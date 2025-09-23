@@ -25,6 +25,7 @@ vulkano = { workspace = true, optional = true }
 vulkano-shaders = { workspace = true, optional = true }
 #vulkano-win = { workspace = true, optional = true }
 bytemuck = { workspace = true }
+winapi = { version = "0.3", features = ["winuser"] }
     
 
 [features]

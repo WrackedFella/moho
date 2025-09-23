@@ -7,6 +7,9 @@ use rand::{Rng, rng};
 mod gpu;
 use legion::World;
 use legion::query::IntoQuery;
+use winit::event::{Event, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::WindowBuilder;
 
 // a component is any type that is 'static, sized, send and sync
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -26,10 +29,6 @@ fn main() {
     // Populate the ECS world with spheres
     random_scene(&mut world);
 
-    // collect GPU-ready instance data from the ECS world
-    let instances = collect_instances(&mut world);
-    println!("Collected {} instances for the GPU", instances.len());
-
     // create a simple perspective camera
     let camera = {
         let eye = glam::Vec3::new(13.0, 2.0, 3.0);
@@ -40,9 +39,33 @@ fn main() {
         (view, proj)
     };
 
-    gpu::run(instances, camera);
+    // Create the winit event loop and window here and drive the renderer
+    // from `main`. This keeps platform-specific windowing on the main thread
+    // and allows cross-platform input handling.
+    let event_loop = EventLoop::new().unwrap();
+    let window = WindowBuilder::new()
+        .with_title("moho - vulkan renderer")
+        .build(&event_loop)
+        .expect("Failed to create window");
 
-    println!("Hello, world!");
+    // Create the GPU renderer (feature-gated). The non-vulkan placeholder
+    // `Renderer` has a `new()` that does not require the window; the Vulkano
+    // `Renderer::new` expects the `EventLoop` and `Window` so pass them along.
+    #[cfg(feature = "vulkan")]
+    let mut renderer = {
+        // The Vulkano renderer consumes the `Window` so we moved it here.
+        let r = gpu::Renderer::new(&event_loop, window);
+        r
+    };
+
+    #[cfg(not(feature = "vulkan"))]
+    let mut renderer = gpu::Renderer::new();
+
+    // For now perform one frame of rendering to validate the renderer
+    // integration and keep builds/tests fast. We'll replace this with a
+    // proper winit event loop in a follow-up change.
+    renderer.render(&mut world, camera);
+    println!("Rendered one frame (exiting).");
 }
 
 fn random_scene(world: &mut World) {
