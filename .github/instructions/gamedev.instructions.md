@@ -1,5 +1,6 @@
 - General Guidelines
     - Use rust for all code.
+	- Use Vulkano and Vulkan for rendering.
     - Follow best practices for rust, where applicable and possible.
     - Break big functions up into smaller, more focused functions.
 - Project Goals

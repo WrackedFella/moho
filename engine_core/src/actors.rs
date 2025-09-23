@@ -1,14 +1,14 @@
 extern crate glam;
-use glam::Vec3;
-use crate::*;
 use crate::materials::MaterialType;
+use crate::*;
 use bytemuck::{Pod, Zeroable};
+use glam::Vec3;
 
 #[derive(Copy, Clone)]
 pub struct Sphere {
     pub center: Vec3,
     pub radius: f32,
-    pub mat_ptr: MaterialType
+    pub mat_ptr: MaterialType,
 }
 
 impl Sphere {
@@ -16,7 +16,7 @@ impl Sphere {
         Sphere {
             center: cen,
             radius: r,
-            mat_ptr: mat
+            mat_ptr: mat,
         }
     }
 }
@@ -26,10 +26,10 @@ impl Hittable for Sphere {
         let oc: Vec3 = r.origin() - &self.center;
         let a: f32 = r.direction().dot(r.direction());
         let b: f32 = oc.dot(r.direction());
-        let c: f32 = oc.dot(oc) - self.radius*self.radius;
-        let discriminant: f32 = b*b - a*c;
+        let c: f32 = oc.dot(oc) - self.radius * self.radius;
+        let discriminant: f32 = b * b - a * c;
         if discriminant > 0f32 {
-            let mut temp = (-b - (b*b-a*c).sqrt()) / a;
+            let mut temp = (-b - (b * b - a * c).sqrt()) / a;
             if temp < t_max && temp > t_min {
                 let point = r.point_at_parameter(temp);
                 // ...existing code omitted intentionally; return a simple record
@@ -37,17 +37,17 @@ impl Hittable for Sphere {
                     t: temp,
                     p: point,
                     normal: (point - &self.center) / self.radius,
-                    mat_ptr: self.mat_ptr
+                    mat_ptr: self.mat_ptr,
                 });
             }
-            temp = (-b + (b*b-a*c).sqrt()) / a;
+            temp = (-b + (b * b - a * c).sqrt()) / a;
             if temp < t_max && temp > t_min {
                 let point = r.point_at_parameter(temp);
                 return Some(HittableRecord {
                     t: temp,
                     p: point,
                     normal: (point - &self.center) / self.radius,
-                    mat_ptr: self.mat_ptr
+                    mat_ptr: self.mat_ptr,
                 });
             }
         }
@@ -70,7 +70,7 @@ impl Sphere {
         let scale = glam::Mat4::from_scale(glam::Vec3::new(self.radius, self.radius, self.radius));
         let model = translate * scale;
         let cols = model.to_cols_array();
-        let mut mat = [[0f32;4];4];
+        let mut mat = [[0f32; 4]; 4];
         mat[0] = [cols[0], cols[1], cols[2], cols[3]];
         mat[1] = [cols[4], cols[5], cols[6], cols[7]];
         mat[2] = [cols[8], cols[9], cols[10], cols[11]];
@@ -83,7 +83,7 @@ impl Sphere {
                 MaterialType::Dielectric { .. } => 2u32,
             },
             object_type: 0u32,
-            padding: [0u32;2],
+            padding: [0u32; 2],
         }
     }
 }
