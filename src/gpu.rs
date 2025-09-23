@@ -4,9 +4,9 @@
 
 #[cfg(not(feature = "vulkan"))]
 pub mod placeholder_renderer {
+    use engine_core::actors::InstanceGpu;
     use legion::World;
     use legion::query::IntoQuery;
-    use engine_core::actors::InstanceGpu;
 
     /// Minimal placeholder renderer used when the `vulkan` feature is disabled.
     /// It implements the same `new` and `render` surface so `main` can be kept
@@ -38,10 +38,10 @@ pub mod placeholder_renderer {
 // dependencies in the non-vulkan build.
 #[cfg(feature = "vulkan")]
 pub mod vulkan_renderer {
-    use std::sync::Arc;
+    use engine_core::actors::InstanceGpu;
     use legion::World;
     use legion::query::IntoQuery;
-    use engine_core::actors::InstanceGpu;
+    use std::sync::Arc;
 
     // NOTE: keep this small and syntactically-correct. The full Vulkano
     // implementation can be iterated on. This skeleton ensures the module
@@ -57,7 +57,10 @@ pub mod vulkan_renderer {
         /// the renderer can create surface(s) and GPU resources. The signatures
         /// are intentionally simple; expand as needed when implementing the
         /// full renderer.
-        pub fn new(event_loop: &winit::event_loop::EventLoop<()>, window: winit::window::Window) -> Self {
+        pub fn new(
+            event_loop: &winit::event_loop::EventLoop<()>,
+            window: winit::window::Window,
+        ) -> Self {
             println!("(vulkan) Initializing renderer (skeleton)");
             // For now, drop the provided values to avoid unused warnings in the skeleton.
             let _ = event_loop;
@@ -73,7 +76,10 @@ pub mod vulkan_renderer {
             for s in q.iter(_world) {
                 instances.push(s.to_instance());
             }
-            println!("(vulkan-skel) render called ({} instances).", instances.len());
+            println!(
+                "(vulkan-skel) render called ({} instances).",
+                instances.len()
+            );
         }
     }
 
@@ -83,7 +89,7 @@ pub mod vulkan_renderer {
 // Export the appropriate Renderer type at the crate root so callers can use
 // `gpu::Renderer` regardless of the active feature.
 #[cfg(not(feature = "vulkan"))]
-pub use placeholder_renderer::Renderer as Renderer;
+pub use placeholder_renderer::Renderer;
 
 #[cfg(feature = "vulkan")]
-pub use vulkan_renderer::Renderer as Renderer;
+pub use vulkan_renderer::Renderer;
