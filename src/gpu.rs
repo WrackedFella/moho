@@ -42,23 +42,23 @@ mod vulkan_scaffold {
             src: "#version 450
 layout(push_constant) uniform Push { mat4 view; mat4 proj; } pc;
 
-layout(location = 0) in vec2 in_position; // per-vertex
-layout(location = 1) in vec4 in_model_col0; // instance - mat4 split across 4 vec4
-layout(location = 2) in vec4 in_model_col1;
-layout(location = 3) in vec4 in_model_col2;
-layout(location = 4) in vec4 in_model_col3;
-            layout(location = 5) in float in_material;
+layout(location = 0) in vec2 position; // per-vertex
+layout(location = 1) in vec4 model_col0; // instance - mat4 split across 4 vec4
+layout(location = 2) in vec4 model_col1;
+layout(location = 3) in vec4 model_col2;
+layout(location = 4) in vec4 model_col3;
+            layout(location = 5) in uint material;
 
 layout(location = 0) out vec3 frag_position;
 layout(location = 1) out float frag_material;
 
 void main() {
-    vec4 local_pos = vec4(in_position, 0.0, 1.0);
-    mat4 model = mat4(in_model_col0, in_model_col1, in_model_col2, in_model_col3);
+    vec4 local_pos = vec4(position, 0.0, 1.0);
+    mat4 model = mat4(model_col0, model_col1, model_col2, model_col3);
     vec4 world_pos = model * local_pos;
     gl_Position = pc.proj * pc.view * world_pos;
     frag_position = world_pos.xyz;
-    frag_material = in_material;
+    frag_material = float(material);
 }
 "
         }
@@ -114,14 +114,28 @@ void main() {
 
         // Load Vulkan library and create an Instance
         let library = VulkanLibrary::new().expect("Failed to load Vulkan library");
-        // Use the Surface helpers on the Vulkano type directly (replaces deprecated vulkano-win helpers)
-        use vulkano::swapchain::Surface;
-        use winit::event_loop::EventLoop;
-        use winit::window::WindowBuilder;
+    // Use the Surface helpers on the Vulkano type directly (replaces deprecated vulkano-win helpers)
+    use vulkano::swapchain::Surface;
+    use winit::event_loop::{EventLoop, EventLoopBuilder};
+    use winit::window::WindowBuilder;
+    // On Windows we may be running inside a test thread; creating an
+    // EventLoop outside the main thread panics. Use the platform extension
+    // to allow building an EventLoop that can be created on any thread.
+    #[cfg(target_os = "windows")]
+    use winit::platform::windows::EventLoopBuilderExtWindows;
 
         // Create the event loop first; the event loop provides the display handle
         // required to compute instance extensions.
-        // EventLoop::new() returns a Result in winit 0.29; unwrap here as in examples.
+    // EventLoop::new() returns a Result in winit 0.29; unwrap here as in examples.
+        #[cfg(target_os = "windows")]
+        let event_loop = {
+            let mut builder = EventLoopBuilder::new();
+            // `with_any_thread(true)` is provided by EventLoopBuilderExtWindows
+            builder.with_any_thread(true);
+            builder.build().expect("Failed to build event loop")
+        };
+
+        #[cfg(not(target_os = "windows"))]
         let event_loop = EventLoop::new().expect("Failed to create event loop");
         // Surface::required_extensions returns a Result; unwrap to get InstanceExtensions.
         let required_extensions = Surface::required_extensions(&event_loop)
@@ -589,3 +603,42 @@ void main() {
 // Re-export the run entry as the crate-level function when the feature is on.
 #[cfg(feature = "vulkan")]
 pub use vulkan_scaffold::run;
+
+// Smoke test: builds a tiny scene and calls the Vulkan scaffold's `run`.
+// This test is ignored by default because it opens a window and requires a
+// working Vulkan driver and an available GPU. Run explicitly with:
+//
+// ```powershell
+// cargo test --features vulkan -- --ignored
+// ```
+//
+// Keep this test in the source so contributors can run it locally when they
+// want to do a quick smoke check of the scaffold.
+#[cfg(all(test, feature = "vulkan"))]
+mod smoke_tests {
+    use super::vulkan_scaffold::run as vk_run;
+    use engine_core::actors::Sphere;
+    use engine_core::materials::MaterialType;
+    use glam::Vec3;
+
+    #[test]
+    #[ignore]
+    fn smoke_render_small_scene() {
+        // Create two spheres and convert to GPU instances
+        let s1 = Sphere::new(Vec3::new(0.0, 0.0, 0.0), 1.0, MaterialType::Lambertian { albedo: Vec3::new(0.8, 0.3, 0.3) });
+        let s2 = Sphere::new(Vec3::new(2.0, 0.0, 0.0), 1.0, MaterialType::Metal { albedo: Vec3::new(0.8, 0.8, 0.8), fuzz: 0.0 });
+
+        let instances = vec![s1.to_instance(), s2.to_instance()];
+
+        // Basic camera (view, proj)
+        let eye = Vec3::new(5.0, 2.0, 5.0);
+        let center = Vec3::new(0.0, 0.0, 0.0);
+        let up = Vec3::new(0.0, 1.0, 0.0);
+        let view = glam::Mat4::look_at_rh(eye, center, up);
+        let proj = glam::Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1, 100.0);
+
+        // Call the scaffolded run; the test is primarily to catch panics and
+        // basic integration errors. It will open a window and present one frame.
+        vk_run(instances, (view, proj));
+    }
+}
