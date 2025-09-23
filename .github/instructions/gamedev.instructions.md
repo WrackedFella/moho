@@ -1,0 +1,8 @@
+- General Guidelines
+    - Use rust for all code.
+    - Follow best practices for rust, where applicable and possible.
+    - Break big functions up into smaller, more focused functions.
+- Project Goals
+    - Create a reusable, extendable game engine.
+    - Render objects using Vulkano
+    - Target Windows, macOs, and Linux systems.
