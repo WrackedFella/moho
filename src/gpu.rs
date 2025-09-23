@@ -41,7 +41,6 @@ pub mod vulkan_renderer {
     use engine_core::actors::InstanceGpu;
     use legion::World;
     use legion::query::IntoQuery;
-    use std::sync::Arc;
 
     // NOTE: keep this small and syntactically-correct. The full Vulkano
     // implementation can be iterated on. This skeleton ensures the module

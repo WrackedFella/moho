@@ -7,17 +7,28 @@ use rand::{Rng, rng};
 mod gpu;
 use legion::World;
 use legion::query::IntoQuery;
+
+// `winit` is an optional workspace dependency. Only import and use it when
+// the feature is enabled. The project uses a `vulkan` feature to enable the
+// Vulkan renderer which depends on `winit`, so guard winit usage behind that
+// feature. When `winit` is not available we fall back to a single-frame
+// render via the placeholder renderer to keep builds fast.
+#[cfg(feature = "vulkan")]
 use winit::event::{Event, WindowEvent};
+#[cfg(feature = "vulkan")]
 use winit::event_loop::{ControlFlow, EventLoop};
+#[cfg(feature = "vulkan")]
 use winit::window::WindowBuilder;
 
 // a component is any type that is 'static, sized, send and sync
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Position {
     x: f32,
     y: f32,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Velocity {
     dx: f32,
@@ -39,33 +50,46 @@ fn main() {
         (view, proj)
     };
 
-    // Create the winit event loop and window here and drive the renderer
-    // from `main`. This keeps platform-specific windowing on the main thread
-    // and allows cross-platform input handling.
-    let event_loop = EventLoop::new().unwrap();
-    let window = WindowBuilder::new()
-        .with_title("moho - vulkan renderer")
-        .build(&event_loop)
-        .expect("Failed to create window");
-
-    // Create the GPU renderer (feature-gated). The non-vulkan placeholder
-    // `Renderer` has a `new()` that does not require the window; the Vulkano
-    // `Renderer::new` expects the `EventLoop` and `Window` so pass them along.
+    // If `vulkan` (and therefore `winit`) is enabled, create the event loop
+    // and run a proper per-frame loop. Otherwise use the placeholder
+    // renderer and run a single frame to keep builds fast.
     #[cfg(feature = "vulkan")]
-    let mut renderer = {
-        // The Vulkano renderer consumes the `Window` so we moved it here.
-        let r = gpu::Renderer::new(&event_loop, window);
-        r
-    };
+    {
+        let event_loop = EventLoop::new().unwrap();
+        let window = WindowBuilder::new()
+            .with_title("moho - vulkan renderer")
+            .build(&event_loop)
+            .expect("Failed to create window");
+
+        // Vulkano renderer expects event loop and window
+        let mut renderer = gpu::Renderer::new(&event_loop, window);
+
+        // Run the winit event loop and render each frame. Exit on window close.
+        // winit 0.29's `EventLoop::run` takes a closure `FnMut(Event<T>, &EventLoopWindowTarget<T>)`.
+        event_loop.run(move |event, elwt| {
+            // Default to polling so we render continuously.
+            elwt.set_control_flow(ControlFlow::Poll);
+
+            match event {
+                Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                    // Exit the event loop (examples use `elwt.exit()` helper).
+                    elwt.exit();
+                }
+                // Render in response to window redraw requests.
+                Event::WindowEvent { event: WindowEvent::RedrawRequested, .. } => {
+                    renderer.render(&mut world, camera);
+                }
+                _ => {}
+            }
+        });
+    }
 
     #[cfg(not(feature = "vulkan"))]
-    let mut renderer = gpu::Renderer::new();
-
-    // For now perform one frame of rendering to validate the renderer
-    // integration and keep builds/tests fast. We'll replace this with a
-    // proper winit event loop in a follow-up change.
-    renderer.render(&mut world, camera);
-    println!("Rendered one frame (exiting).");
+    {
+        let mut renderer = gpu::Renderer::new();
+        renderer.render(&mut world, camera);
+        println!("Rendered one frame (exiting).");
+    }
 }
 
 fn random_scene(world: &mut World) {
@@ -150,6 +174,7 @@ fn random_scene(world: &mut World) {
     println!("World Generated");
 }
 
+#[allow(dead_code)]
 fn collect_instances(world: &mut World) -> Vec<InstanceGpu> {
     let mut out: Vec<InstanceGpu> = Vec::new();
     // Query all entities that have a Sphere component
