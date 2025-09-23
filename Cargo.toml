@@ -4,16 +4,19 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
-moho_core = { path = "core" }
+engine_core = { path = "engine_core" }
 glam = "0.30.4"
 rand = "0.9.1"
 vulkano = "0.35.1"
 vulkano-shaders = "0.35.0"
 winit = "0.30.11"
 legion = "0.4.0"
+bytemuck = "1.9.1"
+vulkano-win = "0.35.0"
 
 [dependencies]
 legion.workspace = true
 rand.workspace = true
-moho_core.workspace = true
+engine_core.workspace = true
 glam.workspace = true
+winit.workspace = true

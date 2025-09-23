@@ -1,5 +1,5 @@
 [package]
-name = "moho_core"
+name = "engine_core"
 version = "0.1.0"
 authors = ["Justin Moore <jmoore5268@gmail.com>"]
 edition = "2018"
@@ -10,3 +10,4 @@ vulkano = { workspace = true, default-features = true }
 vulkano-shaders = { workspace = true }
 winit = { workspace = true, default-features = true }
 rand = { workspace = true }
+bytemuck = { workspace = true }

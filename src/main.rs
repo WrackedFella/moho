@@ -1,9 +1,12 @@
 use rand::{rng, Rng};
 use glam::Vec3;
-use moho_core::actors::Sphere;
-use moho_core::materials::MaterialType;
-use moho_core::vector_length;
+use engine_core::actors::Sphere;
+use engine_core::materials::MaterialType;
+use engine_core::vector_length;
+use engine_core::actors::InstanceGpu;
+mod gpu;
 use legion::World;
+use legion::query::IntoQuery;
 
 // a component is any type that is 'static, sized, send and sync
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -23,6 +26,22 @@ fn main() {
     let mut world = World::default();
     // Populate the ECS world with spheres
     random_scene(&mut world);
+
+    // collect GPU-ready instance data from the ECS world
+    let instances = collect_instances(&mut world);
+    println!("Collected {} instances for the GPU", instances.len());
+
+    // create a simple perspective camera
+    let camera = {
+        let eye = glam::Vec3::new(13.0,2.0,3.0);
+        let center = glam::Vec3::new(0.0,0.0,0.0);
+        let up = glam::Vec3::new(0.0,1.0,0.0);
+        let view = glam::Mat4::look_at_rh(eye, center, up);
+        let proj = glam::Mat4::perspective_rh(45f32.to_radians(), 16.0/9.0, 0.1f32, 100.0f32);
+        (view, proj)
+    };
+
+    gpu::run(instances, camera);
 
     println!("Hello, world!");
 }
@@ -108,4 +127,14 @@ fn random_scene(world: &mut World) {
         },
     ),));
     println!("World Generated");
+}
+
+fn collect_instances(world: &mut World) -> Vec<InstanceGpu> {
+    let mut out: Vec<InstanceGpu> = Vec::new();
+    // Query all entities that have a Sphere component
+    let mut q = <&Sphere>::query();
+    for s in q.iter(world) {
+        out.push(s.to_instance());
+    }
+    out
 }

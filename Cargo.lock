@@ -394,6 +394,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
+name = "engine_core"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "rand",
+ "vulkano",
+ "vulkano-shaders",
+ "winit",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -716,20 +728,10 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 name = "moho"
 version = "0.1.0"
 dependencies = [
+ "engine_core",
  "glam",
  "legion",
- "moho_core",
  "rand",
-]
-
-[[package]]
-name = "moho_core"
-version = "0.1.0"
-dependencies = [
- "glam",
- "rand",
- "vulkano",
- "vulkano-shaders",
  "winit",
 ]
 
