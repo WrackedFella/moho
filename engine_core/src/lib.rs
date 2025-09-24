@@ -50,12 +50,9 @@ pub fn random_in_unit_sphere() -> Vec3 {
     let mut rng = rng();
     let mut p = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
     while vector_length_squared(p) >= 1.0 {
-        p =
-            2f32 * Vec3::new(
-                rng.random::<f32>(),
-                rng.random::<f32>(),
-                rng.random::<f32>(),
-            ) - Vec3::new(1f32, 1f32, 1f32);
+        p = 2f32
+            * Vec3::new(rng.random::<f32>(), rng.random::<f32>(), rng.random::<f32>())
+            - Vec3::new(1f32, 1f32, 1f32);
     }
     p
 }

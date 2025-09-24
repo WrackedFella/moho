@@ -417,7 +417,6 @@ dependencies = [
  "bytemuck",
  "engine_core",
  "glam",
- "log",
  "naga",
  "pollster",
  "wgpu",

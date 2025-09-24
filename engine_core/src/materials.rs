@@ -33,36 +33,40 @@ impl Scatterable for MaterialType {
                 }
             }
             MaterialType::Dielectric { ref_indx } => {
+                let outward_normal: Vec3;
+                let ni_over_nt: f32;
+                let cosine: f32;
                 let normal_vector: f32 = r_in.direction().dot(rec.normal);
-                let (outward_normal, ni_over_nt, cosine) = if normal_vector > 0f32 {
-                    (
-                        -rec.normal,
-                        *ref_indx,
-                        *ref_indx * normal_vector / vector_length(r_in.direction()),
-                    )
+                if normal_vector > 0f32 {
+                    outward_normal = -rec.normal;
+                    ni_over_nt = *ref_indx;
+                    cosine = *ref_indx * normal_vector / vector_length(r_in.direction());
                 } else {
-                    (
-                        rec.normal,
-                        1f32 / *ref_indx,
-                        -normal_vector / vector_length(r_in.direction()),
-                    )
-                };
+                    outward_normal = rec.normal;
+                    ni_over_nt = 1f32 / *ref_indx;
+                    cosine = -normal_vector / vector_length(r_in.direction());
+                }
 
                 let refraction_test = refract(r_in.direction(), outward_normal, ni_over_nt);
+                let reflect_prob: f32;
                 let reflected = reflect(r_in.direction(), rec.normal);
+                let mut refracted = Vec3::new(0f32, 0f32, 0f32);
 
-                let (refracted, reflect_prob) = match refraction_test {
-                    Some(v) => (v, schlick(cosine, *ref_indx)),
-                    None => (Vec3::new(0f32, 0f32, 0f32), 1f32),
-                };
-
+                match refraction_test {
+                    Some(v) => {
+                        refracted = v;
+                        reflect_prob = schlick(cosine, *ref_indx);
+                    }
+                    None => {
+                        reflect_prob = 1f32;
+                    }
+                }
                 let mut rng = rng();
                 let scatter = if rng.random::<f32>() < reflect_prob {
                     Ray::new(rec.p, reflected)
                 } else {
                     Ray::new(rec.p, refracted)
                 };
-
                 Some(ScatterRecord {
                     attenuation: Vec3::new(1f32, 1f32, 1f32),
                     scattered: scatter,
