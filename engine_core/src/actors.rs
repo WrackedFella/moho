@@ -129,4 +129,49 @@ impl Sphere {
         }
         verts
     }
+
+    /// Generate a unit-sphere using indexed triangle lists.
+    /// Returns (vertices, indices) where `vertices` is the unique vertex
+    /// list and `indices` contains 32-bit triangle indices into `vertices`.
+    pub fn unit_sphere_indexed(
+        lat_segments: usize,
+        lon_segments: usize,
+    ) -> (Vec<[f32; 3]>, Vec<u32>) {
+        let lat = lat_segments.max(2);
+        let lon = lon_segments.max(3);
+        // grid of unique positions (lat+1) x (lon+1)
+        let mut pts: Vec<[f32; 3]> = Vec::with_capacity((lat + 1) * (lon + 1));
+        for i in 0..=lat {
+            let theta = std::f32::consts::PI * (i as f32) / (lat as f32);
+            let sin_theta = theta.sin();
+            let cos_theta = theta.cos();
+            for j in 0..=lon {
+                let phi = 2.0 * std::f32::consts::PI * (j as f32) / (lon as f32);
+                let x = sin_theta * phi.cos();
+                let y = cos_theta;
+                let z = sin_theta * phi.sin();
+                pts.push([x, y, z]);
+            }
+        }
+
+        // Build index list (two triangles per quad)
+        let mut indices: Vec<u32> = Vec::with_capacity(lat * lon * 6);
+        for i in 0..lat {
+            for j in 0..lon {
+                let a = (i * (lon + 1) + j) as u32;
+                let b = a + 1;
+                let c = (a + (lon + 1) as u32) as u32; // careful cast
+                let d = c + 1;
+                // triangle 1: a, c, b
+                indices.push(a);
+                indices.push(c);
+                indices.push(b);
+                // triangle 2: b, c, d
+                indices.push(b);
+                indices.push(c);
+                indices.push(d);
+            }
+        }
+        (pts, indices)
+    }
 }

@@ -466,6 +466,16 @@ pub mod gfx {
                 handle
             }
 
+            /// Unregister a mesh handle and free its GPU buffers by dropping
+            /// the mesh table entry. This is an inherent method so it can
+            /// access private fields of `Renderer`.
+            pub fn unregister_mesh(&mut self, mesh: u32) {
+                let idx = mesh as usize;
+                if idx < self.mesh_table.len() {
+                    self.mesh_table[idx] = None;
+                }
+            }
+
             /// Inherent method: render a registered mesh by handle.
             pub fn render_mesh(&mut self, mesh: u32, instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4)) {
                 let idx = mesh as usize;
@@ -565,6 +575,8 @@ pub trait RendererBackend {
     fn register_mesh(&mut self, vertices: &[[f32; 3]]) -> u32;
     /// Register a mesh with an index buffer. `indices` are 32-bit indices.
     fn register_indexed_mesh(&mut self, vertices: &[[f32; 3]], indices: &[u32]) -> u32;
+    /// Unregister a previously-registered mesh handle and free GPU resources.
+    fn unregister_mesh(&mut self, mesh: u32);
     /// Render a previously-registered mesh by handle using the provided
     /// instances and camera.
     fn render_mesh(&mut self, mesh: u32, instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4));
@@ -587,6 +599,9 @@ impl RendererBackend for gfx::wgpu_impl::Renderer {
     fn register_indexed_mesh(&mut self, vertices: &[[f32; 3]], indices: &[u32]) -> u32 {
         gfx::wgpu_impl::Renderer::register_indexed_mesh(self, vertices, indices)
     }
+    fn unregister_mesh(&mut self, mesh: u32) {
+        gfx::wgpu_impl::Renderer::unregister_mesh(self, mesh)
+    }
     fn render_mesh(&mut self, mesh: u32, instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4)) {
         gfx::wgpu_impl::Renderer::render_mesh(self, mesh, instances, camera)
     }
@@ -607,6 +622,7 @@ impl RendererBackend for gfx::placeholder::Renderer {
         // placeholder: no GPU, just return a constant handle (0)
         0
     }
+    fn unregister_mesh(&mut self, _mesh: u32) {}
     fn render_mesh(&mut self, _mesh: u32, _instances: &[engine_core::actors::InstanceGpu], _camera: (glam::Mat4, glam::Mat4)) {
         // no-op in placeholder
     }

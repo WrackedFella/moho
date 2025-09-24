@@ -63,8 +63,14 @@ fn main() {
             .build(&event_loop)
             .expect("Failed to create window");
 
-        // Create a boxed renderer backend via the factory.
-        let mut renderer = create_renderer(&event_loop, window);
+    // Create a boxed renderer backend via the factory.
+    let mut renderer = create_renderer(&event_loop, window);
+
+    // Register the indexed unit-sphere mesh once so we don't re-upload
+    // vertex/index data each frame. Using an indexed mesh reduces vertex
+    // duplication compared to the non-indexed generator.
+    let (vertices, indices) = collect_indexed_vertices(&mut world);
+    let mesh_handle = renderer.register_indexed_mesh(&vertices, &indices);
 
         // Frame timing: aim for ~60 FPS.
         let frame_duration = Duration::from_secs_f64(1.0 / 60.0);
@@ -85,8 +91,7 @@ fn main() {
                 Event::NewEvents(start_cause) => {
                     if matches!(start_cause, StartCause::Init) {
                         let instances = collect_instances(&mut world);
-                        let vertices = collect_vertices(&mut world);
-                        renderer.render(&vertices, &instances, camera);
+                        renderer.render_mesh(mesh_handle, &instances, camera);
                         *control_flow = ControlFlow::Wait;
                     }
                 }
@@ -101,8 +106,7 @@ fn main() {
                 }
                 Event::RedrawRequested(_window_id) => {
                     let instances = collect_instances(&mut world);
-                    let vertices = collect_vertices(&mut world);
-                    renderer.render(&vertices, &instances, camera);
+                    renderer.render_mesh(mesh_handle, &instances, camera);
                     *control_flow = ControlFlow::Wait;
                 }
                 Event::MainEventsCleared => {
@@ -145,10 +149,12 @@ fn main() {
 
     #[cfg(not(feature = "backend-wgpu"))]
     {
-        let mut renderer = create_renderer();
+    let mut renderer = create_renderer();
+    // Register indexed mesh once with placeholder renderer (no-op) and use render_mesh
+    let (vertices, indices) = collect_indexed_vertices(&mut world);
+    let mesh_handle = renderer.register_indexed_mesh(&vertices, &indices);
         let instances = collect_instances(&mut world);
-        let vertices = collect_vertices(&mut world);
-        renderer.render(&vertices, &instances, camera);
+        renderer.render_mesh(mesh_handle, &instances, camera);
         println!("Rendered one frame (exiting).");
     }
 }
@@ -251,6 +257,12 @@ fn collect_vertices(_world: &mut World) -> Vec<[f32; 3]> {
     // instance `model` matrix returned by `Sphere::to_instance()` to scale
     // and position each sphere instance.
     Sphere::unit_sphere_vertices(16, 16)
+}
+
+fn collect_indexed_vertices(_world: &mut World) -> (Vec<[f32; 3]>, Vec<u32>) {
+    // Return an indexed unit-sphere mesh. The renderer will store both
+    // vertex and index buffers and use indexed draws.
+    Sphere::unit_sphere_indexed(16, 16)
 }
 
 // Simple fixed-step simulation function. Advance the ECS world by `dt`.
