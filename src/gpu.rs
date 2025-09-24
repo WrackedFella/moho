@@ -17,9 +17,13 @@ pub mod placeholder_renderer {
             Renderer {}
         }
 
-        pub fn render(&mut self, instances: &[InstanceGpu], _camera: (glam::Mat4, glam::Mat4)) {
-            // Log instance count for visibility in the placeholder backend.
-            println!("Placeholder render called ({} instances).", instances.len());
+        pub fn render(&mut self, _vertices: &[[f32; 3]], instances: &[InstanceGpu], _camera: (glam::Mat4, glam::Mat4)) {
+            // Log counts for visibility in the placeholder backend.
+            println!(
+                "Placeholder render called ({} verts, {} instances).",
+                _vertices.len(),
+                instances.len()
+            );
         }
     }
 
@@ -59,7 +63,7 @@ mod wgpu_impl {
         device: wgpu::Device,
         queue: wgpu::Queue,
         config: wgpu::SurfaceConfiguration,
-        vertex_buffer: wgpu::Buffer,
+    vertex_buffer: Option<wgpu::Buffer>,
         pipeline: wgpu::RenderPipeline,
         camera_buffer: wgpu::Buffer,
         camera_bind_group: wgpu::BindGroup,
@@ -114,131 +118,11 @@ mod wgpu_impl {
             };
             surface.configure(&device, &config);
 
-            // Full cube (36 vertices: 6 faces * 2 triangles * 3 vertices)
-            let vertices: &[Vertex] = &[
-                // front
-                Vertex {
-                    position: [-0.5, -0.5, 0.5],
-                },
-                Vertex {
-                    position: [0.5, -0.5, 0.5],
-                },
-                Vertex {
-                    position: [0.5, 0.5, 0.5],
-                },
-                Vertex {
-                    position: [-0.5, -0.5, 0.5],
-                },
-                Vertex {
-                    position: [0.5, 0.5, 0.5],
-                },
-                Vertex {
-                    position: [-0.5, 0.5, 0.5],
-                },
-                // back
-                Vertex {
-                    position: [0.5, -0.5, -0.5],
-                },
-                Vertex {
-                    position: [-0.5, -0.5, -0.5],
-                },
-                Vertex {
-                    position: [-0.5, 0.5, -0.5],
-                },
-                Vertex {
-                    position: [0.5, -0.5, -0.5],
-                },
-                Vertex {
-                    position: [-0.5, 0.5, -0.5],
-                },
-                Vertex {
-                    position: [0.5, 0.5, -0.5],
-                },
-                // left
-                Vertex {
-                    position: [-0.5, -0.5, -0.5],
-                },
-                Vertex {
-                    position: [-0.5, -0.5, 0.5],
-                },
-                Vertex {
-                    position: [-0.5, 0.5, 0.5],
-                },
-                Vertex {
-                    position: [-0.5, -0.5, -0.5],
-                },
-                Vertex {
-                    position: [-0.5, 0.5, 0.5],
-                },
-                Vertex {
-                    position: [-0.5, 0.5, -0.5],
-                },
-                // right
-                Vertex {
-                    position: [0.5, -0.5, 0.5],
-                },
-                Vertex {
-                    position: [0.5, -0.5, -0.5],
-                },
-                Vertex {
-                    position: [0.5, 0.5, -0.5],
-                },
-                Vertex {
-                    position: [0.5, -0.5, 0.5],
-                },
-                Vertex {
-                    position: [0.5, 0.5, -0.5],
-                },
-                Vertex {
-                    position: [0.5, 0.5, 0.5],
-                },
-                // top
-                Vertex {
-                    position: [-0.5, 0.5, 0.5],
-                },
-                Vertex {
-                    position: [0.5, 0.5, 0.5],
-                },
-                Vertex {
-                    position: [0.5, 0.5, -0.5],
-                },
-                Vertex {
-                    position: [-0.5, 0.5, 0.5],
-                },
-                Vertex {
-                    position: [0.5, 0.5, -0.5],
-                },
-                Vertex {
-                    position: [-0.5, 0.5, -0.5],
-                },
-                // bottom
-                Vertex {
-                    position: [-0.5, -0.5, -0.5],
-                },
-                Vertex {
-                    position: [0.5, -0.5, -0.5],
-                },
-                Vertex {
-                    position: [0.5, -0.5, 0.5],
-                },
-                Vertex {
-                    position: [-0.5, -0.5, -0.5],
-                },
-                Vertex {
-                    position: [0.5, -0.5, 0.5],
-                },
-                Vertex {
-                    position: [-0.5, -0.5, 0.5],
-                },
-            ];
-
-            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("vertex-buffer"),
-                contents: bytemuck::cast_slice(vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-
-            let vertex_count = vertices.len() as u32;
+            // Vertex data is supplied by the application (from the World) at render time.
+            // The renderer will create/update the GPU vertex buffer on demand in
+            // `render()` so no mesh is hardcoded here.
+            let vertex_buffer = None;
+            let vertex_count = 0u32;
 
             // No bind group layouts for now (we don't use additional uniforms yet)
             // let instance_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -387,17 +271,28 @@ mod wgpu_impl {
             }
         }
 
-        pub fn render(&mut self, instances_cpu: &[CpuInstance], camera: (glam::Mat4, glam::Mat4)) {
-            // Convert CPU-side `InstanceGpu` into the tightly-packed GPU layout
-            // used by the vertex shader.
+        pub fn render(&mut self, vertices: &[[f32; 3]], instances_cpu: &[CpuInstance], camera: (glam::Mat4, glam::Mat4)) {
+            // Ensure GPU vertex buffer exists and matches the provided vertices.
+            let vertex_bytes = bytemuck::cast_slice(vertices);
+            let required_vertex_bytes = vertex_bytes.len() as wgpu::BufferAddress;
+            let mut recreate_vertex = false;
+            if self.vertex_buffer.is_none() {
+                recreate_vertex = true;
+            }
+            if recreate_vertex {
+                let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("vertex-buffer"),
+                    contents: vertex_bytes,
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+                self.vertex_buffer = Some(vb);
+                self.vertex_count = vertices.len() as u32;
+            }
+
+            // Convert CPU-side `InstanceGpu` into the tightly-packed GPU layout used by the shader.
             let mut instances: Vec<GpuInstance> = Vec::with_capacity(instances_cpu.len());
             for ic in instances_cpu {
-                instances.push(GpuInstance {
-                    model: ic.model,
-                    material: ic.material,
-                    object_type: 0,
-                    padding: [0, 0],
-                });
+                instances.push(GpuInstance { model: ic.model, material: ic.material, object_type: 0, padding: [0, 0] });
             }
 
             let frame = match self.surface.get_current_texture() {
@@ -493,7 +388,8 @@ mod wgpu_impl {
                 rpass.set_pipeline(&self.pipeline);
                 // set camera bind group (group 0)
                 rpass.set_bind_group(0, &self.camera_bind_group, &[]);
-                rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                // set vertex buffer (created on-demand)
+                rpass.set_vertex_buffer(0, self.vertex_buffer.as_ref().expect("vertex buffer").slice(..));
                 // bind the persistent instance buffer
                 let ibuf = self
                     .instance_buffer

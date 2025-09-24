@@ -84,7 +84,8 @@ fn main() {
                 Event::NewEvents(start_cause) => {
                     if matches!(start_cause, StartCause::Init) {
                         let instances = collect_instances(&mut world);
-                        renderer.render(&instances, camera);
+                        let vertices = collect_vertices(&mut world);
+                        renderer.render(&vertices, &instances, camera);
                         *control_flow = ControlFlow::Wait;
                     }
                 }
@@ -102,7 +103,8 @@ fn main() {
                 }
                 Event::RedrawRequested(_window_id) => {
                     let instances = collect_instances(&mut world);
-                    renderer.render(&instances, camera);
+                    let vertices = collect_vertices(&mut world);
+                    renderer.render(&vertices, &instances, camera);
                     *control_flow = ControlFlow::Wait;
                 }
                 Event::MainEventsCleared => {
@@ -146,8 +148,9 @@ fn main() {
     #[cfg(not(feature = "backend-wgpu"))]
     {
         let mut renderer = gpu::Renderer::new();
-        let instances = collect_instances(&mut world);
-        renderer.render(&instances, camera);
+    let instances = collect_instances(&mut world);
+    let vertices = collect_vertices(&mut world);
+    renderer.render(&vertices, &instances, camera);
         println!("Rendered one frame (exiting).");
     }
 }
@@ -243,6 +246,13 @@ fn collect_instances(world: &mut World) -> Vec<InstanceGpu> {
         out.push(s.to_instance());
     }
     out
+}
+
+fn collect_vertices(_world: &mut World) -> Vec<[f32; 3]> {
+    // Generate a unit sphere mesh once per call. The renderer will use the
+    // instance `model` matrix returned by `Sphere::to_instance()` to scale
+    // and position each sphere instance.
+    Sphere::unit_sphere_vertices(16, 16)
 }
 
 // Simple fixed-step simulation function. Advance the ECS world by `dt`.
