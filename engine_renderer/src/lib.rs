@@ -11,8 +11,8 @@ pub mod prelude {
 // a stable definition and we avoid duplicate layout definitions across the
 // workspace.
 pub mod gpu_types;
-pub use gpu_types::MaterialGpu;
 pub use gpu_types::CameraGpu;
+pub use gpu_types::MaterialGpu;
 
 // Quick sanity check: MaterialGpu should be 32 bytes (two vec4s).
 const _: () = assert!(std::mem::size_of::<MaterialGpu>() == 32);
@@ -45,8 +45,8 @@ pub mod gfx {
             padding: [u32; 2],
         }
 
-    // Use the crate-level MaterialGpu type for the GPU material layout.
-    use crate::MaterialGpu as MaterialGpu;
+        // Use the crate-level MaterialGpu type for the GPU material layout.
+        use crate::MaterialGpu;
 
         pub struct Renderer {
             surface: wgpu::Surface,
@@ -146,7 +146,8 @@ pub mod gfx {
                             wgpu::BindGroupLayoutEntry {
                                 binding: 0,
                                 // camera is read in both the vertex and fragment stages
-                                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                                visibility: wgpu::ShaderStages::VERTEX
+                                    | wgpu::ShaderStages::FRAGMENT,
                                 ty: wgpu::BindingType::Buffer {
                                     ty: wgpu::BufferBindingType::Uniform,
                                     has_dynamic_offset: false,
@@ -187,18 +188,28 @@ pub mod gfx {
                 // Create an initial one-element material storage buffer so we can
                 // create the bind group now. It will be replaced when the app
                 // uploads real materials.
-                let initial_material = MaterialGpu { albedo: [1.0, 1.0, 1.0, 0.0], params: [0.0, 0.0, 0.0, 0.0] };
-                let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("material-buffer-initial"),
-                    contents: bytemuck::cast_slice(&[initial_material]),
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                });
+                let initial_material = MaterialGpu {
+                    albedo: [1.0, 1.0, 1.0, 0.0],
+                    params: [0.0, 0.0, 0.0, 0.0],
+                };
+                let material_buffer =
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("material-buffer-initial"),
+                        contents: bytemuck::cast_slice(&[initial_material]),
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    });
 
                 let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     layout: &camera_bgl,
                     entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: camera_buffer.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 1, resource: material_buffer.as_entire_binding() },
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: camera_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: material_buffer.as_entire_binding(),
+                        },
                     ],
                     label: Some("camera-bind-group"),
                 });
@@ -240,8 +251,8 @@ pub mod gfx {
                             // Per-instance data: model matrix (4x vec4) + material(u32) + object_type(u32)
                             // followed by per-instance material params: albedo(vec3), fuzz(f32), ref_idx(f32)
                             wgpu::VertexBufferLayout {
-                                    array_stride: std::mem::size_of::<GpuInstance>()
-                                        as wgpu::BufferAddress,
+                                array_stride: std::mem::size_of::<GpuInstance>()
+                                    as wgpu::BufferAddress,
                                 step_mode: wgpu::VertexStepMode::Instance,
                                 attributes: &wgpu::vertex_attr_array![
                                     2 => Float32x4,
@@ -406,14 +417,19 @@ pub mod gfx {
                     .instance_buffer
                     .as_ref()
                     .expect("instance buffer was created in new");
-                    if instances.len() > 0 {
-                        self.queue
-                            .write_buffer(buf, 0, bytemuck::cast_slice(&instances));
-                    } else {
-                        let zero = GpuInstance { model: [[0.0; 4]; 4], material: 0, object_type: 0, padding: [0, 0] };
-                        self.queue
-                            .write_buffer(buf, 0, bytemuck::cast_slice(&[zero]));
-                    }
+                if instances.len() > 0 {
+                    self.queue
+                        .write_buffer(buf, 0, bytemuck::cast_slice(&instances));
+                } else {
+                    let zero = GpuInstance {
+                        model: [[0.0; 4]; 4],
+                        material: 0,
+                        object_type: 0,
+                        padding: [0, 0],
+                    };
+                    self.queue
+                        .write_buffer(buf, 0, bytemuck::cast_slice(&[zero]));
+                }
 
                 let mut encoder =
                     self.device
@@ -482,22 +498,31 @@ pub mod gfx {
                 let bytes = bytemuck::cast_slice(materials);
                 let _size = bytes.len() as wgpu::BufferAddress;
                 // Create a new storage buffer for materials and copy data into it.
-                let mat_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("material-buffer"),
-                    contents: bytes,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                });
+                let mat_buf = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("material-buffer"),
+                        contents: bytes,
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    });
                 self.material_buffer = Some(mat_buf);
                 // Recreate the camera bind group to include the new material buffer.
                 let mat_resource = self.material_buffer.as_ref().unwrap().as_entire_binding();
-                self.camera_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    layout: &self.camera_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: self.camera_buffer.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 1, resource: mat_resource },
-                    ],
-                    label: Some("camera-bind-group"),
-                });
+                self.camera_bind_group =
+                    self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        layout: &self.camera_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: self.camera_buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: mat_resource,
+                            },
+                        ],
+                        label: Some("camera-bind-group"),
+                    });
             }
 
             pub fn resize(&mut self, width: u32, height: u32) {
@@ -529,11 +554,13 @@ pub mod gfx {
             /// Inherent method: register a mesh into the renderer's mesh table.
             pub fn register_mesh(&mut self, vertices: &[[f32; 3]]) -> u32 {
                 let vertex_bytes = bytemuck::cast_slice(vertices);
-                let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("mesh-vertex-buffer"),
-                    contents: vertex_bytes,
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
+                let vb = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("mesh-vertex-buffer"),
+                        contents: vertex_bytes,
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
                 let vertex_count = vertices.len() as u32;
                 let entry = MeshEntry {
                     buffer: vb,
@@ -546,26 +573,61 @@ pub mod gfx {
                 handle
             }
 
-            pub fn register_indexed_mesh(&mut self, vertices: &[[f32; 3]], normals: &[[f32; 3]], indices: &[u32]) -> u32 {
+            pub fn register_indexed_mesh(
+                &mut self,
+                vertices: &[[f32; 3]],
+                normals: &[[f32; 3]],
+                indices: &[u32],
+            ) -> u32 {
                 // Interleave positions and normals into the Vertex struct
                 #[repr(C)]
                 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-                struct InterleavedVertex { pos: [f32;3], nor: [f32;3] }
+                struct InterleavedVertex {
+                    pos: [f32; 3],
+                    nor: [f32; 3],
+                }
                 // Build a temporary vec of interleaved vertices
                 let mut iv: Vec<InterleavedVertex> = Vec::with_capacity(vertices.len());
                 for i in 0..vertices.len() {
-                    iv.push(InterleavedVertex { pos: vertices[i], nor: normals[i] });
+                    iv.push(InterleavedVertex {
+                        pos: vertices[i],
+                        nor: normals[i],
+                    });
                 }
                 // Debug: print first few interleaved vertices to ensure normals exist
                 for (i, v) in iv.iter().enumerate().take(6) {
-            log::debug!("[register_indexed_mesh] v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})", i, v.pos[0], v.pos[1], v.pos[2], v.nor[0], v.nor[1], v.nor[2]);
+                    log::debug!(
+                        "[register_indexed_mesh] v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})",
+                        i,
+                        v.pos[0],
+                        v.pos[1],
+                        v.pos[2],
+                        v.nor[0],
+                        v.nor[1],
+                        v.nor[2]
+                    );
                 }
                 // Print a few sampled indices across the mesh to check variation
                 if iv.len() > 50 {
-                    let samples = [0usize, iv.len()/4, iv.len()/2, 3*iv.len()/4, iv.len()-1];
+                    let samples = [
+                        0usize,
+                        iv.len() / 4,
+                        iv.len() / 2,
+                        3 * iv.len() / 4,
+                        iv.len() - 1,
+                    ];
                     for idx in samples {
                         let v = &iv[idx];
-                        log::debug!("[register_indexed_mesh] sample v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})", idx, v.pos[0], v.pos[1], v.pos[2], v.nor[0], v.nor[1], v.nor[2]);
+                        log::debug!(
+                            "[register_indexed_mesh] sample v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})",
+                            idx,
+                            v.pos[0],
+                            v.pos[1],
+                            v.pos[2],
+                            v.nor[0],
+                            v.nor[1],
+                            v.nor[2]
+                        );
                     }
                 }
                 let vertex_bytes = bytemuck::cast_slice(&iv);
@@ -627,7 +689,8 @@ pub mod gfx {
                     cols.push(cam_pos.y);
                     cols.push(cam_pos.z);
                     cols.push(0.0f32);
-                    self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&cols));
+                    self.queue
+                        .write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&cols));
 
                     // instances
                     let mut instances_gpu: Vec<GpuInstance> = Vec::with_capacity(instances.len());
@@ -682,11 +745,11 @@ pub mod gfx {
                     let frame_view = frame
                         .texture
                         .create_view(&wgpu::TextureViewDescriptor::default());
-                    let mut encoder = self
-                        .device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("encoder"),
-                        });
+                    let mut encoder =
+                        self.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("encoder"),
+                            });
                     {
                         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("rpass"),
@@ -733,18 +796,26 @@ pub mod gfx {
         use engine_core::actors::InstanceGpu;
         pub struct Renderer {}
         impl Renderer {
-            pub fn new() -> Self { Renderer {} }
-            pub fn render(&mut self, _vertices: &[[f32;3]], _instances: &[InstanceGpu], _camera: (glam::Mat4, glam::Mat4, glam::Vec3)) {}
+            pub fn new() -> Self {
+                Renderer {}
+            }
+            pub fn render(
+                &mut self,
+                _vertices: &[[f32; 3]],
+                _instances: &[InstanceGpu],
+                _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+            ) {
+            }
             pub fn request_redraw(&self) {}
             pub fn resize(&mut self, _w: u32, _h: u32) {}
         }
     }
 
     // re-export the concrete renderer at gfx level for convenience
-    #[cfg(feature = "backend-wgpu")]
-    pub use wgpu_impl::Renderer;
     #[cfg(not(feature = "backend-wgpu"))]
     pub use placeholder::Renderer;
+    #[cfg(feature = "backend-wgpu")]
+    pub use wgpu_impl::Renderer;
 }
 
 // crate root re-export to preserve the previous `engine_renderer::Renderer` API
@@ -757,7 +828,12 @@ pub use gfx::Renderer;
 
 /// Object-safe renderer backend trait.
 pub trait RendererBackend {
-    fn render(&mut self, vertices: &[[f32; 3]], instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4, glam::Vec3));
+    fn render(
+        &mut self,
+        vertices: &[[f32; 3]],
+        instances: &[engine_core::actors::InstanceGpu],
+        camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+    );
     fn request_redraw(&self);
     fn resize(&mut self, width: u32, height: u32);
     /// Register a mesh represented by an array of positions. Returns a handle
@@ -765,12 +841,22 @@ pub trait RendererBackend {
     /// re-supplying the vertex data every frame.
     fn register_mesh(&mut self, vertices: &[[f32; 3]]) -> u32;
     /// Register a mesh with an index buffer. `indices` are 32-bit indices.
-    fn register_indexed_mesh(&mut self, vertices: &[[f32; 3]], normals: &[[f32;3]], indices: &[u32]) -> u32;
+    fn register_indexed_mesh(
+        &mut self,
+        vertices: &[[f32; 3]],
+        normals: &[[f32; 3]],
+        indices: &[u32],
+    ) -> u32;
     /// Unregister a previously-registered mesh handle and free GPU resources.
     fn unregister_mesh(&mut self, mesh: u32);
     /// Render a previously-registered mesh by handle using the provided
     /// instances and camera.
-    fn render_mesh(&mut self, mesh: u32, instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4, glam::Vec3));
+    fn render_mesh(
+        &mut self,
+        mesh: u32,
+        instances: &[engine_core::actors::InstanceGpu],
+        camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+    );
     /// Replace the material table on the GPU. The caller should prepare a
     /// slice of `MaterialGpu` values describing each distinct material.
     fn set_materials(&mut self, materials: &[crate::MaterialGpu]);
@@ -778,7 +864,12 @@ pub trait RendererBackend {
 
 #[cfg(feature = "backend-wgpu")]
 impl RendererBackend for gfx::wgpu_impl::Renderer {
-    fn render(&mut self, vertices: &[[f32; 3]], instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4, glam::Vec3)) {
+    fn render(
+        &mut self,
+        vertices: &[[f32; 3]],
+        instances: &[engine_core::actors::InstanceGpu],
+        camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+    ) {
         gfx::wgpu_impl::Renderer::render(self, vertices, instances, camera)
     }
     fn request_redraw(&self) {
@@ -790,13 +881,23 @@ impl RendererBackend for gfx::wgpu_impl::Renderer {
     fn register_mesh(&mut self, vertices: &[[f32; 3]]) -> u32 {
         gfx::wgpu_impl::Renderer::register_mesh(self, vertices)
     }
-    fn register_indexed_mesh(&mut self, vertices: &[[f32; 3]], normals: &[[f32;3]], indices: &[u32]) -> u32 {
+    fn register_indexed_mesh(
+        &mut self,
+        vertices: &[[f32; 3]],
+        normals: &[[f32; 3]],
+        indices: &[u32],
+    ) -> u32 {
         gfx::wgpu_impl::Renderer::register_indexed_mesh(self, vertices, normals, indices)
     }
     fn unregister_mesh(&mut self, mesh: u32) {
         gfx::wgpu_impl::Renderer::unregister_mesh(self, mesh)
     }
-    fn render_mesh(&mut self, mesh: u32, instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4, glam::Vec3)) {
+    fn render_mesh(
+        &mut self,
+        mesh: u32,
+        instances: &[engine_core::actors::InstanceGpu],
+        camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+    ) {
         gfx::wgpu_impl::Renderer::render_mesh(self, mesh, instances, camera)
     }
     fn set_materials(&mut self, materials: &[crate::MaterialGpu]) {
@@ -806,7 +907,12 @@ impl RendererBackend for gfx::wgpu_impl::Renderer {
 
 #[cfg(not(feature = "backend-wgpu"))]
 impl RendererBackend for gfx::placeholder::Renderer {
-    fn render(&mut self, vertices: &[[f32; 3]], instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4, glam::Vec3)) {
+    fn render(
+        &mut self,
+        vertices: &[[f32; 3]],
+        instances: &[engine_core::actors::InstanceGpu],
+        camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+    ) {
         gfx::placeholder::Renderer::render(self, vertices, instances, camera)
     }
     fn request_redraw(&self) {
@@ -820,10 +926,20 @@ impl RendererBackend for gfx::placeholder::Renderer {
         0
     }
     fn unregister_mesh(&mut self, _mesh: u32) {}
-    fn render_mesh(&mut self, _mesh: u32, _instances: &[engine_core::actors::InstanceGpu], _camera: (glam::Mat4, glam::Mat4, glam::Vec3)) {
+    fn render_mesh(
+        &mut self,
+        _mesh: u32,
+        _instances: &[engine_core::actors::InstanceGpu],
+        _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+    ) {
         // no-op in placeholder
     }
-    fn register_indexed_mesh(&mut self, _vertices: &[[f32; 3]], _normals: &[[f32;3]], _indices: &[u32]) -> u32 {
+    fn register_indexed_mesh(
+        &mut self,
+        _vertices: &[[f32; 3]],
+        _normals: &[[f32; 3]],
+        _indices: &[u32],
+    ) -> u32 {
         0
     }
     fn set_materials(&mut self, _materials: &[crate::MaterialGpu]) {}
@@ -833,7 +949,10 @@ impl RendererBackend for gfx::placeholder::Renderer {
 /// function takes the `EventLoop` and `Window` so the backend can create a
 /// surface. When disabled the parameterless form is provided.
 #[cfg(feature = "backend-wgpu")]
-pub fn create_renderer(event_loop: &winit::event_loop::EventLoop<()>, window: winit::window::Window) -> Box<dyn RendererBackend> {
+pub fn create_renderer(
+    event_loop: &winit::event_loop::EventLoop<()>,
+    window: winit::window::Window,
+) -> Box<dyn RendererBackend> {
     Box::new(gfx::wgpu_impl::Renderer::new(event_loop, window))
 }
 
@@ -841,4 +960,3 @@ pub fn create_renderer(event_loop: &winit::event_loop::EventLoop<()>, window: wi
 pub fn create_renderer() -> Box<dyn RendererBackend> {
     Box::new(gfx::placeholder::Renderer::new())
 }
-

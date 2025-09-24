@@ -77,8 +77,8 @@ impl Sphere {
         mat[1] = [cols[4], cols[5], cols[6], cols[7]];
         mat[2] = [cols[8], cols[9], cols[10], cols[11]];
         mat[3] = [cols[12], cols[13], cols[14], cols[15]];
-    // Per-instance material parameters will be filled from the
-    // Sphere's MaterialType below.
+        // Per-instance material parameters will be filled from the
+        // Sphere's MaterialType below.
         InstanceGpu {
             model: mat,
             material: material_index,

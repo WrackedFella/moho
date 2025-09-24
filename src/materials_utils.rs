@@ -145,7 +145,9 @@ mod tests {
     #[test]
     fn clear_dirty_and_reset_are_used() {
         let mut mt = MaterialTable::new();
-        let m = MaterialType::Lambertian { albedo: Vec3::new(0.1, 0.2, 0.3) };
+        let m = MaterialType::Lambertian {
+            albedo: Vec3::new(0.1, 0.2, 0.3),
+        };
         let _ = mt.find_or_push(&m);
         assert!(mt.is_dirty());
         mt.clear_dirty();

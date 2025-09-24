@@ -241,7 +241,7 @@ fn main() {
         let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
         let instances = collect_instances(&mut world);
         renderer.render_mesh(mesh_handle, &instances, camera);
-    log::info!("Rendered one frame (exiting). ");
+        log::info!("Rendered one frame (exiting). ");
     }
 }
 
