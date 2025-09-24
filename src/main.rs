@@ -4,7 +4,9 @@ use engine_core::materials::MaterialType;
 use engine_core::vector_length;
 use glam::Vec3;
 use rand::{Rng, rng};
-mod gpu;
+// Renderer has been moved into the `engine_renderer` crate to provide a
+// reusable rendering API.
+use engine_renderer::create_renderer;
 use legion::World;
 use legion::query::IntoQuery;
 
@@ -61,9 +63,8 @@ fn main() {
             .build(&event_loop)
             .expect("Failed to create window");
 
-        // The GPU renderer may own the `Window`; we keep a reference by moving
-        // the `Window` into the renderer so it can call `request_redraw`.
-        let mut renderer = gpu::Renderer::new(&event_loop, window);
+        // Create a boxed renderer backend via the factory.
+        let mut renderer = create_renderer(&event_loop, window);
 
         // Frame timing: aim for ~60 FPS.
         let frame_duration = Duration::from_secs_f64(1.0 / 60.0);
@@ -95,10 +96,7 @@ fn main() {
                 } => {
                     *control_flow = ControlFlow::Exit;
                 }
-                Event::WindowEvent {
-                    event: WindowEvent::Resized(size),
-                    ..
-                } => {
+                Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
                     renderer.resize(size.width, size.height);
                 }
                 Event::RedrawRequested(_window_id) => {
@@ -147,7 +145,7 @@ fn main() {
 
     #[cfg(not(feature = "backend-wgpu"))]
     {
-        let mut renderer = gpu::Renderer::new();
+        let mut renderer = create_renderer();
         let instances = collect_instances(&mut world);
         let vertices = collect_vertices(&mut world);
         renderer.render(&vertices, &instances, camera);
@@ -259,6 +257,7 @@ fn collect_vertices(_world: &mut World) -> Vec<[f32; 3]> {
 // Currently this is a placeholder — it can be extended to run physics,
 // animate entities, or mutate components. `dt` is provided as a Duration
 // to match our fixed-step scheduling.
+#[allow(dead_code)]
 fn simulate(_world: &mut World, dt: std::time::Duration) {
     // Example placeholder: You might iterate components and update positions
     // by velocities here. Keep minimal so builds remain fast.

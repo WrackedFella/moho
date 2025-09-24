@@ -402,6 +402,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_renderer"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "engine_core",
+ "glam",
+ "pollster",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -854,6 +866,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
+ "engine_renderer",
  "glam",
  "legion",
  "pollster",

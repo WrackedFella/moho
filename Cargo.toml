@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 engine_core = { path = "engine_core" }
+engine_renderer = { path = "engine_renderer" }
 glam = "0.30.4"
 rand = "0.9.1"
 legion = "0.4.0"
@@ -19,5 +20,5 @@ bytemuck = { version = "1.9.1", features = ["derive"] }
 
 [features]
 # Enable the WGPU renderer implementation (renamed to avoid name collision)
-backend-wgpu = ["wgpu", "winit", "pollster"]
+backend-wgpu = ["wgpu", "winit", "pollster", "engine_renderer/backend-wgpu"]
 

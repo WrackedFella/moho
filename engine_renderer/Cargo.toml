@@ -1,0 +1,15 @@
+[package]
+name = "engine_renderer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+engine_core = { path = "../engine_core" }
+bytemuck = { version = "1.9.1", features = ["derive"] }
+wgpu = { version = "0.15", optional = true }
+winit = { version = "0.28.6", optional = true }
+pollster = { version = "0.3", optional = true }
+glam = "0.30.4"
+
+[features]
+backend-wgpu = ["wgpu", "winit", "pollster"]
