@@ -9,8 +9,8 @@ engine_renderer = { path = "engine_renderer" }
 glam = "0.30.4"
 rand = "0.9.1"
 legion = "0.4.0"
-log = "0.4"
-env_logger = "0.10"
+log = { workspace = true }
+env_logger = { workspace = true }
 
 # Optional frontend/backends
 # Use winit 0.28.x to be compatible with wgpu/raw-window-handle used by wgpu 0.15
@@ -23,4 +23,11 @@ bytemuck = { version = "1.9.1", features = ["derive"] }
 [features]
 # Enable the WGPU renderer implementation (renamed to avoid name collision)
 backend-wgpu = ["wgpu", "winit", "pollster", "engine_renderer/backend-wgpu"]
+
+[workspace]
+members = ["engine_core", "engine_renderer"]
+
+[workspace.dependencies]
+log = "0.4"
+env_logger = "0.10"
 
