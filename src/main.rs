@@ -12,13 +12,13 @@ use legion::query::IntoQuery;
 // usage behind the `backend-wgpu` feature. When the backend is disabled we
 // fall back to a single-frame placeholder renderer to keep builds fast.
 #[cfg(feature = "backend-wgpu")]
-use winit::event::{Event, WindowEvent, StartCause};
+use std::time::{Duration, Instant};
+#[cfg(feature = "backend-wgpu")]
+use winit::event::{Event, StartCause, WindowEvent};
 #[cfg(feature = "backend-wgpu")]
 use winit::event_loop::{ControlFlow, EventLoop};
 #[cfg(feature = "backend-wgpu")]
 use winit::window::WindowBuilder;
-#[cfg(feature = "backend-wgpu")]
-use std::time::{Instant, Duration};
 
 // a component is any type that is 'static, sized, send and sync
 #[allow(dead_code)]
@@ -61,18 +61,18 @@ fn main() {
             .build(&event_loop)
             .expect("Failed to create window");
 
-    // The GPU renderer may own the `Window`; we keep a reference by moving
-    // the `Window` into the renderer so it can call `request_redraw`.
-    let mut renderer = gpu::Renderer::new(&event_loop, window);
+        // The GPU renderer may own the `Window`; we keep a reference by moving
+        // the `Window` into the renderer so it can call `request_redraw`.
+        let mut renderer = gpu::Renderer::new(&event_loop, window);
 
-    // Frame timing: aim for ~60 FPS.
-    let frame_duration = Duration::from_secs_f64(1.0 / 60.0);
-    let mut last_frame = Instant::now();
-    // Simulation timestep (fixed) and accumulator for decoupled updates.
-    let sim_dt = frame_duration; // simulation uses the same fixed timestep by default
-    let mut sim_acc = Duration::from_secs(0);
-    // Track wall-clock time to accumulate simulation time.
-    let mut last_time = Instant::now();
+        // Frame timing: aim for ~60 FPS.
+        let frame_duration = Duration::from_secs_f64(1.0 / 60.0);
+        let mut last_frame = Instant::now();
+        // Simulation timestep (fixed) and accumulator for decoupled updates.
+        let sim_dt = frame_duration; // simulation uses the same fixed timestep by default
+        let mut sim_acc = Duration::from_secs(0);
+        // Track wall-clock time to accumulate simulation time.
+        let mut last_time = Instant::now();
 
         // Run the winit event loop and render on-demand. Render once on init
         // and after each `WindowEvent::RedrawRequested` (if any external code
@@ -83,18 +83,26 @@ fn main() {
             match event {
                 Event::NewEvents(start_cause) => {
                     if matches!(start_cause, StartCause::Init) {
-                        renderer.render(&mut world, camera);
+                        let instances = collect_instances(&mut world);
+                        renderer.render(&instances, camera);
                         *control_flow = ControlFlow::Wait;
                     }
                 }
-                Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                Event::WindowEvent {
+                    event: WindowEvent::CloseRequested,
+                    ..
+                } => {
                     *control_flow = ControlFlow::Exit;
                 }
-                Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
+                Event::WindowEvent {
+                    event: WindowEvent::Resized(size),
+                    ..
+                } => {
                     renderer.resize(size.width, size.height);
                 }
                 Event::RedrawRequested(_window_id) => {
-                    renderer.render(&mut world, camera);
+                    let instances = collect_instances(&mut world);
+                    renderer.render(&instances, camera);
                     *control_flow = ControlFlow::Wait;
                 }
                 Event::MainEventsCleared => {
@@ -138,7 +146,8 @@ fn main() {
     #[cfg(not(feature = "backend-wgpu"))]
     {
         let mut renderer = gpu::Renderer::new();
-        renderer.render(&mut world, camera);
+        let instances = collect_instances(&mut world);
+        renderer.render(&instances, camera);
         println!("Rendered one frame (exiting).");
     }
 }
