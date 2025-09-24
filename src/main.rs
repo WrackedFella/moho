@@ -148,9 +148,9 @@ fn main() {
     #[cfg(not(feature = "backend-wgpu"))]
     {
         let mut renderer = gpu::Renderer::new();
-    let instances = collect_instances(&mut world);
-    let vertices = collect_vertices(&mut world);
-    renderer.render(&vertices, &instances, camera);
+        let instances = collect_instances(&mut world);
+        let vertices = collect_vertices(&mut world);
+        renderer.render(&vertices, &instances, camera);
         println!("Rendered one frame (exiting).");
     }
 }

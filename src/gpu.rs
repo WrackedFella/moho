@@ -17,7 +17,12 @@ pub mod placeholder_renderer {
             Renderer {}
         }
 
-        pub fn render(&mut self, _vertices: &[[f32; 3]], instances: &[InstanceGpu], _camera: (glam::Mat4, glam::Mat4)) {
+        pub fn render(
+            &mut self,
+            _vertices: &[[f32; 3]],
+            instances: &[InstanceGpu],
+            _camera: (glam::Mat4, glam::Mat4),
+        ) {
             // Log counts for visibility in the placeholder backend.
             println!(
                 "Placeholder render called ({} verts, {} instances).",
@@ -63,7 +68,7 @@ mod wgpu_impl {
         device: wgpu::Device,
         queue: wgpu::Queue,
         config: wgpu::SurfaceConfiguration,
-    vertex_buffer: Option<wgpu::Buffer>,
+        vertex_buffer: Option<wgpu::Buffer>,
         pipeline: wgpu::RenderPipeline,
         camera_buffer: wgpu::Buffer,
         camera_bind_group: wgpu::BindGroup,
@@ -271,7 +276,12 @@ mod wgpu_impl {
             }
         }
 
-        pub fn render(&mut self, vertices: &[[f32; 3]], instances_cpu: &[CpuInstance], camera: (glam::Mat4, glam::Mat4)) {
+        pub fn render(
+            &mut self,
+            vertices: &[[f32; 3]],
+            instances_cpu: &[CpuInstance],
+            camera: (glam::Mat4, glam::Mat4),
+        ) {
             // Ensure GPU vertex buffer exists and matches the provided vertices.
             let vertex_bytes = bytemuck::cast_slice(vertices);
             let required_vertex_bytes = vertex_bytes.len() as wgpu::BufferAddress;
@@ -280,11 +290,13 @@ mod wgpu_impl {
                 recreate_vertex = true;
             }
             if recreate_vertex {
-                let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("vertex-buffer"),
-                    contents: vertex_bytes,
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
+                let vb = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("vertex-buffer"),
+                        contents: vertex_bytes,
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
                 self.vertex_buffer = Some(vb);
                 self.vertex_count = vertices.len() as u32;
             }
@@ -292,7 +304,12 @@ mod wgpu_impl {
             // Convert CPU-side `InstanceGpu` into the tightly-packed GPU layout used by the shader.
             let mut instances: Vec<GpuInstance> = Vec::with_capacity(instances_cpu.len());
             for ic in instances_cpu {
-                instances.push(GpuInstance { model: ic.model, material: ic.material, object_type: 0, padding: [0, 0] });
+                instances.push(GpuInstance {
+                    model: ic.model,
+                    material: ic.material,
+                    object_type: 0,
+                    padding: [0, 0],
+                });
             }
 
             let frame = match self.surface.get_current_texture() {
@@ -389,7 +406,13 @@ mod wgpu_impl {
                 // set camera bind group (group 0)
                 rpass.set_bind_group(0, &self.camera_bind_group, &[]);
                 // set vertex buffer (created on-demand)
-                rpass.set_vertex_buffer(0, self.vertex_buffer.as_ref().expect("vertex buffer").slice(..));
+                rpass.set_vertex_buffer(
+                    0,
+                    self.vertex_buffer
+                        .as_ref()
+                        .expect("vertex buffer")
+                        .slice(..),
+                );
                 // bind the persistent instance buffer
                 let ibuf = self
                     .instance_buffer
