@@ -102,7 +102,7 @@ fn main() {
         // calls `window.request_redraw()`). We schedule the next frame using
         // `ControlFlow::WaitUntil` to sleep the event loop until it's time for
         // the next frame.
-    event_loop.run(move |event, _event_loop_window_target, control_flow| {
+        event_loop.run(move |event, _event_loop_window_target, control_flow| {
             match event {
                 Event::NewEvents(start_cause) => {
                     if matches!(start_cause, StartCause::Init) {
