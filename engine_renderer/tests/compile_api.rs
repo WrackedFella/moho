@@ -1,15 +1,25 @@
 // Ensure the public API for the renderer factory and trait type-checks.
 // This test intentionally does not call into GPU initialization to avoid platform flakiness.
 
+// The API compile test should pass both with and without the `backend-wgpu`
+// feature. When the backend is enabled the factory signature takes an
+// EventLoop/Window; otherwise it is a parameterless factory returning a
+// boxed `RendererBackend`.
 #[test]
 fn api_compiles() {
-    // Use the symbols so the compiler verifies their existence and signatures.
-    use engine_renderer::{RendererBackend, create_renderer};
-
-    // We can't construct a real renderer without a window/surface, but we can assert the
-    // factory function exists and has the expected return type via a type annotation.
-    let _factory: for<'a> fn(
-        &'a winit::event_loop::EventLoop<()>,
-        winit::window::Window,
-    ) -> Box<dyn RendererBackend> = create_renderer;
+    use engine_renderer::RendererBackend;
+    #[cfg(feature = "backend-wgpu")]
+    {
+        use engine_renderer::create_renderer;
+        // Validate the `backend-wgpu` factory signature.
+        let _factory: for<'a> fn(
+            &'a winit::event_loop::EventLoop<()>,
+            winit::window::Window,
+        ) -> Box<dyn RendererBackend> = create_renderer;
+    }
+    #[cfg(not(feature = "backend-wgpu"))]
+    {
+        use engine_renderer::create_renderer;
+        let _factory: fn() -> Box<dyn RendererBackend> = create_renderer;
+    }
 }
