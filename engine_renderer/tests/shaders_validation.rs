@@ -6,19 +6,24 @@ use std::fs;
 #[test]
 fn validate_wgsl_shaders() {
     // List of shader files to validate. Add new WGSL files here as needed.
-    let shaders = [
-        "../shaders/instance.wgsl",
-    ];
+    let shaders = ["../shaders/instance.wgsl"];
 
     for rel in &shaders {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-        let src = fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read shader {}: {}", path.display(), e));
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read shader {}: {}", path.display(), e));
 
         // Parse WGSL
-        let module = naga::front::wgsl::parse_str(&src).expect(&format!("WGSL parse failed for {}", path.display()));
+        let module = naga::front::wgsl::parse_str(&src)
+            .expect(&format!("WGSL parse failed for {}", path.display()));
 
         // Validate
-    let mut validator = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty());
-    validator.validate(&module).expect(&format!("WGSL validation failed for {}", path.display()));
+        let mut validator = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        );
+        validator
+            .validate(&module)
+            .expect(&format!("WGSL validation failed for {}", path.display()));
     }
 }

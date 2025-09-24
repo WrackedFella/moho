@@ -48,7 +48,7 @@ pub mod gfx {
     // Use the crate-level MaterialGpu type for the GPU material layout.
     use crate::MaterialGpu as MaterialGpu;
 
-    pub struct Renderer {
+        pub struct Renderer {
             surface: wgpu::Surface,
             device: wgpu::Device,
             queue: wgpu::Queue,
@@ -131,44 +131,50 @@ pub mod gfx {
                 let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("shader"),
                     // shader path adjusted for crate layout (engine_renderer/src -> repo root)
-                    source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/instance.wgsl").into()),
+                    source: wgpu::ShaderSource::Wgsl(
+                        include_str!("../../shaders/instance.wgsl").into(),
+                    ),
                 });
                 // Camera uniform bind group (group 0) now contains both the camera
                 // uniform (binding 0) and a storage buffer with the material table
                 // world position.
                 let camera_size = std::mem::size_of::<[f32; 20]>() as u64; // 5 vec4s
-                let camera_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("camera-bgl"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            // camera is read in both the vertex and fragment stages
-                            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: Some(std::num::NonZeroU64::new(camera_size).unwrap()),
+                let camera_bgl =
+                    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                        label: Some("camera-bgl"),
+                        entries: &[
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 0,
+                                // camera is read in both the vertex and fragment stages
+                                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Buffer {
+                                    ty: wgpu::BufferBindingType::Uniform,
+                                    has_dynamic_offset: false,
+                                    min_binding_size: Some(
+                                        std::num::NonZeroU64::new(camera_size).unwrap(),
+                                    ),
+                                },
+                                count: None,
                             },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 1,
+                                visibility: wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Buffer {
+                                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                    has_dynamic_offset: false,
+                                    min_binding_size: None,
+                                },
+                                count: None,
                             },
-                            count: None,
-                        },
-                    ],
-                });
+                        ],
+                    });
 
-                let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("pipeline-layout"),
-                    bind_group_layouts: &[&camera_bgl],
-                    push_constant_ranges: &[],
-                });
+                let pipeline_layout =
+                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("pipeline-layout"),
+                        bind_group_layouts: &[&camera_bgl],
+                        push_constant_ranges: &[],
+                    });
 
                 // Create camera uniform buffer (mat4x4<f32> + cam_pos vec4)
                 let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -234,7 +240,8 @@ pub mod gfx {
                             // Per-instance data: model matrix (4x vec4) + material(u32) + object_type(u32)
                             // followed by per-instance material params: albedo(vec3), fuzz(f32), ref_idx(f32)
                             wgpu::VertexBufferLayout {
-                                array_stride: std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress,
+                                    array_stride: std::mem::size_of::<GpuInstance>()
+                                        as wgpu::BufferAddress,
                                 step_mode: wgpu::VertexStepMode::Instance,
                                 attributes: &wgpu::vertex_attr_array![
                                     2 => Float32x4,
@@ -408,11 +415,11 @@ pub mod gfx {
                             .write_buffer(buf, 0, bytemuck::cast_slice(&[zero]));
                     }
 
-                let mut encoder = self
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("encoder"),
-                    });
+                let mut encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("encoder"),
+                        });
 
                 {
                     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -528,13 +535,18 @@ pub mod gfx {
                     usage: wgpu::BufferUsages::VERTEX,
                 });
                 let vertex_count = vertices.len() as u32;
-                let entry = MeshEntry { buffer: vb, vertex_count, index_buffer: None, index_count: 0 };
+                let entry = MeshEntry {
+                    buffer: vb,
+                    vertex_count,
+                    index_buffer: None,
+                    index_count: 0,
+                };
                 let handle = self.mesh_table.len() as u32;
                 self.mesh_table.push(Some(entry));
                 handle
             }
 
-            pub fn register_indexed_mesh(&mut self, vertices: &[[f32;3]], normals: &[[f32;3]], indices: &[u32]) -> u32 {
+            pub fn register_indexed_mesh(&mut self, vertices: &[[f32; 3]], normals: &[[f32; 3]], indices: &[u32]) -> u32 {
                 // Interleave positions and normals into the Vertex struct
                 #[repr(C)]
                 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -557,10 +569,27 @@ pub mod gfx {
                     }
                 }
                 let vertex_bytes = bytemuck::cast_slice(&iv);
-                let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("mesh-vertex-buffer"), contents: vertex_bytes, usage: wgpu::BufferUsages::VERTEX });
+                let vb = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("mesh-vertex-buffer"),
+                        contents: vertex_bytes,
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
                 let index_bytes = bytemuck::cast_slice(indices);
-                let ib = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("mesh-index-buffer"), contents: index_bytes, usage: wgpu::BufferUsages::INDEX });
-                let entry = MeshEntry { buffer: vb, vertex_count: vertices.len() as u32, index_buffer: Some(ib), index_count: indices.len() as u32 };
+                let ib = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("mesh-index-buffer"),
+                        contents: index_bytes,
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
+                let entry = MeshEntry {
+                    buffer: vb,
+                    vertex_count: vertices.len() as u32,
+                    index_buffer: Some(ib),
+                    index_count: indices.len() as u32,
+                };
                 let handle = self.mesh_table.len() as u32;
                 self.mesh_table.push(Some(entry));
                 handle
@@ -577,9 +606,16 @@ pub mod gfx {
             }
 
             /// Inherent method: render a registered mesh by handle.
-            pub fn render_mesh(&mut self, mesh: u32, instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4, glam::Vec3)) {
+            pub fn render_mesh(
+                &mut self,
+                mesh: u32,
+                instances: &[engine_core::actors::InstanceGpu],
+                camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+            ) {
                 let idx = mesh as usize;
-                if idx >= self.mesh_table.len() { return; }
+                if idx >= self.mesh_table.len() {
+                    return;
+                }
                 if let Some(me) = &self.mesh_table[idx] {
                     // update camera
                     let view_mat = camera.0;
@@ -606,29 +642,72 @@ pub mod gfx {
 
                     if self.instance_capacity < instances_gpu.len().max(1) {
                         let mut new_cap = self.instance_capacity.max(1);
-                        while new_cap < instances_gpu.len().max(1) { new_cap = new_cap.saturating_mul(2); }
-                        let size_bytes = (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
-                        let buf = self.device.create_buffer(&wgpu::BufferDescriptor { label: Some("instance-buffer"), size: size_bytes, usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+                        while new_cap < instances_gpu.len().max(1) {
+                            new_cap = new_cap.saturating_mul(2);
+                        }
+                        let size_bytes =
+                            (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
+                        let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("instance-buffer"),
+                            size: size_bytes,
+                            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        });
                         self.instance_buffer = Some(buf);
                         self.instance_capacity = new_cap;
                     }
 
                     let ibuf = self.instance_buffer.as_ref().unwrap();
                     if instances_gpu.len() > 0 {
-                        self.queue.write_buffer(ibuf, 0, bytemuck::cast_slice(&instances_gpu));
+                        self.queue
+                            .write_buffer(ibuf, 0, bytemuck::cast_slice(&instances_gpu));
                     } else {
-                        let zero = GpuInstance { model: [[0.0;4];4], material: 0, object_type: 0, padding: [0,0] };
-                        self.queue.write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
+                        let zero = GpuInstance {
+                            model: [[0.0; 4]; 4],
+                            material: 0,
+                            object_type: 0,
+                            padding: [0, 0],
+                        };
+                        self.queue
+                            .write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
                     }
 
-                    let frame = match self.surface.get_current_texture() { Ok(f) => f, Err(_) => { self.surface.configure(&self.device, &self.config); return } };
-                    let frame_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-                    let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("encoder") });
+                    let frame = match self.surface.get_current_texture() {
+                        Ok(f) => f,
+                        Err(_) => {
+                            self.surface.configure(&self.device, &self.config);
+                            return;
+                        }
+                    };
+                    let frame_view = frame
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default());
+                    let mut encoder = self
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("encoder"),
+                        });
                     {
                         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("rpass"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &frame_view, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: true } })],
-                            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &self.depth_texture_view, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: true }), stencil_ops: None }),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &frame_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                    store: true,
+                                },
+                            })],
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: &self.depth_texture_view,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: true,
+                                    }),
+                                    stencil_ops: None,
+                                },
+                            ),
                         });
                         rpass.set_pipeline(&self.pipeline);
                         rpass.set_bind_group(0, &self.camera_bind_group, &[]);

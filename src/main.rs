@@ -157,7 +157,10 @@ fn main() {
                 } => {
                     *control_flow = ControlFlow::Exit;
                 }
-                Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
+                Event::WindowEvent {
+                    event: WindowEvent::Resized(size),
+                    ..
+                } => {
                     renderer.resize(size.width, size.height);
                 }
                 Event::RedrawRequested(_window_id) => {
