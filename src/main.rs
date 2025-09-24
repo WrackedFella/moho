@@ -10,7 +10,6 @@ use engine_renderer::create_renderer;
 mod materials_utils;
 use legion::World;
 use legion::query::IntoQuery;
-#[cfg(feature = "backend-wgpu")]
 use materials_utils::MaterialTable;
 
 // `winit` is an optional dependency used by the GPU backends. Guard its
@@ -41,8 +40,6 @@ struct Velocity {
 }
 
 fn main() {
-    // Initialize logging early so debug/info calls are captured.
-    let _ = env_logger::builder().is_test(false).try_init();
     let mut world = World::default();
     // Populate the ECS world with spheres
     random_scene(&mut world);
@@ -78,9 +75,61 @@ fn main() {
         // the material storage buffer when nothing changed.
         let mut material_table = MaterialTable::new();
 
-        // NOTE: MaterialTable provides `find_or_push` and manages the GPU-ready
-        // `MaterialGpu` conversion. We rely on that single implementation to
-        // avoid duplication and potential layout mismatches.
+        // Helper function to find or push a material into the provided table
+        // and return its index. Keeping this as a plain function avoids nested
+        // closure borrow issues with the `'static` event loop closure.
+        fn find_or_push(
+            material_table: &mut Vec<engine_renderer::MaterialGpu>,
+            m: &engine_core::materials::MaterialType,
+        ) -> u32 {
+            for (i, existing) in material_table.iter().enumerate() {
+                match m {
+                    engine_core::materials::MaterialType::Lambertian { albedo } => {
+                        if existing.albedo == [albedo.x, albedo.y, albedo.z, 0.0]
+                            && (existing.params[0] - 0.0).abs() < 1e-6
+                        {
+                            return i as u32;
+                        }
+                    }
+                    engine_core::materials::MaterialType::Metal { albedo, fuzz } => {
+                        if existing.albedo == [albedo.x, albedo.y, albedo.z, 0.0]
+                            && (existing.params[0] - *fuzz).abs() < 1e-6
+                        {
+                            return i as u32;
+                        }
+                    }
+                    engine_core::materials::MaterialType::Dielectric { ref_indx } => {
+                        if (existing.params[1] - *ref_indx).abs() < 1e-6 {
+                            return i as u32;
+                        }
+                    }
+                }
+            }
+            // Not found: push a new MaterialGpu
+            let new_idx = material_table.len() as u32;
+            let mg = match m {
+                engine_core::materials::MaterialType::Lambertian { albedo } => {
+                    engine_renderer::MaterialGpu {
+                        albedo: [albedo.x, albedo.y, albedo.z, 0.0],
+                        params: [0.0, 0.0, 0.0, 0.0],
+                    }
+                }
+                engine_core::materials::MaterialType::Metal { albedo, fuzz } => {
+                    engine_renderer::MaterialGpu {
+                        albedo: [albedo.x, albedo.y, albedo.z, 0.0],
+                        params: [*fuzz, 0.0, 0.0, 0.0],
+                    }
+                }
+                engine_core::materials::MaterialType::Dielectric { ref_indx } => {
+                    engine_renderer::MaterialGpu {
+                        albedo: [1.0, 1.0, 1.0, 0.0],
+                        params: [0.0, *ref_indx, 0.0, 0.0],
+                    }
+                }
+            };
+            material_table.push(mg);
+            new_idx
+        }
 
         // Register the indexed unit-sphere mesh once so we don't re-upload
         // vertex/index data each frame. Using an indexed mesh reduces vertex
@@ -106,7 +155,7 @@ fn main() {
         // calls `window.request_redraw()`). We schedule the next frame using
         // `ControlFlow::WaitUntil` to sleep the event loop until it's time for
         // the next frame.
-        event_loop.run(move |event, _event_loop_window_target, control_flow| {
+        let _ = event_loop.run(move |event, _event_loop_window_target, control_flow| {
             match event {
                 Event::NewEvents(start_cause) => {
                     if matches!(start_cause, StartCause::Init) {
@@ -124,22 +173,14 @@ fn main() {
                             instances.push(s.to_instance_with_material(midx));
                         }
                         // Debug: print material table and instance material indices
-                        if !material_table.as_slice().is_empty() {
-                            log::debug!("material_table.len={}", material_table.as_slice().len());
+                        if material_table.as_slice().len() > 0 {
+                            println!("[debug] material_table.len={} ", material_table.as_slice().len());
                             for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
-                                log::debug!(
-                                    "mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}",
-                                    i,
-                                    m.albedo[0],
-                                    m.albedo[1],
-                                    m.albedo[2],
-                                    m.params[0],
-                                    m.params[1]
-                                );
+                                println!("[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}", i, m.albedo[0], m.albedo[1], m.albedo[2], m.params[0], m.params[1]);
                             }
                         }
                         for (i, inst) in instances.iter().enumerate().take(8) {
-                            log::debug!("inst[{}].material={}", i, inst.material);
+                            println!("[debug] inst[{}].material={}", i, inst.material);
                         }
                         // Upload material table to GPU if it changed.
                         if material_table.is_dirty() {
@@ -157,10 +198,7 @@ fn main() {
                 } => {
                     *control_flow = ControlFlow::Exit;
                 }
-                Event::WindowEvent {
-                    event: WindowEvent::Resized(size),
-                    ..
-                } => {
+                Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
                     renderer.resize(size.width, size.height);
                 }
                 Event::RedrawRequested(_window_id) => {
@@ -171,22 +209,14 @@ fn main() {
                         instances.push(s.to_instance_with_material(midx));
                     }
                     // Debug: print material table and first few instance indices
-                    if !material_table.as_slice().is_empty() {
-                        log::debug!("material_table.len={}", material_table.as_slice().len());
+                    if material_table.as_slice().len() > 0 {
+                        println!("[debug] material_table.len={} ", material_table.as_slice().len());
                         for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
-                            log::debug!(
-                                "mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}",
-                                i,
-                                m.albedo[0],
-                                m.albedo[1],
-                                m.albedo[2],
-                                m.params[0],
-                                m.params[1]
-                            );
+                            println!("[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}", i, m.albedo[0], m.albedo[1], m.albedo[2], m.params[0], m.params[1]);
                         }
                     }
                     for (i, inst) in instances.iter().enumerate().take(8) {
-                        log::debug!("inst[{}].material={}", i, inst.material);
+                        println!("[debug] inst[{}].material={}", i, inst.material);
                     }
                     if material_table.is_dirty() {
                         renderer.set_materials(material_table.as_slice());
@@ -241,7 +271,7 @@ fn main() {
         let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
         let instances = collect_instances(&mut world);
         renderer.render_mesh(mesh_handle, &instances, camera);
-        log::info!("Rendered one frame (exiting). ");
+        println!("Rendered one frame (exiting).");
     }
 }
 
@@ -324,7 +354,7 @@ fn random_scene(world: &mut World) {
             fuzz: 0.0f32,
         },
     ),));
-    log::info!("World Generated");
+    println!("World Generated");
 }
 
 #[allow(dead_code)]
@@ -340,7 +370,12 @@ fn collect_instances(world: &mut World) -> Vec<InstanceGpu> {
     out
 }
 
-// ...existing code... (collect_vertices removed; using indexed mesh generator)
+fn collect_vertices(_world: &mut World) -> Vec<[f32; 3]> {
+    // Generate a unit sphere mesh once per call. The renderer will use the
+    // instance `model` matrix returned by `Sphere::to_instance()` to scale
+    // and position each sphere instance.
+    Sphere::unit_sphere_vertices(16, 16)
+}
 
 fn collect_indexed_vertices(_world: &mut World) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
     // Return an indexed unit-sphere mesh with normals.

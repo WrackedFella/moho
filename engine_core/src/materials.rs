@@ -10,63 +10,67 @@ pub enum MaterialType {
 }
 
 impl Scatterable for MaterialType {
-    fn scatter(&self, r_in: Ray, rec: HittableRecord) -> Option<ScatterRecord> {
+    fn scatter(&self, mut r_in: Ray, rec: HittableRecord) -> Option<ScatterRecord> {
         match &self {
             MaterialType::Lambertian { albedo } => {
                 let target: Vec3 = rec.p + rec.normal + random_in_unit_sphere();
-                Some(ScatterRecord {
+                return Some(ScatterRecord {
                     attenuation: *albedo,
                     scattered: Ray::new(rec.p, target - rec.p),
-                })
+                });
             }
             MaterialType::Metal { albedo, fuzz } => {
                 let reflected: Vec3 = reflect(unit_vector(r_in.direction()), rec.normal);
-                let s = Ray::new(rec.p, reflected + *fuzz * random_in_unit_sphere());
+                let mut s = Ray::new(rec.p, reflected + *fuzz * random_in_unit_sphere());
                 let x = s.direction().dot(rec.normal);
                 if x > 0f32 {
-                    Some(ScatterRecord {
+                    return Some(ScatterRecord {
                         attenuation: *albedo,
                         scattered: s,
-                    })
-                } else {
-                    None
+                    });
                 }
+                return None;
             }
             MaterialType::Dielectric { ref_indx } => {
+                let outward_normal: Vec3;
+                let ni_over_nt: f32;
+                let cosine: f32;
                 let normal_vector: f32 = r_in.direction().dot(rec.normal);
-                let (outward_normal, ni_over_nt, cosine) = if normal_vector > 0f32 {
-                    (
-                        -rec.normal,
-                        *ref_indx,
-                        *ref_indx * normal_vector / vector_length(r_in.direction()),
-                    )
+                if normal_vector > 0f32 {
+                    outward_normal = -rec.normal;
+                    ni_over_nt = *ref_indx;
+                    cosine = *ref_indx * normal_vector / vector_length(r_in.direction());
                 } else {
-                    (
-                        rec.normal,
-                        1f32 / *ref_indx,
-                        -normal_vector / vector_length(r_in.direction()),
-                    )
-                };
+                    outward_normal = rec.normal;
+                    ni_over_nt = 1f32 / *ref_indx;
+                    cosine = -normal_vector / vector_length(r_in.direction());
+                }
 
                 let refraction_test = refract(r_in.direction(), outward_normal, ni_over_nt);
+                let reflect_prob: f32;
                 let reflected = reflect(r_in.direction(), rec.normal);
+                let scatter: Ray;
+                let mut refracted = Vec3::new(0f32, 0f32, 0f32);
 
-                let (refracted, reflect_prob) = match refraction_test {
-                    Some(v) => (v, schlick(cosine, *ref_indx)),
-                    None => (Vec3::new(0f32, 0f32, 0f32), 1f32),
-                };
-
+                match refraction_test {
+                    Some(v) => {
+                        refracted = v;
+                        reflect_prob = schlick(cosine, *ref_indx);
+                    }
+                    None => {
+                        reflect_prob = 1f32;
+                    }
+                }
                 let mut rng = rng();
-                let scatter = if rng.random::<f32>() < reflect_prob {
-                    Ray::new(rec.p, reflected)
+                if rng.random::<f32>() < reflect_prob {
+                    scatter = Ray::new(rec.p, reflected);
                 } else {
-                    Ray::new(rec.p, refracted)
-                };
-
-                Some(ScatterRecord {
+                    scatter = Ray::new(rec.p, refracted);
+                }
+                return Some(ScatterRecord {
                     attenuation: Vec3::new(1f32, 1f32, 1f32),
                     scattered: scatter,
-                })
+                });
             }
         }
     }

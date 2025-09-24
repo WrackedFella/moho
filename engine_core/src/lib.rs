@@ -12,7 +12,7 @@ pub mod materials;
 pub fn schlick(cosine: f32, ref_idx: f32) -> f32 {
     let mut r0 = (1f32 - ref_idx) / (1f32 + ref_idx);
     r0 = r0 * r0;
-    r0 + (1f32 - r0) * (1f32 - cosine).powf(5f32)
+    return r0 + (1f32 - r0) * (1f32 - cosine).powf(5f32);
 }
 
 pub fn refract(v: Vec3, n: Vec3, ni_over_nt: f32) -> Option<Vec3> {
@@ -20,9 +20,9 @@ pub fn refract(v: Vec3, n: Vec3, ni_over_nt: f32) -> Option<Vec3> {
     let dt = uv.dot(n);
     let discriminant = 1.0f32 - ni_over_nt * ni_over_nt * (1f32 - dt * dt);
     if discriminant > 0f32 {
-        Some(ni_over_nt * (uv - n * dt) - n * (discriminant.sqrt()))
+        return Some(ni_over_nt * (uv - n * dt) - n * (discriminant.sqrt()));
     } else {
-        None
+        return None;
     }
 }
 
@@ -48,7 +48,7 @@ pub fn vector_length(v: Vec3) -> f32 {
 
 pub fn random_in_unit_sphere() -> Vec3 {
     let mut rng = rng();
-    let mut p = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
+    let mut p = Vec3::new(std::f32::MAX, std::f32::MAX, std::f32::MAX);
     while vector_length_squared(p) >= 1.0 {
         p =
             2f32 * Vec3::new(
@@ -57,18 +57,20 @@ pub fn random_in_unit_sphere() -> Vec3 {
                 rng.random::<f32>(),
             ) - Vec3::new(1f32, 1f32, 1f32);
     }
-    p
+    return p;
 }
 
 pub fn random_in_unit_disk() -> Vec3 {
     let mut rng = rng();
+    let mut p: Vec3;
     loop {
-        let p = 2f32 * Vec3::new(rng.random::<f32>(), rng.random::<f32>(), 0f32)
+        p = 2f32 * Vec3::new(rng.random::<f32>(), rng.random::<f32>(), 0f32)
             - Vec3::new(1f32, 1f32, 0f32);
         if p.dot(p) < 1f32 {
-            return p;
+            break;
         }
     }
+    return p;
 }
 
 pub trait Hittable {
@@ -110,14 +112,14 @@ impl Ray {
         Ray { a: a_in, b: b_in }
     }
 
-    pub fn origin(&self) -> Vec3 {
+    pub fn origin(&mut self) -> Vec3 {
         self.a
     }
-    pub fn direction(&self) -> Vec3 {
+    pub fn direction(&mut self) -> Vec3 {
         self.b
     }
 
-    pub fn point_at_parameter(&self, t: f32) -> Vec3 {
-        self.a + t * self.b
+    pub fn point_at_parameter(&mut self, t: f32) -> Vec3 {
+        &self.a + t * &self.b
     }
 }
