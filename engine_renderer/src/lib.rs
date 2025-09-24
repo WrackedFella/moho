@@ -142,32 +142,19 @@ pub mod gfx {
                 let camera_bgl =
                     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                         label: Some("camera-bgl"),
-                        entries: &[
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 0,
-                                // camera is read in both the vertex and fragment stages
-                                visibility: wgpu::ShaderStages::VERTEX
-                                    | wgpu::ShaderStages::FRAGMENT,
-                                ty: wgpu::BindingType::Buffer {
-                                    ty: wgpu::BufferBindingType::Uniform,
-                                    has_dynamic_offset: false,
-                                    min_binding_size: Some(
-                                        std::num::NonZeroU64::new(camera_size).unwrap(),
-                                    ),
-                                },
-                                count: None,
+                        entries: &[wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            // camera is read in both the vertex and fragment stages
+                            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: Some(
+                                    std::num::NonZeroU64::new(camera_size).unwrap(),
+                                ),
                             },
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 1,
-                                visibility: wgpu::ShaderStages::FRAGMENT,
-                                ty: wgpu::BindingType::Buffer {
-                                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                    has_dynamic_offset: false,
-                                    min_binding_size: None,
-                                },
-                                count: None,
-                            },
-                        ],
+                            count: None,
+                        }],
                     });
 
                 let pipeline_layout =
