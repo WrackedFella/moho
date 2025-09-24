@@ -3,34 +3,21 @@ name = "moho"
 version = "0.1.0"
 edition = "2024"
 
-[workspace.dependencies]
+[dependencies]
 engine_core = { path = "engine_core" }
 glam = "0.30.4"
 rand = "0.9.1"
-vulkano = "0.35.2"
-vulkano-shaders = "0.35"
-winit = "0.29"
 legion = "0.4.0"
-bytemuck = "1.9.1"
-# remove vulkano-win from the workspace to avoid version mismatch; we use `Surface::from_window` directly
-#vulkano-win = "0.34.0"
 
-[dependencies]
-legion.workspace = true
-rand.workspace = true
-engine_core.workspace = true
-glam.workspace = true
-winit = { workspace = true, optional = true }
-vulkano = { workspace = true, optional = true }
-vulkano-shaders = { workspace = true, optional = true }
-#vulkano-win = { workspace = true, optional = true }
-bytemuck = { workspace = true }
-winapi = { version = "0.3", features = ["winuser"] }
-    
+# Optional frontend/backends
+# Use winit 0.28.x to be compatible with wgpu/raw-window-handle used by wgpu 0.15
+winit = { version = "0.28.6", optional = true }
+# WGPU backend (preferred)
+wgpu = { version = "0.15", optional = true }
+pollster = { version = "0.3", optional = true }
+bytemuck = { version = "1.9.1", features = ["derive"] }
 
 [features]
-# Enable the small Vulkano scaffold in `src/gpu.rs`.
-vulkan = ["vulkano", "vulkano-shaders", "winit"]
-
-# (no local patching) Use the registry versions as declared above.
+# Enable the WGPU renderer implementation (renamed to avoid name collision)
+backend-wgpu = ["wgpu", "winit", "pollster"]
 

@@ -5,9 +5,8 @@ authors = ["Justin Moore <jmoore5268@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-glam = { workspace = true }
-vulkano = { workspace = true, default-features = true }
-vulkano-shaders = { workspace = true }
-winit = { workspace = true, default-features = true }
-rand = { workspace = true }
-bytemuck = { workspace = true }
+glam = "0.30.4"
+# Use a `winit` version compatible with the chosen GPU backend's window-handle expectations.
+winit = { version = "0.28.6", default-features = true }
+rand = "0.9.1"
+bytemuck = { version = "1.9.1", features = ["derive"] }

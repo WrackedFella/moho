@@ -8,17 +8,17 @@ mod gpu;
 use legion::World;
 use legion::query::IntoQuery;
 
-// `winit` is an optional workspace dependency. Only import and use it when
-// the feature is enabled. The project uses a `vulkan` feature to enable the
-// Vulkan renderer which depends on `winit`, so guard winit usage behind that
-// feature. When `winit` is not available we fall back to a single-frame
-// render via the placeholder renderer to keep builds fast.
-#[cfg(feature = "vulkan")]
-use winit::event::{Event, WindowEvent};
-#[cfg(feature = "vulkan")]
+// `winit` is an optional dependency used by the GPU backends. Guard its
+// usage behind the `backend-wgpu` feature. When the backend is disabled we
+// fall back to a single-frame placeholder renderer to keep builds fast.
+#[cfg(feature = "backend-wgpu")]
+use winit::event::{Event, WindowEvent, StartCause};
+#[cfg(feature = "backend-wgpu")]
 use winit::event_loop::{ControlFlow, EventLoop};
-#[cfg(feature = "vulkan")]
+#[cfg(feature = "backend-wgpu")]
 use winit::window::WindowBuilder;
+#[cfg(feature = "backend-wgpu")]
+use std::time::{Instant, Duration};
 
 // a component is any type that is 'static, sized, send and sync
 #[allow(dead_code)]
@@ -50,41 +50,92 @@ fn main() {
         (view, proj)
     };
 
-    // If `vulkan` (and therefore `winit`) is enabled, create the event loop
+    // If `backend-wgpu` (and therefore `winit`) is enabled, create the event loop
     // and run a proper per-frame loop. Otherwise use the placeholder
     // renderer and run a single frame to keep builds fast.
-    #[cfg(feature = "vulkan")]
+    #[cfg(feature = "backend-wgpu")]
     {
-        let event_loop = EventLoop::new().unwrap();
+        let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
-            .with_title("moho - vulkan renderer")
+            .with_title("moho - wgpu renderer")
             .build(&event_loop)
             .expect("Failed to create window");
 
-        // Vulkano renderer expects event loop and window
-        let mut renderer = gpu::Renderer::new(&event_loop, window);
+    // The GPU renderer may own the `Window`; we keep a reference by moving
+    // the `Window` into the renderer so it can call `request_redraw`.
+    let mut renderer = gpu::Renderer::new(&event_loop, window);
 
-        // Run the winit event loop and render each frame. Exit on window close.
-        // winit 0.29's `EventLoop::run` takes a closure `FnMut(Event<T>, &EventLoopWindowTarget<T>)`.
-        event_loop.run(move |event, elwt| {
-            // Default to polling so we render continuously.
-            elwt.set_control_flow(ControlFlow::Poll);
+    // Frame timing: aim for ~60 FPS.
+    let frame_duration = Duration::from_secs_f64(1.0 / 60.0);
+    let mut last_frame = Instant::now();
+    // Simulation timestep (fixed) and accumulator for decoupled updates.
+    let sim_dt = frame_duration; // simulation uses the same fixed timestep by default
+    let mut sim_acc = Duration::from_secs(0);
+    // Track wall-clock time to accumulate simulation time.
+    let mut last_time = Instant::now();
 
+        // Run the winit event loop and render on-demand. Render once on init
+        // and after each `WindowEvent::RedrawRequested` (if any external code
+        // calls `window.request_redraw()`). We schedule the next frame using
+        // `ControlFlow::WaitUntil` to sleep the event loop until it's time for
+        // the next frame.
+        let _ = event_loop.run(move |event, _event_loop_window_target, control_flow| {
             match event {
-                Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
-                    // Exit the event loop (examples use `elwt.exit()` helper).
-                    elwt.exit();
+                Event::NewEvents(start_cause) => {
+                    if matches!(start_cause, StartCause::Init) {
+                        renderer.render(&mut world, camera);
+                        *control_flow = ControlFlow::Wait;
+                    }
                 }
-                // Render in response to window redraw requests.
-                Event::WindowEvent { event: WindowEvent::RedrawRequested, .. } => {
+                Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                    *control_flow = ControlFlow::Exit;
+                }
+                Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
+                    renderer.resize(size.width, size.height);
+                }
+                Event::RedrawRequested(_window_id) => {
                     renderer.render(&mut world, camera);
+                    *control_flow = ControlFlow::Wait;
+                }
+                Event::MainEventsCleared => {
+                    // Decouple simulation (fixed-step) from rendering.
+                    // 1) Accumulate wall-clock time into `sim_acc`.
+                    // 2) Step simulation in fixed `sim_dt` increments (capped).
+                    // 3) Render at the render cadence (`frame_duration`) by
+                    //    requesting a redraw when the next render boundary is hit.
+                    let now = Instant::now();
+                    let elapsed = now - last_time;
+                    last_time = now;
+
+                    // Accumulate time for simulation updates.
+                    sim_acc += elapsed;
+                    let mut sim_steps = 0;
+                    while sim_acc >= sim_dt && sim_steps < 20 {
+                        // Advance simulation by exactly sim_dt.
+                        simulate(&mut world, sim_dt);
+                        sim_acc -= sim_dt;
+                        sim_steps += 1;
+                    }
+
+                    // Now handle rendering on the fixed render cadence.
+                    if now >= last_frame + frame_duration {
+                        // Advance the render timestamp by one fixed frame.
+                        last_frame += frame_duration;
+                        renderer.request_redraw();
+                        // Schedule next wake at the next fixed step boundary.
+                        let next = last_frame + frame_duration;
+                        *control_flow = ControlFlow::WaitUntil(next);
+                    } else {
+                        let next = last_frame + frame_duration;
+                        *control_flow = ControlFlow::WaitUntil(next);
+                    }
                 }
                 _ => {}
             }
         });
     }
 
-    #[cfg(not(feature = "vulkan"))]
+    #[cfg(not(feature = "backend-wgpu"))]
     {
         let mut renderer = gpu::Renderer::new();
         renderer.render(&mut world, camera);
@@ -183,4 +234,15 @@ fn collect_instances(world: &mut World) -> Vec<InstanceGpu> {
         out.push(s.to_instance());
     }
     out
+}
+
+// Simple fixed-step simulation function. Advance the ECS world by `dt`.
+// Currently this is a placeholder — it can be extended to run physics,
+// animate entities, or mutate components. `dt` is provided as a Duration
+// to match our fixed-step scheduling.
+fn simulate(_world: &mut World, dt: std::time::Duration) {
+    // Example placeholder: You might iterate components and update positions
+    // by velocities here. Keep minimal so builds remain fast.
+    #[allow(unused_variables)]
+    let _seconds = dt.as_secs_f32();
 }

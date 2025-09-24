@@ -16,7 +16,7 @@ InstanceGpu layout (CPU side):
 
 When editing `InstanceGpu`, update shaders and add a test (`engine_core/tests/instance_pod.rs`) asserting `std::mem::size_of::<InstanceGpu>()` and `bytemuck::Pod` compliance.
 
-Shader parity (GLSL/Vulkan mapping example):
+Shader parity (GLSL mapping example):
 
 - `layout(location = 0) in vec3 in_position;`           // vertex position
 - `layout(location = 1) in vec4 in_model_col0;`         // model matrix column 0
