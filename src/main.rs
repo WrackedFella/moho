@@ -75,61 +75,8 @@ fn main() {
         // the material storage buffer when nothing changed.
         let mut material_table = MaterialTable::new();
 
-        // Helper function to find or push a material into the provided table
-        // and return its index. Keeping this as a plain function avoids nested
-        // closure borrow issues with the `'static` event loop closure.
-        fn find_or_push(
-            material_table: &mut Vec<engine_renderer::MaterialGpu>,
-            m: &engine_core::materials::MaterialType,
-        ) -> u32 {
-            for (i, existing) in material_table.iter().enumerate() {
-                match m {
-                    engine_core::materials::MaterialType::Lambertian { albedo } => {
-                        if existing.albedo == [albedo.x, albedo.y, albedo.z, 0.0]
-                            && (existing.params[0] - 0.0).abs() < 1e-6
-                        {
-                            return i as u32;
-                        }
-                    }
-                    engine_core::materials::MaterialType::Metal { albedo, fuzz } => {
-                        if existing.albedo == [albedo.x, albedo.y, albedo.z, 0.0]
-                            && (existing.params[0] - *fuzz).abs() < 1e-6
-                        {
-                            return i as u32;
-                        }
-                    }
-                    engine_core::materials::MaterialType::Dielectric { ref_indx } => {
-                        if (existing.params[1] - *ref_indx).abs() < 1e-6 {
-                            return i as u32;
-                        }
-                    }
-                }
-            }
-            // Not found: push a new MaterialGpu
-            let new_idx = material_table.len() as u32;
-            let mg = match m {
-                engine_core::materials::MaterialType::Lambertian { albedo } => {
-                    engine_renderer::MaterialGpu {
-                        albedo: [albedo.x, albedo.y, albedo.z, 0.0],
-                        params: [0.0, 0.0, 0.0, 0.0],
-                    }
-                }
-                engine_core::materials::MaterialType::Metal { albedo, fuzz } => {
-                    engine_renderer::MaterialGpu {
-                        albedo: [albedo.x, albedo.y, albedo.z, 0.0],
-                        params: [*fuzz, 0.0, 0.0, 0.0],
-                    }
-                }
-                engine_core::materials::MaterialType::Dielectric { ref_indx } => {
-                    engine_renderer::MaterialGpu {
-                        albedo: [1.0, 1.0, 1.0, 0.0],
-                        params: [0.0, *ref_indx, 0.0, 0.0],
-                    }
-                }
-            };
-            material_table.push(mg);
-            new_idx
-        }
+        // Use `MaterialTable` methods for deduplication; the local helper was
+        // removed because it was unused after consolidating material logic.
 
         // Register the indexed unit-sphere mesh once so we don't re-upload
         // vertex/index data each frame. Using an indexed mesh reduces vertex
@@ -155,7 +102,7 @@ fn main() {
         // calls `window.request_redraw()`). We schedule the next frame using
         // `ControlFlow::WaitUntil` to sleep the event loop until it's time for
         // the next frame.
-        let _ = event_loop.run(move |event, _event_loop_window_target, control_flow| {
+    event_loop.run(move |event, _event_loop_window_target, control_flow| {
             match event {
                 Event::NewEvents(start_cause) => {
                     if matches!(start_cause, StartCause::Init) {
@@ -172,9 +119,9 @@ fn main() {
                             let midx = material_table.find_or_push(&s.mat_ptr);
                             instances.push(s.to_instance_with_material(midx));
                         }
-                        // Debug: print material table and instance material indices
-                        if material_table.as_slice().len() > 0 {
-                            println!("[debug] material_table.len={} ", material_table.as_slice().len());
+                                        // Debug: print material table and instance material indices
+                                        if !material_table.as_slice().is_empty() {
+                                            println!("[debug] material_table.len={} ", material_table.as_slice().len());
                             for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
                                 println!("[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}", i, m.albedo[0], m.albedo[1], m.albedo[2], m.params[0], m.params[1]);
                             }
@@ -209,7 +156,7 @@ fn main() {
                         instances.push(s.to_instance_with_material(midx));
                     }
                     // Debug: print material table and first few instance indices
-                    if material_table.as_slice().len() > 0 {
+                    if !material_table.as_slice().is_empty() {
                         println!("[debug] material_table.len={} ", material_table.as_slice().len());
                         for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
                             println!("[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}", i, m.albedo[0], m.albedo[1], m.albedo[2], m.params[0], m.params[1]);
@@ -370,12 +317,8 @@ fn collect_instances(world: &mut World) -> Vec<InstanceGpu> {
     out
 }
 
-fn collect_vertices(_world: &mut World) -> Vec<[f32; 3]> {
-    // Generate a unit sphere mesh once per call. The renderer will use the
-    // instance `model` matrix returned by `Sphere::to_instance()` to scale
-    // and position each sphere instance.
-    Sphere::unit_sphere_vertices(16, 16)
-}
+// `collect_vertices` was removed; the renderer uses indexed meshes via
+// `collect_indexed_vertices` above.
 
 fn collect_indexed_vertices(_world: &mut World) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
     // Return an indexed unit-sphere mesh with normals.

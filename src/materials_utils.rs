@@ -96,11 +96,21 @@ impl MaterialTable {
         self.dirty = false;
     }
 
+    #[allow(dead_code)]
+    pub fn reset_for_tests(&mut self) {
+        // Provided for tests that might want to reset state; keeps original
+        // reset logic but with a different name so dead_code lints are clear.
+        self.map.clear();
+        self.list.clear();
+        self.dirty = false;
+    }
+
     pub fn as_slice(&self) -> &[engine_renderer::MaterialGpu] {
         &self.list
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     fn reset(&mut self) {
         self.map.clear();
         self.list.clear();

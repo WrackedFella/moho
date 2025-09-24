@@ -420,7 +420,7 @@ pub mod gfx {
                     .instance_buffer
                     .as_ref()
                     .expect("instance buffer was created in new");
-                if instances.len() > 0 {
+                if !instances.is_empty() {
                     self.queue
                         .write_buffer(buf, 0, bytemuck::cast_slice(&instances));
                 } else {
@@ -495,7 +495,7 @@ pub mod gfx {
             /// buffer bound at @group(0) binding 1 and recreates the camera
             /// bind group so the pipeline sees the new buffer.
             pub fn set_material_table(&mut self, materials: &[MaterialGpu]) {
-                if materials.len() == 0 {
+                if materials.is_empty() {
                     return;
                 }
                 let bytes = bytemuck::cast_slice(materials);
@@ -712,7 +712,7 @@ pub mod gfx {
                     }
 
                     let ibuf = self.instance_buffer.as_ref().unwrap();
-                    if instances_gpu.len() > 0 {
+                    if !instances_gpu.is_empty() {
                         self.queue
                             .write_buffer(ibuf, 0, bytemuck::cast_slice(&instances_gpu));
                     } else {

@@ -22,8 +22,8 @@ impl Sphere {
 }
 
 impl Hittable for Sphere {
-    fn hit<'b>(&self, mut r: Ray, t_min: f32, t_max: f32) -> Option<HittableRecord> {
-        let oc: Vec3 = r.origin() - &self.center;
+    fn hit<'b>(&self, r: Ray, t_min: f32, t_max: f32) -> Option<HittableRecord> {
+        let oc: Vec3 = r.origin() - self.center;
         let a: f32 = r.direction().dot(r.direction());
         let b: f32 = oc.dot(r.direction());
         let c: f32 = oc.dot(oc) - self.radius * self.radius;
@@ -36,7 +36,7 @@ impl Hittable for Sphere {
                 return Some(HittableRecord {
                     t: temp,
                     p: point,
-                    normal: (point - &self.center) / self.radius,
+                    normal: (point - self.center) / self.radius,
                     mat_ptr: self.mat_ptr,
                 });
             }
@@ -46,12 +46,12 @@ impl Hittable for Sphere {
                 return Some(HittableRecord {
                     t: temp,
                     p: point,
-                    normal: (point - &self.center) / self.radius,
+                    normal: (point - self.center) / self.radius,
                     mat_ptr: self.mat_ptr,
                 });
             }
         }
-        return None;
+        None
     }
 }
 
@@ -160,7 +160,7 @@ impl Sphere {
             for j in 0..lon {
                 let a = (i * (lon + 1) + j) as u32;
                 let b = a + 1;
-                let c = (a + (lon + 1) as u32) as u32; // careful cast
+                let c = a + (lon + 1) as u32; // careful cast
                 let d = c + 1;
                 // triangle 1: a, c, b
                 indices.push(a);
