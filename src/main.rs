@@ -7,6 +7,8 @@ use rand::{Rng, rng};
 // Renderer has been moved into the `engine_renderer` crate to provide a
 // reusable rendering API.
 use engine_renderer::create_renderer;
+mod materials_utils;
+use materials_utils::MaterialTable;
 use legion::World;
 use legion::query::IntoQuery;
 
@@ -42,14 +44,15 @@ fn main() {
     // Populate the ECS world with spheres
     random_scene(&mut world);
 
-    // create a simple perspective camera
+    // create a simple perspective camera (we keep the camera world position
+    // so the shader can compute view-dependent lighting)
     let camera = {
         let eye = glam::Vec3::new(13.0, 2.0, 3.0);
         let center = glam::Vec3::new(0.0, 0.0, 0.0);
         let up = glam::Vec3::new(0.0, 1.0, 0.0);
         let view = glam::Mat4::look_at_rh(eye, center, up);
         let proj = glam::Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 100.0f32);
-        (view, proj)
+        (view, proj, eye)
     };
 
     // If `backend-wgpu` (and therefore `winit`) is enabled, create the event loop
@@ -66,11 +69,55 @@ fn main() {
     // Create a boxed renderer backend via the factory.
     let mut renderer = create_renderer(&event_loop, window);
 
+    // Build a compact material table using an incremental helper that
+    // deduplicates materials using a hash map and only flags the table as
+    // dirty when a new material is added. This lets us avoid re-uploading
+    // the material storage buffer when nothing changed.
+    let mut material_table = MaterialTable::new();
+
+    // Helper function to find or push a material into the provided table
+    // and return its index. Keeping this as a plain function avoids nested
+    // closure borrow issues with the `'static` event loop closure.
+    fn find_or_push(material_table: &mut Vec<engine_renderer::MaterialGpu>, m: &engine_core::materials::MaterialType) -> u32 {
+        for (i, existing) in material_table.iter().enumerate() {
+            match m {
+                engine_core::materials::MaterialType::Lambertian { albedo } => {
+                    if existing.albedo == [albedo.x, albedo.y, albedo.z] && existing.fuzz == 0.0 {
+                        return i as u32;
+                    }
+                }
+                engine_core::materials::MaterialType::Metal { albedo, fuzz } => {
+                    if existing.albedo == [albedo.x, albedo.y, albedo.z] && (existing.fuzz - *fuzz).abs() < 1e-6 {
+                        return i as u32;
+                    }
+                }
+                engine_core::materials::MaterialType::Dielectric { ref_indx } => {
+                    if (existing.ref_idx - *ref_indx).abs() < 1e-6 {
+                        return i as u32;
+                    }
+                }
+            }
+        }
+        // Not found: push a new MaterialGpu
+        let new_idx = material_table.len() as u32;
+        let mg = match m {
+            engine_core::materials::MaterialType::Lambertian { albedo } => engine_renderer::MaterialGpu { albedo: [albedo.x, albedo.y, albedo.z], fuzz: 0.0, ref_idx: 0.0, _pad: 0.0 },
+            engine_core::materials::MaterialType::Metal { albedo, fuzz } => engine_renderer::MaterialGpu { albedo: [albedo.x, albedo.y, albedo.z], fuzz: *fuzz, ref_idx: 0.0, _pad: 0.0 },
+            engine_core::materials::MaterialType::Dielectric { ref_indx } => engine_renderer::MaterialGpu { albedo: [1.0, 1.0, 1.0], fuzz: 0.0, ref_idx: *ref_indx, _pad: 0.0 },
+        };
+        material_table.push(mg);
+        new_idx
+    }
+
     // Register the indexed unit-sphere mesh once so we don't re-upload
     // vertex/index data each frame. Using an indexed mesh reduces vertex
-    // duplication compared to the non-indexed generator.
-    let (vertices, indices) = collect_indexed_vertices(&mut world);
-    let mesh_handle = renderer.register_indexed_mesh(&vertices, &indices);
+    // duplication compared to the non-indexed generator. We also include
+    // per-vertex normals for lighting.
+    let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
+    let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
+
+    // Walk the world and build instances while populating the material table
+    // indices used by instances.
 
         // Frame timing: aim for ~60 FPS.
         let frame_duration = Duration::from_secs_f64(1.0 / 60.0);
@@ -90,7 +137,25 @@ fn main() {
             match event {
                 Event::NewEvents(start_cause) => {
                     if matches!(start_cause, StartCause::Init) {
-                        let instances = collect_instances(&mut world);
+                        // Build material table and instance buffer each frame.
+                        // (In a more optimized path we'd only update when
+                        // materials change.)
+                        // Rebuild material table from world materials
+                        // Rebuild instances and material table (incremental)
+                        // Note: we clear the CPU-side instance list each frame
+                        // but let MaterialTable manage incremental dedupe.
+                        let mut instances = Vec::new();
+                        let mut q = <&Sphere>::query();
+                        for s in q.iter(&world) {
+                            let midx = material_table.find_or_push(&s.mat_ptr);
+                            instances.push(s.to_instance_with_material(midx));
+                        }
+                        // Upload material table to GPU if it changed.
+                        if material_table.is_dirty() {
+                            renderer.set_materials(material_table.as_slice());
+                            material_table.clear_dirty();
+                        }
+                        renderer.render_mesh(mesh_handle, &instances, camera);
                         renderer.render_mesh(mesh_handle, &instances, camera);
                         *control_flow = ControlFlow::Wait;
                     }
@@ -105,7 +170,16 @@ fn main() {
                     renderer.resize(size.width, size.height);
                 }
                 Event::RedrawRequested(_window_id) => {
-                    let instances = collect_instances(&mut world);
+                    let mut instances = Vec::new();
+                    let mut q = <&Sphere>::query();
+                    for s in q.iter(&world) {
+                        let midx = material_table.find_or_push(&s.mat_ptr);
+                        instances.push(s.to_instance_with_material(midx));
+                    }
+                    if material_table.is_dirty() {
+                        renderer.set_materials(material_table.as_slice());
+                        material_table.clear_dirty();
+                    }
                     renderer.render_mesh(mesh_handle, &instances, camera);
                     *control_flow = ControlFlow::Wait;
                 }
@@ -151,8 +225,8 @@ fn main() {
     {
     let mut renderer = create_renderer();
     // Register indexed mesh once with placeholder renderer (no-op) and use render_mesh
-    let (vertices, indices) = collect_indexed_vertices(&mut world);
-    let mesh_handle = renderer.register_indexed_mesh(&vertices, &indices);
+    let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
+    let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
         let instances = collect_instances(&mut world);
         renderer.render_mesh(mesh_handle, &instances, camera);
         println!("Rendered one frame (exiting).");
@@ -247,7 +321,9 @@ fn collect_instances(world: &mut World) -> Vec<InstanceGpu> {
     // Query all entities that have a Sphere component
     let mut q = <&Sphere>::query();
     for s in q.iter(world) {
-        out.push(s.to_instance());
+        // Fallback helper used by the placeholder renderer path: assign
+        // material index 0 for all instances.
+        out.push(s.to_instance_with_material(0));
     }
     out
 }
@@ -259,9 +335,8 @@ fn collect_vertices(_world: &mut World) -> Vec<[f32; 3]> {
     Sphere::unit_sphere_vertices(16, 16)
 }
 
-fn collect_indexed_vertices(_world: &mut World) -> (Vec<[f32; 3]>, Vec<u32>) {
-    // Return an indexed unit-sphere mesh. The renderer will store both
-    // vertex and index buffers and use indexed draws.
+fn collect_indexed_vertices(_world: &mut World) -> (Vec<[f32; 3]>, Vec<[f32;3]>, Vec<u32>) {
+    // Return an indexed unit-sphere mesh with normals.
     Sphere::unit_sphere_indexed(16, 16)
 }
 

@@ -62,18 +62,12 @@ pub struct InstanceGpu {
     pub material: u32,
     pub object_type: u32,
     pub padding: [u32; 2],
-    // Per-instance material parameters (albedo for Lambertian/Metal,
-    // fuzz for Metal, and ref_idx for Dielectric). Kept here so the
-    // renderer can access material properties per-instance without a
-    // separate material buffer.
-    pub albedo: [f32; 3],
-    pub fuzz: f32,
-    pub ref_idx: f32,
-    pub _pad2: f32,
 }
 
 impl Sphere {
-    pub fn to_instance(&self) -> InstanceGpu {
+    /// Create an InstanceGpu for this sphere, assigning the provided
+    /// material index (index into the renderer's material table).
+    pub fn to_instance_with_material(&self, material_index: u32) -> InstanceGpu {
         let translate = glam::Mat4::from_translation(self.center);
         let scale = glam::Mat4::from_scale(glam::Vec3::new(self.radius, self.radius, self.radius));
         let model = translate * scale;
@@ -85,36 +79,11 @@ impl Sphere {
         mat[3] = [cols[12], cols[13], cols[14], cols[15]];
     // Per-instance material parameters will be filled from the
     // Sphere's MaterialType below.
-        let (material_id, albedo, fuzz, ref_idx) = match self.mat_ptr {
-            MaterialType::Lambertian { albedo: a } => (
-                0u32,
-                [a.x, a.y, a.z],
-                0.0f32,
-                0.0f32,
-            ),
-            MaterialType::Metal { albedo: a, fuzz: f } => (
-                1u32,
-                [a.x, a.y, a.z],
-                f,
-                0.0f32,
-            ),
-            MaterialType::Dielectric { ref_indx } => (
-                2u32,
-                [0.95f32, 0.975f32, 1.0f32],
-                0.0f32,
-                ref_indx,
-            ),
-        };
-
         InstanceGpu {
             model: mat,
-            material: material_id,
+            material: material_index,
             object_type: 0u32,
             padding: [0u32; 2],
-            albedo,
-            fuzz,
-            ref_idx,
-            _pad2: 0.0f32,
         }
     }
 
@@ -167,7 +136,7 @@ impl Sphere {
     pub fn unit_sphere_indexed(
         lat_segments: usize,
         lon_segments: usize,
-    ) -> (Vec<[f32; 3]>, Vec<u32>) {
+    ) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
         let lat = lat_segments.max(2);
         let lon = lon_segments.max(3);
         // grid of unique positions (lat+1) x (lon+1)
@@ -203,6 +172,11 @@ impl Sphere {
                 indices.push(d);
             }
         }
-        (pts, indices)
+        // For a unit sphere the normal at each vertex equals the position.
+        let mut normals: Vec<[f32; 3]> = Vec::with_capacity(pts.len());
+        for p in &pts {
+            normals.push([p[0], p[1], p[2]]);
+        }
+        (pts, normals, indices)
     }
 }

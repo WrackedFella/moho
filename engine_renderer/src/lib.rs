@@ -7,6 +7,19 @@ pub mod prelude {
     pub use crate::Renderer;
 }
 
+// Compact material representation exposed by the crate so backends and the
+// application can share a single, stable memory layout for the GPU material
+// table. This type is always available (feature-independent) which keeps the
+// public `RendererBackend` trait signature consistent across features.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MaterialGpu {
+    pub albedo: [f32; 3],
+    pub fuzz: f32,
+    pub ref_idx: f32,
+    pub _pad: f32,
+}
+
 pub mod gfx {
     //! Graphics backends grouped under `gfx` for clarity. The WGPU backend is
     //! feature-gated behind `backend-wgpu`.
@@ -22,8 +35,10 @@ pub mod gfx {
         #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
         struct Vertex {
             position: [f32; 3],
+            normal: [f32; 3],
         }
 
+        // GPU-side per-instance layout: model matrix + material index + object type
         #[repr(C)]
         #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
         struct GpuInstance {
@@ -31,11 +46,10 @@ pub mod gfx {
             material: u32,
             object_type: u32,
             padding: [u32; 2],
-            albedo: [f32; 3],
-            fuzz: f32,
-            ref_idx: f32,
-            _pad2: f32,
         }
+
+        // Use the crate-level MaterialGpu type for the GPU material layout.
+        use crate::MaterialGpu as MaterialGpu;
 
     pub struct Renderer {
             surface: wgpu::Surface,
@@ -46,6 +60,10 @@ pub mod gfx {
             pipeline: wgpu::RenderPipeline,
             camera_buffer: wgpu::Buffer,
             camera_bind_group: wgpu::BindGroup,
+            // keep the bind group layout so we can recreate the bind group when
+            // the material storage buffer changes size.
+            camera_bind_group_layout: wgpu::BindGroupLayout,
+            material_buffer: Option<wgpu::Buffer>,
             _depth_texture: wgpu::Texture,
             depth_texture_view: wgpu::TextureView,
             depth_format: wgpu::TextureFormat,
@@ -118,20 +136,35 @@ pub mod gfx {
                     // shader path adjusted for crate layout (engine_renderer/src -> repo root)
                     source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/instance.wgsl").into()),
                 });
-                // Camera uniform bind group (group 0, binding 0) with explicit min_binding_size
-                let camera_size = std::mem::size_of::<[f32; 16]>() as u64;
+                // Camera uniform bind group (group 0) now contains both the camera
+                // uniform (binding 0) and a storage buffer with the material table
+                // world position.
+                let camera_size = std::mem::size_of::<[f32; 20]>() as u64; // 5 vec4s
                 let camera_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("camera-bgl"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: Some(std::num::NonZeroU64::new(camera_size).unwrap()),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            // camera is read in both the vertex and fragment stages
+                            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: Some(std::num::NonZeroU64::new(camera_size).unwrap()),
+                            },
+                            count: None,
                         },
-                        count: None,
-                    }],
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
                 });
 
                 let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -140,20 +173,30 @@ pub mod gfx {
                     push_constant_ranges: &[],
                 });
 
-                // Create camera uniform buffer (mat4x4<f32>)
+                // Create camera uniform buffer (mat4x4<f32> + cam_pos vec4)
                 let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("camera-buffer"),
-                    size: std::mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
+                    size: camera_size as wgpu::BufferAddress,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
 
+                // Create an initial one-element material storage buffer so we can
+                // create the bind group now. It will be replaced when the app
+                // uploads real materials.
+                let initial_material = MaterialGpu { albedo: [1.0, 1.0, 1.0], fuzz: 0.0, ref_idx: 0.0, _pad: 0.0 };
+                let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("material-buffer-initial"),
+                    contents: bytemuck::bytes_of(&initial_material),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                });
+
                 let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     layout: &camera_bgl,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: camera_buffer.as_entire_binding(),
-                    }],
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: camera_buffer.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: material_buffer.as_entire_binding() },
+                    ],
                     label: Some("camera-bind-group"),
                 });
 
@@ -182,11 +225,14 @@ pub mod gfx {
                         module: &shader,
                         entry_point: "vs_main",
                         buffers: &[
-                            // Vertex positions
+                            // Vertex positions + normals
                             wgpu::VertexBufferLayout {
                                 array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
                                 step_mode: wgpu::VertexStepMode::Vertex,
-                                attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                                attributes: &wgpu::vertex_attr_array![
+                                    0 => Float32x3,
+                                    1 => Float32x3,
+                                ],
                             },
                             // Per-instance data: model matrix (4x vec4) + material(u32) + object_type(u32)
                             // followed by per-instance material params: albedo(vec3), fuzz(f32), ref_idx(f32)
@@ -194,15 +240,12 @@ pub mod gfx {
                                 array_stride: std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress,
                                 step_mode: wgpu::VertexStepMode::Instance,
                                 attributes: &wgpu::vertex_attr_array![
-                                    1 => Float32x4,
                                     2 => Float32x4,
                                     3 => Float32x4,
                                     4 => Float32x4,
-                                    5 => Uint32,
+                                    5 => Float32x4,
                                     6 => Uint32,
-                                    7 => Float32x3,
-                                    8 => Float32,
-                                    9 => Float32,
+                                    7 => Uint32,
                                 ],
                             },
                         ],
@@ -234,10 +277,6 @@ pub mod gfx {
                     material: 0,
                     object_type: 0,
                     padding: [0, 0],
-                    albedo: [1.0, 1.0, 1.0],
-                    fuzz: 0.0,
-                    ref_idx: 0.0,
-                    _pad2: 0.0,
                 };
                 let instance_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("instance-buffer-initial"),
@@ -254,6 +293,8 @@ pub mod gfx {
                     pipeline,
                     camera_buffer,
                     camera_bind_group,
+                    camera_bind_group_layout: camera_bgl,
+                    material_buffer: Some(material_buffer),
                     _depth_texture: depth_texture,
                     depth_texture_view: depth_view,
                     depth_format,
@@ -269,7 +310,7 @@ pub mod gfx {
                 &mut self,
                 vertices: &[[f32; 3]],
                 instances_cpu: &[CpuInstance],
-                camera: (glam::Mat4, glam::Mat4),
+                camera: (glam::Mat4, glam::Mat4, glam::Vec3),
             ) {
                 // Ensure GPU vertex buffer exists and matches the provided vertices.
                 let vertex_bytes = bytemuck::cast_slice(vertices);
@@ -302,10 +343,6 @@ pub mod gfx {
                         material: ic.material,
                         object_type: ic.object_type,
                         padding: ic.padding,
-                        albedo: ic.albedo,
-                        fuzz: ic.fuzz,
-                        ref_idx: ic.ref_idx,
-                        _pad2: 0.0,
                     });
                 }
 
@@ -327,9 +364,15 @@ pub mod gfx {
                 // Update camera uniform buffer from provided camera (view, proj)
                 let view_mat = camera.0;
                 let proj_mat = camera.1;
+                let cam_pos = camera.2;
                 let viewproj = proj_mat * view_mat;
-                let cols = viewproj.to_cols_array();
-                // write camera matrix to GPU
+                let mut cols = viewproj.to_cols_array().to_vec();
+                // append camera position as a vec4 (x,y,z,0)
+                cols.push(cam_pos.x);
+                cols.push(cam_pos.y);
+                cols.push(cam_pos.z);
+                cols.push(0.0f32);
+                // write camera matrix + cam pos to GPU
                 self.queue
                     .write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&cols));
 
@@ -363,16 +406,7 @@ pub mod gfx {
                         self.queue
                             .write_buffer(buf, 0, bytemuck::cast_slice(&instances));
                     } else {
-                        let zero = GpuInstance {
-                            model: [[0.0; 4]; 4],
-                            material: 0,
-                            object_type: 0,
-                            padding: [0, 0],
-                            albedo: [1.0, 1.0, 1.0],
-                            fuzz: 0.0,
-                            ref_idx: 0.0,
-                            _pad2: 0.0,
-                        };
+                        let zero = GpuInstance { model: [[0.0; 4]; 4], material: 0, object_type: 0, padding: [0, 0] };
                         self.queue
                             .write_buffer(buf, 0, bytemuck::cast_slice(&[zero]));
                     }
@@ -434,6 +468,34 @@ pub mod gfx {
                 }
             }
 
+            /// Update the material table on the GPU. This replaces the storage
+            /// buffer bound at @group(0) binding 1 and recreates the camera
+            /// bind group so the pipeline sees the new buffer.
+            pub fn set_material_table(&mut self, materials: &[MaterialGpu]) {
+                if materials.len() == 0 {
+                    return;
+                }
+                let bytes = bytemuck::cast_slice(materials);
+                let _size = bytes.len() as wgpu::BufferAddress;
+                // Create a new storage buffer for materials and copy data into it.
+                let mat_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("material-buffer"),
+                    contents: bytes,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                });
+                self.material_buffer = Some(mat_buf);
+                // Recreate the camera bind group to include the new material buffer.
+                let mat_resource = self.material_buffer.as_ref().unwrap().as_entire_binding();
+                self.camera_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: &self.camera_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: self.camera_buffer.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: mat_resource },
+                    ],
+                    label: Some("camera-bind-group"),
+                });
+            }
+
             pub fn resize(&mut self, width: u32, height: u32) {
                 if width == 0 || height == 0 {
                     return;
@@ -475,8 +537,17 @@ pub mod gfx {
                 handle
             }
 
-            pub fn register_indexed_mesh(&mut self, vertices: &[[f32;3]], indices: &[u32]) -> u32 {
-                let vertex_bytes = bytemuck::cast_slice(vertices);
+            pub fn register_indexed_mesh(&mut self, vertices: &[[f32;3]], normals: &[[f32;3]], indices: &[u32]) -> u32 {
+                // Interleave positions and normals into the Vertex struct
+                #[repr(C)]
+                #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+                struct InterleavedVertex { pos: [f32;3], nor: [f32;3] }
+                // Build a temporary vec of interleaved vertices
+                let mut iv: Vec<InterleavedVertex> = Vec::with_capacity(vertices.len());
+                for i in 0..vertices.len() {
+                    iv.push(InterleavedVertex { pos: vertices[i], nor: normals[i] });
+                }
+                let vertex_bytes = bytemuck::cast_slice(&iv);
                 let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("mesh-vertex-buffer"), contents: vertex_bytes, usage: wgpu::BufferUsages::VERTEX });
                 let index_bytes = bytemuck::cast_slice(indices);
                 let ib = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("mesh-index-buffer"), contents: index_bytes, usage: wgpu::BufferUsages::INDEX });
@@ -497,13 +568,20 @@ pub mod gfx {
             }
 
             /// Inherent method: render a registered mesh by handle.
-            pub fn render_mesh(&mut self, mesh: u32, instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4)) {
+            pub fn render_mesh(&mut self, mesh: u32, instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4, glam::Vec3)) {
                 let idx = mesh as usize;
                 if idx >= self.mesh_table.len() { return; }
                 if let Some(me) = &self.mesh_table[idx] {
                     // update camera
-                    let viewproj = camera.1 * camera.0;
-                    let cols = viewproj.to_cols_array();
+                    let view_mat = camera.0;
+                    let proj_mat = camera.1;
+                    let cam_pos = camera.2;
+                    let viewproj = proj_mat * view_mat;
+                    let mut cols = viewproj.to_cols_array().to_vec();
+                    cols.push(cam_pos.x);
+                    cols.push(cam_pos.y);
+                    cols.push(cam_pos.z);
+                    cols.push(0.0f32);
                     self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&cols));
 
                     // instances
@@ -514,10 +592,6 @@ pub mod gfx {
                             material: ic.material,
                             object_type: ic.object_type,
                             padding: ic.padding,
-                            albedo: ic.albedo,
-                            fuzz: ic.fuzz,
-                            ref_idx: ic.ref_idx,
-                            _pad2: 0.0,
                         });
                     }
 
@@ -534,7 +608,7 @@ pub mod gfx {
                     if instances_gpu.len() > 0 {
                         self.queue.write_buffer(ibuf, 0, bytemuck::cast_slice(&instances_gpu));
                     } else {
-                        let zero = GpuInstance { model: [[0.0;4];4], material: 0, object_type: 0, padding: [0,0], albedo: [1.0,1.0,1.0], fuzz: 0.0, ref_idx: 0.0, _pad2: 0.0 };
+                        let zero = GpuInstance { model: [[0.0;4];4], material: 0, object_type: 0, padding: [0,0] };
                         self.queue.write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
                     }
 
@@ -572,7 +646,7 @@ pub mod gfx {
         pub struct Renderer {}
         impl Renderer {
             pub fn new() -> Self { Renderer {} }
-            pub fn render(&mut self, _vertices: &[[f32;3]], _instances: &[InstanceGpu], _camera: (glam::Mat4, glam::Mat4)) {}
+            pub fn render(&mut self, _vertices: &[[f32;3]], _instances: &[InstanceGpu], _camera: (glam::Mat4, glam::Mat4, glam::Vec3)) {}
             pub fn request_redraw(&self) {}
             pub fn resize(&mut self, _w: u32, _h: u32) {}
         }
@@ -595,7 +669,7 @@ pub use gfx::Renderer;
 
 /// Object-safe renderer backend trait.
 pub trait RendererBackend {
-    fn render(&mut self, vertices: &[[f32; 3]], instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4));
+    fn render(&mut self, vertices: &[[f32; 3]], instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4, glam::Vec3));
     fn request_redraw(&self);
     fn resize(&mut self, width: u32, height: u32);
     /// Register a mesh represented by an array of positions. Returns a handle
@@ -603,17 +677,20 @@ pub trait RendererBackend {
     /// re-supplying the vertex data every frame.
     fn register_mesh(&mut self, vertices: &[[f32; 3]]) -> u32;
     /// Register a mesh with an index buffer. `indices` are 32-bit indices.
-    fn register_indexed_mesh(&mut self, vertices: &[[f32; 3]], indices: &[u32]) -> u32;
+    fn register_indexed_mesh(&mut self, vertices: &[[f32; 3]], normals: &[[f32;3]], indices: &[u32]) -> u32;
     /// Unregister a previously-registered mesh handle and free GPU resources.
     fn unregister_mesh(&mut self, mesh: u32);
     /// Render a previously-registered mesh by handle using the provided
     /// instances and camera.
-    fn render_mesh(&mut self, mesh: u32, instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4));
+    fn render_mesh(&mut self, mesh: u32, instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4, glam::Vec3));
+    /// Replace the material table on the GPU. The caller should prepare a
+    /// slice of `MaterialGpu` values describing each distinct material.
+    fn set_materials(&mut self, materials: &[crate::MaterialGpu]);
 }
 
 #[cfg(feature = "backend-wgpu")]
 impl RendererBackend for gfx::wgpu_impl::Renderer {
-    fn render(&mut self, vertices: &[[f32; 3]], instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4)) {
+    fn render(&mut self, vertices: &[[f32; 3]], instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4, glam::Vec3)) {
         gfx::wgpu_impl::Renderer::render(self, vertices, instances, camera)
     }
     fn request_redraw(&self) {
@@ -625,20 +702,23 @@ impl RendererBackend for gfx::wgpu_impl::Renderer {
     fn register_mesh(&mut self, vertices: &[[f32; 3]]) -> u32 {
         gfx::wgpu_impl::Renderer::register_mesh(self, vertices)
     }
-    fn register_indexed_mesh(&mut self, vertices: &[[f32; 3]], indices: &[u32]) -> u32 {
-        gfx::wgpu_impl::Renderer::register_indexed_mesh(self, vertices, indices)
+    fn register_indexed_mesh(&mut self, vertices: &[[f32; 3]], normals: &[[f32;3]], indices: &[u32]) -> u32 {
+        gfx::wgpu_impl::Renderer::register_indexed_mesh(self, vertices, normals, indices)
     }
     fn unregister_mesh(&mut self, mesh: u32) {
         gfx::wgpu_impl::Renderer::unregister_mesh(self, mesh)
     }
-    fn render_mesh(&mut self, mesh: u32, instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4)) {
+    fn render_mesh(&mut self, mesh: u32, instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4, glam::Vec3)) {
         gfx::wgpu_impl::Renderer::render_mesh(self, mesh, instances, camera)
+    }
+    fn set_materials(&mut self, materials: &[crate::MaterialGpu]) {
+        gfx::wgpu_impl::Renderer::set_material_table(self, materials)
     }
 }
 
 #[cfg(not(feature = "backend-wgpu"))]
 impl RendererBackend for gfx::placeholder::Renderer {
-    fn render(&mut self, vertices: &[[f32; 3]], instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4)) {
+    fn render(&mut self, vertices: &[[f32; 3]], instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4, glam::Vec3)) {
         gfx::placeholder::Renderer::render(self, vertices, instances, camera)
     }
     fn request_redraw(&self) {
@@ -652,12 +732,13 @@ impl RendererBackend for gfx::placeholder::Renderer {
         0
     }
     fn unregister_mesh(&mut self, _mesh: u32) {}
-    fn render_mesh(&mut self, _mesh: u32, _instances: &[engine_core::actors::InstanceGpu], _camera: (glam::Mat4, glam::Mat4)) {
+    fn render_mesh(&mut self, _mesh: u32, _instances: &[engine_core::actors::InstanceGpu], _camera: (glam::Mat4, glam::Mat4, glam::Vec3)) {
         // no-op in placeholder
     }
-    fn register_indexed_mesh(&mut self, _vertices: &[[f32; 3]], _indices: &[u32]) -> u32 {
+    fn register_indexed_mesh(&mut self, _vertices: &[[f32; 3]], _normals: &[[f32;3]], _indices: &[u32]) -> u32 {
         0
     }
+    fn set_materials(&mut self, _materials: &[crate::MaterialGpu]) {}
 }
 
 /// Create a boxed renderer backend. When `backend-wgpu` is enabled the

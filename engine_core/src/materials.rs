@@ -2,7 +2,7 @@ use crate::*;
 use glam::Vec3;
 use rand::{rng, Rng};
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum MaterialType {
     Lambertian { albedo: Vec3 },
     Metal { albedo: Vec3, fuzz: f32 },

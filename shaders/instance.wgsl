@@ -3,6 +3,7 @@ struct Camera {
     vp1: vec4<f32>,
     vp2: vec4<f32>,
     vp3: vec4<f32>,
+    cam_pos: vec4<f32>,
 }
 
 @group(0) @binding(0)
@@ -10,28 +11,33 @@ var<uniform> camera: Camera;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
 }
 
 struct InstanceIn {
-    @location(1) model_col0: vec4<f32>,
-    @location(2) model_col1: vec4<f32>,
-    @location(3) model_col2: vec4<f32>,
-    @location(4) model_col3: vec4<f32>,
-    @location(5) material: u32,
-    @location(6) object_type: u32,
-    @location(7) albedo: vec3<f32>,
-    @location(8) fuzz: f32,
-    @location(9) ref_idx: f32,
+    @location(2) model_col0: vec4<f32>,
+    @location(3) model_col1: vec4<f32>,
+    @location(4) model_col2: vec4<f32>,
+    @location(5) model_col3: vec4<f32>,
+    @location(6) material: u32,
+    @location(7) object_type: u32,
 }
+
+struct Material {
+    albedo: vec3<f32>,
+    fuzz: f32,
+    ref_idx: f32,
+    _pad: f32,
+}
+
+@group(0) @binding(1)
+var<storage, read> materials: array<Material>;
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) material: u32,
-    @location(1) albedo: vec3<f32>,
-    @location(2) fuzz: f32,
-    @location(3) ref_idx: f32,
-    @location(4) normal: vec3<f32>,
-    @location(5) world_pos: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) world_pos: vec3<f32>,
 }
 
 @vertex
@@ -54,12 +60,9 @@ fn vs_main(v: VertexIn, i: InstanceIn) -> VsOut {
     let r3 = vec4<f32>(vp0.w, vp1.w, vp2.w, vp3.w);
     out.clip = vec4<f32>(dot(r0, world_pos), dot(r1, world_pos), dot(r2, world_pos), dot(r3, world_pos));
     out.material = i.material;
-    out.albedo = i.albedo;
-    out.fuzz = i.fuzz;
-    out.ref_idx = i.ref_idx;
-    // compute world-space normal: transform position with model (w=0 so translation omitted)
-    let pvec = vec4<f32>(v.position, 0.0);
-    let n_ws = vec3<f32>(dot(row0, pvec), dot(row1, pvec), dot(row2, pvec));
+    // transform vertex normal (w=0) by model matrix rows
+    let nvec = vec4<f32>(v.normal, 0.0);
+    let n_ws = vec3<f32>(dot(row0, nvec), dot(row1, nvec), dot(row2, nvec));
     out.normal = normalize(n_ws);
     out.world_pos = vec3<f32>(world_pos.x, world_pos.y, world_pos.z);
     return out;
@@ -69,30 +72,40 @@ fn vs_main(v: VertexIn, i: InstanceIn) -> VsOut {
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Lighting params
     let light_dir = normalize(vec3<f32>(1.0, 1.0, 0.5));
-    let ambient = 0.1;
+    // reduce ambient to increase contrast and perceived shading
+    let ambient = 0.03;
     let N = normalize(in.normal);
     let L = normalize(light_dir);
     let diff = max(dot(N, L), 0.0);
-    // approximate view direction from fragment to origin (camera at or near origin)
-    let V = normalize(-in.world_pos);
+    // use camera-provided world position for view direction
+    let cam_pos = vec3<f32>(camera.cam_pos.x, camera.cam_pos.y, camera.cam_pos.z);
+    let V = normalize(cam_pos - in.world_pos);
     let H = normalize(L + V);
-    let spec = pow(max(dot(N, H), 0.0), 32.0);
+    let spec = pow(max(dot(N, H), 0.0), 64.0);
+
+    // Simple ambient occlusion-like term based on N·L to darken occluded areas
+    // and a cheap contact shadow near the ground (y ~= 0) to restore the
+    // perception of objects sitting on the ground plane.
+    let ao_from_light = clamp(0.3 + 0.7 * diff, 0.0, 1.0);
+    let contact = exp(-10.0 * max(in.world_pos.y, 0.0)); // strong near y=0
+    let ao = ao_from_light * mix(1.0, 0.6, contact);
 
     var color: vec3<f32> = vec3<f32>(0.0);
+    let mat = materials[in.material];
     if (in.material == 0u) {
-        // Lambertian: full diffuse, small specular
-        color = in.albedo * (ambient + (1.0 - ambient) * diff) + vec3<f32>(spec * 0.1);
+        // Lambertian: diffuse + small specular
+        color = mat.albedo * (ambient + (1.0 - ambient) * ao * diff) + vec3<f32>(spec * 0.05);
     } else if (in.material == 1u) {
-        // Metal: stronger specular, diffuse attenuated by (1 - fuzz)
-        let metal_factor = 1.0 - clamp(in.fuzz, 0.0, 1.0);
-        color = in.albedo * (ambient * 0.2 + 0.8 * diff * metal_factor) + vec3<f32>(spec * (0.8 * metal_factor));
+        // Metal: specular-dominant, modulated by fuzz
+        let metal_factor = 1.0 - clamp(mat.fuzz, 0.0, 1.0);
+        color = mat.albedo * (ambient * 0.15 + 0.85 * ao * diff * metal_factor) + vec3<f32>(spec * (0.9 * metal_factor));
     } else if (in.material == 2u) {
-        // Dielectric: mostly diffuse-ish tint + small specular
-        let t = clamp((in.ref_idx - 1.0) * 0.25, 0.0, 1.0);
-        let base = mix(in.albedo, vec3<f32>(0.8, 0.9, 1.0), t);
-        color = base * (ambient + (1.0 - ambient) * diff * 0.6) + vec3<f32>(spec * 0.2);
+        // Dielectric: tinted base + reduced diffuse response
+        let t = clamp((mat.ref_idx - 1.0) * 0.25, 0.0, 1.0);
+        let base = mix(mat.albedo, vec3<f32>(0.8, 0.9, 1.0), t);
+        color = base * (ambient + (1.0 - ambient) * ao * diff * 0.5) + vec3<f32>(spec * 0.25);
     } else {
-        color = in.albedo;
+        color = mat.albedo;
     }
     color = clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
     return vec4<f32>(color, 1.0);
