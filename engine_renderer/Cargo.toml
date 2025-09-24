@@ -11,5 +11,8 @@ winit = { version = "0.28.6", optional = true }
 pollster = { version = "0.3", optional = true }
 glam = "0.30.4"
 
+[dev-dependencies]
+naga = "0.11"
+
 [features]
 backend-wgpu = ["wgpu", "winit", "pollster"]

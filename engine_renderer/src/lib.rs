@@ -53,10 +53,12 @@ pub mod gfx {
             mesh_table: Vec<Option<MeshEntry>>,
         }
 
-        // Per-mesh stored data
+        // Per-mesh stored data (supports optional index buffer)
         pub struct MeshEntry {
             pub buffer: wgpu::Buffer,
             pub vertex_count: u32,
+            pub index_buffer: Option<wgpu::Buffer>,
+            pub index_count: u32,
         }
 
         impl Renderer {
@@ -112,7 +114,8 @@ pub mod gfx {
                     // shader path adjusted for crate layout (engine_renderer/src -> repo root)
                     source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/instance.wgsl").into()),
                 });
-                // Camera uniform bind group (group 0, binding 0)
+                // Camera uniform bind group (group 0, binding 0) with explicit min_binding_size
+                let camera_size = std::mem::size_of::<[f32; 16]>() as u64;
                 let camera_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("camera-bgl"),
                     entries: &[wgpu::BindGroupLayoutEntry {
@@ -121,7 +124,7 @@ pub mod gfx {
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
-                            min_binding_size: None,
+                            min_binding_size: Some(std::num::NonZeroU64::new(camera_size).unwrap()),
                         },
                         count: None,
                     }],
@@ -446,7 +449,18 @@ pub mod gfx {
                     usage: wgpu::BufferUsages::VERTEX,
                 });
                 let vertex_count = vertices.len() as u32;
-                let entry = MeshEntry { buffer: vb, vertex_count };
+                let entry = MeshEntry { buffer: vb, vertex_count, index_buffer: None, index_count: 0 };
+                let handle = self.mesh_table.len() as u32;
+                self.mesh_table.push(Some(entry));
+                handle
+            }
+
+            pub fn register_indexed_mesh(&mut self, vertices: &[[f32;3]], indices: &[u32]) -> u32 {
+                let vertex_bytes = bytemuck::cast_slice(vertices);
+                let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("mesh-vertex-buffer"), contents: vertex_bytes, usage: wgpu::BufferUsages::VERTEX });
+                let index_bytes = bytemuck::cast_slice(indices);
+                let ib = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("mesh-index-buffer"), contents: index_bytes, usage: wgpu::BufferUsages::INDEX });
+                let entry = MeshEntry { buffer: vb, vertex_count: vertices.len() as u32, index_buffer: Some(ib), index_count: indices.len() as u32 };
                 let handle = self.mesh_table.len() as u32;
                 self.mesh_table.push(Some(entry));
                 handle
@@ -499,7 +513,12 @@ pub mod gfx {
                         rpass.set_vertex_buffer(0, me.buffer.slice(..));
                         rpass.set_vertex_buffer(1, ibuf.slice(..));
                         let instance_count = instances_gpu.len().max(1) as u32;
-                        rpass.draw(0..me.vertex_count, 0..instance_count);
+                        if let Some(idx_buf) = &me.index_buffer {
+                            rpass.set_index_buffer(idx_buf.slice(..), wgpu::IndexFormat::Uint32);
+                            rpass.draw_indexed(0..me.index_count, 0, 0..instance_count);
+                        } else {
+                            rpass.draw(0..me.vertex_count, 0..instance_count);
+                        }
                     }
                     self.queue.submit(Some(encoder.finish()));
                     frame.present();
@@ -544,6 +563,8 @@ pub trait RendererBackend {
     /// that can be used with `render_mesh` to render that mesh without
     /// re-supplying the vertex data every frame.
     fn register_mesh(&mut self, vertices: &[[f32; 3]]) -> u32;
+    /// Register a mesh with an index buffer. `indices` are 32-bit indices.
+    fn register_indexed_mesh(&mut self, vertices: &[[f32; 3]], indices: &[u32]) -> u32;
     /// Render a previously-registered mesh by handle using the provided
     /// instances and camera.
     fn render_mesh(&mut self, mesh: u32, instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4));
@@ -562,6 +583,9 @@ impl RendererBackend for gfx::wgpu_impl::Renderer {
     }
     fn register_mesh(&mut self, vertices: &[[f32; 3]]) -> u32 {
         gfx::wgpu_impl::Renderer::register_mesh(self, vertices)
+    }
+    fn register_indexed_mesh(&mut self, vertices: &[[f32; 3]], indices: &[u32]) -> u32 {
+        gfx::wgpu_impl::Renderer::register_indexed_mesh(self, vertices, indices)
     }
     fn render_mesh(&mut self, mesh: u32, instances: &[engine_core::actors::InstanceGpu], camera: (glam::Mat4, glam::Mat4)) {
         gfx::wgpu_impl::Renderer::render_mesh(self, mesh, instances, camera)
@@ -585,6 +609,9 @@ impl RendererBackend for gfx::placeholder::Renderer {
     }
     fn render_mesh(&mut self, _mesh: u32, _instances: &[engine_core::actors::InstanceGpu], _camera: (glam::Mat4, glam::Mat4)) {
         // no-op in placeholder
+    }
+    fn register_indexed_mesh(&mut self, _vertices: &[[f32; 3]], _indices: &[u32]) -> u32 {
+        0
     }
 }
 

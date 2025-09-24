@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+
+      - name: Install wasm target (optional)
+        run: rustup target add wasm32-unknown-unknown || true
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Build (with WGPU backend)
+        run: cargo build --workspace --features backend-wgpu --all-targets --verbose
+
+      - name: Run tests
+        run: cargo test --workspace --features backend-wgpu --all-features --verbose
+
+  clippy:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
