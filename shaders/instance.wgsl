@@ -30,6 +30,8 @@ struct VsOut {
     @location(1) albedo: vec3<f32>,
     @location(2) fuzz: f32,
     @location(3) ref_idx: f32,
+    @location(4) normal: vec3<f32>,
+    @location(5) world_pos: vec3<f32>,
 }
 
 @vertex
@@ -55,28 +57,43 @@ fn vs_main(v: VertexIn, i: InstanceIn) -> VsOut {
     out.albedo = i.albedo;
     out.fuzz = i.fuzz;
     out.ref_idx = i.ref_idx;
+    // compute world-space normal: transform position with model (w=0 so translation omitted)
+    let pvec = vec4<f32>(v.position, 0.0);
+    let n_ws = vec3<f32>(dot(row0, pvec), dot(row1, pvec), dot(row2, pvec));
+    out.normal = normalize(n_ws);
+    out.world_pos = vec3<f32>(world_pos.x, world_pos.y, world_pos.z);
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    // Simple material-based shading:
-    // material == 0 -> Lambertian: use albedo
-    // material == 1 -> Metal: use albedo modulated by (1 - fuzz)
-    // material == 2 -> Dielectric: tint by ref_idx (simple approximation)
+    // Lighting params
+    let light_dir = normalize(vec3<f32>(1.0, 1.0, 0.5));
+    let ambient = 0.1;
+    let N = normalize(in.normal);
+    let L = normalize(light_dir);
+    let diff = max(dot(N, L), 0.0);
+    // approximate view direction from fragment to origin (camera at or near origin)
+    let V = normalize(-in.world_pos);
+    let H = normalize(L + V);
+    let spec = pow(max(dot(N, H), 0.0), 32.0);
+
     var color: vec3<f32> = vec3<f32>(0.0);
     if (in.material == 0u) {
-        color = in.albedo;
+        // Lambertian: full diffuse, small specular
+        color = in.albedo * (ambient + (1.0 - ambient) * diff) + vec3<f32>(spec * 0.1);
     } else if (in.material == 1u) {
+        // Metal: stronger specular, diffuse attenuated by (1 - fuzz)
         let metal_factor = 1.0 - clamp(in.fuzz, 0.0, 1.0);
-        color = in.albedo * metal_factor;
+        color = in.albedo * (ambient * 0.2 + 0.8 * diff * metal_factor) + vec3<f32>(spec * (0.8 * metal_factor));
     } else if (in.material == 2u) {
-        // tint glass slightly by ref_idx: this is not physically correct but
-        // provides visual differentiation
-        let t = clamp((in.ref_idx - 1.0) * 0.5, 0.0, 1.0);
-        color = mix(in.albedo, vec3<f32>(0.8, 0.9, 1.0), t);
+        // Dielectric: mostly diffuse-ish tint + small specular
+        let t = clamp((in.ref_idx - 1.0) * 0.25, 0.0, 1.0);
+        let base = mix(in.albedo, vec3<f32>(0.8, 0.9, 1.0), t);
+        color = base * (ambient + (1.0 - ambient) * diff * 0.6) + vec3<f32>(spec * 0.2);
     } else {
         color = in.albedo;
     }
+    color = clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
     return vec4<f32>(color, 1.0);
 }
