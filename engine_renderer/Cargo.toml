@@ -10,10 +10,9 @@ wgpu = { version = "0.15", optional = true }
 winit = { version = "0.28.6", optional = true }
 pollster = { version = "0.3", optional = true }
 glam = "0.30.4"
-log = { workspace = true }
 
 [dev-dependencies]
-naga = { version = "0.11", features = ["wgsl-in"] }
+naga = "0.11"
 
 [features]
 backend-wgpu = ["wgpu", "winit", "pollster"]
