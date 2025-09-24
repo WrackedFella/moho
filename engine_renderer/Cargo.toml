@@ -10,6 +10,7 @@ wgpu = { version = "0.15", optional = true }
 winit = { version = "0.28.6", optional = true }
 pollster = { version = "0.3", optional = true }
 glam = "0.30.4"
+log = "0.4"
 
 [dev-dependencies]
 naga = "0.11"

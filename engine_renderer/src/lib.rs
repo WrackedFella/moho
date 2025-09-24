@@ -7,18 +7,15 @@ pub mod prelude {
     pub use crate::Renderer;
 }
 
-// Compact material representation exposed by the crate so backends and the
-// application can share a single, stable memory layout for the GPU material
-// table. This type is always available (feature-independent) which keeps the
-// public `RendererBackend` trait signature consistent across features.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct MaterialGpu {
-    // Use two vec4-sized fields so the GPU storage layout is a clean 32-byte
-    // stride per element which matches WGSL `vec4` alignment rules.
-    pub albedo: [f32; 4],
-    pub params: [f32; 4], // params.x = fuzz, params.y = ref_idx, others unused
-}
+// Re-export GPU ABI types from a single module so other crates can import
+// a stable definition and we avoid duplicate layout definitions across the
+// workspace.
+pub mod gpu_types;
+pub use gpu_types::MaterialGpu;
+pub use gpu_types::CameraGpu;
+
+// Quick sanity check: MaterialGpu should be 32 bytes (two vec4s).
+const _: () = assert!(std::mem::size_of::<MaterialGpu>() == 32);
 
 pub mod gfx {
     //! Graphics backends grouped under `gfx` for clarity. The WGPU backend is
@@ -48,8 +45,8 @@ pub mod gfx {
             padding: [u32; 2],
         }
 
-        // Use the crate-level MaterialGpu type for the GPU material layout.
-        use crate::MaterialGpu as MaterialGpu;
+    // Use the crate-level MaterialGpu type for the GPU material layout.
+    use crate::MaterialGpu as MaterialGpu;
 
     pub struct Renderer {
             surface: wgpu::Surface,
@@ -88,7 +85,7 @@ pub mod gfx {
                 _event_loop: &winit::event_loop::EventLoop<()>,
                 window: winit::window::Window,
             ) -> Self {
-                println!("(wgpu) Initializing renderer (instanced cubes)");
+                log::info!("(wgpu) Initializing renderer (instanced cubes)");
                 let size = window.inner_size();
                 // Initialize wgpu
                 let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -187,7 +184,7 @@ pub mod gfx {
                 let initial_material = MaterialGpu { albedo: [1.0, 1.0, 1.0, 0.0], params: [0.0, 0.0, 0.0, 0.0] };
                 let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("material-buffer-initial"),
-                    contents: bytemuck::bytes_of(&initial_material),
+                    contents: bytemuck::cast_slice(&[initial_material]),
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 });
 
@@ -549,14 +546,14 @@ pub mod gfx {
                 }
                 // Debug: print first few interleaved vertices to ensure normals exist
                 for (i, v) in iv.iter().enumerate().take(6) {
-                    println!("[register_indexed_mesh] v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})", i, v.pos[0], v.pos[1], v.pos[2], v.nor[0], v.nor[1], v.nor[2]);
+            log::debug!("[register_indexed_mesh] v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})", i, v.pos[0], v.pos[1], v.pos[2], v.nor[0], v.nor[1], v.nor[2]);
                 }
                 // Print a few sampled indices across the mesh to check variation
                 if iv.len() > 50 {
                     let samples = [0usize, iv.len()/4, iv.len()/2, 3*iv.len()/4, iv.len()-1];
                     for idx in samples {
                         let v = &iv[idx];
-                        println!("[register_indexed_mesh] sample v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})", idx, v.pos[0], v.pos[1], v.pos[2], v.nor[0], v.nor[1], v.nor[2]);
+                        log::debug!("[register_indexed_mesh] sample v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})", idx, v.pos[0], v.pos[1], v.pos[2], v.nor[0], v.nor[1], v.nor[2]);
                     }
                 }
                 let vertex_bytes = bytemuck::cast_slice(&iv);

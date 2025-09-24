@@ -1,8 +1,11 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 /// A compact, hashable key for material deduplication. We use the bit
 /// patterns of f32 values (via to_bits) so the key implements `Eq` and
 /// `Hash` safely.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct MaterialKey {
     variant: u8,
@@ -39,6 +42,7 @@ impl MaterialKey {
 /// Incremental material table that assigns compact indices to distinct
 /// materials and stores GPU-ready `MaterialGpu` values. It avoids re-creating
 /// the GPU buffer unless a new material is added.
+#[allow(dead_code)]
 pub struct MaterialTable {
     map: HashMap<MaterialKey, u32>,
     list: Vec<engine_renderer::MaterialGpu>,
@@ -136,5 +140,17 @@ mod tests {
         assert_ne!(i1, i3, "metal with different fuzz should be distinct");
         assert!(mt.is_dirty());
         assert_eq!(mt.as_slice().len(), 2);
+    }
+
+    #[test]
+    fn clear_dirty_and_reset_are_used() {
+        let mut mt = MaterialTable::new();
+        let m = MaterialType::Lambertian { albedo: Vec3::new(0.1, 0.2, 0.3) };
+        let _ = mt.find_or_push(&m);
+        assert!(mt.is_dirty());
+        mt.clear_dirty();
+        assert!(!mt.is_dirty());
+        mt.reset();
+        assert_eq!(mt.as_slice().len(), 0);
     }
 }
