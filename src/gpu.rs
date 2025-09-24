@@ -276,22 +276,27 @@ mod wgpu_impl {
                 // write camera matrix to GPU
                 self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&cols));
 
-                // Update or create a persistent instance buffer
-                let instance_stride = std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress;
-                let needed = (instances.len().max(1) * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
-                if self.instance_capacity < instances.len().max(1) {
-                    // allocate a new GPU buffer with COPY_DST so we can update it
+                // Update or create a persistent instance buffer using exponential growth
+                let _instance_stride = std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress;
+                let required_count = instances.len().max(1);
+                if self.instance_capacity < required_count {
+                    // exponential grow: double until capacity >= required_count
+                    let mut new_cap = self.instance_capacity.max(1);
+                    while new_cap < required_count {
+                        new_cap = new_cap.saturating_mul(2);
+                    }
+                    let size_bytes = (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
                     let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some("instance-buffer"),
-                        size: needed,
+                        size: size_bytes,
                         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     });
                     self.instance_buffer = Some(buf);
-                    self.instance_capacity = instances.len().max(1);
+                    self.instance_capacity = new_cap;
                 }
 
-                // Write instance data into the persistent buffer (we create an initial buffer in new())
+                // Write only the used portion of the instance buffer
                 let buf = self.instance_buffer.as_ref().expect("instance buffer was created in new");
                 if instances.len() > 0 {
                     self.queue.write_buffer(buf, 0, bytemuck::cast_slice(&instances));
