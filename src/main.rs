@@ -8,9 +8,9 @@ use rand::{Rng, rng};
 // reusable rendering API.
 use engine_renderer::create_renderer;
 mod materials_utils;
-use materials_utils::MaterialTable;
 use legion::World;
 use legion::query::IntoQuery;
+use materials_utils::MaterialTable;
 
 // `winit` is an optional dependency used by the GPU backends. Guard its
 // usage behind the `backend-wgpu` feature. When the backend is disabled we
@@ -66,58 +66,80 @@ fn main() {
             .build(&event_loop)
             .expect("Failed to create window");
 
-    // Create a boxed renderer backend via the factory.
-    let mut renderer = create_renderer(&event_loop, window);
+        // Create a boxed renderer backend via the factory.
+        let mut renderer = create_renderer(&event_loop, window);
 
-    // Build a compact material table using an incremental helper that
-    // deduplicates materials using a hash map and only flags the table as
-    // dirty when a new material is added. This lets us avoid re-uploading
-    // the material storage buffer when nothing changed.
-    let mut material_table = MaterialTable::new();
+        // Build a compact material table using an incremental helper that
+        // deduplicates materials using a hash map and only flags the table as
+        // dirty when a new material is added. This lets us avoid re-uploading
+        // the material storage buffer when nothing changed.
+        let mut material_table = MaterialTable::new();
 
-    // Helper function to find or push a material into the provided table
-    // and return its index. Keeping this as a plain function avoids nested
-    // closure borrow issues with the `'static` event loop closure.
-    fn find_or_push(material_table: &mut Vec<engine_renderer::MaterialGpu>, m: &engine_core::materials::MaterialType) -> u32 {
-        for (i, existing) in material_table.iter().enumerate() {
-            match m {
-                engine_core::materials::MaterialType::Lambertian { albedo } => {
-                    if existing.albedo == [albedo.x, albedo.y, albedo.z] && existing.fuzz == 0.0 {
-                        return i as u32;
+        // Helper function to find or push a material into the provided table
+        // and return its index. Keeping this as a plain function avoids nested
+        // closure borrow issues with the `'static` event loop closure.
+        fn find_or_push(
+            material_table: &mut Vec<engine_renderer::MaterialGpu>,
+            m: &engine_core::materials::MaterialType,
+        ) -> u32 {
+            for (i, existing) in material_table.iter().enumerate() {
+                match m {
+                    engine_core::materials::MaterialType::Lambertian { albedo } => {
+                        if existing.albedo == [albedo.x, albedo.y, albedo.z, 0.0]
+                            && (existing.params[0] - 0.0).abs() < 1e-6
+                        {
+                            return i as u32;
+                        }
                     }
-                }
-                engine_core::materials::MaterialType::Metal { albedo, fuzz } => {
-                    if existing.albedo == [albedo.x, albedo.y, albedo.z] && (existing.fuzz - *fuzz).abs() < 1e-6 {
-                        return i as u32;
+                    engine_core::materials::MaterialType::Metal { albedo, fuzz } => {
+                        if existing.albedo == [albedo.x, albedo.y, albedo.z, 0.0]
+                            && (existing.params[0] - *fuzz).abs() < 1e-6
+                        {
+                            return i as u32;
+                        }
                     }
-                }
-                engine_core::materials::MaterialType::Dielectric { ref_indx } => {
-                    if (existing.ref_idx - *ref_indx).abs() < 1e-6 {
-                        return i as u32;
+                    engine_core::materials::MaterialType::Dielectric { ref_indx } => {
+                        if (existing.params[1] - *ref_indx).abs() < 1e-6 {
+                            return i as u32;
+                        }
                     }
                 }
             }
+            // Not found: push a new MaterialGpu
+            let new_idx = material_table.len() as u32;
+            let mg = match m {
+                engine_core::materials::MaterialType::Lambertian { albedo } => {
+                    engine_renderer::MaterialGpu {
+                        albedo: [albedo.x, albedo.y, albedo.z, 0.0],
+                        params: [0.0, 0.0, 0.0, 0.0],
+                    }
+                }
+                engine_core::materials::MaterialType::Metal { albedo, fuzz } => {
+                    engine_renderer::MaterialGpu {
+                        albedo: [albedo.x, albedo.y, albedo.z, 0.0],
+                        params: [*fuzz, 0.0, 0.0, 0.0],
+                    }
+                }
+                engine_core::materials::MaterialType::Dielectric { ref_indx } => {
+                    engine_renderer::MaterialGpu {
+                        albedo: [1.0, 1.0, 1.0, 0.0],
+                        params: [0.0, *ref_indx, 0.0, 0.0],
+                    }
+                }
+            };
+            material_table.push(mg);
+            new_idx
         }
-        // Not found: push a new MaterialGpu
-        let new_idx = material_table.len() as u32;
-        let mg = match m {
-            engine_core::materials::MaterialType::Lambertian { albedo } => engine_renderer::MaterialGpu { albedo: [albedo.x, albedo.y, albedo.z], fuzz: 0.0, ref_idx: 0.0, _pad: 0.0 },
-            engine_core::materials::MaterialType::Metal { albedo, fuzz } => engine_renderer::MaterialGpu { albedo: [albedo.x, albedo.y, albedo.z], fuzz: *fuzz, ref_idx: 0.0, _pad: 0.0 },
-            engine_core::materials::MaterialType::Dielectric { ref_indx } => engine_renderer::MaterialGpu { albedo: [1.0, 1.0, 1.0], fuzz: 0.0, ref_idx: *ref_indx, _pad: 0.0 },
-        };
-        material_table.push(mg);
-        new_idx
-    }
 
-    // Register the indexed unit-sphere mesh once so we don't re-upload
-    // vertex/index data each frame. Using an indexed mesh reduces vertex
-    // duplication compared to the non-indexed generator. We also include
-    // per-vertex normals for lighting.
-    let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
-    let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
+        // Register the indexed unit-sphere mesh once so we don't re-upload
+        // vertex/index data each frame. Using an indexed mesh reduces vertex
+        // duplication compared to the non-indexed generator. We also include
+        // per-vertex normals for lighting.
+        let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
+        let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
 
-    // Walk the world and build instances while populating the material table
-    // indices used by instances.
+        // Walk the world and build instances while populating the material table
+        // indices used by instances.
 
         // Frame timing: aim for ~60 FPS.
         let frame_duration = Duration::from_secs_f64(1.0 / 60.0);
@@ -150,6 +172,16 @@ fn main() {
                             let midx = material_table.find_or_push(&s.mat_ptr);
                             instances.push(s.to_instance_with_material(midx));
                         }
+                        // Debug: print material table and instance material indices
+                        if material_table.as_slice().len() > 0 {
+                            println!("[debug] material_table.len={} ", material_table.as_slice().len());
+                            for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
+                                println!("[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}", i, m.albedo[0], m.albedo[1], m.albedo[2], m.params[0], m.params[1]);
+                            }
+                        }
+                        for (i, inst) in instances.iter().enumerate().take(8) {
+                            println!("[debug] inst[{}].material={}", i, inst.material);
+                        }
                         // Upload material table to GPU if it changed.
                         if material_table.is_dirty() {
                             renderer.set_materials(material_table.as_slice());
@@ -175,6 +207,16 @@ fn main() {
                     for s in q.iter(&world) {
                         let midx = material_table.find_or_push(&s.mat_ptr);
                         instances.push(s.to_instance_with_material(midx));
+                    }
+                    // Debug: print material table and first few instance indices
+                    if material_table.as_slice().len() > 0 {
+                        println!("[debug] material_table.len={} ", material_table.as_slice().len());
+                        for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
+                            println!("[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}", i, m.albedo[0], m.albedo[1], m.albedo[2], m.params[0], m.params[1]);
+                        }
+                    }
+                    for (i, inst) in instances.iter().enumerate().take(8) {
+                        println!("[debug] inst[{}].material={}", i, inst.material);
                     }
                     if material_table.is_dirty() {
                         renderer.set_materials(material_table.as_slice());
@@ -223,10 +265,10 @@ fn main() {
 
     #[cfg(not(feature = "backend-wgpu"))]
     {
-    let mut renderer = create_renderer();
-    // Register indexed mesh once with placeholder renderer (no-op) and use render_mesh
-    let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
-    let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
+        let mut renderer = create_renderer();
+        // Register indexed mesh once with placeholder renderer (no-op) and use render_mesh
+        let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
+        let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
         let instances = collect_instances(&mut world);
         renderer.render_mesh(mesh_handle, &instances, camera);
         println!("Rendered one frame (exiting).");
@@ -335,7 +377,7 @@ fn collect_vertices(_world: &mut World) -> Vec<[f32; 3]> {
     Sphere::unit_sphere_vertices(16, 16)
 }
 
-fn collect_indexed_vertices(_world: &mut World) -> (Vec<[f32; 3]>, Vec<[f32;3]>, Vec<u32>) {
+fn collect_indexed_vertices(_world: &mut World) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
     // Return an indexed unit-sphere mesh with normals.
     Sphere::unit_sphere_indexed(16, 16)
 }

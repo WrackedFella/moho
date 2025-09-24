@@ -14,10 +14,10 @@ pub mod prelude {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct MaterialGpu {
-    pub albedo: [f32; 3],
-    pub fuzz: f32,
-    pub ref_idx: f32,
-    pub _pad: f32,
+    // Use two vec4-sized fields so the GPU storage layout is a clean 32-byte
+    // stride per element which matches WGSL `vec4` alignment rules.
+    pub albedo: [f32; 4],
+    pub params: [f32; 4], // params.x = fuzz, params.y = ref_idx, others unused
 }
 
 pub mod gfx {
@@ -184,7 +184,7 @@ pub mod gfx {
                 // Create an initial one-element material storage buffer so we can
                 // create the bind group now. It will be replaced when the app
                 // uploads real materials.
-                let initial_material = MaterialGpu { albedo: [1.0, 1.0, 1.0], fuzz: 0.0, ref_idx: 0.0, _pad: 0.0 };
+                let initial_material = MaterialGpu { albedo: [1.0, 1.0, 1.0, 0.0], params: [0.0, 0.0, 0.0, 0.0] };
                 let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("material-buffer-initial"),
                     contents: bytemuck::bytes_of(&initial_material),
@@ -546,6 +546,18 @@ pub mod gfx {
                 let mut iv: Vec<InterleavedVertex> = Vec::with_capacity(vertices.len());
                 for i in 0..vertices.len() {
                     iv.push(InterleavedVertex { pos: vertices[i], nor: normals[i] });
+                }
+                // Debug: print first few interleaved vertices to ensure normals exist
+                for (i, v) in iv.iter().enumerate().take(6) {
+                    println!("[register_indexed_mesh] v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})", i, v.pos[0], v.pos[1], v.pos[2], v.nor[0], v.nor[1], v.nor[2]);
+                }
+                // Print a few sampled indices across the mesh to check variation
+                if iv.len() > 50 {
+                    let samples = [0usize, iv.len()/4, iv.len()/2, 3*iv.len()/4, iv.len()-1];
+                    for idx in samples {
+                        let v = &iv[idx];
+                        println!("[register_indexed_mesh] sample v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})", idx, v.pos[0], v.pos[1], v.pos[2], v.nor[0], v.nor[1], v.nor[2]);
+                    }
                 }
                 let vertex_bytes = bytemuck::cast_slice(&iv);
                 let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("mesh-vertex-buffer"), contents: vertex_bytes, usage: wgpu::BufferUsages::VERTEX });

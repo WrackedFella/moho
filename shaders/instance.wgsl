@@ -24,10 +24,8 @@ struct InstanceIn {
 }
 
 struct Material {
-    albedo: vec3<f32>,
-    fuzz: f32,
-    ref_idx: f32,
-    _pad: f32,
+    albedo: vec4<f32>, // .xyz = albedo, .w unused
+    params: vec4<f32>, // params.x = fuzz, params.y = ref_idx
 }
 
 @group(0) @binding(1)
@@ -35,7 +33,7 @@ var<storage, read> materials: array<Material>;
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
-    @location(0) material: u32,
+    @location(0) @interpolate(flat) material: u32,
     @location(1) normal: vec3<f32>,
     @location(2) world_pos: vec3<f32>,
 }
@@ -90,23 +88,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let contact = exp(-10.0 * max(in.world_pos.y, 0.0)); // strong near y=0
     let ao = ao_from_light * mix(1.0, 0.6, contact);
 
-    var color: vec3<f32> = vec3<f32>(0.0);
     let mat = materials[in.material];
-    if (in.material == 0u) {
-        // Lambertian: diffuse + small specular
-        color = mat.albedo * (ambient + (1.0 - ambient) * ao * diff) + vec3<f32>(spec * 0.05);
-    } else if (in.material == 1u) {
-        // Metal: specular-dominant, modulated by fuzz
-        let metal_factor = 1.0 - clamp(mat.fuzz, 0.0, 1.0);
-        color = mat.albedo * (ambient * 0.15 + 0.85 * ao * diff * metal_factor) + vec3<f32>(spec * (0.9 * metal_factor));
-    } else if (in.material == 2u) {
-        // Dielectric: tinted base + reduced diffuse response
-        let t = clamp((mat.ref_idx - 1.0) * 0.25, 0.0, 1.0);
-        let base = mix(mat.albedo, vec3<f32>(0.8, 0.9, 1.0), t);
-        color = base * (ambient + (1.0 - ambient) * ao * diff * 0.5) + vec3<f32>(spec * 0.25);
-    } else {
-        color = mat.albedo;
-    }
-    color = clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
+    let albedo = mat.albedo.xyz;
+    let fuzz = mat.params.x;
+    // Simple Blinn-Phong style lighting: diffuse + specular
+    let diff_color = albedo * diff;
+    // specular: use a small metalness-like mix controlled by fuzz
+    let spec_strength = mix(0.04, 1.0, clamp(fuzz, 0.0, 1.0));
+    let spec_color = vec3<f32>(spec_strength) * spec;
+
+    let color = vec3<f32>(ambient) * albedo + ao * (diff_color + spec_color);
     return vec4<f32>(color, 1.0);
 }

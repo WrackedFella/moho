@@ -47,7 +47,11 @@ pub struct MaterialTable {
 
 impl MaterialTable {
     pub fn new() -> Self {
-        MaterialTable { map: HashMap::new(), list: Vec::new(), dirty: false }
+        MaterialTable {
+            map: HashMap::new(),
+            list: Vec::new(),
+            dirty: false,
+        }
     }
 
     /// Return the index for the given material, inserting a new entry if
@@ -59,12 +63,24 @@ impl MaterialTable {
         }
         let idx = self.list.len() as u32;
         let mg = match m {
-            engine_core::materials::MaterialType::Lambertian { albedo } =>
-                engine_renderer::MaterialGpu { albedo: [albedo.x, albedo.y, albedo.z], fuzz: 0.0, ref_idx: 0.0, _pad: 0.0 },
-            engine_core::materials::MaterialType::Metal { albedo, fuzz } =>
-                engine_renderer::MaterialGpu { albedo: [albedo.x, albedo.y, albedo.z], fuzz: *fuzz, ref_idx: 0.0, _pad: 0.0 },
-            engine_core::materials::MaterialType::Dielectric { ref_indx } =>
-                engine_renderer::MaterialGpu { albedo: [1.0, 1.0, 1.0], fuzz: 0.0, ref_idx: *ref_indx, _pad: 0.0 },
+            engine_core::materials::MaterialType::Lambertian { albedo } => {
+                engine_renderer::MaterialGpu {
+                    albedo: [albedo.x, albedo.y, albedo.z, 0.0],
+                    params: [0.0, 0.0, 0.0, 0.0],
+                }
+            }
+            engine_core::materials::MaterialType::Metal { albedo, fuzz } => {
+                engine_renderer::MaterialGpu {
+                    albedo: [albedo.x, albedo.y, albedo.z, 0.0],
+                    params: [*fuzz, 0.0, 0.0, 0.0],
+                }
+            }
+            engine_core::materials::MaterialType::Dielectric { ref_indx } => {
+                engine_renderer::MaterialGpu {
+                    albedo: [1.0, 1.0, 1.0, 0.0],
+                    params: [0.0, *ref_indx, 0.0, 0.0],
+                }
+            }
         };
         self.map.insert(key, idx);
         self.list.push(mg);
@@ -72,14 +88,24 @@ impl MaterialTable {
         idx
     }
 
-    pub fn is_dirty(&self) -> bool { self.dirty }
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
 
-    pub fn clear_dirty(&mut self) { self.dirty = false; }
+    pub fn clear_dirty(&mut self) {
+        self.dirty = false;
+    }
 
-    pub fn as_slice(&self) -> &[engine_renderer::MaterialGpu] { &self.list }
+    pub fn as_slice(&self) -> &[engine_renderer::MaterialGpu] {
+        &self.list
+    }
 
     #[cfg(test)]
-    fn reset(&mut self) { self.map.clear(); self.list.clear(); self.dirty = false; }
+    fn reset(&mut self) {
+        self.map.clear();
+        self.list.clear();
+        self.dirty = false;
+    }
 }
 
 #[cfg(test)]
@@ -91,9 +117,16 @@ mod tests {
     #[test]
     fn dedup_materials_basic() {
         let mut mt = MaterialTable::new();
-        let m1 = MaterialType::Lambertian { albedo: Vec3::new(0.5, 0.25, 0.125) };
-        let m2 = MaterialType::Lambertian { albedo: Vec3::new(0.5, 0.25, 0.125) };
-        let m3 = MaterialType::Metal { albedo: Vec3::new(0.5, 0.25, 0.125), fuzz: 0.3 };
+        let m1 = MaterialType::Lambertian {
+            albedo: Vec3::new(0.5, 0.25, 0.125),
+        };
+        let m2 = MaterialType::Lambertian {
+            albedo: Vec3::new(0.5, 0.25, 0.125),
+        };
+        let m3 = MaterialType::Metal {
+            albedo: Vec3::new(0.5, 0.25, 0.125),
+            fuzz: 0.3,
+        };
 
         let i1 = mt.find_or_push(&m1);
         let i2 = mt.find_or_push(&m2);
