@@ -106,7 +106,7 @@ fn main() {
         // calls `window.request_redraw()`). We schedule the next frame using
         // `ControlFlow::WaitUntil` to sleep the event loop until it's time for
         // the next frame.
-        let _ = event_loop.run(move |event, _event_loop_window_target, control_flow| {
+        event_loop.run(move |event, _event_loop_window_target, control_flow| {
             match event {
                 Event::NewEvents(start_cause) => {
                     if matches!(start_cause, StartCause::Init) {
@@ -124,7 +124,7 @@ fn main() {
                             instances.push(s.to_instance_with_material(midx));
                         }
                         // Debug: print material table and instance material indices
-                        if material_table.as_slice().len() > 0 {
+                        if !material_table.as_slice().is_empty() {
                             log::debug!("material_table.len={}", material_table.as_slice().len());
                             for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
                                 log::debug!(
@@ -171,7 +171,7 @@ fn main() {
                         instances.push(s.to_instance_with_material(midx));
                     }
                     // Debug: print material table and first few instance indices
-                    if material_table.as_slice().len() > 0 {
+                    if !material_table.as_slice().is_empty() {
                         log::debug!("material_table.len={}", material_table.as_slice().len());
                         for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
                             log::debug!(
