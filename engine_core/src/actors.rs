@@ -62,6 +62,14 @@ pub struct InstanceGpu {
     pub material: u32,
     pub object_type: u32,
     pub padding: [u32; 2],
+    // Per-instance material parameters (albedo for Lambertian/Metal,
+    // fuzz for Metal, and ref_idx for Dielectric). Kept here so the
+    // renderer can access material properties per-instance without a
+    // separate material buffer.
+    pub albedo: [f32; 3],
+    pub fuzz: f32,
+    pub ref_idx: f32,
+    pub _pad2: f32,
 }
 
 impl Sphere {
@@ -75,15 +83,38 @@ impl Sphere {
         mat[1] = [cols[4], cols[5], cols[6], cols[7]];
         mat[2] = [cols[8], cols[9], cols[10], cols[11]];
         mat[3] = [cols[12], cols[13], cols[14], cols[15]];
+    // Per-instance material parameters will be filled from the
+    // Sphere's MaterialType below.
+        let (material_id, albedo, fuzz, ref_idx) = match self.mat_ptr {
+            MaterialType::Lambertian { albedo: a } => (
+                0u32,
+                [a.x, a.y, a.z],
+                0.0f32,
+                0.0f32,
+            ),
+            MaterialType::Metal { albedo: a, fuzz: f } => (
+                1u32,
+                [a.x, a.y, a.z],
+                f,
+                0.0f32,
+            ),
+            MaterialType::Dielectric { ref_indx } => (
+                2u32,
+                [0.95f32, 0.975f32, 1.0f32],
+                0.0f32,
+                ref_indx,
+            ),
+        };
+
         InstanceGpu {
             model: mat,
-            material: match self.mat_ptr {
-                MaterialType::Lambertian { .. } => 0u32,
-                MaterialType::Metal { .. } => 1u32,
-                MaterialType::Dielectric { .. } => 2u32,
-            },
+            material: material_id,
             object_type: 0u32,
             padding: [0u32; 2],
+            albedo,
+            fuzz,
+            ref_idx,
+            _pad2: 0.0f32,
         }
     }
 

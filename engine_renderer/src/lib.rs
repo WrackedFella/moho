@@ -31,6 +31,10 @@ pub mod gfx {
             material: u32,
             object_type: u32,
             padding: [u32; 2],
+            albedo: [f32; 3],
+            fuzz: f32,
+            ref_idx: f32,
+            _pad2: f32,
         }
 
     pub struct Renderer {
@@ -185,6 +189,7 @@ pub mod gfx {
                                 attributes: &wgpu::vertex_attr_array![0 => Float32x3],
                             },
                             // Per-instance data: model matrix (4x vec4) + material(u32) + object_type(u32)
+                            // followed by per-instance material params: albedo(vec3), fuzz(f32), ref_idx(f32)
                             wgpu::VertexBufferLayout {
                                 array_stride: std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress,
                                 step_mode: wgpu::VertexStepMode::Instance,
@@ -195,6 +200,9 @@ pub mod gfx {
                                     4 => Float32x4,
                                     5 => Uint32,
                                     6 => Uint32,
+                                    7 => Float32x3,
+                                    8 => Float32,
+                                    9 => Float32,
                                 ],
                             },
                         ],
@@ -226,6 +234,10 @@ pub mod gfx {
                     material: 0,
                     object_type: 0,
                     padding: [0, 0],
+                    albedo: [1.0, 1.0, 1.0],
+                    fuzz: 0.0,
+                    ref_idx: 0.0,
+                    _pad2: 0.0,
                 };
                 let instance_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("instance-buffer-initial"),
@@ -288,8 +300,12 @@ pub mod gfx {
                     instances.push(GpuInstance {
                         model: ic.model,
                         material: ic.material,
-                        object_type: 0,
-                        padding: [0, 0],
+                        object_type: ic.object_type,
+                        padding: ic.padding,
+                        albedo: ic.albedo,
+                        fuzz: ic.fuzz,
+                        ref_idx: ic.ref_idx,
+                        _pad2: 0.0,
                     });
                 }
 
@@ -343,19 +359,23 @@ pub mod gfx {
                     .instance_buffer
                     .as_ref()
                     .expect("instance buffer was created in new");
-                if instances.len() > 0 {
-                    self.queue
-                        .write_buffer(buf, 0, bytemuck::cast_slice(&instances));
-                } else {
-                    let zero = GpuInstance {
-                        model: [[0.0; 4]; 4],
-                        material: 0,
-                        object_type: 0,
-                        padding: [0, 0],
-                    };
-                    self.queue
-                        .write_buffer(buf, 0, bytemuck::cast_slice(&[zero]));
-                }
+                    if instances.len() > 0 {
+                        self.queue
+                            .write_buffer(buf, 0, bytemuck::cast_slice(&instances));
+                    } else {
+                        let zero = GpuInstance {
+                            model: [[0.0; 4]; 4],
+                            material: 0,
+                            object_type: 0,
+                            padding: [0, 0],
+                            albedo: [1.0, 1.0, 1.0],
+                            fuzz: 0.0,
+                            ref_idx: 0.0,
+                            _pad2: 0.0,
+                        };
+                        self.queue
+                            .write_buffer(buf, 0, bytemuck::cast_slice(&[zero]));
+                    }
 
                 let mut encoder = self
                     .device
@@ -489,7 +509,16 @@ pub mod gfx {
                     // instances
                     let mut instances_gpu: Vec<GpuInstance> = Vec::with_capacity(instances.len());
                     for ic in instances {
-                        instances_gpu.push(GpuInstance { model: ic.model, material: ic.material, object_type: ic.object_type, padding: ic.padding });
+                        instances_gpu.push(GpuInstance {
+                            model: ic.model,
+                            material: ic.material,
+                            object_type: ic.object_type,
+                            padding: ic.padding,
+                            albedo: ic.albedo,
+                            fuzz: ic.fuzz,
+                            ref_idx: ic.ref_idx,
+                            _pad2: 0.0,
+                        });
                     }
 
                     if self.instance_capacity < instances_gpu.len().max(1) {
@@ -505,7 +534,7 @@ pub mod gfx {
                     if instances_gpu.len() > 0 {
                         self.queue.write_buffer(ibuf, 0, bytemuck::cast_slice(&instances_gpu));
                     } else {
-                        let zero = GpuInstance { model: [[0.0;4];4], material: 0, object_type: 0, padding: [0,0] };
+                        let zero = GpuInstance { model: [[0.0;4];4], material: 0, object_type: 0, padding: [0,0], albedo: [1.0,1.0,1.0], fuzz: 0.0, ref_idx: 0.0, _pad2: 0.0 };
                         self.queue.write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
                     }
 
