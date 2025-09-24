@@ -3,17 +3,31 @@ name = "moho"
 version = "0.1.0"
 edition = "2024"
 
-[workspace.dependencies]
-moho_core = { path = "core" }
+[dependencies]
+engine_core = { path = "engine_core" }
+engine_renderer = { path = "engine_renderer" }
 glam = "0.30.4"
 rand = "0.9.1"
-vulkano = "0.35.1"
-vulkano-shaders = "0.35.0"
-winit = "0.30.11"
 legion = "0.4.0"
+log = { workspace = true }
+env_logger = { workspace = true }
 
-[dependencies]
-legion.workspace = true
-rand.workspace = true
-moho_core.workspace = true
-glam.workspace = true
+# Optional frontend/backends
+# Use winit 0.28.x to be compatible with wgpu/raw-window-handle used by wgpu 0.15
+winit = { version = "0.28.6", optional = true }
+# WGPU backend (preferred)
+wgpu = { version = "0.15", optional = true }
+pollster = { version = "0.3", optional = true }
+bytemuck = { version = "1.9.1", features = ["derive"] }
+
+[features]
+# Enable the WGPU renderer implementation (renamed to avoid name collision)
+backend-wgpu = ["wgpu", "winit", "pollster", "engine_renderer/backend-wgpu"]
+
+[workspace]
+members = ["engine_core", "engine_renderer"]
+
+[workspace.dependencies]
+log = "0.4"
+env_logger = "0.10"
+
