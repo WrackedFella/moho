@@ -64,9 +64,12 @@ mod wgpu_impl {
         pipeline: wgpu::RenderPipeline,
         camera_buffer: wgpu::Buffer,
         camera_bind_group: wgpu::BindGroup,
-        depth_texture: wgpu::Texture,
+        _depth_texture: wgpu::Texture,
         depth_texture_view: wgpu::TextureView,
         depth_format: wgpu::TextureFormat,
+        instance_buffer: Option<wgpu::Buffer>,
+        instance_capacity: usize,
+        vertex_count: u32,
         window: Option<winit::window::Window>,
     }
 
@@ -102,15 +105,26 @@ mod wgpu_impl {
                 };
             surface.configure(&device, &config);
 
-            // Cube vertices
+            // Full cube (36 vertices: 6 faces * 2 triangles * 3 vertices)
             let vertices: &[Vertex] = &[
-                Vertex{ position: [-0.5, -0.5,  0.5] },
-                Vertex{ position: [ 0.5, -0.5,  0.5] },
-                Vertex{ position: [ 0.5,  0.5,  0.5] },
-                Vertex{ position: [-0.5, -0.5,  0.5] },
-                Vertex{ position: [ 0.5,  0.5,  0.5] },
-                Vertex{ position: [-0.5,  0.5,  0.5] },
-                // ... (other faces omitted for brevity) ...
+                // front
+                Vertex{ position: [-0.5, -0.5,  0.5] }, Vertex{ position: [ 0.5, -0.5,  0.5] }, Vertex{ position: [ 0.5,  0.5,  0.5] },
+                Vertex{ position: [-0.5, -0.5,  0.5] }, Vertex{ position: [ 0.5,  0.5,  0.5] }, Vertex{ position: [-0.5,  0.5,  0.5] },
+                // back
+                Vertex{ position: [ 0.5, -0.5, -0.5] }, Vertex{ position: [-0.5, -0.5, -0.5] }, Vertex{ position: [-0.5,  0.5, -0.5] },
+                Vertex{ position: [ 0.5, -0.5, -0.5] }, Vertex{ position: [-0.5,  0.5, -0.5] }, Vertex{ position: [ 0.5,  0.5, -0.5] },
+                // left
+                Vertex{ position: [-0.5, -0.5, -0.5] }, Vertex{ position: [-0.5, -0.5,  0.5] }, Vertex{ position: [-0.5,  0.5,  0.5] },
+                Vertex{ position: [-0.5, -0.5, -0.5] }, Vertex{ position: [-0.5,  0.5,  0.5] }, Vertex{ position: [-0.5,  0.5, -0.5] },
+                // right
+                Vertex{ position: [ 0.5, -0.5,  0.5] }, Vertex{ position: [ 0.5, -0.5, -0.5] }, Vertex{ position: [ 0.5,  0.5, -0.5] },
+                Vertex{ position: [ 0.5, -0.5,  0.5] }, Vertex{ position: [ 0.5,  0.5, -0.5] }, Vertex{ position: [ 0.5,  0.5,  0.5] },
+                // top
+                Vertex{ position: [-0.5,  0.5,  0.5] }, Vertex{ position: [ 0.5,  0.5,  0.5] }, Vertex{ position: [ 0.5,  0.5, -0.5] },
+                Vertex{ position: [-0.5,  0.5,  0.5] }, Vertex{ position: [ 0.5,  0.5, -0.5] }, Vertex{ position: [-0.5,  0.5, -0.5] },
+                // bottom
+                Vertex{ position: [-0.5, -0.5, -0.5] }, Vertex{ position: [ 0.5, -0.5, -0.5] }, Vertex{ position: [ 0.5, -0.5,  0.5] },
+                Vertex{ position: [-0.5, -0.5, -0.5] }, Vertex{ position: [ 0.5, -0.5,  0.5] }, Vertex{ position: [-0.5, -0.5,  0.5] },
             ];
 
             let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -118,6 +132,8 @@ mod wgpu_impl {
                 contents: bytemuck::cast_slice(vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
+
+            let vertex_count = vertices.len() as u32;
 
                 // No bind group layouts for now (we don't use additional uniforms yet)
                 // let instance_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -223,7 +239,15 @@ mod wgpu_impl {
                 multiview: None,
             });
 
-            Renderer { surface, device, queue, config, vertex_buffer, pipeline, camera_buffer, camera_bind_group, depth_texture, depth_texture_view: depth_view, depth_format, window: Some(window) }
+            // create a tiny initial instance buffer (1 element) to avoid special cases
+            let initial_instance = GpuInstance { model: [[0.0;4];4], material: 0, object_type: 0, padding: [0,0] };
+            let instance_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("instance-buffer-initial"),
+                contents: bytemuck::cast_slice(&[initial_instance]),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+
+            Renderer { surface, device, queue, config, vertex_buffer, pipeline, camera_buffer, camera_bind_group, _depth_texture: depth_texture, depth_texture_view: depth_view, depth_format, instance_buffer: Some(instance_buf), instance_capacity: 1, vertex_count, window: Some(window) }
         }
 
             pub fn render(&mut self, world: &mut World, camera: (glam::Mat4, glam::Mat4)) {
@@ -252,21 +276,29 @@ mod wgpu_impl {
                 // write camera matrix to GPU
                 self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&cols));
 
-                // Create instance buffer
-                let instance_buffer = if instances.len() > 0 {
-                    self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                // Update or create a persistent instance buffer
+                let instance_stride = std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress;
+                let needed = (instances.len().max(1) * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
+                if self.instance_capacity < instances.len().max(1) {
+                    // allocate a new GPU buffer with COPY_DST so we can update it
+                    let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some("instance-buffer"),
-                        contents: bytemuck::cast_slice(&instances),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    })
+                        size: needed,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    self.instance_buffer = Some(buf);
+                    self.instance_capacity = instances.len().max(1);
+                }
+
+                // Write instance data into the persistent buffer (we create an initial buffer in new())
+                let buf = self.instance_buffer.as_ref().expect("instance buffer was created in new");
+                if instances.len() > 0 {
+                    self.queue.write_buffer(buf, 0, bytemuck::cast_slice(&instances));
                 } else {
-                    // create an empty 1-element buffer to avoid passing a null buffer
-                    self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("instance-buffer-empty"),
-                        contents: bytemuck::cast_slice(&[GpuInstance { model: [[0.0;4];4], material: 0, object_type: 0, padding: [0,0] }]),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    })
-                };
+                    let zero = GpuInstance { model: [[0.0;4];4], material: 0, object_type: 0, padding: [0,0] };
+                    self.queue.write_buffer(buf, 0, bytemuck::cast_slice(&[zero]));
+                }
 
                 let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("encoder") });
 
@@ -288,9 +320,11 @@ mod wgpu_impl {
                     // set camera bind group (group 0)
                     rpass.set_bind_group(0, &self.camera_bind_group, &[]);
                     rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                    rpass.set_vertex_buffer(1, instance_buffer.slice(..));
+                    // bind the persistent instance buffer
+                    let ibuf = self.instance_buffer.as_ref().expect("instance buffer present");
+                    rpass.set_vertex_buffer(1, ibuf.slice(..));
                     let instance_count = instances.len().max(1) as u32;
-                    rpass.draw(0..6, 0..instance_count);
+                    rpass.draw(0..self.vertex_count, 0..instance_count);
             }
 
             self.queue.submit(Some(encoder.finish()));
