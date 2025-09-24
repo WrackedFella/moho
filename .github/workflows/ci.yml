@@ -5,6 +5,8 @@ on:
     branches: [ main, shader-work ]
   pull_request:
     branches: [ main ]
+  # Allow manual runs from the GitHub UI ("Run workflow" button)
+  workflow_dispatch: {}
 
 jobs:
   check:
