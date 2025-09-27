@@ -256,14 +256,8 @@ fn random_scene(world: &mut World) {
             }
         }
     }
-
-    world.push((Sphere::new(
-        Vec3::new(8f32, 1f32, 0f32),
-        1f32,
-        MaterialType::Dielectric { ref_indx: 1.5f32 },
-    ),));
     world.push((Cube::new(
-        Vec3::new(6f32, 1f32, 0f32),
+        Vec3::new(0f32, 1f32, 0f32),
         1f32,
         1f32,
         1f32,
@@ -275,6 +269,16 @@ fn random_scene(world: &mut World) {
             ),
         },
     ),));
+    world.push((Sphere::new(
+        Vec3::new(4f32, 1f32, 0f32),
+        1f32,
+        MaterialType::Dielectric { ref_indx: 1.5f32 },
+    ),));
+    world.push((Sphere::new(
+        Vec3::new(8f32, 1f32, 0f32),
+        1f32,
+        MaterialType::Dielectric { ref_indx: 1.5f32 },
+    ),));
     // world.push((Sphere::new(
     //     Vec3::new(-4f32, 1f32, 0f32),
     //     1f32,
@@ -282,14 +286,7 @@ fn random_scene(world: &mut World) {
     //         albedo: Vec3::new(0.4f32, 0.2f32, 0.1f32),
     //     },
     // ),));
-    // world.push((Sphere::new(
-    //     Vec3::new(4f32, 1f32, 0f32),
-    //     1f32,
-    //     MaterialType::Metal {
-    //         albedo: Vec3::new(0.7f32, 0.6f32, 0.5f32),
-    //         fuzz: 0.0f32,
-    //     },
-    // ),));
+    
     println!("World Generated");
 }
 
