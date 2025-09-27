@@ -1,8 +1,8 @@
-use engine_core::actors::{Cube, Sphere};
-use engine_core::materials::MaterialType;
-use engine_core::vector_length;
-use glam::Vec3;
-use rand::{Rng, rng};
+#[cfg(feature = "backend-wgpu")]
+use engine_core::actors::Cube;
+use engine_core::actors::Sphere;
+use engine_core::scene_builders::random_scene;
+// glam types are used via fully-qualified names where needed
 // Renderer has been moved into the `engine_renderer` crate to provide a
 // reusable rendering API.
 #[cfg(feature = "backend-wgpu")]
@@ -40,38 +40,31 @@ struct Velocity {
 
 fn main() {
     let mut world = World::default();
-    // Attempt to load a saved scene (binary bincode). If no scene file is
-    // present or load fails, generate a new random scene and save it.
-    let mut scene = engine_renderer::Scene::new();
-    let scene_path = std::path::Path::new("scene.bin");
-    if scene_path.exists() {
-        match scene.load_from_file(scene_path, &mut world) {
-            Ok(_) => println!("Loaded scene from scene.bin"),
-            Err(e) => {
-                eprintln!("Failed to load scene.bin: {}. Generating new scene.", e);
-                random_scene(&mut world);
-                if let Err(e) = scene.save_to_file(scene_path, &world) {
-                    eprintln!("Failed to save generated scene: {}", e);
-                }
-            }
-        }
+    // Parse CLI args for --scene <path>. Default to ./scene.bin
+    let args: Vec<String> = std::env::args().collect();
+    let scene_path_buf = if let Some(i) = args.iter().position(|a| a == "--scene" || a == "-s") {
+        args.get(i + 1).map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from("scene.bin"))
     } else {
-        random_scene(&mut world);
-        if let Err(e) = scene.save_to_file(scene_path, &world) {
-            eprintln!("Failed to save generated scene: {}", e);
-        }
-    }
+        std::path::PathBuf::from("scene.bin")
+    };
+
+    // Create the Scene manager once and try to load the persisted scene.
+    let mut scene = engine_renderer::Scene::new();
+    load_or_generate_scene(&mut scene, &mut world, &scene_path_buf);
 
     // create a simple perspective camera (we keep the camera world position
     // so the shader can compute view-dependent lighting)
-    let camera = {
+    let camera = make_camera();
+
+    // Helper to make the camera clearer - kept local for now.
+    fn make_camera() -> (glam::Mat4, glam::Mat4, glam::Vec3) {
         let eye = glam::Vec3::new(13.0, 2.0, 3.0);
         let center = glam::Vec3::new(0.0, 0.0, 0.0);
         let up = glam::Vec3::new(0.0, 1.0, 0.0);
         let view = glam::Mat4::look_at_rh(eye, center, up);
         let proj = glam::Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 100.0f32);
         (view, proj, eye)
-    };
+    }
 
     // If `backend-wgpu` (and therefore `winit`) is enabled, create the event loop
     // and run a proper per-frame loop. Otherwise use the placeholder
@@ -87,9 +80,9 @@ fn main() {
         // Create a boxed renderer backend via the factory.
         let mut renderer = create_renderer(&event_loop, window);
 
-        // Create a Scene manager which owns the material table and provides
-        // a simple `render` API.
-        let mut scene = engine_renderer::Scene::new();
+        // Use the `scene` created above; it was intentionally created once
+        // before entering the backend-specific code paths so persistence and
+        // material state are shared.
 
         // Use `MaterialTable` methods for deduplication; the local helper was
         // removed because it was unused after consolidating material logic.
@@ -210,102 +203,28 @@ fn main() {
     }
 }
 
-fn random_scene(world: &mut World) {
-    let sphere = Sphere::new(
-        Vec3::new(0f32, -1000f32, 0f32),
-        1000f32,
-        MaterialType::Lambertian {
-            // albedo: Vec3::new(0.5f32, 0.5f32, 0.5f32),
-            albedo: Vec3::new(
-                rng().random::<f32>() * rng().random::<f32>(),
-                rng().random::<f32>() * rng().random::<f32>(),
-                rng().random::<f32>() * rng().random::<f32>(),
-            ),
-        },
-    );
-    world.push((sphere,));
-    for a in -11..11 {
-        for b in -11..11 {
-            let choose_mat = rng().random::<f32>();
-            let center = Vec3::new(
-                a as f32 + 0.9f32 * rng().random::<f32>(),
-                0.2f32,
-                b as f32 + 0.9f32 * rng().random::<f32>(),
-            );
-            if vector_length(center - Vec3::new(4f32, 0.2f32, 0f32)) > 0.9f32 {
-                if choose_mat < 0.8f32 {
-                    // diffuse
-                    let sphere = Sphere::new(
-                        center,
-                        0.2f32,
-                        MaterialType::Lambertian {
-                            albedo: Vec3::new(
-                                rng().random::<f32>() * rng().random::<f32>(),
-                                rng().random::<f32>() * rng().random::<f32>(),
-                                rng().random::<f32>() * rng().random::<f32>(),
-                            ),
-                        },
-                    );
-                    world.push((sphere,));
-                } else if choose_mat < 0.95f32 {
-                    // metal
-                    let sphere = Sphere::new(
-                        center,
-                        0.2f32,
-                        MaterialType::Metal {
-                            albedo: Vec3::new(
-                                0.5f32 * (1f32 + rng().random::<f32>()),
-                                0.5f32 * (1f32 + rng().random::<f32>()),
-                                0.5f32 * (1f32 + rng().random::<f32>()),
-                            ),
-                            fuzz: 0.5f32 * rng().random::<f32>(),
-                        },
-                    );
-                    world.push((sphere,));
-                } else {
-                    // glass
-                    let sphere = Sphere::new(
-                        center,
-                        0.2f32,
-                        MaterialType::Dielectric { ref_indx: 1.5f32 },
-                    );
-                    world.push((sphere,));
+fn load_or_generate_scene(
+    scene: &mut engine_renderer::Scene,
+    world: &mut World,
+    scene_path: &std::path::Path,
+) {
+    if scene_path.exists() {
+        match scene.load_from_file(scene_path, world) {
+            Ok(_) => println!("Loaded scene from scene.bin"),
+            Err(e) => {
+                eprintln!("Failed to load scene.bin: {}. Generating new scene.", e);
+                random_scene(world);
+                if let Err(e) = scene.save_to_file(scene_path, world) {
+                    eprintln!("Failed to save generated scene: {}", e);
                 }
             }
         }
+    } else {
+        random_scene(world);
+        if let Err(e) = scene.save_to_file(scene_path, world) {
+            eprintln!("Failed to save generated scene: {}", e);
+        }
     }
-    world.push((Cube::new(
-        Vec3::new(0f32, 1f32, 0f32),
-        1f32,
-        1f32,
-        1f32,
-        MaterialType::Lambertian {
-            albedo: Vec3::new(
-                rng().random::<f32>() * rng().random::<f32>(),
-                rng().random::<f32>() * rng().random::<f32>(),
-                rng().random::<f32>() * rng().random::<f32>(),
-            ),
-        },
-    ),));
-    world.push((Sphere::new(
-        Vec3::new(4f32, 1f32, 0f32),
-        1f32,
-        MaterialType::Dielectric { ref_indx: 1.5f32 },
-    ),));
-    world.push((Sphere::new(
-        Vec3::new(8f32, 1f32, 0f32),
-        1f32,
-        MaterialType::Dielectric { ref_indx: 1.5f32 },
-    ),));
-    // world.push((Sphere::new(
-    //     Vec3::new(-4f32, 1f32, 0f32),
-    //     1f32,
-    //     MaterialType::Lambertian {
-    //         albedo: Vec3::new(0.4f32, 0.2f32, 0.1f32),
-    //     },
-    // ),));
-
-    println!("World Generated");
 }
 
 #[allow(dead_code)]

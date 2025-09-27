@@ -16,6 +16,7 @@ bincode = "1.3"
 
 [dev-dependencies]
 naga = { version = "0.11", features = ["wgsl-in"] }
+tempfile = "3.5"
 
 [features]
 backend-wgpu = ["wgpu", "winit", "pollster"]

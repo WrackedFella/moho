@@ -7,6 +7,7 @@ use rand::{rng, Rng};
 pub mod actors;
 pub mod camera;
 pub mod materials;
+pub mod scene_builders;
 
 // Reflection function
 pub fn schlick(cosine: f32, ref_idx: f32) -> f32 {

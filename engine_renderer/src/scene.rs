@@ -23,7 +23,6 @@ impl Scene {
             material_table: MaterialTable::new(),
         }
     }
-    
 
     /// Render the provided `world` using `renderer`. `mesh_handle` is the
     /// spherical mesh handle and `cube_mesh_handle` is the cube mesh handle
@@ -150,7 +149,9 @@ impl Scene {
         // while preserving the sorted order.
         let mut groups: Vec<(u32, Vec<InstanceGpu>)> = Vec::new();
         for (_d, mesh_h, inst) in by_depth {
-            if let Some((last_mesh, vec)) = groups.last_mut() && *last_mesh == mesh_h {
+            if let Some((last_mesh, vec)) = groups.last_mut()
+                && *last_mesh == mesh_h
+            {
                 vec.push(inst);
                 continue;
             }
