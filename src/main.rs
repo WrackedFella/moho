@@ -152,9 +152,66 @@ fn main() {
                             material_table.clear_dirty();
                         }
 
-                        // Draw spheres then cubes (each uses its own mesh handle)
-                        renderer.render_mesh(mesh_handle, &sphere_instances, camera, false);
-                        renderer.render_mesh(cube_mesh_handle, &cube_instances, camera, true);
+                        // Draw by material type (opaque first, transparent last).
+                        // Split each mesh's instances into opaque/transparent based on
+                        // the material parameters uploaded in `material_table`.
+                        let mats = material_table.as_slice();
+
+                        let mut cube_opaque: Vec<engine_core::actors::InstanceGpu> = Vec::new();
+                        let mut cube_trans: Vec<engine_core::actors::InstanceGpu> = Vec::new();
+                        for inst in &cube_instances {
+                            let idx = inst.material as usize;
+                            let is_transparent = if idx < mats.len() {
+                                // Use explicit helper: params[2] signals transparency.
+                                mats[idx].is_transparent()
+                            } else {
+                                false
+                            };
+                            if is_transparent {
+                                cube_trans.push(*inst);
+                            } else {
+                                cube_opaque.push(*inst);
+                            }
+                        }
+
+                        let mut sph_opaque: Vec<engine_core::actors::InstanceGpu> = Vec::new();
+                        let mut sph_trans: Vec<engine_core::actors::InstanceGpu> = Vec::new();
+                        for inst in &sphere_instances {
+                            let idx = inst.material as usize;
+                            let is_transparent = if idx < mats.len() { mats[idx].is_transparent() } else { false };
+                            if is_transparent {
+                                sph_trans.push(*inst);
+                            } else {
+                                sph_opaque.push(*inst);
+                            }
+                        }
+
+                        // Render opaque geometry first (no finalize). Then render
+                        // transparent geometry last so blending composes correctly.
+                        renderer.render_mesh(cube_mesh_handle, &cube_opaque, camera, false);
+                        renderer.render_mesh(mesh_handle, &sph_opaque, camera, false);
+
+                        // Decide finalize on the last actual render call. We render
+                        // cube transparent group first (if any), then sphere transparent
+                        // and mark the very last call finalize=true so the renderer
+                        // flushes the batched draws.
+                        let mut did_any_trans = false;
+                        if !cube_trans.is_empty() {
+                            did_any_trans = true;
+                            // If sphere transparent exists, this is not the final call.
+                            let final_call = sph_trans.is_empty();
+                            renderer.render_mesh(cube_mesh_handle, &cube_trans, camera, final_call);
+                        }
+                        if !sph_trans.is_empty() {
+                            did_any_trans = true;
+                            // This is the last call, ensure finalize=true.
+                            renderer.render_mesh(mesh_handle, &sph_trans, camera, true);
+                        }
+                        // If there were no transparent draws at all, we still need
+                        // to finalize the frame. Call an empty finalize to flush.
+                        if !did_any_trans {
+                            renderer.render_mesh(mesh_handle, &Vec::new(), camera, true);
+                        }
                         *control_flow = ControlFlow::Wait;
                     }
                 }
@@ -201,9 +258,41 @@ fn main() {
                         renderer.set_materials(material_table.as_slice());
                         material_table.clear_dirty();
                     }
-                    // Draw sphere and cube meshes
-                    renderer.render_mesh(mesh_handle, &sphere_instances, camera, false);
-                    renderer.render_mesh(cube_mesh_handle, &cube_instances, camera, true);
+                    // Draw by material type (opaque first, transparent last).
+                    let mats = material_table.as_slice();
+
+                    let mut cube_opaque: Vec<engine_core::actors::InstanceGpu> = Vec::new();
+                    let mut cube_trans: Vec<engine_core::actors::InstanceGpu> = Vec::new();
+                    for inst in &cube_instances {
+                        let idx = inst.material as usize;
+                        let is_transparent = if idx < mats.len() { mats[idx].is_transparent() } else { false };
+                        if is_transparent { cube_trans.push(*inst); } else { cube_opaque.push(*inst); }
+                    }
+
+                    let mut sph_opaque: Vec<engine_core::actors::InstanceGpu> = Vec::new();
+                    let mut sph_trans: Vec<engine_core::actors::InstanceGpu> = Vec::new();
+                    for inst in &sphere_instances {
+                        let idx = inst.material as usize;
+                        let is_transparent = if idx < mats.len() { mats[idx].is_transparent() } else { false };
+                        if is_transparent { sph_trans.push(*inst); } else { sph_opaque.push(*inst); }
+                    }
+
+                    renderer.render_mesh(cube_mesh_handle, &cube_opaque, camera, false);
+                    renderer.render_mesh(mesh_handle, &sph_opaque, camera, false);
+
+                    let mut did_any_trans = false;
+                    if !cube_trans.is_empty() {
+                        did_any_trans = true;
+                        let final_call = sph_trans.is_empty();
+                        renderer.render_mesh(cube_mesh_handle, &cube_trans, camera, final_call);
+                    }
+                    if !sph_trans.is_empty() {
+                        did_any_trans = true;
+                        renderer.render_mesh(mesh_handle, &sph_trans, camera, true);
+                    }
+                    if !did_any_trans {
+                        renderer.render_mesh(mesh_handle, &Vec::new(), camera, true);
+                    }
                     *control_flow = ControlFlow::Wait;
                 }
                 Event::MainEventsCleared => {
@@ -322,12 +411,12 @@ fn random_scene(world: &mut World) {
     // }
 
     world.push((Sphere::new(
-        Vec3::new(0f32, 1f32, 0f32),
+        Vec3::new(8f32, 1f32, 0f32),
         1f32,
         MaterialType::Dielectric { ref_indx: 1.5f32 },
     ),));
     world.push((Cube::new(
-        Vec3::new(4f32, 1f32, 0f32),
+        Vec3::new(6f32, 1f32, 0f32),
         1f32,
         1f32,
         1f32,

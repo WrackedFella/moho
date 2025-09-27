@@ -20,6 +20,14 @@ pub struct MaterialGpu {
     pub params: [f32; 4], // params.x = fuzz, params.y = ref_idx, others unused
 }
 
+impl MaterialGpu {
+    /// Return true if this material was marked as potentially transparent
+    /// by the application (params[2] > 0.0).
+    pub fn is_transparent(&self) -> bool {
+        self.params[2] > 0.0
+    }
+}
+
 // Material table implementation (moved from the binary to the renderer crate)
 mod materials;
 pub use materials::MaterialTable;
@@ -290,7 +298,18 @@ pub mod gfx {
                         entry_point: "fs_main",
                         targets: &[Some(wgpu::ColorTargetState {
                             format: config.format,
-                            blend: Some(wgpu::BlendState::REPLACE),
+                            blend: Some(wgpu::BlendState {
+                                color: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                                alpha: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::One,
+                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                            }),
                             write_mask: wgpu::ColorWrites::ALL,
                         })],
                     }),

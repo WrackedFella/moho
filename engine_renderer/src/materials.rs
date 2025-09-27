@@ -79,16 +79,21 @@ impl MaterialTable {
         let idx = self.list.len() as u32;
         let mg = match m {
             engine_core::materials::MaterialType::Lambertian { albedo } => MaterialGpu {
+                // params: [fuzz, ref_idx, is_transparent, unused]
                 albedo: [albedo.x, albedo.y, albedo.z, 0.0],
                 params: [0.0, 0.0, 0.0, 0.0],
             },
             engine_core::materials::MaterialType::Metal { albedo, fuzz } => MaterialGpu {
+                // Metals are opaque; store fuzz in params.x
                 albedo: [albedo.x, albedo.y, albedo.z, 0.0],
                 params: [*fuzz, 0.0, 0.0, 0.0],
             },
             engine_core::materials::MaterialType::Dielectric { ref_indx } => MaterialGpu {
+                // Dielectrics are considered potentially transparent. We store
+                // the refraction index in params.y and set params.z=1.0 to
+                // signal transparency to CPU-side ordering logic.
                 albedo: [1.0, 1.0, 1.0, 0.0],
-                params: [0.0, *ref_indx, 0.0, 0.0],
+                params: [0.0, *ref_indx, 1.0, 0.0],
             },
         };
         self.map.insert(key, idx);
