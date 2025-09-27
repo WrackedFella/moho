@@ -52,9 +52,11 @@ fn main() {
     let mut scene = engine_renderer::Scene::new();
     load_or_generate_scene(&mut scene, &mut world, &scene_path_buf);
 
-    // create a simple perspective camera (we keep the camera world position
-    // so the shader can compute view-dependent lighting)
-    let camera = make_camera();
+    // create a simple PlayerController entity and derive the camera from it
+    let start_pos = glam::Vec3::new(13.0, 2.0, 3.0);
+    world.push((engine_core::controller::PlayerController::new(start_pos), engine_core::controller::ControllerInput::default()));
+    // initial camera value (will be computed from controller each frame)
+    let mut camera = make_camera();
 
     // Helper to make the camera clearer - kept local for now.
     fn make_camera() -> (glam::Mat4, glam::Mat4, glam::Vec3) {
@@ -143,7 +145,35 @@ fn main() {
                 } => {
                     renderer.resize(size.width, size.height);
                 }
+                Event::WindowEvent { event: WindowEvent::KeyboardInput { input, .. }, .. } => {
+                    use winit::event::{VirtualKeyCode, ElementState};
+                    if let Some(vk) = input.virtual_keycode {
+                        let mut q = <&mut engine_core::controller::ControllerInput>::query();
+                        if let Some(ci) = q.iter_mut(&mut world).next() {
+                            match (vk, input.state) {
+                                (VirtualKeyCode::W, ElementState::Pressed) => ci.forward = 1.0,
+                                (VirtualKeyCode::W, ElementState::Released) => ci.forward = 0.0,
+                                (VirtualKeyCode::S, ElementState::Pressed) => ci.forward = -1.0,
+                                (VirtualKeyCode::S, ElementState::Released) => ci.forward = 0.0,
+                                (VirtualKeyCode::D, ElementState::Pressed) => ci.right = 1.0,
+                                (VirtualKeyCode::D, ElementState::Released) => ci.right = 0.0,
+                                (VirtualKeyCode::A, ElementState::Pressed) => ci.right = -1.0,
+                                (VirtualKeyCode::A, ElementState::Released) => ci.right = 0.0,
+                                (VirtualKeyCode::Space, ElementState::Pressed) => ci.up = 1.0,
+                                (VirtualKeyCode::Space, ElementState::Released) => ci.up = 0.0,
+                                (VirtualKeyCode::LShift, ElementState::Pressed) => ci.up = -1.0,
+                                (VirtualKeyCode::LShift, ElementState::Released) => ci.up = 0.0,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 Event::RedrawRequested(_window_id) => {
+                    // Update camera from the first PlayerController component
+                    let mut qc = <&mut engine_core::controller::PlayerController>::query();
+                    if let Some(pc) = qc.iter_mut(&mut world).next() {
+                        camera = engine_core::controller::controller_to_camera(pc);
+                    }
                     scene.render(
                         &mut *renderer,
                         &world,
@@ -153,6 +183,16 @@ fn main() {
                     );
                     *control_flow = ControlFlow::Wait;
                 }
+                Event::DeviceEvent { event: winit::event::DeviceEvent::MouseMotion { delta }, .. } => {
+                    // Apply mouse motion as small yaw/pitch deltas
+                    let mut q = <&mut engine_core::controller::ControllerInput>::query();
+                    if let Some(ci) = q.iter_mut(&mut world).next() {
+                        let sensitivity = 0.0025f32;
+                        ci.yaw_delta += -(delta.0 as f32) * sensitivity;
+                        ci.pitch_delta += -(delta.1 as f32) * sensitivity;
+                    }
+                }
+
                 Event::MainEventsCleared => {
                     // Decouple simulation (fixed-step) from rendering.
                     // 1) Accumulate wall-clock time into `sim_acc`.
@@ -254,8 +294,13 @@ fn collect_indexed_vertices(_world: &mut World) -> (Vec<[f32; 3]>, Vec<[f32; 3]>
 // to match our fixed-step scheduling.
 #[allow(dead_code)]
 fn simulate(_world: &mut World, dt: std::time::Duration) {
-    // Example placeholder: You might iterate components and update positions
-    // by velocities here. Keep minimal so builds remain fast.
-    #[allow(unused_variables)]
-    let _seconds = dt.as_secs_f32();
+    // Apply controller inputs to any PlayerController components.
+    let seconds = dt.as_secs_f32();
+    let mut q = <(&mut engine_core::controller::PlayerController, &mut engine_core::controller::ControllerInput)>::query();
+    for (pc, ci) in q.iter_mut(_world) {
+        pc.apply_input(ci, seconds);
+        // yaw/pitch deltas are one-shot; clear after applying so they act per-frame
+        ci.yaw_delta = 0.0;
+        ci.pitch_delta = 0.0;
+    }
 }
