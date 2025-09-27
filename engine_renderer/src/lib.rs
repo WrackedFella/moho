@@ -20,6 +20,10 @@ pub struct MaterialGpu {
     pub params: [f32; 4], // params.x = fuzz, params.y = ref_idx, others unused
 }
 
+// Material table implementation (moved from the binary to the renderer crate)
+mod materials;
+pub use materials::MaterialTable;
+
 pub mod gfx {
     //! Graphics backends grouped under `gfx` for clarity. The WGPU backend is
     //! feature-gated behind `backend-wgpu`.
@@ -411,95 +415,95 @@ pub mod gfx {
                 self.queue
                     .write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&cols));
 
-                    // Update or create a persistent instance buffer using exponential growth
-                    let _instance_stride = std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress;
-                    let required_count = instances.len().max(1);
-                    if self.instance_capacity < required_count {
-                        // exponential grow: double until capacity >= required_count
-                        let mut new_cap = self.instance_capacity.max(1);
-                        while new_cap < required_count {
-                            new_cap = new_cap.saturating_mul(2);
-                        }
-                        let size_bytes =
-                            (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
-                        let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("instance-buffer"),
-                            size: size_bytes,
-                            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                            mapped_at_creation: false,
-                        });
-                        self.instance_buffer = Some(buf);
-                        self.instance_capacity = new_cap;
+                // Update or create a persistent instance buffer using exponential growth
+                let _instance_stride = std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress;
+                let required_count = instances.len().max(1);
+                if self.instance_capacity < required_count {
+                    // exponential grow: double until capacity >= required_count
+                    let mut new_cap = self.instance_capacity.max(1);
+                    while new_cap < required_count {
+                        new_cap = new_cap.saturating_mul(2);
                     }
+                    let size_bytes =
+                        (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
+                    let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("instance-buffer"),
+                        size: size_bytes,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    self.instance_buffer = Some(buf);
+                    self.instance_capacity = new_cap;
+                }
 
-                    // Write only the used portion of the instance buffer
-                    let buf = self
+                // Write only the used portion of the instance buffer
+                let buf = self
+                    .instance_buffer
+                    .as_ref()
+                    .expect("instance buffer was created in new");
+                if !instances.is_empty() {
+                    self.queue
+                        .write_buffer(buf, 0, bytemuck::cast_slice(&instances));
+                } else {
+                    let zero = GpuInstance {
+                        model: [[0.0; 4]; 4],
+                        material: 0,
+                        object_type: 0,
+                        padding: [0, 0],
+                    };
+                    self.queue
+                        .write_buffer(buf, 0, bytemuck::cast_slice(&[zero]));
+                }
+
+                let mut encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("encoder"),
+                        });
+
+                {
+                    let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("rpass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &frame_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: true,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &self.depth_texture_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: true,
+                            }),
+                            stencil_ops: None,
+                        }),
+                    });
+                    rpass.set_pipeline(&self.pipeline);
+                    // set camera bind group (group 0)
+                    rpass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    // set vertex buffer (created on-demand)
+                    rpass.set_vertex_buffer(
+                        0,
+                        self.vertex_buffer
+                            .as_ref()
+                            .expect("vertex buffer")
+                            .slice(..),
+                    );
+                    // bind the persistent instance buffer
+                    let ibuf = self
                         .instance_buffer
                         .as_ref()
-                        .expect("instance buffer was created in new");
-                    if !instances.is_empty() {
-                        self.queue
-                            .write_buffer(buf, 0, bytemuck::cast_slice(&instances));
-                    } else {
-                        let zero = GpuInstance {
-                            model: [[0.0; 4]; 4],
-                            material: 0,
-                            object_type: 0,
-                            padding: [0, 0],
-                        };
-                        self.queue
-                            .write_buffer(buf, 0, bytemuck::cast_slice(&[zero]));
-                    }
+                        .expect("instance buffer present");
+                    rpass.set_vertex_buffer(1, ibuf.slice(..));
+                    let instance_count = instances.len().max(1) as u32;
+                    rpass.draw(0..self.vertex_count, 0..instance_count);
+                }
 
-                    let mut encoder =
-                        self.device
-                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                label: Some("encoder"),
-                            });
-
-                    {
-                        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("rpass"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: &frame_view,
-                                resolve_target: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                    store: true,
-                                },
-                            })],
-                            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                                view: &self.depth_texture_view,
-                                depth_ops: Some(wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(1.0),
-                                    store: true,
-                                }),
-                                stencil_ops: None,
-                            }),
-                        });
-                        rpass.set_pipeline(&self.pipeline);
-                        // set camera bind group (group 0)
-                        rpass.set_bind_group(0, &self.camera_bind_group, &[]);
-                        // set vertex buffer (created on-demand)
-                        rpass.set_vertex_buffer(
-                            0,
-                            self.vertex_buffer
-                                .as_ref()
-                                .expect("vertex buffer")
-                                .slice(..),
-                        );
-                        // bind the persistent instance buffer
-                        let ibuf = self
-                            .instance_buffer
-                            .as_ref()
-                            .expect("instance buffer present");
-                        rpass.set_vertex_buffer(1, ibuf.slice(..));
-                        let instance_count = instances.len().max(1) as u32;
-                        rpass.draw(0..self.vertex_count, 0..instance_count);
-                    }
-
-                    self.queue.submit(Some(encoder.finish()));
-                    frame.present();
+                self.queue.submit(Some(encoder.finish()));
+                frame.present();
             }
 
             pub fn request_redraw(&self) {
@@ -753,7 +757,9 @@ pub mod gfx {
                     if self.pending_frame_view.is_none() {
                         match self.surface.get_current_texture() {
                             Ok(f) => {
-                                let view = f.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                                let view = f
+                                    .texture
+                                    .create_view(&wgpu::TextureViewDescriptor::default());
                                 self.pending_frame = Some(f);
                                 self.pending_frame_view = Some(view);
                             }
@@ -778,7 +784,11 @@ pub mod gfx {
                         };
 
                         // Create an encoder to record the batched render pass.
-                        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("batched-encoder") });
+                        let mut encoder =
+                            self.device
+                                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                    label: Some("batched-encoder"),
+                                });
 
                         // Before recording, we need to flatten all instance lists
                         // into a contiguous buffer and record the offsets for each draw.
@@ -796,7 +806,8 @@ pub mod gfx {
                             while new_cap < required {
                                 new_cap = new_cap.saturating_mul(2);
                             }
-                            let size_bytes = (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
+                            let size_bytes = (new_cap * std::mem::size_of::<GpuInstance>())
+                                as wgpu::BufferAddress;
                             let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
                                 label: Some("instance-buffer"),
                                 size: size_bytes,
@@ -810,10 +821,17 @@ pub mod gfx {
                         // Upload all instances into the instance buffer
                         let ibuf = self.instance_buffer.as_ref().unwrap();
                         if !all_instances.is_empty() {
-                            self.queue.write_buffer(ibuf, 0, bytemuck::cast_slice(&all_instances));
+                            self.queue
+                                .write_buffer(ibuf, 0, bytemuck::cast_slice(&all_instances));
                         } else {
-                            let zero = GpuInstance { model: [[0.0; 4]; 4], material: 0, object_type: 0, padding: [0, 0] };
-                            self.queue.write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
+                            let zero = GpuInstance {
+                                model: [[0.0; 4]; 4],
+                                material: 0,
+                                object_type: 0,
+                                padding: [0, 0],
+                            };
+                            self.queue
+                                .write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
                         }
 
                         // Begin the single render pass and issue draw calls for
@@ -823,13 +841,21 @@ pub mod gfx {
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                 view: frame_view,
                                 resolve_target: None,
-                                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: true },
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                    store: true,
+                                },
                             })],
-                            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                                view: &self.depth_texture_view,
-                                depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: true }),
-                                stencil_ops: None,
-                            }),
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: &self.depth_texture_view,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: true,
+                                    }),
+                                    stencil_ops: None,
+                                },
+                            ),
                         });
                         rpass.set_pipeline(&self.pipeline);
                         rpass.set_bind_group(0, &self.camera_bind_group, &[]);
@@ -845,11 +871,16 @@ pub mod gfx {
                                 rpass.set_vertex_buffer(0, me.buffer.slice(..));
                                 // Bind the instance buffer with offset for this draw
                                 let offset_instances = offsets[i];
-                                let offset_bytes = (offset_instances * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
+                                let offset_bytes = (offset_instances
+                                    * std::mem::size_of::<GpuInstance>())
+                                    as wgpu::BufferAddress;
                                 rpass.set_vertex_buffer(1, ibuf.slice(offset_bytes..));
                                 let instance_count = insts.len().max(1) as u32;
                                 if let Some(idx_buf) = &me.index_buffer {
-                                    rpass.set_index_buffer(idx_buf.slice(..), wgpu::IndexFormat::Uint32);
+                                    rpass.set_index_buffer(
+                                        idx_buf.slice(..),
+                                        wgpu::IndexFormat::Uint32,
+                                    );
                                     rpass.draw_indexed(0..me.index_count, 0, 0..instance_count);
                                 } else {
                                     rpass.draw(0..me.vertex_count, 0..instance_count);

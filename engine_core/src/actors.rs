@@ -3,8 +3,8 @@ use crate::materials::MaterialType;
 use crate::*;
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
-use legion::World;
 use legion::query::IntoQuery;
+use legion::World;
 
 #[derive(Copy, Clone)]
 pub struct Sphere {
@@ -35,7 +35,6 @@ impl Cube {
         }
     }
 }
-
 
 impl Sphere {
     pub fn new(cen: Vec3, r: f32, mat: MaterialType) -> Sphere {
@@ -131,16 +130,11 @@ impl Cube {
         // the faces via indices. Simpler: construct faces directly.
         let indices: Vec<u32> = vec![
             // +X face (0,1,2,3)
-            0, 1, 2, 0, 2, 3,
-            // +Z face (3,2,5,4) remapped using local indices
-            3, 2, 5, 3, 5, 4,
-            // -X face (4,5,6,7)
-            4, 5, 6, 4, 6, 7,
-            // -Z face (7,6,1,0)
-            7, 6, 1, 7, 1, 0,
-            // +Y face (1,6,5,2)
-            1, 6, 5, 1, 5, 2,
-            // -Y face (7,0,3,4)
+            0, 1, 2, 0, 2, 3, // +Z face (3,2,5,4) remapped using local indices
+            3, 2, 5, 3, 5, 4, // -X face (4,5,6,7)
+            4, 5, 6, 4, 6, 7, // -Z face (7,6,1,0)
+            7, 6, 1, 7, 1, 0, // +Y face (1,6,5,2)
+            1, 6, 5, 1, 5, 2, // -Y face (7,0,3,4)
             7, 0, 3, 7, 3, 4,
         ];
         (verts, normals, indices)

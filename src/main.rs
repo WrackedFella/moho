@@ -1,16 +1,15 @@
 use engine_core::actors::InstanceGpu;
-use engine_core::actors::{Sphere, Cube};
+use engine_core::actors::{Cube, Sphere};
 use engine_core::materials::MaterialType;
 use engine_core::vector_length;
 use glam::Vec3;
 use rand::{Rng, rng};
 // Renderer has been moved into the `engine_renderer` crate to provide a
 // reusable rendering API.
+use engine_renderer::MaterialTable;
 use engine_renderer::create_renderer;
-mod materials_utils;
 use legion::World;
 use legion::query::IntoQuery;
-use materials_utils::MaterialTable;
 
 // `winit` is an optional dependency used by the GPU backends. Guard its
 // usage behind the `backend-wgpu` feature. When the backend is disabled we
@@ -82,12 +81,13 @@ fn main() {
         // vertex/index data each frame. Using an indexed mesh reduces vertex
         // duplication compared to the non-indexed generator. We also include
         // per-vertex normals for lighting.
-    let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
-    let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
+        let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
+        let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
 
-    // Also register the cube mesh so Cube instances can be rendered.
-    let (cube_vertices, cube_normals, cube_indices) = Cube::unit_cube_indexed();
-    let cube_mesh_handle = renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
+        // Also register the cube mesh so Cube instances can be rendered.
+        let (cube_vertices, cube_normals, cube_indices) = Cube::unit_cube_indexed();
+        let cube_mesh_handle =
+            renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
 
         // Walk the world and build instances while populating the material table
         // indices used by instances.
@@ -251,8 +251,8 @@ fn main() {
         // Register indexed mesh once with placeholder renderer (no-op) and use render_mesh
         let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
         let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
-    let instances = collect_instances(&mut world);
-    renderer.render_mesh(mesh_handle, &instances, camera, true);
+        let instances = collect_instances(&mut world);
+        renderer.render_mesh(mesh_handle, &instances, camera, true);
         println!("Rendered one frame (exiting).");
     }
 }
@@ -321,7 +321,7 @@ fn random_scene(world: &mut World) {
     //         }
     //     }
     // }
-    
+
     world.push((Sphere::new(
         Vec3::new(0f32, 1f32, 0f32),
         1f32,
