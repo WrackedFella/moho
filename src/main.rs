@@ -135,7 +135,6 @@ fn main() {
                             material_table.clear_dirty();
                         }
                         renderer.render_mesh(mesh_handle, &instances, camera);
-                        renderer.render_mesh(mesh_handle, &instances, camera);
                         *control_flow = ControlFlow::Wait;
                     }
                 }
@@ -286,8 +285,14 @@ fn random_scene(world: &mut World) {
     //         }
     //     }
     // }
-    world.push((Cube::new(
+    
+    world.push((Sphere::new(
         Vec3::new(0f32, 1f32, 0f32),
+        1f32,
+        MaterialType::Dielectric { ref_indx: 1.5f32 },
+    ),));
+    world.push((Cube::new(
+        Vec3::new(4f32, 1f32, 0f32),
         1f32,
         1f32,
         1f32,
@@ -298,12 +303,6 @@ fn random_scene(world: &mut World) {
                 rng().random::<f32>() * rng().random::<f32>(),
             ),
         },
-    ),));
-    
-    world.push((Sphere::new(
-        Vec3::new(0f32, 1f32, 0f32),
-        1f32,
-        MaterialType::Dielectric { ref_indx: 1.5f32 },
     ),));
     // world.push((Sphere::new(
     //     Vec3::new(-4f32, 1f32, 0f32),
