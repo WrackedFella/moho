@@ -1,5 +1,5 @@
 use engine_core::actors::InstanceGpu;
-use engine_core::actors::Sphere;
+use engine_core::actors::{Sphere, Cube};
 use engine_core::materials::MaterialType;
 use engine_core::vector_length;
 use glam::Vec3;
@@ -227,7 +227,12 @@ fn random_scene(world: &mut World) {
         Vec3::new(0f32, -1000f32, 0f32),
         1000f32,
         MaterialType::Lambertian {
-            albedo: Vec3::new(0.5f32, 0.5f32, 0.5f32),
+            // albedo: Vec3::new(0.5f32, 0.5f32, 0.5f32),
+            albedo: Vec3::new(
+                rng().random::<f32>() * rng().random::<f32>(),
+                rng().random::<f32>() * rng().random::<f32>(),
+                rng().random::<f32>() * rng().random::<f32>(),
+            ),
         },
     );
     world.push((sphere,));
@@ -281,6 +286,20 @@ fn random_scene(world: &mut World) {
     //         }
     //     }
     // }
+    world.push((Cube::new(
+        Vec3::new(0f32, 1f32, 0f32),
+        1f32,
+        1f32,
+        1f32,
+        MaterialType::Lambertian {
+            albedo: Vec3::new(
+                rng().random::<f32>() * rng().random::<f32>(),
+                rng().random::<f32>() * rng().random::<f32>(),
+                rng().random::<f32>() * rng().random::<f32>(),
+            ),
+        },
+    ),));
+    
     world.push((Sphere::new(
         Vec3::new(0f32, 1f32, 0f32),
         1f32,
