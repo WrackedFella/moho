@@ -910,6 +910,11 @@ pub mod gfx {
     pub mod placeholder {
         use engine_core::actors::InstanceGpu;
         pub struct Renderer {}
+        impl Default for Renderer {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
         impl Renderer {
             pub fn new() -> Self {
                 Renderer {}

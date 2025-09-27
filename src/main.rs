@@ -1,11 +1,10 @@
-use engine_core::actors::InstanceGpu;
 use engine_core::actors::{Cube, Sphere};
 use engine_core::materials::MaterialType;
-use engine_core::vector_length;
 use glam::Vec3;
 use rand::{Rng, rng};
 // Renderer has been moved into the `engine_renderer` crate to provide a
 // reusable rendering API.
+#[cfg(feature = "backend-wgpu")]
 use engine_renderer::MaterialTable;
 use engine_renderer::create_renderer;
 use legion::World;
@@ -359,8 +358,8 @@ fn random_scene(world: &mut World) {
 }
 
 #[allow(dead_code)]
-fn collect_instances(world: &mut World) -> Vec<InstanceGpu> {
-    let mut out: Vec<InstanceGpu> = Vec::new();
+fn collect_instances(world: &mut World) -> Vec<engine_core::actors::InstanceGpu> {
+    let mut out: Vec<engine_core::actors::InstanceGpu> = Vec::new();
     // Query all entities that have a Sphere component
     let mut q = <&Sphere>::query();
     for s in q.iter(world) {

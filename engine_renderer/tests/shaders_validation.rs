@@ -15,7 +15,7 @@ fn validate_wgsl_shaders() {
 
         // Parse WGSL
         let module = naga::front::wgsl::parse_str(&src)
-            .expect(&format!("WGSL parse failed for {}", path.display()));
+            .unwrap_or_else(|_| panic!("WGSL parse failed for {}", path.display()));
 
         // Validate
         let mut validator = naga::valid::Validator::new(
@@ -24,6 +24,6 @@ fn validate_wgsl_shaders() {
         );
         validator
             .validate(&module)
-            .expect(&format!("WGSL validation failed for {}", path.display()));
+            .unwrap_or_else(|_| panic!("WGSL validation failed for {}", path.display()));
     }
 }
