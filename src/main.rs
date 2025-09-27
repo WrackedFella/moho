@@ -82,8 +82,12 @@ fn main() {
         // vertex/index data each frame. Using an indexed mesh reduces vertex
         // duplication compared to the non-indexed generator. We also include
         // per-vertex normals for lighting.
-        let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
-        let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
+    let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
+    let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
+
+    // Also register the cube mesh so Cube instances can be rendered.
+    let (cube_vertices, cube_normals, cube_indices) = Cube::unit_cube_indexed();
+    let cube_mesh_handle = renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
 
         // Walk the world and build instances while populating the material table
         // indices used by instances.
@@ -113,28 +117,45 @@ fn main() {
                         // Rebuild instances and material table (incremental)
                         // Note: we clear the CPU-side instance list each frame
                         // but let MaterialTable manage incremental dedupe.
-                        let mut instances = Vec::new();
-                        let mut q = <&Sphere>::query();
-                        for s in q.iter(&world) {
+                        // Build sphere instances and deduplicate materials
+                        let mut sphere_instances = Vec::new();
+                        let mut q_s = <&Sphere>::query();
+                        for s in q_s.iter(&world) {
                             let midx = material_table.find_or_push(&s.mat_ptr);
-                            instances.push(s.to_instance_with_material(midx));
+                            sphere_instances.push(s.to_instance_with_material(midx));
                         }
-                                        // Debug: print material table and instance material indices
-                                        if !material_table.as_slice().is_empty() {
-                                            println!("[debug] material_table.len={} ", material_table.as_slice().len());
+
+                        // Build cube instances and deduplicate materials
+                        let mut cube_instances = Vec::new();
+                        let mut q_c = <&Cube>::query();
+                        for c in q_c.iter(&world) {
+                            let midx = material_table.find_or_push(&c.mat_ptr);
+                            cube_instances.push(c.to_instance_with_material(midx));
+                        }
+
+                        // Debug: print material table and instance material indices
+                        if !material_table.as_slice().is_empty() {
+                            println!("[debug] material_table.len={} ", material_table.as_slice().len());
                             for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
                                 println!("[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}", i, m.albedo[0], m.albedo[1], m.albedo[2], m.params[0], m.params[1]);
                             }
                         }
-                        for (i, inst) in instances.iter().enumerate().take(8) {
-                            println!("[debug] inst[{}].material={}", i, inst.material);
+                        for (i, inst) in sphere_instances.iter().enumerate().take(8) {
+                            println!("[debug] sphere_inst[{}].material={}", i, inst.material);
                         }
+                        for (i, inst) in cube_instances.iter().enumerate().take(8) {
+                            println!("[debug] cube_inst[{}].material={}", i, inst.material);
+                        }
+
                         // Upload material table to GPU if it changed.
                         if material_table.is_dirty() {
                             renderer.set_materials(material_table.as_slice());
                             material_table.clear_dirty();
                         }
-                        renderer.render_mesh(mesh_handle, &instances, camera);
+
+                        // Draw spheres then cubes (each uses its own mesh handle)
+                        renderer.render_mesh(mesh_handle, &sphere_instances, camera, false);
+                        renderer.render_mesh(cube_mesh_handle, &cube_instances, camera, true);
                         *control_flow = ControlFlow::Wait;
                     }
                 }
@@ -148,12 +169,22 @@ fn main() {
                     renderer.resize(size.width, size.height);
                 }
                 Event::RedrawRequested(_window_id) => {
-                    let mut instances = Vec::new();
-                    let mut q = <&Sphere>::query();
-                    for s in q.iter(&world) {
+                    // Build sphere instances and deduplicate materials
+                    let mut sphere_instances = Vec::new();
+                    let mut q_s = <&Sphere>::query();
+                    for s in q_s.iter(&world) {
                         let midx = material_table.find_or_push(&s.mat_ptr);
-                        instances.push(s.to_instance_with_material(midx));
+                        sphere_instances.push(s.to_instance_with_material(midx));
                     }
+
+                    // Build cube instances and deduplicate materials
+                    let mut cube_instances = Vec::new();
+                    let mut q_c = <&Cube>::query();
+                    for c in q_c.iter(&world) {
+                        let midx = material_table.find_or_push(&c.mat_ptr);
+                        cube_instances.push(c.to_instance_with_material(midx));
+                    }
+
                     // Debug: print material table and first few instance indices
                     if !material_table.as_slice().is_empty() {
                         println!("[debug] material_table.len={} ", material_table.as_slice().len());
@@ -161,14 +192,19 @@ fn main() {
                             println!("[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}", i, m.albedo[0], m.albedo[1], m.albedo[2], m.params[0], m.params[1]);
                         }
                     }
-                    for (i, inst) in instances.iter().enumerate().take(8) {
-                        println!("[debug] inst[{}].material={}", i, inst.material);
+                    for (i, inst) in sphere_instances.iter().enumerate().take(8) {
+                        println!("[debug] sphere_inst[{}].material={}", i, inst.material);
+                    }
+                    for (i, inst) in cube_instances.iter().enumerate().take(8) {
+                        println!("[debug] cube_inst[{}].material={}", i, inst.material);
                     }
                     if material_table.is_dirty() {
                         renderer.set_materials(material_table.as_slice());
                         material_table.clear_dirty();
                     }
-                    renderer.render_mesh(mesh_handle, &instances, camera);
+                    // Draw sphere and cube meshes
+                    renderer.render_mesh(mesh_handle, &sphere_instances, camera, false);
+                    renderer.render_mesh(cube_mesh_handle, &cube_instances, camera, true);
                     *control_flow = ControlFlow::Wait;
                 }
                 Event::MainEventsCleared => {
@@ -215,8 +251,8 @@ fn main() {
         // Register indexed mesh once with placeholder renderer (no-op) and use render_mesh
         let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
         let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
-        let instances = collect_instances(&mut world);
-        renderer.render_mesh(mesh_handle, &instances, camera);
+    let instances = collect_instances(&mut world);
+    renderer.render_mesh(mesh_handle, &instances, camera, true);
         println!("Rendered one frame (exiting).");
     }
 }

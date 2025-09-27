@@ -406,6 +406,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "glam",
+ "legion",
  "rand",
  "winit",
 ]

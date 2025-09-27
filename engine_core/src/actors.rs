@@ -3,6 +3,8 @@ use crate::materials::MaterialType;
 use crate::*;
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
+use legion::World;
+use legion::query::IntoQuery;
 
 #[derive(Copy, Clone)]
 pub struct Sphere {
@@ -43,6 +45,38 @@ impl Sphere {
             mat_ptr: mat,
         }
     }
+}
+
+/// Trait representing types that can be converted into a GPU instance for rendering.
+pub trait Renderable {
+    fn to_instance_with_material(&self, material_index: u32) -> InstanceGpu;
+}
+
+impl Renderable for Sphere {
+    fn to_instance_with_material(&self, material_index: u32) -> InstanceGpu {
+        Sphere::to_instance_with_material(self, material_index)
+    }
+}
+
+impl Renderable for Cube {
+    fn to_instance_with_material(&self, material_index: u32) -> InstanceGpu {
+        Cube::to_instance_with_material(self, material_index)
+    }
+}
+
+/// Convenience helper to collect all Renderable instances from the provided ECS `World`.
+/// Currently queries for `Sphere` and `Cube` components and returns a Vec of `InstanceGpu`.
+pub fn collect_renderable_instances(world: &mut World) -> Vec<InstanceGpu> {
+    let mut out: Vec<InstanceGpu> = Vec::new();
+    let mut qs = <&Sphere>::query();
+    for s in qs.iter(world) {
+        out.push(s.to_instance_with_material(0));
+    }
+    let mut qc = <&Cube>::query();
+    for c in qc.iter(world) {
+        out.push(c.to_instance_with_material(0));
+    }
+    out
 }
 
 impl Cube {
