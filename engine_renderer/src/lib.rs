@@ -31,6 +31,8 @@ impl MaterialGpu {
 // Material table implementation (moved from the binary to the renderer crate)
 mod materials;
 pub use materials::MaterialTable;
+mod scene;
+pub use scene::render_world;
 
 pub mod gfx {
     //! Graphics backends grouped under `gfx` for clarity. The WGPU backend is

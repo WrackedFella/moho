@@ -1,5 +1,6 @@
 use engine_core::actors::{Cube, Sphere};
 use engine_core::materials::MaterialType;
+use engine_core::vector_length;
 use glam::Vec3;
 use rand::{Rng, rng};
 // Renderer has been moved into the `engine_renderer` crate to provide a
@@ -109,109 +110,15 @@ fn main() {
             match event {
                 Event::NewEvents(start_cause) => {
                     if matches!(start_cause, StartCause::Init) {
-                        // Build material table and instance buffer each frame.
-                        // (In a more optimized path we'd only update when
-                        // materials change.)
-                        // Rebuild material table from world materials
-                        // Rebuild instances and material table (incremental)
-                        // Note: we clear the CPU-side instance list each frame
-                        // but let MaterialTable manage incremental dedupe.
-                        // Build sphere instances and deduplicate materials
-                        let mut sphere_instances = Vec::new();
-                        let mut q_s = <&Sphere>::query();
-                        for s in q_s.iter(&world) {
-                            let midx = material_table.find_or_push(&s.mat_ptr);
-                            sphere_instances.push(s.to_instance_with_material(midx));
-                        }
-
-                        // Build cube instances and deduplicate materials
-                        let mut cube_instances = Vec::new();
-                        let mut q_c = <&Cube>::query();
-                        for c in q_c.iter(&world) {
-                            let midx = material_table.find_or_push(&c.mat_ptr);
-                            cube_instances.push(c.to_instance_with_material(midx));
-                        }
-
-                        // Debug: print material table and instance material indices
-                        if !material_table.as_slice().is_empty() {
-                            println!("[debug] material_table.len={} ", material_table.as_slice().len());
-                            for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
-                                println!("[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}", i, m.albedo[0], m.albedo[1], m.albedo[2], m.params[0], m.params[1]);
-                            }
-                        }
-                        for (i, inst) in sphere_instances.iter().enumerate().take(8) {
-                            println!("[debug] sphere_inst[{}].material={}", i, inst.material);
-                        }
-                        for (i, inst) in cube_instances.iter().enumerate().take(8) {
-                            println!("[debug] cube_inst[{}].material={}", i, inst.material);
-                        }
-
-                        // Upload material table to GPU if it changed.
-                        if material_table.is_dirty() {
-                            renderer.set_materials(material_table.as_slice());
-                            material_table.clear_dirty();
-                        }
-
-                        // Draw by material type (opaque first, transparent last).
-                        // Split each mesh's instances into opaque/transparent based on
-                        // the material parameters uploaded in `material_table`.
-                        let mats = material_table.as_slice();
-
-                        let mut cube_opaque: Vec<engine_core::actors::InstanceGpu> = Vec::new();
-                        let mut cube_trans: Vec<engine_core::actors::InstanceGpu> = Vec::new();
-                        for inst in &cube_instances {
-                            let idx = inst.material as usize;
-                            let is_transparent = if idx < mats.len() {
-                                // Use explicit helper: params[2] signals transparency.
-                                mats[idx].is_transparent()
-                            } else {
-                                false
-                            };
-                            if is_transparent {
-                                cube_trans.push(*inst);
-                            } else {
-                                cube_opaque.push(*inst);
-                            }
-                        }
-
-                        let mut sph_opaque: Vec<engine_core::actors::InstanceGpu> = Vec::new();
-                        let mut sph_trans: Vec<engine_core::actors::InstanceGpu> = Vec::new();
-                        for inst in &sphere_instances {
-                            let idx = inst.material as usize;
-                            let is_transparent = if idx < mats.len() { mats[idx].is_transparent() } else { false };
-                            if is_transparent {
-                                sph_trans.push(*inst);
-                            } else {
-                                sph_opaque.push(*inst);
-                            }
-                        }
-
-                        // Render opaque geometry first (no finalize). Then render
-                        // transparent geometry last so blending composes correctly.
-                        renderer.render_mesh(cube_mesh_handle, &cube_opaque, camera, false);
-                        renderer.render_mesh(mesh_handle, &sph_opaque, camera, false);
-
-                        // Decide finalize on the last actual render call. We render
-                        // cube transparent group first (if any), then sphere transparent
-                        // and mark the very last call finalize=true so the renderer
-                        // flushes the batched draws.
-                        let mut did_any_trans = false;
-                        if !cube_trans.is_empty() {
-                            did_any_trans = true;
-                            // If sphere transparent exists, this is not the final call.
-                            let final_call = sph_trans.is_empty();
-                            renderer.render_mesh(cube_mesh_handle, &cube_trans, camera, final_call);
-                        }
-                        if !sph_trans.is_empty() {
-                            did_any_trans = true;
-                            // This is the last call, ensure finalize=true.
-                            renderer.render_mesh(mesh_handle, &sph_trans, camera, true);
-                        }
-                        // If there were no transparent draws at all, we still need
-                        // to finalize the frame. Call an empty finalize to flush.
-                        if !did_any_trans {
-                            renderer.render_mesh(mesh_handle, &Vec::new(), camera, true);
-                        }
+                        // Build material table, instances, and render the world.
+                        engine_renderer::render_world(
+                            &mut *renderer,
+                            &world,
+                            &mut material_table,
+                            mesh_handle,
+                            cube_mesh_handle,
+                            camera,
+                        );
                         *control_flow = ControlFlow::Wait;
                     }
                 }
@@ -225,74 +132,14 @@ fn main() {
                     renderer.resize(size.width, size.height);
                 }
                 Event::RedrawRequested(_window_id) => {
-                    // Build sphere instances and deduplicate materials
-                    let mut sphere_instances = Vec::new();
-                    let mut q_s = <&Sphere>::query();
-                    for s in q_s.iter(&world) {
-                        let midx = material_table.find_or_push(&s.mat_ptr);
-                        sphere_instances.push(s.to_instance_with_material(midx));
-                    }
-
-                    // Build cube instances and deduplicate materials
-                    let mut cube_instances = Vec::new();
-                    let mut q_c = <&Cube>::query();
-                    for c in q_c.iter(&world) {
-                        let midx = material_table.find_or_push(&c.mat_ptr);
-                        cube_instances.push(c.to_instance_with_material(midx));
-                    }
-
-                    // Debug: print material table and first few instance indices
-                    if !material_table.as_slice().is_empty() {
-                        println!("[debug] material_table.len={} ", material_table.as_slice().len());
-                        for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
-                            println!("[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}", i, m.albedo[0], m.albedo[1], m.albedo[2], m.params[0], m.params[1]);
-                        }
-                    }
-                    for (i, inst) in sphere_instances.iter().enumerate().take(8) {
-                        println!("[debug] sphere_inst[{}].material={}", i, inst.material);
-                    }
-                    for (i, inst) in cube_instances.iter().enumerate().take(8) {
-                        println!("[debug] cube_inst[{}].material={}", i, inst.material);
-                    }
-                    if material_table.is_dirty() {
-                        renderer.set_materials(material_table.as_slice());
-                        material_table.clear_dirty();
-                    }
-                    // Draw by material type (opaque first, transparent last).
-                    let mats = material_table.as_slice();
-
-                    let mut cube_opaque: Vec<engine_core::actors::InstanceGpu> = Vec::new();
-                    let mut cube_trans: Vec<engine_core::actors::InstanceGpu> = Vec::new();
-                    for inst in &cube_instances {
-                        let idx = inst.material as usize;
-                        let is_transparent = if idx < mats.len() { mats[idx].is_transparent() } else { false };
-                        if is_transparent { cube_trans.push(*inst); } else { cube_opaque.push(*inst); }
-                    }
-
-                    let mut sph_opaque: Vec<engine_core::actors::InstanceGpu> = Vec::new();
-                    let mut sph_trans: Vec<engine_core::actors::InstanceGpu> = Vec::new();
-                    for inst in &sphere_instances {
-                        let idx = inst.material as usize;
-                        let is_transparent = if idx < mats.len() { mats[idx].is_transparent() } else { false };
-                        if is_transparent { sph_trans.push(*inst); } else { sph_opaque.push(*inst); }
-                    }
-
-                    renderer.render_mesh(cube_mesh_handle, &cube_opaque, camera, false);
-                    renderer.render_mesh(mesh_handle, &sph_opaque, camera, false);
-
-                    let mut did_any_trans = false;
-                    if !cube_trans.is_empty() {
-                        did_any_trans = true;
-                        let final_call = sph_trans.is_empty();
-                        renderer.render_mesh(cube_mesh_handle, &cube_trans, camera, final_call);
-                    }
-                    if !sph_trans.is_empty() {
-                        did_any_trans = true;
-                        renderer.render_mesh(mesh_handle, &sph_trans, camera, true);
-                    }
-                    if !did_any_trans {
-                        renderer.render_mesh(mesh_handle, &Vec::new(), camera, true);
-                    }
+                    engine_renderer::render_world(
+                        &mut *renderer,
+                        &world,
+                        &mut material_table,
+                        mesh_handle,
+                        cube_mesh_handle,
+                        camera,
+                    );
                     *control_flow = ControlFlow::Wait;
                 }
                 Event::MainEventsCleared => {
@@ -359,56 +206,56 @@ fn random_scene(world: &mut World) {
         },
     );
     world.push((sphere,));
-    // for a in -11..11 {
-    //     for b in -11..11 {
-    //         let choose_mat = rng().random::<f32>();
-    //         let center = Vec3::new(
-    //             a as f32 + 0.9f32 * rng().random::<f32>(),
-    //             0.2f32,
-    //             b as f32 + 0.9f32 * rng().random::<f32>(),
-    //         );
-    //         if vector_length(center - Vec3::new(4f32, 0.2f32, 0f32)) > 0.9f32 {
-    //             if choose_mat < 0.8f32 {
-    //                 // diffuse
-    //                 let sphere = Sphere::new(
-    //                     center,
-    //                     0.2f32,
-    //                     MaterialType::Lambertian {
-    //                         albedo: Vec3::new(
-    //                             rng().random::<f32>() * rng().random::<f32>(),
-    //                             rng().random::<f32>() * rng().random::<f32>(),
-    //                             rng().random::<f32>() * rng().random::<f32>(),
-    //                         ),
-    //                     },
-    //                 );
-    //                 world.push((sphere,));
-    //             } else if choose_mat < 0.95f32 {
-    //                 // metal
-    //                 let sphere = Sphere::new(
-    //                     center,
-    //                     0.2f32,
-    //                     MaterialType::Metal {
-    //                         albedo: Vec3::new(
-    //                             0.5f32 * (1f32 + rng().random::<f32>()),
-    //                             0.5f32 * (1f32 + rng().random::<f32>()),
-    //                             0.5f32 * (1f32 + rng().random::<f32>()),
-    //                         ),
-    //                         fuzz: 0.5f32 * rng().random::<f32>(),
-    //                     },
-    //                 );
-    //                 world.push((sphere,));
-    //             } else {
-    //                 // glass
-    //                 let sphere = Sphere::new(
-    //                     center,
-    //                     0.2f32,
-    //                     MaterialType::Dielectric { ref_indx: 1.5f32 },
-    //                 );
-    //                 world.push((sphere,));
-    //             }
-    //         }
-    //     }
-    // }
+    for a in -11..11 {
+        for b in -11..11 {
+            let choose_mat = rng().random::<f32>();
+            let center = Vec3::new(
+                a as f32 + 0.9f32 * rng().random::<f32>(),
+                0.2f32,
+                b as f32 + 0.9f32 * rng().random::<f32>(),
+            );
+            if vector_length(center - Vec3::new(4f32, 0.2f32, 0f32)) > 0.9f32 {
+                if choose_mat < 0.8f32 {
+                    // diffuse
+                    let sphere = Sphere::new(
+                        center,
+                        0.2f32,
+                        MaterialType::Lambertian {
+                            albedo: Vec3::new(
+                                rng().random::<f32>() * rng().random::<f32>(),
+                                rng().random::<f32>() * rng().random::<f32>(),
+                                rng().random::<f32>() * rng().random::<f32>(),
+                            ),
+                        },
+                    );
+                    world.push((sphere,));
+                } else if choose_mat < 0.95f32 {
+                    // metal
+                    let sphere = Sphere::new(
+                        center,
+                        0.2f32,
+                        MaterialType::Metal {
+                            albedo: Vec3::new(
+                                0.5f32 * (1f32 + rng().random::<f32>()),
+                                0.5f32 * (1f32 + rng().random::<f32>()),
+                                0.5f32 * (1f32 + rng().random::<f32>()),
+                            ),
+                            fuzz: 0.5f32 * rng().random::<f32>(),
+                        },
+                    );
+                    world.push((sphere,));
+                } else {
+                    // glass
+                    let sphere = Sphere::new(
+                        center,
+                        0.2f32,
+                        MaterialType::Dielectric { ref_indx: 1.5f32 },
+                    );
+                    world.push((sphere,));
+                }
+            }
+        }
+    }
 
     world.push((Sphere::new(
         Vec3::new(8f32, 1f32, 0f32),
