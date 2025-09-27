@@ -40,8 +40,27 @@ struct Velocity {
 
 fn main() {
     let mut world = World::default();
-    // Populate the ECS world with spheres
-    random_scene(&mut world);
+    // Attempt to load a saved scene (binary bincode). If no scene file is
+    // present or load fails, generate a new random scene and save it.
+    let mut scene = engine_renderer::Scene::new();
+    let scene_path = std::path::Path::new("scene.bin");
+    if scene_path.exists() {
+        match scene.load_from_file(scene_path, &mut world) {
+            Ok(_) => println!("Loaded scene from scene.bin"),
+            Err(e) => {
+                eprintln!("Failed to load scene.bin: {}. Generating new scene.", e);
+                random_scene(&mut world);
+                if let Err(e) = scene.save_to_file(scene_path, &world) {
+                    eprintln!("Failed to save generated scene: {}", e);
+                }
+            }
+        }
+    } else {
+        random_scene(&mut world);
+        if let Err(e) = scene.save_to_file(scene_path, &world) {
+            eprintln!("Failed to save generated scene: {}", e);
+        }
+    }
 
     // create a simple perspective camera (we keep the camera world position
     // so the shader can compute view-dependent lighting)
@@ -68,11 +87,9 @@ fn main() {
         // Create a boxed renderer backend via the factory.
         let mut renderer = create_renderer(&event_loop, window);
 
-        // Build a compact material table using an incremental helper that
-        // deduplicates materials using a hash map and only flags the table as
-        // dirty when a new material is added. This lets us avoid re-uploading
-        // the material storage buffer when nothing changed.
-        let mut material_table = MaterialTable::new();
+        // Create a Scene manager which owns the material table and provides
+        // a simple `render` API.
+        let mut scene = engine_renderer::Scene::new();
 
         // Use `MaterialTable` methods for deduplication; the local helper was
         // removed because it was unused after consolidating material logic.
@@ -110,11 +127,10 @@ fn main() {
             match event {
                 Event::NewEvents(start_cause) => {
                     if matches!(start_cause, StartCause::Init) {
-                        // Build material table, instances, and render the world.
-                        engine_renderer::render_world(
+                        // Build material table, instances, and render the world via Scene
+                        scene.render(
                             &mut *renderer,
                             &world,
-                            &mut material_table,
                             mesh_handle,
                             cube_mesh_handle,
                             camera,
@@ -128,14 +144,16 @@ fn main() {
                 } => {
                     *control_flow = ControlFlow::Exit;
                 }
-                Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
+                Event::WindowEvent {
+                    event: WindowEvent::Resized(size),
+                    ..
+                } => {
                     renderer.resize(size.width, size.height);
                 }
                 Event::RedrawRequested(_window_id) => {
-                    engine_renderer::render_world(
+                    scene.render(
                         &mut *renderer,
                         &world,
-                        &mut material_table,
                         mesh_handle,
                         cube_mesh_handle,
                         camera,
@@ -286,7 +304,7 @@ fn random_scene(world: &mut World) {
     //         albedo: Vec3::new(0.4f32, 0.2f32, 0.1f32),
     //     },
     // ),));
-    
+
     println!("World Generated");
 }
 

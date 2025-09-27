@@ -32,7 +32,7 @@ impl MaterialGpu {
 mod materials;
 pub use materials::MaterialTable;
 mod scene;
-pub use scene::render_world;
+pub use scene::Scene;
 
 pub mod gfx {
     //! Graphics backends grouped under `gfx` for clarity. The WGPU backend is
