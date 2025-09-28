@@ -86,7 +86,7 @@ pub mod gfx {
             instance_buffer: Option<wgpu::Buffer>,
             instance_capacity: usize,
             vertex_count: u32,
-            window: Option<winit::window::Window>,
+            // renderer does not own the application Window; the app keeps the Window
             // mesh table stores optional mesh entries for registered meshes
             mesh_table: Vec<Option<MeshEntry>>,
             // cached mesh handle for the unit cube (created on-demand)
@@ -113,7 +113,7 @@ pub mod gfx {
         impl Renderer {
             pub fn new(
                 _event_loop: &winit::event_loop::EventLoop<()>,
-                window: winit::window::Window,
+                window: &winit::window::Window,
             ) -> Self {
                 println!("(wgpu) Initializing renderer (instanced cubes)");
                 let size = window.inner_size();
@@ -122,7 +122,7 @@ pub mod gfx {
                     backends: wgpu::Backends::all(),
                     dx12_shader_compiler: Default::default(),
                 });
-                let surface = unsafe { instance.create_surface(&window) }.expect("create_surface");
+                let surface = unsafe { instance.create_surface(window) }.expect("create_surface");
                 let adapter =
                     pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                         power_preference: wgpu::PowerPreference::HighPerformance,
@@ -357,7 +357,7 @@ pub mod gfx {
                     instance_buffer: Some(instance_buf),
                     instance_capacity: 1,
                     vertex_count,
-                    window: Some(window),
+                    // window is owned by the application; don't store it here
                     mesh_table: Vec::new(),
                     cube_mesh: None,
                     pending_frame: None,
@@ -528,9 +528,10 @@ pub mod gfx {
             }
 
             pub fn request_redraw(&self) {
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                // Renderer does not own the application Window. The application
+                // should call `window.request_redraw()` when appropriate. Keep
+                // this method as a no-op to preserve the public API.
+                // No-op
             }
 
             /// Update the material table on the GPU. This replaces the storage
@@ -1095,7 +1096,7 @@ impl RendererBackend for gfx::placeholder::Renderer {
 #[cfg(feature = "backend-wgpu")]
 pub fn create_renderer(
     event_loop: &winit::event_loop::EventLoop<()>,
-    window: winit::window::Window,
+    window: &winit::window::Window,
 ) -> Box<dyn RendererBackend> {
     Box::new(gfx::wgpu_impl::Renderer::new(event_loop, window))
 }

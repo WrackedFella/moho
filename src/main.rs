@@ -79,8 +79,10 @@ fn main() {
             .build(&event_loop)
             .expect("Failed to create window");
 
-        // Create a boxed renderer backend via the factory.
-        let mut renderer = create_renderer(&event_loop, window);
+    // Create a boxed renderer backend via the factory.
+    let mut renderer = create_renderer(&event_loop, &window);
+    let mut cursor_grabbed = false;
+    use winit::window::CursorGrabMode;
 
         // Use the `scene` created above; it was intentionally created once
         // before entering the backend-specific code paths so persistence and
@@ -151,6 +153,17 @@ fn main() {
                         let mut q = <&mut engine_core::controller::ControllerInput>::query();
                         if let Some(ci) = q.iter_mut(&mut world).next() {
                             match (vk, input.state) {
+                                (VirtualKeyCode::Escape, ElementState::Pressed) => {
+                                    // Toggle cursor grab/visibility
+                                    cursor_grabbed = !cursor_grabbed;
+                                    if cursor_grabbed {
+                                        let _ = window.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+                                        window.set_cursor_visible(false);
+                                    } else {
+                                        let _ = window.set_cursor_grab(CursorGrabMode::None);
+                                        window.set_cursor_visible(true);
+                                    }
+                                }
                                 (VirtualKeyCode::W, ElementState::Pressed) => ci.forward = 1.0,
                                 (VirtualKeyCode::W, ElementState::Released) => ci.forward = 0.0,
                                 (VirtualKeyCode::S, ElementState::Pressed) => ci.forward = -1.0,
@@ -166,6 +179,16 @@ fn main() {
                                 _ => {}
                             }
                         }
+                    }
+                }
+                Event::WindowEvent { event: WindowEvent::Focused(true), .. } => {
+                    // When the window gains focus, capture and hide the cursor
+                    // if we are not already grabbed. This allows refocus to
+                    // re-enable FPS mouse look.
+                    if !cursor_grabbed {
+                        cursor_grabbed = true;
+                        let _ = window.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+                        window.set_cursor_visible(false);
                     }
                 }
                 Event::RedrawRequested(_window_id) => {
@@ -184,12 +207,15 @@ fn main() {
                     *control_flow = ControlFlow::Wait;
                 }
                 Event::DeviceEvent { event: winit::event::DeviceEvent::MouseMotion { delta }, .. } => {
-                    // Apply mouse motion as small yaw/pitch deltas
-                    let mut q = <&mut engine_core::controller::ControllerInput>::query();
-                    if let Some(ci) = q.iter_mut(&mut world).next() {
-                        let sensitivity = 0.0025f32;
-                        ci.yaw_delta += -(delta.0 as f32) * sensitivity;
-                        ci.pitch_delta += -(delta.1 as f32) * sensitivity;
+                    // Only apply mouse motion when the cursor is grabbed for FPS look.
+                    if cursor_grabbed {
+                        // Apply mouse motion as small yaw/pitch deltas
+                        let mut q = <&mut engine_core::controller::ControllerInput>::query();
+                        if let Some(ci) = q.iter_mut(&mut world).next() {
+                            let sensitivity = 0.0025f32;
+                            ci.yaw_delta += -(delta.0 as f32) * sensitivity;
+                            ci.pitch_delta += -(delta.1 as f32) * sensitivity;
+                        }
                     }
                 }
 
@@ -217,7 +243,7 @@ fn main() {
                     if now >= last_frame + frame_duration {
                         // Advance the render timestamp by one fixed frame.
                         last_frame += frame_duration;
-                        renderer.request_redraw();
+                        window.request_redraw();
                         // Schedule next wake at the next fixed step boundary.
                         let next = last_frame + frame_duration;
                         *control_flow = ControlFlow::WaitUntil(next);
