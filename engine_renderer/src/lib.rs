@@ -158,12 +158,15 @@ pub mod gfx {
                 let vertex_buffer = None;
                 let vertex_count = 0u32;
 
+                let shader_source = [
+                    include_str!("../../shaders/common.wgsl"),
+                    include_str!("../../shaders/vertex.wgsl"),
+                    include_str!("../../shaders/fragment.wgsl"),
+                ].join("\n\n");
                 let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("shader"),
                     // shader path adjusted for crate layout (engine_renderer/src -> repo root)
-                    source: wgpu::ShaderSource::Wgsl(
-                        include_str!("../../shaders/instance.wgsl").into(),
-                    ),
+                    source: wgpu::ShaderSource::Wgsl(shader_source.into()),
                 });
                 // Camera uniform bind group (group 0) now contains both the camera
                 // uniform (binding 0) and a storage buffer with the material table
