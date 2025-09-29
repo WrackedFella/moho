@@ -1,16 +1,15 @@
-use engine_core::actors::InstanceGpu;
+#[cfg(feature = "backend-wgpu")]
+use engine_core::actors::Cube;
 use engine_core::actors::Sphere;
-use engine_core::materials::MaterialType;
-use engine_core::vector_length;
-use glam::Vec3;
-use rand::{Rng, rng};
+use engine_core::scene_builders::random_scene;
+// glam types are used via fully-qualified names where needed
 // Renderer has been moved into the `engine_renderer` crate to provide a
 // reusable rendering API.
+#[cfg(feature = "backend-wgpu")]
+use engine_renderer::MaterialTable;
 use engine_renderer::create_renderer;
-mod materials_utils;
 use legion::World;
 use legion::query::IntoQuery;
-use materials_utils::MaterialTable;
 
 // `winit` is an optional dependency used by the GPU backends. Guard its
 // usage behind the `backend-wgpu` feature. When the backend is disabled we
@@ -41,19 +40,33 @@ struct Velocity {
 
 fn main() {
     let mut world = World::default();
-    // Populate the ECS world with spheres
-    random_scene(&mut world);
+    // Parse CLI args for --scene <path>. Default to ./scene.bin
+    let args: Vec<String> = std::env::args().collect();
+    let scene_path_buf = if let Some(i) = args.iter().position(|a| a == "--scene" || a == "-s") {
+        args.get(i + 1).map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from("scene.bin"))
+    } else {
+        std::path::PathBuf::from("scene.bin")
+    };
 
-    // create a simple perspective camera (we keep the camera world position
-    // so the shader can compute view-dependent lighting)
-    let camera = {
+    // Create the Scene manager once and try to load the persisted scene.
+    let mut scene = engine_renderer::Scene::new();
+    load_or_generate_scene(&mut scene, &mut world, &scene_path_buf);
+
+    // create a simple PlayerController entity and derive the camera from it
+    let start_pos = glam::Vec3::new(13.0, 2.0, 3.0);
+    world.push((engine_core::controller::PlayerController::new(start_pos), engine_core::controller::ControllerInput::default()));
+    // initial camera value (will be computed from controller each frame)
+    let mut camera = make_camera();
+
+    // Helper to make the camera clearer - kept local for now.
+    fn make_camera() -> (glam::Mat4, glam::Mat4, glam::Vec3) {
         let eye = glam::Vec3::new(13.0, 2.0, 3.0);
         let center = glam::Vec3::new(0.0, 0.0, 0.0);
         let up = glam::Vec3::new(0.0, 1.0, 0.0);
         let view = glam::Mat4::look_at_rh(eye, center, up);
         let proj = glam::Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 100.0f32);
         (view, proj, eye)
-    };
+    }
 
     // If `backend-wgpu` (and therefore `winit`) is enabled, create the event loop
     // and run a proper per-frame loop. Otherwise use the placeholder
@@ -66,14 +79,14 @@ fn main() {
             .build(&event_loop)
             .expect("Failed to create window");
 
-        // Create a boxed renderer backend via the factory.
-        let mut renderer = create_renderer(&event_loop, window);
+    // Create a boxed renderer backend via the factory.
+    let mut renderer = create_renderer(&event_loop, &window);
+    let mut cursor_grabbed = false;
+    use winit::window::CursorGrabMode;
 
-        // Build a compact material table using an incremental helper that
-        // deduplicates materials using a hash map and only flags the table as
-        // dirty when a new material is added. This lets us avoid re-uploading
-        // the material storage buffer when nothing changed.
-        let mut material_table = MaterialTable::new();
+        // Use the `scene` created above; it was intentionally created once
+        // before entering the backend-specific code paths so persistence and
+        // material state are shared.
 
         // Use `MaterialTable` methods for deduplication; the local helper was
         // removed because it was unused after consolidating material logic.
@@ -84,6 +97,11 @@ fn main() {
         // per-vertex normals for lighting.
         let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
         let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
+
+        // Also register the cube mesh so Cube instances can be rendered.
+        let (cube_vertices, cube_normals, cube_indices) = Cube::unit_cube_indexed();
+        let cube_mesh_handle =
+            renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
 
         // Walk the world and build instances while populating the material table
         // indices used by instances.
@@ -106,36 +124,14 @@ fn main() {
             match event {
                 Event::NewEvents(start_cause) => {
                     if matches!(start_cause, StartCause::Init) {
-                        // Build material table and instance buffer each frame.
-                        // (In a more optimized path we'd only update when
-                        // materials change.)
-                        // Rebuild material table from world materials
-                        // Rebuild instances and material table (incremental)
-                        // Note: we clear the CPU-side instance list each frame
-                        // but let MaterialTable manage incremental dedupe.
-                        let mut instances = Vec::new();
-                        let mut q = <&Sphere>::query();
-                        for s in q.iter(&world) {
-                            let midx = material_table.find_or_push(&s.mat_ptr);
-                            instances.push(s.to_instance_with_material(midx));
-                        }
-                                        // Debug: print material table and instance material indices
-                                        if !material_table.as_slice().is_empty() {
-                                            println!("[debug] material_table.len={} ", material_table.as_slice().len());
-                            for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
-                                println!("[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}", i, m.albedo[0], m.albedo[1], m.albedo[2], m.params[0], m.params[1]);
-                            }
-                        }
-                        for (i, inst) in instances.iter().enumerate().take(8) {
-                            println!("[debug] inst[{}].material={}", i, inst.material);
-                        }
-                        // Upload material table to GPU if it changed.
-                        if material_table.is_dirty() {
-                            renderer.set_materials(material_table.as_slice());
-                            material_table.clear_dirty();
-                        }
-                        renderer.render_mesh(mesh_handle, &instances, camera);
-                        renderer.render_mesh(mesh_handle, &instances, camera);
+                        // Build material table, instances, and render the world via Scene
+                        scene.render(
+                            &mut *renderer,
+                            &world,
+                            mesh_handle,
+                            cube_mesh_handle,
+                            camera,
+                        );
                         *control_flow = ControlFlow::Wait;
                     }
                 }
@@ -145,33 +141,84 @@ fn main() {
                 } => {
                     *control_flow = ControlFlow::Exit;
                 }
-                Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
+                Event::WindowEvent {
+                    event: WindowEvent::Resized(size),
+                    ..
+                } => {
                     renderer.resize(size.width, size.height);
                 }
-                Event::RedrawRequested(_window_id) => {
-                    let mut instances = Vec::new();
-                    let mut q = <&Sphere>::query();
-                    for s in q.iter(&world) {
-                        let midx = material_table.find_or_push(&s.mat_ptr);
-                        instances.push(s.to_instance_with_material(midx));
-                    }
-                    // Debug: print material table and first few instance indices
-                    if !material_table.as_slice().is_empty() {
-                        println!("[debug] material_table.len={} ", material_table.as_slice().len());
-                        for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
-                            println!("[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}", i, m.albedo[0], m.albedo[1], m.albedo[2], m.params[0], m.params[1]);
+                Event::WindowEvent { event: WindowEvent::KeyboardInput { input, .. }, .. } => {
+                    use winit::event::{VirtualKeyCode, ElementState};
+                    if let Some(vk) = input.virtual_keycode {
+                        let mut q = <&mut engine_core::controller::ControllerInput>::query();
+                        if let Some(ci) = q.iter_mut(&mut world).next() {
+                            match (vk, input.state) {
+                                (VirtualKeyCode::Escape, ElementState::Pressed) => {
+                                    // Toggle cursor grab/visibility
+                                    cursor_grabbed = !cursor_grabbed;
+                                    if cursor_grabbed {
+                                        let _ = window.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+                                        window.set_cursor_visible(false);
+                                    } else {
+                                        let _ = window.set_cursor_grab(CursorGrabMode::None);
+                                        window.set_cursor_visible(true);
+                                    }
+                                }
+                                (VirtualKeyCode::W, ElementState::Pressed) => ci.forward = 1.0,
+                                (VirtualKeyCode::W, ElementState::Released) => ci.forward = 0.0,
+                                (VirtualKeyCode::S, ElementState::Pressed) => ci.forward = -1.0,
+                                (VirtualKeyCode::S, ElementState::Released) => ci.forward = 0.0,
+                                (VirtualKeyCode::D, ElementState::Pressed) => ci.right = 1.0,
+                                (VirtualKeyCode::D, ElementState::Released) => ci.right = 0.0,
+                                (VirtualKeyCode::A, ElementState::Pressed) => ci.right = -1.0,
+                                (VirtualKeyCode::A, ElementState::Released) => ci.right = 0.0,
+                                (VirtualKeyCode::Space, ElementState::Pressed) => ci.up = 1.0,
+                                (VirtualKeyCode::Space, ElementState::Released) => ci.up = 0.0,
+                                (VirtualKeyCode::LShift, ElementState::Pressed) => ci.up = -1.0,
+                                (VirtualKeyCode::LShift, ElementState::Released) => ci.up = 0.0,
+                                _ => {}
+                            }
                         }
                     }
-                    for (i, inst) in instances.iter().enumerate().take(8) {
-                        println!("[debug] inst[{}].material={}", i, inst.material);
+                }
+                Event::WindowEvent { event: WindowEvent::Focused(true), .. } => {
+                    // When the window gains focus, capture and hide the cursor
+                    // if we are not already grabbed. This allows refocus to
+                    // re-enable FPS mouse look.
+                    if !cursor_grabbed {
+                        cursor_grabbed = true;
+                        let _ = window.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+                        window.set_cursor_visible(false);
                     }
-                    if material_table.is_dirty() {
-                        renderer.set_materials(material_table.as_slice());
-                        material_table.clear_dirty();
+                }
+                Event::RedrawRequested(_window_id) => {
+                    // Update camera from the first PlayerController component
+                    let mut qc = <&mut engine_core::controller::PlayerController>::query();
+                    if let Some(pc) = qc.iter_mut(&mut world).next() {
+                        camera = engine_core::controller::controller_to_camera(pc);
                     }
-                    renderer.render_mesh(mesh_handle, &instances, camera);
+                    scene.render(
+                        &mut *renderer,
+                        &world,
+                        mesh_handle,
+                        cube_mesh_handle,
+                        camera,
+                    );
                     *control_flow = ControlFlow::Wait;
                 }
+                Event::DeviceEvent { event: winit::event::DeviceEvent::MouseMotion { delta }, .. } => {
+                    // Only apply mouse motion when the cursor is grabbed for FPS look.
+                    if cursor_grabbed {
+                        // Apply mouse motion as small yaw/pitch deltas
+                        let mut q = <&mut engine_core::controller::ControllerInput>::query();
+                        if let Some(ci) = q.iter_mut(&mut world).next() {
+                            let sensitivity = 0.0025f32;
+                            ci.yaw_delta += -(delta.0 as f32) * sensitivity;
+                            ci.pitch_delta += -(delta.1 as f32) * sensitivity;
+                        }
+                    }
+                }
+
                 Event::MainEventsCleared => {
                     // Decouple simulation (fixed-step) from rendering.
                     // 1) Accumulate wall-clock time into `sim_acc`.
@@ -196,7 +243,7 @@ fn main() {
                     if now >= last_frame + frame_duration {
                         // Advance the render timestamp by one fixed frame.
                         last_frame += frame_duration;
-                        renderer.request_redraw();
+                        window.request_redraw();
                         // Schedule next wake at the next fixed step boundary.
                         let next = last_frame + frame_duration;
                         *control_flow = ControlFlow::WaitUntil(next);
@@ -217,96 +264,38 @@ fn main() {
         let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
         let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
         let instances = collect_instances(&mut world);
-        renderer.render_mesh(mesh_handle, &instances, camera);
+        renderer.render_mesh(mesh_handle, &instances, camera, true);
         println!("Rendered one frame (exiting).");
     }
 }
 
-fn random_scene(world: &mut World) {
-    let sphere = Sphere::new(
-        Vec3::new(0f32, -1000f32, 0f32),
-        1000f32,
-        MaterialType::Lambertian {
-            albedo: Vec3::new(0.5f32, 0.5f32, 0.5f32),
-        },
-    );
-    world.push((sphere,));
-    for a in -11..11 {
-        for b in -11..11 {
-            let choose_mat = rng().random::<f32>();
-            let center = Vec3::new(
-                a as f32 + 0.9f32 * rng().random::<f32>(),
-                0.2f32,
-                b as f32 + 0.9f32 * rng().random::<f32>(),
-            );
-            if vector_length(center - Vec3::new(4f32, 0.2f32, 0f32)) > 0.9f32 {
-                if choose_mat < 0.8f32 {
-                    // diffuse
-                    let sphere = Sphere::new(
-                        center,
-                        0.2f32,
-                        MaterialType::Lambertian {
-                            albedo: Vec3::new(
-                                rng().random::<f32>() * rng().random::<f32>(),
-                                rng().random::<f32>() * rng().random::<f32>(),
-                                rng().random::<f32>() * rng().random::<f32>(),
-                            ),
-                        },
-                    );
-                    world.push((sphere,));
-                } else if choose_mat < 0.95f32 {
-                    // metal
-                    let sphere = Sphere::new(
-                        center,
-                        0.2f32,
-                        MaterialType::Metal {
-                            albedo: Vec3::new(
-                                0.5f32 * (1f32 + rng().random::<f32>()),
-                                0.5f32 * (1f32 + rng().random::<f32>()),
-                                0.5f32 * (1f32 + rng().random::<f32>()),
-                            ),
-                            fuzz: 0.5f32 * rng().random::<f32>(),
-                        },
-                    );
-                    world.push((sphere,));
-                } else {
-                    // glass
-                    let sphere = Sphere::new(
-                        center,
-                        0.2f32,
-                        MaterialType::Dielectric { ref_indx: 1.5f32 },
-                    );
-                    world.push((sphere,));
+fn load_or_generate_scene(
+    scene: &mut engine_renderer::Scene,
+    world: &mut World,
+    scene_path: &std::path::Path,
+) {
+    if scene_path.exists() {
+        match scene.load_from_file(scene_path, world) {
+            Ok(_) => println!("Loaded scene from scene.bin"),
+            Err(e) => {
+                eprintln!("Failed to load scene.bin: {}. Generating new scene.", e);
+                random_scene(world);
+                if let Err(e) = scene.save_to_file(scene_path, world) {
+                    eprintln!("Failed to save generated scene: {}", e);
                 }
             }
         }
+    } else {
+        random_scene(world);
+        if let Err(e) = scene.save_to_file(scene_path, world) {
+            eprintln!("Failed to save generated scene: {}", e);
+        }
     }
-    world.push((Sphere::new(
-        Vec3::new(0f32, 1f32, 0f32),
-        1f32,
-        MaterialType::Dielectric { ref_indx: 1.5f32 },
-    ),));
-    world.push((Sphere::new(
-        Vec3::new(-4f32, 1f32, 0f32),
-        1f32,
-        MaterialType::Lambertian {
-            albedo: Vec3::new(0.4f32, 0.2f32, 0.1f32),
-        },
-    ),));
-    world.push((Sphere::new(
-        Vec3::new(4f32, 1f32, 0f32),
-        1f32,
-        MaterialType::Metal {
-            albedo: Vec3::new(0.7f32, 0.6f32, 0.5f32),
-            fuzz: 0.0f32,
-        },
-    ),));
-    println!("World Generated");
 }
 
 #[allow(dead_code)]
-fn collect_instances(world: &mut World) -> Vec<InstanceGpu> {
-    let mut out: Vec<InstanceGpu> = Vec::new();
+fn collect_instances(world: &mut World) -> Vec<engine_core::actors::InstanceGpu> {
+    let mut out: Vec<engine_core::actors::InstanceGpu> = Vec::new();
     // Query all entities that have a Sphere component
     let mut q = <&Sphere>::query();
     for s in q.iter(world) {
@@ -331,8 +320,13 @@ fn collect_indexed_vertices(_world: &mut World) -> (Vec<[f32; 3]>, Vec<[f32; 3]>
 // to match our fixed-step scheduling.
 #[allow(dead_code)]
 fn simulate(_world: &mut World, dt: std::time::Duration) {
-    // Example placeholder: You might iterate components and update positions
-    // by velocities here. Keep minimal so builds remain fast.
-    #[allow(unused_variables)]
-    let _seconds = dt.as_secs_f32();
+    // Apply controller inputs to any PlayerController components.
+    let seconds = dt.as_secs_f32();
+    let mut q = <(&mut engine_core::controller::PlayerController, &mut engine_core::controller::ControllerInput)>::query();
+    for (pc, ci) in q.iter_mut(_world) {
+        pc.apply_input(ci, seconds);
+        // yaw/pitch deltas are one-shot; clear after applying so they act per-frame
+        ci.yaw_delta = 0.0;
+        ci.pitch_delta = 0.0;
+    }
 }

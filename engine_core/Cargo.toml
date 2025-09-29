@@ -10,3 +10,4 @@ glam = "0.30.4"
 winit = { version = "0.28.6", default-features = true }
 rand = "0.9.1"
 bytemuck = { version = "1.9.1", features = ["derive"] }
+legion = "0.4"

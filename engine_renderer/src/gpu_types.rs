@@ -9,6 +9,14 @@ pub struct MaterialGpu {
     pub params: [f32; 4],
 }
 
+impl MaterialGpu {
+    /// Return true if this material was marked as potentially
+    /// transparent by the application (params[2] > 0.0).
+    pub fn is_transparent(&self) -> bool {
+        self.params[2] > 0.0
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct CameraGpu {

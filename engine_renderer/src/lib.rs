@@ -20,6 +20,20 @@ pub struct MaterialGpu {
     pub params: [f32; 4], // params.x = fuzz, params.y = ref_idx, others unused
 }
 
+impl MaterialGpu {
+    /// Return true if this material was marked as potentially transparent
+    /// by the application (params[2] > 0.0).
+    pub fn is_transparent(&self) -> bool {
+        self.params[2] > 0.0
+    }
+}
+
+// Material table implementation (moved from the binary to the renderer crate)
+mod materials;
+pub use materials::MaterialTable;
+mod scene;
+pub use scene::Scene;
+
 pub mod gfx {
     //! Graphics backends grouped under `gfx` for clarity. The WGPU backend is
     //! feature-gated behind `backend-wgpu`.
@@ -51,6 +65,8 @@ pub mod gfx {
         // Use the crate-level MaterialGpu type for the GPU material layout.
         use crate::MaterialGpu;
 
+        use engine_core::actors::Cube as CubeActor;
+
         pub struct Renderer {
             surface: wgpu::Surface,
             device: wgpu::Device,
@@ -70,9 +86,20 @@ pub mod gfx {
             instance_buffer: Option<wgpu::Buffer>,
             instance_capacity: usize,
             vertex_count: u32,
-            window: Option<winit::window::Window>,
+            // renderer does not own the application Window; the app keeps the Window
             // mesh table stores optional mesh entries for registered meshes
             mesh_table: Vec<Option<MeshEntry>>,
+            // cached mesh handle for the unit cube (created on-demand)
+            cube_mesh: Option<u32>,
+            // Pending frame state to allow multiple mesh draws to share the same
+            // acquired surface texture. We only present and submit when the
+            // caller indicates `finalize=true`.
+            pending_frame: Option<wgpu::SurfaceTexture>,
+            // Collect draws (mesh handle + instance list) for the current
+            // application frame. We will record them all in one render pass
+            // and submit when the caller finalizes the frame.
+            pending_draws: Vec<(u32, Vec<GpuInstance>)>,
+            pending_frame_view: Option<wgpu::TextureView>,
         }
 
         // Per-mesh stored data (supports optional index buffer)
@@ -86,7 +113,7 @@ pub mod gfx {
         impl Renderer {
             pub fn new(
                 _event_loop: &winit::event_loop::EventLoop<()>,
-                window: winit::window::Window,
+                window: &winit::window::Window,
             ) -> Self {
                 println!("(wgpu) Initializing renderer (instanced cubes)");
                 let size = window.inner_size();
@@ -95,7 +122,7 @@ pub mod gfx {
                     backends: wgpu::Backends::all(),
                     dx12_shader_compiler: Default::default(),
                 });
-                let surface = unsafe { instance.create_surface(&window) }.expect("create_surface");
+                let surface = unsafe { instance.create_surface(window) }.expect("create_surface");
                 let adapter =
                     pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                         power_preference: wgpu::PowerPreference::HighPerformance,
@@ -131,12 +158,15 @@ pub mod gfx {
                 let vertex_buffer = None;
                 let vertex_count = 0u32;
 
+                let shader_source = [
+                    include_str!("../../shaders/common.wgsl"),
+                    include_str!("../../shaders/vertex.wgsl"),
+                    include_str!("../../shaders/fragment.wgsl"),
+                ].join("\n\n");
                 let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("shader"),
                     // shader path adjusted for crate layout (engine_renderer/src -> repo root)
-                    source: wgpu::ShaderSource::Wgsl(
-                        include_str!("../../shaders/instance.wgsl").into(),
-                    ),
+                    source: wgpu::ShaderSource::Wgsl(shader_source.into()),
                 });
                 // Camera uniform bind group (group 0) now contains both the camera
                 // uniform (binding 0) and a storage buffer with the material table
@@ -273,7 +303,18 @@ pub mod gfx {
                         entry_point: "fs_main",
                         targets: &[Some(wgpu::ColorTargetState {
                             format: config.format,
-                            blend: Some(wgpu::BlendState::REPLACE),
+                            blend: Some(wgpu::BlendState {
+                                color: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                                alpha: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::One,
+                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                            }),
                             write_mask: wgpu::ColorWrites::ALL,
                         })],
                     }),
@@ -319,8 +360,12 @@ pub mod gfx {
                     instance_buffer: Some(instance_buf),
                     instance_capacity: 1,
                     vertex_count,
-                    window: Some(window),
+                    // window is owned by the application; don't store it here
                     mesh_table: Vec::new(),
+                    cube_mesh: None,
+                    pending_frame: None,
+                    pending_draws: Vec::new(),
+                    pending_frame_view: None,
                 }
             }
 
@@ -486,9 +531,10 @@ pub mod gfx {
             }
 
             pub fn request_redraw(&self) {
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                // Renderer does not own the application Window. The application
+                // should call `window.request_redraw()` when appropriate. Keep
+                // this method as a no-op to preserve the public API.
+                // No-op
             }
 
             /// Update the material table on the GPU. This replaces the storage
@@ -664,6 +710,7 @@ pub mod gfx {
                 mesh: u32,
                 instances: &[engine_core::actors::InstanceGpu],
                 camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+                finalize: bool,
             ) {
                 let idx = mesh as usize;
                 if idx >= self.mesh_table.len() {
@@ -726,26 +773,98 @@ pub mod gfx {
                             .write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
                     }
 
-                    let frame = match self.surface.get_current_texture() {
-                        Ok(f) => f,
-                        Err(_) => {
-                            self.surface.configure(&self.device, &self.config);
-                            return;
+                    // Push this draw into pending_draws to batch multiple mesh
+                    // draws into a single render pass per application frame.
+                    self.pending_draws.push((mesh, instances_gpu));
+
+                    // If we need to acquire the frame (this is the first pending
+                    // draw), do so now. If acquire fails attempt reconfigure.
+                    if self.pending_frame_view.is_none() {
+                        match self.surface.get_current_texture() {
+                            Ok(f) => {
+                                let view = f
+                                    .texture
+                                    .create_view(&wgpu::TextureViewDescriptor::default());
+                                self.pending_frame = Some(f);
+                                self.pending_frame_view = Some(view);
+                            }
+                            Err(_) => {
+                                self.surface.configure(&self.device, &self.config);
+                                return;
+                            }
                         }
-                    };
-                    let frame_view = frame
-                        .texture
-                        .create_view(&wgpu::TextureViewDescriptor::default());
-                    let mut encoder =
-                        self.device
-                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                label: Some("encoder"),
+                    }
+
+                    // If finalize requested, record a single render pass that
+                    // iterates all pending_draws and issues draw calls for each
+                    // registered mesh. We will write instance data for each draw
+                    // into the instance buffer sequentially and use vertex buffer
+                    // offsets when binding if supported; wgpu allows setting the
+                    // vertex buffer with an offset in bytes via slice(offset..).
+                    if finalize {
+                        // Ensure we have a frame view and a pending frame to present
+                        let frame_view = match &self.pending_frame_view {
+                            Some(v) => v,
+                            None => return,
+                        };
+
+                        // Create an encoder to record the batched render pass.
+                        let mut encoder =
+                            self.device
+                                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                    label: Some("batched-encoder"),
+                                });
+
+                        // Before recording, we need to flatten all instance lists
+                        // into a contiguous buffer and record the offsets for each draw.
+                        let mut all_instances: Vec<GpuInstance> = Vec::new();
+                        let mut offsets: Vec<usize> = Vec::with_capacity(self.pending_draws.len());
+                        for (_m, insts) in &self.pending_draws {
+                            offsets.push(all_instances.len());
+                            all_instances.extend_from_slice(insts);
+                        }
+
+                        // Ensure instance buffer capacity for all_instances
+                        let required = all_instances.len().max(1);
+                        if self.instance_capacity < required {
+                            let mut new_cap = self.instance_capacity.max(1);
+                            while new_cap < required {
+                                new_cap = new_cap.saturating_mul(2);
+                            }
+                            let size_bytes = (new_cap * std::mem::size_of::<GpuInstance>())
+                                as wgpu::BufferAddress;
+                            let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                                label: Some("instance-buffer"),
+                                size: size_bytes,
+                                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                                mapped_at_creation: false,
                             });
-                    {
+                            self.instance_buffer = Some(buf);
+                            self.instance_capacity = new_cap;
+                        }
+
+                        // Upload all instances into the instance buffer
+                        let ibuf = self.instance_buffer.as_ref().unwrap();
+                        if !all_instances.is_empty() {
+                            self.queue
+                                .write_buffer(ibuf, 0, bytemuck::cast_slice(&all_instances));
+                        } else {
+                            let zero = GpuInstance {
+                                model: [[0.0; 4]; 4],
+                                material: 0,
+                                object_type: 0,
+                                padding: [0, 0],
+                            };
+                            self.queue
+                                .write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
+                        }
+
+                        // Begin the single render pass and issue draw calls for
+                        // each pending draw in order.
                         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("rpass"),
+                            label: Some("batched-rpass"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: &frame_view,
+                                view: frame_view,
                                 resolve_target: None,
                                 ops: wgpu::Operations {
                                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -765,18 +884,48 @@ pub mod gfx {
                         });
                         rpass.set_pipeline(&self.pipeline);
                         rpass.set_bind_group(0, &self.camera_bind_group, &[]);
-                        rpass.set_vertex_buffer(0, me.buffer.slice(..));
-                        rpass.set_vertex_buffer(1, ibuf.slice(..));
-                        let instance_count = instances_gpu.len().max(1) as u32;
-                        if let Some(idx_buf) = &me.index_buffer {
-                            rpass.set_index_buffer(idx_buf.slice(..), wgpu::IndexFormat::Uint32);
-                            rpass.draw_indexed(0..me.index_count, 0, 0..instance_count);
-                        } else {
-                            rpass.draw(0..me.vertex_count, 0..instance_count);
+
+                        // Iterate draws and issue draw calls
+                        for (i, (mesh_handle, insts)) in self.pending_draws.iter().enumerate() {
+                            let idx = *mesh_handle as usize;
+                            if idx >= self.mesh_table.len() {
+                                continue;
+                            }
+                            if let Some(me) = &self.mesh_table[idx] {
+                                // Bind the mesh's vertex buffer
+                                rpass.set_vertex_buffer(0, me.buffer.slice(..));
+                                // Bind the instance buffer with offset for this draw
+                                let offset_instances = offsets[i];
+                                let offset_bytes = (offset_instances
+                                    * std::mem::size_of::<GpuInstance>())
+                                    as wgpu::BufferAddress;
+                                rpass.set_vertex_buffer(1, ibuf.slice(offset_bytes..));
+                                let instance_count = insts.len().max(1) as u32;
+                                if let Some(idx_buf) = &me.index_buffer {
+                                    rpass.set_index_buffer(
+                                        idx_buf.slice(..),
+                                        wgpu::IndexFormat::Uint32,
+                                    );
+                                    rpass.draw_indexed(0..me.index_count, 0, 0..instance_count);
+                                } else {
+                                    rpass.draw(0..me.vertex_count, 0..instance_count);
+                                }
+                            }
                         }
+
+                        drop(rpass);
+
+                        // Submit and present
+                        let finished = encoder.finish();
+                        if let Some(frame) = self.pending_frame.take() {
+                            self.queue.submit(Some(finished));
+                            frame.present();
+                        }
+
+                        // Clear pending state
+                        self.pending_frame_view = None;
+                        self.pending_draws.clear();
                     }
-                    self.queue.submit(Some(encoder.finish()));
-                    frame.present();
                 }
             }
         }
@@ -786,6 +935,11 @@ pub mod gfx {
     pub mod placeholder {
         use engine_core::actors::InstanceGpu;
         pub struct Renderer {}
+        impl Default for Renderer {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
         impl Renderer {
             pub fn new() -> Self {
                 Renderer {}
@@ -847,6 +1001,7 @@ pub trait RendererBackend {
         mesh: u32,
         instances: &[engine_core::actors::InstanceGpu],
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+        finalize: bool,
     );
     /// Replace the material table on the GPU. The caller should prepare a
     /// slice of `MaterialGpu` values describing each distinct material.
@@ -888,8 +1043,9 @@ impl RendererBackend for gfx::wgpu_impl::Renderer {
         mesh: u32,
         instances: &[engine_core::actors::InstanceGpu],
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+        finalize: bool,
     ) {
-        gfx::wgpu_impl::Renderer::render_mesh(self, mesh, instances, camera)
+        gfx::wgpu_impl::Renderer::render_mesh(self, mesh, instances, camera, finalize)
     }
     fn set_materials(&mut self, materials: &[crate::MaterialGpu]) {
         gfx::wgpu_impl::Renderer::set_material_table(self, materials)
@@ -922,6 +1078,7 @@ impl RendererBackend for gfx::placeholder::Renderer {
         _mesh: u32,
         _instances: &[engine_core::actors::InstanceGpu],
         _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+        _finalize: bool,
     ) {
         // no-op in placeholder
     }
@@ -942,7 +1099,7 @@ impl RendererBackend for gfx::placeholder::Renderer {
 #[cfg(feature = "backend-wgpu")]
 pub fn create_renderer(
     event_loop: &winit::event_loop::EventLoop<()>,
-    window: winit::window::Window,
+    window: &winit::window::Window,
 ) -> Box<dyn RendererBackend> {
     Box::new(gfx::wgpu_impl::Renderer::new(event_loop, window))
 }
