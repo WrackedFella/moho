@@ -65,7 +65,7 @@ pub mod gfx {
         // Use the crate-level MaterialGpu type for the GPU material layout.
         use crate::MaterialGpu;
 
-    // cube actor import removed: not used in this module
+        // cube actor import removed: not used in this module
 
         pub struct Renderer {
             surface: wgpu::Surface,
@@ -892,8 +892,8 @@ pub mod gfx {
                                 continue;
                             }
                             if let Some(me) = &self.mesh_table[idx] {
-                                        // Bind the mesh's vertex buffer
-                                        rpass.set_vertex_buffer(0, me.buffer.slice(..));
+                                // Bind the mesh's vertex buffer
+                                rpass.set_vertex_buffer(0, me.buffer.slice(..));
                                 // Bind the instance buffer with offset for this draw
                                 let offset_instances = offsets[i];
                                 let offset_bytes = (offset_instances
