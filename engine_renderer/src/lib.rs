@@ -162,7 +162,8 @@ pub mod gfx {
                     include_str!("../../shaders/common.wgsl"),
                     include_str!("../../shaders/vertex.wgsl"),
                     include_str!("../../shaders/fragment.wgsl"),
-                ].join("\n\n");
+                ]
+                .join("\n\n");
                 let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("shader"),
                     // shader path adjusted for crate layout (engine_renderer/src -> repo root)

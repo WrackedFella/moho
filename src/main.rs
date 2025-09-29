@@ -43,7 +43,9 @@ fn main() {
     // Parse CLI args for --scene <path>. Default to ./scene.bin
     let args: Vec<String> = std::env::args().collect();
     let scene_path_buf = if let Some(i) = args.iter().position(|a| a == "--scene" || a == "-s") {
-        args.get(i + 1).map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from("scene.bin"))
+        args.get(i + 1)
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("scene.bin"))
     } else {
         std::path::PathBuf::from("scene.bin")
     };
@@ -54,7 +56,10 @@ fn main() {
 
     // create a simple PlayerController entity and derive the camera from it
     let start_pos = glam::Vec3::new(13.0, 2.0, 3.0);
-    world.push((engine_core::controller::PlayerController::new(start_pos), engine_core::controller::ControllerInput::default()));
+    world.push((
+        engine_core::controller::PlayerController::new(start_pos),
+        engine_core::controller::ControllerInput::default(),
+    ));
     // initial camera value (will be computed from controller each frame)
     let mut camera = make_camera();
 
@@ -79,10 +84,10 @@ fn main() {
             .build(&event_loop)
             .expect("Failed to create window");
 
-    // Create a boxed renderer backend via the factory.
-    let mut renderer = create_renderer(&event_loop, &window);
-    let mut cursor_grabbed = false;
-    use winit::window::CursorGrabMode;
+        // Create a boxed renderer backend via the factory.
+        let mut renderer = create_renderer(&event_loop, &window);
+        let mut cursor_grabbed = false;
+        use winit::window::CursorGrabMode;
 
         // Use the `scene` created above; it was intentionally created once
         // before entering the backend-specific code paths so persistence and
@@ -147,8 +152,11 @@ fn main() {
                 } => {
                     renderer.resize(size.width, size.height);
                 }
-                Event::WindowEvent { event: WindowEvent::KeyboardInput { input, .. }, .. } => {
-                    use winit::event::{VirtualKeyCode, ElementState};
+                Event::WindowEvent {
+                    event: WindowEvent::KeyboardInput { input, .. },
+                    ..
+                } => {
+                    use winit::event::{ElementState, VirtualKeyCode};
                     if let Some(vk) = input.virtual_keycode {
                         let mut q = <&mut engine_core::controller::ControllerInput>::query();
                         if let Some(ci) = q.iter_mut(&mut world).next() {
@@ -157,7 +165,11 @@ fn main() {
                                     // Toggle cursor grab/visibility
                                     cursor_grabbed = !cursor_grabbed;
                                     if cursor_grabbed {
-                                        let _ = window.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+                                        let _ = window
+                                            .set_cursor_grab(CursorGrabMode::Locked)
+                                            .or_else(|_| {
+                                                window.set_cursor_grab(CursorGrabMode::Confined)
+                                            });
                                         window.set_cursor_visible(false);
                                     } else {
                                         let _ = window.set_cursor_grab(CursorGrabMode::None);
@@ -181,13 +193,18 @@ fn main() {
                         }
                     }
                 }
-                Event::WindowEvent { event: WindowEvent::Focused(true), .. } => {
+                Event::WindowEvent {
+                    event: WindowEvent::Focused(true),
+                    ..
+                } => {
                     // When the window gains focus, capture and hide the cursor
                     // if we are not already grabbed. This allows refocus to
                     // re-enable FPS mouse look.
                     if !cursor_grabbed {
                         cursor_grabbed = true;
-                        let _ = window.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+                        let _ = window
+                            .set_cursor_grab(CursorGrabMode::Locked)
+                            .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
                         window.set_cursor_visible(false);
                     }
                 }
@@ -206,7 +223,10 @@ fn main() {
                     );
                     *control_flow = ControlFlow::Wait;
                 }
-                Event::DeviceEvent { event: winit::event::DeviceEvent::MouseMotion { delta }, .. } => {
+                Event::DeviceEvent {
+                    event: winit::event::DeviceEvent::MouseMotion { delta },
+                    ..
+                } => {
                     // Only apply mouse motion when the cursor is grabbed for FPS look.
                     if cursor_grabbed {
                         // Apply mouse motion as small yaw/pitch deltas
@@ -322,7 +342,10 @@ fn collect_indexed_vertices(_world: &mut World) -> (Vec<[f32; 3]>, Vec<[f32; 3]>
 fn simulate(_world: &mut World, dt: std::time::Duration) {
     // Apply controller inputs to any PlayerController components.
     let seconds = dt.as_secs_f32();
-    let mut q = <(&mut engine_core::controller::PlayerController, &mut engine_core::controller::ControllerInput)>::query();
+    let mut q = <(
+        &mut engine_core::controller::PlayerController,
+        &mut engine_core::controller::ControllerInput,
+    )>::query();
     for (pc, ci) in q.iter_mut(_world) {
         pc.apply_input(ci, seconds);
         // yaw/pitch deltas are one-shot; clear after applying so they act per-frame
