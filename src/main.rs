@@ -5,8 +5,6 @@ use engine_core::scene_builders::random_scene;
 // glam types are used via fully-qualified names where needed
 // Renderer has been moved into the `engine_renderer` crate to provide a
 // reusable rendering API.
-#[cfg(feature = "backend-wgpu")]
-use engine_renderer::MaterialTable;
 use engine_renderer::create_renderer;
 use legion::World;
 use legion::query::IntoQuery;
@@ -61,7 +59,7 @@ fn main() {
         engine_core::controller::ControllerInput::default(),
     ));
     // initial camera value (will be computed from controller each frame)
-    let camera = make_camera();
+    let mut camera = make_camera();
 
     // Helper to make the camera clearer - kept local for now.
     fn make_camera() -> (glam::Mat4, glam::Mat4, glam::Vec3) {

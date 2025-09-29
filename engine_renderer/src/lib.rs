@@ -65,7 +65,7 @@ pub mod gfx {
         // Use the crate-level MaterialGpu type for the GPU material layout.
         use crate::MaterialGpu;
 
-        use engine_core::actors::Cube as CubeActor;
+    // cube actor import removed: not used in this module
 
         pub struct Renderer {
             surface: wgpu::Surface,
@@ -90,7 +90,7 @@ pub mod gfx {
             // mesh table stores optional mesh entries for registered meshes
             mesh_table: Vec<Option<MeshEntry>>,
             // cached mesh handle for the unit cube (created on-demand)
-            cube_mesh: Option<u32>,
+            // cube_mesh was removed as it was never read
             // Pending frame state to allow multiple mesh draws to share the same
             // acquired surface texture. We only present and submit when the
             // caller indicates `finalize=true`.
@@ -363,7 +363,6 @@ pub mod gfx {
                     vertex_count,
                     // window is owned by the application; don't store it here
                     mesh_table: Vec::new(),
-                    cube_mesh: None,
                     pending_frame: None,
                     pending_draws: Vec::new(),
                     pending_frame_view: None,
@@ -717,7 +716,7 @@ pub mod gfx {
                 if idx >= self.mesh_table.len() {
                     return;
                 }
-                if let Some(me) = &self.mesh_table[idx] {
+                if self.mesh_table[idx].is_some() {
                     // update camera
                     let view_mat = camera.0;
                     let proj_mat = camera.1;
@@ -893,8 +892,8 @@ pub mod gfx {
                                 continue;
                             }
                             if let Some(me) = &self.mesh_table[idx] {
-                                // Bind the mesh's vertex buffer
-                                rpass.set_vertex_buffer(0, me.buffer.slice(..));
+                                        // Bind the mesh's vertex buffer
+                                        rpass.set_vertex_buffer(0, me.buffer.slice(..));
                                 // Bind the instance buffer with offset for this draw
                                 let offset_instances = offsets[i];
                                 let offset_bytes = (offset_instances
