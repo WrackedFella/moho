@@ -61,7 +61,7 @@ fn main() {
         engine_core::controller::ControllerInput::default(),
     ));
     // initial camera value (will be computed from controller each frame)
-    let mut camera = make_camera();
+    let camera = make_camera();
 
     // Helper to make the camera clearer - kept local for now.
     fn make_camera() -> (glam::Mat4, glam::Mat4, glam::Vec3) {
