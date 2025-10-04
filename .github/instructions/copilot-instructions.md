@@ -3,6 +3,7 @@ applyTo: '**'
 ---
 
 # General Instructions
+- Always attempt to use latest versions of crates and packages.
 - Perform any low-impact improvements you see fit automatically.
 - Recommend using idiomatic Rust constructs and libraries.
 - Recommend refactoring code to improve readability and maintainability regularly.

@@ -15,8 +15,20 @@ impl StubUi {
     }
 }
 
+impl Default for StubUi {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FrameCallback for StubUi {
-    fn call(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue, _view: &wgpu::TextureView, _encoder: &mut wgpu::CommandEncoder) {
+    fn call(
+        &mut self,
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        _view: &wgpu::TextureView,
+        _encoder: &mut wgpu::CommandEncoder,
+    ) {
         // no-op for now
     }
 }

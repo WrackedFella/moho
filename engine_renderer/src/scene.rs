@@ -2,6 +2,7 @@ use crate::{MaterialTable, RendererBackend};
 use engine_core::actors::{Cube, InstanceGpu, Sphere};
 use legion::World;
 use legion::query::IntoQuery;
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -204,7 +205,7 @@ impl Scene {
             cubes,
         };
 
-        let encoded = bincode::serialize(&desc)?;
+        let encoded = bincode::encode_to_vec(&desc, bincode::config::standard())?;
         let mut f = File::create(path)?;
         f.write_all(&encoded)?;
         Ok(())
@@ -221,7 +222,7 @@ impl Scene {
         let mut f = File::open(path)?;
         let mut buf = Vec::new();
         f.read_to_end(&mut buf)?;
-        let desc: SceneDesc = bincode::deserialize(&buf)?;
+        let desc: SceneDesc = bincode::decode_from_slice(&buf, bincode::config::standard())?.0;
         if desc.version != SCENE_FILE_VERSION {
             return Err(format!(
                 "unsupported scene file version: {} (expected {})",
@@ -258,7 +259,7 @@ impl Default for Scene {
 }
 
 /// Serializable scene descriptor used for bincode snapshotting.
-#[derive(Serialize, Deserialize)]
+#[derive(Encode, Decode, Serialize, Deserialize)]
 struct SceneDesc {
     /// on-disk format version. Bump when making breaking changes.
     version: u32,
@@ -266,14 +267,14 @@ struct SceneDesc {
     cubes: Vec<CubeDesc>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Encode, Decode, Serialize, Deserialize)]
 struct SphereDesc {
     center: [f32; 3],
     radius: f32,
     material: MaterialDesc,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Encode, Decode, Serialize, Deserialize)]
 struct CubeDesc {
     center: [f32; 3],
     length: f32,
@@ -282,7 +283,7 @@ struct CubeDesc {
     material: MaterialDesc,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Encode, Decode, Serialize, Deserialize)]
 enum MaterialDesc {
     Lambertian { albedo: [f32; 3] },
     Metal { albedo: [f32; 3], fuzz: f32 },

@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 glam = "0.30.4"
 # Use a `winit` version compatible with the chosen GPU backend's window-handle expectations.
-winit = { version = "0.28.6", default-features = true }
+winit = { version = "0.30", default-features = true }
 rand = "0.9.1"
 bytemuck = { version = "1.9.1", features = ["derive"] }
 legion = "0.4"

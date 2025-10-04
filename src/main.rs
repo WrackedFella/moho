@@ -3,8 +3,9 @@ use engine_core::actors::Cube;
 use engine_core::actors::Sphere;
 use engine_core::scene_builders::random_scene;
 // glam types are used via fully-qualified names where needed
-// Renderer has been moved into the `engine_renderer` crate to provide a
+// Renderer has been moved int                                            app_state.window.set_cursor_visible(true); the `engine_renderer` crate to provide a
 // reusable rendering API.
+#[cfg(feature = "backend-wgpu")]
 use engine_renderer::create_renderer;
 use legion::World;
 use legion::query::IntoQuery;
@@ -54,11 +55,18 @@ fn main() {
 
     // create a simple PlayerController entity and derive the camera from it
     let start_pos = glam::Vec3::new(13.0, 2.0, 3.0);
+    let mut controller = engine_core::controller::PlayerController::new(start_pos);
+    // Set initial yaw and pitch to look towards the origin
+    // direction = (-13, -2, -3), normalized ≈ (-0.94, -0.14, -0.22)
+    // yaw = atan2(-0.94, -0.22) ≈ -1.76, pitch = asin(-0.14) ≈ -0.14
+    controller.yaw = -1.76;
+    controller.pitch = -0.14;
     world.push((
-        engine_core::controller::PlayerController::new(start_pos),
+        controller,
         engine_core::controller::ControllerInput::default(),
     ));
     // initial camera value (will be computed from controller each frame)
+    #[allow(unused_mut)]
     let mut camera = make_camera();
 
     // Helper to make the camera clearer - kept local for now.
@@ -75,6 +83,7 @@ fn main() {
     // and run a proper per-frame loop. Otherwise use the placeholder
     // renderer and run a single frame to keep builds fast.
     #[cfg(feature = "backend-wgpu")]
+    #[allow(deprecated)]
     {
         let event_loop = EventLoop::new().expect("Failed to create event loop");
         let window_attributes = WindowAttributes::default();
@@ -82,26 +91,28 @@ fn main() {
         // Create the window on the main thread then move ownership into the renderer.
         // The renderer now owns the Window and exposes control methods
         // (request_redraw, set_cursor_visible, set_cursor_grab).
+        #[allow(deprecated)]
         let window = event_loop
             .create_window(window_attributes.clone())
             .expect("Failed to create window");
         window.set_title("moho - wgpu renderer");
 
-    // Box the Window and convert to a raw pointer so we can create a
-    // &'static reference for the renderer and event loop. We will
-    // reconstruct and drop the Box after the event loop exits so this
-    // does not permanently leak memory.
-    let boxed_window = Box::new(window);
-    let raw_window_ptr: *mut winit::window::Window = Box::into_raw(boxed_window);
-    let leaked_window: &'static winit::window::Window = unsafe { &*raw_window_ptr };
+        // Box the Window and convert to a raw pointer so we can create a
+        // &'static reference for the renderer and event loop. We will
+        // reconstruct and drop the Box after the event loop exits so this
+        // does not permanently leak memory.
+        let boxed_window = Box::new(window);
+        let raw_window_ptr: *mut winit::window::Window = Box::into_raw(boxed_window);
+        let leaked_window: &'static winit::window::Window = unsafe { &*raw_window_ptr };
 
-    let mut renderer = create_renderer(leaked_window);
+        let mut renderer = create_renderer(Some(leaked_window));
 
         // Register meshes up-front.
         let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
         let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
         let (cube_vertices, cube_normals, cube_indices) = Cube::unit_cube_indexed();
-        let cube_mesh_handle = renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
+        let cube_mesh_handle =
+            renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
 
         struct AppState {
             renderer: Box<dyn engine_renderer::RendererBackend + 'static>,
@@ -119,7 +130,7 @@ fn main() {
             cursor_grabbed: false,
             window: leaked_window,
         };
-        use winit::window::CursorGrabMode;
+        // use winit::window::CursorGrabMode;
 
         // Frame timing: aim for ~60 FPS.
         let frame_duration = Duration::from_secs_f64(1.0 / 60.0);
@@ -129,15 +140,14 @@ fn main() {
         let mut sim_acc = Duration::from_secs(0);
         // Track wall-clock time to accumulate simulation time.
         let mut last_time = Instant::now();
-    // simple frame counter for debug correlation with renderer logs
-    let mut frame_count: u64 = 0;
+        // simple frame counter for debug correlation with renderer logs
+        let mut frame_count: u64 = 0;
 
-    // Move the raw pointer into the closure so we can reconstruct the Box
-    // after run returns. The raw pointer is still owned by us (we will
-    // call Box::from_raw after run returns).
-    let raw_window_ptr = raw_window_ptr;
-
-    event_loop.run(move |event, active_event_loop| {
+        // Move the raw pointer into the closure so we can reconstruct the Box
+        // after run returns. The raw pointer is still owned by us (we will
+        // call Box::from_raw after run returns).            #[allow(deprecated)]
+        #[allow(deprecated)]
+        let _ = event_loop.run(move |event, active_event_loop| {
             match event {
                 Event::NewEvents(start_cause) => {
                     if matches!(start_cause, StartCause::Init) {
@@ -152,7 +162,10 @@ fn main() {
                         );
 
                         active_event_loop.set_control_flow(ControlFlow::Wait);
-                        } else if matches!(start_cause, StartCause::ResumeTimeReached { .. } | StartCause::Poll) {
+                    } else if matches!(
+                        start_cause,
+                        StartCause::ResumeTimeReached { .. } | StartCause::Poll
+                    ) {
                         // This is called when the event loop wakes at our scheduled time.
                         // Mirror the previous MainEventsCleared behavior: step simulation and
                         // request a redraw when appropriate.
@@ -203,20 +216,34 @@ fn main() {
                                     || format!("{:?}", event.logical_key).contains("Escape");
 
                                 if is_escape {
-                                    eprintln!("Escape pressed; toggling cursor grab (currently={})", app_state.cursor_grabbed);
+                                    eprintln!(
+                                        "Escape pressed; toggling cursor grab (currently={})",
+                                        app_state.cursor_grabbed
+                                    );
                                     if app_state.cursor_grabbed {
-                                        let r = app_state.window.set_cursor_grab(winit::window::CursorGrabMode::None);
+                                        let r = app_state
+                                            .window
+                                            .set_cursor_grab(winit::window::CursorGrabMode::None);
                                         eprintln!("window.set_cursor_grab(None) -> {:?}", r);
                                         app_state.cursor_grabbed = false;
-                                        let _ = app_state.window.set_cursor_visible(true);
+                                        app_state.window.set_cursor_visible(true);
                                     } else {
                                         // Try Locked then Confined
-                                        use winit::window::CursorGrabMode;
-                                        let r = app_state.window.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| app_state.window.set_cursor_grab(CursorGrabMode::Confined));
-                                        eprintln!("window.set_cursor_grab(Locked|Confined) -> {:?}", r);
+                                        let r = app_state
+                                            .window
+                                            .set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                            .or_else(|_| {
+                                                app_state.window.set_cursor_grab(
+                                                    winit::window::CursorGrabMode::Confined,
+                                                )
+                                            });
+                                        eprintln!(
+                                            "window.set_cursor_grab(Locked|Confined) -> {:?}",
+                                            r
+                                        );
                                         if r.is_ok() {
                                             app_state.cursor_grabbed = true;
-                                            let _ = app_state.window.set_cursor_visible(false);
+                                            app_state.window.set_cursor_visible(false);
                                         }
                                     }
                                 }
@@ -224,12 +251,18 @@ fn main() {
                         }
                         WindowEvent::Focused(gained) => {
                             if gained && !app_state.cursor_grabbed {
-                                use winit::window::CursorGrabMode;
-                                let r = app_state.window.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| app_state.window.set_cursor_grab(CursorGrabMode::Confined));
+                                let r = app_state
+                                    .window
+                                    .set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                    .or_else(|_| {
+                                        app_state.window.set_cursor_grab(
+                                            winit::window::CursorGrabMode::Confined,
+                                        )
+                                    });
                                 eprintln!("Focused -> window.set_cursor_grab -> {:?}", r);
                                 if r.is_ok() {
                                     app_state.cursor_grabbed = true;
-                                    let _ = app_state.window.set_cursor_visible(false);
+                                    app_state.window.set_cursor_visible(false);
                                 }
                             }
                         }
@@ -243,7 +276,10 @@ fn main() {
                                 camera = engine_core::controller::controller_to_camera(pc);
                             }
                             // Debug: print camera eye and frame id to correlate with renderer logs
-                            eprintln!("[main] frame={} WindowEvent::RedrawRequested -> camera_eye={:?}", frame_count, camera.2);
+                            eprintln!(
+                                "[main] frame={} WindowEvent::RedrawRequested -> camera_eye={:?}",
+                                frame_count, camera.2
+                            );
                             scene.render(
                                 &mut *app_state.renderer,
                                 &world,
@@ -281,10 +317,10 @@ fn main() {
                         // helps verify that mouse deltas are being consumed.
                         simulate(&mut world, sim_dt);
                         // Ensure the renderer draws the updated camera state.
-                            // Request a redraw via the owned window so the renderer
-                            // will obtain an up-to-date SurfaceTexture during its
-                            // next render call.
-                            app_state.window.request_redraw();
+                        // Request a redraw via the owned window so the renderer
+                        // will obtain an up-to-date SurfaceTexture during its
+                        // next render call.
+                        app_state.window.request_redraw();
                     }
                 }
                 // MainEventsCleared is no longer a top-level Event variant in winit 0.30.
@@ -304,7 +340,7 @@ fn main() {
 
     #[cfg(not(feature = "backend-wgpu"))]
     {
-        let mut renderer = create_renderer();
+        let mut renderer = engine_renderer::create_renderer(None);
         // Register indexed mesh once with placeholder renderer (no-op) and use render_mesh
         let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
         let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
@@ -375,11 +411,14 @@ fn simulate(_world: &mut World, dt: std::time::Duration) {
     static SIM_COUNT: AtomicU64 = AtomicU64::new(0);
     for (pc, ci) in q.iter_mut(_world) {
         let n = SIM_COUNT.fetch_add(1, Ordering::Relaxed);
-        if n % 60 == 0 {
-            eprintln!("simulate[#{}]: before pc={:?} ci={:?} dt={}", n, *pc, *ci, seconds);
+        if n.is_multiple_of(60) {
+            eprintln!(
+                "simulate[#{}]: before pc={:?} ci={:?} dt={}",
+                n, *pc, *ci, seconds
+            );
         }
         pc.apply_input(ci, seconds);
-        if n % 60 == 0 {
+        if n.is_multiple_of(60) {
             eprintln!("simulate[#{}]: after  pc={:?} ci={:?}", n, *pc, *ci);
         }
         // yaw/pitch deltas are one-shot; clear after applying so they act per-frame

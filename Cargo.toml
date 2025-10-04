@@ -16,8 +16,8 @@ env_logger = { workspace = true }
 # Use winit 0.28.x to be compatible with wgpu/raw-window-handle used by wgpu 0.15
 winit = { version = "0.30", optional = true }
 # WGPU backend (preferred)
-wgpu = { version = "26.0.1", optional = true }
-pollster = { version = "0.3", optional = true }
+wgpu = { version = "27", optional = true }
+pollster = { version = "0.4", optional = true }
 bytemuck = { version = "1.9.1", features = ["derive"] }
 
 [features]
