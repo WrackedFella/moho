@@ -1,0 +1,13 @@
+[package]
+name = "moho_ui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# UI crate will own egui and friends; keep minimal for now.
+egui = "0.32"
+egui-winit = "0.32"
+egui-wgpu = "0.32"
+
+[features]
+default = []

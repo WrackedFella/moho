@@ -14,9 +14,9 @@ env_logger = { workspace = true }
 
 # Optional frontend/backends
 # Use winit 0.28.x to be compatible with wgpu/raw-window-handle used by wgpu 0.15
-winit = { version = "0.28.6", optional = true }
+winit = { version = "0.30", optional = true }
 # WGPU backend (preferred)
-wgpu = { version = "0.15", optional = true }
+wgpu = { version = "26.0.1", optional = true }
 pollster = { version = "0.3", optional = true }
 bytemuck = { version = "1.9.1", features = ["derive"] }
 
@@ -25,7 +25,7 @@ bytemuck = { version = "1.9.1", features = ["derive"] }
 backend-wgpu = ["wgpu", "winit", "pollster", "engine_renderer/backend-wgpu"]
 
 [workspace]
-members = ["engine_core", "engine_renderer"]
+members = ["engine_core", "engine_renderer", "moho_ui"]
 
 [workspace.dependencies]
 log = "0.4"
