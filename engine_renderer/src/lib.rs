@@ -67,8 +67,13 @@ pub mod gfx {
 
         // cube actor import removed: not used in this module
 
-        pub struct Renderer {
-            surface: wgpu::Surface,
+        pub struct Renderer<'a> {
+            // Borrow the Window for the lifetime of the renderer. The
+            // application must ensure the Window outlives the returned
+            // renderer (we accept a &Window in new()). This avoids
+            // leaking the Window for the process lifetime.
+            window: &'a winit::window::Window,
+            surface: wgpu::Surface<'a>,
             device: wgpu::Device,
             queue: wgpu::Queue,
             config: wgpu::SurfaceConfiguration,
@@ -110,18 +115,22 @@ pub mod gfx {
             pub index_count: u32,
         }
 
-        impl Renderer {
+    impl<'a> Renderer<'a> {
             pub fn new(
-                _event_loop: &winit::event_loop::EventLoop<()>,
-                window: &winit::window::Window,
+                window: &'a winit::window::Window,
             ) -> Self {
                 println!("(wgpu) Initializing renderer (instanced cubes)");
+                // Use the borrowed window directly. The Surface is created
+                // with a reference to the provided Window; the returned
+                // Surface borrows the Window for the same lifetime.
                 let size = window.inner_size();
                 // Initialize wgpu
-                let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                let instance_desc = wgpu::InstanceDescriptor {
                     backends: wgpu::Backends::all(),
-                    dx12_shader_compiler: Default::default(),
-                });
+                    ..Default::default()
+                };
+                let instance = wgpu::Instance::new(&instance_desc);
+                // create_surface takes a reference to the window; store surface owned by instance
                 let surface = unsafe { instance.create_surface(window) }.expect("create_surface");
                 let adapter =
                     pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -130,25 +139,25 @@ pub mod gfx {
                         force_fallback_adapter: false,
                     }))
                     .expect("Failed to find an adapter");
-                let (device, queue) = pollster::block_on(adapter.request_device(
-                    &wgpu::DeviceDescriptor {
-                        features: wgpu::Features::empty(),
-                        limits: wgpu::Limits::default(),
-                        label: None,
-                    },
-                    None,
-                ))
+                let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                    label: None,
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    memory_hints: Default::default(),
+                    trace: Default::default(),
+                }))
                 .expect("Failed to create device");
 
                 let supported_formats = surface.get_capabilities(&adapter).formats;
                 let config = wgpu::SurfaceConfiguration {
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    format: supported_formats[0],
+                    format: supported_formats[0].clone(),
                     width: size.width,
                     height: size.height,
                     present_mode: wgpu::PresentMode::Fifo,
                     alpha_mode: wgpu::CompositeAlphaMode::Auto,
                     view_formats: vec![],
+                    desired_maximum_frame_latency: 0,
                 };
                 surface.configure(&device, &config);
 
@@ -271,7 +280,8 @@ pub mod gfx {
                     layout: Some(&pipeline_layout),
                     vertex: wgpu::VertexState {
                         module: &shader,
-                        entry_point: "vs_main",
+                        entry_point: Some("vs_main"),
+                        compilation_options: Default::default(),
                         buffers: &[
                             // Vertex positions + normals
                             wgpu::VertexBufferLayout {
@@ -301,7 +311,8 @@ pub mod gfx {
                     },
                     fragment: Some(wgpu::FragmentState {
                         module: &shader,
-                        entry_point: "fs_main",
+                        entry_point: Some("fs_main"),
+                        compilation_options: Default::default(),
                         targets: &[Some(wgpu::ColorTargetState {
                             format: config.format,
                             blend: Some(wgpu::BlendState {
@@ -329,6 +340,7 @@ pub mod gfx {
                     }),
                     multisample: wgpu::MultisampleState::default(),
                     multiview: None,
+                    cache: None,
                 });
 
                 // create a tiny initial instance buffer (1 element) to avoid special cases
@@ -345,6 +357,7 @@ pub mod gfx {
                 });
 
                 Renderer {
+                    window,
                     surface,
                     device,
                     queue,
@@ -429,6 +442,9 @@ pub mod gfx {
                 let proj_mat = camera.1;
                 let cam_pos = camera.2;
                 let viewproj = proj_mat * view_mat;
+                // Debug: print camera position and first element of viewproj so we
+                // can confirm the renderer sees the updated camera each frame.
+                eprintln!("[wgpu] render: cam_pos={:?} viewproj0={:?}", cam_pos, viewproj.to_cols_array()[0]);
                 let mut cols = viewproj.to_cols_array().to_vec();
                 // append camera position as a vec4 (x,y,z,0)
                 cols.push(cam_pos.x);
@@ -491,19 +507,22 @@ pub mod gfx {
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &frame_view,
                             resolve_target: None,
+                            depth_slice: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                store: true,
+                                store: wgpu::StoreOp::Store,
                             },
                         })],
                         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                             view: &self.depth_texture_view,
                             depth_ops: Some(wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(1.0),
-                                store: true,
+                                store: wgpu::StoreOp::Store,
                             }),
                             stencil_ops: None,
                         }),
+                        occlusion_query_set: None,
+                        timestamp_writes: None,
                     });
                     rpass.set_pipeline(&self.pipeline);
                     // set camera bind group (group 0)
@@ -530,12 +549,11 @@ pub mod gfx {
                 frame.present();
             }
 
-            pub fn request_redraw(&self) {
-                // Renderer does not own the application Window. The application
-                // should call `window.request_redraw()` when appropriate. Keep
-                // this method as a no-op to preserve the public API.
-                // No-op
-            }
+            // Note: window-related helpers (request_redraw, cursor control)
+            // are intentionally not exposed from the renderer. The
+            // application owns the Window and should call those methods
+            // directly to avoid renderer needing to keep a reference with
+            // 'static lifetime or leaking the Window.
 
             /// Update the material table on the GPU. This replaces the storage
             /// buffer bound at @group(0) binding 1 and recreates the camera
@@ -722,6 +740,14 @@ pub mod gfx {
                     let proj_mat = camera.1;
                     let cam_pos = camera.2;
                     let viewproj = proj_mat * view_mat;
+                    // Debug: log camera values for render_mesh path so we can
+                    // correlate main-side camera computation with what the
+                    // renderer writes for mesh-based rendering.
+                    eprintln!(
+                        "[wgpu] render_mesh: cam_pos={:?} viewproj0={:?}",
+                        cam_pos,
+                        viewproj.to_cols_array()[0]
+                    );
                     let mut cols = viewproj.to_cols_array().to_vec();
                     cols.push(cam_pos.x);
                     cols.push(cam_pos.y);
@@ -866,9 +892,10 @@ pub mod gfx {
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                 view: frame_view,
                                 resolve_target: None,
+                                depth_slice: None,
                                 ops: wgpu::Operations {
                                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                    store: true,
+                                    store: wgpu::StoreOp::Store,
                                 },
                             })],
                             depth_stencil_attachment: Some(
@@ -876,11 +903,13 @@ pub mod gfx {
                                     view: &self.depth_texture_view,
                                     depth_ops: Some(wgpu::Operations {
                                         load: wgpu::LoadOp::Clear(1.0),
-                                        store: true,
+                                        store: wgpu::StoreOp::Store,
                                     }),
                                     stencil_ops: None,
                                 },
                             ),
+                            occlusion_query_set: None,
+                            timestamp_writes: None,
                         });
                         rpass.set_pipeline(&self.pipeline);
                         rpass.set_bind_group(0, &self.camera_bind_group, &[]);
@@ -917,6 +946,8 @@ pub mod gfx {
 
                         // Submit and present
                         let finished = encoder.finish();
+                        // Debug: print that we're about to submit/present a batched frame
+                        eprintln!("[wgpu] finalize: submitting {} draws", self.pending_draws.len());
                         if let Some(frame) = self.pending_frame.take() {
                             self.queue.submit(Some(finished));
                             frame.present();
@@ -981,6 +1012,10 @@ pub trait RendererBackend {
     );
     fn request_redraw(&self);
     fn resize(&mut self, width: u32, height: u32);
+    /// Set whether the cursor is visible (for FPS-style hide/show).
+    fn set_cursor_visible(&self, visible: bool);
+    /// Request a specific cursor grab mode. Returns Ok(()) on success or Err(()) on failure.
+    fn set_cursor_grab(&self, locked: bool) -> Result<(), ()>;
     /// Register a mesh represented by an array of positions. Returns a handle
     /// that can be used with `render_mesh` to render that mesh without
     /// re-supplying the vertex data every frame.
@@ -1009,7 +1044,7 @@ pub trait RendererBackend {
 }
 
 #[cfg(feature = "backend-wgpu")]
-impl RendererBackend for gfx::wgpu_impl::Renderer {
+impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     fn render(
         &mut self,
         vertices: &[[f32; 3]],
@@ -1019,7 +1054,9 @@ impl RendererBackend for gfx::wgpu_impl::Renderer {
         gfx::wgpu_impl::Renderer::render(self, vertices, instances, camera)
     }
     fn request_redraw(&self) {
-        gfx::wgpu_impl::Renderer::request_redraw(self)
+        // Renderer no longer owns the Window; request_redraw must be
+        // performed by the application via the Window instance.
+        // Keep this no-op to satisfy trait but prefer calling Window directly.
     }
     fn resize(&mut self, width: u32, height: u32) {
         gfx::wgpu_impl::Renderer::resize(self, width, height)
@@ -1049,6 +1086,13 @@ impl RendererBackend for gfx::wgpu_impl::Renderer {
     }
     fn set_materials(&mut self, materials: &[crate::MaterialGpu]) {
         gfx::wgpu_impl::Renderer::set_material_table(self, materials)
+    }
+    fn set_cursor_visible(&self, _visible: bool) {
+        // no-op: application should control the Window cursor visibility
+    }
+    fn set_cursor_grab(&self, _locked: bool) -> Result<(), ()> {
+        // no-op: application should control cursor grab on the Window
+        Ok(())
     }
 }
 
@@ -1091,6 +1135,14 @@ impl RendererBackend for gfx::placeholder::Renderer {
         0
     }
     fn set_materials(&mut self, _materials: &[crate::MaterialGpu]) {}
+
+    fn set_cursor_visible(&self, _visible: bool) {
+        // placeholder: no-op
+    }
+
+    fn set_cursor_grab(&self, _locked: bool) -> Result<(), ()> {
+        Ok(())
+    }
 }
 
 /// Create a boxed renderer backend. When `backend-wgpu` is enabled the
@@ -1098,10 +1150,9 @@ impl RendererBackend for gfx::placeholder::Renderer {
 /// surface. When disabled the parameterless form is provided.
 #[cfg(feature = "backend-wgpu")]
 pub fn create_renderer(
-    event_loop: &winit::event_loop::EventLoop<()>,
-    window: &winit::window::Window,
-) -> Box<dyn RendererBackend> {
-    Box::new(gfx::wgpu_impl::Renderer::new(event_loop, window))
+    window: &'static winit::window::Window,
+) -> Box<dyn RendererBackend + 'static> {
+    Box::new(gfx::wgpu_impl::Renderer::new(window))
 }
 
 #[cfg(not(feature = "backend-wgpu"))]

@@ -19,7 +19,7 @@ use winit::event::{Event, StartCause, WindowEvent};
 #[cfg(feature = "backend-wgpu")]
 use winit::event_loop::{ControlFlow, EventLoop};
 #[cfg(feature = "backend-wgpu")]
-use winit::window::WindowBuilder;
+use winit::window::WindowAttributes;
 
 // a component is any type that is 'static, sized, send and sync
 #[allow(dead_code)]
@@ -76,38 +76,50 @@ fn main() {
     // renderer and run a single frame to keep builds fast.
     #[cfg(feature = "backend-wgpu")]
     {
-        let event_loop = EventLoop::new();
-        let window = WindowBuilder::new()
-            .with_title("moho - wgpu renderer")
-            .build(&event_loop)
+        let event_loop = EventLoop::new().expect("Failed to create event loop");
+        let window_attributes = WindowAttributes::default();
+
+        // Create the window on the main thread then move ownership into the renderer.
+        // The renderer now owns the Window and exposes control methods
+        // (request_redraw, set_cursor_visible, set_cursor_grab).
+        let window = event_loop
+            .create_window(window_attributes.clone())
             .expect("Failed to create window");
+        window.set_title("moho - wgpu renderer");
 
-        // Create a boxed renderer backend via the factory.
-        let mut renderer = create_renderer(&event_loop, &window);
-        let mut cursor_grabbed = false;
-        use winit::window::CursorGrabMode;
+    // Box the Window and convert to a raw pointer so we can create a
+    // &'static reference for the renderer and event loop. We will
+    // reconstruct and drop the Box after the event loop exits so this
+    // does not permanently leak memory.
+    let boxed_window = Box::new(window);
+    let raw_window_ptr: *mut winit::window::Window = Box::into_raw(boxed_window);
+    let leaked_window: &'static winit::window::Window = unsafe { &*raw_window_ptr };
 
-        // Use the `scene` created above; it was intentionally created once
-        // before entering the backend-specific code paths so persistence and
-        // material state are shared.
+    let mut renderer = create_renderer(leaked_window);
 
-        // Use `MaterialTable` methods for deduplication; the local helper was
-        // removed because it was unused after consolidating material logic.
-
-        // Register the indexed unit-sphere mesh once so we don't re-upload
-        // vertex/index data each frame. Using an indexed mesh reduces vertex
-        // duplication compared to the non-indexed generator. We also include
-        // per-vertex normals for lighting.
+        // Register meshes up-front.
         let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
         let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
-
-        // Also register the cube mesh so Cube instances can be rendered.
         let (cube_vertices, cube_normals, cube_indices) = Cube::unit_cube_indexed();
-        let cube_mesh_handle =
-            renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
+        let cube_mesh_handle = renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
 
-        // Walk the world and build instances while populating the material table
-        // indices used by instances.
+        struct AppState {
+            renderer: Box<dyn engine_renderer::RendererBackend + 'static>,
+            mesh_handle: u32,
+            cube_mesh_handle: u32,
+            cursor_grabbed: bool,
+            // keep the Window so event handling can manipulate cursor
+            window: &'static winit::window::Window,
+        }
+
+        let mut app_state = AppState {
+            renderer,
+            mesh_handle,
+            cube_mesh_handle,
+            cursor_grabbed: false,
+            window: leaked_window,
+        };
+        use winit::window::CursorGrabMode;
 
         // Frame timing: aim for ~60 FPS.
         let frame_duration = Duration::from_secs_f64(1.0 / 60.0);
@@ -117,116 +129,144 @@ fn main() {
         let mut sim_acc = Duration::from_secs(0);
         // Track wall-clock time to accumulate simulation time.
         let mut last_time = Instant::now();
+    // simple frame counter for debug correlation with renderer logs
+    let mut frame_count: u64 = 0;
 
-        // Run the winit event loop and render on-demand. Render once on init
-        // and after each `WindowEvent::RedrawRequested` (if any external code
-        // calls `window.request_redraw()`). We schedule the next frame using
-        // `ControlFlow::WaitUntil` to sleep the event loop until it's time for
-        // the next frame.
-        event_loop.run(move |event, _event_loop_window_target, control_flow| {
+    // Move the raw pointer into the closure so we can reconstruct the Box
+    // after run returns. The raw pointer is still owned by us (we will
+    // call Box::from_raw after run returns).
+    let raw_window_ptr = raw_window_ptr;
+
+    event_loop.run(move |event, active_event_loop| {
             match event {
                 Event::NewEvents(start_cause) => {
                     if matches!(start_cause, StartCause::Init) {
-                        // Build material table, instances, and render the world via Scene
+                        // On Init, perform an initial render pass so the window
+                        // displays content immediately.
                         scene.render(
-                            &mut *renderer,
+                            &mut *app_state.renderer,
                             &world,
-                            mesh_handle,
-                            cube_mesh_handle,
+                            app_state.mesh_handle,
+                            app_state.cube_mesh_handle,
                             camera,
                         );
-                        *control_flow = ControlFlow::Wait;
-                    }
-                }
-                Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => {
-                    *control_flow = ControlFlow::Exit;
-                }
-                Event::WindowEvent {
-                    event: WindowEvent::Resized(size),
-                    ..
-                } => {
-                    renderer.resize(size.width, size.height);
-                }
-                Event::WindowEvent {
-                    event: WindowEvent::KeyboardInput { input, .. },
-                    ..
-                } => {
-                    use winit::event::{ElementState, VirtualKeyCode};
-                    if let Some(vk) = input.virtual_keycode {
-                        let mut q = <&mut engine_core::controller::ControllerInput>::query();
-                        if let Some(ci) = q.iter_mut(&mut world).next() {
-                            match (vk, input.state) {
-                                (VirtualKeyCode::Escape, ElementState::Pressed) => {
-                                    // Toggle cursor grab/visibility
-                                    cursor_grabbed = !cursor_grabbed;
-                                    if cursor_grabbed {
-                                        let _ = window
-                                            .set_cursor_grab(CursorGrabMode::Locked)
-                                            .or_else(|_| {
-                                                window.set_cursor_grab(CursorGrabMode::Confined)
-                                            });
-                                        window.set_cursor_visible(false);
-                                    } else {
-                                        let _ = window.set_cursor_grab(CursorGrabMode::None);
-                                        window.set_cursor_visible(true);
-                                    }
-                                }
-                                (VirtualKeyCode::W, ElementState::Pressed) => ci.forward = 1.0,
-                                (VirtualKeyCode::W, ElementState::Released) => ci.forward = 0.0,
-                                (VirtualKeyCode::S, ElementState::Pressed) => ci.forward = -1.0,
-                                (VirtualKeyCode::S, ElementState::Released) => ci.forward = 0.0,
-                                (VirtualKeyCode::D, ElementState::Pressed) => ci.right = 1.0,
-                                (VirtualKeyCode::D, ElementState::Released) => ci.right = 0.0,
-                                (VirtualKeyCode::A, ElementState::Pressed) => ci.right = -1.0,
-                                (VirtualKeyCode::A, ElementState::Released) => ci.right = 0.0,
-                                (VirtualKeyCode::Space, ElementState::Pressed) => ci.up = 1.0,
-                                (VirtualKeyCode::Space, ElementState::Released) => ci.up = 0.0,
-                                (VirtualKeyCode::LShift, ElementState::Pressed) => ci.up = -1.0,
-                                (VirtualKeyCode::LShift, ElementState::Released) => ci.up = 0.0,
-                                _ => {}
-                            }
+
+                        active_event_loop.set_control_flow(ControlFlow::Wait);
+                        } else if matches!(start_cause, StartCause::ResumeTimeReached { .. } | StartCause::Poll) {
+                        // This is called when the event loop wakes at our scheduled time.
+                        // Mirror the previous MainEventsCleared behavior: step simulation and
+                        // request a redraw when appropriate.
+                        let now = Instant::now();
+                        let elapsed = now - last_time;
+                        last_time = now;
+
+                        // Accumulate time for simulation updates.
+                        sim_acc += elapsed;
+                        let mut sim_steps = 0;
+                        while sim_acc >= sim_dt && sim_steps < 20 {
+                            // Advance simulation by exactly sim_dt.
+                            simulate(&mut world, sim_dt);
+                            sim_acc -= sim_dt;
+                            sim_steps += 1;
+                        }
+
+                        // Now handle rendering on the fixed render cadence.
+                        if now >= last_frame + frame_duration {
+                            // Advance the render timestamp by one fixed frame.
+                            last_frame += frame_duration;
+                            // Request a redraw via the Window (renderer.request_redraw is a no-op)
+                            app_state.window.request_redraw();
+                            // Schedule next wake at the next fixed step boundary.
+                            let next = last_frame + frame_duration;
+                            active_event_loop.set_control_flow(ControlFlow::WaitUntil(next));
+                        } else {
+                            let next = last_frame + frame_duration;
+                            active_event_loop.set_control_flow(ControlFlow::WaitUntil(next));
                         }
                     }
                 }
-                Event::WindowEvent {
-                    event: WindowEvent::Focused(true),
-                    ..
-                } => {
-                    // When the window gains focus, capture and hide the cursor
-                    // if we are not already grabbed. This allows refocus to
-                    // re-enable FPS mouse look.
-                    if !cursor_grabbed {
-                        cursor_grabbed = true;
-                        let _ = window
-                            .set_cursor_grab(CursorGrabMode::Locked)
-                            .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
-                        window.set_cursor_visible(false);
+                Event::WindowEvent { event, .. } => {
+                    match event {
+                        WindowEvent::CloseRequested => {
+                            active_event_loop.exit();
+                        }
+                        WindowEvent::Resized(size) => {
+                            app_state.renderer.resize(size.width, size.height);
+                        }
+                        WindowEvent::KeyboardInput { event, .. } => {
+                            if event.state == winit::event::ElementState::Pressed {
+                                let is_escape = event
+                                    .text
+                                    .as_deref()
+                                    .map(|s| s == "\u{1b}")
+                                    .unwrap_or(false)
+                                    || format!("{:?}", event.logical_key).contains("Escape");
+
+                                if is_escape {
+                                    eprintln!("Escape pressed; toggling cursor grab (currently={})", app_state.cursor_grabbed);
+                                    if app_state.cursor_grabbed {
+                                        let r = app_state.window.set_cursor_grab(winit::window::CursorGrabMode::None);
+                                        eprintln!("window.set_cursor_grab(None) -> {:?}", r);
+                                        app_state.cursor_grabbed = false;
+                                        let _ = app_state.window.set_cursor_visible(true);
+                                    } else {
+                                        // Try Locked then Confined
+                                        use winit::window::CursorGrabMode;
+                                        let r = app_state.window.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| app_state.window.set_cursor_grab(CursorGrabMode::Confined));
+                                        eprintln!("window.set_cursor_grab(Locked|Confined) -> {:?}", r);
+                                        if r.is_ok() {
+                                            app_state.cursor_grabbed = true;
+                                            let _ = app_state.window.set_cursor_visible(false);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        WindowEvent::Focused(gained) => {
+                            if gained && !app_state.cursor_grabbed {
+                                use winit::window::CursorGrabMode;
+                                let r = app_state.window.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| app_state.window.set_cursor_grab(CursorGrabMode::Confined));
+                                eprintln!("Focused -> window.set_cursor_grab -> {:?}", r);
+                                if r.is_ok() {
+                                    app_state.cursor_grabbed = true;
+                                    let _ = app_state.window.set_cursor_visible(false);
+                                }
+                            }
+                        }
+                        WindowEvent::RedrawRequested => {
+                            // NOTE: in winit 0.30 RedrawRequested may also arrive as a
+                            // top-level Event::RedrawRequested(window_id). We still
+                            // handle the WindowEvent form when present for
+                            // completeness.
+                            let mut qc = <&mut engine_core::controller::PlayerController>::query();
+                            if let Some(pc) = qc.iter_mut(&mut world).next() {
+                                camera = engine_core::controller::controller_to_camera(pc);
+                            }
+                            // Debug: print camera eye and frame id to correlate with renderer logs
+                            eprintln!("[main] frame={} WindowEvent::RedrawRequested -> camera_eye={:?}", frame_count, camera.2);
+                            scene.render(
+                                &mut *app_state.renderer,
+                                &world,
+                                app_state.mesh_handle,
+                                app_state.cube_mesh_handle,
+                                camera,
+                            );
+                            frame_count = frame_count.wrapping_add(1);
+                            active_event_loop.set_control_flow(ControlFlow::Wait);
+                        }
+                        _ => {}
                     }
-                }
-                Event::RedrawRequested(_window_id) => {
-                    // Update camera from the first PlayerController component
-                    let mut qc = <&mut engine_core::controller::PlayerController>::query();
-                    if let Some(pc) = qc.iter_mut(&mut world).next() {
-                        camera = engine_core::controller::controller_to_camera(pc);
-                    }
-                    scene.render(
-                        &mut *renderer,
-                        &world,
-                        mesh_handle,
-                        cube_mesh_handle,
-                        camera,
-                    );
-                    *control_flow = ControlFlow::Wait;
                 }
                 Event::DeviceEvent {
                     event: winit::event::DeviceEvent::MouseMotion { delta },
                     ..
                 } => {
                     // Only apply mouse motion when the cursor is grabbed for FPS look.
-                    if cursor_grabbed {
+                    let cursor_is_grabbed = app_state.cursor_grabbed;
+                    if !cursor_is_grabbed {
+                        // ignore mouse motion when cursor is not grabbed
+                    } else {
+                        eprintln!("MouseMotion delta={:?}", delta);
                         // Apply mouse motion as small yaw/pitch deltas
                         let mut q = <&mut engine_core::controller::ControllerInput>::query();
                         if let Some(ci) = q.iter_mut(&mut world).next() {
@@ -234,45 +274,32 @@ fn main() {
                             ci.yaw_delta += -(delta.0 as f32) * sensitivity;
                             ci.pitch_delta += -(delta.1 as f32) * sensitivity;
                         }
-                    }
-                }
 
-                Event::MainEventsCleared => {
-                    // Decouple simulation (fixed-step) from rendering.
-                    // 1) Accumulate wall-clock time into `sim_acc`.
-                    // 2) Step simulation in fixed `sim_dt` increments (capped).
-                    // 3) Render at the render cadence (`frame_duration`) by
-                    //    requesting a redraw when the next render boundary is hit.
-                    let now = Instant::now();
-                    let elapsed = now - last_time;
-                    last_time = now;
-
-                    // Accumulate time for simulation updates.
-                    sim_acc += elapsed;
-                    let mut sim_steps = 0;
-                    while sim_acc >= sim_dt && sim_steps < 20 {
-                        // Advance simulation by exactly sim_dt.
+                        // For debugging: run one simulation step immediately after
+                        // applying controller input so we can observe the effect
+                        // in the simulate() debug prints. This is temporary and
+                        // helps verify that mouse deltas are being consumed.
                         simulate(&mut world, sim_dt);
-                        sim_acc -= sim_dt;
-                        sim_steps += 1;
-                    }
-
-                    // Now handle rendering on the fixed render cadence.
-                    if now >= last_frame + frame_duration {
-                        // Advance the render timestamp by one fixed frame.
-                        last_frame += frame_duration;
-                        window.request_redraw();
-                        // Schedule next wake at the next fixed step boundary.
-                        let next = last_frame + frame_duration;
-                        *control_flow = ControlFlow::WaitUntil(next);
-                    } else {
-                        let next = last_frame + frame_duration;
-                        *control_flow = ControlFlow::WaitUntil(next);
+                        // Ensure the renderer draws the updated camera state.
+                            // Request a redraw via the owned window so the renderer
+                            // will obtain an up-to-date SurfaceTexture during its
+                            // next render call.
+                            app_state.window.request_redraw();
                     }
                 }
+                // MainEventsCleared is no longer a top-level Event variant in winit 0.30.
+                // Its previous responsibilities are handled via StartCause::ResumeTimeReached
+                // in the NewEvents branch above.
                 _ => {}
             }
         });
+
+        // event_loop.run returned due to exit(); reconstruct and drop the Box
+        // to free the Window memory we temporarily handed to the 'static ref.
+        unsafe {
+            // Recreate the Box and drop it
+            let _ = Box::from_raw(raw_window_ptr);
+        }
     }
 
     #[cfg(not(feature = "backend-wgpu"))]
@@ -344,8 +371,17 @@ fn simulate(_world: &mut World, dt: std::time::Duration) {
         &mut engine_core::controller::PlayerController,
         &mut engine_core::controller::ControllerInput,
     )>::query();
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SIM_COUNT: AtomicU64 = AtomicU64::new(0);
     for (pc, ci) in q.iter_mut(_world) {
+        let n = SIM_COUNT.fetch_add(1, Ordering::Relaxed);
+        if n % 60 == 0 {
+            eprintln!("simulate[#{}]: before pc={:?} ci={:?} dt={}", n, *pc, *ci, seconds);
+        }
         pc.apply_input(ci, seconds);
+        if n % 60 == 0 {
+            eprintln!("simulate[#{}]: after  pc={:?} ci={:?}", n, *pc, *ci);
+        }
         // yaw/pitch deltas are one-shot; clear after applying so they act per-frame
         ci.yaw_delta = 0.0;
         ci.pitch_delta = 0.0;
