@@ -9,6 +9,8 @@ applyTo: '**'
 - Recommend refactoring code to improve readability and maintainability regularly.
 - Ensure code adheres to Rust best practices and conventions.
 - Design APIs that are intuitive and easy to use.
+- Keep in-line documentation brief but informative.
+- Consolidate library versions to avoid duplication and potential conflicts.
 
 # Architecture and Project Structure
 - Recommend naming conventions and file organization that enhance readability and maintainability.

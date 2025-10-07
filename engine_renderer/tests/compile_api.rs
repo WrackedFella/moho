@@ -12,13 +12,12 @@ fn api_compiles() {
     {
         use engine_renderer::create_renderer;
         // Validate the `backend-wgpu` factory signature.
-        let _factory: fn(Option<&'static winit::window::Window>) -> Box<dyn RendererBackend> =
-            create_renderer;
+        let _factory: fn(Option<&winit::window::Window>) -> Box<dyn RendererBackend> = create_renderer;
     }
     #[cfg(not(feature = "backend-wgpu"))]
     {
         use engine_renderer::create_renderer;
-        let _factory: fn(Option<&winit::window::Window>) -> Box<dyn RendererBackend> =
+        let _factory: fn(Option<std::sync::Arc<()>>) -> Box<dyn RendererBackend> =
             create_renderer;
     }
 }

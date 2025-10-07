@@ -97,15 +97,12 @@ fn main() {
             .expect("Failed to create window");
         window.set_title("moho - wgpu renderer");
 
-        // Box the Window and convert to a raw pointer so we can create a
-        // &'static reference for the renderer and event loop. We will
-        // reconstruct and drop the Box after the event loop exits so this
-        // does not permanently leak memory.
-        let boxed_window = Box::new(window);
-        let raw_window_ptr: *mut winit::window::Window = Box::into_raw(boxed_window);
-        let leaked_window: &'static winit::window::Window = unsafe { &*raw_window_ptr };
+        // Wrap the window in an Arc so we can share ownership between the
+        // renderer and the event loop without unsafe or leaking memory.
+        use std::sync::Arc;
+        let arc_window = Arc::new(window);
 
-        let mut renderer = create_renderer(Some(leaked_window));
+    let mut renderer = create_renderer(Some(&*arc_window));
 
         // Register meshes up-front.
         let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
@@ -114,13 +111,13 @@ fn main() {
         let cube_mesh_handle =
             renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
 
-        struct AppState {
-            renderer: Box<dyn engine_renderer::RendererBackend + 'static>,
+        struct AppState<'a> {
+            renderer: Box<dyn engine_renderer::RendererBackend + 'a>,
             mesh_handle: u32,
             cube_mesh_handle: u32,
             cursor_grabbed: bool,
             // keep the Window so event handling can manipulate cursor
-            window: &'static winit::window::Window,
+            window: std::sync::Arc<winit::window::Window>,
         }
 
         let mut app_state = AppState {
@@ -128,7 +125,7 @@ fn main() {
             mesh_handle,
             cube_mesh_handle,
             cursor_grabbed: false,
-            window: leaked_window,
+            window: Arc::clone(&arc_window),
         };
         // use winit::window::CursorGrabMode;
 
@@ -143,10 +140,10 @@ fn main() {
         // simple frame counter for debug correlation with renderer logs
         let mut frame_count: u64 = 0;
 
-        // Move the raw pointer into the closure so we can reconstruct the Box
-        // after run returns. The raw pointer is still owned by us (we will
-        // call Box::from_raw after run returns).            #[allow(deprecated)]
-        #[allow(deprecated)]
+        // Run the event loop. The leaked window will remain valid for the
+        // duration of the event loop. It will be dropped when the process
+        // terminates (acceptable for this demo app) or can be handled more
+        // explicitly if desired.
         let _ = event_loop.run(move |event, active_event_loop| {
             match event {
                 Event::NewEvents(start_cause) => {
@@ -330,12 +327,8 @@ fn main() {
             }
         });
 
-        // event_loop.run returned due to exit(); reconstruct and drop the Box
-        // to free the Window memory we temporarily handed to the 'static ref.
-        unsafe {
-            // Recreate the Box and drop it
-            let _ = Box::from_raw(raw_window_ptr);
-        }
+        // event_loop.run returned due to exit(); nothing special to do here
+        // as the application retains ownership of the Window via Arc.
     }
 
     #[cfg(not(feature = "backend-wgpu"))]

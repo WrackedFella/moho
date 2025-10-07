@@ -1,8 +1,8 @@
 use crate::{MaterialTable, RendererBackend};
+use bincode::{Decode, Encode};
 use engine_core::actors::{Cube, InstanceGpu, Sphere};
 use legion::World;
 use legion::query::IntoQuery;
-use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Write};
