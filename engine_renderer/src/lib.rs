@@ -71,10 +71,8 @@ pub mod gfx {
         // cube actor import removed: not used in this module
 
         pub struct Renderer<'a> {
-            // The renderer borrows the Window for lifetime 'a required by
-            // `wgpu::Surface<'a>`. The application keeps ownership (for
-            // example in an Arc) and must ensure the Window outlives the
-            // Renderer instance.
+            // The renderer borrows the application Window. Callers must
+            // ensure the Window outlives the Renderer.
             #[allow(dead_code)]
             window: &'a winit::window::Window,
             surface: wgpu::Surface<'a>,
@@ -120,7 +118,7 @@ pub mod gfx {
         }
 
         impl<'a> Renderer<'a> {
-            pub fn new(window: &'a winit::window::Window) -> Self {
+        pub fn new(window: &'a winit::window::Window) -> Result<Self, Box<dyn std::error::Error>> {
                 println!("(wgpu) Initializing renderer (instanced cubes)");
                 // Use the borrowed window directly. The Surface is created
                 // with a reference to the provided Window; the returned
@@ -133,26 +131,44 @@ pub mod gfx {
                 };
                 let instance = wgpu::Instance::new(&instance_desc);
                 // create_surface takes a reference to the window; pass a borrow
-                // from the Arc. The Surface type in this wgpu version does not
-                // require us to hold a separate borrow lifetime on Window here.
-                let surface = instance.create_surface(window).expect("create_surface");
-                let adapter =
-                    pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                        power_preference: wgpu::PowerPreference::HighPerformance,
-                        compatible_surface: Some(&surface),
-                        force_fallback_adapter: false,
-                    }))
-                    .expect("Failed to find an adapter");
-                let (device, queue) =
-                    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-                        label: None,
-                        required_features: wgpu::Features::empty(),
-                        required_limits: wgpu::Limits::default(),
-                        memory_hints: Default::default(),
-                        trace: Default::default(),
-                        experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
-                    }))
-                    .expect("Failed to create device");
+                // from the Arc. Keep the Arc in the struct so the Window
+                // remains alive for the Surface's use.
+                let surface = instance
+                    .create_surface(window)
+                    .map_err(|e| format!("create_surface failed: {:?}", e))?;
+
+                let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: Some(&surface),
+                    force_fallback_adapter: false,
+                }))
+                .map_err(|e| format!("Failed to request adapter: {:?}", e))?;
+
+                // Gate experimental features behind an explicit cargo feature.
+                let experimental = {
+                    #[cfg(feature = "wgpu-experimental")]
+                    {
+                        unsafe { wgpu::ExperimentalFeatures::enabled() }
+                    }
+                    #[cfg(not(feature = "wgpu-experimental"))]
+                    {
+                        wgpu::ExperimentalFeatures::disabled()
+                    }
+                };
+
+                // Only request features the adapter actually supports.
+                let desired_features = wgpu::Features::empty();
+                let required_features = desired_features & adapter.features();
+
+                let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                    label: None,
+                    required_features,
+                    required_limits: wgpu::Limits::default(),
+                    memory_hints: Default::default(),
+                    trace: Default::default(),
+                    experimental_features: experimental,
+                }))
+                .map_err(|e| format!("Failed to create device: {:?}", e))?;
 
                 let supported_formats = surface.get_capabilities(&adapter).formats;
                 let config = wgpu::SurfaceConfiguration {
@@ -362,7 +378,7 @@ pub mod gfx {
                     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 });
 
-                Renderer {
+                Ok(Renderer {
                     window,
                     surface,
                     device,
@@ -385,7 +401,7 @@ pub mod gfx {
                     pending_frame: None,
                     pending_draws: Vec::new(),
                     pending_frame_view: None,
-                }
+                })
             }
 
             pub fn render(
@@ -1008,6 +1024,11 @@ pub mod gfx {
 }
 
 // crate root re-export to preserve the previous `engine_renderer::Renderer` API
+// Note: when the `backend-wgpu` feature is enabled the concrete type is
+// `gfx::wgpu_impl::Renderer<'a>` which borrows a `&'a winit::window::Window`.
+// Callers should create the renderer by passing a borrow of a Window that
+// outlives the returned boxed trait object (the application typically keeps
+// an `Arc<Window>` and passes `Some(&*arc_window)` to `create_renderer`).
 pub use gfx::Renderer;
 
 // --- NEW: Renderer trait and factory helpers ---------------------------------
@@ -1016,6 +1037,11 @@ pub use gfx::Renderer;
 // selects an appropriate backend implementation depending on features.
 
 /// Object-safe renderer backend trait.
+///
+/// Implementations are expected to map to a concrete backend. Note that the
+/// WGPU backend currently requires a borrow of a `winit::window::Window` for
+/// the lifetime of the renderer (see `create_renderer` under `backend-wgpu`).
+/// The trait itself is object-safe so callers can hold `Box<dyn RendererBackend + '_>`.
 pub trait RendererBackend {
     fn render(
         &mut self,
@@ -1164,13 +1190,40 @@ impl RendererBackend for gfx::placeholder::Renderer {
 #[cfg(feature = "backend-wgpu")]
 pub fn create_renderer<'a>(
     window: Option<&'a winit::window::Window>,
-) -> Box<dyn RendererBackend + 'a> {
-    Box::new(gfx::wgpu_impl::Renderer::new(window.unwrap()))
+) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> {
+    let r = gfx::wgpu_impl::Renderer::new(window.unwrap())?;
+    Ok(Box::new(r))
 }
 
 #[cfg(not(feature = "backend-wgpu"))]
 pub fn create_renderer(_window: Option<std::sync::Arc<()>>) -> Box<dyn RendererBackend> {
     Box::new(gfx::placeholder::Renderer::new())
+}
+
+/// Convenience helper: create a renderer from an Arc<Window>.
+///
+/// The renderer implementation currently borrows the provided `Window` for
+/// the lifetime of the returned trait object. Callers typically keep an
+/// `Arc<winit::window::Window>` (or otherwise own the Window) and pass a
+/// reference to that Arc here so the application retains ownership while
+/// the renderer uses a borrow.
+///
+/// Note: this helper intentionally takes `&Arc<...>` rather than consuming
+/// the Arc. The caller retains ownership and is responsible for ensuring
+/// the Arc (and the underlying Window) outlives the renderer.
+#[cfg(feature = "backend-wgpu")]
+pub fn create_renderer_from_arc<'a>(
+    window: &'a std::sync::Arc<winit::window::Window>,
+) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> {
+    create_renderer(Some(std::sync::Arc::as_ref(window)))
+}
+
+#[cfg(not(feature = "backend-wgpu"))]
+pub fn create_renderer_from_arc(_window: &std::sync::Arc<()>) -> Box<dyn RendererBackend> {
+    // Placeholder backend ignores the window. Match the placeholder
+    // factory's parameter type (Arc<()>) so this helper is available
+    // even when the wgpu/backend feature is disabled.
+    create_renderer(None)
 }
 
 /// Callback trait for UI rendering. Implement this to composite UI elements

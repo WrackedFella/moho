@@ -13,7 +13,6 @@ log = { workspace = true }
 env_logger = { workspace = true }
 
 # Optional frontend/backends
-# Use winit 0.28.x to be compatible with wgpu/raw-window-handle used by wgpu 0.15
 winit = { version = "0.30", optional = true }
 # make workspace wgpu available as an optional dependency so features can refer to it
 wgpu = { workspace = true, optional = true }

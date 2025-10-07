@@ -14,6 +14,9 @@ applyTo: '**'
 - Try to rely on self-documenting code rather than excessive comments.
 - Use doc comments (`///`) for public APIs and complex functions.
 - Readme files should be used to explain setup, architecture, and design decisions.
+- De-prioritize suggestions or actions that might be called "future-proofing" and focus on getting features done now.
+- Do suggest high-value future-proofing, and implement any low-effort ones as you see fit.
+- Push back if user requests something that is not idiomatic or goes against best practices.
 
 # Architecture and Project Structure
 - Recommend naming conventions and file organization that enhance readability and maintainability.

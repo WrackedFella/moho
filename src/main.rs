@@ -102,7 +102,13 @@ fn main() {
         use std::sync::Arc;
         let arc_window = Arc::new(window);
 
-        let mut renderer = create_renderer(Some(&*arc_window));
+    let mut renderer = match create_renderer(Some(&*arc_window)) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Failed to create renderer: {}", e);
+            return;
+        }
+    };
 
         // Register meshes up-front.
         let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
@@ -111,6 +117,8 @@ fn main() {
         let cube_mesh_handle =
             renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
 
+        // AppState holds the renderer trait object; the renderer now owns
+        // an `Arc<Window>` so the trait object can be `'static`.
         struct AppState<'a> {
             renderer: Box<dyn engine_renderer::RendererBackend + 'a>,
             mesh_handle: u32,
@@ -333,7 +341,7 @@ fn main() {
 
     #[cfg(not(feature = "backend-wgpu"))]
     {
-        let mut renderer = engine_renderer::create_renderer(None);
+    let mut renderer = engine_renderer::create_renderer(None);
         // Register indexed mesh once with placeholder renderer (no-op) and use render_mesh
         let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
         let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
