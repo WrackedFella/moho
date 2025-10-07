@@ -102,7 +102,7 @@ fn main() {
         use std::sync::Arc;
         let arc_window = Arc::new(window);
 
-    let mut renderer = create_renderer(Some(&*arc_window));
+        let mut renderer = create_renderer(Some(&*arc_window));
 
         // Register meshes up-front.
         let (vertices, normals, indices) = collect_indexed_vertices(&mut world);

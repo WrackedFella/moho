@@ -6,9 +6,9 @@ edition = "2024"
 [dependencies]
 # UI crate will own egui and friends; keep minimal for now.
 # UI crate will own egui and friends; keep minimal for now.
-egui = "0.32.3"
-egui-winit = "0.32.3"
-egui-wgpu = "0.32.3"
+egui = { workspace = true }
+egui-winit = { workspace = true }
+egui-wgpu = { workspace = true }
 engine_renderer = { path = "../engine_renderer", features = ["backend-wgpu"] }
 wgpu = { workspace = true }
 

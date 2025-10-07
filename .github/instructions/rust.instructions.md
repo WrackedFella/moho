@@ -15,12 +15,13 @@ These instructions are based on [The Rust Book](https://doc.rust-lang.org/book/)
 - Use strong typing and leverage Rust's ownership system for memory safety.
 - Break down complex functions into smaller, more manageable functions.
 - For algorithm-related code, include explanations of the approach used.
-- Write code with good maintainability practices, including comments on why certain design decisions were made.
+- Write code with good maintainability practices.
 - Handle errors gracefully using `Result<T, E>` and provide meaningful error messages.
 - For external dependencies, mention their usage and purpose in documentation.
 - Use consistent naming conventions following [RFC 430](https://github.com/rust-lang/rfcs/blob/master/text/0430-finalizing-naming-conventions.md).
 - Write idiomatic, safe, and efficient Rust code that follows the borrow checker's rules.
 - Ensure code compiles without warnings.
+- Prefer using workspace.deps for shared dependencies in a workspace.
 
 ## Patterns to Follow
 

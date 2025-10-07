@@ -42,7 +42,7 @@ pub mod gfx {
     pub mod wgpu_impl {
         // Make sure the `winit` crate name is available when the feature
         // is enabled (helps rustc resolve `winit::...` paths in some envs).
-    extern crate winit;
+        extern crate winit;
         // Migrated WGPU implementation (was previously in `src/gpu.rs`). Paths
         // to assets/shaders are adjusted for the crate layout.
         use engine_core::actors::InstanceGpu as CpuInstance;
