@@ -6,6 +6,12 @@
 //! nothing so the project can build while we iterate.
 
 use engine_renderer::FrameCallback;
+// Ensure wgpu types are available for the FrameCallback signature when
+// the optional iced/ui feature is enabled. The dependency is optional in
+// Cargo.toml but importing the crate here ensures the symbols are linked
+// when enabled.
+#[allow(unused_imports)]
+use wgpu;
 
 pub struct StubUi;
 

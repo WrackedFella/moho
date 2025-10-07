@@ -38,6 +38,10 @@ struct Velocity {
 }
 
 fn main() {
+    // Initialize logging. Use RUST_LOG to control verbosity, default to info.
+    // Example: set RUST_LOG=debug to see more verbose renderer logs.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
     let mut world = World::default();
     // Parse CLI args for --scene <path>. Default to ./scene.bin
     let args: Vec<String> = std::env::args().collect();
@@ -85,16 +89,20 @@ fn main() {
     #[cfg(feature = "backend-wgpu")]
     #[allow(deprecated)]
     {
-        let event_loop = EventLoop::new().expect("Failed to create event loop");
+        let event_loop = EventLoop::new();
         let window_attributes = WindowAttributes::default();
 
         // Create the window on the main thread then move ownership into the renderer.
         // The renderer now owns the Window and exposes control methods
         // (request_redraw, set_cursor_visible, set_cursor_grab).
         #[allow(deprecated)]
-        let window = event_loop
-            .create_window(window_attributes.clone())
-            .expect("Failed to create window");
+        let window = match event_loop.create_window(window_attributes.clone()) {
+            Ok(w) => w,
+            Err(e) => {
+                log::error!("Failed to create window: {:?}", e);
+                return;
+            }
+        };
         window.set_title("moho - wgpu renderer");
 
         // Wrap the window in an Arc so we can share ownership between the
@@ -102,7 +110,13 @@ fn main() {
         use std::sync::Arc;
         let arc_window = Arc::new(window);
 
-    let mut renderer = create_renderer(Some(&*arc_window));
+        let mut renderer = match create_renderer(Some(&*arc_window)) {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("Failed to create renderer: {}", e);
+                return;
+            }
+        };
 
         // Register meshes up-front.
         let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
@@ -111,6 +125,8 @@ fn main() {
         let cube_mesh_handle =
             renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
 
+        // AppState holds the renderer trait object; the renderer now owns
+        // an `Arc<Window>` so the trait object can be `'static`.
         struct AppState<'a> {
             renderer: Box<dyn engine_renderer::RendererBackend + 'a>,
             mesh_handle: u32,
@@ -213,7 +229,7 @@ fn main() {
                                     || format!("{:?}", event.logical_key).contains("Escape");
 
                                 if is_escape {
-                                    eprintln!(
+                                    log::info!(
                                         "Escape pressed; toggling cursor grab (currently={})",
                                         app_state.cursor_grabbed
                                     );
@@ -221,7 +237,7 @@ fn main() {
                                         let r = app_state
                                             .window
                                             .set_cursor_grab(winit::window::CursorGrabMode::None);
-                                        eprintln!("window.set_cursor_grab(None) -> {:?}", r);
+                                        log::debug!("window.set_cursor_grab(None) -> {:?}", r);
                                         app_state.cursor_grabbed = false;
                                         app_state.window.set_cursor_visible(true);
                                     } else {
@@ -234,7 +250,7 @@ fn main() {
                                                     winit::window::CursorGrabMode::Confined,
                                                 )
                                             });
-                                        eprintln!(
+                                        log::debug!(
                                             "window.set_cursor_grab(Locked|Confined) -> {:?}",
                                             r
                                         );
@@ -256,7 +272,7 @@ fn main() {
                                             winit::window::CursorGrabMode::Confined,
                                         )
                                     });
-                                eprintln!("Focused -> window.set_cursor_grab -> {:?}", r);
+                                log::debug!("Focused -> window.set_cursor_grab -> {:?}", r);
                                 if r.is_ok() {
                                     app_state.cursor_grabbed = true;
                                     app_state.window.set_cursor_visible(false);
@@ -273,9 +289,10 @@ fn main() {
                                 camera = engine_core::controller::controller_to_camera(pc);
                             }
                             // Debug: print camera eye and frame id to correlate with renderer logs
-                            eprintln!(
+                            log::debug!(
                                 "[main] frame={} WindowEvent::RedrawRequested -> camera_eye={:?}",
-                                frame_count, camera.2
+                                frame_count,
+                                camera.2
                             );
                             scene.render(
                                 &mut *app_state.renderer,
@@ -299,7 +316,7 @@ fn main() {
                     if !cursor_is_grabbed {
                         // ignore mouse motion when cursor is not grabbed
                     } else {
-                        eprintln!("MouseMotion delta={:?}", delta);
+                        log::debug!("MouseMotion delta={:?}", delta);
                         // Apply mouse motion as small yaw/pitch deltas
                         let mut q = <&mut engine_core::controller::ControllerInput>::query();
                         if let Some(ci) = q.iter_mut(&mut world).next() {
@@ -333,13 +350,21 @@ fn main() {
 
     #[cfg(not(feature = "backend-wgpu"))]
     {
-        let mut renderer = engine_renderer::create_renderer(None);
+        // Use the compatibility wrapper so this code compiles regardless of
+        // whether the workspace was built with `backend-wgpu` enabled.
+        let mut renderer = match engine_renderer::create_renderer_any(None) {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("Failed to create placeholder renderer: {}", e);
+                return;
+            }
+        };
         // Register indexed mesh once with placeholder renderer (no-op) and use render_mesh
         let (vertices, normals, indices) = collect_indexed_vertices(&mut world);
         let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
         let instances = collect_instances(&mut world);
         renderer.render_mesh(mesh_handle, &instances, camera, true);
-        println!("Rendered one frame (exiting).");
+        log::info!("Rendered one frame (exiting).");
     }
 }
 
@@ -350,19 +375,19 @@ fn load_or_generate_scene(
 ) {
     if scene_path.exists() {
         match scene.load_from_file(scene_path, world) {
-            Ok(_) => println!("Loaded scene from scene.bin"),
+            Ok(_) => log::info!("Loaded scene from scene.bin"),
             Err(e) => {
-                eprintln!("Failed to load scene.bin: {}. Generating new scene.", e);
+                log::warn!("Failed to load scene.bin: {}. Generating new scene.", e);
                 random_scene(world);
                 if let Err(e) = scene.save_to_file(scene_path, world) {
-                    eprintln!("Failed to save generated scene: {}", e);
+                    log::warn!("Failed to save generated scene: {}", e);
                 }
             }
         }
     } else {
         random_scene(world);
         if let Err(e) = scene.save_to_file(scene_path, world) {
-            eprintln!("Failed to save generated scene: {}", e);
+            log::warn!("Failed to save generated scene: {}", e);
         }
     }
 }
@@ -405,14 +430,17 @@ fn simulate(_world: &mut World, dt: std::time::Duration) {
     for (pc, ci) in q.iter_mut(_world) {
         let n = SIM_COUNT.fetch_add(1, Ordering::Relaxed);
         if n.is_multiple_of(60) {
-            eprintln!(
+            log::debug!(
                 "simulate[#{}]: before pc={:?} ci={:?} dt={}",
-                n, *pc, *ci, seconds
+                n,
+                *pc,
+                *ci,
+                seconds
             );
         }
         pc.apply_input(ci, seconds);
         if n.is_multiple_of(60) {
-            eprintln!("simulate[#{}]: after  pc={:?} ci={:?}", n, *pc, *ci);
+            log::debug!("simulate[#{}]: after  pc={:?} ci={:?}", n, *pc, *ci);
         }
         // yaw/pitch deltas are one-shot; clear after applying so they act per-frame
         ci.yaw_delta = 0.0;

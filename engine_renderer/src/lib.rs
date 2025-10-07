@@ -42,7 +42,7 @@ pub mod gfx {
     pub mod wgpu_impl {
         // Make sure the `winit` crate name is available when the feature
         // is enabled (helps rustc resolve `winit::...` paths in some envs).
-    extern crate winit;
+        extern crate winit;
         // Migrated WGPU implementation (was previously in `src/gpu.rs`). Paths
         // to assets/shaders are adjusted for the crate layout.
         use engine_core::actors::InstanceGpu as CpuInstance;
@@ -71,10 +71,8 @@ pub mod gfx {
         // cube actor import removed: not used in this module
 
         pub struct Renderer<'a> {
-            // The renderer borrows the Window for lifetime 'a required by
-            // `wgpu::Surface<'a>`. The application keeps ownership (for
-            // example in an Arc) and must ensure the Window outlives the
-            // Renderer instance.
+            // The renderer borrows the application Window. Callers must
+            // ensure the Window outlives the Renderer.
             #[allow(dead_code)]
             window: &'a winit::window::Window,
             surface: wgpu::Surface<'a>,
@@ -120,8 +118,10 @@ pub mod gfx {
         }
 
         impl<'a> Renderer<'a> {
-            pub fn new(window: &'a winit::window::Window) -> Self {
-                println!("(wgpu) Initializing renderer (instanced cubes)");
+            pub fn new(
+                window: &'a winit::window::Window,
+            ) -> Result<Self, Box<dyn std::error::Error>> {
+                log::info!("(wgpu) Initializing renderer (instanced cubes)");
                 // Use the borrowed window directly. The Surface is created
                 // with a reference to the provided Window; the returned
                 // Surface borrows the Window for the same lifetime.
@@ -133,26 +133,46 @@ pub mod gfx {
                 };
                 let instance = wgpu::Instance::new(&instance_desc);
                 // create_surface takes a reference to the window; pass a borrow
-                // from the Arc. The Surface type in this wgpu version does not
-                // require us to hold a separate borrow lifetime on Window here.
-                let surface = instance.create_surface(window).expect("create_surface");
+                // from the Arc. Keep the Arc in the struct so the Window
+                // remains alive for the Surface's use.
+                let surface = instance
+                    .create_surface(window)
+                    .map_err(|e| format!("create_surface failed: {:?}", e))?;
+
                 let adapter =
                     pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                         power_preference: wgpu::PowerPreference::HighPerformance,
                         compatible_surface: Some(&surface),
                         force_fallback_adapter: false,
                     }))
-                    .expect("Failed to find an adapter");
+                    .map_err(|e| format!("Failed to request adapter: {:?}", e))?;
+
+                // Gate experimental features behind an explicit cargo feature.
+                let experimental = {
+                    #[cfg(feature = "wgpu-experimental")]
+                    {
+                        unsafe { wgpu::ExperimentalFeatures::enabled() }
+                    }
+                    #[cfg(not(feature = "wgpu-experimental"))]
+                    {
+                        wgpu::ExperimentalFeatures::disabled()
+                    }
+                };
+
+                // Only request features the adapter actually supports.
+                let desired_features = wgpu::Features::empty();
+                let required_features = desired_features & adapter.features();
+
                 let (device, queue) =
                     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                         label: None,
-                        required_features: wgpu::Features::empty(),
+                        required_features,
                         required_limits: wgpu::Limits::default(),
                         memory_hints: Default::default(),
                         trace: Default::default(),
-                        experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
+                        experimental_features: experimental,
                     }))
-                    .expect("Failed to create device");
+                    .map_err(|e| format!("Failed to create device: {:?}", e))?;
 
                 let supported_formats = surface.get_capabilities(&adapter).formats;
                 let config = wgpu::SurfaceConfiguration {
@@ -201,7 +221,8 @@ pub mod gfx {
                                     ty: wgpu::BufferBindingType::Uniform,
                                     has_dynamic_offset: false,
                                     min_binding_size: Some(
-                                        std::num::NonZeroU64::new(camera_size).unwrap(),
+                                        std::num::NonZeroU64::new(camera_size)
+                                            .ok_or("camera size was zero")?,
                                     ),
                                 },
                                 count: None,
@@ -362,7 +383,7 @@ pub mod gfx {
                     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 });
 
-                Renderer {
+                Ok(Renderer {
                     window,
                     surface,
                     device,
@@ -385,7 +406,7 @@ pub mod gfx {
                     pending_frame: None,
                     pending_draws: Vec::new(),
                     pending_frame_view: None,
-                }
+                })
             }
 
             pub fn render(
@@ -435,7 +456,10 @@ pub mod gfx {
                             self.surface.configure(&self.device, &self.config);
                             return;
                         }
-                        wgpu::SurfaceError::OutOfMemory => panic!("Out of memory"),
+                        wgpu::SurfaceError::OutOfMemory => {
+                            log::error!("wgpu::SurfaceError::OutOfMemory");
+                            panic!("Out of memory")
+                        }
                         _ => return,
                     },
                 };
@@ -450,7 +474,7 @@ pub mod gfx {
                 let viewproj = proj_mat * view_mat;
                 // Debug: print camera position and first element of viewproj so we
                 // can confirm the renderer sees the updated camera each frame.
-                eprintln!(
+                log::trace!(
                     "[wgpu] render: cam_pos={:?} viewproj0={:?}",
                     cam_pos,
                     viewproj.to_cols_array()[0]
@@ -487,10 +511,13 @@ pub mod gfx {
                 }
 
                 // Write only the used portion of the instance buffer
-                let buf = self
-                    .instance_buffer
-                    .as_ref()
-                    .expect("instance buffer was created in new");
+                let buf = match self.instance_buffer.as_ref() {
+                    Some(b) => b,
+                    None => {
+                        log::error!("instance buffer missing when writing instances");
+                        return;
+                    }
+                };
                 if !instances.is_empty() {
                     self.queue
                         .write_buffer(buf, 0, bytemuck::cast_slice(&instances));
@@ -538,18 +565,19 @@ pub mod gfx {
                     // set camera bind group (group 0)
                     rpass.set_bind_group(0, &self.camera_bind_group, &[]);
                     // set vertex buffer (created on-demand)
-                    rpass.set_vertex_buffer(
-                        0,
-                        self.vertex_buffer
-                            .as_ref()
-                            .expect("vertex buffer")
-                            .slice(..),
-                    );
+                    if let Some(vb) = self.vertex_buffer.as_ref() {
+                        rpass.set_vertex_buffer(0, vb.slice(..));
+                    } else {
+                        log::trace!("vertex buffer missing, skipping set_vertex_buffer");
+                    }
                     // bind the persistent instance buffer
-                    let ibuf = self
-                        .instance_buffer
-                        .as_ref()
-                        .expect("instance buffer present");
+                    let ibuf = match self.instance_buffer.as_ref() {
+                        Some(b) => b,
+                        None => {
+                            log::error!("instance buffer missing during draw");
+                            return;
+                        }
+                    };
                     rpass.set_vertex_buffer(1, ibuf.slice(..));
                     let instance_count = instances.len().max(1) as u32;
                     rpass.draw(0..self.vertex_count, 0..instance_count);
@@ -584,7 +612,13 @@ pub mod gfx {
                     });
                 self.material_buffer = Some(mat_buf);
                 // Recreate the camera bind group to include the new material buffer.
-                let mat_resource = self.material_buffer.as_ref().unwrap().as_entire_binding();
+                let mat_resource = match self.material_buffer.as_ref() {
+                    Some(b) => b.as_entire_binding(),
+                    None => {
+                        log::error!("material buffer missing when creating bind group");
+                        return;
+                    }
+                };
                 self.camera_bind_group =
                     self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                         layout: &self.camera_bind_group_layout,
@@ -673,9 +707,15 @@ pub mod gfx {
                 }
                 // Debug: print first few interleaved vertices to ensure normals exist
                 for (i, v) in iv.iter().enumerate().take(6) {
-                    println!(
+                    log::trace!(
                         "[register_indexed_mesh] v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})",
-                        i, v.pos[0], v.pos[1], v.pos[2], v.nor[0], v.nor[1], v.nor[2]
+                        i,
+                        v.pos[0],
+                        v.pos[1],
+                        v.pos[2],
+                        v.nor[0],
+                        v.nor[1],
+                        v.nor[2]
                     );
                 }
                 // Print a few sampled indices across the mesh to check variation
@@ -689,9 +729,15 @@ pub mod gfx {
                     ];
                     for idx in samples {
                         let v = &iv[idx];
-                        println!(
+                        log::debug!(
                             "[register_indexed_mesh] sample v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})",
-                            idx, v.pos[0], v.pos[1], v.pos[2], v.nor[0], v.nor[1], v.nor[2]
+                            idx,
+                            v.pos[0],
+                            v.pos[1],
+                            v.pos[2],
+                            v.nor[0],
+                            v.nor[1],
+                            v.nor[2]
                         );
                     }
                 }
@@ -753,7 +799,7 @@ pub mod gfx {
                     // Debug: log camera values for render_mesh path so we can
                     // correlate main-side camera computation with what the
                     // renderer writes for mesh-based rendering.
-                    eprintln!(
+                    log::trace!(
                         "[wgpu] render_mesh: cam_pos={:?} viewproj0={:?}",
                         cam_pos,
                         viewproj.to_cols_array()[0]
@@ -794,7 +840,13 @@ pub mod gfx {
                         self.instance_capacity = new_cap;
                     }
 
-                    let ibuf = self.instance_buffer.as_ref().unwrap();
+                    let ibuf = match self.instance_buffer.as_ref() {
+                        Some(b) => b,
+                        None => {
+                            log::error!("instance buffer missing when uploading instances");
+                            return;
+                        }
+                    };
                     if !instances_gpu.is_empty() {
                         self.queue
                             .write_buffer(ibuf, 0, bytemuck::cast_slice(&instances_gpu));
@@ -880,7 +932,15 @@ pub mod gfx {
                         }
 
                         // Upload all instances into the instance buffer
-                        let ibuf = self.instance_buffer.as_ref().unwrap();
+                        let ibuf = match self.instance_buffer.as_ref() {
+                            Some(b) => b,
+                            None => {
+                                log::error!(
+                                    "instance buffer missing when uploading batched instances"
+                                );
+                                return;
+                            }
+                        };
                         if !all_instances.is_empty() {
                             self.queue
                                 .write_buffer(ibuf, 0, bytemuck::cast_slice(&all_instances));
@@ -957,7 +1017,7 @@ pub mod gfx {
                         // Submit and present
                         let finished = encoder.finish();
                         // Debug: print that we're about to submit/present a batched frame
-                        eprintln!(
+                        log::debug!(
                             "[wgpu] finalize: submitting {} draws",
                             self.pending_draws.len()
                         );
@@ -1008,6 +1068,11 @@ pub mod gfx {
 }
 
 // crate root re-export to preserve the previous `engine_renderer::Renderer` API
+// Note: when the `backend-wgpu` feature is enabled the concrete type is
+// `gfx::wgpu_impl::Renderer<'a>` which borrows a `&'a winit::window::Window`.
+// Callers should create the renderer by passing a borrow of a Window that
+// outlives the returned boxed trait object (the application typically keeps
+// an `Arc<Window>` and passes `Some(&*arc_window)` to `create_renderer`).
 pub use gfx::Renderer;
 
 // --- NEW: Renderer trait and factory helpers ---------------------------------
@@ -1016,6 +1081,11 @@ pub use gfx::Renderer;
 // selects an appropriate backend implementation depending on features.
 
 /// Object-safe renderer backend trait.
+///
+/// Implementations are expected to map to a concrete backend. Note that the
+/// WGPU backend currently requires a borrow of a `winit::window::Window` for
+/// the lifetime of the renderer (see `create_renderer` under `backend-wgpu`).
+/// The trait itself is object-safe so callers can hold `Box<dyn RendererBackend + '_>`.
 pub trait RendererBackend {
     fn render(
         &mut self,
@@ -1161,16 +1231,79 @@ impl RendererBackend for gfx::placeholder::Renderer {
 /// Create a boxed renderer backend. When `backend-wgpu` is enabled the
 /// function takes the `EventLoop` and `Window` so the backend can create a
 /// surface. When disabled the parameterless form is provided.
+/// Create a boxed renderer backend. Always returns a Result so callers have a
+/// single, fallible API to initialize a renderer regardless of feature flags.
 #[cfg(feature = "backend-wgpu")]
 pub fn create_renderer<'a>(
     window: Option<&'a winit::window::Window>,
-) -> Box<dyn RendererBackend + 'a> {
-    Box::new(gfx::wgpu_impl::Renderer::new(window.unwrap()))
+) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> {
+    let win = window
+        .ok_or_else(|| Box::new(RendererInitError::MissingWindow) as Box<dyn std::error::Error>)?;
+    let r = gfx::wgpu_impl::Renderer::new(win).map_err(|e| {
+        let msg = format!("{}", e);
+        Box::new(RendererInitError::WgpuInit(msg)) as Box<dyn std::error::Error>
+    })?;
+    Ok(Box::new(r))
 }
 
 #[cfg(not(feature = "backend-wgpu"))]
-pub fn create_renderer(_window: Option<std::sync::Arc<()>>) -> Box<dyn RendererBackend> {
-    Box::new(gfx::placeholder::Renderer::new())
+pub fn create_renderer(
+    _window: Option<std::sync::Arc<()>>,
+) -> Result<Box<dyn RendererBackend>, Box<dyn std::error::Error>> {
+    Ok(Box::new(gfx::placeholder::Renderer::new()))
+}
+
+/// Compatibility wrapper: always return a Result<Box<dyn RendererBackend>, Box<dyn Error>>.
+/// This lets callers use a single API regardless of whether the crate was built with
+/// the `backend-wgpu` feature enabled (which changes the signature of `create_renderer`).
+pub fn create_renderer_any<'a>(
+    _window: Option<&'a ()>,
+) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> {
+    // Avoid referencing winit types in the signature so this function
+    // compiles regardless of feature flags. When the GPU backend is
+    // enabled callers should call `create_renderer` directly with a
+    // `winit::window::Window` reference. This helper is intended for
+    // the non-backend placeholder path and will return an Err when the
+    // backend is enabled to make that explicit.
+    #[cfg(feature = "backend-wgpu")]
+    {
+        Err(Box::from(
+            "create_renderer_any is not available when backend-wgpu is enabled; call create_renderer instead",
+        ))
+    }
+
+    #[cfg(not(feature = "backend-wgpu"))]
+    {
+        Ok(Box::new(gfx::placeholder::Renderer::new()))
+    }
+}
+
+/// Convenience helper: create a renderer from an Arc<Window>.
+///
+/// The renderer implementation currently borrows the provided `Window` for
+/// the lifetime of the returned trait object. Callers typically keep an
+/// `Arc<winit::window::Window>` (or otherwise own the Window) and pass a
+/// reference to that Arc here so the application retains ownership while
+/// the renderer uses a borrow.
+///
+/// Note: this helper intentionally takes `&Arc<...>` rather than consuming
+/// the Arc. The caller retains ownership and is responsible for ensuring
+/// the Arc (and the underlying Window) outlives the renderer.
+#[cfg(feature = "backend-wgpu")]
+pub fn create_renderer_from_arc<'a>(
+    window: &'a std::sync::Arc<winit::window::Window>,
+) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> {
+    create_renderer(Some(std::sync::Arc::as_ref(window)))
+}
+
+#[cfg(not(feature = "backend-wgpu"))]
+pub fn create_renderer_from_arc(
+    _window: &std::sync::Arc<()>,
+) -> Result<Box<dyn RendererBackend>, Box<dyn std::error::Error>> {
+    // Placeholder backend ignores the window. Match the placeholder
+    // factory's parameter type (Arc<()>) so this helper is available
+    // even when the wgpu/backend feature is disabled.
+    create_renderer(None)
 }
 
 /// Callback trait for UI rendering. Implement this to composite UI elements
@@ -1184,4 +1317,13 @@ pub trait FrameCallback {
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
     );
+}
+
+/// Errors that can occur during renderer initialization.
+#[derive(thiserror::Error, Debug)]
+pub enum RendererInitError {
+    #[error("missing window for wgpu backend initialization")]
+    MissingWindow,
+    #[error("wgpu backend error: {0}")]
+    WgpuInit(String),
 }

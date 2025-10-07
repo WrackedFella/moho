@@ -11,13 +11,27 @@ fn api_compiles() {
     #[cfg(feature = "backend-wgpu")]
     {
         use engine_renderer::create_renderer;
-        // Validate the `backend-wgpu` factory signature.
-        let _factory: fn(Option<&winit::window::Window>) -> Box<dyn RendererBackend> = create_renderer;
+        use engine_renderer::create_renderer_from_arc;
+        // Validate the `backend-wgpu` factory signature (lifetime-bearing).
+        let _factory: for<'a> fn(
+            Option<&'a winit::window::Window>,
+        ) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> = create_renderer;
+        // Validate the helper that accepts an Arc<Window> and forwards a borrow (lifetime-bearing).
+        let _helper: for<'a> fn(
+            &'a std::sync::Arc<winit::window::Window>,
+        ) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> =
+            create_renderer_from_arc;
     }
     #[cfg(not(feature = "backend-wgpu"))]
     {
         use engine_renderer::create_renderer;
-        let _factory: fn(Option<std::sync::Arc<()>>) -> Box<dyn RendererBackend> =
-            create_renderer;
+        use engine_renderer::create_renderer_from_arc;
+        let _factory: fn(
+            Option<std::sync::Arc<()>>,
+        ) -> Result<Box<dyn RendererBackend>, Box<dyn std::error::Error>> = create_renderer;
+        let _helper: fn(
+            &std::sync::Arc<()>,
+        ) -> Result<Box<dyn RendererBackend>, Box<dyn std::error::Error>> =
+            create_renderer_from_arc;
     }
 }

@@ -54,24 +54,29 @@ impl Scene {
             cube_instances.push(c.to_instance_with_material(midx));
         }
 
-        // Debug: print material table and instance material indices (kept as-is)
+        // Debug: log material table and instance material indices (kept as-is)
         if !material_table.as_slice().is_empty() {
-            println!(
+            log::debug!(
                 "[debug] material_table.len={} ",
                 material_table.as_slice().len()
             );
             for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
-                println!(
+                log::debug!(
                     "[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}",
-                    i, m.albedo[0], m.albedo[1], m.albedo[2], m.params[0], m.params[1]
+                    i,
+                    m.albedo[0],
+                    m.albedo[1],
+                    m.albedo[2],
+                    m.params[0],
+                    m.params[1]
                 );
             }
         }
         for (i, inst) in sphere_instances.iter().enumerate().take(8) {
-            println!("[debug] sphere_inst[{}].material={}", i, inst.material);
+            log::debug!("[debug] sphere_inst[{}].material={}", i, inst.material);
         }
         for (i, inst) in cube_instances.iter().enumerate().take(8) {
-            println!("[debug] cube_inst[{}].material={}", i, inst.material);
+            log::debug!("[debug] cube_inst[{}].material={}", i, inst.material);
         }
 
         // Upload material table to GPU if it changed.

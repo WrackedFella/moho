@@ -5,14 +5,16 @@ edition = "2024"
 
 [dependencies]
 engine_core = { path = "../engine_core" }
-bytemuck = { version = "1.9.1", features = ["derive"] }
+bytemuck = { workspace = true, features = ["derive"] }
 wgpu = { workspace = true, optional = true }
-winit = { version = "0.30", optional = true }
-pollster = { version = "0.4", optional = true }
+winit = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
 glam = "0.30.4"
 legion = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 bincode = "2.0"
+log = { workspace = true }
+thiserror = "1.0"
 
 [dev-dependencies]
 naga = { workspace = true, features = ["wgsl-in"] }
@@ -20,3 +22,4 @@ tempfile = "3.5"
 
 [features]
 backend-wgpu = ["wgpu", "winit", "pollster"]
+wgpu-experimental = []

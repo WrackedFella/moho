@@ -4,13 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# UI crate will own egui and friends; keep minimal for now.
-# UI crate will own egui and friends; keep minimal for now.
-egui = "0.32.3"
-egui-winit = "0.32.3"
-egui-wgpu = "0.32.3"
-engine_renderer = { path = "../engine_renderer", features = ["backend-wgpu"] }
+# RAUI is an optional UI integration. Make it optional so the
+# workspace can build without fetching/building raui (its build
+# script expects a monorepo layout). Enable the `ui-raui` feature
+# when you want to compile with RAUI support.
+iced = { version = "0.13.1", optional = true }
 wgpu = { workspace = true }
+engine_renderer = { path = "../engine_renderer", features = ["backend-wgpu"] }
 
 [features]
 default = []
+ui-iced = ["iced"]
