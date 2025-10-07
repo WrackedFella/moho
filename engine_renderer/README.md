@@ -23,3 +23,17 @@ Examples
 	`Arc<winit::window::Window>` while the application retains ownership of the
 	Window. This helper is intentionally lightweight and forwards a borrow to the
 	underlying factory.
+
+Logging
+-------
+
+The crate uses the `log` facade. Applications should initialize a logger to
+see the renderer's log output. A simple option is `env_logger`:
+
+```rust
+env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+// or set RUST_LOG in the environment: RUST_LOG=debug cargo run -- ...
+```
+
+Set the `RUST_LOG` environment variable to control verbosity (for example,
+`RUST_LOG=debug` to enable trace/debug output from the renderer).

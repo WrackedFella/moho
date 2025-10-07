@@ -11,3 +11,4 @@ winit = { version = "0.30", default-features = true }
 rand = "0.9.1"
 bytemuck = { version = "1.9.1", features = ["derive"] }
 legion = "0.4"
+log = { workspace = true }

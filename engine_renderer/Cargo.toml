@@ -13,6 +13,8 @@ glam = "0.30.4"
 legion = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 bincode = "2.0"
+log = { workspace = true }
+thiserror = "1.0"
 
 [dev-dependencies]
 naga = { workspace = true, features = ["wgsl-in"] }

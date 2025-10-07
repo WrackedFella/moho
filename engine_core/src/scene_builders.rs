@@ -96,5 +96,5 @@ pub fn random_scene(world: &mut World) {
         MaterialType::Dielectric { ref_indx: 1.5f32 },
     ),));
 
-    println!("World Generated");
+    log::info!("World Generated");
 }

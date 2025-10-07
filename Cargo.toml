@@ -37,9 +37,7 @@ rand = "0.9.2"
 serde = "1.0"
 winit = "0.30"
 pollster = "0.4"
-egui = "0.32.3"
-egui-winit = "0.32.3"
-egui-wgpu = "0.32.3"
+iced = "0.13.1"
 
 [workspace]
 members = ["engine_core", "engine_renderer", "moho_ui"]
