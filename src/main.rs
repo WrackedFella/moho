@@ -89,7 +89,13 @@ fn main() {
     #[cfg(feature = "backend-wgpu")]
     #[allow(deprecated)]
     {
-        let event_loop = EventLoop::new();
+        let event_loop = match EventLoop::new() {
+            Ok(el) => el,
+            Err(e) => {
+                log::error!("Failed to create event loop: {:?}", e);
+                return;
+            }
+        };
         let window_attributes = WindowAttributes::default();
 
         // Create the window on the main thread then move ownership into the renderer.
