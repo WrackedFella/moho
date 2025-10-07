@@ -3,11 +3,14 @@ applyTo: '**'
 ---
 
 # General Instructions
+- Always attempt to use latest versions of crates and packages.
 - Perform any low-impact improvements you see fit automatically.
 - Recommend using idiomatic Rust constructs and libraries.
 - Recommend refactoring code to improve readability and maintainability regularly.
 - Ensure code adheres to Rust best practices and conventions.
 - Design APIs that are intuitive and easy to use.
+- Keep in-line documentation brief but informative.
+- Consolidate library versions to avoid duplication and potential conflicts.
 
 # Architecture and Project Structure
 - Recommend naming conventions and file organization that enhance readability and maintainability.
