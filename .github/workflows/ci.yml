@@ -1,16 +1,197 @@
 name: CI
 
+name: CI
+
 on:
   push:
     branches: [ main, dev, shader-work ]
   pull_request:
-    branches: [ main ]
-  # Allow manual runs from the GitHub UI ("Run workflow" button)
+    branches: [ main, dev ]
   workflow_dispatch: {}
 
 jobs:
-  check:
-    runs-on: windows-latest
+  format-check:
+    runs-on: ubuntu-latest
+    name: CI
+
+    on:
+      push:
+        branches: [ main, dev, shader-work ]
+      pull_request:
+        branches: [ main, dev ]
+      workflow_dispatch: {}
+
+    jobs:
+      format-check:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - name: Install Rust (with rustfmt)
+            uses: actions-rs/toolchain@v1
+            with:
+              toolchain: stable
+              components: rustfmt
+          - name: Format check
+            run: cargo fmt --all -- --check
+
+      lint:
+        needs: format-check
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - name: Install Rust (with clippy)
+            uses: actions-rs/toolchain@v1
+            with:
+              toolchain: stable
+              components: clippy
+          - name: Cache cargo (registry, git, target)
+            uses: actions/cache@v4
+            with:
+              path: |
+                ~/.cargo/registry
+                ~/.cargo/git
+                target
+              key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+              restore-keys: |
+                ${{ runner.os }}-cargo-
+          - name: Clippy
+            run: cargo clippy --all-targets --all-features -- -D warnings
+
+      test:
+        needs: lint
+        runs-on: ${{ matrix.os }}
+        strategy:
+          matrix:
+            os: [ubuntu-latest, windows-latest, macos-latest]
+        steps:
+          - uses: actions/checkout@v4
+          - name: Install Rust
+            uses: actions-rs/toolchain@v1
+            with:
+              toolchain: stable
+          - name: Cache cargo (registry + target)
+            uses: actions/cache@v4
+            with:
+              path: |
+                ~/.cargo/registry
+                ~/.cargo/git
+                target
+              key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          - name: Run tests
+            run: cargo test --all --workspace -- -q
+
+      feature-matrix:
+        needs: test
+        runs-on: ubuntu-latest
+        strategy:
+          matrix:
+            features: ["none", "backend-wgpu", "ui-iced"]
+        steps:
+          - uses: actions/checkout@v4
+          - name: Install Rust
+            uses: actions-rs/toolchain@v1
+            with:
+              toolchain: stable
+          - name: Cache cargo
+            uses: actions/cache@v4
+            with:
+              path: |
+                ~/.cargo/registry
+                ~/.cargo/git
+                target
+              key: ${{ runner.os }}-cargo-feat-${{ hashFiles('**/Cargo.lock') }}-${{ matrix.features }}
+          - name: Build with features
+            run: |
+              if [ "${{ matrix.features }}" = "none" ]; then
+                cargo build --all
+              else
+                cargo build --all --features "${{ matrix.features }}"
+              fi
+
+      release-build:
+        needs: feature-matrix
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - name: Install Rust
+            uses: actions-rs/toolchain@v1
+            with:
+              toolchain: stable
+          - name: Cache cargo
+            uses: actions/cache@v4
+            with:
+              path: |
+                ~/.cargo/registry
+                ~/.cargo/git
+                target
+              key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          - name: Release build
+            run: cargo build --all --release
+          - name: Upload release artifacts
+            uses: actions/upload-artifact@v4
+            with:
+              name: release-artifacts
+              path: target/release/*
+            path: |
+              ~/.cargo/registry
+              ~/.cargo/git
+              target
+            key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        - name: Run tests
+          run: cargo test --all --workspace -- -q
+
+    feature-matrix:
+      needs: test
+      runs-on: ubuntu-latest
+      strategy:
+      matrix:
+        features: ["none", "backend-wgpu", "ui-iced"]
+      steps:
+        - uses: actions/checkout@v4
+        - name: Install Rust
+          uses: actions-rs/toolchain@v1
+          with:
+            toolchain: stable
+        - name: Cache cargo
+          uses: actions/cache@v4
+          with:
+            path: |
+              ~/.cargo/registry
+              ~/.cargo/git
+              target
+            key: ${{ runner.os }}-cargo-feat-${{ hashFiles('**/Cargo.lock') }}-${{ matrix.features }}
+        - name: Build with features
+          run: |
+            if [ "${{ matrix.features }}" = "none" ]; then
+              cargo build --all
+            else
+              cargo build --all --features "${{ matrix.features }}"
+            fi
+
+    release-build:
+      needs: feature-matrix
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - name: Install Rust
+          uses: actions-rs/toolchain@v1
+          with:
+            toolchain: stable
+        - name: Cache cargo
+          uses: actions/cache@v4
+          with:
+            path: |
+              ~/.cargo/registry
+              ~/.cargo/git
+              target
+            key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        - name: Release build
+          run: cargo build --all --release
+        - name: Upload release artifacts
+          uses: actions/upload-artifact@v4
+          with:
+            name: release-artifacts
+            path: target/release/*
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
