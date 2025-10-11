@@ -38,3 +38,9 @@ impl FrameCallback for StubUi {
         // no-op for now
     }
 }
+
+#[cfg(feature = "ui-egui")]
+pub use egui_adapter::egui_adapter::{EguiUi as IcedUi, UiEvent, UiReceiver};
+
+#[cfg(feature = "ui-egui")]
+mod egui_adapter;

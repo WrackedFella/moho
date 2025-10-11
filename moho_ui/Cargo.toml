@@ -11,7 +11,19 @@ edition = "2024"
 iced = { version = "0.13.1", optional = true }
 wgpu = { workspace = true }
 engine_renderer = { path = "../engine_renderer", features = ["backend-wgpu"] }
+crossbeam-channel = { version = "0.5", optional = true }
+once_cell = "1.21"
+iced_wgpu = { version = "0.13", optional = true }
+iced_winit = { version = "0.13", optional = true }
+gilrs = { version = "0.11.0", optional = true }
+winit = { version = "0.30", optional = true }
+egui = { version = "0.33.0", optional = true }
+egui-winit = { version = "0.33", optional = true }
+egui-wgpu = { version = "0.33", optional = true }
+log = "0.4"
 
 [features]
 default = []
 ui-iced = ["iced"]
+ui-egui = ["egui", "egui-winit", "egui-wgpu", "crossbeam-channel", "winit"]
+ui-egui-debug = ["ui-egui"]

@@ -11,6 +11,7 @@ rand = "0.9.1"
 legion = "0.4.0"
 log = { workspace = true }
 env_logger = { workspace = true }
+moho_ui = { path = "moho_ui", optional = true }
 
 # Optional frontend/backends
 winit = { version = "0.30", optional = true }
@@ -23,6 +24,10 @@ bytemuck = { version = "1.9.1", features = ["derive"] }
 [features]
 # Enable the WGPU renderer implementation (renamed to avoid name collision)
 backend-wgpu = ["wgpu", "winit", "pollster", "engine_renderer/backend-wgpu"]
+# UI feature to enable egui integration. This enables the moho_ui crate with
+# its `ui-egui` feature so the main binary can use the adapter.
+ui-egui = ["moho_ui/ui-egui"]
+ui-egui-debug = ["moho_ui/ui-egui-debug"]
 
 
 [workspace.dependencies]
