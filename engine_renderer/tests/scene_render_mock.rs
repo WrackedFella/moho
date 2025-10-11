@@ -1,5 +1,5 @@
 use engine_core::actors::{Cube, Sphere};
-use engine_renderer::{MaterialGpu, RendererBackend, FrameCallback};
+use engine_renderer::{FrameCallback, MaterialGpu, RendererBackend};
 use glam::Vec3;
 use legion::World;
 

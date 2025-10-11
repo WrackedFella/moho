@@ -1,6 +1,6 @@
+use moho_ui::menus::Menu;
 use moho_ui::menus::StartMenu;
 use moho_ui::menus::menu::MenuAction;
-use moho_ui::menus::Menu;
 use std::path::PathBuf;
 
 #[test]
@@ -12,7 +12,7 @@ fn start_menu_returns_expected_action_and_rects() {
     // is initialized properly. Capture the returned action and rects.
     let mut action = MenuAction::None;
     let mut rects: Option<(egui::Rect, egui::Rect)> = None;
-    ctx.run(egui::RawInput::default(), |ctx| {
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
         let (a, r) = menu.ui(ctx);
         action = a;
         rects = r;

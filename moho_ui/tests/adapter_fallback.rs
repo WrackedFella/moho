@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 #[test]
 fn fallback_press_release_load_triggers_loadscene() {
-    let (mut ui, receiver) = EguiUi::new(None);
+    let (mut ui, _receiver) = EguiUi::new(None);
 
     // Simulate rects for load and exit buttons in logical pixels
     let load_rect = egui::Rect::from_min_size(egui::pos2(8.0, 8.0), egui::vec2(120.0, 32.0));
@@ -22,7 +22,7 @@ fn fallback_press_release_load_triggers_loadscene() {
         other => panic!("expected LoadScene, got {:?}", other),
     }
     match &events[1] {
-        UiEvent::OverlayToggled(false) => {},
+        UiEvent::OverlayToggled(false) => {}
         other => panic!("expected OverlayToggled(false), got {:?}", other),
     }
 }
@@ -41,7 +41,7 @@ fn fallback_press_release_exit_triggers_exit() {
 
     assert_eq!(events.len(), 1);
     match &events[0] {
-        UiEvent::Exit => {},
+        UiEvent::Exit => {}
         other => panic!("expected Exit, got {:?}", other),
     }
 }

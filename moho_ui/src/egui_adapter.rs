@@ -41,8 +41,11 @@ pub enum UiEvent {
     OverlayToggled(bool),
 }
 
-// Test helpers for external tests. Placed at module scope so they are
-// available to the `moho_ui` integration tests.
+// Test helpers for external tests. These helpers are useful for the
+// integration tests but should not be part of the public production API.
+// Expose them only when running tests or when the `ui-egui-test` feature
+// is enabled for developer convenience.
+#[cfg(any(test, feature = "ui-egui-test"))]
 impl EguiUi {
     /// Set stored response rects (as if painted by egui).
     pub fn test_set_button_rects(&mut self, load: egui::Rect, exit: egui::Rect) {
@@ -117,6 +120,14 @@ impl EguiUi {
 }
 
 static UI_SENDER: OnceCell<crossbeam_channel::Sender<UiEvent>> = OnceCell::new();
+
+/// Convenience factory that mirrors the previous public API: construct an
+/// `EguiUi` and its associated `UiReceiver` channel. This centralizes
+/// adapter construction so callers (for example `main.rs`) don't need to
+/// know the internal constructor details.
+pub fn build_adapter(window: Option<Arc<Window>>) -> (EguiUi, UiReceiver) {
+    EguiUi::new(window)
+}
 
 /// Global flag that indicates whether the UI overlay is visible.
 /// Other parts of the program (for example the input/controller code)

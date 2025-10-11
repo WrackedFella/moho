@@ -23,3 +23,8 @@ log = "0.4"
 default = []
 ui-egui = ["egui", "egui-winit", "egui-wgpu", "crossbeam-channel", "winit"]
 ui-egui-debug = ["ui-egui"]
+# Test-only helpers for the egui adapter. Enable when running integration
+# tests that require internal adapter control (for example to simulate
+# press/release without an actual window). This is intentionally optional
+# so library consumers won't accidentally depend on test utilities.
+ui-egui-test = ["ui-egui"]
