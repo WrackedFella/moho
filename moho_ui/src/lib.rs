@@ -9,9 +9,7 @@ use engine_renderer::FrameCallback;
 // Ensure wgpu types are available for the FrameCallback signature when
 // the optional iced/ui feature is enabled. The dependency is optional in
 // Cargo.toml but importing the crate here ensures the symbols are linked
-// when enabled.
-#[allow(unused_imports)]
-use wgpu;
+// when enabled. (no direct `use wgpu;` needed)
 
 pub struct StubUi;
 
@@ -40,10 +38,10 @@ impl FrameCallback for StubUi {
 }
 
 #[cfg(feature = "ui-egui")]
-pub use egui_adapter::egui_adapter::{EguiUi as IcedUi, UiEvent, UiReceiver};
-
-#[cfg(feature = "ui-egui")]
-pub use egui_adapter::egui_adapter::UI_OVERLAY_VISIBLE;
+pub use egui_adapter::{EguiUi as IcedUi, UI_OVERLAY_VISIBLE, UiEvent, UiReceiver};
 
 #[cfg(feature = "ui-egui")]
 mod egui_adapter;
+
+#[cfg(feature = "ui-egui")]
+pub mod menus;

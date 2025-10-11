@@ -117,12 +117,12 @@ pub mod gfx {
             // and submit when the caller finalizes the frame.
             pending_draws: Vec<(u32, Vec<GpuInstance>)>,
             pending_frame_view: Option<wgpu::TextureView>,
-                // Optional raw pointer to an application-provided FrameCallback.
-                // Stored as a raw pointer to avoid borrow-checker lifetime issues
-                // between the renderer and the application-owned adapter.
-                frame_callback_raw: Option<*mut dyn crate::FrameCallback>,
-                // Optional safe Arc+Mutex-wrapped callback. Prefer this when set.
-                frame_callback_arc: Option<std::sync::Arc<std::sync::Mutex<dyn crate::FrameCallback>>>,
+            // Optional raw pointer to an application-provided FrameCallback.
+            // Stored as a raw pointer to avoid borrow-checker lifetime issues
+            // between the renderer and the application-owned adapter.
+            frame_callback_raw: Option<*mut dyn crate::FrameCallback>,
+            // Optional safe Arc+Mutex-wrapped callback. Prefer this when set.
+            frame_callback_arc: Option<std::sync::Arc<std::sync::Mutex<dyn crate::FrameCallback>>>,
         }
 
         // Per-mesh stored data (supports optional index buffer)
@@ -427,10 +427,10 @@ pub mod gfx {
                 })
             }
 
-                /// Return the configured surface format for the renderer.
-                pub fn surface_format(&self) -> wgpu::TextureFormat {
-                    self.config.format
-                }
+            /// Return the configured surface format for the renderer.
+            pub fn surface_format(&self) -> wgpu::TextureFormat {
+                self.config.format
+            }
 
             pub fn render(
                 &mut self,
@@ -659,14 +659,19 @@ pub mod gfx {
                     });
             }
 
-
             /// Inherent setter for the optional raw FrameCallback pointer.
             /// Placed here so it can access the private field directly.
-            pub fn set_frame_callback_raw_inherent(&mut self, ptr: Option<*mut dyn crate::FrameCallback>) {
+            pub fn set_frame_callback_raw_inherent(
+                &mut self,
+                ptr: Option<*mut dyn crate::FrameCallback>,
+            ) {
                 self.frame_callback_raw = ptr;
             }
             /// Inherent setter for the optional Arc<Mutex<dyn FrameCallback>>.
-            pub fn set_frame_callback_arc_inherent(&mut self, cb: Option<std::sync::Arc<std::sync::Mutex<dyn crate::FrameCallback>>>) {
+            pub fn set_frame_callback_arc_inherent(
+                &mut self,
+                cb: Option<std::sync::Arc<std::sync::Mutex<dyn crate::FrameCallback>>>,
+            ) {
                 self.frame_callback_arc = cb;
             }
             pub fn resize(&mut self, width: u32, height: u32) {
@@ -1060,7 +1065,9 @@ pub mod gfx {
                                     guard.call(&self.device, &self.queue, view, &mut encoder);
                                     log::info!("[wgpu] finalize: frame_callback_arc returned");
                                 } else {
-                                    log::warn!("[wgpu] finalize: failed to lock frame_callback_arc");
+                                    log::warn!(
+                                        "[wgpu] finalize: failed to lock frame_callback_arc"
+                                    );
                                 }
                             }
                         } else if let Some(cb_ptr) = self.frame_callback_raw {
@@ -1094,8 +1101,6 @@ pub mod gfx {
             }
         }
     }
-
-            
 
     #[cfg(not(feature = "backend-wgpu"))]
     pub mod placeholder {
@@ -1189,7 +1194,9 @@ pub trait RendererBackend {
     /// Return the surface texture format used by the renderer (if applicable).
     /// This is useful for UI integrations that need to create GPU pipelines
     /// with the same format as the swapchain.
-    fn surface_format(&self) -> Option<TextureFormatRepr> { None }
+    fn surface_format(&self) -> Option<TextureFormatRepr> {
+        None
+    }
     /// Set an optional raw FrameCallback pointer. The renderer will call the
     /// callback during finalization so the application can record UI commands
     /// into the frame encoder. The pointer must remain valid until cleared.
@@ -1197,7 +1204,10 @@ pub trait RendererBackend {
     /// Set an optional safe Arc<Mutex<dyn FrameCallback>>. Prefer this
     /// registration method when possible; it's thread-safe and avoids raw
     /// pointer lifetime issues. Passing `None` clears the registration.
-    fn set_frame_callback_arc(&mut self, cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>);
+    fn set_frame_callback_arc(
+        &mut self,
+        cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
+    );
 }
 
 #[cfg(feature = "backend-wgpu")]
@@ -1250,7 +1260,10 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     fn set_frame_callback_raw(&mut self, ptr: Option<*mut dyn FrameCallback>) {
         self.set_frame_callback_raw_inherent(ptr);
     }
-    fn set_frame_callback_arc(&mut self, cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>) {
+    fn set_frame_callback_arc(
+        &mut self,
+        cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
+    ) {
         self.set_frame_callback_arc_inherent(cb);
     }
     fn set_cursor_visible(&self, _visible: bool) {

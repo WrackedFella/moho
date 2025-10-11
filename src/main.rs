@@ -147,20 +147,19 @@ fn main() {
 
         // Create the UI adapter (optional feature)
         #[cfg(feature = "ui-egui")]
-        let (ui_adapter, ui_receiver) = match {
-            // Construct adapter using the Arc<Window>
-            moho_ui::IcedUi::new(Some(Arc::clone(&arc_window)))
-        } {
-            v => v,
-        };
+        // Priority: Medium
+        //     TODO: Consider unifying UI adapter construction behind a
+        //           small factory or builder to simplify initialization and
+        //           make testing easier (avoids conditional compilation at call sites).
+        let (ui_adapter, ui_receiver) = moho_ui::IcedUi::new(Some(Arc::clone(&arc_window)));
         #[cfg(feature = "ui-egui")]
         // Wrap the adapter in an Arc<Mutex<..>> so we can register it safely
         // with the renderer and call into it from the event loop.
         let ui_adapter = std::sync::Arc::new(std::sync::Mutex::new(ui_adapter));
 
-    // When the `ui-egui` feature is not enabled we don't create a UI
-    // adapter. All references to the adapter are already feature-gated
-    // so this keeps the main binary independent of the optional crate.
+        // When the `ui-egui` feature is not enabled we don't create a UI
+        // adapter. All references to the adapter are already feature-gated
+        // so this keeps the main binary independent of the optional crate.
 
         let mut app_state = AppState {
             renderer,
@@ -185,7 +184,8 @@ fn main() {
             // Register the adapter with the renderer using the safe Arc<Mutex<..>> API.
             app_state
                 .renderer
-                .set_frame_callback_arc(Some(std::sync::Arc::clone(&ui_adapter) as std::sync::Arc<std::sync::Mutex<dyn engine_renderer::FrameCallback>>));
+                .set_frame_callback_arc(Some(std::sync::Arc::clone(&ui_adapter)
+                    as std::sync::Arc<std::sync::Mutex<dyn engine_renderer::FrameCallback>>));
         }
         // use winit::window::CursorGrabMode;
 
@@ -256,8 +256,13 @@ fn main() {
                                         UiEvent::LoadScene(path) => {
                                             log::info!("UI requested load scene: {:?}", path);
                                             // Attempt to load scene into world and scene manager
-                                            if let Err(e) = scene.load_from_file(&path, &mut world) {
-                                                log::warn!("Failed to load scene from {:?}: {}", path, e);
+                                            if let Err(e) = scene.load_from_file(&path, &mut world)
+                                            {
+                                                log::warn!(
+                                                    "Failed to load scene from {:?}: {}",
+                                                    path,
+                                                    e
+                                                );
                                             }
                                         }
                                         UiEvent::Exit => {
@@ -275,24 +280,29 @@ fn main() {
                                             log::info!("Overlay visibility -> {}", visible);
                                             if visible {
                                                 // Save previous grabbed state and release
-                                                app_state.was_cursor_grabbed = app_state.cursor_grabbed;
+                                                app_state.was_cursor_grabbed =
+                                                    app_state.cursor_grabbed;
                                                 if app_state.cursor_grabbed {
-                                                    let _ = app_state.window.set_cursor_grab(CursorGrabMode::None);
+                                                    let _ = app_state
+                                                        .window
+                                                        .set_cursor_grab(CursorGrabMode::None);
                                                     app_state.cursor_grabbed = false;
                                                 }
                                                 app_state.window.set_cursor_visible(true);
-                                            } else {
+                                            } else if app_state.was_cursor_grabbed {
                                                 // Overlay hidden: restore previous grab if needed
-                                                if app_state.was_cursor_grabbed {
-                                                    let r = app_state
-                                                        .window
-                                                        .set_cursor_grab(CursorGrabMode::Locked)
-                                                        .or_else(|_| app_state.window.set_cursor_grab(CursorGrabMode::Confined));
-                                                    log::debug!("Restore grab -> {:?}", r);
-                                                    if r.is_ok() {
-                                                        app_state.cursor_grabbed = true;
-                                                        app_state.window.set_cursor_visible(false);
-                                                    }
+                                                let r = app_state
+                                                    .window
+                                                    .set_cursor_grab(CursorGrabMode::Locked)
+                                                    .or_else(|_| {
+                                                        app_state.window.set_cursor_grab(
+                                                            CursorGrabMode::Confined,
+                                                        )
+                                                    });
+                                                log::debug!("Restore grab -> {:?}", r);
+                                                if r.is_ok() {
+                                                    app_state.cursor_grabbed = true;
+                                                    app_state.window.set_cursor_visible(false);
                                                 }
                                             }
                                         }
@@ -352,25 +362,29 @@ fn main() {
                                     if visible {
                                         app_state.was_cursor_grabbed = app_state.cursor_grabbed;
                                         if app_state.cursor_grabbed {
-                                            let _ = app_state.window.set_cursor_grab(CursorGrabMode::None);
+                                            let _ = app_state
+                                                .window
+                                                .set_cursor_grab(CursorGrabMode::None);
                                             app_state.cursor_grabbed = false;
                                         }
                                         app_state.window.set_cursor_visible(true);
                                         // Ensure the window redraws so the UI is rendered now
                                         app_state.window.request_redraw();
-                                    } else {
-                                        if app_state.was_cursor_grabbed {
-                                            let r = app_state
-                                                .window
-                                                .set_cursor_grab(CursorGrabMode::Locked)
-                                                .or_else(|_| app_state.window.set_cursor_grab(CursorGrabMode::Confined));
-                                            log::debug!("Restore grab -> {:?}", r);
-                                            if r.is_ok() {
-                                                app_state.cursor_grabbed = true;
-                                                app_state.window.set_cursor_visible(false);
-                                                // Update the window so UI hides immediately
-                                                app_state.window.request_redraw();
-                                            }
+                                    } else if app_state.was_cursor_grabbed {
+                                        let r = app_state
+                                            .window
+                                            .set_cursor_grab(CursorGrabMode::Locked)
+                                            .or_else(|_| {
+                                                app_state
+                                                    .window
+                                                    .set_cursor_grab(CursorGrabMode::Confined)
+                                            });
+                                        log::debug!("Restore grab -> {:?}", r);
+                                        if r.is_ok() {
+                                            app_state.cursor_grabbed = true;
+                                            app_state.window.set_cursor_visible(false);
+                                            // Update the window so UI hides immediately
+                                            app_state.window.request_redraw();
                                         }
                                     }
                                 }
@@ -420,7 +434,9 @@ fn main() {
                                         app_state.window.set_cursor_visible(false);
                                     }
                                 } else {
-                                    log::debug!("Focused event ignored because UI overlay is visible");
+                                    log::debug!(
+                                        "Focused event ignored because UI overlay is visible"
+                                    );
                                 }
                             }
                         }
