@@ -393,18 +393,34 @@ fn main() {
                         WindowEvent::KeyboardInput { .. } => {}
                         WindowEvent::Focused(gained) => {
                             if gained && !app_state.cursor_grabbed {
-                                let r = app_state
-                                    .window
-                                    .set_cursor_grab(winit::window::CursorGrabMode::Locked)
-                                    .or_else(|_| {
-                                        app_state.window.set_cursor_grab(
-                                            winit::window::CursorGrabMode::Confined,
-                                        )
-                                    });
-                                log::debug!("Focused -> window.set_cursor_grab -> {:?}", r);
-                                if r.is_ok() {
-                                    app_state.cursor_grabbed = true;
-                                    app_state.window.set_cursor_visible(false);
+                                // If the UI overlay is visible, don't force a
+                                // cursor grab here because the user may be
+                                // interacting with the UI. Query the adapter's
+                                // visibility state when present.
+                                #[cfg(feature = "ui-egui")]
+                                let ui_visible = match ui_adapter.lock() {
+                                    Ok(a) => a.is_visible(),
+                                    Err(_) => false,
+                                };
+                                #[cfg(not(feature = "ui-egui"))]
+                                let ui_visible = false;
+
+                                if !ui_visible {
+                                    let r = app_state
+                                        .window
+                                        .set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                        .or_else(|_| {
+                                            app_state.window.set_cursor_grab(
+                                                winit::window::CursorGrabMode::Confined,
+                                            )
+                                        });
+                                    log::debug!("Focused -> window.set_cursor_grab -> {:?}", r);
+                                    if r.is_ok() {
+                                        app_state.cursor_grabbed = true;
+                                        app_state.window.set_cursor_visible(false);
+                                    }
+                                } else {
+                                    log::debug!("Focused event ignored because UI overlay is visible");
                                 }
                             }
                         }
@@ -453,10 +469,25 @@ fn main() {
                     event: winit::event::DeviceEvent::MouseMotion { delta },
                     ..
                 } => {
-                    // Only apply mouse motion when the cursor is grabbed for FPS look.
+                    // Only apply mouse motion when the cursor is grabbed for
+                    // FPS look and the UI overlay is not visible. Use the
+                    // atomic flag to avoid locking the adapter here.
+                    let overlay_visible = {
+                        #[cfg(feature = "ui-egui")]
+                        {
+                            use moho_ui::UI_OVERLAY_VISIBLE;
+                            UI_OVERLAY_VISIBLE.load(std::sync::atomic::Ordering::SeqCst)
+                        }
+                        #[cfg(not(feature = "ui-egui"))]
+                        {
+                            false
+                        }
+                    };
+
                     let cursor_is_grabbed = app_state.cursor_grabbed;
-                    if !cursor_is_grabbed {
-                        // ignore mouse motion when cursor is not grabbed
+                    if !cursor_is_grabbed || overlay_visible {
+                        // ignore mouse motion when cursor is not grabbed or
+                        // when the UI overlay is visible.
                     } else {
                         log::debug!("MouseMotion delta={:?}", delta);
                         // Apply mouse motion as small yaw/pitch deltas
