@@ -41,6 +41,81 @@ pub enum UiEvent {
     OverlayToggled(bool),
 }
 
+// Test helpers for external tests. Placed at module scope so they are
+// available to the `moho_ui` integration tests.
+impl EguiUi {
+    /// Set stored response rects (as if painted by egui).
+    pub fn test_set_button_rects(&mut self, load: egui::Rect, exit: egui::Rect) {
+        self.load_button_rect = Some(load);
+        self.exit_button_rect = Some(exit);
+    }
+
+    /// Simulate a press and release that both occurred between frames.
+    /// `press` is logical pixel position of press, `release` is release.
+    pub fn test_simulate_press_release(&mut self, press: (f32, f32), release: (f32, f32)) {
+        self.mouse_press_pos = Some(press);
+        self.last_cursor = Some(release);
+        self.mouse_was_pressed = true;
+        self.mouse_pressed = false;
+    }
+
+    /// Run the adapter's non-egui fallback click detection logic and
+    /// return the UiEvents that would have been emitted.
+    pub fn test_collect_fallback_events(&mut self) -> Vec<UiEvent> {
+        let mut out: Vec<UiEvent> = Vec::new();
+        if self.mouse_was_pressed && !self.mouse_pressed {
+            if let Some((px, py)) = self.mouse_press_pos.take() {
+                if let Some((rx, ry)) = self.last_cursor {
+                    let in_load_press = self
+                        .load_button_rect
+                        .is_some_and(|r| r.contains(egui::pos2(px, py)));
+                    let in_exit_press = self
+                        .exit_button_rect
+                        .is_some_and(|r| r.contains(egui::pos2(px, py)));
+                    let in_load_release = self
+                        .load_button_rect
+                        .is_some_and(|r| r.contains(egui::pos2(rx, ry)));
+                    let in_exit_release = self
+                        .exit_button_rect
+                        .is_some_and(|r| r.contains(egui::pos2(rx, ry)));
+
+                    if in_load_press && in_load_release {
+                        out.push(UiEvent::LoadScene(PathBuf::from("saves/scene.bin")));
+                        self.ui_visible = false;
+                        self.cursor_grabbed = Some(true);
+                        out.push(UiEvent::OverlayToggled(false));
+                    } else if in_exit_press && in_exit_release {
+                        out.push(UiEvent::Exit);
+                    }
+                }
+            } else if let Some((x, y)) = self.last_cursor {
+                let in_load = self
+                    .load_button_rect
+                    .is_some_and(|r| r.contains(egui::pos2(x, y)));
+                let in_exit = self
+                    .exit_button_rect
+                    .is_some_and(|r| r.contains(egui::pos2(x, y)));
+                if in_load {
+                    out.push(UiEvent::LoadScene(PathBuf::from("saves/scene.bin")));
+                    self.ui_visible = false;
+                    self.cursor_grabbed = Some(true);
+                    out.push(UiEvent::OverlayToggled(false));
+                } else if in_exit {
+                    out.push(UiEvent::Exit);
+                }
+            }
+        }
+        // Track previous press state as call() would do
+        self.mouse_was_pressed = self.mouse_pressed;
+        out
+    }
+
+    /// Set a staging belt for smoke testing recall behavior.
+    pub fn test_set_staging_belt(&mut self) {
+        self.staging_belt = Some(wgpu::util::StagingBelt::new(1024));
+    }
+}
+
 static UI_SENDER: OnceCell<crossbeam_channel::Sender<UiEvent>> = OnceCell::new();
 
 /// Global flag that indicates whether the UI overlay is visible.
@@ -646,6 +721,8 @@ impl FrameCallback for EguiUi {
                                 Some(egui_wgpu::Renderer::new(_device, fmt, Default::default()));
                         }
                     }
+
+                    // ...existing code...
 
                     let input = if let (Some(state), Some(win)) =
                         (self.egui_winit.as_mut(), self.window.as_ref())

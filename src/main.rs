@@ -151,11 +151,13 @@ fn main() {
         //     TODO: Consider unifying UI adapter construction behind a
         //           small factory or builder to simplify initialization and
         //           make testing easier (avoids conditional compilation at call sites).
-        let (ui_adapter, ui_receiver) = moho_ui::IcedUi::new(Some(Arc::clone(&arc_window)));
+    let (ui_adapter, ui_receiver) = moho_ui::EguiUi::new(Some(Arc::clone(&arc_window)));
         #[cfg(feature = "ui-egui")]
         // Wrap the adapter in an Arc<Mutex<..>> so we can register it safely
         // with the renderer and call into it from the event loop.
-        let ui_adapter = std::sync::Arc::new(std::sync::Mutex::new(ui_adapter));
+        let ui_adapter = std::sync::Arc::new(
+            std::sync::Mutex::<moho_ui::EguiUi>::new(ui_adapter),
+        );
 
         // When the `ui-egui` feature is not enabled we don't create a UI
         // adapter. All references to the adapter are already feature-gated

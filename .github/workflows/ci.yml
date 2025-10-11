@@ -85,7 +85,7 @@ jobs:
         runs-on: ubuntu-latest
         strategy:
           matrix:
-            features: ["none", "backend-wgpu", "ui-iced"]
+            features: ["none", "backend-wgpu", "ui-egui"]
         steps:
           - uses: actions/checkout@v4
           - name: Install Rust
@@ -145,7 +145,7 @@ jobs:
       runs-on: ubuntu-latest
       strategy:
       matrix:
-        features: ["none", "backend-wgpu", "ui-iced"]
+        features: ["none", "backend-wgpu", "ui-egui"]
       steps:
         - uses: actions/checkout@v4
         - name: Install Rust

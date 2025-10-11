@@ -37,11 +37,15 @@ impl FrameCallback for StubUi {
     }
 }
 
-#[cfg(feature = "ui-egui")]
-pub use egui_adapter::{EguiUi as IcedUi, UI_OVERLAY_VISIBLE, UiEvent, UiReceiver};
+// Re-export adapter and types for the egui feature. Also make them
+// available during `cargo test` so integration tests can reference
+// the adapter symbols even when the feature gate is not enabled in
+// the default test configuration.
+#[cfg(any(feature = "ui-egui", test))]
+pub mod egui_adapter;
 
-#[cfg(feature = "ui-egui")]
-mod egui_adapter;
+#[cfg(any(feature = "ui-egui", test))]
+pub use egui_adapter::{EguiUi, UI_OVERLAY_VISIBLE, UiEvent, UiReceiver};
 
-#[cfg(feature = "ui-egui")]
+#[cfg(any(feature = "ui-egui", test))]
 pub mod menus;
