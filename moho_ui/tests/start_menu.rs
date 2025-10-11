@@ -9,25 +9,20 @@ fn start_menu_returns_expected_action_and_rects() {
     let ctx = egui::Context::default();
 
     // Call ui() inside `ctx.run` so egui's internal state (available_rect, etc)
-    // is initialized properly. Capture the returned action and rects.
-    let mut action = MenuAction::None;
-    let mut rects: Option<(egui::Rect, egui::Rect)> = None;
+    // is initialized properly. Capture the returned menu items.
+    let mut items: Vec<moho_ui::menus::menu::MenuItem> = Vec::new();
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
-        let (a, r) = menu.ui(ctx);
-        action = a;
-        rects = r;
+        items = menu.ui(ctx);
     });
 
-    // No click simulated, so expect no action
-    match action {
-        MenuAction::None => {}
-        other => panic!("expected no action, got {:?}", other),
+    // No click simulated, so none of the items should have been triggered;
+    // but the items vector should contain our 4 menu entries.
+    assert_eq!(items.len(), 4, "expected 4 menu items from StartMenu");
+    // Check rects exist and are positive
+    for item in &items {
+        assert!(item.rect.is_some(), "expected item.rect to be present");
+        assert!(item.rect.unwrap().is_positive());
     }
-
-    // Rects should be present for both buttons
-    let (load_rect, exit_rect) = rects.expect("expected rects for start menu");
-    assert!(load_rect.is_positive());
-    assert!(exit_rect.is_positive());
 
     // Verify menu metadata
     assert_eq!(menu.name(), "start");

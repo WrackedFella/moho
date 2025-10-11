@@ -26,28 +26,59 @@ impl Menu for StartMenu {
     fn spec(&self) -> &MenuSpec {
         &self.spec
     }
-    fn ui(&mut self, ctx: &egui::Context) -> (MenuAction, Option<(egui::Rect, egui::Rect)>) {
-        let mut load_rect: Option<egui::Rect> = None;
-        let mut exit_rect: Option<egui::Rect> = None;
-        let mut action = MenuAction::None;
+    fn ui(&mut self, ctx: &egui::Context) -> Vec<crate::menus::menu::MenuItem> {
+        let mut items: Vec<crate::menus::menu::MenuItem> = Vec::new();
+
+        // Determine whether a saved scene exists
+        let save_path = PathBuf::from("saves/scene.bin");
+        let save_exists = std::path::Path::new(&save_path).exists();
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(16.0);
                 ui.heading("Moho");
-                ui.add_space(8.0);
-                let load_resp = ui.add(egui::Button::new("Start"));
-                if load_resp.clicked() {
-                    action = MenuAction::LoadScene(PathBuf::from("saves/scene.bin"));
-                }
-                ui.add_space(4.0);
-                let exit_resp = ui.add(egui::Button::new("Exit"));
-                if exit_resp.clicked() {
-                    action = MenuAction::Exit;
-                }
-                load_rect = Some(load_resp.rect);
-                exit_rect = Some(exit_resp.rect);
+                ui.add_space(12.0);
+
+                // Helper to paint hover/focus styling around a rect
+                let paint_decor = |ui: &mut egui::Ui, resp: &egui::Response| {
+                    if resp.hovered() {
+                        let r = resp.rect;
+                        ui.painter().rect_filled(
+                            r,
+                            4.0,
+                            ui.visuals().widgets.active.bg_fill.linear_multiply(1.05),
+                        );
+                    }
+                };
+
+                // Continue button (disabled when no save exists)
+                let cont = ui.add_enabled(save_exists, egui::Button::new("Continue").min_size(egui::vec2(160.0, 28.0)));
+                paint_decor(ui, &cont);
+                let cont_clicked = cont.clicked() && save_exists;
+                items.push(crate::menus::menu::MenuItem { action: MenuAction::LoadScene(save_path.clone()), rect: Some(cont.rect), enabled: save_exists, clicked: cont_clicked });
+                ui.add_space(6.0);
+
+                // New World button - always enabled
+                let nw = ui.add(egui::Button::new("New World").min_size(egui::vec2(160.0, 28.0)));
+                paint_decor(ui, &nw);
+                let nw_clicked = nw.clicked();
+                items.push(crate::menus::menu::MenuItem { action: MenuAction::NewWorld, rect: Some(nw.rect), enabled: true, clicked: nw_clicked });
+                ui.add_space(6.0);
+
+                // Settings placeholder
+                let st = ui.add(egui::Button::new("Settings").min_size(egui::vec2(160.0, 28.0)));
+                paint_decor(ui, &st);
+                let st_clicked = st.clicked();
+                items.push(crate::menus::menu::MenuItem { action: MenuAction::ShowMenu("settings".to_string()), rect: Some(st.rect), enabled: true, clicked: st_clicked });
+                ui.add_space(6.0);
+
+                let ex = ui.add(egui::Button::new("Exit").min_size(egui::vec2(160.0, 28.0)));
+                paint_decor(ui, &ex);
+                let ex_clicked = ex.clicked();
+                items.push(crate::menus::menu::MenuItem { action: MenuAction::Exit, rect: Some(ex.rect), enabled: true, clicked: ex_clicked });
             });
         });
-        (action, load_rect.and_then(|l| exit_rect.map(|e| (l, e))))
+
+        items
     }
 }

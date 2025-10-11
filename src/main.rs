@@ -265,6 +265,24 @@ fn main() {
                                                 );
                                             }
                                         }
+                                        UiEvent::NewWorld => {
+                                            log::info!("UI requested NewWorld");
+                                            // Ensure saves directory exists
+                                            let saves_dir = std::path::Path::new("saves");
+                                            if !saves_dir.exists() {
+                                                if let Err(e) = std::fs::create_dir_all(saves_dir) {
+                                                    log::warn!("Failed to create saves dir: {}", e);
+                                                }
+                                            }
+                                            let save_path = saves_dir.join("scene.bin");
+                                            // Generate a fresh random scene and persist it
+                                            random_scene(&mut world);
+                                            if let Err(e) = scene.save_to_file(&save_path, &world) {
+                                                log::warn!("Failed to save new scene to {:?}: {}", save_path, e);
+                                            } else {
+                                                log::info!("Saved new scene to {:?}", save_path);
+                                            }
+                                        }
                                         UiEvent::Exit => {
                                             log::info!("UI requested exit");
                                             active_event_loop.exit();
@@ -350,6 +368,22 @@ fn main() {
                                     log::info!("UI requested load scene: {:?}", path);
                                     if let Err(e) = scene.load_from_file(&path, &mut world) {
                                         log::warn!("Failed to load scene from {:?}: {}", path, e);
+                                    }
+                                }
+                                UiEvent::NewWorld => {
+                                    log::info!("UI requested NewWorld");
+                                    let saves_dir = std::path::Path::new("saves");
+                                    if !saves_dir.exists() {
+                                        if let Err(e) = std::fs::create_dir_all(saves_dir) {
+                                            log::warn!("Failed to create saves dir: {}", e);
+                                        }
+                                    }
+                                    let save_path = saves_dir.join("scene.bin");
+                                    random_scene(&mut world);
+                                    if let Err(e) = scene.save_to_file(&save_path, &world) {
+                                        log::warn!("Failed to save new scene to {:?}: {}", save_path, e);
+                                    } else {
+                                        log::info!("Saved new scene to {:?}", save_path);
                                     }
                                 }
                                 UiEvent::Exit => {

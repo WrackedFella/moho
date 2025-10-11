@@ -36,6 +36,7 @@ use winit::window::{CursorGrabMode, Window};
 #[derive(Debug, Clone)]
 pub enum UiEvent {
     LoadScene(PathBuf),
+    NewWorld,
     Exit,
     /// Overlay visibility changed: true = shown, false = hidden
     OverlayToggled(bool),
@@ -47,10 +48,14 @@ pub enum UiEvent {
 // is enabled for developer convenience.
 #[cfg(any(test, feature = "ui-egui-test"))]
 impl EguiUi {
-    /// Set stored response rects (as if painted by egui).
-    pub fn test_set_button_rects(&mut self, load: egui::Rect, exit: egui::Rect) {
-        self.load_button_rect = Some(load);
-        self.exit_button_rect = Some(exit);
+    /// Set stored response rects (as if painted by egui). Order: continue, newworld, settings, exit
+    pub fn test_set_button_rects(&mut self, cont: egui::Rect, neww: egui::Rect, set: egui::Rect, exit: egui::Rect) {
+        self.menu_items = vec![
+            crate::menus::menu::MenuItem { action: crate::menus::menu::MenuAction::LoadScene(PathBuf::from("saves/scene.bin")), rect: Some(cont), enabled: true, clicked: false },
+            crate::menus::menu::MenuItem { action: crate::menus::menu::MenuAction::NewWorld, rect: Some(neww), enabled: true, clicked: false },
+            crate::menus::menu::MenuItem { action: crate::menus::menu::MenuAction::ShowMenu("settings".to_string()), rect: Some(set), enabled: true, clicked: false },
+            crate::menus::menu::MenuItem { action: crate::menus::menu::MenuAction::Exit, rect: Some(exit), enabled: true, clicked: false },
+        ];
     }
 
     /// Simulate a press and release that both occurred between frames.
@@ -69,42 +74,60 @@ impl EguiUi {
         if self.mouse_was_pressed && !self.mouse_pressed {
             if let Some((px, py)) = self.mouse_press_pos.take() {
                 if let Some((rx, ry)) = self.last_cursor {
-                    let in_load_press = self
-                        .load_button_rect
-                        .is_some_and(|r| r.contains(egui::pos2(px, py)));
-                    let in_exit_press = self
-                        .exit_button_rect
-                        .is_some_and(|r| r.contains(egui::pos2(px, py)));
-                    let in_load_release = self
-                        .load_button_rect
-                        .is_some_and(|r| r.contains(egui::pos2(rx, ry)));
-                    let in_exit_release = self
-                        .exit_button_rect
-                        .is_some_and(|r| r.contains(egui::pos2(rx, ry)));
-
-                    if in_load_press && in_load_release {
-                        out.push(UiEvent::LoadScene(PathBuf::from("saves/scene.bin")));
-                        self.ui_visible = false;
-                        self.cursor_grabbed = Some(true);
-                        out.push(UiEvent::OverlayToggled(false));
-                    } else if in_exit_press && in_exit_release {
-                        out.push(UiEvent::Exit);
+                    // Iterate items and check which one contains both press and release
+                    for item in &self.menu_items {
+                        if let Some(r) = item.rect {
+                            let in_press = r.contains(egui::pos2(px, py));
+                            let in_release = r.contains(egui::pos2(rx, ry));
+                            if in_press && in_release && item.enabled {
+                                match &item.action {
+                                    crate::menus::menu::MenuAction::LoadScene(p) => {
+                                        out.push(UiEvent::LoadScene(p.clone()));
+                                        self.ui_visible = false;
+                                        self.cursor_grabbed = Some(true);
+                                        out.push(UiEvent::OverlayToggled(false));
+                                    }
+                                    crate::menus::menu::MenuAction::NewWorld => {
+                                        out.push(UiEvent::NewWorld);
+                                        self.ui_visible = false;
+                                        self.cursor_grabbed = Some(true);
+                                        out.push(UiEvent::OverlayToggled(false));
+                                    }
+                                    crate::menus::menu::MenuAction::Exit => {
+                                        out.push(UiEvent::Exit);
+                                    }
+                                    _ => {}
+                                }
+                                break;
+                            }
+                        }
                     }
                 }
             } else if let Some((x, y)) = self.last_cursor {
-                let in_load = self
-                    .load_button_rect
-                    .is_some_and(|r| r.contains(egui::pos2(x, y)));
-                let in_exit = self
-                    .exit_button_rect
-                    .is_some_and(|r| r.contains(egui::pos2(x, y)));
-                if in_load {
-                    out.push(UiEvent::LoadScene(PathBuf::from("saves/scene.bin")));
-                    self.ui_visible = false;
-                    self.cursor_grabbed = Some(true);
-                    out.push(UiEvent::OverlayToggled(false));
-                } else if in_exit {
-                    out.push(UiEvent::Exit);
+                for item in &self.menu_items {
+                    if let Some(r) = item.rect {
+                        if r.contains(egui::pos2(x, y)) && item.enabled {
+                            match &item.action {
+                                crate::menus::menu::MenuAction::LoadScene(p) => {
+                                    out.push(UiEvent::LoadScene(p.clone()));
+                                    self.ui_visible = false;
+                                    self.cursor_grabbed = Some(true);
+                                    out.push(UiEvent::OverlayToggled(false));
+                                }
+                                crate::menus::menu::MenuAction::NewWorld => {
+                                    out.push(UiEvent::NewWorld);
+                                    self.ui_visible = false;
+                                    self.cursor_grabbed = Some(true);
+                                    out.push(UiEvent::OverlayToggled(false));
+                                }
+                                crate::menus::menu::MenuAction::Exit => {
+                                    out.push(UiEvent::Exit);
+                                }
+                                _ => {}
+                            }
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -118,6 +141,7 @@ impl EguiUi {
         self.staging_belt = Some(wgpu::util::StagingBelt::new(1024));
     }
 }
+
 
 static UI_SENDER: OnceCell<crossbeam_channel::Sender<UiEvent>> = OnceCell::new();
 
@@ -150,9 +174,8 @@ pub struct EguiUi {
     mouse_was_pressed: bool,
     // Position where the last left-button press began (logical pixels).
     mouse_press_pos: Option<(f32, f32)>,
-    // Last-known egui response rects for the fallback hit-test
-    load_button_rect: Option<egui::Rect>,
-    exit_button_rect: Option<egui::Rect>,
+    // Last-known menu items with optional response rects for the fallback hit-test
+    menu_items: Vec<crate::menus::menu::MenuItem>,
     // Whether the UI overlay is currently visible. Hidden by default.
     ui_visible: bool,
     // egui runtime fields (lazy initialized)
@@ -284,8 +307,7 @@ impl EguiUi {
             mouse_pressed: false,
             mouse_was_pressed: false,
             mouse_press_pos: None,
-            load_button_rect: None,
-            exit_button_rect: None,
+            menu_items: Vec::new(),
             // Start the application with the start menu visible so the
             // user sees a deterministic menu on launch.
             ui_visible: true,
@@ -440,37 +462,27 @@ impl EguiUi {
                             // record press location for immediate hit-test on release
                             self.mouse_press_pos = self.last_cursor;
                         } else {
-                            if let Some((px, py)) = self.mouse_press_pos.take() {
+                                if let Some((px, py)) = self.mouse_press_pos.take() {
                                 if let Some((rx, ry)) = self.last_cursor {
-                                    // Prefer the stored egui response rects when available
-                                    // so the immediate hit-test matches what was painted.
-                                    let in_load_press = self.load_button_rect.map_or(
-                                        px >= 8.0 && px <= 128.0 && py >= 8.0 && py <= 40.0,
-                                        |r| r.contains(egui::pos2(px, py)),
-                                    );
-                                    let in_exit_press = self.exit_button_rect.map_or(
-                                        px >= 8.0 && px <= 128.0 && py >= 48.0 && py <= 80.0,
-                                        |r| r.contains(egui::pos2(px, py)),
-                                    );
-                                    let in_load_release = self.load_button_rect.map_or(
-                                        rx >= 8.0 && rx <= 128.0 && ry >= 8.0 && ry <= 40.0,
-                                        |r| r.contains(egui::pos2(rx, ry)),
-                                    );
-                                    let in_exit_release = self.exit_button_rect.map_or(
-                                        rx >= 8.0 && rx <= 128.0 && ry >= 48.0 && ry <= 80.0,
-                                        |r| r.contains(egui::pos2(rx, ry)),
-                                    );
-                                    if in_load_press && in_load_release {
-                                        let _ = self.sender.send(UiEvent::LoadScene(
-                                            PathBuf::from("saves/scene.bin"),
-                                        ));
-                                        // Close overlay internally and notify the application
-                                        // to manage OS cursor/grab state via OverlayToggled.
-                                        self.ui_visible = false;
-                                        self.cursor_grabbed = Some(true);
-                                        let _ = self.sender.send(UiEvent::OverlayToggled(false));
-                                    } else if in_exit_press && in_exit_release {
-                                        let _ = self.sender.send(UiEvent::Exit);
+                                    if let Some(action) = self.detect_menu_action_press_release(px, py, rx, ry) {
+                                        match action {
+                                            crate::menus::menu::MenuAction::LoadScene(p) => {
+                                                let _ = self.sender.send(UiEvent::LoadScene(p));
+                                                self.ui_visible = false;
+                                                self.cursor_grabbed = Some(true);
+                                                let _ = self.sender.send(UiEvent::OverlayToggled(false));
+                                            }
+                                            crate::menus::menu::MenuAction::NewWorld => {
+                                                let _ = self.sender.send(UiEvent::NewWorld);
+                                                self.ui_visible = false;
+                                                self.cursor_grabbed = Some(true);
+                                                let _ = self.sender.send(UiEvent::OverlayToggled(false));
+                                            }
+                                            crate::menus::menu::MenuAction::Exit => {
+                                                let _ = self.sender.send(UiEvent::Exit);
+                                            }
+                                            _ => {}
+                                        }
                                     }
                                 }
                             }
@@ -518,39 +530,29 @@ impl EguiUi {
                             self.mouse_press_pos = self.last_cursor;
                         } else {
                             if let Some((px, py)) = self.mouse_press_pos.take() {
-                                if let Some((rx, ry)) = self.last_cursor {
-                                    // Prefer stored response rects when available to
-                                    // match the painted debug geometry exactly.
-                                    let in_load_press = self.load_button_rect.map_or(
-                                        px >= 8.0 && px <= 128.0 && py >= 8.0 && py <= 40.0,
-                                        |r| r.contains(egui::pos2(px, py)),
-                                    );
-                                    let in_exit_press = self.exit_button_rect.map_or(
-                                        px >= 8.0 && px <= 128.0 && py >= 48.0 && py <= 80.0,
-                                        |r| r.contains(egui::pos2(px, py)),
-                                    );
-                                    let in_load_release = self.load_button_rect.map_or(
-                                        rx >= 8.0 && rx <= 128.0 && ry >= 8.0 && ry <= 40.0,
-                                        |r| r.contains(egui::pos2(rx, ry)),
-                                    );
-                                    let in_exit_release = self.exit_button_rect.map_or(
-                                        rx >= 8.0 && rx <= 128.0 && ry >= 48.0 && ry <= 80.0,
-                                        |r| r.contains(egui::pos2(rx, ry)),
-                                    );
-                                    if in_load_press && in_load_release {
-                                        let _ = self.sender.send(UiEvent::LoadScene(
-                                            PathBuf::from("saves/scene.bin"),
-                                        ));
-                                        // Close overlay internally and notify the application
-                                        // to manage OS cursor/grab state via OverlayToggled.
-                                        self.ui_visible = false;
-                                        self.cursor_grabbed = Some(true);
-                                        let _ = self.sender.send(UiEvent::OverlayToggled(false));
-                                    } else if in_exit_press && in_exit_release {
-                                        let _ = self.sender.send(UiEvent::Exit);
+                                    if let Some((rx, ry)) = self.last_cursor {
+                                        if let Some(action) = self.detect_menu_action_press_release(px, py, rx, ry) {
+                                            match action {
+                                                crate::menus::menu::MenuAction::LoadScene(p) => {
+                                                    let _ = self.sender.send(UiEvent::LoadScene(p));
+                                                    self.ui_visible = false;
+                                                    self.cursor_grabbed = Some(true);
+                                                    let _ = self.sender.send(UiEvent::OverlayToggled(false));
+                                                }
+                                                crate::menus::menu::MenuAction::NewWorld => {
+                                                    let _ = self.sender.send(UiEvent::NewWorld);
+                                                    self.ui_visible = false;
+                                                    self.cursor_grabbed = Some(true);
+                                                    let _ = self.sender.send(UiEvent::OverlayToggled(false));
+                                                }
+                                                crate::menus::menu::MenuAction::Exit => {
+                                                    let _ = self.sender.send(UiEvent::Exit);
+                                                }
+                                                _ => {}
+                                            }
+                                        }
                                     }
                                 }
-                            }
                         }
 
                         let pos = self
@@ -574,6 +576,46 @@ impl EguiUi {
     }
 }
 
+impl EguiUi {
+    /// Detect a menu action when both press and release positions are known.
+    /// Returns the first matching MenuAction (cloned) if any item contains
+    /// both positions and is enabled.
+    fn detect_menu_action_press_release(
+        &self,
+        px: f32,
+        py: f32,
+        rx: f32,
+        ry: f32,
+    ) -> Option<crate::menus::menu::MenuAction> {
+        for item in &self.menu_items {
+            if !item.enabled {
+                continue;
+            }
+            if let Some(r) = item.rect {
+                if r.contains(egui::pos2(px, py)) && r.contains(egui::pos2(rx, ry)) {
+                    return Some(item.action.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Detect a menu action when only the release position is available.
+    fn detect_menu_action_release_only(&self, x: f32, y: f32) -> Option<crate::menus::menu::MenuAction> {
+        for item in &self.menu_items {
+            if !item.enabled {
+                continue;
+            }
+            if let Some(r) = item.rect {
+                if r.contains(egui::pos2(x, y)) {
+                    return Some(item.action.clone());
+                }
+            }
+        }
+        None
+    }
+}
+
 impl Default for EguiUi {
     fn default() -> Self {
         let (s, _) = crossbeam_channel::unbounded();
@@ -585,8 +627,7 @@ impl Default for EguiUi {
             mouse_pressed: false,
             mouse_was_pressed: false,
             mouse_press_pos: None,
-            load_button_rect: None,
-            exit_button_rect: None,
+            menu_items: Vec::new(),
             egui_ctx: None,
             egui_winit: None,
             egui_renderer: None,
@@ -710,185 +751,8 @@ impl FrameCallback for EguiUi {
                 });
                 drop(_rpass);
 
-                // Run a minimal egui frame to force layout/tessellation
-                // so the first presented frame contains UI shapes and the
-                // egui textures. Ensure the egui GPU renderer exists so
-                // textures can be uploaded safely.
-                // (ui_emitted_action declared above)
-
-                if let Some(ctx) = &self.egui_ctx {
-                    // If we know the surface format, ensure renderer exists
-                    // before running the UI so textures_delta can be
-                    // processed without panics.
-                    if self.egui_renderer.is_none() {
-                        if let Some(fmt) = self.surface_format {
-                            if cfg!(feature = "ui-egui-debug") {
-                                log::info!(
-                                    "EguiUi: creating egui_wgpu::Renderer for warmup with format {:?}",
-                                    fmt
-                                );
-                            }
-                            self.egui_renderer =
-                                Some(egui_wgpu::Renderer::new(_device, fmt, Default::default()));
-                        }
-                    }
-
-                    // ...existing code...
-
-                    let input = if let (Some(state), Some(win)) =
-                        (self.egui_winit.as_mut(), self.window.as_ref())
-                    {
-                        state.take_egui_input(win)
-                    } else {
-                        egui::RawInput::default()
-                    };
-
-                    let full_output = ctx.run(input, |ctx| {
-                        egui::CentralPanel::default().show(ctx, |ui| {
-                            ui.vertical_centered(|ui| {
-                                ui.add_space(16.0);
-                                ui.heading("Moho");
-                                ui.add_space(8.0);
-                                if ui.button("Start").clicked() {
-                                    let _ = self
-                                        .sender
-                                        .send(UiEvent::LoadScene(PathBuf::from("saves/scene.bin")));
-                                    // Close overlay internally and notify the application
-                                    // so it can manage OS cursor/grab state centrally.
-                                    self.ui_visible = false;
-                                    self.cursor_grabbed = Some(true);
-                                    let _ = self.sender.send(UiEvent::OverlayToggled(false));
-                                }
-                                ui.add_space(4.0);
-                                if ui.button("Exit").clicked() {
-                                    let _ = self.sender.send(UiEvent::Exit);
-                                }
-                            });
-                            // Debug: draw non-egui fallback rectangles so we can
-                            // visually confirm the clickable regions.
-                            if cfg!(feature = "ui-egui-debug") {
-                                let painter = ctx.layer_painter(egui::LayerId::new(
-                                    egui::Order::Foreground,
-                                    egui::Id::new("moho_debug_rects_warmup"),
-                                ));
-                                let load_rect = egui::Rect::from_min_max(
-                                    egui::pos2(8.0, 8.0),
-                                    egui::pos2(128.0, 40.0),
-                                );
-                                let exit_rect = egui::Rect::from_min_max(
-                                    egui::pos2(8.0, 48.0),
-                                    egui::pos2(128.0, 80.0),
-                                );
-                                painter.rect_filled(
-                                    load_rect,
-                                    0.0,
-                                    egui::Color32::from_rgba_unmultiplied(255, 0, 0, 60),
-                                );
-                                // outline omitted (egui API mismatch); filled rect is sufficient for debug
-                                painter.rect_filled(
-                                    exit_rect,
-                                    0.0,
-                                    egui::Color32::from_rgba_unmultiplied(0, 255, 0, 60),
-                                );
-                                // outline omitted (egui API mismatch); filled rect is sufficient for debug
-                            }
-                        });
-                    });
-
-                    // Process the warmup FullOutput similar to the
-                    // regular frame path so textures are uploaded and
-                    // buffers are prepared.
-                    let pixels_per_point = full_output.pixels_per_point;
-                    let textures_delta = full_output.textures_delta;
-                    let shapes = full_output.shapes;
-
-                    if cfg!(feature = "ui-egui-debug") {
-                        log::info!(
-                            "EguiUi (warmup): full_output shapes={}, textures_set={}, textures_free={}, ppp={}",
-                            shapes.len(),
-                            textures_delta.set.len(),
-                            textures_delta.free.len(),
-                            pixels_per_point
-                        );
-                    }
-
-                    if let Some(renderer) = &mut self.egui_renderer {
-                        for (id, image_delta) in textures_delta.set {
-                            renderer.update_texture(_device, _queue, id, &image_delta);
-                        }
-                        for id in textures_delta.free {
-                            renderer.free_texture(&id);
-                        }
-
-                        let clipped_primitives = ctx.tessellate(shapes, pixels_per_point);
-
-                        // screen descriptor
-                        let screen_desc = if let Some(win) = &self.window {
-                            let size = win.inner_size();
-                            egui_wgpu::ScreenDescriptor {
-                                size_in_pixels: [size.width as u32, size.height as u32],
-                                pixels_per_point,
-                            }
-                        } else {
-                            egui_wgpu::ScreenDescriptor {
-                                size_in_pixels: [800, 600],
-                                pixels_per_point,
-                            }
-                        };
-
-                        if self.staging_belt.is_none() {
-                            if cfg!(feature = "ui-egui-debug") {
-                                log::info!("EguiUi: creating StagingBelt (warmup)");
-                            }
-                            self.staging_belt = Some(wgpu::util::StagingBelt::new(1024));
-                        }
-
-                        let _user_cmds = renderer.update_buffers(
-                            _device,
-                            _queue,
-                            _encoder,
-                            &clipped_primitives,
-                            &screen_desc,
-                        );
-
-                        if let Some(belt) = &mut self.staging_belt {
-                            if cfg!(feature = "ui-egui-debug") {
-                                log::info!("EguiUi: finishing staging belt (warmup)");
-                            }
-                            belt.finish();
-                        }
-
-                        let mut egui_rpass =
-                            _encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                label: Some("egui_warmup_pass"),
-                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                    view: _view,
-                                    resolve_target: None,
-                                    ops: wgpu::Operations {
-                                        load: wgpu::LoadOp::Load,
-                                        store: wgpu::StoreOp::Store,
-                                    },
-                                    depth_slice: None,
-                                })],
-                                depth_stencil_attachment: None,
-                                occlusion_query_set: None,
-                                timestamp_writes: None,
-                            });
-
-                        let egui_rpass_static: &mut wgpu::RenderPass<'static> =
-                            unsafe { std::mem::transmute(&mut egui_rpass) };
-                        if cfg!(feature = "ui-egui-debug") {
-                            log::info!("EguiUi: calling egui_wgpu::Renderer::render (warmup)");
-                        }
-                        renderer.render(egui_rpass_static, &clipped_primitives, &screen_desc);
-                        drop(egui_rpass);
-                    }
-                }
-
-                // Mark warmup complete so normal frames render now.
+                // For now perform a very small warmup: clear and mark as done.
                 self.warmup_pending = false;
-                // Done — don't continue into the regular UI rendering path
-                // for this invocation; the warmup frame is presented.
                 return;
             }
             // Drive egui: begin a frame with accumulated raw_input so egui
@@ -973,27 +837,34 @@ impl FrameCallback for EguiUi {
                     // Delegate to the current menu if present. Menus return a
                     // MenuAction and optional response rects for fallback hit-tests.
                     if let Some(menu) = &mut self.current_menu {
-                        let (action, rects) = menu.ui(ctx);
-                        // Store rects for fallback hit-test if provided.
-                        if let Some((load_r, exit_r)) = rects {
-                            self.load_button_rect = Some(load_r);
-                            self.exit_button_rect = Some(exit_r);
-                        }
-                        // Translate MenuAction into UiEvent and internal state.
-                        match action {
-                            crate::menus::menu::MenuAction::LoadScene(p) => {
-                                let _ = self.sender.send(UiEvent::LoadScene(p));
-                                self.ui_visible = false;
-                                self.cursor_grabbed = Some(true);
-                                let _ = self.sender.send(UiEvent::OverlayToggled(false));
-                                ui_emitted_action = true;
+                        let items = menu.ui(ctx);
+                        // Dispatch immediate clicks and record items for fallback.
+                        for item in &items {
+                            if item.clicked && item.enabled {
+                                match &item.action {
+                                    crate::menus::menu::MenuAction::LoadScene(p) => {
+                                        let _ = self.sender.send(UiEvent::LoadScene(p.clone()));
+                                        self.ui_visible = false;
+                                        self.cursor_grabbed = Some(true);
+                                        let _ = self.sender.send(UiEvent::OverlayToggled(false));
+                                        ui_emitted_action = true;
+                                    }
+                                    crate::menus::menu::MenuAction::NewWorld => {
+                                        let _ = self.sender.send(UiEvent::NewWorld);
+                                        self.ui_visible = false;
+                                        self.cursor_grabbed = Some(true);
+                                        let _ = self.sender.send(UiEvent::OverlayToggled(false));
+                                        ui_emitted_action = true;
+                                    }
+                                    crate::menus::menu::MenuAction::Exit => {
+                                        let _ = self.sender.send(UiEvent::Exit);
+                                        ui_emitted_action = true;
+                                    }
+                                    _ => {}
+                                }
                             }
-                            crate::menus::menu::MenuAction::Exit => {
-                                let _ = self.sender.send(UiEvent::Exit);
-                                ui_emitted_action = true;
-                            }
-                            _ => {}
                         }
+                        self.menu_items = items;
                     }
                     // Menus are responsible for painting their UI; no further
                     // inline widgets are needed here.
@@ -1134,109 +1005,99 @@ impl FrameCallback for EguiUi {
             });
             drop(rpass);
 
-            // Simple, non-egui UI hit-testing: two rectangular buttons in the
+            // Simple, non-egui UI hit-testing: four rectangular buttons in the
             // top-left corner. Coordinates are in logical pixels and assume the
             // window's origin at (0,0). This allows the engine to receive
             // actionable UI events before full egui rendering is wired.
             //
-            // Button layout:
-            //  - Load Scene: rect [8,8 .. 128,40]
-            //  - Exit:       rect [8,48 .. 128,80]
-            // Detect a click that may have occurred between frames. Prefer
-            // to use the recorded press position (`mouse_press_pos`) so we
-            // can distinguish horizontal vs vertical layouts accurately.
+            // Button layout (logical defaults used when rects not provided):
+            //  - Continue:  rect [8,8 .. 128,40]
+            //  - New World: rect [8,48 .. 128,80]
+            //  - Settings:  rect [8,88 .. 128,120]
+            //  - Exit:      rect [8,128 .. 128,160]
             if self.mouse_was_pressed && !self.mouse_pressed {
                 if let Some((px, py)) = self.mouse_press_pos.take() {
                     if let Some((rx, ry)) = self.last_cursor {
-                        let in_load_press = self
-                            .load_button_rect
-                            .is_some_and(|r| r.contains(egui::pos2(px, py)));
-                        let in_exit_press = self
-                            .exit_button_rect
-                            .is_some_and(|r| r.contains(egui::pos2(px, py)));
-                        let in_load_release = self
-                            .load_button_rect
-                            .is_some_and(|r| r.contains(egui::pos2(rx, ry)));
-                        let in_exit_release = self
-                            .exit_button_rect
-                            .is_some_and(|r| r.contains(egui::pos2(rx, ry)));
-
-                        // If egui already emitted an action this frame, avoid
-                        // firing the non-egui fallback duplicate.
                         if cfg!(feature = "ui-egui-debug") {
                             log::info!(
-                                "EguiUi(fallback): press=({}, {}), release=({}, {}) load_rect={:?}, exit_rect={:?}",
+                                "EguiUi(fallback): press=({}, {}), release=({}, {}) menu_items={}",
                                 px,
                                 py,
                                 rx,
                                 ry,
-                                self.load_button_rect,
-                                self.exit_button_rect
+                                self.menu_items.len()
                             );
                         }
                         if !ui_emitted_action {
-                            if in_load_press && in_load_release {
-                                // Send a LoadScene with a default path
-                                let _ = self
-                                    .sender
-                                    .send(UiEvent::LoadScene(PathBuf::from("saves/scene.bin")));
-                                // Close overlay internally and notify the app so it can
-                                // manage OS cursor/grab state via OverlayToggled.
-                                self.ui_visible = false;
-                                self.cursor_grabbed = Some(true);
-                                let _ = self.sender.send(UiEvent::OverlayToggled(false));
-                            } else if in_exit_press && in_exit_release {
+                            if let Some(action) = self.detect_menu_action_press_release(px, py, rx, ry) {
+                                match action {
+                                    crate::menus::menu::MenuAction::LoadScene(p) => {
+                                        let _ = self.sender.send(UiEvent::LoadScene(p));
+                                        self.ui_visible = false;
+                                        self.cursor_grabbed = Some(true);
+                                        let _ = self.sender.send(UiEvent::OverlayToggled(false));
+                                    }
+                                    crate::menus::menu::MenuAction::NewWorld => {
+                                        let _ = self.sender.send(UiEvent::NewWorld);
+                                        self.ui_visible = false;
+                                        self.cursor_grabbed = Some(true);
+                                        let _ = self.sender.send(UiEvent::OverlayToggled(false));
+                                    }
+                                    crate::menus::menu::MenuAction::Exit => {
+                                        let _ = self.sender.send(UiEvent::Exit);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        } else if let Some(action) = self.detect_menu_action_press_release(px, py, rx, ry) {
+                            if let crate::menus::menu::MenuAction::Exit = action {
                                 if cfg!(feature = "ui-egui-debug") {
                                     log::info!(
                                         "EguiUi: non-egui fallback Exit clicked (noop for debug)"
                                     );
                                 }
                             }
-                        } else if in_exit_press && in_exit_release {
-                            // If egui already emitted an action, still allow
-                            // exit to be logged here when egui didn't.
-                            if cfg!(feature = "ui-egui-debug") {
-                                log::info!(
-                                    "EguiUi: non-egui fallback Exit clicked (noop for debug)"
-                                );
-                            }
                         }
                     }
                 } else if let Some((x, y)) = self.last_cursor {
                     if cfg!(feature = "ui-egui-debug") {
                         log::info!(
-                            "EguiUi(fallback release-only): release=({}, {}), load_rect={:?}, exit_rect={:?}",
+                            "EguiUi(fallback release-only): release=({}, {}), menu_items={}",
                             x,
                             y,
-                            self.load_button_rect,
-                            self.exit_button_rect
+                            self.menu_items.len()
                         );
                     }
-                    // Fallback: we only have the release position available.
-                    let in_load = self
-                        .load_button_rect
-                        .is_some_and(|r| r.contains(egui::pos2(x, y)));
-                    let in_exit = self
-                        .exit_button_rect
-                        .is_some_and(|r| r.contains(egui::pos2(x, y)));
                     if !ui_emitted_action {
-                        if in_load {
-                            let _ = self
-                                .sender
-                                .send(UiEvent::LoadScene(PathBuf::from("saves/scene.bin")));
-                            self.ui_visible = false;
-                            self.cursor_grabbed = Some(true);
-                            let _ = self.sender.send(UiEvent::OverlayToggled(false));
-                        } else if in_exit {
-                            if cfg!(feature = "ui-egui-debug") {
-                                log::info!(
-                                    "EguiUi: non-egui fallback Exit clicked (noop for debug)"
-                                );
+                        if let Some(action) = self.detect_menu_action_release_only(x, y) {
+                            match action {
+                                crate::menus::menu::MenuAction::LoadScene(p) => {
+                                    let _ = self.sender.send(UiEvent::LoadScene(p));
+                                    self.ui_visible = false;
+                                    self.cursor_grabbed = Some(true);
+                                    let _ = self.sender.send(UiEvent::OverlayToggled(false));
+                                }
+                                crate::menus::menu::MenuAction::NewWorld => {
+                                    let _ = self.sender.send(UiEvent::NewWorld);
+                                    self.ui_visible = false;
+                                    self.cursor_grabbed = Some(true);
+                                    let _ = self.sender.send(UiEvent::OverlayToggled(false));
+                                }
+                                crate::menus::menu::MenuAction::Exit => {
+                                    if cfg!(feature = "ui-egui-debug") {
+                                        log::info!(
+                                            "EguiUi: non-egui fallback Exit clicked (noop for debug)"
+                                        );
+                                    }
+                                }
+                                _ => {}
                             }
                         }
-                    } else if in_exit {
-                        if cfg!(feature = "ui-egui-debug") {
-                            log::info!("EguiUi: non-egui fallback Exit clicked (noop for debug)");
+                    } else if let Some(action) = self.detect_menu_action_release_only(x, y) {
+                        if let crate::menus::menu::MenuAction::Exit = action {
+                            if cfg!(feature = "ui-egui-debug") {
+                                log::info!("EguiUi: non-egui fallback Exit clicked (noop for debug)");
+                            }
                         }
                     }
                 }
