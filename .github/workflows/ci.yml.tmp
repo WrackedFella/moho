@@ -5,7 +5,6 @@ on:
     branches: [ main, dev, shader-work ]
   pull_request:
     branches: [ main, dev ]
-  workflow_dispatch: {}
 
 jobs:
   test:
@@ -23,4 +22,4 @@ jobs:
       - name: Run workspace tests
         run: cargo test --all --workspace -- -q
       - name: Run moho_ui tests with egui feature
-        run: cargo test -p moho_ui --features 'ui-egui ui-egui-test' -- -q
+        run: cargo test -p moho_ui --features "ui-egui ui-egui-test" -- -q

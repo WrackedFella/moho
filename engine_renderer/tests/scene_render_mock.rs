@@ -1,5 +1,5 @@
 use engine_core::actors::{Cube, Sphere};
-use engine_renderer::{MaterialGpu, RendererBackend};
+use engine_renderer::{FrameCallback, MaterialGpu, RendererBackend};
 use glam::Vec3;
 use legion::World;
 
@@ -55,6 +55,12 @@ impl RendererBackend for MockRenderer {
             .push("render_mesh_called".to_string());
     }
     fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
+    fn set_frame_callback_raw(&mut self, _ptr: Option<*mut dyn crate::FrameCallback>) {}
+    fn set_frame_callback_arc(
+        &mut self,
+        _cb: Option<std::sync::Arc<std::sync::Mutex<dyn crate::FrameCallback>>>,
+    ) {
+    }
 }
 
 #[test]

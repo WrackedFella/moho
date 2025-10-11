@@ -138,17 +138,55 @@ fn main() {
             mesh_handle: u32,
             cube_mesh_handle: u32,
             cursor_grabbed: bool,
+            // Remember whether the cursor was grabbed before showing an overlay
+            // so we can restore it when the overlay is closed.
+            was_cursor_grabbed: bool,
             // keep the Window so event handling can manipulate cursor
             window: std::sync::Arc<winit::window::Window>,
         }
+
+        // Create the UI adapter (optional feature)
+        #[cfg(feature = "ui-egui")]
+        // Priority: Medium
+        //     TODO: Consider unifying UI adapter construction behind a
+        //           small factory or builder to simplify initialization and
+        //           make testing easier (avoids conditional compilation at call sites).
+        let (ui_adapter, ui_receiver) = moho_ui::build_adapter(Some(Arc::clone(&arc_window)));
+        #[cfg(feature = "ui-egui")]
+        // Wrap the adapter in an Arc<Mutex<..>> so we can register it safely
+        // with the renderer and call into it from the event loop.
+        let ui_adapter = std::sync::Arc::new(std::sync::Mutex::new(ui_adapter));
+
+        // When the `ui-egui` feature is not enabled we don't create a UI
+        // adapter. All references to the adapter are already feature-gated
+        // so this keeps the main binary independent of the optional crate.
 
         let mut app_state = AppState {
             renderer,
             mesh_handle,
             cube_mesh_handle,
             cursor_grabbed: false,
+            was_cursor_grabbed: false,
             window: Arc::clone(&arc_window),
         };
+
+        // If UI adapter is present, give it the surface format (so the
+        // egui GPU renderer can be initialized) and register it with the
+        // renderer so the renderer will call it during frame finalization.
+        #[cfg(feature = "ui-egui")]
+        {
+            if let Some(fmt) = app_state.renderer.surface_format() {
+                // lock the adapter briefly to set the surface format
+                if let Ok(mut a) = ui_adapter.lock() {
+                    a.set_surface_format(fmt);
+                }
+            }
+            // Register the adapter with the renderer using the safe Arc<Mutex<..>> API.
+            app_state
+                .renderer
+                .set_frame_callback_arc(Some(std::sync::Arc::clone(&ui_adapter)
+                    as std::sync::Arc<std::sync::Mutex<dyn engine_renderer::FrameCallback>>));
+        }
         // use winit::window::CursorGrabMode;
 
         // Frame timing: aim for ~60 FPS.
@@ -208,6 +246,69 @@ fn main() {
                             last_frame += frame_duration;
                             // Request a redraw via the Window (renderer.request_redraw is a no-op)
                             app_state.window.request_redraw();
+                            // Process UI events if the ui feature is enabled
+                            #[cfg(feature = "ui-egui")]
+                            {
+                                use moho_ui::UiEvent;
+                                // Drain events non-blockingly
+                                while let Ok(ev) = ui_receiver.try_recv() {
+                                    match ev {
+                                        UiEvent::LoadScene(path) => {
+                                            log::info!("UI requested load scene: {:?}", path);
+                                            // Attempt to load scene into world and scene manager
+                                            if let Err(e) = scene.load_from_file(&path, &mut world)
+                                            {
+                                                log::warn!(
+                                                    "Failed to load scene from {:?}: {}",
+                                                    path,
+                                                    e
+                                                );
+                                            }
+                                        }
+                                        UiEvent::Exit => {
+                                            log::info!("UI requested exit");
+                                            active_event_loop.exit();
+                                        }
+                                        UiEvent::OverlayToggled(visible) => {
+                                            // Adapter requested overlay visibility change.
+                                            // When showing an overlay we want to release
+                                            // the application's cursor grab so the OS
+                                            // cursor can be presented for UI interaction.
+                                            // When hiding the overlay, restore the
+                                            // previous grab state if it was grabbed.
+                                            use winit::window::CursorGrabMode;
+                                            log::info!("Overlay visibility -> {}", visible);
+                                            if visible {
+                                                // Save previous grabbed state and release
+                                                app_state.was_cursor_grabbed =
+                                                    app_state.cursor_grabbed;
+                                                if app_state.cursor_grabbed {
+                                                    let _ = app_state
+                                                        .window
+                                                        .set_cursor_grab(CursorGrabMode::None);
+                                                    app_state.cursor_grabbed = false;
+                                                }
+                                                app_state.window.set_cursor_visible(true);
+                                            } else if app_state.was_cursor_grabbed {
+                                                // Overlay hidden: restore previous grab if needed
+                                                let r = app_state
+                                                    .window
+                                                    .set_cursor_grab(CursorGrabMode::Locked)
+                                                    .or_else(|_| {
+                                                        app_state.window.set_cursor_grab(
+                                                            CursorGrabMode::Confined,
+                                                        )
+                                                    });
+                                                log::debug!("Restore grab -> {:?}", r);
+                                                if r.is_ok() {
+                                                    app_state.cursor_grabbed = true;
+                                                    app_state.window.set_cursor_visible(false);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             // Schedule next wake at the next fixed step boundary.
                             let next = last_frame + frame_duration;
                             active_event_loop.set_control_flow(ControlFlow::WaitUntil(next));
@@ -218,6 +319,78 @@ fn main() {
                     }
                 }
                 Event::WindowEvent { event, .. } => {
+                    // Forward input events to the UI adapter when available
+                    #[cfg(feature = "ui-egui")]
+                    {
+                        use winit::event::WindowEvent as WEvent;
+                        // Forward pointer, modifier and keyboard events so the
+                        // embedded UI can react (for example Escape to toggle
+                        // the overlay). The adapter will ignore events it
+                        // doesn't care about.
+                        match &event {
+                            WEvent::CursorMoved { .. }
+                            | WEvent::MouseInput { .. }
+                            | WEvent::ModifiersChanged(_)
+                            | WEvent::KeyboardInput { .. } => {
+                                if let Ok(mut a) = ui_adapter.lock() {
+                                    a.handle_winit_event(&event);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    // Process any UI events immediately so overlay visibility
+                    // changes take effect without waiting for the NewEvents drain.
+                    #[cfg(feature = "ui-egui")]
+                    {
+                        use moho_ui::UiEvent;
+                        while let Ok(ev) = ui_receiver.try_recv() {
+                            match ev {
+                                UiEvent::LoadScene(path) => {
+                                    log::info!("UI requested load scene: {:?}", path);
+                                    if let Err(e) = scene.load_from_file(&path, &mut world) {
+                                        log::warn!("Failed to load scene from {:?}: {}", path, e);
+                                    }
+                                }
+                                UiEvent::Exit => {
+                                    log::info!("UI requested exit");
+                                    active_event_loop.exit();
+                                }
+                                UiEvent::OverlayToggled(visible) => {
+                                    use winit::window::CursorGrabMode;
+                                    log::info!("Overlay visibility -> {}", visible);
+                                    if visible {
+                                        app_state.was_cursor_grabbed = app_state.cursor_grabbed;
+                                        if app_state.cursor_grabbed {
+                                            let _ = app_state
+                                                .window
+                                                .set_cursor_grab(CursorGrabMode::None);
+                                            app_state.cursor_grabbed = false;
+                                        }
+                                        app_state.window.set_cursor_visible(true);
+                                        // Ensure the window redraws so the UI is rendered now
+                                        app_state.window.request_redraw();
+                                    } else if app_state.was_cursor_grabbed {
+                                        let r = app_state
+                                            .window
+                                            .set_cursor_grab(CursorGrabMode::Locked)
+                                            .or_else(|_| {
+                                                app_state
+                                                    .window
+                                                    .set_cursor_grab(CursorGrabMode::Confined)
+                                            });
+                                        log::debug!("Restore grab -> {:?}", r);
+                                        if r.is_ok() {
+                                            app_state.cursor_grabbed = true;
+                                            app_state.window.set_cursor_visible(false);
+                                            // Update the window so UI hides immediately
+                                            app_state.window.request_redraw();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     match event {
                         WindowEvent::CloseRequested => {
                             active_event_loop.exit();
@@ -225,63 +398,45 @@ fn main() {
                         WindowEvent::Resized(size) => {
                             app_state.renderer.resize(size.width, size.height);
                         }
-                        WindowEvent::KeyboardInput { event, .. } => {
-                            if event.state == winit::event::ElementState::Pressed {
-                                let is_escape = event
-                                    .text
-                                    .as_deref()
-                                    .map(|s| s == "\u{1b}")
-                                    .unwrap_or(false)
-                                    || format!("{:?}", event.logical_key).contains("Escape");
-
-                                if is_escape {
-                                    log::info!(
-                                        "Escape pressed; toggling cursor grab (currently={})",
-                                        app_state.cursor_grabbed
-                                    );
-                                    if app_state.cursor_grabbed {
-                                        let r = app_state
-                                            .window
-                                            .set_cursor_grab(winit::window::CursorGrabMode::None);
-                                        log::debug!("window.set_cursor_grab(None) -> {:?}", r);
-                                        app_state.cursor_grabbed = false;
-                                        app_state.window.set_cursor_visible(true);
-                                    } else {
-                                        // Try Locked then Confined
-                                        let r = app_state
-                                            .window
-                                            .set_cursor_grab(winit::window::CursorGrabMode::Locked)
-                                            .or_else(|_| {
-                                                app_state.window.set_cursor_grab(
-                                                    winit::window::CursorGrabMode::Confined,
-                                                )
-                                            });
-                                        log::debug!(
-                                            "window.set_cursor_grab(Locked|Confined) -> {:?}",
-                                            r
-                                        );
-                                        if r.is_ok() {
-                                            app_state.cursor_grabbed = true;
-                                            app_state.window.set_cursor_visible(false);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // Keyboard input is forwarded to the UI adapter above.
+                        // We intentionally do not toggle cursor grab here on
+                        // Escape because the embedded UI handles showing the
+                        // cursor and enabling interaction without requiring the
+                        // application to release its grab. This avoids the app
+                        // "losing" the cursor when the menu is opened.
+                        WindowEvent::KeyboardInput { .. } => {}
                         WindowEvent::Focused(gained) => {
                             if gained && !app_state.cursor_grabbed {
-                                let r = app_state
-                                    .window
-                                    .set_cursor_grab(winit::window::CursorGrabMode::Locked)
-                                    .or_else(|_| {
-                                        app_state.window.set_cursor_grab(
-                                            winit::window::CursorGrabMode::Confined,
-                                        )
-                                    });
-                                log::debug!("Focused -> window.set_cursor_grab -> {:?}", r);
-                                if r.is_ok() {
-                                    app_state.cursor_grabbed = true;
-                                    app_state.window.set_cursor_visible(false);
+                                // If the UI overlay is visible, don't force a
+                                // cursor grab here because the user may be
+                                // interacting with the UI. Query the adapter's
+                                // visibility state when present.
+                                #[cfg(feature = "ui-egui")]
+                                let ui_visible = match ui_adapter.lock() {
+                                    Ok(a) => a.is_visible(),
+                                    Err(_) => false,
+                                };
+                                #[cfg(not(feature = "ui-egui"))]
+                                let ui_visible = false;
+
+                                if !ui_visible {
+                                    let r = app_state
+                                        .window
+                                        .set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                        .or_else(|_| {
+                                            app_state.window.set_cursor_grab(
+                                                winit::window::CursorGrabMode::Confined,
+                                            )
+                                        });
+                                    log::debug!("Focused -> window.set_cursor_grab -> {:?}", r);
+                                    if r.is_ok() {
+                                        app_state.cursor_grabbed = true;
+                                        app_state.window.set_cursor_visible(false);
+                                    }
+                                } else {
+                                    log::debug!(
+                                        "Focused event ignored because UI overlay is visible"
+                                    );
                                 }
                             }
                         }
@@ -307,6 +462,19 @@ fn main() {
                                 app_state.cube_mesh_handle,
                                 camera,
                             );
+
+                            // After a frame has been rendered the renderer will
+                            // submit the encoder to the GPU queue. If we created
+                            // a staging belt for egui uploads we must recall it
+                            // after the submission so resources are reclaimed.
+                            #[cfg(feature = "ui-egui")]
+                            {
+                                // Call recall on the adapter to allow the staging belt
+                                // to free its memory. This must be done after queue.submit().
+                                if let Ok(mut a) = ui_adapter.lock() {
+                                    a.recall_staging_belt();
+                                }
+                            }
                             frame_count = frame_count.wrapping_add(1);
                             active_event_loop.set_control_flow(ControlFlow::Wait);
                         }
@@ -317,10 +485,25 @@ fn main() {
                     event: winit::event::DeviceEvent::MouseMotion { delta },
                     ..
                 } => {
-                    // Only apply mouse motion when the cursor is grabbed for FPS look.
+                    // Only apply mouse motion when the cursor is grabbed for
+                    // FPS look and the UI overlay is not visible. Use the
+                    // atomic flag to avoid locking the adapter here.
+                    let overlay_visible = {
+                        #[cfg(feature = "ui-egui")]
+                        {
+                            use moho_ui::UI_OVERLAY_VISIBLE;
+                            UI_OVERLAY_VISIBLE.load(std::sync::atomic::Ordering::SeqCst)
+                        }
+                        #[cfg(not(feature = "ui-egui"))]
+                        {
+                            false
+                        }
+                    };
+
                     let cursor_is_grabbed = app_state.cursor_grabbed;
-                    if !cursor_is_grabbed {
-                        // ignore mouse motion when cursor is not grabbed
+                    if !cursor_is_grabbed || overlay_visible {
+                        // ignore mouse motion when cursor is not grabbed or
+                        // when the UI overlay is visible.
                     } else {
                         log::debug!("MouseMotion delta={:?}", delta);
                         // Apply mouse motion as small yaw/pitch deltas
