@@ -2,7 +2,6 @@
 
 use moho_ui::menus::Menu;
 use moho_ui::menus::StartMenu;
-use moho_ui::menus::menu::MenuAction;
 use std::path::PathBuf;
 
 #[test]

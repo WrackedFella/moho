@@ -2,7 +2,7 @@ use egui::{Align2, Vec2};
 use std::path::PathBuf;
 
 /// Actions a Menu may return when interacted with.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MenuAction {
     None,
     LoadScene(PathBuf),
