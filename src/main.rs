@@ -14,11 +14,19 @@ struct WindowRenderer {
     cube_mesh_handle: u32,
 }
 
+// App state to manage different modes
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum AppMode {
+    Menu,
+    Game,
+}
+
 // Application state structure that implements ApplicationHandler
 struct App {
     world: World,
     scene: engine_renderer::Scene,
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+    mode: AppMode,
 
     // Runtime state (initialized after window creation)
     window_renderer: Option<WindowRenderer>,
@@ -58,6 +66,7 @@ impl App {
             world,
             scene,
             camera,
+            mode: AppMode::Menu, // Start in menu mode
             window_renderer: None,
 
             #[cfg(feature = "ui-egui")]
@@ -118,6 +127,83 @@ impl App {
 
         Ok(())
     }
+
+    fn generate_new_world(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        log::info!("Generating new world...");
+
+        // Clear the existing world
+        self.world.clear();
+
+        // Generate new random scene
+        engine_core::scene_builders::random_scene(&mut self.world);
+
+        // Ensure saves directory exists
+        let saves_dir = std::path::Path::new("saves");
+        if !saves_dir.exists() {
+            std::fs::create_dir_all(saves_dir)?;
+        }
+
+        // Save the new scene to the standard location
+        let save_path = saves_dir.join("scene.bin");
+        self.scene.save_to_file(&save_path, &self.world)?;
+        log::info!("Saved new scene to {:?}", save_path);
+
+        // Request a redraw to show the new scene
+        if let Some(ref wr) = self.window_renderer {
+            wr.window.request_redraw();
+        }
+
+        // Switch to game mode and hide menu
+        self.mode = AppMode::Game;
+        self.hide_menu();
+
+        log::info!("New world generation complete - switched to game mode");
+        Ok(())
+    }
+
+    fn hide_menu(&mut self) {
+        #[cfg(feature = "ui-egui")]
+        if let Some(ui_adapter) = &self.ui_adapter {
+            if let Ok(mut adapter) = ui_adapter.lock() {
+                // Set UI to not visible directly
+                adapter.ui_visible = false;
+                
+                // Update the atomic flag
+                use moho_ui::UI_OVERLAY_VISIBLE;
+                UI_OVERLAY_VISIBLE.store(false, std::sync::atomic::Ordering::SeqCst);
+                
+                log::info!("Menu hidden - UI set to invisible");
+            }
+        }
+
+        // Hide cursor when in game mode
+        if let Some(ref wr) = self.window_renderer {
+            wr.window.set_cursor_visible(false);
+        }
+    }
+
+    fn show_menu(&mut self) {
+        self.mode = AppMode::Menu;
+
+        #[cfg(feature = "ui-egui")]
+        if let Some(ui_adapter) = &self.ui_adapter {
+            if let Ok(mut adapter) = ui_adapter.lock() {
+                // Set UI to visible
+                adapter.ui_visible = true;
+                
+                // Update the atomic flag
+                use moho_ui::UI_OVERLAY_VISIBLE;
+                UI_OVERLAY_VISIBLE.store(true, std::sync::atomic::Ordering::SeqCst);
+                
+                log::info!("Menu shown - UI set to visible");
+            }
+        }
+
+        // Show cursor when in menu mode
+        if let Some(ref wr) = self.window_renderer {
+            wr.window.set_cursor_visible(true);
+        }
+    }
 }
 
 impl ApplicationHandler for App {
@@ -163,17 +249,28 @@ impl ApplicationHandler for App {
                 wr.window.request_redraw();
             }
 
-            // Process UI events
+            // Process UI events - collect events first to avoid borrowing conflicts
             #[cfg(feature = "ui-egui")]
-            if let Some(ui_receiver) = &self.ui_receiver {
+            {
                 use moho_ui::UiEvent;
-                while let Ok(ev) = ui_receiver.try_recv() {
+                let mut events = Vec::new();
+                if let Some(ui_receiver) = &self.ui_receiver {
+                    while let Ok(ev) = ui_receiver.try_recv() {
+                        events.push(ev);
+                    }
+                }
+
+                // Process collected events
+                for ev in events {
                     match ev {
                         UiEvent::LoadScene(path) => {
                             log::info!("UI requested load scene: {:?}", path);
                         }
                         UiEvent::NewWorld => {
                             log::info!("UI requested NewWorld");
+                            if let Err(e) = self.generate_new_world() {
+                                log::error!("Failed to generate new world: {}", e);
+                            }
                         }
                         UiEvent::Exit => {
                             log::info!("UI requested exit");
