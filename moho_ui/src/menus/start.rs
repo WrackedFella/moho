@@ -43,11 +43,8 @@ impl Menu for StartMenu {
                 let paint_decor = |ui: &mut egui::Ui, resp: &egui::Response| {
                     if resp.hovered() {
                         let r = resp.rect;
-                        ui.painter().rect_filled(
-                            r,
-                            4.0,
-                            ui.visuals().widgets.active.bg_fill.linear_multiply(1.05),
-                        );
+                        let hover_color = egui::Color32::from_rgba_premultiplied(150, 150, 150, 100); // Light grey highlight
+                        ui.painter().rect_filled(r, 4.0, hover_color);
                     }
                 };
 
