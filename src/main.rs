@@ -313,7 +313,8 @@ impl ApplicationHandler for App {
                             log::info!("UI requested ShowMenu: {}", name);
                             #[cfg(feature = "ui-egui")]
                             if let Some(ui_adapter) = &self.ui_adapter
-                                && let Ok(mut adapter) = ui_adapter.lock() {
+                                && let Ok(mut adapter) = ui_adapter.lock()
+                            {
                                 adapter.show_menu(&name);
                             }
                         }
