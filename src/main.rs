@@ -33,7 +33,7 @@ struct App {
 
     // UI components
     #[cfg(feature = "ui-egui")]
-    ui_adapter: Option<Arc<Mutex<moho_ui::EguiUi>>>,
+    ui_adapter: Option<Arc<Mutex<moho_ui::EguiAdapter>>>,
     #[cfg(feature = "ui-egui")]
     ui_receiver: Option<moho_ui::UiReceiver>,
 
