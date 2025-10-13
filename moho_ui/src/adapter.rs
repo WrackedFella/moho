@@ -3,7 +3,7 @@
 //! This adapter manages menus and UI state in a scalable way,
 //! allowing easy addition of new menus and menu types.
 
-use crate::menus::{Menu, MenuAction, StartMenu};
+use crate::menus::{Menu, MenuAction, SettingsMenu, StartMenu};
 use engine_renderer::FrameCallback;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -72,6 +72,7 @@ impl EguiAdapter {
         // Create initial menu set
         let mut menus: HashMap<String, Box<dyn Menu>> = HashMap::new();
         menus.insert("start".to_string(), Box::new(StartMenu::new()));
+        menus.insert("settings".to_string(), Box::new(SettingsMenu::new()));
 
         let adapter = Self {
             context,

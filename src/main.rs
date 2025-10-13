@@ -311,6 +311,12 @@ impl ApplicationHandler for App {
                         }
                         UiEvent::ShowMenu(name) => {
                             log::info!("UI requested ShowMenu: {}", name);
+                            #[cfg(feature = "ui-egui")]
+                            if let Some(ui_adapter) = &self.ui_adapter {
+                                if let Ok(mut adapter) = ui_adapter.lock() {
+                                    adapter.show_menu(&name);
+                                }
+                            }
                         }
                         UiEvent::OverlayToggled(visible) => {
                             log::info!("Overlay visibility -> {}", visible);

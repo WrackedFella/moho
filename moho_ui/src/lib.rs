@@ -49,4 +49,4 @@ pub use adapter::{EguiAdapter, UI_OVERLAY_VISIBLE, UiEvent, UiReceiver, build_ad
 pub use adapter::EguiAdapter as EguiUi;
 
 #[cfg(feature = "ui-egui")]
-pub use menus::{Menu, MenuAction, MenuItem, StartMenu};
+pub use menus::{Menu, MenuAction, MenuItem, SettingsMenu, StartMenu};
