@@ -42,28 +42,38 @@ impl Menu for SettingsMenu {
                 ui.label("Settings will be implemented here in future iterations.");
                 ui.add_space(32.0);
 
-                // Bottom buttons - right aligned
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::BOTTOM), |ui| {
-                    // Save Changes button
-                    let save = ui.add(egui::Button::new("Save Changes").min_size(egui::vec2(120.0, 28.0)));
-                    let save_clicked = save.clicked();
-                    items.push(crate::menus::menu::MenuItem {
-                        action: MenuAction::ShowMenu("start".to_string()), // For now, just go back to start
-                        rect: Some(save.rect),
-                        enabled: true,
-                        clicked: save_clicked,
-                    });
+                // Bottom-right buttons in their own bottom panel so they stay pinned
+                egui::TopBottomPanel::bottom("settings_bottom").show(ctx, |ui| {
+                    // Make the panel relatively short and give a little padding
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            // Use slightly taller buttons so text is vertically centered
+                            let save = ui.add(
+                                egui::Button::new("Save Changes").min_size(egui::vec2(120.0, 36.0)),
+                            );
+                            let save_clicked = save.clicked();
+                            items.push(crate::menus::menu::MenuItem {
+                                action: MenuAction::ShowMenu("start".to_string()), // For now, just go back to start
+                                rect: Some(save.rect),
+                                enabled: true,
+                                clicked: save_clicked,
+                            });
 
-                    ui.add_space(8.0);
+                            ui.add_space(8.0);
 
-                    // Cancel button
-                    let cancel = ui.add(egui::Button::new("Cancel").min_size(egui::vec2(80.0, 28.0)));
-                    let cancel_clicked = cancel.clicked();
-                    items.push(crate::menus::menu::MenuItem {
-                        action: MenuAction::ShowMenu("start".to_string()), // Go back to start menu
-                        rect: Some(cancel.rect),
-                        enabled: true,
-                        clicked: cancel_clicked,
+                            let cancel = ui
+                                .add(egui::Button::new("Cancel").min_size(egui::vec2(100.0, 36.0)));
+                            let cancel_clicked = cancel.clicked();
+                            items.push(crate::menus::menu::MenuItem {
+                                action: MenuAction::ShowMenu("start".to_string()), // Go back to start menu
+                                rect: Some(cancel.rect),
+                                enabled: true,
+                                clicked: cancel_clicked,
+                            });
+
+                            ui.add_space(8.0);
+                        });
                     });
                 });
             });
