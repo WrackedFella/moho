@@ -52,17 +52,30 @@ impl Menu for StartMenu {
                 };
 
                 // Continue button (disabled when no save exists)
-                let cont = ui.add_enabled(save_exists, egui::Button::new("Continue").min_size(egui::vec2(160.0, 28.0)));
+                let cont = ui.add_enabled(
+                    save_exists,
+                    egui::Button::new("Continue").min_size(egui::vec2(160.0, 28.0)),
+                );
                 paint_decor(ui, &cont);
                 let cont_clicked = cont.clicked() && save_exists;
-                items.push(crate::menus::menu::MenuItem { action: MenuAction::LoadScene(save_path.clone()), rect: Some(cont.rect), enabled: save_exists, clicked: cont_clicked });
+                items.push(crate::menus::menu::MenuItem {
+                    action: MenuAction::LoadScene(save_path.clone()),
+                    rect: Some(cont.rect),
+                    enabled: save_exists,
+                    clicked: cont_clicked,
+                });
                 ui.add_space(6.0);
 
                 // New World button - always enabled
                 let nw = ui.add(egui::Button::new("New World").min_size(egui::vec2(160.0, 28.0)));
                 paint_decor(ui, &nw);
                 let nw_clicked = nw.clicked();
-                items.push(crate::menus::menu::MenuItem { action: MenuAction::NewWorld, rect: Some(nw.rect), enabled: true, clicked: nw_clicked });
+                items.push(crate::menus::menu::MenuItem {
+                    action: MenuAction::NewWorld,
+                    rect: Some(nw.rect),
+                    enabled: true,
+                    clicked: nw_clicked,
+                });
                 ui.add_space(6.0);
 
                 // Settings placeholder
@@ -73,13 +86,23 @@ impl Menu for StartMenu {
                     // Temporary placeholder behavior until a real settings menu exists.
                     log::info!("Settings clicked (placeholder)");
                 }
-                items.push(crate::menus::menu::MenuItem { action: MenuAction::ShowMenu("settings".to_string()), rect: Some(st.rect), enabled: true, clicked: st_clicked });
+                items.push(crate::menus::menu::MenuItem {
+                    action: MenuAction::ShowMenu("settings".to_string()),
+                    rect: Some(st.rect),
+                    enabled: true,
+                    clicked: st_clicked,
+                });
                 ui.add_space(6.0);
 
                 let ex = ui.add(egui::Button::new("Exit").min_size(egui::vec2(160.0, 28.0)));
                 paint_decor(ui, &ex);
                 let ex_clicked = ex.clicked();
-                items.push(crate::menus::menu::MenuItem { action: MenuAction::Exit, rect: Some(ex.rect), enabled: true, clicked: ex_clicked });
+                items.push(crate::menus::menu::MenuItem {
+                    action: MenuAction::Exit,
+                    rect: Some(ex.rect),
+                    enabled: true,
+                    clicked: ex_clicked,
+                });
             });
         });
 

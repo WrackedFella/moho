@@ -39,27 +39,66 @@ fn start_menu_returns_expected_action_and_rects() {
 
 #[test]
 fn hit_test_helper_press_release_and_release_only() {
-    use moho_ui::menus::menu::{hit_test_menu_items, MenuItem, MenuAction};
+    use moho_ui::menus::menu::{MenuAction, MenuItem, hit_test_menu_items};
 
     // Construct four menu items with deterministic rects in logical points
-    let cont = MenuItem { action: MenuAction::LoadScene(PathBuf::from("saves/scene.bin")), rect: Some(moho_ui::menus::menu::rect_from_min_max(8.0,8.0,128.0,40.0)), enabled: true, clicked: false };
-    let neww = MenuItem { action: MenuAction::NewWorld, rect: Some(moho_ui::menus::menu::rect_from_min_max(8.0,48.0,128.0,80.0)), enabled: true, clicked: false };
-    let set = MenuItem { action: MenuAction::ShowMenu("settings".to_string()), rect: Some(moho_ui::menus::menu::rect_from_min_max(8.0,88.0,128.0,120.0)), enabled: true, clicked: false };
-    let exit = MenuItem { action: MenuAction::Exit, rect: Some(moho_ui::menus::menu::rect_from_min_max(8.0,128.0,128.0,160.0)), enabled: true, clicked: false };
+    let cont = MenuItem {
+        action: MenuAction::LoadScene(PathBuf::from("saves/scene.bin")),
+        rect: Some(moho_ui::menus::menu::rect_from_min_max(
+            8.0, 8.0, 128.0, 40.0,
+        )),
+        enabled: true,
+        clicked: false,
+    };
+    let neww = MenuItem {
+        action: MenuAction::NewWorld,
+        rect: Some(moho_ui::menus::menu::rect_from_min_max(
+            8.0, 48.0, 128.0, 80.0,
+        )),
+        enabled: true,
+        clicked: false,
+    };
+    let set = MenuItem {
+        action: MenuAction::ShowMenu("settings".to_string()),
+        rect: Some(moho_ui::menus::menu::rect_from_min_max(
+            8.0, 88.0, 128.0, 120.0,
+        )),
+        enabled: true,
+        clicked: false,
+    };
+    let exit = MenuItem {
+        action: MenuAction::Exit,
+        rect: Some(moho_ui::menus::menu::rect_from_min_max(
+            8.0, 128.0, 128.0, 160.0,
+        )),
+        enabled: true,
+        clicked: false,
+    };
     let items = vec![cont, neww, set, exit];
 
     // Simulate a press and release inside the Settings rect
     // Use coordinates that fall inside the `set` rect above
     let press = Some((32.0_f32, 96.0_f32));
     let release = (32.0_f32, 96.0_f32);
-    let action = hit_test_menu_items(press, release, &items, None, /*coords_are_physical=*/ false, 0.0).expect("expected an action");
+    let action = hit_test_menu_items(
+        press, release, &items, None, /*coords_are_physical=*/ false, 0.0,
+    )
+    .expect("expected an action");
     match action {
         MenuAction::ShowMenu(name) => assert_eq!(name, "settings"),
         other => panic!("unexpected action: {:?}", other),
     }
 
     // Simulate a release-only on Continue
-    let action2 = hit_test_menu_items(None, (16.0_f32, 16.0_f32 + 24.0_f32), &items, None, /*coords_are_physical=*/ false, 0.0).expect("expected an action");
+    let action2 = hit_test_menu_items(
+        None,
+        (16.0_f32, 16.0_f32 + 24.0_f32),
+        &items,
+        None,
+        /*coords_are_physical=*/ false,
+        0.0,
+    )
+    .expect("expected an action");
     match action2 {
         MenuAction::LoadScene(p) => assert_eq!(p, PathBuf::from("saves/scene.bin")),
         other => panic!("unexpected action: {:?}", other),

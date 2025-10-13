@@ -1,9 +1,9 @@
+use legion::World;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use winit::event::{Event, StartCause, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowAttributes;
-use legion::World;
 
 fn main() {
     // Initialize logging
@@ -30,18 +30,25 @@ fn main() {
 
     // Window and renderer creation
     #[allow(deprecated)]
-    let window = Arc::new(event_loop.create_window(window_attributes).expect("Failed to create window"));
-    let mut renderer = engine_renderer::create_renderer(Some(&*window)).expect("Failed to create renderer");
-    
+    let window = Arc::new(
+        event_loop
+            .create_window(window_attributes)
+            .expect("Failed to create window"),
+    );
+    let mut renderer =
+        engine_renderer::create_renderer(Some(&*window)).expect("Failed to create renderer");
+
     // Create minimal mesh data in correct format
     let vertices = vec![[0.0f32, 0.0f32, 0.0f32]]; // minimal vertex data
     let normals = vec![[0.0f32, 1.0f32, 0.0f32]]; // minimal normal data  
     let indices = vec![0u32]; // minimal index data
     let _mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
-    
-    let (cube_vertices, cube_normals, cube_indices) = engine_core::actors::Cube::unit_cube_indexed();
-    let _cube_mesh_handle = renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
-    
+
+    let (cube_vertices, cube_normals, cube_indices) =
+        engine_core::actors::Cube::unit_cube_indexed();
+    let _cube_mesh_handle =
+        renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
+
     // Wrap renderer in AppState-like structure for consistency
     struct AppState<'a> {
         renderer: Box<dyn engine_renderer::RendererBackend + 'a>,
@@ -49,7 +56,7 @@ fn main() {
         cube_mesh_handle: u32,
         window: Arc<winit::window::Window>,
     }
-    
+
     let mut app_state = AppState {
         renderer,
         mesh_handle: _mesh_handle,
@@ -68,10 +75,11 @@ fn main() {
     #[cfg(feature = "ui-egui")]
     {
         if let Ok(mut a) = ui_adapter.lock() {
-            a.set_surface_format(wgpu::TextureFormat::Bgra8UnormSrgb.into());
+            a.set_surface_format(wgpu::TextureFormat::Bgra8UnormSrgb);
         }
-        app_state.renderer.set_frame_callback_arc(Some(ui_adapter.clone() 
-            as Arc<Mutex<dyn engine_renderer::FrameCallback>>));
+        app_state.renderer.set_frame_callback_arc(Some(
+            ui_adapter.clone() as Arc<Mutex<dyn engine_renderer::FrameCallback>>
+        ));
     }
 
     // Frame timing
@@ -79,11 +87,18 @@ fn main() {
     let mut last_frame = Instant::now();
 
     // Run the event loop - MINIMAL VERSION
+    #[allow(deprecated)]
     let _ = event_loop.run(move |event, active_event_loop| {
         match event {
             Event::NewEvents(StartCause::Init) => {
                 log::info!("Initial render");
-                scene.render(&mut *app_state.renderer, &world, app_state.mesh_handle, app_state.cube_mesh_handle, camera);
+                scene.render(
+                    &mut *app_state.renderer,
+                    &world,
+                    app_state.mesh_handle,
+                    app_state.cube_mesh_handle,
+                    camera,
+                );
                 app_state.window.request_redraw();
             }
 
@@ -156,8 +171,14 @@ fn main() {
                     }
                     WindowEvent::RedrawRequested => {
                         log::debug!("RedrawRequested - rendering frame");
-                        scene.render(&mut *app_state.renderer, &world, app_state.mesh_handle, app_state.cube_mesh_handle, camera);
-                        
+                        scene.render(
+                            &mut *app_state.renderer,
+                            &world,
+                            app_state.mesh_handle,
+                            app_state.cube_mesh_handle,
+                            camera,
+                        );
+
                         // Recall staging belt after render
                         #[cfg(feature = "ui-egui")]
                         {
