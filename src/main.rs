@@ -242,8 +242,12 @@ impl App {
         // Calculate left/right (A is left, so negative)
         let right = if self.key_d { 1.0 } else { 0.0 } - if self.key_a { 1.0 } else { 0.0 };
         
-        // Calculate up/down (Space is up, Shift is down)
-        let up = if self.key_space { 1.0 } else { 0.0 } - if self.key_shift { 1.0 } else { 0.0 };
+        // Calculate up/down (Space is up, Shift is down) - only in first person mode
+        let up = if self.player_controller.camera_mode == engine_core::controller::CameraMode::FirstPerson {
+            (if self.key_space { 1.0 } else { 0.0 }) - (if self.key_shift { 1.0 } else { 0.0 })
+        } else {
+            0.0 // No up/down in isometric mode
+        };
         
         self.controller_input.forward = forward;
         self.controller_input.right = right;
@@ -273,6 +277,20 @@ impl App {
                         self.show_menu();
                     }
                 }
+                KeyCode::Tab => {
+                    if pressed {
+                        // Toggle camera mode
+                        self.player_controller.camera_mode = match self.player_controller.camera_mode {
+                            engine_core::controller::CameraMode::FirstPerson => {
+                                engine_core::controller::CameraMode::Isometric
+                            }
+                            engine_core::controller::CameraMode::Isometric => {
+                                engine_core::controller::CameraMode::FirstPerson
+                            }
+                        };
+                        log::info!("Switched to camera mode: {:?}", self.player_controller.camera_mode);
+                    }
+                }
                 _ => {}
             }
         }
@@ -280,8 +298,8 @@ impl App {
 
     /// Handle mouse motion for camera look
     fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
-        // Only process input in game mode
-        if self.mode != AppMode::Game {
+        // Only process input in game mode and first person camera mode
+        if self.mode != AppMode::Game || self.player_controller.camera_mode != engine_core::controller::CameraMode::FirstPerson {
             return;
         }
 
