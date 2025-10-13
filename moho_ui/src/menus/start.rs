@@ -69,6 +69,10 @@ impl Menu for StartMenu {
                 let st = ui.add(egui::Button::new("Settings").min_size(egui::vec2(160.0, 28.0)));
                 paint_decor(ui, &st);
                 let st_clicked = st.clicked();
+                if st_clicked {
+                    // Temporary placeholder behavior until a real settings menu exists.
+                    log::info!("Settings clicked (placeholder)");
+                }
                 items.push(crate::menus::menu::MenuItem { action: MenuAction::ShowMenu("settings".to_string()), rect: Some(st.rect), enabled: true, clicked: st_clicked });
                 ui.add_space(6.0);
 

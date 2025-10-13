@@ -1062,7 +1062,7 @@ pub mod gfx {
                             if let Some(view) = self.pending_frame_view.as_ref() {
                                 // Lock the mutex briefly while calling into the callback.
                                 if let Ok(mut guard) = cb_arc.lock() {
-                                    guard.call(&self.device, &self.queue, view, &mut encoder);
+                                    guard.call(&self.device, &self.queue, view, &mut encoder, self.config.width, self.config.height);
                                     log::info!("[wgpu] finalize: frame_callback_arc returned");
                                 } else {
                                     log::warn!(
@@ -1075,7 +1075,7 @@ pub mod gfx {
                                 log::info!("[wgpu] finalize: calling frame_callback_raw");
                                 if let Some(view) = self.pending_frame_view.as_ref() {
                                     let cb: &mut dyn crate::FrameCallback = &mut *cb_ptr;
-                                    cb.call(&self.device, &self.queue, view, &mut encoder);
+                                    cb.call(&self.device, &self.queue, view, &mut encoder, self.config.width, self.config.height);
                                     log::info!("[wgpu] finalize: frame_callback_raw returned");
                                 }
                             }
@@ -1416,6 +1416,8 @@ pub trait FrameCallback {
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
+        surface_width: u32,
+        surface_height: u32,
     );
 }
 

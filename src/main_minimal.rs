@@ -11,8 +11,8 @@ fn main() {
     log::info!("Starting minimal menu test");
 
     // Create basic world and scene (minimal setup)
-    let world = World::default();
-    let mut scene = engine_renderer::Scene::new();
+    let mut world = World::default();
+    let scene = engine_renderer::Scene::new();
 
     // Basic camera
     let camera = {
@@ -29,38 +29,18 @@ fn main() {
     let window_attributes = WindowAttributes::default();
 
     // Window and renderer creation
-    #[allow(deprecated)]
-    let window = Arc::new(event_loop.create_window(window_attributes).expect("Failed to create window"));
-    let mut renderer = engine_renderer::create_renderer(Some(&*window)).expect("Failed to create renderer");
-    
-    // Create minimal mesh data in correct format
-    let vertices = vec![[0.0f32, 0.0f32, 0.0f32]]; // minimal vertex data
-    let normals = vec![[0.0f32, 1.0f32, 0.0f32]]; // minimal normal data  
-    let indices = vec![0u32]; // minimal index data
-    let _mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
-    
-    let (cube_vertices, cube_normals, cube_indices) = engine_core::actors::Cube::unit_cube_indexed();
-    let _cube_mesh_handle = renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
-    
-    // Wrap renderer in AppState-like structure for consistency
-    struct AppState<'a> {
-        renderer: Box<dyn engine_renderer::RendererBackend + 'a>,
-        mesh_handle: u32,
-        cube_mesh_handle: u32,
-        window: Arc<winit::window::Window>,
-    }
-    
-    let mut app_state = AppState {
-        renderer,
-        mesh_handle: _mesh_handle,
-        cube_mesh_handle: _cube_mesh_handle,
-        window: window.clone(),
+    let (window, mut renderer, _mesh_handle, _cube_mesh_handle) = {
+        let window = Arc::new(event_loop.create_window(window_attributes).expect("Failed to create window"));
+        let mut renderer = engine_renderer::create_renderer(window.clone()).expect("Failed to create renderer");
+        let mesh_handle = renderer.create_mesh_placeholder();
+        let cube_mesh_handle = renderer.create_cube_mesh();
+        (window, renderer, mesh_handle, cube_mesh_handle)
     };
 
     // UI setup - this is the critical part
     #[cfg(feature = "ui-egui")]
     let (ui_adapter, ui_receiver) = {
-        let (adapter, receiver) = moho_ui::build_adapter(Some(window.clone()));
+        let (adapter, receiver) = moho_ui::EguiUi::new(Some(window.clone()));
         (Arc::new(Mutex::new(adapter)), receiver)
     };
 
@@ -70,7 +50,7 @@ fn main() {
         if let Ok(mut a) = ui_adapter.lock() {
             a.set_surface_format(wgpu::TextureFormat::Bgra8UnormSrgb.into());
         }
-        app_state.renderer.set_frame_callback_arc(Some(ui_adapter.clone() 
+        renderer.set_frame_callback_arc(Some(ui_adapter.clone() 
             as Arc<Mutex<dyn engine_renderer::FrameCallback>>));
     }
 
@@ -83,15 +63,15 @@ fn main() {
         match event {
             Event::NewEvents(StartCause::Init) => {
                 log::info!("Initial render");
-                scene.render(&mut *app_state.renderer, &world, app_state.mesh_handle, app_state.cube_mesh_handle, camera);
-                app_state.window.request_redraw();
+                scene.render(&mut renderer, &world, _mesh_handle, _cube_mesh_handle, camera);
+                window.request_redraw();
             }
 
             Event::NewEvents(_) => {
                 let now = Instant::now();
                 if now >= last_frame + frame_duration {
                     last_frame += frame_duration;
-                    app_state.window.request_redraw();
+                    window.request_redraw();
 
                     // Process UI events
                     #[cfg(feature = "ui-egui")]
@@ -115,7 +95,7 @@ fn main() {
                                 UiEvent::OverlayToggled(visible) => {
                                     log::info!("Overlay visibility -> {}", visible);
                                     if visible {
-                                        app_state.window.set_cursor_visible(true);
+                                        window.set_cursor_visible(true);
                                     }
                                 }
                             }
@@ -152,11 +132,11 @@ fn main() {
                         active_event_loop.exit();
                     }
                     WindowEvent::Resized(size) => {
-                        app_state.renderer.resize(size.width, size.height);
+                        renderer.resize(size.width, size.height);
                     }
                     WindowEvent::RedrawRequested => {
                         log::debug!("RedrawRequested - rendering frame");
-                        scene.render(&mut *app_state.renderer, &world, app_state.mesh_handle, app_state.cube_mesh_handle, camera);
+                        scene.render(&mut renderer, &world, _mesh_handle, _cube_mesh_handle, camera);
                         
                         // Recall staging belt after render
                         #[cfg(feature = "ui-egui")]

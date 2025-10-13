@@ -32,6 +32,8 @@ impl FrameCallback for StubUi {
         _queue: &wgpu::Queue,
         _view: &wgpu::TextureView,
         _encoder: &mut wgpu::CommandEncoder,
+        _surface_width: u32,
+        _surface_height: u32,
     ) {
         // no-op for now
     }
