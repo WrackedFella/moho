@@ -1,3 +1,4 @@
+#![cfg(feature = "ui-egui")]
 use moho_ui::EguiUi;
 
 #[test]

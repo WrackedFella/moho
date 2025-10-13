@@ -1214,10 +1214,12 @@ pub trait RendererBackend {
     /// Set an optional raw FrameCallback pointer. The renderer will call the
     /// callback during finalization so the application can record UI commands
     /// into the frame encoder. The pointer must remain valid until cleared.
+    #[cfg(feature = "backend-wgpu")]
     fn set_frame_callback_raw(&mut self, ptr: Option<*mut dyn FrameCallback>);
     /// Set an optional safe Arc<Mutex<dyn FrameCallback>>. Prefer this
     /// registration method when possible; it's thread-safe and avoids raw
     /// pointer lifetime issues. Passing `None` clears the registration.
+    #[cfg(feature = "backend-wgpu")]
     fn set_frame_callback_arc(
         &mut self,
         cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
@@ -1271,9 +1273,11 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     fn surface_format(&self) -> Option<TextureFormatRepr> {
         Some(self.surface_format())
     }
+    #[cfg(feature = "backend-wgpu")]
     fn set_frame_callback_raw(&mut self, ptr: Option<*mut dyn FrameCallback>) {
         self.set_frame_callback_raw_inherent(ptr);
     }
+    #[cfg(feature = "backend-wgpu")]
     fn set_frame_callback_arc(
         &mut self,
         cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
