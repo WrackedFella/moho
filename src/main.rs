@@ -1,12 +1,24 @@
+#[cfg(feature = "backend-wgpu")]
 use legion::World;
-use std::sync::{Arc, Mutex};
+#[cfg(feature = "backend-wgpu")]
+use std::sync::Arc;
+#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
+use std::sync::Mutex;
+#[cfg(feature = "backend-wgpu")]
 use std::time::{Duration, Instant};
+#[cfg(feature = "backend-wgpu")]
 use winit::application::ApplicationHandler;
-use winit::event::{StartCause, WindowEvent};
+#[cfg(feature = "backend-wgpu")]
+use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, StartCause, WindowEvent};
+#[cfg(feature = "backend-wgpu")]
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowAttributes, WindowId};
+#[cfg(feature = "backend-wgpu")]
+use winit::keyboard::{KeyCode, PhysicalKey};
+#[cfg(feature = "backend-wgpu")]
+use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
 
 // Combined state to handle lifetimes properly
+#[cfg(feature = "backend-wgpu")]
 struct WindowRenderer {
     window: Arc<Window>,
     renderer: Box<dyn engine_renderer::RendererBackend>,
@@ -15,6 +27,7 @@ struct WindowRenderer {
 }
 
 // App state to manage different modes
+#[cfg(feature = "backend-wgpu")]
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum AppMode {
     Menu,
@@ -22,6 +35,7 @@ enum AppMode {
 }
 
 // Application state structure that implements ApplicationHandler
+#[cfg(feature = "backend-wgpu")]
 struct App {
     world: World,
     scene: engine_renderer::Scene,
@@ -37,11 +51,25 @@ struct App {
     #[cfg(feature = "ui-egui")]
     ui_receiver: Option<moho_ui::UiReceiver>,
 
+    // Camera control
+    player_controller: engine_core::controller::PlayerController,
+    controller_input: engine_core::controller::ControllerInput,
+    mouse_sensitivity: f32,
+
+    // Keyboard state tracking
+    key_w: bool,
+    key_a: bool,
+    key_s: bool,
+    key_d: bool,
+    key_space: bool,
+    key_shift: bool,
+
     // Frame timing
     frame_duration: Duration,
     last_frame: Instant,
 }
 
+#[cfg(feature = "backend-wgpu")]
 impl App {
     fn new() -> Self {
         // Initialize logging
@@ -62,6 +90,9 @@ impl App {
             (view, proj, eye)
         };
 
+        // Initialize player controller at the camera position
+        let player_controller = engine_core::controller::PlayerController::new(camera.2);
+
         Self {
             world,
             scene,
@@ -73,6 +104,19 @@ impl App {
             ui_adapter: None,
             #[cfg(feature = "ui-egui")]
             ui_receiver: None,
+
+            // Camera control
+            player_controller,
+            controller_input: engine_core::controller::ControllerInput::default(),
+            mouse_sensitivity: 0.002, // Radians per pixel of mouse movement
+
+            // Keyboard state
+            key_w: false,
+            key_a: false,
+            key_s: false,
+            key_d: false,
+            key_space: false,
+            key_shift: false,
 
             frame_duration: Duration::from_secs_f64(1.0 / 60.0),
             last_frame: Instant::now(),
@@ -190,6 +234,112 @@ impl App {
         Ok(())
     }
 
+    /// Update controller input from keyboard state
+    fn update_controller_input(&mut self) {
+        // Calculate forward/backward
+        let forward = if self.key_w { 1.0 } else { 0.0 } - if self.key_s { 1.0 } else { 0.0 };
+
+        // Calculate left/right (A is left, so negative)
+        let right = if self.key_d { 1.0 } else { 0.0 } - if self.key_a { 1.0 } else { 0.0 };
+
+        // Calculate up/down (Space is up, Shift is down) - only in first person mode
+        let up = if self.player_controller.camera_mode
+            == engine_core::controller::CameraMode::FirstPerson
+        {
+            (if self.key_space { 1.0 } else { 0.0 }) - (if self.key_shift { 1.0 } else { 0.0 })
+        } else {
+            0.0 // No up/down in isometric mode
+        };
+
+        self.controller_input.forward = forward;
+        self.controller_input.right = right;
+        self.controller_input.up = up;
+    }
+
+    /// Handle keyboard input for camera controls
+    fn handle_keyboard_input(&mut self, event: &KeyEvent) {
+        // Only process input in game mode
+        if self.mode != AppMode::Game {
+            return;
+        }
+
+        let pressed = event.state == ElementState::Pressed;
+
+        if let PhysicalKey::Code(keycode) = event.physical_key {
+            match keycode {
+                KeyCode::KeyW => self.key_w = pressed,
+                KeyCode::KeyA => self.key_a = pressed,
+                KeyCode::KeyS => self.key_s = pressed,
+                KeyCode::KeyD => self.key_d = pressed,
+                KeyCode::Space => self.key_space = pressed,
+                KeyCode::ShiftLeft | KeyCode::ShiftRight => self.key_shift = pressed,
+                KeyCode::Escape => {
+                    // ESC to show menu
+                    if pressed {
+                        self.show_menu();
+                    }
+                }
+                KeyCode::Tab => {
+                    if pressed {
+                        // Toggle camera mode
+                        self.player_controller.camera_mode =
+                            match self.player_controller.camera_mode {
+                                engine_core::controller::CameraMode::FirstPerson => {
+                                    engine_core::controller::CameraMode::Isometric
+                                }
+                                engine_core::controller::CameraMode::Isometric => {
+                                    engine_core::controller::CameraMode::FirstPerson
+                                }
+                            };
+                        log::info!(
+                            "Switched to camera mode: {:?}",
+                            self.player_controller.camera_mode
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Handle mouse motion for camera look
+    fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
+        // Only process input in game mode and first person camera mode
+        if self.mode != AppMode::Game
+            || self.player_controller.camera_mode
+                != engine_core::controller::CameraMode::FirstPerson
+        {
+            return;
+        }
+
+        // Apply mouse delta to controller input
+        // Mouse X controls yaw (left/right), Mouse Y controls pitch (up/down)
+        // Invert X so moving mouse right turns camera right
+        self.controller_input.yaw_delta = -delta.0 as f32 * self.mouse_sensitivity;
+        self.controller_input.pitch_delta = -delta.1 as f32 * self.mouse_sensitivity; // Invert Y for natural feel
+    }
+
+    /// Grab and hide the cursor for game mode
+    fn grab_cursor(&mut self) {
+        if let Some(ref wr) = self.window_renderer {
+            wr.window.set_cursor_visible(false);
+
+            // Try to grab the cursor - confined mode keeps it in window
+            let _ = wr
+                .window
+                .set_cursor_grab(CursorGrabMode::Confined)
+                .or_else(|_| wr.window.set_cursor_grab(CursorGrabMode::Locked));
+        }
+    }
+
+    /// Release the cursor for menu mode
+    fn release_cursor(&mut self) {
+        if let Some(ref wr) = self.window_renderer {
+            wr.window.set_cursor_visible(true);
+            let _ = wr.window.set_cursor_grab(CursorGrabMode::None);
+        }
+    }
+
     fn hide_menu(&mut self) {
         #[cfg(feature = "ui-egui")]
         if let Some(ui_adapter) = &self.ui_adapter
@@ -205,13 +355,10 @@ impl App {
             log::info!("Menu hidden - UI set to invisible");
         }
 
-        // Hide cursor when in game mode
-        if let Some(ref wr) = self.window_renderer {
-            wr.window.set_cursor_visible(false);
-        }
+        // Grab cursor for game mode
+        self.grab_cursor();
     }
 
-    #[allow(dead_code)]
     fn show_menu(&mut self) {
         self.mode = AppMode::Menu;
 
@@ -229,13 +376,12 @@ impl App {
             log::info!("Menu shown - UI set to visible");
         }
 
-        // Show cursor when in menu mode
-        if let Some(ref wr) = self.window_renderer {
-            wr.window.set_cursor_visible(true);
-        }
+        // Release cursor for menu mode
+        self.release_cursor();
     }
 }
 
+#[cfg(feature = "backend-wgpu")]
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window_renderer.is_none() {
@@ -273,7 +419,26 @@ impl ApplicationHandler for App {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, _cause: StartCause) {
         let now = Instant::now();
         if now >= self.last_frame + self.frame_duration {
+            let dt = self.frame_duration.as_secs_f32();
             self.last_frame += self.frame_duration;
+
+            // Update camera controls if in game mode
+            if self.mode == AppMode::Game {
+                // Update controller input from keyboard state
+                self.update_controller_input();
+
+                // Apply input to player controller
+                self.player_controller
+                    .apply_input(&self.controller_input, dt);
+
+                // Update camera from controller
+                self.camera =
+                    engine_core::controller::controller_to_camera(&self.player_controller);
+
+                // Reset mouse deltas for next frame
+                self.controller_input.yaw_delta = 0.0;
+                self.controller_input.pitch_delta = 0.0;
+            }
 
             if let Some(ref wr) = self.window_renderer {
                 wr.window.request_redraw();
@@ -367,6 +532,11 @@ impl ApplicationHandler for App {
                     wr.renderer.resize(size.width, size.height);
                 }
             }
+            WindowEvent::KeyboardInput {
+                event: key_event, ..
+            } => {
+                self.handle_keyboard_input(&key_event);
+            }
             WindowEvent::RedrawRequested => {
                 log::debug!("RedrawRequested - rendering frame");
                 if let Some(ref mut wr) = self.window_renderer {
@@ -390,12 +560,32 @@ impl ApplicationHandler for App {
             _ => {}
         }
     }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        // Handle raw mouse motion for camera look
+        if let DeviceEvent::MouseMotion { delta } = event {
+            self.handle_mouse_motion(delta);
+        }
+    }
 }
 
+#[cfg(feature = "backend-wgpu")]
 fn main() {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut app = App::new();
 
     // Run the modern event loop with ApplicationHandler
     let _ = event_loop.run_app(&mut app);
+}
+
+#[cfg(not(feature = "backend-wgpu"))]
+fn main() {
+    eprintln!("This binary requires the 'backend-wgpu' feature to be enabled.");
+    eprintln!("Run with: cargo run --features backend-wgpu");
+    std::process::exit(1);
 }
