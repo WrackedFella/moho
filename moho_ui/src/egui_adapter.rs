@@ -106,14 +106,16 @@ impl EguiUi {
         let egui_ctx = egui::Context::default();
 
         // Create egui_winit state if window is available
-        let egui_winit = window.as_ref().map(|win| egui_winit::State::new(
+        let egui_winit = window.as_ref().map(|win| {
+            egui_winit::State::new(
                 egui_ctx.clone(),
                 egui::ViewportId::ROOT,
                 win.as_ref(),
                 None,
                 None,
                 Some(1024), // max texture side
-            ));
+            )
+        });
 
         let ui = Self {
             ui_visible: true, // Start with menu visible
