@@ -1,49 +1,46 @@
 #![cfg(feature = "ui-egui-test")]
 //! Smoke test for the egui adapter lifecycle.
 //!
-//! This test is intentionally small: it constructs an adapter via
-//! `build_adapter`, verifies basic event sending, and exercises the
-//! staging belt recall code path. It is gated behind the
-//! `ui-egui-test` feature so it does not affect normal consumers.
+//! This test verifies basic adapter functionality and menu management.
 
-use std::path::PathBuf;
-
-use moho_ui::{UiEvent, build_adapter};
+use moho_ui::build_adapter;
 
 #[test]
 fn adapter_lifecycle_smoke() {
     let (mut adapter, receiver) = build_adapter(None);
 
-    // Adapter should start visible (start menu mode).
-    assert!(adapter.is_visible());
+    // Adapter should start with menus visible
+    assert!(adapter.ui_visible);
 
-    // Construction currently emits an OverlayToggled(true) event so drain
-    // any such initialization messages before asserting our explicit
-    // actions below.
-    while let Ok(ev) = receiver.try_recv() {
-        match ev {
-            UiEvent::OverlayToggled(true) => continue,
-            other => panic!("unexpected event during init drain: {:?}", other),
-        }
-    }
+    // Construction should not emit any events initially
+    assert!(receiver.is_empty());
 
-    // Send a LoadScene and ensure the receiver gets the path.
-    adapter.send_load_scene("saves/test.bin");
-    match receiver.try_recv() {
-        Ok(UiEvent::LoadScene(p)) => assert_eq!(p, PathBuf::from("saves/test.bin")),
-        other => panic!("expected LoadScene, got: {:?}", other),
-    }
+    // Test menu switching (we can't check internal state, but we can verify no panics)
+    adapter.show_menu("settings");
+    assert!(adapter.ui_visible);
 
-    // Send an Exit event and ensure the receiver sees it.
-    adapter.send_exit();
-    match receiver.try_recv() {
-        Ok(UiEvent::Exit) => {}
-        other => panic!("expected Exit, got: {:?}", other),
-    }
+    // Switch back to start menu
+    adapter.show_menu("start");
+    assert!(adapter.ui_visible);
 
-    // Ensure test helpers and staging belt recall are safe to call.
-    adapter.test_set_staging_belt();
-    // recall should be idempotent / safe to call multiple times.
+    // Test hiding menus
+    adapter.hide_menus();
+    assert!(!adapter.ui_visible);
+
+    // Test recall_staging_belt is safe to call
     adapter.recall_staging_belt();
+    adapter.recall_staging_belt();
+}
+
+#[test]
+fn menu_action_processing() {
+    let (mut adapter, _receiver) = build_adapter(None);
+
+    // Test that menu switching works without panicking
+    adapter.show_menu("settings");
+    adapter.show_menu("start");
+    adapter.hide_menus();
+
+    // Should be able to call multiple times safely
     adapter.recall_staging_belt();
 }

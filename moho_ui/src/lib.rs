@@ -1,16 +1,11 @@
-//! Minimal `moho_ui` crate.
+//! Modern, modular UI system for the Moho game engine.
 //!
-//! This crate will implement an object-safe FrameCallback that the
-//! application can pass into the renderer to composite UI in the final
-//! command encoder. For now provide a stub implementation that does
-//! nothing so the project can build while we iterate.
+//! This crate provides a flexible, scalable UI system based on egui with support
+//! for multiple menu types and easy extensibility for new UI components.
 
 use engine_renderer::FrameCallback;
-// Ensure wgpu types are available for the FrameCallback signature when
-// the optional iced/ui feature is enabled. The dependency is optional in
-// Cargo.toml but importing the crate here ensures the symbols are linked
-// when enabled. (no direct `use wgpu;` needed)
 
+/// Stub UI implementation for when no UI features are enabled
 pub struct StubUi;
 
 impl StubUi {
@@ -32,19 +27,26 @@ impl FrameCallback for StubUi {
         _queue: &wgpu::Queue,
         _view: &wgpu::TextureView,
         _encoder: &mut wgpu::CommandEncoder,
+        _surface_width: u32,
+        _surface_height: u32,
     ) {
-        // no-op for now
+        // no-op when no UI is available
     }
 }
 
-// Re-export adapter and types for the egui feature.
-// Keep the public API surface minimal: everything below is only
-// available when the `ui-egui` feature is enabled.
+// Modern egui-based UI system
 #[cfg(feature = "ui-egui")]
-pub mod egui_adapter;
-
-#[cfg(feature = "ui-egui")]
-pub use egui_adapter::{EguiUi, UI_OVERLAY_VISIBLE, UiEvent, UiReceiver, build_adapter};
+pub mod adapter;
 
 #[cfg(feature = "ui-egui")]
 pub mod menus;
+
+// Re-export the main types for easy access
+#[cfg(feature = "ui-egui")]
+pub use adapter::{EguiAdapter, UI_OVERLAY_VISIBLE, UiEvent, UiReceiver, build_adapter};
+
+#[cfg(feature = "ui-egui")]
+pub use adapter::EguiAdapter as EguiUi;
+
+#[cfg(feature = "ui-egui")]
+pub use menus::{Menu, MenuAction, MenuItem, SettingsMenu, StartMenu};
