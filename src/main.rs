@@ -159,7 +159,10 @@ impl App {
         Ok(())
     }
 
-    fn load_scene<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<(), Box<dyn std::error::Error>> {
+    fn load_scene<P: AsRef<std::path::Path>>(
+        &mut self,
+        path: P,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         log::info!("Loading scene from: {:?}", path.as_ref());
 
         // Check if the file exists
@@ -189,17 +192,17 @@ impl App {
 
     fn hide_menu(&mut self) {
         #[cfg(feature = "ui-egui")]
-        if let Some(ui_adapter) = &self.ui_adapter {
-            if let Ok(mut adapter) = ui_adapter.lock() {
-                // Set UI to not visible directly
-                adapter.ui_visible = false;
-                
-                // Update the atomic flag
-                use moho_ui::UI_OVERLAY_VISIBLE;
-                UI_OVERLAY_VISIBLE.store(false, std::sync::atomic::Ordering::SeqCst);
-                
-                log::info!("Menu hidden - UI set to invisible");
-            }
+        if let Some(ui_adapter) = &self.ui_adapter
+            && let Ok(mut adapter) = ui_adapter.lock()
+        {
+            // Set UI to not visible directly
+            adapter.ui_visible = false;
+
+            // Update the atomic flag
+            use moho_ui::UI_OVERLAY_VISIBLE;
+            UI_OVERLAY_VISIBLE.store(false, std::sync::atomic::Ordering::SeqCst);
+
+            log::info!("Menu hidden - UI set to invisible");
         }
 
         // Hide cursor when in game mode
@@ -208,21 +211,22 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     fn show_menu(&mut self) {
         self.mode = AppMode::Menu;
 
         #[cfg(feature = "ui-egui")]
-        if let Some(ui_adapter) = &self.ui_adapter {
-            if let Ok(mut adapter) = ui_adapter.lock() {
-                // Set UI to visible
-                adapter.ui_visible = true;
-                
-                // Update the atomic flag
-                use moho_ui::UI_OVERLAY_VISIBLE;
-                UI_OVERLAY_VISIBLE.store(true, std::sync::atomic::Ordering::SeqCst);
-                
-                log::info!("Menu shown - UI set to visible");
-            }
+        if let Some(ui_adapter) = &self.ui_adapter
+            && let Ok(mut adapter) = ui_adapter.lock()
+        {
+            // Set UI to visible
+            adapter.ui_visible = true;
+
+            // Update the atomic flag
+            use moho_ui::UI_OVERLAY_VISIBLE;
+            UI_OVERLAY_VISIBLE.store(true, std::sync::atomic::Ordering::SeqCst);
+
+            log::info!("Menu shown - UI set to visible");
         }
 
         // Show cursor when in menu mode

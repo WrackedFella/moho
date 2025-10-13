@@ -43,10 +43,10 @@ pub mod menus;
 
 // Re-export the main types for easy access
 #[cfg(feature = "ui-egui")]
-pub use adapter::{EguiAdapter, UiEvent, UiReceiver, UI_OVERLAY_VISIBLE, build_adapter};
+pub use adapter::{EguiAdapter, UI_OVERLAY_VISIBLE, UiEvent, UiReceiver, build_adapter};
 
 #[cfg(feature = "ui-egui")]
 pub use adapter::EguiAdapter as EguiUi;
 
 #[cfg(feature = "ui-egui")]
-pub use menus::{Menu, MenuAction, StartMenu, MenuItem};
+pub use menus::{Menu, MenuAction, MenuItem, StartMenu};
