@@ -54,6 +54,8 @@ impl Scene {
             cube_instances.push(c.to_instance_with_material(midx));
         }
 
+
+
         // Debug: log material table and instance material indices (kept as-is)
         if !material_table.as_slice().is_empty() {
             log::debug!(

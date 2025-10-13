@@ -52,9 +52,9 @@ impl App {
         let world = World::default();
         let scene = engine_renderer::Scene::new();
 
-        // Basic camera
+        // Basic camera - positioned to get a good view of the random scene
         let camera = {
-            let eye = glam::Vec3::new(0.0, 0.0, 5.0);
+            let eye = glam::Vec3::new(13.0, 2.0, 3.0);
             let center = glam::Vec3::new(0.0, 0.0, 0.0);
             let up = glam::Vec3::new(0.0, 1.0, 0.0);
             let view = glam::Mat4::look_at_rh(eye, center, up);
@@ -88,10 +88,8 @@ impl App {
         let window_ref: &'static Window = Box::leak(Box::new(window.clone()));
         let mut renderer = engine_renderer::create_renderer(Some(window_ref))?;
 
-        // Create minimal mesh data
-        let vertices = vec![[0.0f32, 0.0f32, 0.0f32]];
-        let normals = vec![[0.0f32, 1.0f32, 0.0f32]];
-        let indices = vec![0u32];
+        // Create sphere mesh data using the proper sphere geometry
+        let (vertices, normals, indices) = engine_core::actors::Sphere::unit_sphere_indexed(16, 16);
         let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
 
         let (cube_vertices, cube_normals, cube_indices) =
