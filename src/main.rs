@@ -55,7 +55,7 @@ struct App {
     player_controller: engine_core::controller::PlayerController,
     controller_input: engine_core::controller::ControllerInput,
     mouse_sensitivity: f32,
-    
+
     // Keyboard state tracking
     key_w: bool,
     key_a: bool,
@@ -109,7 +109,7 @@ impl App {
             player_controller,
             controller_input: engine_core::controller::ControllerInput::default(),
             mouse_sensitivity: 0.002, // Radians per pixel of mouse movement
-            
+
             // Keyboard state
             key_w: false,
             key_a: false,
@@ -238,17 +238,19 @@ impl App {
     fn update_controller_input(&mut self) {
         // Calculate forward/backward
         let forward = if self.key_w { 1.0 } else { 0.0 } - if self.key_s { 1.0 } else { 0.0 };
-        
+
         // Calculate left/right (A is left, so negative)
         let right = if self.key_d { 1.0 } else { 0.0 } - if self.key_a { 1.0 } else { 0.0 };
-        
+
         // Calculate up/down (Space is up, Shift is down) - only in first person mode
-        let up = if self.player_controller.camera_mode == engine_core::controller::CameraMode::FirstPerson {
+        let up = if self.player_controller.camera_mode
+            == engine_core::controller::CameraMode::FirstPerson
+        {
             (if self.key_space { 1.0 } else { 0.0 }) - (if self.key_shift { 1.0 } else { 0.0 })
         } else {
             0.0 // No up/down in isometric mode
         };
-        
+
         self.controller_input.forward = forward;
         self.controller_input.right = right;
         self.controller_input.up = up;
@@ -262,7 +264,7 @@ impl App {
         }
 
         let pressed = event.state == ElementState::Pressed;
-        
+
         if let PhysicalKey::Code(keycode) = event.physical_key {
             match keycode {
                 KeyCode::KeyW => self.key_w = pressed,
@@ -280,15 +282,19 @@ impl App {
                 KeyCode::Tab => {
                     if pressed {
                         // Toggle camera mode
-                        self.player_controller.camera_mode = match self.player_controller.camera_mode {
-                            engine_core::controller::CameraMode::FirstPerson => {
-                                engine_core::controller::CameraMode::Isometric
-                            }
-                            engine_core::controller::CameraMode::Isometric => {
-                                engine_core::controller::CameraMode::FirstPerson
-                            }
-                        };
-                        log::info!("Switched to camera mode: {:?}", self.player_controller.camera_mode);
+                        self.player_controller.camera_mode =
+                            match self.player_controller.camera_mode {
+                                engine_core::controller::CameraMode::FirstPerson => {
+                                    engine_core::controller::CameraMode::Isometric
+                                }
+                                engine_core::controller::CameraMode::Isometric => {
+                                    engine_core::controller::CameraMode::FirstPerson
+                                }
+                            };
+                        log::info!(
+                            "Switched to camera mode: {:?}",
+                            self.player_controller.camera_mode
+                        );
                     }
                 }
                 _ => {}
@@ -299,7 +305,10 @@ impl App {
     /// Handle mouse motion for camera look
     fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
         // Only process input in game mode and first person camera mode
-        if self.mode != AppMode::Game || self.player_controller.camera_mode != engine_core::controller::CameraMode::FirstPerson {
+        if self.mode != AppMode::Game
+            || self.player_controller.camera_mode
+                != engine_core::controller::CameraMode::FirstPerson
+        {
             return;
         }
 
@@ -314,9 +323,11 @@ impl App {
     fn grab_cursor(&mut self) {
         if let Some(ref wr) = self.window_renderer {
             wr.window.set_cursor_visible(false);
-            
+
             // Try to grab the cursor - confined mode keeps it in window
-            let _ = wr.window.set_cursor_grab(CursorGrabMode::Confined)
+            let _ = wr
+                .window
+                .set_cursor_grab(CursorGrabMode::Confined)
                 .or_else(|_| wr.window.set_cursor_grab(CursorGrabMode::Locked));
         }
     }
@@ -415,13 +426,15 @@ impl ApplicationHandler for App {
             if self.mode == AppMode::Game {
                 // Update controller input from keyboard state
                 self.update_controller_input();
-                
+
                 // Apply input to player controller
-                self.player_controller.apply_input(&self.controller_input, dt);
-                
+                self.player_controller
+                    .apply_input(&self.controller_input, dt);
+
                 // Update camera from controller
-                self.camera = engine_core::controller::controller_to_camera(&self.player_controller);
-                
+                self.camera =
+                    engine_core::controller::controller_to_camera(&self.player_controller);
+
                 // Reset mouse deltas for next frame
                 self.controller_input.yaw_delta = 0.0;
                 self.controller_input.pitch_delta = 0.0;
@@ -519,7 +532,9 @@ impl ApplicationHandler for App {
                     wr.renderer.resize(size.width, size.height);
                 }
             }
-            WindowEvent::KeyboardInput { event: key_event, .. } => {
+            WindowEvent::KeyboardInput {
+                event: key_event, ..
+            } => {
                 self.handle_keyboard_input(&key_event);
             }
             WindowEvent::RedrawRequested => {

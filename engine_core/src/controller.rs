@@ -64,13 +64,13 @@ impl PlayerController {
                 // Calculate camera-relative directions (projected onto ground plane)
                 let camera_offset = Vec3::new(10.0, 10.0, 10.0);
                 let to_camera = camera_offset.normalize_or_zero();
-                
+
                 // Forward in camera space (away from camera, projected to ground)
                 let forward = Vec3::new(-to_camera.x, 0.0, -to_camera.z).normalize_or_zero();
-                
+
                 // Right is perpendicular to forward on the ground plane
                 let right = Vec3::new(-forward.z, 0.0, forward.x);
-                
+
                 let mut dir = Vec3::ZERO;
                 dir += forward * input.forward;
                 dir += right * input.right;
