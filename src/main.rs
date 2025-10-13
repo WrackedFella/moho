@@ -159,6 +159,34 @@ impl App {
         Ok(())
     }
 
+    fn load_scene<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<(), Box<dyn std::error::Error>> {
+        log::info!("Loading scene from: {:?}", path.as_ref());
+
+        // Check if the file exists
+        if !path.as_ref().exists() {
+            return Err(format!("Scene file does not exist: {:?}", path.as_ref()).into());
+        }
+
+        // Clear the existing world
+        self.world.clear();
+
+        // Load the scene from file
+        self.scene.load_from_file(&path, &mut self.world)?;
+        log::info!("Scene loaded successfully from {:?}", path.as_ref());
+
+        // Request a redraw to show the loaded scene
+        if let Some(ref wr) = self.window_renderer {
+            wr.window.request_redraw();
+        }
+
+        // Switch to game mode and hide menu
+        self.mode = AppMode::Game;
+        self.hide_menu();
+
+        log::info!("Scene loading complete - switched to game mode");
+        Ok(())
+    }
+
     fn hide_menu(&mut self) {
         #[cfg(feature = "ui-egui")]
         if let Some(ui_adapter) = &self.ui_adapter {
@@ -263,6 +291,9 @@ impl ApplicationHandler for App {
                     match ev {
                         UiEvent::LoadScene(path) => {
                             log::info!("UI requested load scene: {:?}", path);
+                            if let Err(e) = self.load_scene(&path) {
+                                log::error!("Failed to load scene from {:?}: {}", path, e);
+                            }
                         }
                         UiEvent::NewWorld => {
                             log::info!("UI requested NewWorld");
