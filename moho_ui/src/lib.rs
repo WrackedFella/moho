@@ -41,6 +41,9 @@ pub mod adapter;
 #[cfg(feature = "ui-egui")]
 pub mod menus;
 
+#[cfg(feature = "ui-egui")]
+pub mod prefs;
+
 // Re-export the main types for easy access
 #[cfg(feature = "ui-egui")]
 pub use adapter::{EguiAdapter, UI_OVERLAY_VISIBLE, UiEvent, UiReceiver, build_adapter};
