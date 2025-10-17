@@ -64,7 +64,7 @@ impl ModalManager {
                 .fixed_pos(egui::pos2(0.0, 0.0))
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
-                    let screen_rect = ctx.screen_rect();
+                    let screen_rect = ctx.input(|i| i.viewport_rect());
                     ui.painter().rect_filled(
                         screen_rect,
                         0.0,

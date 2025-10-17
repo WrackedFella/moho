@@ -104,6 +104,10 @@ impl SettingsMenu {
         self.show_conflict_modal = false;
     }
 
+    fn is_dirty(&self) -> bool {
+        self.dirty_key_w || self.dirty_key_a || self.dirty_key_s || self.dirty_key_d || self.dirty_mouse_sens
+    }
+
     fn paint_dirty_decor(ui: &mut egui::Ui, resp: &egui::Response, dirty: bool) {
         if dirty || resp.hovered() {
             let r = resp.rect;
@@ -157,57 +161,123 @@ impl Menu for SettingsMenu {
                     s
                 };
 
+                // Use fixed-width layout for right-aligned inputs
+                let label_width = 150.0;
+                
                 ui.horizontal(|ui| {
-                    ui.label("Move Forward:");
-                    let id = 0usize;
-                    let mut label = binding_label(&self.staged.key_w);
-                    if self.listening == Some(id) { label = "Press any key...".to_string(); }
-                    let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
-                    Self::paint_dirty_decor(ui, &btn, self.staged.key_w != self.prefs.key_w);
-                    if btn.clicked() { self.listening = Some(id); }
-                    self.dirty_key_w = self.staged.key_w != self.prefs.key_w;
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(label_width, 28.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label("Move Forward:");
+                        }
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let id = 0usize;
+                        let mut label = binding_label(&self.staged.key_w);
+                        if self.listening == Some(id) { label = "Press any key...".to_string(); }
+                        let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
+                        Self::paint_dirty_decor(ui, &btn, self.staged.key_w != self.prefs.key_w);
+                        if btn.clicked() { self.listening = Some(id); }
+                        self.dirty_key_w = self.staged.key_w != self.prefs.key_w;
+                    });
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label("Move Left:");
-                    let id = 1usize;
-                    let mut label = binding_label(&self.staged.key_a);
-                    if self.listening == Some(id) { label = "Press any key...".to_string(); }
-                    let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
-                    Self::paint_dirty_decor(ui, &btn, self.staged.key_a != self.prefs.key_a);
-                    if btn.clicked() { self.listening = Some(id); }
-                    self.dirty_key_a = self.staged.key_a != self.prefs.key_a;
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(label_width, 28.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label("Move Left:");
+                        }
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let id = 1usize;
+                        let mut label = binding_label(&self.staged.key_a);
+                        if self.listening == Some(id) { label = "Press any key...".to_string(); }
+                        let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
+                        Self::paint_dirty_decor(ui, &btn, self.staged.key_a != self.prefs.key_a);
+                        if btn.clicked() { self.listening = Some(id); }
+                        self.dirty_key_a = self.staged.key_a != self.prefs.key_a;
+                    });
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label("Move Back:");
-                    let id = 2usize;
-                    let mut label = binding_label(&self.staged.key_s);
-                    if self.listening == Some(id) { label = "Press any key...".to_string(); }
-                    let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
-                    Self::paint_dirty_decor(ui, &btn, self.staged.key_s != self.prefs.key_s);
-                    if btn.clicked() { self.listening = Some(id); }
-                    self.dirty_key_s = self.staged.key_s != self.prefs.key_s;
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(label_width, 28.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label("Move Back:");
+                        }
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let id = 2usize;
+                        let mut label = binding_label(&self.staged.key_s);
+                        if self.listening == Some(id) { label = "Press any key...".to_string(); }
+                        let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
+                        Self::paint_dirty_decor(ui, &btn, self.staged.key_s != self.prefs.key_s);
+                        if btn.clicked() { self.listening = Some(id); }
+                        self.dirty_key_s = self.staged.key_s != self.prefs.key_s;
+                    });
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label("Move Right:");
-                    let id = 3usize;
-                    let mut label = binding_label(&self.staged.key_d);
-                    if self.listening == Some(id) { label = "Press any key...".to_string(); }
-                    let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
-                    Self::paint_dirty_decor(ui, &btn, self.staged.key_d != self.prefs.key_d);
-                    if btn.clicked() { self.listening = Some(id); }
-                    self.dirty_key_d = self.staged.key_d != self.prefs.key_d;
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(label_width, 28.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label("Move Right:");
+                        }
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let id = 3usize;
+                        let mut label = binding_label(&self.staged.key_d);
+                        if self.listening == Some(id) { label = "Press any key...".to_string(); }
+                        let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
+                        Self::paint_dirty_decor(ui, &btn, self.staged.key_d != self.prefs.key_d);
+                        if btn.clicked() { self.listening = Some(id); }
+                        self.dirty_key_d = self.staged.key_d != self.prefs.key_d;
+                    });
                 });
 
                 ui.add_space(8.0);
 
                 ui.horizontal(|ui| {
-                    ui.label("Mouse Sensitivity:");
-                    let drag = ui.add(egui::DragValue::new(&mut self.staged.mouse_sensitivity).range(0.01..=10.0).speed(0.1));
-                    Self::paint_dirty_decor(ui, &drag, (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs() > f32::EPSILON);
-                    self.dirty_mouse_sens = (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs() > f32::EPSILON;
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(label_width, 28.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label("Mouse Sensitivity:");
+                        }
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Slider matching keybind button width (120px) - added first so it appears on the right
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(120.0, 20.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().slider_width = 120.0;
+                                let slider = ui.add(
+                                    egui::Slider::new(&mut self.staged.mouse_sensitivity, 0.01..=10.0)
+                                        .show_value(false)
+                                        .min_decimals(0)
+                                        .max_decimals(2)
+                                );
+                                Self::paint_dirty_decor(ui, &slider, (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs() > f32::EPSILON);
+                            }
+                        );
+                        ui.add_space(8.0);
+                        // Drag value input - added second so it appears on the left
+                        let drag = ui.add(
+                            egui::DragValue::new(&mut self.staged.mouse_sensitivity)
+                                .range(0.01..=10.0)
+                                .speed(0.1)
+                                .min_decimals(2)
+                                .max_decimals(2)
+                        );
+                        Self::paint_dirty_decor(ui, &drag, (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs() > f32::EPSILON);
+                        self.dirty_mouse_sens = (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs() > f32::EPSILON;
+                    });
                 });
 
                 ui.add_space(12.0);
@@ -238,23 +308,36 @@ impl Menu for SettingsMenu {
 
                             ui.add_space(8.0);
 
-                            let cancel = ui.add(egui::Button::new("Cancel").min_size(egui::vec2(100.0, 36.0)));
-                            let cancel_clicked = cancel.clicked();
-                            if cancel_clicked {
-                                // revert staged values to last saved prefs
-                                self.staged = self.prefs.clone();
-                                self.dirty_key_w = false;
-                                self.dirty_key_a = false;
-                                self.dirty_key_s = false;
-                                self.dirty_key_d = false;
-                                self.dirty_mouse_sens = false;
+                            // Show Cancel when form is dirty, Back when clean
+                            let is_dirty = self.is_dirty();
+                            if is_dirty {
+                                let cancel = ui.add(egui::Button::new("Cancel").min_size(egui::vec2(100.0, 36.0)));
+                                let cancel_clicked = cancel.clicked();
+                                if cancel_clicked {
+                                    // revert staged values to last saved prefs
+                                    self.staged = self.prefs.clone();
+                                    self.dirty_key_w = false;
+                                    self.dirty_key_a = false;
+                                    self.dirty_key_s = false;
+                                    self.dirty_key_d = false;
+                                    self.dirty_mouse_sens = false;
+                                }
+                                items.push(crate::menus::menu::MenuItem {
+                                    action: MenuAction::None,
+                                    rect: Some(cancel.rect),
+                                    enabled: true,
+                                    clicked: cancel_clicked,
+                                });
+                            } else {
+                                let back = ui.add(egui::Button::new("Back").min_size(egui::vec2(100.0, 36.0)));
+                                let back_clicked = back.clicked();
+                                items.push(crate::menus::menu::MenuItem {
+                                    action: MenuAction::ShowMenu("start".to_string()),
+                                    rect: Some(back.rect),
+                                    enabled: true,
+                                    clicked: back_clicked,
+                                });
                             }
-                            items.push(crate::menus::menu::MenuItem {
-                                action: MenuAction::None,
-                                rect: Some(cancel.rect),
-                                enabled: true,
-                                clicked: cancel_clicked,
-                            });
 
                             ui.add_space(8.0);
                         });
