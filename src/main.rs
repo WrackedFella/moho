@@ -507,14 +507,21 @@ impl ApplicationHandler for App {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        // Forward ONLY mouse events to UI - NO KEYBOARD
+        // Forward input events to UI adapter when in Menu mode
         #[cfg(feature = "ui-egui")]
         if let Some(ui_adapter) = &self.ui_adapter {
             use winit::event::WindowEvent as WEvent;
             match &event {
+                // Always forward mouse events
                 WEvent::CursorMoved { .. }
                 | WEvent::MouseInput { .. }
                 | WEvent::ModifiersChanged(_) => {
+                    if let Ok(mut a) = ui_adapter.lock() {
+                        a.handle_winit_event(&event);
+                    }
+                }
+                // Forward keyboard events ONLY in Menu mode
+                WEvent::KeyboardInput { .. } if self.mode == AppMode::Menu => {
                     if let Ok(mut a) = ui_adapter.lock() {
                         a.handle_winit_event(&event);
                     }

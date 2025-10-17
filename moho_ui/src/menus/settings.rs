@@ -1,5 +1,5 @@
 use crate::menus::menu::{Menu, MenuAction, MenuSpec};
-use crate::prefs::Prefs;
+use crate::prefs::{Prefs, Binding};
 
 pub struct SettingsMenu {
     spec: MenuSpec,
@@ -11,6 +11,7 @@ pub struct SettingsMenu {
     dirty_key_s: bool,
     dirty_key_d: bool,
     dirty_mouse_sens: bool,
+    listening: Option<usize>,
 }
 
 impl SettingsMenu {
@@ -25,6 +26,7 @@ impl SettingsMenu {
             dirty_key_s: false,
             dirty_key_d: false,
             dirty_mouse_sens: false,
+            listening: None,
         }
     }
 
@@ -62,31 +64,66 @@ impl Menu for SettingsMenu {
                 ui.heading("Game Settings");
                 ui.add_space(12.0);
 
+                let binding_label = |b: &Binding| -> String {
+                    if b.code == 0 { return "Unbound".to_string(); }
+                    let mut s = String::new();
+                    if b.mods & 1 != 0 { s.push_str("Ctrl+"); }
+                    if b.mods & 2 != 0 { s.push_str("Shift+"); }
+                    if b.mods & 4 != 0 { s.push_str("Alt+"); }
+                    if let Some(ch) = std::char::from_u32(b.code) {
+                        if ch.is_ascii_graphic() { s.push(ch.to_ascii_uppercase()); return s; }
+                    }
+                    match b.code {
+                        0x100 => { s.push_str("ArrowUp"); }
+                        0x101 => { s.push_str("ArrowDown"); }
+                        0x102 => { s.push_str("ArrowLeft"); }
+                        0x103 => { s.push_str("ArrowRight"); }
+                        _ => { s.push_str("Unknown"); }
+                    }
+                    s
+                };
+
                 ui.horizontal(|ui| {
                     ui.label("Move Forward:");
-                    let w_resp = ui.add(egui::TextEdit::singleline(&mut self.staged.key_w).desired_width(80.0));
-                    Self::paint_dirty_decor(ui, &w_resp, self.staged.key_w != self.prefs.key_w);
+                    let id = 0usize;
+                    let mut label = binding_label(&self.staged.key_w);
+                    if self.listening == Some(id) { label = "Press any key...".to_string(); }
+                    let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
+                    Self::paint_dirty_decor(ui, &btn, self.staged.key_w != self.prefs.key_w);
+                    if btn.clicked() { self.listening = Some(id); }
                     self.dirty_key_w = self.staged.key_w != self.prefs.key_w;
                 });
 
                 ui.horizontal(|ui| {
                     ui.label("Move Left:");
-                    let a_resp = ui.add(egui::TextEdit::singleline(&mut self.staged.key_a).desired_width(80.0));
-                    Self::paint_dirty_decor(ui, &a_resp, self.staged.key_a != self.prefs.key_a);
+                    let id = 1usize;
+                    let mut label = binding_label(&self.staged.key_a);
+                    if self.listening == Some(id) { label = "Press any key...".to_string(); }
+                    let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
+                    Self::paint_dirty_decor(ui, &btn, self.staged.key_a != self.prefs.key_a);
+                    if btn.clicked() { self.listening = Some(id); }
                     self.dirty_key_a = self.staged.key_a != self.prefs.key_a;
                 });
 
                 ui.horizontal(|ui| {
                     ui.label("Move Back:");
-                    let s_resp = ui.add(egui::TextEdit::singleline(&mut self.staged.key_s).desired_width(80.0));
-                    Self::paint_dirty_decor(ui, &s_resp, self.staged.key_s != self.prefs.key_s);
+                    let id = 2usize;
+                    let mut label = binding_label(&self.staged.key_s);
+                    if self.listening == Some(id) { label = "Press any key...".to_string(); }
+                    let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
+                    Self::paint_dirty_decor(ui, &btn, self.staged.key_s != self.prefs.key_s);
+                    if btn.clicked() { self.listening = Some(id); }
                     self.dirty_key_s = self.staged.key_s != self.prefs.key_s;
                 });
 
                 ui.horizontal(|ui| {
                     ui.label("Move Right:");
-                    let d_resp = ui.add(egui::TextEdit::singleline(&mut self.staged.key_d).desired_width(80.0));
-                    Self::paint_dirty_decor(ui, &d_resp, self.staged.key_d != self.prefs.key_d);
+                    let id = 3usize;
+                    let mut label = binding_label(&self.staged.key_d);
+                    if self.listening == Some(id) { label = "Press any key...".to_string(); }
+                    let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
+                    Self::paint_dirty_decor(ui, &btn, self.staged.key_d != self.prefs.key_d);
+                    if btn.clicked() { self.listening = Some(id); }
                     self.dirty_key_d = self.staged.key_d != self.prefs.key_d;
                 });
 
@@ -94,15 +131,8 @@ impl Menu for SettingsMenu {
 
                 ui.horizontal(|ui| {
                     ui.label("Mouse Sensitivity:");
-                    let mut sens_str = format!("{}", self.staged.mouse_sensitivity);
-                    let sens_resp = ui.add(egui::TextEdit::singleline(&mut sens_str).desired_width(120.0));
-                    // if changed, try parse
-                    if sens_resp.changed() {
-                        if let Ok(v) = sens_str.parse::<f32>() {
-                            self.staged.mouse_sensitivity = v;
-                        }
-                    }
-                    Self::paint_dirty_decor(ui, &sens_resp, (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs() > f32::EPSILON);
+                    let drag = ui.add(egui::DragValue::new(&mut self.staged.mouse_sensitivity).range(0.01..=10.0).speed(0.1));
+                    Self::paint_dirty_decor(ui, &drag, (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs() > f32::EPSILON);
                     self.dirty_mouse_sens = (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs() > f32::EPSILON;
                 });
 
@@ -118,9 +148,15 @@ impl Menu for SettingsMenu {
                                 // commit staged to prefs and save
                                 self.prefs = self.staged.clone();
                                 let _ = self.prefs.save();
+                                // clear dirty flags
+                                self.dirty_key_w = false;
+                                self.dirty_key_a = false;
+                                self.dirty_key_s = false;
+                                self.dirty_key_d = false;
+                                self.dirty_mouse_sens = false;
                             }
                             items.push(crate::menus::menu::MenuItem {
-                                action: if save_clicked { MenuAction::ShowMenu("start".to_string()) } else { MenuAction::None },
+                                action: MenuAction::None,
                                 rect: Some(save.rect),
                                 enabled: true,
                                 clicked: save_clicked,
@@ -140,7 +176,7 @@ impl Menu for SettingsMenu {
                                 self.dirty_mouse_sens = false;
                             }
                             items.push(crate::menus::menu::MenuItem {
-                                action: if cancel_clicked { MenuAction::ShowMenu("start".to_string()) } else { MenuAction::None },
+                                action: MenuAction::None,
                                 rect: Some(cancel.rect),
                                 enabled: true,
                                 clicked: cancel_clicked,
@@ -152,6 +188,126 @@ impl Menu for SettingsMenu {
                 });
             });
         });
+
+        // helper: map egui::Key to numeric code. Letters and digits map to their ASCII uppercased codes.
+        fn key_to_code(k: &egui::Key) -> u32 {
+            use egui::Key::*;
+            match k {
+                A => 'A' as u32,
+                B => 'B' as u32,
+                C => 'C' as u32,
+                D => 'D' as u32,
+                E => 'E' as u32,
+                F => 'F' as u32,
+                G => 'G' as u32,
+                H => 'H' as u32,
+                I => 'I' as u32,
+                J => 'J' as u32,
+                K => 'K' as u32,
+                L => 'L' as u32,
+                M => 'M' as u32,
+                N => 'N' as u32,
+                O => 'O' as u32,
+                P => 'P' as u32,
+                Q => 'Q' as u32,
+                R => 'R' as u32,
+                S => 'S' as u32,
+                T => 'T' as u32,
+                U => 'U' as u32,
+                V => 'V' as u32,
+                W => 'W' as u32,
+                X => 'X' as u32,
+                Y => 'Y' as u32,
+                Z => 'Z' as u32,
+                Num0 => '0' as u32,
+                Num1 => '1' as u32,
+                        Num2 => '2' as u32,
+                        Num3 => '3' as u32,
+                        Num4 => '4' as u32,
+                        Num5 => '5' as u32,
+                        Num6 => '6' as u32,
+                        Num7 => '7' as u32,
+                        Num8 => '8' as u32,
+                        Num9 => '9' as u32,
+                        ArrowUp => 0x100,
+                        ArrowDown => 0x101,
+                        ArrowLeft => 0x102,
+                        ArrowRight => 0x103,
+                        Escape => 0x200,
+                        Tab => 0x201,
+                        Backspace => 0x202,
+                        Enter => 0x203,
+                        Space => ' ' as u32,
+                        _ => 0,
+                    }
+                }
+
+        // Handle key capture when listening for binding
+        if let Some(listen_id) = self.listening {
+            ctx.input(|input| {
+                for ev in &input.events {
+                    if let egui::Event::Key { key, pressed, modifiers, .. } = ev {
+                        if *pressed {
+                            // Escape cancels listening
+                            if *key == egui::Key::Escape {
+                                self.listening = None;
+                                return;
+                            }
+                            // derive code and modifiers
+                            let code: u32 = key_to_code(key);
+                            let mut mods: u8 = 0;
+                            if modifiers.ctrl { mods |= 1; }
+                            if modifiers.shift { mods |= 2; }
+                            if modifiers.alt { mods |= 4; }
+
+                            let binding = Binding::new(code, mods);
+                            
+                            // Check for duplicate bindings and clear them
+                            if binding.code != 0 { // Don't check unbound keys
+                                if self.staged.key_w == binding && listen_id != 0 {
+                                    self.staged.key_w = Binding::new(0, 0);
+                                    self.dirty_key_w = true;
+                                }
+                                if self.staged.key_a == binding && listen_id != 1 {
+                                    self.staged.key_a = Binding::new(0, 0);
+                                    self.dirty_key_a = true;
+                                }
+                                if self.staged.key_s == binding && listen_id != 2 {
+                                    self.staged.key_s = Binding::new(0, 0);
+                                    self.dirty_key_s = true;
+                                }
+                                if self.staged.key_d == binding && listen_id != 3 {
+                                    self.staged.key_d = Binding::new(0, 0);
+                                    self.dirty_key_d = true;
+                                }
+                            }
+                            
+                            // Set the new binding
+                            match listen_id {
+                                0 => {
+                                    self.staged.key_w = binding;
+                                    self.dirty_key_w = true;
+                                }
+                                1 => {
+                                    self.staged.key_a = binding;
+                                    self.dirty_key_a = true;
+                                }
+                                2 => {
+                                    self.staged.key_s = binding;
+                                    self.dirty_key_s = true;
+                                }
+                                3 => {
+                                    self.staged.key_d = binding;
+                                    self.dirty_key_d = true;
+                                }
+                                _ => {}
+                            }
+                            self.listening = None;
+                        }
+                    }
+                }
+            });
+        }
 
         items
     }
