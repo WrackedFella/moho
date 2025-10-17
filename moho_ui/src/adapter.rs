@@ -4,6 +4,7 @@
 //! allowing easy addition of new menus and menu types.
 
 use crate::menus::{Menu, MenuAction, SettingsMenu, StartMenu};
+use crate::modal::ModalManager;
 use engine_renderer::FrameCallback;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -37,6 +38,9 @@ pub struct EguiAdapter {
     // Menu management
     menus: HashMap<String, Box<dyn Menu>>,
     active_menu: Option<String>,
+
+    // Modal management
+    pub modal_manager: ModalManager,
 
     // Communication
     sender: crossbeam_channel::Sender<UiEvent>,
@@ -80,6 +84,7 @@ impl EguiAdapter {
             renderer: None,
             menus,
             active_menu: Some("start".to_string()),
+            modal_manager: ModalManager::new(),
             sender,
             ui_visible: true,
             window,
@@ -231,6 +236,8 @@ impl FrameCallback for EguiAdapter {
 
         // Run egui and collect menu actions
         let mut menu_actions = Vec::new();
+        let mut modal_result = crate::modal::ModalResult::None;
+        
         let full_output = self.context.run(raw_input, |ctx| {
             // Render active menu if any
             if let Some(menu_name) = &self.active_menu.clone()
@@ -245,7 +252,47 @@ impl FrameCallback for EguiAdapter {
                     }
                 }
             }
+
+            // Check if settings menu wants to show conflict modal
+            if let Some(menu) = self.menus.get_mut("settings") {
+                if let Some(settings) = menu.as_any_mut().downcast_mut::<SettingsMenu>() {
+                    if settings.show_conflict_modal {
+                        settings.show_conflict_modal = false;
+                        
+                        use crate::modals::KeybindConflictModal;
+                        let modal = KeybindConflictModal::new(
+                            settings.conflict_key_name.clone(),
+                            settings.conflict_binding_desc.clone(),
+                        );
+                        
+                        self.modal_manager.show(Box::new(modal));
+                    }
+                }
+            }
+
+            // Render modal on top of menu (if active)
+            modal_result = self.modal_manager.render(ctx);
         });
+
+        // Handle modal result
+        use crate::modal::ModalResult;
+        match modal_result {
+            ModalResult::Confirm => {
+                if let Some(menu) = self.menus.get_mut("settings") {
+                    if let Some(settings) = menu.as_any_mut().downcast_mut::<SettingsMenu>() {
+                        settings.apply_pending_binding();
+                    }
+                }
+            }
+            ModalResult::Cancel => {
+                if let Some(menu) = self.menus.get_mut("settings") {
+                    if let Some(settings) = menu.as_any_mut().downcast_mut::<SettingsMenu>() {
+                        settings.cancel_pending_binding();
+                    }
+                }
+            }
+            ModalResult::None => {}
+        }
 
         // Process menu actions outside the egui context
         for action in menu_actions {

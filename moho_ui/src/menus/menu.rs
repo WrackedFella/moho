@@ -165,4 +165,7 @@ pub trait Menu: Send {
     fn ui(&mut self, ctx: &egui::Context) -> Vec<MenuItem>;
     fn on_show(&mut self) {}
     fn on_hide(&mut self) {}
+    
+    /// Allow downcasting to concrete menu types
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }

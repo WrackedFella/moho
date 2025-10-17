@@ -1,6 +1,13 @@
 use crate::menus::menu::{Menu, MenuAction, MenuSpec};
 use crate::prefs::{Prefs, Binding};
 
+#[derive(Clone)]
+struct PendingBinding {
+    target_id: usize,
+    binding: Binding,
+    conflicting_id: Option<usize>,
+}
+
 pub struct SettingsMenu {
     spec: MenuSpec,
     prefs: Prefs,
@@ -12,6 +19,10 @@ pub struct SettingsMenu {
     dirty_key_d: bool,
     dirty_mouse_sens: bool,
     listening: Option<usize>,
+    pending_binding: Option<PendingBinding>,
+    pub show_conflict_modal: bool,
+    pub conflict_key_name: String,
+    pub conflict_binding_desc: String,
 }
 
 impl SettingsMenu {
@@ -27,7 +38,70 @@ impl SettingsMenu {
             dirty_key_d: false,
             dirty_mouse_sens: false,
             listening: None,
+            pending_binding: None,
+            show_conflict_modal: false,
+            conflict_key_name: String::new(),
+            conflict_binding_desc: String::new(),
         }
+    }
+
+    fn get_key_name(&self, id: usize) -> &str {
+        match id {
+            0 => "Move Forward",
+            1 => "Move Left",
+            2 => "Move Back",
+            3 => "Move Right",
+            _ => "Unknown",
+        }
+    }
+
+    fn binding_label(b: &Binding) -> String {
+        if b.code == 0 { return "Unbound".to_string(); }
+        let mut s = String::new();
+        if b.mods & 1 != 0 { s.push_str("Ctrl+"); }
+        if b.mods & 2 != 0 { s.push_str("Shift+"); }
+        if b.mods & 4 != 0 { s.push_str("Alt+"); }
+        if let Some(ch) = std::char::from_u32(b.code) {
+            if ch.is_ascii_graphic() { s.push(ch.to_ascii_uppercase()); return s; }
+        }
+        match b.code {
+            0x100 => s.push_str("ArrowUp"),
+            0x101 => s.push_str("ArrowDown"),
+            0x102 => s.push_str("ArrowLeft"),
+            0x103 => s.push_str("ArrowRight"),
+            _ => s.push_str("Unknown"),
+        }
+        s
+    }
+
+    pub fn apply_pending_binding(&mut self) {
+        if let Some(pending) = self.pending_binding.take() {
+            // Clear conflicting binding if any
+            if let Some(conflict_id) = pending.conflicting_id {
+                match conflict_id {
+                    0 => { self.staged.key_w = Binding::new(0, 0); self.dirty_key_w = true; }
+                    1 => { self.staged.key_a = Binding::new(0, 0); self.dirty_key_a = true; }
+                    2 => { self.staged.key_s = Binding::new(0, 0); self.dirty_key_s = true; }
+                    3 => { self.staged.key_d = Binding::new(0, 0); self.dirty_key_d = true; }
+                    _ => {}
+                }
+            }
+
+            // Apply new binding
+            match pending.target_id {
+                0 => { self.staged.key_w = pending.binding; self.dirty_key_w = true; }
+                1 => { self.staged.key_a = pending.binding; self.dirty_key_a = true; }
+                2 => { self.staged.key_s = pending.binding; self.dirty_key_s = true; }
+                3 => { self.staged.key_d = pending.binding; self.dirty_key_d = true; }
+                _ => {}
+            }
+        }
+        self.show_conflict_modal = false;
+    }
+
+    pub fn cancel_pending_binding(&mut self) {
+        self.pending_binding = None;
+        self.show_conflict_modal = false;
     }
 
     fn paint_dirty_decor(ui: &mut egui::Ui, resp: &egui::Response, dirty: bool) {
@@ -262,45 +336,51 @@ impl Menu for SettingsMenu {
 
                             let binding = Binding::new(code, mods);
                             
-                            // Check for duplicate bindings and clear them
+                            // Check for duplicate bindings
+                            let mut conflicting_id: Option<usize> = None;
                             if binding.code != 0 { // Don't check unbound keys
                                 if self.staged.key_w == binding && listen_id != 0 {
-                                    self.staged.key_w = Binding::new(0, 0);
-                                    self.dirty_key_w = true;
-                                }
-                                if self.staged.key_a == binding && listen_id != 1 {
-                                    self.staged.key_a = Binding::new(0, 0);
-                                    self.dirty_key_a = true;
-                                }
-                                if self.staged.key_s == binding && listen_id != 2 {
-                                    self.staged.key_s = Binding::new(0, 0);
-                                    self.dirty_key_s = true;
-                                }
-                                if self.staged.key_d == binding && listen_id != 3 {
-                                    self.staged.key_d = Binding::new(0, 0);
-                                    self.dirty_key_d = true;
+                                    conflicting_id = Some(0);
+                                } else if self.staged.key_a == binding && listen_id != 1 {
+                                    conflicting_id = Some(1);
+                                } else if self.staged.key_s == binding && listen_id != 2 {
+                                    conflicting_id = Some(2);
+                                } else if self.staged.key_d == binding && listen_id != 3 {
+                                    conflicting_id = Some(3);
                                 }
                             }
                             
-                            // Set the new binding
-                            match listen_id {
-                                0 => {
-                                    self.staged.key_w = binding;
-                                    self.dirty_key_w = true;
+                            if let Some(conflict_id) = conflicting_id {
+                                // Show conflict modal
+                                self.pending_binding = Some(PendingBinding {
+                                    target_id: listen_id,
+                                    binding,
+                                    conflicting_id: Some(conflict_id),
+                                });
+                                self.conflict_key_name = self.get_key_name(conflict_id).to_string();
+                                self.conflict_binding_desc = Self::binding_label(&binding);
+                                self.show_conflict_modal = true;
+                            } else {
+                                // No conflict, apply immediately
+                                match listen_id {
+                                    0 => {
+                                        self.staged.key_w = binding;
+                                        self.dirty_key_w = true;
+                                    }
+                                    1 => {
+                                        self.staged.key_a = binding;
+                                        self.dirty_key_a = true;
+                                    }
+                                    2 => {
+                                        self.staged.key_s = binding;
+                                        self.dirty_key_s = true;
+                                    }
+                                    3 => {
+                                        self.staged.key_d = binding;
+                                        self.dirty_key_d = true;
+                                    }
+                                    _ => {}
                                 }
-                                1 => {
-                                    self.staged.key_a = binding;
-                                    self.dirty_key_a = true;
-                                }
-                                2 => {
-                                    self.staged.key_s = binding;
-                                    self.dirty_key_s = true;
-                                }
-                                3 => {
-                                    self.staged.key_d = binding;
-                                    self.dirty_key_d = true;
-                                }
-                                _ => {}
                             }
                             self.listening = None;
                         }
@@ -310,5 +390,9 @@ impl Menu for SettingsMenu {
         }
 
         items
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }
