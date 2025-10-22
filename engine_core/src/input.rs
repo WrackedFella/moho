@@ -1,19 +1,8 @@
 use std::time::Instant;
 
-/// Deadzone thresholds for different input filtering levels
+/// Default filter configuration constants
 const DEADZONE_DEFAULT: f32 = 0.01;
-const DEADZONE_GAMING: f32 = 0.005;
-const DEADZONE_CINEMATIC: f32 = 0.02;
-
-/// Smoothing factors for exponential filtering
 const SMOOTHING_DEFAULT: f32 = 0.8;
-const SMOOTHING_GAMING: f32 = 0.9;
-const SMOOTHING_CINEMATIC: f32 = 0.6;
-
-/// Power curve factor for gaming acceleration
-const GAMING_ACCELERATION: f32 = 1.2;
-const SIGMOID_POWER: f32 = 2.0;
-const SIGMOID_NORMALIZATION: f32 = 10.0;
 
 #[derive(Clone, Debug)]
 pub struct DeadzoneFilter {
@@ -51,8 +40,10 @@ impl ExponentialFilter {
 
     pub fn apply(&mut self, input: (f32, f32)) -> (f32, f32) {
         let output = (
-            self.smoothing_factor * input.0 + (1.0 - self.smoothing_factor) * self.previous_output.0,
-            self.smoothing_factor * input.1 + (1.0 - self.smoothing_factor) * self.previous_output.1,
+            self.smoothing_factor * input.0
+                + (1.0 - self.smoothing_factor) * self.previous_output.0,
+            self.smoothing_factor * input.1
+                + (1.0 - self.smoothing_factor) * self.previous_output.1,
         );
         self.previous_output = output;
         output
@@ -63,60 +54,29 @@ impl ExponentialFilter {
     }
 }
 
-/// Non-linear response curves used in professional games for natural feel
+/// Linear response curve (simplified for Default preset only)
 #[derive(Clone, Debug)]
 pub struct SensitivityCurve {
     curve_type: CurveType,
-    power: f32,
 }
 
 #[derive(Clone, Debug)]
 pub enum CurveType {
     Linear,
-    Power,
-    Sigmoid,
 }
 
 impl SensitivityCurve {
     pub fn linear() -> Self {
         Self {
             curve_type: CurveType::Linear,
-            power: 1.0,
         }
     }
 
-    pub fn power(power: f32) -> Self {
-        Self {
-            curve_type: CurveType::Power,
-            power: power.max(0.1),
-        }
-    }
 
-    pub fn sigmoid() -> Self {
-        Self {
-            curve_type: CurveType::Sigmoid,
-            power: SIGMOID_POWER,
-        }
-    }
 
     pub fn apply(&self, input: (f32, f32)) -> (f32, f32) {
         match self.curve_type {
             CurveType::Linear => input,
-            CurveType::Power => {
-                let x_sign = input.0.signum();
-                let y_sign = input.1.signum();
-                let x_magnitude = input.0.abs().powf(self.power);
-                let y_magnitude = input.1.abs().powf(self.power);
-                (x_sign * x_magnitude, y_sign * y_magnitude)
-            }
-            CurveType::Sigmoid => {
-                let apply_sigmoid = |x: f32| {
-                    let normalized = x / SIGMOID_NORMALIZATION;
-                    let sigmoid = 2.0 / (1.0 + (-self.power * normalized).exp()) - 1.0;
-                    sigmoid * SIGMOID_NORMALIZATION * x.signum()
-                };
-                (apply_sigmoid(input.0), apply_sigmoid(input.1))
-            }
         }
     }
 }
@@ -140,24 +100,6 @@ impl FilterPipeline {
         }
     }
 
-    pub fn gaming_preset() -> Self {
-        Self {
-            deadzone_filter: DeadzoneFilter::new(DEADZONE_GAMING),
-            smoothing_filter: ExponentialFilter::new(SMOOTHING_GAMING),
-            sensitivity_curve: SensitivityCurve::power(GAMING_ACCELERATION),
-            enabled: true,
-        }
-    }
-
-    pub fn cinematic_preset() -> Self {
-        Self {
-            deadzone_filter: DeadzoneFilter::new(DEADZONE_CINEMATIC),
-            smoothing_filter: ExponentialFilter::new(SMOOTHING_CINEMATIC),
-            sensitivity_curve: SensitivityCurve::sigmoid(),
-            enabled: true,
-        }
-    }
-
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
@@ -173,7 +115,7 @@ impl FilterPipeline {
         let after_deadzone = self.deadzone_filter.apply(input);
         let after_smoothing = self.smoothing_filter.apply(after_deadzone);
         let after_curve = self.sensitivity_curve.apply(after_smoothing);
-        
+
         after_curve
     }
 
@@ -217,8 +159,6 @@ impl Default for InputFrame {
 #[derive(Clone, Copy, Debug)]
 pub enum FilterPreset {
     Default,
-    Gaming,
-    Cinematic,
 }
 
 /// Event-frequency collection with frame-frequency processing to eliminate input loss
@@ -239,18 +179,13 @@ impl InputSystem {
         }
     }
 
-    pub fn new_with_preset(sensitivity: f32, preset: FilterPreset) -> Self {
-        let filter_pipeline = match preset {
-            FilterPreset::Default => FilterPipeline::new(),
-            FilterPreset::Gaming => FilterPipeline::gaming_preset(),
-            FilterPreset::Cinematic => FilterPipeline::cinematic_preset(),
-        };
-        
+    pub fn new_with_preset(sensitivity: f32, _preset: FilterPreset) -> Self {
+        // Only Default preset is supported
         Self {
             mouse_state: MouseState::default(),
             current_frame: InputFrame::default(),
             sensitivity,
-            filter_pipeline,
+            filter_pipeline: FilterPipeline::new(),
         }
     }
 
@@ -269,17 +204,17 @@ impl InputSystem {
     pub fn sample_frame_input(&mut self) -> (f32, f32) {
         let raw_delta = self.mouse_state.delta_accumulator;
         self.mouse_state.delta_accumulator = (0.0, 0.0);
-        
+
         let sensitivity_applied = (
             raw_delta.0 as f32 * self.sensitivity,
             raw_delta.1 as f32 * self.sensitivity,
         );
-        
+
         let filtered_delta = self.filter_pipeline.apply(sensitivity_applied);
-        
+
         self.current_frame.mouse_delta = filtered_delta;
         self.current_frame.timestamp = Instant::now();
-        
+
         filtered_delta
     }
 
@@ -292,15 +227,10 @@ impl InputSystem {
         self.filter_pipeline.set_enabled(enabled);
     }
 
-    pub fn apply_preset(&mut self, preset: FilterPreset) {
-        self.filter_pipeline = match preset {
-            FilterPreset::Default => FilterPipeline::new(),
-            FilterPreset::Gaming => FilterPipeline::gaming_preset(),
-            FilterPreset::Cinematic => FilterPipeline::cinematic_preset(),
-        };
+    pub fn apply_preset(&mut self, _preset: FilterPreset) {
+        // Only Default preset is supported
+        self.filter_pipeline = FilterPipeline::new();
     }
-
-
 }
 
 #[cfg(test)]
@@ -310,17 +240,17 @@ mod tests {
     #[test]
     fn test_input_accumulation() {
         let mut input_system = InputSystem::new(1.0);
-        
+
         // Simulate multiple mouse events between frames
         input_system.collect_mouse_delta((1.0, 0.0));
         input_system.collect_mouse_delta((1.0, 0.0));
         input_system.collect_mouse_delta((0.0, 1.0));
-        
+
         // Sample should return accumulated delta
         let (x, y) = input_system.sample_frame_input();
         assert_eq!(x, 2.0); // 1.0 + 1.0
         assert_eq!(y, 1.0); // 0.0 + 0.0 + 1.0
-        
+
         // Should be reset after sampling
         let (x2, y2) = input_system.sample_frame_input();
         assert_eq!(x2, 0.0);
@@ -330,10 +260,10 @@ mod tests {
     #[test]
     fn test_sensitivity_scaling() {
         let mut input_system = InputSystem::new(2.0);
-        
+
         input_system.collect_mouse_delta((1.0, 1.0));
         let (x, y) = input_system.sample_frame_input();
-        
+
         assert_eq!(x, 2.0); // 1.0 * 2.0
         assert_eq!(y, 2.0); // 1.0 * 2.0
     }
@@ -341,12 +271,12 @@ mod tests {
     #[test]
     fn test_has_pending_input() {
         let mut input_system = InputSystem::new(1.0);
-        
+
         assert!(!input_system.has_pending_input());
-        
+
         input_system.collect_mouse_delta((1.0, 0.0));
         assert!(input_system.has_pending_input());
-        
+
         input_system.sample_frame_input();
         assert!(!input_system.has_pending_input());
     }

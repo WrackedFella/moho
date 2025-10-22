@@ -28,13 +28,17 @@ impl Modal for KeybindConflictModal {
 
             // Warning icon and message
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("⚠").size(32.0).color(egui::Color32::YELLOW));
+                ui.label(
+                    egui::RichText::new("⚠")
+                        .size(32.0)
+                        .color(egui::Color32::YELLOW),
+                );
                 ui.add_space(8.0);
                 ui.vertical(|ui| {
                     ui.label(
                         egui::RichText::new("This key is already assigned!")
                             .strong()
-                            .size(16.0)
+                            .size(16.0),
                     );
                     ui.add_space(4.0);
                     ui.label(format!(
@@ -44,7 +48,7 @@ impl Modal for KeybindConflictModal {
                     ui.label(
                         egui::RichText::new(&self.conflicting_key_name)
                             .strong()
-                            .color(egui::Color32::LIGHT_BLUE)
+                            .color(egui::Color32::LIGHT_BLUE),
                     );
                 });
             });
@@ -60,7 +64,7 @@ impl Modal for KeybindConflictModal {
                     self.conflicting_key_name
                 ))
                 .italics()
-                .color(egui::Color32::GRAY)
+                .color(egui::Color32::GRAY),
             );
 
             ui.add_space(12.0);
@@ -68,13 +72,19 @@ impl Modal for KeybindConflictModal {
             // Buttons
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.add(egui::Button::new("Proceed").min_size(egui::vec2(100.0, 32.0))).clicked() {
+                    if ui
+                        .add(egui::Button::new("Proceed").min_size(egui::vec2(100.0, 32.0)))
+                        .clicked()
+                    {
                         result = ModalResult::Confirm;
                     }
 
                     ui.add_space(8.0);
 
-                    if ui.add(egui::Button::new("Cancel").min_size(egui::vec2(100.0, 32.0))).clicked() {
+                    if ui
+                        .add(egui::Button::new("Cancel").min_size(egui::vec2(100.0, 32.0)))
+                        .clicked()
+                    {
                         result = ModalResult::Cancel;
                     }
                 });

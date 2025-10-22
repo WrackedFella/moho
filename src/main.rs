@@ -1,5 +1,7 @@
 #[cfg(feature = "backend-wgpu")]
 use legion::World;
+#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
+use moho_ui::prefs::Prefs;
 #[cfg(feature = "backend-wgpu")]
 use std::sync::Arc;
 #[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
@@ -16,8 +18,6 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 #[cfg(feature = "backend-wgpu")]
 use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
-#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
-use moho_ui::prefs::Prefs;
 
 // Combined state to handle lifetimes properly
 #[cfg(feature = "backend-wgpu")]
@@ -104,14 +104,7 @@ impl App {
         #[cfg(not(feature = "ui-egui"))]
         let mouse_sensitivity = 0.002;
 
-        // Convert UI filter preset to engine filter preset
-        #[cfg(feature = "ui-egui")]
-        let engine_filter_preset = match prefs.input_filter_preset {
-            moho_ui::prefs::InputFilterPreset::Default => engine_core::input::FilterPreset::Default,
-            moho_ui::prefs::InputFilterPreset::Gaming => engine_core::input::FilterPreset::Gaming,
-            moho_ui::prefs::InputFilterPreset::Cinematic => engine_core::input::FilterPreset::Cinematic,
-        };
-        #[cfg(not(feature = "ui-egui"))]
+        // Always use the default filter preset
         let engine_filter_preset = engine_core::input::FilterPreset::Default;
 
         Self {
@@ -131,7 +124,10 @@ impl App {
             controller_input: engine_core::controller::ControllerInput::default(),
             mouse_sensitivity,
             input_system: {
-                let mut input_sys = engine_core::input::InputSystem::new_with_preset(mouse_sensitivity, engine_filter_preset);
+                let mut input_sys = engine_core::input::InputSystem::new_with_preset(
+                    mouse_sensitivity,
+                    engine_filter_preset,
+                );
                 #[cfg(feature = "ui-egui")]
                 input_sys.set_filter_enabled(prefs.input_filtering_enabled);
                 input_sys
@@ -512,20 +508,19 @@ impl ApplicationHandler for App {
                             }
                         }
                         UiEvent::SettingsSaved(prefs) => {
-                            log::info!("Settings saved - applying mouse sensitivity: {} | filter preset: {:?} | filtering enabled: {}", 
-                                prefs.mouse_sensitivity, prefs.input_filter_preset, prefs.input_filtering_enabled);
-                            
+                            log::info!(
+                                "Settings saved - applying mouse sensitivity: {} | filtering enabled: {}",
+                                prefs.mouse_sensitivity,
+                                prefs.input_filtering_enabled
+                            );
+
                             // Scale the UI range (0.01-10.0) to radians per pixel
                             self.mouse_sensitivity = prefs.mouse_sensitivity * 0.002;
                             self.input_system.set_sensitivity(self.mouse_sensitivity);
-                            
-                            let engine_filter_preset = match prefs.input_filter_preset {
-                                moho_ui::prefs::InputFilterPreset::Default => engine_core::input::FilterPreset::Default,
-                                moho_ui::prefs::InputFilterPreset::Gaming => engine_core::input::FilterPreset::Gaming,
-                                moho_ui::prefs::InputFilterPreset::Cinematic => engine_core::input::FilterPreset::Cinematic,
-                            };
-                            self.input_system.apply_preset(engine_filter_preset);
-                            self.input_system.set_filter_enabled(prefs.input_filtering_enabled);
+
+                            // Always use default filter preset, only apply filtering enabled state
+                            self.input_system
+                                .set_filter_enabled(prefs.input_filtering_enabled);
                         }
                     }
                 }
