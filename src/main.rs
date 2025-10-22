@@ -57,6 +57,7 @@ struct App {
     player_controller: engine_core::controller::PlayerController,
     controller_input: engine_core::controller::ControllerInput,
     mouse_sensitivity: f32,
+    input_system: engine_core::input::InputSystem,
 
     // Keyboard state tracking
     key_w: bool,
@@ -103,6 +104,16 @@ impl App {
         #[cfg(not(feature = "ui-egui"))]
         let mouse_sensitivity = 0.002;
 
+        // Convert UI filter preset to engine filter preset
+        #[cfg(feature = "ui-egui")]
+        let engine_filter_preset = match prefs.input_filter_preset {
+            moho_ui::prefs::InputFilterPreset::Default => engine_core::input::FilterPreset::Default,
+            moho_ui::prefs::InputFilterPreset::Gaming => engine_core::input::FilterPreset::Gaming,
+            moho_ui::prefs::InputFilterPreset::Cinematic => engine_core::input::FilterPreset::Cinematic,
+        };
+        #[cfg(not(feature = "ui-egui"))]
+        let engine_filter_preset = engine_core::input::FilterPreset::Default;
+
         Self {
             world,
             scene,
@@ -119,6 +130,12 @@ impl App {
             player_controller,
             controller_input: engine_core::controller::ControllerInput::default(),
             mouse_sensitivity,
+            input_system: {
+                let mut input_sys = engine_core::input::InputSystem::new_with_preset(mouse_sensitivity, engine_filter_preset);
+                #[cfg(feature = "ui-egui")]
+                input_sys.set_filter_enabled(prefs.input_filtering_enabled);
+                input_sys
+            },
 
             // Keyboard state
             key_w: false,
@@ -321,12 +338,7 @@ impl App {
         {
             return;
         }
-
-        // Apply mouse delta to controller input
-        // Mouse X controls yaw (left/right), Mouse Y controls pitch (up/down)
-        // Invert X so moving mouse right turns camera right
-        self.controller_input.yaw_delta = -delta.0 as f32 * self.mouse_sensitivity;
-        self.controller_input.pitch_delta = -delta.1 as f32 * self.mouse_sensitivity; // Invert Y for natural feel
+        self.input_system.collect_mouse_delta((-delta.0, -delta.1));
     }
 
     /// Grab and hide the cursor for game mode
@@ -437,6 +449,10 @@ impl ApplicationHandler for App {
                 // Update controller input from keyboard state
                 self.update_controller_input();
 
+                let (yaw_delta, pitch_delta) = self.input_system.sample_frame_input();
+                self.controller_input.yaw_delta = yaw_delta;
+                self.controller_input.pitch_delta = pitch_delta;
+
                 // Apply input to player controller
                 self.player_controller
                     .apply_input(&self.controller_input, dt);
@@ -444,10 +460,6 @@ impl ApplicationHandler for App {
                 // Update camera from controller
                 self.camera =
                     engine_core::controller::controller_to_camera(&self.player_controller);
-
-                // Reset mouse deltas for next frame
-                self.controller_input.yaw_delta = 0.0;
-                self.controller_input.pitch_delta = 0.0;
             }
 
             if let Some(ref wr) = self.window_renderer {
@@ -500,9 +512,20 @@ impl ApplicationHandler for App {
                             }
                         }
                         UiEvent::SettingsSaved(prefs) => {
-                            log::info!("Settings saved - applying mouse sensitivity: {}", prefs.mouse_sensitivity);
+                            log::info!("Settings saved - applying mouse sensitivity: {} | filter preset: {:?} | filtering enabled: {}", 
+                                prefs.mouse_sensitivity, prefs.input_filter_preset, prefs.input_filtering_enabled);
+                            
                             // Scale the UI range (0.01-10.0) to radians per pixel
                             self.mouse_sensitivity = prefs.mouse_sensitivity * 0.002;
+                            self.input_system.set_sensitivity(self.mouse_sensitivity);
+                            
+                            let engine_filter_preset = match prefs.input_filter_preset {
+                                moho_ui::prefs::InputFilterPreset::Default => engine_core::input::FilterPreset::Default,
+                                moho_ui::prefs::InputFilterPreset::Gaming => engine_core::input::FilterPreset::Gaming,
+                                moho_ui::prefs::InputFilterPreset::Cinematic => engine_core::input::FilterPreset::Cinematic,
+                            };
+                            self.input_system.apply_preset(engine_filter_preset);
+                            self.input_system.set_filter_enabled(prefs.input_filtering_enabled);
                         }
                     }
                 }

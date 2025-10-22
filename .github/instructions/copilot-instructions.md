@@ -25,6 +25,9 @@ applyTo: '**'
 - Maintain clear separation of concerns between different parts of the codebase.
 - Follow established design patterns and coding conventions used in the project.
 - Consolidate library versions to avoid duplication and potential conflicts.
+- When possible, lean towards product-ready architecture patterns and industry standards.
+- Break large architectural changes into manageable phases that can be tested and validated.
+- Prioritize professional-grade systems that will scale with the project's growth.
 
 # Game Development
 - Use rust for all code.

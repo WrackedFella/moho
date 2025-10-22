@@ -24,6 +24,22 @@ pub struct Prefs {
     pub key_s: Binding,
     pub key_d: Binding,
     pub mouse_sensitivity: f32,
+    pub input_filter_preset: InputFilterPreset,
+    pub input_filtering_enabled: bool,
+}
+
+/// Input filtering presets for different use cases
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputFilterPreset {
+    Default,
+    Gaming,
+    Cinematic,
+}
+
+impl Default for InputFilterPreset {
+    fn default() -> Self {
+        InputFilterPreset::Default
+    }
 }
 
 impl Default for Prefs {
@@ -34,6 +50,8 @@ impl Default for Prefs {
             key_s: Binding::new('S' as u32, 0),
             key_d: Binding::new('D' as u32, 0),
             mouse_sensitivity: 1.0,
+            input_filter_preset: InputFilterPreset::Default,
+            input_filtering_enabled: true,
         }
     }
 }
@@ -108,6 +126,19 @@ impl Prefs {
                 if let Some(s) = get_str("key_s") { prefs.key_s = parse_binding(&s, prefs.key_s); }
                 if let Some(s) = get_str("key_d") { prefs.key_d = parse_binding(&s, prefs.key_d); }
                 prefs.mouse_sensitivity = get_f32("mouse_sensitivity", prefs.mouse_sensitivity);
+                
+                // Parse input filtering preferences
+                if let Some(s) = get_str("input_filter_preset") {
+                    prefs.input_filter_preset = match s.to_lowercase().as_str() {
+                        "gaming" => InputFilterPreset::Gaming,
+                        "cinematic" => InputFilterPreset::Cinematic,
+                        _ => InputFilterPreset::Default,
+                    };
+                }
+                
+                if let Some(s) = get_str("input_filtering_enabled") {
+                    prefs.input_filtering_enabled = s.to_lowercase() == "true" || s == "1";
+                }
             }
         }
 
@@ -148,6 +179,16 @@ impl Prefs {
         out.push_str(&format!("key_s={}\n", binding_to_string(&self.key_s)));
         out.push_str(&format!("key_d={}\n", binding_to_string(&self.key_d)));
         out.push_str(&format!("mouse_sensitivity={}\n", self.mouse_sensitivity));
+        
+        // Save input filtering preferences
+        let preset_name = match self.input_filter_preset {
+            InputFilterPreset::Default => "default",
+            InputFilterPreset::Gaming => "gaming",
+            InputFilterPreset::Cinematic => "cinematic",
+        };
+        out.push_str(&format!("input_filter_preset={}\n", preset_name));
+        out.push_str(&format!("input_filtering_enabled={}\n", self.input_filtering_enabled));
+        
         fs::write(path, out)?;
         Ok(())
     }

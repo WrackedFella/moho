@@ -1,5 +1,5 @@
 use crate::menus::menu::{Menu, MenuAction, MenuSpec};
-use crate::prefs::{Prefs, Binding};
+use crate::prefs::{Prefs, Binding, InputFilterPreset};
 
 #[derive(Clone)]
 struct PendingBinding {
@@ -18,6 +18,8 @@ pub struct SettingsMenu {
     dirty_key_s: bool,
     dirty_key_d: bool,
     dirty_mouse_sens: bool,
+    dirty_filter_preset: bool,
+    dirty_filtering_enabled: bool,
     listening: Option<usize>,
     pending_binding: Option<PendingBinding>,
     pub show_conflict_modal: bool,
@@ -37,6 +39,8 @@ impl SettingsMenu {
             dirty_key_s: false,
             dirty_key_d: false,
             dirty_mouse_sens: false,
+            dirty_filter_preset: false,
+            dirty_filtering_enabled: false,
             listening: None,
             pending_binding: None,
             show_conflict_modal: false,
@@ -106,6 +110,7 @@ impl SettingsMenu {
 
     fn is_dirty(&self) -> bool {
         self.dirty_key_w || self.dirty_key_a || self.dirty_key_s || self.dirty_key_d || self.dirty_mouse_sens
+            || self.dirty_filter_preset || self.dirty_filtering_enabled
     }
 
     fn paint_dirty_decor(ui: &mut egui::Ui, resp: &egui::Response, dirty: bool) {
@@ -282,6 +287,71 @@ impl Menu for SettingsMenu {
 
                 ui.add_space(12.0);
 
+                // Input Filtering Section
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(label_width, 28.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label("Input Filtering:");
+                        }
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Toggle filtering on/off
+                        let checkbox = ui.checkbox(&mut self.staged.input_filtering_enabled, "Enable");
+                        Self::paint_dirty_decor(ui, &checkbox, self.staged.input_filtering_enabled != self.prefs.input_filtering_enabled);
+                        self.dirty_filtering_enabled = self.staged.input_filtering_enabled != self.prefs.input_filtering_enabled;
+                    });
+                });
+
+                ui.add_space(8.0);
+
+                // Filter Preset Selection
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(label_width, 28.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label("Filter Preset:");
+                        }
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let preset_names = ["Default", "Gaming", "Cinematic"];
+                        let current_index = match self.staged.input_filter_preset {
+                            InputFilterPreset::Default => 0,
+                            InputFilterPreset::Gaming => 1,
+                            InputFilterPreset::Cinematic => 2,
+                        };
+                        
+                        let mut selected_index = current_index;
+                        let combo = egui::ComboBox::from_id_salt("filter_preset")
+                            .selected_text(preset_names[current_index])
+                            .width(120.0)
+                            .show_ui(ui, |ui| {
+                                for (i, name) in preset_names.iter().enumerate() {
+                                    let tooltip = match i {
+                                        1 => "Minimal filtering for competitive gaming",
+                                        2 => "Heavy smoothing for cinematic camera work",
+                                        _ => "Balanced filtering for general use",
+                                    };
+                                    if ui.selectable_value(&mut selected_index, i, *name)
+                                        .on_hover_text(tooltip).clicked() {
+                                        self.staged.input_filter_preset = match i {
+                                            1 => InputFilterPreset::Gaming,
+                                            2 => InputFilterPreset::Cinematic,
+                                            _ => InputFilterPreset::Default,
+                                        };
+                                    }
+                                }
+                            });
+                        
+                        Self::paint_dirty_decor(ui, &combo.response, self.staged.input_filter_preset != self.prefs.input_filter_preset);
+                        self.dirty_filter_preset = self.staged.input_filter_preset != self.prefs.input_filter_preset;
+                    });
+                });
+
+                ui.add_space(12.0);
+
                 egui::TopBottomPanel::bottom("settings_bottom").show(ctx, |ui| {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
@@ -298,6 +368,8 @@ impl Menu for SettingsMenu {
                             self.dirty_key_s = false;
                             self.dirty_key_d = false;
                             self.dirty_mouse_sens = false;
+                            self.dirty_filter_preset = false;
+                            self.dirty_filtering_enabled = false;
                         }
                         items.push(crate::menus::menu::MenuItem {
                             action: if save_clicked {
