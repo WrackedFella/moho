@@ -16,6 +16,8 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 #[cfg(feature = "backend-wgpu")]
 use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
+#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
+use moho_ui::prefs::Prefs;
 
 // Combined state to handle lifetimes properly
 #[cfg(feature = "backend-wgpu")]
@@ -93,6 +95,14 @@ impl App {
         // Initialize player controller at the camera position
         let player_controller = engine_core::controller::PlayerController::new(camera.2);
 
+        // Load preferences and apply mouse sensitivity
+        #[cfg(feature = "ui-egui")]
+        let prefs = Prefs::load();
+        #[cfg(feature = "ui-egui")]
+        let mouse_sensitivity = prefs.mouse_sensitivity * 0.002;
+        #[cfg(not(feature = "ui-egui"))]
+        let mouse_sensitivity = 0.002;
+
         Self {
             world,
             scene,
@@ -108,7 +118,7 @@ impl App {
             // Camera control
             player_controller,
             controller_input: engine_core::controller::ControllerInput::default(),
-            mouse_sensitivity: 0.002, // Radians per pixel of mouse movement
+            mouse_sensitivity,
 
             // Keyboard state
             key_w: false,
@@ -489,6 +499,11 @@ impl ApplicationHandler for App {
                                 wr.window.set_cursor_visible(true);
                             }
                         }
+                        UiEvent::SettingsSaved(prefs) => {
+                            log::info!("Settings saved - applying mouse sensitivity: {}", prefs.mouse_sensitivity);
+                            // Scale the UI range (0.01-10.0) to radians per pixel
+                            self.mouse_sensitivity = prefs.mouse_sensitivity * 0.002;
+                        }
                     }
                 }
             }
@@ -507,14 +522,21 @@ impl ApplicationHandler for App {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        // Forward ONLY mouse events to UI - NO KEYBOARD
+        // Forward input events to UI adapter when in Menu mode
         #[cfg(feature = "ui-egui")]
         if let Some(ui_adapter) = &self.ui_adapter {
             use winit::event::WindowEvent as WEvent;
             match &event {
+                // Always forward mouse events
                 WEvent::CursorMoved { .. }
                 | WEvent::MouseInput { .. }
                 | WEvent::ModifiersChanged(_) => {
+                    if let Ok(mut a) = ui_adapter.lock() {
+                        a.handle_winit_event(&event);
+                    }
+                }
+                // Forward keyboard events ONLY in Menu mode
+                WEvent::KeyboardInput { .. } if self.mode == AppMode::Menu => {
                     if let Ok(mut a) = ui_adapter.lock() {
                         a.handle_winit_event(&event);
                     }

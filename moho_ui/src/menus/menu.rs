@@ -1,5 +1,6 @@
 use egui::{Align2, Vec2};
 use std::path::PathBuf;
+use crate::prefs::Prefs;
 
 /// Actions a Menu may return when interacted with.
 #[derive(Debug, Clone, PartialEq)]
@@ -10,6 +11,7 @@ pub enum MenuAction {
     Exit,
     ShowMenu(String),
     Close,
+    SettingsSaved(Prefs),
 }
 
 /// A single logical menu item exposed by a Menu implementation. `rect`
@@ -165,4 +167,7 @@ pub trait Menu: Send {
     fn ui(&mut self, ctx: &egui::Context) -> Vec<MenuItem>;
     fn on_show(&mut self) {}
     fn on_hide(&mut self) {}
+    
+    /// Allow downcasting to concrete menu types
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }

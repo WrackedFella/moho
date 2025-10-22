@@ -41,6 +41,15 @@ pub mod adapter;
 #[cfg(feature = "ui-egui")]
 pub mod menus;
 
+#[cfg(feature = "ui-egui")]
+pub mod prefs;
+
+#[cfg(feature = "ui-egui")]
+pub mod modal;
+
+#[cfg(feature = "ui-egui")]
+pub mod modals;
+
 // Re-export the main types for easy access
 #[cfg(feature = "ui-egui")]
 pub use adapter::{EguiAdapter, UI_OVERLAY_VISIBLE, UiEvent, UiReceiver, build_adapter};
@@ -50,3 +59,9 @@ pub use adapter::EguiAdapter as EguiUi;
 
 #[cfg(feature = "ui-egui")]
 pub use menus::{Menu, MenuAction, MenuItem, SettingsMenu, StartMenu};
+
+#[cfg(feature = "ui-egui")]
+pub use modal::{Modal, ModalManager, ModalResult};
+
+#[cfg(feature = "ui-egui")]
+pub use modals::KeybindConflictModal;
