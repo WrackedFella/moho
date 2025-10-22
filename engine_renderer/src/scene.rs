@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 /// Scene file version. Bump when the on-disk layout changes.
-const SCENE_FILE_VERSION: u32 = 1;
+const SCENE_FILE_VERSION: u32 = 2;
 
 /// Scene manager that owns the `MaterialTable` and provides a simple
 /// `render` API to submit an ECS world for drawing. This centralizes
@@ -174,13 +174,14 @@ impl Scene {
 
     /// Save a compact binary snapshot of the scene (method 2: bincode).
     /// This writes a serialized SceneDesc containing all Spheres, Cubes,
-    /// and Materials known to the scene. It does NOT serialize arbitrary
+    /// Materials, and camera position/orientation. It does NOT serialize arbitrary
     /// ECS state; it serializes the application-level scene description
     /// and can be reloaded into a fresh `World` via `load_from_file`.
     pub fn save_to_file<P: AsRef<Path>>(
         &self,
         path: P,
         world: &World,
+        camera_position: Option<(glam::Vec3, f32, f32)>, // (position, yaw, pitch)
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Collect serializable descriptors from the ECS world.
         let mut spheres: Vec<SphereDesc> = Vec::new();
@@ -204,10 +205,17 @@ impl Scene {
             });
         }
 
+        let camera = camera_position.map(|(pos, yaw, pitch)| CameraDesc {
+            position: [pos.x, pos.y, pos.z],
+            yaw,
+            pitch,
+        });
+
         let desc = SceneDesc {
             version: SCENE_FILE_VERSION,
             spheres,
             cubes,
+            camera,
         };
 
         let encoded = bincode::encode_to_vec(&desc, bincode::config::standard())?;
@@ -219,18 +227,19 @@ impl Scene {
     /// Load a SceneDesc from a file and populate the provided `world` with
     /// entities. Existing world contents are left untouched; caller may
     /// clear the world beforehand if desired.
+    /// Returns camera position and orientation if present in the scene file.
     pub fn load_from_file<P: AsRef<Path>>(
         &mut self,
         path: P,
         world: &mut World,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<Option<(glam::Vec3, f32, f32)>, Box<dyn std::error::Error>> {
         let mut f = File::open(path)?;
         let mut buf = Vec::new();
         f.read_to_end(&mut buf)?;
         let desc: SceneDesc = bincode::decode_from_slice(&buf, bincode::config::standard())?.0;
-        if desc.version != SCENE_FILE_VERSION {
+        if desc.version < 1 || desc.version > SCENE_FILE_VERSION {
             return Err(format!(
-                "unsupported scene file version: {} (expected {})",
+                "unsupported scene file version: {} (expected 1-{})",
                 desc.version, SCENE_FILE_VERSION
             )
             .into());
@@ -253,7 +262,13 @@ impl Scene {
             );
             world.push((cube,));
         }
-        Ok(())
+
+        // Return camera position and orientation if present
+        let camera_data = desc
+            .camera
+            .map(|cam| (glam::Vec3::from_array(cam.position), cam.yaw, cam.pitch));
+
+        Ok(camera_data)
     }
 }
 
@@ -270,6 +285,8 @@ struct SceneDesc {
     version: u32,
     spheres: Vec<SphereDesc>,
     cubes: Vec<CubeDesc>,
+    #[serde(default)]
+    camera: Option<CameraDesc>,
 }
 
 #[derive(Encode, Decode, Serialize, Deserialize)]
@@ -286,6 +303,13 @@ struct CubeDesc {
     width: f32,
     height: f32,
     material: MaterialDesc,
+}
+
+#[derive(Encode, Decode, Serialize, Deserialize)]
+struct CameraDesc {
+    position: [f32; 3],
+    yaw: f32,
+    pitch: f32,
 }
 
 #[derive(Encode, Decode, Serialize, Deserialize)]

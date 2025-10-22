@@ -32,7 +32,7 @@ fn save_and_load_scene_roundtrip() {
     let path = tmp.path().to_path_buf();
 
     // save
-    scene.save_to_file(&path, &world).expect("save ok");
+    scene.save_to_file(&path, &world, None).expect("save ok");
 
     // create a fresh world and load
     let mut loaded_world = World::default();

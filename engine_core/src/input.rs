@@ -72,8 +72,6 @@ impl SensitivityCurve {
         }
     }
 
-
-
     pub fn apply(&self, input: (f32, f32)) -> (f32, f32) {
         match self.curve_type {
             CurveType::Linear => input,
