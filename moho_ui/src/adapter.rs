@@ -5,6 +5,7 @@
 
 use crate::menus::{Menu, MenuAction, SettingsMenu, StartMenu};
 use crate::modal::ModalManager;
+use crate::prefs::Prefs;
 use engine_renderer::FrameCallback;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -21,6 +22,7 @@ pub enum UiEvent {
     ShowMenu(String),
     Exit,
     OverlayToggled(bool),
+    SettingsSaved(Prefs),
 }
 
 pub type UiReceiver = crossbeam_channel::Receiver<UiEvent>;
@@ -175,6 +177,9 @@ impl EguiAdapter {
             }
             MenuAction::Close => {
                 self.hide_menus();
+            }
+            MenuAction::SettingsSaved(prefs) => {
+                let _ = self.sender.send(UiEvent::SettingsSaved(prefs));
             }
             MenuAction::None => {
                 // No action

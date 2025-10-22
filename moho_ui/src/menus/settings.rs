@@ -286,27 +286,29 @@ impl Menu for SettingsMenu {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let save = ui.add(egui::Button::new("Save Changes").min_size(egui::vec2(120.0, 36.0)));
-                            let save_clicked = save.clicked();
-                            if save_clicked {
-                                // commit staged to prefs and save
-                                self.prefs = self.staged.clone();
-                                let _ = self.prefs.save();
-                                // clear dirty flags
-                                self.dirty_key_w = false;
-                                self.dirty_key_a = false;
-                                self.dirty_key_s = false;
-                                self.dirty_key_d = false;
-                                self.dirty_mouse_sens = false;
-                            }
-                            items.push(crate::menus::menu::MenuItem {
-                                action: MenuAction::None,
-                                rect: Some(save.rect),
-                                enabled: true,
-                                clicked: save_clicked,
-                            });
-
-                            ui.add_space(8.0);
+                        let save = ui.add(egui::Button::new("Save Changes").min_size(egui::vec2(120.0, 36.0)));
+                        let save_clicked = save.clicked();
+                        if save_clicked {
+                            // commit staged to prefs and save
+                            self.prefs = self.staged.clone();
+                            let _ = self.prefs.save();
+                            // clear dirty flags
+                            self.dirty_key_w = false;
+                            self.dirty_key_a = false;
+                            self.dirty_key_s = false;
+                            self.dirty_key_d = false;
+                            self.dirty_mouse_sens = false;
+                        }
+                        items.push(crate::menus::menu::MenuItem {
+                            action: if save_clicked {
+                                MenuAction::SettingsSaved(self.prefs.clone())
+                            } else {
+                                MenuAction::None
+                            },
+                            rect: Some(save.rect),
+                            enabled: true,
+                            clicked: save_clicked,
+                        });                            ui.add_space(8.0);
 
                             // Show Cancel when form is dirty, Back when clean
                             let is_dirty = self.is_dirty();

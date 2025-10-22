@@ -16,6 +16,8 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 #[cfg(feature = "backend-wgpu")]
 use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
+#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
+use moho_ui::prefs::Prefs;
 
 // Combined state to handle lifetimes properly
 #[cfg(feature = "backend-wgpu")]
@@ -93,6 +95,14 @@ impl App {
         // Initialize player controller at the camera position
         let player_controller = engine_core::controller::PlayerController::new(camera.2);
 
+        // Load preferences and apply mouse sensitivity
+        #[cfg(feature = "ui-egui")]
+        let prefs = Prefs::load();
+        #[cfg(feature = "ui-egui")]
+        let mouse_sensitivity = prefs.mouse_sensitivity * 0.002;
+        #[cfg(not(feature = "ui-egui"))]
+        let mouse_sensitivity = 0.002;
+
         Self {
             world,
             scene,
@@ -108,7 +118,7 @@ impl App {
             // Camera control
             player_controller,
             controller_input: engine_core::controller::ControllerInput::default(),
-            mouse_sensitivity: 0.002, // Radians per pixel of mouse movement
+            mouse_sensitivity,
 
             // Keyboard state
             key_w: false,
@@ -488,6 +498,11 @@ impl ApplicationHandler for App {
                             if visible && let Some(ref wr) = self.window_renderer {
                                 wr.window.set_cursor_visible(true);
                             }
+                        }
+                        UiEvent::SettingsSaved(prefs) => {
+                            log::info!("Settings saved - applying mouse sensitivity: {}", prefs.mouse_sensitivity);
+                            // Scale the UI range (0.01-10.0) to radians per pixel
+                            self.mouse_sensitivity = prefs.mouse_sensitivity * 0.002;
                         }
                     }
                 }
