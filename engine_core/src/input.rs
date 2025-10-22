@@ -205,6 +205,14 @@ impl InputSystem {
         let raw_delta = self.mouse_state.delta_accumulator;
         self.mouse_state.delta_accumulator = (0.0, 0.0);
 
+        // If no input accumulated, return zero and reset smoothing
+        if raw_delta.0.abs() < f64::EPSILON && raw_delta.1.abs() < f64::EPSILON {
+            self.filter_pipeline.reset();
+            self.current_frame.mouse_delta = (0.0, 0.0);
+            self.current_frame.timestamp = Instant::now();
+            return (0.0, 0.0);
+        }
+
         let sensitivity_applied = (
             raw_delta.0 as f32 * self.sensitivity,
             raw_delta.1 as f32 * self.sensitivity,
@@ -246,10 +254,12 @@ mod tests {
         input_system.collect_mouse_delta((1.0, 0.0));
         input_system.collect_mouse_delta((0.0, 1.0));
 
-        // Sample should return accumulated delta
+        // Sample should return accumulated delta with filtering applied
+        // Exponential smoothing factor 0.8: output = 0.8 * input + 0.2 * previous
+        // First frame: previous = 0.0, so output = 0.8 * input
         let (x, y) = input_system.sample_frame_input();
-        assert_eq!(x, 2.0); // 1.0 + 1.0
-        assert_eq!(y, 1.0); // 0.0 + 0.0 + 1.0
+        assert_eq!(x, 1.6); // 0.8 * (1.0 + 1.0)
+        assert_eq!(y, 0.8); // 0.8 * (0.0 + 0.0 + 1.0)
 
         // Should be reset after sampling
         let (x2, y2) = input_system.sample_frame_input();
@@ -264,8 +274,10 @@ mod tests {
         input_system.collect_mouse_delta((1.0, 1.0));
         let (x, y) = input_system.sample_frame_input();
 
-        assert_eq!(x, 2.0); // 1.0 * 2.0
-        assert_eq!(y, 2.0); // 1.0 * 2.0
+        // Input (1.0, 1.0) * sensitivity 2.0 = (2.0, 2.0)
+        // After exponential smoothing (factor 0.8): (1.6, 1.6)
+        assert_eq!(x, 1.6);
+        assert_eq!(y, 1.6);
     }
 
     #[test]
