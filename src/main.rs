@@ -210,7 +210,13 @@ impl App {
 
         // Save the new scene to the standard location
         let save_path = saves_dir.join("scene.bin");
-        self.scene.save_to_file(&save_path, &self.world)?;
+        let camera_data = Some((
+            self.player_controller.position,
+            self.player_controller.yaw,
+            self.player_controller.pitch,
+        ));
+        self.scene
+            .save_to_file(&save_path, &self.world, camera_data)?;
         log::info!("Saved new scene to {:?}", save_path);
 
         // Request a redraw to show the new scene
@@ -223,6 +229,30 @@ impl App {
         self.hide_menu();
 
         log::info!("New world generation complete - switched to game mode");
+        Ok(())
+    }
+
+    fn auto_save_on_shutdown(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        log::info!("Auto-saving on shutdown...");
+
+        // Ensure saves directory exists
+        let saves_dir = std::path::Path::new("saves");
+        if !saves_dir.exists() {
+            std::fs::create_dir_all(saves_dir)?;
+        }
+
+        // Save the current scene with camera data
+        let save_path = saves_dir.join("scene.bin");
+        let camera_data = Some((
+            self.player_controller.position,
+            self.player_controller.yaw,
+            self.player_controller.pitch,
+        ));
+
+        self.scene
+            .save_to_file(&save_path, &self.world, camera_data)?;
+        log::info!("Auto-saved scene to {:?}", save_path);
+
         Ok(())
     }
 
@@ -241,8 +271,23 @@ impl App {
         self.world.clear();
 
         // Load the scene from file
-        self.scene.load_from_file(&path, &mut self.world)?;
+        let camera_data = self.scene.load_from_file(&path, &mut self.world)?;
         log::info!("Scene loaded successfully from {:?}", path.as_ref());
+
+        // Restore camera position if available
+        if let Some((position, yaw, pitch)) = camera_data {
+            self.player_controller.position = position;
+            self.player_controller.yaw = yaw;
+            self.player_controller.pitch = pitch;
+            log::info!(
+                "Restored camera position: {:?}, yaw: {:.2}, pitch: {:.2}",
+                position,
+                yaw,
+                pitch
+            );
+        } else {
+            log::info!("No camera data found in scene file, keeping current position");
+        }
 
         // Request a redraw to show the loaded scene
         if let Some(ref wr) = self.window_renderer {
@@ -490,6 +535,10 @@ impl ApplicationHandler for App {
                         }
                         UiEvent::Exit => {
                             log::info!("UI requested exit");
+                            // Auto-save before exit
+                            if let Err(e) = self.auto_save_on_shutdown() {
+                                log::warn!("Failed to auto-save on exit: {}", e);
+                            }
                             event_loop.exit();
                         }
                         UiEvent::ShowMenu(name) => {
@@ -565,6 +614,10 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::CloseRequested => {
+                // Auto-save before close
+                if let Err(e) = self.auto_save_on_shutdown() {
+                    log::warn!("Failed to auto-save on close: {}", e);
+                }
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {

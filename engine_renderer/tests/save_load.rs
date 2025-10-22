@@ -32,12 +32,12 @@ fn save_and_load_scene_roundtrip() {
     let path = tmp.path().to_path_buf();
 
     // save
-    scene.save_to_file(&path, &world).expect("save ok");
+    scene.save_to_file(&path, &world, None).expect("save ok");
 
     // create a fresh world and load
     let mut loaded_world = World::default();
     let mut scene2 = engine_renderer::Scene::new();
-    scene2
+    let _camera_data = scene2
         .load_from_file(&path, &mut loaded_world)
         .expect("load ok");
 

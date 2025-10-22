@@ -55,6 +55,10 @@ pub struct EguiAdapter {
     surface_config: Option<wgpu::SurfaceConfiguration>,
 }
 
+// EguiAdapter needs to be Send + Sync for use with Arc<Mutex<>> across threads
+unsafe impl Send for EguiAdapter {}
+unsafe impl Sync for EguiAdapter {}
+
 impl EguiAdapter {
     /// Create a new adapter with a communication channel
     pub fn new(window: Option<Arc<Window>>) -> (Self, UiReceiver) {
@@ -259,20 +263,19 @@ impl FrameCallback for EguiAdapter {
             }
 
             // Check if settings menu wants to show conflict modal
-            if let Some(menu) = self.menus.get_mut("settings") {
-                if let Some(settings) = menu.as_any_mut().downcast_mut::<SettingsMenu>() {
-                    if settings.show_conflict_modal {
-                        settings.show_conflict_modal = false;
+            if let Some(menu) = self.menus.get_mut("settings")
+                && let Some(settings) = menu.as_any_mut().downcast_mut::<SettingsMenu>()
+                && settings.show_conflict_modal
+            {
+                settings.show_conflict_modal = false;
 
-                        use crate::modals::KeybindConflictModal;
-                        let modal = KeybindConflictModal::new(
-                            settings.conflict_key_name.clone(),
-                            settings.conflict_binding_desc.clone(),
-                        );
+                use crate::modals::KeybindConflictModal;
+                let modal = KeybindConflictModal::new(
+                    settings.conflict_key_name.clone(),
+                    settings.conflict_binding_desc.clone(),
+                );
 
-                        self.modal_manager.show(Box::new(modal));
-                    }
-                }
+                self.modal_manager.show(Box::new(modal));
             }
 
             // Render modal on top of menu (if active)
@@ -283,17 +286,17 @@ impl FrameCallback for EguiAdapter {
         use crate::modal::ModalResult;
         match modal_result {
             ModalResult::Confirm => {
-                if let Some(menu) = self.menus.get_mut("settings") {
-                    if let Some(settings) = menu.as_any_mut().downcast_mut::<SettingsMenu>() {
-                        settings.apply_pending_binding();
-                    }
+                if let Some(menu) = self.menus.get_mut("settings")
+                    && let Some(settings) = menu.as_any_mut().downcast_mut::<SettingsMenu>()
+                {
+                    settings.apply_pending_binding();
                 }
             }
             ModalResult::Cancel => {
-                if let Some(menu) = self.menus.get_mut("settings") {
-                    if let Some(settings) = menu.as_any_mut().downcast_mut::<SettingsMenu>() {
-                        settings.cancel_pending_binding();
-                    }
+                if let Some(menu) = self.menus.get_mut("settings")
+                    && let Some(settings) = menu.as_any_mut().downcast_mut::<SettingsMenu>()
+                {
+                    settings.cancel_pending_binding();
                 }
             }
             ModalResult::None => {}

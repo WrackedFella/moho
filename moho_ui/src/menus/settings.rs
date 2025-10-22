@@ -71,11 +71,11 @@ impl SettingsMenu {
         if b.mods & 4 != 0 {
             s.push_str("Alt+");
         }
-        if let Some(ch) = std::char::from_u32(b.code) {
-            if ch.is_ascii_graphic() {
-                s.push(ch.to_ascii_uppercase());
-                return s;
-            }
+        if let Some(ch) = std::char::from_u32(b.code)
+            && ch.is_ascii_graphic()
+        {
+            s.push(ch.to_ascii_uppercase());
+            return s;
         }
         match b.code {
             0x100 => s.push_str("ArrowUp"),
@@ -198,11 +198,11 @@ impl Menu for SettingsMenu {
                     if b.mods & 4 != 0 {
                         s.push_str("Alt+");
                     }
-                    if let Some(ch) = std::char::from_u32(b.code) {
-                        if ch.is_ascii_graphic() {
-                            s.push(ch.to_ascii_uppercase());
-                            return s;
-                        }
+                    if let Some(ch) = std::char::from_u32(b.code)
+                        && ch.is_ascii_graphic()
+                    {
+                        s.push(ch.to_ascii_uppercase());
+                        return s;
                     }
                     match b.code {
                         0x100 => {
@@ -540,12 +540,11 @@ impl Menu for SettingsMenu {
                 for ev in &input.events {
                     if let egui::Event::Key {
                         key,
-                        pressed,
+                        pressed: true,
                         modifiers,
                         ..
                     } = ev
                     {
-                        if *pressed {
                             // Escape cancels listening
                             if *key == egui::Key::Escape {
                                 self.listening = None;
@@ -616,7 +615,6 @@ impl Menu for SettingsMenu {
                             self.listening = None;
                         }
                     }
-                }
             });
         }
 
