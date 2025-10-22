@@ -8,6 +8,9 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 
+/// Type alias for camera data: (position, yaw, pitch)
+pub type CameraData = (glam::Vec3, f32, f32);
+
 /// Scene file version. Bump when the on-disk layout changes.
 const SCENE_FILE_VERSION: u32 = 2;
 
@@ -181,7 +184,7 @@ impl Scene {
         &self,
         path: P,
         world: &World,
-        camera_position: Option<(glam::Vec3, f32, f32)>, // (position, yaw, pitch)
+        camera_position: Option<CameraData>, // (position, yaw, pitch)
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Collect serializable descriptors from the ECS world.
         let mut spheres: Vec<SphereDesc> = Vec::new();
@@ -232,7 +235,7 @@ impl Scene {
         &mut self,
         path: P,
         world: &mut World,
-    ) -> Result<Option<(glam::Vec3, f32, f32)>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<CameraData>, Box<dyn std::error::Error>> {
         let mut f = File::open(path)?;
         let mut buf = Vec::new();
         f.read_to_end(&mut buf)?;

@@ -37,7 +37,7 @@ fn save_and_load_scene_roundtrip() {
     // create a fresh world and load
     let mut loaded_world = World::default();
     let mut scene2 = engine_renderer::Scene::new();
-    scene2
+    let _camera_data = scene2
         .load_from_file(&path, &mut loaded_world)
         .expect("load ok");
 

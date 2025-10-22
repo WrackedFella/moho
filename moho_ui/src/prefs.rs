@@ -68,8 +68,9 @@ impl Prefs {
         };
 
         let mut prefs = Prefs::default();
-        if let Ok(map) = ini::macro_safe_read(&content) {
-            if let Some(section) = map.get("prefs").or_else(|| map.get("default")) {
+        if let Ok(map) = ini::macro_safe_read(&content)
+            && let Some(section) = map.get("prefs").or_else(|| map.get("default"))
+        {
                 let get_str = |k: &str| section.get(k).and_then(|o| o.clone());
                 let get_f32 = |k: &str, def: f32| {
                     section
@@ -151,7 +152,6 @@ impl Prefs {
                 if let Some(s) = get_str("input_filtering_enabled") {
                     prefs.input_filtering_enabled = s.to_lowercase() == "true" || s == "1";
                 }
-            }
         }
 
         prefs
@@ -179,11 +179,11 @@ impl Prefs {
             if b.mods & 4 != 0 {
                 s.push_str("Alt+");
             }
-            if let Some(ch) = std::char::from_u32(b.code) {
-                if ch.is_ascii_graphic() {
-                    s.push(ch.to_ascii_uppercase());
-                    return s;
-                }
+            if let Some(ch) = std::char::from_u32(b.code)
+                && ch.is_ascii_graphic()
+            {
+                s.push(ch.to_ascii_uppercase());
+                return s;
             }
             match b.code {
                 0x100 => s.push_str("ArrowUp"),

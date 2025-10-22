@@ -112,13 +112,17 @@ impl FilterPipeline {
 
         let after_deadzone = self.deadzone_filter.apply(input);
         let after_smoothing = self.smoothing_filter.apply(after_deadzone);
-        let after_curve = self.sensitivity_curve.apply(after_smoothing);
-
-        after_curve
+        self.sensitivity_curve.apply(after_smoothing)
     }
 
     pub fn reset(&mut self) {
         self.smoothing_filter.reset();
+    }
+}
+
+impl Default for FilterPipeline {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
