@@ -1,6 +1,6 @@
 ---
 mode: agent
-model: GPT-5 mini
+model: Grok Code Fast 1
 ---
 Create a TODO item as a comment in the code near the relevant section.
 

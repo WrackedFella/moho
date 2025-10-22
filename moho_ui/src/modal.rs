@@ -65,11 +65,8 @@ impl ModalManager {
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
                     let screen_rect = ctx.input(|i| i.viewport_rect());
-                    ui.painter().rect_filled(
-                        screen_rect,
-                        0.0,
-                        self.backdrop_color,
-                    );
+                    ui.painter()
+                        .rect_filled(screen_rect, 0.0, self.backdrop_color);
                 });
 
             // Draw modal window

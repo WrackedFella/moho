@@ -139,7 +139,7 @@ impl Cube {
             [-0.5, 0.5, -0.5],
             [0.5, 0.5, -0.5],
         ];
-        
+
         // Normals: each face has 4 vertices with the same normal
         let normals: Vec<[f32; 3]> = vec![
             // +X face (right)
@@ -173,20 +173,15 @@ impl Cube {
             [0.0, 0.0, -1.0],
             [0.0, 0.0, -1.0],
         ];
-        
+
         // Indices: 2 triangles per face, 6 faces = 36 indices
         let indices: Vec<u32> = vec![
             // +X face
-            0, 1, 2, 0, 2, 3,
-            // -X face
-            4, 5, 6, 4, 6, 7,
-            // +Y face
-            8, 9, 10, 8, 10, 11,
-            // -Y face
-            12, 13, 14, 12, 14, 15,
-            // +Z face
-            16, 17, 18, 16, 18, 19,
-            // -Z face
+            0, 1, 2, 0, 2, 3, // -X face
+            4, 5, 6, 4, 6, 7, // +Y face
+            8, 9, 10, 8, 10, 11, // -Y face
+            12, 13, 14, 12, 14, 15, // +Z face
+            16, 17, 18, 16, 18, 19, // -Z face
             20, 21, 22, 20, 22, 23,
         ];
         (verts, normals, indices)

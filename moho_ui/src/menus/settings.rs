@@ -1,5 +1,5 @@
 use crate::menus::menu::{Menu, MenuAction, MenuSpec};
-use crate::prefs::{Prefs, Binding};
+use crate::prefs::{Binding, Prefs};
 
 #[derive(Clone)]
 struct PendingBinding {
@@ -18,6 +18,7 @@ pub struct SettingsMenu {
     dirty_key_s: bool,
     dirty_key_d: bool,
     dirty_mouse_sens: bool,
+    dirty_filtering_enabled: bool,
     listening: Option<usize>,
     pending_binding: Option<PendingBinding>,
     pub show_conflict_modal: bool,
@@ -37,6 +38,7 @@ impl SettingsMenu {
             dirty_key_s: false,
             dirty_key_d: false,
             dirty_mouse_sens: false,
+            dirty_filtering_enabled: false,
             listening: None,
             pending_binding: None,
             show_conflict_modal: false,
@@ -56,13 +58,24 @@ impl SettingsMenu {
     }
 
     fn binding_label(b: &Binding) -> String {
-        if b.code == 0 { return "Unbound".to_string(); }
+        if b.code == 0 {
+            return "Unbound".to_string();
+        }
         let mut s = String::new();
-        if b.mods & 1 != 0 { s.push_str("Ctrl+"); }
-        if b.mods & 2 != 0 { s.push_str("Shift+"); }
-        if b.mods & 4 != 0 { s.push_str("Alt+"); }
+        if b.mods & 1 != 0 {
+            s.push_str("Ctrl+");
+        }
+        if b.mods & 2 != 0 {
+            s.push_str("Shift+");
+        }
+        if b.mods & 4 != 0 {
+            s.push_str("Alt+");
+        }
         if let Some(ch) = std::char::from_u32(b.code) {
-            if ch.is_ascii_graphic() { s.push(ch.to_ascii_uppercase()); return s; }
+            if ch.is_ascii_graphic() {
+                s.push(ch.to_ascii_uppercase());
+                return s;
+            }
         }
         match b.code {
             0x100 => s.push_str("ArrowUp"),
@@ -79,20 +92,44 @@ impl SettingsMenu {
             // Clear conflicting binding if any
             if let Some(conflict_id) = pending.conflicting_id {
                 match conflict_id {
-                    0 => { self.staged.key_w = Binding::new(0, 0); self.dirty_key_w = true; }
-                    1 => { self.staged.key_a = Binding::new(0, 0); self.dirty_key_a = true; }
-                    2 => { self.staged.key_s = Binding::new(0, 0); self.dirty_key_s = true; }
-                    3 => { self.staged.key_d = Binding::new(0, 0); self.dirty_key_d = true; }
+                    0 => {
+                        self.staged.key_w = Binding::new(0, 0);
+                        self.dirty_key_w = true;
+                    }
+                    1 => {
+                        self.staged.key_a = Binding::new(0, 0);
+                        self.dirty_key_a = true;
+                    }
+                    2 => {
+                        self.staged.key_s = Binding::new(0, 0);
+                        self.dirty_key_s = true;
+                    }
+                    3 => {
+                        self.staged.key_d = Binding::new(0, 0);
+                        self.dirty_key_d = true;
+                    }
                     _ => {}
                 }
             }
 
             // Apply new binding
             match pending.target_id {
-                0 => { self.staged.key_w = pending.binding; self.dirty_key_w = true; }
-                1 => { self.staged.key_a = pending.binding; self.dirty_key_a = true; }
-                2 => { self.staged.key_s = pending.binding; self.dirty_key_s = true; }
-                3 => { self.staged.key_d = pending.binding; self.dirty_key_d = true; }
+                0 => {
+                    self.staged.key_w = pending.binding;
+                    self.dirty_key_w = true;
+                }
+                1 => {
+                    self.staged.key_a = pending.binding;
+                    self.dirty_key_a = true;
+                }
+                2 => {
+                    self.staged.key_s = pending.binding;
+                    self.dirty_key_s = true;
+                }
+                3 => {
+                    self.staged.key_d = pending.binding;
+                    self.dirty_key_d = true;
+                }
                 _ => {}
             }
         }
@@ -105,7 +142,12 @@ impl SettingsMenu {
     }
 
     fn is_dirty(&self) -> bool {
-        self.dirty_key_w || self.dirty_key_a || self.dirty_key_s || self.dirty_key_d || self.dirty_mouse_sens
+        self.dirty_key_w
+            || self.dirty_key_a
+            || self.dirty_key_s
+            || self.dirty_key_d
+            || self.dirty_mouse_sens
+            || self.dirty_filtering_enabled
     }
 
     fn paint_dirty_decor(ui: &mut egui::Ui, resp: &egui::Response, dirty: bool) {
@@ -143,42 +185,68 @@ impl Menu for SettingsMenu {
                 ui.add_space(12.0);
 
                 let binding_label = |b: &Binding| -> String {
-                    if b.code == 0 { return "Unbound".to_string(); }
+                    if b.code == 0 {
+                        return "Unbound".to_string();
+                    }
                     let mut s = String::new();
-                    if b.mods & 1 != 0 { s.push_str("Ctrl+"); }
-                    if b.mods & 2 != 0 { s.push_str("Shift+"); }
-                    if b.mods & 4 != 0 { s.push_str("Alt+"); }
+                    if b.mods & 1 != 0 {
+                        s.push_str("Ctrl+");
+                    }
+                    if b.mods & 2 != 0 {
+                        s.push_str("Shift+");
+                    }
+                    if b.mods & 4 != 0 {
+                        s.push_str("Alt+");
+                    }
                     if let Some(ch) = std::char::from_u32(b.code) {
-                        if ch.is_ascii_graphic() { s.push(ch.to_ascii_uppercase()); return s; }
+                        if ch.is_ascii_graphic() {
+                            s.push(ch.to_ascii_uppercase());
+                            return s;
+                        }
                     }
                     match b.code {
-                        0x100 => { s.push_str("ArrowUp"); }
-                        0x101 => { s.push_str("ArrowDown"); }
-                        0x102 => { s.push_str("ArrowLeft"); }
-                        0x103 => { s.push_str("ArrowRight"); }
-                        _ => { s.push_str("Unknown"); }
+                        0x100 => {
+                            s.push_str("ArrowUp");
+                        }
+                        0x101 => {
+                            s.push_str("ArrowDown");
+                        }
+                        0x102 => {
+                            s.push_str("ArrowLeft");
+                        }
+                        0x103 => {
+                            s.push_str("ArrowRight");
+                        }
+                        _ => {
+                            s.push_str("Unknown");
+                        }
                     }
                     s
                 };
 
                 // Use fixed-width layout for right-aligned inputs
                 let label_width = 150.0;
-                
+
                 ui.horizontal(|ui| {
                     ui.allocate_ui_with_layout(
                         egui::vec2(label_width, 28.0),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             ui.label("Move Forward:");
-                        }
+                        },
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let id = 0usize;
                         let mut label = binding_label(&self.staged.key_w);
-                        if self.listening == Some(id) { label = "Press any key...".to_string(); }
-                        let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
+                        if self.listening == Some(id) {
+                            label = "Press any key...".to_string();
+                        }
+                        let btn =
+                            ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
                         Self::paint_dirty_decor(ui, &btn, self.staged.key_w != self.prefs.key_w);
-                        if btn.clicked() { self.listening = Some(id); }
+                        if btn.clicked() {
+                            self.listening = Some(id);
+                        }
                         self.dirty_key_w = self.staged.key_w != self.prefs.key_w;
                     });
                 });
@@ -189,15 +257,20 @@ impl Menu for SettingsMenu {
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             ui.label("Move Left:");
-                        }
+                        },
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let id = 1usize;
                         let mut label = binding_label(&self.staged.key_a);
-                        if self.listening == Some(id) { label = "Press any key...".to_string(); }
-                        let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
+                        if self.listening == Some(id) {
+                            label = "Press any key...".to_string();
+                        }
+                        let btn =
+                            ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
                         Self::paint_dirty_decor(ui, &btn, self.staged.key_a != self.prefs.key_a);
-                        if btn.clicked() { self.listening = Some(id); }
+                        if btn.clicked() {
+                            self.listening = Some(id);
+                        }
                         self.dirty_key_a = self.staged.key_a != self.prefs.key_a;
                     });
                 });
@@ -208,15 +281,20 @@ impl Menu for SettingsMenu {
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             ui.label("Move Back:");
-                        }
+                        },
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let id = 2usize;
                         let mut label = binding_label(&self.staged.key_s);
-                        if self.listening == Some(id) { label = "Press any key...".to_string(); }
-                        let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
+                        if self.listening == Some(id) {
+                            label = "Press any key...".to_string();
+                        }
+                        let btn =
+                            ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
                         Self::paint_dirty_decor(ui, &btn, self.staged.key_s != self.prefs.key_s);
-                        if btn.clicked() { self.listening = Some(id); }
+                        if btn.clicked() {
+                            self.listening = Some(id);
+                        }
                         self.dirty_key_s = self.staged.key_s != self.prefs.key_s;
                     });
                 });
@@ -227,15 +305,20 @@ impl Menu for SettingsMenu {
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             ui.label("Move Right:");
-                        }
+                        },
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let id = 3usize;
                         let mut label = binding_label(&self.staged.key_d);
-                        if self.listening == Some(id) { label = "Press any key...".to_string(); }
-                        let btn = ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
+                        if self.listening == Some(id) {
+                            label = "Press any key...".to_string();
+                        }
+                        let btn =
+                            ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
                         Self::paint_dirty_decor(ui, &btn, self.staged.key_d != self.prefs.key_d);
-                        if btn.clicked() { self.listening = Some(id); }
+                        if btn.clicked() {
+                            self.listening = Some(id);
+                        }
                         self.dirty_key_d = self.staged.key_d != self.prefs.key_d;
                     });
                 });
@@ -248,7 +331,7 @@ impl Menu for SettingsMenu {
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             ui.label("Mouse Sensitivity:");
-                        }
+                        },
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Slider matching keybind button width (120px) - added first so it appears on the right
@@ -258,13 +341,22 @@ impl Menu for SettingsMenu {
                             |ui| {
                                 ui.spacing_mut().slider_width = 120.0;
                                 let slider = ui.add(
-                                    egui::Slider::new(&mut self.staged.mouse_sensitivity, 0.01..=10.0)
-                                        .show_value(false)
-                                        .min_decimals(0)
-                                        .max_decimals(2)
+                                    egui::Slider::new(
+                                        &mut self.staged.mouse_sensitivity,
+                                        0.01..=10.0,
+                                    )
+                                    .show_value(false)
+                                    .min_decimals(0)
+                                    .max_decimals(2),
                                 );
-                                Self::paint_dirty_decor(ui, &slider, (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs() > f32::EPSILON);
-                            }
+                                Self::paint_dirty_decor(
+                                    ui,
+                                    &slider,
+                                    (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity)
+                                        .abs()
+                                        > f32::EPSILON,
+                                );
+                            },
                         );
                         ui.add_space(8.0);
                         // Drag value input - added second so it appears on the left
@@ -273,10 +365,43 @@ impl Menu for SettingsMenu {
                                 .range(0.01..=10.0)
                                 .speed(0.1)
                                 .min_decimals(2)
-                                .max_decimals(2)
+                                .max_decimals(2),
                         );
-                        Self::paint_dirty_decor(ui, &drag, (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs() > f32::EPSILON);
-                        self.dirty_mouse_sens = (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs() > f32::EPSILON;
+                        Self::paint_dirty_decor(
+                            ui,
+                            &drag,
+                            (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs()
+                                > f32::EPSILON,
+                        );
+                        self.dirty_mouse_sens =
+                            (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs()
+                                > f32::EPSILON;
+                    });
+                });
+
+                ui.add_space(12.0);
+
+                // Input Filtering Section
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(label_width, 28.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label("Input Filtering:");
+                        },
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Toggle filtering on/off
+                        let checkbox =
+                            ui.checkbox(&mut self.staged.input_filtering_enabled, "Enable");
+                        Self::paint_dirty_decor(
+                            ui,
+                            &checkbox,
+                            self.staged.input_filtering_enabled
+                                != self.prefs.input_filtering_enabled,
+                        );
+                        self.dirty_filtering_enabled = self.staged.input_filtering_enabled
+                            != self.prefs.input_filtering_enabled;
                     });
                 });
 
@@ -286,34 +411,40 @@ impl Menu for SettingsMenu {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let save = ui.add(egui::Button::new("Save Changes").min_size(egui::vec2(120.0, 36.0)));
-                        let save_clicked = save.clicked();
-                        if save_clicked {
-                            // commit staged to prefs and save
-                            self.prefs = self.staged.clone();
-                            let _ = self.prefs.save();
-                            // clear dirty flags
-                            self.dirty_key_w = false;
-                            self.dirty_key_a = false;
-                            self.dirty_key_s = false;
-                            self.dirty_key_d = false;
-                            self.dirty_mouse_sens = false;
-                        }
-                        items.push(crate::menus::menu::MenuItem {
-                            action: if save_clicked {
-                                MenuAction::SettingsSaved(self.prefs.clone())
-                            } else {
-                                MenuAction::None
-                            },
-                            rect: Some(save.rect),
-                            enabled: true,
-                            clicked: save_clicked,
-                        });                            ui.add_space(8.0);
+                            let save = ui.add(
+                                egui::Button::new("Save Changes").min_size(egui::vec2(120.0, 36.0)),
+                            );
+                            let save_clicked = save.clicked();
+                            if save_clicked {
+                                // commit staged to prefs and save
+                                self.prefs = self.staged.clone();
+                                let _ = self.prefs.save();
+                                // clear dirty flags
+                                self.dirty_key_w = false;
+                                self.dirty_key_a = false;
+                                self.dirty_key_s = false;
+                                self.dirty_key_d = false;
+                                self.dirty_mouse_sens = false;
+                                self.dirty_filtering_enabled = false;
+                            }
+                            items.push(crate::menus::menu::MenuItem {
+                                action: if save_clicked {
+                                    MenuAction::SettingsSaved(self.prefs.clone())
+                                } else {
+                                    MenuAction::None
+                                },
+                                rect: Some(save.rect),
+                                enabled: true,
+                                clicked: save_clicked,
+                            });
+                            ui.add_space(8.0);
 
                             // Show Cancel when form is dirty, Back when clean
                             let is_dirty = self.is_dirty();
                             if is_dirty {
-                                let cancel = ui.add(egui::Button::new("Cancel").min_size(egui::vec2(100.0, 36.0)));
+                                let cancel = ui.add(
+                                    egui::Button::new("Cancel").min_size(egui::vec2(100.0, 36.0)),
+                                );
                                 let cancel_clicked = cancel.clicked();
                                 if cancel_clicked {
                                     // revert staged values to last saved prefs
@@ -331,7 +462,9 @@ impl Menu for SettingsMenu {
                                     clicked: cancel_clicked,
                                 });
                             } else {
-                                let back = ui.add(egui::Button::new("Back").min_size(egui::vec2(100.0, 36.0)));
+                                let back = ui.add(
+                                    egui::Button::new("Back").min_size(egui::vec2(100.0, 36.0)),
+                                );
                                 let back_clicked = back.clicked();
                                 items.push(crate::menus::menu::MenuItem {
                                     action: MenuAction::ShowMenu("start".to_string()),
@@ -380,32 +513,38 @@ impl Menu for SettingsMenu {
                 Z => 'Z' as u32,
                 Num0 => '0' as u32,
                 Num1 => '1' as u32,
-                        Num2 => '2' as u32,
-                        Num3 => '3' as u32,
-                        Num4 => '4' as u32,
-                        Num5 => '5' as u32,
-                        Num6 => '6' as u32,
-                        Num7 => '7' as u32,
-                        Num8 => '8' as u32,
-                        Num9 => '9' as u32,
-                        ArrowUp => 0x100,
-                        ArrowDown => 0x101,
-                        ArrowLeft => 0x102,
-                        ArrowRight => 0x103,
-                        Escape => 0x200,
-                        Tab => 0x201,
-                        Backspace => 0x202,
-                        Enter => 0x203,
-                        Space => ' ' as u32,
-                        _ => 0,
-                    }
-                }
+                Num2 => '2' as u32,
+                Num3 => '3' as u32,
+                Num4 => '4' as u32,
+                Num5 => '5' as u32,
+                Num6 => '6' as u32,
+                Num7 => '7' as u32,
+                Num8 => '8' as u32,
+                Num9 => '9' as u32,
+                ArrowUp => 0x100,
+                ArrowDown => 0x101,
+                ArrowLeft => 0x102,
+                ArrowRight => 0x103,
+                Escape => 0x200,
+                Tab => 0x201,
+                Backspace => 0x202,
+                Enter => 0x203,
+                Space => ' ' as u32,
+                _ => 0,
+            }
+        }
 
         // Handle key capture when listening for binding
         if let Some(listen_id) = self.listening {
             ctx.input(|input| {
                 for ev in &input.events {
-                    if let egui::Event::Key { key, pressed, modifiers, .. } = ev {
+                    if let egui::Event::Key {
+                        key,
+                        pressed,
+                        modifiers,
+                        ..
+                    } = ev
+                    {
                         if *pressed {
                             // Escape cancels listening
                             if *key == egui::Key::Escape {
@@ -415,15 +554,22 @@ impl Menu for SettingsMenu {
                             // derive code and modifiers
                             let code: u32 = key_to_code(key);
                             let mut mods: u8 = 0;
-                            if modifiers.ctrl { mods |= 1; }
-                            if modifiers.shift { mods |= 2; }
-                            if modifiers.alt { mods |= 4; }
+                            if modifiers.ctrl {
+                                mods |= 1;
+                            }
+                            if modifiers.shift {
+                                mods |= 2;
+                            }
+                            if modifiers.alt {
+                                mods |= 4;
+                            }
 
                             let binding = Binding::new(code, mods);
-                            
+
                             // Check for duplicate bindings
                             let mut conflicting_id: Option<usize> = None;
-                            if binding.code != 0 { // Don't check unbound keys
+                            if binding.code != 0 {
+                                // Don't check unbound keys
                                 if self.staged.key_w == binding && listen_id != 0 {
                                     conflicting_id = Some(0);
                                 } else if self.staged.key_a == binding && listen_id != 1 {
@@ -434,7 +580,7 @@ impl Menu for SettingsMenu {
                                     conflicting_id = Some(3);
                                 }
                             }
-                            
+
                             if let Some(conflict_id) = conflicting_id {
                                 // Show conflict modal
                                 self.pending_binding = Some(PendingBinding {

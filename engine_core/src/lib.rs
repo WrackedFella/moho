@@ -7,6 +7,7 @@ use rand::{rng, Rng};
 pub mod actors;
 pub mod camera;
 pub mod controller;
+pub mod input;
 pub mod materials;
 pub mod scene_builders;
 
