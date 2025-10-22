@@ -545,76 +545,76 @@ impl Menu for SettingsMenu {
                         ..
                     } = ev
                     {
-                            // Escape cancels listening
-                            if *key == egui::Key::Escape {
-                                self.listening = None;
-                                return;
-                            }
-                            // derive code and modifiers
-                            let code: u32 = key_to_code(key);
-                            let mut mods: u8 = 0;
-                            if modifiers.ctrl {
-                                mods |= 1;
-                            }
-                            if modifiers.shift {
-                                mods |= 2;
-                            }
-                            if modifiers.alt {
-                                mods |= 4;
-                            }
-
-                            let binding = Binding::new(code, mods);
-
-                            // Check for duplicate bindings
-                            let mut conflicting_id: Option<usize> = None;
-                            if binding.code != 0 {
-                                // Don't check unbound keys
-                                if self.staged.key_w == binding && listen_id != 0 {
-                                    conflicting_id = Some(0);
-                                } else if self.staged.key_a == binding && listen_id != 1 {
-                                    conflicting_id = Some(1);
-                                } else if self.staged.key_s == binding && listen_id != 2 {
-                                    conflicting_id = Some(2);
-                                } else if self.staged.key_d == binding && listen_id != 3 {
-                                    conflicting_id = Some(3);
-                                }
-                            }
-
-                            if let Some(conflict_id) = conflicting_id {
-                                // Show conflict modal
-                                self.pending_binding = Some(PendingBinding {
-                                    target_id: listen_id,
-                                    binding,
-                                    conflicting_id: Some(conflict_id),
-                                });
-                                self.conflict_key_name = self.get_key_name(conflict_id).to_string();
-                                self.conflict_binding_desc = Self::binding_label(&binding);
-                                self.show_conflict_modal = true;
-                            } else {
-                                // No conflict, apply immediately
-                                match listen_id {
-                                    0 => {
-                                        self.staged.key_w = binding;
-                                        self.dirty_key_w = true;
-                                    }
-                                    1 => {
-                                        self.staged.key_a = binding;
-                                        self.dirty_key_a = true;
-                                    }
-                                    2 => {
-                                        self.staged.key_s = binding;
-                                        self.dirty_key_s = true;
-                                    }
-                                    3 => {
-                                        self.staged.key_d = binding;
-                                        self.dirty_key_d = true;
-                                    }
-                                    _ => {}
-                                }
-                            }
+                        // Escape cancels listening
+                        if *key == egui::Key::Escape {
                             self.listening = None;
+                            return;
                         }
+                        // derive code and modifiers
+                        let code: u32 = key_to_code(key);
+                        let mut mods: u8 = 0;
+                        if modifiers.ctrl {
+                            mods |= 1;
+                        }
+                        if modifiers.shift {
+                            mods |= 2;
+                        }
+                        if modifiers.alt {
+                            mods |= 4;
+                        }
+
+                        let binding = Binding::new(code, mods);
+
+                        // Check for duplicate bindings
+                        let mut conflicting_id: Option<usize> = None;
+                        if binding.code != 0 {
+                            // Don't check unbound keys
+                            if self.staged.key_w == binding && listen_id != 0 {
+                                conflicting_id = Some(0);
+                            } else if self.staged.key_a == binding && listen_id != 1 {
+                                conflicting_id = Some(1);
+                            } else if self.staged.key_s == binding && listen_id != 2 {
+                                conflicting_id = Some(2);
+                            } else if self.staged.key_d == binding && listen_id != 3 {
+                                conflicting_id = Some(3);
+                            }
+                        }
+
+                        if let Some(conflict_id) = conflicting_id {
+                            // Show conflict modal
+                            self.pending_binding = Some(PendingBinding {
+                                target_id: listen_id,
+                                binding,
+                                conflicting_id: Some(conflict_id),
+                            });
+                            self.conflict_key_name = self.get_key_name(conflict_id).to_string();
+                            self.conflict_binding_desc = Self::binding_label(&binding);
+                            self.show_conflict_modal = true;
+                        } else {
+                            // No conflict, apply immediately
+                            match listen_id {
+                                0 => {
+                                    self.staged.key_w = binding;
+                                    self.dirty_key_w = true;
+                                }
+                                1 => {
+                                    self.staged.key_a = binding;
+                                    self.dirty_key_a = true;
+                                }
+                                2 => {
+                                    self.staged.key_s = binding;
+                                    self.dirty_key_s = true;
+                                }
+                                3 => {
+                                    self.staged.key_d = binding;
+                                    self.dirty_key_d = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                        self.listening = None;
                     }
+                }
             });
         }
 

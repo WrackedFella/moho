@@ -71,87 +71,87 @@ impl Prefs {
         if let Ok(map) = ini::macro_safe_read(&content)
             && let Some(section) = map.get("prefs").or_else(|| map.get("default"))
         {
-                let get_str = |k: &str| section.get(k).and_then(|o| o.clone());
-                let get_f32 = |k: &str, def: f32| {
-                    section
-                        .get(k)
-                        .and_then(|o| o.clone())
-                        .and_then(|s| s.parse::<f32>().ok())
-                        .unwrap_or(def)
-                };
+            let get_str = |k: &str| section.get(k).and_then(|o| o.clone());
+            let get_f32 = |k: &str, def: f32| {
+                section
+                    .get(k)
+                    .and_then(|o| o.clone())
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .unwrap_or(def)
+            };
 
-                // Parse human-readable bindings like "Ctrl+W" or "ArrowUp".
-                fn parse_binding(s: &str, fallback: Binding) -> Binding {
-                    let s = s.trim();
-                    if s.is_empty() {
-                        return fallback;
-                    }
-                    if s.eq_ignore_ascii_case("unbound") {
-                        return Binding::new(0, 0);
-                    }
-                    let mut mods: u8 = 0;
-                    let parts: Vec<&str> = s.split('+').map(|p| p.trim()).collect();
-                    let mut key_part = "";
-                    for p in &parts {
-                        let up = p.to_ascii_uppercase();
-                        match up.as_str() {
-                            "CTRL" | "CONTROL" => {
-                                mods |= 1;
-                                continue;
-                            }
-                            "SHIFT" => {
-                                mods |= 2;
-                                continue;
-                            }
-                            "ALT" => {
-                                mods |= 4;
-                                continue;
-                            }
-                            _ => {
-                                key_part = p.trim();
-                            }
+            // Parse human-readable bindings like "Ctrl+W" or "ArrowUp".
+            fn parse_binding(s: &str, fallback: Binding) -> Binding {
+                let s = s.trim();
+                if s.is_empty() {
+                    return fallback;
+                }
+                if s.eq_ignore_ascii_case("unbound") {
+                    return Binding::new(0, 0);
+                }
+                let mut mods: u8 = 0;
+                let parts: Vec<&str> = s.split('+').map(|p| p.trim()).collect();
+                let mut key_part = "";
+                for p in &parts {
+                    let up = p.to_ascii_uppercase();
+                    match up.as_str() {
+                        "CTRL" | "CONTROL" => {
+                            mods |= 1;
+                            continue;
                         }
-                    }
-                    if key_part.is_empty() {
-                        return fallback;
-                    }
-
-                    let code = match key_part {
-                        "ARROWUP" | "UP" => 0x100,
-                        "ARROWDOWN" | "DOWN" => 0x101,
-                        "ARROWLEFT" | "LEFT" => 0x102,
-                        "ARROWRIGHT" | "RIGHT" => 0x103,
-                        "ESC" | "ESCAPE" => 0x200,
-                        "TAB" => 0x201,
-                        "BACKSPACE" => 0x202,
-                        "ENTER" | "RETURN" => 0x203,
-                        "SPACE" => ' ' as u32,
-                        s if s.len() == 1 => s.chars().next().unwrap() as u32,
+                        "SHIFT" => {
+                            mods |= 2;
+                            continue;
+                        }
+                        "ALT" => {
+                            mods |= 4;
+                            continue;
+                        }
                         _ => {
-                            // try parse numeric code as fallback
-                            key_part.parse::<u32>().unwrap_or(fallback.code)
+                            key_part = p.trim();
                         }
-                    };
-                    Binding::new(code, mods)
+                    }
+                }
+                if key_part.is_empty() {
+                    return fallback;
                 }
 
-                if let Some(s) = get_str("key_w") {
-                    prefs.key_w = parse_binding(&s, prefs.key_w);
-                }
-                if let Some(s) = get_str("key_a") {
-                    prefs.key_a = parse_binding(&s, prefs.key_a);
-                }
-                if let Some(s) = get_str("key_s") {
-                    prefs.key_s = parse_binding(&s, prefs.key_s);
-                }
-                if let Some(s) = get_str("key_d") {
-                    prefs.key_d = parse_binding(&s, prefs.key_d);
-                }
-                prefs.mouse_sensitivity = get_f32("mouse_sensitivity", prefs.mouse_sensitivity);
+                let code = match key_part {
+                    "ARROWUP" | "UP" => 0x100,
+                    "ARROWDOWN" | "DOWN" => 0x101,
+                    "ARROWLEFT" | "LEFT" => 0x102,
+                    "ARROWRIGHT" | "RIGHT" => 0x103,
+                    "ESC" | "ESCAPE" => 0x200,
+                    "TAB" => 0x201,
+                    "BACKSPACE" => 0x202,
+                    "ENTER" | "RETURN" => 0x203,
+                    "SPACE" => ' ' as u32,
+                    s if s.len() == 1 => s.chars().next().unwrap() as u32,
+                    _ => {
+                        // try parse numeric code as fallback
+                        key_part.parse::<u32>().unwrap_or(fallback.code)
+                    }
+                };
+                Binding::new(code, mods)
+            }
 
-                if let Some(s) = get_str("input_filtering_enabled") {
-                    prefs.input_filtering_enabled = s.to_lowercase() == "true" || s == "1";
-                }
+            if let Some(s) = get_str("key_w") {
+                prefs.key_w = parse_binding(&s, prefs.key_w);
+            }
+            if let Some(s) = get_str("key_a") {
+                prefs.key_a = parse_binding(&s, prefs.key_a);
+            }
+            if let Some(s) = get_str("key_s") {
+                prefs.key_s = parse_binding(&s, prefs.key_s);
+            }
+            if let Some(s) = get_str("key_d") {
+                prefs.key_d = parse_binding(&s, prefs.key_d);
+            }
+            prefs.mouse_sensitivity = get_f32("mouse_sensitivity", prefs.mouse_sensitivity);
+
+            if let Some(s) = get_str("input_filtering_enabled") {
+                prefs.input_filtering_enabled = s.to_lowercase() == "true" || s == "1";
+            }
         }
 
         prefs
