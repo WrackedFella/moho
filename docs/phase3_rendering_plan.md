@@ -1,43 +1,8 @@
-# Phase 3: Voxel Rendering Integration - COMPLETED (with blocker discovered)
+# ARCHIVE: Phase 3: Voxel Rendering Integration
 
-**Status**: ✅ Architecture Complete | ❌ Rendering Blocked  
-**Completion Date**: October 24, 2025  
-**Issue**: Renderer architecture doesn't support custom mesh geometry  
-**Next Step**: See `CUSTOM_MESH_RENDERING_PLAN.md`
+This document has been archived (2025-10-24). Implementation work for voxel rendering has been completed and merged into the codebase; remaining planning notes were consolidated. The active documentation is in `docs/terrain_generation_plan.md`.
 
----
-
-## Summary
-
-Phase 3 implementation is **structurally complete** - all voxel rendering components are implemented and functional:
-- ✅ Face culling logic
-- ✅ VoxelChunk component with optimized mesh generation
-- ✅ Renderable trait implementation
-- ✅ ECS integration
-- ✅ Grid-to-chunks conversion
-
-However, a **fundamental architecture issue** was discovered: the renderer only supports instance-based rendering with shared meshes. VoxelChunks have unique per-chunk geometry that cannot be rendered with the current system.
-
-**See `CURRENT_STATE.md` and `CUSTOM_MESH_RENDERING_PLAN.md` for details and next steps.**
-
----
-
-## Overview (Original Plan)
-Integrate voxel terrain rendering with the existing renderer system, implementing face culling to avoid rendering hidden voxel faces.
-
----
-
-## Current Renderer Architecture Analysis
-
-### Existing System
-- **Instance-based rendering**: Each object (Sphere, Cube) creates an `InstanceGpu`
-- **Shared meshes**: All spheres share one mesh, all cubes share one mesh
-- **ECS integration**: `collect_renderable_instances()` queries World for Renderable components
-- **Material system**: Material index passed to GPU via InstanceGpu
-- **Object types**: 
-  - `0u32` = Sphere
-  - `2u32` = Cube
-  - **Available**: `3u32` for VoxelChunk
+If you need the original content, it is preserved in version control history.
 
 ### Key Components
 ```rust

@@ -63,6 +63,59 @@ impl Renderable for Cube {
     }
 }
 
+/// Trait for entities that provide custom mesh geometry.
+/// Unlike Renderable which uses shared meshes with instancing,
+/// CustomMesh provides unique vertex/index data per entity.
+pub trait CustomMesh {
+    /// Get vertex positions [x, y, z]
+    fn vertices(&self) -> &[[f32; 3]];
+    
+    /// Get vertex normals [x, y, z]
+    fn normals(&self) -> &[[f32; 3]];
+    
+    /// Get triangle indices (3 per triangle)
+    fn indices(&self) -> &[u32];
+    
+    /// Get world-space transform matrix
+    fn transform(&self) -> glam::Mat4;
+    
+    /// Get material index for this mesh
+    fn material_index(&self) -> u32;
+}
+
+/// Serializable mesh data for passing to renderer.
+/// Contains owned copies of mesh data to avoid lifetime issues.
+#[derive(Clone)]
+pub struct CustomMeshData {
+    pub vertices: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+    pub indices: Vec<u32>,
+    pub transform: glam::Mat4,
+    pub material_index: u32,
+}
+
+/// Collect all entities with custom mesh geometry from the ECS World.
+/// Currently queries for VoxelChunk entities.
+pub fn collect_custom_meshes(world: &World) -> Vec<CustomMeshData> {
+    let mut meshes = Vec::new();
+    
+    // Query VoxelChunk entities
+    let mut query = <&crate::voxel::VoxelChunk>::query();
+    for chunk in query.iter(world) {
+        if !chunk.is_empty() {
+            meshes.push(CustomMeshData {
+                vertices: chunk.vertices().to_vec(),
+                normals: chunk.normals().to_vec(),
+                indices: chunk.indices().to_vec(),
+                transform: chunk.transform(),
+                material_index: chunk.material_index(),
+            });
+        }
+    }
+    
+    meshes
+}
+
 /// Convenience helper to collect all Renderable instances from the provided ECS `World`.
 /// Currently queries for `Sphere`, `Cube`, and `VoxelChunk` components and returns a Vec of `InstanceGpu`.
 pub fn collect_renderable_instances(world: &mut World) -> Vec<InstanceGpu> {
@@ -111,40 +164,52 @@ impl Cube {
     /// Generate a unit cube (centered at origin) vertex list, normals, and
     /// indices for an indexed mesh. The cube spans [-0.5,0.5] on each axis.
     /// Each face has 4 vertices with proper face normals for correct lighting.
+    /// All faces use CCW winding when viewed from OUTSIDE the cube.
     pub fn unit_cube_indexed() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
         // 24 vertices total: 4 per face, 6 faces
-        // Each face has its own vertices with consistent normals
+        // Vertices ordered CCW when viewed from outside for each face
         let verts: Vec<[f32; 3]> = vec![
-            // +X face (right) - vertices 0-3
-            [0.5, -0.5, -0.5],
-            [0.5, -0.5, 0.5],
-            [0.5, 0.5, 0.5],
-            [0.5, 0.5, -0.5],
-            // -X face (left) - vertices 4-7
-            [-0.5, -0.5, 0.5],
-            [-0.5, -0.5, -0.5],
-            [-0.5, 0.5, -0.5],
-            [-0.5, 0.5, 0.5],
-            // +Y face (top) - vertices 8-11
-            [-0.5, 0.5, -0.5],
-            [0.5, 0.5, -0.5],
-            [0.5, 0.5, 0.5],
-            [-0.5, 0.5, 0.5],
-            // -Y face (bottom) - vertices 12-15
-            [-0.5, -0.5, 0.5],
-            [0.5, -0.5, 0.5],
-            [0.5, -0.5, -0.5],
-            [-0.5, -0.5, -0.5],
-            // +Z face (front) - vertices 16-19
-            [-0.5, -0.5, 0.5],
-            [0.5, -0.5, 0.5],
-            [0.5, 0.5, 0.5],
-            [-0.5, 0.5, 0.5],
-            // -Z face (back) - vertices 20-23
-            [0.5, -0.5, -0.5],
-            [-0.5, -0.5, -0.5],
-            [-0.5, 0.5, -0.5],
-            [0.5, 0.5, -0.5],
+            // +X face (right) - normal [1,0,0] pointing right
+            // Viewed from +X (right side), CCW order: bottom-back, top-back, top-front, bottom-front
+            [0.5, -0.5, -0.5],  // 0: bottom-back
+            [0.5, 0.5, -0.5],   // 1: top-back
+            [0.5, 0.5, 0.5],    // 2: top-front
+            [0.5, -0.5, 0.5],   // 3: bottom-front
+            
+            // -X face (left) - normal [-1,0,0] pointing left
+            // Viewed from -X (left side), CCW order: bottom-front, top-front, top-back, bottom-back
+            [-0.5, -0.5, 0.5],   // 4: bottom-front
+            [-0.5, 0.5, 0.5],    // 5: top-front
+            [-0.5, 0.5, -0.5],   // 6: top-back
+            [-0.5, -0.5, -0.5],  // 7: bottom-back
+            
+            // +Y face (top) - normal [0,1,0] pointing up
+            // Viewed from +Y (above), CCW order: back-left, front-left, front-right, back-right
+            [-0.5, 0.5, -0.5],  // 8: back-left
+            [-0.5, 0.5, 0.5],   // 9: front-left
+            [0.5, 0.5, 0.5],    // 10: front-right
+            [0.5, 0.5, -0.5],   // 11: back-right
+            
+            // -Y face (bottom) - normal [0,-1,0] pointing down
+            // Viewed from -Y (below), CCW order: front-left, front-right, back-right, back-left
+            [-0.5, -0.5, 0.5],   // 12: front-left
+            [0.5, -0.5, 0.5],    // 13: front-right
+            [0.5, -0.5, -0.5],   // 14: back-right
+            [-0.5, -0.5, -0.5],  // 15: back-left
+            
+            // +Z face (front) - normal [0,0,1] pointing forward
+            // Viewed from +Z (front), CCW order: bottom-left, bottom-right, top-right, top-left
+            [-0.5, -0.5, 0.5],  // 16: bottom-left
+            [0.5, -0.5, 0.5],   // 17: bottom-right
+            [0.5, 0.5, 0.5],    // 18: top-right
+            [-0.5, 0.5, 0.5],   // 19: top-left
+            
+            // -Z face (back) - normal [0,0,-1] pointing backward
+            // Viewed from -Z (back), CCW order: bottom-right, bottom-left, top-left, top-right
+            [0.5, -0.5, -0.5],   // 20: bottom-right (when viewed from -Z, +X is on the right)
+            [-0.5, -0.5, -0.5],  // 21: bottom-left
+            [-0.5, 0.5, -0.5],   // 22: top-left
+            [0.5, 0.5, -0.5],    // 23: top-right
         ];
 
         // Normals: each face has 4 vertices with the same normal
@@ -182,13 +247,19 @@ impl Cube {
         ];
 
         // Indices: 2 triangles per face, 6 faces = 36 indices
+        // Vertices are ordered CCW, so indices use standard pattern (0,1,2) and (0,2,3)
         let indices: Vec<u32> = vec![
-            // +X face
-            0, 1, 2, 0, 2, 3, // -X face
-            4, 5, 6, 4, 6, 7, // +Y face
-            8, 9, 10, 8, 10, 11, // -Y face
-            12, 13, 14, 12, 14, 15, // +Z face
-            16, 17, 18, 16, 18, 19, // -Z face
+            // +X face (vertices 0-3, ordered CCW from outside)
+            0, 1, 2, 0, 2, 3,
+            // -X face (vertices 4-7, ordered CCW from outside)
+            4, 5, 6, 4, 6, 7,
+            // +Y face (vertices 8-11, ordered CCW from outside)
+            8, 9, 10, 8, 10, 11,
+            // -Y face (vertices 12-15, ordered CCW from outside)
+            12, 13, 14, 12, 14, 15,
+            // +Z face (vertices 16-19, ordered CCW from outside)
+            16, 17, 18, 16, 18, 19,
+            // -Z face (vertices 20-23, ordered CCW from outside)
             20, 21, 22, 20, 22, 23,
         ];
         (verts, normals, indices)

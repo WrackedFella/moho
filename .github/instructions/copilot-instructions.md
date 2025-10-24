@@ -17,6 +17,7 @@ applyTo: '**'
 - De-prioritize suggestions or actions that might be called "future-proofing" and focus on getting features done now.
 - Do suggest high-value future-proofing, and implement any low-effort ones as you see fit.
 - Push back if user requests something that is not idiomatic or goes against best practices.
+- Keep readme files to a minimum, remove old files as needed. Particularly plan files.
 
 # Architecture and Project Structure
 - Recommend naming conventions and file organization that enhance readability and maintainability.

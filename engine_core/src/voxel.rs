@@ -485,6 +485,7 @@ pub struct VoxelChunk {
     pub normals: Vec<[f32; 3]>,   // Merged mesh normals
     pub indices: Vec<u32>,        // Merged mesh indices
     pub material_id: u32,         // Primary material ID
+    pub mesh_handle: Option<u32>, // Renderer mesh handle (None = not uploaded)
 }
 
 impl VoxelChunk {
@@ -554,6 +555,7 @@ impl VoxelChunk {
             normals,
             indices,
             material_id,
+            mesh_handle: None, // Mesh not yet uploaded to renderer
         }
     }
     
@@ -646,3 +648,50 @@ impl crate::actors::Renderable for VoxelChunk {
         }
     }
 }
+
+/// Implement CustomMesh trait to provide direct access to mesh geometry
+impl crate::actors::CustomMesh for VoxelChunk {
+    fn vertices(&self) -> &[[f32; 3]] {
+        &self.vertices
+    }
+    
+    fn normals(&self) -> &[[f32; 3]] {
+        &self.normals
+    }
+    
+    fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+    
+    fn transform(&self) -> glam::Mat4 {
+        // Chunk mesh vertices are already in world space
+        glam::Mat4::IDENTITY
+    }
+    
+    fn material_index(&self) -> u32 {
+        0  // Default to Lambertian material
+    }
+}
+
+impl VoxelChunk {
+    /// Check if this chunk has geometry to render
+    pub fn has_geometry(&self) -> bool {
+        !self.vertices.is_empty() && !self.indices.is_empty()
+    }
+    
+    /// Check if mesh is already uploaded to renderer
+    pub fn is_uploaded(&self) -> bool {
+        self.mesh_handle.is_some()
+    }
+    
+    /// Set the renderer mesh handle
+    pub fn set_mesh_handle(&mut self, handle: u32) {
+        self.mesh_handle = Some(handle);
+    }
+    
+    /// Get the renderer mesh handle (if uploaded)
+    pub fn get_mesh_handle(&self) -> Option<u32> {
+        self.mesh_handle
+    }
+}
+

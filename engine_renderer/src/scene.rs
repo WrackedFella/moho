@@ -1,6 +1,7 @@
 use crate::{MaterialTable, RendererBackend};
 use bincode::{Decode, Encode};
-use engine_core::actors::{Cube, InstanceGpu, Sphere};
+use engine_core::actors::{Cube, InstanceGpu, Sphere, CustomMesh};
+use engine_core::voxel::VoxelChunk;
 use legion::World;
 use legion::query::IntoQuery;
 use serde::{Deserialize, Serialize};
@@ -34,7 +35,7 @@ impl Scene {
     pub fn render(
         &mut self,
         renderer: &mut dyn RendererBackend,
-        world: &World,
+        world: &mut World,
         mesh_handle: u32,
         cube_mesh_handle: u32,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
@@ -88,6 +89,55 @@ impl Scene {
             material_table.clear_dirty();
         }
 
+        // Upload VoxelChunk meshes to renderer (first-time registration)
+        // Query mutable VoxelChunks to store mesh handles
+        {
+            let mut q_chunks_mut = <&mut VoxelChunk>::query();
+            for chunk in q_chunks_mut.iter_mut(world) {
+                // Skip if already uploaded or has no geometry
+                if chunk.is_uploaded() || !chunk.has_geometry() {
+                    continue;
+                }
+                
+                // Register the chunk mesh with renderer
+                let handle = renderer.register_indexed_mesh(
+                    chunk.vertices(),
+                    chunk.normals(),
+                    chunk.indices(),
+                );
+                chunk.set_mesh_handle(handle);
+                
+                log::info!(
+                    "Uploaded VoxelChunk {:?}: {} verts, {} indices -> handle {}",
+                    chunk.chunk_pos,
+                    chunk.vertices().len(),
+                    chunk.indices().len(),
+                    handle
+                );
+            }
+        }
+
+        // Build VoxelChunk instances (identity transform, mesh already in world space)
+        let mut chunk_renders: Vec<(u32, InstanceGpu)> = Vec::new();
+        {
+            let mut q_chunks = <&VoxelChunk>::query();
+            for chunk in q_chunks.iter(world) {
+                if let Some(handle) = chunk.get_mesh_handle() {
+                    // VoxelChunk uses identity transform (mesh in world space)
+                    // Material index 0 (Lambertian)
+                    let inst = InstanceGpu {
+                        model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                        material: 0,
+                        object_type: 2, // VoxelChunk type
+                        padding: [0, 0],
+                    };
+                    chunk_renders.push((handle, inst));
+                }
+            }
+        }
+
+        log::debug!("[Scene::render] VoxelChunks to render: {}", chunk_renders.len());
+
         // Draw by material type (opaque first). Split instances into opaque
         // and transparent using the material table, then perform a global
         // back-to-front sort for transparent instances across all meshes so
@@ -129,13 +179,22 @@ impl Scene {
         // Render opaque geometry first (no finalize).
         renderer.render_mesh(cube_mesh_handle, &cube_opaque, camera, false);
         renderer.render_mesh(mesh_handle, &sph_opaque, camera, false);
+        
+        // Render VoxelChunks (opaque, each chunk as separate draw)
+        for (chunk_handle, chunk_inst) in &chunk_renders {
+            renderer.render_mesh(*chunk_handle, &[*chunk_inst], camera, false);
+        }
 
         // If there are transparent entries, compute per-instance depth from the
         // camera eye and sort furthest-first (back-to-front). We extract the
         // translation component from the instance model matrix (column 3).
         if transparent_entries.is_empty() {
             // No transparent draws: finalize by issuing an empty finalize draw.
-            renderer.render_mesh(mesh_handle, &Vec::new(), camera, true);
+            // Use any valid mesh handle - prefer chunk handle if available, else sphere mesh
+            let finalize_handle = chunk_renders.first()
+                .map(|(h, _)| *h)
+                .unwrap_or(mesh_handle);
+            renderer.render_mesh(finalize_handle, &Vec::new(), camera, true);
             return;
         }
 
@@ -176,7 +235,7 @@ impl Scene {
     }
 
     /// Save a compact binary snapshot of the scene (method 2: bincode).
-    /// This writes a serialized SceneDesc containing all Spheres, Cubes,
+    /// This writes a serialized SceneDesc containing all Spheres, Cubes, VoxelChunks,
     /// Materials, and camera position/orientation. It does NOT serialize arbitrary
     /// ECS state; it serializes the application-level scene description
     /// and can be reloaded into a fresh `World` via `load_from_file`.
@@ -207,6 +266,19 @@ impl Scene {
                 material: MaterialDesc::from_material(&c.mat_ptr),
             });
         }
+        
+        // Collect VoxelChunks
+        let mut voxel_chunks: Vec<VoxelChunkDesc> = Vec::new();
+        let mut qv = <&engine_core::voxel::VoxelChunk>::query();
+        for chunk in qv.iter(world) {
+            voxel_chunks.push(VoxelChunkDesc {
+                chunk_pos: [chunk.chunk_pos.x, chunk.chunk_pos.y, chunk.chunk_pos.z],
+                vertices: chunk.vertices.clone(),
+                normals: chunk.normals.clone(),
+                indices: chunk.indices.clone(),
+                material_id: chunk.material_id,
+            });
+        }
 
         let camera = camera_position.map(|(pos, yaw, pitch)| CameraDesc {
             position: [pos.x, pos.y, pos.z],
@@ -218,6 +290,7 @@ impl Scene {
             version: SCENE_FILE_VERSION,
             spheres,
             cubes,
+            voxel_chunks,
             camera,
         };
 
@@ -265,6 +338,23 @@ impl Scene {
             );
             world.push((cube,));
         }
+        
+        // Load VoxelChunks
+        for chunk_desc in desc.voxel_chunks {
+            let chunk = engine_core::voxel::VoxelChunk {
+                chunk_pos: glam::IVec3::new(
+                    chunk_desc.chunk_pos[0],
+                    chunk_desc.chunk_pos[1],
+                    chunk_desc.chunk_pos[2],
+                ),
+                vertices: chunk_desc.vertices,
+                normals: chunk_desc.normals,
+                indices: chunk_desc.indices,
+                material_id: chunk_desc.material_id,
+                mesh_handle: None, // Will be uploaded on next render
+            };
+            world.push((chunk,));
+        }
 
         // Return camera position and orientation if present
         let camera_data = desc
@@ -289,7 +379,18 @@ struct SceneDesc {
     spheres: Vec<SphereDesc>,
     cubes: Vec<CubeDesc>,
     #[serde(default)]
+    voxel_chunks: Vec<VoxelChunkDesc>,
+    #[serde(default)]
     camera: Option<CameraDesc>,
+}
+
+#[derive(Encode, Decode, Serialize, Deserialize)]
+struct VoxelChunkDesc {
+    chunk_pos: [i32; 3],
+    vertices: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    indices: Vec<u32>,
+    material_id: u32,
 }
 
 #[derive(Encode, Decode, Serialize, Deserialize)]

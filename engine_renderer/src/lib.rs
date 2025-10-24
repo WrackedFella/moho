@@ -373,7 +373,15 @@ pub mod gfx {
                             write_mask: wgpu::ColorWrites::ALL,
                         })],
                     }),
-                    primitive: wgpu::PrimitiveState::default(),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw, // Counter-clockwise winding
+                        cull_mode: Some(wgpu::Face::Back), // Enable back-face culling
+                        unclipped_depth: false,
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        conservative: false,
+                    },
                     depth_stencil: Some(wgpu::DepthStencilState {
                         format: depth_format,
                         depth_write_enabled: true,
@@ -1031,22 +1039,34 @@ pub mod gfx {
                             if let Some(me) = &self.mesh_table[idx] {
                                 // Bind the mesh's vertex buffer
                                 rpass.set_vertex_buffer(0, me.buffer.slice(..));
+                                
                                 // Bind the instance buffer with offset for this draw
+                                // Skip instance buffer binding if there are no instances (finalize draw)
                                 let offset_instances = offsets[i];
-                                let offset_bytes = (offset_instances
-                                    * std::mem::size_of::<GpuInstance>())
-                                    as wgpu::BufferAddress;
-                                rpass.set_vertex_buffer(1, ibuf.slice(offset_bytes..));
-                                let instance_count = insts.len().max(1) as u32;
-                                if let Some(idx_buf) = &me.index_buffer {
-                                    rpass.set_index_buffer(
-                                        idx_buf.slice(..),
-                                        wgpu::IndexFormat::Uint32,
-                                    );
-                                    rpass.draw_indexed(0..me.index_count, 0, 0..instance_count);
-                                } else {
-                                    rpass.draw(0..me.vertex_count, 0..instance_count);
+                                let actual_instance_count = insts.len();
+                                
+                                if actual_instance_count > 0 {
+                                    let offset_bytes = (offset_instances
+                                        * std::mem::size_of::<GpuInstance>())
+                                        as wgpu::BufferAddress;
+                                    let end_bytes = ((offset_instances + actual_instance_count)
+                                        * std::mem::size_of::<GpuInstance>())
+                                        as wgpu::BufferAddress;
+                                    rpass.set_vertex_buffer(1, ibuf.slice(offset_bytes..end_bytes));
+                                    
+                                    // Draw with actual instance count
+                                    let instance_count_u32 = actual_instance_count as u32;
+                                    if let Some(idx_buf) = &me.index_buffer {
+                                        rpass.set_index_buffer(
+                                            idx_buf.slice(..),
+                                            wgpu::IndexFormat::Uint32,
+                                        );
+                                        rpass.draw_indexed(0..me.index_count, 0, 0..instance_count_u32);
+                                    } else {
+                                        rpass.draw(0..me.vertex_count, 0..instance_count_u32);
+                                    }
                                 }
+                                // If actual_instance_count is 0, this is a finalize-only draw, skip rendering
                             }
                         }
 

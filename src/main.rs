@@ -492,7 +492,7 @@ impl ApplicationHandler for App {
                     if let Some(ref mut wr) = self.window_renderer {
                         self.scene.render(
                             &mut *wr.renderer,
-                            &self.world,
+                            &mut self.world,
                             wr.mesh_handle,
                             wr.cube_mesh_handle,
                             self.camera,
@@ -679,7 +679,7 @@ impl ApplicationHandler for App {
                 if let Some(ref mut wr) = self.window_renderer {
                     self.scene.render(
                         &mut *wr.renderer,
-                        &self.world,
+                        &mut self.world,
                         wr.mesh_handle,
                         wr.cube_mesh_handle,
                         self.camera,

@@ -4,7 +4,7 @@ use legion::World;
 use crate::actors::{Cube, Sphere};
 use crate::materials::MaterialType;
 use crate::vector_length;
-use crate::voxel::{VoxelGrid, VoxelBlock, VoxelChunk, TerrainSmoother, BlockPos};
+use crate::voxel::{VoxelGrid, VoxelBlock, VoxelChunk, BlockPos, MeshGenerator};
 use rand::{rng, Rng};
 use noise::{NoiseFn, Perlin};
 
@@ -102,6 +102,7 @@ pub fn random_scene(world: &mut World) {
 }
 
 /// Terrain configuration for procedural generation
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct TerrainConfig {
     pub frequency: f64,
     pub amplitude: f32,
@@ -110,6 +111,7 @@ pub struct TerrainConfig {
     pub terrain_type: TerrainType,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub enum TerrainType {
     GentleHills,      // Smooth, rolling terrain
     Mountains,        // Dramatic height variation
@@ -139,8 +141,15 @@ pub fn voxel_terrain_scene(world: &mut World) {
     log::info!("Generating voxel terrain...");
     generate_terrain(&mut grid, &config);
     
-    log::info!("Applying smoothing pass...");
-    TerrainSmoother::smooth_terrain(&mut grid);
+    // TODO: Implement proper greedy meshing before re-enabling smoothing
+    // The current smoothing creates gaps between deformed and non-deformed blocks
+    // log::info!("Applying smoothing pass...");
+    // TerrainSmoother::smooth_terrain(&mut grid);
+    
+    // Initialize all blocks with cube mesh since smoothing is disabled
+    for block in grid.iter_blocks_mut() {
+        block.mesh_data = MeshGenerator::cube_mesh();
+    }
     
     log::info!("Converting grid to renderable chunks...");
     let chunks = grid_to_chunks(&grid);
