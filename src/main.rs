@@ -217,7 +217,7 @@ impl App {
 
         // Generate voxel terrain scene
         engine_core::scene_builders::voxel_terrain_scene(&mut self.world);
-        
+
         // Old random scene (for testing/fallback)
         // engine_core::scene_builders::random_scene(&mut self.world);
 

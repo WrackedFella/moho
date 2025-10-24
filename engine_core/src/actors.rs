@@ -69,16 +69,16 @@ impl Renderable for Cube {
 pub trait CustomMesh {
     /// Get vertex positions [x, y, z]
     fn vertices(&self) -> &[[f32; 3]];
-    
+
     /// Get vertex normals [x, y, z]
     fn normals(&self) -> &[[f32; 3]];
-    
+
     /// Get triangle indices (3 per triangle)
     fn indices(&self) -> &[u32];
-    
+
     /// Get world-space transform matrix
     fn transform(&self) -> glam::Mat4;
-    
+
     /// Get material index for this mesh
     fn material_index(&self) -> u32;
 }
@@ -98,7 +98,7 @@ pub struct CustomMeshData {
 /// Currently queries for VoxelChunk entities.
 pub fn collect_custom_meshes(world: &World) -> Vec<CustomMeshData> {
     let mut meshes = Vec::new();
-    
+
     // Query VoxelChunk entities
     let mut query = <&crate::voxel::VoxelChunk>::query();
     for chunk in query.iter(world) {
@@ -112,7 +112,7 @@ pub fn collect_custom_meshes(world: &World) -> Vec<CustomMeshData> {
             });
         }
     }
-    
+
     meshes
 }
 
@@ -128,13 +128,13 @@ pub fn collect_renderable_instances(world: &mut World) -> Vec<InstanceGpu> {
     for c in qc.iter(world) {
         out.push(c.to_instance_with_material(0));
     }
-    
+
     // Add voxel chunk rendering
     let mut qv = <&crate::voxel::VoxelChunk>::query();
     for chunk in qv.iter(world) {
         out.push(chunk.to_instance_with_material(0));
     }
-    
+
     out
 }
 
@@ -171,45 +171,40 @@ impl Cube {
         let verts: Vec<[f32; 3]> = vec![
             // +X face (right) - normal [1,0,0] pointing right
             // Viewed from +X (right side), CCW order: bottom-back, top-back, top-front, bottom-front
-            [0.5, -0.5, -0.5],  // 0: bottom-back
-            [0.5, 0.5, -0.5],   // 1: top-back
-            [0.5, 0.5, 0.5],    // 2: top-front
-            [0.5, -0.5, 0.5],   // 3: bottom-front
-            
+            [0.5, -0.5, -0.5], // 0: bottom-back
+            [0.5, 0.5, -0.5],  // 1: top-back
+            [0.5, 0.5, 0.5],   // 2: top-front
+            [0.5, -0.5, 0.5],  // 3: bottom-front
             // -X face (left) - normal [-1,0,0] pointing left
             // Viewed from -X (left side), CCW order: bottom-front, top-front, top-back, bottom-back
-            [-0.5, -0.5, 0.5],   // 4: bottom-front
-            [-0.5, 0.5, 0.5],    // 5: top-front
-            [-0.5, 0.5, -0.5],   // 6: top-back
-            [-0.5, -0.5, -0.5],  // 7: bottom-back
-            
+            [-0.5, -0.5, 0.5],  // 4: bottom-front
+            [-0.5, 0.5, 0.5],   // 5: top-front
+            [-0.5, 0.5, -0.5],  // 6: top-back
+            [-0.5, -0.5, -0.5], // 7: bottom-back
             // +Y face (top) - normal [0,1,0] pointing up
             // Viewed from +Y (above), CCW order: back-left, front-left, front-right, back-right
-            [-0.5, 0.5, -0.5],  // 8: back-left
-            [-0.5, 0.5, 0.5],   // 9: front-left
-            [0.5, 0.5, 0.5],    // 10: front-right
-            [0.5, 0.5, -0.5],   // 11: back-right
-            
+            [-0.5, 0.5, -0.5], // 8: back-left
+            [-0.5, 0.5, 0.5],  // 9: front-left
+            [0.5, 0.5, 0.5],   // 10: front-right
+            [0.5, 0.5, -0.5],  // 11: back-right
             // -Y face (bottom) - normal [0,-1,0] pointing down
             // Viewed from -Y (below), CCW order: front-left, front-right, back-right, back-left
-            [-0.5, -0.5, 0.5],   // 12: front-left
-            [0.5, -0.5, 0.5],    // 13: front-right
-            [0.5, -0.5, -0.5],   // 14: back-right
-            [-0.5, -0.5, -0.5],  // 15: back-left
-            
+            [-0.5, -0.5, 0.5],  // 12: front-left
+            [0.5, -0.5, 0.5],   // 13: front-right
+            [0.5, -0.5, -0.5],  // 14: back-right
+            [-0.5, -0.5, -0.5], // 15: back-left
             // +Z face (front) - normal [0,0,1] pointing forward
             // Viewed from +Z (front), CCW order: bottom-left, bottom-right, top-right, top-left
-            [-0.5, -0.5, 0.5],  // 16: bottom-left
-            [0.5, -0.5, 0.5],   // 17: bottom-right
-            [0.5, 0.5, 0.5],    // 18: top-right
-            [-0.5, 0.5, 0.5],   // 19: top-left
-            
+            [-0.5, -0.5, 0.5], // 16: bottom-left
+            [0.5, -0.5, 0.5],  // 17: bottom-right
+            [0.5, 0.5, 0.5],   // 18: top-right
+            [-0.5, 0.5, 0.5],  // 19: top-left
             // -Z face (back) - normal [0,0,-1] pointing backward
             // Viewed from -Z (back), CCW order: bottom-right, bottom-left, top-left, top-right
-            [0.5, -0.5, -0.5],   // 20: bottom-right (when viewed from -Z, +X is on the right)
-            [-0.5, -0.5, -0.5],  // 21: bottom-left
-            [-0.5, 0.5, -0.5],   // 22: top-left
-            [0.5, 0.5, -0.5],    // 23: top-right
+            [0.5, -0.5, -0.5], // 20: bottom-right (when viewed from -Z, +X is on the right)
+            [-0.5, -0.5, -0.5], // 21: bottom-left
+            [-0.5, 0.5, -0.5], // 22: top-left
+            [0.5, 0.5, -0.5],  // 23: top-right
         ];
 
         // Normals: each face has 4 vertices with the same normal
@@ -250,16 +245,11 @@ impl Cube {
         // Vertices are ordered CCW, so indices use standard pattern (0,1,2) and (0,2,3)
         let indices: Vec<u32> = vec![
             // +X face (vertices 0-3, ordered CCW from outside)
-            0, 1, 2, 0, 2, 3,
-            // -X face (vertices 4-7, ordered CCW from outside)
-            4, 5, 6, 4, 6, 7,
-            // +Y face (vertices 8-11, ordered CCW from outside)
-            8, 9, 10, 8, 10, 11,
-            // -Y face (vertices 12-15, ordered CCW from outside)
-            12, 13, 14, 12, 14, 15,
-            // +Z face (vertices 16-19, ordered CCW from outside)
-            16, 17, 18, 16, 18, 19,
-            // -Z face (vertices 20-23, ordered CCW from outside)
+            0, 1, 2, 0, 2, 3, // -X face (vertices 4-7, ordered CCW from outside)
+            4, 5, 6, 4, 6, 7, // +Y face (vertices 8-11, ordered CCW from outside)
+            8, 9, 10, 8, 10, 11, // -Y face (vertices 12-15, ordered CCW from outside)
+            12, 13, 14, 12, 14, 15, // +Z face (vertices 16-19, ordered CCW from outside)
+            16, 17, 18, 16, 18, 19, // -Z face (vertices 20-23, ordered CCW from outside)
             20, 21, 22, 20, 22, 23,
         ];
         (verts, normals, indices)

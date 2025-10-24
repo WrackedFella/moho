@@ -1039,12 +1039,12 @@ pub mod gfx {
                             if let Some(me) = &self.mesh_table[idx] {
                                 // Bind the mesh's vertex buffer
                                 rpass.set_vertex_buffer(0, me.buffer.slice(..));
-                                
+
                                 // Bind the instance buffer with offset for this draw
                                 // Skip instance buffer binding if there are no instances (finalize draw)
                                 let offset_instances = offsets[i];
                                 let actual_instance_count = insts.len();
-                                
+
                                 if actual_instance_count > 0 {
                                     let offset_bytes = (offset_instances
                                         * std::mem::size_of::<GpuInstance>())
@@ -1053,7 +1053,7 @@ pub mod gfx {
                                         * std::mem::size_of::<GpuInstance>())
                                         as wgpu::BufferAddress;
                                     rpass.set_vertex_buffer(1, ibuf.slice(offset_bytes..end_bytes));
-                                    
+
                                     // Draw with actual instance count
                                     let instance_count_u32 = actual_instance_count as u32;
                                     if let Some(idx_buf) = &me.index_buffer {
@@ -1061,7 +1061,11 @@ pub mod gfx {
                                             idx_buf.slice(..),
                                             wgpu::IndexFormat::Uint32,
                                         );
-                                        rpass.draw_indexed(0..me.index_count, 0, 0..instance_count_u32);
+                                        rpass.draw_indexed(
+                                            0..me.index_count,
+                                            0,
+                                            0..instance_count_u32,
+                                        );
                                     } else {
                                         rpass.draw(0..me.vertex_count, 0..instance_count_u32);
                                     }

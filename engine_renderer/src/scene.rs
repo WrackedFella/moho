@@ -1,6 +1,6 @@
 use crate::{MaterialTable, RendererBackend};
 use bincode::{Decode, Encode};
-use engine_core::actors::{Cube, InstanceGpu, Sphere, CustomMesh};
+use engine_core::actors::{Cube, CustomMesh, InstanceGpu, Sphere};
 use engine_core::voxel::VoxelChunk;
 use legion::World;
 use legion::query::IntoQuery;
@@ -98,7 +98,7 @@ impl Scene {
                 if chunk.is_uploaded() || !chunk.has_geometry() {
                     continue;
                 }
-                
+
                 // Register the chunk mesh with renderer
                 let handle = renderer.register_indexed_mesh(
                     chunk.vertices(),
@@ -106,7 +106,7 @@ impl Scene {
                     chunk.indices(),
                 );
                 chunk.set_mesh_handle(handle);
-                
+
                 log::info!(
                     "Uploaded VoxelChunk {:?}: {} verts, {} indices -> handle {}",
                     chunk.chunk_pos,
@@ -136,7 +136,10 @@ impl Scene {
             }
         }
 
-        log::debug!("[Scene::render] VoxelChunks to render: {}", chunk_renders.len());
+        log::debug!(
+            "[Scene::render] VoxelChunks to render: {}",
+            chunk_renders.len()
+        );
 
         // Draw by material type (opaque first). Split instances into opaque
         // and transparent using the material table, then perform a global
@@ -179,7 +182,7 @@ impl Scene {
         // Render opaque geometry first (no finalize).
         renderer.render_mesh(cube_mesh_handle, &cube_opaque, camera, false);
         renderer.render_mesh(mesh_handle, &sph_opaque, camera, false);
-        
+
         // Render VoxelChunks (opaque, each chunk as separate draw)
         for (chunk_handle, chunk_inst) in &chunk_renders {
             renderer.render_mesh(*chunk_handle, &[*chunk_inst], camera, false);
@@ -191,7 +194,8 @@ impl Scene {
         if transparent_entries.is_empty() {
             // No transparent draws: finalize by issuing an empty finalize draw.
             // Use any valid mesh handle - prefer chunk handle if available, else sphere mesh
-            let finalize_handle = chunk_renders.first()
+            let finalize_handle = chunk_renders
+                .first()
                 .map(|(h, _)| *h)
                 .unwrap_or(mesh_handle);
             renderer.render_mesh(finalize_handle, &Vec::new(), camera, true);
@@ -266,7 +270,7 @@ impl Scene {
                 material: MaterialDesc::from_material(&c.mat_ptr),
             });
         }
-        
+
         // Collect VoxelChunks
         let mut voxel_chunks: Vec<VoxelChunkDesc> = Vec::new();
         let mut qv = <&engine_core::voxel::VoxelChunk>::query();
@@ -338,7 +342,7 @@ impl Scene {
             );
             world.push((cube,));
         }
-        
+
         // Load VoxelChunks
         for chunk_desc in desc.voxel_chunks {
             let chunk = engine_core::voxel::VoxelChunk {

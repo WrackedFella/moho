@@ -1,6 +1,6 @@
+use crate::materials::MaterialType;
 use glam::{IVec3, Vec3};
 use std::collections::HashMap;
-use crate::materials::MaterialType;
 
 /// Integer vector for grid coordinates
 pub type BlockPos = IVec3;
@@ -28,7 +28,7 @@ impl FaceDirection {
             FaceDirection::NegZ => BlockPos::new(0, 0, -1),
         }
     }
-    
+
     /// Get all six face directions
     pub fn all() -> [FaceDirection; 6] {
         [
@@ -40,30 +40,30 @@ impl FaceDirection {
             FaceDirection::NegZ,
         ]
     }
-    
+
     /// Get the vertex range for this face in a standard cube mesh
     /// Standard cube has 24 vertices (4 per face) in order: +X, -X, +Y, -Y, +Z, -Z
     pub fn vertex_range(&self) -> (usize, usize) {
         match self {
-            FaceDirection::PosX => (0, 4),   // vertices 0-3
-            FaceDirection::NegX => (4, 4),   // vertices 4-7
-            FaceDirection::PosY => (8, 4),   // vertices 8-11
-            FaceDirection::NegY => (12, 4),  // vertices 12-15
-            FaceDirection::PosZ => (16, 4),  // vertices 16-19
-            FaceDirection::NegZ => (20, 4),  // vertices 20-23
+            FaceDirection::PosX => (0, 4),  // vertices 0-3
+            FaceDirection::NegX => (4, 4),  // vertices 4-7
+            FaceDirection::PosY => (8, 4),  // vertices 8-11
+            FaceDirection::NegY => (12, 4), // vertices 12-15
+            FaceDirection::PosZ => (16, 4), // vertices 16-19
+            FaceDirection::NegZ => (20, 4), // vertices 20-23
         }
     }
-    
+
     /// Get the index range for this face in a standard cube mesh
     /// Standard cube has 36 indices (6 per face) in order: +X, -X, +Y, -Y, +Z, -Z
     pub fn index_range(&self) -> (usize, usize) {
         match self {
-            FaceDirection::PosX => (0, 6),   // indices 0-5
-            FaceDirection::NegX => (6, 6),   // indices 6-11
-            FaceDirection::PosY => (12, 6),  // indices 12-17
-            FaceDirection::NegY => (18, 6),  // indices 18-23
-            FaceDirection::PosZ => (24, 6),  // indices 24-29
-            FaceDirection::NegZ => (30, 6),  // indices 30-35
+            FaceDirection::PosX => (0, 6),  // indices 0-5
+            FaceDirection::NegX => (6, 6),  // indices 6-11
+            FaceDirection::PosY => (12, 6), // indices 12-17
+            FaceDirection::NegY => (18, 6), // indices 18-23
+            FaceDirection::PosZ => (24, 6), // indices 24-29
+            FaceDirection::NegZ => (30, 6), // indices 30-35
         }
     }
 }
@@ -89,7 +89,7 @@ impl VoxelMesh {
 /// Resource data for mining/gathering
 #[derive(Debug, Clone)]
 pub struct ResourceData {
-    pub resource_type: String,  // "stone", "ore", "dirt", etc.
+    pub resource_type: String, // "stone", "ore", "dirt", etc.
     pub quantity: u32,
 }
 
@@ -103,34 +103,40 @@ impl MaterialRegistry {
         let mut registry = MaterialRegistry {
             materials: Vec::new(),
         };
-        
+
         // Register default materials
         // ID 0: Grass (green)
         registry.materials.push(MaterialType::Lambertian {
             albedo: Vec3::new(0.3, 0.6, 0.3),
         });
-        
+
         // ID 1: Dirt (brown)
         registry.materials.push(MaterialType::Lambertian {
             albedo: Vec3::new(0.5, 0.4, 0.3),
         });
-        
+
         // ID 2: Stone (gray)
         registry.materials.push(MaterialType::Lambertian {
             albedo: Vec3::new(0.5, 0.5, 0.5),
         });
-        
+
         registry
     }
-    
+
     pub fn get(&self, id: u32) -> Option<&MaterialType> {
         self.materials.get(id as usize)
     }
-    
+
     pub fn register(&mut self, material: MaterialType) -> u32 {
         let id = self.materials.len() as u32;
         self.materials.push(material);
         id
+    }
+}
+
+impl Default for MaterialRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -144,31 +150,37 @@ impl ResourceRegistry {
         let mut registry = ResourceRegistry {
             resources: Vec::new(),
         };
-        
+
         // Register default resources
         // ID 0: Stone
         registry.resources.push(ResourceData {
             resource_type: "stone".to_string(),
             quantity: 1,
         });
-        
+
         // ID 1: Iron ore
         registry.resources.push(ResourceData {
             resource_type: "iron_ore".to_string(),
             quantity: 2,
         });
-        
+
         registry
     }
-    
+
     pub fn get(&self, id: u32) -> Option<&ResourceData> {
         self.resources.get(id as usize)
     }
-    
+
     pub fn register(&mut self, resource: ResourceData) -> u32 {
         let id = self.resources.len() as u32;
         self.resources.push(resource);
         id
+    }
+}
+
+impl Default for ResourceRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -178,7 +190,7 @@ impl ResourceRegistry {
 pub struct VoxelBlock {
     pub position: BlockPos,
     pub mesh_data: VoxelMesh,
-    pub material_id: u32,       // Index into MaterialRegistry
+    pub material_id: u32,         // Index into MaterialRegistry
     pub resource_id: Option<u32>, // Index into ResourceRegistry
 }
 
@@ -191,7 +203,7 @@ impl VoxelBlock {
             resource_id: None,
         }
     }
-    
+
     /// Convert grid position to world position (center of block)
     pub fn world_position(&self) -> Vec3 {
         Vec3::new(
@@ -219,41 +231,41 @@ impl VoxelGrid {
             resource_registry: ResourceRegistry::new(),
         }
     }
-    
+
     /// Get the chunk size
     pub fn chunk_size(&self) -> i32 {
         self.chunk_size
     }
-    
+
     /// Get iterator over all block positions
     pub fn block_positions(&self) -> impl Iterator<Item = &BlockPos> {
         self.blocks.keys()
     }
-    
+
     pub fn set_block(&mut self, pos: BlockPos, block: VoxelBlock) {
         self.blocks.insert(pos, block);
     }
-    
+
     pub fn get_block(&self, pos: &BlockPos) -> Option<&VoxelBlock> {
         self.blocks.get(pos)
     }
-    
+
     pub fn get_block_mut(&mut self, pos: &BlockPos) -> Option<&mut VoxelBlock> {
         self.blocks.get_mut(pos)
     }
-    
+
     pub fn remove_block(&mut self, pos: &BlockPos) -> Option<VoxelBlock> {
         self.blocks.remove(pos)
     }
-    
+
     pub fn iter_blocks(&self) -> impl Iterator<Item = &VoxelBlock> {
         self.blocks.values()
     }
-    
+
     pub fn iter_blocks_mut(&mut self) -> impl Iterator<Item = &mut VoxelBlock> {
         self.blocks.values_mut()
     }
-    
+
     /// Get chunk coordinate from block position (static helper)
     pub fn get_chunk_pos(pos: BlockPos, chunk_size: i32) -> IVec3 {
         IVec3::new(
@@ -262,56 +274,62 @@ impl VoxelGrid {
             pos.z.div_euclid(chunk_size),
         )
     }
-    
+
     /// Get chunk coordinate from block position (instance method)
     pub fn chunk_pos_of(&self, pos: BlockPos) -> IVec3 {
         Self::get_chunk_pos(pos, self.chunk_size)
     }
-    
+
     /// Get all blocks in a chunk
     pub fn get_chunk_blocks(&self, chunk_pos: IVec3) -> Vec<&VoxelBlock> {
         let min = chunk_pos * self.chunk_size;
         let max = min + IVec3::splat(self.chunk_size);
-        
-        self.blocks.values()
+
+        self.blocks
+            .values()
             .filter(|b| {
-                b.position.x >= min.x && b.position.x < max.x &&
-                b.position.y >= min.y && b.position.y < max.y &&
-                b.position.z >= min.z && b.position.z < max.z
+                b.position.x >= min.x
+                    && b.position.x < max.x
+                    && b.position.y >= min.y
+                    && b.position.y < max.y
+                    && b.position.z >= min.z
+                    && b.position.z < max.z
             })
             .collect()
     }
-    
+
     /// Get height at a position (highest Y with a block)
     pub fn get_height(&self, x: i32, z: i32) -> Option<i32> {
-        let blocks_at_xz: Vec<i32> = self.blocks.keys()
+        let blocks_at_xz: Vec<i32> = self
+            .blocks
+            .keys()
             .filter(|pos| pos.x == x && pos.z == z)
             .map(|pos| pos.y)
             .collect();
         blocks_at_xz.into_iter().max()
     }
-    
+
     /// Get neighbor heights for smoothing algorithm
     /// Returns [North, South, East, West]
     pub fn get_neighbor_heights(&self, pos: BlockPos) -> [Option<i32>; 4] {
         [
-            self.get_height(pos.x, pos.z + 1),     // North (+Z)
-            self.get_height(pos.x, pos.z - 1),     // South (-Z)
-            self.get_height(pos.x + 1, pos.z),     // East (+X)
-            self.get_height(pos.x - 1, pos.z),     // West (-X)
+            self.get_height(pos.x, pos.z + 1), // North (+Z)
+            self.get_height(pos.x, pos.z - 1), // South (-Z)
+            self.get_height(pos.x + 1, pos.z), // East (+X)
+            self.get_height(pos.x - 1, pos.z), // West (-X)
         ]
     }
-    
+
     /// Check if a face should be rendered (face culling optimization)
     /// Returns false if the neighbor block is solid (face is hidden)
     pub fn should_render_face(&self, pos: BlockPos, direction: FaceDirection) -> bool {
         let neighbor_pos = pos + direction.offset();
-        
+
         // If neighbor exists (solid block), don't render this face
         // If no neighbor (air or out of bounds), render the face
         !self.blocks.contains_key(&neighbor_pos)
     }
-    
+
     /// Get list of visible faces for a block (for face culling)
     pub fn get_visible_faces(&self, pos: BlockPos) -> Vec<FaceDirection> {
         FaceDirection::all()
@@ -335,7 +353,7 @@ impl MeshGenerator {
             indices,
         }
     }
-    
+
     /// Generate mesh with top vertices deformed based on neighbor heights
     /// This creates smooth transitions/ramps automatically
     pub fn smoothed_mesh(
@@ -344,10 +362,10 @@ impl MeshGenerator {
     ) -> VoxelMesh {
         let current_height = position.y;
         let (mut verts, mut normals, indices) = crate::actors::Cube::unit_cube_indexed();
-        
+
         // Check each direction for height differences
         let [north_h, south_h, east_h, west_h] = neighbor_heights;
-        
+
         // If neighbor is lower by 1, deform that edge down to create ramp
         if north_h == Some(current_height - 1) {
             // Deform north edge (z = +0.5 in cube coordinates)
@@ -362,57 +380,53 @@ impl MeshGenerator {
         if west_h == Some(current_height - 1) {
             Self::deform_vertices_on_edge(&mut verts, Edge::West, -0.5);
         }
-        
+
         // Recalculate normals for deformed faces
         Self::recalculate_normals(&verts, &indices, &mut normals);
-        
+
         VoxelMesh {
             vertices: verts,
             normals,
             indices,
         }
     }
-    
-    fn deform_vertices_on_edge(verts: &mut Vec<[f32; 3]>, edge: Edge, offset: f32) {
+
+    fn deform_vertices_on_edge(verts: &mut [[f32; 3]], edge: Edge, offset: f32) {
         // Find vertices on the specified edge and adjust their Y coordinate
         for vert in verts.iter_mut() {
             let matches_edge = match edge {
-                Edge::North => vert[2] > 0.49 && vert[1] > 0.49,  // z=+0.5, y=+0.5 (top north)
+                Edge::North => vert[2] > 0.49 && vert[1] > 0.49, // z=+0.5, y=+0.5 (top north)
                 Edge::South => vert[2] < -0.49 && vert[1] > 0.49, // z=-0.5, y=+0.5 (top south)
-                Edge::East => vert[0] > 0.49 && vert[1] > 0.49,   // x=+0.5, y=+0.5 (top east)
-                Edge::West => vert[0] < -0.49 && vert[1] > 0.49,  // x=-0.5, y=+0.5 (top west)
+                Edge::East => vert[0] > 0.49 && vert[1] > 0.49,  // x=+0.5, y=+0.5 (top east)
+                Edge::West => vert[0] < -0.49 && vert[1] > 0.49, // x=-0.5, y=+0.5 (top west)
             };
-            
+
             if matches_edge {
                 vert[1] += offset; // Move down by offset
             }
         }
     }
-    
-    fn recalculate_normals(
-        verts: &[[f32; 3]],
-        indices: &[u32],
-        normals: &mut Vec<[f32; 3]>,
-    ) {
+
+    fn recalculate_normals(verts: &[[f32; 3]], indices: &[u32], normals: &mut [[f32; 3]]) {
         // Reset normals to zero
         for normal in normals.iter_mut() {
             *normal = [0.0, 0.0, 0.0];
         }
-        
+
         // For each triangle, calculate face normal and accumulate
         for i in (0..indices.len()).step_by(3) {
             let i0 = indices[i] as usize;
             let i1 = indices[i + 1] as usize;
             let i2 = indices[i + 2] as usize;
-            
+
             let v0 = Vec3::from(verts[i0]);
             let v1 = Vec3::from(verts[i1]);
             let v2 = Vec3::from(verts[i2]);
-            
+
             let edge1 = v1 - v0;
             let edge2 = v2 - v0;
             let normal = edge1.cross(edge2).normalize();
-            
+
             // Accumulate normals at vertices
             let n_arr = normal.to_array();
             for &idx in &[i0, i1, i2] {
@@ -421,7 +435,7 @@ impl MeshGenerator {
                 normals[idx][2] += n_arr[2];
             }
         }
-        
+
         // Normalize accumulated normals
         for normal in normals.iter_mut() {
             let n = Vec3::from(*normal).normalize();
@@ -446,17 +460,15 @@ impl TerrainSmoother {
     /// Converts cubes to ramps where there are single-block height differences
     pub fn smooth_terrain(grid: &mut VoxelGrid) {
         // Collect positions first to avoid borrow issues
-        let positions: Vec<BlockPos> = grid.iter_blocks()
-            .map(|b| b.position)
-            .collect();
-        
+        let positions: Vec<BlockPos> = grid.iter_blocks().map(|b| b.position).collect();
+
         for pos in positions {
             let neighbor_heights = grid.get_neighbor_heights(pos);
-            
+
             if Self::needs_smoothing(&neighbor_heights, pos.y) {
                 // Generate smoothed mesh for this block
                 let smoothed = MeshGenerator::smoothed_mesh(pos, neighbor_heights);
-                
+
                 if let Some(block) = grid.get_block_mut(&pos) {
                     block.mesh_data = smoothed;
                 }
@@ -468,11 +480,13 @@ impl TerrainSmoother {
             }
         }
     }
-    
+
     /// Determine if a block needs smoothing based on neighbor heights
     fn needs_smoothing(neighbor_heights: &[Option<i32>; 4], current_height: i32) -> bool {
         // If any neighbor is exactly 1 block lower, we need smoothing
-        neighbor_heights.iter().any(|&h| h == Some(current_height - 1))
+        neighbor_heights
+            .iter()
+            .any(|&h| h == Some(current_height - 1))
     }
 }
 
@@ -495,39 +509,39 @@ impl VoxelChunk {
         let mut normals = Vec::new();
         let mut indices = Vec::new();
         let mut vertex_offset = 0u32;
-        
+
         let blocks = grid.get_chunk_blocks(chunk_pos);
-        
+
         // Track material usage to determine primary material
         let mut material_counts: HashMap<u32, usize> = HashMap::new();
-        
+
         for block in &blocks {
             *material_counts.entry(block.material_id).or_insert(0) += 1;
         }
-        
+
         // Use most common material as primary material
         let material_id = material_counts
             .into_iter()
             .max_by_key(|&(_, count)| count)
             .map(|(id, _)| id)
             .unwrap_or(0);
-        
+
         for block in blocks {
             // Get visible faces for this block (face culling)
             let visible_faces = grid.get_visible_faces(block.position);
-            
+
             if visible_faces.is_empty() {
                 continue; // Block is completely surrounded, skip it
             }
-            
+
             // Generate mesh for this block with only visible faces
-            let (block_verts, block_normals, block_indices) = 
+            let (block_verts, block_normals, block_indices) =
                 Self::extract_visible_faces(&block.mesh_data, &visible_faces);
-            
+
             if block_verts.is_empty() {
                 continue; // No geometry to add
             }
-            
+
             // Transform vertices to world position
             let world_pos = block.world_position();
             let vert_count = block_verts.len() as u32;
@@ -538,17 +552,17 @@ impl VoxelChunk {
                     vert[2] + world_pos.z,
                 ]);
             }
-            
+
             // Copy normals
             normals.extend_from_slice(&block_normals);
-            
+
             // Offset indices to account for merged vertices
             for idx in block_indices {
                 indices.push(idx + vertex_offset);
             }
             vertex_offset += vert_count;
         }
-        
+
         VoxelChunk {
             chunk_pos,
             vertices,
@@ -558,7 +572,7 @@ impl VoxelChunk {
             mesh_handle: None, // Mesh not yet uploaded to renderer
         }
     }
-    
+
     /// Extract only visible faces from a block mesh
     /// Returns (vertices, normals, indices) for the visible faces only
     fn extract_visible_faces(
@@ -568,11 +582,11 @@ impl VoxelChunk {
         if visible_faces.is_empty() {
             return (Vec::new(), Vec::new(), Vec::new());
         }
-        
+
         // For full optimization, we would extract only the specified faces
         // For MVP, if any face is visible, include the whole block mesh
         // TODO: Implement per-face extraction for maximum optimization
-        
+
         // Check if all faces are visible (common case for isolated blocks)
         if visible_faces.len() == 6 {
             // All faces visible, return entire mesh
@@ -582,18 +596,18 @@ impl VoxelChunk {
                 block_mesh.indices.clone(),
             );
         }
-        
+
         // Some faces culled - extract only visible faces
         let mut vertices = Vec::new();
         let mut normals = Vec::new();
         let mut indices = Vec::new();
         let mut vertex_map: HashMap<u32, u32> = HashMap::new();
         let mut next_vertex_id = 0u32;
-        
+
         for &face in visible_faces {
             let (idx_start, idx_count) = face.index_range();
             let face_indices = &block_mesh.indices[idx_start..idx_start + idx_count];
-            
+
             // Add indices and track which vertices we need
             for &original_idx in face_indices {
                 if let Some(&new_idx) = vertex_map.get(&original_idx) {
@@ -603,23 +617,23 @@ impl VoxelChunk {
                     let new_idx = next_vertex_id;
                     vertex_map.insert(original_idx, new_idx);
                     indices.push(new_idx);
-                    
+
                     vertices.push(block_mesh.vertices[original_idx as usize]);
                     normals.push(block_mesh.normals[original_idx as usize]);
-                    
+
                     next_vertex_id += 1;
                 }
             }
         }
-        
+
         (vertices, normals, indices)
     }
-    
+
     /// Check if chunk has any geometry
     pub fn is_empty(&self) -> bool {
         self.vertices.is_empty()
     }
-    
+
     /// Get approximate memory usage of this chunk in bytes
     pub fn memory_size(&self) -> usize {
         self.vertices.len() * std::mem::size_of::<[f32; 3]>()
@@ -639,7 +653,7 @@ impl crate::actors::Renderable for VoxelChunk {
         mat[1] = [cols[4], cols[5], cols[6], cols[7]];
         mat[2] = [cols[8], cols[9], cols[10], cols[11]];
         mat[3] = [cols[12], cols[13], cols[14], cols[15]];
-        
+
         crate::actors::InstanceGpu {
             model: mat,
             material: material_index,
@@ -654,22 +668,22 @@ impl crate::actors::CustomMesh for VoxelChunk {
     fn vertices(&self) -> &[[f32; 3]] {
         &self.vertices
     }
-    
+
     fn normals(&self) -> &[[f32; 3]] {
         &self.normals
     }
-    
+
     fn indices(&self) -> &[u32] {
         &self.indices
     }
-    
+
     fn transform(&self) -> glam::Mat4 {
         // Chunk mesh vertices are already in world space
         glam::Mat4::IDENTITY
     }
-    
+
     fn material_index(&self) -> u32 {
-        0  // Default to Lambertian material
+        0 // Default to Lambertian material
     }
 }
 
@@ -678,20 +692,19 @@ impl VoxelChunk {
     pub fn has_geometry(&self) -> bool {
         !self.vertices.is_empty() && !self.indices.is_empty()
     }
-    
+
     /// Check if mesh is already uploaded to renderer
     pub fn is_uploaded(&self) -> bool {
         self.mesh_handle.is_some()
     }
-    
+
     /// Set the renderer mesh handle
     pub fn set_mesh_handle(&mut self, handle: u32) {
         self.mesh_handle = Some(handle);
     }
-    
+
     /// Get the renderer mesh handle (if uploaded)
     pub fn get_mesh_handle(&self) -> Option<u32> {
         self.mesh_handle
     }
 }
-

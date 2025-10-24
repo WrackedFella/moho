@@ -102,7 +102,7 @@ fn scene_render_invokes_renderer_backend_calls() {
     );
 
     // Call render — it should call into the mock's render_mesh several times.
-    scene.render(&mut mock, &world, mesh_handle, cube_mesh_handle, camera);
+    scene.render(&mut mock, &mut world, mesh_handle, cube_mesh_handle, camera);
 
     let calls = mock.renders.borrow();
     assert!(
