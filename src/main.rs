@@ -115,7 +115,7 @@ impl App {
             Ok(audio) => {
                 log::info!("Audio system initialized successfully");
                 Some(audio)
-            },
+            }
             Err(e) => {
                 log::warn!("Failed to initialize audio system: {}", e);
                 None
@@ -634,8 +634,12 @@ impl ApplicationHandler for App {
                         UiEvent::AudioEvent(audio_event) => {
                             // Convert UI audio event to engine audio event
                             let engine_event = match audio_event {
-                                moho_ui::UiAudioEvent::ButtonClick => engine_audio::AudioEvent::ButtonClick,
-                                moho_ui::UiAudioEvent::MenuNavigate => engine_audio::AudioEvent::MenuNavigate,
+                                moho_ui::UiAudioEvent::ButtonClick => {
+                                    engine_audio::AudioEvent::ButtonClick
+                                }
+                                moho_ui::UiAudioEvent::MenuNavigate => {
+                                    engine_audio::AudioEvent::MenuNavigate
+                                }
                                 moho_ui::UiAudioEvent::Confirm => engine_audio::AudioEvent::Confirm,
                                 moho_ui::UiAudioEvent::Cancel => engine_audio::AudioEvent::Cancel,
                                 moho_ui::UiAudioEvent::Error => engine_audio::AudioEvent::Error,
