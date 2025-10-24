@@ -1,7 +1,7 @@
 use engine_core::actors::{Cube, Sphere};
-use engine_renderer::{MaterialGpu, RendererBackend};
 #[cfg(feature = "backend-wgpu")]
 use engine_renderer::FrameCallback;
+use engine_renderer::{MaterialGpu, RendererBackend};
 use glam::Vec3;
 use legion::World;
 
