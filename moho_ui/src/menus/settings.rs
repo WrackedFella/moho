@@ -19,6 +19,11 @@ pub struct SettingsMenu {
     dirty_key_d: bool,
     dirty_mouse_sens: bool,
     dirty_filtering_enabled: bool,
+    // Audio dirty flags
+    dirty_audio_sound_effect: bool,
+    dirty_audio_music: bool,
+    dirty_audio_ui: bool,
+    dirty_audio_voice: bool,
     listening: Option<usize>,
     pending_binding: Option<PendingBinding>,
     pub show_conflict_modal: bool,
@@ -39,6 +44,10 @@ impl SettingsMenu {
             dirty_key_d: false,
             dirty_mouse_sens: false,
             dirty_filtering_enabled: false,
+            dirty_audio_sound_effect: false,
+            dirty_audio_music: false,
+            dirty_audio_ui: false,
+            dirty_audio_voice: false,
             listening: None,
             pending_binding: None,
             show_conflict_modal: false,
@@ -148,6 +157,10 @@ impl SettingsMenu {
             || self.dirty_key_d
             || self.dirty_mouse_sens
             || self.dirty_filtering_enabled
+            || self.dirty_audio_sound_effect
+            || self.dirty_audio_music
+            || self.dirty_audio_ui
+            || self.dirty_audio_voice
     }
 
     fn paint_dirty_decor(ui: &mut egui::Ui, resp: &egui::Response, dirty: bool) {
@@ -183,6 +196,18 @@ impl Menu for SettingsMenu {
 
                 ui.heading("Game Settings");
                 ui.add_space(12.0);
+
+                // Controls Section Header
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Controls")
+                            .size(18.0)
+                            .color(egui::Color32::from_rgb(200, 200, 200)),
+                    );
+                });
+                ui.add_space(4.0);
+                ui.separator();
+                ui.add_space(8.0);
 
                 let binding_label = |b: &Binding| -> String {
                     if b.code == 0 {
@@ -405,6 +430,227 @@ impl Menu for SettingsMenu {
                     });
                 });
 
+                ui.add_space(24.0);
+
+                // Audio Section Header
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Audio")
+                            .size(18.0)
+                            .color(egui::Color32::from_rgb(200, 200, 200)),
+                    );
+                });
+                ui.add_space(4.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                // Sound Effect Volume
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(label_width, 28.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label("Sound Effects:");
+                        },
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(120.0, 20.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().slider_width = 120.0;
+                                let slider = ui.add(
+                                    egui::Slider::new(
+                                        &mut self.staged.audio_sound_effect_volume,
+                                        1.0..=10.0,
+                                    )
+                                    .show_value(false),
+                                );
+                                Self::paint_dirty_decor(
+                                    ui,
+                                    &slider,
+                                    (self.staged.audio_sound_effect_volume
+                                        - self.prefs.audio_sound_effect_volume)
+                                        .abs()
+                                        > f32::EPSILON,
+                                );
+                            },
+                        );
+                        ui.add_space(8.0);
+                        let drag = ui.add(
+                            egui::DragValue::new(&mut self.staged.audio_sound_effect_volume)
+                                .range(1.0..=10.0)
+                                .speed(0.1)
+                                .min_decimals(1)
+                                .max_decimals(1),
+                        );
+                        Self::paint_dirty_decor(
+                            ui,
+                            &drag,
+                            (self.staged.audio_sound_effect_volume
+                                - self.prefs.audio_sound_effect_volume)
+                                .abs()
+                                > f32::EPSILON,
+                        );
+                        self.dirty_audio_sound_effect = (self.staged.audio_sound_effect_volume
+                            - self.prefs.audio_sound_effect_volume)
+                            .abs()
+                            > f32::EPSILON;
+                    });
+                });
+
+                // Music Volume
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(label_width, 28.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label("Music:");
+                        },
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(120.0, 20.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().slider_width = 120.0;
+                                let slider = ui.add(
+                                    egui::Slider::new(
+                                        &mut self.staged.audio_music_volume,
+                                        1.0..=10.0,
+                                    )
+                                    .show_value(false),
+                                );
+                                Self::paint_dirty_decor(
+                                    ui,
+                                    &slider,
+                                    (self.staged.audio_music_volume
+                                        - self.prefs.audio_music_volume)
+                                        .abs()
+                                        > f32::EPSILON,
+                                );
+                            },
+                        );
+                        ui.add_space(8.0);
+                        let drag = ui.add(
+                            egui::DragValue::new(&mut self.staged.audio_music_volume)
+                                .range(1.0..=10.0)
+                                .speed(0.1)
+                                .min_decimals(1)
+                                .max_decimals(1),
+                        );
+                        Self::paint_dirty_decor(
+                            ui,
+                            &drag,
+                            (self.staged.audio_music_volume - self.prefs.audio_music_volume).abs()
+                                > f32::EPSILON,
+                        );
+                        self.dirty_audio_music =
+                            (self.staged.audio_music_volume - self.prefs.audio_music_volume).abs()
+                                > f32::EPSILON;
+                    });
+                });
+
+                // UI Volume
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(label_width, 28.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label("User Interface:");
+                        },
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(120.0, 20.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().slider_width = 120.0;
+                                let slider = ui.add(
+                                    egui::Slider::new(&mut self.staged.audio_ui_volume, 1.0..=10.0)
+                                        .show_value(false),
+                                );
+                                Self::paint_dirty_decor(
+                                    ui,
+                                    &slider,
+                                    (self.staged.audio_ui_volume - self.prefs.audio_ui_volume)
+                                        .abs()
+                                        > f32::EPSILON,
+                                );
+                            },
+                        );
+                        ui.add_space(8.0);
+                        let drag = ui.add(
+                            egui::DragValue::new(&mut self.staged.audio_ui_volume)
+                                .range(1.0..=10.0)
+                                .speed(0.1)
+                                .min_decimals(1)
+                                .max_decimals(1),
+                        );
+                        Self::paint_dirty_decor(
+                            ui,
+                            &drag,
+                            (self.staged.audio_ui_volume - self.prefs.audio_ui_volume).abs()
+                                > f32::EPSILON,
+                        );
+                        self.dirty_audio_ui =
+                            (self.staged.audio_ui_volume - self.prefs.audio_ui_volume).abs()
+                                > f32::EPSILON;
+                    });
+                });
+
+                // Voice Volume
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(label_width, 28.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label("Voice:");
+                        },
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(120.0, 20.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().slider_width = 120.0;
+                                let slider = ui.add(
+                                    egui::Slider::new(
+                                        &mut self.staged.audio_voice_volume,
+                                        1.0..=10.0,
+                                    )
+                                    .show_value(false),
+                                );
+                                Self::paint_dirty_decor(
+                                    ui,
+                                    &slider,
+                                    (self.staged.audio_voice_volume
+                                        - self.prefs.audio_voice_volume)
+                                        .abs()
+                                        > f32::EPSILON,
+                                );
+                            },
+                        );
+                        ui.add_space(8.0);
+                        let drag = ui.add(
+                            egui::DragValue::new(&mut self.staged.audio_voice_volume)
+                                .range(1.0..=10.0)
+                                .speed(0.1)
+                                .min_decimals(1)
+                                .max_decimals(1),
+                        );
+                        Self::paint_dirty_decor(
+                            ui,
+                            &drag,
+                            (self.staged.audio_voice_volume - self.prefs.audio_voice_volume).abs()
+                                > f32::EPSILON,
+                        );
+                        self.dirty_audio_voice =
+                            (self.staged.audio_voice_volume - self.prefs.audio_voice_volume).abs()
+                                > f32::EPSILON;
+                    });
+                });
+
                 ui.add_space(12.0);
 
                 egui::TopBottomPanel::bottom("settings_bottom").show(ctx, |ui| {
@@ -426,6 +672,10 @@ impl Menu for SettingsMenu {
                                 self.dirty_key_d = false;
                                 self.dirty_mouse_sens = false;
                                 self.dirty_filtering_enabled = false;
+                                self.dirty_audio_sound_effect = false;
+                                self.dirty_audio_music = false;
+                                self.dirty_audio_ui = false;
+                                self.dirty_audio_voice = false;
                             }
                             items.push(crate::menus::menu::MenuItem {
                                 action: if save_clicked {
@@ -454,6 +704,11 @@ impl Menu for SettingsMenu {
                                     self.dirty_key_s = false;
                                     self.dirty_key_d = false;
                                     self.dirty_mouse_sens = false;
+                                    self.dirty_filtering_enabled = false;
+                                    self.dirty_audio_sound_effect = false;
+                                    self.dirty_audio_music = false;
+                                    self.dirty_audio_ui = false;
+                                    self.dirty_audio_voice = false;
                                 }
                                 items.push(crate::menus::menu::MenuItem {
                                     action: MenuAction::None,
