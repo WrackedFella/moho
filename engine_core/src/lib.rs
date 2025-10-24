@@ -10,6 +10,7 @@ pub mod controller;
 pub mod input;
 pub mod materials;
 pub mod scene_builders;
+pub mod voxel;
 
 // Reflection function
 pub fn schlick(cosine: f32, ref_idx: f32) -> f32 {

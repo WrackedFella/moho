@@ -64,7 +64,7 @@ impl Renderable for Cube {
 }
 
 /// Convenience helper to collect all Renderable instances from the provided ECS `World`.
-/// Currently queries for `Sphere` and `Cube` components and returns a Vec of `InstanceGpu`.
+/// Currently queries for `Sphere`, `Cube`, and `VoxelChunk` components and returns a Vec of `InstanceGpu`.
 pub fn collect_renderable_instances(world: &mut World) -> Vec<InstanceGpu> {
     let mut out: Vec<InstanceGpu> = Vec::new();
     let mut qs = <&Sphere>::query();
@@ -75,6 +75,13 @@ pub fn collect_renderable_instances(world: &mut World) -> Vec<InstanceGpu> {
     for c in qc.iter(world) {
         out.push(c.to_instance_with_material(0));
     }
+    
+    // Add voxel chunk rendering
+    let mut qv = <&crate::voxel::VoxelChunk>::query();
+    for chunk in qv.iter(world) {
+        out.push(chunk.to_instance_with_material(0));
+    }
+    
     out
 }
 

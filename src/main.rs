@@ -86,13 +86,13 @@ impl App {
         let world = World::default();
         let scene = engine_renderer::Scene::new();
 
-        // Basic camera - positioned to get a good view of the random scene
+        // Basic camera - positioned to get a good view of voxel terrain
         let camera = {
-            let eye = glam::Vec3::new(13.0, 2.0, 3.0);
-            let center = glam::Vec3::new(0.0, 0.0, 0.0);
+            let eye = glam::Vec3::new(40.0, 25.0, 40.0);
+            let center = glam::Vec3::new(0.0, 8.0, 0.0);
             let up = glam::Vec3::new(0.0, 1.0, 0.0);
             let view = glam::Mat4::look_at_rh(eye, center, up);
-            let proj = glam::Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 100.0f32);
+            let proj = glam::Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 200.0f32);
             (view, proj, eye)
         };
 
@@ -215,8 +215,11 @@ impl App {
         // Clear the existing world
         self.world.clear();
 
-        // Generate new random scene
-        engine_core::scene_builders::random_scene(&mut self.world);
+        // Generate voxel terrain scene
+        engine_core::scene_builders::voxel_terrain_scene(&mut self.world);
+        
+        // Old random scene (for testing/fallback)
+        // engine_core::scene_builders::random_scene(&mut self.world);
 
         // Ensure saves directory exists
         let saves_dir = std::path::Path::new("saves");
