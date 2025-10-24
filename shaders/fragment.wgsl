@@ -53,12 +53,28 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let alpha = clamp((1.0 - F) * 0.6 + 0.05, 0.02, 1.0);
     } else {
         // Non-dielectric path (Lambertian / Metal)
-        let diff_color = albedo * diff;
-        // specular: use a small metalness-like mix controlled by fuzz
-        let spec_strength = mix(0.04, 1.0, clamp(fuzz, 0.0, 1.0));
-        // For metals the specular should be tinted by albedo; for dielectrics
-        // we handled spec separately above.
-        let spec_color = albedo * spec_strength * spec;
+        // For metals, fuzz represents surface roughness (0 = smooth, 1 = rough)
+        // Detect if this is a metal: fuzz > 0.01 indicates metallic material
+        let is_metal = step(0.01, fuzz);
+        
+        // For metals: reduce diffuse, increase specular
+        // For lambertian: normal diffuse, minimal specular
+        let diff_strength = mix(1.0, 0.3, is_metal);
+        let diff_color = albedo * diff * diff_strength;
+        
+        // Metal specular: strong but affected by fuzz (roughness)
+        // Lambertian specular: very weak
+        let base_spec_strength = mix(0.04, 0.85, is_metal);
+        // Fuzz reduces specular strength for metals (rougher = less reflective)
+        let fuzz_factor = mix(1.0, 0.4, clamp(fuzz, 0.0, 1.0));
+        let spec_strength = base_spec_strength * fuzz_factor;
+        
+        // Sharper specular for metals (higher power)
+        let spec_power = mix(64.0, 96.0, is_metal);
+        let spec_highlight = pow(max(dot(N, H), 0.0), spec_power);
+        
+        // For metals the specular should be tinted by albedo
+        let spec_color = albedo * spec_strength * spec_highlight;
 
         color = vec3<f32>(ambient) * albedo + ao * (diff_color + spec_color);
     }
