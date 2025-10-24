@@ -461,11 +461,11 @@ impl App {
 
     /// Handle audio events from the UI or game
     fn handle_audio_event(&mut self, event: engine_audio::AudioEvent) {
-        if let Some(ref mut audio) = self.audio_system {
-            if let Err(e) = audio.handle_event(event) {
-                // Don't spam errors for missing audio files during development
-                log::debug!("Audio event failed: {}", e);
-            }
+        if let Some(ref mut audio) = self.audio_system
+            && let Err(e) = audio.handle_event(event)
+        {
+            // Don't spam errors for missing audio files during development
+            log::debug!("Audio event failed: {}", e);
         }
     }
 }
