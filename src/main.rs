@@ -381,13 +381,6 @@ impl App {
                         );
                     }
                 }
-                KeyCode::KeyT => {
-                    if pressed {
-                        // Test audio system
-                        log::info!("Testing audio system...");
-                        self.test_audio();
-                    }
-                }
                 _ => {}
             }
         }
@@ -475,33 +468,6 @@ impl App {
             }
         }
     }
-
-    /// Play a UI sound effect
-    fn play_ui_sound(&mut self, sound_type: UiSoundType) {
-        let event = match sound_type {
-            UiSoundType::Click => engine_audio::AudioEvent::ButtonClick,
-            UiSoundType::Navigate => engine_audio::AudioEvent::MenuNavigate,
-            UiSoundType::Confirm => engine_audio::AudioEvent::Confirm,
-            UiSoundType::Cancel => engine_audio::AudioEvent::Cancel,
-            UiSoundType::Error => engine_audio::AudioEvent::Error,
-        };
-        self.handle_audio_event(event);
-    }
-
-    /// Test audio system by playing a click sound
-    fn test_audio(&mut self) {
-        self.play_ui_sound(UiSoundType::Click);
-    }
-}
-
-/// UI sound types for easy use throughout the application
-#[cfg(feature = "backend-wgpu")]
-enum UiSoundType {
-    Click,
-    Navigate,
-    Confirm,
-    Cancel,
-    Error,
 }
 
 #[cfg(feature = "backend-wgpu")]
