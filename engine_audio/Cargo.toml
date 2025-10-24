@@ -1,0 +1,13 @@
+[package]
+name = "engine_audio"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rodio = { workspace = true }
+log = { workspace = true }
+thiserror = "1.0"
+glam = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }
