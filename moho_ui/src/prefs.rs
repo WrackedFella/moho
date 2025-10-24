@@ -29,6 +29,11 @@ pub struct Prefs {
     pub key_d: Binding,
     pub mouse_sensitivity: f32,
     pub input_filtering_enabled: bool,
+    // Audio settings (values 1.0 to 10.0)
+    pub audio_sound_effect_volume: f32,
+    pub audio_music_volume: f32,
+    pub audio_ui_volume: f32,
+    pub audio_voice_volume: f32,
 }
 
 impl Default for Prefs {
@@ -40,6 +45,11 @@ impl Default for Prefs {
             key_d: Binding::new('D' as u32, 0),
             mouse_sensitivity: 1.0,
             input_filtering_enabled: true,
+            // Default audio volumes (mid-range)
+            audio_sound_effect_volume: 7.0,
+            audio_music_volume: 5.0,
+            audio_ui_volume: 8.0,
+            audio_voice_volume: 7.0,
         }
     }
 }
@@ -154,6 +164,25 @@ impl Prefs {
             }
         }
 
+        // Load audio settings from [audio] section if present
+        if let Ok(map) = ini::macro_safe_read(&content)
+            && let Some(audio_section) = map.get("audio")
+        {
+            let get_f32 = |k: &str, def: f32| {
+                audio_section
+                    .get(k)
+                    .and_then(|o| o.clone())
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .unwrap_or(def)
+            };
+
+            prefs.audio_sound_effect_volume =
+                get_f32("sound_effect_volume", prefs.audio_sound_effect_volume);
+            prefs.audio_music_volume = get_f32("music_volume", prefs.audio_music_volume);
+            prefs.audio_ui_volume = get_f32("ui_volume", prefs.audio_ui_volume);
+            prefs.audio_voice_volume = get_f32("voice_volume", prefs.audio_voice_volume);
+        }
+
         prefs
     }
 
@@ -163,6 +192,8 @@ impl Prefs {
             fs::create_dir_all(dir)?;
         }
         let mut out = String::new();
+
+        // Controls section
         out.push_str("[prefs]\n");
         // store human-readable bindings, e.g. "Ctrl+W" or "ArrowUp"
         fn binding_to_string(b: &Binding) -> String {
@@ -208,6 +239,16 @@ impl Prefs {
             "input_filtering_enabled={}\n",
             self.input_filtering_enabled
         ));
+
+        // Audio section
+        out.push_str("\n[audio]\n");
+        out.push_str(&format!(
+            "sound_effect_volume={:.1}\n",
+            self.audio_sound_effect_volume
+        ));
+        out.push_str(&format!("music_volume={:.1}\n", self.audio_music_volume));
+        out.push_str(&format!("ui_volume={:.1}\n", self.audio_ui_volume));
+        out.push_str(&format!("voice_volume={:.1}\n", self.audio_voice_volume));
 
         fs::write(path, out)?;
         Ok(())
