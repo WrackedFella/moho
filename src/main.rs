@@ -47,6 +47,9 @@ struct App {
     // Runtime state (initialized after window creation)
     window_renderer: Option<WindowRenderer>,
 
+    // Audio system
+    audio_system: Option<engine_audio::AudioSystem>,
+
     // UI components
     #[cfg(feature = "ui-egui")]
     ui_adapter: Option<Arc<Mutex<moho_ui::EguiAdapter>>>,
@@ -107,12 +110,25 @@ impl App {
         // Always use the default filter preset
         let engine_filter_preset = engine_core::input::FilterPreset::Default;
 
+        // Initialize audio system
+        let audio_system = match engine_audio::AudioSystem::new() {
+            Ok(audio) => {
+                log::info!("Audio system initialized successfully");
+                Some(audio)
+            }
+            Err(e) => {
+                log::warn!("Failed to initialize audio system: {}", e);
+                None
+            }
+        };
+
         Self {
             world,
             scene,
             camera,
             mode: AppMode::Menu, // Start in menu mode
             window_renderer: None,
+            audio_system,
 
             #[cfg(feature = "ui-egui")]
             ui_adapter: None,
@@ -442,6 +458,16 @@ impl App {
         // Release cursor for menu mode
         self.release_cursor();
     }
+
+    /// Handle audio events from the UI or game
+    fn handle_audio_event(&mut self, event: engine_audio::AudioEvent) {
+        if let Some(ref mut audio) = self.audio_system {
+            if let Err(e) = audio.handle_event(event) {
+                // Don't spam errors for missing audio files during development
+                log::debug!("Audio event failed: {}", e);
+            }
+        }
+    }
 }
 
 #[cfg(feature = "backend-wgpu")]
@@ -570,6 +596,21 @@ impl ApplicationHandler for App {
                             // Always use default filter preset, only apply filtering enabled state
                             self.input_system
                                 .set_filter_enabled(prefs.input_filtering_enabled);
+                        }
+                        UiEvent::AudioEvent(audio_event) => {
+                            // Convert UI audio event to engine audio event
+                            let engine_event = match audio_event {
+                                moho_ui::UiAudioEvent::ButtonClick => {
+                                    engine_audio::AudioEvent::ButtonClick
+                                }
+                                moho_ui::UiAudioEvent::MenuNavigate => {
+                                    engine_audio::AudioEvent::MenuNavigate
+                                }
+                                moho_ui::UiAudioEvent::Confirm => engine_audio::AudioEvent::Confirm,
+                                moho_ui::UiAudioEvent::Cancel => engine_audio::AudioEvent::Cancel,
+                                moho_ui::UiAudioEvent::Error => engine_audio::AudioEvent::Error,
+                            };
+                            self.handle_audio_event(engine_event);
                         }
                     }
                 }

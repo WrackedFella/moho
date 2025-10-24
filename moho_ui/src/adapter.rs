@@ -23,6 +23,17 @@ pub enum UiEvent {
     Exit,
     OverlayToggled(bool),
     SettingsSaved(Prefs),
+    AudioEvent(UiAudioEvent),
+}
+
+/// Audio events from UI interactions
+#[derive(Debug, Clone)]
+pub enum UiAudioEvent {
+    ButtonClick,
+    MenuNavigate,
+    Confirm,
+    Cancel,
+    Error,
 }
 
 pub type UiReceiver = crossbeam_channel::Receiver<UiEvent>;
@@ -168,21 +179,27 @@ impl EguiAdapter {
     fn process_menu_action(&mut self, action: MenuAction) {
         match action {
             MenuAction::LoadScene(path) => {
+                self.emit_audio_event(UiAudioEvent::Confirm);
                 let _ = self.sender.send(UiEvent::LoadScene(path));
             }
             MenuAction::NewWorld => {
+                self.emit_audio_event(UiAudioEvent::Confirm);
                 let _ = self.sender.send(UiEvent::NewWorld);
             }
             MenuAction::Exit => {
+                self.emit_audio_event(UiAudioEvent::ButtonClick);
                 let _ = self.sender.send(UiEvent::Exit);
             }
             MenuAction::ShowMenu(name) => {
+                self.emit_audio_event(UiAudioEvent::MenuNavigate);
                 let _ = self.sender.send(UiEvent::ShowMenu(name));
             }
             MenuAction::Close => {
+                self.emit_audio_event(UiAudioEvent::Cancel);
                 self.hide_menus();
             }
             MenuAction::SettingsSaved(prefs) => {
+                self.emit_audio_event(UiAudioEvent::Confirm);
                 let _ = self.sender.send(UiEvent::SettingsSaved(prefs));
             }
             MenuAction::None => {
@@ -211,6 +228,11 @@ impl EguiAdapter {
     pub fn recall_staging_belt(&mut self) {
         // This is called by the main application after rendering
         // No-op for now, but could be used for cleanup
+    }
+
+    /// Emit an audio event
+    fn emit_audio_event(&mut self, audio_event: UiAudioEvent) {
+        let _ = self.sender.send(UiEvent::AudioEvent(audio_event));
     }
 }
 
