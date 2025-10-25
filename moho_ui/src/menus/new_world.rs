@@ -136,7 +136,9 @@ impl Menu for NewWorldMenu {
                                                         .monospace(),
                                                 );
                                                 ui.add_space(8.0);
-                                                ui.add(
+                                                // Use add_sized to match the text field width
+                                                ui.add_sized(
+                                                    egui::vec2(field_width, 20.0),
                                                     egui::Slider::new(&mut self.size_xz, 64..=256)
                                                         .show_value(false),
                                                 )
@@ -148,14 +150,12 @@ impl Menu for NewWorldMenu {
                                     ui.add_space(12.0);
 
                                     // Push the buttons to the bottom of the card by using a
-                                    // bottom-up layout. This keeps them roughly where the
-                                    // red guideline indicates regardless of panel height.
+                                    // bottom-up layout. This keeps them snug with the bottom border.
                                     ui.with_layout(
                                         egui::Layout::bottom_up(egui::Align::Min),
                                         |ui| {
-                                            // Add a larger spacer so the buttons sit lower in the card
-                                            // (closer to the red guideline from the screenshot).
-                                            ui.add_space(96.0);
+                                            // Small spacer to give just a bit of breathing room from the edge
+                                            ui.add_space(8.0);
 
                                             // Right-align the action buttons inside the bottom area
                                             ui.with_layout(
