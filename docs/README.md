@@ -208,7 +208,7 @@
 
 ### Configuration
 - Default terrain: GentleHills, amplitude 8.0, frequency 0.05
-- Chunk size: 16×16×16 blocks
+- Chunk size: 64×64×64 blocks
 - Materials: 0=grass, 1=dirt, 2=stone
 - Resources: 0=stone, 1=iron ore (10% spawn rate)
 

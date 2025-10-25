@@ -136,7 +136,7 @@ impl Default for TerrainConfig {
 /// Two-pass algorithm: 1) Place blocks, 2) Smooth transitions
 pub fn voxel_terrain_scene(world: &mut World) {
     let config = TerrainConfig::default();
-    let mut grid = VoxelGrid::new(16); // 16×16×16 chunks
+    let mut grid = VoxelGrid::new(64); // 64×64×64 chunks
 
     log::info!("Generating voxel terrain...");
     generate_terrain(&mut grid, &config);

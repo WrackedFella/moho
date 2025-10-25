@@ -58,8 +58,8 @@ fn test_voxel_block_basics() {
 
 #[test]
 fn test_voxel_grid_basic_ops() {
-    let mut grid = VoxelGrid::new(16);
-    assert_eq!(grid.chunk_size(), 16);
+    let mut grid = VoxelGrid::new(64);
+    assert_eq!(grid.chunk_size(), 64);
     assert_eq!(grid.block_positions().count(), 0);
 
     let pos = IVec3::new(1, 2, 3);
@@ -77,19 +77,19 @@ fn test_voxel_grid_basic_ops() {
 
     // Chunk position calculation
     assert_eq!(
-        VoxelGrid::get_chunk_pos(IVec3::new(0, 0, 0), 16),
+        VoxelGrid::get_chunk_pos(IVec3::new(0, 0, 0), 64),
         IVec3::new(0, 0, 0)
     );
     assert_eq!(
-        VoxelGrid::get_chunk_pos(IVec3::new(15, 15, 15), 16),
+        VoxelGrid::get_chunk_pos(IVec3::new(63, 63, 63), 64),
         IVec3::new(0, 0, 0)
     );
     assert_eq!(
-        VoxelGrid::get_chunk_pos(IVec3::new(16, 16, 16), 16),
+        VoxelGrid::get_chunk_pos(IVec3::new(64, 64, 64), 64),
         IVec3::new(1, 1, 1)
     );
     assert_eq!(
-        VoxelGrid::get_chunk_pos(IVec3::new(-1, -1, -1), 16),
+        VoxelGrid::get_chunk_pos(IVec3::new(-1, -1, -1), 64),
         IVec3::new(-1, -1, -1)
     );
 }
