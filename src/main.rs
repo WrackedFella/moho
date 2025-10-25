@@ -1,15 +1,15 @@
+#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
+use crossbeam_channel::{Receiver, unbounded};
 #[cfg(feature = "backend-wgpu")]
 use legion::World;
 #[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
 use moho_ui::prefs::Prefs;
-#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
-use crossbeam_channel::{unbounded, Receiver};
-#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
-use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "backend-wgpu")]
 use std::sync::Arc;
 #[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
 use std::sync::Mutex;
+#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "backend-wgpu")]
 use std::time::{Duration, Instant};
 #[cfg(feature = "backend-wgpu")]
@@ -27,7 +27,10 @@ mod save;
 #[cfg(feature = "ui-egui")]
 enum GenerationMsg {
     Progress(f32),
-    Completed { scene_bytes: Vec<u8>, spec: moho_ui::WorldSpec },
+    Completed {
+        scene_bytes: Vec<u8>,
+        spec: moho_ui::WorldSpec,
+    },
     Canceled,
     Failed(String),
 }
@@ -312,7 +315,8 @@ impl App {
                     let scene_bytes = match local_scene.encode_to_bytes(&local_world, None) {
                         Ok(b) => b,
                         Err(e) => {
-                            let _ = sender.send(GenerationMsg::Failed(format!("encode failed: {}", e)));
+                            let _ =
+                                sender.send(GenerationMsg::Failed(format!("encode failed: {}", e)));
                             return;
                         }
                     };
@@ -323,18 +327,24 @@ impl App {
                     let saves_dir = PathBuf::from("saves");
                     if !saves_dir.exists() {
                         if let Err(e) = std::fs::create_dir_all(&saves_dir) {
-                            let _ = sender.send(GenerationMsg::Failed(format!("mkdir failed: {}", e)));
+                            let _ =
+                                sender.send(GenerationMsg::Failed(format!("mkdir failed: {}", e)));
                             return;
                         }
                     }
                     let save_path = saves_dir.join("scene.bin");
-                    if let Err(e) = save::write_scene_with_metadata(&save_path, &scene_bytes, &spec_for_thread) {
+                    if let Err(e) =
+                        save::write_scene_with_metadata(&save_path, &scene_bytes, &spec_for_thread)
+                    {
                         let _ = sender.send(GenerationMsg::Failed(format!("write failed: {}", e)));
                         return;
                     }
 
                     let _ = sender.send(GenerationMsg::Progress(1.0));
-                    let _ = sender.send(GenerationMsg::Completed { scene_bytes, spec: spec_for_thread });
+                    let _ = sender.send(GenerationMsg::Completed {
+                        scene_bytes,
+                        spec: spec_for_thread,
+                    });
                 })?;
 
             // Store receiver, handle and cancel flag so the main loop can poll it
@@ -560,9 +570,20 @@ impl App {
             // Handle special keys
             match keycode {
                 KeyCode::Escape => {
-                    // ESC to show menu
+                    // ESC to show menu. When pressed in-game, always open the
+                    // main Start menu (not any previously active submenu).
                     if pressed {
+                        // Set app into Menu mode and release cursor
                         self.show_menu();
+
+                        // Also explicitly request the adapter show the "start"
+                        // menu so we don't reopen any other menu (e.g. new_world)
+                        #[cfg(feature = "ui-egui")]
+                        if let Some(ui_adapter) = &self.ui_adapter
+                            && let Ok(mut adapter) = ui_adapter.lock()
+                        {
+                            adapter.show_menu("start");
+                        }
                     }
                 }
                 KeyCode::Tab => {

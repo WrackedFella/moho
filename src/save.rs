@@ -99,7 +99,8 @@ pub fn read_scene_and_metadata<P: AsRef<Path>>(
     let scene_bytes = buf[offset..offset + scene_len].to_vec();
 
     // Decode metadata
-    let (spec, _): (moho_ui::WorldSpec, usize) = bincode::decode_from_slice(meta_bytes, bincode::config::standard())?;
+    let (spec, _): (moho_ui::WorldSpec, usize) =
+        bincode::decode_from_slice(meta_bytes, bincode::config::standard())?;
     Ok((spec, scene_bytes))
 }
 

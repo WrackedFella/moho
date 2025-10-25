@@ -2,12 +2,12 @@ use crate::prefs::Prefs;
 use egui::{Align2, Vec2};
 use std::path::PathBuf;
 
+use bincode::{Decode, Encode};
 /// Parameters describing a new world request coming from the UI.
 ///
 /// Implemented inside `moho_ui` for the UI-first approach. We keep this
 /// simple and `Clone` so it can be transported via the internal channel.
 use serde::{Deserialize, Serialize};
-use bincode::{Encode, Decode};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Encode, Decode)]
 pub struct WorldSpec {
