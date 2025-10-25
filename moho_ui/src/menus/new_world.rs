@@ -123,6 +123,15 @@ impl Menu for NewWorldMenu {
         items
     }
 
+    fn on_show(&mut self) {
+        // Generate a random u64 seed when the menu is shown and populate the
+        // seed input field so the user sees a pre-filled value they can keep
+        // or edit. Use rand::random which works across editions and avoids
+        // method name conflicts with newer Rust keywords.
+        let seed: u64 = rand::random();
+        self.seed_input = seed.to_string();
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
