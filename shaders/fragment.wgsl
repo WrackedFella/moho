@@ -25,6 +25,16 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let fuzz = mat.params.x;
     let ref_idx = mat.params.y;
 
+    // Override albedo based on face normal for voxel terrain
+    // Top faces (normal pointing up) = green, Side faces = light brown
+    let is_top_face = abs(N.y) > 0.9; // Normal mostly vertical
+    let voxel_albedo = select(
+        vec3<f32>(0.6, 0.5, 0.4), // Light brown for sides
+        vec3<f32>(0.3, 0.6, 0.3), // Green for top
+        is_top_face
+    );
+    let final_albedo = voxel_albedo;
+
     // If ref_idx > 0 we treat the material as a dielectric (glass-like).
     // We don't implement true refraction here (no background sampling), but
     // use a Fresnel-based specular term and reduce diffuse contribution so
@@ -43,10 +53,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // Approximate transmitted light (tint) scaled by (1 - F). This is a
         // cheap stand-in for refraction/transmission and helps the object
         // look glassy when combined with specular.
-        let trans = albedo * (1.0 - F) * 0.6;
+        let trans = final_albedo * (1.0 - F) * 0.6;
 
         // Small ambient contribution; rely mostly on AO + specular + trans
-        color = vec3<f32>(ambient) * albedo * 0.1 + ao * (spec_diel + trans);
+        color = vec3<f32>(ambient) * final_albedo * 0.1 + ao * (spec_diel + trans);
         // approximate alpha: more reflective (higher F) -> less transmitted
         // we bias alpha so very slight translucency remains even for weakly
         // refractive materials.
@@ -60,7 +70,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // For metals: reduce diffuse, increase specular
         // For lambertian: normal diffuse, minimal specular
         let diff_strength = mix(1.0, 0.3, is_metal);
-        let diff_color = albedo * diff * diff_strength;
+        let diff_color = final_albedo * diff * diff_strength;
         
         // Metal specular: strong but affected by fuzz (roughness)
         // Lambertian specular: very weak
@@ -74,9 +84,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let spec_highlight = pow(max(dot(N, H), 0.0), spec_power);
         
         // For metals the specular should be tinted by albedo
-        let spec_color = albedo * spec_strength * spec_highlight;
+        let spec_color = final_albedo * spec_strength * spec_highlight;
 
-        color = vec3<f32>(ambient) * albedo + ao * (diff_color + spec_color);
+        color = vec3<f32>(ambient) * final_albedo + ao * (diff_color + spec_color);
     }
     // For dielectrics we computed `alpha` above; otherwise alpha is opaque.
     var out_alpha: f32 = 1.0;
