@@ -46,7 +46,7 @@ impl Default for Prefs {
             key_s: Binding::new('S' as u32, 0),
             key_d: Binding::new('D' as u32, 0),
             key_up: Binding::new(' ' as u32, 0),    // Space
-            key_down: Binding::new(0, 2),            // Shift (mods=2)
+            key_down: Binding::new(0x204, 0),            // Shift
             mouse_sensitivity: 1.0,
             input_filtering_enabled: true,
             // Default audio volumes (mid-range)
@@ -144,7 +144,10 @@ impl Prefs {
                     "TAB" => 0x201,
                     "BACKSPACE" => 0x202,
                     "ENTER" | "RETURN" => 0x203,
-                    "SPACE" => ' ' as u32,
+                    "SPACE" | "SPACEBAR" => ' ' as u32,
+                    "SHIFT" => 0x204,
+                    "CTRL" | "CONTROL" => 0x205,
+                    "ALT" => 0x206,
                     s if s.len() == 1 => s.chars().next().unwrap() as u32,
                     _ => {
                         // try parse numeric code as fallback
@@ -251,7 +254,7 @@ impl Prefs {
             
             // Handle Space specially
             if b.code == ' ' as u32 {
-                s.push_str("Space");
+                s.push_str("Spacebar");
                 return s;
             }
             
@@ -273,6 +276,9 @@ impl Prefs {
                 0x201 => s.push_str("Tab"),
                 0x202 => s.push_str("Backspace"),
                 0x203 => s.push_str("Enter"),
+                0x204 => s.push_str("Shift"),
+                0x205 => s.push_str("Ctrl"),
+                0x206 => s.push_str("Alt"),
                 _ => s.push_str("Unknown"),
             }
             s

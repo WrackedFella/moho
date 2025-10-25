@@ -149,7 +149,7 @@ impl SettingsMenu {
         
         // Handle Space specially
         if b.code == ' ' as u32 {
-            s.push_str("Space");
+            s.push_str("Spacebar");
             return s;
         }
         
@@ -161,8 +161,13 @@ impl SettingsMenu {
             return s;
         }
         
-        // Fallback
-        s.push_str("Unknown");
+        // Handle special keys
+        match b.code {
+            0x204 => s.push_str("Shift"),
+            0x205 => s.push_str("Ctrl"),
+            0x206 => s.push_str("Alt"),
+            _ => s.push_str("Unknown"),
+        }
         s
     }
 
@@ -298,10 +303,33 @@ impl Menu for SettingsMenu {
                 ui.add_space(8.0);
 
                 let binding_label = |b: &Binding| -> String {
-                    if b.code == 0 {
+                    if b.code == 0 && b.mods == 0 {
                         return "Unbound".to_string();
                     }
+                    
                     let mut s = String::new();
+                    
+                    // If only modifiers are set (no key code), show just the modifier
+                    if b.code == 0 {
+                        if b.mods & 1 != 0 {
+                            s.push_str("Ctrl");
+                        }
+                        if b.mods & 2 != 0 {
+                            if !s.is_empty() {
+                                s.push('+');
+                            }
+                            s.push_str("Shift");
+                        }
+                        if b.mods & 4 != 0 {
+                            if !s.is_empty() {
+                                s.push('+');
+                            }
+                            s.push_str("Alt");
+                        }
+                        return s;
+                    }
+                    
+                    // Add modifiers prefix
                     if b.mods & 1 != 0 {
                         s.push_str("Ctrl+");
                     }
@@ -311,28 +339,64 @@ impl Menu for SettingsMenu {
                     if b.mods & 4 != 0 {
                         s.push_str("Alt+");
                     }
+                    
+                    // Handle special keys first
+                    match b.code {
+                        0x100 => {
+                            s.push_str("ArrowUp");
+                            return s;
+                        }
+                        0x101 => {
+                            s.push_str("ArrowDown");
+                            return s;
+                        }
+                        0x102 => {
+                            s.push_str("ArrowLeft");
+                            return s;
+                        }
+                        0x103 => {
+                            s.push_str("ArrowRight");
+                            return s;
+                        }
+                        0x200 => {
+                            s.push_str("Escape");
+                            return s;
+                        }
+                        0x201 => {
+                            s.push_str("Tab");
+                            return s;
+                        }
+                        0x202 => {
+                            s.push_str("Backspace");
+                            return s;
+                        }
+                        0x203 => {
+                            s.push_str("Enter");
+                            return s;
+                        }
+                        _ => {}
+                    }
+                    
+                    // Handle Space specially
+                    if b.code == ' ' as u32 {
+                        s.push_str("Spacebar");
+                        return s;
+                    }
+                    
+                    // Handle regular ASCII characters
                     if let Some(ch) = std::char::from_u32(b.code)
                         && ch.is_ascii_graphic()
                     {
                         s.push(ch.to_ascii_uppercase());
                         return s;
                     }
+                    
+                    // Handle special keys
                     match b.code {
-                        0x100 => {
-                            s.push_str("ArrowUp");
-                        }
-                        0x101 => {
-                            s.push_str("ArrowDown");
-                        }
-                        0x102 => {
-                            s.push_str("ArrowLeft");
-                        }
-                        0x103 => {
-                            s.push_str("ArrowRight");
-                        }
-                        _ => {
-                            s.push_str("Unknown");
-                        }
+                        0x204 => s.push_str("Shift"),
+                        0x205 => s.push_str("Ctrl"),
+                        0x206 => s.push_str("Alt"),
+                        _ => s.push_str("Unknown"),
                     }
                     s
                 };
@@ -942,7 +1006,7 @@ impl Menu for SettingsMenu {
                             return;
                         }
                         // derive code and modifiers
-                        let code: u32 = key_to_code(key);
+                        let mut code: u32 = key_to_code(key);
                         let mut mods: u8 = 0;
                         if modifiers.ctrl {
                             mods |= 1;
@@ -952,6 +1016,20 @@ impl Menu for SettingsMenu {
                         }
                         if modifiers.alt {
                             mods |= 4;
+                        }
+
+                        // If no key code but modifier is pressed, treat modifier as key
+                        if code == 0 {
+                            if mods == 1 { // only ctrl
+                                code = 0x205;
+                                mods = 0;
+                            } else if mods == 2 { // only shift
+                                code = 0x204;
+                                mods = 0;
+                            } else if mods == 4 { // only alt
+                                code = 0x206;
+                                mods = 0;
+                            }
                         }
 
                         let binding = Binding::new(code, mods);

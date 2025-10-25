@@ -394,15 +394,14 @@ impl App {
                 KeyCode::Tab => 0x201,
                 KeyCode::Backspace => 0x202,
                 KeyCode::Enter => 0x203,
+                KeyCode::ShiftLeft | KeyCode::ShiftRight => 0x204,
+                KeyCode::ControlLeft | KeyCode::ControlRight => 0x205,
+                KeyCode::AltLeft | KeyCode::AltRight => 0x206,
                 _ => 0, // Unknown key
             };
 
-            // Track modifier state for Shift
-            let mods = if matches!(keycode, KeyCode::ShiftLeft | KeyCode::ShiftRight) {
-                2u8 // Shift modifier
-            } else {
-                0u8
-            };
+            // No longer using modifiers
+            let mods = 0u8;
 
             if code != 0 || mods != 0 {
                 let key_binding = (code, mods);
