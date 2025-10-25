@@ -40,7 +40,8 @@ pub(crate) fn forward_wheel_if_allowed(
         _ => {}
     }
 
-    tx.send(crate::input_event::InputEvent::MouseWheel { delta_y }).is_ok()
+    tx.send(crate::input_event::InputEvent::MouseWheel { delta_y })
+        .is_ok()
 }
 
 // Combined state to handle lifetimes properly
@@ -127,7 +128,7 @@ impl App {
             let proj = glam::Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 200.0f32);
             (view, proj, eye)
         };
-        
+
         // Initialize player controller at the camera position
 
         let player_controller = engine_core::controller::PlayerController::new(camera.2);
@@ -482,10 +483,10 @@ impl App {
 
         let pressed = event.state == ElementState::Pressed;
 
-            if let PhysicalKey::Code(keycode) = event.physical_key {
-                // Convert physical keycode to our binding code using shared helper
-                let pk = event.physical_key;
-                let code = moho_input::physical_key_to_binding_code(pk);
+        if let PhysicalKey::Code(keycode) = event.physical_key {
+            // Convert physical keycode to our binding code using shared helper
+            let pk = event.physical_key;
+            let code = moho_input::physical_key_to_binding_code(pk);
 
             // No longer using modifiers
             let mods = 0u8;

@@ -63,12 +63,27 @@ mod tests {
 
     #[test]
     fn maps_letters_and_specials() {
-        assert_eq!(physical_key_to_binding_code(PhysicalKey::Code(KeyCode::KeyA)), 'A' as u32);
-        assert_eq!(physical_key_to_binding_code(PhysicalKey::Code(KeyCode::Space)), ' ' as u32);
-        assert_eq!(physical_key_to_binding_code(PhysicalKey::Code(KeyCode::ArrowUp)), 0x100);
-        assert_eq!(physical_key_to_binding_code(PhysicalKey::Code(KeyCode::Escape)), 0x200);
-        assert_eq!(physical_key_to_binding_code(PhysicalKey::Code(KeyCode::ShiftLeft)), 0x204);
-    // Non-Code cases are not commonly exposed via winit's PhysicalKey; we
-    // already exercise mapped codes above.
+        assert_eq!(
+            physical_key_to_binding_code(PhysicalKey::Code(KeyCode::KeyA)),
+            'A' as u32
+        );
+        assert_eq!(
+            physical_key_to_binding_code(PhysicalKey::Code(KeyCode::Space)),
+            ' ' as u32
+        );
+        assert_eq!(
+            physical_key_to_binding_code(PhysicalKey::Code(KeyCode::ArrowUp)),
+            0x100
+        );
+        assert_eq!(
+            physical_key_to_binding_code(PhysicalKey::Code(KeyCode::Escape)),
+            0x200
+        );
+        assert_eq!(
+            physical_key_to_binding_code(PhysicalKey::Code(KeyCode::ShiftLeft)),
+            0x204
+        );
+        // Non-Code cases are not commonly exposed via winit's PhysicalKey; we
+        // already exercise mapped codes above.
     }
 }

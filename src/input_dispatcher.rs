@@ -114,8 +114,8 @@ mod tests {
     #[cfg(feature = "ui-egui")]
     #[test]
     fn wheel_forwarding_respects_ui_visibility() {
-        use std::sync::{Arc, Mutex};
         use crossbeam_channel::unbounded;
+        use std::sync::{Arc, Mutex};
 
         let (adapter, _rx) = moho_ui::build_adapter(None);
         let adapter = Arc::new(Mutex::new(adapter));

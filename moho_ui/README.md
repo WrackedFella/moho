@@ -184,6 +184,14 @@ If you want, I can:
   logic.
 - Add the README content to the top-level docs or `docs/` folder instead.
 
+Recent input & UI notes
+
+- InputDispatcher: the app now uses a small prioritized dispatcher to route `WindowEvent`s. The settings keybind capture registers at a higher priority so it can intercept events while the settings menu is listening.
+- Shared mapping: the physical key → binding mapping lives in the workspace crate `moho_input` to avoid duplication between the binary and `moho_ui`.
+- Wheel policy: mouse-wheel events are forwarded to the game only when the UI overlay is hidden. The forwarder uses a conservative `try_lock()` behavior and will *not* forward if the UI lock cannot be obtained.
+
+These items are small, self-contained, and were added to make keybind capture and UI/game input composition predictable.
+
 ---
 Small note: this adapter intentionally contains a few pragmatic
 engineering choices (warmup pass, synthetic pointer injection, fallback

@@ -64,7 +64,7 @@ impl SettingsMenu {
     /// Handle a winit WindowEvent when the settings menu is listening for a binding.
     /// Returns true if the event was consumed (binding applied or cancelled).
     pub fn handle_winit_event(&mut self, event: &winit::event::WindowEvent) -> bool {
-    use winit::event::{ElementState, WindowEvent as WEvent};
+        use winit::event::{ElementState, WindowEvent as WEvent};
 
         if let WEvent::KeyboardInput {
             event: key_event, ..
