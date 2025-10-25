@@ -1649,10 +1649,18 @@ dependencies = [
  "glam",
  "legion",
  "log",
+ "moho_input",
  "moho_ui",
  "pollster",
  "rand 0.9.2",
  "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "moho_input"
+version = "0.1.0"
+dependencies = [
  "winit",
 ]
 
@@ -1668,6 +1676,7 @@ dependencies = [
  "gilrs",
  "ini",
  "log",
+ "moho_input",
  "once_cell",
  "wgpu",
  "winit",

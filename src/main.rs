@@ -25,6 +25,24 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 #[cfg(feature = "backend-wgpu")]
 use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
 
+#[cfg(feature = "ui-egui")]
+/// Conservatively forward a wheel delta to the game's input channel.
+/// Returns true if the event was forwarded.
+pub(crate) fn forward_wheel_if_allowed(
+    ui_adapter: &std::sync::Arc<std::sync::Mutex<moho_ui::EguiAdapter>>,
+    tx: &crossbeam_channel::Sender<crate::input_event::InputEvent>,
+    delta_y: f32,
+) -> bool {
+    // Conservative: if we can't acquire the lock, do not forward.
+    match ui_adapter.try_lock() {
+        Ok(a) if a.ui_visible => return false,
+        Err(_) => return false,
+        _ => {}
+    }
+
+    tx.send(crate::input_event::InputEvent::MouseWheel { delta_y }).is_ok()
+}
+
 // Combined state to handle lifetimes properly
 #[cfg(feature = "backend-wgpu")]
 struct WindowRenderer {
@@ -109,8 +127,9 @@ impl App {
             let proj = glam::Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 200.0f32);
             (view, proj, eye)
         };
-
+        
         // Initialize player controller at the camera position
+
         let player_controller = engine_core::controller::PlayerController::new(camera.2);
 
         // Load preferences and apply mouse sensitivity
@@ -247,24 +266,33 @@ impl App {
             self.unconsumed_input_tx = Some(tx.clone());
             self.unconsumed_input_rx = Some(rx);
 
+            // Prepare a ui_adapter clone to check visibility before forwarding wheel
+            let ui_adapter_for_forward = ui_adapter.clone();
+
             // Register a low-priority subscriber that forwards mouse wheel events into
             // the channel so the game can act on them later (e.g., scroll-to-zoom).
+            // We only forward when the UI overlay is not visible. Note: the
+            // dispatcher already ensures this subscriber is only called when higher
+            // priority handlers did not consume the event (i.e., egui didn't want it).
             self.dispatcher.register(0, move |event: &WindowEvent| {
                 use winit::event::WindowEvent as WEvent;
                 if let WEvent::MouseWheel { delta, .. } = event {
-                    // Convert delta to a simple numeric pair
-                    match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_x, y) => {
-                            let _ =
-                                tx.send(crate::input_event::InputEvent::MouseWheel { delta_y: *y });
-                            return true;
-                        }
-                        winit::event::MouseScrollDelta::PixelDelta(p) => {
-                            let _ = tx.send(crate::input_event::InputEvent::MouseWheel {
-                                delta_y: p.y as f32,
-                            });
-                            return true;
-                        }
+                    // Use the conservative try_lock approach: if we cannot acquire the
+                    // lock for any reason, treat as UI-visible and do not forward.
+                    match ui_adapter_for_forward.try_lock() {
+                        Ok(a) if a.ui_visible => return false,
+                        Err(_) => return false,
+                        _ => {}
+                    }
+
+                    // Convert delta to a simple numeric pair and forward via helper
+                    let delta_y = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_x, y) => *y,
+                        winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                    };
+
+                    if crate::forward_wheel_if_allowed(&ui_adapter_for_forward, &tx, delta_y) {
+                        return true;
                     }
                 }
                 false
@@ -454,49 +482,10 @@ impl App {
 
         let pressed = event.state == ElementState::Pressed;
 
-        if let PhysicalKey::Code(keycode) = event.physical_key {
-            // Convert physical keycode to our binding code
-            let code = match keycode {
-                KeyCode::KeyA => 'A' as u32,
-                KeyCode::KeyB => 'B' as u32,
-                KeyCode::KeyC => 'C' as u32,
-                KeyCode::KeyD => 'D' as u32,
-                KeyCode::KeyE => 'E' as u32,
-                KeyCode::KeyF => 'F' as u32,
-                KeyCode::KeyG => 'G' as u32,
-                KeyCode::KeyH => 'H' as u32,
-                KeyCode::KeyI => 'I' as u32,
-                KeyCode::KeyJ => 'J' as u32,
-                KeyCode::KeyK => 'K' as u32,
-                KeyCode::KeyL => 'L' as u32,
-                KeyCode::KeyM => 'M' as u32,
-                KeyCode::KeyN => 'N' as u32,
-                KeyCode::KeyO => 'O' as u32,
-                KeyCode::KeyP => 'P' as u32,
-                KeyCode::KeyQ => 'Q' as u32,
-                KeyCode::KeyR => 'R' as u32,
-                KeyCode::KeyS => 'S' as u32,
-                KeyCode::KeyT => 'T' as u32,
-                KeyCode::KeyU => 'U' as u32,
-                KeyCode::KeyV => 'V' as u32,
-                KeyCode::KeyW => 'W' as u32,
-                KeyCode::KeyX => 'X' as u32,
-                KeyCode::KeyY => 'Y' as u32,
-                KeyCode::KeyZ => 'Z' as u32,
-                KeyCode::Space => ' ' as u32,
-                KeyCode::ArrowUp => 0x100,
-                KeyCode::ArrowDown => 0x101,
-                KeyCode::ArrowLeft => 0x102,
-                KeyCode::ArrowRight => 0x103,
-                KeyCode::Escape => 0x200,
-                KeyCode::Tab => 0x201,
-                KeyCode::Backspace => 0x202,
-                KeyCode::Enter => 0x203,
-                KeyCode::ShiftLeft | KeyCode::ShiftRight => 0x204,
-                KeyCode::ControlLeft | KeyCode::ControlRight => 0x205,
-                KeyCode::AltLeft | KeyCode::AltRight => 0x206,
-                _ => 0, // Unknown key
-            };
+            if let PhysicalKey::Code(keycode) = event.physical_key {
+                // Convert physical keycode to our binding code using shared helper
+                let pk = event.physical_key;
+                let code = moho_input::physical_key_to_binding_code(pk);
 
             // No longer using modifiers
             let mods = 0u8;

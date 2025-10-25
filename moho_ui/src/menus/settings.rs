@@ -64,8 +64,7 @@ impl SettingsMenu {
     /// Handle a winit WindowEvent when the settings menu is listening for a binding.
     /// Returns true if the event was consumed (binding applied or cancelled).
     pub fn handle_winit_event(&mut self, event: &winit::event::WindowEvent) -> bool {
-        use winit::event::{ElementState, WindowEvent as WEvent};
-        use winit::keyboard::{KeyCode, PhysicalKey};
+    use winit::event::{ElementState, WindowEvent as WEvent};
 
         if let WEvent::KeyboardInput {
             event: key_event, ..
@@ -81,52 +80,8 @@ impl SettingsMenu {
                 return false;
             }
 
-            // Map physical key to binding code (same mapping as main)
-            let code = if let PhysicalKey::Code(kc) = key_event.physical_key {
-                match kc {
-                    KeyCode::KeyA => 'A' as u32,
-                    KeyCode::KeyB => 'B' as u32,
-                    KeyCode::KeyC => 'C' as u32,
-                    KeyCode::KeyD => 'D' as u32,
-                    KeyCode::KeyE => 'E' as u32,
-                    KeyCode::KeyF => 'F' as u32,
-                    KeyCode::KeyG => 'G' as u32,
-                    KeyCode::KeyH => 'H' as u32,
-                    KeyCode::KeyI => 'I' as u32,
-                    KeyCode::KeyJ => 'J' as u32,
-                    KeyCode::KeyK => 'K' as u32,
-                    KeyCode::KeyL => 'L' as u32,
-                    KeyCode::KeyM => 'M' as u32,
-                    KeyCode::KeyN => 'N' as u32,
-                    KeyCode::KeyO => 'O' as u32,
-                    KeyCode::KeyP => 'P' as u32,
-                    KeyCode::KeyQ => 'Q' as u32,
-                    KeyCode::KeyR => 'R' as u32,
-                    KeyCode::KeyS => 'S' as u32,
-                    KeyCode::KeyT => 'T' as u32,
-                    KeyCode::KeyU => 'U' as u32,
-                    KeyCode::KeyV => 'V' as u32,
-                    KeyCode::KeyW => 'W' as u32,
-                    KeyCode::KeyX => 'X' as u32,
-                    KeyCode::KeyY => 'Y' as u32,
-                    KeyCode::KeyZ => 'Z' as u32,
-                    KeyCode::Space => ' ' as u32,
-                    KeyCode::ArrowUp => 0x100,
-                    KeyCode::ArrowDown => 0x101,
-                    KeyCode::ArrowLeft => 0x102,
-                    KeyCode::ArrowRight => 0x103,
-                    KeyCode::Escape => 0x200,
-                    KeyCode::Tab => 0x201,
-                    KeyCode::Backspace => 0x202,
-                    KeyCode::Enter => 0x203,
-                    KeyCode::ShiftLeft | KeyCode::ShiftRight => 0x204,
-                    KeyCode::ControlLeft | KeyCode::ControlRight => 0x205,
-                    KeyCode::AltLeft | KeyCode::AltRight => 0x206,
-                    _ => 0,
-                }
-            } else {
-                0
-            };
+            // Map physical key to binding code (delegated to shared helper)
+            let code = moho_input::physical_key_to_binding_code(key_event.physical_key);
 
             // We don't have reliable modifier state here (winit KeyEvent doesn't expose it
             // in a consistent, portable way), so record no modifier bits for non-modifier

@@ -110,4 +110,36 @@ mod tests {
         // Only the consumer (priority 5) should have run
         assert_eq!(got, vec![5]);
     }
+
+    #[cfg(feature = "ui-egui")]
+    #[test]
+    fn wheel_forwarding_respects_ui_visibility() {
+        use std::sync::{Arc, Mutex};
+        use crossbeam_channel::unbounded;
+
+        let (adapter, _rx) = moho_ui::build_adapter(None);
+        let adapter = Arc::new(Mutex::new(adapter));
+
+        // Case 1: UI hidden -> forward
+        adapter.lock().unwrap().ui_visible = false;
+        let (tx, rx) = unbounded::<crate::input_event::InputEvent>();
+        let forwarded = crate::forward_wheel_if_allowed(&adapter, &tx, 1.0);
+        assert!(forwarded);
+        assert!(rx.try_recv().is_ok());
+
+        // Case 2: UI visible -> do not forward
+        adapter.lock().unwrap().ui_visible = true;
+        let (tx2, rx2) = unbounded::<crate::input_event::InputEvent>();
+        let forwarded2 = crate::forward_wheel_if_allowed(&adapter, &tx2, 1.0);
+        assert!(!forwarded2);
+        assert!(rx2.try_recv().is_err());
+
+        // Case 3: lock failure (simulate by holding the lock) -> do not forward
+        let guard = adapter.lock().unwrap();
+        let (tx3, rx3) = unbounded::<crate::input_event::InputEvent>();
+        let forwarded3 = crate::forward_wheel_if_allowed(&adapter, &tx3, 1.0);
+        assert!(!forwarded3);
+        assert!(rx3.try_recv().is_err());
+        drop(guard);
+    }
 }
