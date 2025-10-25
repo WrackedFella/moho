@@ -108,6 +108,10 @@ pub struct TerrainConfig {
     pub amplitude: f32,
     pub octaves: u32,
     pub seed: u32,
+    /// World size in blocks along the X/Z axes (full width). The generator
+    /// treats this as the total side length; internal code uses half this
+    /// value as the +/- loop bound when iterating from -size..size.
+    pub world_size: u32,
     pub terrain_type: TerrainType,
 }
 
@@ -127,6 +131,7 @@ impl Default for TerrainConfig {
             amplitude: 8.0,
             octaves: 3,
             seed: 42,
+            world_size: 64,
             terrain_type: TerrainType::GentleHills,
         }
     }
@@ -136,15 +141,21 @@ impl Default for TerrainConfig {
 /// Two-pass algorithm: 1) Place blocks, 2) Smooth transitions
 pub fn voxel_terrain_scene(world: &mut World) {
     let config = TerrainConfig::default();
+    voxel_terrain_scene_with_config(world, &config);
+}
+
+
+/// Variant that accepts a custom `TerrainConfig`. This allows callers to
+/// control the PRNG seed (and later other parameters) when generating a
+/// terrain for new-world generation.
+pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig) {
     let mut grid = VoxelGrid::new(64); // 64×64×64 chunks
 
-    log::info!("Generating voxel terrain...");
-    generate_terrain(&mut grid, &config);
+    log::info!("Generating voxel terrain (seed={})...", config.seed);
+    generate_terrain(&mut grid, config);
 
-    // TODO: Implement proper greedy meshing before re-enabling smoothing
-    // The current smoothing creates gaps between deformed and non-deformed blocks
-    // log::info!("Applying smoothing pass...");
-    // TerrainSmoother::smooth_terrain(&mut grid);
+    // TODO: Consider making grid size configurable via the config struct
+    // (e.g., grid_size: u32) so callers can control world extents.
 
     // Initialize all blocks with cube mesh since smoothing is disabled
     for block in grid.iter_blocks_mut() {
@@ -168,7 +179,9 @@ pub fn voxel_terrain_scene(world: &mut World) {
 /// Generate terrain blocks based on noise
 fn generate_terrain(grid: &mut VoxelGrid, config: &TerrainConfig) {
     let noise = Perlin::new(config.seed);
-    let size = 32; // 32×32 XZ plane (64×64 total area)
+    // Compute half-size for the -size..size looping used by the original impl.
+    // `config.world_size` is the full width in blocks (e.g., 128 -> loop -64..64)
+    let size = (config.world_size / 2) as i32;
 
     // Pass 1: Generate vertical columns of blocks based on noise
     for x in -size..size {

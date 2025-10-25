@@ -302,7 +302,15 @@ impl App {
                         let _ = sender.send(GenerationMsg::Canceled);
                         return;
                     }
-                    engine_core::scene_builders::voxel_terrain_scene(&mut local_world);
+                    // Use the supplied WorldSpec seed (if any) when generating
+                    // terrain so different seeds produce different worlds.
+                    let mut terrain_config = engine_core::scene_builders::TerrainConfig::default();
+                    if let Some(s) = spec_for_thread.seed {
+                        terrain_config.seed = s as u32; // truncate to u32
+                    }
+                    // Map UI's size_xz (full width in blocks) into the terrain config.
+                    terrain_config.world_size = spec_for_thread.size_xz;
+                    engine_core::scene_builders::voxel_terrain_scene_with_config(&mut local_world, &terrain_config);
                     let _ = sender.send(GenerationMsg::Progress(0.6));
 
                     if cancel_clone.load(Ordering::Relaxed) {
@@ -310,9 +318,20 @@ impl App {
                         return;
                     }
 
-                    // Encode scene bytes
+                    // Encode scene bytes. Provide a sensible default camera for
+                    // newly generated worlds so the app has a starting
+                    // viewpoint instead of relying on previous controller state.
                     let local_scene = engine_renderer::Scene::new();
-                    let scene_bytes = match local_scene.encode_to_bytes(&local_world, None) {
+                    // Place camera above world center looking slightly down
+                    let camera_height = 24.0f32;
+                    let camera_position = glam::Vec3::new(0.0, camera_height, 0.0);
+                    // yaw = 0.0 (look along +Z), pitch negative to look downward
+                    let camera_yaw = 0.0f32;
+                    let camera_pitch = -0.4f32;
+                    let scene_bytes = match local_scene.encode_to_bytes(
+                        &local_world,
+                        Some((camera_position, camera_yaw, camera_pitch)),
+                    ) {
                         Ok(b) => b,
                         Err(e) => {
                             let _ =
@@ -407,6 +426,10 @@ impl App {
                 self.player_controller.position = position;
                 self.player_controller.yaw = yaw;
                 self.player_controller.pitch = pitch;
+                    // Clear any pending input so the restored camera
+                    // orientation isn't immediately overridden by
+                    // accumulated mouse deltas or smoothing state.
+                    self.input_system.clear_pending_input();
                 log::info!(
                     "Restored camera position: {:?}, yaw: {:.2}, pitch: {:.2}",
                     position,
@@ -885,6 +908,10 @@ impl ApplicationHandler for App {
                                             self.player_controller.position = position;
                                             self.player_controller.yaw = yaw;
                                             self.player_controller.pitch = pitch;
+                                            // Clear any pending input so the restored camera
+                                            // orientation isn't immediately overridden by
+                                            // accumulated mouse deltas or smoothing state.
+                                            self.input_system.clear_pending_input();
                                         }
                                     }
                                     Err(e) => {
