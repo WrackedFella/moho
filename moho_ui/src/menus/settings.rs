@@ -1,5 +1,22 @@
 use crate::menus::menu::{Menu, MenuAction, MenuSpec};
 use crate::prefs::{Binding, Prefs};
+use std::collections::HashSet;
+
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+enum SettingsField {
+    KeyW,
+    KeyA,
+    KeyS,
+    KeyD,
+    KeyUp,
+    KeyDown,
+    MouseSensitivity,
+    InputFiltering,
+    AudioSoundEffect,
+    AudioMusic,
+    AudioUI,
+    AudioVoice,
+}
 
 #[derive(Clone)]
 struct PendingBinding {
@@ -12,20 +29,7 @@ pub struct SettingsMenu {
     spec: MenuSpec,
     prefs: Prefs,
     staged: Prefs,
-    // per-field dirty flags
-    dirty_key_w: bool,
-    dirty_key_a: bool,
-    dirty_key_s: bool,
-    dirty_key_d: bool,
-    dirty_key_up: bool,
-    dirty_key_down: bool,
-    dirty_mouse_sens: bool,
-    dirty_filtering_enabled: bool,
-    // Audio dirty flags
-    dirty_audio_sound_effect: bool,
-    dirty_audio_music: bool,
-    dirty_audio_ui: bool,
-    dirty_audio_voice: bool,
+    dirty_fields: HashSet<SettingsField>,
     listening: Option<usize>,
     pending_binding: Option<PendingBinding>,
     pub show_conflict_modal: bool,
@@ -40,18 +44,7 @@ impl SettingsMenu {
             spec: MenuSpec::default(),
             prefs: prefs.clone(),
             staged: prefs,
-            dirty_key_w: false,
-            dirty_key_a: false,
-            dirty_key_s: false,
-            dirty_key_d: false,
-            dirty_key_up: false,
-            dirty_key_down: false,
-            dirty_mouse_sens: false,
-            dirty_filtering_enabled: false,
-            dirty_audio_sound_effect: false,
-            dirty_audio_music: false,
-            dirty_audio_ui: false,
-            dirty_audio_voice: false,
+            dirty_fields: HashSet::new(),
             listening: None,
             pending_binding: None,
             show_conflict_modal: false,
@@ -178,27 +171,27 @@ impl SettingsMenu {
                 match conflict_id {
                     0 => {
                         self.staged.key_w = Binding::new(0, 0);
-                        self.dirty_key_w = true;
+                        self.dirty_fields.insert(SettingsField::KeyW);
                     }
                     1 => {
                         self.staged.key_a = Binding::new(0, 0);
-                        self.dirty_key_a = true;
+                        self.dirty_fields.insert(SettingsField::KeyA);
                     }
                     2 => {
                         self.staged.key_s = Binding::new(0, 0);
-                        self.dirty_key_s = true;
+                        self.dirty_fields.insert(SettingsField::KeyS);
                     }
                     3 => {
                         self.staged.key_d = Binding::new(0, 0);
-                        self.dirty_key_d = true;
+                        self.dirty_fields.insert(SettingsField::KeyD);
                     }
                     4 => {
                         self.staged.key_up = Binding::new(0, 0);
-                        self.dirty_key_up = true;
+                        self.dirty_fields.insert(SettingsField::KeyUp);
                     }
                     5 => {
                         self.staged.key_down = Binding::new(0, 0);
-                        self.dirty_key_down = true;
+                        self.dirty_fields.insert(SettingsField::KeyDown);
                     }
                     _ => {}
                 }
@@ -208,27 +201,27 @@ impl SettingsMenu {
             match pending.target_id {
                 0 => {
                     self.staged.key_w = pending.binding;
-                    self.dirty_key_w = true;
+                    self.dirty_fields.insert(SettingsField::KeyW);
                 }
                 1 => {
                     self.staged.key_a = pending.binding;
-                    self.dirty_key_a = true;
+                    self.dirty_fields.insert(SettingsField::KeyA);
                 }
                 2 => {
                     self.staged.key_s = pending.binding;
-                    self.dirty_key_s = true;
+                    self.dirty_fields.insert(SettingsField::KeyS);
                 }
                 3 => {
                     self.staged.key_d = pending.binding;
-                    self.dirty_key_d = true;
+                    self.dirty_fields.insert(SettingsField::KeyD);
                 }
                 4 => {
                     self.staged.key_up = pending.binding;
-                    self.dirty_key_up = true;
+                    self.dirty_fields.insert(SettingsField::KeyUp);
                 }
                 5 => {
                     self.staged.key_down = pending.binding;
-                    self.dirty_key_down = true;
+                    self.dirty_fields.insert(SettingsField::KeyDown);
                 }
                 _ => {}
             }
@@ -242,18 +235,7 @@ impl SettingsMenu {
     }
 
     fn is_dirty(&self) -> bool {
-        self.dirty_key_w
-            || self.dirty_key_a
-            || self.dirty_key_s
-            || self.dirty_key_d
-            || self.dirty_key_up
-            || self.dirty_key_down
-            || self.dirty_mouse_sens
-            || self.dirty_filtering_enabled
-            || self.dirty_audio_sound_effect
-            || self.dirty_audio_music
-            || self.dirty_audio_ui
-            || self.dirty_audio_voice
+        !self.dirty_fields.is_empty()
     }
 
     fn paint_dirty_decor(ui: &mut egui::Ui, resp: &egui::Response, dirty: bool) {
@@ -262,6 +244,91 @@ impl SettingsMenu {
             let hover_color = egui::Color32::from_rgba_premultiplied(150, 150, 150, 60);
             ui.painter().rect_filled(r, 4.0, hover_color);
         }
+    }
+
+    /// Render a keybind control with label and button
+    /// Returns (is_dirty, was_clicked)
+    fn render_keybind_control(
+        ui: &mut egui::Ui,
+        label: &str,
+        binding: &Binding,
+        saved_binding: &Binding,
+        is_listening: bool,
+        label_width: f32,
+    ) -> (bool, bool) {
+        let is_dirty = binding != saved_binding;
+        let mut was_clicked = false;
+        
+        ui.horizontal(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(label_width, 28.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.label(label);
+                },
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mut label_text = Self::binding_label(binding);
+                if is_listening {
+                    label_text = "Press any key...".to_string();
+                }
+                let btn = ui.add(egui::Button::new(label_text).min_size(egui::vec2(120.0, 28.0)));
+                Self::paint_dirty_decor(ui, &btn, is_dirty);
+                if btn.clicked() {
+                    was_clicked = true;
+                }
+            });
+        });
+        
+        (is_dirty, was_clicked)
+    }
+
+    /// Render a volume control with slider and drag value
+    /// Returns true if the value is dirty (different from saved)
+    fn render_volume_slider(
+        ui: &mut egui::Ui,
+        label: &str,
+        value: &mut f32,
+        saved_value: f32,
+        label_width: f32,
+    ) -> bool {
+        let is_dirty = (value.clone() - saved_value).abs() > f32::EPSILON;
+        
+        ui.horizontal(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(label_width, 28.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.label(label);
+                },
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Slider (120px wide) - appears on the right
+                ui.allocate_ui_with_layout(
+                    egui::vec2(120.0, 20.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.spacing_mut().slider_width = 120.0;
+                        let slider = ui.add(
+                            egui::Slider::new(value, 1.0..=10.0).show_value(false),
+                        );
+                        Self::paint_dirty_decor(ui, &slider, is_dirty);
+                    },
+                );
+                ui.add_space(8.0);
+                // Drag value - appears on the left
+                let drag = ui.add(
+                    egui::DragValue::new(value)
+                        .range(1.0..=10.0)
+                        .speed(0.1)
+                        .min_decimals(1)
+                        .max_decimals(1),
+                );
+                Self::paint_dirty_decor(ui, &drag, is_dirty);
+            });
+        });
+        
+        is_dirty
     }
 }
 
@@ -302,251 +369,128 @@ impl Menu for SettingsMenu {
                 ui.separator();
                 ui.add_space(8.0);
 
-                let binding_label = |b: &Binding| -> String {
-                    if b.code == 0 && b.mods == 0 {
-                        return "Unbound".to_string();
-                    }
-                    
-                    let mut s = String::new();
-                    
-                    // If only modifiers are set (no key code), show just the modifier
-                    if b.code == 0 {
-                        if b.mods & 1 != 0 {
-                            s.push_str("Ctrl");
-                        }
-                        if b.mods & 2 != 0 {
-                            if !s.is_empty() {
-                                s.push('+');
-                            }
-                            s.push_str("Shift");
-                        }
-                        if b.mods & 4 != 0 {
-                            if !s.is_empty() {
-                                s.push('+');
-                            }
-                            s.push_str("Alt");
-                        }
-                        return s;
-                    }
-                    
-                    // Add modifiers prefix
-                    if b.mods & 1 != 0 {
-                        s.push_str("Ctrl+");
-                    }
-                    if b.mods & 2 != 0 {
-                        s.push_str("Shift+");
-                    }
-                    if b.mods & 4 != 0 {
-                        s.push_str("Alt+");
-                    }
-                    
-                    // Handle special keys first
-                    match b.code {
-                        0x100 => {
-                            s.push_str("ArrowUp");
-                            return s;
-                        }
-                        0x101 => {
-                            s.push_str("ArrowDown");
-                            return s;
-                        }
-                        0x102 => {
-                            s.push_str("ArrowLeft");
-                            return s;
-                        }
-                        0x103 => {
-                            s.push_str("ArrowRight");
-                            return s;
-                        }
-                        0x200 => {
-                            s.push_str("Escape");
-                            return s;
-                        }
-                        0x201 => {
-                            s.push_str("Tab");
-                            return s;
-                        }
-                        0x202 => {
-                            s.push_str("Backspace");
-                            return s;
-                        }
-                        0x203 => {
-                            s.push_str("Enter");
-                            return s;
-                        }
-                        _ => {}
-                    }
-                    
-                    // Handle Space specially
-                    if b.code == ' ' as u32 {
-                        s.push_str("Spacebar");
-                        return s;
-                    }
-                    
-                    // Handle regular ASCII characters
-                    if let Some(ch) = std::char::from_u32(b.code)
-                        && ch.is_ascii_graphic()
-                    {
-                        s.push(ch.to_ascii_uppercase());
-                        return s;
-                    }
-                    
-                    // Handle special keys
-                    match b.code {
-                        0x204 => s.push_str("Shift"),
-                        0x205 => s.push_str("Ctrl"),
-                        0x206 => s.push_str("Alt"),
-                        _ => s.push_str("Unknown"),
-                    }
-                    s
-                };
-
                 // Use fixed-width layout for right-aligned inputs
                 let label_width = 150.0;
 
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(label_width, 28.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.label("Move Forward:");
-                        },
+                // Move Forward
+                {
+                    let (dirty, clicked) = Self::render_keybind_control(
+                        ui,
+                        "Move Forward:",
+                        &self.staged.key_w,
+                        &self.prefs.key_w,
+                        self.listening == Some(0),
+                        label_width,
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let id = 0usize;
-                        let mut label = binding_label(&self.staged.key_w);
-                        if self.listening == Some(id) {
-                            label = "Press any key...".to_string();
-                        }
-                        let btn =
-                            ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
-                        Self::paint_dirty_decor(ui, &btn, self.staged.key_w != self.prefs.key_w);
-                        if btn.clicked() {
-                            self.listening = Some(id);
-                        }
-                        self.dirty_key_w = self.staged.key_w != self.prefs.key_w;
-                    });
-                });
+                    if dirty {
+                        self.dirty_fields.insert(SettingsField::KeyW);
+                    } else {
+                        self.dirty_fields.remove(&SettingsField::KeyW);
+                    }
+                    if clicked {
+                        self.listening = Some(0);
+                    }
+                }
 
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(label_width, 28.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.label("Move Left:");
-                        },
+                // Move Left
+                {
+                    let (dirty, clicked) = Self::render_keybind_control(
+                        ui,
+                        "Move Left:",
+                        &self.staged.key_a,
+                        &self.prefs.key_a,
+                        self.listening == Some(1),
+                        label_width,
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let id = 1usize;
-                        let mut label = binding_label(&self.staged.key_a);
-                        if self.listening == Some(id) {
-                            label = "Press any key...".to_string();
-                        }
-                        let btn =
-                            ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
-                        Self::paint_dirty_decor(ui, &btn, self.staged.key_a != self.prefs.key_a);
-                        if btn.clicked() {
-                            self.listening = Some(id);
-                        }
-                        self.dirty_key_a = self.staged.key_a != self.prefs.key_a;
-                    });
-                });
+                    if dirty {
+                        self.dirty_fields.insert(SettingsField::KeyA);
+                    } else {
+                        self.dirty_fields.remove(&SettingsField::KeyA);
+                    }
+                    if clicked {
+                        self.listening = Some(1);
+                    }
+                }
 
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(label_width, 28.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.label("Move Back:");
-                        },
+                // Move Back
+                {
+                    let (dirty, clicked) = Self::render_keybind_control(
+                        ui,
+                        "Move Back:",
+                        &self.staged.key_s,
+                        &self.prefs.key_s,
+                        self.listening == Some(2),
+                        label_width,
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let id = 2usize;
-                        let mut label = binding_label(&self.staged.key_s);
-                        if self.listening == Some(id) {
-                            label = "Press any key...".to_string();
-                        }
-                        let btn =
-                            ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
-                        Self::paint_dirty_decor(ui, &btn, self.staged.key_s != self.prefs.key_s);
-                        if btn.clicked() {
-                            self.listening = Some(id);
-                        }
-                        self.dirty_key_s = self.staged.key_s != self.prefs.key_s;
-                    });
-                });
+                    if dirty {
+                        self.dirty_fields.insert(SettingsField::KeyS);
+                    } else {
+                        self.dirty_fields.remove(&SettingsField::KeyS);
+                    }
+                    if clicked {
+                        self.listening = Some(2);
+                    }
+                }
 
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(label_width, 28.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.label("Move Right:");
-                        },
+                // Move Right
+                {
+                    let (dirty, clicked) = Self::render_keybind_control(
+                        ui,
+                        "Move Right:",
+                        &self.staged.key_d,
+                        &self.prefs.key_d,
+                        self.listening == Some(3),
+                        label_width,
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let id = 3usize;
-                        let mut label = binding_label(&self.staged.key_d);
-                        if self.listening == Some(id) {
-                            label = "Press any key...".to_string();
-                        }
-                        let btn =
-                            ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
-                        Self::paint_dirty_decor(ui, &btn, self.staged.key_d != self.prefs.key_d);
-                        if btn.clicked() {
-                            self.listening = Some(id);
-                        }
-                        self.dirty_key_d = self.staged.key_d != self.prefs.key_d;
-                    });
-                });
+                    if dirty {
+                        self.dirty_fields.insert(SettingsField::KeyD);
+                    } else {
+                        self.dirty_fields.remove(&SettingsField::KeyD);
+                    }
+                    if clicked {
+                        self.listening = Some(3);
+                    }
+                }
 
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(label_width, 28.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.label("Move Up:");
-                        },
+                // Move Up
+                {
+                    let (dirty, clicked) = Self::render_keybind_control(
+                        ui,
+                        "Move Up:",
+                        &self.staged.key_up,
+                        &self.prefs.key_up,
+                        self.listening == Some(4),
+                        label_width,
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let id = 4usize;
-                        let mut label = binding_label(&self.staged.key_up);
-                        if self.listening == Some(id) {
-                            label = "Press any key...".to_string();
-                        }
-                        let btn =
-                            ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
-                        Self::paint_dirty_decor(ui, &btn, self.staged.key_up != self.prefs.key_up);
-                        if btn.clicked() {
-                            self.listening = Some(id);
-                        }
-                        self.dirty_key_up = self.staged.key_up != self.prefs.key_up;
-                    });
-                });
+                    if dirty {
+                        self.dirty_fields.insert(SettingsField::KeyUp);
+                    } else {
+                        self.dirty_fields.remove(&SettingsField::KeyUp);
+                    }
+                    if clicked {
+                        self.listening = Some(4);
+                    }
+                }
 
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(label_width, 28.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.label("Move Down:");
-                        },
+                // Move Down
+                {
+                    let (dirty, clicked) = Self::render_keybind_control(
+                        ui,
+                        "Move Down:",
+                        &self.staged.key_down,
+                        &self.prefs.key_down,
+                        self.listening == Some(5),
+                        label_width,
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let id = 5usize;
-                        let mut label = binding_label(&self.staged.key_down);
-                        if self.listening == Some(id) {
-                            label = "Press any key...".to_string();
-                        }
-                        let btn =
-                            ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
-                        Self::paint_dirty_decor(ui, &btn, self.staged.key_down != self.prefs.key_down);
-                        if btn.clicked() {
-                            self.listening = Some(id);
-                        }
-                        self.dirty_key_down = self.staged.key_down != self.prefs.key_down;
-                    });
-                });
+                    if dirty {
+                        self.dirty_fields.insert(SettingsField::KeyDown);
+                    } else {
+                        self.dirty_fields.remove(&SettingsField::KeyDown);
+                    }
+                    if clicked {
+                        self.listening = Some(5);
+                    }
+                }
 
                 ui.add_space(8.0);
 
@@ -598,9 +542,13 @@ impl Menu for SettingsMenu {
                             (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs()
                                 > f32::EPSILON,
                         );
-                        self.dirty_mouse_sens =
-                            (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs()
-                                > f32::EPSILON;
+                        if (self.staged.mouse_sensitivity - self.prefs.mouse_sensitivity).abs()
+                            > f32::EPSILON
+                        {
+                            self.dirty_fields.insert(SettingsField::MouseSensitivity);
+                        } else {
+                            self.dirty_fields.remove(&SettingsField::MouseSensitivity);
+                        }
                     });
                 });
 
@@ -625,8 +573,13 @@ impl Menu for SettingsMenu {
                             self.staged.input_filtering_enabled
                                 != self.prefs.input_filtering_enabled,
                         );
-                        self.dirty_filtering_enabled = self.staged.input_filtering_enabled
-                            != self.prefs.input_filtering_enabled;
+                        if self.staged.input_filtering_enabled
+                            != self.prefs.input_filtering_enabled
+                        {
+                            self.dirty_fields.insert(SettingsField::InputFiltering);
+                        } else {
+                            self.dirty_fields.remove(&SettingsField::InputFiltering);
+                        }
                     });
                 });
 
@@ -645,211 +598,68 @@ impl Menu for SettingsMenu {
                 ui.add_space(8.0);
 
                 // Sound Effect Volume
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(label_width, 28.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.label("Sound Effects:");
-                        },
+                {
+                    let dirty = Self::render_volume_slider(
+                        ui,
+                        "Sound Effects:",
+                        &mut self.staged.audio_sound_effect_volume,
+                        self.prefs.audio_sound_effect_volume,
+                        label_width,
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(120.0, 20.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.spacing_mut().slider_width = 120.0;
-                                let slider = ui.add(
-                                    egui::Slider::new(
-                                        &mut self.staged.audio_sound_effect_volume,
-                                        1.0..=10.0,
-                                    )
-                                    .show_value(false),
-                                );
-                                Self::paint_dirty_decor(
-                                    ui,
-                                    &slider,
-                                    (self.staged.audio_sound_effect_volume
-                                        - self.prefs.audio_sound_effect_volume)
-                                        .abs()
-                                        > f32::EPSILON,
-                                );
-                            },
-                        );
-                        ui.add_space(8.0);
-                        let drag = ui.add(
-                            egui::DragValue::new(&mut self.staged.audio_sound_effect_volume)
-                                .range(1.0..=10.0)
-                                .speed(0.1)
-                                .min_decimals(1)
-                                .max_decimals(1),
-                        );
-                        Self::paint_dirty_decor(
-                            ui,
-                            &drag,
-                            (self.staged.audio_sound_effect_volume
-                                - self.prefs.audio_sound_effect_volume)
-                                .abs()
-                                > f32::EPSILON,
-                        );
-                        self.dirty_audio_sound_effect = (self.staged.audio_sound_effect_volume
-                            - self.prefs.audio_sound_effect_volume)
-                            .abs()
-                            > f32::EPSILON;
-                    });
-                });
+                    if dirty {
+                        self.dirty_fields.insert(SettingsField::AudioSoundEffect);
+                    } else {
+                        self.dirty_fields.remove(&SettingsField::AudioSoundEffect);
+                    }
+                }
 
                 // Music Volume
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(label_width, 28.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.label("Music:");
-                        },
+                {
+                    let dirty = Self::render_volume_slider(
+                        ui,
+                        "Music:",
+                        &mut self.staged.audio_music_volume,
+                        self.prefs.audio_music_volume,
+                        label_width,
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(120.0, 20.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.spacing_mut().slider_width = 120.0;
-                                let slider = ui.add(
-                                    egui::Slider::new(
-                                        &mut self.staged.audio_music_volume,
-                                        1.0..=10.0,
-                                    )
-                                    .show_value(false),
-                                );
-                                Self::paint_dirty_decor(
-                                    ui,
-                                    &slider,
-                                    (self.staged.audio_music_volume
-                                        - self.prefs.audio_music_volume)
-                                        .abs()
-                                        > f32::EPSILON,
-                                );
-                            },
-                        );
-                        ui.add_space(8.0);
-                        let drag = ui.add(
-                            egui::DragValue::new(&mut self.staged.audio_music_volume)
-                                .range(1.0..=10.0)
-                                .speed(0.1)
-                                .min_decimals(1)
-                                .max_decimals(1),
-                        );
-                        Self::paint_dirty_decor(
-                            ui,
-                            &drag,
-                            (self.staged.audio_music_volume - self.prefs.audio_music_volume).abs()
-                                > f32::EPSILON,
-                        );
-                        self.dirty_audio_music =
-                            (self.staged.audio_music_volume - self.prefs.audio_music_volume).abs()
-                                > f32::EPSILON;
-                    });
-                });
+                    if dirty {
+                        self.dirty_fields.insert(SettingsField::AudioMusic);
+                    } else {
+                        self.dirty_fields.remove(&SettingsField::AudioMusic);
+                    }
+                }
 
                 // UI Volume
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(label_width, 28.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.label("User Interface:");
-                        },
+                {
+                    let dirty = Self::render_volume_slider(
+                        ui,
+                        "User Interface:",
+                        &mut self.staged.audio_ui_volume,
+                        self.prefs.audio_ui_volume,
+                        label_width,
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(120.0, 20.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.spacing_mut().slider_width = 120.0;
-                                let slider = ui.add(
-                                    egui::Slider::new(&mut self.staged.audio_ui_volume, 1.0..=10.0)
-                                        .show_value(false),
-                                );
-                                Self::paint_dirty_decor(
-                                    ui,
-                                    &slider,
-                                    (self.staged.audio_ui_volume - self.prefs.audio_ui_volume)
-                                        .abs()
-                                        > f32::EPSILON,
-                                );
-                            },
-                        );
-                        ui.add_space(8.0);
-                        let drag = ui.add(
-                            egui::DragValue::new(&mut self.staged.audio_ui_volume)
-                                .range(1.0..=10.0)
-                                .speed(0.1)
-                                .min_decimals(1)
-                                .max_decimals(1),
-                        );
-                        Self::paint_dirty_decor(
-                            ui,
-                            &drag,
-                            (self.staged.audio_ui_volume - self.prefs.audio_ui_volume).abs()
-                                > f32::EPSILON,
-                        );
-                        self.dirty_audio_ui =
-                            (self.staged.audio_ui_volume - self.prefs.audio_ui_volume).abs()
-                                > f32::EPSILON;
-                    });
-                });
+                    if dirty {
+                        self.dirty_fields.insert(SettingsField::AudioUI);
+                    } else {
+                        self.dirty_fields.remove(&SettingsField::AudioUI);
+                    }
+                }
 
                 // Voice Volume
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(label_width, 28.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.label("Voice:");
-                        },
+                {
+                    let dirty = Self::render_volume_slider(
+                        ui,
+                        "Voice:",
+                        &mut self.staged.audio_voice_volume,
+                        self.prefs.audio_voice_volume,
+                        label_width,
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(120.0, 20.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.spacing_mut().slider_width = 120.0;
-                                let slider = ui.add(
-                                    egui::Slider::new(
-                                        &mut self.staged.audio_voice_volume,
-                                        1.0..=10.0,
-                                    )
-                                    .show_value(false),
-                                );
-                                Self::paint_dirty_decor(
-                                    ui,
-                                    &slider,
-                                    (self.staged.audio_voice_volume
-                                        - self.prefs.audio_voice_volume)
-                                        .abs()
-                                        > f32::EPSILON,
-                                );
-                            },
-                        );
-                        ui.add_space(8.0);
-                        let drag = ui.add(
-                            egui::DragValue::new(&mut self.staged.audio_voice_volume)
-                                .range(1.0..=10.0)
-                                .speed(0.1)
-                                .min_decimals(1)
-                                .max_decimals(1),
-                        );
-                        Self::paint_dirty_decor(
-                            ui,
-                            &drag,
-                            (self.staged.audio_voice_volume - self.prefs.audio_voice_volume).abs()
-                                > f32::EPSILON,
-                        );
-                        self.dirty_audio_voice =
-                            (self.staged.audio_voice_volume - self.prefs.audio_voice_volume).abs()
-                                > f32::EPSILON;
-                    });
-                });
+                    if dirty {
+                        self.dirty_fields.insert(SettingsField::AudioVoice);
+                    } else {
+                        self.dirty_fields.remove(&SettingsField::AudioVoice);
+                    }
+                }
 
                 ui.add_space(12.0);
 
@@ -866,16 +676,7 @@ impl Menu for SettingsMenu {
                                 self.prefs = self.staged.clone();
                                 let _ = self.prefs.save();
                                 // clear dirty flags
-                                self.dirty_key_w = false;
-                                self.dirty_key_a = false;
-                                self.dirty_key_s = false;
-                                self.dirty_key_d = false;
-                                self.dirty_mouse_sens = false;
-                                self.dirty_filtering_enabled = false;
-                                self.dirty_audio_sound_effect = false;
-                                self.dirty_audio_music = false;
-                                self.dirty_audio_ui = false;
-                                self.dirty_audio_voice = false;
+                                self.dirty_fields.clear();
                             }
                             items.push(crate::menus::menu::MenuItem {
                                 action: if save_clicked {
@@ -899,16 +700,7 @@ impl Menu for SettingsMenu {
                                 if cancel_clicked {
                                     // revert staged values to last saved prefs
                                     self.staged = self.prefs.clone();
-                                    self.dirty_key_w = false;
-                                    self.dirty_key_a = false;
-                                    self.dirty_key_s = false;
-                                    self.dirty_key_d = false;
-                                    self.dirty_mouse_sens = false;
-                                    self.dirty_filtering_enabled = false;
-                                    self.dirty_audio_sound_effect = false;
-                                    self.dirty_audio_music = false;
-                                    self.dirty_audio_ui = false;
-                                    self.dirty_audio_voice = false;
+                                    self.dirty_fields.clear();
                                 }
                                 items.push(crate::menus::menu::MenuItem {
                                     action: MenuAction::None,
@@ -1068,27 +860,27 @@ impl Menu for SettingsMenu {
                             match listen_id {
                                 0 => {
                                     self.staged.key_w = binding;
-                                    self.dirty_key_w = true;
+                                    self.dirty_fields.insert(SettingsField::KeyW);
                                 }
                                 1 => {
                                     self.staged.key_a = binding;
-                                    self.dirty_key_a = true;
+                                    self.dirty_fields.insert(SettingsField::KeyA);
                                 }
                                 2 => {
                                     self.staged.key_s = binding;
-                                    self.dirty_key_s = true;
+                                    self.dirty_fields.insert(SettingsField::KeyS);
                                 }
                                 3 => {
                                     self.staged.key_d = binding;
-                                    self.dirty_key_d = true;
+                                    self.dirty_fields.insert(SettingsField::KeyD);
                                 }
                                 4 => {
                                     self.staged.key_up = binding;
-                                    self.dirty_key_up = true;
+                                    self.dirty_fields.insert(SettingsField::KeyUp);
                                 }
                                 5 => {
                                     self.staged.key_down = binding;
-                                    self.dirty_key_down = true;
+                                    self.dirty_fields.insert(SettingsField::KeyDown);
                                 }
                                 _ => {}
                             }
