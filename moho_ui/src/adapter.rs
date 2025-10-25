@@ -3,7 +3,7 @@
 //! This adapter manages menus and UI state in a scalable way,
 //! allowing easy addition of new menus and menu types.
 
-use crate::menus::{Menu, MenuAction, SettingsMenu, StartMenu};
+use crate::menus::{Menu, MenuAction, NewWorldMenu, SettingsMenu, StartMenu};
 use crate::modal::ModalManager;
 use crate::prefs::Prefs;
 use engine_renderer::FrameCallback;
@@ -18,7 +18,8 @@ use winit::window::Window;
 #[derive(Debug, Clone)]
 pub enum UiEvent {
     LoadScene(PathBuf),
-    NewWorld,
+    /// Start generation of a new world with provided parameters
+    NewWorld(crate::menus::WorldSpec),
     ShowMenu(String),
     Exit,
     OverlayToggled(bool),
@@ -61,9 +62,23 @@ pub struct EguiAdapter {
     // State
     pub ui_visible: bool,
     window: Option<Arc<Window>>,
+    // Optional progress overlay state. When Some, the adapter will render a
+    // simple modal progress overlay showing percent complete and an optional
+    // cancel button. The main application can control this by locking the
+    // adapter and calling the helper methods below.
+    pub progress: Option<ProgressState>,
 
     // Rendering
     surface_config: Option<wgpu::SurfaceConfiguration>,
+}
+
+/// Lightweight progress state used by the adapter to render an overlay.
+#[derive(Debug, Clone)]
+pub struct ProgressState {
+    pub title: String,
+    pub percent: f32, // 0.0 ..= 1.0
+    pub cancellable: bool,
+    pub canceled: bool,
 }
 
 // EguiAdapter needs to be Send + Sync for use with Arc<Mutex<>> across threads
@@ -94,6 +109,8 @@ impl EguiAdapter {
         let mut menus: HashMap<String, Box<dyn Menu>> = HashMap::new();
         menus.insert("start".to_string(), Box::new(StartMenu::new()));
         menus.insert("settings".to_string(), Box::new(SettingsMenu::new()));
+        // New World menu (UI-first wiring)
+        menus.insert("new_world".to_string(), Box::new(NewWorldMenu::new()));
 
         let adapter = Self {
             context,
@@ -106,6 +123,7 @@ impl EguiAdapter {
             ui_visible: true,
             window,
             surface_config: None,
+            progress: None,
         };
 
         (adapter, receiver)
@@ -175,6 +193,43 @@ impl EguiAdapter {
         }
     }
 
+    /// Start showing a progress overlay with the given title. This will
+    /// overwrite any existing progress state.
+    pub fn start_progress(&mut self, title: impl Into<String>, cancellable: bool) {
+        self.progress = Some(ProgressState {
+            title: title.into(),
+            percent: 0.0,
+            cancellable,
+            canceled: false,
+        });
+        self.ui_visible = true;
+    }
+
+    /// Update the visible progress fraction (0.0 ..= 1.0)
+    pub fn set_progress(&mut self, percent: f32) {
+        if let Some(p) = &mut self.progress {
+            p.percent = percent.clamp(0.0, 1.0);
+        }
+    }
+
+    /// Mark the progress overlay finished and remove it from view.
+    pub fn finish_progress(&mut self) {
+        self.progress = None;
+    }
+
+    /// Check whether the user clicked cancel on the progress overlay. This
+    /// returns true once and clears the flag; it is safe for the caller to
+    /// poll periodically while a long-running task is in progress.
+    pub fn take_progress_canceled(&mut self) -> bool {
+        if let Some(p) = &mut self.progress {
+            let was = p.canceled;
+            p.canceled = false;
+            was
+        } else {
+            false
+        }
+    }
+
     /// Process menu actions and convert to UI events
     fn process_menu_action(&mut self, action: MenuAction) {
         match action {
@@ -183,8 +238,14 @@ impl EguiAdapter {
                 let _ = self.sender.send(UiEvent::LoadScene(path));
             }
             MenuAction::NewWorld => {
+                // Open the New World menu so the user can specify params.
                 self.emit_audio_event(UiAudioEvent::Confirm);
-                let _ = self.sender.send(UiEvent::NewWorld);
+                self.show_menu("new_world");
+            }
+            MenuAction::GenerateWorld(spec) => {
+                // User confirmed generation with a WorldSpec payload from the new_world menu
+                self.emit_audio_event(UiAudioEvent::Confirm);
+                let _ = self.sender.send(UiEvent::NewWorld(spec));
             }
             MenuAction::Exit => {
                 self.emit_audio_event(UiAudioEvent::ButtonClick);
@@ -302,6 +363,28 @@ impl FrameCallback for EguiAdapter {
 
             // Render modal on top of menu (if active)
             modal_result = self.modal_manager.render(ctx);
+
+            // Progress overlay (renders above menus). Keep it simple: a centered
+            // window with a progress bar and optional Cancel button. The cancel
+            // flag is stored in the ProgressState so the caller can poll it.
+            if let Some(progress) = self.progress.as_mut() {
+                use egui::{Align2, RichText};
+                egui::Area::new("progress_overlay_area".into())
+                    .anchor(Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                    .show(ctx, |ui| {
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                            ui.add_space(8.0);
+                            ui.label(RichText::new(&progress.title).heading());
+                            ui.add_space(6.0);
+                            ui.add(egui::ProgressBar::new(progress.percent).show_percentage());
+                            ui.add_space(8.0);
+                            if progress.cancellable && ui.add(egui::Button::new("Cancel")).clicked()
+                            {
+                                progress.canceled = true;
+                            }
+                        });
+                    });
+            }
         });
 
         // Handle modal result

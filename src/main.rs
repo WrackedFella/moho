@@ -2,6 +2,10 @@
 use legion::World;
 #[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
 use moho_ui::prefs::Prefs;
+#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
+use crossbeam_channel::{unbounded, Receiver};
+#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "backend-wgpu")]
 use std::sync::Arc;
 #[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
@@ -18,6 +22,15 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 #[cfg(feature = "backend-wgpu")]
 use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
+mod save;
+
+#[cfg(feature = "ui-egui")]
+enum GenerationMsg {
+    Progress(f32),
+    Completed { scene_bytes: Vec<u8>, spec: moho_ui::WorldSpec },
+    Canceled,
+    Failed(String),
+}
 
 // Combined state to handle lifetimes properly
 #[cfg(feature = "backend-wgpu")]
@@ -55,6 +68,13 @@ struct App {
     ui_adapter: Option<Arc<Mutex<moho_ui::EguiAdapter>>>,
     #[cfg(feature = "ui-egui")]
     ui_receiver: Option<moho_ui::UiReceiver>,
+    // Async generation plumbing (only used when UI is present)
+    #[cfg(feature = "ui-egui")]
+    generation_receiver: Option<Receiver<GenerationMsg>>,
+    #[cfg(feature = "ui-egui")]
+    generation_handle: Option<std::thread::JoinHandle<()>>,
+    #[cfg(feature = "ui-egui")]
+    generation_cancel: Option<Arc<AtomicBool>>,
 
     // Camera control
     player_controller: engine_core::controller::PlayerController,
@@ -134,6 +154,12 @@ impl App {
             ui_adapter: None,
             #[cfg(feature = "ui-egui")]
             ui_receiver: None,
+            #[cfg(feature = "ui-egui")]
+            generation_receiver: None,
+            #[cfg(feature = "ui-egui")]
+            generation_handle: None,
+            #[cfg(feature = "ui-egui")]
+            generation_cancel: None,
 
             // Camera control
             player_controller,
@@ -205,46 +231,119 @@ impl App {
         Ok(())
     }
 
-    fn generate_new_world(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        log::info!("Generating new world...");
+    fn generate_new_world(
+        &mut self,
+        spec: moho_ui::WorldSpec,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        log::info!("Starting async generation for spec={:?}", spec);
 
-        // Clear the existing world
-        self.world.clear();
-
-        // Generate voxel terrain scene
-        engine_core::scene_builders::voxel_terrain_scene(&mut self.world);
-
-        // Old random scene (for testing/fallback)
-        // engine_core::scene_builders::random_scene(&mut self.world);
-
-        // Ensure saves directory exists
-        let saves_dir = std::path::Path::new("saves");
-        if !saves_dir.exists() {
-            std::fs::create_dir_all(saves_dir)?;
+        // Only start async generation when UI/adapter present; otherwise fall back
+        // to the synchronous path for headless builds.
+        #[cfg(not(feature = "ui-egui"))]
+        {
+            // Fallback synchronous path
+            log::info!("No UI adapter available - falling back to sync generation");
+            // Clear the existing world
+            self.world.clear();
+            engine_core::scene_builders::voxel_terrain_scene(&mut self.world);
+            // Persist immediately
+            let saves_dir = std::path::Path::new("saves");
+            if !saves_dir.exists() {
+                std::fs::create_dir_all(saves_dir)?;
+            }
+            let save_path = saves_dir.join("scene.bin");
+            let camera_data = Some((
+                self.player_controller.position,
+                self.player_controller.yaw,
+                self.player_controller.pitch,
+            ));
+            let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
+            save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
+            self.mode = AppMode::Game;
+            self.hide_menu();
+            return Ok(());
         }
 
-        // Save the new scene to the standard location
-        let save_path = saves_dir.join("scene.bin");
-        let camera_data = Some((
-            self.player_controller.position,
-            self.player_controller.yaw,
-            self.player_controller.pitch,
-        ));
-        self.scene
-            .save_to_file(&save_path, &self.world, camera_data)?;
-        log::info!("Saved new scene to {:?}", save_path);
+        #[cfg(feature = "ui-egui")]
+        {
+            use std::path::PathBuf;
 
-        // Request a redraw to show the new scene
-        if let Some(ref wr) = self.window_renderer {
-            wr.window.request_redraw();
+            // Prepare communication channel and cancellation flag
+            let (tx, rx) = unbounded::<GenerationMsg>();
+            let cancel_flag = Arc::new(AtomicBool::new(false));
+
+            // Start UI progress overlay immediately
+            if let Some(ui_adapter) = &self.ui_adapter
+                && let Ok(mut a) = ui_adapter.lock()
+            {
+                a.start_progress(format!("Generating {}", spec.name), true);
+                a.set_progress(0.01);
+            }
+
+            // Save shared state into local variables for the thread.
+            let spec_for_thread = spec;
+            let cancel_clone = cancel_flag.clone();
+            let sender = tx.clone();
+
+            // Spawn the generation thread
+            let handle = std::thread::Builder::new()
+                .name("world-generator".to_string())
+                .spawn(move || {
+                    // Report initial progress
+                    let _ = sender.send(GenerationMsg::Progress(0.02));
+
+                    // Local world and scene used for generation
+                    let mut local_world = World::default();
+                    // Step 1: clear/build
+                    if cancel_clone.load(Ordering::Relaxed) {
+                        let _ = sender.send(GenerationMsg::Canceled);
+                        return;
+                    }
+                    engine_core::scene_builders::voxel_terrain_scene(&mut local_world);
+                    let _ = sender.send(GenerationMsg::Progress(0.6));
+
+                    if cancel_clone.load(Ordering::Relaxed) {
+                        let _ = sender.send(GenerationMsg::Canceled);
+                        return;
+                    }
+
+                    // Encode scene bytes
+                    let local_scene = engine_renderer::Scene::new();
+                    let scene_bytes = match local_scene.encode_to_bytes(&local_world, None) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            let _ = sender.send(GenerationMsg::Failed(format!("encode failed: {}", e)));
+                            return;
+                        }
+                    };
+
+                    let _ = sender.send(GenerationMsg::Progress(0.9));
+
+                    // Ensure saves directory exists and persist the envelope
+                    let saves_dir = PathBuf::from("saves");
+                    if !saves_dir.exists() {
+                        if let Err(e) = std::fs::create_dir_all(&saves_dir) {
+                            let _ = sender.send(GenerationMsg::Failed(format!("mkdir failed: {}", e)));
+                            return;
+                        }
+                    }
+                    let save_path = saves_dir.join("scene.bin");
+                    if let Err(e) = save::write_scene_with_metadata(&save_path, &scene_bytes, &spec_for_thread) {
+                        let _ = sender.send(GenerationMsg::Failed(format!("write failed: {}", e)));
+                        return;
+                    }
+
+                    let _ = sender.send(GenerationMsg::Progress(1.0));
+                    let _ = sender.send(GenerationMsg::Completed { scene_bytes, spec: spec_for_thread });
+                })?;
+
+            // Store receiver, handle and cancel flag so the main loop can poll it
+            self.generation_receiver = Some(rx);
+            self.generation_handle = Some(handle);
+            self.generation_cancel = Some(cancel_flag);
+
+            Ok(())
         }
-
-        // Switch to game mode and hide menu
-        self.mode = AppMode::Game;
-        self.hide_menu();
-
-        log::info!("New world generation complete - switched to game mode");
-        Ok(())
     }
 
     fn auto_save_on_shutdown(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -285,23 +384,48 @@ impl App {
         // Clear the existing world
         self.world.clear();
 
-        // Load the scene from file
-        let camera_data = self.scene.load_from_file(&path, &mut self.world)?;
-        log::info!("Scene loaded successfully from {:?}", path.as_ref());
+        // Load the scene from file. Use the envelope-aware loader when UI
+        // feature is enabled so we can read the WorldSpec metadata.
+        #[cfg(feature = "ui-egui")]
+        {
+            let (spec, scene_bytes) = save::read_scene_and_metadata(&path)?;
+            log::info!("Loaded WorldSpec from save: {:?}", spec);
+            let camera_data = self.scene.load_from_bytes(&scene_bytes, &mut self.world)?;
+            log::info!("Scene loaded successfully from {:?}", path.as_ref());
+            // Restore camera handled below using camera_data
+            if let Some((position, yaw, pitch)) = camera_data {
+                self.player_controller.position = position;
+                self.player_controller.yaw = yaw;
+                self.player_controller.pitch = pitch;
+                log::info!(
+                    "Restored camera position: {:?}, yaw: {:.2}, pitch: {:.2}",
+                    position,
+                    yaw,
+                    pitch
+                );
+            } else {
+                log::info!("No camera data found in scene file, keeping current position");
+            }
+        }
 
-        // Restore camera position if available
-        if let Some((position, yaw, pitch)) = camera_data {
-            self.player_controller.position = position;
-            self.player_controller.yaw = yaw;
-            self.player_controller.pitch = pitch;
-            log::info!(
-                "Restored camera position: {:?}, yaw: {:.2}, pitch: {:.2}",
-                position,
-                yaw,
-                pitch
-            );
-        } else {
-            log::info!("No camera data found in scene file, keeping current position");
+        #[cfg(not(feature = "ui-egui"))]
+        {
+            // Fallback: legacy loader (no metadata)
+            let camera_data = self.scene.load_from_file(&path, &mut self.world)?;
+            log::info!("Scene loaded successfully from {:?}", path.as_ref());
+            if let Some((position, yaw, pitch)) = camera_data {
+                self.player_controller.position = position;
+                self.player_controller.yaw = yaw;
+                self.player_controller.pitch = pitch;
+                log::info!(
+                    "Restored camera position: {:?}, yaw: {:.2}, pitch: {:.2}",
+                    position,
+                    yaw,
+                    pitch
+                );
+            } else {
+                log::info!("No camera data found in scene file, keeping current position");
+            }
         }
 
         // Request a redraw to show the loaded scene
@@ -631,9 +755,9 @@ impl ApplicationHandler for App {
                                 log::error!("Failed to load scene from {:?}: {}", path, e);
                             }
                         }
-                        UiEvent::NewWorld => {
-                            log::info!("UI requested NewWorld");
-                            if let Err(e) = self.generate_new_world() {
+                        UiEvent::NewWorld(spec) => {
+                            log::info!("UI requested NewWorld: {:?}", spec);
+                            if let Err(e) = self.generate_new_world(spec) {
                                 log::error!("Failed to generate new world: {}", e);
                             }
                         }
@@ -693,6 +817,107 @@ impl ApplicationHandler for App {
                             };
                             self.handle_audio_event(engine_event);
                         }
+                    }
+                }
+
+                // If the UI progress overlay Cancel button was pressed, propagate
+                // cancellation to the generator thread by setting the atomic flag.
+                #[cfg(feature = "ui-egui")]
+                if let Some(ui_adapter) = &self.ui_adapter
+                    && let Ok(mut a) = ui_adapter.lock()
+                {
+                    if a.take_progress_canceled() {
+                        if let Some(cancel_flag) = &self.generation_cancel {
+                            cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                }
+
+                // Poll async generation channel if running. Take the receiver so
+                // we can mutate `self` while processing messages.
+                if let Some(rx) = self.generation_receiver.take() {
+                    let mut still_running = true;
+                    while let Ok(msg) = rx.try_recv() {
+                        match msg {
+                            GenerationMsg::Progress(p) => {
+                                if let Some(ui_adapter) = &self.ui_adapter
+                                    && let Ok(mut a) = ui_adapter.lock()
+                                {
+                                    a.set_progress(p);
+                                }
+                            }
+                            GenerationMsg::Completed { scene_bytes, spec } => {
+                                log::info!("Generation completed for spec={:?}", spec.name);
+                                // Complete progress UI
+                                if let Some(ui_adapter) = &self.ui_adapter
+                                    && let Ok(mut a) = ui_adapter.lock()
+                                {
+                                    a.set_progress(1.0);
+                                    a.finish_progress();
+                                }
+
+                                // Load produced scene bytes into the main world
+                                self.world.clear();
+                                match self.scene.load_from_bytes(&scene_bytes, &mut self.world) {
+                                    Ok(camera_data) => {
+                                        if let Some((position, yaw, pitch)) = camera_data {
+                                            self.player_controller.position = position;
+                                            self.player_controller.yaw = yaw;
+                                            self.player_controller.pitch = pitch;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::error!("Failed to load generated scene bytes: {}", e);
+                                    }
+                                }
+
+                                // Clean up generation state
+                                if let Some(h) = self.generation_handle.take() {
+                                    let _ = h.join();
+                                }
+                                self.generation_cancel = None;
+
+                                // Switch to game mode and hide menu
+                                self.mode = AppMode::Game;
+                                self.hide_menu();
+
+                                still_running = false;
+                            }
+                            GenerationMsg::Canceled => {
+                                if let Some(ui_adapter) = &self.ui_adapter
+                                    && let Ok(mut a) = ui_adapter.lock()
+                                {
+                                    a.finish_progress();
+                                }
+                                if let Some(h) = self.generation_handle.take() {
+                                    let _ = h.join();
+                                }
+                                self.generation_cancel = None;
+                                log::info!("Generation canceled by user");
+                                still_running = false;
+                            }
+                            GenerationMsg::Failed(reason) => {
+                                log::error!("Generation failed: {}", reason);
+                                if let Some(ui_adapter) = &self.ui_adapter
+                                    && let Ok(mut a) = ui_adapter.lock()
+                                {
+                                    a.finish_progress();
+                                }
+                                if let Some(h) = self.generation_handle.take() {
+                                    let _ = h.join();
+                                }
+                                self.generation_cancel = None;
+                                still_running = false;
+                            }
+                        }
+                    }
+
+                    if still_running {
+                        // Put the receiver back for future polling
+                        self.generation_receiver = Some(rx);
+                    } else {
+                        // Drop the receiver and clear state
+                        self.generation_receiver = None;
                     }
                 }
             }

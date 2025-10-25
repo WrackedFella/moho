@@ -63,6 +63,8 @@ pub use adapter::{
 pub use adapter::EguiAdapter as EguiUi;
 
 #[cfg(feature = "ui-egui")]
+pub use menus::WorldSpec;
+#[cfg(feature = "ui-egui")]
 pub use menus::{Menu, MenuAction, MenuItem, SettingsMenu, StartMenu};
 
 #[cfg(feature = "ui-egui")]

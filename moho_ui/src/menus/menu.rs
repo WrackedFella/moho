@@ -2,12 +2,29 @@ use crate::prefs::Prefs;
 use egui::{Align2, Vec2};
 use std::path::PathBuf;
 
+/// Parameters describing a new world request coming from the UI.
+///
+/// Implemented inside `moho_ui` for the UI-first approach. We keep this
+/// simple and `Clone` so it can be transported via the internal channel.
+use serde::{Deserialize, Serialize};
+use bincode::{Encode, Decode};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Encode, Decode)]
+pub struct WorldSpec {
+    pub name: String,
+    pub seed: Option<u64>,
+    pub size_xz: u32,
+}
+
 /// Actions a Menu may return when interacted with.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MenuAction {
     None,
     LoadScene(PathBuf),
+    /// Request that the adapter open the New World menu (start menu -> open dialog)
     NewWorld,
+    /// User confirmed generation from the New World menu with parameters
+    GenerateWorld(WorldSpec),
     Exit,
     ShowMenu(String),
     Close,

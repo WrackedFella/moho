@@ -2,10 +2,9 @@ use engine_core::actors::Sphere;
 use engine_core::materials::MaterialType;
 use glam::Vec3;
 use legion::World;
-use std::fs;
 
 #[test]
-fn save_and_load_scene_roundtrip() {
+fn scene_encode_decode_roundtrip_in_memory() {
     let mut world = World::default();
     // create a simple scene with two spheres
     let s1 = Sphere::new(
@@ -28,18 +27,15 @@ fn save_and_load_scene_roundtrip() {
 
     let scene = engine_renderer::Scene::new();
 
-    let tmp = tempfile::NamedTempFile::new().expect("create temp file");
-    let path = tmp.path().to_path_buf();
+    // Encode the scene into in-memory bytes
+    let bytes = scene.encode_to_bytes(&world, None).expect("encode ok");
 
-    // save
-    scene.save_to_file(&path, &world, None).expect("save ok");
-
-    // create a fresh world and load
+    // create a fresh world and decode from bytes
     let mut loaded_world = World::default();
     let mut scene2 = engine_renderer::Scene::new();
     let _camera_data = scene2
-        .load_from_file(&path, &mut loaded_world)
-        .expect("load ok");
+        .load_from_bytes(&bytes, &mut loaded_world)
+        .expect("decode ok");
 
     // Basic checks: worlds contain Hittable-like components (we pushed Spheres only)
     use legion::query::IntoQuery;
@@ -50,7 +46,4 @@ fn save_and_load_scene_roundtrip() {
         orig_count, loaded_count,
         "scene roundtrip should preserve entity count"
     );
-
-    // Cleanup
-    let _ = fs::remove_file(path);
 }

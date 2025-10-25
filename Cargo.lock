@@ -1640,7 +1640,9 @@ dependencies = [
 name = "moho"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "bytemuck",
+ "crossbeam-channel",
  "engine_audio",
  "engine_core",
  "engine_renderer",
@@ -1659,6 +1661,7 @@ dependencies = [
 name = "moho_ui"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "crossbeam-channel",
  "egui",
  "egui-wgpu",
@@ -1668,6 +1671,7 @@ dependencies = [
  "ini",
  "log",
  "once_cell",
+ "serde",
  "wgpu",
  "winit",
 ]
