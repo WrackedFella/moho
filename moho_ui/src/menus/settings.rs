@@ -266,15 +266,79 @@ impl Menu for SettingsMenu {
     fn ui(&mut self, ctx: &egui::Context) -> Vec<crate::menus::menu::MenuItem> {
         let mut items: Vec<crate::menus::menu::MenuItem> = Vec::new();
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // Title - keep outside scroll area for visibility
+        // Top panel for title - reserves space at top
+        egui::TopBottomPanel::top("settings_top").show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(16.0);
                 ui.heading("Game Settings");
                 ui.add_space(12.0);
             });
+        });
 
-            // Scrollable form content
+        // Bottom panel for buttons - reserves space at bottom
+        egui::TopBottomPanel::bottom("settings_bottom").show(ctx, |ui| {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let save = ui.add(
+                        egui::Button::new("Save Changes").min_size(egui::vec2(120.0, 36.0)),
+                    );
+                    let save_clicked = save.clicked();
+                    if save_clicked {
+                        // commit staged to prefs and save
+                        self.prefs = self.staged.clone();
+                        let _ = self.prefs.save();
+                        // clear dirty flags
+                        self.dirty_fields.clear();
+                    }
+                    items.push(crate::menus::menu::MenuItem {
+                        action: if save_clicked {
+                            MenuAction::SettingsSaved(self.prefs.clone())
+                        } else {
+                            MenuAction::None
+                        },
+                        rect: Some(save.rect),
+                        enabled: true,
+                        clicked: save_clicked,
+                    });
+                    ui.add_space(8.0);
+
+                    // Show Cancel when form is dirty, Back when clean
+                    let is_dirty = self.is_dirty();
+                    if is_dirty {
+                        let cancel = ui
+                            .add(egui::Button::new("Cancel").min_size(egui::vec2(100.0, 36.0)));
+                        let cancel_clicked = cancel.clicked();
+                        if cancel_clicked {
+                            // revert staged values to last saved prefs
+                            self.staged = self.prefs.clone();
+                            self.dirty_fields.clear();
+                        }
+                        items.push(crate::menus::menu::MenuItem {
+                            action: MenuAction::None,
+                            rect: Some(cancel.rect),
+                            enabled: true,
+                            clicked: cancel_clicked,
+                        });
+                    } else {
+                        let back =
+                            ui.add(egui::Button::new("Back").min_size(egui::vec2(100.0, 36.0)));
+                        let back_clicked = back.clicked();
+                        items.push(crate::menus::menu::MenuItem {
+                            action: MenuAction::ShowMenu("start".to_string()),
+                            rect: Some(back.rect),
+                            enabled: true,
+                            clicked: back_clicked,
+                        });
+                    }
+
+                    ui.add_space(8.0);
+                });
+            });
+        });
+
+        // Central panel contains only the scrollable form content
+        egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -605,67 +669,6 @@ impl Menu for SettingsMenu {
                         ui.add_space(12.0);
                     });
                 });
-
-            egui::TopBottomPanel::bottom("settings_bottom").show(ctx, |ui| {
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let save = ui.add(
-                            egui::Button::new("Save Changes").min_size(egui::vec2(120.0, 36.0)),
-                        );
-                        let save_clicked = save.clicked();
-                        if save_clicked {
-                            // commit staged to prefs and save
-                            self.prefs = self.staged.clone();
-                            let _ = self.prefs.save();
-                            // clear dirty flags
-                            self.dirty_fields.clear();
-                        }
-                        items.push(crate::menus::menu::MenuItem {
-                            action: if save_clicked {
-                                MenuAction::SettingsSaved(self.prefs.clone())
-                            } else {
-                                MenuAction::None
-                            },
-                            rect: Some(save.rect),
-                            enabled: true,
-                            clicked: save_clicked,
-                        });
-                        ui.add_space(8.0);
-
-                        // Show Cancel when form is dirty, Back when clean
-                        let is_dirty = self.is_dirty();
-                        if is_dirty {
-                            let cancel = ui
-                                .add(egui::Button::new("Cancel").min_size(egui::vec2(100.0, 36.0)));
-                            let cancel_clicked = cancel.clicked();
-                            if cancel_clicked {
-                                // revert staged values to last saved prefs
-                                self.staged = self.prefs.clone();
-                                self.dirty_fields.clear();
-                            }
-                            items.push(crate::menus::menu::MenuItem {
-                                action: MenuAction::None,
-                                rect: Some(cancel.rect),
-                                enabled: true,
-                                clicked: cancel_clicked,
-                            });
-                        } else {
-                            let back =
-                                ui.add(egui::Button::new("Back").min_size(egui::vec2(100.0, 36.0)));
-                            let back_clicked = back.clicked();
-                            items.push(crate::menus::menu::MenuItem {
-                                action: MenuAction::ShowMenu("start".to_string()),
-                                rect: Some(back.rect),
-                                enabled: true,
-                                clicked: back_clicked,
-                            });
-                        }
-
-                        ui.add_space(8.0);
-                    });
-                });
-            });
         });
 
         // helper: map egui::Key to numeric code. Letters and digits map to their ASCII uppercased codes.
