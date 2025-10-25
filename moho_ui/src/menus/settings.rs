@@ -36,6 +36,7 @@ pub struct SettingsMenu {
     pub show_conflict_modal: bool,
     pub conflict_key_name: String,
     pub conflict_binding_desc: String,
+    last_mods: u8,
 }
 
 impl SettingsMenu {
@@ -51,6 +52,7 @@ impl SettingsMenu {
             show_conflict_modal: false,
             conflict_key_name: String::new(),
             conflict_binding_desc: String::new(),
+            last_mods: 0,
         }
     }
 
@@ -228,6 +230,88 @@ impl SettingsMenu {
             }
         }
         self.show_conflict_modal = false;
+    }
+
+    // Attempt to capture a modifier-only binding when listening.
+    // Returns true if a binding was applied or a conflict modal was queued.
+    pub(crate) fn capture_modifier_if_listening(&mut self, cur_mods: u8) -> bool {
+        if let Some(listen_id) = self.listening {
+            if cur_mods != self.last_mods {
+                if self.last_mods == 0 && (cur_mods == 1 || cur_mods == 2 || cur_mods == 4) {
+                    let code = match cur_mods {
+                        1 => 0x205,
+                        2 => 0x204,
+                        4 => 0x206,
+                        _ => 0,
+                    };
+                    let binding = Binding::new(code, 0);
+
+                    // Check for duplicate bindings
+                    let mut conflicting_id: Option<usize> = None;
+                    if binding.code != 0 {
+                        if self.staged.key_w == binding && listen_id != 0 {
+                            conflicting_id = Some(0);
+                        } else if self.staged.key_a == binding && listen_id != 1 {
+                            conflicting_id = Some(1);
+                        } else if self.staged.key_s == binding && listen_id != 2 {
+                            conflicting_id = Some(2);
+                        } else if self.staged.key_d == binding && listen_id != 3 {
+                            conflicting_id = Some(3);
+                        } else if self.staged.key_up == binding && listen_id != 4 {
+                            conflicting_id = Some(4);
+                        } else if self.staged.key_down == binding && listen_id != 5 {
+                            conflicting_id = Some(5);
+                        }
+                    }
+
+                    if let Some(conflict_id) = conflicting_id {
+                        self.pending_binding = Some(PendingBinding {
+                            target_id: listen_id,
+                            binding,
+                            conflicting_id: Some(conflict_id),
+                        });
+                        self.conflict_key_name = self.get_key_name(conflict_id).to_string();
+                        self.conflict_binding_desc = Self::binding_label(&binding);
+                        self.show_conflict_modal = true;
+                        self.last_mods = cur_mods;
+                        return true;
+                    } else {
+                        match listen_id {
+                            0 => {
+                                self.staged.key_w = binding;
+                                self.dirty_fields.insert(SettingsField::KeyW);
+                            }
+                            1 => {
+                                self.staged.key_a = binding;
+                                self.dirty_fields.insert(SettingsField::KeyA);
+                            }
+                            2 => {
+                                self.staged.key_s = binding;
+                                self.dirty_fields.insert(SettingsField::KeyS);
+                            }
+                            3 => {
+                                self.staged.key_d = binding;
+                                self.dirty_fields.insert(SettingsField::KeyD);
+                            }
+                            4 => {
+                                self.staged.key_up = binding;
+                                self.dirty_fields.insert(SettingsField::KeyUp);
+                            }
+                            5 => {
+                                self.staged.key_down = binding;
+                                self.dirty_fields.insert(SettingsField::KeyDown);
+                            }
+                            _ => {}
+                        }
+                        self.listening = None;
+                        self.last_mods = cur_mods;
+                        return true;
+                    }
+                }
+                self.last_mods = cur_mods;
+            }
+        }
+        false
     }
 
     pub fn cancel_pending_binding(&mut self) {
@@ -745,7 +829,25 @@ impl Menu for SettingsMenu {
 
         // Handle key capture when listening for binding
         if let Some(listen_id) = self.listening {
+            // detect modifier-only presses via modifiers state (for keys like Ctrl/Shift/Alt)
             ctx.input(|input| {
+                let mut cur_mods: u8 = 0;
+                if input.modifiers.ctrl {
+                    cur_mods |= 1;
+                }
+                if input.modifiers.shift {
+                    cur_mods |= 2;
+                }
+                if input.modifiers.alt {
+                    cur_mods |= 4;
+                }
+
+                // Try to capture modifier-only bindings; ignore scroll and other events.
+                if self.capture_modifier_if_listening(cur_mods) {
+                    return;
+                }
+
+                // process normal key events as before
                 for ev in &input.events {
                     if let egui::Event::Key {
                         key,
@@ -754,12 +856,11 @@ impl Menu for SettingsMenu {
                         ..
                     } = ev
                     {
-                        // Escape cancels listening
                         if *key == egui::Key::Escape {
                             self.listening = None;
                             return;
                         }
-                        // derive code and modifiers
+
                         let mut code: u32 = key_to_code(key);
                         let mut mods: u8 = 0;
                         if modifiers.ctrl {
@@ -772,18 +873,14 @@ impl Menu for SettingsMenu {
                             mods |= 4;
                         }
 
-                        // If no key code but modifier is pressed, treat modifier as key
                         if code == 0 {
                             if mods == 1 {
-                                // only ctrl
                                 code = 0x205;
                                 mods = 0;
                             } else if mods == 2 {
-                                // only shift
                                 code = 0x204;
                                 mods = 0;
                             } else if mods == 4 {
-                                // only alt
                                 code = 0x206;
                                 mods = 0;
                             }
@@ -791,10 +888,8 @@ impl Menu for SettingsMenu {
 
                         let binding = Binding::new(code, mods);
 
-                        // Check for duplicate bindings
                         let mut conflicting_id: Option<usize> = None;
                         if binding.code != 0 {
-                            // Don't check unbound keys
                             if self.staged.key_w == binding && listen_id != 0 {
                                 conflicting_id = Some(0);
                             } else if self.staged.key_a == binding && listen_id != 1 {
@@ -811,7 +906,6 @@ impl Menu for SettingsMenu {
                         }
 
                         if let Some(conflict_id) = conflicting_id {
-                            // Show conflict modal
                             self.pending_binding = Some(PendingBinding {
                                 target_id: listen_id,
                                 binding,
@@ -821,7 +915,6 @@ impl Menu for SettingsMenu {
                             self.conflict_binding_desc = Self::binding_label(&binding);
                             self.show_conflict_modal = true;
                         } else {
-                            // No conflict, apply immediately
                             match listen_id {
                                 0 => {
                                     self.staged.key_w = binding;
@@ -861,5 +954,49 @@ impl Menu for SettingsMenu {
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn modifier_only_capture_applies() {
+        let mut menu = SettingsMenu::new();
+        menu.listening = Some(0);
+        menu.last_mods = 0;
+
+        let applied = menu.capture_modifier_if_listening(1);
+        assert!(applied, "modifier capture should apply");
+        assert!(menu.listening.is_none(), "should stop listening after capture");
+        assert_eq!(menu.staged.key_w, Binding::new(0x205, 0));
+    }
+
+    #[test]
+    fn modifier_only_conflict_shows_modal() {
+        let mut menu = SettingsMenu::new();
+        // set staged key_a to Ctrl so Ctrl will conflict with listening target 0
+        menu.staged.key_a = Binding::new(0x205, 0);
+        menu.listening = Some(0);
+        menu.last_mods = 0;
+
+        let applied = menu.capture_modifier_if_listening(1);
+        assert!(applied, "modifier conflict should be processed");
+        assert!(menu.pending_binding.is_some(), "pending binding should be set on conflict");
+        assert!(menu.show_conflict_modal, "conflict modal flag should be set");
+    }
+
+    #[test]
+    fn modifier_multiple_mods_ignored() {
+        let mut menu = SettingsMenu::new();
+        menu.listening = Some(0);
+        menu.last_mods = 0;
+
+        // ctrl+shift (bits 1 and 2) should not create a modifier-only binding
+        let applied = menu.capture_modifier_if_listening(3);
+        assert!(!applied, "combined modifiers should not be captured");
+        assert!(menu.listening.is_some(), "still listening after ignored multi-modifier");
+        assert_eq!(menu.last_mods, 3);
     }
 }
