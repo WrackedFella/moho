@@ -12,3 +12,5 @@ rand = "0.9.1"
 bytemuck = { version = "1.9.1", features = ["derive"] }
 legion = "0.4"
 log = { workspace = true }
+noise = "0.9"
+serde = { version = "1.0", features = ["derive"] }

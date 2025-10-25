@@ -1,42 +1,6 @@
-# Multiplayer Architecture Plan for Moho Game Engine
+# ARCHIVE: MULTIPLAYER_PLAN
 
-*Generated: October 22, 2025*
-
-## Overview
-
-This document outlines the long-term plan for adding multiplayer functionality to the Moho game engine using a peer-to-peer approach without dedicated servers or anti-cheat requirements.
-
-## Design Constraints
-
-- **No dedicated servers** - Host-client or peer-to-peer architecture only
-- **No anti-cheat requirements** - Focus on cooperative multiplayer experience
-- **Minimize current disruption** - Lay foundations without breaking existing functionality
-- **Future flexibility** - Architecture should support different networking approaches
-
-## Recommended Architecture: Host-Client Model
-
-### Why Host-Client?
-- **Simple to implement** - One "special" client runs authoritative simulation
-- **No server infrastructure** - Perfect for friend groups and small sessions
-- **Reuses existing code** - Most single-player logic can be preserved
-- **Natural for 2-8 players** - Optimal for typical multiplayer sessions
-
-### Architecture Overview
-```
-Host Client                    Regular Clients
-┌─────────────┐               ┌─────────────┐
-│   Input     │◄──────────────┤   Input     │
-│ Simulation  │               │ Rendering   │
-│ Rendering   │──────────────►│    UI       │
-│ Broadcasting│               │             │
-└─────────────┘               └─────────────┘
-```
-
-- **Host**: Runs full game simulation, collects input from all players, broadcasts state
-- **Clients**: Send input to host, render received game state
-- **Migration**: Game ends if host disconnects (future: host migration)
-
-## Current Architecture Analysis
+Archived 2025-10-24. Multiplayer planning notes have been archived. Multiplayer is out of scope for the current voxel rendering cleanup; keep this in VCS history if needed.
 
 ### Strengths for Multiplayer
 - ✅ **ECS-based architecture** (Legion) provides clean entity/component separation

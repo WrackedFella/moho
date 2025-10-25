@@ -27,6 +27,8 @@ pub struct Prefs {
     pub key_a: Binding,
     pub key_s: Binding,
     pub key_d: Binding,
+    pub key_up: Binding,
+    pub key_down: Binding,
     pub mouse_sensitivity: f32,
     pub input_filtering_enabled: bool,
     // Audio settings (values 1.0 to 10.0)
@@ -43,6 +45,8 @@ impl Default for Prefs {
             key_a: Binding::new('A' as u32, 0),
             key_s: Binding::new('S' as u32, 0),
             key_d: Binding::new('D' as u32, 0),
+            key_up: Binding::new(' ' as u32, 0), // Space
+            key_down: Binding::new(0x204, 0),    // Shift
             mouse_sensitivity: 1.0,
             input_filtering_enabled: true,
             // Default audio volumes (mid-range)
@@ -122,11 +126,16 @@ impl Prefs {
                         }
                     }
                 }
+
+                // If only modifiers (no key part), return modifier-only binding
                 if key_part.is_empty() {
+                    if mods != 0 {
+                        return Binding::new(0, mods);
+                    }
                     return fallback;
                 }
 
-                let code = match key_part {
+                let code = match key_part.to_ascii_uppercase().as_str() {
                     "ARROWUP" | "UP" => 0x100,
                     "ARROWDOWN" | "DOWN" => 0x101,
                     "ARROWLEFT" | "LEFT" => 0x102,
@@ -135,7 +144,10 @@ impl Prefs {
                     "TAB" => 0x201,
                     "BACKSPACE" => 0x202,
                     "ENTER" | "RETURN" => 0x203,
-                    "SPACE" => ' ' as u32,
+                    "SPACE" | "SPACEBAR" => ' ' as u32,
+                    "SHIFT" => 0x204,
+                    "CTRL" | "CONTROL" => 0x205,
+                    "ALT" => 0x206,
                     s if s.len() == 1 => s.chars().next().unwrap() as u32,
                     _ => {
                         // try parse numeric code as fallback
@@ -156,6 +168,12 @@ impl Prefs {
             }
             if let Some(s) = get_str("key_d") {
                 prefs.key_d = parse_binding(&s, prefs.key_d);
+            }
+            if let Some(s) = get_str("key_up") {
+                prefs.key_up = parse_binding(&s, prefs.key_up);
+            }
+            if let Some(s) = get_str("key_down") {
+                prefs.key_down = parse_binding(&s, prefs.key_down);
             }
             prefs.mouse_sensitivity = get_f32("mouse_sensitivity", prefs.mouse_sensitivity);
 
@@ -197,10 +215,33 @@ impl Prefs {
         out.push_str("[prefs]\n");
         // store human-readable bindings, e.g. "Ctrl+W" or "ArrowUp"
         fn binding_to_string(b: &Binding) -> String {
-            if b.code == 0 {
+            if b.code == 0 && b.mods == 0 {
                 return "Unbound".to_string();
             }
+
             let mut s = String::new();
+
+            // If only modifiers are set (no key code), show just the modifier
+            if b.code == 0 {
+                if b.mods & 1 != 0 {
+                    s.push_str("Ctrl");
+                }
+                if b.mods & 2 != 0 {
+                    if !s.is_empty() {
+                        s.push('+');
+                    }
+                    s.push_str("Shift");
+                }
+                if b.mods & 4 != 0 {
+                    if !s.is_empty() {
+                        s.push('+');
+                    }
+                    s.push_str("Alt");
+                }
+                return s;
+            }
+
+            // Add modifiers prefix
             if b.mods & 1 != 0 {
                 s.push_str("Ctrl+");
             }
@@ -210,12 +251,22 @@ impl Prefs {
             if b.mods & 4 != 0 {
                 s.push_str("Alt+");
             }
+
+            // Handle Space specially
+            if b.code == ' ' as u32 {
+                s.push_str("Spacebar");
+                return s;
+            }
+
+            // Handle regular ASCII characters
             if let Some(ch) = std::char::from_u32(b.code)
                 && ch.is_ascii_graphic()
             {
                 s.push(ch.to_ascii_uppercase());
                 return s;
             }
+
+            // Handle special keys
             match b.code {
                 0x100 => s.push_str("ArrowUp"),
                 0x101 => s.push_str("ArrowDown"),
@@ -225,6 +276,9 @@ impl Prefs {
                 0x201 => s.push_str("Tab"),
                 0x202 => s.push_str("Backspace"),
                 0x203 => s.push_str("Enter"),
+                0x204 => s.push_str("Shift"),
+                0x205 => s.push_str("Ctrl"),
+                0x206 => s.push_str("Alt"),
                 _ => s.push_str("Unknown"),
             }
             s
@@ -234,6 +288,8 @@ impl Prefs {
         out.push_str(&format!("key_a={}\n", binding_to_string(&self.key_a)));
         out.push_str(&format!("key_s={}\n", binding_to_string(&self.key_s)));
         out.push_str(&format!("key_d={}\n", binding_to_string(&self.key_d)));
+        out.push_str(&format!("key_up={}\n", binding_to_string(&self.key_up)));
+        out.push_str(&format!("key_down={}\n", binding_to_string(&self.key_down)));
         out.push_str(&format!("mouse_sensitivity={}\n", self.mouse_sensitivity));
         out.push_str(&format!(
             "input_filtering_enabled={}\n",
