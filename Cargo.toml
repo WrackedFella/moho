@@ -7,12 +7,14 @@ edition = "2024"
 engine_core = { path = "engine_core" }
 engine_renderer = { path = "engine_renderer" }
 engine_audio = { path = "engine_audio" }
+moho_input = { path = "moho_input" }
 glam = "0.30.4"
 rand = "0.9.1"
 legion = "0.4.0"
 log = { workspace = true }
 env_logger = { workspace = true }
 moho_ui = { path = "moho_ui", optional = true }
+crossbeam-channel = "0.5"
 
 # Optional frontend/backends
 winit = { version = "0.30", optional = true }
@@ -46,5 +48,6 @@ pollster = "0.4"
 rodio = "0.19"
 
 [workspace]
-members = ["engine_core", "engine_renderer", "engine_audio", "moho_ui"]
+members = ["engine_core", "engine_renderer", "engine_audio", "moho_ui", "moho_input"]
+
 
