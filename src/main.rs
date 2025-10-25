@@ -71,6 +71,8 @@ struct App {
     ui_adapter: Option<Arc<Mutex<moho_ui::EguiAdapter>>>,
     #[cfg(feature = "ui-egui")]
     ui_receiver: Option<moho_ui::UiReceiver>,
+    #[cfg(feature = "ui-egui")]
+    last_world_spec: Option<moho_ui::WorldSpec>,
     // Async generation plumbing (only used when UI is present)
     #[cfg(feature = "ui-egui")]
     generation_receiver: Option<Receiver<GenerationMsg>>,
@@ -180,6 +182,8 @@ impl App {
 
             // Store prefs and keyboard state
             prefs,
+            #[cfg(feature = "ui-egui")]
+            last_world_spec: None,
             active_keys: std::collections::HashSet::new(),
 
             frame_duration: Duration::from_secs_f64(1.0 / 60.0),
@@ -384,7 +388,11 @@ impl App {
             std::fs::create_dir_all(saves_dir)?;
         }
 
-        // Save the current scene with camera data
+        // Save the current scene with camera data. When the UI is enabled
+        // we prefer to write the envelope format (magic + metadata + scene)
+        // so Continue/Load operations can read the WorldSpec metadata. Use
+        // a minimal "autosave" WorldSpec when no explicit metadata is
+        // available.
         let save_path = saves_dir.join("scene.bin");
         let camera_data = Some((
             self.player_controller.position,
@@ -392,9 +400,31 @@ impl App {
             self.player_controller.pitch,
         ));
 
-        self.scene
-            .save_to_file(&save_path, &self.world, camera_data)?;
-        log::info!("Auto-saved scene to {:?}", save_path);
+        #[cfg(feature = "ui-egui")]
+        {
+            // Encode scene bytes and write envelope. Prefer the last known
+            // WorldSpec (e.g. from a loaded or generated scene) so autosaves
+            // preserve original metadata; fall back to a minimal spec.
+            let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
+            let spec = self
+                .last_world_spec
+                .clone()
+                .unwrap_or(moho_ui::WorldSpec {
+                    name: "autosave".to_string(),
+                    seed: None,
+                    size_xz: 64,
+                });
+            save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
+            log::info!("Auto-saved scene (envelope) to {:?} (spec={:?})", save_path, spec.name);
+        }
+
+        #[cfg(not(feature = "ui-egui"))]
+        {
+            // Legacy path - write raw scene bytes without envelope
+            self.scene
+                .save_to_file(&save_path, &self.world, camera_data)?;
+            log::info!("Auto-saved scene to {:?}", save_path);
+        }
 
         Ok(())
     }
@@ -418,6 +448,9 @@ impl App {
         #[cfg(feature = "ui-egui")]
         {
             let (spec, scene_bytes) = save::read_scene_and_metadata(&path)?;
+            // Remember the WorldSpec from the loaded file so autosaves and
+            // subsequent writes preserve the original metadata.
+            self.last_world_spec = Some(spec.clone());
             log::info!("Loaded WorldSpec from save: {:?}", spec);
             let camera_data = self.scene.load_from_bytes(&scene_bytes, &mut self.world)?;
             log::info!("Scene loaded successfully from {:?}", path.as_ref());
@@ -892,6 +925,9 @@ impl ApplicationHandler for App {
                             }
                             GenerationMsg::Completed { scene_bytes, spec } => {
                                 log::info!("Generation completed for spec={:?}", spec.name);
+                                // Remember the last WorldSpec so future saves include
+                                // the original metadata (autosave/continue consistency).
+                                self.last_world_spec = Some(spec.clone());
                                 // Complete progress UI
                                 if let Some(ui_adapter) = &self.ui_adapter
                                     && let Ok(mut a) = ui_adapter.lock()
