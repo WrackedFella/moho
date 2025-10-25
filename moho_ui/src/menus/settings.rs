@@ -64,130 +64,169 @@ impl SettingsMenu {
     /// Handle a winit WindowEvent when the settings menu is listening for a binding.
     /// Returns true if the event was consumed (binding applied or cancelled).
     pub fn handle_winit_event(&mut self, event: &winit::event::WindowEvent) -> bool {
-    use winit::event::{WindowEvent as WEvent, ElementState};
-    use winit::keyboard::{KeyCode, PhysicalKey};
+        use winit::event::{ElementState, WindowEvent as WEvent};
+        use winit::keyboard::{KeyCode, PhysicalKey};
 
-        match event {
-            WEvent::KeyboardInput { event: key_event, .. } => {
-                // Only respond to key presses while listening
-                if key_event.state != ElementState::Pressed {
-                    return false;
-                }
-
-                // If not listening, ignore
-                let listen_id = match self.listening {
-                    Some(id) => id,
-                    None => return false,
-                };
-
-                // Map physical key to binding code (same mapping as main)
-                let code = if let PhysicalKey::Code(kc) = key_event.physical_key {
-                    match kc {
-                        KeyCode::KeyA => 'A' as u32,
-                        KeyCode::KeyB => 'B' as u32,
-                        KeyCode::KeyC => 'C' as u32,
-                        KeyCode::KeyD => 'D' as u32,
-                        KeyCode::KeyE => 'E' as u32,
-                        KeyCode::KeyF => 'F' as u32,
-                        KeyCode::KeyG => 'G' as u32,
-                        KeyCode::KeyH => 'H' as u32,
-                        KeyCode::KeyI => 'I' as u32,
-                        KeyCode::KeyJ => 'J' as u32,
-                        KeyCode::KeyK => 'K' as u32,
-                        KeyCode::KeyL => 'L' as u32,
-                        KeyCode::KeyM => 'M' as u32,
-                        KeyCode::KeyN => 'N' as u32,
-                        KeyCode::KeyO => 'O' as u32,
-                        KeyCode::KeyP => 'P' as u32,
-                        KeyCode::KeyQ => 'Q' as u32,
-                        KeyCode::KeyR => 'R' as u32,
-                        KeyCode::KeyS => 'S' as u32,
-                        KeyCode::KeyT => 'T' as u32,
-                        KeyCode::KeyU => 'U' as u32,
-                        KeyCode::KeyV => 'V' as u32,
-                        KeyCode::KeyW => 'W' as u32,
-                        KeyCode::KeyX => 'X' as u32,
-                        KeyCode::KeyY => 'Y' as u32,
-                        KeyCode::KeyZ => 'Z' as u32,
-                        KeyCode::Space => ' ' as u32,
-                        KeyCode::ArrowUp => 0x100,
-                        KeyCode::ArrowDown => 0x101,
-                        KeyCode::ArrowLeft => 0x102,
-                        KeyCode::ArrowRight => 0x103,
-                        KeyCode::Escape => 0x200,
-                        KeyCode::Tab => 0x201,
-                        KeyCode::Backspace => 0x202,
-                        KeyCode::Enter => 0x203,
-                        KeyCode::ShiftLeft | KeyCode::ShiftRight => 0x204,
-                        KeyCode::ControlLeft | KeyCode::ControlRight => 0x205,
-                        KeyCode::AltLeft | KeyCode::AltRight => 0x206,
-                        _ => 0,
-                    }
-                } else {
-                    0
-                };
-
-                // We don't have reliable modifier state here (winit KeyEvent doesn't expose it
-                // in a consistent, portable way), so record no modifier bits for non-modifier
-                // keys. Modifier-only captures are handled when the user presses a pure
-                // modifier key (Shift/Ctrl/Alt), which map to special codes below.
-                let mods_bits = 0u8;
-
-                // Escape is reserved: cancel listening
-                if code == 0x200 {
-                    self.cancel_pending_binding();
-                    self.listening = None;
-                    return true;
-                }
-
-                // If the pressed key is a pure modifier key (mapped to special codes), and
-                // there are no other modifiers active, treat it as a modifier-only binding.
-                let is_pure_modifier = code == 0x204 || code == 0x205 || code == 0x206;
-                let binding = if is_pure_modifier && mods_bits == 0 {
-                    Binding::new(code, 0)
-                } else {
-                    Binding::new(code, mods_bits)
-                };
-
-                // Check for duplicate bindings
-                let mut conflicting_id: Option<usize> = None;
-                if binding.code != 0 {
-                    if self.staged.key_w == binding && listen_id != 0 { conflicting_id = Some(0);} 
-                    else if self.staged.key_a == binding && listen_id != 1 { conflicting_id = Some(1);} 
-                    else if self.staged.key_s == binding && listen_id != 2 { conflicting_id = Some(2);} 
-                    else if self.staged.key_d == binding && listen_id != 3 { conflicting_id = Some(3);} 
-                    else if self.staged.key_up == binding && listen_id != 4 { conflicting_id = Some(4);} 
-                    else if self.staged.key_down == binding && listen_id != 5 { conflicting_id = Some(5);} 
-                }
-
-                if let Some(conflict_id) = conflicting_id {
-                    self.pending_binding = Some(PendingBinding {
-                        target_id: listen_id,
-                        binding,
-                        conflicting_id: Some(conflict_id),
-                    });
-                    self.conflict_key_name = self.get_key_name(conflict_id).to_string();
-                    self.conflict_binding_desc = Self::binding_label(&binding);
-                    self.show_conflict_modal = true;
-                    self.listening = None;
-                    return true;
-                } else {
-                    match listen_id {
-                        0 => { self.staged.key_w = binding; self.dirty_fields.insert(SettingsField::KeyW); }
-                        1 => { self.staged.key_a = binding; self.dirty_fields.insert(SettingsField::KeyA); }
-                        2 => { self.staged.key_s = binding; self.dirty_fields.insert(SettingsField::KeyS); }
-                        3 => { self.staged.key_d = binding; self.dirty_fields.insert(SettingsField::KeyD); }
-                        4 => { self.staged.key_up = binding; self.dirty_fields.insert(SettingsField::KeyUp); }
-                        5 => { self.staged.key_down = binding; self.dirty_fields.insert(SettingsField::KeyDown); }
-                        _ => {}
-                    }
-                    self.listening = None;
-                    return true;
-                }
+        if let WEvent::KeyboardInput {
+            event: key_event, ..
+        } = event
+        {
+            // Only respond to key presses while listening
+            if key_event.state != ElementState::Pressed {
+                return false;
             }
-            _ => {}
+
+            // If not listening, ignore
+            if self.listening.is_none() {
+                return false;
+            }
+
+            // Map physical key to binding code (same mapping as main)
+            let code = if let PhysicalKey::Code(kc) = key_event.physical_key {
+                match kc {
+                    KeyCode::KeyA => 'A' as u32,
+                    KeyCode::KeyB => 'B' as u32,
+                    KeyCode::KeyC => 'C' as u32,
+                    KeyCode::KeyD => 'D' as u32,
+                    KeyCode::KeyE => 'E' as u32,
+                    KeyCode::KeyF => 'F' as u32,
+                    KeyCode::KeyG => 'G' as u32,
+                    KeyCode::KeyH => 'H' as u32,
+                    KeyCode::KeyI => 'I' as u32,
+                    KeyCode::KeyJ => 'J' as u32,
+                    KeyCode::KeyK => 'K' as u32,
+                    KeyCode::KeyL => 'L' as u32,
+                    KeyCode::KeyM => 'M' as u32,
+                    KeyCode::KeyN => 'N' as u32,
+                    KeyCode::KeyO => 'O' as u32,
+                    KeyCode::KeyP => 'P' as u32,
+                    KeyCode::KeyQ => 'Q' as u32,
+                    KeyCode::KeyR => 'R' as u32,
+                    KeyCode::KeyS => 'S' as u32,
+                    KeyCode::KeyT => 'T' as u32,
+                    KeyCode::KeyU => 'U' as u32,
+                    KeyCode::KeyV => 'V' as u32,
+                    KeyCode::KeyW => 'W' as u32,
+                    KeyCode::KeyX => 'X' as u32,
+                    KeyCode::KeyY => 'Y' as u32,
+                    KeyCode::KeyZ => 'Z' as u32,
+                    KeyCode::Space => ' ' as u32,
+                    KeyCode::ArrowUp => 0x100,
+                    KeyCode::ArrowDown => 0x101,
+                    KeyCode::ArrowLeft => 0x102,
+                    KeyCode::ArrowRight => 0x103,
+                    KeyCode::Escape => 0x200,
+                    KeyCode::Tab => 0x201,
+                    KeyCode::Backspace => 0x202,
+                    KeyCode::Enter => 0x203,
+                    KeyCode::ShiftLeft | KeyCode::ShiftRight => 0x204,
+                    KeyCode::ControlLeft | KeyCode::ControlRight => 0x205,
+                    KeyCode::AltLeft | KeyCode::AltRight => 0x206,
+                    _ => 0,
+                }
+            } else {
+                0
+            };
+
+            // We don't have reliable modifier state here (winit KeyEvent doesn't expose it
+            // in a consistent, portable way), so record no modifier bits for non-modifier
+            // keys. We forward the resolved key code to a helper so tests can exercise
+            // the post-mapping logic without constructing full winit KeyEvent structs.
+            let mods_bits = 0u8;
+
+            return self.apply_key_code_while_listening(code, mods_bits);
         }
         false
+    }
+
+    /// Testable helper: apply a resolved key code while the menu is listening.
+    ///
+    /// This function contains the core logic for applying a binding or queuing a
+    /// conflict modal when `listening` is active. It's pub(crate) so unit tests
+    /// can exercise the behavior without depending on winit event construction.
+    pub(crate) fn apply_key_code_while_listening(&mut self, code: u32, mods_bits: u8) -> bool {
+        // If not listening, ignore
+        let listen_id = match self.listening {
+            Some(id) => id,
+            None => return false,
+        };
+
+        // Escape is reserved: cancel listening
+        if code == 0x200 {
+            self.cancel_pending_binding();
+            self.listening = None;
+            return true;
+        }
+
+        // If the pressed key is a pure modifier key (mapped to special codes), and
+        // there are no other modifiers active, treat it as a modifier-only binding.
+        let is_pure_modifier = code == 0x204 || code == 0x205 || code == 0x206;
+        let binding = if is_pure_modifier && mods_bits == 0 {
+            Binding::new(code, 0)
+        } else {
+            Binding::new(code, mods_bits)
+        };
+
+        // Check for duplicate bindings
+        let mut conflicting_id: Option<usize> = None;
+        if binding.code != 0 {
+            if self.staged.key_w == binding && listen_id != 0 {
+                conflicting_id = Some(0);
+            } else if self.staged.key_a == binding && listen_id != 1 {
+                conflicting_id = Some(1);
+            } else if self.staged.key_s == binding && listen_id != 2 {
+                conflicting_id = Some(2);
+            } else if self.staged.key_d == binding && listen_id != 3 {
+                conflicting_id = Some(3);
+            } else if self.staged.key_up == binding && listen_id != 4 {
+                conflicting_id = Some(4);
+            } else if self.staged.key_down == binding && listen_id != 5 {
+                conflicting_id = Some(5);
+            }
+        }
+
+        if let Some(conflict_id) = conflicting_id {
+            self.pending_binding = Some(PendingBinding {
+                target_id: listen_id,
+                binding,
+                conflicting_id: Some(conflict_id),
+            });
+            self.conflict_key_name = self.get_key_name(conflict_id).to_string();
+            self.conflict_binding_desc = Self::binding_label(&binding);
+            self.show_conflict_modal = true;
+            self.listening = None;
+            true
+        } else {
+            match listen_id {
+                0 => {
+                    self.staged.key_w = binding;
+                    self.dirty_fields.insert(SettingsField::KeyW);
+                }
+                1 => {
+                    self.staged.key_a = binding;
+                    self.dirty_fields.insert(SettingsField::KeyA);
+                }
+                2 => {
+                    self.staged.key_s = binding;
+                    self.dirty_fields.insert(SettingsField::KeyS);
+                }
+                3 => {
+                    self.staged.key_d = binding;
+                    self.dirty_fields.insert(SettingsField::KeyD);
+                }
+                4 => {
+                    self.staged.key_up = binding;
+                    self.dirty_fields.insert(SettingsField::KeyUp);
+                }
+                5 => {
+                    self.staged.key_down = binding;
+                    self.dirty_fields.insert(SettingsField::KeyDown);
+                }
+                _ => {}
+            }
+            self.listening = None;
+            true
+        }
     }
 
     fn get_key_name(&self, id: usize) -> &str {
@@ -369,82 +408,83 @@ impl SettingsMenu {
     // Attempt to capture a modifier-only binding when listening.
     // Returns true if a binding was applied or a conflict modal was queued.
     pub(crate) fn capture_modifier_if_listening(&mut self, cur_mods: u8) -> bool {
-        if let Some(listen_id) = self.listening {
-            if cur_mods != self.last_mods {
-                if self.last_mods == 0 && (cur_mods == 1 || cur_mods == 2 || cur_mods == 4) {
-                    let code = match cur_mods {
-                        1 => 0x205,
-                        2 => 0x204,
-                        4 => 0x206,
-                        _ => 0,
-                    };
-                    let binding = Binding::new(code, 0);
+        if let Some(listen_id) = self.listening
+            && cur_mods != self.last_mods
+        {
+            if self.last_mods == 0 && (cur_mods == 1 || cur_mods == 2 || cur_mods == 4) {
+                let code = match cur_mods {
+                    1 => 0x205,
+                    2 => 0x204,
+                    4 => 0x206,
+                    _ => 0,
+                };
+                let binding = Binding::new(code, 0);
 
-                    // Check for duplicate bindings
-                    let mut conflicting_id: Option<usize> = None;
-                    if binding.code != 0 {
-                        if self.staged.key_w == binding && listen_id != 0 {
-                            conflicting_id = Some(0);
-                        } else if self.staged.key_a == binding && listen_id != 1 {
-                            conflicting_id = Some(1);
-                        } else if self.staged.key_s == binding && listen_id != 2 {
-                            conflicting_id = Some(2);
-                        } else if self.staged.key_d == binding && listen_id != 3 {
-                            conflicting_id = Some(3);
-                        } else if self.staged.key_up == binding && listen_id != 4 {
-                            conflicting_id = Some(4);
-                        } else if self.staged.key_down == binding && listen_id != 5 {
-                            conflicting_id = Some(5);
-                        }
-                    }
-
-                    if let Some(conflict_id) = conflicting_id {
-                        self.pending_binding = Some(PendingBinding {
-                            target_id: listen_id,
-                            binding,
-                            conflicting_id: Some(conflict_id),
-                        });
-                        self.conflict_key_name = self.get_key_name(conflict_id).to_string();
-                        self.conflict_binding_desc = Self::binding_label(&binding);
-                        self.show_conflict_modal = true;
-                        self.last_mods = cur_mods;
-                        return true;
-                    } else {
-                        match listen_id {
-                            0 => {
-                                self.staged.key_w = binding;
-                                self.dirty_fields.insert(SettingsField::KeyW);
-                            }
-                            1 => {
-                                self.staged.key_a = binding;
-                                self.dirty_fields.insert(SettingsField::KeyA);
-                            }
-                            2 => {
-                                self.staged.key_s = binding;
-                                self.dirty_fields.insert(SettingsField::KeyS);
-                            }
-                            3 => {
-                                self.staged.key_d = binding;
-                                self.dirty_fields.insert(SettingsField::KeyD);
-                            }
-                            4 => {
-                                self.staged.key_up = binding;
-                                self.dirty_fields.insert(SettingsField::KeyUp);
-                            }
-                            5 => {
-                                self.staged.key_down = binding;
-                                self.dirty_fields.insert(SettingsField::KeyDown);
-                            }
-                            _ => {}
-                        }
-                        self.listening = None;
-                        self.last_mods = cur_mods;
-                        return true;
+                // Check for duplicate bindings
+                let mut conflicting_id: Option<usize> = None;
+                if binding.code != 0 {
+                    if self.staged.key_w == binding && listen_id != 0 {
+                        conflicting_id = Some(0);
+                    } else if self.staged.key_a == binding && listen_id != 1 {
+                        conflicting_id = Some(1);
+                    } else if self.staged.key_s == binding && listen_id != 2 {
+                        conflicting_id = Some(2);
+                    } else if self.staged.key_d == binding && listen_id != 3 {
+                        conflicting_id = Some(3);
+                    } else if self.staged.key_up == binding && listen_id != 4 {
+                        conflicting_id = Some(4);
+                    } else if self.staged.key_down == binding && listen_id != 5 {
+                        conflicting_id = Some(5);
                     }
                 }
-                self.last_mods = cur_mods;
+
+                if let Some(conflict_id) = conflicting_id {
+                    self.pending_binding = Some(PendingBinding {
+                        target_id: listen_id,
+                        binding,
+                        conflicting_id: Some(conflict_id),
+                    });
+                    self.conflict_key_name = self.get_key_name(conflict_id).to_string();
+                    self.conflict_binding_desc = Self::binding_label(&binding);
+                    self.show_conflict_modal = true;
+                    self.last_mods = cur_mods;
+                    return true;
+                } else {
+                    match listen_id {
+                        0 => {
+                            self.staged.key_w = binding;
+                            self.dirty_fields.insert(SettingsField::KeyW);
+                        }
+                        1 => {
+                            self.staged.key_a = binding;
+                            self.dirty_fields.insert(SettingsField::KeyA);
+                        }
+                        2 => {
+                            self.staged.key_s = binding;
+                            self.dirty_fields.insert(SettingsField::KeyS);
+                        }
+                        3 => {
+                            self.staged.key_d = binding;
+                            self.dirty_fields.insert(SettingsField::KeyD);
+                        }
+                        4 => {
+                            self.staged.key_up = binding;
+                            self.dirty_fields.insert(SettingsField::KeyUp);
+                        }
+                        5 => {
+                            self.staged.key_down = binding;
+                            self.dirty_fields.insert(SettingsField::KeyDown);
+                        }
+                        _ => {}
+                    }
+                    self.listening = None;
+                    self.last_mods = cur_mods;
+                    return true;
+                }
             }
+            self.last_mods = cur_mods;
         }
+
         false
     }
 
@@ -1107,7 +1147,10 @@ mod tests {
 
         let applied = menu.capture_modifier_if_listening(1);
         assert!(applied, "modifier capture should apply");
-        assert!(menu.listening.is_none(), "should stop listening after capture");
+        assert!(
+            menu.listening.is_none(),
+            "should stop listening after capture"
+        );
         assert_eq!(menu.staged.key_w, Binding::new(0x205, 0));
     }
 
@@ -1121,8 +1164,14 @@ mod tests {
 
         let applied = menu.capture_modifier_if_listening(1);
         assert!(applied, "modifier conflict should be processed");
-        assert!(menu.pending_binding.is_some(), "pending binding should be set on conflict");
-        assert!(menu.show_conflict_modal, "conflict modal flag should be set");
+        assert!(
+            menu.pending_binding.is_some(),
+            "pending binding should be set on conflict"
+        );
+        assert!(
+            menu.show_conflict_modal,
+            "conflict modal flag should be set"
+        );
     }
 
     #[test]
@@ -1134,7 +1183,10 @@ mod tests {
         // ctrl+shift (bits 1 and 2) should not create a modifier-only binding
         let applied = menu.capture_modifier_if_listening(3);
         assert!(!applied, "combined modifiers should not be captured");
-        assert!(menu.listening.is_some(), "still listening after ignored multi-modifier");
+        assert!(
+            menu.listening.is_some(),
+            "still listening after ignored multi-modifier"
+        );
         assert_eq!(menu.last_mods, 3);
     }
 

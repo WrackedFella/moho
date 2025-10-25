@@ -18,8 +18,6 @@ mod input_dispatcher;
 use crate::input_dispatcher::InputDispatcher;
 #[cfg(feature = "ui-egui")]
 mod input_event;
-#[cfg(feature = "ui-egui")]
-use crate::input_event::InputEvent;
 #[cfg(feature = "backend-wgpu")]
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 #[cfg(feature = "backend-wgpu")]
@@ -253,21 +251,21 @@ impl App {
             // the channel so the game can act on them later (e.g., scroll-to-zoom).
             self.dispatcher.register(0, move |event: &WindowEvent| {
                 use winit::event::WindowEvent as WEvent;
-                match event {
-                    WEvent::MouseWheel { delta, .. } => {
-                        // Convert delta to a simple numeric pair
-                        match delta {
-                            winit::event::MouseScrollDelta::LineDelta(x, y) => {
-                                let _ = tx.send(crate::input_event::InputEvent::MouseWheel { delta_x: *x, delta_y: *y });
-                                return true;
-                            }
-                            winit::event::MouseScrollDelta::PixelDelta(p) => {
-                                let _ = tx.send(crate::input_event::InputEvent::MouseWheel { delta_x: p.x as f32, delta_y: p.y as f32 });
-                                return true;
-                            }
+                if let WEvent::MouseWheel { delta, .. } = event {
+                    // Convert delta to a simple numeric pair
+                    match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_x, y) => {
+                            let _ =
+                                tx.send(crate::input_event::InputEvent::MouseWheel { delta_y: *y });
+                            return true;
+                        }
+                        winit::event::MouseScrollDelta::PixelDelta(p) => {
+                            let _ = tx.send(crate::input_event::InputEvent::MouseWheel {
+                                delta_y: p.y as f32,
+                            });
+                            return true;
                         }
                     }
-                    _ => {}
                 }
                 false
             });
@@ -778,18 +776,19 @@ impl ApplicationHandler for App {
                 if let Some(rx) = &self.unconsumed_input_rx {
                     while let Ok(iev) = rx.try_recv() {
                         match iev {
-                            crate::input_event::InputEvent::MouseWheel { delta_x: _, delta_y } => {
+                            crate::input_event::InputEvent::MouseWheel { delta_y } => {
                                 // Only act on wheel events in game mode
                                 if self.mode == AppMode::Game {
                                     // Simple zoom: move player forward/back along look direction
-                                    let dz = delta_y as f32 * 0.5; // tuning factor
+                                    let dz = delta_y * 0.5; // tuning factor
                                     let yaw = self.player_controller.yaw;
                                     let pitch = self.player_controller.pitch;
                                     let sy = yaw.sin();
                                     let cy = yaw.cos();
                                     let cp = pitch.cos();
                                     let sp = pitch.sin();
-                                    let forward = glam::Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
+                                    let forward =
+                                        glam::Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
                                     self.player_controller.position += forward * dz;
                                 }
                             }

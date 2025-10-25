@@ -157,10 +157,10 @@ impl EguiAdapter {
 
     /// Return true if the settings menu is currently listening for a keybind.
     pub fn settings_is_listening(&self) -> bool {
-        if let Some(menu) = self.menus.get("settings") {
-            if let Some(s) = menu.as_any().downcast_ref::<SettingsMenu>() {
-                return s.is_listening();
-            }
+        if let Some(menu) = self.menus.get("settings")
+            && let Some(s) = menu.as_any().downcast_ref::<SettingsMenu>()
+        {
+            return s.is_listening();
         }
         false
     }
@@ -168,10 +168,10 @@ impl EguiAdapter {
     /// Try to let the settings menu process this WindowEvent for keybind capture.
     /// Returns true if the event was consumed by the settings menu.
     pub fn try_handle_settings_event(&mut self, event: &WindowEvent) -> bool {
-        if let Some(menu) = self.menus.get_mut("settings") {
-            if let Some(s) = menu.as_any_mut().downcast_mut::<SettingsMenu>() {
-                return s.handle_winit_event(event);
-            }
+        if let Some(menu) = self.menus.get_mut("settings")
+            && let Some(s) = menu.as_any_mut().downcast_mut::<SettingsMenu>()
+        {
+            return s.handle_winit_event(event);
         }
         false
     }
