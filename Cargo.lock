@@ -1641,6 +1641,7 @@ name = "moho"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "crossbeam-channel",
  "engine_audio",
  "engine_core",
  "engine_renderer",

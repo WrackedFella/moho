@@ -170,4 +170,6 @@ pub trait Menu: Send {
 
     /// Allow downcasting to concrete menu types
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+    /// Read-only downcast helper
+    fn as_any(&self) -> &dyn std::any::Any;
 }

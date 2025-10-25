@@ -13,6 +13,7 @@ legion = "0.4.0"
 log = { workspace = true }
 env_logger = { workspace = true }
 moho_ui = { path = "moho_ui", optional = true }
+crossbeam-channel = "0.5"
 
 # Optional frontend/backends
 winit = { version = "0.30", optional = true }

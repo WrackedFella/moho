@@ -12,6 +12,14 @@ use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 #[cfg(feature = "backend-wgpu")]
 use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, StartCause, WindowEvent};
+#[cfg(feature = "ui-egui")]
+mod input_dispatcher;
+#[cfg(feature = "ui-egui")]
+use crate::input_dispatcher::InputDispatcher;
+#[cfg(feature = "ui-egui")]
+mod input_event;
+#[cfg(feature = "ui-egui")]
+use crate::input_event::InputEvent;
 #[cfg(feature = "backend-wgpu")]
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 #[cfg(feature = "backend-wgpu")]
@@ -55,6 +63,16 @@ struct App {
     ui_adapter: Option<Arc<Mutex<moho_ui::EguiAdapter>>>,
     #[cfg(feature = "ui-egui")]
     ui_receiver: Option<moho_ui::UiReceiver>,
+
+    // Input dispatcher (routes events to prioritized subscribers)
+    #[cfg(feature = "ui-egui")]
+    dispatcher: InputDispatcher,
+
+    // Channel for simplified input events forwarded to the game when UI doesn't consume them
+    #[cfg(feature = "ui-egui")]
+    unconsumed_input_tx: Option<crossbeam_channel::Sender<crate::input_event::InputEvent>>,
+    #[cfg(feature = "ui-egui")]
+    unconsumed_input_rx: Option<crossbeam_channel::Receiver<crate::input_event::InputEvent>>,
 
     // Camera control
     player_controller: engine_core::controller::PlayerController,
@@ -135,6 +153,14 @@ impl App {
             #[cfg(feature = "ui-egui")]
             ui_receiver: None,
 
+            #[cfg(feature = "ui-egui")]
+            dispatcher: InputDispatcher::new(),
+
+            #[cfg(feature = "ui-egui")]
+            unconsumed_input_tx: None,
+            #[cfg(feature = "ui-egui")]
+            unconsumed_input_rx: None,
+
             // Camera control
             player_controller,
             controller_input: engine_core::controller::ControllerInput::default(),
@@ -190,8 +216,61 @@ impl App {
                 ui_adapter.clone() as Arc<Mutex<dyn engine_renderer::FrameCallback>>
             ));
 
-            self.ui_adapter = Some(ui_adapter);
+            // Store adapter & receiver
+            self.ui_adapter = Some(ui_adapter.clone());
             self.ui_receiver = Some(receiver);
+
+            // Register KeybindCapture subscriber at higher priority so it can intercept
+            // events while the settings menu is actively listening for a binding.
+            let kb_adapter = ui_adapter.clone();
+            self.dispatcher.register(200, move |event: &WindowEvent| {
+                if let Ok(mut a) = kb_adapter.lock() {
+                    // Quick check then forward to settings handler
+                    if a.settings_is_listening() {
+                        return a.try_handle_settings_event(event);
+                    }
+                }
+                false
+            });
+
+            // Register UI adapter as a normal UI subscriber
+            let ui_adapter_clone = ui_adapter.clone();
+            self.dispatcher.register(100, move |event: &WindowEvent| {
+                if let Ok(mut a) = ui_adapter_clone.lock() {
+                    a.handle_winit_event(event)
+                } else {
+                    false
+                }
+            });
+
+            // Create channel for simplified input events (e.g., mouse wheel) that
+            // the game will process if the UI doesn't consume them.
+            let (tx, rx) = crossbeam_channel::unbounded::<crate::input_event::InputEvent>();
+            self.unconsumed_input_tx = Some(tx.clone());
+            self.unconsumed_input_rx = Some(rx);
+
+            // Register a low-priority subscriber that forwards mouse wheel events into
+            // the channel so the game can act on them later (e.g., scroll-to-zoom).
+            self.dispatcher.register(0, move |event: &WindowEvent| {
+                use winit::event::WindowEvent as WEvent;
+                match event {
+                    WEvent::MouseWheel { delta, .. } => {
+                        // Convert delta to a simple numeric pair
+                        match delta {
+                            winit::event::MouseScrollDelta::LineDelta(x, y) => {
+                                let _ = tx.send(crate::input_event::InputEvent::MouseWheel { delta_x: *x, delta_y: *y });
+                                return true;
+                            }
+                            winit::event::MouseScrollDelta::PixelDelta(p) => {
+                                let _ = tx.send(crate::input_event::InputEvent::MouseWheel { delta_x: p.x as f32, delta_y: p.y as f32 });
+                                return true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                false
+            });
         }
 
         // Store everything together in the WindowRenderer
@@ -695,6 +774,28 @@ impl ApplicationHandler for App {
                         }
                     }
                 }
+                // Drain simplified input events forwarded by the dispatcher (e.g., mouse wheel)
+                if let Some(rx) = &self.unconsumed_input_rx {
+                    while let Ok(iev) = rx.try_recv() {
+                        match iev {
+                            crate::input_event::InputEvent::MouseWheel { delta_x: _, delta_y } => {
+                                // Only act on wheel events in game mode
+                                if self.mode == AppMode::Game {
+                                    // Simple zoom: move player forward/back along look direction
+                                    let dz = delta_y as f32 * 0.5; // tuning factor
+                                    let yaw = self.player_controller.yaw;
+                                    let pitch = self.player_controller.pitch;
+                                    let sy = yaw.sin();
+                                    let cy = yaw.cos();
+                                    let cp = pitch.cos();
+                                    let sp = pitch.sin();
+                                    let forward = glam::Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
+                                    self.player_controller.position += forward * dz;
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             let next = self.last_frame + self.frame_duration;
@@ -711,27 +812,12 @@ impl ApplicationHandler for App {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        // Forward input events to UI adapter when in Menu mode
+        // Dispatch the event to registered subscribers (UI first). If consumed,
+        // skip further application-level handling.
         #[cfg(feature = "ui-egui")]
-        if let Some(ui_adapter) = &self.ui_adapter {
-            use winit::event::WindowEvent as WEvent;
-            match &event {
-                // Always forward mouse events (include wheel for menu scrolling)
-                WEvent::CursorMoved { .. }
-                | WEvent::MouseInput { .. }
-                | WEvent::MouseWheel { .. }
-                | WEvent::ModifiersChanged(_) => {
-                    if let Ok(mut a) = ui_adapter.lock() {
-                        a.handle_winit_event(&event);
-                    }
-                }
-                // Forward keyboard events ONLY in Menu mode
-                WEvent::KeyboardInput { .. } if self.mode == AppMode::Menu => {
-                    if let Ok(mut a) = ui_adapter.lock() {
-                        a.handle_winit_event(&event);
-                    }
-                }
-                _ => {}
+        {
+            if self.dispatcher.dispatch(&event) {
+                return;
             }
         }
 
