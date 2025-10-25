@@ -144,7 +144,6 @@ pub fn voxel_terrain_scene(world: &mut World) {
     voxel_terrain_scene_with_config(world, &config);
 }
 
-
 /// Variant that accepts a custom `TerrainConfig`. This allows callers to
 /// control the PRNG seed (and later other parameters) when generating a
 /// terrain for new-world generation.

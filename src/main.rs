@@ -314,7 +314,10 @@ impl App {
                     }
                     // Map UI's size_xz (full width in blocks) into the terrain config.
                     terrain_config.world_size = spec_for_thread.size_xz;
-                    engine_core::scene_builders::voxel_terrain_scene_with_config(&mut local_world, &terrain_config);
+                    engine_core::scene_builders::voxel_terrain_scene_with_config(
+                        &mut local_world,
+                        &terrain_config,
+                    );
                     let _ = sender.send(GenerationMsg::Progress(0.6));
 
                     if cancel_clone.load(Ordering::Relaxed) {
@@ -348,12 +351,11 @@ impl App {
 
                     // Ensure saves directory exists and persist the envelope
                     let saves_dir = PathBuf::from("saves");
-                    if !saves_dir.exists() {
-                        if let Err(e) = std::fs::create_dir_all(&saves_dir) {
-                            let _ =
-                                sender.send(GenerationMsg::Failed(format!("mkdir failed: {}", e)));
-                            return;
-                        }
+                    if !saves_dir.exists()
+                        && let Err(e) = std::fs::create_dir_all(&saves_dir)
+                    {
+                        let _ = sender.send(GenerationMsg::Failed(format!("mkdir failed: {}", e)));
+                        return;
                     }
                     let save_path = saves_dir.join("scene.bin");
                     if let Err(e) =
@@ -406,16 +408,17 @@ impl App {
             // WorldSpec (e.g. from a loaded or generated scene) so autosaves
             // preserve original metadata; fall back to a minimal spec.
             let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
-            let spec = self
-                .last_world_spec
-                .clone()
-                .unwrap_or(moho_ui::WorldSpec {
-                    name: "autosave".to_string(),
-                    seed: None,
-                    size_xz: 64,
-                });
+            let spec = self.last_world_spec.clone().unwrap_or(moho_ui::WorldSpec {
+                name: "autosave".to_string(),
+                seed: None,
+                size_xz: 64,
+            });
             save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
-            log::info!("Auto-saved scene (envelope) to {:?} (spec={:?})", save_path, spec.name);
+            log::info!(
+                "Auto-saved scene (envelope) to {:?} (spec={:?})",
+                save_path,
+                spec.name
+            );
         }
 
         #[cfg(not(feature = "ui-egui"))]
@@ -459,10 +462,10 @@ impl App {
                 self.player_controller.position = position;
                 self.player_controller.yaw = yaw;
                 self.player_controller.pitch = pitch;
-                    // Clear any pending input so the restored camera
-                    // orientation isn't immediately overridden by
-                    // accumulated mouse deltas or smoothing state.
-                    self.input_system.clear_pending_input();
+                // Clear any pending input so the restored camera
+                // orientation isn't immediately overridden by
+                // accumulated mouse deltas or smoothing state.
+                self.input_system.clear_pending_input();
                 log::info!(
                     "Restored camera position: {:?}, yaw: {:.2}, pitch: {:.2}",
                     position,
@@ -902,12 +905,10 @@ impl ApplicationHandler for App {
                 #[cfg(feature = "ui-egui")]
                 if let Some(ui_adapter) = &self.ui_adapter
                     && let Ok(mut a) = ui_adapter.lock()
+                    && a.take_progress_canceled()
+                    && let Some(cancel_flag) = &self.generation_cancel
                 {
-                    if a.take_progress_canceled() {
-                        if let Some(cancel_flag) = &self.generation_cancel {
-                            cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                        }
-                    }
+                    cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
 
                 // Poll async generation channel if running. Take the receiver so
