@@ -162,6 +162,42 @@ Known remaining quirks and recommendations
   move rect storage to a conditional branch that runs only when the widget
   is clicked.
 
+8) egui Slider width control quirk
+- **Problem**: `egui::Slider` does not respect `ui.add_sized(...)` for its width
+  the way `TextEdit` and other widgets do. Using `add_sized(egui::vec2(width, height), Slider::new(...))`
+  will NOT make the slider's draggable bar expand to fill the specified width.
+  
+- **Root cause**: egui's `Slider` widget has internal sizing logic that uses
+  `ui.spacing().slider_width` to determine the width of the draggable bar portion.
+  The slider ignores the outer `add_sized` constraint and instead consults this
+  spacing property.
+
+- **Solution**: To make a slider wider than the default, you must set
+  `ui.spacing_mut().slider_width` to the desired width (minus space for the
+  value display and padding, typically ~60px) before adding the slider:
+  
+  ```rust
+  ui.horizontal(|ui| {
+      ui.allocate_ui_with_layout(egui::vec2(label_width, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+          ui.label("World Size");
+      });
+      ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+          let slider_width = field_width * 1.5; // e.g., 540px if field_width is 360px
+          ui.spacing_mut().slider_width = slider_width - 60.0; // Account for value display box
+          ui.add(egui::Slider::new(&mut self.size_xz, 64..=256).min_decimals(0));
+      });
+  });
+  ```
+
+- **Example**: In `NewWorldMenu`, we wanted the World Size slider to be 50% wider
+  than the text fields (360px → 540px). Using `add_sized` alone did not work.
+  Setting `ui.spacing_mut().slider_width = 480.0` (540px - 60px) before adding
+  the slider successfully made the draggable bar expand to the desired width.
+
+- **Tip**: The subtracted padding (60px in our case) accounts for egui's internal
+  spacing, the value display box on the right, and margins. You may need to adjust
+  this value if your slider uses custom formatters or different styling.
+
 How to run with debug output (PowerShell)
 
 ```powershell

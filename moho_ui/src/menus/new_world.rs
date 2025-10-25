@@ -81,13 +81,13 @@ impl Menu for NewWorldMenu {
                         ui.vertical_centered(|ui| {
                             // field sizing same as settings
                             let label_width: f32 = 150.0;
-                            let field_width: f32 = 272.0;
+                            let field_width: f32 = 360.0;
 
                             // World Name
                             ui.horizontal(|ui| {
                                 ui.allocate_ui_with_layout(egui::vec2(label_width, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| { ui.label("World Name"); });
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.add(egui::TextEdit::singleline(&mut self.name_input).desired_width(field_width));
+                                    ui.add_sized(egui::vec2(field_width, 28.0), egui::TextEdit::singleline(&mut self.name_input));
                                 });
                             });
 
@@ -97,20 +97,18 @@ impl Menu for NewWorldMenu {
                             ui.horizontal(|ui| {
                                 ui.allocate_ui_with_layout(egui::vec2(label_width, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| { ui.label("Seed (optional)"); });
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.add(egui::TextEdit::singleline(&mut self.seed_input).desired_width(field_width));
+                                    ui.add_sized(egui::vec2(field_width, 28.0), egui::TextEdit::singleline(&mut self.seed_input));
                                 });
                             });
 
                             ui.add_space(8.0);
 
-                            // World Size - put slider in the same width as fields
                             ui.horizontal(|ui| {
                                 ui.allocate_ui_with_layout(egui::vec2(label_width, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| { ui.label("World Size"); });
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label("size");
-                                    ui.label(egui::RichText::new(format!("{}", self.size_xz)).monospace());
-                                    ui.add_space(8.0);
-                                    ui.add_sized(egui::vec2(field_width, 20.0), egui::Slider::new(&mut self.size_xz, 64..=256));
+                                    let slider_width = field_width;
+                                    ui.spacing_mut().slider_width = slider_width - 60.0; // Account for value display and padding
+                                    ui.add(egui::Slider::new(&mut self.size_xz, 64..=256).min_decimals(0));
                                 });
                             });
 
