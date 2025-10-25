@@ -716,9 +716,10 @@ impl ApplicationHandler for App {
         if let Some(ui_adapter) = &self.ui_adapter {
             use winit::event::WindowEvent as WEvent;
             match &event {
-                // Always forward mouse events
+                // Always forward mouse events (include wheel for menu scrolling)
                 WEvent::CursorMoved { .. }
                 | WEvent::MouseInput { .. }
+                | WEvent::MouseWheel { .. }
                 | WEvent::ModifiersChanged(_) => {
                     if let Ok(mut a) = ui_adapter.lock() {
                         a.handle_winit_event(&event);
