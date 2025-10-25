@@ -999,4 +999,27 @@ mod tests {
         assert!(menu.listening.is_some(), "still listening after ignored multi-modifier");
         assert_eq!(menu.last_mods, 3);
     }
+
+    #[test]
+    fn egui_integration_modifier_capture() {
+        let ctx = egui::Context::default();
+        let mut menu = SettingsMenu::new();
+        menu.listening = Some(0);
+        menu.last_mods = 0;
+
+        let mut raw = egui::RawInput::default();
+        raw.modifiers.ctrl = true;
+
+        let _full = ctx.run(raw, |ctx| {
+            menu.ui(ctx);
+        });
+
+        assert!(menu.staged.key_w == Binding::new(0x205, 0));
+        assert!(menu.listening.is_none());
+    }
+
+    // Note: Scroll and low-level Key event simulation in integration tests
+    // depends on the egui version's RawInput/Event API. We keep focused
+    // integration coverage on modifiers here; other cases are covered by
+    // unit tests and adapter-level behavior.
 }
