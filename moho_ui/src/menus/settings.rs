@@ -1,3 +1,4 @@
+use crate::forms::FormBuilder;
 use crate::menus::menu::{Menu, MenuAction, MenuSpec};
 use crate::prefs::{Binding, Prefs};
 use std::collections::HashSet;
@@ -245,91 +246,6 @@ impl SettingsMenu {
             ui.painter().rect_filled(r, 4.0, hover_color);
         }
     }
-
-    /// Render a keybind control with label and button
-    /// Returns (is_dirty, was_clicked)
-    fn render_keybind_control(
-        ui: &mut egui::Ui,
-        label: &str,
-        binding: &Binding,
-        saved_binding: &Binding,
-        is_listening: bool,
-        label_width: f32,
-    ) -> (bool, bool) {
-        let is_dirty = binding != saved_binding;
-        let mut was_clicked = false;
-        
-        ui.horizontal(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(label_width, 28.0),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.label(label);
-                },
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut label_text = Self::binding_label(binding);
-                if is_listening {
-                    label_text = "Press any key...".to_string();
-                }
-                let btn = ui.add(egui::Button::new(label_text).min_size(egui::vec2(120.0, 28.0)));
-                Self::paint_dirty_decor(ui, &btn, is_dirty);
-                if btn.clicked() {
-                    was_clicked = true;
-                }
-            });
-        });
-        
-        (is_dirty, was_clicked)
-    }
-
-    /// Render a volume control with slider and drag value
-    /// Returns true if the value is dirty (different from saved)
-    fn render_volume_slider(
-        ui: &mut egui::Ui,
-        label: &str,
-        value: &mut f32,
-        saved_value: f32,
-        label_width: f32,
-    ) -> bool {
-        let is_dirty = (value.clone() - saved_value).abs() > f32::EPSILON;
-        
-        ui.horizontal(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(label_width, 28.0),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.label(label);
-                },
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Slider (120px wide) - appears on the right
-                ui.allocate_ui_with_layout(
-                    egui::vec2(120.0, 20.0),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.spacing_mut().slider_width = 120.0;
-                        let slider = ui.add(
-                            egui::Slider::new(value, 1.0..=10.0).show_value(false),
-                        );
-                        Self::paint_dirty_decor(ui, &slider, is_dirty);
-                    },
-                );
-                ui.add_space(8.0);
-                // Drag value - appears on the left
-                let drag = ui.add(
-                    egui::DragValue::new(value)
-                        .range(1.0..=10.0)
-                        .speed(0.1)
-                        .min_decimals(1)
-                        .max_decimals(1),
-                );
-                Self::paint_dirty_decor(ui, &drag, is_dirty);
-            });
-        });
-        
-        is_dirty
-    }
 }
 
 impl Default for SettingsMenu {
@@ -374,15 +290,16 @@ impl Menu for SettingsMenu {
 
                 // Move Forward
                 {
-                    let (dirty, clicked) = Self::render_keybind_control(
+                    let is_dirty = self.staged.key_w != self.prefs.key_w;
+                    let clicked = FormBuilder::keybind_control(
                         ui,
                         "Move Forward:",
-                        &self.staged.key_w,
-                        &self.prefs.key_w,
+                        &Self::binding_label(&self.staged.key_w),
+                        is_dirty,
                         self.listening == Some(0),
                         label_width,
                     );
-                    if dirty {
+                    if is_dirty {
                         self.dirty_fields.insert(SettingsField::KeyW);
                     } else {
                         self.dirty_fields.remove(&SettingsField::KeyW);
@@ -394,15 +311,16 @@ impl Menu for SettingsMenu {
 
                 // Move Left
                 {
-                    let (dirty, clicked) = Self::render_keybind_control(
+                    let is_dirty = self.staged.key_a != self.prefs.key_a;
+                    let clicked = FormBuilder::keybind_control(
                         ui,
                         "Move Left:",
-                        &self.staged.key_a,
-                        &self.prefs.key_a,
+                        &Self::binding_label(&self.staged.key_a),
+                        is_dirty,
                         self.listening == Some(1),
                         label_width,
                     );
-                    if dirty {
+                    if is_dirty {
                         self.dirty_fields.insert(SettingsField::KeyA);
                     } else {
                         self.dirty_fields.remove(&SettingsField::KeyA);
@@ -414,15 +332,16 @@ impl Menu for SettingsMenu {
 
                 // Move Back
                 {
-                    let (dirty, clicked) = Self::render_keybind_control(
+                    let is_dirty = self.staged.key_s != self.prefs.key_s;
+                    let clicked = FormBuilder::keybind_control(
                         ui,
                         "Move Back:",
-                        &self.staged.key_s,
-                        &self.prefs.key_s,
+                        &Self::binding_label(&self.staged.key_s),
+                        is_dirty,
                         self.listening == Some(2),
                         label_width,
                     );
-                    if dirty {
+                    if is_dirty {
                         self.dirty_fields.insert(SettingsField::KeyS);
                     } else {
                         self.dirty_fields.remove(&SettingsField::KeyS);
@@ -434,15 +353,16 @@ impl Menu for SettingsMenu {
 
                 // Move Right
                 {
-                    let (dirty, clicked) = Self::render_keybind_control(
+                    let is_dirty = self.staged.key_d != self.prefs.key_d;
+                    let clicked = FormBuilder::keybind_control(
                         ui,
                         "Move Right:",
-                        &self.staged.key_d,
-                        &self.prefs.key_d,
+                        &Self::binding_label(&self.staged.key_d),
+                        is_dirty,
                         self.listening == Some(3),
                         label_width,
                     );
-                    if dirty {
+                    if is_dirty {
                         self.dirty_fields.insert(SettingsField::KeyD);
                     } else {
                         self.dirty_fields.remove(&SettingsField::KeyD);
@@ -454,15 +374,16 @@ impl Menu for SettingsMenu {
 
                 // Move Up
                 {
-                    let (dirty, clicked) = Self::render_keybind_control(
+                    let is_dirty = self.staged.key_up != self.prefs.key_up;
+                    let clicked = FormBuilder::keybind_control(
                         ui,
                         "Move Up:",
-                        &self.staged.key_up,
-                        &self.prefs.key_up,
+                        &Self::binding_label(&self.staged.key_up),
+                        is_dirty,
                         self.listening == Some(4),
                         label_width,
                     );
-                    if dirty {
+                    if is_dirty {
                         self.dirty_fields.insert(SettingsField::KeyUp);
                     } else {
                         self.dirty_fields.remove(&SettingsField::KeyUp);
@@ -474,15 +395,16 @@ impl Menu for SettingsMenu {
 
                 // Move Down
                 {
-                    let (dirty, clicked) = Self::render_keybind_control(
+                    let is_dirty = self.staged.key_down != self.prefs.key_down;
+                    let clicked = FormBuilder::keybind_control(
                         ui,
                         "Move Down:",
-                        &self.staged.key_down,
-                        &self.prefs.key_down,
+                        &Self::binding_label(&self.staged.key_down),
+                        is_dirty,
                         self.listening == Some(5),
                         label_width,
                     );
-                    if dirty {
+                    if is_dirty {
                         self.dirty_fields.insert(SettingsField::KeyDown);
                     } else {
                         self.dirty_fields.remove(&SettingsField::KeyDown);
@@ -599,7 +521,7 @@ impl Menu for SettingsMenu {
 
                 // Sound Effect Volume
                 {
-                    let dirty = Self::render_volume_slider(
+                    let dirty = FormBuilder::volume_slider(
                         ui,
                         "Sound Effects:",
                         &mut self.staged.audio_sound_effect_volume,
@@ -615,7 +537,7 @@ impl Menu for SettingsMenu {
 
                 // Music Volume
                 {
-                    let dirty = Self::render_volume_slider(
+                    let dirty = FormBuilder::volume_slider(
                         ui,
                         "Music:",
                         &mut self.staged.audio_music_volume,
@@ -631,7 +553,7 @@ impl Menu for SettingsMenu {
 
                 // UI Volume
                 {
-                    let dirty = Self::render_volume_slider(
+                    let dirty = FormBuilder::volume_slider(
                         ui,
                         "User Interface:",
                         &mut self.staged.audio_ui_volume,
@@ -647,7 +569,7 @@ impl Menu for SettingsMenu {
 
                 // Voice Volume
                 {
-                    let dirty = Self::render_volume_slider(
+                    let dirty = FormBuilder::volume_slider(
                         ui,
                         "Voice:",
                         &mut self.staged.audio_voice_volume,
