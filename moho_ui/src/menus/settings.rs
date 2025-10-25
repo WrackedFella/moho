@@ -17,6 +17,8 @@ pub struct SettingsMenu {
     dirty_key_a: bool,
     dirty_key_s: bool,
     dirty_key_d: bool,
+    dirty_key_up: bool,
+    dirty_key_down: bool,
     dirty_mouse_sens: bool,
     dirty_filtering_enabled: bool,
     // Audio dirty flags
@@ -42,6 +44,8 @@ impl SettingsMenu {
             dirty_key_a: false,
             dirty_key_s: false,
             dirty_key_d: false,
+            dirty_key_up: false,
+            dirty_key_down: false,
             dirty_mouse_sens: false,
             dirty_filtering_enabled: false,
             dirty_audio_sound_effect: false,
@@ -62,15 +66,40 @@ impl SettingsMenu {
             1 => "Move Left",
             2 => "Move Back",
             3 => "Move Right",
+            4 => "Move Up",
+            5 => "Move Down",
             _ => "Unknown",
         }
     }
 
     fn binding_label(b: &Binding) -> String {
-        if b.code == 0 {
+        if b.code == 0 && b.mods == 0 {
             return "Unbound".to_string();
         }
+        
         let mut s = String::new();
+        
+        // If only modifiers are set (no key code), show just the modifier
+        if b.code == 0 {
+            if b.mods & 1 != 0 {
+                s.push_str("Ctrl");
+            }
+            if b.mods & 2 != 0 {
+                if !s.is_empty() {
+                    s.push('+');
+                }
+                s.push_str("Shift");
+            }
+            if b.mods & 4 != 0 {
+                if !s.is_empty() {
+                    s.push('+');
+                }
+                s.push_str("Alt");
+            }
+            return s;
+        }
+        
+        // Add modifiers prefix
         if b.mods & 1 != 0 {
             s.push_str("Ctrl+");
         }
@@ -80,19 +109,60 @@ impl SettingsMenu {
         if b.mods & 4 != 0 {
             s.push_str("Alt+");
         }
+        
+        // Handle special keys first
+        match b.code {
+            0x100 => {
+                s.push_str("ArrowUp");
+                return s;
+            }
+            0x101 => {
+                s.push_str("ArrowDown");
+                return s;
+            }
+            0x102 => {
+                s.push_str("ArrowLeft");
+                return s;
+            }
+            0x103 => {
+                s.push_str("ArrowRight");
+                return s;
+            }
+            0x200 => {
+                s.push_str("Escape");
+                return s;
+            }
+            0x201 => {
+                s.push_str("Tab");
+                return s;
+            }
+            0x202 => {
+                s.push_str("Backspace");
+                return s;
+            }
+            0x203 => {
+                s.push_str("Enter");
+                return s;
+            }
+            _ => {}
+        }
+        
+        // Handle Space specially
+        if b.code == ' ' as u32 {
+            s.push_str("Space");
+            return s;
+        }
+        
+        // Handle regular ASCII characters
         if let Some(ch) = std::char::from_u32(b.code)
             && ch.is_ascii_graphic()
         {
             s.push(ch.to_ascii_uppercase());
             return s;
         }
-        match b.code {
-            0x100 => s.push_str("ArrowUp"),
-            0x101 => s.push_str("ArrowDown"),
-            0x102 => s.push_str("ArrowLeft"),
-            0x103 => s.push_str("ArrowRight"),
-            _ => s.push_str("Unknown"),
-        }
+        
+        // Fallback
+        s.push_str("Unknown");
         s
     }
 
@@ -117,6 +187,14 @@ impl SettingsMenu {
                         self.staged.key_d = Binding::new(0, 0);
                         self.dirty_key_d = true;
                     }
+                    4 => {
+                        self.staged.key_up = Binding::new(0, 0);
+                        self.dirty_key_up = true;
+                    }
+                    5 => {
+                        self.staged.key_down = Binding::new(0, 0);
+                        self.dirty_key_down = true;
+                    }
                     _ => {}
                 }
             }
@@ -139,6 +217,14 @@ impl SettingsMenu {
                     self.staged.key_d = pending.binding;
                     self.dirty_key_d = true;
                 }
+                4 => {
+                    self.staged.key_up = pending.binding;
+                    self.dirty_key_up = true;
+                }
+                5 => {
+                    self.staged.key_down = pending.binding;
+                    self.dirty_key_down = true;
+                }
                 _ => {}
             }
         }
@@ -155,6 +241,8 @@ impl SettingsMenu {
             || self.dirty_key_a
             || self.dirty_key_s
             || self.dirty_key_d
+            || self.dirty_key_up
+            || self.dirty_key_down
             || self.dirty_mouse_sens
             || self.dirty_filtering_enabled
             || self.dirty_audio_sound_effect
@@ -345,6 +433,54 @@ impl Menu for SettingsMenu {
                             self.listening = Some(id);
                         }
                         self.dirty_key_d = self.staged.key_d != self.prefs.key_d;
+                    });
+                });
+
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(label_width, 28.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label("Move Up:");
+                        },
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let id = 4usize;
+                        let mut label = binding_label(&self.staged.key_up);
+                        if self.listening == Some(id) {
+                            label = "Press any key...".to_string();
+                        }
+                        let btn =
+                            ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
+                        Self::paint_dirty_decor(ui, &btn, self.staged.key_up != self.prefs.key_up);
+                        if btn.clicked() {
+                            self.listening = Some(id);
+                        }
+                        self.dirty_key_up = self.staged.key_up != self.prefs.key_up;
+                    });
+                });
+
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(label_width, 28.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label("Move Down:");
+                        },
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let id = 5usize;
+                        let mut label = binding_label(&self.staged.key_down);
+                        if self.listening == Some(id) {
+                            label = "Press any key...".to_string();
+                        }
+                        let btn =
+                            ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)));
+                        Self::paint_dirty_decor(ui, &btn, self.staged.key_down != self.prefs.key_down);
+                        if btn.clicked() {
+                            self.listening = Some(id);
+                        }
+                        self.dirty_key_down = self.staged.key_down != self.prefs.key_down;
                     });
                 });
 
@@ -832,6 +968,10 @@ impl Menu for SettingsMenu {
                                 conflicting_id = Some(2);
                             } else if self.staged.key_d == binding && listen_id != 3 {
                                 conflicting_id = Some(3);
+                            } else if self.staged.key_up == binding && listen_id != 4 {
+                                conflicting_id = Some(4);
+                            } else if self.staged.key_down == binding && listen_id != 5 {
+                                conflicting_id = Some(5);
                             }
                         }
 
@@ -863,6 +1003,14 @@ impl Menu for SettingsMenu {
                                 3 => {
                                     self.staged.key_d = binding;
                                     self.dirty_key_d = true;
+                                }
+                                4 => {
+                                    self.staged.key_up = binding;
+                                    self.dirty_key_up = true;
+                                }
+                                5 => {
+                                    self.staged.key_down = binding;
+                                    self.dirty_key_down = true;
                                 }
                                 _ => {}
                             }

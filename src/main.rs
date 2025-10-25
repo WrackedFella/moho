@@ -62,13 +62,11 @@ struct App {
     mouse_sensitivity: f32,
     input_system: engine_core::input::InputSystem,
 
-    // Keyboard state tracking
-    key_w: bool,
-    key_a: bool,
-    key_s: bool,
-    key_d: bool,
-    key_space: bool,
-    key_shift: bool,
+    // Keybinds
+    prefs: Prefs,
+
+    // Keyboard state tracking (stores active key codes with modifiers)
+    active_keys: std::collections::HashSet<(u32, u8)>,
 
     // Frame timing
     frame_duration: Duration,
@@ -106,6 +104,8 @@ impl App {
         let mouse_sensitivity = prefs.mouse_sensitivity * 0.002;
         #[cfg(not(feature = "ui-egui"))]
         let mouse_sensitivity = 0.002;
+        #[cfg(not(feature = "ui-egui"))]
+        let prefs = Prefs::default();
 
         // Always use the default filter preset
         let engine_filter_preset = engine_core::input::FilterPreset::Default;
@@ -149,13 +149,9 @@ impl App {
                 input_sys
             },
 
-            // Keyboard state
-            key_w: false,
-            key_a: false,
-            key_s: false,
-            key_d: false,
-            key_space: false,
-            key_shift: false,
+            // Store prefs and keyboard state
+            prefs,
+            active_keys: std::collections::HashSet::new(),
 
             frame_duration: Duration::from_secs_f64(1.0 / 60.0),
             last_frame: Instant::now(),
@@ -323,17 +319,25 @@ impl App {
 
     /// Update controller input from keyboard state
     fn update_controller_input(&mut self) {
+        // Helper to check if a binding is currently active
+        let is_active = |binding: &moho_ui::prefs::Binding| -> bool {
+            self.active_keys.contains(&(binding.code, binding.mods))
+        };
+
         // Calculate forward/backward
-        let forward = if self.key_w { 1.0 } else { 0.0 } - if self.key_s { 1.0 } else { 0.0 };
+        let forward = if is_active(&self.prefs.key_w) { 1.0 } else { 0.0 }
+            - if is_active(&self.prefs.key_s) { 1.0 } else { 0.0 };
 
         // Calculate left/right (A is left, so negative)
-        let right = if self.key_d { 1.0 } else { 0.0 } - if self.key_a { 1.0 } else { 0.0 };
+        let right = if is_active(&self.prefs.key_d) { 1.0 } else { 0.0 }
+            - if is_active(&self.prefs.key_a) { 1.0 } else { 0.0 };
 
-        // Calculate up/down (Space is up, Shift is down) - only in first person mode
+        // Calculate up/down - only in first person mode
         let up = if self.player_controller.camera_mode
             == engine_core::controller::CameraMode::FirstPerson
         {
-            (if self.key_space { 1.0 } else { 0.0 }) - (if self.key_shift { 1.0 } else { 0.0 })
+            (if is_active(&self.prefs.key_up) { 1.0 } else { 0.0 })
+                - (if is_active(&self.prefs.key_down) { 1.0 } else { 0.0 })
         } else {
             0.0 // No up/down in isometric mode
         };
@@ -353,13 +357,64 @@ impl App {
         let pressed = event.state == ElementState::Pressed;
 
         if let PhysicalKey::Code(keycode) = event.physical_key {
+            // Convert physical keycode to our binding code
+            let code = match keycode {
+                KeyCode::KeyA => 'A' as u32,
+                KeyCode::KeyB => 'B' as u32,
+                KeyCode::KeyC => 'C' as u32,
+                KeyCode::KeyD => 'D' as u32,
+                KeyCode::KeyE => 'E' as u32,
+                KeyCode::KeyF => 'F' as u32,
+                KeyCode::KeyG => 'G' as u32,
+                KeyCode::KeyH => 'H' as u32,
+                KeyCode::KeyI => 'I' as u32,
+                KeyCode::KeyJ => 'J' as u32,
+                KeyCode::KeyK => 'K' as u32,
+                KeyCode::KeyL => 'L' as u32,
+                KeyCode::KeyM => 'M' as u32,
+                KeyCode::KeyN => 'N' as u32,
+                KeyCode::KeyO => 'O' as u32,
+                KeyCode::KeyP => 'P' as u32,
+                KeyCode::KeyQ => 'Q' as u32,
+                KeyCode::KeyR => 'R' as u32,
+                KeyCode::KeyS => 'S' as u32,
+                KeyCode::KeyT => 'T' as u32,
+                KeyCode::KeyU => 'U' as u32,
+                KeyCode::KeyV => 'V' as u32,
+                KeyCode::KeyW => 'W' as u32,
+                KeyCode::KeyX => 'X' as u32,
+                KeyCode::KeyY => 'Y' as u32,
+                KeyCode::KeyZ => 'Z' as u32,
+                KeyCode::Space => ' ' as u32,
+                KeyCode::ArrowUp => 0x100,
+                KeyCode::ArrowDown => 0x101,
+                KeyCode::ArrowLeft => 0x102,
+                KeyCode::ArrowRight => 0x103,
+                KeyCode::Escape => 0x200,
+                KeyCode::Tab => 0x201,
+                KeyCode::Backspace => 0x202,
+                KeyCode::Enter => 0x203,
+                _ => 0, // Unknown key
+            };
+
+            // Track modifier state for Shift
+            let mods = if matches!(keycode, KeyCode::ShiftLeft | KeyCode::ShiftRight) {
+                2u8 // Shift modifier
+            } else {
+                0u8
+            };
+
+            if code != 0 || mods != 0 {
+                let key_binding = (code, mods);
+                if pressed {
+                    self.active_keys.insert(key_binding);
+                } else {
+                    self.active_keys.remove(&key_binding);
+                }
+            }
+
+            // Handle special keys
             match keycode {
-                KeyCode::KeyW => self.key_w = pressed,
-                KeyCode::KeyA => self.key_a = pressed,
-                KeyCode::KeyS => self.key_s = pressed,
-                KeyCode::KeyD => self.key_d = pressed,
-                KeyCode::Space => self.key_space = pressed,
-                KeyCode::ShiftLeft | KeyCode::ShiftRight => self.key_shift = pressed,
                 KeyCode::Escape => {
                     // ESC to show menu
                     if pressed {
@@ -599,6 +654,9 @@ impl ApplicationHandler for App {
                             // Always use default filter preset, only apply filtering enabled state
                             self.input_system
                                 .set_filter_enabled(prefs.input_filtering_enabled);
+
+                            // Update keybinds
+                            self.prefs = prefs;
                         }
                         UiEvent::AudioEvent(audio_event) => {
                             // Convert UI audio event to engine audio event
