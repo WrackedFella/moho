@@ -325,19 +325,40 @@ impl App {
         };
 
         // Calculate forward/backward
-        let forward = if is_active(&self.prefs.key_w) { 1.0 } else { 0.0 }
-            - if is_active(&self.prefs.key_s) { 1.0 } else { 0.0 };
+        let forward = if is_active(&self.prefs.key_w) {
+            1.0
+        } else {
+            0.0
+        } - if is_active(&self.prefs.key_s) {
+            1.0
+        } else {
+            0.0
+        };
 
         // Calculate left/right (A is left, so negative)
-        let right = if is_active(&self.prefs.key_d) { 1.0 } else { 0.0 }
-            - if is_active(&self.prefs.key_a) { 1.0 } else { 0.0 };
+        let right = if is_active(&self.prefs.key_d) {
+            1.0
+        } else {
+            0.0
+        } - if is_active(&self.prefs.key_a) {
+            1.0
+        } else {
+            0.0
+        };
 
         // Calculate up/down - only in first person mode
         let up = if self.player_controller.camera_mode
             == engine_core::controller::CameraMode::FirstPerson
         {
-            (if is_active(&self.prefs.key_up) { 1.0 } else { 0.0 })
-                - (if is_active(&self.prefs.key_down) { 1.0 } else { 0.0 })
+            (if is_active(&self.prefs.key_up) {
+                1.0
+            } else {
+                0.0
+            }) - (if is_active(&self.prefs.key_down) {
+                1.0
+            } else {
+                0.0
+            })
         } else {
             0.0 // No up/down in isometric mode
         };

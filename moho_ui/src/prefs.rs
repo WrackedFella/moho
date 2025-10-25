@@ -45,8 +45,8 @@ impl Default for Prefs {
             key_a: Binding::new('A' as u32, 0),
             key_s: Binding::new('S' as u32, 0),
             key_d: Binding::new('D' as u32, 0),
-            key_up: Binding::new(' ' as u32, 0),    // Space
-            key_down: Binding::new(0x204, 0),            // Shift
+            key_up: Binding::new(' ' as u32, 0), // Space
+            key_down: Binding::new(0x204, 0),    // Shift
             mouse_sensitivity: 1.0,
             input_filtering_enabled: true,
             // Default audio volumes (mid-range)
@@ -126,7 +126,7 @@ impl Prefs {
                         }
                     }
                 }
-                
+
                 // If only modifiers (no key part), return modifier-only binding
                 if key_part.is_empty() {
                     if mods != 0 {
@@ -218,9 +218,9 @@ impl Prefs {
             if b.code == 0 && b.mods == 0 {
                 return "Unbound".to_string();
             }
-            
+
             let mut s = String::new();
-            
+
             // If only modifiers are set (no key code), show just the modifier
             if b.code == 0 {
                 if b.mods & 1 != 0 {
@@ -240,7 +240,7 @@ impl Prefs {
                 }
                 return s;
             }
-            
+
             // Add modifiers prefix
             if b.mods & 1 != 0 {
                 s.push_str("Ctrl+");
@@ -251,13 +251,13 @@ impl Prefs {
             if b.mods & 4 != 0 {
                 s.push_str("Alt+");
             }
-            
+
             // Handle Space specially
             if b.code == ' ' as u32 {
                 s.push_str("Spacebar");
                 return s;
             }
-            
+
             // Handle regular ASCII characters
             if let Some(ch) = std::char::from_u32(b.code)
                 && ch.is_ascii_graphic()
@@ -265,7 +265,7 @@ impl Prefs {
                 s.push(ch.to_ascii_uppercase());
                 return s;
             }
-            
+
             // Handle special keys
             match b.code {
                 0x100 => s.push_str("ArrowUp"),

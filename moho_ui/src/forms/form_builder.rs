@@ -1,10 +1,10 @@
 /// A reusable form builder for creating consistent UI controls across the application.
-/// 
+///
 /// This builder encapsulates common UI patterns for settings forms, including:
 /// - Keybind controls with conflict detection and listening state
 /// - Volume sliders with drag values and dirty state indicators
 /// - Consistent styling and layout
-/// 
+///
 /// # Example
 /// ```ignore
 /// let dirty = FormBuilder::volume_slider(ui, "Volume:", &mut value, original_value, 150.0);
@@ -55,7 +55,8 @@ impl FormBuilder {
                     binding_text
                 };
 
-                let button = ui.add(egui::Button::new(button_text).min_size(egui::vec2(120.0, 28.0)));
+                let button =
+                    ui.add(egui::Button::new(button_text).min_size(egui::vec2(120.0, 28.0)));
                 if button.clicked() {
                     was_clicked = true;
                 }
@@ -108,9 +109,7 @@ impl FormBuilder {
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.spacing_mut().slider_width = 120.0;
-                        let slider = ui.add(
-                            egui::Slider::new(value, 1.0..=10.0).show_value(false),
-                        );
+                        let slider = ui.add(egui::Slider::new(value, 1.0..=10.0).show_value(false));
                         if is_dirty {
                             Self::paint_dirty_decor(ui, &slider);
                         }

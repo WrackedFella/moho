@@ -70,9 +70,9 @@ impl SettingsMenu {
         if b.code == 0 && b.mods == 0 {
             return "Unbound".to_string();
         }
-        
+
         let mut s = String::new();
-        
+
         // If only modifiers are set (no key code), show just the modifier
         if b.code == 0 {
             if b.mods & 1 != 0 {
@@ -92,7 +92,7 @@ impl SettingsMenu {
             }
             return s;
         }
-        
+
         // Add modifiers prefix
         if b.mods & 1 != 0 {
             s.push_str("Ctrl+");
@@ -103,7 +103,7 @@ impl SettingsMenu {
         if b.mods & 4 != 0 {
             s.push_str("Alt+");
         }
-        
+
         // Handle special keys first
         match b.code {
             0x100 => {
@@ -140,13 +140,13 @@ impl SettingsMenu {
             }
             _ => {}
         }
-        
+
         // Handle Space specially
         if b.code == ' ' as u32 {
             s.push_str("Spacebar");
             return s;
         }
-        
+
         // Handle regular ASCII characters
         if let Some(ch) = std::char::from_u32(b.code)
             && ch.is_ascii_graphic()
@@ -154,7 +154,7 @@ impl SettingsMenu {
             s.push(ch.to_ascii_uppercase());
             return s;
         }
-        
+
         // Handle special keys
         match b.code {
             0x204 => s.push_str("Shift"),
@@ -495,8 +495,7 @@ impl Menu for SettingsMenu {
                             self.staged.input_filtering_enabled
                                 != self.prefs.input_filtering_enabled,
                         );
-                        if self.staged.input_filtering_enabled
-                            != self.prefs.input_filtering_enabled
+                        if self.staged.input_filtering_enabled != self.prefs.input_filtering_enabled
                         {
                             self.dirty_fields.insert(SettingsField::InputFiltering);
                         } else {
@@ -734,13 +733,16 @@ impl Menu for SettingsMenu {
 
                         // If no key code but modifier is pressed, treat modifier as key
                         if code == 0 {
-                            if mods == 1 { // only ctrl
+                            if mods == 1 {
+                                // only ctrl
                                 code = 0x205;
                                 mods = 0;
-                            } else if mods == 2 { // only shift
+                            } else if mods == 2 {
+                                // only shift
                                 code = 0x204;
                                 mods = 0;
-                            } else if mods == 4 { // only alt
+                            } else if mods == 4 {
+                                // only alt
                                 code = 0x206;
                                 mods = 0;
                             }
