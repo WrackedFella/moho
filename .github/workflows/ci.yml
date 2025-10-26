@@ -20,6 +20,38 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
+
+      # --- Caching and sccache setup (speeds up Rust builds) ---
+      - name: Cache cargo registry & git
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-reg-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-reg-
+
+      - name: Install sccache
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sccache || true
+        # Note: on macOS use `brew install sccache`, on Windows use choco/scoop
+
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: ${{ runner.os }}-sccache-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Configure sccache wrapper
+        run: |
+          echo "RUSTC_WRAPPER=$(which sccache)" >> $GITHUB_ENV
+          # Start sccache server and set a sensible cache size
+          sccache --stop-server || true
+          sccache --start-server || true
+          sccache --set-cache-size 10G || true
+
       - name: Format check
         run: cargo fmt --all -- --check
       - name: Clippy
