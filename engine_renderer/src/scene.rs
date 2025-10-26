@@ -304,6 +304,66 @@ impl Scene {
         Ok(())
     }
 
+    /// Encode the scene descriptor to a Vec<u8> for in-memory handling.
+    /// This mirrors the on-disk serialization used by `save_to_file`.
+    pub fn encode_to_bytes(
+        &self,
+        world: &World,
+        camera_position: Option<CameraData>,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        // Collect serializable descriptors from the ECS world.
+        let mut spheres: Vec<SphereDesc> = Vec::new();
+        let mut qs = <&Sphere>::query();
+        for s in qs.iter(world) {
+            spheres.push(SphereDesc {
+                center: s.center.to_array(),
+                radius: s.radius,
+                material: MaterialDesc::from_material(&s.mat_ptr),
+            });
+        }
+        let mut cubes: Vec<CubeDesc> = Vec::new();
+        let mut qc = <&Cube>::query();
+        for c in qc.iter(world) {
+            cubes.push(CubeDesc {
+                center: c.center.to_array(),
+                length: c.length,
+                width: c.width,
+                height: c.height,
+                material: MaterialDesc::from_material(&c.mat_ptr),
+            });
+        }
+
+        // Collect VoxelChunks
+        let mut voxel_chunks: Vec<VoxelChunkDesc> = Vec::new();
+        let mut qv = <&engine_core::voxel::VoxelChunk>::query();
+        for chunk in qv.iter(world) {
+            voxel_chunks.push(VoxelChunkDesc {
+                chunk_pos: [chunk.chunk_pos.x, chunk.chunk_pos.y, chunk.chunk_pos.z],
+                vertices: chunk.vertices.clone(),
+                normals: chunk.normals.clone(),
+                indices: chunk.indices.clone(),
+                material_id: chunk.material_id,
+            });
+        }
+
+        let camera = camera_position.map(|(pos, yaw, pitch)| CameraDesc {
+            position: [pos.x, pos.y, pos.z],
+            yaw,
+            pitch,
+        });
+
+        let desc = SceneDesc {
+            version: SCENE_FILE_VERSION,
+            spheres,
+            cubes,
+            voxel_chunks,
+            camera,
+        };
+
+        let encoded = bincode::encode_to_vec(&desc, bincode::config::standard())?;
+        Ok(encoded)
+    }
+
     /// Load a SceneDesc from a file and populate the provided `world` with
     /// entities. Existing world contents are left untouched; caller may
     /// clear the world beforehand if desired.
@@ -316,7 +376,26 @@ impl Scene {
         let mut f = File::open(path)?;
         let mut buf = Vec::new();
         f.read_to_end(&mut buf)?;
-        let desc: SceneDesc = bincode::decode_from_slice(&buf, bincode::config::standard())?.0;
+        // Delegate to helper that decodes from bytes so load_from_bytes can reuse it.
+        Self::decode_and_populate(&buf, world)
+    }
+
+    /// Decode a scene saved as bincode bytes and populate `world`. Returns
+    /// optional camera data if present.
+    pub fn load_from_bytes(
+        &mut self,
+        bytes: &[u8],
+        world: &mut World,
+    ) -> Result<Option<CameraData>, Box<dyn std::error::Error>> {
+        Self::decode_and_populate(bytes, world)
+    }
+
+    /// Internal helper to decode SceneDesc from bytes and populate a world.
+    fn decode_and_populate(
+        bytes: &[u8],
+        world: &mut World,
+    ) -> Result<Option<CameraData>, Box<dyn std::error::Error>> {
+        let desc: SceneDesc = bincode::decode_from_slice(bytes, bincode::config::standard())?.0;
         if desc.version < 1 || desc.version > SCENE_FILE_VERSION {
             return Err(format!(
                 "unsupported scene file version: {} (expected 1-{})",

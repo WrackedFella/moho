@@ -241,6 +241,17 @@ impl InputSystem {
         // Only Default preset is supported
         self.filter_pipeline = FilterPipeline::new();
     }
+
+    /// Clear any pending input and reset internal filters/state.
+    ///
+    /// Use this when restoring a camera or teleporting the player so that
+    /// accumulated mouse deltas or smoothing state don't immediately apply
+    /// and cause an unexpected camera jump/flip.
+    pub fn clear_pending_input(&mut self) {
+        self.mouse_state.delta_accumulator = (0.0, 0.0);
+        self.filter_pipeline.reset();
+        self.current_frame = InputFrame::default();
+    }
 }
 
 #[cfg(test)]
