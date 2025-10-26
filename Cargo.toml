@@ -1,9 +1,6 @@
 [[bin]]
 path = "src/main.rs"
 name = "moho"
-plugin = false
-proc-macro = false
-edition = "2024"
 required-features = []
 
 [package]
