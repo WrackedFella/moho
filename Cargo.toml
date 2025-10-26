@@ -8,6 +8,7 @@ moho_core = { path = "moho_core" }
 moho_renderer = { path = "moho_renderer" }
 moho_audio = { path = "moho_audio" }
 moho_input = { path = "moho_input" }
+moho_sim = { path = "moho_sim" }
 glam = { workspace = true }
 rand = { workspace = true }
 legion = "0.4.0"

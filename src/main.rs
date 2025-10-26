@@ -116,9 +116,8 @@ struct App {
     #[cfg(feature = "ui-egui")]
     unconsumed_input_rx: Option<crossbeam_channel::Receiver<crate::input_event::InputEvent>>,
 
-    // Camera control
-    player_controller: moho_core::controller::PlayerController,
-    controller_input: moho_core::controller::ControllerInput,
+    // Camera control (moved into simulation)
+    simulation: moho_sim::SimulationController,
     mouse_sensitivity: f32,
     input_system: moho_core::input::InputSystem,
 
@@ -154,9 +153,8 @@ impl App {
             (view, proj, eye)
         };
 
-        // Initialize player controller at the camera position
-
-        let player_controller = moho_core::controller::PlayerController::new(camera.2);
+    // Initialize simulation wrapper (owns controller + input state)
+    let simulation = moho_sim::SimulationController::new(camera.2);
 
         // Load preferences and apply mouse sensitivity
         #[cfg(feature = "ui-egui")]
@@ -210,9 +208,8 @@ impl App {
             #[cfg(feature = "ui-egui")]
             unconsumed_input_rx: None,
 
-            // Camera control
-            player_controller,
-            controller_input: moho_core::controller::ControllerInput::default(),
+            // Camera control (moved into simulation)
+            simulation,
             mouse_sensitivity,
             input_system: {
                 let mut input_sys = moho_core::input::InputSystem::new_with_preset(
@@ -365,11 +362,8 @@ impl App {
                 std::fs::create_dir_all(saves_dir)?;
             }
             let save_path = saves_dir.join("scene.bin");
-            let camera_data = Some((
-                self.player_controller.position,
-                self.player_controller.yaw,
-                self.player_controller.pitch,
-            ));
+            let (yaw, pitch) = self.simulation.yaw_pitch();
+            let camera_data = Some((self.simulation.position(), yaw, pitch));
             let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
             save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
             self.mode = AppMode::Game;
@@ -502,11 +496,8 @@ impl App {
         // a minimal "autosave" WorldSpec when no explicit metadata is
         // available.
         let save_path = saves_dir.join("scene.bin");
-        let camera_data = Some((
-            self.player_controller.position,
-            self.player_controller.yaw,
-            self.player_controller.pitch,
-        ));
+        let (yaw, pitch) = self.simulation.yaw_pitch();
+        let camera_data = Some((self.simulation.position(), yaw, pitch));
 
         #[cfg(feature = "ui-egui")]
         {
@@ -565,9 +556,7 @@ impl App {
             log::info!("Scene loaded successfully from {:?}", path.as_ref());
             // Restore camera handled below using camera_data
             if let Some((position, yaw, pitch)) = camera_data {
-                self.player_controller.position = position;
-                self.player_controller.yaw = yaw;
-                self.player_controller.pitch = pitch;
+                self.simulation.set_position_yaw_pitch(position, yaw, pitch);
                 // Clear any pending input so the restored camera
                 // orientation isn't immediately overridden by
                 // accumulated mouse deltas or smoothing state.
@@ -589,9 +578,7 @@ impl App {
             let camera_data = self.scene.load_from_file(&path, &mut self.world)?;
             log::info!("Scene loaded successfully from {:?}", path.as_ref());
             if let Some((position, yaw, pitch)) = camera_data {
-                self.player_controller.position = position;
-                self.player_controller.yaw = yaw;
-                self.player_controller.pitch = pitch;
+                self.simulation.set_position_yaw_pitch(position, yaw, pitch);
                 log::info!(
                     "Restored camera position: {:?}, yaw: {:.2}, pitch: {:.2}",
                     position,
@@ -646,7 +633,7 @@ impl App {
         };
 
         // Calculate up/down - only in first person mode
-        let up = if self.player_controller.camera_mode
+        let up = if self.simulation.camera_mode()
             == moho_core::controller::CameraMode::FirstPerson
         {
             (if is_active(&self.prefs.key_up) {
@@ -662,9 +649,9 @@ impl App {
             0.0 // No up/down in isometric mode
         };
 
-        self.controller_input.forward = forward;
-        self.controller_input.right = right;
-        self.controller_input.up = up;
+    self.simulation.controller_input.forward = forward;
+    self.simulation.controller_input.right = right;
+    self.simulation.controller_input.up = up;
     }
 
     /// Handle keyboard input for camera controls
@@ -715,19 +702,16 @@ impl App {
                 KeyCode::Tab => {
                     if pressed {
                         // Toggle camera mode
-                        self.player_controller.camera_mode =
-                            match self.player_controller.camera_mode {
-                                moho_core::controller::CameraMode::FirstPerson => {
-                                    moho_core::controller::CameraMode::Isometric
-                                }
-                                moho_core::controller::CameraMode::Isometric => {
-                                    moho_core::controller::CameraMode::FirstPerson
-                                }
-                            };
-                        log::info!(
-                            "Switched to camera mode: {:?}",
-                            self.player_controller.camera_mode
-                        );
+                        let new_mode = match self.simulation.camera_mode() {
+                            moho_core::controller::CameraMode::FirstPerson => {
+                                moho_core::controller::CameraMode::Isometric
+                            }
+                            moho_core::controller::CameraMode::Isometric => {
+                                moho_core::controller::CameraMode::FirstPerson
+                            }
+                        };
+                        self.simulation.set_camera_mode(new_mode);
+                        log::info!("Switched to camera mode: {:?}", self.simulation.camera_mode());
                     }
                 }
                 _ => {}
@@ -739,7 +723,7 @@ impl App {
     fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
         // Only process input in game mode and first person camera mode
         if self.mode != AppMode::Game
-            || self.player_controller.camera_mode != moho_core::controller::CameraMode::FirstPerson
+            || self.simulation.camera_mode() != moho_core::controller::CameraMode::FirstPerson
         {
             return;
         }
@@ -867,15 +851,15 @@ impl ApplicationHandler for App {
                 self.update_controller_input();
 
                 let (yaw_delta, pitch_delta) = self.input_system.sample_frame_input();
-                self.controller_input.yaw_delta = yaw_delta;
-                self.controller_input.pitch_delta = pitch_delta;
+                {
+                    let mut ci = self.simulation.controller_input_mut();
+                    ci.yaw_delta = yaw_delta;
+                    ci.pitch_delta = pitch_delta;
+                }
 
-                // Apply input to player controller
-                self.player_controller
-                    .apply_input(&self.controller_input, dt);
-
-                // Update camera from controller
-                self.camera = moho_core::controller::controller_to_camera(&self.player_controller);
+                // Apply input via simulation wrapper and update camera from returned tuple.
+                let (view, proj, eye) = self.simulation.apply_input(dt);
+                self.camera = (view, proj, eye);
             }
 
             if let Some(ref wr) = self.window_renderer {
@@ -976,15 +960,15 @@ impl ApplicationHandler for App {
                                 if self.mode == AppMode::Game {
                                     // Simple zoom: move player forward/back along look direction
                                     let dz = delta_y * 0.5; // tuning factor
-                                    let yaw = self.player_controller.yaw;
-                                    let pitch = self.player_controller.pitch;
+                                    let (yaw, pitch) = self.simulation.yaw_pitch();
                                     let sy = yaw.sin();
                                     let cy = yaw.cos();
                                     let cp = pitch.cos();
                                     let sp = pitch.sin();
                                     let forward =
                                         glam::Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
-                                    self.player_controller.position += forward * dz;
+                                    let new_pos = self.simulation.position() + forward * dz;
+                                    self.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
                                 }
                             }
                         }
@@ -1033,9 +1017,7 @@ impl ApplicationHandler for App {
                                 match self.scene.load_from_bytes(&scene_bytes, &mut self.world) {
                                     Ok(camera_data) => {
                                         if let Some((position, yaw, pitch)) = camera_data {
-                                            self.player_controller.position = position;
-                                            self.player_controller.yaw = yaw;
-                                            self.player_controller.pitch = pitch;
+                                            self.simulation.set_position_yaw_pitch(position, yaw, pitch);
                                             // Clear any pending input so the restored camera
                                             // orientation isn't immediately overridden by
                                             // accumulated mouse deltas or smoothing state.
