@@ -16,6 +16,10 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+      - name: Install system deps (alsa, pkg-config)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
       - name: Format check
         run: cargo fmt --all -- --check
       - name: Clippy

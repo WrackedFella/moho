@@ -117,6 +117,16 @@
 
 ---
 
+## 🧭 Recent UI & Input Changes
+
+- InputDispatcher: added a prioritized input dispatcher that routes `winit::WindowEvent` events to registered subscribers in descending priority order and stops propagation when an event is consumed. This lets the keybind capture UI preempt game input reliably.
+- `moho_input` crate: extracted the physical-key -> binding-code mapping into a small shared crate `moho_input` so both the binary and `moho_ui` use a single canonical mapping. See `moho_input/src/lib.rs` for the mapping and unit tests.
+- Wheel consumption policy: the UI now has precedence for mouse-wheel events. Wheel events are only forwarded to the game when the UI overlay is not visible. The forwarder is conservative: if the UI mutex cannot be acquired (poisoned/would-block), the event is NOT forwarded to avoid accidental input leakage while menus may be active.
+- Tests: added unit tests for the dispatcher ordering/consumption and for the settings keybind UI. See `src/input_dispatcher.rs` and `moho_input/src/lib.rs` for tests and examples.
+
+These changes improve input predictability and make keybind capture robust across UI and game layers.
+
+
 ## 📊 Key Metrics
 
 ### Current Implementation
