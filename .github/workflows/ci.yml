@@ -8,8 +8,121 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  test:
+  prepare:
+    name: Prepare recipe
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-chef (helper)
+        uses: lukka/get-cargo-chef@v1
+      - name: Generate cargo-chef recipe
+        run: |
+          cargo chef prepare --recipe-path recipe.json
+      - name: Upload recipe
+        uses: actions/upload-artifact@v4
+        with:
+          name: chef-recipe
+          path: recipe.json
+
+  cook:
+    name: Cook (build dependencies)
+    needs: prepare
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download recipe
+        uses: actions/download-artifact@v4
+        with:
+          name: chef-recipe
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Install system deps (alsa, pkg-config)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
+
+      # Cache cargo registry & git to avoid repeated downloads
+      - name: Cache cargo registry & git
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-reg-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-reg-
+
+      - name: Build CI Docker image (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          docker build -t moho-ci:latest -f .github/docker/Dockerfile .
+
+      - name: Cache sccache (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: ${{ matrix.os }}-sccache-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Restore chef cache (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/deps
+            target/debug/deps
+          key: ${{ matrix.os }}-cargo-chef-${{ hashFiles('recipe.json') }}
+
+      - name: Run cargo-chef cook inside Docker (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/work \
+            -v $HOME/.cargo/registry:/root/.cargo/registry \
+            -v $HOME/.cargo/git:/root/.cargo/git \
+            -v $HOME/.cache/sccache:/root/.cache/sccache \
+            -w /work moho-ci:latest \
+            bash -lc "cargo chef cook --recipe-path recipe.json --locked"
+
+      - name: Install sccache & cargo-chef (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew update || true
+          brew install sccache || true
+          cargo install cargo-chef --locked || true
+
+      - name: Run cargo-chef cook on macOS runner
+        if: matrix.os == 'macos-latest'
+        run: |
+          mkdir -p ~/.cache/sccache
+          cargo chef cook --recipe-path recipe.json --locked
+
+      - name: Install sccache & cargo-chef (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          choco install sccache -y || true
+          cargo install cargo-chef --locked || true
+
+      - name: Run cargo-chef cook on Windows runner
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $env:USERPROFILE = $env:USERPROFILE
+          cargo chef cook --recipe-path recipe.json --locked
+
+  test:
+    name: Build & Test
+    needs: cook
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -21,8 +134,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
 
-      # --- Caching and sccache setup (speeds up Rust builds) ---
-      - name: Cache cargo registry & git
+      - name: Restore cargo registry & git
         uses: actions/cache@v4
         with:
           path: |
@@ -32,31 +144,62 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-reg-
 
-      - name: Install sccache
+      - name: Install sccache (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y sccache || true
-        # Note: on macOS use `brew install sccache`, on Windows use choco/scoop
 
-      - name: Cache sccache
+      - name: Restore sccache (Linux/macOS)
+        if: matrix.os != 'windows-latest'
         uses: actions/cache@v4
         with:
           path: ~/.cache/sccache
-          key: ${{ runner.os }}-sccache-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ matrix.os }}-sccache-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Configure sccache wrapper
+      - name: Configure sccache wrapper (Linux/macOS)
+        if: matrix.os != 'windows-latest'
         run: |
           echo "RUSTC_WRAPPER=$(which sccache)" >> $GITHUB_ENV
-          # Start sccache server and set a sensible cache size
-          sccache --stop-server || true
           sccache --start-server || true
-          sccache --set-cache-size 10G || true
 
-      - name: Format check
-        run: cargo fmt --all -- --check
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-      - name: Run workspace tests
-        run: cargo test --all --workspace -- -q
-      - name: Run moho_ui tests with egui feature
-        run: cargo test -p moho_ui --features 'ui-egui ui-egui-test' -- -q
+      - name: Build CI Docker image (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          docker build -t moho-ci:latest -f .github/docker/Dockerfile .
+
+      - name: Run format/clippy/tests inside Docker (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/work \
+            -v $HOME/.cargo/registry:/root/.cargo/registry \
+            -v $HOME/.cargo/git:/root/.cargo/git \
+            -v $HOME/.cache/sccache:/root/.cache/sccache \
+            -w /work moho-ci:latest \
+            bash -lc "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all --workspace -- -q && cargo test -p moho_ui --features 'ui-egui ui-egui-test' -- -q"
+
+      - name: Install sccache & run tests on macOS
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew update || true
+          brew install sccache || true
+          echo "RUSTC_WRAPPER=$(which sccache)" >> $GITHUB_ENV
+          sccache --start-server || true
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all --workspace -- -q
+          cargo test -p moho_ui --features 'ui-egui ui-egui-test' -- -q
+
+      - name: Install sccache & run tests on Windows
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          choco install sccache -y || true
+          $env:RUSTC_WRAPPER = (Get-Command sccache).Source
+          [System.Environment]::SetEnvironmentVariable('RUSTC_WRAPPER', $env:RUSTC_WRAPPER, 'Process')
+          sccache --start-server || true
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all --workspace -- -q
+          cargo test -p moho_ui --features 'ui-egui ui-egui-test' -- -q
