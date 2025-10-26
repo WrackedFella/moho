@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-engine_core = { path = "engine_core" }
-engine_renderer = { path = "engine_renderer" }
-engine_audio = { path = "engine_audio" }
+moho_core = { path = "moho_core" }
+moho_renderer = { path = "moho_renderer" }
+moho_audio = { path = "moho_audio" }
 moho_input = { path = "moho_input" }
 glam = "0.30.4"
 rand = "0.9.1"
@@ -27,7 +27,7 @@ bytemuck = { version = "1.9.1", features = ["derive"] }
 
 [features]
 # Enable the WGPU renderer implementation (renamed to avoid name collision)
-backend-wgpu = ["wgpu", "winit", "pollster", "engine_renderer/backend-wgpu"]
+backend-wgpu = ["wgpu", "winit", "pollster", "moho_renderer/backend-wgpu"]
 # UI feature to enable egui integration. This enables the moho_ui crate with
 # its `ui-egui` feature so the main binary can use the adapter.
 ui-egui = ["moho_ui/ui-egui"]
@@ -49,6 +49,6 @@ pollster = "0.4"
 rodio = "0.19"
 
 [workspace]
-members = ["engine_core", "engine_renderer", "engine_audio", "moho_ui", "moho_input"]
+members = ["moho_core", "moho_renderer", "moho_audio", "moho_ui", "moho_input"]
 
 

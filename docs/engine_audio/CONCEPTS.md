@@ -1,3 +1,8 @@
+# engine_audio — Conceptual Documentation
+
+Archived conceptual material from `moho_audio/README.md`.
+
+````markdown
 # engine_audio
 
 This crate provides audio functionality for the Moho game engine. It handles audio playback, sound effects, background music, and spatial audio positioning.
@@ -14,7 +19,7 @@ This crate provides audio functionality for the Moho game engine. It handles aud
 ## Usage
 
 ```rust
-use engine_audio::{AudioSystem, AudioEvent};
+use moho_audio::{AudioSystem, AudioEvent};
 
 // Initialize the audio system
 let mut audio_system = AudioSystem::new()?;
@@ -34,3 +39,10 @@ The audio system follows the modular pattern used throughout the Moho engine:
 - `AudioSource` - Individual audio file representation and metadata
 - `AudioEvent` - Event-driven audio triggers for UI and game events
 - `AudioSettings` - User configuration for volume levels and audio preferences
+
+````
+
+Notes
+-----
+- Move here any long-form design notes or future plans (spatial audio, mixing, streaming) so crate README remains focused on usage.
+

@@ -7,11 +7,11 @@
 // boxed `RendererBackend`.
 #[test]
 fn api_compiles() {
-    use engine_renderer::RendererBackend;
+    use moho_renderer::RendererBackend;
     #[cfg(feature = "backend-wgpu")]
     {
-        use engine_renderer::create_renderer;
-        use engine_renderer::create_renderer_from_arc;
+        use moho_renderer::create_renderer;
+        use moho_renderer::create_renderer_from_arc;
         // Validate the `backend-wgpu` factory signature (lifetime-bearing).
         let _factory: for<'a> fn(
             Option<&'a winit::window::Window>,
@@ -29,8 +29,8 @@ fn api_compiles() {
     }
     #[cfg(not(feature = "backend-wgpu"))]
     {
-        use engine_renderer::create_renderer;
-        use engine_renderer::create_renderer_from_arc;
+        use moho_renderer::create_renderer;
+        use moho_renderer::create_renderer_from_arc;
         let _factory: fn(
             Option<std::sync::Arc<()>>,
         ) -> Result<Box<dyn RendererBackend>, Box<dyn std::error::Error>> = create_renderer;

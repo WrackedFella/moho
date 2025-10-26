@@ -1,9 +1,9 @@
 use crate::{MaterialTable, RendererBackend};
 use bincode::{Decode, Encode};
-use engine_core::actors::{Cube, CustomMesh, InstanceGpu, Sphere};
-use engine_core::voxel::VoxelChunk;
 use legion::World;
 use legion::query::IntoQuery;
+use moho_core::actors::{Cube, CustomMesh, InstanceGpu, Sphere};
+use moho_core::voxel::VoxelChunk;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -273,7 +273,7 @@ impl Scene {
 
         // Collect VoxelChunks
         let mut voxel_chunks: Vec<VoxelChunkDesc> = Vec::new();
-        let mut qv = <&engine_core::voxel::VoxelChunk>::query();
+        let mut qv = <&moho_core::voxel::VoxelChunk>::query();
         for chunk in qv.iter(world) {
             voxel_chunks.push(VoxelChunkDesc {
                 chunk_pos: [chunk.chunk_pos.x, chunk.chunk_pos.y, chunk.chunk_pos.z],
@@ -335,7 +335,7 @@ impl Scene {
 
         // Collect VoxelChunks
         let mut voxel_chunks: Vec<VoxelChunkDesc> = Vec::new();
-        let mut qv = <&engine_core::voxel::VoxelChunk>::query();
+        let mut qv = <&moho_core::voxel::VoxelChunk>::query();
         for chunk in qv.iter(world) {
             voxel_chunks.push(VoxelChunkDesc {
                 chunk_pos: [chunk.chunk_pos.x, chunk.chunk_pos.y, chunk.chunk_pos.z],
@@ -424,7 +424,7 @@ impl Scene {
 
         // Load VoxelChunks
         for chunk_desc in desc.voxel_chunks {
-            let chunk = engine_core::voxel::VoxelChunk {
+            let chunk = moho_core::voxel::VoxelChunk {
                 chunk_pos: glam::IVec3::new(
                     chunk_desc.chunk_pos[0],
                     chunk_desc.chunk_pos[1],
@@ -507,18 +507,16 @@ enum MaterialDesc {
 }
 
 impl MaterialDesc {
-    fn from_material(m: &engine_core::materials::MaterialType) -> Self {
+    fn from_material(m: &moho_core::materials::MaterialType) -> Self {
         match m {
-            engine_core::materials::MaterialType::Lambertian { albedo } => {
-                MaterialDesc::Lambertian {
-                    albedo: [albedo.x, albedo.y, albedo.z],
-                }
-            }
-            engine_core::materials::MaterialType::Metal { albedo, fuzz } => MaterialDesc::Metal {
+            moho_core::materials::MaterialType::Lambertian { albedo } => MaterialDesc::Lambertian {
+                albedo: [albedo.x, albedo.y, albedo.z],
+            },
+            moho_core::materials::MaterialType::Metal { albedo, fuzz } => MaterialDesc::Metal {
                 albedo: [albedo.x, albedo.y, albedo.z],
                 fuzz: *fuzz,
             },
-            engine_core::materials::MaterialType::Dielectric { ref_indx } => {
+            moho_core::materials::MaterialType::Dielectric { ref_indx } => {
                 MaterialDesc::Dielectric {
                     ref_indx: *ref_indx,
                 }
@@ -526,19 +524,17 @@ impl MaterialDesc {
         }
     }
 
-    fn into_material_type(self) -> engine_core::materials::MaterialType {
+    fn into_material_type(self) -> moho_core::materials::MaterialType {
         match self {
-            MaterialDesc::Lambertian { albedo } => {
-                engine_core::materials::MaterialType::Lambertian {
-                    albedo: glam::Vec3::new(albedo[0], albedo[1], albedo[2]),
-                }
-            }
-            MaterialDesc::Metal { albedo, fuzz } => engine_core::materials::MaterialType::Metal {
+            MaterialDesc::Lambertian { albedo } => moho_core::materials::MaterialType::Lambertian {
+                albedo: glam::Vec3::new(albedo[0], albedo[1], albedo[2]),
+            },
+            MaterialDesc::Metal { albedo, fuzz } => moho_core::materials::MaterialType::Metal {
                 albedo: glam::Vec3::new(albedo[0], albedo[1], albedo[2]),
                 fuzz,
             },
             MaterialDesc::Dielectric { ref_indx } => {
-                engine_core::materials::MaterialType::Dielectric { ref_indx }
+                moho_core::materials::MaterialType::Dielectric { ref_indx }
             }
         }
     }

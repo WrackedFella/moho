@@ -1,6 +1,6 @@
 // Clean, focused unit tests for voxel utilities and grid behavior.
-use engine_core::voxel::*;
 use glam::{IVec3, Vec3};
+use moho_core::voxel::*;
 
 // FaceDirection helpers
 #[test]

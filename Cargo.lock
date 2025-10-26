@@ -749,50 +749,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "engine_audio"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "glam",
- "log",
- "rodio",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "engine_core"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "glam",
- "legion",
- "log",
- "noise",
- "rand 0.9.2",
- "serde",
- "winit",
-]
-
-[[package]]
-name = "engine_renderer"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "bytemuck",
- "engine_core",
- "glam",
- "legion",
- "log",
- "naga",
- "pollster",
- "serde",
- "tempfile",
- "thiserror 1.0.69",
- "wgpu",
- "winit",
-]
-
-[[package]]
 name = "env_logger"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1643,14 +1599,14 @@ dependencies = [
  "bincode",
  "bytemuck",
  "crossbeam-channel",
- "engine_audio",
- "engine_core",
- "engine_renderer",
  "env_logger",
  "glam",
  "legion",
  "log",
+ "moho_audio",
+ "moho_core",
  "moho_input",
+ "moho_renderer",
  "moho_ui",
  "pollster",
  "rand 0.9.2",
@@ -1659,9 +1615,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "moho_audio"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "glam",
+ "log",
+ "rodio",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "moho_core"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "legion",
+ "log",
+ "noise",
+ "rand 0.9.2",
+ "serde",
+ "winit",
+]
+
+[[package]]
 name = "moho_input"
 version = "0.1.0"
 dependencies = [
+ "winit",
+]
+
+[[package]]
+name = "moho_renderer"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "bytemuck",
+ "glam",
+ "legion",
+ "log",
+ "moho_core",
+ "naga",
+ "pollster",
+ "serde",
+ "tempfile",
+ "thiserror 1.0.69",
+ "wgpu",
  "winit",
 ]
 
@@ -1674,11 +1674,11 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui-winit",
- "engine_renderer",
  "gilrs",
  "ini",
  "log",
  "moho_input",
+ "moho_renderer",
  "once_cell",
  "rand 0.9.2",
  "serde",

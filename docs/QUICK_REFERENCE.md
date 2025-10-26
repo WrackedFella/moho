@@ -30,19 +30,19 @@ VoxelChunk  → CustomMesh  → CustomMeshData  → Renderer (custom)  → GPU �
 ### Files to Create/Modify
 | File | Action | Purpose |
 |------|--------|---------|
-| `engine_core/src/actors.rs` | Add trait | Define `CustomMesh` trait |
-| `engine_core/src/actors.rs` | Add function | `collect_custom_meshes()` |
-| `engine_core/src/voxel.rs` | Implement | `CustomMesh` for `VoxelChunk` |
-| `engine_renderer/src/scene.rs` | Add struct | `CustomMeshGpu` buffer manager |
-| `engine_renderer/src/lib.rs` | Modify | Add custom mesh rendering path |
+| `moho_core/src/actors.rs` | Add trait | Define `CustomMesh` trait |
+| `moho_core/src/actors.rs` | Add function | `collect_custom_meshes()` |
+| `moho_core/src/voxel.rs` | Implement | `CustomMesh` for `VoxelChunk` |
+| `moho_renderer/src/scene.rs` | Add struct | `CustomMeshGpu` buffer manager |
+| `moho_renderer/src/lib.rs` | Modify | Add custom mesh rendering path |
 | Main render loop | Modify | Call `collect_custom_meshes()` |
 
 ### Files to Study First
 | File | Why |
 |------|-----|
-| `engine_renderer/src/lib.rs` | Understand render loop |
-| `engine_renderer/src/scene.rs` | See buffer management |
-| `engine_renderer/src/gpu_types.rs` | Understand GPU structures |
+| `moho_renderer/src/lib.rs` | Understand render loop |
+| `moho_renderer/src/scene.rs` | See buffer management |
+| `moho_renderer/src/gpu_types.rs` | Understand GPU structures |
 | `shaders/vertex.wgsl` | Verify input compatibility |
 
 ---
@@ -51,7 +51,7 @@ VoxelChunk  → CustomMesh  → CustomMeshData  → Renderer (custom)  → GPU �
 
 ### 1. CustomMesh Trait
 ```rust
-// In engine_core/src/actors.rs
+// In moho_core/src/actors.rs
 pub trait CustomMesh {
     fn vertices(&self) -> &[[f32; 3]];
     fn normals(&self) -> &[[f32; 3]];
@@ -63,7 +63,7 @@ pub trait CustomMesh {
 
 ### 2. Implement for VoxelChunk
 ```rust
-// In engine_core/src/voxel.rs
+// In moho_core/src/voxel.rs
 impl crate::actors::CustomMesh for VoxelChunk {
     fn vertices(&self) -> &[[f32; 3]] { &self.vertices }
     fn normals(&self) -> &[[f32; 3]] { &self.normals }
@@ -75,7 +75,7 @@ impl crate::actors::CustomMesh for VoxelChunk {
 
 ### 3. Collection Function
 ```rust
-// In engine_core/src/actors.rs
+// In moho_core/src/actors.rs
 pub struct CustomMeshData {
     pub vertices: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
@@ -105,7 +105,7 @@ pub fn collect_custom_meshes(world: &World) -> Vec<CustomMeshData> {
 
 ### 4. GPU Buffer Creation
 ```rust
-// In engine_renderer/src/scene.rs or new file
+// In moho_renderer/src/scene.rs or new file
 use wgpu::util::DeviceExt;
 
 pub struct CustomMeshGpu {
@@ -308,3 +308,4 @@ fn render_custom_meshes(&self, render_pass: &mut wgpu::RenderPass) {
 ---
 
 **Keep this tab open while coding!** 🚀
+

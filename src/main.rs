@@ -64,7 +64,7 @@ pub(crate) fn forward_wheel_if_allowed(
 #[cfg(feature = "backend-wgpu")]
 struct WindowRenderer {
     window: Arc<Window>,
-    renderer: Box<dyn engine_renderer::RendererBackend>,
+    renderer: Box<dyn moho_renderer::RendererBackend>,
     mesh_handle: u32,
     cube_mesh_handle: u32,
 }
@@ -81,7 +81,7 @@ enum AppMode {
 #[cfg(feature = "backend-wgpu")]
 struct App {
     world: World,
-    scene: engine_renderer::Scene,
+    scene: moho_renderer::Scene,
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     mode: AppMode,
 
@@ -89,7 +89,7 @@ struct App {
     window_renderer: Option<WindowRenderer>,
 
     // Audio system
-    audio_system: Option<engine_audio::AudioSystem>,
+    audio_system: Option<moho_audio::AudioSystem>,
 
     // UI components
     #[cfg(feature = "ui-egui")]
@@ -117,10 +117,10 @@ struct App {
     unconsumed_input_rx: Option<crossbeam_channel::Receiver<crate::input_event::InputEvent>>,
 
     // Camera control
-    player_controller: engine_core::controller::PlayerController,
-    controller_input: engine_core::controller::ControllerInput,
+    player_controller: moho_core::controller::PlayerController,
+    controller_input: moho_core::controller::ControllerInput,
     mouse_sensitivity: f32,
-    input_system: engine_core::input::InputSystem,
+    input_system: moho_core::input::InputSystem,
 
     // Keybinds
     prefs: Prefs,
@@ -142,7 +142,7 @@ impl App {
 
         // Create basic world and scene (minimal setup)
         let world = World::default();
-        let scene = engine_renderer::Scene::new();
+        let scene = moho_renderer::Scene::new();
 
         // Basic camera - positioned to get a good view of voxel terrain
         let camera = {
@@ -156,7 +156,7 @@ impl App {
 
         // Initialize player controller at the camera position
 
-        let player_controller = engine_core::controller::PlayerController::new(camera.2);
+        let player_controller = moho_core::controller::PlayerController::new(camera.2);
 
         // Load preferences and apply mouse sensitivity
         #[cfg(feature = "ui-egui")]
@@ -169,10 +169,10 @@ impl App {
         let prefs = Prefs::default();
 
         // Always use the default filter preset
-        let engine_filter_preset = engine_core::input::FilterPreset::Default;
+        let engine_filter_preset = moho_core::input::FilterPreset::Default;
 
         // Initialize audio system
-        let audio_system = match engine_audio::AudioSystem::new() {
+        let audio_system = match moho_audio::AudioSystem::new() {
             Ok(audio) => {
                 log::info!("Audio system initialized successfully");
                 Some(audio)
@@ -212,10 +212,10 @@ impl App {
 
             // Camera control
             player_controller,
-            controller_input: engine_core::controller::ControllerInput::default(),
+            controller_input: moho_core::controller::ControllerInput::default(),
             mouse_sensitivity,
             input_system: {
-                let mut input_sys = engine_core::input::InputSystem::new_with_preset(
+                let mut input_sys = moho_core::input::InputSystem::new_with_preset(
                     mouse_sensitivity,
                     engine_filter_preset,
                 );
@@ -242,14 +242,14 @@ impl App {
         // Create renderer - leak the Arc to get a 'static reference
         // This is acceptable for a main application window that lives for the program duration
         let window_ref: &'static Window = Box::leak(Box::new(window.clone()));
-        let mut renderer = engine_renderer::create_renderer(Some(window_ref))?;
+        let mut renderer = moho_renderer::create_renderer(Some(window_ref))?;
 
         // Create sphere mesh data using the proper sphere geometry
-        let (vertices, normals, indices) = engine_core::actors::Sphere::unit_sphere_indexed(16, 16);
+        let (vertices, normals, indices) = moho_core::actors::Sphere::unit_sphere_indexed(16, 16);
         let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
 
         let (cube_vertices, cube_normals, cube_indices) =
-            engine_core::actors::Cube::unit_cube_indexed();
+            moho_core::actors::Cube::unit_cube_indexed();
         let cube_mesh_handle =
             renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
 
@@ -264,7 +264,7 @@ impl App {
             }
 
             renderer.set_frame_callback_arc(Some(
-                ui_adapter.clone() as Arc<Mutex<dyn engine_renderer::FrameCallback>>
+                ui_adapter.clone() as Arc<Mutex<dyn moho_renderer::FrameCallback>>
             ));
 
             // Store adapter & receiver
@@ -358,7 +358,7 @@ impl App {
             log::info!("No UI adapter available - falling back to sync generation");
             // Clear the existing world
             self.world.clear();
-            engine_core::scene_builders::voxel_terrain_scene(&mut self.world);
+            moho_core::scene_builders::voxel_terrain_scene(&mut self.world);
             // Persist immediately
             let saves_dir = std::path::Path::new("saves");
             if !saves_dir.exists() {
@@ -414,13 +414,13 @@ impl App {
                     }
                     // Use the supplied WorldSpec seed (if any) when generating
                     // terrain so different seeds produce different worlds.
-                    let mut terrain_config = engine_core::scene_builders::TerrainConfig::default();
+                    let mut terrain_config = moho_core::scene_builders::TerrainConfig::default();
                     if let Some(s) = spec_for_thread.seed {
                         terrain_config.seed = s as u32; // truncate to u32
                     }
                     // Map UI's size_xz (full width in blocks) into the terrain config.
                     terrain_config.world_size = spec_for_thread.size_xz;
-                    engine_core::scene_builders::voxel_terrain_scene_with_config(
+                    moho_core::scene_builders::voxel_terrain_scene_with_config(
                         &mut local_world,
                         &terrain_config,
                     );
@@ -434,7 +434,7 @@ impl App {
                     // Encode scene bytes. Provide a sensible default camera for
                     // newly generated worlds so the app has a starting
                     // viewpoint instead of relying on previous controller state.
-                    let local_scene = engine_renderer::Scene::new();
+                    let local_scene = moho_renderer::Scene::new();
                     // Place camera above world center looking slightly down
                     let camera_height = 24.0f32;
                     let camera_position = glam::Vec3::new(0.0, camera_height, 0.0);
@@ -647,7 +647,7 @@ impl App {
 
         // Calculate up/down - only in first person mode
         let up = if self.player_controller.camera_mode
-            == engine_core::controller::CameraMode::FirstPerson
+            == moho_core::controller::CameraMode::FirstPerson
         {
             (if is_active(&self.prefs.key_up) {
                 1.0
@@ -717,11 +717,11 @@ impl App {
                         // Toggle camera mode
                         self.player_controller.camera_mode =
                             match self.player_controller.camera_mode {
-                                engine_core::controller::CameraMode::FirstPerson => {
-                                    engine_core::controller::CameraMode::Isometric
+                                moho_core::controller::CameraMode::FirstPerson => {
+                                    moho_core::controller::CameraMode::Isometric
                                 }
-                                engine_core::controller::CameraMode::Isometric => {
-                                    engine_core::controller::CameraMode::FirstPerson
+                                moho_core::controller::CameraMode::Isometric => {
+                                    moho_core::controller::CameraMode::FirstPerson
                                 }
                             };
                         log::info!(
@@ -739,8 +739,7 @@ impl App {
     fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
         // Only process input in game mode and first person camera mode
         if self.mode != AppMode::Game
-            || self.player_controller.camera_mode
-                != engine_core::controller::CameraMode::FirstPerson
+            || self.player_controller.camera_mode != moho_core::controller::CameraMode::FirstPerson
         {
             return;
         }
@@ -809,7 +808,7 @@ impl App {
     }
 
     /// Handle audio events from the UI or game
-    fn handle_audio_event(&mut self, event: engine_audio::AudioEvent) {
+    fn handle_audio_event(&mut self, event: moho_audio::AudioEvent) {
         if let Some(ref mut audio) = self.audio_system
             && let Err(e) = audio.handle_event(event)
         {
@@ -823,7 +822,9 @@ impl App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window_renderer.is_none() {
-            let window_attributes = WindowAttributes::default();
+            // Set a descriptive title for the main window instead of the default
+            let mut window_attributes = WindowAttributes::default();
+            window_attributes.title = "Project: Moho - Prototype".into();
             match event_loop.create_window(window_attributes) {
                 Ok(window) => {
                     let window_arc = Arc::new(window);
@@ -874,8 +875,7 @@ impl ApplicationHandler for App {
                     .apply_input(&self.controller_input, dt);
 
                 // Update camera from controller
-                self.camera =
-                    engine_core::controller::controller_to_camera(&self.player_controller);
+                self.camera = moho_core::controller::controller_to_camera(&self.player_controller);
             }
 
             if let Some(ref wr) = self.window_renderer {
@@ -953,14 +953,14 @@ impl ApplicationHandler for App {
                             // Convert UI audio event to engine audio event
                             let engine_event = match audio_event {
                                 moho_ui::UiAudioEvent::ButtonClick => {
-                                    engine_audio::AudioEvent::ButtonClick
+                                    moho_audio::AudioEvent::ButtonClick
                                 }
                                 moho_ui::UiAudioEvent::MenuNavigate => {
-                                    engine_audio::AudioEvent::MenuNavigate
+                                    moho_audio::AudioEvent::MenuNavigate
                                 }
-                                moho_ui::UiAudioEvent::Confirm => engine_audio::AudioEvent::Confirm,
-                                moho_ui::UiAudioEvent::Cancel => engine_audio::AudioEvent::Cancel,
-                                moho_ui::UiAudioEvent::Error => engine_audio::AudioEvent::Error,
+                                moho_ui::UiAudioEvent::Confirm => moho_audio::AudioEvent::Confirm,
+                                moho_ui::UiAudioEvent::Cancel => moho_audio::AudioEvent::Cancel,
+                                moho_ui::UiAudioEvent::Error => moho_audio::AudioEvent::Error,
                             };
                             self.handle_audio_event(engine_event);
                         }

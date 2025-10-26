@@ -3,7 +3,7 @@
 //! This crate provides a flexible, scalable UI system based on egui with support
 //! for multiple menu types and easy extensibility for new UI components.
 
-use engine_renderer::FrameCallback;
+use moho_renderer::FrameCallback;
 
 /// Stub UI implementation for when no UI features are enabled
 pub struct StubUi;

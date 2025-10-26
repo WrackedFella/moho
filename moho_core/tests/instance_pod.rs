@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use engine_core::actors::InstanceGpu;
+use moho_core::actors::InstanceGpu;
 
 #[test]
 fn instance_gpu_pod_and_size() {

@@ -1,5 +1,5 @@
 [package]
-name = "engine_audio"
+name = "moho_audio"
 version = "0.1.0"
 edition = "2024"
 

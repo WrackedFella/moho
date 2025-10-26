@@ -1,9 +1,9 @@
-use engine_core::actors::{Cube, Sphere};
-#[cfg(feature = "backend-wgpu")]
-use engine_renderer::FrameCallback;
-use engine_renderer::{MaterialGpu, RendererBackend};
 use glam::Vec3;
 use legion::World;
+use moho_core::actors::{Cube, Sphere};
+#[cfg(feature = "backend-wgpu")]
+use moho_renderer::FrameCallback;
+use moho_renderer::{MaterialGpu, RendererBackend};
 
 // A tiny mock RendererBackend that records calls for assertions.
 struct MockRenderer {
@@ -22,7 +22,7 @@ impl RendererBackend for MockRenderer {
     fn render(
         &mut self,
         _vertices: &[[f32; 3]],
-        _instances: &[engine_core::actors::InstanceGpu],
+        _instances: &[moho_core::actors::InstanceGpu],
         _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
         self.renders.borrow_mut().push("render_called".to_string());
@@ -48,7 +48,7 @@ impl RendererBackend for MockRenderer {
     fn render_mesh(
         &mut self,
         _mesh: u32,
-        _instances: &[engine_core::actors::InstanceGpu],
+        _instances: &[moho_core::actors::InstanceGpu],
         _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
         _finalize: bool,
     ) {
@@ -74,7 +74,7 @@ fn scene_render_invokes_renderer_backend_calls() {
     let s = Sphere::new(
         Vec3::new(0.0, 0.0, 0.0),
         1.0,
-        engine_core::materials::MaterialType::Lambertian {
+        moho_core::materials::MaterialType::Lambertian {
             albedo: Vec3::new(0.2, 0.3, 0.4),
         },
     );
@@ -83,7 +83,7 @@ fn scene_render_invokes_renderer_backend_calls() {
         1.0,
         1.0,
         1.0,
-        engine_core::materials::MaterialType::Metal {
+        moho_core::materials::MaterialType::Metal {
             albedo: Vec3::new(0.6, 0.6, 0.6),
             fuzz: 0.1,
         },
@@ -91,7 +91,7 @@ fn scene_render_invokes_renderer_backend_calls() {
     world.push((s,));
     world.push((c,));
 
-    let mut scene = engine_renderer::Scene::new();
+    let mut scene = moho_renderer::Scene::new();
     let mut mock = MockRenderer::new();
 
     // Register meshes (mock returns handles 0)

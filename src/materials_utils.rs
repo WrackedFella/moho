@@ -12,21 +12,21 @@ struct MaterialKey {
 }
 
 impl MaterialKey {
-    fn from_material(m: &engine_core::materials::MaterialType) -> Self {
+    fn from_material(m: &moho_core::materials::MaterialType) -> Self {
         match m {
-            engine_core::materials::MaterialType::Lambertian { albedo } => MaterialKey {
+            moho_core::materials::MaterialType::Lambertian { albedo } => MaterialKey {
                 variant: 0,
                 albedo_bits: [albedo.x.to_bits(), albedo.y.to_bits(), albedo.z.to_bits()],
                 fuzz_bits: 0,
                 ref_idx_bits: 0,
             },
-            engine_core::materials::MaterialType::Metal { albedo, fuzz } => MaterialKey {
+            moho_core::materials::MaterialType::Metal { albedo, fuzz } => MaterialKey {
                 variant: 1,
                 albedo_bits: [albedo.x.to_bits(), albedo.y.to_bits(), albedo.z.to_bits()],
                 fuzz_bits: fuzz.to_bits(),
                 ref_idx_bits: 0,
             },
-            engine_core::materials::MaterialType::Dielectric { ref_indx } => MaterialKey {
+            moho_core::materials::MaterialType::Dielectric { ref_indx } => MaterialKey {
                 variant: 2,
                 albedo_bits: [1u32, 1u32, 1u32],
                 fuzz_bits: 0,
@@ -41,7 +41,7 @@ impl MaterialKey {
 /// the GPU buffer unless a new material is added.
 pub struct MaterialTable {
     map: HashMap<MaterialKey, u32>,
-    list: Vec<engine_renderer::MaterialGpu>,
+    list: Vec<moho_renderer::MaterialGpu>,
     dirty: bool,
 }
 
@@ -56,27 +56,27 @@ impl MaterialTable {
 
     /// Return the index for the given material, inserting a new entry if
     /// necessary. Marks the table as dirty when a new material is added.
-    pub fn find_or_push(&mut self, m: &engine_core::materials::MaterialType) -> u32 {
+    pub fn find_or_push(&mut self, m: &moho_core::materials::MaterialType) -> u32 {
         let key = MaterialKey::from_material(m);
         if let Some(&idx) = self.map.get(&key) {
             return idx;
         }
         let idx = self.list.len() as u32;
         let mg = match m {
-            engine_core::materials::MaterialType::Lambertian { albedo } => {
-                engine_renderer::MaterialGpu {
+            moho_core::materials::MaterialType::Lambertian { albedo } => {
+                moho_renderer::MaterialGpu {
                     albedo: [albedo.x, albedo.y, albedo.z, 0.0],
                     params: [0.0, 0.0, 0.0, 0.0],
                 }
             }
-            engine_core::materials::MaterialType::Metal { albedo, fuzz } => {
-                engine_renderer::MaterialGpu {
+            moho_core::materials::MaterialType::Metal { albedo, fuzz } => {
+                moho_renderer::MaterialGpu {
                     albedo: [albedo.x, albedo.y, albedo.z, 0.0],
                     params: [*fuzz, 0.0, 0.0, 0.0],
                 }
             }
-            engine_core::materials::MaterialType::Dielectric { ref_indx } => {
-                engine_renderer::MaterialGpu {
+            moho_core::materials::MaterialType::Dielectric { ref_indx } => {
+                moho_renderer::MaterialGpu {
                     albedo: [1.0, 1.0, 1.0, 0.0],
                     params: [0.0, *ref_indx, 0.0, 0.0],
                 }
@@ -105,7 +105,7 @@ impl MaterialTable {
         self.dirty = false;
     }
 
-    pub fn as_slice(&self) -> &[engine_renderer::MaterialGpu] {
+    pub fn as_slice(&self) -> &[moho_renderer::MaterialGpu] {
         &self.list
     }
 
@@ -121,7 +121,7 @@ impl MaterialTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine_core::materials::MaterialType;
+    use moho_core::materials::MaterialType;
     use glam::Vec3;
 
     #[test]
@@ -148,3 +148,4 @@ mod tests {
         assert_eq!(mt.as_slice().len(), 2);
     }
 }
+

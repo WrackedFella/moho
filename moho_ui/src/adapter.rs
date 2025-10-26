@@ -6,7 +6,7 @@
 use crate::menus::{Menu, MenuAction, NewWorldMenu, SettingsMenu, StartMenu};
 use crate::modal::ModalManager;
 use crate::prefs::Prefs;
-use engine_renderer::FrameCallback;
+use moho_renderer::FrameCallback;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

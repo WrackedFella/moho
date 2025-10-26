@@ -111,7 +111,7 @@ pub enum GameStateUpdate {
 4. **Test input recording** - Validate command abstraction works
 
 **Files Modified**:
-- `engine_core/src/controller.rs` - Add player ID support
+- `moho_core/src/controller.rs` - Add player ID support
 - `game_simulation/src/input.rs` - New input command types
 - `src/main.rs` - Use command-based input
 
@@ -124,8 +124,8 @@ pub enum GameStateUpdate {
 4. **Test with simulated players** - Add keyboard "player 2" or simple bot
 
 **Files Modified**:
-- `engine_core/src/actors.rs` - Add player entities
-- `engine_core/src/camera.rs` - Multi-player camera handling
+- `moho_core/src/actors.rs` - Add player entities
+- `moho_core/src/camera.rs` - Multi-player camera handling
 - `game_simulation/src/player.rs` - Player management
 
 ### Phase 4: State Serialization (1 week)
@@ -137,7 +137,7 @@ pub enum GameStateUpdate {
 4. **Validate determinism** - Same inputs = same outputs
 
 **Files Modified**:
-- `engine_renderer/src/scene.rs` - Extended serialization
+- `moho_renderer/src/scene.rs` - Extended serialization
 - `game_simulation/src/state.rs` - Delta update system
 
 ## Recommended Workspace Structure
@@ -145,8 +145,8 @@ pub enum GameStateUpdate {
 ```
 moho/
 ├── Cargo.toml                 # Workspace root (add game_simulation member)
-├── engine_core/               # Core game types (unchanged)
-├── engine_renderer/           # Rendering system (unchanged)  
+├── moho_core/               # Core game types (unchanged)
+├── moho_renderer/           # Rendering system (unchanged)  
 ├── moho_ui/                  # UI system (unchanged)
 ├── game_simulation/          # NEW: Pure game logic
 │   ├── src/
