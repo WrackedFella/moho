@@ -1,6 +1,6 @@
 // Clean, focused unit tests for voxel utilities and grid behavior.
-use moho_core::voxel::*;
 use glam::{IVec3, Vec3};
+use moho_core::voxel::*;
 
 // FaceDirection helpers
 #[test]
@@ -134,4 +134,3 @@ fn test_face_culling_and_visible_faces() {
     assert!(visible.contains(&FaceDirection::PosY));
     assert!(visible.contains(&FaceDirection::NegX));
 }
-

@@ -139,8 +139,8 @@ impl Default for MaterialTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use moho_core::materials::MaterialType;
     use glam::Vec3;
+    use moho_core::materials::MaterialType;
 
     #[test]
     fn dedup_materials_basic() {
@@ -166,4 +166,3 @@ mod tests {
         assert_eq!(mt.as_slice().len(), 2);
     }
 }
-

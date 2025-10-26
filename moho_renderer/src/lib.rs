@@ -1471,4 +1471,3 @@ pub enum RendererInitError {
     #[error("wgpu backend error: {0}")]
     WgpuInit(String),
 }
-

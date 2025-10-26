@@ -40,4 +40,3 @@ fn api_compiles() {
             create_renderer_from_arc;
     }
 }
-

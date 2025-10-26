@@ -1,9 +1,9 @@
 use crate::{MaterialTable, RendererBackend};
 use bincode::{Decode, Encode};
-use moho_core::actors::{Cube, CustomMesh, InstanceGpu, Sphere};
-use moho_core::voxel::VoxelChunk;
 use legion::World;
 use legion::query::IntoQuery;
+use moho_core::actors::{Cube, CustomMesh, InstanceGpu, Sphere};
+use moho_core::voxel::VoxelChunk;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -509,11 +509,9 @@ enum MaterialDesc {
 impl MaterialDesc {
     fn from_material(m: &moho_core::materials::MaterialType) -> Self {
         match m {
-            moho_core::materials::MaterialType::Lambertian { albedo } => {
-                MaterialDesc::Lambertian {
-                    albedo: [albedo.x, albedo.y, albedo.z],
-                }
-            }
+            moho_core::materials::MaterialType::Lambertian { albedo } => MaterialDesc::Lambertian {
+                albedo: [albedo.x, albedo.y, albedo.z],
+            },
             moho_core::materials::MaterialType::Metal { albedo, fuzz } => MaterialDesc::Metal {
                 albedo: [albedo.x, albedo.y, albedo.z],
                 fuzz: *fuzz,
@@ -528,11 +526,9 @@ impl MaterialDesc {
 
     fn into_material_type(self) -> moho_core::materials::MaterialType {
         match self {
-            MaterialDesc::Lambertian { albedo } => {
-                moho_core::materials::MaterialType::Lambertian {
-                    albedo: glam::Vec3::new(albedo[0], albedo[1], albedo[2]),
-                }
-            }
+            MaterialDesc::Lambertian { albedo } => moho_core::materials::MaterialType::Lambertian {
+                albedo: glam::Vec3::new(albedo[0], albedo[1], albedo[2]),
+            },
             MaterialDesc::Metal { albedo, fuzz } => moho_core::materials::MaterialType::Metal {
                 albedo: glam::Vec3::new(albedo[0], albedo[1], albedo[2]),
                 fuzz,
@@ -543,4 +539,3 @@ impl MaterialDesc {
         }
     }
 }
-

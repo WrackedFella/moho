@@ -501,4 +501,3 @@ impl FrameCallback for EguiAdapter {
 pub fn build_adapter(window: Option<Arc<Window>>) -> (EguiAdapter, UiReceiver) {
     EguiAdapter::new(window)
 }
-

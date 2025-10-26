@@ -1,7 +1,7 @@
-use moho_core::actors::Sphere;
-use moho_core::materials::MaterialType;
 use glam::Vec3;
 use legion::World;
+use moho_core::actors::Sphere;
+use moho_core::materials::MaterialType;
 
 #[test]
 fn scene_encode_decode_roundtrip_in_memory() {
@@ -47,4 +47,3 @@ fn scene_encode_decode_roundtrip_in_memory() {
         "scene roundtrip should preserve entity count"
     );
 }
-

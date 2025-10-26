@@ -1,9 +1,9 @@
+use glam::Vec3;
+use legion::World;
 use moho_core::actors::{Cube, Sphere};
 #[cfg(feature = "backend-wgpu")]
 use moho_renderer::FrameCallback;
 use moho_renderer::{MaterialGpu, RendererBackend};
-use glam::Vec3;
-use legion::World;
 
 // A tiny mock RendererBackend that records calls for assertions.
 struct MockRenderer {
@@ -114,4 +114,3 @@ fn scene_render_invokes_renderer_backend_calls() {
         "expected render_mesh to be called"
     );
 }
-
