@@ -1,4 +1,4 @@
-FROM rust:1.70-slim
+FROM rust:slim
 
 # Install system dependencies needed by native crates
 RUN apt-get update \
@@ -13,8 +13,11 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # Install cargo-chef and sccache for fast builds
-RUN cargo install cargo-chef --locked || true
-RUN cargo install sccache --locked || true
+RUN cargo install cargo-chef --locked
+RUN cargo install sccache --locked
+
+# Verify installations
+RUN cargo chef --version && sccache --version
 
 # Ensure cargo-installed binaries are on PATH for all container runs
 ENV PATH=/usr/local/cargo/bin:$PATH

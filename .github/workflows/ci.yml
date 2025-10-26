@@ -92,7 +92,7 @@ jobs:
             -v $HOME/.cargo/git:/root/.cargo/git \
             -v $HOME/.cache/sccache:/root/.cache/sccache \
               -w /work moho-ci:latest \
-              bash -lc "export PATH=/usr/local/cargo/bin:$PATH && cargo chef cook --recipe-path recipe.json --locked"
+              bash -c "cargo chef cook --recipe-path recipe.json"
 
       - name: Install sccache & cargo-chef (macOS)
         if: matrix.os == 'macos-latest'
@@ -182,7 +182,7 @@ jobs:
             -v $HOME/.cargo/git:/root/.cargo/git \
             -v $HOME/.cache/sccache:/root/.cache/sccache \
             -w /work moho-ci:latest \
-            bash -lc "export PATH=/usr/local/cargo/bin:$PATH && cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all --workspace -- -q && cargo test -p moho_ui --features 'ui-egui ui-egui-test' -- -q"
+            bash -c "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all --workspace -- -q && cargo test -p moho_ui --features 'ui-egui ui-egui-test' -- -q"
 
       - name: Install sccache & run tests on macOS
         if: matrix.os == 'macos-latest'
