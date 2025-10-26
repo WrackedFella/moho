@@ -739,8 +739,7 @@ impl App {
     fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
         // Only process input in game mode and first person camera mode
         if self.mode != AppMode::Game
-            || self.player_controller.camera_mode
-                != moho_core::controller::CameraMode::FirstPerson
+            || self.player_controller.camera_mode != moho_core::controller::CameraMode::FirstPerson
         {
             return;
         }
@@ -823,7 +822,9 @@ impl App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window_renderer.is_none() {
-            let window_attributes = WindowAttributes::default();
+            // Set a descriptive title for the main window instead of the default
+            let mut window_attributes = WindowAttributes::default();
+            window_attributes.title = "Project: Moho - Prototype".into();
             match event_loop.create_window(window_attributes) {
                 Ok(window) => {
                     let window_arc = Arc::new(window);
@@ -874,8 +875,7 @@ impl ApplicationHandler for App {
                     .apply_input(&self.controller_input, dt);
 
                 // Update camera from controller
-                self.camera =
-                    moho_core::controller::controller_to_camera(&self.player_controller);
+                self.camera = moho_core::controller::controller_to_camera(&self.player_controller);
             }
 
             if let Some(ref wr) = self.window_renderer {
@@ -1191,4 +1191,3 @@ fn main() {
     eprintln!("Run with: cargo run --features backend-wgpu");
     std::process::exit(1);
 }
-
