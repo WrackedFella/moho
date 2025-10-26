@@ -35,7 +35,7 @@ enum GenerationMsg {
     Progress(f32),
     Completed {
         scene_bytes: Vec<u8>,
-        spec: moho_ui::WorldSpec,
+    spec: moho_core::scene_builders::WorldSpec,
     },
     Canceled,
     Failed(String),
@@ -97,7 +97,7 @@ struct App {
     #[cfg(feature = "ui-egui")]
     ui_receiver: Option<moho_ui::UiReceiver>,
     #[cfg(feature = "ui-egui")]
-    last_world_spec: Option<moho_ui::WorldSpec>,
+    last_world_spec: Option<moho_core::scene_builders::WorldSpec>,
     // Async generation plumbing (only used when UI is present)
     #[cfg(feature = "ui-egui")]
     generation_receiver: Option<Receiver<GenerationMsg>>,
@@ -343,7 +343,7 @@ impl App {
 
     fn generate_new_world(
         &mut self,
-        spec: moho_ui::WorldSpec,
+    spec: moho_core::scene_builders::WorldSpec,
     ) -> Result<(), Box<dyn std::error::Error>> {
         log::info!("Starting async generation for spec={:?}", spec);
 
@@ -505,7 +505,7 @@ impl App {
             // WorldSpec (e.g. from a loaded or generated scene) so autosaves
             // preserve original metadata; fall back to a minimal spec.
             let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
-            let spec = self.last_world_spec.clone().unwrap_or(moho_ui::WorldSpec {
+            let spec = self.last_world_spec.clone().unwrap_or(moho_core::scene_builders::WorldSpec {
                 name: "autosave".to_string(),
                 seed: None,
                 size_xz: 64,

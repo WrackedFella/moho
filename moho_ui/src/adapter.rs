@@ -3,7 +3,8 @@
 //! This adapter manages menus and UI state in a scalable way,
 //! allowing easy addition of new menus and menu types.
 
-use crate::menus::{Menu, MenuAction, NewWorldMenu, SettingsMenu, StartMenu};
+use crate::menus::{Menu, MenuAction, StartMenu};
+use crate::forms::{NewWorldMenu, SettingsMenu};
 use crate::modal::ModalManager;
 use crate::prefs::Prefs;
 use moho_renderer::FrameCallback;
@@ -19,7 +20,7 @@ use winit::window::Window;
 pub enum UiEvent {
     LoadScene(PathBuf),
     /// Start generation of a new world with provided parameters
-    NewWorld(crate::menus::WorldSpec),
+    NewWorld(moho_core::scene_builders::WorldSpec),
     ShowMenu(String),
     Exit,
     OverlayToggled(bool),

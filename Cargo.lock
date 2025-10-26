@@ -1636,6 +1636,7 @@ dependencies = [
 name = "moho_core"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "bytemuck",
  "glam",
  "legion",
@@ -1698,6 +1699,7 @@ dependencies = [
  "gilrs",
  "ini",
  "log",
+ "moho_core",
  "moho_input",
  "moho_renderer",
  "once_cell",

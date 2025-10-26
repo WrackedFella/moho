@@ -63,9 +63,10 @@ pub use adapter::{
 pub use adapter::EguiAdapter as EguiUi;
 
 #[cfg(feature = "ui-egui")]
-pub use menus::WorldSpec;
+pub use menus::{Menu, MenuAction, MenuItem, StartMenu};
+
 #[cfg(feature = "ui-egui")]
-pub use menus::{Menu, MenuAction, MenuItem, SettingsMenu, StartMenu};
+pub use forms::{NewWorldMenu, SettingsMenu};
 
 #[cfg(feature = "ui-egui")]
 pub use modal::{Modal, ModalManager, ModalResult};

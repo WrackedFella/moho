@@ -2,6 +2,8 @@ use glam::Vec3;
 use legion::World;
 
 use crate::actors::{Cube, Sphere};
+use serde::{Deserialize, Serialize};
+use bincode::{Decode, Encode};
 use crate::materials::MaterialType;
 use crate::vector_length;
 use crate::voxel::{BlockPos, MeshGenerator, VoxelBlock, VoxelChunk, VoxelGrid};
@@ -27,6 +29,7 @@ pub fn random_scene(world: &mut World) {
     for a in -11..11 {
         for b in -11..11 {
             let choose_mat = rng_local.random::<f32>();
+        
             let center = Vec3::new(
                 a as f32 + 0.9f32 * rng_local.random::<f32>(),
                 0.2f32,
@@ -101,8 +104,17 @@ pub fn random_scene(world: &mut World) {
     log::info!("World Generated");
 }
 
+/// Parameters describing a new world request coming from the UI or other
+/// front-ends. Defined here so the generator and caller share a single type.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Encode, Decode)]
+pub struct WorldSpec {
+    pub name: String,
+    pub seed: Option<u64>,
+    pub size_xz: u32,
+}
+
 /// Terrain configuration for procedural generation
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TerrainConfig {
     pub frequency: f64,
     pub amplitude: f32,
