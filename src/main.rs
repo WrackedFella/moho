@@ -854,7 +854,7 @@ impl ApplicationHandler for App {
 
                 let (yaw_delta, pitch_delta) = self.input_system.sample_frame_input();
                 {
-                    let mut ci = self.simulation.controller_input_mut();
+                    let ci = self.simulation.controller_input_mut();
                     ci.yaw_delta = yaw_delta;
                     ci.pitch_delta = pitch_delta;
                 }
