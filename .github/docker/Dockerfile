@@ -16,8 +16,11 @@ RUN apt-get update \
 RUN cargo install cargo-chef --locked
 RUN cargo install sccache --locked
 
+# Install rustfmt and clippy components
+RUN rustup component add rustfmt clippy
+
 # Verify installations
-RUN cargo chef --version && sccache --version
+RUN cargo chef --version && sccache --version && cargo fmt --version && cargo clippy --version
 
 # Ensure cargo-installed binaries are on PATH for all container runs
 ENV PATH=/usr/local/cargo/bin:$PATH
