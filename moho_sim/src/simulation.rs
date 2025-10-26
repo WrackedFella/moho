@@ -1,10 +1,10 @@
-use moho_core::controller::{ControllerInput, PlayerController, CameraMode, controller_to_camera};
-use glam::{Mat4, Vec3};
-use serde::{Deserialize, Serialize};
-use bincode::{Encode, Decode};
+use bincode::{Decode, Encode};
 use crc32fast::Hasher;
+use glam::{Mat4, Vec3};
+use moho_core::controller::{CameraMode, ControllerInput, PlayerController, controller_to_camera};
+use serde::{Deserialize, Serialize};
 
-const SNAP_MAGIC: &[u8;4] = b"MOHO";
+const SNAP_MAGIC: &[u8; 4] = b"MOHO";
 const SNAP_VERSION: u16 = 1;
 
 #[derive(Serialize, Deserialize, Encode, Decode)]
@@ -62,7 +62,10 @@ impl TryFrom<SimulationSnapshot> for SimulationController {
             yaw_delta: ss.yaw_delta,
             pitch_delta: ss.pitch_delta,
         };
-        Ok(SimulationController { player_controller: pc, controller_input: ci })
+        Ok(SimulationController {
+            player_controller: pc,
+            controller_input: ci,
+        })
     }
 }
 
@@ -71,8 +74,8 @@ impl SimulationController {
     /// Create a validated snapshot (header + bincode payload)
     pub fn snapshot_bytes(&self) -> Vec<u8> {
         let snap: SimulationSnapshot = self.into();
-        let payload = bincode::encode_to_vec(&snap, bincode::config::standard())
-            .expect("serialize snapshot");
+        let payload =
+            bincode::encode_to_vec(&snap, bincode::config::standard()).expect("serialize snapshot");
 
         let mut hasher = Hasher::new();
         hasher.update(&payload);
@@ -111,8 +114,9 @@ impl SimulationController {
         if calc != checksum {
             return Err("checksum mismatch".into());
         }
-        let (ss, _len): (SimulationSnapshot, usize) = bincode::decode_from_slice(payload, bincode::config::standard())
-            .map_err(|e| format!("deser error: {}", e))?;
+        let (ss, _len): (SimulationSnapshot, usize) =
+            bincode::decode_from_slice(payload, bincode::config::standard())
+                .map_err(|e| format!("deser error: {}", e))?;
         SimulationController::try_from(ss)
     }
 }
@@ -143,7 +147,8 @@ impl SimulationController {
     /// Apply the current controller input for this tick and return the camera
     /// tuple (view, proj, cam_pos) after applying movement/look deltas.
     pub fn apply_input(&mut self, dt: f32) -> (Mat4, Mat4, Vec3) {
-        self.player_controller.apply_input(&self.controller_input, dt);
+        self.player_controller
+            .apply_input(&self.controller_input, dt);
         controller_to_camera(&self.player_controller)
     }
 

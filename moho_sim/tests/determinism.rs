@@ -18,7 +18,10 @@ fn simulation_is_deterministic_given_seed_and_inputs() {
     sim2.tick(&inputs);
     let final2 = (sim2.x, sim2.y);
 
-    assert_eq!(final1, final2, "Simulations with same seed+inputs must match");
+    assert_eq!(
+        final1, final2,
+        "Simulations with same seed+inputs must match"
+    );
 
     // Verify snapshot/restore also preserves state
     let snap = sim1.snapshot();

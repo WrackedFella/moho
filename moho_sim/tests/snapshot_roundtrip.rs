@@ -10,13 +10,22 @@ fn snapshot_roundtrip_and_restore() {
     sim.controller_input.right = -0.4;
 
     let bytes = sim.snapshot_bytes();
-    let restored = moho_sim::SimulationController::restore_from_bytes(&bytes)
-        .expect("restore should succeed");
+    let restored =
+        moho_sim::SimulationController::restore_from_bytes(&bytes).expect("restore should succeed");
 
-    assert_eq!(sim.player_controller.position, restored.player_controller.position);
+    assert_eq!(
+        sim.player_controller.position,
+        restored.player_controller.position
+    );
     assert_eq!(sim.player_controller.yaw, restored.player_controller.yaw);
-    assert_eq!(sim.player_controller.pitch, restored.player_controller.pitch);
-    assert_eq!(sim.controller_input.forward, restored.controller_input.forward);
+    assert_eq!(
+        sim.player_controller.pitch,
+        restored.player_controller.pitch
+    );
+    assert_eq!(
+        sim.controller_input.forward,
+        restored.controller_input.forward
+    );
     assert_eq!(sim.controller_input.right, restored.controller_input.right);
 }
 

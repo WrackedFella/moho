@@ -153,8 +153,8 @@ impl App {
             (view, proj, eye)
         };
 
-    // Initialize simulation wrapper (owns controller + input state)
-    let simulation = moho_sim::SimulationController::new(camera.2);
+        // Initialize simulation wrapper (owns controller + input state)
+        let simulation = moho_sim::SimulationController::new(camera.2);
 
         // Load preferences and apply mouse sensitivity
         #[cfg(feature = "ui-egui")]
@@ -633,8 +633,7 @@ impl App {
         };
 
         // Calculate up/down - only in first person mode
-        let up = if self.simulation.camera_mode()
-            == moho_core::controller::CameraMode::FirstPerson
+        let up = if self.simulation.camera_mode() == moho_core::controller::CameraMode::FirstPerson
         {
             (if is_active(&self.prefs.key_up) {
                 1.0
@@ -649,9 +648,9 @@ impl App {
             0.0 // No up/down in isometric mode
         };
 
-    self.simulation.controller_input.forward = forward;
-    self.simulation.controller_input.right = right;
-    self.simulation.controller_input.up = up;
+        self.simulation.controller_input.forward = forward;
+        self.simulation.controller_input.right = right;
+        self.simulation.controller_input.up = up;
     }
 
     /// Handle keyboard input for camera controls
@@ -711,7 +710,10 @@ impl App {
                             }
                         };
                         self.simulation.set_camera_mode(new_mode);
-                        log::info!("Switched to camera mode: {:?}", self.simulation.camera_mode());
+                        log::info!(
+                            "Switched to camera mode: {:?}",
+                            self.simulation.camera_mode()
+                        );
                     }
                 }
                 _ => {}
@@ -1017,7 +1019,8 @@ impl ApplicationHandler for App {
                                 match self.scene.load_from_bytes(&scene_bytes, &mut self.world) {
                                     Ok(camera_data) => {
                                         if let Some((position, yaw, pitch)) = camera_data {
-                                            self.simulation.set_position_yaw_pitch(position, yaw, pitch);
+                                            self.simulation
+                                                .set_position_yaw_pitch(position, yaw, pitch);
                                             // Clear any pending input so the restored camera
                                             // orientation isn't immediately overridden by
                                             // accumulated mouse deltas or smoothing state.

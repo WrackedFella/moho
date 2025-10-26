@@ -53,5 +53,8 @@ pub fn map_to_player_inputs(prev: &ContinuousState, curr: &ContinuousState) -> V
 
 /// Utility to stamp a list of inputs with a tick index.
 pub fn stamp_inputs(tick: u64, inputs: Vec<PlayerInput>) -> Vec<TimedInput> {
-    inputs.into_iter().map(|input| TimedInput { tick, input }).collect()
+    inputs
+        .into_iter()
+        .map(|input| TimedInput { tick, input })
+        .collect()
 }
