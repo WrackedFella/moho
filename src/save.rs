@@ -19,7 +19,7 @@ const SAVE_VERSION: u32 = 1;
 pub fn write_scene_with_metadata<P: AsRef<Path>>(
     path: P,
     scene_bytes: &[u8],
-    world_spec: &moho_ui::WorldSpec,
+    world_spec: &moho_core::scene_builders::WorldSpec,
 ) -> Result<(), Box<dyn Error>> {
     let path = path.as_ref();
     let tmp_path = path.with_extension("tmp");
@@ -64,7 +64,7 @@ pub fn write_scene_with_metadata<P: AsRef<Path>>(
 #[cfg(feature = "ui-egui")]
 pub fn read_scene_and_metadata<P: AsRef<Path>>(
     path: P,
-) -> Result<(moho_ui::WorldSpec, Vec<u8>), Box<dyn Error>> {
+    ) -> Result<(moho_core::scene_builders::WorldSpec, Vec<u8>), Box<dyn Error>> {
     let mut f = File::open(path.as_ref())?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf)?;
@@ -99,7 +99,7 @@ pub fn read_scene_and_metadata<P: AsRef<Path>>(
     let scene_bytes = buf[offset..offset + scene_len].to_vec();
 
     // Decode metadata
-    let (spec, _): (moho_ui::WorldSpec, usize) =
+    let (spec, _): (moho_core::scene_builders::WorldSpec, usize) =
         bincode::decode_from_slice(meta_bytes, bincode::config::standard())?;
     Ok((spec, scene_bytes))
 }
@@ -120,7 +120,7 @@ mod tests {
         path.push(format!("moho_test_save_{}.bin", now));
 
         let scene_bytes = vec![9u8, 8, 7, 6];
-        let spec = moho_ui::WorldSpec {
+        let spec = moho_core::scene_builders::WorldSpec {
             name: "test-mod".to_string(),
             seed: Some(1234),
             size_xz: 64,

@@ -1,4 +1,4 @@
-use crate::menus::WorldSpec;
+use moho_core::scene_builders::WorldSpec;
 use crate::menus::menu::{Menu, MenuAction, MenuItem, MenuSpec};
 
 pub struct NewWorldMenu {

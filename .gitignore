@@ -26,5 +26,5 @@ target
 /examples
 /temp
 *.ini
-/sfx
+/assets/
 recipe.json

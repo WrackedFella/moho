@@ -57,7 +57,7 @@ impl AudioSystem {
 
     /// Pre-load common UI sounds to eliminate loading delays
     fn preload_ui_sounds(&mut self) -> AudioResult<()> {
-        let ui_sounds = vec!["sfx/button_click.mp3"];
+    let ui_sounds = vec!["assets/audio/ui/button_click.mp3"];
 
         for sound_path in ui_sounds {
             if let Ok(audio_data) = std::fs::read(sound_path) {
@@ -156,13 +156,13 @@ impl AudioSystem {
     pub fn handle_event(&mut self, event: AudioEvent) -> AudioResult<()> {
         match event {
             AudioEvent::ButtonClick => {
-                // Use the button_click.mp3 from sfx directory
-                self.play_ui_sound("sfx/button_click.mp3", 0.8)
+                // Use the button_click.mp3 from assets/audio/ui directory
+                self.play_ui_sound("assets/audio/ui/button_click.mp3", 0.8)
             }
-            AudioEvent::MenuNavigate => self.play_ui_sound("sfx/button_click.mp3", 0.6),
-            AudioEvent::Confirm => self.play_ui_sound("sfx/button_click.mp3", 0.8),
-            AudioEvent::Cancel => self.play_ui_sound("sfx/button_click.mp3", 0.7),
-            AudioEvent::Error => self.play_ui_sound("sfx/button_click.mp3", 0.9),
+            AudioEvent::MenuNavigate => self.play_ui_sound("assets/audio/ui/button_click.mp3", 0.6),
+            AudioEvent::Confirm => self.play_ui_sound("assets/audio/ui/button_click.mp3", 0.8),
+            AudioEvent::Cancel => self.play_ui_sound("assets/audio/ui/button_click.mp3", 0.7),
+            AudioEvent::Error => self.play_ui_sound("assets/audio/ui/button_click.mp3", 0.9),
             AudioEvent::CustomSound { path, volume } => self.play_sound(&path, volume),
             AudioEvent::BackgroundMusic {
                 path,

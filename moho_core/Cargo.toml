@@ -14,3 +14,4 @@ legion = "0.4"
 log = { workspace = true }
 noise = "0.9"
 serde = { workspace = true, features = ["derive"] }
+bincode = { workspace = true }
