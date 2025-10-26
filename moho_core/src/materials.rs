@@ -1,6 +1,6 @@
 use crate::*;
 use glam::Vec3;
-use rand::{rng, Rng};
+use rand::{Rng, rng};
 
 #[derive(Copy, Clone, PartialEq)]
 pub enum MaterialType {

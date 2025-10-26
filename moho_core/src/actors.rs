@@ -3,8 +3,8 @@ use crate::materials::MaterialType;
 use crate::*;
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
-use legion::query::IntoQuery;
 use legion::World;
+use legion::query::IntoQuery;
 
 #[derive(Copy, Clone)]
 pub struct Sphere {
