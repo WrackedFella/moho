@@ -32,7 +32,7 @@ voice_volume=7.0
 
 ## Audio Categories
 
-The audio settings correspond to the `AudioCategory` enum in `engine_audio/src/audio_source.rs`:
+The audio settings correspond to the `AudioCategory` enum in `moho_audio/src/audio_source.rs`:
 
 - **SoundEffect**: General game sound effects (default: 7.0)
 - **Music**: Background music (default: 5.0)
@@ -63,3 +63,4 @@ music_volume=5.0
 ui_volume=8.0
 voice_volume=7.0
 ```
+

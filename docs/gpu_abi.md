@@ -60,4 +60,5 @@ Size: 80 bytes (5 vec4s).
 ## Tips
 - Always change Rust types first and run `cargo test` to catch size/layout issues.
 - Use `bytemuck::cast_slice` for safe transmutation of `&[MaterialGpu]` to `&[u8]`.
-- Keep `shaders/*.wgsl` and `engine_renderer::gpu_types` in sync when adding fields.
+- Keep `shaders/*.wgsl` and `moho_renderer::gpu_types` in sync when adding fields.
+

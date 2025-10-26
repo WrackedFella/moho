@@ -1,7 +1,7 @@
 // Renderer crate extracted from the main binary to provide a reusable renderer
 // API. The WGPU implementation has been migrated here and organized under a
 // `gfx` module as requested. The crate re-exports a `Renderer` type at the
-// root so callers can continue to use `engine_renderer::Renderer`.
+// root so callers can continue to use `moho_renderer::Renderer`.
 
 pub mod prelude {
     pub use crate::Renderer;
@@ -55,7 +55,7 @@ pub mod gfx {
         extern crate winit;
         // Migrated WGPU implementation (was previously in `src/gpu.rs`). Paths
         // to assets/shaders are adjusted for the crate layout.
-        use engine_core::actors::InstanceGpu as CpuInstance;
+        use moho_core::actors::InstanceGpu as CpuInstance;
         use wgpu::util::DeviceExt;
 
         #[repr(C)]
@@ -217,7 +217,7 @@ pub mod gfx {
                 .join("\n\n");
                 let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("shader"),
-                    // shader path adjusted for crate layout (engine_renderer/src -> repo root)
+                    // shader path adjusted for crate layout (moho_renderer/src -> repo root)
                     source: wgpu::ShaderSource::Wgsl(shader_source.into()),
                 });
                 // Camera uniform bind group (group 0) now contains both the camera
@@ -828,7 +828,7 @@ pub mod gfx {
             pub fn render_mesh(
                 &mut self,
                 mesh: u32,
-                instances: &[engine_core::actors::InstanceGpu],
+                instances: &[moho_core::actors::InstanceGpu],
                 camera: (glam::Mat4, glam::Mat4, glam::Vec3),
                 finalize: bool,
             ) {
@@ -1142,7 +1142,7 @@ pub mod gfx {
 
     #[cfg(not(feature = "backend-wgpu"))]
     pub mod placeholder {
-        use engine_core::actors::InstanceGpu;
+        use moho_core::actors::InstanceGpu;
         pub struct Renderer {}
         impl Default for Renderer {
             fn default() -> Self {
@@ -1172,7 +1172,7 @@ pub mod gfx {
     pub use wgpu_impl::Renderer;
 }
 
-// crate root re-export to preserve the previous `engine_renderer::Renderer` API
+// crate root re-export to preserve the previous `moho_renderer::Renderer` API
 // Note: when the `backend-wgpu` feature is enabled the concrete type is
 // `gfx::wgpu_impl::Renderer<'a>` which borrows a `&'a winit::window::Window`.
 // Callers should create the renderer by passing a borrow of a Window that
@@ -1195,7 +1195,7 @@ pub trait RendererBackend {
     fn render(
         &mut self,
         vertices: &[[f32; 3]],
-        instances: &[engine_core::actors::InstanceGpu],
+        instances: &[moho_core::actors::InstanceGpu],
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     );
     fn request_redraw(&self);
@@ -1222,7 +1222,7 @@ pub trait RendererBackend {
     fn render_mesh(
         &mut self,
         mesh: u32,
-        instances: &[engine_core::actors::InstanceGpu],
+        instances: &[moho_core::actors::InstanceGpu],
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
         finalize: bool,
     );
@@ -1255,7 +1255,7 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     fn render(
         &mut self,
         vertices: &[[f32; 3]],
-        instances: &[engine_core::actors::InstanceGpu],
+        instances: &[moho_core::actors::InstanceGpu],
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
         gfx::wgpu_impl::Renderer::render(self, vertices, instances, camera)
@@ -1285,7 +1285,7 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     fn render_mesh(
         &mut self,
         mesh: u32,
-        instances: &[engine_core::actors::InstanceGpu],
+        instances: &[moho_core::actors::InstanceGpu],
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
         finalize: bool,
     ) {
@@ -1322,7 +1322,7 @@ impl RendererBackend for gfx::placeholder::Renderer {
     fn render(
         &mut self,
         vertices: &[[f32; 3]],
-        instances: &[engine_core::actors::InstanceGpu],
+        instances: &[moho_core::actors::InstanceGpu],
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
         gfx::placeholder::Renderer::render(self, vertices, instances, camera)
@@ -1341,7 +1341,7 @@ impl RendererBackend for gfx::placeholder::Renderer {
     fn render_mesh(
         &mut self,
         _mesh: u32,
-        _instances: &[engine_core::actors::InstanceGpu],
+        _instances: &[moho_core::actors::InstanceGpu],
         _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
         _finalize: bool,
     ) {
@@ -1471,3 +1471,4 @@ pub enum RendererInitError {
     #[error("wgpu backend error: {0}")]
     WgpuInit(String),
 }
+

@@ -4,7 +4,7 @@ This file summarizes the low-risk cleanups and findings from a quick repository 
 
 ## Findings (low-risk)
 
-- `engine_core/src/scene_builders.rs` contains a TODO: `Implement proper greedy meshing before re-enabling smoothing` — a mesh optimization backlog item.
+- `moho_core/src/scene_builders.rs` contains a TODO: `Implement proper greedy meshing before re-enabling smoothing` — a mesh optimization backlog item.
 
 These TODOs were left in place because they are valid development tasks; consider opening issues for them if you want them tracked.
 
@@ -17,3 +17,4 @@ These TODOs were left in place because they are valid development tasks; conside
 - Consider consolidating conceptual documentation into `docs/` while keeping crate `README.md` files focused on usage.
 
 If you want, I can create GitHub issues for the recommended refactors or implement one of the small follow-ups (form validation or input grace-frames).
+

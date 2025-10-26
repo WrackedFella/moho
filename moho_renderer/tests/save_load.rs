@@ -1,5 +1,5 @@
-use engine_core::actors::Sphere;
-use engine_core::materials::MaterialType;
+use moho_core::actors::Sphere;
+use moho_core::materials::MaterialType;
 use glam::Vec3;
 use legion::World;
 
@@ -25,14 +25,14 @@ fn scene_encode_decode_roundtrip_in_memory() {
     world.push((s1,));
     world.push((s2,));
 
-    let scene = engine_renderer::Scene::new();
+    let scene = moho_renderer::Scene::new();
 
     // Encode the scene into in-memory bytes
     let bytes = scene.encode_to_bytes(&world, None).expect("encode ok");
 
     // create a fresh world and decode from bytes
     let mut loaded_world = World::default();
-    let mut scene2 = engine_renderer::Scene::new();
+    let mut scene2 = moho_renderer::Scene::new();
     let _camera_data = scene2
         .load_from_bytes(&bytes, &mut loaded_world)
         .expect("decode ok");
@@ -47,3 +47,4 @@ fn scene_encode_decode_roundtrip_in_memory() {
         "scene roundtrip should preserve entity count"
     );
 }
+

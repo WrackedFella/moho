@@ -107,9 +107,9 @@
 5. **Explore Renderer**
    ```bash
    # Study these files first
-   code engine_renderer/src/lib.rs
-   code engine_renderer/src/scene.rs
-   code engine_renderer/src/gpu_types.rs
+   code moho_renderer/src/lib.rs
+   code moho_renderer/src/scene.rs
+   code moho_renderer/src/gpu_types.rs
    ```
 
 6. **Start Phase 1 of Custom Mesh Plan**
@@ -153,17 +153,17 @@ These changes improve input predictability and make keybind capture robust acros
 ## 🔧 Technical Reference
 
 ### Key Files Modified
-- `engine_core/Cargo.toml` - Added noise dependency
-- `engine_core/src/lib.rs` - Exported voxel module
-- `engine_core/src/voxel.rs` - Complete voxel system (644 lines)
-- `engine_core/src/scene_builders.rs` - Terrain generation
-- `engine_core/src/actors.rs` - Instance collection
+- `moho_core/Cargo.toml` - Added noise dependency
+- `moho_core/src/lib.rs` - Exported voxel module
+- `moho_core/src/voxel.rs` - Complete voxel system (644 lines)
+- `moho_core/src/scene_builders.rs` - Terrain generation
+- `moho_core/src/actors.rs` - Instance collection
 - `src/main.rs` - Camera position and scene selection
 
 ### Key Files to Modify Next
-- `engine_core/src/actors.rs` - Add `CustomMesh` trait
-- `engine_renderer/src/scene.rs` - Add custom mesh manager
-- `engine_renderer/src/lib.rs` - Integrate custom rendering
+- `moho_core/src/actors.rs` - Add `CustomMesh` trait
+- `moho_renderer/src/scene.rs` - Add custom mesh manager
+- `moho_renderer/src/lib.rs` - Integrate custom rendering
 - Main render loop - Call custom mesh collection
 
 ### Dependencies
@@ -209,10 +209,10 @@ These changes improve input predictability and make keybind capture robust acros
 ## 🔗 Related Files
 
 ### Source Code
-- `engine_core/src/voxel.rs` - Core voxel system
-- `engine_core/src/scene_builders.rs` - Terrain generation
-- `engine_core/src/actors.rs` - Renderable trait
-- `engine_renderer/src/` - Rendering system (to be modified)
+- `moho_core/src/voxel.rs` - Core voxel system
+- `moho_core/src/scene_builders.rs` - Terrain generation
+- `moho_core/src/actors.rs` - Renderable trait
+- `moho_renderer/src/` - Rendering system (to be modified)
 
 ### Shaders
 - `shaders/vertex.wgsl` - Vertex shader (check compatibility)
@@ -229,3 +229,4 @@ These changes improve input predictability and make keybind capture robust acros
 ---
 
 **Ready to proceed? Start with `CURRENT_STATE.md` then move to `CUSTOM_MESH_RENDERING_PLAN.md`** 🚀
+

@@ -36,7 +36,7 @@ Key API (adapter surface)
 - Construction: `EguiUi::new(window: Option<Arc<winit::window::Window>>) -> (EguiUi, UiReceiver)`
   - Returns the adapter and a `crossbeam_channel::Receiver<UiEvent>`.
 - Methods on `EguiUi`:
-  - `set_surface_format(fmt: engine_renderer::TextureFormatRepr)` — inform the
+  - `set_surface_format(fmt: moho_renderer::TextureFormatRepr)` — inform the
     adapter about the swapchain format so the egui GPU renderer can be
     initialized.
   - `recall_staging_belt(&mut self)` — IMPORTANT: call this on the adapter
@@ -104,3 +104,4 @@ Important integration notes and quirks
 Notes
 -----
 - Keep the full adapter implementation notes here for maintainers. The crate-level `README.md` should remain a short quick-start and usage pointer to this document.
+

@@ -1,5 +1,5 @@
 [package]
-name = "engine_core"
+name = "moho_core"
 version = "0.1.0"
 authors = ["Justin Moore <jmoore5268@gmail.com>"]
 edition = "2018"

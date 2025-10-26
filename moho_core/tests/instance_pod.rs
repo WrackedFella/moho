@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use engine_core::actors::InstanceGpu;
+use moho_core::actors::InstanceGpu;
 
 #[test]
 fn instance_gpu_pod_and_size() {
@@ -11,3 +11,4 @@ fn instance_gpu_pod_and_size() {
     assert_eq!(std::mem::size_of::<InstanceGpu>() % 16, 0);
     assert_eq!(std::mem::size_of::<InstanceGpu>(), 80);
 }
+

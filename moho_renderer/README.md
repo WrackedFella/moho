@@ -7,7 +7,7 @@ Ownership and lifetimes
 
 # engine_renderer
 
-Renderer utilities for Moho. Detailed design notes and lifetime constraints have been moved to `docs/engine_renderer/CONCEPTS.md`.
+Renderer utilities for Moho. Detailed design notes and lifetime constraints have been moved to `docs/moho_renderer/CONCEPTS.md`.
 
 Quick start
 -----------
@@ -16,3 +16,4 @@ Quick start
 Logging
 -------
 - The crate uses the `log` facade; initialize a logger (e.g., `env_logger`) or set `RUST_LOG` to control verbosity.
+
