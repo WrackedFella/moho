@@ -34,7 +34,7 @@ jobs:
     needs: prepare
     strategy:
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +47,7 @@ jobs:
         with:
           toolchain: stable
       - name: Install system deps (alsa, pkg-config)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
@@ -99,6 +100,8 @@ jobs:
         run: |
           brew update || true
           brew install sccache || true
+          # Ensure rustfmt and clippy are available on the macOS runner
+          rustup component add rustfmt clippy || true
           cargo install cargo-chef --locked || true
 
       - name: Run cargo-chef cook on macOS runner
@@ -112,6 +115,8 @@ jobs:
         shell: pwsh
         run: |
           choco install sccache -y || true
+          # Ensure rustfmt and clippy are available on the Windows runner
+          rustup component add rustfmt clippy || true
           cargo install cargo-chef --locked || true
 
       - name: Run cargo-chef cook on Windows runner
@@ -126,7 +131,7 @@ jobs:
     needs: cook
     strategy:
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -135,6 +140,7 @@ jobs:
         with:
           toolchain: stable
       - name: Install system deps (alsa, pkg-config)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
@@ -191,6 +197,8 @@ jobs:
           brew install sccache || true
           echo "RUSTC_WRAPPER=$(which sccache)" >> $GITHUB_ENV
           sccache --start-server || true
+          # Ensure rustfmt and clippy are available for format/lint checks
+          rustup component add rustfmt clippy || true
           cargo fmt --all -- --check
           cargo clippy --all-targets --all-features -- -D warnings
           cargo test --all --workspace -- -q
@@ -204,6 +212,8 @@ jobs:
           $env:RUSTC_WRAPPER = (Get-Command sccache).Source
           [System.Environment]::SetEnvironmentVariable('RUSTC_WRAPPER', $env:RUSTC_WRAPPER, 'Process')
           sccache --start-server || true
+          # Ensure rustfmt and clippy are available for format/lint checks
+          rustup component add rustfmt clippy || true
           cargo fmt --all -- --check
           cargo clippy --all-targets --all-features -- -D warnings
           cargo test --all --workspace -- -q
