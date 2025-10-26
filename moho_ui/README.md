@@ -1,124 +1,19 @@
 moho_ui — egui overlay adapter
 
-Overview
+moho_ui — egui overlay adapter
 
-`moho_ui` provides a small embedded egui adapter that implements the engine's
-`FrameCallback` and exposes a channel of `UiEvent` messages the application
-(main) can poll. It is designed as a minimal integration layer so the rest of
-the engine can be mostly UI-backend-agnostic.
+This crate provides an embedded egui adapter that integrates with the engine's frame loop.
 
-This README documents how to use the adapter, the important implementation
-notes and quirks we discovered while integrating egui v0.33, and tips to avoid
-subtle coordinate / timing problems.
+Conceptual background and integration notes have been moved to `docs/moho_ui/CONCEPTS.md`.
 
 Quick start
+-----------
+- Build with egui features: `cargo run -p moho --features "backend-wgpu ui-egui"`.
 
-- Build and run the app with egui and debug helpers:
+API notes
+---------
+- The adapter exposes `EguiUi` and a `crossbeam_channel::Receiver<UiEvent>` for main to poll.
 
-```powershell
-cargo run -p moho --features "backend-wgpu ui-egui ui-egui-debug"
-```
-
-- The adapter constructs an egui `Context` and (when a `winit::Window` is
-available) an `egui_winit::State`. It exposes a channel receiver you can poll
-for `UiEvent` messages.
-
-Key API (adapter surface)
-
-- Type: `moho_ui::egui_adapter::EguiUi`
-- Construction: `EguiUi::new(window: Option<Arc<winit::window::Window>>) -> (EguiUi, UiReceiver)`
-  - Returns the adapter and a `crossbeam_channel::Receiver<UiEvent>`.
-- Methods on `EguiUi`:
-  - `set_surface_format(fmt: engine_renderer::TextureFormatRepr)` — inform the
-    adapter about the swapchain format so the egui GPU renderer can be
-    initialized.
-  - `recall_staging_belt(&mut self)` — IMPORTANT: call this on the adapter
-    immediately after the engine calls `queue.submit(...)`. This lets the
-    internal `wgpu::util::StagingBelt` reclaim its memory safely.
-  - `send_load_scene(path)` / `send_exit()` — convenience helpers that send
-    `UiEvent::LoadScene` / `UiEvent::Exit` on the internal channel.
-  - `is_visible()` — whether the overlay is currently visible.
-
-Events sent by the UI
-
-`UiEvent` enum (sent from adapter -> main):
-- `LoadScene(PathBuf)` — Request to load a scene. Adapter uses a default path
-  in the small demo UI; real integrations should wire this to a file chooser
-  or similar.
-- `Exit` — Request to exit the application.
-- `OverlayToggled(bool)` — Overlay shown/hidden. The adapter sends this so the
-  application (main) can perform OS-level cursor visibility/grab changes.
-
-Important integration notes and quirks
-
-1) Centralize OS cursor/grab state in `main`
-- The adapter intentionally does not directly change OS cursor visibility or
-  grab in most places. Instead it sends `UiEvent::OverlayToggled(bool)` and
-  expects `main` to apply cursor visibility/grab changes. This avoids races
-  and duplicate side-effects when multiple systems attempt to change the
-  cursor state.
-
-2) Staging belt lifecycle
-- `EguiUi` uses a `wgpu::util::StagingBelt` to upload egui textures/buffers.
-  The adapter calls `staging_belt.finish()` before returning from its
-  `FrameCallback`. The engine MUST call `EguiUi::recall_staging_belt()` right
-  after `queue.submit(...)` to let the belt reclaim memory. Failure to do so
-  will cause memory to accumulate.
-
-3) Input translation and synthetic pointer
-- When a `Window` is available, the adapter prefers `egui_winit::State` to
-  translate winit events into egui `RawInput`. If egui_winit isn't used (or
-  when we want to ensure manually-injected events are processed immediately),
-  the adapter falls back to `egui::RawInput` and will set
-  `force_raw_input_next_frame` so synthetic events are consumed on the next
-  frame.
-- When showing the overlay (for example the start menu) the adapter seeds a
-  synthetic `PointerMoved` at a sensible top-left position (16,16) so the UI
-  is interactive immediately — this avoids UI requiring one extra real mouse
-  move to become responsive.
-
-4) Warmup pass to avoid "zero shapes on first frame"
-- To avoid an egui regression where anchored Areas can produce no shapes on
-  the first frame, the adapter performs a short warmup frame (a color clear
-  and a minimal egui frame) the first time the overlay is shown. This is
-  feature-guarded and can be observed with `ui-egui-debug`.
-
-5) Clicks that occur entirely between frames (press+release) — fallback
-   hit-testing
-- To make the simple top-left menu reliably clickable even when press and
-  release happen between frames (which can occur when the app runs at a
-  lower frame-rate or the user clicks fast), the adapter implements a
-  fallback immediate hit-test path:
-  - When events are forwarded to `egui_winit`, it prefers to let egui
-    consume events. However `egui_winit` can return "not consumed" for
-    some events. In that case the adapter records press locations and, on
-    release, performs an immediate hit-test and may send UI events.
-  - The fallback uses the exact `egui::Rect` recorded from the last egui
-    frame (stored as `load_button_rect` / `exit_button_rect`). This keeps the
-    fallback geometry identical to the painted debug rectangles and avoids
-    hard-coded geometry mismatches.
-
-6) Coordinate space (logical vs device pixels)
-- `egui::Response.rect` and egui logical coordinates are in "points" (logical
-  pixels). winit reports cursor positions in physical/device pixels. The
-  adapter converts winit positions to logical points by dividing by
-  `window.scale_factor()` when capturing cursor positions so hit-tests use the
-  same coordinate space. If you change how/where cursor positions are
-  recorded, ensure you preserve this conversion.
-
-7) Debugging helpers (feature `ui-egui-debug`)
-- Compile/run with `ui-egui-debug` to enable:
-  - Extra INFO logs from the adapter.
-  - A magenta warmup clear (visual diagnostic) when the overlay first shows.
-  - Painted translucent red/green rectangles showing the exact egui
-    `Response.rect` for the Load/Exit buttons.
-  - Extra diagnostic logs showing `load_rect`, `exit_rect` and the recorded
-    cursor positions used by the fallback hit-test.
-
-Root cause we found and fix summary
-
-- Symptom: Clicking the Exit area sometimes triggered Load Scene even though
-  the debug rectangles matched the visual UI.
 
 - Short diagnosis: The non-egui fallback used a different geometry/coordinate
   space than the painted egui widgets — at one point the fallback used hard

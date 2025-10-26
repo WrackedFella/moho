@@ -7,6 +7,9 @@
 
 ## 📚 Document Overview
 
+> Cleanup notes and low-risk findings were added to `docs/CLEANUP_NOTES.md` on 2025-10-25. (Removed the previously archived third-party README from the repository root.)
+
+
 ### Current State & Next Steps
 - **[CURRENT_STATE.md](CURRENT_STATE.md)** ⭐ START HERE
   - Complete status of implemented features
