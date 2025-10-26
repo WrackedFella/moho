@@ -47,6 +47,7 @@ jobs:
         with:
           toolchain: stable
       - name: Install system deps (alsa, pkg-config)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
@@ -139,6 +140,7 @@ jobs:
         with:
           toolchain: stable
       - name: Install system deps (alsa, pkg-config)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
