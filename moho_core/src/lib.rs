@@ -2,7 +2,7 @@ extern crate glam;
 extern crate rand;
 use crate::materials::MaterialType;
 use glam::Vec3;
-use rand::{rng, Rng};
+use rand::{Rng, rng};
 
 pub mod actors;
 pub mod camera;

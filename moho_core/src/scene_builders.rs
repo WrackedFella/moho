@@ -6,7 +6,7 @@ use crate::materials::MaterialType;
 use crate::vector_length;
 use crate::voxel::{BlockPos, MeshGenerator, VoxelBlock, VoxelChunk, VoxelGrid};
 use noise::{NoiseFn, Perlin};
-use rand::{rng, Rng};
+use rand::{Rng, rng};
 
 /// Simple random scene generator used for testing and demos.
 /// Moved out of `main.rs` to keep application code minimal.

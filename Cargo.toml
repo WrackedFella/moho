@@ -1,56 +1,85 @@
+[[bin]]
+path = "src/main.rs"
+name = "moho"
+required-features = []
+
 [package]
 name = "moho"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-moho_core = { path = "moho_core" }
-moho_renderer = { path = "moho_renderer" }
-moho_audio = { path = "moho_audio" }
-moho_input = { path = "moho_input" }
-moho_sim = { path = "moho_sim" }
-glam = { workspace = true }
-rand = { workspace = true }
-legion = "0.4.0"
-log = { workspace = true }
-env_logger = { workspace = true }
-moho_ui = { path = "moho_ui", optional = true }
-bincode = { workspace = true }
-crossbeam-channel = "0.5"
-
-# Optional frontend/backends
-winit = { version = "0.30", optional = true }
-# make workspace wgpu available as an optional dependency so features can refer to it
-wgpu = { workspace = true, optional = true }
-# WGPU and naga are provided at the workspace level to keep versions consistent
-pollster = { version = "0.4", optional = true }
-bytemuck = { version = "1.9.1", features = ["derive"] }
-
-[features]
-# Enable the WGPU renderer implementation (renamed to avoid name collision)
-backend-wgpu = ["wgpu", "winit", "pollster", "moho_renderer/backend-wgpu"]
-# UI feature to enable egui integration. This enables the moho_ui crate with
-# its `ui-egui` feature so the main binary can use the adapter.
-ui-egui = ["moho_ui/ui-egui"]
-ui-egui-debug = ["moho_ui/ui-egui-debug"]
-
-
-[workspace.dependencies]
-# Centralize common workspace dependency versions
-wgpu = "27"
-naga = "27"
-log = "0.4"
-env_logger = "0.10"
-bytemuck = "1.24"
-glam = "0.30.8"
-rand = "0.9.2"
-serde = "1.0"
-bincode = "2.0"
-winit = "0.30"
-pollster = "0.4"
-rodio = "0.19"
-
 [workspace]
 members = ["moho_core", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_sim"]
 
+[workspace.dependencies]
+bincode = "2.0"
+bytemuck = "1.24"
+env_logger = "0.10"
+glam = "0.30.8"
+log = "0.4"
+naga = "27"
+pollster = "0.4"
+rand = "0.9.2"
+rodio = "0.19"
+serde = "1.0"
+wgpu = "27"
+winit = "0.30"
 
+[dependencies]
+crossbeam-channel = "0.5"
+legion = "0.4.0"
+
+[dependencies.bincode]
+workspace = true
+
+[dependencies.bytemuck]
+version = "1.9.1"
+features = ["derive"]
+
+[dependencies.env_logger]
+workspace = true
+
+[dependencies.glam]
+workspace = true
+
+[dependencies.log]
+workspace = true
+
+[dependencies.moho_audio]
+path = "moho_audio"
+
+[dependencies.moho_core]
+path = "moho_core"
+
+[dependencies.moho_input]
+path = "moho_input"
+
+[dependencies.moho_renderer]
+path = "moho_renderer"
+
+[dependencies.moho_sim]
+path = "moho_sim"
+
+[dependencies.moho_ui]
+path = "moho_ui"
+optional = true
+
+[dependencies.pollster]
+version = "0.4"
+optional = true
+
+[dependencies.rand]
+workspace = true
+
+[dependencies.wgpu]
+workspace = true
+optional = true
+
+[dependencies.winit]
+version = "0.30"
+optional = true
+
+[features]
+backend-wgpu = ["wgpu", "winit", "pollster", "moho_renderer/backend-wgpu"]
+ui-egui = ["moho_ui/ui-egui"]
+ui-egui-debug = ["moho_ui/ui-egui-debug"]
