@@ -1,5 +1,5 @@
-use crate::forms::FormBuilder;
-use crate::menus::menu::{Menu, MenuAction, MenuSpec};
+use crate::forms::FormControls;
+use crate::menus::menu::{Menu, MenuAction, ScreenSpec};
 use crate::prefs::{Binding, Prefs};
 use std::collections::HashSet;
 
@@ -27,7 +27,7 @@ struct PendingBinding {
 }
 
 pub struct SettingsMenu {
-    spec: MenuSpec,
+    spec: ScreenSpec,
     prefs: Prefs,
     staged: Prefs,
     dirty_fields: HashSet<SettingsField>,
@@ -43,7 +43,7 @@ impl SettingsMenu {
     pub fn new() -> Self {
         let prefs = Prefs::load();
         Self {
-            spec: MenuSpec::default(),
+            spec: ScreenSpec::default(),
             prefs: prefs.clone(),
             staged: prefs,
             dirty_fields: HashSet::new(),
@@ -472,7 +472,7 @@ impl Menu for SettingsMenu {
         "settings"
     }
 
-    fn spec(&self) -> &MenuSpec {
+    fn spec(&self) -> &ScreenSpec {
         &self.spec
     }
 
@@ -581,7 +581,7 @@ impl Menu for SettingsMenu {
                                     // Move Forward
                                     {
                                         let is_dirty = self.staged.key_w != self.prefs.key_w;
-                                        let clicked = FormBuilder::keybind_control(
+                                        let clicked = FormControls::keybind_control(
                                             ui,
                                             "Move Forward:",
                                             &Self::binding_label(&self.staged.key_w),
@@ -602,7 +602,7 @@ impl Menu for SettingsMenu {
                                     // Move Left
                                     {
                                         let is_dirty = self.staged.key_a != self.prefs.key_a;
-                                        let clicked = FormBuilder::keybind_control(
+                                        let clicked = FormControls::keybind_control(
                                             ui,
                                             "Move Left:",
                                             &Self::binding_label(&self.staged.key_a),
@@ -623,7 +623,7 @@ impl Menu for SettingsMenu {
                                     // Move Back
                                     {
                                         let is_dirty = self.staged.key_s != self.prefs.key_s;
-                                        let clicked = FormBuilder::keybind_control(
+                                        let clicked = FormControls::keybind_control(
                                             ui,
                                             "Move Back:",
                                             &Self::binding_label(&self.staged.key_s),
@@ -644,7 +644,7 @@ impl Menu for SettingsMenu {
                                     // Move Right
                                     {
                                         let is_dirty = self.staged.key_d != self.prefs.key_d;
-                                        let clicked = FormBuilder::keybind_control(
+                                        let clicked = FormControls::keybind_control(
                                             ui,
                                             "Move Right:",
                                             &Self::binding_label(&self.staged.key_d),
@@ -665,7 +665,7 @@ impl Menu for SettingsMenu {
                                     // Move Up
                                     {
                                         let is_dirty = self.staged.key_up != self.prefs.key_up;
-                                        let clicked = FormBuilder::keybind_control(
+                                        let clicked = FormControls::keybind_control(
                                             ui,
                                             "Move Up:",
                                             &Self::binding_label(&self.staged.key_up),
@@ -686,7 +686,7 @@ impl Menu for SettingsMenu {
                                     // Move Down
                                     {
                                         let is_dirty = self.staged.key_down != self.prefs.key_down;
-                                        let clicked = FormBuilder::keybind_control(
+                                        let clicked = FormControls::keybind_control(
                                             ui,
                                             "Move Down:",
                                             &Self::binding_label(&self.staged.key_down),
@@ -832,7 +832,7 @@ impl Menu for SettingsMenu {
 
                                     // Sound Effect Volume
                                     {
-                                        let dirty = FormBuilder::volume_slider(
+                                        let dirty = FormControls::volume_slider(
                                             ui,
                                             "Sound Effects:",
                                             &mut self.staged.audio_sound_effect_volume,
@@ -850,7 +850,7 @@ impl Menu for SettingsMenu {
 
                                     // Music Volume
                                     {
-                                        let dirty = FormBuilder::volume_slider(
+                                        let dirty = FormControls::volume_slider(
                                             ui,
                                             "Music:",
                                             &mut self.staged.audio_music_volume,
@@ -866,7 +866,7 @@ impl Menu for SettingsMenu {
 
                                     // UI Volume
                                     {
-                                        let dirty = FormBuilder::volume_slider(
+                                        let dirty = FormControls::volume_slider(
                                             ui,
                                             "User Interface:",
                                             &mut self.staged.audio_ui_volume,
@@ -882,7 +882,7 @@ impl Menu for SettingsMenu {
 
                                     // Voice Volume
                                     {
-                                        let dirty = FormBuilder::volume_slider(
+                                        let dirty = FormControls::volume_slider(
                                             ui,
                                             "Voice:",
                                             &mut self.staged.audio_voice_volume,

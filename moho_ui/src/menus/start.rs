@@ -1,14 +1,14 @@
-use crate::menus::menu::{Menu, MenuAction, MenuSpec};
+use crate::menus::menu::{Menu, MenuAction, ScreenSpec};
 use std::path::PathBuf;
 
 pub struct StartMenu {
-    spec: MenuSpec,
+    spec: ScreenSpec,
 }
 
 impl StartMenu {
     pub fn new() -> Self {
         Self {
-            spec: MenuSpec::default(),
+            spec: ScreenSpec::default(),
         }
     }
 }
@@ -23,7 +23,7 @@ impl Menu for StartMenu {
     fn name(&self) -> &str {
         "start"
     }
-    fn spec(&self) -> &MenuSpec {
+    fn spec(&self) -> &ScreenSpec {
         &self.spec
     }
     fn ui(&mut self, ctx: &egui::Context) -> Vec<crate::menus::menu::MenuItem> {

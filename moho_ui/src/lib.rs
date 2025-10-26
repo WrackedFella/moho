@@ -53,6 +53,9 @@ pub mod modals;
 #[cfg(feature = "ui-egui")]
 pub mod forms;
 
+#[cfg(feature = "ui-egui")]
+pub mod input_handling;
+
 // Re-export the main types for easy access
 #[cfg(feature = "ui-egui")]
 pub use adapter::{
@@ -75,4 +78,4 @@ pub use modal::{Modal, ModalManager, ModalResult};
 pub use modals::KeybindConflictModal;
 
 #[cfg(feature = "ui-egui")]
-pub use forms::FormBuilder;
+pub use forms::FormControls;

@@ -1,8 +1,8 @@
 use moho_core::scene_builders::WorldSpec;
-use crate::menus::menu::{Menu, MenuAction, MenuItem, MenuSpec};
+use crate::menus::menu::{Menu, MenuAction, MenuItem, ScreenSpec};
 
 pub struct NewWorldMenu {
-    spec: MenuSpec,
+    spec: ScreenSpec,
     name_input: String,
     seed_input: String,
     size_xz: u32,
@@ -11,7 +11,7 @@ pub struct NewWorldMenu {
 impl NewWorldMenu {
     pub fn new() -> Self {
         Self {
-            spec: MenuSpec::default(),
+            spec: ScreenSpec::default(),
             name_input: String::from("New World"),
             seed_input: String::new(),
             size_xz: 128,
@@ -30,7 +30,7 @@ impl Menu for NewWorldMenu {
         "new_world"
     }
 
-    fn spec(&self) -> &MenuSpec {
+    fn spec(&self) -> &ScreenSpec {
         &self.spec
     }
 

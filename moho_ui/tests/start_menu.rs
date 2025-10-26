@@ -38,12 +38,13 @@ fn start_menu_returns_expected_action_and_rects() {
 
 #[test]
 fn hit_test_helper_press_release_and_release_only() {
-    use moho_ui::menus::menu::{MenuAction, MenuItem, hit_test_menu_items};
+    use moho_ui::menus::menu::{MenuAction, MenuItem};
+    use moho_ui::input_handling::{hit_test_menu_items, rect_from_min_max};
 
     // Construct four menu items with deterministic rects in logical points
     let cont = MenuItem {
         action: MenuAction::LoadScene(PathBuf::from("saves/scene.bin")),
-        rect: Some(moho_ui::menus::menu::rect_from_min_max(
+        rect: Some(rect_from_min_max(
             8.0, 8.0, 128.0, 40.0,
         )),
         enabled: true,
@@ -51,7 +52,7 @@ fn hit_test_helper_press_release_and_release_only() {
     };
     let neww = MenuItem {
         action: MenuAction::NewWorld,
-        rect: Some(moho_ui::menus::menu::rect_from_min_max(
+        rect: Some(rect_from_min_max(
             8.0, 48.0, 128.0, 80.0,
         )),
         enabled: true,
@@ -59,7 +60,7 @@ fn hit_test_helper_press_release_and_release_only() {
     };
     let set = MenuItem {
         action: MenuAction::ShowMenu("settings".to_string()),
-        rect: Some(moho_ui::menus::menu::rect_from_min_max(
+        rect: Some(rect_from_min_max(
             8.0, 88.0, 128.0, 120.0,
         )),
         enabled: true,
@@ -67,7 +68,7 @@ fn hit_test_helper_press_release_and_release_only() {
     };
     let exit = MenuItem {
         action: MenuAction::Exit,
-        rect: Some(moho_ui::menus::menu::rect_from_min_max(
+        rect: Some(rect_from_min_max(
             8.0, 128.0, 128.0, 160.0,
         )),
         enabled: true,
