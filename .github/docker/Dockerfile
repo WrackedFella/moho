@@ -16,6 +16,9 @@ RUN apt-get update \
 RUN cargo install cargo-chef --locked || true
 RUN cargo install sccache --locked || true
 
+# Ensure cargo-installed binaries are on PATH for all container runs
+ENV PATH=/usr/local/cargo/bin:$PATH
+
 # Ensure sccache directory exists
 RUN mkdir -p /root/.cache/sccache /root/.cargo/registry /root/.cargo/git
 
