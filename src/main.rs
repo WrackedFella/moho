@@ -28,6 +28,13 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 #[cfg(feature = "backend-wgpu")]
 use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
+
+// Core game state and input routing modules
+#[cfg(feature = "backend-wgpu")]
+mod game_state;
+#[cfg(feature = "backend-wgpu")]
+mod input_routing;
+
 mod save;
 
 #[cfg(feature = "ui-egui")]
