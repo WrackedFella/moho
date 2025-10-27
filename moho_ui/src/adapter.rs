@@ -57,6 +57,10 @@ pub struct EguiAdapter {
     // Window reference
     window: Option<Arc<Window>>,
 
+    // Game state (used to determine what to render)
+    // This is updated by the main app before each frame
+    current_game_state: GameState,
+
     // Optional progress overlay state. When Some, the adapter will render a
     // simple modal progress overlay showing percent complete and an optional
     // cancel button. The main application can control this by locking the
@@ -65,6 +69,15 @@ pub struct EguiAdapter {
 
     // Rendering
     surface_config: Option<wgpu::SurfaceConfiguration>,
+}
+
+/// Game state enum (re-exported from main crate for UI use)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameState {
+    Menu,
+    Playing,
+    ConsoleOpen,
+    Paused,
 }
 
 /// Lightweight progress state used by the adapter to render an overlay.
@@ -105,9 +118,15 @@ impl EguiAdapter {
             ui_state: UiStateManager::new(),
             event_bus,
             window,
+            current_game_state: GameState::Menu,
             surface_config: None,
             progress: None,
         }
+    }
+
+    /// Update the current game state (called by main app each frame)
+    pub fn set_game_state(&mut self, state: GameState) {
+        self.current_game_state = state;
     }
 
     /// Add a new menu to the manager
@@ -319,6 +338,11 @@ impl FrameCallback for EguiAdapter {
         surface_width: u32,
         surface_height: u32,
     ) {
+        // Note: We need GameState to determine what to render.
+        // For now, use the visible flag. The main app will need to pass GameState
+        // or we can read it from the event bus in the future.
+        // TODO: Accept GameState as parameter or store in adapter
+
         // Skip rendering if UI is not visible
         if !self.ui_state.visible {
             return;
@@ -343,27 +367,70 @@ impl FrameCallback for EguiAdapter {
         let mut modal_result = crate::modal::ModalResult::None;
 
         let full_output = self.context.run(raw_input, |ctx| {
-            // Render active screen if any
-            if let Some(screen) = self.ui_state.active_screen_mut() {
-                let items = screen.render(ctx);
+            // Render based on current game state
+            match self.current_game_state {
+                GameState::Menu => {
+                    // Render menu screens
+                    if let Some(screen) = self.ui_state.active_screen_mut() {
+                        let items = screen.render(ctx);
 
-                // Collect clicked actions for processing outside the closure
-                for item in items {
-                    if item.clicked && item.enabled {
-                        menu_actions.push(item.action);
+                        // Collect clicked actions for processing outside the closure
+                        for item in items {
+                            if item.clicked && item.enabled {
+                                menu_actions.push(item.action);
+                            }
+                        }
+                    }
+
+                    // Check if any screen wants to show a modal
+                    if let Some(screen) = self.ui_state.active_screen_mut()
+                        && let Some(modal) = screen.take_pending_modal()
+                    {
+                        self.ui_state.modal_manager.show(modal);
+                    }
+
+                    // Render modal on top of menu (if active)
+                    modal_result = self.ui_state.modal_manager.render(ctx);
+                }
+                GameState::ConsoleOpen => {
+                    // Render console overlay (game world is rendered by main renderer)
+                    let console_action = self.ui_state.console.render(ctx);
+
+                    // Process console action
+                    use crate::overlays::ConsoleAction;
+                    match console_action {
+                        ConsoleAction::Quit => {
+                            use moho_core::events::UiEvent;
+                            self.event_bus.publish(UiEvent::ExitRequested);
+                        }
+                        ConsoleAction::ToggleGodMode => {
+                            use moho_core::events::DebugEvent;
+                            self.event_bus
+                                .publish(DebugEvent::ToggleGodMode { enabled: true });
+                        }
+                        ConsoleAction::ToggleNoclip => {
+                            use moho_core::events::DebugEvent;
+                            self.event_bus
+                                .publish(DebugEvent::ToggleCollision { enabled: false });
+                        }
+                        ConsoleAction::None => {}
                     }
                 }
-            }
-
-            // Check if any screen wants to show a modal
-            if let Some(screen) = self.ui_state.active_screen_mut()
-                && let Some(modal) = screen.take_pending_modal()
-            {
-                self.ui_state.modal_manager.show(modal);
-            }
-
-            // Render modal on top of menu (if active)
-            modal_result = self.ui_state.modal_manager.render(ctx); // Progress overlay (renders above menus). Keep it simple: a centered
+                GameState::Paused => {
+                    // TODO: Render pause menu overlay when implemented
+                    // For now, just render a simple "Paused" message
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.centered_and_justified(|ui| {
+                            ui.heading("Paused");
+                            ui.label("Press ESC to resume");
+                        });
+                    });
+                }
+                GameState::Playing => {
+                    // No UI rendering when playing (game world only)
+                    // This path should rarely be hit since ui_state.visible should be false
+                }
+            } // Progress overlay (renders above menus). Keep it simple: a centered
             // window with a progress bar and optional Cancel button. The cancel
             // flag is stored in the ProgressState so the caller can poll it.
             if let Some(progress) = self.progress.as_mut() {

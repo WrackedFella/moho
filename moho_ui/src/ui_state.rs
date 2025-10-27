@@ -4,6 +4,7 @@
 //! making the adapter lighter and the state easier to test and maintain.
 
 use crate::modal::ModalManager;
+use crate::overlays::Console;
 use crate::screens::Menu;
 use std::collections::HashMap;
 
@@ -17,6 +18,9 @@ pub struct UiStateManager {
 
     /// Modal dialog manager
     pub modal_manager: ModalManager,
+
+    /// Debug console overlay (separate from screens)
+    pub console: Console,
 
     /// Whether UI is currently visible
     pub visible: bool,
@@ -38,6 +42,7 @@ impl UiStateManager {
             screens,
             active_screen: Some("start".to_string()),
             modal_manager: ModalManager::new(),
+            console: Console::new(),
             visible: true,
         }
     }

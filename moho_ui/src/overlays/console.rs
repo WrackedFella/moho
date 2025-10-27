@@ -11,6 +11,19 @@ const MAX_HISTORY: usize = 100;
 /// Maximum number of output lines to display
 const MAX_OUTPUT_LINES: usize = 20;
 
+/// Console command action to be processed by the application
+#[derive(Debug, Clone)]
+pub enum ConsoleAction {
+    /// Quit the application
+    Quit,
+    /// Toggle god mode
+    ToggleGodMode,
+    /// Toggle noclip mode
+    ToggleNoclip,
+    /// No action
+    None,
+}
+
 /// Console overlay component for debugging and command execution.
 ///
 /// The console does NOT manage its own visibility - that's handled by GameState.
@@ -55,10 +68,14 @@ impl Console {
 
     /// Render the console overlay.
     ///
+    /// Returns a `ConsoleAction` if a command was executed that needs
+    /// to be processed by the application.
+    ///
     /// # Arguments
     ///
     /// * `ctx` - The egui context to render into
-    pub fn render(&mut self, ctx: &egui::Context) {
+    pub fn render(&mut self, ctx: &egui::Context) -> ConsoleAction {
+        let mut action = ConsoleAction::None;
         // Console panel at bottom of screen
         egui::TopBottomPanel::bottom("console_panel")
             .resizable(true)
@@ -108,7 +125,7 @@ impl Console {
 
                     // Handle enter key
                     if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        self.execute_command();
+                        action = self.execute_command();
                         self.focus_input = true; // Re-focus for next command
                     }
 
@@ -122,40 +139,42 @@ impl Console {
                     }
                 });
             });
+
+        action
     }
 
     /// Execute the current command in the input buffer.
-    fn execute_command(&mut self) {
+    fn execute_command(&mut self) -> ConsoleAction {
         let command = self.input_buffer.trim().to_string();
 
         if command.is_empty() {
-            return;
+            return ConsoleAction::None;
         }
 
-        // Add command to output
+        // Echo command to output
         self.add_output(format!("> {}", command));
 
         // Add to history
-        if self.history.is_empty() || self.history.back() != Some(&command) {
-            self.history.push_back(command.clone());
-            if self.history.len() > MAX_HISTORY {
-                self.history.pop_front();
-            }
+        self.history.push_back(command.clone());
+        if self.history.len() > MAX_HISTORY {
+            self.history.pop_front();
         }
         self.history_index = None;
 
-        // Parse and handle command
-        self.handle_command(&command);
+        // Handle command and get action
+        let action = self.handle_command(&command);
 
         // Clear input
         self.input_buffer.clear();
+
+        action
     }
 
-    /// Handle a parsed command.
-    fn handle_command(&mut self, command: &str) {
+    /// Handle a parsed command and return the action.
+    fn handle_command(&mut self, command: &str) -> ConsoleAction {
         let parts: Vec<&str> = command.split_whitespace().collect();
         if parts.is_empty() {
-            return;
+            return ConsoleAction::None;
         }
 
         match parts[0].to_lowercase().as_str() {
@@ -166,27 +185,28 @@ impl Console {
                 self.add_output("  quit - Exit the application".to_string());
                 self.add_output("  god - Toggle god mode (invincibility)".to_string());
                 self.add_output("  noclip - Toggle noclip mode (fly through walls)".to_string());
+                ConsoleAction::None
             }
             "clear" => {
                 self.output.clear();
+                ConsoleAction::None
             }
             "quit" => {
-                self.add_output("Quit command recognized (event will be published)".to_string());
-                // TODO: Publish quit event via EventBus (Phase 3)
+                self.add_output("Exiting application...".to_string());
+                ConsoleAction::Quit
             }
             "god" => {
-                self.add_output(
-                    "God mode command recognized (event will be published)".to_string(),
-                );
-                // TODO: Publish god mode toggle event (Phase 3)
+                self.add_output("Toggling god mode...".to_string());
+                ConsoleAction::ToggleGodMode
             }
             "noclip" => {
-                self.add_output("Noclip command recognized (event will be published)".to_string());
-                // TODO: Publish noclip toggle event (Phase 3)
+                self.add_output("Toggling noclip mode...".to_string());
+                ConsoleAction::ToggleNoclip
             }
             _ => {
                 self.add_output(format!("Unknown command: '{}'", parts[0]));
                 self.add_output("Type 'help' for available commands".to_string());
+                ConsoleAction::None
             }
         }
     }

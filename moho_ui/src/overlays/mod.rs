@@ -11,4 +11,4 @@
 
 pub mod console;
 
-pub use console::Console;
+pub use console::{Console, ConsoleAction};

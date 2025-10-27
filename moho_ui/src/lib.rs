@@ -62,7 +62,7 @@ pub mod ui_state;
 // Re-export the main types for easy access
 #[cfg(feature = "ui-egui")]
 pub use adapter::{
-    EguiAdapter, UI_OVERLAY_VISIBLE, UiAudioEvent, UiEvent, UiReceiver, build_adapter,
+    EguiAdapter, GameState, UI_OVERLAY_VISIBLE, UiAudioEvent, UiEvent, UiReceiver, build_adapter,
 };
 
 #[cfg(feature = "ui-egui")]
@@ -75,7 +75,7 @@ pub use screens::{
 };
 
 #[cfg(feature = "ui-egui")]
-pub use overlays::Console;
+pub use overlays::{Console, ConsoleAction};
 
 #[cfg(feature = "ui-egui")]
 pub use modal::{Modal, ModalManager, ModalResult};
