@@ -51,8 +51,8 @@ pub struct EguiAdapter {
     // UI state management (extracted from adapter)
     ui_state: UiStateManager,
 
-    // Communication
-    sender: crossbeam_channel::Sender<UiEvent>,
+    // Event bus for application-wide events
+    event_bus: Arc<moho_core::EventBus>,
 
     // Window reference
     window: Option<Arc<Window>>,
@@ -81,10 +81,8 @@ unsafe impl Send for EguiAdapter {}
 unsafe impl Sync for EguiAdapter {}
 
 impl EguiAdapter {
-    /// Create a new adapter with a communication channel
-    pub fn new(window: Option<Arc<Window>>) -> (Self, UiReceiver) {
-        let (sender, receiver) = crossbeam_channel::unbounded();
-
+    /// Create a new adapter with event bus
+    pub fn new(window: Option<Arc<Window>>, event_bus: Arc<moho_core::EventBus>) -> Self {
         let context = egui::Context::default();
         context.set_visuals(egui::Visuals::dark());
 
@@ -100,18 +98,16 @@ impl EguiAdapter {
             )
         });
 
-        let adapter = Self {
+        Self {
             context,
             winit_state,
             renderer: None,
             ui_state: UiStateManager::new(),
-            sender,
+            event_bus,
             window,
             surface_config: None,
             progress: None,
-        };
-
-        (adapter, receiver)
+        }
     }
 
     /// Add a new menu to the manager
@@ -230,10 +226,13 @@ impl EguiAdapter {
 
     /// Process menu actions and convert to UI events
     fn process_menu_action(&mut self, action: MenuAction) {
+        use moho_core::events::UiEvent as CoreUiEvent;
+
         match action {
             MenuAction::LoadScene(path) => {
                 self.emit_audio_event(UiAudioEvent::Confirm);
-                let _ = self.sender.send(UiEvent::LoadScene(path));
+                self.event_bus
+                    .publish(CoreUiEvent::LoadSceneRequested { path });
             }
             MenuAction::NewWorld => {
                 // Open the New World menu so the user can specify params.
@@ -243,23 +242,28 @@ impl EguiAdapter {
             MenuAction::GenerateWorld(spec) => {
                 // User confirmed generation with a WorldSpec payload from the new_world menu
                 self.emit_audio_event(UiAudioEvent::Confirm);
-                let _ = self.sender.send(UiEvent::NewWorld(spec));
+                self.event_bus.publish(CoreUiEvent::NewWorldRequested {
+                    name: "New World".to_string(),
+                    seed: spec.seed,
+                    size: spec.size_xz,
+                });
             }
             MenuAction::Exit => {
                 self.emit_audio_event(UiAudioEvent::ButtonClick);
-                let _ = self.sender.send(UiEvent::Exit);
+                self.event_bus.publish(CoreUiEvent::ExitRequested);
             }
             MenuAction::ShowMenu(name) => {
                 self.emit_audio_event(UiAudioEvent::MenuNavigate);
-                let _ = self.sender.send(UiEvent::ShowMenu(name));
+                self.event_bus
+                    .publish(CoreUiEvent::MenuShown { name: name.clone() });
             }
             MenuAction::Close => {
                 self.emit_audio_event(UiAudioEvent::Cancel);
                 self.hide_menus();
             }
-            MenuAction::SettingsSaved(prefs) => {
+            MenuAction::SettingsSaved(_prefs) => {
                 self.emit_audio_event(UiAudioEvent::Confirm);
-                let _ = self.sender.send(UiEvent::SettingsSaved(prefs));
+                self.event_bus.publish(CoreUiEvent::SettingsSaved);
             }
             MenuAction::None => {
                 // No action
@@ -291,7 +295,17 @@ impl EguiAdapter {
 
     /// Emit an audio event
     fn emit_audio_event(&mut self, audio_event: UiAudioEvent) {
-        let _ = self.sender.send(UiEvent::AudioEvent(audio_event));
+        use moho_core::events::AudioEvent;
+
+        let core_event = match audio_event {
+            UiAudioEvent::ButtonClick => AudioEvent::ButtonClick,
+            UiAudioEvent::MenuNavigate => AudioEvent::MenuNavigate,
+            UiAudioEvent::Confirm => AudioEvent::Confirm,
+            UiAudioEvent::Cancel => AudioEvent::Cancel,
+            UiAudioEvent::Error => AudioEvent::Error,
+        };
+
+        self.event_bus.publish(core_event);
     }
 }
 
@@ -453,7 +467,10 @@ impl FrameCallback for EguiAdapter {
     }
 }
 
-/// Build adapter function for compatibility with existing main.rs
-pub fn build_adapter(window: Option<Arc<Window>>) -> (EguiAdapter, UiReceiver) {
-    EguiAdapter::new(window)
+/// Build adapter function
+pub fn build_adapter(
+    window: Option<Arc<Window>>,
+    event_bus: Arc<moho_core::EventBus>,
+) -> EguiAdapter {
+    EguiAdapter::new(window, event_bus)
 }

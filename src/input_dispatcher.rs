@@ -115,9 +115,11 @@ mod tests {
     #[test]
     fn wheel_forwarding_respects_ui_visibility() {
         use crossbeam_channel::unbounded;
+        use moho_core::events::EventBus;
         use std::sync::{Arc, Mutex};
 
-        let (adapter, _rx) = moho_ui::build_adapter(None);
+        let event_bus = Arc::new(EventBus::new());
+        let adapter = moho_ui::build_adapter(None, event_bus);
         let adapter = Arc::new(Mutex::new(adapter));
 
         // Case 1: UI hidden -> forward

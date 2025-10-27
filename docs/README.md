@@ -1,103 +1,210 @@
-# Voxel Terrain System - Documentation Index
+# Moho Documentation Index
 
-**Last Updated**: October 24, 2025  
-**Branch**: `world-generation` → `custom-mesh-rendering` (next)
-
----
-
-## 📚 Document Overview
-
-> Cleanup notes and low-risk findings were added to `docs/CLEANUP_NOTES.md` on 2025-10-25. (Removed the previously archived third-party README from the repository root.)
-
-
-### Current State & Next Steps
-- **[CURRENT_STATE.md](CURRENT_STATE.md)** ⭐ START HERE
-  - Complete status of implemented features
-  - Detailed explanation of rendering blocker
-  - Statistics and test results
-  - What works vs. what's blocked
-
-- **[CUSTOM_MESH_RENDERING_PLAN.md](CUSTOM_MESH_RENDERING_PLAN.md)** 🎯 NEXT PHASE
-  - Detailed implementation plan for Option B
-  - 5 phases with estimated hours
-  - Code examples and architecture diagrams
-  - Testing strategy and success criteria
-  - **Read this before starting renderer work**
-
-### Historical Plans (Completed)
-- **[terrain_generation_plan_revised.md](terrain_generation_plan_revised.md)** 
-  - Original comprehensive plan for voxel system
-  - Architecture overview and design decisions
-  - Implementation details for all phases
-  - Reference for understanding system design
-
-- **[phase3_rendering_plan.md](phase3_rendering_plan.md)**
-  - Phase 3 specific plan (completed with blocker)
-  - Face culling strategy and implementation
-  - Chunk-based rendering approach
-  - Now includes completion summary
-
-- **[terrain_generation_plan.md](terrain_generation_plan.md)** (DEPRECATED)
-  - Original plan using deformed mesh approach
-  - Superseded by voxel-based system
-  - Kept for historical reference
+**Last Updated**: October 26, 2025  
+**Status**: Event Bus Complete, Production Ready
 
 ---
 
-## 🗺️ Implementation Timeline
+## 📚 Quick Navigation
 
-### ✅ Phase 1: Foundation (Complete)
-- Added noise dependency
-- Created voxel module with core structures
-- Material and resource registries
-- **Time**: ~2-3 hours
+### ⭐ Start Here
+- **[../README.md](../README.md)** - Main project README with quick start guide
+- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Common tasks and commands
+- **[CLEANUP_NOTES.md](CLEANUP_NOTES.md)** - Low-risk improvements and findings
 
-### ✅ Phase 2: Terrain Generation (Complete)
-- Perlin noise integration
-- Multi-octave sampling
-- Terrain type variations
-- Material/resource assignment
-- Smoothing algorithm for ramps
-- **Time**: ~4-5 hours
+### 🎯 Event Bus (Latest - Production Ready)
+- **[Best Practices](engine_core/EVENT_BUS_BEST_PRACTICES.md)** ⭐ Usage patterns, common pitfalls, migration guide
+- **[Performance Analysis](engine_core/EVENT_BUS_PERFORMANCE.md)** - Benchmark results (11.4M events/sec, <1% frame budget)
+- **[Testing Notes](engine_core/EVENT_BUS_TESTING_NOTES.md)** - Test findings, limitations, code examples
+- **[Complete Summary](engine_core/EVENT_BUS_SUMMARY.md)** - Full implementation details and statistics
 
-### ✅ Phase 3: Rendering Integration (Complete - Blocked)
-- Face culling logic (87% triangle reduction)
-- VoxelChunk component
-- Chunk-based rendering structure
-- ECS integration
-- Camera positioning fix
-- **Time**: ~4-5 hours
-- **Blocker**: Renderer doesn't support custom meshes
+### 🏗️ Core Systems
+- **[engine_core/CONCEPTS.md](engine_core/CONCEPTS.md)** - Core architecture and design
+- **[engine_renderer/CONCEPTS.md](engine_renderer/CONCEPTS.md)** - Rendering system
+- **[engine_audio/CONCEPTS.md](engine_audio/CONCEPTS.md)** - Audio system
+- **[moho_ui/CONCEPTS.md](moho_ui/CONCEPTS.md)** - UI system integration
 
-### 🎯 Phase 4: Custom Mesh Rendering (Next)
-- Extend renderer for custom geometry
-- GPU buffer management per chunk
-- Hybrid rendering (instances + custom meshes)
-- Testing and validation
-- **Estimated Time**: 6-8 hours
-- **See**: `CUSTOM_MESH_RENDERING_PLAN.md`
+### 📖 Reference
+- **[gpu_abi.md](gpu_abi.md)** - Shader/CPU data layout requirements
+- **[prefs_format.md](prefs_format.md)** - Configuration file structure
 
 ---
 
-## 🚀 Quick Start for Next Session
+## 🗂️ Architecture Overview
 
-1. **Review Current State**
-   ```bash
-   # Read this first to understand what's done
-   code docs/CURRENT_STATE.md
-   ```
+### Workspace Crates
 
-2. **Study the Plan**
-   ```bash
-   # Understand the approach before coding
-   code docs/CUSTOM_MESH_RENDERING_PLAN.md
-   ```
+| Crate | Purpose | Key Features |
+|-------|---------|--------------|
+| **moho_core** | Core types, events, voxels | Event bus, materials, camera, voxel system |
+| **moho_renderer** | WGPU rendering | Custom mesh support, instance rendering |
+| **moho_audio** | Audio playback | rodio-based, event-driven |
+| **moho_ui** | egui integration | Menus, overlays, settings |
+| **moho_input** | Input handling | Keyboard, mouse, gamepad mapping |
+| **moho_sim** | Deterministic simulation | Snapshot/restore, CRC validation |
 
-3. **Commit Current Work**
-   ```bash
-   git add -A
-   git commit -m "Phase 3 complete: Voxel terrain generation with face culling"
-   ```
+### Event System
+
+The event bus is the primary communication mechanism between systems:
+
+```rust
+// 10 event type modules
+SystemEvent  - Lifecycle, frames, errors
+UiEvent      - Menus, buttons, forms
+AudioEvent   - Sounds, music, voice
+InputEvent   - Keyboard, mouse, gamepad
+GameEvent    - Player actions, objectives
+PhysicsEvent - Collisions, triggers
+GraphicsEvent - Rendering, camera
+WorldEvent   - Chunk loading, streaming
+DebugEvent   - Logging, profiling
+NetworkEvent - Multiplayer, sync
+```
+
+**Performance**: Sub-microsecond latency, 11.4M events/sec, <0.01% frame budget
+
+See [EVENT_BUS_BEST_PRACTICES.md](engine_core/EVENT_BUS_BEST_PRACTICES.md) for usage patterns.
+
+---
+
+## 🧪 Testing
+
+### Test Coverage
+- **27 event bus tests** (12 unit + 8 integration + 7 doc tests) - 100% pass rate
+- **Voxel system tests** - Face culling, grid operations
+- **Simulation tests** - Determinism, snapshot roundtrip
+- **Renderer tests** - Scene serialization, shader validation
+
+### Running Tests
+
+```sh
+# All tests
+cargo test --workspace
+
+# Event bus tests only
+cargo test --package moho_core events::tests
+cargo test --test event_bus_integration
+
+# Performance benchmarks
+cargo bench --bench event_bus_bench
+```
+
+---
+
+## � Current Status
+
+### ✅ Completed Features
+
+**Event Bus System** (October 2025)
+- Type-safe pub/sub architecture
+- Priority-based handler execution
+- Metrics tracking and event history
+- 27 comprehensive tests
+- Performance exceeds commercial engines
+
+**Voxel Terrain**
+- Chunk-based world generation
+- Face culling (87% triangle reduction)
+- Material and resource systems
+- Multi-octave Perlin noise
+
+**ECS Integration**
+- Legion-based entity system
+- Deterministic simulation
+- Snapshot/restore with CRC validation
+
+**UI System**
+- egui-based menus
+- Settings persistence
+- Event-driven interaction
+
+**Audio System**
+- rodio playback
+- Event-driven triggering
+- Background music support
+
+### 🎯 Next Steps
+
+**Debug Console Overlay** (Planned)
+- Leverage event bus for command execution
+- Use DebugEvent type for logging
+- Implement command history
+- Save command for debugging
+
+**Multiplayer Foundation**
+- Network event serialization
+- Snapshot synchronization
+- Input replay system
+
+---
+
+## 📝 Development Notes
+
+### Performance Targets
+- **60 FPS**: 16.66ms frame budget
+- **Event bus**: <0.01% frame time
+- **Voxel rendering**: TBD based on chunk count
+- **Simulation**: Deterministic, snapshot-friendly
+
+### Design Principles
+1. **Separation of concerns**: Simulation vs rendering
+2. **Type safety**: Compile-time event routing
+3. **Performance**: Sub-millisecond latencies
+4. **Testability**: Comprehensive test coverage
+5. **Documentation**: Clear patterns and examples
+
+### Known Limitations
+1. **Event cascading**: Publishing from handler causes deadlock (use channels)
+2. **AudioSystem threading**: Not Send/Sync (stays on main thread)
+3. **History overhead**: 4.9× cost when enabled (disabled by default)
+
+See [EVENT_BUS_TESTING_NOTES.md](engine_core/EVENT_BUS_TESTING_NOTES.md) for detailed findings.
+
+---
+
+## � Tools & Commands
+
+### Code Quality
+```sh
+# Format
+cargo fmt --all
+
+# Lint
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Test
+cargo test --workspace
+
+# Bench
+cargo bench --bench event_bus_bench
+```
+
+### Documentation
+```sh
+# Generate API docs
+cargo doc --open --no-deps
+
+# View benchmark reports
+start target/criterion/report/index.html
+```
+
+---
+
+## 📂 Historical Documents
+
+These documents are kept for reference but may be outdated:
+
+- **[terrain_generation_plan.md](terrain_generation_plan.md)** - Original terrain plan (deprecated)
+- **[terrain_generation_plan_revised.md](terrain_generation_plan_revised.md)** - Voxel-based system plan
+- **[phase3_rendering_plan.md](phase3_rendering_plan.md)** - Phase 3 rendering (completed)
+- **[CURRENT_STATE.md](CURRENT_STATE.md)** - Previous state snapshot
+- **[CUSTOM_MESH_RENDERING_PLAN.md](CUSTOM_MESH_RENDERING_PLAN.md)** - Custom mesh plan
+
+---
+
+**Maintained By**: Moho Development Team  
+**Last Major Update**: Event Bus Implementation (October 2025)  
+**Branch**: `event-bus` → merge to `dev`
 
 4. **Create New Branch**
    ```bash

@@ -88,14 +88,20 @@ struct App {
     // Runtime state (initialized after window creation)
     window_renderer: Option<WindowRenderer>,
 
-    // Audio system
+    // Event bus for application-wide events
+    event_bus: Arc<moho_core::EventBus>,
+
+    // Event collection channels (for events that need to mutate App state)
+    #[cfg(feature = "ui-egui")]
+    ui_event_rx: crossbeam_channel::Receiver<moho_core::events::UiEvent>,
+    audio_event_rx: crossbeam_channel::Receiver<moho_core::events::AudioEvent>,
+
+    // Audio system (not thread-safe, stays on main thread)
     audio_system: Option<moho_audio::AudioSystem>,
 
     // UI components
     #[cfg(feature = "ui-egui")]
     ui_adapter: Option<Arc<Mutex<moho_ui::EguiAdapter>>>,
-    #[cfg(feature = "ui-egui")]
-    ui_receiver: Option<moho_ui::UiReceiver>,
     #[cfg(feature = "ui-egui")]
     last_world_spec: Option<moho_core::scene_builders::WorldSpec>,
     // Async generation plumbing (only used when UI is present)
@@ -118,6 +124,7 @@ struct App {
 
     // Camera control (moved into simulation)
     simulation: moho_sim::SimulationController,
+    #[allow(dead_code)]
     mouse_sensitivity: f32,
     input_system: moho_core::input::InputSystem,
 
@@ -169,6 +176,30 @@ impl App {
         // Always use the default filter preset
         let engine_filter_preset = moho_core::input::FilterPreset::Default;
 
+        // Initialize event bus
+        let event_bus = Arc::new(moho_core::EventBus::new());
+        log::info!("Event bus initialized");
+
+        // Set up event collection channels for events that need to mutate App state
+        #[cfg(feature = "ui-egui")]
+        let (ui_event_tx, ui_event_rx) = crossbeam_channel::unbounded();
+        let (audio_event_tx, audio_event_rx) = crossbeam_channel::unbounded();
+
+        // Subscribe to UI events
+        #[cfg(feature = "ui-egui")]
+        {
+            event_bus.subscribe(move |event: &moho_core::events::UiEvent| {
+                let _ = ui_event_tx.send(event.clone());
+            });
+        }
+
+        // Subscribe to Audio events
+        {
+            event_bus.subscribe(move |event: &moho_core::events::AudioEvent| {
+                let _ = audio_event_tx.send(event.clone());
+            });
+        }
+
         // Initialize audio system
         let audio_system = match moho_audio::AudioSystem::new() {
             Ok(audio) => {
@@ -181,18 +212,25 @@ impl App {
             }
         };
 
+        // Note: Audio system cannot be subscribed to event bus because rodio types
+        // are not Send/Sync. Audio events will be processed manually in the frame loop.
+
         Self {
             world,
             scene,
             camera,
             mode: AppMode::Menu, // Start in menu mode
             window_renderer: None,
+            event_bus,
+
+            #[cfg(feature = "ui-egui")]
+            ui_event_rx,
+            audio_event_rx,
+
             audio_system,
 
             #[cfg(feature = "ui-egui")]
             ui_adapter: None,
-            #[cfg(feature = "ui-egui")]
-            ui_receiver: None,
             #[cfg(feature = "ui-egui")]
             generation_receiver: None,
             #[cfg(feature = "ui-egui")]
@@ -253,7 +291,7 @@ impl App {
         // UI setup
         #[cfg(feature = "ui-egui")]
         {
-            let (adapter, receiver) = moho_ui::build_adapter(Some(window.clone()));
+            let adapter = moho_ui::build_adapter(Some(window.clone()), self.event_bus.clone());
             let ui_adapter = Arc::new(Mutex::new(adapter));
 
             if let Ok(mut a) = ui_adapter.lock() {
@@ -264,9 +302,8 @@ impl App {
                 ui_adapter.clone() as Arc<Mutex<dyn moho_renderer::FrameCallback>>
             ));
 
-            // Store adapter & receiver
+            // Store adapter
             self.ui_adapter = Some(ui_adapter.clone());
-            self.ui_receiver = Some(receiver);
 
             // Register KeybindCapture subscriber at higher priority so it can intercept
             // events while the active screen is actively listening for raw input.
@@ -850,6 +887,16 @@ impl ApplicationHandler for App {
             let dt = self.frame_duration.as_secs_f32();
             self.last_frame += self.frame_duration;
 
+            // Publish frame start event
+            static FRAME_COUNTER: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            let frame_number = FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.event_bus
+                .publish(moho_core::events::SystemEvent::FrameStart {
+                    frame_number,
+                    delta_time: dt,
+                });
+
             // Update camera controls if in game mode
             if self.mode == AppMode::Game {
                 // Update controller input from keyboard state
@@ -871,33 +918,34 @@ impl ApplicationHandler for App {
                 wr.window.request_redraw();
             }
 
-            // Process UI events - collect events first to avoid borrowing conflicts
+            // Process UI events from event bus
             #[cfg(feature = "ui-egui")]
             {
-                use moho_ui::UiEvent;
-                let mut events = Vec::new();
-                if let Some(ui_receiver) = &self.ui_receiver {
-                    while let Ok(ev) = ui_receiver.try_recv() {
-                        events.push(ev);
-                    }
-                }
-
-                // Process collected events
-                for ev in events {
-                    match ev {
-                        UiEvent::LoadScene(path) => {
+                while let Ok(event) = self.ui_event_rx.try_recv() {
+                    match event {
+                        moho_core::events::UiEvent::LoadSceneRequested { path } => {
                             log::info!("UI requested load scene: {:?}", path);
                             if let Err(e) = self.load_scene(&path) {
                                 log::error!("Failed to load scene from {:?}: {}", path, e);
                             }
                         }
-                        UiEvent::NewWorld(spec) => {
-                            log::info!("UI requested NewWorld: {:?}", spec);
+                        moho_core::events::UiEvent::NewWorldRequested { name, seed, size } => {
+                            log::info!(
+                                "UI requested new world: {} (seed: {:?}, size: {})",
+                                name,
+                                seed,
+                                size
+                            );
+                            let spec = moho_core::scene_builders::WorldSpec {
+                                name,
+                                seed,
+                                size_xz: size,
+                            };
                             if let Err(e) = self.generate_new_world(spec) {
                                 log::error!("Failed to generate new world: {}", e);
                             }
                         }
-                        UiEvent::Exit => {
+                        moho_core::events::UiEvent::ExitRequested => {
                             log::info!("UI requested exit");
                             // Auto-save before exit
                             if let Err(e) = self.auto_save_on_shutdown() {
@@ -905,186 +953,209 @@ impl ApplicationHandler for App {
                             }
                             event_loop.exit();
                         }
-                        UiEvent::ShowMenu(name) => {
-                            log::info!("UI requested ShowMenu: {}", name);
-                            #[cfg(feature = "ui-egui")]
+                        moho_core::events::UiEvent::MenuShown { name } => {
+                            log::info!("UI requested show menu: {}", name);
                             if let Some(ui_adapter) = &self.ui_adapter
                                 && let Ok(mut adapter) = ui_adapter.lock()
                             {
                                 adapter.show_menu(&name);
                             }
                         }
-                        UiEvent::OverlayToggled(visible) => {
-                            log::info!("Overlay visibility -> {}", visible);
-                            if visible && let Some(ref wr) = self.window_renderer {
+                        moho_core::events::UiEvent::MenuHidden { name } => {
+                            log::info!("Menu hidden: {}", name);
+                        }
+                        moho_core::events::UiEvent::OverlayToggled { name, visible } => {
+                            log::info!("Overlay {} toggled: {}", name, visible);
+                            if visible
+                                && let Some(ref wr) = self.window_renderer
+                            {
                                 wr.window.set_cursor_visible(true);
                             }
                         }
-                        UiEvent::SettingsSaved(prefs) => {
-                            log::info!(
-                                "Settings saved - applying mouse sensitivity: {} | filtering enabled: {}",
-                                prefs.mouse_sensitivity,
-                                prefs.input_filtering_enabled
-                            );
-
-                            // Scale the UI range (0.01-10.0) to radians per pixel
-                            self.mouse_sensitivity = prefs.mouse_sensitivity * 0.002;
-                            self.input_system.set_sensitivity(self.mouse_sensitivity);
-
-                            // Always use default filter preset, only apply filtering enabled state
-                            self.input_system
-                                .set_filter_enabled(prefs.input_filtering_enabled);
-
-                            // Update keybinds
-                            self.prefs = prefs;
+                        moho_core::events::UiEvent::SettingsSaved => {
+                            log::info!("Settings saved");
+                            // Settings are already saved by the UI adapter
+                            // Here we could reload/apply them if needed
                         }
-                        UiEvent::AudioEvent(audio_event) => {
-                            // Convert UI audio event to engine audio event
-                            let engine_event = match audio_event {
-                                moho_ui::UiAudioEvent::ButtonClick => {
-                                    moho_audio::AudioEvent::ButtonClick
-                                }
-                                moho_ui::UiAudioEvent::MenuNavigate => {
-                                    moho_audio::AudioEvent::MenuNavigate
-                                }
-                                moho_ui::UiAudioEvent::Confirm => moho_audio::AudioEvent::Confirm,
-                                moho_ui::UiAudioEvent::Cancel => moho_audio::AudioEvent::Cancel,
-                                moho_ui::UiAudioEvent::Error => moho_audio::AudioEvent::Error,
-                            };
-                            self.handle_audio_event(engine_event);
-                        }
-                    }
-                }
-
-                // Drain simplified input events forwarded by the dispatcher (e.g., mouse wheel)
-                if let Some(rx) = &self.unconsumed_input_rx {
-                    while let Ok(iev) = rx.try_recv() {
-                        match iev {
-                            crate::input_event::InputEvent::MouseWheel { delta_y } => {
-                                // Only act on wheel events in game mode
-                                if self.mode == AppMode::Game {
-                                    // Simple zoom: move player forward/back along look direction
-                                    let dz = delta_y * 0.5; // tuning factor
-                                    let (yaw, pitch) = self.simulation.yaw_pitch();
-                                    let sy = yaw.sin();
-                                    let cy = yaw.cos();
-                                    let cp = pitch.cos();
-                                    let sp = pitch.sin();
-                                    let forward =
-                                        glam::Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
-                                    let new_pos = self.simulation.position() + forward * dz;
-                                    self.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // If the UI progress overlay Cancel button was pressed, propagate
-                // cancellation to the generator thread by setting the atomic flag.
-                #[cfg(feature = "ui-egui")]
-                if let Some(ui_adapter) = &self.ui_adapter
-                    && let Ok(mut a) = ui_adapter.lock()
-                    && a.take_progress_canceled()
-                    && let Some(cancel_flag) = &self.generation_cancel
-                {
-                    cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
-
-                // Poll async generation channel if running. Take the receiver so
-                // we can mutate `self` while processing messages.
-                if let Some(rx) = self.generation_receiver.take() {
-                    let mut still_running = true;
-                    while let Ok(msg) = rx.try_recv() {
-                        match msg {
-                            GenerationMsg::Progress(p) => {
-                                if let Some(ui_adapter) = &self.ui_adapter
-                                    && let Ok(mut a) = ui_adapter.lock()
-                                {
-                                    a.set_progress(p);
-                                }
-                            }
-                            GenerationMsg::Completed { scene_bytes, spec } => {
-                                log::info!("Generation completed for spec={:?}", spec.name);
-                                // Remember the last WorldSpec so future saves include
-                                // the original metadata (autosave/continue consistency).
-                                self.last_world_spec = Some(spec.clone());
-                                // Complete progress UI
-                                if let Some(ui_adapter) = &self.ui_adapter
-                                    && let Ok(mut a) = ui_adapter.lock()
-                                {
-                                    a.set_progress(1.0);
-                                    a.finish_progress();
-                                }
-
-                                // Load produced scene bytes into the main world
-                                self.world.clear();
-                                match self.scene.load_from_bytes(&scene_bytes, &mut self.world) {
-                                    Ok(camera_data) => {
-                                        if let Some((position, yaw, pitch)) = camera_data {
-                                            self.simulation
-                                                .set_position_yaw_pitch(position, yaw, pitch);
-                                            // Clear any pending input so the restored camera
-                                            // orientation isn't immediately overridden by
-                                            // accumulated mouse deltas or smoothing state.
-                                            self.input_system.clear_pending_input();
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log::error!("Failed to load generated scene bytes: {}", e);
-                                    }
-                                }
-
-                                // Clean up generation state
-                                if let Some(h) = self.generation_handle.take() {
-                                    let _ = h.join();
-                                }
-                                self.generation_cancel = None;
-
-                                // Switch to game mode and hide menu
-                                self.mode = AppMode::Game;
-                                self.hide_menu();
-
-                                still_running = false;
-                            }
-                            GenerationMsg::Canceled => {
-                                if let Some(ui_adapter) = &self.ui_adapter
-                                    && let Ok(mut a) = ui_adapter.lock()
-                                {
-                                    a.finish_progress();
-                                }
-                                if let Some(h) = self.generation_handle.take() {
-                                    let _ = h.join();
-                                }
-                                self.generation_cancel = None;
-                                log::info!("Generation canceled by user");
-                                still_running = false;
-                            }
-                            GenerationMsg::Failed(reason) => {
-                                log::error!("Generation failed: {}", reason);
-                                if let Some(ui_adapter) = &self.ui_adapter
-                                    && let Ok(mut a) = ui_adapter.lock()
-                                {
-                                    a.finish_progress();
-                                }
-                                if let Some(h) = self.generation_handle.take() {
-                                    let _ = h.join();
-                                }
-                                self.generation_cancel = None;
-                                still_running = false;
-                            }
-                        }
-                    }
-
-                    if still_running {
-                        // Put the receiver back for future polling
-                        self.generation_receiver = Some(rx);
-                    } else {
-                        // Drop the receiver and clear state
-                        self.generation_receiver = None;
                     }
                 }
             }
+
+            // Process audio events from event bus
+            {
+                while let Ok(event) = self.audio_event_rx.try_recv() {
+                    // Map core::events::AudioEvent to moho_audio::AudioEvent
+                    let audio_event = match event {
+                        moho_core::events::AudioEvent::ButtonClick => {
+                            moho_audio::AudioEvent::ButtonClick
+                        }
+                        moho_core::events::AudioEvent::MenuNavigate => {
+                            moho_audio::AudioEvent::MenuNavigate
+                        }
+                        moho_core::events::AudioEvent::Confirm => moho_audio::AudioEvent::Confirm,
+                        moho_core::events::AudioEvent::Cancel => moho_audio::AudioEvent::Cancel,
+                        moho_core::events::AudioEvent::Error => moho_audio::AudioEvent::Error,
+                        moho_core::events::AudioEvent::PlaySound { path, volume } => {
+                            moho_audio::AudioEvent::CustomSound { path, volume }
+                        }
+                        moho_core::events::AudioEvent::MusicStart {
+                            path,
+                            volume,
+                            looped,
+                        } => moho_audio::AudioEvent::BackgroundMusic {
+                            path,
+                            volume,
+                            looped,
+                        },
+                        moho_core::events::AudioEvent::MusicStop => {
+                            moho_audio::AudioEvent::Stop(moho_audio::AudioCategory::Music)
+                        }
+                        moho_core::events::AudioEvent::MusicVolumeChanged { volume: _ } => {
+                            // Skip - not implemented in current audio system
+                            continue;
+                        }
+                        moho_core::events::AudioEvent::StopAll => {
+                            moho_audio::AudioEvent::Stop(moho_audio::AudioCategory::All)
+                        }
+                    };
+
+                    self.handle_audio_event(audio_event);
+                }
+            }
+
+            // Drain simplified input events forwarded by the dispatcher (e.g., mouse wheel)
+            if let Some(rx) = &self.unconsumed_input_rx {
+                while let Ok(iev) = rx.try_recv() {
+                    match iev {
+                        crate::input_event::InputEvent::MouseWheel { delta_y } => {
+                            // Only act on wheel events in game mode
+                            if self.mode == AppMode::Game {
+                                // Simple zoom: move player forward/back along look direction
+                                let dz = delta_y * 0.5; // tuning factor
+                                let (yaw, pitch) = self.simulation.yaw_pitch();
+                                let sy = yaw.sin();
+                                let cy = yaw.cos();
+                                let cp = pitch.cos();
+                                let sp = pitch.sin();
+                                let forward =
+                                    glam::Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
+                                let new_pos = self.simulation.position() + forward * dz;
+                                self.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If the UI progress overlay Cancel button was pressed, propagate
+            // cancellation to the generator thread by setting the atomic flag.
+            #[cfg(feature = "ui-egui")]
+            if let Some(ui_adapter) = &self.ui_adapter
+                && let Ok(mut a) = ui_adapter.lock()
+                && a.take_progress_canceled()
+                && let Some(cancel_flag) = &self.generation_cancel
+            {
+                cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+
+            // Poll async generation channel if running. Take the receiver so
+            // we can mutate `self` while processing messages.
+            if let Some(rx) = self.generation_receiver.take() {
+                let mut still_running = true;
+                while let Ok(msg) = rx.try_recv() {
+                    match msg {
+                        GenerationMsg::Progress(p) => {
+                            if let Some(ui_adapter) = &self.ui_adapter
+                                && let Ok(mut a) = ui_adapter.lock()
+                            {
+                                a.set_progress(p);
+                            }
+                        }
+                        GenerationMsg::Completed { scene_bytes, spec } => {
+                            log::info!("Generation completed for spec={:?}", spec.name);
+                            // Remember the last WorldSpec so future saves include
+                            // the original metadata (autosave/continue consistency).
+                            self.last_world_spec = Some(spec.clone());
+                            // Complete progress UI
+                            if let Some(ui_adapter) = &self.ui_adapter
+                                && let Ok(mut a) = ui_adapter.lock()
+                            {
+                                a.set_progress(1.0);
+                                a.finish_progress();
+                            }
+
+                            // Load produced scene bytes into the main world
+                            self.world.clear();
+                            match self.scene.load_from_bytes(&scene_bytes, &mut self.world) {
+                                Ok(camera_data) => {
+                                    if let Some((position, yaw, pitch)) = camera_data {
+                                        self.simulation
+                                            .set_position_yaw_pitch(position, yaw, pitch);
+                                        // Clear any pending input so the restored camera
+                                        // orientation isn't immediately overridden by
+                                        // accumulated mouse deltas or smoothing state.
+                                        self.input_system.clear_pending_input();
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to load generated scene bytes: {}", e);
+                                }
+                            }
+
+                            // Clean up generation state
+                            if let Some(h) = self.generation_handle.take() {
+                                let _ = h.join();
+                            }
+                            self.generation_cancel = None;
+
+                            // Switch to game mode and hide menu
+                            self.mode = AppMode::Game;
+                            self.hide_menu();
+
+                            still_running = false;
+                        }
+                        GenerationMsg::Canceled => {
+                            if let Some(ui_adapter) = &self.ui_adapter
+                                && let Ok(mut a) = ui_adapter.lock()
+                            {
+                                a.finish_progress();
+                            }
+                            if let Some(h) = self.generation_handle.take() {
+                                let _ = h.join();
+                            }
+                            self.generation_cancel = None;
+                            log::info!("Generation canceled by user");
+                            still_running = false;
+                        }
+                        GenerationMsg::Failed(reason) => {
+                            log::error!("Generation failed: {}", reason);
+                            if let Some(ui_adapter) = &self.ui_adapter
+                                && let Ok(mut a) = ui_adapter.lock()
+                            {
+                                a.finish_progress();
+                            }
+                            if let Some(h) = self.generation_handle.take() {
+                                let _ = h.join();
+                            }
+                            self.generation_cancel = None;
+                            still_running = false;
+                        }
+                    }
+                }
+
+                if still_running {
+                    // Put the receiver back for future polling
+                    self.generation_receiver = Some(rx);
+                } else {
+                    // Drop the receiver and clear state
+                    self.generation_receiver = None;
+                }
+            }
+
+            // Publish frame end event and process deferred events
+            self.event_bus
+                .publish(moho_core::events::SystemEvent::FrameEnd { frame_number });
+            self.event_bus.process_deferred();
 
             let next = self.last_frame + self.frame_duration;
             event_loop.set_control_flow(ControlFlow::WaitUntil(next));
