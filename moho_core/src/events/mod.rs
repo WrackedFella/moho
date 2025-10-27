@@ -61,3 +61,35 @@ pub use types::Event;
 
 // Re-export handler types for advanced usage
 pub use handler::{Handler, HandlerFn, HandlerList};
+
+// Re-export all event types
+pub use types::{
+    // Audio events
+    AudioEvent,
+    // Debug events
+    ConsoleLevel,
+    DebugEvent,
+    // Game events
+    GameEvent,
+    // Graphics events
+    AntiAliasingMode,
+    GraphicsEvent,
+    GraphicsSetting,
+    RenderMode,
+    ShadowQuality,
+    // Input events
+    InputEvent,
+    // Network events
+    NetworkEvent,
+    // Physics events
+    PhysicsEvent,
+    // System events
+    SystemEvent,
+    // UI events
+    UiEvent,
+    // World events
+    BiomeType,
+    MaterialType,
+    OreType,
+    WorldEvent,
+};

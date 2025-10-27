@@ -1,6 +1,30 @@
 use std::any::Any;
 use std::fmt::Debug;
 
+// Event type modules
+pub mod audio;
+pub mod debug;
+pub mod game;
+pub mod graphics;
+pub mod input;
+pub mod network;
+pub mod physics;
+pub mod system;
+pub mod ui;
+pub mod world;
+
+// Re-export all event types for convenience
+pub use audio::*;
+pub use debug::*;
+pub use game::*;
+pub use graphics::*;
+pub use input::*;
+pub use network::*;
+pub use physics::*;
+pub use system::*;
+pub use ui::*;
+pub use world::*;
+
 /// Base trait for all events in the system.
 ///
 /// Events must be:
