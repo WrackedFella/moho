@@ -126,6 +126,10 @@ impl EguiAdapter {
 
     /// Update the current game state (called by main app each frame)
     pub fn set_game_state(&mut self, state: GameState) {
+        // Reset console state when entering ConsoleOpen to prevent immediate close
+        if state == GameState::ConsoleOpen && self.current_game_state != GameState::ConsoleOpen {
+            self.ui_state.console.reset_on_open();
+        }
         self.current_game_state = state;
     }
 
@@ -399,6 +403,12 @@ impl FrameCallback for EguiAdapter {
                     // Process console action
                     use crate::overlays::ConsoleAction;
                     match console_action {
+                        ConsoleAction::Close => {
+                            use moho_core::events::UiEvent;
+                            self.event_bus.publish(UiEvent::MenuHidden {
+                                name: "console".to_string(),
+                            });
+                        }
                         ConsoleAction::Quit => {
                             use moho_core::events::UiEvent;
                             self.event_bus.publish(UiEvent::ExitRequested);

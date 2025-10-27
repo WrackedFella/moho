@@ -1112,6 +1112,10 @@ impl ApplicationHandler for App {
                         }
                         moho_core::events::UiEvent::MenuHidden { name } => {
                             log::info!("Menu hidden: {}", name);
+                            // Handle console close event
+                            if name == "console" {
+                                self.exit_console();
+                            }
                         }
                         moho_core::events::UiEvent::OverlayToggled { name, visible } => {
                             log::info!("Overlay {} toggled: {}", name, visible);

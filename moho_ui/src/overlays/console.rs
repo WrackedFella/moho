@@ -20,6 +20,8 @@ pub enum ConsoleAction {
     ToggleGodMode,
     /// Toggle noclip mode
     ToggleNoclip,
+    /// Close the console (triggered by backtick key)
+    Close,
     /// No action
     None,
 }
@@ -52,6 +54,9 @@ pub struct Console {
 
     /// Whether input field should be focused
     focus_input: bool,
+
+    /// Set to true when console is first opened, prevents immediate close
+    just_opened: bool,
 }
 
 impl Console {
@@ -63,6 +68,7 @@ impl Console {
             history_index: None,
             output: VecDeque::with_capacity(MAX_OUTPUT_LINES),
             focus_input: true,
+            just_opened: true,
         };
 
         // Add welcome message
@@ -86,6 +92,16 @@ impl Console {
     pub fn render(&mut self, ctx: &egui::Context) -> ConsoleAction {
         let mut action = ConsoleAction::None;
         
+        // Check for backtick key press BEFORE egui processes input
+        // This ensures backtick closes the console even when text field has focus
+        // Skip on first frame to prevent immediate close when console is opened
+        if !self.just_opened && ctx.input(|i| i.key_pressed(egui::Key::Backtick)) {
+            return ConsoleAction::Close;
+        }
+        
+        // Clear the just_opened flag after first frame
+        self.just_opened = false;
+        
         // Create a custom frame with semi-transparent background
         // Note: This transparency pattern can be reused for other overlays
         let frame = egui::Frame::new()
@@ -94,10 +110,8 @@ impl Console {
         
         // Console panel at bottom of screen
         egui::TopBottomPanel::bottom("console_panel")
-            .resizable(true)
-            .default_height(300.0)
-            .min_height(100.0)
-            .max_height(600.0)
+            .resizable(false)
+            .exact_height(300.0)
             .frame(frame)
             .show(ctx, |ui| {
                 // Output area (scrollable)
@@ -280,6 +294,12 @@ impl Console {
     /// Clear all output.
     pub fn clear(&mut self) {
         self.output.clear();
+    }
+
+    /// Reset the console state when reopening (prevents immediate close).
+    pub fn reset_on_open(&mut self) {
+        self.just_opened = true;
+        self.focus_input = true;
     }
 }
 
