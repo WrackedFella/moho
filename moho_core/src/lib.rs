@@ -7,10 +7,14 @@ use rand::{Rng, rng};
 pub mod actors;
 pub mod camera;
 pub mod controller;
+pub mod events;
 pub mod input;
 pub mod materials;
 pub mod scene_builders;
 pub mod voxel;
+
+// Re-export commonly used event types
+pub use events::{Event, EventBus};
 
 // Reflection function
 pub fn schlick(cosine: f32, ref_idx: f32) -> f32 {
