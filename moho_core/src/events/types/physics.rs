@@ -18,16 +18,10 @@ pub enum PhysicsEvent {
     PlayerJumped { initial_velocity: f32 },
 
     /// Player landed on ground
-    PlayerLanded {
-        fall_distance: f32,
-        damage: u32,
-    },
+    PlayerLanded { fall_distance: f32, damage: u32 },
 
     /// Voxel destroyed/modified
-    VoxelDestroyed {
-        position: IVec3,
-        material_type: u8,
-    },
+    VoxelDestroyed { position: IVec3, material_type: u8 },
 
     /// Physics collision detected
     CollisionDetected {

@@ -25,10 +25,7 @@ pub enum GameEvent {
     PlayerDamaged { amount: u32, source: String },
 
     /// Player health changed
-    PlayerHealthChanged {
-        old_health: u32,
-        new_health: u32,
-    },
+    PlayerHealthChanged { old_health: u32, new_health: u32 },
 
     /// Entity spawned
     EntitySpawned {

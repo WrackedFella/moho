@@ -16,7 +16,7 @@ pub mod audio_system;
 pub mod error;
 
 // Re-export main types for convenience
-pub use audio_events::AudioEvent;
+pub use audio_events::{AudioCategory, AudioEvent};
 pub use audio_settings::AudioSettings;
 pub use audio_source::AudioSource;
 pub use audio_system::AudioSystem;

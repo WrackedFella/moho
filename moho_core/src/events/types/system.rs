@@ -11,10 +11,7 @@ pub enum SystemEvent {
     Shutdown,
 
     /// Frame start with timing info
-    FrameStart {
-        frame_number: u64,
-        delta_time: f32,
-    },
+    FrameStart { frame_number: u64, delta_time: f32 },
 
     /// Frame end
     FrameEnd { frame_number: u64 },

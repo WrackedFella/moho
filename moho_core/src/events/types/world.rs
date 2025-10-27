@@ -36,10 +36,7 @@ pub enum WorldEvent {
     GenerationProgress { percent: f32 },
 
     /// World generation completed
-    GenerationCompleted {
-        seed: u64,
-        total_voxels: u64,
-    },
+    GenerationCompleted { seed: u64, total_voxels: u64 },
 }
 
 #[derive(Clone, Debug)]

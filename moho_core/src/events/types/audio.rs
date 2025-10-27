@@ -12,7 +12,10 @@ pub enum AudioEvent {
     Error,
 
     /// Play custom sound
-    PlaySound { path: String, volume: f32 },
+    PlaySound {
+        path: String,
+        volume: f32,
+    },
 
     /// Background music control
     MusicStart {
@@ -23,7 +26,9 @@ pub enum AudioEvent {
 
     MusicStop,
 
-    MusicVolumeChanged { volume: f32 },
+    MusicVolumeChanged {
+        volume: f32,
+    },
 
     /// Stop all audio or category
     StopAll,

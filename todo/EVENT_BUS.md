@@ -1316,18 +1316,33 @@ Test scenarios:
 ## Known Limitations & Future Work
 
 ### Current Limitations
-1. **Deferred event downcast**: Type erasure makes deferred processing complex
-2. **No event filtering**: Can't filter events by criteria
-3. **No event priorities**: FIFO processing only
-4. **No event cancellation**: Can't cancel published events
+1. **Event cascading causes deadlock**: Publishing an event from within a handler causes RwLock reentrancy deadlock. Use channels or deferred events for cascading behavior.
+2. **Deferred event downcast**: Type erasure makes deferred processing complex (requires trait object downcasting)
+3. **No event filtering**: Can't subscribe with predicate filters
+4. **AudioSystem not thread-safe**: rodio's OutputStream is not Send/Sync, audio must stay on main thread
 
 ### Future Enhancements
-1. **Event filtering**: Subscribe with predicates
-2. **Event aggregation**: Batch similar events
-3. **Async handlers**: Support for async event handlers
-4. **Event replay**: Record and replay event sequences
-5. **Network serialization**: Serialize events for multiplayer
-6. **Performance profiling**: Built-in profiler integration
+1. **Fix cascading deadlock** 🔴 HIGH PRIORITY:
+   - **Problem**: Current RwLock-based implementation deadlocks when handler publishes event
+   - **Solution Options**:
+     - a) Implement lock-free queue for handlers (crossbeam or custom MPMC queue)
+     - b) Two-phase execution: collect events in Vec during handler execution, publish after lock released
+     - c) Use parking_lot RwLock with recursive/upgradable locks
+     - d) Channel-based buffering (current workaround - document as pattern)
+   - **Current Workaround**: Use channels in handlers to defer publishing:
+     ```rust
+     let (tx, rx) = mpsc::channel();
+     bus.subscribe(move |_: &UiEvent| { tx.send(AudioEvent::Confirm).ok(); });
+     // In frame loop: for event in rx.try_iter() { bus.publish(event); }
+     ```
+   - **Status**: Documented in EVENT_BUS_TESTING_NOTES.md, needs architectural fix
+   
+2. **Event filtering**: Subscribe with predicates
+3. **Event aggregation**: Batch similar events
+4. **Async handlers**: Support for async event handlers
+5. **Event replay**: Record and replay event sequences
+6. **Network serialization**: Serialize events for multiplayer
+7. **Performance profiling**: Built-in profiler integration
 
 ---
 

@@ -64,32 +64,35 @@ pub use handler::{Handler, HandlerFn, HandlerList};
 
 // Re-export all event types
 pub use types::{
+    // Graphics events
+    AntiAliasingMode,
     // Audio events
     AudioEvent,
+    // World events
+    BiomeType,
     // Debug events
     ConsoleLevel,
     DebugEvent,
     // Game events
     GameEvent,
-    // Graphics events
-    AntiAliasingMode,
     GraphicsEvent,
     GraphicsSetting,
-    RenderMode,
-    ShadowQuality,
     // Input events
     InputEvent,
+    MaterialType,
     // Network events
     NetworkEvent,
+    OreType,
     // Physics events
     PhysicsEvent,
+    RenderMode,
+    ShadowQuality,
     // System events
     SystemEvent,
     // UI events
     UiEvent,
-    // World events
-    BiomeType,
-    MaterialType,
-    OreType,
     WorldEvent,
 };
+
+#[cfg(test)]
+mod tests;

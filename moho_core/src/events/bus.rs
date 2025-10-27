@@ -1,11 +1,12 @@
+use super::Event;
 use super::handler::{Handler, HandlerFn, HandlerList};
 use super::metrics::{EventMetrics, MetricsTracker};
-use super::Event;
 use std::any::TypeId;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 
 /// Deferred event wrapper for processing later
+#[allow(dead_code)] // Fields used when process_deferred() is implemented
 struct DeferredEvent {
     event: Box<dyn Any + Send>,
     type_id: TypeId,
@@ -150,10 +151,7 @@ impl EventBus {
         let handler = Handler::new(handler_fn, priority);
 
         let mut handlers = self.sync_handlers.write().unwrap();
-        handlers
-            .entry(type_id)
-            .or_insert_with(HandlerList::new)
-            .add(handler);
+        handlers.entry(type_id).or_default().add(handler);
     }
 
     /// Publish event immediately (synchronous handlers called now)
@@ -196,23 +194,24 @@ impl EventBus {
 
         // Execute synchronous handlers
         let handlers = self.sync_handlers.read().unwrap();
-        if let Some(handler_list) = handlers.get(&type_id) {
-            if !handler_list.is_empty() {
-                // Ensure handlers are sorted by priority
-                drop(handlers);
-                let mut handlers = self.sync_handlers.write().unwrap();
-                if let Some(handler_list) = handlers.get_mut(&type_id) {
-                    handler_list.sort_by_priority();
-                }
-                drop(handlers);
+        if let Some(handler_list) = handlers.get(&type_id)
+            && !handler_list.is_empty()
+        {
+            // Ensure handlers are sorted by priority
+            drop(handlers);
+            let mut handlers = self.sync_handlers.write().unwrap();
+            if let Some(handler_list) = handlers.get_mut(&type_id) {
+                handler_list.sort_by_priority();
+            }
+            drop(handlers);
 
-                // Re-acquire read lock and execute
-                let handlers = self.sync_handlers.read().unwrap();
-                if let Some(handler_list) = handlers.get(&type_id) {
-                    for handler in handler_list.handlers() {
-                        if let Some(handler_fn) = handler.downcast::<E>() {
-                            handler_fn(&event);
-                        }
+            // Re-acquire read lock and execute
+            let handlers = self.sync_handlers.read().unwrap();
+            if let Some(handler_list) = handlers.get(&type_id) {
+                for handler in handler_list.handlers() {
+                    if let Some(handler_fn) = handler.downcast::<E>() {
+                        handler_fn(&event);
+                        self.metrics_tracker.increment_processed();
                     }
                 }
             }
