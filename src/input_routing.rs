@@ -4,6 +4,12 @@
 //! input events to different layers based on the current game state. Higher
 //! priority layers receive input first and can consume events to prevent
 //! lower priority layers from receiving them.
+//!
+//! # Status: Implemented but not fully integrated
+//!
+//! Currently used to track active layers based on GameState, but actual event
+//! dispatch is handled by the `InputDispatcher` system. See `TODO.md` Task 10
+//! for architectural discussion of full integration vs current hybrid approach.
 
 use crate::game_state::GameState;
 use std::collections::HashMap;

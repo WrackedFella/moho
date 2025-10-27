@@ -1320,6 +1320,10 @@ impl ApplicationHandler for App {
     ) {
         // Dispatch the event to registered subscribers (UI first). If consumed,
         // skip further application-level handling.
+        //
+        // NOTE: InputRouter is maintained but not used for dispatch here.
+        // The InputDispatcher provides UI-first routing which works well with egui.
+        // See TODO.md Task 10 for architectural discussion.
         #[cfg(feature = "ui-egui")]
         {
             if self.dispatcher.dispatch(&event) {
