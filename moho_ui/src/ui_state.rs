@@ -54,10 +54,10 @@ impl UiStateManager {
         }
 
         // Call on_hide for current screen
-        if let Some(current) = &self.active_screen {
-            if let Some(screen) = self.screens.get_mut(current) {
-                screen.on_hide();
-            }
+        if let Some(current) = &self.active_screen
+            && let Some(screen) = self.screens.get_mut(current)
+        {
+            screen.on_hide();
         }
 
         // Activate new screen
@@ -72,10 +72,10 @@ impl UiStateManager {
 
     /// Hide all screens
     pub fn hide_all(&mut self) {
-        if let Some(current) = &self.active_screen {
-            if let Some(screen) = self.screens.get_mut(current) {
-                screen.on_hide();
-            }
+        if let Some(current) = &self.active_screen
+            && let Some(screen) = self.screens.get_mut(current)
+        {
+            screen.on_hide();
         }
         self.active_screen = None;
         self.visible = false;
@@ -91,9 +91,9 @@ impl UiStateManager {
     }
 
     /// Get the currently active screen (immutable)
-    pub fn active_screen(&self) -> Option<&Box<dyn Menu>> {
+    pub fn active_screen(&self) -> Option<&dyn Menu> {
         if let Some(name) = &self.active_screen {
-            self.screens.get(name)
+            self.screens.get(name).map(|b| b.as_ref())
         } else {
             None
         }
@@ -115,8 +115,8 @@ impl UiStateManager {
     }
 
     /// Get a specific screen by name (immutable)
-    pub fn get_screen(&self, name: &str) -> Option<&Box<dyn Menu>> {
-        self.screens.get(name)
+    pub fn get_screen(&self, name: &str) -> Option<&dyn Menu> {
+        self.screens.get(name).map(|b| b.as_ref())
     }
 }
 

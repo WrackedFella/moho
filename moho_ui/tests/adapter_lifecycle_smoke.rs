@@ -10,22 +10,22 @@ fn adapter_lifecycle_smoke() {
     let (mut adapter, receiver) = build_adapter(None);
 
     // Adapter should start with menus visible
-    assert!(adapter.ui_visible);
+    assert!(adapter.is_visible());
 
     // Construction should not emit any events initially
     assert!(receiver.is_empty());
 
     // Test menu switching (we can't check internal state, but we can verify no panics)
     adapter.show_menu("settings");
-    assert!(adapter.ui_visible);
+    assert!(adapter.is_visible());
 
     // Switch back to start menu
     adapter.show_menu("start");
-    assert!(adapter.ui_visible);
+    assert!(adapter.is_visible());
 
     // Test hiding menus
     adapter.hide_menus();
-    assert!(!adapter.ui_visible);
+    assert!(!adapter.is_visible());
 
     // Test recall_staging_belt is safe to call
     adapter.recall_staging_belt();

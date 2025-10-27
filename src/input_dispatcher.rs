@@ -121,14 +121,14 @@ mod tests {
         let adapter = Arc::new(Mutex::new(adapter));
 
         // Case 1: UI hidden -> forward
-        adapter.lock().unwrap().ui_visible = false;
+        adapter.lock().unwrap().set_visible(false);
         let (tx, rx) = unbounded::<crate::input_event::InputEvent>();
         let forwarded = crate::forward_wheel_if_allowed(&adapter, &tx, 1.0);
         assert!(forwarded);
         assert!(rx.try_recv().is_ok());
 
         // Case 2: UI visible -> do not forward
-        adapter.lock().unwrap().ui_visible = true;
+        adapter.lock().unwrap().set_visible(true);
         let (tx2, rx2) = unbounded::<crate::input_event::InputEvent>();
         let forwarded2 = crate::forward_wheel_if_allowed(&adapter, &tx2, 1.0);
         assert!(!forwarded2);

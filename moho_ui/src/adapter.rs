@@ -342,10 +342,10 @@ impl FrameCallback for EguiAdapter {
             }
 
             // Check if any screen wants to show a modal
-            if let Some(screen) = self.ui_state.active_screen_mut() {
-                if let Some(modal) = screen.take_pending_modal() {
-                    self.ui_state.modal_manager.show(modal);
-                }
+            if let Some(screen) = self.ui_state.active_screen_mut()
+                && let Some(modal) = screen.take_pending_modal()
+            {
+                self.ui_state.modal_manager.show(modal);
             }
 
             // Render modal on top of menu (if active)
