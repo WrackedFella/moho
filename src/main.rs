@@ -76,21 +76,16 @@ struct WindowRenderer {
     cube_mesh_handle: u32,
 }
 
-// App state to manage different modes
-#[cfg(feature = "backend-wgpu")]
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum AppMode {
-    Menu,
-    Game,
-}
-
 // Application state structure that implements ApplicationHandler
 #[cfg(feature = "backend-wgpu")]
 struct App {
     world: World,
     scene: moho_renderer::Scene,
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-    mode: AppMode,
+
+    // Game state management (replaces old AppMode)
+    game_state: crate::game_state::GameState,
+    input_router: crate::input_routing::InputRouter,
 
     // Runtime state (initialized after window creation)
     window_renderer: Option<WindowRenderer>,
@@ -226,7 +221,8 @@ impl App {
             world,
             scene,
             camera,
-            mode: AppMode::Menu, // Start in menu mode
+            game_state: crate::game_state::GameState::Menu, // Start in menu
+            input_router: crate::input_routing::InputRouter::new(),
             window_renderer: None,
             event_bus,
 
@@ -410,7 +406,7 @@ impl App {
             let camera_data = Some((self.simulation.position(), yaw, pitch));
             let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
             save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
-            self.mode = AppMode::Game;
+            self.game_state = crate::game_state::GameState::Playing;
             self.hide_menu();
             return Ok(());
         }
@@ -643,7 +639,7 @@ impl App {
         }
 
         // Switch to game mode and hide menu
-        self.mode = AppMode::Game;
+        self.game_state = crate::game_state::GameState::Playing;
         self.hide_menu();
 
         log::info!("Scene loading complete - switched to game mode");
@@ -703,7 +699,7 @@ impl App {
     /// Handle keyboard input for camera controls
     fn handle_keyboard_input(&mut self, event: &KeyEvent) {
         // Only process input in game mode
-        if self.mode != AppMode::Game {
+        if self.game_state != crate::game_state::GameState::Playing {
             return;
         }
 
@@ -771,7 +767,7 @@ impl App {
     /// Handle mouse motion for camera look
     fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
         // Only process input in game mode and first person camera mode
-        if self.mode != AppMode::Game
+        if self.game_state != crate::game_state::GameState::Playing
             || self.simulation.camera_mode() != moho_core::controller::CameraMode::FirstPerson
         {
             return;
@@ -820,7 +816,7 @@ impl App {
     }
 
     fn show_menu(&mut self) {
-        self.mode = AppMode::Menu;
+        self.game_state = crate::game_state::GameState::Menu;
 
         #[cfg(feature = "ui-egui")]
         if let Some(ui_adapter) = &self.ui_adapter
@@ -905,7 +901,7 @@ impl ApplicationHandler for App {
                 });
 
             // Update camera controls if in game mode
-            if self.mode == AppMode::Game {
+            if self.game_state == crate::game_state::GameState::Playing {
                 // Update controller input from keyboard state
                 self.update_controller_input();
 
@@ -973,9 +969,7 @@ impl ApplicationHandler for App {
                         }
                         moho_core::events::UiEvent::OverlayToggled { name, visible } => {
                             log::info!("Overlay {} toggled: {}", name, visible);
-                            if visible
-                                && let Some(ref wr) = self.window_renderer
-                            {
+                            if visible && let Some(ref wr) = self.window_renderer {
                                 wr.window.set_cursor_visible(true);
                             }
                         }
@@ -1036,7 +1030,7 @@ impl ApplicationHandler for App {
                     match iev {
                         crate::input_event::InputEvent::MouseWheel { delta_y } => {
                             // Only act on wheel events in game mode
-                            if self.mode == AppMode::Game {
+                            if self.game_state == crate::game_state::GameState::Playing {
                                 // Simple zoom: move player forward/back along look direction
                                 let dz = delta_y * 0.5; // tuning factor
                                 let (yaw, pitch) = self.simulation.yaw_pitch();
@@ -1116,7 +1110,7 @@ impl ApplicationHandler for App {
                             self.generation_cancel = None;
 
                             // Switch to game mode and hide menu
-                            self.mode = AppMode::Game;
+                            self.game_state = crate::game_state::GameState::Playing;
                             self.hide_menu();
 
                             still_running = false;

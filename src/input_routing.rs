@@ -157,11 +157,11 @@ impl InputRouter {
     /// `true` if the event was consumed by any layer, `false` otherwise
     pub fn dispatch(&self, event: &WindowEvent) -> bool {
         for layer in &self.active_layers {
-            if let Some(handler) = self.handlers.get(layer) {
-                if handler(event) {
-                    // Event consumed, stop propagation
-                    return true;
-                }
+            if let Some(handler) = self.handlers.get(layer)
+                && handler(event)
+            {
+                // Event consumed, stop propagation
+                return true;
             }
         }
 

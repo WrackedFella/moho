@@ -75,6 +75,9 @@ pub use screens::{
 };
 
 #[cfg(feature = "ui-egui")]
+pub use overlays::Console;
+
+#[cfg(feature = "ui-egui")]
 pub use modal::{Modal, ModalManager, ModalResult};
 
 #[cfg(feature = "ui-egui")]

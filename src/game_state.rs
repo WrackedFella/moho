@@ -188,14 +188,18 @@ mod tests {
     #[test]
     fn test_validate_transition() {
         // Valid transitions should return Ok
-        assert!(GameState::Playing
-            .validate_transition(GameState::ConsoleOpen)
-            .is_ok());
+        assert!(
+            GameState::Playing
+                .validate_transition(GameState::ConsoleOpen)
+                .is_ok()
+        );
 
         // Invalid transitions should return Err
-        assert!(GameState::Menu
-            .validate_transition(GameState::ConsoleOpen)
-            .is_err());
+        assert!(
+            GameState::Menu
+                .validate_transition(GameState::ConsoleOpen)
+                .is_err()
+        );
     }
 
     #[test]
