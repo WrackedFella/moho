@@ -28,6 +28,15 @@ pub enum ConsoleAction {
 ///
 /// The console does NOT manage its own visibility - that's handled by GameState.
 /// This component only handles rendering and input when it's active.
+///
+/// # Example (usage sketch)
+///
+/// ```rust,ignore
+/// // The adapter receives `GameState::ConsoleOpen` and calls `console.render(&ctx)` each frame.
+/// let mut console = moho_ui::overlays::console::Console::new();
+/// // User types 'god' and presses Enter — the adapter receives a ConsoleAction::ToggleGodMode
+/// // and publishes `DebugEvent::ToggleGodMode` on the EventBus for subscribers to handle.
+/// ```
 pub struct Console {
     /// Current input text being typed
     input_buffer: String,
