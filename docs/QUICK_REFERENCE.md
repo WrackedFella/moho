@@ -254,24 +254,24 @@ fn render_custom_meshes(&self, render_pass: &mut wgpu::RenderPass) {
 
 ## 🚦 Progress Tracking
 
-### Phase 1: Foundation (1-2 hours)
+### Phase 1: Foundation (estimate: 1 SP)
 - [ ] CustomMesh trait defined and documented
 - [ ] VoxelChunk implements CustomMesh
 - [ ] collect_custom_meshes() implemented
 - [ ] Unit tests pass
 
-### Phase 2: Renderer (2-3 hours)
+### Phase 2: Renderer (estimate: 2 SP)
 - [ ] CustomMeshGpu struct created
 - [ ] Buffer upload working
 - [ ] CustomMeshManager added
 - [ ] Integration with render loop
 
-### Phase 3: Rendering (1 hour)
+### Phase 3: Rendering (estimate: 1 SP)
 - [ ] Draw calls implemented
 - [ ] Shader compatibility verified
 - [ ] First visual output achieved
 
-### Phase 4: Testing (1 hour)
+### Phase 4: Testing (estimate: 1 SP)
 - [ ] All 16 chunks render
 - [ ] Face culling verified
 - [ ] Performance acceptable

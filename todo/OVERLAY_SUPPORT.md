@@ -5,7 +5,7 @@
 Phase 3 adds support for **in-game overlays** - non-modal UI elements that appear during gameplay without blocking the game. This includes HUD elements, notifications, in-game menus, and other interactive UI that coexists with the game world.
 
 **Status:** Not Started (Phase 1 & 2 Complete)  
-**Estimated Effort:** 2-3 days  
+**Estimate:** 8 SP  
 **Prerequisites:** Phase 1 & 2 completed ✅
 
 ---
@@ -22,7 +22,7 @@ Phase 3 adds support for **in-game overlays** - non-modal UI elements that appea
 
 ## Task Breakdown
 
-### Task 1: Define Overlay Trait (1-2 hours)
+### Task 1: Define Overlay Trait (estimate: 1 SP)
 
 **File:** `moho_ui/src/overlays/overlay.rs` (new)
 
@@ -95,7 +95,7 @@ pub enum OverlaySize {
 
 ---
 
-### Task 2: Create Example Overlays (2-3 hours)
+### Task 2: Create Example Overlays (estimate: 2 SP)
 
 #### 2a. HUD Overlay (`moho_ui/src/overlays/hud.rs`)
 
@@ -295,7 +295,7 @@ impl Overlay for PauseMenuOverlay {
 
 ---
 
-### Task 3: Overlay Manager (2-3 hours)
+### Task 3: Overlay Manager (estimate: 2 SP)
 
 **File:** `moho_ui/src/overlays/overlay_manager.rs` (new)
 
@@ -367,7 +367,7 @@ impl OverlayManager {
 
 ---
 
-### Task 4: Update Adapter for Overlays (2-3 hours)
+### Task 4: Update Adapter for Overlays (estimate: 2 SP)
 
 **File:** `moho_ui/src/adapter.rs`
 
@@ -520,7 +520,7 @@ fn handle_pause_key(&mut self) {
 
 ---
 
-### Task 6: Simplify MenuItem → UiAction (2-3 hours)
+### Task 6: Simplify MenuItem → UiAction (estimate: 2 SP)
 
 **Rationale:** `MenuItem` is now used by both screens and overlays, making the name misleading. Rename to `UiAction` for clarity.
 

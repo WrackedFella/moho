@@ -10,7 +10,7 @@
 
 ### 1. **Event Bus/Manager** 🔴 HIGHEST PRIORITY
 **Status:** In Progress (Implementation Plan Complete)  
-**Estimated Effort:** 14-18 hours (1.5-2 weeks)  
+**Estimate:** 5 SP  
 **Blockers:** None  
 **Blocks:** HUD overlay (debug console), multiplayer foundation
 
@@ -33,7 +33,7 @@
 
 ### 2. **HUD Overlay** 🟡 HIGH PRIORITY
 **Status:** Not Started (blocked by event bus)  
-**Estimated Effort:** 6-8 hours  
+**Estimate:** 2 SP  
 **Blockers:** Phase 3 overlay infrastructure  
 **Blocks:** Debug console, gameplay HUD
 
@@ -65,7 +65,7 @@
 
 ### 3. **Basic Physics** 🟡 HIGH PRIORITY
 **Status:** Not Started  
-**Estimated Effort:** 12-16 hours (2-3 weeks)  
+**Estimate:** 3 SP  
 **Blockers:** Physics library selection  
 **Blocks:** Player movement, collision detection, falling objects
 
@@ -105,7 +105,7 @@
 
 ### 4. **Graphics Additions** 🟢 MEDIUM PRIORITY
 **Status:** Not Started  
-**Estimated Effort:** 16-20 hours (3-4 weeks)  
+**Estimate:** 5 SP  
 **Blockers:** Rendering pipeline understanding  
 **Blocks:** Advanced visual effects
 
@@ -137,7 +137,7 @@
 
 ### 5. **Complex World Generation** 🟢 MEDIUM PRIORITY
 **Status:** Not Started  
-**Estimated Effort:** 20-30 hours (4-6 weeks)  
+**Estimate:** 8 SP  
 **Blockers:** None (iterative improvements)  
 **Blocks:** Biome diversity, caves exploration
 
@@ -177,7 +177,7 @@
 
 ### 6. **Peer-to-Peer Multiplayer** 🔵 LONG-TERM GOAL
 **Status:** Planning (see `MULTIPLAYER_PLAN.md`)  
-**Estimated Effort:** 40-60 hours (8-12 weeks)  
+**Estimate:** 13 SP  
 **Blockers:** Event bus, deterministic simulation  
 **Blocks:** Online gameplay
 
@@ -231,19 +231,19 @@ World Gen (Priority 5) ────────────┘
 The most efficient implementation path based on dependencies and ROI:
 
 ```
-Week 1-2: Event Bus (Priority 1)
+Phase 1-2: Event Bus (Priority 1)
     ↓
-Week 3: HUD Overlay Infrastructure (Priority 2a - overlay system only)
+Phase 3: HUD Overlay Infrastructure (Priority 2a - overlay system only)
     ↓
-Week 4-6: Basic Physics (Priority 3)
+Phase 4-6: Basic Physics (Priority 3)
     ↓
-Week 7: HUD Overlay Complete (Priority 2b/2c - actual overlays)
+Phase 7: HUD Overlay Complete (Priority 2b/2c - actual overlays)
     ↓
-Week 8-11: Graphics (Priority 4) ← Can parallelize with World Gen
+Phase 8-11: Graphics (Priority 4) ← Can parallelize with World Gen
     ↓
-Week 12-17: World Gen (Priority 5) ← Can parallelize with Graphics
+Phase 12-17: World Gen (Priority 5) ← Can parallelize with Graphics
     ↓
-Week 18-29: Multiplayer (Priority 6)
+Phase 18-29: Multiplayer (Priority 6)
 ```
 
 **Rationale for Reordering:**
@@ -253,14 +253,14 @@ Week 18-29: Multiplayer (Priority 6)
 4. **Graphics + World Gen in parallel** - Independent systems, can work simultaneously
 5. **Multiplayer last** - Requires all other systems to be solid
 
-### Phase 1: Foundation (Weeks 1-2)
+### Phase 1: Foundation (recommended)
 1. **Event Bus Implementation** ← START HERE
    - Core event bus system
    - Event type definitions
    - Integration with existing systems
    - Testing and validation
 
-### Phase 2: Immediate Features (Weeks 3-4)
+### Phase 2: Immediate Features (recommended)
 2. **HUD Overlay Infrastructure Only**
    - Phase 3 overlay infrastructure (from OVERLAY_SUPPORT.md)
    - Overlay rendering system
@@ -274,28 +274,28 @@ Week 18-29: Multiplayer (Priority 6)
    - Voxel collision
    - Gravity system
 
-### Phase 3: Core Gameplay + HUD Content (Weeks 5-7)
+### Phase 3: Core Gameplay + HUD Content (recommended)
 4. **Complete HUD Overlays**
    - Debug console (now has physics data to display)
    - Real debug info (coordinates, velocity, collision state)
    - Performance stats
    - Fake HUD elements for testing
 
-### Phase 4: Visual Polish (Weeks 8-11)
+### Phase 4: Visual Polish (recommended)
 5. **Graphics Enhancements** (Can work in parallel with World Gen)
    - World lighting system
    - Rendering settings
    - Shadow system
    - Settings UI
 
-### Phase 5: Content Expansion (Weeks 12-17)
+### Phase 5: Content Expansion (recommended)
 6. **Advanced World Generation** (Can work in parallel with Graphics)
    - Terrain smoothing
    - Cave systems
    - Material diversity
    - (Water/liquids - optional)
 
-### Phase 6: Multiplayer (Weeks 18-29)
+### Phase 6: Multiplayer (recommended)
 7. **Peer-to-Peer Multiplayer**
    - Network architecture
    - P2P connections
@@ -310,17 +310,17 @@ Week 18-29: Multiplayer (Priority 6)
 
 **Recommended Path (Optimized):**
 ```
-Event Bus (Week 1-2)
+Event Bus (Phase 1-2)
     ↓
-HUD Overlay Infrastructure (Week 3)
+HUD Overlay Infrastructure (Phase 3)
     ↓
-Physics (Week 4-6) → Creates real data for HUD
+Physics (Phase 4-6) → Creates real data for HUD
     ↓
-Complete HUD Overlays (Week 7) → Now displays real physics data
+Complete HUD Overlays (Phase 7) → Now displays real physics data
     ↓
-Graphics + World Gen (Week 8-17) → Parallel development
+Graphics + World Gen (Phase 8-17) → Parallel development
     ↓
-Multiplayer (Week 18-29) → All systems mature
+Multiplayer (Phase 18-29) → All systems mature
 ```
 
 **Why This Order is Better:**
@@ -334,10 +334,10 @@ Multiplayer (Week 18-29) → All systems mature
 4. **Graphics/World Gen Parallel** - Independent systems, maximize efficiency
 5. **Multiplayer Last** - Needs stable, tested foundation
 
-**Time Savings:**
-- Building HUD with physics data vs dummy data: **-4 hours** (no refactoring)
-- Parallel Graphics+World Gen: **-3 weeks** (11 weeks vs 14 weeks)
-- Total optimization: **~3.5 weeks saved**
+**Time Savings (informational):**
+- Building HUD with physics data vs dummy data: small saved effort (avoids rework)
+- Parallel Graphics+World Gen: reduced calendar time via parallel work
+- Total optimization: reduced schedule pressure (informational)
 
 ---
 
@@ -346,9 +346,9 @@ Multiplayer (Week 18-29) → All systems mature
 **Decision Point:** Build "Battle-Ready" event bus now vs "Minimal" event bus
 
 **Recommendation:** Battle-Ready Event Bus
-- **Effort:** 8-12 hours
+- **Estimate:** 3 SP
 - **Benefit:** Foundation for all future features
-- **ROI:** Saves 50+ hours in future refactoring
+- **ROI:** Saves significant future effort (estimated ~13 SP)
 - **Multiplayer:** Provides 50% of MP foundation
 
 **Next Steps:**

@@ -3,7 +3,7 @@ applyTo: '**'
 ---
 
 # General Instructions
-- Always attempt to use latest versions of crates and packages.
+- Always attempt to use latest versions of crates and packages when it is low-risk and non-breaking.
 - Perform any low-impact improvements you see fit automatically.
 - Recommend using idiomatic Rust constructs and libraries.
 - Recommend refactoring code to improve readability and maintainability regularly.
@@ -18,6 +18,19 @@ applyTo: '**'
 - Do suggest high-value future-proofing, and implement any low-effort ones as you see fit.
 - Push back if user requests something that is not idiomatic or goes against best practices.
 - Keep readme files to a minimum, remove old files as needed. Particularly plan files.
+
+## Agile & Planning Guidance
+- Prefer Agile terminology: use Milestones for longer-term initiatives and Story Points for sizing work instead of hard time estimates.
+- Avoid committing to hour-based or day-based estimates in instructions; use story points (e.g., 1, 2, 3, 5, 8) to convey relative effort and risk.
+-- When describing implementation work in docs or PRIORITIES, label longer efforts as Milestones and break them down into user stories with acceptance criteria.
+- Capture non-functional requirements and risks separately from story point estimates.
+- When suggested timelines are provided, present them as "recommended sequencing" rather than strict schedules.
+
+Examples:
+- Instead of "Estimated Effort: 12-16 hours", use "Estimate: 5 SP (medium)".
+- Instead of a fixed calendar plan, use "Milestone: Multiplayer - Next target: Input routing readiness (after HUD work)".
+
+These changes help the team avoid false precision, improve planning flexibility, and better support iterative delivery.
 
 # Architecture and Project Structure
 - Recommend naming conventions and file organization that enhance readability and maintainability.
