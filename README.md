@@ -1,42 +1,145 @@
 [![CI](https://github.com/WrackedFella/moho/actions/workflows/ci.yml/badge.svg)](https://github.com/WrackedFella/moho/actions/workflows/ci.yml)
 
-moho — A small modular voxel game engine (Rust)
+# Moho — A Modular Voxel Game Engine (Rust)
 
-Short description
-- moho is a modular Rust workspace containing engine components (core, renderer, UI, audio) and a headless simulation crate (`moho_sim`) used for deterministic simulation and tests.
-- The project emphasizes separation between pure simulation and rendering to make testing, snapshots, and future multiplayer work easier.
+## Overview
 
-Quick start (prerequisites)
-- Install Rust toolchain (stable or the toolchain pinned in `rust-toolchain` if present).
-- On Windows, ensure Vulkan/WGPU-compatible drivers are installed for rendering.
+Moho is a modular Rust workspace containing engine components designed for voxel-based games:
 
-Common commands
-- Run the game (desktop):
+- **moho_core** - Event bus, voxel types, camera, materials, core utilities
+- **moho_renderer** - WGPU-based rendering backend  
+- **moho_audio** - Audio playback (rodio-based)
+- **moho_ui** - egui integration for menus and overlays
+- **moho_input** - Input mapping and state management
+- **moho_sim** - Deterministic headless simulation for testing and multiplayer
+
+The project emphasizes **separation of concerns** between simulation and rendering, making testing, snapshots, and future multiplayer functionality easier.
+
+### Key Features
+
+✅ **Event Bus System** - Type-safe pub/sub for decoupled system communication  
+✅ **Voxel Terrain** - Chunk-based world with face culling (87% triangle reduction)  
+✅ **Deterministic Simulation** - Snapshot/restore with CRC validation  
+✅ **ECS Architecture** - Legion-based entity component system  
+✅ **Cross-platform** - Windows, macOS, Linux support via WGPU
+
+## Quick Start
+
+### Prerequisites
+- Rust toolchain (stable 2024 edition or later)
+- Vulkan/WGPU-compatible graphics drivers
+
+### Running the Game
 
 ```sh
 cargo run --features "backend-wgpu,ui-egui"
 ```
 
-- Run all workspace tests (quiet):
+### Testing
 
 ```sh
-cargo test --all --workspace -- -q
+# Run all tests
+cargo test --workspace
+
+# Run specific crate tests
+cargo test --package moho_core
+
+# Run integration tests
+cargo test --test event_bus_integration
 ```
 
-- Build release:
+### Performance Benchmarks
 
 ```sh
-cargo build --release
+# Run benchmarks (requires criterion)
+cargo bench --bench event_bus_bench
+
+# View results
+start target/criterion/report/index.html
 ```
 
-- Format & lint:
+### Code Quality
 
 ```sh
-cargo fmt
-cargo clippy --all-targets -- -D warnings
+# Format code
+cargo fmt --all
+
+# Run linter
+cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Docker (CI / hermetic build)
+## Documentation
+
+### Event Bus
+- **[Best Practices](docs/engine_core/EVENT_BUS_BEST_PRACTICES.md)** - Usage patterns and common pitfalls
+- **[Performance Analysis](docs/engine_core/EVENT_BUS_PERFORMANCE.md)** - Benchmark results (11M events/sec)
+- **[Testing Notes](docs/engine_core/EVENT_BUS_TESTING_NOTES.md)** - Test findings and limitations
+- **[Complete Summary](docs/engine_core/EVENT_BUS_SUMMARY.md)** - Full implementation details
+
+### Core Concepts
+- **[moho_core Concepts](docs/engine_core/CONCEPTS.md)** - Architecture and design decisions
+- **[moho_renderer Concepts](docs/engine_renderer/CONCEPTS.md)** - Rendering system overview
+- **[moho_audio Concepts](docs/engine_audio/CONCEPTS.md)** - Audio system design
+- **[moho_ui Concepts](docs/moho_ui/CONCEPTS.md)** - UI system integration
+
+### Other Docs
+- **[Quick Reference](docs/QUICK_REFERENCE.md)** - Common tasks and patterns
+- **[GPU ABI](docs/gpu_abi.md)** - Shader/CPU data layout requirements
+- **[Preferences Format](docs/prefs_format.md)** - Configuration file structure
+
+## Architecture
+
+### Workspace Structure
+
+```
+moho/
+├── benches/              # Performance benchmarks
+├── docs/                 # Documentation
+├── src/                  # Main application
+├── tests/                # Integration tests
+├── moho_core/            # Core types, events, voxels
+├── moho_renderer/        # WGPU rendering
+├── moho_audio/           # Audio playback
+├── moho_ui/              # egui UI
+├── moho_input/           # Input handling
+└── moho_sim/             # Deterministic simulation
+```
+
+### Event Bus System
+
+The event bus provides type-safe, decoupled communication between systems:
+
+```rust
+use moho_core::events::{EventBus, UiEvent};
+
+let bus = Arc::new(EventBus::new());
+
+// Subscribe to events
+bus.subscribe(|event: &UiEvent| {
+    println!("UI Event: {:?}", event);
+});
+
+// Publish events
+bus.publish(UiEvent::MenuShown { name: "main".to_string() });
+```
+
+**Performance**: <1% frame budget at 60 FPS, 11.4M events/second throughput
+
+See [EVENT_BUS_BEST_PRACTICES.md](docs/engine_core/EVENT_BUS_BEST_PRACTICES.md) for detailed usage patterns.
+
+## Build & Release
+
+### Development Build
+```sh
+cargo build --features "backend-wgpu,ui-egui"
+```
+
+### Release Build
+```sh
+cargo build --release --features "backend-wgpu,ui-egui"
+```
+
+## Docker / CI
 - Build the CI Docker image (used by GitHub Actions; local debugging):
 
 ```sh

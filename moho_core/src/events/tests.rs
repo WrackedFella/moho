@@ -2,8 +2,8 @@
 mod event_bus_tests {
     use crate::events::{Event, EventBus};
     use std::any::Any;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     // Test event types
     #[derive(Clone, Debug)]
@@ -170,7 +170,7 @@ mod event_bus_tests {
         std::thread::sleep(std::time::Duration::from_millis(10));
 
         let history = bus.history();
-        
+
         // Should have 2 TestEvents but not HighFrequencyEvent (should_record = false)
         assert!(history.len() >= 2);
         assert!(history.iter().any(|s| s.contains("TestEvent")));

@@ -3,8 +3,8 @@
 //! Tests event flow between different systems and realistic usage patterns.
 
 use moho_core::events::{AudioEvent, EventBus, InputEvent, SystemEvent, UiEvent};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 #[test]
 fn test_ui_to_audio_event_flow() {
@@ -30,7 +30,7 @@ fn test_ui_to_audio_event_flow() {
 #[test]
 fn test_multi_subscriber_event_distribution() {
     let bus = Arc::new(EventBus::new());
-    
+
     let ui_counter = Arc::new(AtomicU32::new(0));
     let analytics_counter = Arc::new(AtomicU32::new(0));
     let logger_counter = Arc::new(AtomicU32::new(0));
@@ -69,15 +69,18 @@ fn test_multi_subscriber_event_distribution() {
 fn test_frame_lifecycle_events() {
     let bus = Arc::new(EventBus::with_history(true, 100));
     let frame_counter = Arc::new(AtomicU32::new(0));
-    
+
     // Subscribe to frame events to verify they're published
     let fc = frame_counter.clone();
     bus.subscribe(move |event: &SystemEvent| {
-        if matches!(event, SystemEvent::FrameStart { .. } | SystemEvent::FrameEnd { .. }) {
+        if matches!(
+            event,
+            SystemEvent::FrameStart { .. } | SystemEvent::FrameEnd { .. }
+        ) {
             fc.fetch_add(1, Ordering::Relaxed);
         }
     });
-    
+
     // Simulate frame loop
     for frame in 0..5 {
         bus.publish(SystemEvent::FrameStart {
@@ -88,7 +91,9 @@ fn test_frame_lifecycle_events() {
         // Simulate some events during frame
         bus.publish(AudioEvent::ButtonClick);
 
-        bus.publish(SystemEvent::FrameEnd { frame_number: frame });
+        bus.publish(SystemEvent::FrameEnd {
+            frame_number: frame,
+        });
         bus.process_deferred();
     }
 
@@ -96,14 +101,20 @@ fn test_frame_lifecycle_events() {
 
     // Verify frame events were published (5 FrameStart + 5 FrameEnd = 10)
     assert_eq!(frame_counter.load(Ordering::Relaxed), 10);
-    
+
     let history = bus.history();
-    
+
     // Frame events should NOT be in history (they override should_record to return false)
     // Only ButtonClick events should be recorded
-    assert_eq!(history.len(), 5, "Should have 5 ButtonClick events in history");
-    assert!(history.iter().all(|s| s.contains("ButtonClick")), 
-            "History should only contain ButtonClick events");
+    assert_eq!(
+        history.len(),
+        5,
+        "Should have 5 ButtonClick events in history"
+    );
+    assert!(
+        history.iter().all(|s| s.contains("ButtonClick")),
+        "History should only contain ButtonClick events"
+    );
 }
 
 #[test]
@@ -235,7 +246,7 @@ fn test_metrics_tracking() {
 #[test]
 fn test_real_world_game_loop() {
     let bus = Arc::new(EventBus::with_history(true, 100));
-    
+
     let audio_events = Arc::new(AtomicU32::new(0));
     let ui_events = Arc::new(AtomicU32::new(0));
 
@@ -267,7 +278,9 @@ fn test_real_world_game_loop() {
         }
 
         // Frame end
-        bus.publish(SystemEvent::FrameEnd { frame_number: frame });
+        bus.publish(SystemEvent::FrameEnd {
+            frame_number: frame,
+        });
         bus.process_deferred();
     }
 

@@ -124,6 +124,7 @@ struct App {
 
     // Camera control (moved into simulation)
     simulation: moho_sim::SimulationController,
+    #[allow(dead_code)]
     mouse_sensitivity: f32,
     input_system: moho_core::input::InputSystem,
 
@@ -221,11 +222,11 @@ impl App {
             mode: AppMode::Menu, // Start in menu mode
             window_renderer: None,
             event_bus,
-            
+
             #[cfg(feature = "ui-egui")]
             ui_event_rx,
             audio_event_rx,
-            
+
             audio_system,
 
             #[cfg(feature = "ui-egui")]
@@ -834,11 +835,11 @@ impl App {
 
     /// Handle audio events from the UI or game
     fn handle_audio_event(&mut self, event: moho_audio::AudioEvent) {
-        if let Some(ref mut audio) = self.audio_system {
-            if let Err(e) = audio.handle_event(event) {
-                // Don't spam errors for missing audio files during development
-                log::debug!("Audio event failed: {}", e);
-            }
+        if let Some(ref mut audio) = self.audio_system
+            && let Err(e) = audio.handle_event(event)
+        {
+            // Don't spam errors for missing audio files during development
+            log::debug!("Audio event failed: {}", e);
         }
     }
 }
@@ -929,7 +930,12 @@ impl ApplicationHandler for App {
                             }
                         }
                         moho_core::events::UiEvent::NewWorldRequested { name, seed, size } => {
-                            log::info!("UI requested new world: {} (seed: {:?}, size: {})", name, seed, size);
+                            log::info!(
+                                "UI requested new world: {} (seed: {:?}, size: {})",
+                                name,
+                                seed,
+                                size
+                            );
                             let spec = moho_core::scene_builders::WorldSpec {
                                 name,
                                 seed,
@@ -949,10 +955,10 @@ impl ApplicationHandler for App {
                         }
                         moho_core::events::UiEvent::MenuShown { name } => {
                             log::info!("UI requested show menu: {}", name);
-                            if let Some(ui_adapter) = &self.ui_adapter {
-                                if let Ok(mut adapter) = ui_adapter.lock() {
-                                    adapter.show_menu(&name);
-                                }
+                            if let Some(ui_adapter) = &self.ui_adapter
+                                && let Ok(mut adapter) = ui_adapter.lock()
+                            {
+                                adapter.show_menu(&name);
                             }
                         }
                         moho_core::events::UiEvent::MenuHidden { name } => {
@@ -960,10 +966,10 @@ impl ApplicationHandler for App {
                         }
                         moho_core::events::UiEvent::OverlayToggled { name, visible } => {
                             log::info!("Overlay {} toggled: {}", name, visible);
-                            if visible {
-                                if let Some(ref wr) = self.window_renderer {
-                                    wr.window.set_cursor_visible(true);
-                                }
+                            if visible
+                                && let Some(ref wr) = self.window_renderer
+                            {
+                                wr.window.set_cursor_visible(true);
                             }
                         }
                         moho_core::events::UiEvent::SettingsSaved => {
@@ -1012,7 +1018,7 @@ impl ApplicationHandler for App {
                             moho_audio::AudioEvent::Stop(moho_audio::AudioCategory::All)
                         }
                     };
-                    
+
                     self.handle_audio_event(audio_event);
                 }
             }
