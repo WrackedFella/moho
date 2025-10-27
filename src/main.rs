@@ -28,6 +28,13 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 #[cfg(feature = "backend-wgpu")]
 use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
+
+// Core game state and input routing modules
+#[cfg(feature = "backend-wgpu")]
+mod game_state;
+#[cfg(feature = "backend-wgpu")]
+mod input_routing;
+
 mod save;
 
 #[cfg(feature = "ui-egui")]
@@ -69,21 +76,16 @@ struct WindowRenderer {
     cube_mesh_handle: u32,
 }
 
-// App state to manage different modes
-#[cfg(feature = "backend-wgpu")]
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum AppMode {
-    Menu,
-    Game,
-}
-
 // Application state structure that implements ApplicationHandler
 #[cfg(feature = "backend-wgpu")]
 struct App {
     world: World,
     scene: moho_renderer::Scene,
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-    mode: AppMode,
+
+    // Game state management (replaces old AppMode)
+    game_state: crate::game_state::GameState,
+    input_router: crate::input_routing::InputRouter,
 
     // Runtime state (initialized after window creation)
     window_renderer: Option<WindowRenderer>,
@@ -219,7 +221,8 @@ impl App {
             world,
             scene,
             camera,
-            mode: AppMode::Menu, // Start in menu mode
+            game_state: crate::game_state::GameState::Menu, // Start in menu
+            input_router: crate::input_routing::InputRouter::new(),
             window_renderer: None,
             event_bus,
 
@@ -403,7 +406,7 @@ impl App {
             let camera_data = Some((self.simulation.position(), yaw, pitch));
             let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
             save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
-            self.mode = AppMode::Game;
+            self.game_state = crate::game_state::GameState::Playing;
             self.hide_menu();
             return Ok(());
         }
@@ -636,7 +639,7 @@ impl App {
         }
 
         // Switch to game mode and hide menu
-        self.mode = AppMode::Game;
+        self.game_state = crate::game_state::GameState::Playing;
         self.hide_menu();
 
         log::info!("Scene loading complete - switched to game mode");
@@ -695,14 +698,57 @@ impl App {
 
     /// Handle keyboard input for camera controls
     fn handle_keyboard_input(&mut self, event: &KeyEvent) {
-        // Only process input in game mode
-        if self.mode != AppMode::Game {
-            return;
-        }
-
         let pressed = event.state == ElementState::Pressed;
 
         if let PhysicalKey::Code(keycode) = event.physical_key {
+            // Handle global hotkeys first (work in any state)
+            match keycode {
+                KeyCode::Backquote => {
+                    // Backtick (`) toggles console
+                    if pressed {
+                        use crate::game_state::GameState;
+                        match self.game_state {
+                            GameState::Playing => self.enter_console(),
+                            GameState::ConsoleOpen => self.exit_console(),
+                            _ => {}
+                        }
+                    }
+                    return; // Don't process further
+                }
+                KeyCode::Escape => {
+                    // Escape closes console if open, otherwise opens menu
+                    if pressed {
+                        use crate::game_state::GameState;
+                        match self.game_state {
+                            GameState::ConsoleOpen => {
+                                self.exit_console();
+                                return;
+                            }
+                            GameState::Playing => {
+                                // ESC to show menu
+                                self.show_menu();
+
+                                // Also explicitly request the adapter show the "start" menu
+                                #[cfg(feature = "ui-egui")]
+                                if let Some(ui_adapter) = &self.ui_adapter
+                                    && let Ok(mut adapter) = ui_adapter.lock()
+                                {
+                                    adapter.show_menu("start");
+                                }
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            // Only process game input in Playing mode
+            if self.game_state != crate::game_state::GameState::Playing {
+                return;
+            }
+
             // Convert physical keycode to our binding code using shared helper
             let pk = event.physical_key;
             let code = moho_input::physical_key_to_binding_code(pk);
@@ -719,44 +765,22 @@ impl App {
                 }
             }
 
-            // Handle special keys
-            match keycode {
-                KeyCode::Escape => {
-                    // ESC to show menu. When pressed in-game, always open the
-                    // main Start menu (not any previously active submenu).
-                    if pressed {
-                        // Set app into Menu mode and release cursor
-                        self.show_menu();
-
-                        // Also explicitly request the adapter show the "start"
-                        // menu so we don't reopen any other menu (e.g. new_world)
-                        #[cfg(feature = "ui-egui")]
-                        if let Some(ui_adapter) = &self.ui_adapter
-                            && let Ok(mut adapter) = ui_adapter.lock()
-                        {
-                            adapter.show_menu("start");
-                        }
+            // Handle special keys (only in Playing state at this point)
+            if keycode == KeyCode::Tab && pressed {
+                // Toggle camera mode
+                let new_mode = match self.simulation.camera_mode() {
+                    moho_core::controller::CameraMode::FirstPerson => {
+                        moho_core::controller::CameraMode::Isometric
                     }
-                }
-                KeyCode::Tab => {
-                    if pressed {
-                        // Toggle camera mode
-                        let new_mode = match self.simulation.camera_mode() {
-                            moho_core::controller::CameraMode::FirstPerson => {
-                                moho_core::controller::CameraMode::Isometric
-                            }
-                            moho_core::controller::CameraMode::Isometric => {
-                                moho_core::controller::CameraMode::FirstPerson
-                            }
-                        };
-                        self.simulation.set_camera_mode(new_mode);
-                        log::info!(
-                            "Switched to camera mode: {:?}",
-                            self.simulation.camera_mode()
-                        );
+                    moho_core::controller::CameraMode::Isometric => {
+                        moho_core::controller::CameraMode::FirstPerson
                     }
-                }
-                _ => {}
+                };
+                self.simulation.set_camera_mode(new_mode);
+                log::info!(
+                    "Switched to camera mode: {:?}",
+                    self.simulation.camera_mode()
+                );
             }
         }
     }
@@ -764,7 +788,7 @@ impl App {
     /// Handle mouse motion for camera look
     fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
         // Only process input in game mode and first person camera mode
-        if self.mode != AppMode::Game
+        if self.game_state != crate::game_state::GameState::Playing
             || self.simulation.camera_mode() != moho_core::controller::CameraMode::FirstPerson
         {
             return;
@@ -794,12 +818,15 @@ impl App {
     }
 
     fn hide_menu(&mut self) {
+        self.game_state = crate::game_state::GameState::Playing;
+
         #[cfg(feature = "ui-egui")]
         if let Some(ui_adapter) = &self.ui_adapter
             && let Ok(mut adapter) = ui_adapter.lock()
         {
             // Set UI to not visible directly
             adapter.set_visible(false);
+            adapter.set_game_state(moho_ui::GameState::Playing);
 
             // Update the atomic flag
             use moho_ui::UI_OVERLAY_VISIBLE;
@@ -808,12 +835,16 @@ impl App {
             log::info!("Menu hidden - UI set to invisible");
         }
 
+        // Update input router
+        self.input_router
+            .update_for_state(crate::game_state::GameState::Playing);
+
         // Grab cursor for game mode
         self.grab_cursor();
     }
 
     fn show_menu(&mut self) {
-        self.mode = AppMode::Menu;
+        self.game_state = crate::game_state::GameState::Menu;
 
         #[cfg(feature = "ui-egui")]
         if let Some(ui_adapter) = &self.ui_adapter
@@ -821,6 +852,7 @@ impl App {
         {
             // Set UI to visible
             adapter.set_visible(true);
+            adapter.set_game_state(moho_ui::GameState::Menu);
 
             // Update the atomic flag
             use moho_ui::UI_OVERLAY_VISIBLE;
@@ -829,8 +861,124 @@ impl App {
             log::info!("Menu shown - UI set to visible");
         }
 
+        // Update input router
+        self.input_router
+            .update_for_state(crate::game_state::GameState::Menu);
+
         // Release cursor for menu mode
         self.release_cursor();
+    }
+
+    /// Enter console mode (opens debug console over game)
+    fn enter_console(&mut self) {
+        use crate::game_state::GameState;
+
+        // Validate transition
+        if !self.game_state.can_transition_to(GameState::ConsoleOpen) {
+            log::warn!("Cannot open console from state: {:?}", self.game_state);
+            return;
+        }
+
+        log::info!("Entering console mode");
+        self.game_state = GameState::ConsoleOpen;
+
+        // Update input router for console state
+        self.input_router.update_for_state(GameState::ConsoleOpen);
+
+        // Make UI visible for console overlay
+        #[cfg(feature = "ui-egui")]
+        if let Some(ui_adapter) = &self.ui_adapter
+            && let Ok(mut adapter) = ui_adapter.lock()
+        {
+            adapter.set_visible(true);
+            adapter.set_game_state(moho_ui::GameState::ConsoleOpen);
+            use moho_ui::UI_OVERLAY_VISIBLE;
+            UI_OVERLAY_VISIBLE.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        // Release cursor so user can type
+        self.release_cursor();
+    }
+
+    /// Exit console mode (return to playing)
+    fn exit_console(&mut self) {
+        use crate::game_state::GameState;
+
+        // Validate transition
+        if !self.game_state.can_transition_to(GameState::Playing) {
+            log::warn!("Cannot exit console from state: {:?}", self.game_state);
+            return;
+        }
+
+        log::info!("Exiting console mode");
+        self.game_state = GameState::Playing;
+
+        // Update input router for playing state
+        self.input_router.update_for_state(GameState::Playing);
+
+        // Hide UI when returning to game
+        #[cfg(feature = "ui-egui")]
+        if let Some(ui_adapter) = &self.ui_adapter
+            && let Ok(mut adapter) = ui_adapter.lock()
+        {
+            adapter.set_visible(false);
+            adapter.set_game_state(moho_ui::GameState::Playing);
+            use moho_ui::UI_OVERLAY_VISIBLE;
+            UI_OVERLAY_VISIBLE.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        // Grab cursor for game mode
+        self.grab_cursor();
+    }
+
+    /// Toggle pause state
+    #[allow(dead_code)]
+    fn toggle_pause(&mut self) {
+        use crate::game_state::GameState;
+
+        match self.game_state {
+            GameState::Playing => {
+                if self.game_state.can_transition_to(GameState::Paused) {
+                    log::info!("Pausing game");
+                    self.game_state = GameState::Paused;
+                    self.input_router.update_for_state(GameState::Paused);
+
+                    #[cfg(feature = "ui-egui")]
+                    if let Some(ui_adapter) = &self.ui_adapter
+                        && let Ok(mut adapter) = ui_adapter.lock()
+                    {
+                        adapter.set_visible(true);
+                        adapter.set_game_state(moho_ui::GameState::Paused);
+                        use moho_ui::UI_OVERLAY_VISIBLE;
+                        UI_OVERLAY_VISIBLE.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+
+                    self.release_cursor();
+                }
+            }
+            GameState::Paused => {
+                if self.game_state.can_transition_to(GameState::Playing) {
+                    log::info!("Resuming game");
+                    self.game_state = GameState::Playing;
+                    self.input_router.update_for_state(GameState::Playing);
+
+                    #[cfg(feature = "ui-egui")]
+                    if let Some(ui_adapter) = &self.ui_adapter
+                        && let Ok(mut adapter) = ui_adapter.lock()
+                    {
+                        adapter.set_visible(false);
+                        adapter.set_game_state(moho_ui::GameState::Playing);
+                        use moho_ui::UI_OVERLAY_VISIBLE;
+                        UI_OVERLAY_VISIBLE.store(false, std::sync::atomic::Ordering::SeqCst);
+                    }
+
+                    self.grab_cursor();
+                }
+            }
+            _ => {
+                log::debug!("Cannot toggle pause from state: {:?}", self.game_state);
+            }
+        }
     }
 
     /// Handle audio events from the UI or game
@@ -898,7 +1046,7 @@ impl ApplicationHandler for App {
                 });
 
             // Update camera controls if in game mode
-            if self.mode == AppMode::Game {
+            if self.game_state == crate::game_state::GameState::Playing {
                 // Update controller input from keyboard state
                 self.update_controller_input();
 
@@ -963,12 +1111,14 @@ impl ApplicationHandler for App {
                         }
                         moho_core::events::UiEvent::MenuHidden { name } => {
                             log::info!("Menu hidden: {}", name);
+                            // Handle console close event
+                            if name == "console" {
+                                self.exit_console();
+                            }
                         }
                         moho_core::events::UiEvent::OverlayToggled { name, visible } => {
                             log::info!("Overlay {} toggled: {}", name, visible);
-                            if visible
-                                && let Some(ref wr) = self.window_renderer
-                            {
+                            if visible && let Some(ref wr) = self.window_renderer {
                                 wr.window.set_cursor_visible(true);
                             }
                         }
@@ -1029,7 +1179,7 @@ impl ApplicationHandler for App {
                     match iev {
                         crate::input_event::InputEvent::MouseWheel { delta_y } => {
                             // Only act on wheel events in game mode
-                            if self.mode == AppMode::Game {
+                            if self.game_state == crate::game_state::GameState::Playing {
                                 // Simple zoom: move player forward/back along look direction
                                 let dz = delta_y * 0.5; // tuning factor
                                 let (yaw, pitch) = self.simulation.yaw_pitch();
@@ -1109,7 +1259,7 @@ impl ApplicationHandler for App {
                             self.generation_cancel = None;
 
                             // Switch to game mode and hide menu
-                            self.mode = AppMode::Game;
+                            self.game_state = crate::game_state::GameState::Playing;
                             self.hide_menu();
 
                             still_running = false;
@@ -1173,6 +1323,10 @@ impl ApplicationHandler for App {
     ) {
         // Dispatch the event to registered subscribers (UI first). If consumed,
         // skip further application-level handling.
+        //
+        // NOTE: InputRouter is maintained but not used for dispatch here.
+        // The InputDispatcher provides UI-first routing which works well with egui.
+        // See TODO.md Task 10 for architectural discussion.
         #[cfg(feature = "ui-egui")]
         {
             if self.dispatcher.dispatch(&event) {

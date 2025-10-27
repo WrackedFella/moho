@@ -87,6 +87,26 @@ cargo clippy --all-targets --all-features -- -D warnings
 - **[GPU ABI](docs/gpu_abi.md)** - Shader/CPU data layout requirements
 - **[Preferences Format](docs/prefs_format.md)** - Configuration file structure
 
+### Debug Console (Developer)
+
+- Toggle: Press the backtick (`) while in the Playing state to open the debug console overlay; press Escape to close it.
+- Purpose: Lightweight in-game console for diagnostics, executing debug commands, and publishing events to the application's `EventBus`.
+- Commands: `help`, `clear`, `quit`, `god`, `noclip` (the console is extensible; commands publish `UiEvent`/`DebugEvent` variants).
+
+Example: subscribe to console events via the `EventBus`:
+
+```rust
+use std::sync::Arc;
+use moho_core::events::EventBus;
+
+let bus: Arc<EventBus> = Arc::new(EventBus::new());
+bus.subscribe(|evt: &moho_core::events::DebugEvent| {
+    println!("DebugEvent: {:?}", evt);
+});
+```
+
+See `docs/CONSOLE_ARCHITECTURE.md` and `docs/ADDING_CONSOLE_COMMANDS.md` for architecture and extension guidance.
+
 ## Architecture
 
 ### Workspace Structure

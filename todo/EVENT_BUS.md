@@ -3,7 +3,7 @@
 **Status:** In Progress  
 **Started:** October 26, 2025  
 **Branch:** ui-refactor  
-**Estimated Effort:** 14-18 hours (1.5-2 weeks)
+**Estimate:** 5 SP
 
 ---
 
@@ -51,7 +51,7 @@ moho_core/src/events/
 
 ---
 
-## Phase 1: Core Event Bus (4-5 hours)
+## Phase 1: Core Event Bus (estimate: 2 SP)
 
 ### Task 1.1: Event Trait & Infrastructure
 
@@ -539,7 +539,7 @@ pub use events::{EventBus, Event};
 
 ---
 
-## Phase 2: Event Type Definitions (3-4 hours)
+## Phase 2: Event Type Definitions (estimate: 2 SP)
 
 ### Task 2.1: System Events
 
@@ -1200,7 +1200,7 @@ pub use world::*;
 
 ---
 
-## Phase 3: Integration (4-5 hours)
+## Phase 3: Integration (estimate: 2 SP)
 
 ### Task 3.1: Add EventBus to App
 
@@ -1241,7 +1241,7 @@ pub use world::*;
 
 ---
 
-## Phase 4: Testing (3-4 hours)
+## Phase 4: Testing (estimate: 2 SP)
 
 ### Task 4.1: Unit Tests
 
@@ -1362,15 +1362,15 @@ log = "0.4"    # Already exists
 
 ## Timeline
 
-### Week 1
-- **Days 1-2**: Phase 1 (Core Event Bus)
-- **Days 3-4**: Phase 2 (Event Types)
-- **Day 5**: Phase 3 Start (Integration)
+### Phase 1 (recommended)
+- **Phase steps 1-2**: Core Event Bus
+- **Phase steps 3-4**: Event Types
+- **Phase step 5**: Integration start
 
-### Week 2
-- **Days 1-2**: Phase 3 Complete (Integration)
-- **Days 3-4**: Phase 4 (Testing)
-- **Day 5**: Documentation and code review
+### Phase 2 (recommended)
+- **Phase steps 1-2**: Complete integration
+- **Phase steps 3-4**: Testing
+- **Phase step 5**: Documentation and code review
 
 ---
 
