@@ -1,5 +1,5 @@
-use std::sync::{Arc, Mutex};
 use moho_core::events::EventBus;
+use std::sync::{Arc, Mutex};
 
 #[test]
 fn eventbus_multiple_subscribers_receive_events() {

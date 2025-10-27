@@ -42,6 +42,7 @@ pub enum GameState {
     /// - Rendering: Game world (frozen) + pause menu overlay
     /// - Cursor: Visible and free
     /// - Simulation: Paused
+    #[allow(dead_code)]
     Paused,
 }
 
@@ -91,6 +92,7 @@ impl GameState {
     /// # Errors
     ///
     /// Returns an error message if the transition is not allowed.
+    #[allow(dead_code)]
     pub fn validate_transition(self, new_state: GameState) -> Result<(), String> {
         if self.can_transition_to(new_state) {
             Ok(())
@@ -103,16 +105,19 @@ impl GameState {
     }
 
     /// Returns true if the game simulation should be running in this state.
+    #[allow(dead_code)]
     pub fn is_simulating(self) -> bool {
         matches!(self, GameState::Playing)
     }
 
     /// Returns true if the cursor should be grabbed and hidden in this state.
+    #[allow(dead_code)]
     pub fn should_grab_cursor(self) -> bool {
         matches!(self, GameState::Playing)
     }
 
     /// Returns true if the game world should be rendered in this state.
+    #[allow(dead_code)]
     pub fn should_render_world(self) -> bool {
         matches!(
             self,
@@ -121,11 +126,13 @@ impl GameState {
     }
 
     /// Returns true if UI overlays (console, pause menu) should be rendered.
+    #[allow(dead_code)]
     pub fn should_render_overlay(self) -> bool {
         matches!(self, GameState::ConsoleOpen | GameState::Paused)
     }
 
     /// Returns true if the main menu should be rendered.
+    #[allow(dead_code)]
     pub fn should_render_menu(self) -> bool {
         matches!(self, GameState::Menu)
     }

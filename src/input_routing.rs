@@ -21,6 +21,7 @@ use winit::event::WindowEvent;
 /// Each layer represents a different input handling context (menus, console, game, etc.).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
+#[allow(dead_code)]
 pub enum InputLayer {
     /// Modal dialogs (highest priority - blocks all other input)
     Modal = 100,
@@ -42,6 +43,7 @@ impl InputLayer {
     /// Get the priority value for this layer.
     ///
     /// Higher numbers = higher priority = receives input first.
+    #[allow(dead_code)]
     pub fn priority(self) -> u8 {
         self as u8
     }
@@ -81,6 +83,7 @@ pub type InputHandler = Box<dyn Fn(&WindowEvent) -> bool + Send + Sync>;
 /// // Dispatch events
 /// // let consumed = router.dispatch(&window_event);
 /// ```
+#[allow(dead_code)]
 pub struct InputRouter {
     /// Currently active input layers (determined by GameState)
     active_layers: Vec<InputLayer>,
@@ -89,6 +92,7 @@ pub struct InputRouter {
     handlers: HashMap<InputLayer, InputHandler>,
 }
 
+#[allow(dead_code)]
 impl InputRouter {
     /// Create a new input router with no active layers or handlers.
     pub fn new() -> Self {

@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use moho_core::events::EventBus;
+use std::sync::Arc;
 
 // These tests are light-weight integration tests that verify the console publishes
 // the expected events to the EventBus. They mock the minimal pieces required.
@@ -19,6 +19,8 @@ fn console_quit_publishes_exit_event() {
     // Simulate adapter publishing the ExitRequested event (what the console would do).
     bus.publish(moho_core::events::UiEvent::ExitRequested);
 
-    let received = rx.recv_timeout(std::time::Duration::from_secs(1)).expect("Expected event");
+    let received = rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("Expected event");
     assert!(received.contains("ExitRequested"));
 }

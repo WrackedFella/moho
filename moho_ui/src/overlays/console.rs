@@ -91,23 +91,23 @@ impl Console {
     /// * `ctx` - The egui context to render into
     pub fn render(&mut self, ctx: &egui::Context) -> ConsoleAction {
         let mut action = ConsoleAction::None;
-        
+
         // Check for backtick key press BEFORE egui processes input
         // This ensures backtick closes the console even when text field has focus
         // Skip on first frame to prevent immediate close when console is opened
         if !self.just_opened && ctx.input(|i| i.key_pressed(egui::Key::Backtick)) {
             return ConsoleAction::Close;
         }
-        
+
         // Clear the just_opened flag after first frame
         self.just_opened = false;
-        
+
         // Create a custom frame with semi-transparent background
         // Note: This transparency pattern can be reused for other overlays
         let frame = egui::Frame::new()
             .fill(egui::Color32::from_rgba_premultiplied(20, 20, 30, 180))
             .inner_margin(egui::Margin::same(8));
-        
+
         // Console panel at bottom of screen
         egui::TopBottomPanel::bottom("console_panel")
             .resizable(false)

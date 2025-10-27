@@ -766,23 +766,21 @@ impl App {
             }
 
             // Handle special keys (only in Playing state at this point)
-            if keycode == KeyCode::Tab {
-                if pressed {
-                    // Toggle camera mode
-                    let new_mode = match self.simulation.camera_mode() {
-                        moho_core::controller::CameraMode::FirstPerson => {
-                            moho_core::controller::CameraMode::Isometric
-                        }
-                        moho_core::controller::CameraMode::Isometric => {
-                            moho_core::controller::CameraMode::FirstPerson
-                        }
-                    };
-                    self.simulation.set_camera_mode(new_mode);
-                    log::info!(
-                        "Switched to camera mode: {:?}",
-                        self.simulation.camera_mode()
-                    );
-                }
+            if keycode == KeyCode::Tab && pressed {
+                // Toggle camera mode
+                let new_mode = match self.simulation.camera_mode() {
+                    moho_core::controller::CameraMode::FirstPerson => {
+                        moho_core::controller::CameraMode::Isometric
+                    }
+                    moho_core::controller::CameraMode::Isometric => {
+                        moho_core::controller::CameraMode::FirstPerson
+                    }
+                };
+                self.simulation.set_camera_mode(new_mode);
+                log::info!(
+                    "Switched to camera mode: {:?}",
+                    self.simulation.camera_mode()
+                );
             }
         }
     }
@@ -929,11 +927,12 @@ impl App {
             UI_OVERLAY_VISIBLE.store(false, std::sync::atomic::Ordering::SeqCst);
         }
 
-        // Grab cursor for game mode
+    // Grab cursor for game mode
         self.grab_cursor();
     }
 
     /// Toggle pause state
+    #[allow(dead_code)]
     fn toggle_pause(&mut self) {
         use crate::game_state::GameState;
 

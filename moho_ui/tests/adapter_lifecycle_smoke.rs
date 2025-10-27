@@ -4,16 +4,15 @@
 //! This test verifies basic adapter functionality and menu management.
 
 use moho_ui::build_adapter;
+use std::sync::Arc;
 
 #[test]
 fn adapter_lifecycle_smoke() {
-    let (mut adapter, receiver) = build_adapter(None);
+    let event_bus = Arc::new(moho_core::EventBus::new());
+    let mut adapter = build_adapter(None, event_bus.clone());
 
     // Adapter should start with menus visible
     assert!(adapter.is_visible());
-
-    // Construction should not emit any events initially
-    assert!(receiver.is_empty());
 
     // Test menu switching (we can't check internal state, but we can verify no panics)
     adapter.show_menu("settings");
@@ -34,7 +33,8 @@ fn adapter_lifecycle_smoke() {
 
 #[test]
 fn menu_action_processing() {
-    let (mut adapter, _receiver) = build_adapter(None);
+    let event_bus = Arc::new(moho_core::EventBus::new());
+    let mut adapter = build_adapter(None, event_bus.clone());
 
     // Test that menu switching works without panicking
     adapter.show_menu("settings");
