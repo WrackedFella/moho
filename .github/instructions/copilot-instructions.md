@@ -14,10 +14,23 @@ applyTo: '**'
 - Try to rely on self-documenting code rather than excessive comments.
 - Use doc comments (`///`) for public APIs and complex functions.
 - Readme files should be used to explain setup, architecture, and design decisions.
-- De-prioritize suggestions or actions that might be called "future-proofing" and focus on getting features done now.
-- Do suggest high-value future-proofing, and implement any low-effort ones as you see fit.
 - Push back if user requests something that is not idiomatic or goes against best practices.
 - Keep readme files to a minimum, remove old files as needed. Particularly plan files.
+
+## Quality vs Speed Guidance
+**Foundation/Engine Work (Current Phase):**
+- Prioritize quality, future-proofing, and architectural soundness
+- Focus on reusable, professional-grade systems that will scale
+- Worth the extra effort to build solid foundations
+- Examples: Event systems, physics integration, rendering pipeline, input routing
+
+**Game-Specific Work (Future Phase):**
+- Prioritize speed and pragmatic solutions
+- Reuse is not required - optimize for specific use case
+- Can use more targeted/hacky solutions when appropriate
+- Examples: Specific gameplay mechanics, level-specific logic, UI screens for one game mode
+
+When in doubt, ask: "Is this part of the reusable engine foundation or game-specific logic?"
 
 ## Agile & Planning Guidance
 - Prefer Agile terminology: use Milestones for longer-term initiatives and Story Points for sizing work instead of hard time estimates.
