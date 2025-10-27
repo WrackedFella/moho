@@ -927,7 +927,7 @@ impl App {
             UI_OVERLAY_VISIBLE.store(false, std::sync::atomic::Ordering::SeqCst);
         }
 
-    // Grab cursor for game mode
+        // Grab cursor for game mode
         self.grab_cursor();
     }
 
