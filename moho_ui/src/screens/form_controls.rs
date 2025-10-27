@@ -1,20 +1,20 @@
-/// A reusable form builder for creating consistent UI controls across the application.
+/// Reusable UI controls for creating consistent form elements across the application.
 ///
-/// This builder encapsulates common UI patterns for settings forms, including:
+/// This module encapsulates common UI patterns for settings forms, including:
 /// - Keybind controls with conflict detection and listening state
 /// - Volume sliders with drag values and dirty state indicators
 /// - Consistent styling and layout
 ///
 /// # Example
 /// ```ignore
-/// let dirty = FormBuilder::volume_slider(ui, "Volume:", &mut value, original_value, 150.0);
+/// let dirty = FormControls::volume_slider(ui, "Volume:", &mut value, original_value, 150.0);
 /// if dirty {
 ///     dirty_fields.insert(Field::Volume);
 /// }
 /// ```
-pub struct FormBuilder;
+pub struct FormControls;
 
-impl FormBuilder {
+impl FormControls {
     /// Renders a keybind control with a label, current binding display, and listen button.
     ///
     /// # Arguments
@@ -144,5 +144,96 @@ impl FormBuilder {
         let rect = response.rect;
         let color = egui::Color32::from_rgba_premultiplied(150, 150, 150, 60);
         ui.painter().rect_filled(rect, 4.0, color);
+    }
+
+    /// Standard three-panel layout for form screens.
+    ///
+    /// This helper reduces duplication by providing a consistent layout pattern:
+    /// - Top panel: centered title with spacing
+    /// - Bottom panel: right-aligned action buttons
+    /// - Central panel: scrollable content area with horizontal margins
+    ///
+    /// # Arguments
+    /// * `ctx` - The egui context
+    /// * `title` - The screen title text
+    /// * `panel_id_prefix` - Unique prefix for panel IDs (e.g., "settings", "new_world")
+    /// * `render_buttons` - Closure to render bottom panel buttons, returns (primary_clicked, secondary_clicked)
+    /// * `render_content` - Closure to render the central scrollable content
+    ///
+    /// # Returns
+    /// Tuple of (primary_button_clicked, secondary_button_clicked)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let (save_clicked, back_clicked) = FormControls::standard_screen_layout(
+    ///     ctx,
+    ///     "Settings",
+    ///     "settings",
+    ///     |ui| {
+    ///         let save = ui.button("Save");
+    ///         ui.add_space(12.0);
+    ///         let back = ui.button("Back");
+    ///         (save.clicked(), back.clicked())
+    ///     },
+    ///     |ui| {
+    ///         ui.label("Content here");
+    ///     }
+    /// );
+    /// ```
+    pub fn standard_screen_layout<FB, FC>(
+        ctx: &egui::Context,
+        title: &str,
+        panel_id_prefix: &str,
+        mut render_buttons: FB,
+        mut render_content: FC,
+    ) -> (bool, bool)
+    where
+        FB: FnMut(&mut egui::Ui) -> (bool, bool),
+        FC: FnMut(&mut egui::Ui),
+    {
+        let mut button_results = (false, false);
+
+        // Top panel: title area
+        egui::TopBottomPanel::top(format!("{}_top", panel_id_prefix)).show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(16.0);
+                ui.heading(title);
+                ui.add_space(12.0);
+            });
+        });
+
+        // Bottom panel: action buttons
+        egui::TopBottomPanel::bottom(format!("{}_bottom", panel_id_prefix)).show(ctx, |ui| {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    button_results = render_buttons(ui);
+                });
+            });
+            ui.add_space(8.0);
+        });
+
+        // Central panel: scrollable content
+        egui::CentralPanel::default().show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let gutter: f32 = 20.0;
+                    let avail = ui.available_width();
+                    ui.horizontal(|ui| {
+                        ui.add_space(gutter);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2((avail - 2.0 * gutter).max(0.0), 0.0),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                render_content(ui);
+                            },
+                        );
+                        ui.add_space(gutter);
+                    });
+                });
+        });
+
+        button_results
     }
 }

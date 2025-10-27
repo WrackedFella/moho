@@ -1,5 +1,4 @@
-use crate::forms::FormBuilder;
-use crate::menus::menu::{Menu, MenuAction, MenuSpec};
+use super::{FormControls, MenuAction, Screen, ScreenSpec, UiComponent};
 use crate::prefs::{Binding, Prefs};
 use std::collections::HashSet;
 
@@ -27,7 +26,7 @@ struct PendingBinding {
 }
 
 pub struct SettingsMenu {
-    spec: MenuSpec,
+    spec: ScreenSpec,
     prefs: Prefs,
     staged: Prefs,
     dirty_fields: HashSet<SettingsField>,
@@ -43,7 +42,7 @@ impl SettingsMenu {
     pub fn new() -> Self {
         let prefs = Prefs::load();
         Self {
-            spec: MenuSpec::default(),
+            spec: ScreenSpec::default(),
             prefs: prefs.clone(),
             staged: prefs,
             dirty_fields: HashSet::new(),
@@ -467,17 +466,14 @@ impl Default for SettingsMenu {
     }
 }
 
-impl Menu for SettingsMenu {
+// Implement UiComponent (base trait)
+impl UiComponent for SettingsMenu {
     fn name(&self) -> &str {
         "settings"
     }
 
-    fn spec(&self) -> &MenuSpec {
-        &self.spec
-    }
-
-    fn ui(&mut self, ctx: &egui::Context) -> Vec<crate::menus::menu::MenuItem> {
-        let mut items: Vec<crate::menus::menu::MenuItem> = Vec::new();
+    fn render(&mut self, ctx: &egui::Context) -> Vec<super::MenuItem> {
+        let mut items: Vec<super::MenuItem> = Vec::new();
 
         // Top panel for title - reserves space at top
         egui::TopBottomPanel::top("settings_top").show(ctx, |ui| {
@@ -503,7 +499,7 @@ impl Menu for SettingsMenu {
                         // clear dirty flags
                         self.dirty_fields.clear();
                     }
-                    items.push(crate::menus::menu::MenuItem {
+                    items.push(super::MenuItem {
                         action: if save_clicked {
                             MenuAction::SettingsSaved(self.prefs.clone())
                         } else {
@@ -526,7 +522,7 @@ impl Menu for SettingsMenu {
                             self.staged = self.prefs.clone();
                             self.dirty_fields.clear();
                         }
-                        items.push(crate::menus::menu::MenuItem {
+                        items.push(super::MenuItem {
                             action: MenuAction::None,
                             rect: Some(cancel.rect),
                             enabled: true,
@@ -536,7 +532,7 @@ impl Menu for SettingsMenu {
                         let back =
                             ui.add(egui::Button::new("Back").min_size(egui::vec2(100.0, 36.0)));
                         let back_clicked = back.clicked();
-                        items.push(crate::menus::menu::MenuItem {
+                        items.push(super::MenuItem {
                             action: MenuAction::ShowMenu("start".to_string()),
                             rect: Some(back.rect),
                             enabled: true,
@@ -581,7 +577,7 @@ impl Menu for SettingsMenu {
                                     // Move Forward
                                     {
                                         let is_dirty = self.staged.key_w != self.prefs.key_w;
-                                        let clicked = FormBuilder::keybind_control(
+                                        let clicked = FormControls::keybind_control(
                                             ui,
                                             "Move Forward:",
                                             &Self::binding_label(&self.staged.key_w),
@@ -602,7 +598,7 @@ impl Menu for SettingsMenu {
                                     // Move Left
                                     {
                                         let is_dirty = self.staged.key_a != self.prefs.key_a;
-                                        let clicked = FormBuilder::keybind_control(
+                                        let clicked = FormControls::keybind_control(
                                             ui,
                                             "Move Left:",
                                             &Self::binding_label(&self.staged.key_a),
@@ -623,7 +619,7 @@ impl Menu for SettingsMenu {
                                     // Move Back
                                     {
                                         let is_dirty = self.staged.key_s != self.prefs.key_s;
-                                        let clicked = FormBuilder::keybind_control(
+                                        let clicked = FormControls::keybind_control(
                                             ui,
                                             "Move Back:",
                                             &Self::binding_label(&self.staged.key_s),
@@ -644,7 +640,7 @@ impl Menu for SettingsMenu {
                                     // Move Right
                                     {
                                         let is_dirty = self.staged.key_d != self.prefs.key_d;
-                                        let clicked = FormBuilder::keybind_control(
+                                        let clicked = FormControls::keybind_control(
                                             ui,
                                             "Move Right:",
                                             &Self::binding_label(&self.staged.key_d),
@@ -665,7 +661,7 @@ impl Menu for SettingsMenu {
                                     // Move Up
                                     {
                                         let is_dirty = self.staged.key_up != self.prefs.key_up;
-                                        let clicked = FormBuilder::keybind_control(
+                                        let clicked = FormControls::keybind_control(
                                             ui,
                                             "Move Up:",
                                             &Self::binding_label(&self.staged.key_up),
@@ -686,7 +682,7 @@ impl Menu for SettingsMenu {
                                     // Move Down
                                     {
                                         let is_dirty = self.staged.key_down != self.prefs.key_down;
-                                        let clicked = FormBuilder::keybind_control(
+                                        let clicked = FormControls::keybind_control(
                                             ui,
                                             "Move Down:",
                                             &Self::binding_label(&self.staged.key_down),
@@ -832,7 +828,7 @@ impl Menu for SettingsMenu {
 
                                     // Sound Effect Volume
                                     {
-                                        let dirty = FormBuilder::volume_slider(
+                                        let dirty = FormControls::volume_slider(
                                             ui,
                                             "Sound Effects:",
                                             &mut self.staged.audio_sound_effect_volume,
@@ -850,7 +846,7 @@ impl Menu for SettingsMenu {
 
                                     // Music Volume
                                     {
-                                        let dirty = FormBuilder::volume_slider(
+                                        let dirty = FormControls::volume_slider(
                                             ui,
                                             "Music:",
                                             &mut self.staged.audio_music_volume,
@@ -866,7 +862,7 @@ impl Menu for SettingsMenu {
 
                                     // UI Volume
                                     {
-                                        let dirty = FormBuilder::volume_slider(
+                                        let dirty = FormControls::volume_slider(
                                             ui,
                                             "User Interface:",
                                             &mut self.staged.audio_ui_volume,
@@ -882,7 +878,7 @@ impl Menu for SettingsMenu {
 
                                     // Voice Volume
                                     {
-                                        let dirty = FormBuilder::volume_slider(
+                                        let dirty = FormControls::volume_slider(
                                             ui,
                                             "Voice:",
                                             &mut self.staged.audio_voice_volume,
@@ -1090,6 +1086,49 @@ impl Menu for SettingsMenu {
     }
 }
 
+// Implement Screen (specialized trait) with capability pattern
+impl Screen for SettingsMenu {
+    fn spec(&self) -> &ScreenSpec {
+        &self.spec
+    }
+
+    /// Settings menu captures raw input when listening for keybinds
+    fn captures_raw_input(&self) -> bool {
+        self.is_listening()
+    }
+
+    /// Handle raw input for keybind capture
+    fn handle_raw_input(&mut self, event: &winit::event::WindowEvent) -> bool {
+        self.handle_winit_event(event)
+    }
+
+    /// Check if settings wants to show the keybind conflict modal
+    fn take_pending_modal(&mut self) -> Option<Box<dyn crate::modal::Modal>> {
+        if self.show_conflict_modal {
+            self.show_conflict_modal = false;
+
+            use crate::modals::KeybindConflictModal;
+            let modal = KeybindConflictModal::new(
+                self.conflict_key_name.clone(),
+                self.conflict_binding_desc.clone(),
+            );
+
+            Some(Box::new(modal))
+        } else {
+            None
+        }
+    }
+
+    /// Apply pending keybind when modal is confirmed
+    fn on_modal_confirm(&mut self) {
+        self.apply_pending_binding();
+    }
+
+    /// Cancel pending keybind when modal is cancelled
+    fn on_modal_cancel(&mut self) {
+        self.cancel_pending_binding();
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1156,7 +1195,7 @@ mod tests {
         raw.modifiers.ctrl = true;
 
         let _full = ctx.run(raw, |ctx| {
-            menu.ui(ctx);
+            menu.render(ctx);
         });
 
         assert!(menu.staged.key_w == Binding::new(0x205, 0));

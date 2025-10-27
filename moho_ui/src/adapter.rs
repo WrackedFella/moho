@@ -3,11 +3,10 @@
 //! This adapter manages menus and UI state in a scalable way,
 //! allowing easy addition of new menus and menu types.
 
-use crate::menus::{Menu, MenuAction, NewWorldMenu, SettingsMenu, StartMenu};
-use crate::modal::ModalManager;
 use crate::prefs::Prefs;
+use crate::screens::{Menu, MenuAction};
+use crate::ui_state::UiStateManager;
 use moho_renderer::FrameCallback;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,7 +18,7 @@ use winit::window::Window;
 pub enum UiEvent {
     LoadScene(PathBuf),
     /// Start generation of a new world with provided parameters
-    NewWorld(crate::menus::WorldSpec),
+    NewWorld(moho_core::scene_builders::WorldSpec),
     ShowMenu(String),
     Exit,
     OverlayToggled(bool),
@@ -49,19 +48,15 @@ pub struct EguiAdapter {
     winit_state: Option<egui_winit::State>,
     renderer: Option<egui_wgpu::Renderer>,
 
-    // Menu management
-    menus: HashMap<String, Box<dyn Menu>>,
-    active_menu: Option<String>,
-
-    // Modal management
-    pub modal_manager: ModalManager,
+    // UI state management (extracted from adapter)
+    ui_state: UiStateManager,
 
     // Communication
     sender: crossbeam_channel::Sender<UiEvent>,
 
-    // State
-    pub ui_visible: bool,
+    // Window reference
     window: Option<Arc<Window>>,
+
     // Optional progress overlay state. When Some, the adapter will render a
     // simple modal progress overlay showing percent complete and an optional
     // cancel button. The main application can control this by locking the
@@ -105,22 +100,12 @@ impl EguiAdapter {
             )
         });
 
-        // Create initial menu set
-        let mut menus: HashMap<String, Box<dyn Menu>> = HashMap::new();
-        menus.insert("start".to_string(), Box::new(StartMenu::new()));
-        menus.insert("settings".to_string(), Box::new(SettingsMenu::new()));
-        // New World menu (UI-first wiring)
-        menus.insert("new_world".to_string(), Box::new(NewWorldMenu::new()));
-
         let adapter = Self {
             context,
             winit_state,
             renderer: None,
-            menus,
-            active_menu: Some("start".to_string()),
-            modal_manager: ModalManager::new(),
+            ui_state: UiStateManager::new(),
             sender,
-            ui_visible: true,
             window,
             surface_config: None,
             progress: None,
@@ -131,35 +116,17 @@ impl EguiAdapter {
 
     /// Add a new menu to the manager
     pub fn add_menu(&mut self, name: String, menu: Box<dyn Menu>) {
-        self.menus.insert(name, menu);
+        self.ui_state.add_screen(name, menu);
     }
 
     /// Show a specific menu
     pub fn show_menu(&mut self, name: &str) {
-        if self.menus.contains_key(name) {
-            if let Some(current) = &self.active_menu
-                && let Some(menu) = self.menus.get_mut(current)
-            {
-                menu.on_hide();
-            }
-
-            self.active_menu = Some(name.to_string());
-            if let Some(menu) = self.menus.get_mut(name) {
-                menu.on_show();
-            }
-            self.ui_visible = true;
-        }
+        self.ui_state.show_screen(name);
     }
 
     /// Hide all menus
     pub fn hide_menus(&mut self) {
-        if let Some(current) = &self.active_menu
-            && let Some(menu) = self.menus.get_mut(current)
-        {
-            menu.on_hide();
-        }
-        self.active_menu = None;
-        self.ui_visible = false;
+        self.ui_state.hide_all();
     }
 
     /// Handle window events (mouse, keyboard).
@@ -173,25 +140,31 @@ impl EguiAdapter {
         false
     }
 
-    /// Return true if the settings menu is currently listening for a keybind.
-    pub fn settings_is_listening(&self) -> bool {
-        if let Some(menu) = self.menus.get("settings")
-            && let Some(s) = menu.as_any().downcast_ref::<SettingsMenu>()
-        {
-            return s.is_listening();
+    /// Return true if the active menu/screen captures raw input events.
+    pub fn active_screen_captures_input(&self) -> bool {
+        if let Some(screen) = self.ui_state.active_screen() {
+            return screen.captures_raw_input();
         }
         false
     }
 
-    /// Try to let the settings menu process this WindowEvent for keybind capture.
-    /// Returns true if the event was consumed by the settings menu.
-    pub fn try_handle_settings_event(&mut self, event: &WindowEvent) -> bool {
-        if let Some(menu) = self.menus.get_mut("settings")
-            && let Some(s) = menu.as_any_mut().downcast_mut::<SettingsMenu>()
-        {
-            return s.handle_winit_event(event);
+    /// Try to let the active menu/screen process raw WindowEvent input.
+    /// Returns true if the event was consumed.
+    pub fn try_handle_screen_input(&mut self, event: &WindowEvent) -> bool {
+        if let Some(screen) = self.ui_state.active_screen_mut() {
+            return screen.handle_raw_input(event);
         }
         false
+    }
+
+    /// Returns whether the UI is currently visible
+    pub fn is_visible(&self) -> bool {
+        self.ui_state.visible
+    }
+
+    /// Sets the UI visibility
+    pub fn set_visible(&mut self, visible: bool) {
+        self.ui_state.visible = visible;
     }
 
     /// Set surface format for renderer initialization
@@ -227,7 +200,7 @@ impl EguiAdapter {
             cancellable,
             canceled: false,
         });
-        self.ui_visible = true;
+        self.ui_state.visible = true;
     }
 
     /// Update the visible progress fraction (0.0 ..= 1.0)
@@ -333,12 +306,12 @@ impl FrameCallback for EguiAdapter {
         surface_height: u32,
     ) {
         // Skip rendering if UI is not visible
-        if !self.ui_visible {
+        if !self.ui_state.visible {
             return;
         }
 
         // Update global visibility flag
-        UI_OVERLAY_VISIBLE.store(self.ui_visible, Ordering::SeqCst);
+        UI_OVERLAY_VISIBLE.store(self.ui_state.visible, Ordering::SeqCst);
 
         // Initialize renderer if needed
         let format = self
@@ -356,11 +329,9 @@ impl FrameCallback for EguiAdapter {
         let mut modal_result = crate::modal::ModalResult::None;
 
         let full_output = self.context.run(raw_input, |ctx| {
-            // Render active menu if any
-            if let Some(menu_name) = &self.active_menu.clone()
-                && let Some(menu) = self.menus.get_mut(menu_name)
-            {
-                let items = menu.ui(ctx);
+            // Render active screen if any
+            if let Some(screen) = self.ui_state.active_screen_mut() {
+                let items = screen.render(ctx);
 
                 // Collect clicked actions for processing outside the closure
                 for item in items {
@@ -370,26 +341,15 @@ impl FrameCallback for EguiAdapter {
                 }
             }
 
-            // Check if settings menu wants to show conflict modal
-            if let Some(menu) = self.menus.get_mut("settings")
-                && let Some(settings) = menu.as_any_mut().downcast_mut::<SettingsMenu>()
-                && settings.show_conflict_modal
+            // Check if any screen wants to show a modal
+            if let Some(screen) = self.ui_state.active_screen_mut()
+                && let Some(modal) = screen.take_pending_modal()
             {
-                settings.show_conflict_modal = false;
-
-                use crate::modals::KeybindConflictModal;
-                let modal = KeybindConflictModal::new(
-                    settings.conflict_key_name.clone(),
-                    settings.conflict_binding_desc.clone(),
-                );
-
-                self.modal_manager.show(Box::new(modal));
+                self.ui_state.modal_manager.show(modal);
             }
 
             // Render modal on top of menu (if active)
-            modal_result = self.modal_manager.render(ctx);
-
-            // Progress overlay (renders above menus). Keep it simple: a centered
+            modal_result = self.ui_state.modal_manager.render(ctx); // Progress overlay (renders above menus). Keep it simple: a centered
             // window with a progress bar and optional Cancel button. The cancel
             // flag is stored in the ProgressState so the caller can poll it.
             if let Some(progress) = self.progress.as_mut() {
@@ -416,17 +376,13 @@ impl FrameCallback for EguiAdapter {
         use crate::modal::ModalResult;
         match modal_result {
             ModalResult::Confirm => {
-                if let Some(menu) = self.menus.get_mut("settings")
-                    && let Some(settings) = menu.as_any_mut().downcast_mut::<SettingsMenu>()
-                {
-                    settings.apply_pending_binding();
+                if let Some(screen) = self.ui_state.active_screen_mut() {
+                    screen.on_modal_confirm();
                 }
             }
             ModalResult::Cancel => {
-                if let Some(menu) = self.menus.get_mut("settings")
-                    && let Some(settings) = menu.as_any_mut().downcast_mut::<SettingsMenu>()
-                {
-                    settings.cancel_pending_binding();
+                if let Some(screen) = self.ui_state.active_screen_mut() {
+                    screen.on_modal_cancel();
                 }
             }
             ModalResult::None => {}

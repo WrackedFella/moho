@@ -1,8 +1,8 @@
-use crate::menus::WorldSpec;
-use crate::menus::menu::{Menu, MenuAction, MenuItem, MenuSpec};
+use super::{MenuAction, MenuItem, Screen, ScreenSpec, UiComponent};
+use moho_core::scene_builders::WorldSpec;
 
 pub struct NewWorldMenu {
-    spec: MenuSpec,
+    spec: ScreenSpec,
     name_input: String,
     seed_input: String,
     size_xz: u32,
@@ -11,7 +11,7 @@ pub struct NewWorldMenu {
 impl NewWorldMenu {
     pub fn new() -> Self {
         Self {
-            spec: MenuSpec::default(),
+            spec: ScreenSpec::default(),
             name_input: String::from("New World"),
             seed_input: String::new(),
             size_xz: 128,
@@ -25,16 +25,13 @@ impl Default for NewWorldMenu {
     }
 }
 
-impl Menu for NewWorldMenu {
+// Implement UiComponent (base trait)
+impl UiComponent for NewWorldMenu {
     fn name(&self) -> &str {
         "new_world"
     }
 
-    fn spec(&self) -> &MenuSpec {
-        &self.spec
-    }
-
-    fn ui(&mut self, ctx: &egui::Context) -> Vec<MenuItem> {
+    fn render(&mut self, ctx: &egui::Context) -> Vec<MenuItem> {
         let mut items: Vec<MenuItem> = Vec::new();
 
         // Top panel: title area
@@ -207,5 +204,12 @@ impl Menu for NewWorldMenu {
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+// Implement Screen (specialized trait)
+impl Screen for NewWorldMenu {
+    fn spec(&self) -> &ScreenSpec {
+        &self.spec
     }
 }

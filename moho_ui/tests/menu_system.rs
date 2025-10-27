@@ -1,7 +1,8 @@
 #![cfg(feature = "ui-egui")]
 //! Tests for the menu system functionality
 
-use moho_ui::menus::{Menu, MenuAction, MenuItem, SettingsMenu};
+use moho_ui::UiComponent;
+use moho_ui::{MenuAction, MenuItem, SettingsMenu};
 use std::path::PathBuf;
 
 #[test]
@@ -9,10 +10,10 @@ fn settings_menu_structure() {
     let mut menu = SettingsMenu::new();
     let ctx = egui::Context::default();
 
-    // Call ui() inside `ctx.run` so egui's internal state is initialized
+    // Call render() inside `ctx.run` so egui's internal state is initialized
     let mut items: Vec<MenuItem> = Vec::new();
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
-        items = menu.ui(ctx);
+        items = menu.render(ctx);
     });
 
     // Settings menu should return menu items

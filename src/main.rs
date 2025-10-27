@@ -35,7 +35,7 @@ enum GenerationMsg {
     Progress(f32),
     Completed {
         scene_bytes: Vec<u8>,
-        spec: moho_ui::WorldSpec,
+        spec: moho_core::scene_builders::WorldSpec,
     },
     Canceled,
     Failed(String),
@@ -51,7 +51,7 @@ pub(crate) fn forward_wheel_if_allowed(
 ) -> bool {
     // Conservative: if we can't acquire the lock, do not forward.
     match ui_adapter.try_lock() {
-        Ok(a) if a.ui_visible => return false,
+        Ok(a) if a.is_visible() => return false,
         Err(_) => return false,
         _ => {}
     }
@@ -97,7 +97,7 @@ struct App {
     #[cfg(feature = "ui-egui")]
     ui_receiver: Option<moho_ui::UiReceiver>,
     #[cfg(feature = "ui-egui")]
-    last_world_spec: Option<moho_ui::WorldSpec>,
+    last_world_spec: Option<moho_core::scene_builders::WorldSpec>,
     // Async generation plumbing (only used when UI is present)
     #[cfg(feature = "ui-egui")]
     generation_receiver: Option<Receiver<GenerationMsg>>,
@@ -269,13 +269,13 @@ impl App {
             self.ui_receiver = Some(receiver);
 
             // Register KeybindCapture subscriber at higher priority so it can intercept
-            // events while the settings menu is actively listening for a binding.
+            // events while the active screen is actively listening for raw input.
             let kb_adapter = ui_adapter.clone();
             self.dispatcher.register(200, move |event: &WindowEvent| {
                 if let Ok(mut a) = kb_adapter.lock() {
-                    // Quick check then forward to settings handler
-                    if a.settings_is_listening() {
-                        return a.try_handle_settings_event(event);
+                    // Quick check then forward to screen input handler
+                    if a.active_screen_captures_input() {
+                        return a.try_handle_screen_input(event);
                     }
                 }
                 false
@@ -311,7 +311,7 @@ impl App {
                     // Use the conservative try_lock approach: if we cannot acquire the
                     // lock for any reason, treat as UI-visible and do not forward.
                     match ui_adapter_for_forward.try_lock() {
-                        Ok(a) if a.ui_visible => return false,
+                        Ok(a) if a.is_visible() => return false,
                         Err(_) => return false,
                         _ => {}
                     }
@@ -343,7 +343,7 @@ impl App {
 
     fn generate_new_world(
         &mut self,
-        spec: moho_ui::WorldSpec,
+        spec: moho_core::scene_builders::WorldSpec,
     ) -> Result<(), Box<dyn std::error::Error>> {
         log::info!("Starting async generation for spec={:?}", spec);
 
@@ -505,11 +505,14 @@ impl App {
             // WorldSpec (e.g. from a loaded or generated scene) so autosaves
             // preserve original metadata; fall back to a minimal spec.
             let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
-            let spec = self.last_world_spec.clone().unwrap_or(moho_ui::WorldSpec {
-                name: "autosave".to_string(),
-                seed: None,
-                size_xz: 64,
-            });
+            let spec =
+                self.last_world_spec
+                    .clone()
+                    .unwrap_or(moho_core::scene_builders::WorldSpec {
+                        name: "autosave".to_string(),
+                        seed: None,
+                        size_xz: 64,
+                    });
             save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
             log::info!(
                 "Auto-saved scene (envelope) to {:?} (spec={:?})",
@@ -759,7 +762,7 @@ impl App {
             && let Ok(mut adapter) = ui_adapter.lock()
         {
             // Set UI to not visible directly
-            adapter.ui_visible = false;
+            adapter.set_visible(false);
 
             // Update the atomic flag
             use moho_ui::UI_OVERLAY_VISIBLE;
@@ -780,7 +783,7 @@ impl App {
             && let Ok(mut adapter) = ui_adapter.lock()
         {
             // Set UI to visible
-            adapter.ui_visible = true;
+            adapter.set_visible(true);
 
             // Update the atomic flag
             use moho_ui::UI_OVERLAY_VISIBLE;

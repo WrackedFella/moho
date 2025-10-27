@@ -1,62 +1,10 @@
-use crate::prefs::Prefs;
-use egui::{Align2, Vec2};
-use std::path::PathBuf;
+//! Input handling utilities for UI components.
+//!
+//! This module provides fallback hit-testing logic and coordinate conversion
+//! utilities for UI interaction when egui's built-in event handling is
+//! insufficient or unavailable.
 
-use bincode::{Decode, Encode};
-/// Parameters describing a new world request coming from the UI.
-///
-/// Implemented inside `moho_ui` for the UI-first approach. We keep this
-/// simple and `Clone` so it can be transported via the internal channel.
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Encode, Decode)]
-pub struct WorldSpec {
-    pub name: String,
-    pub seed: Option<u64>,
-    pub size_xz: u32,
-}
-
-/// Actions a Menu may return when interacted with.
-#[derive(Debug, Clone, PartialEq)]
-pub enum MenuAction {
-    None,
-    LoadScene(PathBuf),
-    /// Request that the adapter open the New World menu (start menu -> open dialog)
-    NewWorld,
-    /// User confirmed generation from the New World menu with parameters
-    GenerateWorld(WorldSpec),
-    Exit,
-    ShowMenu(String),
-    Close,
-    SettingsSaved(Prefs),
-}
-
-/// A single logical menu item exposed by a Menu implementation. `rect`
-/// is optional and used by the adapter for fallback hit-testing when
-/// egui's rendering is not available. `enabled` controls whether the
-/// adapter should consider the item clickable in fallback logic.
-#[derive(Clone, Debug)]
-pub struct MenuItem {
-    pub action: MenuAction,
-    pub rect: Option<egui::Rect>,
-    pub enabled: bool,
-    /// Whether this item was clicked during the current ui() invocation.
-    /// Menu implementations should set this to true when the user
-    /// interacts with the widget so the adapter can dispatch the
-    /// action immediately (without relying solely on fallback hit-tests).
-    pub clicked: bool,
-}
-
-impl PartialEq for MenuItem {
-    fn eq(&self, other: &Self) -> bool {
-        // Compare action by Debug string (MenuAction may not implement Eq)
-        format!("{:?}", self.action) == format!("{:?}", other.action)
-            && self.enabled == other.enabled
-            && self.clicked == other.clicked
-            // Compare rects approximately by their Debug string
-            && format!("{:?}", self.rect) == format!("{:?}", other.rect)
-    }
-}
+use crate::screens::{MenuAction, MenuItem};
 
 /// Hit-test helper for menu fallback logic. Given an optional press and
 /// release position and a slice of `MenuItem`s, return the first matching
@@ -149,44 +97,4 @@ pub fn hit_test_menu_items(
 /// This avoids having integration tests depend directly on the `egui` crate.
 pub fn rect_from_min_max(min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> egui::Rect {
     egui::Rect::from_min_max(egui::pos2(min_x, min_y), egui::pos2(max_x, max_y))
-}
-
-/// Basic specification for menu positioning and simple style overrides.
-#[derive(Clone, Debug)]
-pub struct MenuSpec {
-    pub anchor: Align2,
-    pub offset: Vec2,
-    pub modal: bool,
-}
-
-impl Default for MenuSpec {
-    fn default() -> Self {
-        Self {
-            anchor: Align2::LEFT_TOP,
-            offset: egui::vec2(8.0, 8.0),
-            modal: false,
-        }
-    }
-}
-
-/// Menu trait: each menu is responsible for drawing itself and returning
-/// a list of `MenuItem`s describing clickable items painted by the menu.
-/// The adapter consumes that list for fallback hit-testing and to map
-/// actions to `UiEvent`s. Implementations should fill `rect` for any
-/// button-like widgets to enable fallback behavior.
-pub trait Menu: Send {
-    fn name(&self) -> &str;
-    fn spec(&self) -> &MenuSpec;
-    /// Draw the menu and return a vector of MenuItem entries. The menu is
-    /// responsible for painting the UI; each MenuItem should include an
-    /// optional `rect` corresponding to the painted widget so the adapter
-    /// can perform fallback hit tests when necessary.
-    fn ui(&mut self, ctx: &egui::Context) -> Vec<MenuItem>;
-    fn on_show(&mut self) {}
-    fn on_hide(&mut self) {}
-
-    /// Allow downcasting to concrete menu types
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
-    /// Read-only downcast helper
-    fn as_any(&self) -> &dyn std::any::Any;
 }
