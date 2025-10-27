@@ -64,7 +64,7 @@ pub fn write_scene_with_metadata<P: AsRef<Path>>(
 #[cfg(feature = "ui-egui")]
 pub fn read_scene_and_metadata<P: AsRef<Path>>(
     path: P,
-    ) -> Result<(moho_core::scene_builders::WorldSpec, Vec<u8>), Box<dyn Error>> {
+) -> Result<(moho_core::scene_builders::WorldSpec, Vec<u8>), Box<dyn Error>> {
     let mut f = File::open(path.as_ref())?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf)?;

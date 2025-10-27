@@ -65,26 +65,26 @@ impl Default for ScreenSpec {
 }
 
 /// Base trait for all UI components (screens, overlays, modals, etc.)
-/// 
+///
 /// This trait provides the foundation for the UI system's component hierarchy.
 /// All interactive UI elements should implement this trait or one of its
 /// specialized variants (Screen, Overlay, etc.)
 pub trait UiComponent: Send {
     /// Unique identifier for this component
     fn name(&self) -> &str;
-    
+
     /// Render the component and return any actions triggered during rendering
     fn render(&mut self, ctx: &egui::Context) -> Vec<MenuItem>;
-    
+
     /// Called when the component is shown
     fn on_show(&mut self) {}
-    
+
     /// Called when the component is hidden
     fn on_hide(&mut self) {}
-    
+
     /// Allow downcasting to concrete component types
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
-    
+
     /// Read-only downcast helper
     fn as_any(&self) -> &dyn std::any::Any;
 }
@@ -96,15 +96,15 @@ pub trait UiComponent: Send {
 pub trait Screen: UiComponent {
     /// Screen-specific configuration (positioning, modal behavior, etc.)
     fn spec(&self) -> &ScreenSpec;
-    
+
     /// Whether this screen captures raw window input events.
-    /// 
+    ///
     /// Return `true` if the screen needs to receive raw WindowEvent messages
     /// for custom input handling (e.g., keybind listening in settings).
     fn captures_raw_input(&self) -> bool {
         false
     }
-    
+
     /// Handle raw window input events when `captures_raw_input()` returns true.
     ///
     /// This method is only called when the screen has indicated it wants raw input.
@@ -118,7 +118,7 @@ pub trait Screen: UiComponent {
     fn handle_raw_input(&mut self, _event: &winit::event::WindowEvent) -> bool {
         false
     }
-    
+
     /// Check if this screen wants to show a modal dialog.
     ///
     /// Return `Some(modal)` if a modal should be displayed, `None` otherwise.
@@ -126,12 +126,12 @@ pub trait Screen: UiComponent {
     fn take_pending_modal(&mut self) -> Option<Box<dyn crate::modal::Modal>> {
         None
     }
-    
+
     /// Handle modal confirmation (user clicked OK/Confirm).
     ///
     /// Called when a modal shown by this screen is confirmed by the user.
     fn on_modal_confirm(&mut self) {}
-    
+
     /// Handle modal cancellation (user clicked Cancel or closed the modal).
     ///
     /// Called when a modal shown by this screen is cancelled by the user.
@@ -139,7 +139,7 @@ pub trait Screen: UiComponent {
 }
 
 /// Backward compatibility alias for existing code.
-/// 
+///
 /// TODO: Remove this alias in a future refactor once all code uses Screen directly.
 /// This allows gradual migration from Menu to Screen without breaking existing code.
 pub trait Menu: Screen {}

@@ -1,5 +1,5 @@
+use super::{MenuAction, MenuItem, Screen, ScreenSpec, UiComponent};
 use moho_core::scene_builders::WorldSpec;
-use crate::menus::menu::{MenuAction, MenuItem, ScreenSpec, Screen, UiComponent};
 
 pub struct NewWorldMenu {
     spec: ScreenSpec,

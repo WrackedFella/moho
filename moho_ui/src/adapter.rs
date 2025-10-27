@@ -3,8 +3,8 @@
 //! This adapter manages menus and UI state in a scalable way,
 //! allowing easy addition of new menus and menu types.
 
-use crate::menus::{Menu, MenuAction};
 use crate::prefs::Prefs;
+use crate::screens::{Menu, MenuAction};
 use crate::ui_state::UiStateManager;
 use moho_renderer::FrameCallback;
 use std::path::PathBuf;
@@ -56,7 +56,7 @@ pub struct EguiAdapter {
 
     // Window reference
     window: Option<Arc<Window>>,
-    
+
     // Optional progress overlay state. When Some, the adapter will render a
     // simple modal progress overlay showing percent complete and an optional
     // cancel button. The main application can control this by locking the
@@ -348,8 +348,8 @@ impl FrameCallback for EguiAdapter {
                 }
             }
 
-        // Render modal on top of menu (if active)
-        modal_result = self.ui_state.modal_manager.render(ctx);            // Progress overlay (renders above menus). Keep it simple: a centered
+            // Render modal on top of menu (if active)
+            modal_result = self.ui_state.modal_manager.render(ctx); // Progress overlay (renders above menus). Keep it simple: a centered
             // window with a progress bar and optional Cancel button. The cancel
             // flag is stored in the ProgressState so the caller can poll it.
             if let Some(progress) = self.progress.as_mut() {

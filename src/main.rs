@@ -35,7 +35,7 @@ enum GenerationMsg {
     Progress(f32),
     Completed {
         scene_bytes: Vec<u8>,
-    spec: moho_core::scene_builders::WorldSpec,
+        spec: moho_core::scene_builders::WorldSpec,
     },
     Canceled,
     Failed(String),
@@ -343,7 +343,7 @@ impl App {
 
     fn generate_new_world(
         &mut self,
-    spec: moho_core::scene_builders::WorldSpec,
+        spec: moho_core::scene_builders::WorldSpec,
     ) -> Result<(), Box<dyn std::error::Error>> {
         log::info!("Starting async generation for spec={:?}", spec);
 
@@ -505,11 +505,14 @@ impl App {
             // WorldSpec (e.g. from a loaded or generated scene) so autosaves
             // preserve original metadata; fall back to a minimal spec.
             let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
-            let spec = self.last_world_spec.clone().unwrap_or(moho_core::scene_builders::WorldSpec {
-                name: "autosave".to_string(),
-                seed: None,
-                size_xz: 64,
-            });
+            let spec =
+                self.last_world_spec
+                    .clone()
+                    .unwrap_or(moho_core::scene_builders::WorldSpec {
+                        name: "autosave".to_string(),
+                        seed: None,
+                        size_xz: 64,
+                    });
             save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
             log::info!(
                 "Auto-saved scene (envelope) to {:?} (spec={:?})",

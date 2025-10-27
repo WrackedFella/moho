@@ -1,5 +1,4 @@
-use crate::forms::FormControls;
-use crate::menus::menu::{MenuAction, ScreenSpec, Screen, UiComponent};
+use super::{FormControls, MenuAction, Screen, ScreenSpec, UiComponent};
 use crate::prefs::{Binding, Prefs};
 use std::collections::HashSet;
 
@@ -473,8 +472,8 @@ impl UiComponent for SettingsMenu {
         "settings"
     }
 
-    fn render(&mut self, ctx: &egui::Context) -> Vec<crate::menus::menu::MenuItem> {
-        let mut items: Vec<crate::menus::menu::MenuItem> = Vec::new();
+    fn render(&mut self, ctx: &egui::Context) -> Vec<super::MenuItem> {
+        let mut items: Vec<super::MenuItem> = Vec::new();
 
         // Top panel for title - reserves space at top
         egui::TopBottomPanel::top("settings_top").show(ctx, |ui| {
@@ -500,7 +499,7 @@ impl UiComponent for SettingsMenu {
                         // clear dirty flags
                         self.dirty_fields.clear();
                     }
-                    items.push(crate::menus::menu::MenuItem {
+                    items.push(super::MenuItem {
                         action: if save_clicked {
                             MenuAction::SettingsSaved(self.prefs.clone())
                         } else {
@@ -523,7 +522,7 @@ impl UiComponent for SettingsMenu {
                             self.staged = self.prefs.clone();
                             self.dirty_fields.clear();
                         }
-                        items.push(crate::menus::menu::MenuItem {
+                        items.push(super::MenuItem {
                             action: MenuAction::None,
                             rect: Some(cancel.rect),
                             enabled: true,
@@ -533,7 +532,7 @@ impl UiComponent for SettingsMenu {
                         let back =
                             ui.add(egui::Button::new("Back").min_size(egui::vec2(100.0, 36.0)));
                         let back_clicked = back.clicked();
-                        items.push(crate::menus::menu::MenuItem {
+                        items.push(super::MenuItem {
                             action: MenuAction::ShowMenu("start".to_string()),
                             rect: Some(back.rect),
                             enabled: true,
@@ -1102,29 +1101,29 @@ impl Screen for SettingsMenu {
     fn handle_raw_input(&mut self, event: &winit::event::WindowEvent) -> bool {
         self.handle_winit_event(event)
     }
-    
+
     /// Check if settings wants to show the keybind conflict modal
     fn take_pending_modal(&mut self) -> Option<Box<dyn crate::modal::Modal>> {
         if self.show_conflict_modal {
             self.show_conflict_modal = false;
-            
+
             use crate::modals::KeybindConflictModal;
             let modal = KeybindConflictModal::new(
                 self.conflict_key_name.clone(),
                 self.conflict_binding_desc.clone(),
             );
-            
+
             Some(Box::new(modal))
         } else {
             None
         }
     }
-    
+
     /// Apply pending keybind when modal is confirmed
     fn on_modal_confirm(&mut self) {
         self.apply_pending_binding();
     }
-    
+
     /// Cancel pending keybind when modal is cancelled
     fn on_modal_cancel(&mut self) {
         self.cancel_pending_binding();

@@ -39,7 +39,10 @@ impl FrameCallback for StubUi {
 pub mod adapter;
 
 #[cfg(feature = "ui-egui")]
-pub mod menus;
+pub mod screens;
+
+#[cfg(feature = "ui-egui")]
+pub mod overlays;
 
 #[cfg(feature = "ui-egui")]
 pub mod prefs;
@@ -49,9 +52,6 @@ pub mod modal;
 
 #[cfg(feature = "ui-egui")]
 pub mod modals;
-
-#[cfg(feature = "ui-egui")]
-pub mod forms;
 
 #[cfg(feature = "ui-egui")]
 pub mod input_handling;
@@ -69,16 +69,13 @@ pub use adapter::{
 pub use adapter::EguiAdapter as EguiUi;
 
 #[cfg(feature = "ui-egui")]
-pub use menus::{Menu, MenuAction, MenuItem, Screen, ScreenSpec, StartMenu, UiComponent};
-
-#[cfg(feature = "ui-egui")]
-pub use forms::{NewWorldMenu, SettingsMenu};
+pub use screens::{
+    FormControls, Menu, MenuAction, MenuItem, NewWorldMenu, Screen, ScreenSpec, SettingsMenu,
+    StartMenu, UiComponent,
+};
 
 #[cfg(feature = "ui-egui")]
 pub use modal::{Modal, ModalManager, ModalResult};
 
 #[cfg(feature = "ui-egui")]
 pub use modals::KeybindConflictModal;
-
-#[cfg(feature = "ui-egui")]
-pub use forms::FormControls;

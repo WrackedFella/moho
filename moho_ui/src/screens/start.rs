@@ -1,4 +1,4 @@
-use crate::menus::menu::{MenuAction, ScreenSpec, Screen, UiComponent};
+use super::{MenuAction, Screen, ScreenSpec, UiComponent};
 use std::path::PathBuf;
 
 pub struct StartMenu {
@@ -25,8 +25,8 @@ impl UiComponent for StartMenu {
         "start"
     }
 
-    fn render(&mut self, ctx: &egui::Context) -> Vec<crate::menus::menu::MenuItem> {
-        let mut items: Vec<crate::menus::menu::MenuItem> = Vec::new();
+    fn render(&mut self, ctx: &egui::Context) -> Vec<super::MenuItem> {
+        let mut items: Vec<super::MenuItem> = Vec::new();
 
         // Determine whether a saved scene exists
         let save_path = PathBuf::from("saves/scene.bin");
@@ -55,7 +55,7 @@ impl UiComponent for StartMenu {
                 );
                 paint_decor(ui, &cont);
                 let cont_clicked = cont.clicked() && save_exists;
-                items.push(crate::menus::menu::MenuItem {
+                items.push(super::MenuItem {
                     action: MenuAction::LoadScene(save_path.clone()),
                     rect: Some(cont.rect),
                     enabled: save_exists,
@@ -67,7 +67,7 @@ impl UiComponent for StartMenu {
                 let nw = ui.add(egui::Button::new("New World").min_size(egui::vec2(160.0, 28.0)));
                 paint_decor(ui, &nw);
                 let nw_clicked = nw.clicked();
-                items.push(crate::menus::menu::MenuItem {
+                items.push(super::MenuItem {
                     action: MenuAction::NewWorld,
                     rect: Some(nw.rect),
                     enabled: true,
@@ -79,7 +79,7 @@ impl UiComponent for StartMenu {
                 let st = ui.add(egui::Button::new("Settings").min_size(egui::vec2(160.0, 28.0)));
                 paint_decor(ui, &st);
                 let st_clicked = st.clicked();
-                items.push(crate::menus::menu::MenuItem {
+                items.push(super::MenuItem {
                     action: MenuAction::ShowMenu("settings".to_string()),
                     rect: Some(st.rect),
                     enabled: true,
@@ -90,7 +90,7 @@ impl UiComponent for StartMenu {
                 let ex = ui.add(egui::Button::new("Exit").min_size(egui::vec2(160.0, 28.0)));
                 paint_decor(ui, &ex);
                 let ex_clicked = ex.clicked();
-                items.push(crate::menus::menu::MenuItem {
+                items.push(super::MenuItem {
                     action: MenuAction::Exit,
                     rect: Some(ex.rect),
                     enabled: true,

@@ -4,7 +4,7 @@
 //! utilities for UI interaction when egui's built-in event handling is
 //! insufficient or unavailable.
 
-use crate::menus::menu::{MenuAction, MenuItem};
+use crate::screens::{MenuAction, MenuItem};
 
 /// Hit-test helper for menu fallback logic. Given an optional press and
 /// release position and a slice of `MenuItem`s, return the first matching

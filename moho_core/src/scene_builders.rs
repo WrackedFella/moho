@@ -2,13 +2,13 @@ use glam::Vec3;
 use legion::World;
 
 use crate::actors::{Cube, Sphere};
-use serde::{Deserialize, Serialize};
-use bincode::{Decode, Encode};
 use crate::materials::MaterialType;
 use crate::vector_length;
 use crate::voxel::{BlockPos, MeshGenerator, VoxelBlock, VoxelChunk, VoxelGrid};
+use bincode::{Decode, Encode};
 use noise::{NoiseFn, Perlin};
 use rand::{Rng, rng};
+use serde::{Deserialize, Serialize};
 
 /// Simple random scene generator used for testing and demos.
 /// Moved out of `main.rs` to keep application code minimal.
@@ -29,7 +29,7 @@ pub fn random_scene(world: &mut World) {
     for a in -11..11 {
         for b in -11..11 {
             let choose_mat = rng_local.random::<f32>();
-        
+
             let center = Vec3::new(
                 a as f32 + 0.9f32 * rng_local.random::<f32>(),
                 0.2f32,

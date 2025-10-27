@@ -1,9 +1,8 @@
 #![cfg(feature = "ui-egui")]
 //! Tests for the menu system functionality
 
-use moho_ui::menus::{MenuAction, MenuItem};
-use moho_ui::forms::SettingsMenu;
 use moho_ui::UiComponent;
+use moho_ui::{MenuAction, MenuItem, SettingsMenu};
 use std::path::PathBuf;
 
 #[test]

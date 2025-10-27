@@ -57,7 +57,7 @@ impl AudioSystem {
 
     /// Pre-load common UI sounds to eliminate loading delays
     fn preload_ui_sounds(&mut self) -> AudioResult<()> {
-    let ui_sounds = vec!["assets/audio/ui/button_click.mp3"];
+        let ui_sounds = vec!["assets/audio/ui/button_click.mp3"];
 
         for sound_path in ui_sounds {
             if let Ok(audio_data) = std::fs::read(sound_path) {
