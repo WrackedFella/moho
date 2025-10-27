@@ -1,5 +1,5 @@
 use crate::forms::FormControls;
-use crate::menus::menu::{Menu, MenuAction, ScreenSpec};
+use crate::menus::menu::{MenuAction, ScreenSpec, Screen, UiComponent};
 use crate::prefs::{Binding, Prefs};
 use std::collections::HashSet;
 
@@ -467,16 +467,13 @@ impl Default for SettingsMenu {
     }
 }
 
-impl Menu for SettingsMenu {
+// Implement UiComponent (base trait)
+impl UiComponent for SettingsMenu {
     fn name(&self) -> &str {
         "settings"
     }
 
-    fn spec(&self) -> &ScreenSpec {
-        &self.spec
-    }
-
-    fn ui(&mut self, ctx: &egui::Context) -> Vec<crate::menus::menu::MenuItem> {
+    fn render(&mut self, ctx: &egui::Context) -> Vec<crate::menus::menu::MenuItem> {
         let mut items: Vec<crate::menus::menu::MenuItem> = Vec::new();
 
         // Top panel for title - reserves space at top
@@ -1090,6 +1087,49 @@ impl Menu for SettingsMenu {
     }
 }
 
+// Implement Screen (specialized trait) with capability pattern
+impl Screen for SettingsMenu {
+    fn spec(&self) -> &ScreenSpec {
+        &self.spec
+    }
+
+    /// Settings menu captures raw input when listening for keybinds
+    fn captures_raw_input(&self) -> bool {
+        self.is_listening()
+    }
+
+    /// Handle raw input for keybind capture
+    fn handle_raw_input(&mut self, event: &winit::event::WindowEvent) -> bool {
+        self.handle_winit_event(event)
+    }
+    
+    /// Check if settings wants to show the keybind conflict modal
+    fn take_pending_modal(&mut self) -> Option<Box<dyn crate::modal::Modal>> {
+        if self.show_conflict_modal {
+            self.show_conflict_modal = false;
+            
+            use crate::modals::KeybindConflictModal;
+            let modal = KeybindConflictModal::new(
+                self.conflict_key_name.clone(),
+                self.conflict_binding_desc.clone(),
+            );
+            
+            Some(Box::new(modal))
+        } else {
+            None
+        }
+    }
+    
+    /// Apply pending keybind when modal is confirmed
+    fn on_modal_confirm(&mut self) {
+        self.apply_pending_binding();
+    }
+    
+    /// Cancel pending keybind when modal is cancelled
+    fn on_modal_cancel(&mut self) {
+        self.cancel_pending_binding();
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1156,7 +1196,7 @@ mod tests {
         raw.modifiers.ctrl = true;
 
         let _full = ctx.run(raw, |ctx| {
-            menu.ui(ctx);
+            menu.render(ctx);
         });
 
         assert!(menu.staged.key_w == Binding::new(0x205, 0));

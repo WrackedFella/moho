@@ -51,7 +51,7 @@ pub(crate) fn forward_wheel_if_allowed(
 ) -> bool {
     // Conservative: if we can't acquire the lock, do not forward.
     match ui_adapter.try_lock() {
-        Ok(a) if a.ui_visible => return false,
+        Ok(a) if a.is_visible() => return false,
         Err(_) => return false,
         _ => {}
     }
@@ -269,13 +269,13 @@ impl App {
             self.ui_receiver = Some(receiver);
 
             // Register KeybindCapture subscriber at higher priority so it can intercept
-            // events while the settings menu is actively listening for a binding.
+            // events while the active screen is actively listening for raw input.
             let kb_adapter = ui_adapter.clone();
             self.dispatcher.register(200, move |event: &WindowEvent| {
                 if let Ok(mut a) = kb_adapter.lock() {
-                    // Quick check then forward to settings handler
-                    if a.settings_is_listening() {
-                        return a.try_handle_settings_event(event);
+                    // Quick check then forward to screen input handler
+                    if a.active_screen_captures_input() {
+                        return a.try_handle_screen_input(event);
                     }
                 }
                 false
@@ -311,7 +311,7 @@ impl App {
                     // Use the conservative try_lock approach: if we cannot acquire the
                     // lock for any reason, treat as UI-visible and do not forward.
                     match ui_adapter_for_forward.try_lock() {
-                        Ok(a) if a.ui_visible => return false,
+                        Ok(a) if a.is_visible() => return false,
                         Err(_) => return false,
                         _ => {}
                     }
@@ -759,7 +759,7 @@ impl App {
             && let Ok(mut adapter) = ui_adapter.lock()
         {
             // Set UI to not visible directly
-            adapter.ui_visible = false;
+            adapter.set_visible(false);
 
             // Update the atomic flag
             use moho_ui::UI_OVERLAY_VISIBLE;
@@ -780,7 +780,7 @@ impl App {
             && let Ok(mut adapter) = ui_adapter.lock()
         {
             // Set UI to visible
-            adapter.ui_visible = true;
+            adapter.set_visible(true);
 
             // Update the atomic flag
             use moho_ui::UI_OVERLAY_VISIBLE;

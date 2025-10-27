@@ -1,7 +1,7 @@
 #![cfg(feature = "ui-egui")]
 
-use moho_ui::menus::Menu;
 use moho_ui::menus::StartMenu;
+use moho_ui::UiComponent;
 use std::path::PathBuf;
 
 #[test]
@@ -9,11 +9,11 @@ fn start_menu_returns_expected_action_and_rects() {
     let mut menu = StartMenu::new();
     let ctx = egui::Context::default();
 
-    // Call ui() inside `ctx.run` so egui's internal state (available_rect, etc)
+    // Call render() inside `ctx.run` so egui's internal state (available_rect, etc)
     // is initialized properly. Capture the returned menu items.
     let mut items: Vec<moho_ui::menus::menu::MenuItem> = Vec::new();
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
-        items = menu.ui(ctx);
+        items = menu.render(ctx);
     });
 
     // No click simulated, so none of the items should have been triggered;

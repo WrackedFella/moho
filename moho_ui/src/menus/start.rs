@@ -1,4 +1,4 @@
-use crate::menus::menu::{Menu, MenuAction, ScreenSpec};
+use crate::menus::menu::{MenuAction, ScreenSpec, Screen, UiComponent};
 use std::path::PathBuf;
 
 pub struct StartMenu {
@@ -19,14 +19,13 @@ impl Default for StartMenu {
     }
 }
 
-impl Menu for StartMenu {
+// Implement UiComponent (base trait)
+impl UiComponent for StartMenu {
     fn name(&self) -> &str {
         "start"
     }
-    fn spec(&self) -> &ScreenSpec {
-        &self.spec
-    }
-    fn ui(&mut self, ctx: &egui::Context) -> Vec<crate::menus::menu::MenuItem> {
+
+    fn render(&mut self, ctx: &egui::Context) -> Vec<crate::menus::menu::MenuItem> {
         let mut items: Vec<crate::menus::menu::MenuItem> = Vec::new();
 
         // Determine whether a saved scene exists
@@ -108,5 +107,12 @@ impl Menu for StartMenu {
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+// Implement Screen (specialized trait)
+impl Screen for StartMenu {
+    fn spec(&self) -> &ScreenSpec {
+        &self.spec
     }
 }

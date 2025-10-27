@@ -56,6 +56,9 @@ pub mod forms;
 #[cfg(feature = "ui-egui")]
 pub mod input_handling;
 
+#[cfg(feature = "ui-egui")]
+pub mod ui_state;
+
 // Re-export the main types for easy access
 #[cfg(feature = "ui-egui")]
 pub use adapter::{
@@ -66,7 +69,7 @@ pub use adapter::{
 pub use adapter::EguiAdapter as EguiUi;
 
 #[cfg(feature = "ui-egui")]
-pub use menus::{Menu, MenuAction, MenuItem, StartMenu};
+pub use menus::{Menu, MenuAction, MenuItem, Screen, ScreenSpec, StartMenu, UiComponent};
 
 #[cfg(feature = "ui-egui")]
 pub use forms::{NewWorldMenu, SettingsMenu};
