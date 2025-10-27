@@ -85,17 +85,21 @@ impl Console {
     /// * `ctx` - The egui context to render into
     pub fn render(&mut self, ctx: &egui::Context) -> ConsoleAction {
         let mut action = ConsoleAction::None;
+        
+        // Create a custom frame with semi-transparent background
+        // Note: This transparency pattern can be reused for other overlays
+        let frame = egui::Frame::new()
+            .fill(egui::Color32::from_rgba_premultiplied(20, 20, 30, 180))
+            .inner_margin(egui::Margin::same(8));
+        
         // Console panel at bottom of screen
         egui::TopBottomPanel::bottom("console_panel")
             .resizable(true)
             .default_height(300.0)
             .min_height(100.0)
             .max_height(600.0)
+            .frame(frame)
             .show(ctx, |ui| {
-                // Dark background
-                ui.visuals_mut().window_fill =
-                    egui::Color32::from_rgba_premultiplied(20, 20, 30, 240);
-
                 // Output area (scrollable)
                 egui::ScrollArea::vertical()
                     .stick_to_bottom(true)
