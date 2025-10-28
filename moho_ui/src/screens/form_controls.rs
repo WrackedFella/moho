@@ -204,13 +204,13 @@ impl FormControls {
 
         // Bottom panel: action buttons
         egui::TopBottomPanel::bottom(format!("{}_bottom", panel_id_prefix)).show(ctx, |ui| {
-            ui.add_space(6.0);
+            ui.add_space(12.0);
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     button_results = render_buttons(ui);
                 });
             });
-            ui.add_space(8.0);
+            ui.add_space(16.0);
         });
 
         // Central panel: scrollable content
@@ -235,5 +235,102 @@ impl FormControls {
         });
 
         button_results
+    }
+
+    /// Calculate responsive gutter size based on available width and percentage.
+    ///
+    /// This helper enables percentage-based layouts similar to WinForms or CSS,
+    /// working around egui's lack of native percentage support.
+    ///
+    /// # Arguments
+    /// * `available_width` - The total available width (from `ui.available_width()`)
+    /// * `gutter_percent` - Percentage of width to use for each gutter (0.0 to 1.0)
+    ///
+    /// # Returns
+    /// The calculated gutter size in pixels
+    ///
+    /// # Example
+    /// ```ignore
+    /// let gutter = FormControls::calculate_gutter(ui.available_width(), 0.30);
+    /// // Creates 30% gutters on each side, 40% content width
+    /// ```
+    pub fn calculate_gutter(available_width: f32, gutter_percent: f32) -> f32 {
+        (available_width * gutter_percent).max(20.0)
+    }
+
+    /// Calculate content width from available width and gutter percentage.
+    ///
+    /// # Arguments
+    /// * `available_width` - The total available width
+    /// * `gutter_percent` - Percentage for each side gutter (0.0 to 1.0)
+    ///
+    /// # Returns
+    /// The calculated content width (total - 2*gutters)
+    pub fn calculate_content_width(available_width: f32, gutter_percent: f32) -> f32 {
+        let gutter = Self::calculate_gutter(available_width, gutter_percent);
+        (available_width - 2.0 * gutter).max(100.0)
+    }
+
+    /// Renders a horizontal tab bar and returns the index of the selected tab.
+    ///
+    /// This creates a row of tab buttons styled to indicate active/inactive state.
+    /// The active tab appears elevated with lighter background, while inactive tabs
+    /// are darker and recessed.
+    ///
+    /// # Arguments
+    /// * `ui` - The egui UI context
+    /// * `tabs` - Slice of tab label strings
+    /// * `active_index` - Index of the currently active tab (0-based)
+    ///
+    /// # Returns
+    /// The index of the selected tab (may be unchanged if no tab was clicked)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let tabs = ["Controls", "Audio", "Graphics"];
+    /// let new_index = FormControls::tab_bar(ui, &tabs, self.active_tab_index);
+    /// if new_index != self.active_tab_index {
+    ///     self.active_tab_index = new_index;
+    /// }
+    /// ```
+    pub fn tab_bar(ui: &mut egui::Ui, tabs: &[&str], active_index: usize) -> usize {
+        let mut selected = active_index;
+
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+
+            for (i, &label) in tabs.iter().enumerate() {
+                let is_active = i == active_index;
+
+                // Style the button based on active state
+                let button = if is_active {
+                    egui::Button::new(label)
+                        .fill(egui::Color32::from_rgb(60, 60, 60))
+                        .min_size(egui::vec2(100.0, 32.0))
+                } else {
+                    egui::Button::new(label)
+                        .fill(egui::Color32::from_rgb(40, 40, 40))
+                        .min_size(egui::vec2(100.0, 32.0))
+                };
+
+                let response = ui.add(button);
+
+                // Update selection if clicked
+                if response.clicked() {
+                    selected = i;
+                }
+
+                // Add subtle visual feedback on hover for inactive tabs
+                if !is_active && response.hovered() {
+                    ui.painter().rect_filled(
+                        response.rect,
+                        4.0,
+                        egui::Color32::from_rgba_premultiplied(50, 50, 50, 30),
+                    );
+                }
+            }
+        });
+
+        selected
     }
 }

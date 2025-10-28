@@ -14,7 +14,7 @@ pub use menu::{Menu, MenuAction, MenuItem, Screen, ScreenSpec, UiComponent};
 
 // Re-export screen implementations
 pub use new_world::NewWorldMenu;
-pub use settings::SettingsMenu;
+pub use settings::{SettingsMenu, SettingsTab};
 pub use start::StartMenu;
 
 // Re-export form controls

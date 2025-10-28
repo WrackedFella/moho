@@ -1,4 +1,4 @@
-use super::{MenuAction, MenuItem, Screen, ScreenSpec, UiComponent};
+use super::{FormControls, MenuAction, MenuItem, Screen, ScreenSpec, UiComponent};
 use moho_core::scene_builders::WorldSpec;
 
 pub struct NewWorldMenu {
@@ -36,58 +36,81 @@ impl UiComponent for NewWorldMenu {
 
         // Top panel: title area
         egui::TopBottomPanel::top("new_world_top").show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(12.0);
-                ui.heading("Create New World");
-                ui.add_space(8.0);
+            // Use same gutter percentage as content area (30%)
+            let avail = ui.available_width();
+            let gutter = FormControls::calculate_gutter(avail, 0.30);
+
+            ui.horizontal(|ui| {
+                ui.add_space(gutter);
+                ui.allocate_ui_with_layout(
+                    egui::vec2((avail - 2.0 * gutter).max(0.0), 0.0),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        ui.add_space(16.0);
+                        ui.heading("Create New World");
+                        ui.add_space(12.0);
+                    },
+                );
+                ui.add_space(gutter);
             });
         });
 
-        // Bottom panel: buttons reserved at the bottom so they're snug
+        // Bottom panel: buttons reserved at the bottom
         egui::TopBottomPanel::bottom("new_world_bottom").show(ctx, |ui| {
-            ui.add_space(6.0);
+            // Use same gutter percentage as content area (30%)
+            let avail = ui.available_width();
+            let gutter = FormControls::calculate_gutter(avail, 0.30);
+
+            ui.add_space(12.0);
             ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let cont =
-                        ui.add(egui::Button::new("Continue").min_size(egui::vec2(120.0, 36.0)));
-                    ui.add_space(12.0);
-                    let cancel =
-                        ui.add(egui::Button::new("Back").min_size(egui::vec2(120.0, 36.0)));
+                ui.add_space(gutter);
+                ui.allocate_ui_with_layout(
+                    egui::vec2((avail - 2.0 * gutter).max(0.0), 0.0),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        let cont = ui
+                            .add(egui::Button::new("Continue").min_size(egui::vec2(120.0, 36.0)));
+                        ui.add_space(12.0);
+                        let cancel =
+                            ui.add(egui::Button::new("Back").min_size(egui::vec2(120.0, 36.0)));
 
-                    if cont.clicked() {
-                        let name = self.name_input.trim().to_string();
-                        let name = if name.is_empty() {
-                            String::from("New World")
-                        } else {
-                            name.chars().take(64).collect()
-                        };
-                        let seed = match self.seed_input.trim() {
-                            "" => None,
-                            s => s.parse::<u64>().ok(),
-                        };
-                        let spec = WorldSpec {
-                            name,
-                            seed,
-                            size_xz: self.size_xz,
-                        };
-                        items.push(MenuItem {
-                            action: MenuAction::GenerateWorld(spec),
-                            rect: Some(cont.rect),
-                            enabled: true,
-                            clicked: true,
-                        });
-                    }
+                        if cont.clicked() {
+                            let name = self.name_input.trim().to_string();
+                            let name = if name.is_empty() {
+                                String::from("New World")
+                            } else {
+                                name.chars().take(64).collect()
+                            };
+                            let seed = match self.seed_input.trim() {
+                                "" => None,
+                                s => s.parse::<u64>().ok(),
+                            };
+                            let spec = WorldSpec {
+                                name,
+                                seed,
+                                size_xz: self.size_xz,
+                            };
+                            items.push(MenuItem {
+                                action: MenuAction::GenerateWorld(spec),
+                                rect: Some(cont.rect),
+                                enabled: true,
+                                clicked: true,
+                            });
+                        }
 
-                    if cancel.clicked() {
-                        items.push(MenuItem {
-                            action: MenuAction::ShowMenu("start".to_string()),
-                            rect: Some(cancel.rect),
-                            enabled: true,
-                            clicked: true,
-                        });
-                    }
-                });
+                        if cancel.clicked() {
+                            items.push(MenuItem {
+                                action: MenuAction::ShowMenu("start".to_string()),
+                                rect: Some(cancel.rect),
+                                enabled: true,
+                                clicked: true,
+                            });
+                        }
+                    },
+                );
+                ui.add_space(gutter);
             });
+            ui.add_space(16.0);
         });
 
         // Central panel: form fields inside a scroll area
@@ -95,8 +118,10 @@ impl UiComponent for NewWorldMenu {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    let gutter: f32 = 20.0;
+                    // Use percentage-based gutters (30% on each side)
                     let avail = ui.available_width();
+                    let gutter = FormControls::calculate_gutter(avail, 0.30);
+
                     ui.horizontal(|ui| {
                         ui.add_space(gutter);
                         ui.allocate_ui_with_layout(
