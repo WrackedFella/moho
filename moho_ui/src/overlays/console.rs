@@ -114,56 +114,68 @@ impl Console {
             .exact_height(300.0)
             .frame(frame)
             .show(ctx, |ui| {
-                // Output area (scrollable)
-                egui::ScrollArea::vertical()
-                    .stick_to_bottom(true)
-                    .max_height(250.0)
-                    .show(ui, |ui| {
-                        ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 2.0);
+                // Use vertical layout with bottom-to-top ordering
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                    // Bottom padding to prevent input from being cut off
+                    ui.add_space(4.0);
 
-                        for line in &self.output {
-                            ui.label(egui::RichText::new(line).family(egui::FontFamily::Monospace));
+                    // Input field (rendered first, appears at bottom)
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(">")
+                                .family(egui::FontFamily::Monospace)
+                                .strong(),
+                        );
+
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.input_buffer)
+                                .font(egui::FontId::monospace(14.0))
+                                .desired_width(f32::INFINITY),
+                        );
+
+                        // Auto-focus input on first frame
+                        if self.focus_input {
+                            response.request_focus();
+                            self.focus_input = false;
+                        }
+
+                        // Handle enter key
+                        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            action = self.execute_command();
+                            self.focus_input = true; // Re-focus for next command
+                        }
+
+                        // Handle history navigation
+                        if response.has_focus() {
+                            if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                                self.history_up();
+                            } else if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                                self.history_down();
+                            }
                         }
                     });
 
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(4.0);
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.add_space(8.0);
 
-                // Input field
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(">")
-                            .family(egui::FontFamily::Monospace)
-                            .strong(),
-                    );
+                    // Output area (scrollable) - rendered last, appears at top
+                    egui::ScrollArea::vertical()
+                        .stick_to_bottom(true)
+                        .max_height(250.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 2.0);
 
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.input_buffer)
-                            .font(egui::FontId::monospace(14.0))
-                            .desired_width(f32::INFINITY),
-                    );
+                            // Use full available width for output
+                            ui.set_width(ui.available_width());
 
-                    // Auto-focus input on first frame
-                    if self.focus_input {
-                        response.request_focus();
-                        self.focus_input = false;
-                    }
-
-                    // Handle enter key
-                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        action = self.execute_command();
-                        self.focus_input = true; // Re-focus for next command
-                    }
-
-                    // Handle history navigation
-                    if response.has_focus() {
-                        if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-                            self.history_up();
-                        } else if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-                            self.history_down();
-                        }
-                    }
+                            for line in &self.output {
+                                ui.label(
+                                    egui::RichText::new(line).family(egui::FontFamily::Monospace),
+                                );
+                            }
+                        });
                 });
             });
 

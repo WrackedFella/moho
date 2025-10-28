@@ -1,9 +1,15 @@
+mod audio_tab;
+mod controls_tab;
+mod types;
+
+pub use types::SettingsTab;
+
 use super::{FormControls, MenuAction, Screen, ScreenSpec, UiComponent};
 use crate::prefs::{Binding, Prefs};
 use std::collections::HashSet;
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-enum SettingsField {
+pub(super) enum SettingsField {
     KeyW,
     KeyA,
     KeyS,
@@ -27,6 +33,7 @@ struct PendingBinding {
 
 pub struct SettingsMenu {
     spec: ScreenSpec,
+    active_tab: SettingsTab,
     prefs: Prefs,
     staged: Prefs,
     dirty_fields: HashSet<SettingsField>,
@@ -43,6 +50,7 @@ impl SettingsMenu {
         let prefs = Prefs::load();
         Self {
             spec: ScreenSpec::default(),
+            active_tab: SettingsTab::default(),
             prefs: prefs.clone(),
             staged: prefs,
             dirty_fields: HashSet::new(),
@@ -195,7 +203,7 @@ impl SettingsMenu {
         }
     }
 
-    fn binding_label(b: &Binding) -> String {
+    pub(super) fn binding_label(b: &Binding) -> String {
         if b.code == 0 && b.mods == 0 {
             return "Unbound".to_string();
         }
@@ -451,7 +459,7 @@ impl SettingsMenu {
         !self.dirty_fields.is_empty()
     }
 
-    fn paint_dirty_decor(ui: &mut egui::Ui, resp: &egui::Response, dirty: bool) {
+    pub(super) fn paint_dirty_decor(ui: &mut egui::Ui, resp: &egui::Response, dirty: bool) {
         if dirty || resp.hovered() {
             let r = resp.rect;
             let hover_color = egui::Color32::from_rgba_premultiplied(150, 150, 150, 60);
@@ -475,74 +483,108 @@ impl UiComponent for SettingsMenu {
     fn render(&mut self, ctx: &egui::Context) -> Vec<super::MenuItem> {
         let mut items: Vec<super::MenuItem> = Vec::new();
 
-        // Top panel for title - reserves space at top
+        // Top panel for title and tab bar - reserves space at top
         egui::TopBottomPanel::top("settings_top").show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(16.0);
-                ui.heading("Game Settings");
-                ui.add_space(12.0);
+            // Use same gutter percentage as content area (30%)
+            let avail = ui.available_width();
+            let gutter = FormControls::calculate_gutter(avail, 0.30);
+
+            ui.horizontal(|ui| {
+                ui.add_space(gutter);
+                ui.allocate_ui_with_layout(
+                    egui::vec2((avail - 2.0 * gutter).max(0.0), 0.0),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        ui.add_space(16.0);
+                        ui.heading("Game Settings");
+                        ui.add_space(8.0);
+
+                        // Tab bar
+                        let new_tab_index = FormControls::tab_bar(
+                            ui,
+                            SettingsTab::all_tabs(),
+                            self.active_tab.to_index(),
+                        );
+                        self.active_tab = SettingsTab::from_index(new_tab_index);
+
+                        ui.add_space(12.0);
+                    },
+                );
+                ui.add_space(gutter);
             });
         });
 
         // Bottom panel for buttons - reserves space at bottom
         egui::TopBottomPanel::bottom("settings_bottom").show(ctx, |ui| {
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let save =
-                        ui.add(egui::Button::new("Save Changes").min_size(egui::vec2(120.0, 36.0)));
-                    let save_clicked = save.clicked();
-                    if save_clicked {
-                        // commit staged to prefs and save
-                        self.prefs = self.staged.clone();
-                        let _ = self.prefs.save();
-                        // clear dirty flags
-                        self.dirty_fields.clear();
-                    }
-                    items.push(super::MenuItem {
-                        action: if save_clicked {
-                            MenuAction::SettingsSaved(self.prefs.clone())
-                        } else {
-                            MenuAction::None
-                        },
-                        rect: Some(save.rect),
-                        enabled: true,
-                        clicked: save_clicked,
-                    });
-                    ui.add_space(8.0);
+            // Use same gutter percentage as content area (30%)
+            let avail = ui.available_width();
+            let gutter = FormControls::calculate_gutter(avail, 0.30);
 
-                    // Show Cancel when form is dirty, Back when clean
-                    let is_dirty = self.is_dirty();
-                    if is_dirty {
-                        let cancel =
-                            ui.add(egui::Button::new("Cancel").min_size(egui::vec2(100.0, 36.0)));
-                        let cancel_clicked = cancel.clicked();
-                        if cancel_clicked {
-                            // revert staged values to last saved prefs
-                            self.staged = self.prefs.clone();
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                ui.add_space(gutter);
+                ui.allocate_ui_with_layout(
+                    egui::vec2((avail - 2.0 * gutter).max(0.0), 0.0),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        let save = ui.add(
+                            egui::Button::new("Save Changes").min_size(egui::vec2(120.0, 36.0)),
+                        );
+                        let save_clicked = save.clicked();
+                        if save_clicked {
+                            // commit staged to prefs and save
+                            self.prefs = self.staged.clone();
+                            let _ = self.prefs.save();
+                            // clear dirty flags
                             self.dirty_fields.clear();
                         }
                         items.push(super::MenuItem {
-                            action: MenuAction::None,
-                            rect: Some(cancel.rect),
+                            action: if save_clicked {
+                                MenuAction::SettingsSaved(self.prefs.clone())
+                            } else {
+                                MenuAction::None
+                            },
+                            rect: Some(save.rect),
                             enabled: true,
-                            clicked: cancel_clicked,
+                            clicked: save_clicked,
                         });
-                    } else {
-                        let back =
-                            ui.add(egui::Button::new("Back").min_size(egui::vec2(100.0, 36.0)));
-                        let back_clicked = back.clicked();
-                        items.push(super::MenuItem {
-                            action: MenuAction::ShowMenu("start".to_string()),
-                            rect: Some(back.rect),
-                            enabled: true,
-                            clicked: back_clicked,
-                        });
-                    }
+                        ui.add_space(8.0);
 
-                    ui.add_space(8.0);
-                });
+                        // Show Cancel when form is dirty, Back when clean
+                        let is_dirty = self.is_dirty();
+                        if is_dirty {
+                            let cancel = ui
+                                .add(egui::Button::new("Cancel").min_size(egui::vec2(100.0, 36.0)));
+                            let cancel_clicked = cancel.clicked();
+                            if cancel_clicked {
+                                // revert staged values to last saved prefs
+                                self.staged = self.prefs.clone();
+                                self.dirty_fields.clear();
+                            }
+                            items.push(super::MenuItem {
+                                action: MenuAction::None,
+                                rect: Some(cancel.rect),
+                                enabled: true,
+                                clicked: cancel_clicked,
+                            });
+                        } else {
+                            let back =
+                                ui.add(egui::Button::new("Back").min_size(egui::vec2(100.0, 36.0)));
+                            let back_clicked = back.clicked();
+                            items.push(super::MenuItem {
+                                action: MenuAction::ShowMenu("start".to_string()),
+                                rect: Some(back.rect),
+                                enabled: true,
+                                clicked: back_clicked,
+                            });
+                        }
+
+                        ui.add_space(8.0);
+                    },
+                );
+                ui.add_space(gutter);
             });
+            ui.add_space(16.0);
         });
 
         // Central panel contains only the scrollable form content
@@ -550,348 +592,21 @@ impl UiComponent for SettingsMenu {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    let gutter: f32 = 20.0;
+                    // Use percentage-based gutters (30% on each side)
                     let avail = ui.available_width();
+                    let gutter = FormControls::calculate_gutter(avail, 0.30);
+
                     ui.horizontal(|ui| {
                         ui.add_space(gutter);
                         ui.allocate_ui_with_layout(
                             egui::vec2((avail - 2.0 * gutter).max(0.0), 0.0),
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
-                                ui.vertical_centered(|ui| {
-                                    // Controls Section Header
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            egui::RichText::new("Controls")
-                                                .size(18.0)
-                                                .color(egui::Color32::from_rgb(200, 200, 200)),
-                                        );
-                                    });
-                                    ui.add_space(4.0);
-                                    ui.separator();
-                                    ui.add_space(8.0);
-
-                                    // Use fixed-width layout for right-aligned inputs
-                                    let label_width = 150.0;
-
-                                    // Move Forward
-                                    {
-                                        let is_dirty = self.staged.key_w != self.prefs.key_w;
-                                        let clicked = FormControls::keybind_control(
-                                            ui,
-                                            "Move Forward:",
-                                            &Self::binding_label(&self.staged.key_w),
-                                            is_dirty,
-                                            self.listening == Some(0),
-                                            label_width,
-                                        );
-                                        if is_dirty {
-                                            self.dirty_fields.insert(SettingsField::KeyW);
-                                        } else {
-                                            self.dirty_fields.remove(&SettingsField::KeyW);
-                                        }
-                                        if clicked {
-                                            self.listening = Some(0);
-                                        }
-                                    }
-
-                                    // Move Left
-                                    {
-                                        let is_dirty = self.staged.key_a != self.prefs.key_a;
-                                        let clicked = FormControls::keybind_control(
-                                            ui,
-                                            "Move Left:",
-                                            &Self::binding_label(&self.staged.key_a),
-                                            is_dirty,
-                                            self.listening == Some(1),
-                                            label_width,
-                                        );
-                                        if is_dirty {
-                                            self.dirty_fields.insert(SettingsField::KeyA);
-                                        } else {
-                                            self.dirty_fields.remove(&SettingsField::KeyA);
-                                        }
-                                        if clicked {
-                                            self.listening = Some(1);
-                                        }
-                                    }
-
-                                    // Move Back
-                                    {
-                                        let is_dirty = self.staged.key_s != self.prefs.key_s;
-                                        let clicked = FormControls::keybind_control(
-                                            ui,
-                                            "Move Back:",
-                                            &Self::binding_label(&self.staged.key_s),
-                                            is_dirty,
-                                            self.listening == Some(2),
-                                            label_width,
-                                        );
-                                        if is_dirty {
-                                            self.dirty_fields.insert(SettingsField::KeyS);
-                                        } else {
-                                            self.dirty_fields.remove(&SettingsField::KeyS);
-                                        }
-                                        if clicked {
-                                            self.listening = Some(2);
-                                        }
-                                    }
-
-                                    // Move Right
-                                    {
-                                        let is_dirty = self.staged.key_d != self.prefs.key_d;
-                                        let clicked = FormControls::keybind_control(
-                                            ui,
-                                            "Move Right:",
-                                            &Self::binding_label(&self.staged.key_d),
-                                            is_dirty,
-                                            self.listening == Some(3),
-                                            label_width,
-                                        );
-                                        if is_dirty {
-                                            self.dirty_fields.insert(SettingsField::KeyD);
-                                        } else {
-                                            self.dirty_fields.remove(&SettingsField::KeyD);
-                                        }
-                                        if clicked {
-                                            self.listening = Some(3);
-                                        }
-                                    }
-
-                                    // Move Up
-                                    {
-                                        let is_dirty = self.staged.key_up != self.prefs.key_up;
-                                        let clicked = FormControls::keybind_control(
-                                            ui,
-                                            "Move Up:",
-                                            &Self::binding_label(&self.staged.key_up),
-                                            is_dirty,
-                                            self.listening == Some(4),
-                                            label_width,
-                                        );
-                                        if is_dirty {
-                                            self.dirty_fields.insert(SettingsField::KeyUp);
-                                        } else {
-                                            self.dirty_fields.remove(&SettingsField::KeyUp);
-                                        }
-                                        if clicked {
-                                            self.listening = Some(4);
-                                        }
-                                    }
-
-                                    // Move Down
-                                    {
-                                        let is_dirty = self.staged.key_down != self.prefs.key_down;
-                                        let clicked = FormControls::keybind_control(
-                                            ui,
-                                            "Move Down:",
-                                            &Self::binding_label(&self.staged.key_down),
-                                            is_dirty,
-                                            self.listening == Some(5),
-                                            label_width,
-                                        );
-                                        if is_dirty {
-                                            self.dirty_fields.insert(SettingsField::KeyDown);
-                                        } else {
-                                            self.dirty_fields.remove(&SettingsField::KeyDown);
-                                        }
-                                        if clicked {
-                                            self.listening = Some(5);
-                                        }
-                                    }
-
-                                    ui.add_space(8.0);
-
-                                    ui.horizontal(|ui| {
-                                        ui.allocate_ui_with_layout(
-                                            egui::vec2(label_width, 28.0),
-                                            egui::Layout::left_to_right(egui::Align::Center),
-                                            |ui| {
-                                                ui.label("Mouse Sensitivity:");
-                                            },
-                                        );
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                // Slider matching keybind button width (120px) - added first so it appears on the right
-                                                ui.allocate_ui_with_layout(
-                                                    egui::vec2(120.0, 20.0),
-                                                    egui::Layout::left_to_right(
-                                                        egui::Align::Center,
-                                                    ),
-                                                    |ui| {
-                                                        ui.spacing_mut().slider_width = 120.0;
-                                                        let slider = ui.add(
-                                                            egui::Slider::new(
-                                                                &mut self.staged.mouse_sensitivity,
-                                                                0.01..=10.0,
-                                                            )
-                                                            .show_value(false)
-                                                            .min_decimals(0)
-                                                            .max_decimals(2),
-                                                        );
-                                                        Self::paint_dirty_decor(
-                                                            ui,
-                                                            &slider,
-                                                            (self.staged.mouse_sensitivity
-                                                                - self.prefs.mouse_sensitivity)
-                                                                .abs()
-                                                                > f32::EPSILON,
-                                                        );
-                                                    },
-                                                );
-                                                ui.add_space(8.0);
-                                                // Drag value input - added second so it appears on the left
-                                                let drag = ui.add(
-                                                    egui::DragValue::new(
-                                                        &mut self.staged.mouse_sensitivity,
-                                                    )
-                                                    .range(0.01..=10.0)
-                                                    .speed(0.1)
-                                                    .min_decimals(2)
-                                                    .max_decimals(2),
-                                                );
-                                                Self::paint_dirty_decor(
-                                                    ui,
-                                                    &drag,
-                                                    (self.staged.mouse_sensitivity
-                                                        - self.prefs.mouse_sensitivity)
-                                                        .abs()
-                                                        > f32::EPSILON,
-                                                );
-                                                if (self.staged.mouse_sensitivity
-                                                    - self.prefs.mouse_sensitivity)
-                                                    .abs()
-                                                    > f32::EPSILON
-                                                {
-                                                    self.dirty_fields
-                                                        .insert(SettingsField::MouseSensitivity);
-                                                } else {
-                                                    self.dirty_fields
-                                                        .remove(&SettingsField::MouseSensitivity);
-                                                }
-                                            },
-                                        );
-                                    });
-
-                                    ui.add_space(12.0);
-
-                                    // Input Filtering Section
-                                    ui.horizontal(|ui| {
-                                        ui.allocate_ui_with_layout(
-                                            egui::vec2(label_width, 28.0),
-                                            egui::Layout::left_to_right(egui::Align::Center),
-                                            |ui| {
-                                                ui.label("Input Filtering:");
-                                            },
-                                        );
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                // Toggle filtering on/off
-                                                let checkbox = ui.checkbox(
-                                                    &mut self.staged.input_filtering_enabled,
-                                                    "Enable",
-                                                );
-                                                Self::paint_dirty_decor(
-                                                    ui,
-                                                    &checkbox,
-                                                    self.staged.input_filtering_enabled
-                                                        != self.prefs.input_filtering_enabled,
-                                                );
-                                                if self.staged.input_filtering_enabled
-                                                    != self.prefs.input_filtering_enabled
-                                                {
-                                                    self.dirty_fields
-                                                        .insert(SettingsField::InputFiltering);
-                                                } else {
-                                                    self.dirty_fields
-                                                        .remove(&SettingsField::InputFiltering);
-                                                }
-                                            },
-                                        );
-                                    });
-
-                                    ui.add_space(24.0);
-
-                                    // Audio Section Header
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            egui::RichText::new("Audio")
-                                                .size(18.0)
-                                                .color(egui::Color32::from_rgb(200, 200, 200)),
-                                        );
-                                    });
-                                    ui.add_space(4.0);
-                                    ui.separator();
-                                    ui.add_space(8.0);
-
-                                    // Sound Effect Volume
-                                    {
-                                        let dirty = FormControls::volume_slider(
-                                            ui,
-                                            "Sound Effects:",
-                                            &mut self.staged.audio_sound_effect_volume,
-                                            self.prefs.audio_sound_effect_volume,
-                                            label_width,
-                                        );
-                                        if dirty {
-                                            self.dirty_fields
-                                                .insert(SettingsField::AudioSoundEffect);
-                                        } else {
-                                            self.dirty_fields
-                                                .remove(&SettingsField::AudioSoundEffect);
-                                        }
-                                    }
-
-                                    // Music Volume
-                                    {
-                                        let dirty = FormControls::volume_slider(
-                                            ui,
-                                            "Music:",
-                                            &mut self.staged.audio_music_volume,
-                                            self.prefs.audio_music_volume,
-                                            label_width,
-                                        );
-                                        if dirty {
-                                            self.dirty_fields.insert(SettingsField::AudioMusic);
-                                        } else {
-                                            self.dirty_fields.remove(&SettingsField::AudioMusic);
-                                        }
-                                    }
-
-                                    // UI Volume
-                                    {
-                                        let dirty = FormControls::volume_slider(
-                                            ui,
-                                            "User Interface:",
-                                            &mut self.staged.audio_ui_volume,
-                                            self.prefs.audio_ui_volume,
-                                            label_width,
-                                        );
-                                        if dirty {
-                                            self.dirty_fields.insert(SettingsField::AudioUI);
-                                        } else {
-                                            self.dirty_fields.remove(&SettingsField::AudioUI);
-                                        }
-                                    }
-
-                                    // Voice Volume
-                                    {
-                                        let dirty = FormControls::volume_slider(
-                                            ui,
-                                            "Voice:",
-                                            &mut self.staged.audio_voice_volume,
-                                            self.prefs.audio_voice_volume,
-                                            label_width,
-                                        );
-                                        if dirty {
-                                            self.dirty_fields.insert(SettingsField::AudioVoice);
-                                        } else {
-                                            self.dirty_fields.remove(&SettingsField::AudioVoice);
-                                        }
-                                    }
-                                });
+                                // Render the active tab content
+                                match self.active_tab {
+                                    SettingsTab::Controls => controls_tab::render(self, ui),
+                                    SettingsTab::Audio => audio_tab::render(self, ui),
+                                }
                             },
                         );
                         ui.add_space(gutter);
