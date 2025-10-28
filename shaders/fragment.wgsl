@@ -1,12 +1,16 @@
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    // Lighting params
-    let light_dir = normalize(vec3<f32>(1.0, 1.0, 0.5));
-    // reduce ambient to increase contrast and perceived shading
-    let ambient = 0.03;
+    // Extract lighting parameters from uniform
+    let sun_dir = normalize(lighting.sun_direction.xyz);
+    let sun_intensity = lighting.sun_direction.w;
+    let sun_col = lighting.sun_color.xyz;
+    let ambient_col = lighting.ambient.xyz;
+    let ambient_intensity = lighting.ambient.w;
+    
     let N = normalize(in.normal);
-    let L = normalize(light_dir);
+    let L = sun_dir;
     let diff = max(dot(N, L), 0.0);
+    
     // use camera-provided world position for view direction
     let cam_pos = vec3<f32>(camera.cam_pos.x, camera.cam_pos.y, camera.cam_pos.z);
     let V = normalize(cam_pos - in.world_pos);
@@ -48,15 +52,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let F = R0 + (1.0 - R0) * pow(1.0 - cos_theta, 5.0);
 
         // Strong, sharp specular for dielectrics; use a high exponent
-        let spec_diel = vec3<f32>(F) * pow(max(dot(N, H), 0.0), 128.0);
+        let spec_diel = vec3<f32>(F) * pow(max(dot(N, H), 0.0), 128.0) * sun_col * sun_intensity;
 
         // Approximate transmitted light (tint) scaled by (1 - F). This is a
         // cheap stand-in for refraction/transmission and helps the object
         // look glassy when combined with specular.
-        let trans = final_albedo * (1.0 - F) * 0.6;
+        let trans = final_albedo * (1.0 - F) * 0.6 * sun_col * sun_intensity;
 
-        // Small ambient contribution; rely mostly on AO + specular + trans
-        color = vec3<f32>(ambient) * final_albedo * 0.1 + ao * (spec_diel + trans);
+        // Ambient contribution
+        color = ambient_col * ambient_intensity * final_albedo * 0.1 + ao * (spec_diel + trans);
         // approximate alpha: more reflective (higher F) -> less transmitted
         // we bias alpha so very slight translucency remains even for weakly
         // refractive materials.
@@ -70,7 +74,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // For metals: reduce diffuse, increase specular
         // For lambertian: normal diffuse, minimal specular
         let diff_strength = mix(1.0, 0.3, is_metal);
-        let diff_color = final_albedo * diff * diff_strength;
+        let diff_color = final_albedo * diff * diff_strength * sun_col * sun_intensity;
         
         // Metal specular: strong but affected by fuzz (roughness)
         // Lambertian specular: very weak
@@ -83,10 +87,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let spec_power = mix(64.0, 96.0, is_metal);
         let spec_highlight = pow(max(dot(N, H), 0.0), spec_power);
         
-        // For metals the specular should be tinted by albedo
-        let spec_color = final_albedo * spec_strength * spec_highlight;
+        // For metals the specular should be tinted by albedo and sun color
+        let spec_color = final_albedo * spec_strength * spec_highlight * sun_col * sun_intensity;
 
-        color = vec3<f32>(ambient) * final_albedo + ao * (diff_color + spec_color);
+        color = ambient_col * ambient_intensity * final_albedo + ao * (diff_color + spec_color);
     }
     // For dielectrics we computed `alpha` above; otherwise alpha is opaque.
     var out_alpha: f32 = 1.0;

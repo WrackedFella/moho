@@ -7,8 +7,20 @@ struct Camera {
     cam_pos: vec4<f32>,
 }
 
+struct Lighting {
+    sun_direction: vec4<f32>,  // xyz = direction (normalized), w = intensity
+    sun_color: vec4<f32>,      // xyz = color, w = unused
+    ambient: vec4<f32>,        // xyz = color, w = intensity
+}
+
 @group(0) @binding(0)
 var<uniform> camera: Camera;
+
+@group(0) @binding(1)
+var<storage, read> materials: array<Material>;
+
+@group(0) @binding(2)
+var<uniform> lighting: Lighting;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -28,9 +40,6 @@ struct Material {
     albedo: vec4<f32>, // .xyz = albedo, .w unused
     params: vec4<f32>, // params.x = fuzz, params.y = ref_idx
 }
-
-@group(0) @binding(1)
-var<storage, read> materials: array<Material>;
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,

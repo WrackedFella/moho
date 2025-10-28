@@ -43,6 +43,8 @@ mod materials;
 pub use materials::MaterialTable;
 mod scene;
 pub use scene::Scene;
+mod gpu_types;
+pub use gpu_types::{CameraGpu, LightingGpu};
 
 pub mod gfx {
     //! Graphics backends grouped under `gfx` for clarity. The WGPU backend is
@@ -123,6 +125,10 @@ pub mod gfx {
             frame_callback_raw: Option<*mut dyn crate::FrameCallback>,
             // Optional safe Arc+Mutex-wrapped callback. Prefer this when set.
             frame_callback_arc: Option<std::sync::Arc<std::sync::Mutex<dyn crate::FrameCallback>>>,
+            // Skybox rendering resources
+            skybox_pipeline: wgpu::RenderPipeline,
+            skybox_vertex_buffer: wgpu::Buffer,
+            skybox_vertex_count: u32,
         }
 
         // Per-mesh stored data (supports optional index buffer)
@@ -220,10 +226,12 @@ pub mod gfx {
                     // shader path adjusted for crate layout (moho_renderer/src -> repo root)
                     source: wgpu::ShaderSource::Wgsl(shader_source.into()),
                 });
-                // Camera uniform bind group (group 0) now contains both the camera
-                // uniform (binding 0) and a storage buffer with the material table
-                // world position.
+                // Camera uniform bind group (group 0) now contains:
+                //   binding 0: camera uniform (VP matrix + position)
+                //   binding 1: material storage buffer
+                //   binding 2: lighting uniform (sun + ambient)
                 let camera_size = std::mem::size_of::<[f32; 20]>() as u64; // 5 vec4s
+                let lighting_size = std::mem::size_of::<[f32; 12]>() as u64; // 3 vec4s
                 let camera_bgl =
                     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                         label: Some("camera-bgl"),
@@ -253,6 +261,19 @@ pub mod gfx {
                                 },
                                 count: None,
                             },
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 2,
+                                visibility: wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Buffer {
+                                    ty: wgpu::BufferBindingType::Uniform,
+                                    has_dynamic_offset: false,
+                                    min_binding_size: Some(
+                                        std::num::NonZeroU64::new(lighting_size)
+                                            .ok_or("lighting size was zero")?,
+                                    ),
+                                },
+                                count: None,
+                            },
                         ],
                     });
 
@@ -270,6 +291,16 @@ pub mod gfx {
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
+
+                // Create lighting uniform buffer with default lighting
+                use crate::gpu_types::LightingGpu;
+                let initial_lighting = LightingGpu::default();
+                let lighting_buffer =
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("lighting-buffer"),
+                        contents: bytemuck::bytes_of(&initial_lighting),
+                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    });
 
                 // Create an initial one-element material storage buffer so we can
                 // create the bind group now. It will be replaced when the app
@@ -295,6 +326,10 @@ pub mod gfx {
                         wgpu::BindGroupEntry {
                             binding: 1,
                             resource: material_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: lighting_buffer.as_entire_binding(),
                         },
                     ],
                     label: Some("camera-bind-group"),
@@ -407,6 +442,67 @@ pub mod gfx {
                     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 });
 
+                // Create skybox rendering resources
+                let skybox_shader_source = std::fs::read_to_string("shaders/skybox.wgsl")
+                    .map_err(|e| format!("Failed to read skybox shader: {}", e))?;
+                let skybox_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("skybox-shader"),
+                    source: wgpu::ShaderSource::Wgsl(skybox_shader_source.into()),
+                });
+
+                // Create skybox pipeline
+                let skybox_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("skybox-pipeline"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &skybox_shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: Default::default(),
+                        buffers: &[wgpu::VertexBufferLayout {
+                            array_stride: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                        }],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &skybox_shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: config.format,
+                            blend: None, // No blending for skybox
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: None, // No culling for skybox (inside a sphere)
+                        unclipped_depth: false,
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        conservative: false,
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: depth_format,
+                        depth_write_enabled: false, // Don't write depth for skybox
+                        depth_compare: wgpu::CompareFunction::LessEqual, // LessEqual for skybox at far plane
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                });
+
+                // Generate skybox sphere geometry (UV sphere)
+                let (skybox_vertices, skybox_vertex_count) = Self::generate_skybox_sphere(32, 16);
+                let skybox_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("skybox-vertex-buffer"),
+                    contents: bytemuck::cast_slice(&skybox_vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
                 Ok(Renderer {
                     window,
                     surface,
@@ -432,7 +528,58 @@ pub mod gfx {
                     pending_frame_view: None,
                     frame_callback_raw: None,
                     frame_callback_arc: None,
+                    skybox_pipeline,
+                    skybox_vertex_buffer,
+                    skybox_vertex_count,
                 })
+            }
+
+            /// Generate a UV sphere for the skybox
+            /// Returns (vertices, vertex_count)
+            fn generate_skybox_sphere(longitude_segments: u32, latitude_segments: u32) -> (Vec<[f32; 3]>, u32) {
+                let mut vertices = Vec::new();
+                
+                // Generate vertices for UV sphere
+                for lat in 0..=latitude_segments {
+                    let theta = std::f32::consts::PI * (lat as f32) / (latitude_segments as f32);
+                    let sin_theta = theta.sin();
+                    let cos_theta = theta.cos();
+                    
+                    for lon in 0..=longitude_segments {
+                        let phi = 2.0 * std::f32::consts::PI * (lon as f32) / (longitude_segments as f32);
+                        let sin_phi = phi.sin();
+                        let cos_phi = phi.cos();
+                        
+                        // Unit sphere position
+                        let x = sin_theta * cos_phi;
+                        let y = cos_theta;
+                        let z = sin_theta * sin_phi;
+                        
+                        vertices.push([x, y, z]);
+                    }
+                }
+                
+                // Generate triangle indices (convert to triangle list)
+                let mut triangle_vertices = Vec::new();
+                for lat in 0..latitude_segments {
+                    for lon in 0..longitude_segments {
+                        let current = (lat * (longitude_segments + 1) + lon) as usize;
+                        let next = current + (longitude_segments + 1) as usize;
+                        
+                        // First triangle
+                        triangle_vertices.push(vertices[current]);
+                        triangle_vertices.push(vertices[next]);
+                        triangle_vertices.push(vertices[current + 1]);
+                        
+                        // Second triangle
+                        triangle_vertices.push(vertices[current + 1]);
+                        triangle_vertices.push(vertices[next]);
+                        triangle_vertices.push(vertices[next + 1]);
+                    }
+                }
+                
+                let vertex_count = triangle_vertices.len() as u32;
+                (triangle_vertices, vertex_count)
             }
 
             /// Return the configured surface format for the renderer.
@@ -592,6 +739,14 @@ pub mod gfx {
                         occlusion_query_set: None,
                         timestamp_writes: None,
                     });
+                    
+                    // Render skybox first (at maximum depth)
+                    rpass.set_pipeline(&self.skybox_pipeline);
+                    rpass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    rpass.set_vertex_buffer(0, self.skybox_vertex_buffer.slice(..));
+                    rpass.draw(0..self.skybox_vertex_count, 0..1);
+                    
+                    // Then render main scene
                     rpass.set_pipeline(&self.pipeline);
                     // set camera bind group (group 0)
                     rpass.set_bind_group(0, &self.camera_bind_group, &[]);
