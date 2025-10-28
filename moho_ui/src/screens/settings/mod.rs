@@ -1,6 +1,6 @@
-mod types;
-mod controls_tab;
 mod audio_tab;
+mod controls_tab;
+mod types;
 
 pub use types::SettingsTab;
 
@@ -488,7 +488,7 @@ impl UiComponent for SettingsMenu {
             // Use same gutter percentage as content area (30%)
             let avail = ui.available_width();
             let gutter = FormControls::calculate_gutter(avail, 0.30);
-            
+
             ui.horizontal(|ui| {
                 ui.add_space(gutter);
                 ui.allocate_ui_with_layout(
@@ -519,7 +519,7 @@ impl UiComponent for SettingsMenu {
             // Use same gutter percentage as content area (30%)
             let avail = ui.available_width();
             let gutter = FormControls::calculate_gutter(avail, 0.30);
-            
+
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 ui.add_space(gutter);
@@ -568,8 +568,8 @@ impl UiComponent for SettingsMenu {
                                 clicked: cancel_clicked,
                             });
                         } else {
-                            let back = ui
-                                .add(egui::Button::new("Back").min_size(egui::vec2(100.0, 36.0)));
+                            let back =
+                                ui.add(egui::Button::new("Back").min_size(egui::vec2(100.0, 36.0)));
                             let back_clicked = back.clicked();
                             items.push(super::MenuItem {
                                 action: MenuAction::ShowMenu("start".to_string()),

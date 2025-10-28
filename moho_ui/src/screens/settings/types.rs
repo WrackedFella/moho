@@ -1,6 +1,7 @@
 /// Represents the different tabs available in the Settings menu.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum SettingsTab {
+    #[default]
     Controls,
     Audio,
 }
@@ -35,11 +36,5 @@ impl SettingsTab {
     /// Get all available tabs in display order.
     pub fn all_tabs() -> &'static [&'static str] {
         &["Controls", "Audio"]
-    }
-}
-
-impl Default for SettingsTab {
-    fn default() -> Self {
-        SettingsTab::Controls
     }
 }

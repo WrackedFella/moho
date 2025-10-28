@@ -166,12 +166,14 @@ impl Console {
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 2.0);
-                            
+
                             // Use full available width for output
                             ui.set_width(ui.available_width());
 
                             for line in &self.output {
-                                ui.label(egui::RichText::new(line).family(egui::FontFamily::Monospace));
+                                ui.label(
+                                    egui::RichText::new(line).family(egui::FontFamily::Monospace),
+                                );
                             }
                         });
                 });

@@ -196,11 +196,9 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 if (menu.staged.mouse_sensitivity - menu.prefs.mouse_sensitivity).abs()
                     > f32::EPSILON
                 {
-                    menu.dirty_fields
-                        .insert(SettingsField::MouseSensitivity);
+                    menu.dirty_fields.insert(SettingsField::MouseSensitivity);
                 } else {
-                    menu.dirty_fields
-                        .remove(&SettingsField::MouseSensitivity);
+                    menu.dirty_fields.remove(&SettingsField::MouseSensitivity);
                 }
             });
         });
@@ -217,8 +215,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 },
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let checkbox =
-                    ui.checkbox(&mut menu.staged.input_filtering_enabled, "Enable");
+                let checkbox = ui.checkbox(&mut menu.staged.input_filtering_enabled, "Enable");
                 SettingsMenu::paint_dirty_decor(
                     ui,
                     &checkbox,
@@ -227,8 +224,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 if menu.staged.input_filtering_enabled != menu.prefs.input_filtering_enabled {
                     menu.dirty_fields.insert(SettingsField::InputFiltering);
                 } else {
-                    menu.dirty_fields
-                        .remove(&SettingsField::InputFiltering);
+                    menu.dirty_fields.remove(&SettingsField::InputFiltering);
                 }
             });
         });

@@ -29,11 +29,9 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 label_width,
             );
             if dirty {
-                menu.dirty_fields
-                    .insert(SettingsField::AudioSoundEffect);
+                menu.dirty_fields.insert(SettingsField::AudioSoundEffect);
             } else {
-                menu.dirty_fields
-                    .remove(&SettingsField::AudioSoundEffect);
+                menu.dirty_fields.remove(&SettingsField::AudioSoundEffect);
             }
         }
 

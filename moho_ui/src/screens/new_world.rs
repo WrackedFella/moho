@@ -68,8 +68,8 @@ impl UiComponent for NewWorldMenu {
                     egui::vec2((avail - 2.0 * gutter).max(0.0), 0.0),
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                        let cont = ui
-                            .add(egui::Button::new("Continue").min_size(egui::vec2(120.0, 36.0)));
+                        let cont =
+                            ui.add(egui::Button::new("Continue").min_size(egui::vec2(120.0, 36.0)));
                         ui.add_space(12.0);
                         let cancel =
                             ui.add(egui::Button::new("Back").min_size(egui::vec2(120.0, 36.0)));
