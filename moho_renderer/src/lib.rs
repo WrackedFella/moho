@@ -581,7 +581,7 @@ pub mod gfx {
                 });
 
                 // Create shadow mapping resources
-                const SHADOW_MAP_SIZE: u32 = 2048;
+                const SHADOW_MAP_SIZE: u32 = 4096; // Increased from 2048 for better quality
                 
                 // Shadow map depth texture
                 let shadow_map_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -842,16 +842,6 @@ pub mod gfx {
                 let light_distance = 300.0; // Far back to see large area
                 let light_pos = scene_center - light_dir * light_distance;
                 
-                // Debug logging (once per frame is enough)
-                static SHADOW_DEBUG_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-                let frame = SHADOW_DEBUG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if frame % 60 == 0 {
-                    eprintln!("[Shadow Debug] cam_pos: {:?}", cam_pos);
-                    eprintln!("[Shadow Debug] light_dir: {:?}", light_dir);
-                    eprintln!("[Shadow Debug] scene_center: {:?}", scene_center);
-                    eprintln!("[Shadow Debug] light_pos: {:?}", light_pos);
-                }
-                
                 // Create light view matrix (looking from light toward camera/scene center)
                 let light_view = glam::Mat4::look_at_rh(
                     light_pos,
@@ -860,11 +850,11 @@ pub mod gfx {
                 );
                 
                 // Create orthographic projection for directional light
-                // MASSIVELY increase coverage for isometric/aerial views
-                // Camera can see terrain from very far away at shallow angles
-                let ortho_size = 500.0; // 1000x1000 unit coverage - very large
+                // Optimized for 128x128 terrain (4 chunks of 64 units each)
+                // Tighter frustum = better shadow map resolution
+                let ortho_size = 100.0; // 200x200 unit coverage - fits terrain with margin
                 let near = 1.0;
-                let far = 600.0; // Deep frustum to capture everything
+                let far = 400.0; // Deep enough to capture terrain depth
                 
                 let light_proj = glam::Mat4::orthographic_rh(
                     -ortho_size,

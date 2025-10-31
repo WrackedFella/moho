@@ -22,7 +22,8 @@ fn debug_shadow_coords(light_space_pos: vec4<f32>) -> vec3<f32> {
 }
 
 // Calculate shadow factor using PCF (Percentage Closer Filtering)
-fn calculate_shadow(light_space_pos: vec4<f32>) -> f32 {
+// Takes light_space_pos, surface normal, and light direction for slope-scale bias
+fn calculate_shadow(light_space_pos: vec4<f32>, normal: vec3<f32>, light_dir: vec3<f32>) -> f32 {
     // Perspective divide
     var proj_coords = light_space_pos.xyz / light_space_pos.w;
     
@@ -39,22 +40,27 @@ fn calculate_shadow(light_space_pos: vec4<f32>) -> f32 {
         return 1.0;
     }
     
-    // PCF: Sample multiple texels for soft shadows
-    let texel_size = 1.0 / 2048.0; // Shadow map size
-    var shadow = 0.0;
-    let pcf_radius = 1.5; // Sample radius
+    // Slope-scale depth bias for shadow acne prevention
+    // Slightly increased to handle voxel edge precision issues
+    let ndotl = max(dot(normal, light_dir), 0.0);
+    let base_bias = 0.0012; // Increased for edge cases
+    let slope_bias = 0.0025 * sqrt(1.0 - ndotl * ndotl) / max(ndotl, 0.1);
+    let bias = base_bias + slope_bias;
+    let biased_depth = proj_coords.z - bias;
     
+    // PCF for soft shadows - 3x3 kernel
+    let texel_size = 1.0 / 4096.0; // Shadow map size (4096x4096)
+    var shadow = 0.0;
+    let pcf_radius = 1.0; // Moderate softness
+    
+    // 3x3 kernel for soft shadows
     for (var x = -1.0; x <= 1.0; x += 1.0) {
         for (var y = -1.0; y <= 1.0; y += 1.0) {
             let offset = vec2<f32>(x, y) * texel_size * pcf_radius;
             let sample_coords = proj_coords.xy + offset;
-            
-            // textureSampleCompare returns 1.0 if depth test passes, 0.0 if fails
-            shadow += textureSampleCompare(shadow_map, shadow_sampler, sample_coords, proj_coords.z);
+            shadow += textureSampleCompare(shadow_map, shadow_sampler, sample_coords, biased_depth);
         }
     }
-    
-    // Average the 9 samples
     shadow /= 9.0;
     
     return shadow; // 0.0 = full shadow, 1.0 = full light
@@ -73,8 +79,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let L = sun_dir;
     let diff = max(dot(N, L), 0.0);
     
-    // Calculate shadow factor
-    let shadow = calculate_shadow(in.light_space_pos);
+    // Calculate shadow factor with slope-scale bias
+    let shadow = calculate_shadow(in.light_space_pos, N, L);
     
     // use camera-provided world position for view direction
     let cam_pos = vec3<f32>(camera.cam_pos.x, camera.cam_pos.y, camera.cam_pos.z);
@@ -85,7 +91,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Simple ambient occlusion-like term based on N·L to darken occluded areas
     // and a cheap contact shadow near the ground (y ~= 0) to restore the
     // perception of objects sitting on the ground plane.
-    let ao_from_light = clamp(0.3 + 0.7 * diff, 0.0, 1.0);
+    // Reduced minimum from 0.3 to 0.05 so back-faces are much darker
+    let ao_from_light = clamp(0.05 + 0.95 * diff, 0.0, 1.0);
     let contact = exp(-10.0 * max(in.world_pos.y, 0.0)); // strong near y=0
     let ao = ao_from_light * mix(1.0, 0.6, contact);
 
@@ -125,8 +132,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // look glassy when combined with specular.
         let trans = final_albedo * (1.0 - F) * 0.6 * sun_col * sun_intensity * shadow;
 
-        // Ambient contribution (not affected by shadow)
-        color = ambient_col * ambient_intensity * final_albedo * 0.1 + ao * (spec_diel + trans);
+        // Reduce ambient in shadowed areas AND on back-facing surfaces
+        let shadow_darkening = mix(0.2, 1.0, shadow);
+        let backface_darkening = mix(0.15, 1.0, diff);
+        let total_darkening = shadow_darkening * backface_darkening;
+        color = ambient_col * ambient_intensity * final_albedo * 0.1 * total_darkening + ao * (spec_diel + trans);
         // approximate alpha: more reflective (higher F) -> less transmitted
         // we bias alpha so very slight translucency remains even for weakly
         // refractive materials.
@@ -158,8 +168,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // Apply shadow to specular as well
         let spec_color = final_albedo * spec_strength * spec_highlight * sun_col * sun_intensity * shadow;
 
-        // Ambient not affected by shadow, direct lighting is
-        color = ambient_col * ambient_intensity * final_albedo + ao * (diff_color + spec_color);
+        // Reduce ambient in shadowed areas AND on back-facing surfaces
+        // Surfaces in complete shadow should be much darker
+        // Also darken surfaces facing away from light (diff close to 0)
+        let shadow_darkening = mix(0.2, 1.0, shadow); // Darken by 80% in full shadow
+        let backface_darkening = mix(0.15, 1.0, diff); // Darken by 85% when facing away
+        let total_darkening = shadow_darkening * backface_darkening;
+        color = ambient_col * ambient_intensity * final_albedo * total_darkening + ao * (diff_color + spec_color);
     }
     
     // DEBUG: Visualize shadow coordinates (comment out for normal rendering)
