@@ -44,7 +44,7 @@ pub use materials::MaterialTable;
 mod scene;
 pub use scene::Scene;
 mod gpu_types;
-pub use gpu_types::{CameraGpu, LightingGpu, ShadowMatrixGpu};
+pub use gpu_types::{CameraGpu, LightingGpu, ShadowMatrixGpu, CascadedShadowMatrixGpu};
 
 pub mod gfx {
     //! Graphics backends grouped under `gfx` for clarity. The WGPU backend is
@@ -59,6 +59,29 @@ pub mod gfx {
         // to assets/shaders are adjusted for the crate layout.
         use moho_core::actors::InstanceGpu as CpuInstance;
         use wgpu::util::DeviceExt;
+        
+        // ===== Shadow Mapping Configuration =====
+        /// Number of cascaded shadow map cascades for CSM (Cascaded Shadow Maps)
+        const NUM_SHADOW_CASCADES: u32 = 4;
+
+        /// Shadow map resolution per cascade (4096x4096 for high quality)
+        const SHADOW_MAP_SIZE: u32 = 4096;
+
+        /// Cascade split distances from camera (in world units)
+        /// Option B: Moderate distances (20, 50, 100, 200)
+        /// - Near cascade (0-20): Very high precision for closest geometry
+        /// - Mid-near cascade (20-50): High precision for nearby gameplay area  
+        /// - Mid-far cascade (50-100): Medium precision for visible terrain
+        /// - Far cascade (100-200): Lower precision for distant geometry
+        /// Note: Distances can be tweaked until voxel chunk size is finalized
+        const CASCADE_SPLIT_DISTANCES: [f32; 4] = [20.0, 50.0, 100.0, 200.0];
+
+        /// Debug flag: Enable CSM debug visualization (cascade color-coding)
+        const CSM_DEBUG_MODE: bool = false;
+
+        /// Debug flag: Enable verbose logging of cascade calculations
+        const CSM_VERBOSE_LOGGING: bool = false;
+        // ===== End Shadow Mapping Configuration =====
 
         #[repr(C)]
         #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -130,7 +153,7 @@ pub mod gfx {
             skybox_pipeline: wgpu::RenderPipeline,
             skybox_vertex_buffer: wgpu::Buffer,
             skybox_vertex_count: u32,
-            // Shadow mapping resources
+            // Shadow mapping resources (legacy single shadow map)
             shadow_map_texture: wgpu::Texture,
             shadow_map_view: wgpu::TextureView,
             shadow_pipeline: wgpu::RenderPipeline,
@@ -142,6 +165,11 @@ pub mod gfx {
             shadow_pass_bind_group: wgpu::BindGroup,
             // Current lighting state (cached for shadow matrix calculation)
             current_lighting: crate::gpu_types::LightingGpu,
+            // CSM (Cascaded Shadow Maps) resources
+            csm_texture: wgpu::Texture,
+            csm_cascade_views: Vec<wgpu::TextureView>,
+            csm_array_view: wgpu::TextureView,
+            // Note: CSM matrix buffer, bind groups, etc. will be added in Phase 2
         }
 
         // Per-mesh stored data (supports optional index buffer)
@@ -581,9 +609,9 @@ pub mod gfx {
                 });
 
                 // Create shadow mapping resources
-                const SHADOW_MAP_SIZE: u32 = 4096; // Increased from 2048 for better quality
                 
-                // Shadow map depth texture
+                // ===== Legacy Single Shadow Map (will be phased out) =====
+                // Shadow map depth texture (single layer for backward compatibility)
                 let shadow_map_texture = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("shadow-map-texture"),
                     size: wgpu::Extent3d {
@@ -600,6 +628,62 @@ pub mod gfx {
                 });
                 
                 let shadow_map_view = shadow_map_texture.create_view(&wgpu::TextureViewDescriptor::default());
+                
+                // ===== CSM Texture Array (new) =====
+                // Create texture array for cascaded shadow maps (4 layers)
+                let csm_texture = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("csm-texture-array"),
+                    size: wgpu::Extent3d {
+                        width: SHADOW_MAP_SIZE,
+                        height: SHADOW_MAP_SIZE,
+                        depth_or_array_layers: NUM_SHADOW_CASCADES,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Depth32Float,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+                
+                if CSM_VERBOSE_LOGGING {
+                    log::info!("Created CSM texture array: {}x{} with {} layers", 
+                               SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, NUM_SHADOW_CASCADES);
+                }
+                
+                // Create views for each cascade layer (for rendering)
+                let csm_cascade_views: Vec<wgpu::TextureView> = (0..NUM_SHADOW_CASCADES)
+                    .map(|i| {
+                        csm_texture.create_view(&wgpu::TextureViewDescriptor {
+                            label: Some(&format!("csm-cascade-{}-view", i)),
+                            format: Some(wgpu::TextureFormat::Depth32Float),
+                            dimension: Some(wgpu::TextureViewDimension::D2),
+                            aspect: wgpu::TextureAspect::All,
+                            base_mip_level: 0,
+                            mip_level_count: None,
+                            base_array_layer: i,
+                            array_layer_count: Some(1),
+                            usage: Some(wgpu::TextureUsages::RENDER_ATTACHMENT),
+                        })
+                    })
+                    .collect();
+                
+                // Create full array view (for sampling in shaders)
+                let csm_array_view = csm_texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("csm-array-view"),
+                    format: Some(wgpu::TextureFormat::Depth32Float),
+                    dimension: Some(wgpu::TextureViewDimension::D2Array),
+                    aspect: wgpu::TextureAspect::All,
+                    base_mip_level: 0,
+                    mip_level_count: None,
+                    base_array_layer: 0,
+                    array_layer_count: Some(NUM_SHADOW_CASCADES),
+                    usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
+                });
+                
+                if CSM_VERBOSE_LOGGING {
+                    log::info!("Created {} cascade views + 1 array view for CSM sampling", NUM_SHADOW_CASCADES);
+                }
                 
                 // Shadow matrix uniform buffer
                 use crate::gpu_types::ShadowMatrixGpu;
@@ -763,6 +847,9 @@ pub mod gfx {
                     shadow_sampler,
                     shadow_pass_bind_group,
                     current_lighting: initial_lighting,
+                    csm_texture,
+                    csm_cascade_views,
+                    csm_array_view,
                 })
             }
 

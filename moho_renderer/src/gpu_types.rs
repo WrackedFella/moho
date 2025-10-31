@@ -39,7 +39,7 @@ pub struct LightingGpu {
     pub ambient: [f32; 4],
 }
 
-/// GPU-visible shadow matrix for light-space transformation
+/// GPU-visible shadow matrix for light-space transformation (single shadow map - legacy)
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct ShadowMatrixGpu {
@@ -58,6 +58,68 @@ impl Default for ShadowMatrixGpu {
             sm1: [0.0, 1.0, 0.0, 0.0],
             sm2: [0.0, 0.0, 1.0, 0.0],
             sm3: [0.0, 0.0, 0.0, 1.0],
+        }
+    }
+}
+
+/// GPU-visible cascaded shadow matrices for CSM (Cascaded Shadow Maps)
+/// Contains 4 shadow matrices (one per cascade) and their split distances
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct CascadedShadowMatrixGpu {
+    /// Cascade 0 matrix (4x4 stored as 4 vec4s) - nearest cascade
+    pub cascade0_m0: [f32; 4],
+    pub cascade0_m1: [f32; 4],
+    pub cascade0_m2: [f32; 4],
+    pub cascade0_m3: [f32; 4],
+    
+    /// Cascade 1 matrix (4x4 stored as 4 vec4s)
+    pub cascade1_m0: [f32; 4],
+    pub cascade1_m1: [f32; 4],
+    pub cascade1_m2: [f32; 4],
+    pub cascade1_m3: [f32; 4],
+    
+    /// Cascade 2 matrix (4x4 stored as 4 vec4s)
+    pub cascade2_m0: [f32; 4],
+    pub cascade2_m1: [f32; 4],
+    pub cascade2_m2: [f32; 4],
+    pub cascade2_m3: [f32; 4],
+    
+    /// Cascade 3 matrix (4x4 stored as 4 vec4s) - farthest cascade
+    pub cascade3_m0: [f32; 4],
+    pub cascade3_m1: [f32; 4],
+    pub cascade3_m2: [f32; 4],
+    pub cascade3_m3: [f32; 4],
+    
+    /// Split distances for cascade boundaries (xyz = cascades 0-2 far planes, w = cascade 3 far plane)
+    pub split_distances: [f32; 4],
+}
+
+impl Default for CascadedShadowMatrixGpu {
+    fn default() -> Self {
+        // Identity matrices for all cascades by default
+        Self {
+            cascade0_m0: [1.0, 0.0, 0.0, 0.0],
+            cascade0_m1: [0.0, 1.0, 0.0, 0.0],
+            cascade0_m2: [0.0, 0.0, 1.0, 0.0],
+            cascade0_m3: [0.0, 0.0, 0.0, 1.0],
+            
+            cascade1_m0: [1.0, 0.0, 0.0, 0.0],
+            cascade1_m1: [0.0, 1.0, 0.0, 0.0],
+            cascade1_m2: [0.0, 0.0, 1.0, 0.0],
+            cascade1_m3: [0.0, 0.0, 0.0, 1.0],
+            
+            cascade2_m0: [1.0, 0.0, 0.0, 0.0],
+            cascade2_m1: [0.0, 1.0, 0.0, 0.0],
+            cascade2_m2: [0.0, 0.0, 1.0, 0.0],
+            cascade2_m3: [0.0, 0.0, 0.0, 1.0],
+            
+            cascade3_m0: [1.0, 0.0, 0.0, 0.0],
+            cascade3_m1: [0.0, 1.0, 0.0, 0.0],
+            cascade3_m2: [0.0, 0.0, 1.0, 0.0],
+            cascade3_m3: [0.0, 0.0, 0.0, 1.0],
+            
+            split_distances: [20.0, 50.0, 100.0, 200.0],
         }
     }
 }
@@ -84,5 +146,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<CameraGpu>(), 80);
         assert_eq!(std::mem::size_of::<LightingGpu>(), 48);
         assert_eq!(std::mem::size_of::<ShadowMatrixGpu>(), 64);
+        // CascadedShadowMatrixGpu: 4 matrices (4x4 each = 64 bytes) + 1 vec4 (16 bytes) = 272 bytes
+        assert_eq!(std::mem::size_of::<CascadedShadowMatrixGpu>(), 272);
     }
 }
