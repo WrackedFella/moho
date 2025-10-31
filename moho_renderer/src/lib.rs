@@ -44,7 +44,7 @@ pub use materials::MaterialTable;
 mod scene;
 pub use scene::Scene;
 mod gpu_types;
-pub use gpu_types::{CameraGpu, LightingGpu};
+pub use gpu_types::{CameraGpu, LightingGpu, ShadowMatrixGpu};
 
 pub mod gfx {
     //! Graphics backends grouped under `gfx` for clarity. The WGPU backend is
@@ -99,6 +99,7 @@ pub mod gfx {
             // the material storage buffer changes size.
             camera_bind_group_layout: wgpu::BindGroupLayout,
             material_buffer: Option<wgpu::Buffer>,
+            lighting_buffer: wgpu::Buffer,
             _depth_texture: wgpu::Texture,
             depth_texture_view: wgpu::TextureView,
             depth_format: wgpu::TextureFormat,
@@ -129,6 +130,18 @@ pub mod gfx {
             skybox_pipeline: wgpu::RenderPipeline,
             skybox_vertex_buffer: wgpu::Buffer,
             skybox_vertex_count: u32,
+            // Shadow mapping resources
+            shadow_map_texture: wgpu::Texture,
+            shadow_map_view: wgpu::TextureView,
+            shadow_pipeline: wgpu::RenderPipeline,
+            shadow_matrix_buffer: wgpu::Buffer,
+            shadow_bind_group_layout: wgpu::BindGroupLayout,
+            shadow_bind_group: wgpu::BindGroup,
+            shadow_sampler: wgpu::Sampler,
+            // Shadow pass bind group (for rendering shadow map)
+            shadow_pass_bind_group: wgpu::BindGroup,
+            // Current lighting state (cached for shadow matrix calculation)
+            current_lighting: crate::gpu_types::LightingGpu,
         }
 
         // Per-mesh stored data (supports optional index buffer)
@@ -277,9 +290,73 @@ pub mod gfx {
                         ],
                     });
 
+                // Create shadow bind group layout for main pass (group 1: shadow sampling)
+                let shadow_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("shadow-bgl"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: Some(
+                                    std::num::NonZeroU64::new(std::mem::size_of::<ShadowMatrixGpu>() as u64)
+                                        .ok_or("shadow matrix size was zero")?,
+                                ),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Depth,
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                            count: None,
+                        },
+                    ],
+                });
+
+                // Create shadow pass bind group layout (group 0 for shadow pass: just shadow matrix)
+                let shadow_pass_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("shadow-pass-bgl"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::VERTEX,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: Some(
+                                    std::num::NonZeroU64::new(std::mem::size_of::<ShadowMatrixGpu>() as u64)
+                                        .ok_or("shadow matrix size was zero")?,
+                                ),
+                            },
+                            count: None,
+                        },
+                    ],
+                });
+
                 let pipeline_layout =
                     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                         label: Some("pipeline-layout"),
+                        bind_group_layouts: &[&camera_bgl, &shadow_bind_group_layout],
+                        push_constant_ranges: &[],
+                    });
+
+                // Skybox pipeline layout (only needs camera bind group, no shadows)
+                let skybox_pipeline_layout =
+                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("skybox-pipeline-layout"),
                         bind_group_layouts: &[&camera_bgl],
                         push_constant_ranges: &[],
                     });
@@ -453,7 +530,7 @@ pub mod gfx {
                 // Create skybox pipeline
                 let skybox_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some("skybox-pipeline"),
-                    layout: Some(&pipeline_layout),
+                    layout: Some(&skybox_pipeline_layout),
                     vertex: wgpu::VertexState {
                         module: &skybox_shader,
                         entry_point: Some("vs_main"),
@@ -503,6 +580,151 @@ pub mod gfx {
                     usage: wgpu::BufferUsages::VERTEX,
                 });
 
+                // Create shadow mapping resources
+                const SHADOW_MAP_SIZE: u32 = 2048;
+                
+                // Shadow map depth texture
+                let shadow_map_texture = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("shadow-map-texture"),
+                    size: wgpu::Extent3d {
+                        width: SHADOW_MAP_SIZE,
+                        height: SHADOW_MAP_SIZE,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Depth32Float,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+                
+                let shadow_map_view = shadow_map_texture.create_view(&wgpu::TextureViewDescriptor::default());
+                
+                // Shadow matrix uniform buffer
+                use crate::gpu_types::ShadowMatrixGpu;
+                let initial_shadow_matrix = ShadowMatrixGpu::default();
+                let shadow_matrix_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("shadow-matrix-buffer"),
+                    contents: bytemuck::bytes_of(&initial_shadow_matrix),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
+                
+                // Shadow sampler (comparison sampler for PCF)
+                let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                    label: Some("shadow-sampler"),
+                    address_mode_u: wgpu::AddressMode::ClampToEdge,
+                    address_mode_v: wgpu::AddressMode::ClampToEdge,
+                    address_mode_w: wgpu::AddressMode::ClampToEdge,
+                    mag_filter: wgpu::FilterMode::Linear,
+                    min_filter: wgpu::FilterMode::Linear,
+                    mipmap_filter: wgpu::FilterMode::Nearest,
+                    compare: Some(wgpu::CompareFunction::LessEqual), // Comparison sampler for shadow mapping
+                    ..Default::default()
+                });
+                
+                // Shadow pass bind group (for shadow rendering - just the shadow matrix)
+                let shadow_pass_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("shadow-pass-bind-group"),
+                    layout: &shadow_pass_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: shadow_matrix_buffer.as_entire_binding(),
+                        },
+                    ],
+                });
+                
+                // Shadow bind group (for main pass - shadow sampling with matrix + texture + sampler)
+                let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("shadow-bind-group"),
+                    layout: &shadow_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: shadow_matrix_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&shadow_map_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                        },
+                    ],
+                });
+                
+                // Create shadow pipeline (simple depth-only rendering)
+                let shadow_shader_source = std::fs::read_to_string("shaders/shadow.wgsl")
+                    .map_err(|e| format!("Failed to read shadow shader: {}", e))?;
+                let shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("shadow-shader"),
+                    source: wgpu::ShaderSource::Wgsl(shadow_shader_source.into()),
+                });
+                
+                // Shadow pipeline uses shadow_pass_bind_group_layout (just shadow matrix for rendering)
+                let shadow_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("shadow-pipeline-layout"),
+                    bind_group_layouts: &[&shadow_pass_bind_group_layout],
+                    push_constant_ranges: &[],
+                });
+                
+                let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("shadow-pipeline"),
+                    layout: Some(&shadow_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shadow_shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: Default::default(),
+                        buffers: &[
+                            // Vertex buffer (position + normal)
+                            wgpu::VertexBufferLayout {
+                                array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                                step_mode: wgpu::VertexStepMode::Vertex,
+                                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                            },
+                            // Instance buffer
+                            wgpu::VertexBufferLayout {
+                                array_stride: std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress,
+                                step_mode: wgpu::VertexStepMode::Instance,
+                                attributes: &wgpu::vertex_attr_array![
+                                    2 => Float32x4,
+                                    3 => Float32x4,
+                                    4 => Float32x4,
+                                    5 => Float32x4,
+                                    6 => Uint32,
+                                    7 => Uint32,
+                                ],
+                            },
+                        ],
+                    },
+                    fragment: None, // Depth-only pass, no fragment shader
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: Some(wgpu::Face::Back),
+                        unclipped_depth: false,
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        conservative: false,
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: wgpu::TextureFormat::Depth32Float,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState {
+                            constant: 2, // Shadow bias to reduce acne
+                            slope_scale: 2.0,
+                            clamp: 0.0,
+                        },
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                });
+
                 Ok(Renderer {
                     window,
                     surface,
@@ -515,6 +737,7 @@ pub mod gfx {
                     camera_bind_group,
                     camera_bind_group_layout: camera_bgl,
                     material_buffer: Some(material_buffer),
+                    lighting_buffer,
                     _depth_texture: depth_texture,
                     depth_texture_view: depth_view,
                     depth_format,
@@ -531,6 +754,15 @@ pub mod gfx {
                     skybox_pipeline,
                     skybox_vertex_buffer,
                     skybox_vertex_count,
+                    shadow_map_texture,
+                    shadow_map_view,
+                    shadow_pipeline,
+                    shadow_matrix_buffer,
+                    shadow_bind_group_layout,
+                    shadow_bind_group,
+                    shadow_sampler,
+                    shadow_pass_bind_group,
+                    current_lighting: initial_lighting,
                 })
             }
 
@@ -585,6 +817,66 @@ pub mod gfx {
             /// Return the configured surface format for the renderer.
             pub fn surface_format(&self) -> wgpu::TextureFormat {
                 self.config.format
+            }
+
+            /// Update lighting parameters and write to GPU buffer.
+            /// This also updates the current_lighting field for shadow matrix calculation.
+            pub fn update_lighting(&mut self, lighting: crate::gpu_types::LightingGpu) {
+                self.current_lighting = lighting;
+                self.queue.write_buffer(
+                    &self.lighting_buffer,
+                    0,
+                    bytemuck::bytes_of(&lighting),
+                );
+            }
+
+            /// Calculate shadow matrix (light view-projection) based on sun direction.
+            /// Creates an orthographic projection from the light's perspective to cover the scene.
+            fn calculate_shadow_matrix(&self, sun_dir: glam::Vec3, cam_pos: glam::Vec3) -> glam::Mat4 {
+                // Normalize sun direction
+                let light_dir = sun_dir.normalize();
+                
+                // Center shadow frustum on camera position (follow the view)
+                // For isometric/high angle view, need to cover much larger area
+                let scene_center = cam_pos;
+                let light_distance = 300.0; // Far back to see large area
+                let light_pos = scene_center - light_dir * light_distance;
+                
+                // Debug logging (once per frame is enough)
+                static SHADOW_DEBUG_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                let frame = SHADOW_DEBUG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if frame % 60 == 0 {
+                    eprintln!("[Shadow Debug] cam_pos: {:?}", cam_pos);
+                    eprintln!("[Shadow Debug] light_dir: {:?}", light_dir);
+                    eprintln!("[Shadow Debug] scene_center: {:?}", scene_center);
+                    eprintln!("[Shadow Debug] light_pos: {:?}", light_pos);
+                }
+                
+                // Create light view matrix (looking from light toward camera/scene center)
+                let light_view = glam::Mat4::look_at_rh(
+                    light_pos,
+                    scene_center,
+                    glam::Vec3::Y, // Up vector
+                );
+                
+                // Create orthographic projection for directional light
+                // MASSIVELY increase coverage for isometric/aerial views
+                // Camera can see terrain from very far away at shallow angles
+                let ortho_size = 500.0; // 1000x1000 unit coverage - very large
+                let near = 1.0;
+                let far = 600.0; // Deep frustum to capture everything
+                
+                let light_proj = glam::Mat4::orthographic_rh(
+                    -ortho_size,
+                    ortho_size,
+                    -ortho_size,
+                    ortho_size,
+                    near,
+                    far,
+                );
+                
+                // Return light view-projection matrix
+                light_proj * light_view
             }
 
             pub fn render(
@@ -710,12 +1002,64 @@ pub mod gfx {
                         .write_buffer(buf, 0, bytemuck::cast_slice(&[zero]));
                 }
 
+                // Calculate and update shadow matrix based on current sun direction
+                let sun_dir = glam::Vec3::new(
+                    self.current_lighting.sun_direction[0],
+                    self.current_lighting.sun_direction[1],
+                    self.current_lighting.sun_direction[2],
+                );
+                let shadow_matrix = self.calculate_shadow_matrix(sun_dir, cam_pos);
+                let cols = shadow_matrix.to_cols_array_2d();
+                let shadow_matrix_gpu = crate::gpu_types::ShadowMatrixGpu {
+                    sm0: cols[0],
+                    sm1: cols[1],
+                    sm2: cols[2],
+                    sm3: cols[3],
+                };
+                self.queue.write_buffer(
+                    &self.shadow_matrix_buffer,
+                    0,
+                    bytemuck::bytes_of(&shadow_matrix_gpu),
+                );
+
                 let mut encoder =
                     self.device
                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                             label: Some("encoder"),
                         });
 
+                // SHADOW PASS: Render scene from light's perspective to shadow map
+                {
+                    let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("shadow-pass"),
+                        color_attachments: &[], // No color output for depth-only pass
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &self.shadow_map_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0), // Clear to maximum depth
+                                store: wgpu::StoreOp::Store,     // Store shadow map for use in main pass
+                            }),
+                            stencil_ops: None,
+                        }),
+                        occlusion_query_set: None,
+                        timestamp_writes: None,
+                    });
+
+                    shadow_pass.set_pipeline(&self.shadow_pipeline);
+                    shadow_pass.set_bind_group(0, &self.shadow_pass_bind_group, &[]);
+                    
+                    // Render scene geometry to shadow map
+                    if let Some(vb) = self.vertex_buffer.as_ref() {
+                        shadow_pass.set_vertex_buffer(0, vb.slice(..));
+                    }
+                    if let Some(ibuf) = self.instance_buffer.as_ref() {
+                        shadow_pass.set_vertex_buffer(1, ibuf.slice(..));
+                    }
+                    let instance_count = instances.len().max(1) as u32;
+                    shadow_pass.draw(0..self.vertex_count, 0..instance_count);
+                }
+
+                // MAIN PASS: Render scene with shadows
                 {
                     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("rpass"),
@@ -750,6 +1094,8 @@ pub mod gfx {
                     rpass.set_pipeline(&self.pipeline);
                     // set camera bind group (group 0)
                     rpass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    // set shadow bind group (group 1)
+                    rpass.set_bind_group(1, &self.shadow_bind_group, &[]);
                     // set vertex buffer (created on-demand)
                     if let Some(vb) = self.vertex_buffer.as_ref() {
                         rpass.set_vertex_buffer(0, vb.slice(..));
@@ -1013,6 +1359,26 @@ pub mod gfx {
                     self.queue
                         .write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&cols));
 
+                    // Calculate and update shadow matrix based on current sun direction
+                    let sun_dir = glam::Vec3::new(
+                        self.current_lighting.sun_direction[0],
+                        self.current_lighting.sun_direction[1],
+                        self.current_lighting.sun_direction[2],
+                    );
+                    let shadow_matrix = self.calculate_shadow_matrix(sun_dir, cam_pos);
+                    let cols = shadow_matrix.to_cols_array_2d();
+                    let shadow_matrix_gpu = crate::gpu_types::ShadowMatrixGpu {
+                        sm0: cols[0],
+                        sm1: cols[1],
+                        sm2: cols[2],
+                        sm3: cols[3],
+                    };
+                    self.queue.write_buffer(
+                        &self.shadow_matrix_buffer,
+                        0,
+                        bytemuck::bytes_of(&shadow_matrix_gpu),
+                    );
+
                     // instances
                     let mut instances_gpu: Vec<GpuInstance> = Vec::with_capacity(instances.len());
                     for ic in instances {
@@ -1156,6 +1522,56 @@ pub mod gfx {
                                 .write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
                         }
 
+                        // SHADOW PASS: Render scene from light's perspective to shadow map
+                        {
+                            let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("shadow-pass"),
+                                color_attachments: &[],
+                                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                                    view: &self.shadow_map_view,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: wgpu::StoreOp::Store,
+                                    }),
+                                    stencil_ops: None,
+                                }),
+                                occlusion_query_set: None,
+                                timestamp_writes: None,
+                            });
+
+                            shadow_pass.set_pipeline(&self.shadow_pipeline);
+                            shadow_pass.set_bind_group(0, &self.shadow_pass_bind_group, &[]);
+
+                            // Draw all pending meshes from light's perspective with instances
+                            for (i, (mesh_handle, insts)) in self.pending_draws.iter().enumerate() {
+                                let idx = *mesh_handle as usize;
+                                if idx >= self.mesh_table.len() {
+                                    continue;
+                                }
+                                if let Some(me) = &self.mesh_table[idx] {
+                                    shadow_pass.set_vertex_buffer(0, me.buffer.slice(..));
+                                    
+                                    // Bind instance buffer with offset for this draw
+                                    let offset_instances = offsets[i];
+                                    let actual_instance_count = insts.len();
+                                    
+                                    if actual_instance_count > 0 {
+                                        let offset_bytes = (offset_instances * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
+                                        let end_bytes = ((offset_instances + actual_instance_count) * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
+                                        shadow_pass.set_vertex_buffer(1, ibuf.slice(offset_bytes..end_bytes));
+                                        
+                                        let instance_count_u32 = actual_instance_count as u32;
+                                        if let Some(idx_buf) = &me.index_buffer {
+                                            shadow_pass.set_index_buffer(idx_buf.slice(..), wgpu::IndexFormat::Uint32);
+                                            shadow_pass.draw_indexed(0..me.index_count, 0, 0..instance_count_u32);
+                                        } else {
+                                            shadow_pass.draw(0..me.vertex_count, 0..instance_count_u32);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // Begin the single render pass and issue draw calls for
                         // each pending draw in order.
                         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1184,6 +1600,7 @@ pub mod gfx {
                         });
                         rpass.set_pipeline(&self.pipeline);
                         rpass.set_bind_group(0, &self.camera_bind_group, &[]);
+                        rpass.set_bind_group(1, &self.shadow_bind_group, &[]);
 
                         // Iterate draws and issue draw calls
                         for (i, (mesh_handle, insts)) in self.pending_draws.iter().enumerate() {

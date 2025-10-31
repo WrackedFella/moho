@@ -1,3 +1,65 @@
+// Debug: Returns color-coded visualization of shadow coordinates
+fn debug_shadow_coords(light_space_pos: vec4<f32>) -> vec3<f32> {
+    var proj_coords = light_space_pos.xyz / light_space_pos.w;
+    proj_coords = proj_coords * 0.5 + 0.5;
+    proj_coords.y = 1.0 - proj_coords.y;
+    
+    // Color code: Red = outside X, Green = outside Y, Blue = outside Z, White = inside bounds
+    var debug_color = vec3<f32>(1.0, 1.0, 1.0); // Start with white (inside)
+    
+    if (proj_coords.x < 0.0 || proj_coords.x > 1.0) {
+        debug_color = vec3<f32>(1.0, 0.0, 0.0); // Red = outside X bounds
+    } else if (proj_coords.y < 0.0 || proj_coords.y > 1.0) {
+        debug_color = vec3<f32>(0.0, 1.0, 0.0); // Green = outside Y bounds
+    } else if (proj_coords.z < 0.0 || proj_coords.z > 1.0) {
+        debug_color = vec3<f32>(0.0, 0.0, 1.0); // Blue = outside Z bounds (depth)
+    } else {
+        // Inside bounds - show UV coordinates as color
+        debug_color = vec3<f32>(proj_coords.x, proj_coords.y, 0.5);
+    }
+    
+    return debug_color;
+}
+
+// Calculate shadow factor using PCF (Percentage Closer Filtering)
+fn calculate_shadow(light_space_pos: vec4<f32>) -> f32 {
+    // Perspective divide
+    var proj_coords = light_space_pos.xyz / light_space_pos.w;
+    
+    // Transform from [-1, 1] to [0, 1] for texture coordinates
+    proj_coords = proj_coords * 0.5 + 0.5;
+    
+    // Flip Y coordinate (texture coordinates are top-left origin)
+    proj_coords.y = 1.0 - proj_coords.y;
+    
+    // Outside shadow map bounds? Full light
+    if (proj_coords.x < 0.0 || proj_coords.x > 1.0 ||
+        proj_coords.y < 0.0 || proj_coords.y > 1.0 ||
+        proj_coords.z < 0.0 || proj_coords.z > 1.0) {
+        return 1.0;
+    }
+    
+    // PCF: Sample multiple texels for soft shadows
+    let texel_size = 1.0 / 2048.0; // Shadow map size
+    var shadow = 0.0;
+    let pcf_radius = 1.5; // Sample radius
+    
+    for (var x = -1.0; x <= 1.0; x += 1.0) {
+        for (var y = -1.0; y <= 1.0; y += 1.0) {
+            let offset = vec2<f32>(x, y) * texel_size * pcf_radius;
+            let sample_coords = proj_coords.xy + offset;
+            
+            // textureSampleCompare returns 1.0 if depth test passes, 0.0 if fails
+            shadow += textureSampleCompare(shadow_map, shadow_sampler, sample_coords, proj_coords.z);
+        }
+    }
+    
+    // Average the 9 samples
+    shadow /= 9.0;
+    
+    return shadow; // 0.0 = full shadow, 1.0 = full light
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Extract lighting parameters from uniform
@@ -10,6 +72,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let N = normalize(in.normal);
     let L = sun_dir;
     let diff = max(dot(N, L), 0.0);
+    
+    // Calculate shadow factor
+    let shadow = calculate_shadow(in.light_space_pos);
     
     // use camera-provided world position for view direction
     let cam_pos = vec3<f32>(camera.cam_pos.x, camera.cam_pos.y, camera.cam_pos.z);
@@ -52,14 +117,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let F = R0 + (1.0 - R0) * pow(1.0 - cos_theta, 5.0);
 
         // Strong, sharp specular for dielectrics; use a high exponent
-        let spec_diel = vec3<f32>(F) * pow(max(dot(N, H), 0.0), 128.0) * sun_col * sun_intensity;
+        // Apply shadow to direct lighting only
+        let spec_diel = vec3<f32>(F) * pow(max(dot(N, H), 0.0), 128.0) * sun_col * sun_intensity * shadow;
 
         // Approximate transmitted light (tint) scaled by (1 - F). This is a
         // cheap stand-in for refraction/transmission and helps the object
         // look glassy when combined with specular.
-        let trans = final_albedo * (1.0 - F) * 0.6 * sun_col * sun_intensity;
+        let trans = final_albedo * (1.0 - F) * 0.6 * sun_col * sun_intensity * shadow;
 
-        // Ambient contribution
+        // Ambient contribution (not affected by shadow)
         color = ambient_col * ambient_intensity * final_albedo * 0.1 + ao * (spec_diel + trans);
         // approximate alpha: more reflective (higher F) -> less transmitted
         // we bias alpha so very slight translucency remains even for weakly
@@ -74,7 +140,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // For metals: reduce diffuse, increase specular
         // For lambertian: normal diffuse, minimal specular
         let diff_strength = mix(1.0, 0.3, is_metal);
-        let diff_color = final_albedo * diff * diff_strength * sun_col * sun_intensity;
+        // Apply shadow to diffuse lighting
+        let diff_color = final_albedo * diff * diff_strength * sun_col * sun_intensity * shadow;
         
         // Metal specular: strong but affected by fuzz (roughness)
         // Lambertian specular: very weak
@@ -88,10 +155,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let spec_highlight = pow(max(dot(N, H), 0.0), spec_power);
         
         // For metals the specular should be tinted by albedo and sun color
-        let spec_color = final_albedo * spec_strength * spec_highlight * sun_col * sun_intensity;
+        // Apply shadow to specular as well
+        let spec_color = final_albedo * spec_strength * spec_highlight * sun_col * sun_intensity * shadow;
 
+        // Ambient not affected by shadow, direct lighting is
         color = ambient_col * ambient_intensity * final_albedo + ao * (diff_color + spec_color);
     }
+    
+    // DEBUG: Visualize shadow coordinates (comment out for normal rendering)
+    // Uncomment the line below to see shadow map coverage:
+    // Red = outside X bounds, Green = outside Y bounds, Blue = outside Z bounds (depth)
+    // Color gradient = inside bounds (shows UV coords)
+    // return vec4<f32>(debug_shadow_coords(in.light_space_pos), 1.0);
+    
     // For dielectrics we computed `alpha` above; otherwise alpha is opaque.
     var out_alpha: f32 = 1.0;
     if (ref_idx > 0.0) {

@@ -13,6 +13,13 @@ struct Lighting {
     ambient: vec4<f32>,        // xyz = color, w = intensity
 }
 
+struct ShadowMatrix {
+    sm0: vec4<f32>,
+    sm1: vec4<f32>,
+    sm2: vec4<f32>,
+    sm3: vec4<f32>,
+}
+
 @group(0) @binding(0)
 var<uniform> camera: Camera;
 
@@ -21,6 +28,16 @@ var<storage, read> materials: array<Material>;
 
 @group(0) @binding(2)
 var<uniform> lighting: Lighting;
+
+// Shadow mapping resources (group 1)
+@group(1) @binding(0)
+var<uniform> shadow_matrix: ShadowMatrix;
+
+@group(1) @binding(1)
+var shadow_map: texture_depth_2d;
+
+@group(1) @binding(2)
+var shadow_sampler: sampler_comparison;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -46,4 +63,5 @@ struct VsOut {
     @location(0) @interpolate(flat) material: u32,
     @location(1) normal: vec3<f32>,
     @location(2) world_pos: vec3<f32>,
+    @location(3) light_space_pos: vec4<f32>,
 }
