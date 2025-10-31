@@ -169,7 +169,8 @@ pub mod gfx {
             csm_texture: wgpu::Texture,
             csm_cascade_views: Vec<wgpu::TextureView>,
             csm_array_view: wgpu::TextureView,
-            // Note: CSM matrix buffer, bind groups, etc. will be added in Phase 2
+            csm_logged_once: std::cell::Cell<bool>, // Track if we've logged cascade info
+            // Note: CSM matrix buffer, bind groups, etc. will be added in Phase 3
         }
 
         // Per-mesh stored data (supports optional index buffer)
@@ -850,6 +851,7 @@ pub mod gfx {
                     csm_texture,
                     csm_cascade_views,
                     csm_array_view,
+                    csm_logged_once: std::cell::Cell::new(false),
                 })
             }
 
@@ -919,6 +921,7 @@ pub mod gfx {
 
             /// Calculate shadow matrix (light view-projection) based on sun direction.
             /// Creates an orthographic projection from the light's perspective to cover the scene.
+            /// NOTE: This is the legacy single shadow map calculation, will be replaced by CSM.
             fn calculate_shadow_matrix(&self, sun_dir: glam::Vec3, cam_pos: glam::Vec3) -> glam::Mat4 {
                 // Normalize sun direction
                 let light_dir = sun_dir.normalize();
@@ -954,6 +957,150 @@ pub mod gfx {
                 
                 // Return light view-projection matrix
                 light_proj * light_view
+            }
+
+            /// CSM: Calculate cascade frustum bounds in view space.
+            /// Returns an array of (near, far) distances for each cascade split.
+            fn calculate_cascade_splits(&self) -> [(f32, f32); NUM_SHADOW_CASCADES as usize] {
+                let mut splits = [(0.0f32, 0.0f32); NUM_SHADOW_CASCADES as usize];
+                
+                // First cascade starts at near plane (very close to camera)
+                splits[0] = (0.1, CASCADE_SPLIT_DISTANCES[0]);
+                
+                // Remaining cascades use configured split distances
+                for i in 1..NUM_SHADOW_CASCADES as usize {
+                    splits[i] = (
+                        CASCADE_SPLIT_DISTANCES[i - 1],
+                        CASCADE_SPLIT_DISTANCES[i],
+                    );
+                }
+                
+                // Log splits only once (on first call)
+                if !self.csm_logged_once.get() {
+                    log::info!("CSM cascade splits:");
+                    for (i, (near, far)) in splits.iter().enumerate() {
+                        log::info!("  Cascade {}: {:.1} -> {:.1} units", i, near, far);
+                    }
+                }
+                
+                splits
+            }
+
+            /// CSM: Calculate tight orthographic projection for a specific cascade.
+            /// This computes a tight-fitting frustum around the visible geometry in the cascade slice.
+            fn calculate_cascade_matrix(
+                &self,
+                cascade_idx: u32,
+                light_dir: glam::Vec3,
+                cam_pos: glam::Vec3,
+                _near: f32,
+                far: f32,
+            ) -> glam::Mat4 {
+                // For now, use a simple approach: expand ortho size based on cascade distance
+                // More sophisticated approach would project view frustum corners into light space
+                
+                // Center the cascade frustum on camera position
+                let cascade_center = cam_pos;
+                
+                // Position light far enough back to see the entire cascade range
+                let light_distance = far * 2.0;
+                let light_pos = cascade_center - light_dir * light_distance;
+                
+                // Create light view matrix
+                let light_view = glam::Mat4::look_at_rh(
+                    light_pos,
+                    cascade_center,
+                    glam::Vec3::Y,
+                );
+                
+                // Calculate orthographic size based on cascade distance
+                // Closer cascades need smaller frustums (higher resolution)
+                // Further cascades need larger frustums (lower resolution)
+                let cascade_radius = far * 1.5; // Generous coverage with margin
+                
+                // Create orthographic projection for this cascade
+                let light_proj = glam::Mat4::orthographic_rh(
+                    -cascade_radius,
+                    cascade_radius,
+                    -cascade_radius,
+                    cascade_radius,
+                    1.0, // Near plane in light space
+                    light_distance + far, // Far plane to capture full depth
+                );
+                
+                // Log matrix details only once (on first call)
+                if !self.csm_logged_once.get() {
+                    log::info!(
+                        "  Cascade {} matrix: center={:?}, radius={:.1}, light_dist={:.1}",
+                        cascade_idx,
+                        cascade_center,
+                        cascade_radius,
+                        light_distance
+                    );
+                }
+                
+                light_proj * light_view
+            }
+
+            /// CSM: Calculate all cascade matrices based on sun direction and camera position.
+            /// Returns an array of 4 matrices and the CascadedShadowMatrixGpu structure.
+            fn calculate_cascade_matrices(
+                &self,
+                sun_dir: glam::Vec3,
+                cam_pos: glam::Vec3,
+            ) -> ([glam::Mat4; NUM_SHADOW_CASCADES as usize], crate::gpu_types::CascadedShadowMatrixGpu) {
+                let light_dir = sun_dir.normalize();
+                let splits = self.calculate_cascade_splits();
+                
+                // Log calculation details only once (on first call)
+                if !self.csm_logged_once.get() {
+                    log::info!("Calculating CSM cascade matrices for sun_dir={:?}, cam_pos={:?}", light_dir, cam_pos);
+                }
+                
+                let mut matrices = [glam::Mat4::IDENTITY; NUM_SHADOW_CASCADES as usize];
+                
+                for i in 0..NUM_SHADOW_CASCADES as usize {
+                    let (near, far) = splits[i];
+                    matrices[i] = self.calculate_cascade_matrix(i as u32, light_dir, cam_pos, near, far);
+                }
+                
+                // Convert to GPU structure
+                let cols0 = matrices[0].to_cols_array_2d();
+                let cols1 = matrices[1].to_cols_array_2d();
+                let cols2 = matrices[2].to_cols_array_2d();
+                let cols3 = matrices[3].to_cols_array_2d();
+                
+                let gpu_data = crate::gpu_types::CascadedShadowMatrixGpu {
+                    cascade0_m0: cols0[0],
+                    cascade0_m1: cols0[1],
+                    cascade0_m2: cols0[2],
+                    cascade0_m3: cols0[3],
+                    
+                    cascade1_m0: cols1[0],
+                    cascade1_m1: cols1[1],
+                    cascade1_m2: cols1[2],
+                    cascade1_m3: cols1[3],
+                    
+                    cascade2_m0: cols2[0],
+                    cascade2_m1: cols2[1],
+                    cascade2_m2: cols2[2],
+                    cascade2_m3: cols2[3],
+                    
+                    cascade3_m0: cols3[0],
+                    cascade3_m1: cols3[1],
+                    cascade3_m2: cols3[2],
+                    cascade3_m3: cols3[3],
+                    
+                    split_distances: CASCADE_SPLIT_DISTANCES,
+                };
+                
+                // Mark that we've logged once and set the flag
+                if !self.csm_logged_once.get() {
+                    log::info!("CSM cascade matrices calculated successfully");
+                    self.csm_logged_once.set(true);
+                }
+                
+                (matrices, gpu_data)
             }
 
             pub fn render(
@@ -1442,6 +1589,11 @@ pub mod gfx {
                         self.current_lighting.sun_direction[1],
                         self.current_lighting.sun_direction[2],
                     );
+                    
+                    // CSM Phase 2 Test: Calculate cascade matrices (not yet used for rendering)
+                    let (_cascade_matrices, _cascade_gpu_data) = self.calculate_cascade_matrices(sun_dir, cam_pos);
+                    
+                    // Legacy single shadow map (still in use)
                     let shadow_matrix = self.calculate_shadow_matrix(sun_dir, cam_pos);
                     let cols = shadow_matrix.to_cols_array_2d();
                     let shadow_matrix_gpu = crate::gpu_types::ShadowMatrixGpu {
