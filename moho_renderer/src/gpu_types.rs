@@ -12,6 +12,7 @@ pub struct MaterialGpu {
 impl MaterialGpu {
     /// Return true if this material was marked as potentially
     /// transparent by the application (params[2] > 0.0).
+    #[allow(dead_code)]
     pub fn is_transparent(&self) -> bool {
         self.params[2] > 0.0
     }
@@ -72,25 +73,25 @@ pub struct CascadedShadowMatrixGpu {
     pub cascade0_m1: [f32; 4],
     pub cascade0_m2: [f32; 4],
     pub cascade0_m3: [f32; 4],
-    
+
     /// Cascade 1 matrix (4x4 stored as 4 vec4s)
     pub cascade1_m0: [f32; 4],
     pub cascade1_m1: [f32; 4],
     pub cascade1_m2: [f32; 4],
     pub cascade1_m3: [f32; 4],
-    
+
     /// Cascade 2 matrix (4x4 stored as 4 vec4s)
     pub cascade2_m0: [f32; 4],
     pub cascade2_m1: [f32; 4],
     pub cascade2_m2: [f32; 4],
     pub cascade2_m3: [f32; 4],
-    
+
     /// Cascade 3 matrix (4x4 stored as 4 vec4s) - farthest cascade
     pub cascade3_m0: [f32; 4],
     pub cascade3_m1: [f32; 4],
     pub cascade3_m2: [f32; 4],
     pub cascade3_m3: [f32; 4],
-    
+
     /// Split distances for cascade boundaries (xyz = cascades 0-2 far planes, w = cascade 3 far plane)
     pub split_distances: [f32; 4],
 }
@@ -103,22 +104,22 @@ impl Default for CascadedShadowMatrixGpu {
             cascade0_m1: [0.0, 1.0, 0.0, 0.0],
             cascade0_m2: [0.0, 0.0, 1.0, 0.0],
             cascade0_m3: [0.0, 0.0, 0.0, 1.0],
-            
+
             cascade1_m0: [1.0, 0.0, 0.0, 0.0],
             cascade1_m1: [0.0, 1.0, 0.0, 0.0],
             cascade1_m2: [0.0, 0.0, 1.0, 0.0],
             cascade1_m3: [0.0, 0.0, 0.0, 1.0],
-            
+
             cascade2_m0: [1.0, 0.0, 0.0, 0.0],
             cascade2_m1: [0.0, 1.0, 0.0, 0.0],
             cascade2_m2: [0.0, 0.0, 1.0, 0.0],
             cascade2_m3: [0.0, 0.0, 0.0, 1.0],
-            
+
             cascade3_m0: [1.0, 0.0, 0.0, 0.0],
             cascade3_m1: [0.0, 1.0, 0.0, 0.0],
             cascade3_m2: [0.0, 0.0, 1.0, 0.0],
             cascade3_m3: [0.0, 0.0, 0.0, 1.0],
-            
+
             split_distances: [20.0, 50.0, 100.0, 200.0],
         }
     }
@@ -127,8 +128,9 @@ impl Default for CascadedShadowMatrixGpu {
 impl Default for LightingGpu {
     fn default() -> Self {
         Self {
-            // Default sun direction: from upper-right-front
-            sun_direction: [0.577, 0.577, 0.577, 1.0], // normalized(1,1,1), intensity=1.0
+            // Default sun direction: lower in the sky (morning/evening light)
+            // Normalized from approximately (0.7, 0.3, 0.6) for ~20° elevation
+            sun_direction: [0.707, 0.303, 0.641, 1.0], // Lower angle, intensity=1.0
             // Warm sunlight color
             sun_color: [1.0, 0.95, 0.8, 0.0],
             // Reduced ambient light to make shadows more visible

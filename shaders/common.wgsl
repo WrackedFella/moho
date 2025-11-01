@@ -34,7 +34,7 @@ var<uniform> lighting: Lighting;
 var<uniform> shadow_matrix: ShadowMatrix;
 
 @group(1) @binding(1)
-var shadow_map: texture_depth_2d;
+var shadow_map: texture_depth_2d_array; // Phase 4: Array texture for all 4 cascades
 
 @group(1) @binding(2)
 var shadow_sampler: sampler_comparison;

@@ -21,9 +21,27 @@ fn debug_shadow_coords(light_space_pos: vec4<f32>) -> vec3<f32> {
     return debug_color;
 }
 
-// Calculate shadow factor using PCF (Percentage Closer Filtering)
-// Takes light_space_pos, surface normal, and light direction for slope-scale bias
-fn calculate_shadow(light_space_pos: vec4<f32>, normal: vec3<f32>, light_dir: vec3<f32>) -> f32 {
+// CSM Phase 4: Select appropriate cascade based on view-space depth
+// Returns cascade index (0-3) based on split distances
+fn select_cascade(view_depth: f32) -> u32 {
+    // Cascade split distances: [20, 50, 100, 200] units
+    if (view_depth < 20.0) {
+        return 0u; // Closest cascade (highest detail)
+    } else if (view_depth < 50.0) {
+        return 1u;
+    } else if (view_depth < 100.0) {
+        return 2u;
+    } else {
+        return 3u; // Farthest cascade (lowest detail, largest area)
+    }
+}
+
+// Calculate shadow factor using PCF (Percentage Closer Filtering) with CSM
+// Phase 4: Selects appropriate cascade based on fragment depth
+fn calculate_shadow(light_space_pos: vec4<f32>, normal: vec3<f32>, light_dir: vec3<f32>, view_depth: f32) -> f32 {
+    // Select cascade based on view-space depth
+    let cascade_index = select_cascade(view_depth);
+    
     // Perspective divide
     var proj_coords = light_space_pos.xyz / light_space_pos.w;
     
@@ -41,24 +59,24 @@ fn calculate_shadow(light_space_pos: vec4<f32>, normal: vec3<f32>, light_dir: ve
     }
     
     // Slope-scale depth bias for shadow acne prevention
-    // Slightly increased to handle voxel edge precision issues
     let ndotl = max(dot(normal, light_dir), 0.0);
-    let base_bias = 0.0012; // Increased for edge cases
+    let base_bias = 0.0012;
     let slope_bias = 0.0025 * sqrt(1.0 - ndotl * ndotl) / max(ndotl, 0.1);
     let bias = base_bias + slope_bias;
     let biased_depth = proj_coords.z - bias;
     
     // PCF for soft shadows - 3x3 kernel
-    let texel_size = 1.0 / 4096.0; // Shadow map size (4096x4096)
+    let texel_size = 1.0 / 4096.0; // Shadow map size (4096x4096 per cascade)
     var shadow = 0.0;
-    let pcf_radius = 1.0; // Moderate softness
+    let pcf_radius = 1.0;
     
-    // 3x3 kernel for soft shadows
+    // 3x3 kernel - sample from selected cascade layer
     for (var x = -1.0; x <= 1.0; x += 1.0) {
         for (var y = -1.0; y <= 1.0; y += 1.0) {
             let offset = vec2<f32>(x, y) * texel_size * pcf_radius;
             let sample_coords = proj_coords.xy + offset;
-            shadow += textureSampleCompare(shadow_map, shadow_sampler, sample_coords, biased_depth);
+            // Sample from cascade array texture at selected layer
+            shadow += textureSampleCompareLevel(shadow_map, shadow_sampler, sample_coords, i32(cascade_index), biased_depth);
         }
     }
     shadow /= 9.0;
@@ -79,8 +97,30 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let L = sun_dir;
     let diff = max(dot(N, L), 0.0);
     
-    // Calculate shadow factor with slope-scale bias
-    let shadow = calculate_shadow(in.light_space_pos, N, L);
+    // Calculate view-space depth for cascade selection (Phase 4: CSM)
+    let cam_pos_vec = vec3<f32>(camera.cam_pos.x, camera.cam_pos.y, camera.cam_pos.z);
+    let view_depth = length(in.world_pos - cam_pos_vec);
+    
+    // Calculate shadow factor with CSM cascade selection
+    let shadow = calculate_shadow(in.light_space_pos, N, L, view_depth);
+    
+    // CSM Phase 4: Debug visualization - color-code cascades
+    // Set to false to disable, true to see cascade bands
+    let csm_debug = false; // Disabled - using proper CSM shadows
+    if (csm_debug) {
+        let cascade_idx = select_cascade(view_depth);
+        var cascade_color = vec3<f32>(1.0, 1.0, 1.0); // White fallback
+        if (cascade_idx == 0u) {
+            cascade_color = vec3<f32>(1.0, 0.0, 0.0); // Red: 0-20 units
+        } else if (cascade_idx == 1u) {
+            cascade_color = vec3<f32>(0.0, 1.0, 0.0); // Green: 20-50 units
+        } else if (cascade_idx == 2u) {
+            cascade_color = vec3<f32>(0.0, 0.0, 1.0); // Blue: 50-100 units
+        } else {
+            cascade_color = vec3<f32>(1.0, 1.0, 0.0); // Yellow: 100-200 units
+        }
+        return vec4<f32>(cascade_color, 1.0);
+    }
     
     // use camera-provided world position for view direction
     let cam_pos = vec3<f32>(camera.cam_pos.x, camera.cam_pos.y, camera.cam_pos.z);
