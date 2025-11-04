@@ -19,7 +19,9 @@ const CSM_VERBOSE_LOGGING: bool = false;
 pub struct ShadowSystem {
     pub shadow_pipeline: wgpu::RenderPipeline,
     pub shadow_matrix_buffer: wgpu::Buffer,
+    #[allow(dead_code)]
     pub shadow_map_view: wgpu::TextureView,
+    #[allow(dead_code)]
     pub shadow_pass_bind_group: wgpu::BindGroup,
     pub csm_matrix_buffer: wgpu::Buffer,
     pub csm_cascade_views: Vec<wgpu::TextureView>,
@@ -203,7 +205,7 @@ impl ShadowSystem {
 
         let csm_shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("csm-shadow-bind-group"),
-            layout: &shadow_bind_group_layout,
+            layout: shadow_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -310,7 +312,9 @@ impl ShadowSystem {
         })
     }
 
-    /// Calculate shadow matrix for legacy single shadow map
+    /// Calculate shadow matrix for legacy single-cascade shadow mapping
+    /// This creates a view-projection matrix from the sun's perspective
+    #[allow(dead_code)]
     pub fn calculate_shadow_matrix(&self, sun_dir: glam::Vec3, cam_pos: glam::Vec3) -> glam::Mat4 {
         let light_dir = sun_dir.normalize();
         let scene_center = cam_pos;

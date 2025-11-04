@@ -43,7 +43,6 @@ pub mod gfx {
         use crate::gpu_types::{CascadedShadowMatrixGpu, ShadowMatrixGpu};
         use crate::shadow::{NUM_SHADOW_CASCADES, ShadowSystem};
         use crate::types::{GpuInstance, MeshEntry, Vertex};
-        use moho_core::actors::InstanceGpu as CpuInstance;
         use wgpu::util::DeviceExt;
 
         pub struct Renderer<'a> {
@@ -53,6 +52,7 @@ pub mod gfx {
             device: wgpu::Device,
             queue: wgpu::Queue,
             config: wgpu::SurfaceConfiguration,
+            #[allow(dead_code)]
             vertex_buffer: Option<wgpu::Buffer>,
             pipeline: wgpu::RenderPipeline,
             camera_buffer: wgpu::Buffer,
@@ -65,6 +65,7 @@ pub mod gfx {
             depth_format: wgpu::TextureFormat,
             instance_buffer: Option<wgpu::Buffer>,
             instance_capacity: usize,
+            #[allow(dead_code)]
             vertex_count: u32,
             mesh_table: Vec<Option<MeshEntry>>,
             pending_frame: Option<wgpu::SurfaceTexture>,
@@ -530,7 +531,10 @@ pub mod gfx {
 
                 // Generate skybox as fullscreen quad (two triangles covering the screen)
                 let (skybox_vertices, skybox_vertex_count) = Self::generate_skybox_quad();
-                log::info!("Generated skybox fullscreen quad with {} vertices", skybox_vertex_count);
+                log::info!(
+                    "Generated skybox fullscreen quad with {} vertices",
+                    skybox_vertex_count
+                );
                 let skybox_vertex_buffer =
                     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("skybox-vertex-buffer"),
@@ -582,14 +586,14 @@ pub mod gfx {
                 let vertices = vec![
                     // First triangle (bottom-left, top-left, bottom-right)
                     [-1.0, -1.0, 0.0], // Bottom-left
-                    [-1.0,  1.0, 0.0], // Top-left
-                    [ 1.0, -1.0, 0.0], // Bottom-right
+                    [-1.0, 1.0, 0.0],  // Top-left
+                    [1.0, -1.0, 0.0],  // Bottom-right
                     // Second triangle (bottom-right, top-left, top-right)
-                    [ 1.0, -1.0, 0.0], // Bottom-right
-                    [-1.0,  1.0, 0.0], // Top-left
-                    [ 1.0,  1.0, 0.0], // Top-right
+                    [1.0, -1.0, 0.0], // Bottom-right
+                    [-1.0, 1.0, 0.0], // Top-left
+                    [1.0, 1.0, 0.0],  // Top-right
                 ];
-                
+
                 let vertex_count = vertices.len() as u32;
                 (vertices, vertex_count)
             }
@@ -843,251 +847,7 @@ pub mod gfx {
             */
             // END shadow calculation methods moved to shadow module
 
-            // TODO: This render() method appears to be unused - the app uses render_mesh() instead.
-            // Consider removing this method to avoid duplicate rendering logic and confusion.
-            // Investigate if any code paths still call this before removal.
-            pub fn render(
-                &mut self,
-                vertices: &[[f32; 3]],
-                instances_cpu: &[CpuInstance],
-                camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-            ) {
-                // Ensure GPU vertex buffer exists and matches the provided vertices.
-                let vertex_bytes = bytemuck::cast_slice(vertices);
-                let mut recreate_vertex = false;
-                if self.vertex_buffer.is_none() {
-                    recreate_vertex = true;
-                } else if self.vertex_count as usize != vertices.len() {
-                    // If the incoming vertex count changed, recreate the buffer to match
-                    // (could alternatively allow partial updates, but recreating is
-                    // simpler and sufficient for now).
-                    recreate_vertex = true;
-                }
-                if recreate_vertex {
-                    let vb = self
-                        .device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("vertex-buffer"),
-                            contents: vertex_bytes,
-                            usage: wgpu::BufferUsages::VERTEX,
-                        });
-                    self.vertex_buffer = Some(vb);
-                    self.vertex_count = vertices.len() as u32;
-                }
-
-                // Convert CPU-side `InstanceGpu` into the tightly-packed GPU layout used by the shader.
-                let mut instances: Vec<GpuInstance> = Vec::with_capacity(instances_cpu.len());
-                for ic in instances_cpu {
-                    instances.push(GpuInstance {
-                        model: ic.model,
-                        material: ic.material,
-                        object_type: ic.object_type,
-                        padding: ic.padding,
-                    });
-                }
-
-                let frame = match self.surface.get_current_texture() {
-                    Ok(f) => f,
-                    Err(e) => match e {
-                        wgpu::SurfaceError::Lost => {
-                            self.surface.configure(&self.device, &self.config);
-                            return;
-                        }
-                        wgpu::SurfaceError::OutOfMemory => {
-                            log::error!("wgpu::SurfaceError::OutOfMemory");
-                            panic!("Out of memory")
-                        }
-                        _ => return,
-                    },
-                };
-                let frame_view = frame
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default());
-
-                // Update camera uniform buffer from provided camera (view, proj)
-                let view_mat = camera.0;
-                let proj_mat = camera.1;
-                let cam_pos = camera.2;
-                let viewproj = proj_mat * view_mat;
-                // Debug: print camera position and first element of viewproj so we
-                // can confirm the renderer sees the updated camera each frame.
-                log::trace!(
-                    "[wgpu] render: cam_pos={:?} viewproj0={:?}",
-                    cam_pos,
-                    viewproj.to_cols_array()[0]
-                );
-                let mut cols = viewproj.to_cols_array().to_vec();
-                // append camera position as a vec4 (x,y,z,0)
-                cols.push(cam_pos.x);
-                cols.push(cam_pos.y);
-                cols.push(cam_pos.z);
-                cols.push(0.0f32);
-                // write camera matrix + cam pos to GPU
-                self.queue
-                    .write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&cols));
-
-                // Update or create a persistent instance buffer using exponential growth
-                let _instance_stride = std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress;
-                let required_count = instances.len().max(1);
-                if self.instance_capacity < required_count {
-                    // exponential grow: double until capacity >= required_count
-                    let mut new_cap = self.instance_capacity.max(1);
-                    while new_cap < required_count {
-                        new_cap = new_cap.saturating_mul(2);
-                    }
-                    let size_bytes =
-                        (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
-                    let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("instance-buffer"),
-                        size: size_bytes,
-                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
-                    self.instance_buffer = Some(buf);
-                    self.instance_capacity = new_cap;
-                }
-
-                // Write only the used portion of the instance buffer
-                let buf = match self.instance_buffer.as_ref() {
-                    Some(b) => b,
-                    None => {
-                        log::error!("instance buffer missing when writing instances");
-                        return;
-                    }
-                };
-                if !instances.is_empty() {
-                    self.queue
-                        .write_buffer(buf, 0, bytemuck::cast_slice(&instances));
-                } else {
-                    let zero = GpuInstance {
-                        model: [[0.0; 4]; 4],
-                        material: 0,
-                        object_type: 0,
-                        padding: [0, 0],
-                    };
-                    self.queue
-                        .write_buffer(buf, 0, bytemuck::cast_slice(&[zero]));
-                }
-
-                // Calculate and update shadow matrix based on current sun direction
-                let sun_dir = glam::Vec3::new(
-                    self.shadow.current_lighting.sun_direction[0],
-                    self.shadow.current_lighting.sun_direction[1],
-                    self.shadow.current_lighting.sun_direction[2],
-                );
-                let shadow_matrix = self.shadow.calculate_shadow_matrix(sun_dir, cam_pos);
-                let cols = shadow_matrix.to_cols_array_2d();
-                let shadow_matrix_gpu = crate::gpu_types::ShadowMatrixGpu {
-                    sm0: cols[0],
-                    sm1: cols[1],
-                    sm2: cols[2],
-                    sm3: cols[3],
-                };
-                self.queue.write_buffer(
-                    &self.shadow.shadow_matrix_buffer,
-                    0,
-                    bytemuck::bytes_of(&shadow_matrix_gpu),
-                );
-
-                let mut encoder =
-                    self.device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("encoder"),
-                        });
-
-                // SHADOW PASS: Render scene from light's perspective to shadow map
-                {
-                    let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("shadow-pass"),
-                        color_attachments: &[], // No color output for depth-only pass
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: &self.shadow.shadow_map_view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0), // Clear to maximum depth
-                                store: wgpu::StoreOp::Store, // Store shadow map for use in main pass
-                            }),
-                            stencil_ops: None,
-                        }),
-                        occlusion_query_set: None,
-                        timestamp_writes: None,
-                    });
-
-                    shadow_pass.set_pipeline(&self.shadow.shadow_pipeline);
-                    shadow_pass.set_bind_group(0, &self.shadow.shadow_pass_bind_group, &[]);
-
-                    // Render scene geometry to shadow map
-                    if let Some(vb) = self.vertex_buffer.as_ref() {
-                        shadow_pass.set_vertex_buffer(0, vb.slice(..));
-                    }
-                    if let Some(ibuf) = self.instance_buffer.as_ref() {
-                        shadow_pass.set_vertex_buffer(1, ibuf.slice(..));
-                    }
-                    let instance_count = instances.len().max(1) as u32;
-                    shadow_pass.draw(0..self.vertex_count, 0..instance_count);
-                }
-
-                // MAIN PASS: Render scene with shadows
-                {
-                    let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("rpass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &frame_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: &self.depth_texture_view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Store,
-                            }),
-                            stencil_ops: None,
-                        }),
-                        occlusion_query_set: None,
-                        timestamp_writes: None,
-                    });
-
-                    // Render skybox first (at maximum depth)
-                    log::info!("[skybox] issuing draw - vertex_count={}", self.skybox_vertex_count);
-                    rpass.set_pipeline(&self.skybox_pipeline);
-                    rpass.set_bind_group(0, &self.camera_bind_group, &[]);
-                    rpass.set_vertex_buffer(0, self.skybox_vertex_buffer.slice(..));
-                    rpass.draw(0..self.skybox_vertex_count, 0..1);
-                    log::info!("[skybox] draw issued");
-
-                    // Then render main scene
-                    rpass.set_pipeline(&self.pipeline);
-                    // set camera bind group (group 0)
-                    rpass.set_bind_group(0, &self.camera_bind_group, &[]);
-                    // CSM Phase 3: Use cascade 0 for shadow sampling
-                    rpass.set_bind_group(1, &self.shadow.csm_shadow_bind_group, &[]);
-                    // set vertex buffer (created on-demand)
-                    if let Some(vb) = self.vertex_buffer.as_ref() {
-                        rpass.set_vertex_buffer(0, vb.slice(..));
-                    } else {
-                        log::trace!("vertex buffer missing, skipping set_vertex_buffer");
-                    }
-                    // bind the persistent instance buffer
-                    let ibuf = match self.instance_buffer.as_ref() {
-                        Some(b) => b,
-                        None => {
-                            log::error!("instance buffer missing during draw");
-                            return;
-                        }
-                    };
-                    rpass.set_vertex_buffer(1, ibuf.slice(..));
-                    let instance_count = instances.len().max(1) as u32;
-                    rpass.draw(0..self.vertex_count, 0..instance_count);
-                }
-
-                self.queue.submit(Some(encoder.finish()));
-                frame.present();
-            }
-
+            // Note: The old render() method has been removed. Use render_mesh() instead.
             // Note: window-related helpers (request_redraw, cursor control)
             // are intentionally not exposed from the renderer. The
             // application owns the Window and should call those methods
@@ -1605,13 +1365,13 @@ pub mod gfx {
                             occlusion_query_set: None,
                             timestamp_writes: None,
                         });
-                        
+
                         // Render skybox first (at maximum depth, behind everything)
                         rpass.set_pipeline(&self.skybox_pipeline);
                         rpass.set_bind_group(0, &self.camera_bind_group, &[]);
                         rpass.set_vertex_buffer(0, self.skybox_vertex_buffer.slice(..));
                         rpass.draw(0..self.skybox_vertex_count, 0..1);
-                        
+
                         // Then render main scene
                         rpass.set_pipeline(&self.pipeline);
                         rpass.set_bind_group(0, &self.camera_bind_group, &[]);
@@ -1741,13 +1501,6 @@ pub mod gfx {
             pub fn new() -> Self {
                 Renderer {}
             }
-            pub fn render(
-                &mut self,
-                _vertices: &[[f32; 3]],
-                _instances: &[InstanceGpu],
-                _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-            ) {
-            }
             pub fn request_redraw(&self) {}
             pub fn resize(&mut self, _w: u32, _h: u32) {}
         }
@@ -1780,12 +1533,6 @@ pub use gfx::Renderer;
 /// the lifetime of the renderer (see `create_renderer` under `backend-wgpu`).
 /// The trait itself is object-safe so callers can hold `Box<dyn RendererBackend + '_>`.
 pub trait RendererBackend {
-    fn render(
-        &mut self,
-        vertices: &[[f32; 3]],
-        instances: &[moho_core::actors::InstanceGpu],
-        camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-    );
     fn request_redraw(&self);
     fn resize(&mut self, width: u32, height: u32);
     /// Set whether the cursor is visible (for FPS-style hide/show).
@@ -1840,14 +1587,6 @@ pub trait RendererBackend {
 
 #[cfg(feature = "backend-wgpu")]
 impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
-    fn render(
-        &mut self,
-        vertices: &[[f32; 3]],
-        instances: &[moho_core::actors::InstanceGpu],
-        camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-    ) {
-        gfx::wgpu_impl::Renderer::render(self, vertices, instances, camera)
-    }
     fn request_redraw(&self) {
         // Renderer no longer owns the Window; request_redraw must be
         // performed by the application via the Window instance.
@@ -1907,14 +1646,6 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
 
 #[cfg(not(feature = "backend-wgpu"))]
 impl RendererBackend for gfx::placeholder::Renderer {
-    fn render(
-        &mut self,
-        vertices: &[[f32; 3]],
-        instances: &[moho_core::actors::InstanceGpu],
-        camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-    ) {
-        gfx::placeholder::Renderer::render(self, vertices, instances, camera)
-    }
     fn request_redraw(&self) {
         gfx::placeholder::Renderer::request_redraw(self)
     }
