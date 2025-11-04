@@ -158,7 +158,7 @@ impl App {
             let center = glam::Vec3::new(0.0, 8.0, 0.0);
             let up = glam::Vec3::new(0.0, 1.0, 0.0);
             let view = glam::Mat4::look_at_rh(eye, center, up);
-            let proj = glam::Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 200.0f32);
+            let proj = glam::Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 1500.0f32); // Increased for skybox visibility
             (view, proj, eye)
         };
 

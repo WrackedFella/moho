@@ -7,7 +7,8 @@ pub const NUM_SHADOW_CASCADES: u32 = 4;
 pub const SHADOW_MAP_SIZE: u32 = 4096;
 
 /// Cascade split distances from camera (in world units)
-pub const CASCADE_SPLIT_DISTANCES: [f32; 4] = [20.0, 50.0, 100.0, 200.0];
+/// Scaled up for increased view distance - covers near terrain to distant features
+pub const CASCADE_SPLIT_DISTANCES: [f32; 4] = [50.0, 150.0, 400.0, 800.0];
 
 #[allow(dead_code)]
 const CSM_DEBUG_MODE: bool = false;

@@ -100,7 +100,7 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
             let center = eye + forward;
             let up = Vec3::Y;
             let view = Mat4::look_at_rh(eye, center, up);
-            let proj = Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 100.0f32);
+            let proj = Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 1500.0f32); // Increased for skybox visibility
             (view, proj, eye)
         }
         CameraMode::Isometric => {
@@ -109,7 +109,7 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
             let center = pc.position; // Look at the controller position
             let up = Vec3::Y;
             let view = Mat4::look_at_rh(eye, center, up);
-            let proj = Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 100.0f32);
+            let proj = Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 1500.0f32); // Increased for skybox visibility
             (view, proj, eye)
         }
     }

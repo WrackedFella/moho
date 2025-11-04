@@ -519,7 +519,7 @@ pub mod gfx {
                         depth_stencil: Some(wgpu::DepthStencilState {
                             format: depth_format,
                             depth_write_enabled: false, // Don't write depth for skybox
-                            depth_compare: wgpu::CompareFunction::LessEqual, // LessEqual for skybox at far plane
+                            depth_compare: wgpu::CompareFunction::LessEqual, // Render at far plane
                             stencil: wgpu::StencilState::default(),
                             bias: wgpu::DepthBiasState::default(),
                         }),
@@ -528,8 +528,9 @@ pub mod gfx {
                         cache: None,
                     });
 
-                // Generate skybox sphere geometry (UV sphere)
-                let (skybox_vertices, skybox_vertex_count) = Self::generate_skybox_sphere(32, 16);
+                // Generate skybox as fullscreen quad (two triangles covering the screen)
+                let (skybox_vertices, skybox_vertex_count) = Self::generate_skybox_quad();
+                log::info!("Generated skybox fullscreen quad with {} vertices", skybox_vertex_count);
                 let skybox_vertex_buffer =
                     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("skybox-vertex-buffer"),
@@ -574,6 +575,27 @@ pub mod gfx {
 
             /// Generate a UV sphere for the skybox
             /// Returns (vertices, vertex_count)
+            /// Generate a fullscreen quad for skybox rendering (renders at far plane depth)
+            fn generate_skybox_quad() -> (Vec<[f32; 3]>, u32) {
+                // Fullscreen quad in clip space coordinates [-1, 1]
+                // Two triangles covering the entire screen
+                let vertices = vec![
+                    // First triangle (bottom-left, top-left, bottom-right)
+                    [-1.0, -1.0, 0.0], // Bottom-left
+                    [-1.0,  1.0, 0.0], // Top-left
+                    [ 1.0, -1.0, 0.0], // Bottom-right
+                    // Second triangle (bottom-right, top-left, top-right)
+                    [ 1.0, -1.0, 0.0], // Bottom-right
+                    [-1.0,  1.0, 0.0], // Top-left
+                    [ 1.0,  1.0, 0.0], // Top-right
+                ];
+                
+                let vertex_count = vertices.len() as u32;
+                (vertices, vertex_count)
+            }
+
+            // Old sphere generation method (keeping for reference, can be removed later)
+            #[allow(dead_code)]
             fn generate_skybox_sphere(
                 longitude_segments: u32,
                 latitude_segments: u32,
@@ -821,6 +843,9 @@ pub mod gfx {
             */
             // END shadow calculation methods moved to shadow module
 
+            // TODO: This render() method appears to be unused - the app uses render_mesh() instead.
+            // Consider removing this method to avoid duplicate rendering logic and confusion.
+            // Investigate if any code paths still call this before removal.
             pub fn render(
                 &mut self,
                 vertices: &[[f32; 3]],
@@ -1027,10 +1052,12 @@ pub mod gfx {
                     });
 
                     // Render skybox first (at maximum depth)
+                    log::info!("[skybox] issuing draw - vertex_count={}", self.skybox_vertex_count);
                     rpass.set_pipeline(&self.skybox_pipeline);
                     rpass.set_bind_group(0, &self.camera_bind_group, &[]);
                     rpass.set_vertex_buffer(0, self.skybox_vertex_buffer.slice(..));
                     rpass.draw(0..self.skybox_vertex_count, 0..1);
+                    log::info!("[skybox] draw issued");
 
                     // Then render main scene
                     rpass.set_pipeline(&self.pipeline);
@@ -1578,6 +1605,14 @@ pub mod gfx {
                             occlusion_query_set: None,
                             timestamp_writes: None,
                         });
+                        
+                        // Render skybox first (at maximum depth, behind everything)
+                        rpass.set_pipeline(&self.skybox_pipeline);
+                        rpass.set_bind_group(0, &self.camera_bind_group, &[]);
+                        rpass.set_vertex_buffer(0, self.skybox_vertex_buffer.slice(..));
+                        rpass.draw(0..self.skybox_vertex_count, 0..1);
+                        
+                        // Then render main scene
                         rpass.set_pipeline(&self.pipeline);
                         rpass.set_bind_group(0, &self.camera_bind_group, &[]);
                         // CSM Phase 3: Use cascade 0 for shadow sampling
