@@ -8,6 +8,9 @@ pub enum GraphicsEvent {
     /// Light position changed (sun)
     LightPositionChanged { position: Vec3, intensity: f32 },
 
+    /// Sun direction changed (yaw, pitch in radians)
+    SunDirectionChanged { yaw: f32, pitch: f32 },
+
     /// Time of day changed
     TimeOfDayChanged { time: f32, sun_angle: f32 },
 

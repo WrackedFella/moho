@@ -423,6 +423,24 @@ impl FrameCallback for EguiAdapter {
                             self.event_bus
                                 .publish(DebugEvent::ToggleCollision { enabled: false });
                         }
+                        ConsoleAction::SetSunDirection(yaw, pitch) => {
+                            use moho_core::events::GraphicsEvent;
+                            // Convert degrees to radians
+                            let yaw_rad = yaw.to_radians();
+                            let pitch_rad = pitch.to_radians();
+                            self.event_bus.publish(GraphicsEvent::SunDirectionChanged {
+                                yaw: yaw_rad,
+                                pitch: pitch_rad,
+                            });
+                        }
+                        ConsoleAction::SetTimeOfDay(time) => {
+                            use moho_core::events::GraphicsEvent;
+                            // Calculate sun angle from time (0.0 = midnight, 0.5 = noon)
+                            // Sun angle: 0 = horizon (sunrise/sunset), PI/2 = zenith (noon)
+                            let sun_angle = (time - 0.25) * 2.0 * std::f32::consts::PI;
+                            self.event_bus
+                                .publish(GraphicsEvent::TimeOfDayChanged { time, sun_angle });
+                        }
                         ConsoleAction::None => {}
                     }
                 }

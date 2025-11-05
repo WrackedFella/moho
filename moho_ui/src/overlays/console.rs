@@ -22,6 +22,10 @@ pub enum ConsoleAction {
     ToggleNoclip,
     /// Close the console (triggered by backtick key)
     Close,
+    /// Set sun direction (yaw, pitch in degrees)
+    SetSunDirection(f32, f32),
+    /// Set time of day (0.0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset, 1.0 = midnight)
+    SetTimeOfDay(f32),
     /// No action
     None,
 }
@@ -224,6 +228,10 @@ impl Console {
                 self.add_output("  quit - Exit the application".to_string());
                 self.add_output("  god - Toggle god mode (invincibility)".to_string());
                 self.add_output("  noclip - Toggle noclip mode (fly through walls)".to_string());
+                self.add_output("  sun <yaw> <pitch> - Set sun direction (degrees)".to_string());
+                self.add_output(
+                    "  time <0.0-1.0> - Set time of day (0=midnight, 0.5=noon)".to_string(),
+                );
                 ConsoleAction::None
             }
             "clear" => {
@@ -241,6 +249,48 @@ impl Console {
             "noclip" => {
                 self.add_output("Toggling noclip mode...".to_string());
                 ConsoleAction::ToggleNoclip
+            }
+            "sun" => {
+                if parts.len() != 3 {
+                    self.add_output("Usage: sun <yaw> <pitch>".to_string());
+                    self.add_output("  Example: sun 45 60".to_string());
+                    return ConsoleAction::None;
+                }
+                match (parts[1].parse::<f32>(), parts[2].parse::<f32>()) {
+                    (Ok(yaw), Ok(pitch)) => {
+                        self.add_output(format!(
+                            "Setting sun direction: yaw={}, pitch={}",
+                            yaw, pitch
+                        ));
+                        ConsoleAction::SetSunDirection(yaw, pitch)
+                    }
+                    _ => {
+                        self.add_output("Error: yaw and pitch must be numbers".to_string());
+                        ConsoleAction::None
+                    }
+                }
+            }
+            "time" => {
+                if parts.len() != 2 {
+                    self.add_output("Usage: time <0.0-1.0>".to_string());
+                    self.add_output(
+                        "  0.0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset".to_string(),
+                    );
+                    return ConsoleAction::None;
+                }
+                match parts[1].parse::<f32>() {
+                    Ok(time) => {
+                        let clamped = time.clamp(0.0, 1.0);
+                        self.add_output(format!("Setting time of day: {:.2}", clamped));
+                        ConsoleAction::SetTimeOfDay(clamped)
+                    }
+                    Err(_) => {
+                        self.add_output(
+                            "Error: time must be a number between 0.0 and 1.0".to_string(),
+                        );
+                        ConsoleAction::None
+                    }
+                }
             }
             _ => {
                 self.add_output(format!("Unknown command: '{}'", parts[0]));
