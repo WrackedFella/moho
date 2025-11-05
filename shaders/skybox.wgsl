@@ -142,8 +142,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let sun_dot = dot(dir, sun_dir);
     
     // Sun disk (sharp edge)
-    let sun_size = 0.998; // cos(angle) - smaller = bigger sun
-    let sun_glow_size = 0.95; // Larger glow around sun
+    let sun_size = 0.9998; // cos(~1.1°) - realistic sun size (real sun is ~0.5°)
+    let sun_glow_size = 0.998; // Tighter glow around smaller sun
     
     if (sun_dot > sun_size) {
         // Bright sun disk
