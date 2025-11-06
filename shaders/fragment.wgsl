@@ -90,12 +90,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let sun_dir = normalize(lighting.sun_direction.xyz);
     let sun_intensity = lighting.sun_direction.w;
     let sun_col = lighting.sun_color.xyz;
+    let moon_dir = normalize(lighting.moon_direction.xyz);
+    let moon_intensity = lighting.moon_direction.w;
+    let moon_col = lighting.moon_color.xyz;
     let ambient_col = lighting.ambient.xyz;
     let ambient_intensity = lighting.ambient.w;
     
     let N = normalize(in.normal);
     let L = sun_dir;
     let diff = max(dot(N, L), 0.0);
+    
+    // Moon lighting calculation
+    let L_moon = moon_dir;
+    let diff_moon = max(dot(N, L_moon), 0.0);
     
     // Calculate view-space depth for cascade selection (Phase 4: CSM)
     let cam_pos_vec = vec3<f32>(camera.cam_pos.x, camera.cam_pos.y, camera.cam_pos.z);
@@ -164,19 +171,24 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let F = R0 + (1.0 - R0) * pow(1.0 - cos_theta, 5.0);
 
         // Strong, sharp specular for dielectrics; use a high exponent
-        // Apply shadow to direct lighting only
+        // Apply shadow to sun lighting only
         let spec_diel = vec3<f32>(F) * pow(max(dot(N, H), 0.0), 128.0) * sun_col * sun_intensity * shadow;
+        
+        // Moon specular for dielectrics (no shadow)
+        let H_moon = normalize(L_moon + V);
+        let spec_diel_moon = vec3<f32>(F) * pow(max(dot(N, H_moon), 0.0), 128.0) * moon_col * moon_intensity * 0.5;
 
         // Approximate transmitted light (tint) scaled by (1 - F). This is a
         // cheap stand-in for refraction/transmission and helps the object
         // look glassy when combined with specular.
         let trans = final_albedo * (1.0 - F) * 0.6 * sun_col * sun_intensity * shadow;
+        let trans_moon = final_albedo * (1.0 - F) * 0.6 * moon_col * moon_intensity * 0.5;
 
         // Reduce ambient in shadowed areas AND on back-facing surfaces
         let shadow_darkening = mix(0.2, 1.0, shadow);
         let backface_darkening = mix(0.15, 1.0, diff);
         let total_darkening = shadow_darkening * backface_darkening;
-        color = ambient_col * ambient_intensity * final_albedo * 0.1 * total_darkening + ao * (spec_diel + trans);
+        color = ambient_col * ambient_intensity * final_albedo * 0.1 * total_darkening + ao * (spec_diel + trans + spec_diel_moon + trans_moon);
         // approximate alpha: more reflective (higher F) -> less transmitted
         // we bias alpha so very slight translucency remains even for weakly
         // refractive materials.
@@ -190,8 +202,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // For metals: reduce diffuse, increase specular
         // For lambertian: normal diffuse, minimal specular
         let diff_strength = mix(1.0, 0.3, is_metal);
-        // Apply shadow to diffuse lighting
+        // Apply shadow to diffuse lighting (sun)
         let diff_color = final_albedo * diff * diff_strength * sun_col * sun_intensity * shadow;
+        
+        // Moon diffuse lighting (no shadows for moon - simpler lighting model)
+        let diff_color_moon = final_albedo * diff_moon * diff_strength * moon_col * moon_intensity;
         
         // Metal specular: strong but affected by fuzz (roughness)
         // Lambertian specular: very weak
@@ -204,9 +219,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let spec_power = mix(64.0, 96.0, is_metal);
         let spec_highlight = pow(max(dot(N, H), 0.0), spec_power);
         
-        // For metals the specular should be tinted by albedo and sun color
-        // Apply shadow to specular as well
+        // Moon specular (softer than sun)
+        let H_moon = normalize(L_moon + V);
+        let spec_highlight_moon = pow(max(dot(N, H_moon), 0.0), spec_power * 0.8);
+        
+        // For metals the specular should be tinted by albedo and light color
+        // Apply shadow to sun specular only
         let spec_color = final_albedo * spec_strength * spec_highlight * sun_col * sun_intensity * shadow;
+        let spec_color_moon = final_albedo * spec_strength * spec_highlight_moon * moon_col * moon_intensity * 0.5;
 
         // Reduce ambient in shadowed areas AND on back-facing surfaces
         // Surfaces in complete shadow should be much darker
@@ -214,7 +234,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let shadow_darkening = mix(0.2, 1.0, shadow); // Darken by 80% in full shadow
         let backface_darkening = mix(0.15, 1.0, diff); // Darken by 85% when facing away
         let total_darkening = shadow_darkening * backface_darkening;
-        color = ambient_col * ambient_intensity * final_albedo * total_darkening + ao * (diff_color + spec_color);
+        color = ambient_col * ambient_intensity * final_albedo * total_darkening + ao * (diff_color + spec_color + diff_color_moon + spec_color_moon);
     }
     
     // DEBUG: Visualize shadow coordinates (comment out for normal rendering)

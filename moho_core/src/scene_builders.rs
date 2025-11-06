@@ -111,6 +111,25 @@ pub struct WorldSpec {
     pub name: String,
     pub seed: Option<u64>,
     pub size_xz: u32,
+    /// Length of daytime in real-world seconds (e.g., 600.0 = 10 minute day)
+    pub day_length_seconds: f32,
+    /// Length of nighttime in real-world seconds (e.g., 300.0 = 5 minute night)
+    pub night_length_seconds: f32,
+    /// Initial time when world starts (0.0 = midnight, 6.0 = dawn, 12.0 = noon, 18.0 = dusk)
+    pub initial_time_of_day: f32,
+}
+
+impl Default for WorldSpec {
+    fn default() -> Self {
+        Self {
+            name: "New World".to_string(),
+            seed: None,
+            size_xz: 64,
+            day_length_seconds: 600.0,   // 10 minute days
+            night_length_seconds: 420.0, // 7 minute nights
+            initial_time_of_day: 6.0,    // Start at dawn
+        }
+    }
 }
 
 /// Terrain configuration for procedural generation

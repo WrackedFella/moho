@@ -28,3 +28,9 @@ target
 *.ini
 /assets/
 recipe.json
+/_rca/
+
+# Code metrics output
+/metrics-output/
+/metrics-summary/
+/tmp_rust_code_analysis/

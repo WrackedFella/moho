@@ -30,6 +30,25 @@ The debug console is an egui-based overlay controlled by the central `GameState`
 
 All console-driven events are published through the `EventBus` which is thread-safe (Arc + RwLock patterns). Console UI runs on the main thread (egui), and event handling can be consumed either on the main thread or worker threads depending on subscribers.
 
+## Available Commands
+
+| Command | Description | Event Published |
+|---------|-------------|----------------|
+| `time <0-24>` | Set time of day (0.0-24.0 hours) | `GraphicsEvent::TimeOfDayChanged` |
+| `save` | Save current game state | `SystemEvent::SaveRequested` |
+| `load` | Load saved game state | `SystemEvent::LoadRequested` |
+| `exit` / `quit` | Exit application | `SystemEvent::ExitRequested` |
+| `god` | Toggle god mode | `DebugEvent::ToggleGodMode` |
+| `clear` | Clear console output | *(Internal action)* |
+
+**Example Usage:**
+```
+> time 6     # Set to 6:00 AM (dawn)
+> time 12    # Set to noon
+> time 18    # Set to 6:00 PM (dusk)
+> time 0     # Set to midnight
+```
+
 ## Tests & Verification
 
 - Unit tests for `Console` parsing and `ConsoleAction` generation live in `moho_ui` tests.

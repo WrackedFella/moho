@@ -10,7 +10,10 @@ struct Camera {
 struct Lighting {
     sun_direction: vec4<f32>,  // xyz = direction (normalized), w = intensity
     sun_color: vec4<f32>,      // xyz = color, w = unused
+    moon_direction: vec4<f32>, // xyz = direction (normalized), w = intensity
+    moon_color: vec4<f32>,     // xyz = color, w = unused
     ambient: vec4<f32>,        // xyz = color, w = intensity
+    time_of_day: vec4<f32>,    // x = 0-24 hours, yzw = unused
 }
 
 struct ShadowMatrix {

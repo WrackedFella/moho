@@ -2,6 +2,7 @@ use bincode::{Decode, Encode};
 use crc32fast::Hasher;
 use glam::{Mat4, Vec3};
 use moho_core::controller::{CameraMode, ControllerInput, PlayerController, controller_to_camera};
+use moho_core::game_clock::GameClock;
 use serde::{Deserialize, Serialize};
 
 const SNAP_MAGIC: &[u8; 4] = b"MOHO";
@@ -65,6 +66,7 @@ impl TryFrom<SimulationSnapshot> for SimulationController {
         Ok(SimulationController {
             player_controller: pc,
             controller_input: ci,
+            game_clock: GameClock::default(),
         })
     }
 }
@@ -128,6 +130,7 @@ impl SimulationController {
 pub struct SimulationController {
     pub player_controller: PlayerController,
     pub controller_input: ControllerInput,
+    pub game_clock: GameClock,
 }
 
 impl SimulationController {
@@ -136,6 +139,21 @@ impl SimulationController {
         Self {
             player_controller: PlayerController::new(position),
             controller_input: ControllerInput::default(),
+            game_clock: GameClock::default(),
+        }
+    }
+
+    /// Create a new SimulationController with custom clock configuration.
+    pub fn with_clock(
+        position: Vec3,
+        day_length: f32,
+        night_length: f32,
+        initial_time: f32,
+    ) -> Self {
+        Self {
+            player_controller: PlayerController::new(position),
+            controller_input: ControllerInput::default(),
+            game_clock: GameClock::new(initial_time, day_length, night_length),
         }
     }
 
@@ -146,9 +164,14 @@ impl SimulationController {
 
     /// Apply the current controller input for this tick and return the camera
     /// tuple (view, proj, cam_pos) after applying movement/look deltas.
+    /// Also advances the game clock.
     pub fn apply_input(&mut self, dt: f32) -> (Mat4, Mat4, Vec3) {
         self.player_controller
             .apply_input(&self.controller_input, dt);
+
+        // Advance game clock
+        self.game_clock.tick(dt);
+
         controller_to_camera(&self.player_controller)
     }
 
@@ -177,5 +200,30 @@ impl SimulationController {
     /// Get camera mode
     pub fn camera_mode(&self) -> CameraMode {
         self.player_controller.camera_mode
+    }
+
+    /// Get reference to the game clock
+    pub fn game_clock(&self) -> &GameClock {
+        &self.game_clock
+    }
+
+    /// Get mutable reference to the game clock
+    pub fn game_clock_mut(&mut self) -> &mut GameClock {
+        &mut self.game_clock
+    }
+
+    /// Get sun and moon directions from the game clock
+    pub fn celestial_directions(&self) -> (Vec3, Vec3) {
+        self.game_clock.celestial_directions()
+    }
+
+    /// Get current time of day in hours (0.0-24.0)
+    pub fn time_of_day(&self) -> f32 {
+        self.game_clock.time_of_day()
+    }
+
+    /// Set time of day directly (for debugging/testing)
+    pub fn set_time_of_day(&mut self, time: f32) {
+        self.game_clock.set_time(time);
     }
 }

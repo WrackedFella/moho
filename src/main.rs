@@ -97,6 +97,7 @@ struct App {
     #[cfg(feature = "ui-egui")]
     ui_event_rx: crossbeam_channel::Receiver<moho_core::events::UiEvent>,
     audio_event_rx: crossbeam_channel::Receiver<moho_core::events::AudioEvent>,
+    graphics_event_rx: crossbeam_channel::Receiver<moho_core::events::GraphicsEvent>,
 
     // Audio system (not thread-safe, stays on main thread)
     audio_system: Option<moho_audio::AudioSystem>,
@@ -187,6 +188,7 @@ impl App {
         #[cfg(feature = "ui-egui")]
         let (ui_event_tx, ui_event_rx) = crossbeam_channel::unbounded();
         let (audio_event_tx, audio_event_rx) = crossbeam_channel::unbounded();
+        let (graphics_event_tx, graphics_event_rx) = crossbeam_channel::unbounded();
 
         // Subscribe to UI events
         #[cfg(feature = "ui-egui")]
@@ -200,6 +202,13 @@ impl App {
         {
             event_bus.subscribe(move |event: &moho_core::events::AudioEvent| {
                 let _ = audio_event_tx.send(event.clone());
+            });
+        }
+
+        // Subscribe to Graphics events
+        {
+            event_bus.subscribe(move |event: &moho_core::events::GraphicsEvent| {
+                let _ = graphics_event_tx.send(event.clone());
             });
         }
 
@@ -230,6 +239,7 @@ impl App {
             #[cfg(feature = "ui-egui")]
             ui_event_rx,
             audio_event_rx,
+            graphics_event_rx,
 
             audio_system,
 
@@ -553,6 +563,9 @@ impl App {
                         name: "autosave".to_string(),
                         seed: None,
                         size_xz: 64,
+                        day_length_seconds: 600.0,
+                        night_length_seconds: 420.0,
+                        initial_time_of_day: 6.0,
                     });
             save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
             log::info!(
@@ -1061,6 +1074,77 @@ impl ApplicationHandler for App {
                 // Apply input via simulation wrapper and update camera from returned tuple.
                 let (view, proj, eye) = self.simulation.apply_input(dt);
                 self.camera = (view, proj, eye);
+
+                // Update lighting based on celestial positions from game clock
+                if let Some(ref mut wr) = self.window_renderer {
+                    let (sun_dir, moon_dir) = self.simulation.celestial_directions();
+                    let time = self.simulation.time_of_day();
+
+                    // Calculate sun intensity (0 when below horizon)
+                    let sun_intensity = if sun_dir.y > 0.0 { 1.0 } else { 0.0 };
+
+                    // Calculate moon intensity based on position and time
+                    // Moon is stronger at night, weaker during day transitions
+                    let moon_base_intensity = if moon_dir.y > 0.0 {
+                        // Moon is above horizon
+                        if !(5.0..21.0).contains(&time) {
+                            // Deep night: full moon brightness
+                            0.4
+                        } else if (5.0..7.0).contains(&time) {
+                            // Dawn: moon fading
+                            let t = (time - 5.0) / 2.0; // 0-1 over 2 hours
+                            0.4 * (1.0 - t) // 0.4 -> 0.0
+                        } else if (17.0..21.0).contains(&time) {
+                            // Dusk: moon rising
+                            let t = (time - 17.0) / 4.0; // 0-1 over 4 hours
+                            0.4 * t // 0.0 -> 0.4
+                        } else {
+                            // Day: moon barely visible if at all
+                            0.0
+                        }
+                    } else {
+                        // Moon below horizon
+                        0.0
+                    };
+
+                    // Calculate ambient lighting based on time of day
+                    // Night: 0-5, 21-24 (very low, blue-tinted)
+                    // Dawn: 5-7 (increasing, warm tint)
+                    // Day: 7-17 (full brightness, neutral)
+                    // Dusk: 17-21 (decreasing, warm tint)
+                    let (ambient_color, ambient_intensity) = if (7.0..17.0).contains(&time) {
+                        // Day: full brightness, cool ambient
+                        ([0.4, 0.5, 0.6], 0.15)
+                    } else if (5.0..7.0).contains(&time) {
+                        // Dawn: increasing brightness, warm tint
+                        let t = (time - 5.0) / 2.0; // 0-1 over 2 hours
+                        let intensity = 0.05 + t * 0.10; // 0.05 -> 0.15
+                        ([0.5, 0.45, 0.4], intensity)
+                    } else if (17.0..21.0).contains(&time) {
+                        // Dusk: decreasing brightness, warm tint
+                        let t = (time - 17.0) / 4.0; // 0-1 over 4 hours
+                        let intensity = 0.15 - t * 0.10; // 0.15 -> 0.05
+                        ([0.5, 0.4, 0.35], intensity)
+                    } else {
+                        // Night: very low brightness, blue tint
+                        ([0.3, 0.35, 0.5], 0.05)
+                    };
+
+                    let lighting = moho_renderer::LightingGpu {
+                        sun_direction: [sun_dir.x, sun_dir.y, sun_dir.z, sun_intensity],
+                        sun_color: [1.0, 0.95, 0.8, 0.0], // Warm sunlight
+                        moon_direction: [moon_dir.x, moon_dir.y, moon_dir.z, moon_base_intensity],
+                        moon_color: [0.7, 0.8, 0.9, 0.0], // Silver-blue moonlight
+                        ambient: [
+                            ambient_color[0],
+                            ambient_color[1],
+                            ambient_color[2],
+                            ambient_intensity,
+                        ],
+                        time_of_day: [time, 0.0, 0.0, 0.0],
+                    };
+                    wr.renderer.update_lighting(lighting);
+                }
             }
 
             if let Some(ref wr) = self.window_renderer {
@@ -1089,6 +1173,9 @@ impl ApplicationHandler for App {
                                 name,
                                 seed,
                                 size_xz: size,
+                                day_length_seconds: 600.0,
+                                night_length_seconds: 420.0,
+                                initial_time_of_day: 6.0,
                             };
                             if let Err(e) = self.generate_new_world(spec) {
                                 log::error!("Failed to generate new world: {}", e);
@@ -1171,6 +1258,26 @@ impl ApplicationHandler for App {
                     };
 
                     self.handle_audio_event(audio_event);
+                }
+            }
+
+            // Process graphics events from event bus
+            {
+                while let Ok(event) = self.graphics_event_rx.try_recv() {
+                    match event {
+                        moho_core::events::GraphicsEvent::TimeOfDayChanged { time, .. } => {
+                            // Set the game clock time directly (time is in hours 0-24)
+                            self.simulation.set_time_of_day(time);
+                            log::info!(
+                                "Time set to {:.2} ({})",
+                                time,
+                                self.simulation.game_clock().time_string()
+                            );
+                        }
+                        _ => {
+                            // Other graphics events not yet handled
+                        }
+                    }
                 }
             }
 

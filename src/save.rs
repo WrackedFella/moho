@@ -124,6 +124,9 @@ mod tests {
             name: "test-mod".to_string(),
             seed: Some(1234),
             size_xz: 64,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+            initial_time_of_day: 6.0,
         };
 
         write_scene_with_metadata(&path, &scene_bytes, &spec).expect("write ok");

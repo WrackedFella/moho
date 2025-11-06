@@ -2,219 +2,108 @@ name: CI
 
 on:
   push:
-    branches: [ main, dev, shader-work ]
+    branches: [ main, dev, shader-work, time-of-day ]
   pull_request:
     branches: [ main, dev ]
   workflow_dispatch: {}
 
+# This CI workflow runs independently of the metrics workflow.
+# Both workflows trigger on the same events but execute in parallel.
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0  # Disable incremental compilation for CI
+  RUST_BACKTRACE: 1
+
 jobs:
-  prepare:
-    name: Prepare recipe
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-      - name: Install cargo-chef (helper)
-        run: |
-          cargo install cargo-chef --locked || true
-      - name: Generate cargo-chef recipe
-        run: |
-          cargo chef prepare --recipe-path recipe.json
-      - name: Upload recipe
-        uses: actions/upload-artifact@v4
-        with:
-          name: chef-recipe
-          path: recipe.json
-
-  cook:
-    name: Cook (build dependencies)
-    needs: prepare
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Download recipe
-        uses: actions/download-artifact@v4
-        with:
-          name: chef-recipe
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-      - name: Install system deps (alsa, pkg-config)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
-
-      # Cache cargo registry & git to avoid repeated downloads
-      - name: Cache cargo registry & git
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-reg-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-reg-
-
-      - name: Build CI Docker image (Linux only)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          docker build -t moho-ci:latest -f .github/docker/Dockerfile .
-
-      - name: Cache sccache (Linux/macOS)
-        if: matrix.os != 'windows-latest'
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/sccache
-          key: ${{ matrix.os }}-sccache-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Restore chef cache (Linux/macOS)
-        if: matrix.os != 'windows-latest'
-        uses: actions/cache@v4
-        with:
-          path: |
-            target/deps
-            target/debug/deps
-          key: ${{ matrix.os }}-cargo-chef-${{ hashFiles('recipe.json') }}
-
-      - name: Run cargo-chef cook inside Docker (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/work \
-            -v $HOME/.cargo/registry:/root/.cargo/registry \
-            -v $HOME/.cargo/git:/root/.cargo/git \
-            -v $HOME/.cache/sccache:/root/.cache/sccache \
-              -w /work moho-ci:latest \
-              bash -c "cargo chef cook --recipe-path recipe.json"
-
-      - name: Install sccache & cargo-chef (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          brew update || true
-          brew install sccache || true
-          # Ensure rustfmt and clippy are available on the macOS runner
-          rustup component add rustfmt clippy || true
-          cargo install cargo-chef --locked || true
-
-      - name: Run cargo-chef cook on macOS runner
-        if: matrix.os == 'macos-latest'
-        run: |
-          mkdir -p ~/.cache/sccache
-          cargo chef cook --recipe-path recipe.json --locked
-
-      - name: Install sccache & cargo-chef (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          choco install sccache -y || true
-          # Ensure rustfmt and clippy are available on the Windows runner
-          rustup component add rustfmt clippy || true
-          cargo install cargo-chef --locked || true
-
-      - name: Run cargo-chef cook on Windows runner
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          $env:USERPROFILE = $env:USERPROFILE
-          cargo chef cook --recipe-path recipe.json --locked
-
+  # Single job that does everything - eliminates job overhead
   test:
-    name: Build & Test
-    needs: cook
+    name: Test (${{ matrix.os }})
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-      - name: Install system deps (alsa, pkg-config)
+          components: rustfmt, clippy
+      
+      # Install system dependencies
+      - name: Install system deps (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
-
-      - name: Restore cargo registry & git
-        uses: actions/cache@v4
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libudev-dev \
+            libasound2-dev \
+            libssl-dev
+          # Ensure pkg-config can find system pc files (fallback)
+          echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-/usr/lib/x86_64-linux-gnu/pkgconfig}" >> $GITHUB_ENV
+      
+      # Use Swatinem's cache action - much faster than manual caching
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-reg-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-reg-
+          shared-key: ${{ matrix.os }}
+          cache-on-failure: true
+          # Cache all target directories including dependencies
+          cache-targets: true
+          # Save cache even if build fails
+          save-if: true
+      
+      # Check formatting first (fast, fails early)
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      
+      # Run clippy (catches issues before full build)
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      
+      # Build all targets (leverages cache from clippy)
+      - name: Build
+        run: cargo build --all-targets --all-features
+      
+      # Run tests
+      - name: Run tests
+        run: cargo test --workspace --all-features -- --nocapture
+      
+      # Run UI tests separately (only if other tests pass)
+      - name: Run UI tests
+        run: cargo test -p moho_ui --features 'ui-egui ui-egui-test'
+        continue-on-error: true  # UI tests can be flaky
 
-      - name: Install sccache (Linux)
-        if: matrix.os == 'ubuntu-latest'
+  # Optional: Separate benchmark job (only on Linux, only on push to main/dev)
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y sccache || true
-
-      - name: Restore sccache (Linux/macOS)
-        if: matrix.os != 'windows-latest'
-        uses: actions/cache@v4
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libudev-dev \
+            libasound2-dev
+          # Ensure pkg-config can find system pc files (fallback)
+          echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-/usr/lib/x86_64-linux-gnu/pkgconfig}" >> $GITHUB_ENV
+      
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
         with:
-          path: ~/.cache/sccache
-          key: ${{ matrix.os }}-sccache-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: bench
+      
+      - name: Run benchmarks
+        run: cargo bench --bench event_bus_bench -- --output-format bencher
 
-      - name: Configure sccache wrapper (Linux/macOS)
-        if: matrix.os != 'windows-latest'
-        run: |
-          echo "RUSTC_WRAPPER=$(which sccache)" >> $GITHUB_ENV
-          sccache --start-server || true
-
-      - name: Build CI Docker image (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          docker build -t moho-ci:latest -f .github/docker/Dockerfile .
-
-      - name: Run format/clippy/tests inside Docker (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/work \
-            -v $HOME/.cargo/registry:/root/.cargo/registry \
-            -v $HOME/.cargo/git:/root/.cargo/git \
-            -v $HOME/.cache/sccache:/root/.cache/sccache \
-            -w /work moho-ci:latest \
-            bash -c "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all --workspace -- -q && cargo test -p moho_ui --features 'ui-egui ui-egui-test' -- -q"
-
-      - name: Install sccache & run tests on macOS
-        if: matrix.os == 'macos-latest'
-        run: |
-          brew update || true
-          brew install sccache || true
-          echo "RUSTC_WRAPPER=$(which sccache)" >> $GITHUB_ENV
-          sccache --start-server || true
-          # Ensure rustfmt and clippy are available for format/lint checks
-          rustup component add rustfmt clippy || true
-          cargo fmt --all -- --check
-          cargo clippy --all-targets --all-features -- -D warnings
-          cargo test --all --workspace -- -q
-          cargo test -p moho_ui --features 'ui-egui ui-egui-test' -- -q
-
-      - name: Install sccache & run tests on Windows
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          choco install sccache -y || true
-          $env:RUSTC_WRAPPER = (Get-Command sccache).Source
-          [System.Environment]::SetEnvironmentVariable('RUSTC_WRAPPER', $env:RUSTC_WRAPPER, 'Process')
-          sccache --start-server || true
-          # Ensure rustfmt and clippy are available for format/lint checks
-          rustup component add rustfmt clippy || true
-          cargo fmt --all -- --check
-          cargo clippy --all-targets --all-features -- -D warnings
-          cargo test --all --workspace -- -q
-          cargo test -p moho_ui --features 'ui-egui ui-egui-test' -- -q

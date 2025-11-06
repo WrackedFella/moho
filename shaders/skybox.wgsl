@@ -12,7 +12,10 @@ struct Camera {
 struct Lighting {
     sun_direction: vec4<f32>,  // xyz = direction (normalized), w = intensity
     sun_color: vec4<f32>,      // xyz = color, w = unused
+    moon_direction: vec4<f32>, // xyz = direction (normalized), w = intensity
+    moon_color: vec4<f32>,     // xyz = color, w = unused
     ambient: vec4<f32>,        // xyz = color, w = intensity
+    time_of_day: vec4<f32>,    // x = 0-24 hours, yzw = unused
 }
 
 @group(0) @binding(0)
@@ -111,14 +114,80 @@ fn inverse_mat4(m: mat4x4<f32>) -> mat4x4<f32> {
     );
 }
 
+// Calculate sky colors based on time of day
+fn get_sky_colors(time: f32) -> array<vec3<f32>, 3> {
+    // Time periods:
+    // Night:   0-5, 21-24 (deep blue/black)
+    // Dawn:    5-7 (warm oranges/pinks)
+    // Day:     7-17 (robin's egg blue)
+    // Dusk:    17-21 (warm oranges/reds)
+    
+    var zenith: vec3<f32>;
+    var horizon: vec3<f32>;
+    var ground: vec3<f32>;
+    
+    // Night colors (0-5, 21-24)
+    let night_zenith = vec3<f32>(0.05, 0.05, 0.15);   // Very dark blue
+    let night_horizon = vec3<f32>(0.1, 0.1, 0.2);     // Slightly lighter dark blue
+    let night_ground = vec3<f32>(0.05, 0.05, 0.1);    // Almost black
+    
+    // Dawn colors (5-7)
+    let dawn_zenith = vec3<f32>(0.3, 0.5, 0.7);       // Deep blue
+    let dawn_horizon = vec3<f32>(1.0, 0.6, 0.4);      // Orange/pink
+    let dawn_ground = vec3<f32>(0.2, 0.15, 0.2);      // Dark purple
+    
+    // Day colors (7-17)
+    let day_zenith = vec3<f32>(0.5, 0.85, 0.95);      // Robin's egg blue
+    let day_horizon = vec3<f32>(0.85, 0.95, 0.98);    // Almost white cyan
+    let day_ground = vec3<f32>(0.6, 0.65, 0.7);       // Light gray
+    
+    // Dusk colors (17-21)
+    let dusk_zenith = vec3<f32>(0.3, 0.4, 0.6);       // Deep blue
+    let dusk_horizon = vec3<f32>(1.0, 0.5, 0.3);      // Orange/red
+    let dusk_ground = vec3<f32>(0.2, 0.15, 0.15);     // Dark brown
+    
+    if (time >= 0.0 && time < 5.0) {
+        // Night (0-5)
+        zenith = night_zenith;
+        horizon = night_horizon;
+        ground = night_ground;
+    } else if (time >= 5.0 && time < 7.0) {
+        // Dawn transition (5-7)
+        let t = smoothstep(5.0, 7.0, time);
+        zenith = mix(night_zenith, dawn_zenith, t);
+        horizon = mix(night_horizon, dawn_horizon, t);
+        ground = mix(night_ground, dawn_ground, t);
+    } else if (time >= 7.0 && time < 17.0) {
+        // Day (7-17)
+        zenith = day_zenith;
+        horizon = day_horizon;
+        ground = day_ground;
+    } else if (time >= 17.0 && time < 21.0) {
+        // Dusk transition (17-21)
+        let t = smoothstep(17.0, 21.0, time);
+        zenith = mix(day_zenith, dusk_zenith, t);
+        horizon = mix(day_horizon, dusk_horizon, t);
+        ground = mix(day_ground, dusk_ground, t);
+    } else {
+        // Night (21-24)
+        zenith = night_zenith;
+        horizon = night_horizon;
+        ground = night_ground;
+    }
+    
+    return array<vec3<f32>, 3>(zenith, horizon, ground);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let dir = normalize(in.world_pos);
+    let time = lighting.time_of_day.x;
     
-    // Sky gradient from zenith to horizon - Robin's egg blue theme
-    let zenith_color = vec3<f32>(0.5, 0.85, 0.95);    // Bright robin's egg blue at top
-    let horizon_color = vec3<f32>(0.85, 0.95, 0.98);  // Almost white cyan at horizon
-    let ground_color = vec3<f32>(0.6, 0.65, 0.7);     // Light gray ground
+    // Get sky colors based on time of day
+    let colors = get_sky_colors(time);
+    let zenith_color = colors[0];
+    let horizon_color = colors[1];
+    let ground_color = colors[2];
     
     // Interpolate based on vertical direction
     let t = dir.y; // -1 (down) to 1 (up)
@@ -159,6 +228,33 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let scatter_factor = max(0.0, sun_dot);
     let scatter = pow(scatter_factor, 8.0) * 0.3 * sun_col;
     sky_color = sky_color + scatter;
+    
+    // Add moon disk
+    let moon_dir = normalize(lighting.moon_direction.xyz);
+    let moon_col = lighting.moon_color.xyz;
+    let moon_intensity = lighting.moon_direction.w;
+    
+    let moon_dot = dot(dir, moon_dir);
+    
+    // Moon disk (same size as sun for simplicity)
+    let moon_size = 0.9998; // cos(~1.1°) - same as sun
+    let moon_glow_size = 0.998; // Subtle glow around moon
+    
+    if (moon_dot > moon_size) {
+        // Bright moon disk (softer than sun)
+        let moon_brightness = moon_col * moon_intensity * 1.5;
+        sky_color = sky_color + moon_brightness;
+    } else if (moon_dot > moon_glow_size) {
+        // Moon glow/corona (more subtle than sun)
+        let glow_factor = smoothstep(moon_glow_size, moon_size, moon_dot);
+        let glow = moon_col * moon_intensity * glow_factor * 0.8;
+        sky_color = sky_color + glow;
+    }
+    
+    // Atmospheric scattering effect near moon (very subtle)
+    let moon_scatter_factor = max(0.0, moon_dot);
+    let moon_scatter = pow(moon_scatter_factor, 12.0) * 0.15 * moon_col;
+    sky_color = sky_color + moon_scatter;
     
     return vec4<f32>(sky_color, 1.0);
 }
