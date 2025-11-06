@@ -9,19 +9,14 @@
 
 ### ⭐ Start Here
 - **[../README.md](../README.md)** - Main project README with quick start guide
-- **[CLEANUP_NOTES.md](CLEANUP_NOTES.md)** - Redirect to todo/CLEANUP_NOTES.md
 
-### 🎯 Event Bus (Latest - Production Ready)
-- **[Best Practices](engine_core/EVENT_BUS_BEST_PRACTICES.md)** ⭐ Usage patterns, common pitfalls, migration guide
+### 🎯 Event Bus (Production Ready)
+- **[Best Practices](engine_core/EVENT_BUS_BEST_PRACTICES.md)** ⭐ Usage patterns, common pitfalls, design patterns
 - **[Performance Analysis](engine_core/EVENT_BUS_PERFORMANCE.md)** - Benchmark results (11.4M events/sec, <1% frame budget)
-- **[Testing Notes](engine_core/EVENT_BUS_TESTING_NOTES.md)** - Test findings, limitations, code examples
-- **[Complete Summary](engine_core/EVENT_BUS_SUMMARY.md)** - Full implementation details and statistics
 
 ### 🏗️ Core Systems
-- **[engine_core/CONCEPTS.md](engine_core/CONCEPTS.md)** - Core architecture and design
-- **[engine_renderer/CONCEPTS.md](engine_renderer/CONCEPTS.md)** - Rendering system
-- **[engine_audio/CONCEPTS.md](engine_audio/CONCEPTS.md)** - Audio system
-- **[moho_ui/CONCEPTS.md](moho_ui/CONCEPTS.md)** - UI system integration
+
+For detailed information on each system, see the respective library README files in the workspace.
 
 ### 📖 Reference
 - **[gpu_abi.md](gpu_abi.md)** - Shader/CPU data layout requirements

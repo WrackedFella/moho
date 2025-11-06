@@ -72,23 +72,26 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## Documentation
 
-### Event Bus
-- **[Best Practices](docs/engine_core/EVENT_BUS_BEST_PRACTICES.md)** - Usage patterns and common pitfalls
-- **[Performance Analysis](docs/engine_core/EVENT_BUS_PERFORMANCE.md)** - Benchmark results (11M events/sec)
-- **[Testing Notes](docs/engine_core/EVENT_BUS_TESTING_NOTES.md)** - Test findings and limitations
-- **[Complete Summary](docs/engine_core/EVENT_BUS_SUMMARY.md)** - Full implementation details
+### Library Documentation
+Each workspace crate has comprehensive documentation in its README:
+- **[moho_core/README.md](moho_core/README.md)** - Event bus, game clock, voxels, camera
+- **[moho_renderer/README.md](moho_renderer/README.md)** - WGPU rendering, CSM shadows, lighting
+- **[moho_audio/README.md](moho_audio/README.md)** - Audio playback and event handling
+- **[moho_ui/README.md](moho_ui/README.md)** - egui menus, settings, console, overlays
+- **[moho_input/README.md](moho_input/README.md)** - Input mapping and key bindings
+- **[moho_sim/README.md](moho_sim/README.md)** - Deterministic simulation and snapshots
 
-### Core Concepts
-- **[moho_core Concepts](docs/engine_core/CONCEPTS.md)** - Architecture and design decisions
-- **[moho_renderer Concepts](docs/engine_renderer/CONCEPTS.md)** - Rendering system overview
-- **[moho_audio Concepts](docs/engine_audio/CONCEPTS.md)** - Audio system design
-- **[moho_ui Concepts](docs/moho_ui/CONCEPTS.md)** - UI system integration
-
-### Other Docs
-- **[GPU ABI](docs/gpu_abi.md)** - Shader/CPU data layout requirements
-- **[Preferences Format](docs/prefs_format.md)** - Configuration file structure
+### Architecture Documentation
+- **[Event Bus Best Practices](docs/engine_core/EVENT_BUS_BEST_PRACTICES.md)** - Usage patterns and common pitfalls
+- **[Event Bus Performance](docs/engine_core/EVENT_BUS_PERFORMANCE.md)** - Benchmark results (11M events/sec)
 - **[Console Architecture](docs/CONSOLE_ARCHITECTURE.md)** - Debug console system design
 - **[Game State Architecture](docs/GAME_STATE_ARCHITECTURE.md)** - State machine documentation
+- **[Adding Console Commands](docs/ADDING_CONSOLE_COMMANDS.md)** - Extending the console
+
+### Technical Reference
+- **[GPU ABI](docs/gpu_abi.md)** - Shader/CPU data layout requirements (Material, Camera, Lighting, CSM)
+- **[Preferences Format](docs/prefs_format.md)** - Configuration file structure
+- **[Documentation Index](docs/README.md)** - Complete documentation overview
 
 ### Day/Night Cycle
 
@@ -113,7 +116,7 @@ let spec = moho_core::scene_builders::WorldSpec {
 };
 ```
 
-See [Day/Night Status Report](docs/DAY_NIGHT_STATUS_REPORT.md) for full implementation details.
+See [moho_core/README.md](moho_core/README.md) for GameClock API details.
 
 ### Debug Console (Developer)
 
