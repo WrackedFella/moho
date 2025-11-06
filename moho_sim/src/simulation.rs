@@ -144,7 +144,12 @@ impl SimulationController {
     }
 
     /// Create a new SimulationController with custom clock configuration.
-    pub fn with_clock(position: Vec3, day_length: f32, night_length: f32, initial_time: f32) -> Self {
+    pub fn with_clock(
+        position: Vec3,
+        day_length: f32,
+        night_length: f32,
+        initial_time: f32,
+    ) -> Self {
         Self {
             player_controller: PlayerController::new(position),
             controller_input: ControllerInput::default(),
@@ -163,10 +168,10 @@ impl SimulationController {
     pub fn apply_input(&mut self, dt: f32) -> (Mat4, Mat4, Vec3) {
         self.player_controller
             .apply_input(&self.controller_input, dt);
-        
+
         // Advance game clock
         self.game_clock.tick(dt);
-        
+
         controller_to_camera(&self.player_controller)
     }
 

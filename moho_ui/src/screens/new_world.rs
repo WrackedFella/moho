@@ -89,9 +89,9 @@ impl UiComponent for NewWorldMenu {
                                 name,
                                 seed,
                                 size_xz: self.size_xz,
-                                day_length_seconds: 600.0,   // Default 10 minute days
+                                day_length_seconds: 600.0, // Default 10 minute days
                                 night_length_seconds: 420.0, // Default 7 minute nights
-                                initial_time_of_day: 6.0,    // Start at dawn
+                                initial_time_of_day: 6.0,  // Start at dawn
                             };
                             items.push(MenuItem {
                                 action: MenuAction::GenerateWorld(spec),

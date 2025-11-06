@@ -437,8 +437,10 @@ impl FrameCallback for EguiAdapter {
                             use moho_core::events::GraphicsEvent;
                             // Time is now in hours (0-24) and will be set directly on the game clock
                             // The sun_angle field is kept for backward compatibility but not used
-                            self.event_bus
-                                .publish(GraphicsEvent::TimeOfDayChanged { time, sun_angle: 0.0 });
+                            self.event_bus.publish(GraphicsEvent::TimeOfDayChanged {
+                                time,
+                                sun_angle: 0.0,
+                            });
                         }
                         ConsoleAction::None => {}
                     }

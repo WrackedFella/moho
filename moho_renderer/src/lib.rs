@@ -1680,7 +1680,7 @@ impl RendererBackend for gfx::placeholder::Renderer {
         0
     }
     fn set_materials(&mut self, _materials: &[crate::MaterialGpu]) {}
-    
+
     fn update_lighting(&mut self, _lighting: crate::gpu_types::LightingGpu) {
         // no-op in placeholder
     }

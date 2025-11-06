@@ -230,7 +230,8 @@ impl Console {
                 self.add_output("  noclip - Toggle noclip mode (fly through walls)".to_string());
                 self.add_output("  sun <yaw> <pitch> - Set sun direction (degrees)".to_string());
                 self.add_output(
-                    "  time <0-24> - Set time of day (0=midnight, 6=dawn, 12=noon, 18=dusk)".to_string(),
+                    "  time <0-24> - Set time of day (0=midnight, 6=dawn, 12=noon, 18=dusk)"
+                        .to_string(),
                 );
                 ConsoleAction::None
             }

@@ -17,13 +17,13 @@ use std::f32::consts::PI;
 pub struct GameClock {
     /// Current time of day in hours (0.0 = midnight, 12.0 = noon, 24.0 wraps to 0.0)
     time_of_day: f32,
-    
+
     /// Length of daytime in real-world seconds
     day_length_seconds: f32,
-    
+
     /// Length of nighttime in real-world seconds
     night_length_seconds: f32,
-    
+
     /// Total elapsed time in seconds (for debugging/stats)
     elapsed_seconds: f64,
 }
@@ -39,7 +39,7 @@ impl GameClock {
     /// # Example
     /// ```
     /// use moho_core::game_clock::GameClock;
-    /// 
+    ///
     /// // 10 minute days, 7 minute nights, starting at dawn
     /// let clock = GameClock::new(6.0, 600.0, 420.0);
     /// ```
@@ -61,7 +61,7 @@ impl GameClock {
     /// * `dt` - Delta time in real-world seconds
     pub fn tick(&mut self, dt: f32) {
         self.elapsed_seconds += dt as f64;
-        
+
         // Determine current phase and corresponding speed
         let time_speed = if self.is_daytime() {
             // Day phase: 6:00 - 18:00 (12 hours)
@@ -70,7 +70,7 @@ impl GameClock {
             // Night phase: 18:00 - 6:00 (12 hours)
             12.0 / self.night_length_seconds
         };
-        
+
         // Advance time and wrap at 24 hours
         self.time_of_day += dt * time_speed;
         self.time_of_day = self.time_of_day.rem_euclid(24.0);
@@ -150,19 +150,19 @@ impl GameClock {
         // Time range 6-18 maps to angle range -90° to +90° (π/2 to -π/2)
         let hours_since_dawn = time - 6.0; // 0.0 to 12.0
         let progress = hours_since_dawn / 12.0; // 0.0 to 1.0
-        
+
         // Azimuth: sweep from east (-π/2) through south (0) to west (π/2)
         let azimuth = (progress - 0.5) * PI; // -π/2 to π/2
-        
+
         // Elevation: parabolic arc, max elevation at noon
         // Use sine curve for smooth arc: 0° at horizon, max 60° at zenith
         let elevation = (progress * PI).sin() * (PI / 3.0); // 0 to 60° and back to 0
-        
+
         // Convert spherical coordinates to Cartesian (x=east, y=up, z=north)
         let x = azimuth.sin() * elevation.cos(); // East-west component
-        let y = elevation.sin();                  // Elevation component
+        let y = elevation.sin(); // Elevation component
         let z = azimuth.cos() * elevation.cos(); // North-south component
-        
+
         Vec3::new(x, y, z).normalize()
     }
 
@@ -203,7 +203,7 @@ mod tests {
     fn test_time_wrapping() {
         let mut clock = GameClock::new(23.5, 600.0, 300.0);
         assert_eq!(clock.time_of_day(), 23.5);
-        
+
         clock.set_time(25.0); // Should wrap to 1.0
         assert_eq!(clock.time_of_day(), 1.0);
     }
@@ -213,7 +213,7 @@ mod tests {
         let mut clock = GameClock::new(12.0, 600.0, 300.0);
         assert!(clock.is_daytime());
         assert!(!clock.is_nighttime());
-        
+
         clock.set_time(22.0);
         assert!(!clock.is_daytime());
         assert!(clock.is_nighttime());
@@ -223,7 +223,7 @@ mod tests {
     fn test_sun_direction_noon() {
         let clock = GameClock::new(12.0, 600.0, 300.0);
         let sun = clock.sun_direction();
-        
+
         // At noon, sun should be high (positive Y) and pointing south (positive Z)
         assert!(sun.y > 0.7, "Sun should be high at noon");
         assert!(sun.z > 0.0, "Sun should be in south at noon");
@@ -233,7 +233,7 @@ mod tests {
     fn test_sun_direction_dawn() {
         let clock = GameClock::new(6.0, 600.0, 300.0);
         let sun = clock.sun_direction();
-        
+
         // At dawn, sun should be at horizon in the east
         assert!(sun.y.abs() < 0.2, "Sun should be near horizon at dawn");
         assert!(sun.x < -0.5, "Sun should be in east at dawn");
@@ -243,7 +243,7 @@ mod tests {
     fn test_sun_below_horizon() {
         let clock = GameClock::new(22.0, 600.0, 300.0);
         let sun = clock.sun_direction();
-        
+
         // At night, sun should point down
         assert_eq!(sun, Vec3::NEG_Y);
     }
@@ -252,13 +252,13 @@ mod tests {
     fn test_moon_opposite_sun() {
         let clock = GameClock::new(12.0, 600.0, 300.0);
         let moon = clock.moon_direction();
-        
+
         // At noon, moon should be below horizon (midnight for moon)
         assert_eq!(moon, Vec3::NEG_Y);
-        
+
         let clock = GameClock::new(0.0, 600.0, 300.0);
         let moon = clock.moon_direction();
-        
+
         // At midnight, moon should be high (noon for moon)
         assert!(moon.y > 0.7, "Moon should be high at midnight");
     }
@@ -267,9 +267,9 @@ mod tests {
     fn test_clock_tick() {
         let mut clock = GameClock::new(12.0, 120.0, 120.0); // Fast 2-minute cycles
         let initial_time = clock.time_of_day();
-        
+
         clock.tick(1.0); // Advance 1 second
-        
+
         assert!(clock.time_of_day() > initial_time);
         assert_eq!(clock.elapsed_seconds(), 1.0);
     }
@@ -278,7 +278,7 @@ mod tests {
     fn test_time_string() {
         let clock = GameClock::new(14.5, 600.0, 300.0);
         assert_eq!(clock.time_string(), "14:30");
-        
+
         let clock = GameClock::new(9.0, 600.0, 300.0);
         assert_eq!(clock.time_string(), "09:00");
     }

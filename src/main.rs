@@ -1074,27 +1074,27 @@ impl ApplicationHandler for App {
                 // Apply input via simulation wrapper and update camera from returned tuple.
                 let (view, proj, eye) = self.simulation.apply_input(dt);
                 self.camera = (view, proj, eye);
-                
+
                 // Update lighting based on celestial positions from game clock
                 if let Some(ref mut wr) = self.window_renderer {
                     let (sun_dir, moon_dir) = self.simulation.celestial_directions();
                     let time = self.simulation.time_of_day();
-                    
+
                     // Calculate sun intensity (0 when below horizon)
                     let sun_intensity = if sun_dir.y > 0.0 { 1.0 } else { 0.0 };
-                    
+
                     // Calculate moon intensity based on position and time
                     // Moon is stronger at night, weaker during day transitions
                     let moon_base_intensity = if moon_dir.y > 0.0 {
                         // Moon is above horizon
-                        if time >= 21.0 || time < 5.0 {
+                        if !(5.0..21.0).contains(&time) {
                             // Deep night: full moon brightness
                             0.4
-                        } else if time >= 5.0 && time < 7.0 {
+                        } else if (5.0..7.0).contains(&time) {
                             // Dawn: moon fading
                             let t = (time - 5.0) / 2.0; // 0-1 over 2 hours
                             0.4 * (1.0 - t) // 0.4 -> 0.0
-                        } else if time >= 17.0 && time < 21.0 {
+                        } else if (17.0..21.0).contains(&time) {
                             // Dusk: moon rising
                             let t = (time - 17.0) / 4.0; // 0-1 over 4 hours
                             0.4 * t // 0.0 -> 0.4
@@ -1106,21 +1106,21 @@ impl ApplicationHandler for App {
                         // Moon below horizon
                         0.0
                     };
-                    
+
                     // Calculate ambient lighting based on time of day
                     // Night: 0-5, 21-24 (very low, blue-tinted)
                     // Dawn: 5-7 (increasing, warm tint)
                     // Day: 7-17 (full brightness, neutral)
                     // Dusk: 17-21 (decreasing, warm tint)
-                    let (ambient_color, ambient_intensity) = if time >= 7.0 && time < 17.0 {
+                    let (ambient_color, ambient_intensity) = if (7.0..17.0).contains(&time) {
                         // Day: full brightness, cool ambient
                         ([0.4, 0.5, 0.6], 0.15)
-                    } else if time >= 5.0 && time < 7.0 {
+                    } else if (5.0..7.0).contains(&time) {
                         // Dawn: increasing brightness, warm tint
                         let t = (time - 5.0) / 2.0; // 0-1 over 2 hours
                         let intensity = 0.05 + t * 0.10; // 0.05 -> 0.15
                         ([0.5, 0.45, 0.4], intensity)
-                    } else if time >= 17.0 && time < 21.0 {
+                    } else if (17.0..21.0).contains(&time) {
                         // Dusk: decreasing brightness, warm tint
                         let t = (time - 17.0) / 4.0; // 0-1 over 4 hours
                         let intensity = 0.15 - t * 0.10; // 0.15 -> 0.05
@@ -1129,13 +1129,18 @@ impl ApplicationHandler for App {
                         // Night: very low brightness, blue tint
                         ([0.3, 0.35, 0.5], 0.05)
                     };
-                    
+
                     let lighting = moho_renderer::LightingGpu {
                         sun_direction: [sun_dir.x, sun_dir.y, sun_dir.z, sun_intensity],
                         sun_color: [1.0, 0.95, 0.8, 0.0], // Warm sunlight
                         moon_direction: [moon_dir.x, moon_dir.y, moon_dir.z, moon_base_intensity],
                         moon_color: [0.7, 0.8, 0.9, 0.0], // Silver-blue moonlight
-                        ambient: [ambient_color[0], ambient_color[1], ambient_color[2], ambient_intensity],
+                        ambient: [
+                            ambient_color[0],
+                            ambient_color[1],
+                            ambient_color[2],
+                            ambient_intensity,
+                        ],
                         time_of_day: [time, 0.0, 0.0, 0.0],
                     };
                     wr.renderer.update_lighting(lighting);
@@ -1263,7 +1268,11 @@ impl ApplicationHandler for App {
                         moho_core::events::GraphicsEvent::TimeOfDayChanged { time, .. } => {
                             // Set the game clock time directly (time is in hours 0-24)
                             self.simulation.set_time_of_day(time);
-                            log::info!("Time set to {:.2} ({})", time, self.simulation.game_clock().time_string());
+                            log::info!(
+                                "Time set to {:.2} ({})",
+                                time,
+                                self.simulation.game_clock().time_string()
+                            );
                         }
                         _ => {
                             // Other graphics events not yet handled
