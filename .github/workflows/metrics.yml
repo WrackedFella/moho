@@ -1,13 +1,10 @@
 # Standalone metrics workflow using mozilla/rust-code-analysis CLI
 # Produces per-file JSON metrics and a small aggregated summary, uploads as artifact.
 #
-# Triggers: push and pull_request by default. Adjust as needed.
+# Triggers: pull_request only (runs on PRs into any branch)
 name: "Metrics — rust-code-analysis"
 
 on:
-  push:
-    branches:
-      - '**'
   pull_request:
     branches:
       - '**'
@@ -47,10 +44,20 @@ jobs:
         run: |
           set -euo pipefail
           TMPDIR=$(mktemp -d)
+          echo "Building rust-code-analysis in $TMPDIR"
           git clone --depth 1 https://github.com/mozilla/rust-code-analysis.git "$TMPDIR"
-          cd "$TMPDIR/rust-code-analysis-cli"
-          cargo build --release
-          cp target/release/rust-code-analysis-cli "$GITHUB_WORKSPACE/"
+          cd "$TMPDIR"
+          cargo build --release -p rust-code-analysis-cli
+          # Find the binary (might be in different locations)
+          CLI_PATH=$(find target/release -name "rust-code-analysis-cli" -type f | head -1)
+          if [ -z "$CLI_PATH" ]; then
+            echo "ERROR: rust-code-analysis-cli binary not found"
+            find target/release -type f -executable
+            exit 1
+          fi
+          echo "Found CLI at: $CLI_PATH"
+          cp "$CLI_PATH" "$GITHUB_WORKSPACE/rust-code-analysis-cli"
+          chmod +x "$GITHUB_WORKSPACE/rust-code-analysis-cli"
 
       - name: Run metrics (produce JSON per-file)
         run: |
