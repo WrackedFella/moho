@@ -1,7 +1,7 @@
 # Moho Documentation Index
 
-**Last Updated**: October 26, 2025  
-**Status**: Event Bus Complete, Production Ready
+**Last Updated**: November 6, 2025  
+**Status**: Production Ready - Event Bus, Day/Night Cycle, Shadows
 
 ---
 
@@ -9,8 +9,7 @@
 
 ### ⭐ Start Here
 - **[../README.md](../README.md)** - Main project README with quick start guide
-- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Common tasks and commands
-- **[CLEANUP_NOTES.md](CLEANUP_NOTES.md)** - Low-risk improvements and findings
+- **[CLEANUP_NOTES.md](CLEANUP_NOTES.md)** - Redirect to todo/CLEANUP_NOTES.md
 
 ### 🎯 Event Bus (Latest - Production Ready)
 - **[Best Practices](engine_core/EVENT_BUS_BEST_PRACTICES.md)** ⭐ Usage patterns, common pitfalls, migration guide
@@ -123,13 +122,26 @@ cargo bench --bench event_bus_bench
 - Event-driven triggering
 - Background music support
 
-### 🎯 Next Steps
+**Day/Night Cycle** (November 2025)
+- GameClock with 24-hour cycle (asymmetric day 600s / night 420s)
+- Dynamic sun and moon with realistic celestial arcs
+- Time-based sky colors (night, dawn, day, dusk transitions)
+- Dual directional lighting (sun + moon) with dynamic intensities
+- Ambient lighting adjusts with time of day
+- Console command: `time <0-24>` for testing
 
-**Debug Console Overlay** (Planned)
-- Leverage event bus for command execution
-- Use DebugEvent type for logging
-- Implement command history
-- Save command for debugging
+**Cascaded Shadow Mapping**
+- 4 cascades covering 0-800 units
+- 4096×4096 shadow maps per cascade
+- PCF soft shadows
+- Sun-based shadows (moon does not cast shadows)
+
+**Debug Console**
+- Command execution with event bus integration
+- Time control for day/night testing
+- Settings management
+
+### 🎯 Next Steps
 
 **Multiplayer Foundation**
 - Network event serialization
@@ -190,40 +202,8 @@ start target/criterion/report/index.html
 
 ---
 
-## 📂 Historical Documents
-
-These documents are kept for reference but may be outdated:
-
-- **[terrain_generation_plan.md](terrain_generation_plan.md)** - Original terrain plan (deprecated)
-- **[terrain_generation_plan_revised.md](terrain_generation_plan_revised.md)** - Voxel-based system plan
-- **[phase3_rendering_plan.md](phase3_rendering_plan.md)** - Phase 3 rendering (completed)
-- **[CURRENT_STATE.md](CURRENT_STATE.md)** - Previous state snapshot
-- **[CUSTOM_MESH_RENDERING_PLAN.md](CUSTOM_MESH_RENDERING_PLAN.md)** - Custom mesh plan
-
----
-
 **Maintained By**: Moho Development Team  
-**Last Major Update**: Event Bus Implementation (October 2025)  
-**Branch**: `event-bus` → merge to `dev`
-
-4. **Create New Branch**
-   ```bash
-   git checkout -b custom-mesh-rendering
-   ```
-
-5. **Explore Renderer**
-   ```bash
-   # Study these files first
-   code moho_renderer/src/lib.rs
-   code moho_renderer/src/scene.rs
-   code moho_renderer/src/gpu_types.rs
-   ```
-
-6. **Start Phase 1 of Custom Mesh Plan**
-   - Define `CustomMesh` trait
-   - Implement for `VoxelChunk`
-   - Create collection function
-   - **Reference**: Lines 48-135 in `CUSTOM_MESH_RENDERING_PLAN.md`
+**Last Major Update**: Day/Night Cycle, Shadows, Event Bus (November 2025)
 
 ---
 
@@ -257,83 +237,6 @@ These changes improve input predictability and make keybind capture robust acros
 
 ---
 
-## 🔧 Technical Reference
-
-### Key Files Modified
-- `moho_core/Cargo.toml` - Added noise dependency
-- `moho_core/src/lib.rs` - Exported voxel module
-- `moho_core/src/voxel.rs` - Complete voxel system (644 lines)
-- `moho_core/src/scene_builders.rs` - Terrain generation
-- `moho_core/src/actors.rs` - Instance collection
-- `src/main.rs` - Camera position and scene selection
-
-### Key Files to Modify Next
-- `moho_core/src/actors.rs` - Add `CustomMesh` trait
-- `moho_renderer/src/scene.rs` - Add custom mesh manager
-- `moho_renderer/src/lib.rs` - Integrate custom rendering
-- Main render loop - Call custom mesh collection
-
-### Dependencies
-- `noise = "0.9"` - Perlin noise
-- `glam` - Math types
-- `legion` - ECS
-- `wgpu` - GPU backend
-- `bytemuck` - GPU data marshalling
-
 ---
 
-## 🎯 Goals by Document
-
-| Document | Primary Goal | Audience |
-|----------|-------------|----------|
-| CURRENT_STATE.md | Understand what's done and what's next | Starting new session |
-| CUSTOM_MESH_RENDERING_PLAN.md | Step-by-step implementation guide | Implementing renderer changes |
-| terrain_generation_plan_revised.md | System architecture reference | Understanding design decisions |
-| phase3_rendering_plan.md | Historical record of Phase 3 | Understanding what was attempted |
-
----
-
-## 💡 Tips
-
-1. **Always start with CURRENT_STATE.md** - It has the latest status
-2. **CUSTOM_MESH_RENDERING_PLAN.md is your roadmap** - Follow it phase by phase
-3. **Commit frequently** - This is experimental renderer work
-4. **Test with single chunk first** - Simplify debugging
-5. **Keep world-generation branch stable** - Use feature branch for renderer work
-
----
-
-## 📝 Notes
-
-- All voxel terrain code is **production ready** and well-tested
-- The rendering blocker is **architectural, not a bug** in voxel code
-- Face culling optimization is **already implemented** and will work once rendering works
-- Camera position **already fixed** for terrain viewing
-- Terrain generation **takes ~11 seconds** for smoothing pass (acceptable)
-
----
-
-## 🔗 Related Files
-
-### Source Code
-- `moho_core/src/voxel.rs` - Core voxel system
-- `moho_core/src/scene_builders.rs` - Terrain generation
-- `moho_core/src/actors.rs` - Renderable trait
-- `moho_renderer/src/` - Rendering system (to be modified)
-
-### Shaders
-- `shaders/vertex.wgsl` - Vertex shader (check compatibility)
-- `shaders/fragment.wgsl` - Fragment shader
-- `shaders/common.wgsl` - Shared structures
-
-### Configuration
-- Default terrain: GentleHills, amplitude 8.0, frequency 0.05
-- Chunk size: 64×64×64 blocks
-- Block coloring: Top faces = green, Side faces = light brown
-- Materials: 0=grass, 1=dirt, 2=stone (used for physics/behavior)
-- Resources: 0=stone, 1=iron ore (10% spawn rate)
-
----
-
-**Ready to proceed? Start with `CURRENT_STATE.md` then move to `CUSTOM_MESH_RENDERING_PLAN.md`** 🚀
-
+For more information, see the specific architecture documents or refer to the main project [README](../README.md).

@@ -8,6 +8,7 @@ pub mod actors;
 pub mod camera;
 pub mod controller;
 pub mod events;
+pub mod game_clock;
 pub mod input;
 pub mod materials;
 pub mod scene_builders;

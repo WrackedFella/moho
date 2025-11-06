@@ -17,8 +17,10 @@ The project emphasizes **separation of concerns** between simulation and renderi
 
 ### Key Features
 
+✅ **Day/Night Cycle** - 24-hour clock with moving sun/moon, dynamic sky colors, and moonlight  
 ✅ **Event Bus System** - Type-safe pub/sub for decoupled system communication  
 ✅ **Voxel Terrain** - Chunk-based world with face culling (87% triangle reduction)  
+✅ **Cascaded Shadow Maps** - High-quality shadows with 4 cascades (4096×4096)  
 ✅ **Deterministic Simulation** - Snapshot/restore with CRC validation  
 ✅ **ECS Architecture** - Legion-based entity component system  
 ✅ **Cross-platform** - Windows, macOS, Linux support via WGPU
@@ -83,15 +85,41 @@ cargo clippy --all-targets --all-features -- -D warnings
 - **[moho_ui Concepts](docs/moho_ui/CONCEPTS.md)** - UI system integration
 
 ### Other Docs
-- **[Quick Reference](docs/QUICK_REFERENCE.md)** - Common tasks and patterns
 - **[GPU ABI](docs/gpu_abi.md)** - Shader/CPU data layout requirements
 - **[Preferences Format](docs/prefs_format.md)** - Configuration file structure
+- **[Console Architecture](docs/CONSOLE_ARCHITECTURE.md)** - Debug console system design
+- **[Game State Architecture](docs/GAME_STATE_ARCHITECTURE.md)** - State machine documentation
+
+### Day/Night Cycle
+
+The game features a complete day/night cycle with realistic celestial mechanics:
+
+- **24-Hour Clock** - Configurable day/night lengths (default: 10 min day, 7 min night)
+- **Dynamic Sky** - Time-based colors: dawn (warm orange), day (robin's egg blue), dusk (red/orange), night (dark blue)
+- **Sun & Moon** - Realistic movement across the sky (sun rises east, peaks south, sets west; moon opposite)
+- **Moonlight** - Moon provides blue-silver directional lighting at night (intensity 0.4)
+- **Dynamic Lighting** - Ambient lighting adjusts with time (0.05-0.15 intensity)
+- **Console Control** - Use `time <0-24>` to jump to any time (e.g., `time 0` = midnight, `time 12` = noon)
+
+**Configuration** (per world):
+```rust
+let spec = moho_core::scene_builders::WorldSpec {
+    name: "My World".to_string(),
+    seed: Some(12345),
+    size_xz: 64,
+    day_length_seconds: 600.0,    // 10 minutes
+    night_length_seconds: 420.0,   // 7 minutes
+    initial_time_of_day: 6.0,      // Start at dawn
+};
+```
+
+See [Day/Night Status Report](docs/DAY_NIGHT_STATUS_REPORT.md) for full implementation details.
 
 ### Debug Console (Developer)
 
 - Toggle: Press the backtick (`) while in the Playing state to open the debug console overlay; press Escape to close it.
 - Purpose: Lightweight in-game console for diagnostics, executing debug commands, and publishing events to the application's `EventBus`.
-- Commands: `help`, `clear`, `quit`, `god`, `noclip` (the console is extensible; commands publish `UiEvent`/`DebugEvent` variants).
+- Commands: `help`, `clear`, `quit`, `god`, `noclip`, `time <0-24>` (the console is extensible; commands publish `UiEvent`/`DebugEvent` variants).
 
 Example: subscribe to console events via the `EventBus`:
 

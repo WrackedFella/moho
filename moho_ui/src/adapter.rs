@@ -435,11 +435,10 @@ impl FrameCallback for EguiAdapter {
                         }
                         ConsoleAction::SetTimeOfDay(time) => {
                             use moho_core::events::GraphicsEvent;
-                            // Calculate sun angle from time (0.0 = midnight, 0.5 = noon)
-                            // Sun angle: 0 = horizon (sunrise/sunset), PI/2 = zenith (noon)
-                            let sun_angle = (time - 0.25) * 2.0 * std::f32::consts::PI;
+                            // Time is now in hours (0-24) and will be set directly on the game clock
+                            // The sun_angle field is kept for backward compatibility but not used
                             self.event_bus
-                                .publish(GraphicsEvent::TimeOfDayChanged { time, sun_angle });
+                                .publish(GraphicsEvent::TimeOfDayChanged { time, sun_angle: 0.0 });
                         }
                         ConsoleAction::None => {}
                     }

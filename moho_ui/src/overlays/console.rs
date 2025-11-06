@@ -24,7 +24,7 @@ pub enum ConsoleAction {
     Close,
     /// Set sun direction (yaw, pitch in degrees)
     SetSunDirection(f32, f32),
-    /// Set time of day (0.0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset, 1.0 = midnight)
+    /// Set time of day in hours (0.0 = midnight, 6.0 = dawn, 12.0 = noon, 18.0 = dusk, 24.0 = midnight)
     SetTimeOfDay(f32),
     /// No action
     None,
@@ -230,7 +230,7 @@ impl Console {
                 self.add_output("  noclip - Toggle noclip mode (fly through walls)".to_string());
                 self.add_output("  sun <yaw> <pitch> - Set sun direction (degrees)".to_string());
                 self.add_output(
-                    "  time <0.0-1.0> - Set time of day (0=midnight, 0.5=noon)".to_string(),
+                    "  time <0-24> - Set time of day (0=midnight, 6=dawn, 12=noon, 18=dusk)".to_string(),
                 );
                 ConsoleAction::None
             }
@@ -272,21 +272,23 @@ impl Console {
             }
             "time" => {
                 if parts.len() != 2 {
-                    self.add_output("Usage: time <0.0-1.0>".to_string());
+                    self.add_output("Usage: time <0-24>".to_string());
                     self.add_output(
-                        "  0.0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset".to_string(),
+                        "  0 = midnight, 6 = dawn, 12 = noon, 18 = dusk, 24 = midnight".to_string(),
                     );
                     return ConsoleAction::None;
                 }
                 match parts[1].parse::<f32>() {
                     Ok(time) => {
-                        let clamped = time.clamp(0.0, 1.0);
-                        self.add_output(format!("Setting time of day: {:.2}", clamped));
+                        let clamped = time.clamp(0.0, 24.0);
+                        let hours = clamped.floor() as u32;
+                        let minutes = ((clamped.fract() * 60.0) as u32).min(59);
+                        self.add_output(format!("Setting time to {:02}:{:02}", hours, minutes));
                         ConsoleAction::SetTimeOfDay(clamped)
                     }
                     Err(_) => {
                         self.add_output(
-                            "Error: time must be a number between 0.0 and 1.0".to_string(),
+                            "Error: time must be a number between 0 and 24".to_string(),
                         );
                         ConsoleAction::None
                     }

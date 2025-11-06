@@ -19,14 +19,7 @@ impl MockRenderer {
 }
 
 impl RendererBackend for MockRenderer {
-    fn render(
-        &mut self,
-        _vertices: &[[f32; 3]],
-        _instances: &[moho_core::actors::InstanceGpu],
-        _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-    ) {
-        self.renders.borrow_mut().push("render_called".to_string());
-    }
+    fn update_lighting(&mut self, _lighting: moho_renderer::LightingGpu) {}
     fn request_redraw(&self) {}
     fn resize(&mut self, _width: u32, _height: u32) {}
     fn set_cursor_visible(&self, _visible: bool) {}

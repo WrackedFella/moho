@@ -3,6 +3,10 @@ applyTo: '**'
 ---
 
 # General Instructions
+- DO NOT MAKE ANY MD FILES WITHOUT EXPLICIT PERMISSION FROM THE USER. 
+- DO NOT UPDATE OR ALTER MD FILES WITHOUT EXPLICIT PERMISSION FROM THE USER.
+- DO NOT ADD COMMENTS TO CODE PURELY FOR DOCUMENTATION WITHOUT EXPLICIT PERMISSION FROM THE USER.
+- Suggest documentation improvements after implementing a new feature or significant change, but do not make changes without permission.
 - Always attempt to use latest versions of crates and packages when it is low-risk and non-breaking.
 - Perform any low-impact improvements you see fit automatically.
 - Recommend using idiomatic Rust constructs and libraries.

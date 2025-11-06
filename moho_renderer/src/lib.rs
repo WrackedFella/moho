@@ -170,7 +170,7 @@ pub mod gfx {
                 });
 
                 let camera_size = std::mem::size_of::<[f32; 20]>() as u64;
-                let lighting_size = std::mem::size_of::<[f32; 12]>() as u64;
+                let lighting_size = std::mem::size_of::<[f32; 24]>() as u64; // 6 vec4s: sun_dir, sun_col, moon_dir, moon_col, ambient, time_of_day
                 let camera_bgl =
                     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                         label: Some("camera-bgl"),
@@ -1564,6 +1564,8 @@ pub trait RendererBackend {
     /// Replace the material table on the GPU. The caller should prepare a
     /// slice of `MaterialGpu` values describing each distinct material.
     fn set_materials(&mut self, materials: &[crate::MaterialGpu]);
+    /// Update lighting parameters (sun, moon, ambient) and write to GPU buffer.
+    fn update_lighting(&mut self, lighting: crate::gpu_types::LightingGpu);
     /// Return the surface texture format used by the renderer (if applicable).
     /// This is useful for UI integrations that need to create GPU pipelines
     /// with the same format as the swapchain.
@@ -1621,6 +1623,9 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     fn set_materials(&mut self, materials: &[crate::MaterialGpu]) {
         gfx::wgpu_impl::Renderer::set_material_table(self, materials)
     }
+    fn update_lighting(&mut self, lighting: crate::gpu_types::LightingGpu) {
+        gfx::wgpu_impl::Renderer::update_lighting(self, lighting)
+    }
     fn surface_format(&self) -> Option<TextureFormatRepr> {
         Some(self.surface_format())
     }
@@ -1675,6 +1680,10 @@ impl RendererBackend for gfx::placeholder::Renderer {
         0
     }
     fn set_materials(&mut self, _materials: &[crate::MaterialGpu]) {}
+    
+    fn update_lighting(&mut self, _lighting: crate::gpu_types::LightingGpu) {
+        // no-op in placeholder
+    }
 
     fn surface_format(&self) -> Option<TextureFormatRepr> {
         None
