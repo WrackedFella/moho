@@ -57,88 +57,46 @@ jobs:
           set -euo pipefail
           rm -rf "$METRICS_OUTPUT_DIR" "$METRICS_SUMMARY_DIR"
           mkdir -p "$METRICS_OUTPUT_DIR" "$METRICS_SUMMARY_DIR"
-          ./rust-code-analysis-cli -m -p . -O json -o "$METRICS_OUTPUT_DIR" --pr
+          # Run metrics on all Rust source directories
+          ./rust-code-analysis-cli -m -p src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+          ./rust-code-analysis-cli -m -p moho_core/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+          ./rust-code-analysis-cli -m -p moho_audio/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+          ./rust-code-analysis-cli -m -p moho_input/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+          ./rust-code-analysis-cli -m -p moho_renderer/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+          ./rust-code-analysis-cli -m -p moho_sim/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+          ./rust-code-analysis-cli -m -p moho_ui/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
 
-      - name: Aggregate metrics (simple summaries)
+      - name: Install PowerShell (if needed)
         run: |
-          set -euo pipefail
-          # Combine per-file JSONs into one array
-          python - <<'PY' > "$METRICS_SUMMARY_DIR/all_metrics.json"
-import json,glob,os,sys
-out=[]
-for p in glob.glob("metrics-output/*.json"):
-    try:
-        with open(p,'r',encoding='utf-8') as f:
-            j=json.load(f)
-            j.setdefault("__src_file", os.path.basename(p))
-            out.append(j)
-    except Exception as e:
-        print("skipping",p,"err",e,file=sys.stderr)
-print(json.dumps(out))
-PY
+          # PowerShell Core is usually pre-installed on ubuntu-latest
+          which pwsh || (echo "PowerShell not found, installing..." && \
+            sudo apt-get update && \
+            sudo apt-get install -y wget apt-transport-https software-properties-common && \
+            wget -q "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb" && \
+            sudo dpkg -i packages-microsoft-prod.deb && \
+            sudo apt-get update && \
+            sudo apt-get install -y powershell)
 
-          # Extract functions with cyclomatic complexity > MAX_FUNCTION_CYCLOMATIC
-          python - <<'PY' > "$METRICS_SUMMARY_DIR/high_cc_functions.json"
-import json,glob,os
-th = int(os.environ.get("MAX_FUNCTION_CYCLOMATIC","20"))
-res=[]
-for p in glob.glob("metrics-output/*.json"):
-  try:
-    j=json.load(open(p,'r',encoding='utf-8'))
-    path = j.get("path") or j.get("__src_file") or p
-    for f in j.get("functions", []) or []:
-      cc = f.get("cyclomatic") or f.get("cyclomatic_complexity") or None
-      if cc is None: continue
-      try:
-        if float(cc) > th:
-          res.append({"file": path, "function": f.get("name"), "cyclomatic": cc, "start_line": f.get("start_line")})
-      except:
-        pass
-  except Exception:
-    pass
-print(json.dumps(res))
-PY
-
-          # Extract per-file maintainability index (visual studio variant)
-          python - <<'PY' > "$METRICS_SUMMARY_DIR/mi_per_file.json"
-import json,glob
-out=[]
-for p in glob.glob("metrics-output/*.json"):
-  try:
-    j=json.load(open(p,'r',encoding='utf-8'))
-    mi = None
-    for key in ["maintainability_index","mi","mi_stats"]:
-      if key in j and isinstance(j[key], dict) and "mi_visual_studio" in j[key]:
-        mi = j[key]["mi_visual_studio"]
-        break
-    if mi is None:
-      mi = j.get("mi_visual_studio") or j.get("mi")
-    out.append({"file": j.get("path") or j.get("__src_file") or p, "mi_visual_studio": mi})
-  except Exception:
-    pass
-print(json.dumps(out))
-PY
-
-      - name: Optionally fail on policy thresholds (disabled by default)
+      - name: Aggregate metrics with PowerShell script
         run: |
-          set -euo pipefail
-          echo "High cyclomatic complexity check (threshold: $MAX_FUNCTION_CYCLOMATIC)"
+          pwsh -File scripts/aggregate-metrics.ps1 \
+            -MetricsDir "$METRICS_OUTPUT_DIR" \
+            -SummaryDir "$METRICS_SUMMARY_DIR" \
+            -CyclomaticThreshold "$MAX_FUNCTION_CYCLOMATIC" \
+            -MaintainabilityThreshold "$MIN_MI_VISUAL_STUDIO"
+
+      - name: Display summary
+        run: |
+          echo "=== High Cyclomatic Complexity Functions ==="
           if [ -s "$METRICS_SUMMARY_DIR/high_cc_functions.json" ]; then
-            echo "High cyclomatic functions found:"
-            jq '.' "$METRICS_SUMMARY_DIR/high_cc_functions.json" || true
-            echo "To fail the job on high CC, uncomment exit 1 in the workflow step."
+            jq -r '.[] | "\(.cyclomatic | floor) - \(.function) (\(.file):\(.start_line))"' "$METRICS_SUMMARY_DIR/high_cc_functions.json" | head -20 || true
           else
-            echo "No functions above threshold."
+            echo "No functions above threshold $MAX_FUNCTION_CYCLOMATIC"
           fi
-
-          echo "Checking MI below minimum ($MIN_MI_VISUAL_STUDIO)..."
-          python - <<'PY'
-import json,sys
-mi_min = float(sys.argv[1])
-arr = json.load(open("metrics-summary/mi_per_file.json"))
-low = [x for x in arr if x.get("mi_visual_studio") is not None and float(x.get("mi_visual_studio")) < mi_min]
-print(len(low))
-PY "$MIN_MI_VISUAL_STUDIO" | grep -q -x '0' && echo "No low MI files." || (echo "Some files with MI below threshold" && jq '.[] | select(.mi_visual_studio != null and (.mi_visual_studio | tonumber) < '"$MIN_MI_VISUAL_STUDIO"')' "$METRICS_SUMMARY_DIR/mi_per_file.json" || true)
+          
+          echo ""
+          echo "=== Low Maintainability Index Files ==="
+          jq -r '.[] | select(.mi_visual_studio != null and (.mi_visual_studio | tonumber) < '"$MIN_MI_VISUAL_STUDIO"') | "\(.mi_visual_studio | floor) - \(.file)"' "$METRICS_SUMMARY_DIR/mi_per_file.json" | head -20 || echo "All files above threshold $MIN_MI_VISUAL_STUDIO"
 
       - name: Upload metrics artifact
         uses: actions/upload-artifact@v4
