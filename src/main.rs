@@ -29,11 +29,18 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 #[cfg(feature = "backend-wgpu")]
 use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
 
+// Import shared types
+use moho_types::{AppState as SharedAppState, GameState};
+
 // Core game state and input routing modules
 #[cfg(feature = "backend-wgpu")]
 mod game_state;
 #[cfg(feature = "backend-wgpu")]
 mod input_routing;
+
+// Application initialization modules
+#[cfg(feature = "backend-wgpu")]
+mod app;
 
 mod save;
 
@@ -145,103 +152,32 @@ struct App {
 #[cfg(feature = "backend-wgpu")]
 impl App {
     fn new() -> Self {
-        // Initialize logging
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-        log::info!("Starting minimal menu test");
-
-        // Create basic world and scene (minimal setup)
-        let world = World::default();
-        let scene = moho_renderer::Scene::new();
-
-        // Basic camera - positioned to get a good view of voxel terrain
-        let camera = {
-            let eye = glam::Vec3::new(40.0, 25.0, 40.0);
-            let center = glam::Vec3::new(0.0, 8.0, 0.0);
-            let up = glam::Vec3::new(0.0, 1.0, 0.0);
-            let view = glam::Mat4::look_at_rh(eye, center, up);
-            let proj =
-                glam::Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 1500.0f32); // Increased for skybox visibility
-            (view, proj, eye)
-        };
-
-        // Initialize simulation wrapper (owns controller + input state)
-        let simulation = moho_sim::SimulationController::new(camera.2);
-
-        // Load preferences and apply mouse sensitivity
+        // Load application configuration
         #[cfg(feature = "ui-egui")]
-        let prefs = Prefs::load();
-        #[cfg(feature = "ui-egui")]
-        let mouse_sensitivity = prefs.mouse_sensitivity * 0.002;
+        let config = crate::app::config::AppConfig::from_prefs();
         #[cfg(not(feature = "ui-egui"))]
-        let mouse_sensitivity = 0.002;
-        #[cfg(not(feature = "ui-egui"))]
-        let prefs = Prefs::default();
-
-        // Always use the default filter preset
-        let engine_filter_preset = moho_core::input::FilterPreset::Default;
-
-        // Initialize event bus
-        let event_bus = Arc::new(moho_core::EventBus::new());
-        log::info!("Event bus initialized");
-
-        // Set up event collection channels for events that need to mutate App state
-        #[cfg(feature = "ui-egui")]
-        let (ui_event_tx, ui_event_rx) = crossbeam_channel::unbounded();
-        let (audio_event_tx, audio_event_rx) = crossbeam_channel::unbounded();
-        let (graphics_event_tx, graphics_event_rx) = crossbeam_channel::unbounded();
-
-        // Subscribe to UI events
-        #[cfg(feature = "ui-egui")]
-        {
-            event_bus.subscribe(move |event: &moho_core::events::UiEvent| {
-                let _ = ui_event_tx.send(event.clone());
-            });
-        }
-
-        // Subscribe to Audio events
-        {
-            event_bus.subscribe(move |event: &moho_core::events::AudioEvent| {
-                let _ = audio_event_tx.send(event.clone());
-            });
-        }
-
-        // Subscribe to Graphics events
-        {
-            event_bus.subscribe(move |event: &moho_core::events::GraphicsEvent| {
-                let _ = graphics_event_tx.send(event.clone());
-            });
-        }
-
-        // Initialize audio system
-        let audio_system = match moho_audio::AudioSystem::new() {
-            Ok(audio) => {
-                log::info!("Audio system initialized successfully");
-                Some(audio)
-            }
-            Err(e) => {
-                log::warn!("Failed to initialize audio system: {}", e);
-                None
-            }
-        };
-
-        // Note: Audio system cannot be subscribed to event bus because rodio types
-        // are not Send/Sync. Audio events will be processed manually in the frame loop.
-
+        let config = crate::app::config::AppConfig::default();
+        
+        // Initialize all systems using the builder
+        let initialized = crate::app::initializer::AppInitializer::new(config)
+            .build()
+            .expect("Failed to initialize application");
+        
         Self {
-            world,
-            scene,
-            camera,
+            world: initialized.world,
+            scene: initialized.scene,
+            camera: initialized.camera,
             game_state: crate::game_state::GameState::Menu, // Start in menu
             input_router: crate::input_routing::InputRouter::new(),
             window_renderer: None,
-            event_bus,
+            event_bus: initialized.event_bus,
 
             #[cfg(feature = "ui-egui")]
-            ui_event_rx,
-            audio_event_rx,
-            graphics_event_rx,
+            ui_event_rx: initialized.ui_event_rx,
+            audio_event_rx: initialized.audio_event_rx,
+            graphics_event_rx: initialized.graphics_event_rx,
 
-            audio_system,
+            audio_system: initialized.audio_system,
 
             #[cfg(feature = "ui-egui")]
             ui_adapter: None,
@@ -261,26 +197,18 @@ impl App {
             unconsumed_input_rx: None,
 
             // Camera control (moved into simulation)
-            simulation,
-            mouse_sensitivity,
-            input_system: {
-                let mut input_sys = moho_core::input::InputSystem::new_with_preset(
-                    mouse_sensitivity,
-                    engine_filter_preset,
-                );
-                #[cfg(feature = "ui-egui")]
-                input_sys.set_filter_enabled(prefs.input_filtering_enabled);
-                input_sys
-            },
+            simulation: initialized.simulation,
+            mouse_sensitivity: initialized.mouse_sensitivity,
+            input_system: initialized.input_system,
 
             // Store prefs and keyboard state
-            prefs,
+            prefs: initialized.prefs,
             #[cfg(feature = "ui-egui")]
             last_world_spec: None,
             active_keys: std::collections::HashSet::new(),
 
-            frame_duration: Duration::from_secs_f64(1.0 / 60.0),
-            last_frame: Instant::now(),
+            frame_duration: initialized.frame_duration,
+            last_frame: initialized.last_frame,
         }
     }
 

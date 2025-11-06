@@ -1721,6 +1721,7 @@ dependencies = [
  "moho_input",
  "moho_renderer",
  "moho_sim",
+ "moho_types",
  "moho_ui",
  "pollster",
  "rand 0.9.2",
@@ -1792,6 +1793,13 @@ dependencies = [
  "rand_chacha 0.3.1",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "moho_types"
+version = "0.1.0"
+dependencies = [
+ "winit",
 ]
 
 [[package]]
