@@ -15,6 +15,13 @@ applyTo: '**'
 - Use doc comments (`///`) for public APIs and complex functions.
 - Push back if user requests something that is not idiomatic or goes against best practices.
 
+## Git Operations (NEVER Perform Automatically)
+- **NEVER run `git commit` or `git push` commands without explicit user instruction.**
+- **NEVER stage files with `git add` unless explicitly requested.**
+- You may run `git status`, `git diff`, or other read-only git commands to gather information.
+- When changes are ready, inform the user and let them decide when to commit/push.
+- Exception: User explicitly says "commit this", "push these changes", or similar direct instruction.
+
 ## Documentation Rules (STRICT - Always Ask First)
 - **NEVER create, update, or alter ANY .md files without EXPLICIT permission from the user.**
 - This applies to ALL markdown files regardless of purpose:
