@@ -3,10 +3,6 @@ applyTo: '**'
 ---
 
 # General Instructions
-- DO NOT MAKE ANY MD FILES WITHOUT EXPLICIT PERMISSION FROM THE USER. 
-- DO NOT UPDATE OR ALTER MD FILES WITHOUT EXPLICIT PERMISSION FROM THE USER.
-- DO NOT ADD COMMENTS TO CODE PURELY FOR DOCUMENTATION WITHOUT EXPLICIT PERMISSION FROM THE USER.
-- Suggest documentation improvements after implementing a new feature or significant change, but do not make changes without permission.
 - Always attempt to use latest versions of crates and packages when it is low-risk and non-breaking.
 - Perform any low-impact improvements you see fit automatically.
 - Recommend using idiomatic Rust constructs and libraries.
@@ -17,9 +13,34 @@ applyTo: '**'
 - In-line comments should explain the "why" behind complex logic.
 - Try to rely on self-documenting code rather than excessive comments.
 - Use doc comments (`///`) for public APIs and complex functions.
-- Readme files should be used to explain setup, architecture, and design decisions.
 - Push back if user requests something that is not idiomatic or goes against best practices.
+
+## Documentation Rules (STRICT - Always Ask First)
+- **NEVER create, update, or alter ANY .md files without EXPLICIT permission from the user.**
+- This applies to ALL markdown files regardless of purpose:
+  - Progress tracking, todo lists, or plan files
+  - Technical analysis, decision records, or comparison documents  
+  - Architecture documentation or implementation proposals
+  - Summary documents, meeting notes, or status reports
+- **"Proceed" does NOT mean "create documentation"** - it means implement the requested changes only.
+- **Always present analysis in chat first** using formatted markdown (tables, lists, code blocks).
+- **Ask explicitly** before creating any .md file: "Would you like me to create a document for [purpose]?"
+- Wait for clear affirmative response ("yes", "create a doc", "document this") before creating files.
+- Exception: User explicitly requests documentation with phrases like "document this", "create a README", or "write this up".
+
+## Code Comments - Minimal and Purposeful
+- **NEVER add comments purely for documentation without explicit permission.**
+- Comments should explain "why" behind complex logic, not "what" the code does.
+- Rely on self-documenting code (clear names, small functions) over comments.
+- Use doc comments (`///`) for public APIs and complex functions only.
+- Suggest documentation improvements after implementing features, but ask permission before adding.
+
+## README Files - Essential Information Only
+- READMEs should explain setup, architecture, and design decisions.
+- Keep README files to a minimum - remove outdated files as needed.
+- Particularly avoid plan files, progress tracking, or temporary documentation.
 - Keep readme files to a minimum, remove old files as needed. Particularly plan files.
+- Readme files should be used to explain setup, architecture, and design decisions.
 
 ## Quality vs Speed Guidance
 **Foundation/Engine Work (Current Phase):**
