@@ -32,7 +32,9 @@ jobs:
       - name: Install system deps (optional)
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev clang || true
+          sudo apt-get install -y pkg-config libudev-dev libssl-dev clang || true
+          # Ensure pkg-config can find system pc files (fallback)
+          export PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-/usr/lib/x86_64-linux-gnu/pkgconfig}
 
       - name: Set up Rust toolchain
         uses: actions-rs/toolchain@v1
