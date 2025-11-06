@@ -1,14 +1,17 @@
 mod audio_tab;
 mod binding_registry;
+mod conflict_modal;
 mod controls_tab;
+mod state;
 mod types;
 
 pub use types::{BindingId, SettingsTab};
 use binding_registry::BindingRegistry;
+use conflict_modal::{ConflictModalState, PendingBinding};
+use state::SettingsState;
 
 use super::{FormControls, MenuAction, Screen, ScreenSpec, UiComponent};
-use crate::prefs::{Binding, Prefs};
-use std::collections::HashSet;
+use crate::prefs::Binding;
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 pub(super) enum SettingsField {
@@ -26,41 +29,66 @@ pub(super) enum SettingsField {
     AudioVoice,
 }
 
-#[derive(Clone)]
-struct PendingBinding {
-    target_id: usize,
-    binding: Binding,
-    conflicting_id: Option<usize>,
-}
-
 pub struct SettingsMenu {
     spec: ScreenSpec,
     active_tab: SettingsTab,
-    prefs: Prefs,
-    staged: Prefs,
-    dirty_fields: HashSet<SettingsField>,
+    state: SettingsState,
     listening: Option<usize>,
-    pending_binding: Option<PendingBinding>,
-    pub show_conflict_modal: bool,
-    pub conflict_key_name: String,
-    pub conflict_binding_desc: String,
+    conflict_modal: ConflictModalState,
     last_mods: u8,
 }
 
 impl SettingsMenu {
     pub fn new() -> Self {
-        let prefs = Prefs::load();
         Self {
             spec: ScreenSpec::default(),
             active_tab: SettingsTab::default(),
-            prefs: prefs.clone(),
-            staged: prefs,
-            dirty_fields: HashSet::new(),
+            state: SettingsState::new(),
             listening: None,
-            pending_binding: None,
-            show_conflict_modal: false,
-            conflict_key_name: String::new(),
-            conflict_binding_desc: String::new(),
+            conflict_modal: ConflictModalState::new(),
+            last_mods: 0,
+        }
+    }
+
+    /// Create a SettingsMenu with specific preferences (for testing).
+    ///
+    /// This constructor allows tests to use isolated prefs instances without
+    /// reading from or writing to the shared config/prefs.ini file.
+    ///
+    /// # Test Isolation
+    ///
+    /// Use this in tests instead of `new()` to ensure each test starts with a
+    /// known, clean state. Even if tests call `apply_staged_changes()` (which
+    /// saves to disk), other tests using `with_prefs()` won't be affected because
+    /// they initialize with their own Prefs instance.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use moho_ui::screens::SettingsMenu;
+    /// use moho_ui::prefs::Prefs;
+    ///
+    /// // Create menu with default prefs (no disk I/O)
+    /// let menu = SettingsMenu::with_prefs(Prefs::default());
+    ///
+    /// // Or create with custom prefs for specific test scenarios
+    /// let mut custom_prefs = Prefs::default();
+    /// custom_prefs.mouse_sensitivity = 2.5;
+    /// let menu = SettingsMenu::with_prefs(custom_prefs);
+    /// ```
+    ///
+    /// # Arguments
+    /// * `prefs` - The preferences to initialize with
+    ///
+    /// # Returns
+    /// A new SettingsMenu with the given preferences
+    pub fn with_prefs(prefs: crate::prefs::Prefs) -> Self {
+        Self {
+            spec: ScreenSpec::default(),
+            active_tab: SettingsTab::default(),
+            state: SettingsState::from_prefs(prefs),
+            listening: None,
+            conflict_modal: ConflictModalState::new(),
             last_mods: 0,
         }
     }
@@ -68,6 +96,11 @@ impl SettingsMenu {
     /// Return true when the menu is currently listening for a new binding.
     pub fn is_listening(&self) -> bool {
         self.listening.is_some()
+    }
+
+    /// Get a reference to the conflict modal state (for testing).
+    pub fn conflict_modal(&self) -> &ConflictModalState {
+        &self.conflict_modal
     }
 
     /// Handle a winit WindowEvent when the settings menu is listening for a binding.
@@ -134,50 +167,38 @@ impl SettingsMenu {
         };
 
         // Check for duplicate bindings using registry
-        let registry = BindingRegistry::from_prefs(&self.staged);
+        let registry = BindingRegistry::from_prefs(self.state.staged());
         let exclude_id = BindingId::from_usize(listen_id).expect("Invalid binding ID");
         let conflicting_id = registry.find_conflict(&binding, exclude_id);
 
         if let Some(conflict_bid) = conflicting_id {
             let conflict_id = conflict_bid.to_usize();
-            self.pending_binding = Some(PendingBinding {
+            let pending = PendingBinding {
                 target_id: listen_id,
                 binding,
                 conflicting_id: Some(conflict_id),
-            });
-            self.conflict_key_name = self.get_key_name(conflict_id).to_string();
-            self.conflict_binding_desc = Self::binding_label(&binding);
-            self.show_conflict_modal = true;
+            };
+            let conflict_key_name = self.get_key_name(conflict_id).to_string();
+            let conflict_binding_desc = Self::binding_label(&binding);
+            self.conflict_modal
+                .show(pending, conflict_key_name, conflict_binding_desc);
             self.listening = None;
             true
         } else {
-            match listen_id {
-                0 => {
-                    self.staged.key_w = binding;
-                    self.dirty_fields.insert(SettingsField::KeyW);
+            // Apply binding using state management
+            let field = match listen_id {
+                0 => SettingsField::KeyW,
+                1 => SettingsField::KeyA,
+                2 => SettingsField::KeyS,
+                3 => SettingsField::KeyD,
+                4 => SettingsField::KeyUp,
+                5 => SettingsField::KeyDown,
+                _ => {
+                    self.listening = None;
+                    return true;
                 }
-                1 => {
-                    self.staged.key_a = binding;
-                    self.dirty_fields.insert(SettingsField::KeyA);
-                }
-                2 => {
-                    self.staged.key_s = binding;
-                    self.dirty_fields.insert(SettingsField::KeyS);
-                }
-                3 => {
-                    self.staged.key_d = binding;
-                    self.dirty_fields.insert(SettingsField::KeyD);
-                }
-                4 => {
-                    self.staged.key_up = binding;
-                    self.dirty_fields.insert(SettingsField::KeyUp);
-                }
-                5 => {
-                    self.staged.key_down = binding;
-                    self.dirty_fields.insert(SettingsField::KeyDown);
-                }
-                _ => {}
-            }
+            };
+            self.state.set_staged_binding(field, binding);
             self.listening = None;
             true
         }
@@ -187,6 +208,166 @@ impl SettingsMenu {
         BindingId::from_usize(id)
             .map(|bid| bid.display_name())
             .unwrap_or("Unknown")
+    }
+
+    /// Map egui::Key to numeric code for binding storage.
+    /// Letters and digits map to their ASCII uppercased codes.
+    fn key_to_code(k: &egui::Key) -> u32 {
+        use egui::Key::*;
+        match k {
+            A => 'A' as u32,
+            B => 'B' as u32,
+            C => 'C' as u32,
+            D => 'D' as u32,
+            E => 'E' as u32,
+            F => 'F' as u32,
+            G => 'G' as u32,
+            H => 'H' as u32,
+            I => 'I' as u32,
+            J => 'J' as u32,
+            K => 'K' as u32,
+            L => 'L' as u32,
+            M => 'M' as u32,
+            N => 'N' as u32,
+            O => 'O' as u32,
+            P => 'P' as u32,
+            Q => 'Q' as u32,
+            R => 'R' as u32,
+            S => 'S' as u32,
+            T => 'T' as u32,
+            U => 'U' as u32,
+            V => 'V' as u32,
+            W => 'W' as u32,
+            X => 'X' as u32,
+            Y => 'Y' as u32,
+            Z => 'Z' as u32,
+            Num0 => '0' as u32,
+            Num1 => '1' as u32,
+            Num2 => '2' as u32,
+            Num3 => '3' as u32,
+            Num4 => '4' as u32,
+            Num5 => '5' as u32,
+            Num6 => '6' as u32,
+            Num7 => '7' as u32,
+            Num8 => '8' as u32,
+            Num9 => '9' as u32,
+            ArrowUp => 0x100,
+            ArrowDown => 0x101,
+            ArrowLeft => 0x102,
+            ArrowRight => 0x103,
+            Escape => 0x200,
+            Tab => 0x201,
+            Backspace => 0x202,
+            Enter => 0x203,
+            Space => ' ' as u32,
+            _ => 0,
+        }
+    }
+
+    /// Handle key capture when listening for a binding.
+    /// Processes keyboard input from egui context to update bindings.
+    ///
+    /// # Arguments
+    /// * `ctx` - The egui context to read input from
+    fn handle_key_capture(&mut self, ctx: &egui::Context) {
+        if let Some(listen_id) = self.listening {
+            ctx.input(|input| {
+                // Detect modifier-only presses via modifiers state
+                let mut cur_mods: u8 = 0;
+                if input.modifiers.ctrl {
+                    cur_mods |= 1;
+                }
+                if input.modifiers.shift {
+                    cur_mods |= 2;
+                }
+                if input.modifiers.alt {
+                    cur_mods |= 4;
+                }
+
+                // Try to capture modifier-only bindings first
+                if self.capture_modifier_if_listening(cur_mods) {
+                    return;
+                }
+
+                // Process normal key events
+                for ev in &input.events {
+                    if let egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } = ev
+                    {
+                        // Escape cancels listening mode
+                        if *key == egui::Key::Escape {
+                            self.listening = None;
+                            return;
+                        }
+
+                        let mut code: u32 = Self::key_to_code(key);
+                        let mut mods: u8 = 0;
+                        if modifiers.ctrl {
+                            mods |= 1;
+                        }
+                        if modifiers.shift {
+                            mods |= 2;
+                        }
+                        if modifiers.alt {
+                            mods |= 4;
+                        }
+
+                        // Handle pure modifier keys (Ctrl, Shift, Alt)
+                        if code == 0 {
+                            if mods == 1 {
+                                code = 0x205; // Ctrl
+                                mods = 0;
+                            } else if mods == 2 {
+                                code = 0x204; // Shift
+                                mods = 0;
+                            } else if mods == 4 {
+                                code = 0x206; // Alt
+                                mods = 0;
+                            }
+                        }
+
+                        let binding = Binding::new(code, mods);
+
+                        // Check for conflicts using registry
+                        let registry = BindingRegistry::from_prefs(self.state.staged());
+                        let exclude_id =
+                            BindingId::from_usize(listen_id).expect("Invalid binding ID");
+                        let conflicting_id = registry.find_conflict(&binding, exclude_id);
+
+                        if let Some(conflict_bid) = conflicting_id {
+                            // Conflict detected - show modal
+                            let conflict_id = conflict_bid.to_usize();
+                            let pending = PendingBinding {
+                                target_id: listen_id,
+                                binding,
+                                conflicting_id: Some(conflict_id),
+                            };
+                            let conflict_key_name = self.get_key_name(conflict_id).to_string();
+                            let conflict_binding_desc = Self::binding_label(&binding);
+                            self.conflict_modal
+                                .show(pending, conflict_key_name, conflict_binding_desc);
+                        } else {
+                            // No conflict - apply binding directly
+                            let field = match listen_id {
+                                0 => SettingsField::KeyW,
+                                1 => SettingsField::KeyA,
+                                2 => SettingsField::KeyS,
+                                3 => SettingsField::KeyD,
+                                4 => SettingsField::KeyUp,
+                                5 => SettingsField::KeyDown,
+                                _ => SettingsField::KeyW, // Fallback (shouldn't happen)
+                            };
+                            self.state.set_staged_binding(field, binding);
+                        }
+                        self.listening = None;
+                    }
+                }
+            });
+        }
     }
 
     pub(super) fn binding_label(b: &Binding) -> String {
@@ -289,71 +470,35 @@ impl SettingsMenu {
     }
 
     pub fn apply_pending_binding(&mut self) {
-        if let Some(pending) = self.pending_binding.take() {
+        if let Some(pending) = self.conflict_modal.take_pending() {
             // Clear conflicting binding if any
             if let Some(conflict_id) = pending.conflicting_id {
-                match conflict_id {
-                    0 => {
-                        self.staged.key_w = Binding::new(0, 0);
-                        self.dirty_fields.insert(SettingsField::KeyW);
-                    }
-                    1 => {
-                        self.staged.key_a = Binding::new(0, 0);
-                        self.dirty_fields.insert(SettingsField::KeyA);
-                    }
-                    2 => {
-                        self.staged.key_s = Binding::new(0, 0);
-                        self.dirty_fields.insert(SettingsField::KeyS);
-                    }
-                    3 => {
-                        self.staged.key_d = Binding::new(0, 0);
-                        self.dirty_fields.insert(SettingsField::KeyD);
-                    }
-                    4 => {
-                        self.staged.key_up = Binding::new(0, 0);
-                        self.dirty_fields.insert(SettingsField::KeyUp);
-                    }
-                    5 => {
-                        self.staged.key_down = Binding::new(0, 0);
-                        self.dirty_fields.insert(SettingsField::KeyDown);
-                    }
-                    _ => {}
-                }
+                let field = match conflict_id {
+                    0 => SettingsField::KeyW,
+                    1 => SettingsField::KeyA,
+                    2 => SettingsField::KeyS,
+                    3 => SettingsField::KeyD,
+                    4 => SettingsField::KeyUp,
+                    5 => SettingsField::KeyDown,
+                    _ => SettingsField::KeyW, // Fallback (shouldn't happen)
+                };
+                self.state.set_staged_binding(field, Binding::new(0, 0));
             }
 
             // Apply new binding
-            match pending.target_id {
-                0 => {
-                    self.staged.key_w = pending.binding;
-                    self.dirty_fields.insert(SettingsField::KeyW);
-                }
-                1 => {
-                    self.staged.key_a = pending.binding;
-                    self.dirty_fields.insert(SettingsField::KeyA);
-                }
-                2 => {
-                    self.staged.key_s = pending.binding;
-                    self.dirty_fields.insert(SettingsField::KeyS);
-                }
-                3 => {
-                    self.staged.key_d = pending.binding;
-                    self.dirty_fields.insert(SettingsField::KeyD);
-                }
-                4 => {
-                    self.staged.key_up = pending.binding;
-                    self.dirty_fields.insert(SettingsField::KeyUp);
-                }
-                5 => {
-                    self.staged.key_down = pending.binding;
-                    self.dirty_fields.insert(SettingsField::KeyDown);
-                }
-                _ => {}
-            }
+            let target_field = match pending.target_id {
+                0 => SettingsField::KeyW,
+                1 => SettingsField::KeyA,
+                2 => SettingsField::KeyS,
+                3 => SettingsField::KeyD,
+                4 => SettingsField::KeyUp,
+                5 => SettingsField::KeyDown,
+                _ => SettingsField::KeyW, // Fallback (shouldn't happen)
+            };
+            self.state.set_staged_binding(target_field, pending.binding);
         }
-        self.show_conflict_modal = false;
+        self.conflict_modal.hide();
     }
-
-    // Attempt to capture a modifier-only binding when listening.
     // Returns true if a binding was applied or a conflict modal was queued.
     pub(crate) fn capture_modifier_if_listening(&mut self, cur_mods: u8) -> bool {
         if let Some(listen_id) = self.listening
@@ -369,50 +514,34 @@ impl SettingsMenu {
                 let binding = Binding::new(code, 0);
 
                 // Check for duplicate bindings using registry
-                let registry = BindingRegistry::from_prefs(&self.staged);
+                let registry = BindingRegistry::from_prefs(self.state.staged());
                 let exclude_id = BindingId::from_usize(listen_id).expect("Invalid binding ID");
                 let conflicting_id = registry.find_conflict(&binding, exclude_id);
 
                 if let Some(conflict_bid) = conflicting_id {
                     let conflict_id = conflict_bid.to_usize();
-                    self.pending_binding = Some(PendingBinding {
+                    let pending = PendingBinding {
                         target_id: listen_id,
                         binding,
                         conflicting_id: Some(conflict_id),
-                    });
-                    self.conflict_key_name = self.get_key_name(conflict_id).to_string();
-                    self.conflict_binding_desc = Self::binding_label(&binding);
-                    self.show_conflict_modal = true;
+                    };
+                    let conflict_key_name = self.get_key_name(conflict_id).to_string();
+                    let conflict_binding_desc = Self::binding_label(&binding);
+                    self.conflict_modal
+                        .show(pending, conflict_key_name, conflict_binding_desc);
                     self.last_mods = cur_mods;
                     return true;
                 } else {
-                    match listen_id {
-                        0 => {
-                            self.staged.key_w = binding;
-                            self.dirty_fields.insert(SettingsField::KeyW);
-                        }
-                        1 => {
-                            self.staged.key_a = binding;
-                            self.dirty_fields.insert(SettingsField::KeyA);
-                        }
-                        2 => {
-                            self.staged.key_s = binding;
-                            self.dirty_fields.insert(SettingsField::KeyS);
-                        }
-                        3 => {
-                            self.staged.key_d = binding;
-                            self.dirty_fields.insert(SettingsField::KeyD);
-                        }
-                        4 => {
-                            self.staged.key_up = binding;
-                            self.dirty_fields.insert(SettingsField::KeyUp);
-                        }
-                        5 => {
-                            self.staged.key_down = binding;
-                            self.dirty_fields.insert(SettingsField::KeyDown);
-                        }
-                        _ => {}
-                    }
+                    let field = match listen_id {
+                        0 => SettingsField::KeyW,
+                        1 => SettingsField::KeyA,
+                        2 => SettingsField::KeyS,
+                        3 => SettingsField::KeyD,
+                        4 => SettingsField::KeyUp,
+                        5 => SettingsField::KeyDown,
+                        _ => SettingsField::KeyW, // Fallback (shouldn't happen)
+                    };
+                    self.state.set_staged_binding(field, binding);
                     self.listening = None;
                     self.last_mods = cur_mods;
                     return true;
@@ -425,12 +554,11 @@ impl SettingsMenu {
     }
 
     pub fn cancel_pending_binding(&mut self) {
-        self.pending_binding = None;
-        self.show_conflict_modal = false;
+        self.conflict_modal.clear();
     }
 
     fn is_dirty(&self) -> bool {
-        !self.dirty_fields.is_empty()
+        self.state.is_dirty()
     }
 
     pub(super) fn paint_dirty_decor(ui: &mut egui::Ui, resp: &egui::Response, dirty: bool) {
@@ -474,30 +602,29 @@ impl SettingsMenu {
     /// Get the staged binding for a specific binding ID.
     /// For testing purposes only - allows tests to verify binding state.
     pub fn get_staged_binding(&self, binding_id: usize) -> Binding {
-        match binding_id {
-            0 => self.staged.key_w,
-            1 => self.staged.key_a,
-            2 => self.staged.key_s,
-            3 => self.staged.key_d,
-            4 => self.staged.key_up,
-            5 => self.staged.key_down,
-            _ => Binding::new(0, 0),
-        }
+        let field = match binding_id {
+            0 => SettingsField::KeyW,
+            1 => SettingsField::KeyA,
+            2 => SettingsField::KeyS,
+            3 => SettingsField::KeyD,
+            4 => SettingsField::KeyUp,
+            5 => SettingsField::KeyDown,
+            _ => return Binding::new(0, 0),
+        };
+        self.state.get_staged_binding(field)
     }
 
     /// Apply and save staged changes.
     /// For testing purposes only - allows tests to simulate clicking "Save Changes".
     pub fn apply_staged_changes(&mut self) {
-        self.prefs = self.staged.clone();
-        let _ = self.prefs.save();
-        self.dirty_fields.clear();
+        let _ = self.state.apply_changes();
+        let _ = self.state.prefs().save();
     }
 
     /// Revert staged changes to last saved state.
     /// For testing purposes only - allows tests to simulate clicking "Cancel".
     pub fn revert_staged_changes(&mut self) {
-        self.staged = self.prefs.clone();
-        self.dirty_fields.clear();
+        self.state.revert_changes();
     }
 
     /// Confirm a pending binding that triggered a conflict modal.
@@ -571,15 +698,12 @@ impl UiComponent for SettingsMenu {
                         );
                         let save_clicked = save.clicked();
                         if save_clicked {
-                            // commit staged to prefs and save
-                            self.prefs = self.staged.clone();
-                            let _ = self.prefs.save();
-                            // clear dirty flags
-                            self.dirty_fields.clear();
+                            let _ = self.state.apply_changes();
+                            let _ = self.state.prefs().save();
                         }
                         items.push(super::MenuItem {
                             action: if save_clicked {
-                                MenuAction::SettingsSaved(self.prefs.clone())
+                                MenuAction::SettingsSaved(self.state.prefs().clone())
                             } else {
                                 MenuAction::None
                             },
@@ -596,9 +720,7 @@ impl UiComponent for SettingsMenu {
                                 .add(egui::Button::new("Cancel").min_size(egui::vec2(100.0, 36.0)));
                             let cancel_clicked = cancel.clicked();
                             if cancel_clicked {
-                                // revert staged values to last saved prefs
-                                self.staged = self.prefs.clone();
-                                self.dirty_fields.clear();
+                                self.state.revert_changes();
                             }
                             items.push(super::MenuItem {
                                 action: MenuAction::None,
@@ -653,180 +775,8 @@ impl UiComponent for SettingsMenu {
                 });
         });
 
-        // helper: map egui::Key to numeric code. Letters and digits map to their ASCII uppercased codes.
-        fn key_to_code(k: &egui::Key) -> u32 {
-            use egui::Key::*;
-            match k {
-                A => 'A' as u32,
-                B => 'B' as u32,
-                C => 'C' as u32,
-                D => 'D' as u32,
-                E => 'E' as u32,
-                F => 'F' as u32,
-                G => 'G' as u32,
-                H => 'H' as u32,
-                I => 'I' as u32,
-                J => 'J' as u32,
-                K => 'K' as u32,
-                L => 'L' as u32,
-                M => 'M' as u32,
-                N => 'N' as u32,
-                O => 'O' as u32,
-                P => 'P' as u32,
-                Q => 'Q' as u32,
-                R => 'R' as u32,
-                S => 'S' as u32,
-                T => 'T' as u32,
-                U => 'U' as u32,
-                V => 'V' as u32,
-                W => 'W' as u32,
-                X => 'X' as u32,
-                Y => 'Y' as u32,
-                Z => 'Z' as u32,
-                Num0 => '0' as u32,
-                Num1 => '1' as u32,
-                Num2 => '2' as u32,
-                Num3 => '3' as u32,
-                Num4 => '4' as u32,
-                Num5 => '5' as u32,
-                Num6 => '6' as u32,
-                Num7 => '7' as u32,
-                Num8 => '8' as u32,
-                Num9 => '9' as u32,
-                ArrowUp => 0x100,
-                ArrowDown => 0x101,
-                ArrowLeft => 0x102,
-                ArrowRight => 0x103,
-                Escape => 0x200,
-                Tab => 0x201,
-                Backspace => 0x202,
-                Enter => 0x203,
-                Space => ' ' as u32,
-                _ => 0,
-            }
-        }
-
-        // Handle key capture when listening for binding
-        if let Some(listen_id) = self.listening {
-            // detect modifier-only presses via modifiers state (for keys like Ctrl/Shift/Alt)
-            ctx.input(|input| {
-                let mut cur_mods: u8 = 0;
-                if input.modifiers.ctrl {
-                    cur_mods |= 1;
-                }
-                if input.modifiers.shift {
-                    cur_mods |= 2;
-                }
-                if input.modifiers.alt {
-                    cur_mods |= 4;
-                }
-
-                // Try to capture modifier-only bindings; ignore scroll and other events.
-                if self.capture_modifier_if_listening(cur_mods) {
-                    return;
-                }
-
-                // process normal key events as before
-                for ev in &input.events {
-                    if let egui::Event::Key {
-                        key,
-                        pressed: true,
-                        modifiers,
-                        ..
-                    } = ev
-                    {
-                        if *key == egui::Key::Escape {
-                            self.listening = None;
-                            return;
-                        }
-
-                        let mut code: u32 = key_to_code(key);
-                        let mut mods: u8 = 0;
-                        if modifiers.ctrl {
-                            mods |= 1;
-                        }
-                        if modifiers.shift {
-                            mods |= 2;
-                        }
-                        if modifiers.alt {
-                            mods |= 4;
-                        }
-
-                        if code == 0 {
-                            if mods == 1 {
-                                code = 0x205;
-                                mods = 0;
-                            } else if mods == 2 {
-                                code = 0x204;
-                                mods = 0;
-                            } else if mods == 4 {
-                                code = 0x206;
-                                mods = 0;
-                            }
-                        }
-
-                        let binding = Binding::new(code, mods);
-
-                        let mut conflicting_id: Option<usize> = None;
-                        if binding.code != 0 {
-                            if self.staged.key_w == binding && listen_id != 0 {
-                                conflicting_id = Some(0);
-                            } else if self.staged.key_a == binding && listen_id != 1 {
-                                conflicting_id = Some(1);
-                            } else if self.staged.key_s == binding && listen_id != 2 {
-                                conflicting_id = Some(2);
-                            } else if self.staged.key_d == binding && listen_id != 3 {
-                                conflicting_id = Some(3);
-                            } else if self.staged.key_up == binding && listen_id != 4 {
-                                conflicting_id = Some(4);
-                            } else if self.staged.key_down == binding && listen_id != 5 {
-                                conflicting_id = Some(5);
-                            }
-                        }
-
-                        if let Some(conflict_id) = conflicting_id {
-                            self.pending_binding = Some(PendingBinding {
-                                target_id: listen_id,
-                                binding,
-                                conflicting_id: Some(conflict_id),
-                            });
-                            self.conflict_key_name = self.get_key_name(conflict_id).to_string();
-                            self.conflict_binding_desc = Self::binding_label(&binding);
-                            self.show_conflict_modal = true;
-                        } else {
-                            match listen_id {
-                                0 => {
-                                    self.staged.key_w = binding;
-                                    self.dirty_fields.insert(SettingsField::KeyW);
-                                }
-                                1 => {
-                                    self.staged.key_a = binding;
-                                    self.dirty_fields.insert(SettingsField::KeyA);
-                                }
-                                2 => {
-                                    self.staged.key_s = binding;
-                                    self.dirty_fields.insert(SettingsField::KeyS);
-                                }
-                                3 => {
-                                    self.staged.key_d = binding;
-                                    self.dirty_fields.insert(SettingsField::KeyD);
-                                }
-                                4 => {
-                                    self.staged.key_up = binding;
-                                    self.dirty_fields.insert(SettingsField::KeyUp);
-                                }
-                                5 => {
-                                    self.staged.key_down = binding;
-                                    self.dirty_fields.insert(SettingsField::KeyDown);
-                                }
-                                _ => {}
-                            }
-                        }
-                        self.listening = None;
-                    }
-                }
-            });
-        }
+        // Handle key capture when listening for a binding
+        self.handle_key_capture(ctx);
 
         items
     }
@@ -858,13 +808,13 @@ impl Screen for SettingsMenu {
 
     /// Check if settings wants to show the keybind conflict modal
     fn take_pending_modal(&mut self) -> Option<Box<dyn crate::modal::Modal>> {
-        if self.show_conflict_modal {
-            self.show_conflict_modal = false;
+        if self.conflict_modal.is_visible() {
+            self.conflict_modal.hide();
 
             use crate::modals::KeybindConflictModal;
             let modal = KeybindConflictModal::new(
-                self.conflict_key_name.clone(),
-                self.conflict_binding_desc.clone(),
+                self.conflict_modal.conflict_key_name().to_string(),
+                self.conflict_modal.conflict_binding_desc().to_string(),
             );
 
             Some(Box::new(modal))
@@ -899,27 +849,30 @@ mod tests {
             menu.listening.is_none(),
             "should stop listening after capture"
         );
-        assert_eq!(menu.staged.key_w, Binding::new(0x205, 0));
+        assert_eq!(
+            menu.state.get_staged_binding(SettingsField::KeyW),
+            Binding::new(0x205, 0)
+        );
     }
 
     #[test]
     fn modifier_only_conflict_shows_modal() {
         let mut menu = SettingsMenu::new();
         // set staged key_a to Ctrl so Ctrl will conflict with listening target 0
-        menu.staged.key_a = Binding::new(0x205, 0);
+        menu.state
+            .set_staged_binding(SettingsField::KeyA, Binding::new(0x205, 0));
         menu.listening = Some(0);
         menu.last_mods = 0;
 
         let applied = menu.capture_modifier_if_listening(1);
         assert!(applied, "modifier conflict should be processed");
         assert!(
-            menu.pending_binding.is_some(),
-            "pending binding should be set on conflict"
+            menu.conflict_modal.is_visible(),
+            "conflict modal should be visible when conflict is detected"
         );
-        assert!(
-            menu.show_conflict_modal,
-            "conflict modal flag should be set"
-        );
+        // Verify the modal has the correct conflict info
+        assert_eq!(menu.conflict_modal.conflict_key_name(), "Move Left");
+        assert_eq!(menu.conflict_modal.conflict_binding_desc(), "Ctrl");
     }
 
     #[test]
@@ -952,7 +905,9 @@ mod tests {
             menu.render(ctx);
         });
 
-        assert!(menu.staged.key_w == Binding::new(0x205, 0));
+        assert!(
+            menu.state.get_staged_binding(SettingsField::KeyW) == Binding::new(0x205, 0)
+        );
         assert!(menu.listening.is_none());
     }
 

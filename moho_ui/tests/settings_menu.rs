@@ -1,7 +1,29 @@
 #![cfg(feature = "ui-egui")]
 
+//! Integration tests for SettingsMenu
+//!
+//! # Test Isolation
+//!
+//! These tests use `SettingsMenu::with_prefs(Prefs::default())` instead of
+//! `SettingsMenu::new()` to ensure test isolation. This approach:
+//!
+//! 1. **Avoids shared state**: Each test starts with a clean default Prefs instance
+//!    rather than loading from the potentially-modified config/prefs.ini file.
+//!
+//! 2. **Prevents test interference**: Tests that call `apply_staged_changes()`
+//!    (which saves to disk) won't affect other tests because each test initializes
+//!    with `Prefs::default()` regardless of disk state.
+//!
+//! 3. **Maintains realistic behavior**: Tests that need to verify save/revert
+//!    functionality can still call `apply_staged_changes()` and `revert_staged_changes()`
+//!    because the underlying Prefs instance behaves identically whether loaded from
+//!    disk or created as default.
+//!
+//! This pattern ensures tests are deterministic, parallelizable, and won't fail
+//! due to leftover state from previous test runs or other tests in the suite.
+
 use moho_ui::screens::SettingsMenu;
-use moho_ui::prefs::Binding;
+use moho_ui::prefs::{Binding, Prefs};
 use moho_ui::UiComponent;
 
 /// Test 1: Binding conflict detection
@@ -10,7 +32,7 @@ use moho_ui::UiComponent;
 /// attempts to bind a key that's already assigned to another action.
 #[test]
 fn binding_conflict_detection_works() {
-    let mut menu = SettingsMenu::new();
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
     
     // Start listening for key_w (id = 0)
     menu.start_listening(0);
@@ -27,18 +49,18 @@ fn binding_conflict_detection_works() {
     assert!(consumed, "conflicting binding should be consumed");
     
     // Should show conflict modal
-    assert!(menu.show_conflict_modal, "conflict modal should be shown");
+    assert!(menu.conflict_modal().is_visible(), "conflict modal should be shown");
     assert!(!menu.is_listening(), "should stop listening when conflict detected");
     
     // Verify conflict information
-    assert_eq!(menu.conflict_key_name, "Move Forward", "should identify conflicting key");
-    assert!(!menu.conflict_binding_desc.is_empty(), "should have binding description");
+    assert_eq!(menu.conflict_modal().conflict_key_name(), "Move Forward", "should identify conflicting key");
+    assert!(!menu.conflict_modal().conflict_binding_desc().is_empty(), "should have binding description");
 }
 
 /// Test 2: Escaping while listening cancels binding
 #[test]
 fn escape_cancels_binding_listen() {
-    let mut menu = SettingsMenu::new();
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
     
     menu.start_listening(0);
     assert!(menu.is_listening());
@@ -47,7 +69,7 @@ fn escape_cancels_binding_listen() {
     let consumed = menu.apply_key_code_while_listening(0x200, 0);
     assert!(consumed, "escape should be consumed");
     assert!(!menu.is_listening(), "should stop listening after escape");
-    assert!(!menu.show_conflict_modal, "should not show conflict modal");
+    assert!(!menu.conflict_modal().is_visible(), "should not show conflict modal");
 }
 
 /// Test 3: Tab switching functionality
@@ -55,7 +77,7 @@ fn escape_cancels_binding_listen() {
 fn tab_switching_works() {
     use moho_ui::screens::SettingsTab;
     
-    let mut menu = SettingsMenu::new();
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
     
     // Default tab should be Controls
     assert_eq!(menu.active_tab(), SettingsTab::Controls);
@@ -72,7 +94,7 @@ fn tab_switching_works() {
 /// Test 4: Staged changes and dirty tracking
 #[test]
 fn staged_changes_tracked_correctly() {
-    let mut menu = SettingsMenu::new();
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
     
     // Initially no dirty fields
     assert!(!menu.has_unsaved_changes());
@@ -94,18 +116,30 @@ fn staged_changes_tracked_correctly() {
 /// Test 5: Reverting staged changes
 #[test]
 fn revert_changes_works() {
-    let mut menu = SettingsMenu::new();
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
     
-    // Get original binding for key_w
+    // First, explicitly set a known binding so we're not dependent on defaults
+    menu.start_listening(0);
+    menu.apply_key_code_while_listening(87, 0); // 'W'
+    menu.apply_staged_changes(); // Save it
+    
+    // Get the saved binding
     let original_binding = menu.get_staged_binding(0);
+    assert_eq!(original_binding.code, 87, "Expected original binding to be 'W'");
     
-    // Make a change - use 'Q' which isn't bound by default
+    // Now make a change - use 'Q' which is different
     menu.start_listening(0);
     menu.apply_key_code_while_listening('Q' as u32, 0); // 'Q' key
+    
+    // If there was a conflict, confirm it
+    if menu.conflict_modal().is_visible() {
+        menu.confirm_pending_binding();
+    }
     
     // Staged binding should be different
     let new_binding = menu.get_staged_binding(0);
     assert_ne!(original_binding, new_binding);
+    assert_eq!(new_binding.code, 'Q' as u32);
     assert!(menu.has_unsaved_changes());
     
     // Revert changes
@@ -119,7 +153,7 @@ fn revert_changes_works() {
 /// Test 6: Confirming conflict replaces binding
 #[test]
 fn confirming_conflict_replaces_binding() {
-    let mut menu = SettingsMenu::new();
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
     
     // Bind key_w to 'W'
     menu.start_listening(0);
@@ -131,13 +165,13 @@ fn confirming_conflict_replaces_binding() {
     menu.apply_key_code_while_listening(87, 0);
     
     // Should show conflict modal
-    assert!(menu.show_conflict_modal);
+    assert!(menu.conflict_modal().is_visible());
     
     // Confirm the conflict (replace existing binding)
     menu.confirm_pending_binding();
     
     // Modal should be closed
-    assert!(!menu.show_conflict_modal);
+    assert!(!menu.conflict_modal().is_visible());
     
     // key_a should now have the binding
     assert_eq!(menu.get_staged_binding(1), key_w_binding);
@@ -149,7 +183,7 @@ fn confirming_conflict_replaces_binding() {
 /// Test 7: Canceling conflict preserves original binding
 #[test]
 fn canceling_conflict_preserves_original() {
-    let mut menu = SettingsMenu::new();
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
     
     // Bind key_w to 'W'
     menu.start_listening(0);
@@ -166,13 +200,13 @@ fn canceling_conflict_preserves_original() {
     menu.apply_key_code_while_listening(87, 0);
     
     // Should show conflict modal
-    assert!(menu.show_conflict_modal);
+    assert!(menu.conflict_modal().is_visible());
     
     // Cancel the conflict
     menu.cancel_pending_binding();
     
     // Modal should be closed
-    assert!(!menu.show_conflict_modal);
+    assert!(!menu.conflict_modal().is_visible());
     
     // Original bindings should be preserved
     assert_eq!(menu.get_staged_binding(0), key_w_binding);
@@ -182,7 +216,7 @@ fn canceling_conflict_preserves_original() {
 /// Test 8: Multiple bindings don't interfere with each other
 #[test]
 fn multiple_unique_bindings_work() {
-    let mut menu = SettingsMenu::new();
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
     
     // Bind all six keys to unique codes
     let bindings = [87, 65, 83, 68, 38, 40]; // W, A, S, D, Up, Down
@@ -190,7 +224,7 @@ fn multiple_unique_bindings_work() {
     for (id, &code) in bindings.iter().enumerate() {
         menu.start_listening(id);
         menu.apply_key_code_while_listening(code, 0);
-        assert!(!menu.show_conflict_modal, "unique bindings should not conflict");
+        assert!(!menu.conflict_modal().is_visible(), "unique bindings should not conflict");
     }
     
     // Verify all bindings are set correctly
@@ -203,7 +237,7 @@ fn multiple_unique_bindings_work() {
 /// Test 9: Render doesn't crash with default context
 #[test]
 fn render_doesnt_crash() {
-    let mut menu = SettingsMenu::new();
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
     let ctx = egui::Context::default();
     
     // Render in both tabs
@@ -225,7 +259,7 @@ fn render_doesnt_crash() {
 /// Test 10: Modifier keys are handled correctly
 #[test]
 fn modifier_keys_handled() {
-    let mut menu = SettingsMenu::new();
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
     
     // Bind with Ctrl modifier (mods_bits = 1)
     menu.start_listening(0);
