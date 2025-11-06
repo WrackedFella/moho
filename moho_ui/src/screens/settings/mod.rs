@@ -1,8 +1,10 @@
 mod audio_tab;
+mod binding_registry;
 mod controls_tab;
 mod types;
 
-pub use types::SettingsTab;
+pub use types::{BindingId, SettingsTab};
+use binding_registry::BindingRegistry;
 
 use super::{FormControls, MenuAction, Screen, ScreenSpec, UiComponent};
 use crate::prefs::{Binding, Prefs};
@@ -104,9 +106,11 @@ impl SettingsMenu {
     /// Testable helper: apply a resolved key code while the menu is listening.
     ///
     /// This function contains the core logic for applying a binding or queuing a
-    /// conflict modal when `listening` is active. It's pub(crate) so unit tests
+    /// conflict modal when `listening` is active. It's public so unit tests
     /// can exercise the behavior without depending on winit event construction.
-    pub(crate) fn apply_key_code_while_listening(&mut self, code: u32, mods_bits: u8) -> bool {
+    /// 
+    /// For testing purposes: allows direct simulation of key input during binding listen mode.
+    pub fn apply_key_code_while_listening(&mut self, code: u32, mods_bits: u8) -> bool {
         // If not listening, ignore
         let listen_id = match self.listening {
             Some(id) => id,
@@ -129,25 +133,13 @@ impl SettingsMenu {
             Binding::new(code, mods_bits)
         };
 
-        // Check for duplicate bindings
-        let mut conflicting_id: Option<usize> = None;
-        if binding.code != 0 {
-            if self.staged.key_w == binding && listen_id != 0 {
-                conflicting_id = Some(0);
-            } else if self.staged.key_a == binding && listen_id != 1 {
-                conflicting_id = Some(1);
-            } else if self.staged.key_s == binding && listen_id != 2 {
-                conflicting_id = Some(2);
-            } else if self.staged.key_d == binding && listen_id != 3 {
-                conflicting_id = Some(3);
-            } else if self.staged.key_up == binding && listen_id != 4 {
-                conflicting_id = Some(4);
-            } else if self.staged.key_down == binding && listen_id != 5 {
-                conflicting_id = Some(5);
-            }
-        }
+        // Check for duplicate bindings using registry
+        let registry = BindingRegistry::from_prefs(&self.staged);
+        let exclude_id = BindingId::from_usize(listen_id).expect("Invalid binding ID");
+        let conflicting_id = registry.find_conflict(&binding, exclude_id);
 
-        if let Some(conflict_id) = conflicting_id {
+        if let Some(conflict_bid) = conflicting_id {
+            let conflict_id = conflict_bid.to_usize();
             self.pending_binding = Some(PendingBinding {
                 target_id: listen_id,
                 binding,
@@ -192,15 +184,9 @@ impl SettingsMenu {
     }
 
     fn get_key_name(&self, id: usize) -> &str {
-        match id {
-            0 => "Move Forward",
-            1 => "Move Left",
-            2 => "Move Back",
-            3 => "Move Right",
-            4 => "Move Up",
-            5 => "Move Down",
-            _ => "Unknown",
-        }
+        BindingId::from_usize(id)
+            .map(|bid| bid.display_name())
+            .unwrap_or("Unknown")
     }
 
     pub(super) fn binding_label(b: &Binding) -> String {
@@ -382,25 +368,13 @@ impl SettingsMenu {
                 };
                 let binding = Binding::new(code, 0);
 
-                // Check for duplicate bindings
-                let mut conflicting_id: Option<usize> = None;
-                if binding.code != 0 {
-                    if self.staged.key_w == binding && listen_id != 0 {
-                        conflicting_id = Some(0);
-                    } else if self.staged.key_a == binding && listen_id != 1 {
-                        conflicting_id = Some(1);
-                    } else if self.staged.key_s == binding && listen_id != 2 {
-                        conflicting_id = Some(2);
-                    } else if self.staged.key_d == binding && listen_id != 3 {
-                        conflicting_id = Some(3);
-                    } else if self.staged.key_up == binding && listen_id != 4 {
-                        conflicting_id = Some(4);
-                    } else if self.staged.key_down == binding && listen_id != 5 {
-                        conflicting_id = Some(5);
-                    }
-                }
+                // Check for duplicate bindings using registry
+                let registry = BindingRegistry::from_prefs(&self.staged);
+                let exclude_id = BindingId::from_usize(listen_id).expect("Invalid binding ID");
+                let conflicting_id = registry.find_conflict(&binding, exclude_id);
 
-                if let Some(conflict_id) = conflicting_id {
+                if let Some(conflict_bid) = conflicting_id {
+                    let conflict_id = conflict_bid.to_usize();
                     self.pending_binding = Some(PendingBinding {
                         target_id: listen_id,
                         binding,
@@ -465,6 +439,71 @@ impl SettingsMenu {
             let hover_color = egui::Color32::from_rgba_premultiplied(150, 150, 150, 60);
             ui.painter().rect_filled(r, 4.0, hover_color);
         }
+    }
+
+    // ========== Test Helper Methods ==========
+    // These methods are exposed for testing to allow direct manipulation
+    // of settings menu state without requiring full UI interaction.
+    // They are public to support integration tests but should not be used
+    // in production code.
+
+    /// Start listening for a key binding on the specified binding ID.
+    /// For testing purposes only - allows tests to simulate user clicking "Listen" button.
+    pub fn start_listening(&mut self, binding_id: usize) {
+        self.listening = Some(binding_id);
+    }
+
+    /// Get the currently active tab.
+    /// For testing purposes only - allows tests to verify tab state.
+    pub fn active_tab(&self) -> SettingsTab {
+        self.active_tab
+    }
+
+    /// Set the active tab directly.
+    /// For testing purposes only - allows tests to simulate tab switching.
+    pub fn set_active_tab(&mut self, tab: SettingsTab) {
+        self.active_tab = tab;
+    }
+
+    /// Check if there are any unsaved changes.
+    /// For testing purposes only - wraps the private is_dirty() method.
+    pub fn has_unsaved_changes(&self) -> bool {
+        self.is_dirty()
+    }
+
+    /// Get the staged binding for a specific binding ID.
+    /// For testing purposes only - allows tests to verify binding state.
+    pub fn get_staged_binding(&self, binding_id: usize) -> Binding {
+        match binding_id {
+            0 => self.staged.key_w,
+            1 => self.staged.key_a,
+            2 => self.staged.key_s,
+            3 => self.staged.key_d,
+            4 => self.staged.key_up,
+            5 => self.staged.key_down,
+            _ => Binding::new(0, 0),
+        }
+    }
+
+    /// Apply and save staged changes.
+    /// For testing purposes only - allows tests to simulate clicking "Save Changes".
+    pub fn apply_staged_changes(&mut self) {
+        self.prefs = self.staged.clone();
+        let _ = self.prefs.save();
+        self.dirty_fields.clear();
+    }
+
+    /// Revert staged changes to last saved state.
+    /// For testing purposes only - allows tests to simulate clicking "Cancel".
+    pub fn revert_staged_changes(&mut self) {
+        self.staged = self.prefs.clone();
+        self.dirty_fields.clear();
+    }
+
+    /// Confirm a pending binding that triggered a conflict modal.
+    /// For testing purposes only - allows tests to simulate clicking "Confirm" on conflict modal.
+    pub fn confirm_pending_binding(&mut self) {
+        self.apply_pending_binding();
     }
 }
 
