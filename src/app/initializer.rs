@@ -6,8 +6,6 @@
 //!
 //! # Example
 //! ```no_run
-//! # #[cfg(feature = "backend-wgpu")]
-//! # {
 //! use moho::app::initializer::AppInitializer;
 //! use moho::app::config::AppConfig;
 //!
@@ -15,7 +13,6 @@
 //! let app = AppInitializer::new(config)
 //!     .build()
 //!     .expect("Failed to initialize application");
-//! # }
 //! ```
 
 use std::sync::Arc;
@@ -24,9 +21,7 @@ use legion::World;
 use moho_core::input::InputSystem;
 use moho_sim::SimulationController;
 
-#[cfg(feature = "ui-egui")]
 use moho_ui::prefs::Prefs;
-#[cfg(feature = "ui-egui")]
 use crate::input_dispatcher::InputDispatcher;
 
 use super::config::AppConfig;
@@ -68,7 +63,6 @@ pub struct InitializedApp {
     pub camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     pub event_bus: Arc<moho_core::EventBus>,
     
-    #[cfg(feature = "ui-egui")]
     pub ui_event_rx: crossbeam_channel::Receiver<moho_core::events::UiEvent>,
     pub audio_event_rx: crossbeam_channel::Receiver<moho_core::events::AudioEvent>,
     pub graphics_event_rx: crossbeam_channel::Receiver<moho_core::events::GraphicsEvent>,
@@ -78,9 +72,6 @@ pub struct InitializedApp {
     pub mouse_sensitivity: f32,
     pub input_system: InputSystem,
     
-    #[cfg(feature = "ui-egui")]
-    pub prefs: Prefs,
-    #[cfg(not(feature = "ui-egui"))]
     pub prefs: Prefs,
     
     pub frame_duration: Duration,
@@ -94,8 +85,6 @@ pub struct InitializedApp {
 ///
 /// # Example
 /// ```no_run
-/// # #[cfg(feature = "backend-wgpu")]
-/// # {
 /// use moho::app::initializer::AppInitializer;
 /// use moho::app::config::AppConfig;
 ///
@@ -106,7 +95,6 @@ pub struct InitializedApp {
 /// let initialized = AppInitializer::new(config)
 ///     .build()
 ///     .expect("Initialization failed");
-/// # }
 /// ```
 pub struct AppInitializer {
     config: AppConfig,
@@ -144,8 +132,6 @@ impl AppInitializer {
     ///
     /// # Example
     /// ```no_run
-    /// # #[cfg(feature = "backend-wgpu")]
-    /// # {
     /// use moho::app::initializer::AppInitializer;
     /// use moho::app::config::AppConfig;
     ///
@@ -154,7 +140,6 @@ impl AppInitializer {
     ///     Ok(initialized) => println!("App initialized successfully"),
     ///     Err(e) => eprintln!("Initialization failed: {}", e),
     /// }
-    /// # }
     /// ```
     pub fn build(self) -> Result<InitializedApp, AppInitError> {
         // Initialize logging (ignore error if already initialized for tests)
@@ -177,7 +162,6 @@ impl AppInitializer {
         // Initialize event bus and subscribers
         let event_bus_setup = setup_event_bus();
         let event_bus = event_bus_setup.event_bus;
-        #[cfg(feature = "ui-egui")]
         let ui_event_rx = event_bus_setup.ui_event_rx;
         let audio_event_rx = event_bus_setup.audio_event_rx;
         let graphics_event_rx = event_bus_setup.graphics_event_rx;
@@ -196,7 +180,6 @@ impl AppInitializer {
             self.config.mouse_sensitivity,
             self.config.filter_preset,
         );
-        #[cfg(feature = "ui-egui")]
         input_system.set_filter_enabled(self.config.input_filtering_enabled);
         log::debug!("Input system initialized");
         
@@ -208,7 +191,6 @@ impl AppInitializer {
             camera,
             event_bus,
             
-            #[cfg(feature = "ui-egui")]
             ui_event_rx,
             audio_event_rx,
             graphics_event_rx,
@@ -218,10 +200,7 @@ impl AppInitializer {
             mouse_sensitivity: self.config.mouse_sensitivity,
             input_system,
             
-            #[cfg(feature = "ui-egui")]
             prefs: self.config.prefs,
-            #[cfg(not(feature = "ui-egui"))]
-            prefs: Prefs::default(),
             
             frame_duration: Duration::from_secs_f64(1.0 / 60.0),
             last_frame: Instant::now(),
@@ -321,7 +300,6 @@ mod tests {
         assert!(result2.is_ok());
     }
     
-    #[cfg(feature = "ui-egui")]
     #[test]
     fn test_build_includes_prefs() {
         let mut prefs = Prefs::default();

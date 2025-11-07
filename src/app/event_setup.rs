@@ -25,8 +25,7 @@ pub struct EventBusSetup {
     /// The event bus itself (shared via Arc for thread-safe publishing)
     pub event_bus: Arc<EventBus>,
 
-    /// Receiver for UI events (only available with ui-egui feature)
-    #[cfg(feature = "ui-egui")]
+    /// Receiver for UI events
     pub ui_event_rx: Receiver<moho_core::events::UiEvent>,
 
     /// Receiver for audio events
@@ -67,14 +66,11 @@ pub fn setup_event_bus() -> EventBusSetup {
     log::info!("Event bus initialized");
 
     // Create channels for event collection
-    #[cfg(feature = "ui-egui")]
     let (ui_event_tx, ui_event_rx) = unbounded::<moho_core::events::UiEvent>();
-    
     let (audio_event_tx, audio_event_rx) = unbounded::<moho_core::events::AudioEvent>();
     let (graphics_event_tx, graphics_event_rx) = unbounded::<moho_core::events::GraphicsEvent>();
 
-    // Subscribe to UI events (feature-gated)
-    #[cfg(feature = "ui-egui")]
+    // Subscribe to UI events
     {
         let bus = event_bus.clone();
         bus.subscribe(move |event: &moho_core::events::UiEvent| {
@@ -101,7 +97,6 @@ pub fn setup_event_bus() -> EventBusSetup {
 
     EventBusSetup {
         event_bus,
-        #[cfg(feature = "ui-egui")]
         ui_event_rx,
         audio_event_rx,
         graphics_event_rx,
@@ -150,7 +145,6 @@ mod tests {
         assert!(received.is_ok(), "Should receive graphics event");
     }
 
-    #[cfg(feature = "ui-egui")]
     #[test]
     fn test_ui_event_subscription() {
         let setup = setup_event_bus();
@@ -172,8 +166,6 @@ mod tests {
         // Channels should start empty
         assert!(setup.audio_event_rx.is_empty());
         assert!(setup.graphics_event_rx.is_empty());
-        
-        #[cfg(feature = "ui-egui")]
         assert!(setup.ui_event_rx.is_empty());
     }
 }

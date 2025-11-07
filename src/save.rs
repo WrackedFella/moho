@@ -1,21 +1,14 @@
-#[cfg(feature = "ui-egui")]
 use std::error::Error;
-#[cfg(feature = "ui-egui")]
 use std::fs::{File, remove_file, rename};
-#[cfg(feature = "ui-egui")]
 use std::io::{Read, Write};
-#[cfg(feature = "ui-egui")]
 use std::path::Path;
 
-#[cfg(feature = "ui-egui")]
 const SAVE_MAGIC: &[u8; 4] = b"MOHO";
-#[cfg(feature = "ui-egui")]
 const SAVE_VERSION: u32 = 1;
 
 /// Atomically write a save file that envelopes the scene bytes together with
 /// the UI-provided `WorldSpec` metadata. Format:
 /// [4 bytes magic][u32 version][u64 meta_len][meta bytes][u64 scene_len][scene bytes]
-#[cfg(feature = "ui-egui")]
 pub fn write_scene_with_metadata<P: AsRef<Path>>(
     path: P,
     scene_bytes: &[u8],
@@ -61,7 +54,6 @@ pub fn write_scene_with_metadata<P: AsRef<Path>>(
 /// Some(WorldSpec) and the raw scene bytes. If the file appears to be the
 /// legacy flat scene file, return None and the raw file bytes so the caller
 /// can decode using the existing Scene::load_from_bytes helper.
-#[cfg(feature = "ui-egui")]
 pub fn read_scene_and_metadata<P: AsRef<Path>>(
     path: P,
 ) -> Result<(moho_core::scene_builders::WorldSpec, Vec<u8>), Box<dyn Error>> {
@@ -105,7 +97,6 @@ pub fn read_scene_and_metadata<P: AsRef<Path>>(
 }
 
 #[cfg(test)]
-#[cfg(feature = "ui-egui")]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};

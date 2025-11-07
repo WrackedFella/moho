@@ -51,7 +51,6 @@ impl GenerationProcessor {
     }
 
     /// Handle generation progress update
-    #[cfg(feature = "ui-egui")]
     fn handle_progress(&self, app: &mut App, progress: f32) {
         if let Some(ui_adapter) = &app.ui_adapter
             && let Ok(mut a) = ui_adapter.lock()
@@ -60,13 +59,7 @@ impl GenerationProcessor {
         }
     }
 
-    #[cfg(not(feature = "ui-egui"))]
-    fn handle_progress(&self, _app: &mut App, _progress: f32) {
-        // No-op without UI
-    }
-
     /// Handle generation completion
-    #[cfg(feature = "ui-egui")]
     fn handle_completed(
         &self,
         app: &mut App,
@@ -111,18 +104,7 @@ impl GenerationProcessor {
         app.hide_menu();
     }
 
-    #[cfg(not(feature = "ui-egui"))]
-    fn handle_completed(
-        &self,
-        _app: &mut App,
-        _scene_bytes: Vec<u8>,
-        _spec: moho_core::scene_builders::WorldSpec,
-    ) {
-        // No-op without UI
-    }
-
     /// Handle generation cancellation
-    #[cfg(feature = "ui-egui")]
     fn handle_canceled(&self, app: &mut App) {
         if let Some(ui_adapter) = &app.ui_adapter
             && let Ok(mut a) = ui_adapter.lock()
@@ -136,13 +118,7 @@ impl GenerationProcessor {
         log::info!("Generation canceled by user");
     }
 
-    #[cfg(not(feature = "ui-egui"))]
-    fn handle_canceled(&self, _app: &mut App) {
-        // No-op without UI
-    }
-
     /// Handle generation failure
-    #[cfg(feature = "ui-egui")]
     fn handle_failed(&self, app: &mut App, reason: String) {
         log::error!("Generation failed: {}", reason);
         if let Some(ui_adapter) = &app.ui_adapter
@@ -154,11 +130,6 @@ impl GenerationProcessor {
             let _ = h.join();
         }
         app.generation_cancel = None;
-    }
-
-    #[cfg(not(feature = "ui-egui"))]
-    fn handle_failed(&self, _app: &mut App, _reason: String) {
-        // No-op without UI
     }
 }
 

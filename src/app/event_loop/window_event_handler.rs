@@ -76,7 +76,6 @@ impl WindowEventHandler {
         }
 
         // Recall staging belt after render
-        #[cfg(feature = "ui-egui")]
         if let Some(ui_adapter) = &app.ui_adapter
             && let Ok(mut a) = ui_adapter.lock()
         {

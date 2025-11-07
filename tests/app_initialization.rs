@@ -5,16 +5,13 @@
 //!
 //! 1. App can be created with default configuration
 //! 2. All required systems are initialized
-//! 3. Feature flags work correctly (#[cfg(feature = "ui-egui")])
-//! 4. Initialization order and dependencies are preserved
+//! 3. Initialization order and dependencies are preserved
 //!
 //! # Test Strategy
 //!
 //! These are "characterization tests" - they document what the code currently does,
 //! not necessarily what it should do. During refactoring, these tests act as a
 //! safety net to detect unintended behavioral changes.
-
-#![cfg(feature = "backend-wgpu")]
 
 use moho_types::{AppState, GameState};
 use std::sync::Arc;
@@ -111,36 +108,19 @@ fn audio_system_failure_is_graceful() {
     assert!(audio_system.is_none(), "App can function without audio system");
 }
 
-/// Test 4: Feature flags control UI initialization
+/// Test 4: UI initialization paths
 ///
-/// Documents that #[cfg(feature = "ui-egui")] controls multiple initialization paths.
-/// This is critical for headless/server builds.
+/// Documents UI initialization behavior now that it's always enabled.
 #[test]
-fn feature_flags_documented() {
-    // With ui-egui feature:
+fn ui_initialization_documented() {
+    // UI is now always enabled:
     // - Prefs are loaded from disk
     // - UI event channel created
     // - InputDispatcher created
     // - Generation channels created
     // - Unconsumed input channels created
     
-    // Without ui-egui feature:
-    // - Prefs use default values
-    // - No UI event handling
-    // - No input dispatcher
-    // - Simpler initialization path
-    
-    #[cfg(feature = "ui-egui")]
-    {
-        // UI feature is enabled in tests (since we're testing with --all-features)
-        assert!(true, "UI features are available");
-    }
-    
-    #[cfg(not(feature = "ui-egui"))]
-    {
-        // This would be tested in a separate build without the feature
-        assert!(true, "Running without UI features");
-    }
+    assert!(true, "UI features are always available");
 }
 
 /// Test 5: Event bus subscribers are set up correctly

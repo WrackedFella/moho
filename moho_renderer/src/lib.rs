@@ -2,11 +2,7 @@ pub mod prelude {
     pub use crate::Renderer;
 }
 
-#[cfg(feature = "backend-wgpu")]
 pub type TextureFormatRepr = wgpu::TextureFormat;
-
-#[cfg(not(feature = "backend-wgpu"))]
-pub type TextureFormatRepr = ();
 
 /// GPU material layout (32-byte stride for WGSL vec4 alignment)
 #[repr(C)]
@@ -29,14 +25,11 @@ pub use scene::Scene;
 mod gpu_types;
 pub use gpu_types::{CameraGpu, CascadedShadowMatrixGpu, LightingGpu, ShadowMatrixGpu};
 
-#[cfg(feature = "backend-wgpu")]
 mod shadow;
-#[cfg(feature = "backend-wgpu")]
 mod types;
 
 pub mod gfx {
 
-    #[cfg(feature = "backend-wgpu")]
     pub mod wgpu_impl {
         extern crate winit;
         use crate::MaterialGpu;
@@ -1488,28 +1481,7 @@ pub mod gfx {
         }
     }
 
-    #[cfg(not(feature = "backend-wgpu"))]
-    pub mod placeholder {
-        use moho_core::actors::InstanceGpu;
-        pub struct Renderer {}
-        impl Default for Renderer {
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-        impl Renderer {
-            pub fn new() -> Self {
-                Renderer {}
-            }
-            pub fn request_redraw(&self) {}
-            pub fn resize(&mut self, _w: u32, _h: u32) {}
-        }
-    }
-
     // re-export the concrete renderer at gfx level for convenience
-    #[cfg(not(feature = "backend-wgpu"))]
-    pub use placeholder::Renderer;
-    #[cfg(feature = "backend-wgpu")]
     pub use wgpu_impl::Renderer;
 }
 
@@ -1575,19 +1547,16 @@ pub trait RendererBackend {
     /// Set an optional raw FrameCallback pointer. The renderer will call the
     /// callback during finalization so the application can record UI commands
     /// into the frame encoder. The pointer must remain valid until cleared.
-    #[cfg(feature = "backend-wgpu")]
     fn set_frame_callback_raw(&mut self, ptr: Option<*mut dyn FrameCallback>);
     /// Set an optional safe Arc<Mutex<dyn FrameCallback>>. Prefer this
     /// registration method when possible; it's thread-safe and avoids raw
     /// pointer lifetime issues. Passing `None` clears the registration.
-    #[cfg(feature = "backend-wgpu")]
     fn set_frame_callback_arc(
         &mut self,
         cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
     );
 }
 
-#[cfg(feature = "backend-wgpu")]
 impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     fn request_redraw(&self) {
         // Renderer no longer owns the Window; request_redraw must be
@@ -1629,11 +1598,9 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     fn surface_format(&self) -> Option<TextureFormatRepr> {
         Some(self.surface_format())
     }
-    #[cfg(feature = "backend-wgpu")]
     fn set_frame_callback_raw(&mut self, ptr: Option<*mut dyn FrameCallback>) {
         self.set_frame_callback_raw_inherent(ptr);
     }
-    #[cfg(feature = "backend-wgpu")]
     fn set_frame_callback_arc(
         &mut self,
         cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
@@ -1649,61 +1616,8 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     }
 }
 
-#[cfg(not(feature = "backend-wgpu"))]
-impl RendererBackend for gfx::placeholder::Renderer {
-    fn request_redraw(&self) {
-        gfx::placeholder::Renderer::request_redraw(self)
-    }
-    fn resize(&mut self, width: u32, height: u32) {
-        gfx::placeholder::Renderer::resize(self, width, height)
-    }
-    fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
-        // placeholder: no GPU, just return a constant handle (0)
-        0
-    }
-    fn unregister_mesh(&mut self, _mesh: u32) {}
-    fn render_mesh(
-        &mut self,
-        _mesh: u32,
-        _instances: &[moho_core::actors::InstanceGpu],
-        _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-        _finalize: bool,
-    ) {
-        // no-op in placeholder
-    }
-    fn register_indexed_mesh(
-        &mut self,
-        _vertices: &[[f32; 3]],
-        _normals: &[[f32; 3]],
-        _indices: &[u32],
-    ) -> u32 {
-        0
-    }
-    fn set_materials(&mut self, _materials: &[crate::MaterialGpu]) {}
-
-    fn update_lighting(&mut self, _lighting: crate::gpu_types::LightingGpu) {
-        // no-op in placeholder
-    }
-
-    fn surface_format(&self) -> Option<TextureFormatRepr> {
-        None
-    }
-
-    fn set_cursor_visible(&self, _visible: bool) {
-        // placeholder: no-op
-    }
-
-    fn set_cursor_grab(&self, _locked: bool) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-}
-
-/// Create a boxed renderer backend. When `backend-wgpu` is enabled the
-/// function takes the `EventLoop` and `Window` so the backend can create a
-/// surface. When disabled the parameterless form is provided.
 /// Create a boxed renderer backend. Always returns a Result so callers have a
-/// single, fallible API to initialize a renderer regardless of feature flags.
-#[cfg(feature = "backend-wgpu")]
+/// single, fallible API to initialize a renderer.
 pub fn create_renderer<'a>(
     window: Option<&'a winit::window::Window>,
 ) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> {
@@ -1714,38 +1628,6 @@ pub fn create_renderer<'a>(
         Box::new(RendererInitError::WgpuInit(msg)) as Box<dyn std::error::Error>
     })?;
     Ok(Box::new(r))
-}
-
-#[cfg(not(feature = "backend-wgpu"))]
-pub fn create_renderer(
-    _window: Option<std::sync::Arc<()>>,
-) -> Result<Box<dyn RendererBackend>, Box<dyn std::error::Error>> {
-    Ok(Box::new(gfx::placeholder::Renderer::new()))
-}
-
-/// Compatibility wrapper: always return a Result<Box<dyn RendererBackend>, Box<dyn Error>>.
-/// This lets callers use a single API regardless of whether the crate was built with
-/// the `backend-wgpu` feature enabled (which changes the signature of `create_renderer`).
-pub fn create_renderer_any<'a>(
-    _window: Option<&'a ()>,
-) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> {
-    // Avoid referencing winit types in the signature so this function
-    // compiles regardless of feature flags. When the GPU backend is
-    // enabled callers should call `create_renderer` directly with a
-    // `winit::window::Window` reference. This helper is intended for
-    // the non-backend placeholder path and will return an Err when the
-    // backend is enabled to make that explicit.
-    #[cfg(feature = "backend-wgpu")]
-    {
-        Err(Box::from(
-            "create_renderer_any is not available when backend-wgpu is enabled; call create_renderer instead",
-        ))
-    }
-
-    #[cfg(not(feature = "backend-wgpu"))]
-    {
-        Ok(Box::new(gfx::placeholder::Renderer::new()))
-    }
 }
 
 /// Convenience helper: create a renderer from an Arc<Window>.
@@ -1759,26 +1641,14 @@ pub fn create_renderer_any<'a>(
 /// Note: this helper intentionally takes `&Arc<...>` rather than consuming
 /// the Arc. The caller retains ownership and is responsible for ensuring
 /// the Arc (and the underlying Window) outlives the renderer.
-#[cfg(feature = "backend-wgpu")]
 pub fn create_renderer_from_arc<'a>(
     window: &'a std::sync::Arc<winit::window::Window>,
 ) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> {
     create_renderer(Some(std::sync::Arc::as_ref(window)))
 }
 
-#[cfg(not(feature = "backend-wgpu"))]
-pub fn create_renderer_from_arc(
-    _window: &std::sync::Arc<()>,
-) -> Result<Box<dyn RendererBackend>, Box<dyn std::error::Error>> {
-    // Placeholder backend ignores the window. Match the placeholder
-    // factory's parameter type (Arc<()>) so this helper is available
-    // even when the wgpu/backend feature is disabled.
-    create_renderer(None)
-}
-
 /// Callback trait for UI rendering. Implement this to composite UI elements
 /// into the renderer's command encoder.
-#[cfg(feature = "backend-wgpu")]
 pub trait FrameCallback {
     fn call(
         &mut self,

@@ -111,7 +111,6 @@ mod tests {
         assert_eq!(got, vec![5]);
     }
 
-    #[cfg(feature = "ui-egui")]
     #[test]
     fn wheel_forwarding_respects_ui_visibility() {
         use crossbeam_channel::unbounded;

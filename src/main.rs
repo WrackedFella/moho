@@ -1,50 +1,31 @@
-#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
 use crossbeam_channel::{Receiver, unbounded};
-#[cfg(feature = "backend-wgpu")]
 use legion::World;
-#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
 use moho_ui::prefs::Prefs;
-#[cfg(feature = "backend-wgpu")]
 use std::sync::Arc;
-#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
 use std::sync::Mutex;
-#[cfg(all(feature = "backend-wgpu", feature = "ui-egui"))]
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(feature = "backend-wgpu")]
 use std::time::{Duration, Instant};
-#[cfg(feature = "backend-wgpu")]
 use winit::application::ApplicationHandler;
-#[cfg(feature = "backend-wgpu")]
 use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, StartCause, WindowEvent};
-#[cfg(feature = "ui-egui")]
 mod input_dispatcher;
-#[cfg(feature = "ui-egui")]
 use crate::input_dispatcher::InputDispatcher;
-#[cfg(feature = "ui-egui")]
 mod input_event;
-#[cfg(feature = "backend-wgpu")]
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-#[cfg(feature = "backend-wgpu")]
 use winit::keyboard::{KeyCode, PhysicalKey};
-#[cfg(feature = "backend-wgpu")]
 use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
 
 // Import shared types
 use moho_types::{AppState as SharedAppState, GameState};
 
 // Core game state and input routing modules
-#[cfg(feature = "backend-wgpu")]
 mod game_state;
-#[cfg(feature = "backend-wgpu")]
 mod input_routing;
 
 // Application initialization modules
-#[cfg(feature = "backend-wgpu")]
 mod app;
 
 mod save;
 
-#[cfg(feature = "ui-egui")]
 enum GenerationMsg {
     Progress(f32),
     Completed {
@@ -55,7 +36,6 @@ enum GenerationMsg {
     Failed(String),
 }
 
-#[cfg(feature = "ui-egui")]
 /// Conservatively forward a wheel delta to the game's input channel.
 /// Returns true if the event was forwarded.
 pub(crate) fn forward_wheel_if_allowed(
@@ -75,7 +55,6 @@ pub(crate) fn forward_wheel_if_allowed(
 }
 
 // Combined state to handle lifetimes properly
-#[cfg(feature = "backend-wgpu")]
 struct WindowRenderer {
     window: Arc<Window>,
     renderer: Box<dyn moho_renderer::RendererBackend>,
@@ -84,7 +63,6 @@ struct WindowRenderer {
 }
 
 // Application state structure that implements ApplicationHandler
-#[cfg(feature = "backend-wgpu")]
 struct App {
     world: World,
     scene: moho_renderer::Scene,
@@ -101,7 +79,6 @@ struct App {
     event_bus: Arc<moho_core::EventBus>,
 
     // Event collection channels (for events that need to mutate App state)
-    #[cfg(feature = "ui-egui")]
     ui_event_rx: crossbeam_channel::Receiver<moho_core::events::UiEvent>,
     audio_event_rx: crossbeam_channel::Receiver<moho_core::events::AudioEvent>,
     graphics_event_rx: crossbeam_channel::Receiver<moho_core::events::GraphicsEvent>,
@@ -110,26 +87,18 @@ struct App {
     audio_system: Option<moho_audio::AudioSystem>,
 
     // UI components
-    #[cfg(feature = "ui-egui")]
     ui_adapter: Option<Arc<Mutex<moho_ui::EguiAdapter>>>,
-    #[cfg(feature = "ui-egui")]
     last_world_spec: Option<moho_core::scene_builders::WorldSpec>,
     // Async generation plumbing (only used when UI is present)
-    #[cfg(feature = "ui-egui")]
     generation_receiver: Option<Receiver<GenerationMsg>>,
-    #[cfg(feature = "ui-egui")]
     generation_handle: Option<std::thread::JoinHandle<()>>,
-    #[cfg(feature = "ui-egui")]
     generation_cancel: Option<Arc<AtomicBool>>,
 
     // Input dispatcher (routes events to prioritized subscribers)
-    #[cfg(feature = "ui-egui")]
     dispatcher: InputDispatcher,
 
     // Channel for simplified input events forwarded to the game when UI doesn't consume them
-    #[cfg(feature = "ui-egui")]
     unconsumed_input_tx: Option<crossbeam_channel::Sender<crate::input_event::InputEvent>>,
-    #[cfg(feature = "ui-egui")]
     unconsumed_input_rx: Option<crossbeam_channel::Receiver<crate::input_event::InputEvent>>,
 
     // Camera control (moved into simulation)
@@ -149,14 +118,10 @@ struct App {
     last_frame: Instant,
 }
 
-#[cfg(feature = "backend-wgpu")]
 impl App {
     fn new() -> Self {
         // Load application configuration
-        #[cfg(feature = "ui-egui")]
         let config = crate::app::config::AppConfig::from_prefs();
-        #[cfg(not(feature = "ui-egui"))]
-        let config = crate::app::config::AppConfig::default();
         
         // Initialize all systems using the builder
         let initialized = crate::app::initializer::AppInitializer::new(config)
@@ -172,28 +137,20 @@ impl App {
             window_renderer: None,
             event_bus: initialized.event_bus,
 
-            #[cfg(feature = "ui-egui")]
             ui_event_rx: initialized.ui_event_rx,
             audio_event_rx: initialized.audio_event_rx,
             graphics_event_rx: initialized.graphics_event_rx,
 
             audio_system: initialized.audio_system,
 
-            #[cfg(feature = "ui-egui")]
             ui_adapter: None,
-            #[cfg(feature = "ui-egui")]
             generation_receiver: None,
-            #[cfg(feature = "ui-egui")]
             generation_handle: None,
-            #[cfg(feature = "ui-egui")]
             generation_cancel: None,
 
-            #[cfg(feature = "ui-egui")]
             dispatcher: InputDispatcher::new(),
 
-            #[cfg(feature = "ui-egui")]
             unconsumed_input_tx: None,
-            #[cfg(feature = "ui-egui")]
             unconsumed_input_rx: None,
 
             // Camera control (moved into simulation)
@@ -203,7 +160,6 @@ impl App {
 
             // Store prefs and keyboard state
             prefs: initialized.prefs,
-            #[cfg(feature = "ui-egui")]
             last_world_spec: None,
             active_keys: std::collections::HashSet::new(),
 
@@ -231,7 +187,6 @@ impl App {
             renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
 
         // UI setup
-        #[cfg(feature = "ui-egui")]
         {
             let adapter = moho_ui::build_adapter(Some(window.clone()), self.event_bus.clone());
             let ui_adapter = Arc::new(Mutex::new(adapter));
@@ -326,31 +281,6 @@ impl App {
     ) -> Result<(), Box<dyn std::error::Error>> {
         log::info!("Starting async generation for spec={:?}", spec);
 
-        // Only start async generation when UI/adapter present; otherwise fall back
-        // to the synchronous path for headless builds.
-        #[cfg(not(feature = "ui-egui"))]
-        {
-            // Fallback synchronous path
-            log::info!("No UI adapter available - falling back to sync generation");
-            // Clear the existing world
-            self.world.clear();
-            moho_core::scene_builders::voxel_terrain_scene(&mut self.world);
-            // Persist immediately
-            let saves_dir = std::path::Path::new("saves");
-            if !saves_dir.exists() {
-                std::fs::create_dir_all(saves_dir)?;
-            }
-            let save_path = saves_dir.join("scene.bin");
-            let (yaw, pitch) = self.simulation.yaw_pitch();
-            let camera_data = Some((self.simulation.position(), yaw, pitch));
-            let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
-            save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
-            self.game_state = crate::game_state::GameState::Playing;
-            self.hide_menu();
-            return Ok(());
-        }
-
-        #[cfg(feature = "ui-egui")]
         {
             use std::path::PathBuf;
 
@@ -478,38 +408,27 @@ impl App {
         let (yaw, pitch) = self.simulation.yaw_pitch();
         let camera_data = Some((self.simulation.position(), yaw, pitch));
 
-        #[cfg(feature = "ui-egui")]
-        {
-            // Encode scene bytes and write envelope. Prefer the last known
-            // WorldSpec (e.g. from a loaded or generated scene) so autosaves
-            // preserve original metadata; fall back to a minimal spec.
-            let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
-            let spec =
-                self.last_world_spec
-                    .clone()
-                    .unwrap_or(moho_core::scene_builders::WorldSpec {
-                        name: "autosave".to_string(),
-                        seed: None,
-                        size_xz: 64,
-                        day_length_seconds: 600.0,
-                        night_length_seconds: 420.0,
-                        initial_time_of_day: 6.0,
-                    });
-            save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
-            log::info!(
-                "Auto-saved scene (envelope) to {:?} (spec={:?})",
-                save_path,
-                spec.name
-            );
-        }
-
-        #[cfg(not(feature = "ui-egui"))]
-        {
-            // Legacy path - write raw scene bytes without envelope
-            self.scene
-                .save_to_file(&save_path, &self.world, camera_data)?;
-            log::info!("Auto-saved scene to {:?}", save_path);
-        }
+        // Encode scene bytes and write envelope. Prefer the last known
+        // WorldSpec (e.g. from a loaded or generated scene) so autosaves
+        // preserve original metadata; fall back to a minimal spec.
+        let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
+        let spec =
+            self.last_world_spec
+                .clone()
+                .unwrap_or(moho_core::scene_builders::WorldSpec {
+                    name: "autosave".to_string(),
+                    seed: None,
+                    size_xz: 64,
+                    day_length_seconds: 600.0,
+                    night_length_seconds: 420.0,
+                    initial_time_of_day: 6.0,
+                });
+        save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
+        log::info!(
+            "Auto-saved scene (envelope) to {:?} (spec={:?})",
+            save_path,
+            spec.name
+        );
 
         Ok(())
     }
@@ -528,9 +447,7 @@ impl App {
         // Clear the existing world
         self.world.clear();
 
-        // Load the scene from file. Use the envelope-aware loader when UI
-        // feature is enabled so we can read the WorldSpec metadata.
-        #[cfg(feature = "ui-egui")]
+        // Load the scene from file with metadata support
         {
             let (spec, scene_bytes) = save::read_scene_and_metadata(&path)?;
             // Remember the WorldSpec from the loaded file so autosaves and
@@ -546,24 +463,6 @@ impl App {
                 // orientation isn't immediately overridden by
                 // accumulated mouse deltas or smoothing state.
                 self.input_system.clear_pending_input();
-                log::info!(
-                    "Restored camera position: {:?}, yaw: {:.2}, pitch: {:.2}",
-                    position,
-                    yaw,
-                    pitch
-                );
-            } else {
-                log::info!("No camera data found in scene file, keeping current position");
-            }
-        }
-
-        #[cfg(not(feature = "ui-egui"))]
-        {
-            // Fallback: legacy loader (no metadata)
-            let camera_data = self.scene.load_from_file(&path, &mut self.world)?;
-            log::info!("Scene loaded successfully from {:?}", path.as_ref());
-            if let Some((position, yaw, pitch)) = camera_data {
-                self.simulation.set_position_yaw_pitch(position, yaw, pitch);
                 log::info!(
                     "Restored camera position: {:?}, yaw: {:.2}, pitch: {:.2}",
                     position,
@@ -671,7 +570,6 @@ impl App {
                                 self.show_menu();
 
                                 // Also explicitly request the adapter show the "start" menu
-                                #[cfg(feature = "ui-egui")]
                                 if let Some(ui_adapter) = &self.ui_adapter
                                     && let Ok(mut adapter) = ui_adapter.lock()
                                 {
@@ -762,7 +660,6 @@ impl App {
     fn hide_menu(&mut self) {
         self.game_state = crate::game_state::GameState::Playing;
 
-        #[cfg(feature = "ui-egui")]
         if let Some(ui_adapter) = &self.ui_adapter
             && let Ok(mut adapter) = ui_adapter.lock()
         {
@@ -788,7 +685,6 @@ impl App {
     fn show_menu(&mut self) {
         self.game_state = crate::game_state::GameState::Menu;
 
-        #[cfg(feature = "ui-egui")]
         if let Some(ui_adapter) = &self.ui_adapter
             && let Ok(mut adapter) = ui_adapter.lock()
         {
@@ -828,7 +724,6 @@ impl App {
         self.input_router.update_for_state(GameState::ConsoleOpen);
 
         // Make UI visible for console overlay
-        #[cfg(feature = "ui-egui")]
         if let Some(ui_adapter) = &self.ui_adapter
             && let Ok(mut adapter) = ui_adapter.lock()
         {
@@ -859,7 +754,6 @@ impl App {
         self.input_router.update_for_state(GameState::Playing);
 
         // Hide UI when returning to game
-        #[cfg(feature = "ui-egui")]
         if let Some(ui_adapter) = &self.ui_adapter
             && let Ok(mut adapter) = ui_adapter.lock()
         {
@@ -885,7 +779,6 @@ impl App {
                     self.game_state = GameState::Paused;
                     self.input_router.update_for_state(GameState::Paused);
 
-                    #[cfg(feature = "ui-egui")]
                     if let Some(ui_adapter) = &self.ui_adapter
                         && let Ok(mut adapter) = ui_adapter.lock()
                     {
@@ -904,7 +797,6 @@ impl App {
                     self.game_state = GameState::Playing;
                     self.input_router.update_for_state(GameState::Playing);
 
-                    #[cfg(feature = "ui-egui")]
                     if let Some(ui_adapter) = &self.ui_adapter
                         && let Ok(mut adapter) = ui_adapter.lock()
                     {
@@ -934,7 +826,6 @@ impl App {
     }
 }
 
-#[cfg(feature = "backend-wgpu")]
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_manager = app::event_loop::WindowManager::new();
@@ -959,19 +850,15 @@ impl ApplicationHandler for App {
         frame_processor.process_frame(self, event_loop);
 
         // Process all event types from event bus
-        #[cfg(feature = "ui-egui")]
         event_processor.process_ui_events(self, event_loop);
-        
         event_processor.process_audio_events(self);
         event_processor.process_graphics_events(self);
         event_processor.process_input_events(self);
 
         // Check for generation cancellation from UI
-        #[cfg(feature = "ui-egui")]
         event_processor.check_generation_cancel(self);
 
         // Poll async generation if running
-        #[cfg(feature = "ui-egui")]
         generation_processor.poll_generation(self);
     }
 
@@ -983,11 +870,8 @@ impl ApplicationHandler for App {
     ) {
         // Dispatch the event to registered subscribers (UI first). If consumed,
         // skip further application-level handling.
-        #[cfg(feature = "ui-egui")]
-        {
-            if self.dispatcher.dispatch(&event) {
-                return;
-            }
+        if self.dispatcher.dispatch(&event) {
+            return;
         }
 
         let window_event_handler = app::event_loop::WindowEventHandler::new();
@@ -1005,8 +889,6 @@ impl ApplicationHandler for App {
     }
 }
 
-// Manually remove all duplicate code below this point and keep only the correct main() function
-#[cfg(feature = "backend-wgpu")]
 fn main() {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut app = App::new();
@@ -1014,11 +896,3 @@ fn main() {
     // Run the modern event loop with ApplicationHandler
     let _ = event_loop.run_app(&mut app);
 }
-
-#[cfg(not(feature = "backend-wgpu"))]
-fn main() {
-    eprintln!("This binary requires the 'backend-wgpu' feature to be enabled.");
-    eprintln!("Run with: cargo run --features backend-wgpu");
-    std::process::exit(1);
-}
-

@@ -21,7 +21,6 @@ impl EventProcessor {
     }
 
     /// Process all pending UI events from the event bus
-    #[cfg(feature = "ui-egui")]
     pub fn process_ui_events(&self, app: &mut App, event_loop: &ActiveEventLoop) {
         while let Ok(event) = app.ui_event_rx.try_recv() {
             self.handle_ui_event(app, event_loop, event);
@@ -29,7 +28,6 @@ impl EventProcessor {
     }
 
     /// Process a single UI event
-    #[cfg(feature = "ui-egui")]
     fn handle_ui_event(&self, app: &mut App, event_loop: &ActiveEventLoop, event: UiEvent) {
         match event {
             UiEvent::LoadSceneRequested { path } => {
@@ -192,7 +190,6 @@ impl EventProcessor {
     }
 
     /// Check and propagate generation cancellation from UI
-    #[cfg(feature = "ui-egui")]
     pub fn check_generation_cancel(&self, app: &mut App) {
         if let Some(ui_adapter) = &app.ui_adapter
             && let Ok(mut a) = ui_adapter.lock()
