@@ -937,418 +937,42 @@ impl App {
 #[cfg(feature = "backend-wgpu")]
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window_renderer.is_none() {
-            // Set a descriptive title for the main window instead of the default
-            let mut window_attributes = WindowAttributes::default();
-            window_attributes.title = "Project: Moho - Prototype".into();
-            match event_loop.create_window(window_attributes) {
-                Ok(window) => {
-                    let window_arc = Arc::new(window);
-                    if let Err(e) = self.setup_renderer_and_ui(window_arc.clone()) {
-                        log::error!("Failed to setup renderer and UI: {}", e);
-                        event_loop.exit();
-                        return;
-                    }
-
-                    // Initial render
-                    log::info!("Initial render");
-                    if let Some(ref mut wr) = self.window_renderer {
-                        self.scene.render(
-                            &mut *wr.renderer,
-                            &mut self.world,
-                            wr.mesh_handle,
-                            wr.cube_mesh_handle,
-                            self.camera,
-                        );
-                        wr.window.request_redraw();
-                    }
-                }
-                Err(e) => {
-                    log::error!("Failed to create window: {}", e);
-                    event_loop.exit();
-                }
-            }
+        let window_manager = app::event_loop::WindowManager::new();
+        if let Err(e) = window_manager.handle_resumed(self, event_loop) {
+            log::error!("{}", e);
+            event_loop.exit();
         }
     }
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, _cause: StartCause) {
-        let now = Instant::now();
-        if now >= self.last_frame + self.frame_duration {
-            let dt = self.frame_duration.as_secs_f32();
-            self.last_frame += self.frame_duration;
+        let frame_processor = app::event_loop::FrameProcessor::new();
+        let event_processor = app::event_loop::EventProcessor::new();
+        let generation_processor = app::event_loop::GenerationProcessor::new();
 
-            // Publish frame start event
-            static FRAME_COUNTER: std::sync::atomic::AtomicU64 =
-                std::sync::atomic::AtomicU64::new(0);
-            let frame_number = FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            self.event_bus
-                .publish(moho_core::events::SystemEvent::FrameStart {
-                    frame_number,
-                    delta_time: dt,
-                });
-
-            // Update camera controls if in game mode
-            if self.game_state == crate::game_state::GameState::Playing {
-                // Update controller input from keyboard state
-                self.update_controller_input();
-
-                let (yaw_delta, pitch_delta) = self.input_system.sample_frame_input();
-                {
-                    let ci = self.simulation.controller_input_mut();
-                    ci.yaw_delta = yaw_delta;
-                    ci.pitch_delta = pitch_delta;
-                }
-
-                // Apply input via simulation wrapper and update camera from returned tuple.
-                let (view, proj, eye) = self.simulation.apply_input(dt);
-                self.camera = (view, proj, eye);
-
-                // Update lighting based on celestial positions from game clock
-                if let Some(ref mut wr) = self.window_renderer {
-                    let (sun_dir, moon_dir) = self.simulation.celestial_directions();
-                    let time = self.simulation.time_of_day();
-
-                    // Calculate sun intensity (0 when below horizon)
-                    let sun_intensity = if sun_dir.y > 0.0 { 1.0 } else { 0.0 };
-
-                    // Calculate moon intensity based on position and time
-                    // Moon is stronger at night, weaker during day transitions
-                    let moon_base_intensity = if moon_dir.y > 0.0 {
-                        // Moon is above horizon
-                        if !(5.0..21.0).contains(&time) {
-                            // Deep night: full moon brightness
-                            0.4
-                        } else if (5.0..7.0).contains(&time) {
-                            // Dawn: moon fading
-                            let t = (time - 5.0) / 2.0; // 0-1 over 2 hours
-                            0.4 * (1.0 - t) // 0.4 -> 0.0
-                        } else if (17.0..21.0).contains(&time) {
-                            // Dusk: moon rising
-                            let t = (time - 17.0) / 4.0; // 0-1 over 4 hours
-                            0.4 * t // 0.0 -> 0.4
-                        } else {
-                            // Day: moon barely visible if at all
-                            0.0
-                        }
-                    } else {
-                        // Moon below horizon
-                        0.0
-                    };
-
-                    // Calculate ambient lighting based on time of day
-                    // Night: 0-5, 21-24 (very low, blue-tinted)
-                    // Dawn: 5-7 (increasing, warm tint)
-                    // Day: 7-17 (full brightness, neutral)
-                    // Dusk: 17-21 (decreasing, warm tint)
-                    let (ambient_color, ambient_intensity) = if (7.0..17.0).contains(&time) {
-                        // Day: full brightness, cool ambient
-                        ([0.4, 0.5, 0.6], 0.15)
-                    } else if (5.0..7.0).contains(&time) {
-                        // Dawn: increasing brightness, warm tint
-                        let t = (time - 5.0) / 2.0; // 0-1 over 2 hours
-                        let intensity = 0.05 + t * 0.10; // 0.05 -> 0.15
-                        ([0.5, 0.45, 0.4], intensity)
-                    } else if (17.0..21.0).contains(&time) {
-                        // Dusk: decreasing brightness, warm tint
-                        let t = (time - 17.0) / 4.0; // 0-1 over 4 hours
-                        let intensity = 0.15 - t * 0.10; // 0.15 -> 0.05
-                        ([0.5, 0.4, 0.35], intensity)
-                    } else {
-                        // Night: very low brightness, blue tint
-                        ([0.3, 0.35, 0.5], 0.05)
-                    };
-
-                    let lighting = moho_renderer::LightingGpu {
-                        sun_direction: [sun_dir.x, sun_dir.y, sun_dir.z, sun_intensity],
-                        sun_color: [1.0, 0.95, 0.8, 0.0], // Warm sunlight
-                        moon_direction: [moon_dir.x, moon_dir.y, moon_dir.z, moon_base_intensity],
-                        moon_color: [0.7, 0.8, 0.9, 0.0], // Silver-blue moonlight
-                        ambient: [
-                            ambient_color[0],
-                            ambient_color[1],
-                            ambient_color[2],
-                            ambient_intensity,
-                        ],
-                        time_of_day: [time, 0.0, 0.0, 0.0],
-                    };
-                    wr.renderer.update_lighting(lighting);
-                }
-            }
-
-            if let Some(ref wr) = self.window_renderer {
-                wr.window.request_redraw();
-            }
-
-            // Process UI events from event bus
-            #[cfg(feature = "ui-egui")]
-            {
-                while let Ok(event) = self.ui_event_rx.try_recv() {
-                    match event {
-                        moho_core::events::UiEvent::LoadSceneRequested { path } => {
-                            log::info!("UI requested load scene: {:?}", path);
-                            if let Err(e) = self.load_scene(&path) {
-                                log::error!("Failed to load scene from {:?}: {}", path, e);
-                            }
-                        }
-                        moho_core::events::UiEvent::NewWorldRequested { name, seed, size } => {
-                            log::info!(
-                                "UI requested new world: {} (seed: {:?}, size: {})",
-                                name,
-                                seed,
-                                size
-                            );
-                            let spec = moho_core::scene_builders::WorldSpec {
-                                name,
-                                seed,
-                                size_xz: size,
-                                day_length_seconds: 600.0,
-                                night_length_seconds: 420.0,
-                                initial_time_of_day: 6.0,
-                            };
-                            if let Err(e) = self.generate_new_world(spec) {
-                                log::error!("Failed to generate new world: {}", e);
-                            }
-                        }
-                        moho_core::events::UiEvent::ExitRequested => {
-                            log::info!("UI requested exit");
-                            // Auto-save before exit
-                            if let Err(e) = self.auto_save_on_shutdown() {
-                                log::warn!("Failed to auto-save on exit: {}", e);
-                            }
-                            event_loop.exit();
-                        }
-                        moho_core::events::UiEvent::MenuShown { name } => {
-                            log::info!("UI requested show menu: {}", name);
-                            if let Some(ui_adapter) = &self.ui_adapter
-                                && let Ok(mut adapter) = ui_adapter.lock()
-                            {
-                                adapter.show_menu(&name);
-                            }
-                        }
-                        moho_core::events::UiEvent::MenuHidden { name } => {
-                            log::info!("Menu hidden: {}", name);
-                            // Handle console close event
-                            if name == "console" {
-                                self.exit_console();
-                            }
-                        }
-                        moho_core::events::UiEvent::OverlayToggled { name, visible } => {
-                            log::info!("Overlay {} toggled: {}", name, visible);
-                            if visible && let Some(ref wr) = self.window_renderer {
-                                wr.window.set_cursor_visible(true);
-                            }
-                        }
-                        moho_core::events::UiEvent::SettingsSaved => {
-                            log::info!("Settings saved");
-                            // Settings are already saved by the UI adapter
-                            // Here we could reload/apply them if needed
-                        }
-                    }
-                }
-            }
-
-            // Process audio events from event bus
-            {
-                while let Ok(event) = self.audio_event_rx.try_recv() {
-                    // Map core::events::AudioEvent to moho_audio::AudioEvent
-                    let audio_event = match event {
-                        moho_core::events::AudioEvent::ButtonClick => {
-                            moho_audio::AudioEvent::ButtonClick
-                        }
-                        moho_core::events::AudioEvent::MenuNavigate => {
-                            moho_audio::AudioEvent::MenuNavigate
-                        }
-                        moho_core::events::AudioEvent::Confirm => moho_audio::AudioEvent::Confirm,
-                        moho_core::events::AudioEvent::Cancel => moho_audio::AudioEvent::Cancel,
-                        moho_core::events::AudioEvent::Error => moho_audio::AudioEvent::Error,
-                        moho_core::events::AudioEvent::PlaySound { path, volume } => {
-                            moho_audio::AudioEvent::CustomSound { path, volume }
-                        }
-                        moho_core::events::AudioEvent::MusicStart {
-                            path,
-                            volume,
-                            looped,
-                        } => moho_audio::AudioEvent::BackgroundMusic {
-                            path,
-                            volume,
-                            looped,
-                        },
-                        moho_core::events::AudioEvent::MusicStop => {
-                            moho_audio::AudioEvent::Stop(moho_audio::AudioCategory::Music)
-                        }
-                        moho_core::events::AudioEvent::MusicVolumeChanged { volume: _ } => {
-                            // Skip - not implemented in current audio system
-                            continue;
-                        }
-                        moho_core::events::AudioEvent::StopAll => {
-                            moho_audio::AudioEvent::Stop(moho_audio::AudioCategory::All)
-                        }
-                    };
-
-                    self.handle_audio_event(audio_event);
-                }
-            }
-
-            // Process graphics events from event bus
-            {
-                while let Ok(event) = self.graphics_event_rx.try_recv() {
-                    match event {
-                        moho_core::events::GraphicsEvent::TimeOfDayChanged { time, .. } => {
-                            // Set the game clock time directly (time is in hours 0-24)
-                            self.simulation.set_time_of_day(time);
-                            log::info!(
-                                "Time set to {:.2} ({})",
-                                time,
-                                self.simulation.game_clock().time_string()
-                            );
-                        }
-                        _ => {
-                            // Other graphics events not yet handled
-                        }
-                    }
-                }
-            }
-
-            // Drain simplified input events forwarded by the dispatcher (e.g., mouse wheel)
-            if let Some(rx) = &self.unconsumed_input_rx {
-                while let Ok(iev) = rx.try_recv() {
-                    match iev {
-                        crate::input_event::InputEvent::MouseWheel { delta_y } => {
-                            // Only act on wheel events in game mode
-                            if self.game_state == crate::game_state::GameState::Playing {
-                                // Simple zoom: move player forward/back along look direction
-                                let dz = delta_y * 0.5; // tuning factor
-                                let (yaw, pitch) = self.simulation.yaw_pitch();
-                                let sy = yaw.sin();
-                                let cy = yaw.cos();
-                                let cp = pitch.cos();
-                                let sp = pitch.sin();
-                                let forward =
-                                    glam::Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
-                                let new_pos = self.simulation.position() + forward * dz;
-                                self.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // If the UI progress overlay Cancel button was pressed, propagate
-            // cancellation to the generator thread by setting the atomic flag.
-            #[cfg(feature = "ui-egui")]
-            if let Some(ui_adapter) = &self.ui_adapter
-                && let Ok(mut a) = ui_adapter.lock()
-                && a.take_progress_canceled()
-                && let Some(cancel_flag) = &self.generation_cancel
-            {
-                cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-
-            // Poll async generation channel if running. Take the receiver so
-            // we can mutate `self` while processing messages.
-            if let Some(rx) = self.generation_receiver.take() {
-                let mut still_running = true;
-                while let Ok(msg) = rx.try_recv() {
-                    match msg {
-                        GenerationMsg::Progress(p) => {
-                            if let Some(ui_adapter) = &self.ui_adapter
-                                && let Ok(mut a) = ui_adapter.lock()
-                            {
-                                a.set_progress(p);
-                            }
-                        }
-                        GenerationMsg::Completed { scene_bytes, spec } => {
-                            log::info!("Generation completed for spec={:?}", spec.name);
-                            // Remember the last WorldSpec so future saves include
-                            // the original metadata (autosave/continue consistency).
-                            self.last_world_spec = Some(spec.clone());
-                            // Complete progress UI
-                            if let Some(ui_adapter) = &self.ui_adapter
-                                && let Ok(mut a) = ui_adapter.lock()
-                            {
-                                a.set_progress(1.0);
-                                a.finish_progress();
-                            }
-
-                            // Load produced scene bytes into the main world
-                            self.world.clear();
-                            match self.scene.load_from_bytes(&scene_bytes, &mut self.world) {
-                                Ok(camera_data) => {
-                                    if let Some((position, yaw, pitch)) = camera_data {
-                                        self.simulation
-                                            .set_position_yaw_pitch(position, yaw, pitch);
-                                        // Clear any pending input so the restored camera
-                                        // orientation isn't immediately overridden by
-                                        // accumulated mouse deltas or smoothing state.
-                                        self.input_system.clear_pending_input();
-                                    }
-                                }
-                                Err(e) => {
-                                    log::error!("Failed to load generated scene bytes: {}", e);
-                                }
-                            }
-
-                            // Clean up generation state
-                            if let Some(h) = self.generation_handle.take() {
-                                let _ = h.join();
-                            }
-                            self.generation_cancel = None;
-
-                            // Switch to game mode and hide menu
-                            self.game_state = crate::game_state::GameState::Playing;
-                            self.hide_menu();
-
-                            still_running = false;
-                        }
-                        GenerationMsg::Canceled => {
-                            if let Some(ui_adapter) = &self.ui_adapter
-                                && let Ok(mut a) = ui_adapter.lock()
-                            {
-                                a.finish_progress();
-                            }
-                            if let Some(h) = self.generation_handle.take() {
-                                let _ = h.join();
-                            }
-                            self.generation_cancel = None;
-                            log::info!("Generation canceled by user");
-                            still_running = false;
-                        }
-                        GenerationMsg::Failed(reason) => {
-                            log::error!("Generation failed: {}", reason);
-                            if let Some(ui_adapter) = &self.ui_adapter
-                                && let Ok(mut a) = ui_adapter.lock()
-                            {
-                                a.finish_progress();
-                            }
-                            if let Some(h) = self.generation_handle.take() {
-                                let _ = h.join();
-                            }
-                            self.generation_cancel = None;
-                            still_running = false;
-                        }
-                    }
-                }
-
-                if still_running {
-                    // Put the receiver back for future polling
-                    self.generation_receiver = Some(rx);
-                } else {
-                    // Drop the receiver and clear state
-                    self.generation_receiver = None;
-                }
-            }
-
-            // Publish frame end event and process deferred events
-            self.event_bus
-                .publish(moho_core::events::SystemEvent::FrameEnd { frame_number });
-            self.event_bus.process_deferred();
-
-            let next = self.last_frame + self.frame_duration;
-            event_loop.set_control_flow(ControlFlow::WaitUntil(next));
-        } else {
-            let next = self.last_frame + self.frame_duration;
-            event_loop.set_control_flow(ControlFlow::WaitUntil(next));
+        // Check if it's time to process a frame
+        if !frame_processor.should_process_frame(self) {
+            frame_processor.update_control_flow(self, event_loop);
+            return;
         }
+
+        // Process complete frame (timing, game state, lighting)
+        frame_processor.process_frame(self, event_loop);
+
+        // Process all event types from event bus
+        #[cfg(feature = "ui-egui")]
+        event_processor.process_ui_events(self, event_loop);
+        
+        event_processor.process_audio_events(self);
+        event_processor.process_graphics_events(self);
+        event_processor.process_input_events(self);
+
+        // Check for generation cancellation from UI
+        #[cfg(feature = "ui-egui")]
+        event_processor.check_generation_cancel(self);
+
+        // Poll async generation if running
+        #[cfg(feature = "ui-egui")]
+        generation_processor.poll_generation(self);
     }
 
     fn window_event(
@@ -1359,10 +983,6 @@ impl ApplicationHandler for App {
     ) {
         // Dispatch the event to registered subscribers (UI first). If consumed,
         // skip further application-level handling.
-        //
-        // NOTE: InputRouter is maintained but not used for dispatch here.
-        // The InputDispatcher provides UI-first routing which works well with egui.
-        // See TODO.md Task 10 for architectural discussion.
         #[cfg(feature = "ui-egui")]
         {
             if self.dispatcher.dispatch(&event) {
@@ -1370,46 +990,8 @@ impl ApplicationHandler for App {
             }
         }
 
-        match event {
-            WindowEvent::CloseRequested => {
-                // Auto-save before close
-                if let Err(e) = self.auto_save_on_shutdown() {
-                    log::warn!("Failed to auto-save on close: {}", e);
-                }
-                event_loop.exit();
-            }
-            WindowEvent::Resized(size) => {
-                if let Some(ref mut wr) = self.window_renderer {
-                    wr.renderer.resize(size.width, size.height);
-                }
-            }
-            WindowEvent::KeyboardInput {
-                event: key_event, ..
-            } => {
-                self.handle_keyboard_input(&key_event);
-            }
-            WindowEvent::RedrawRequested => {
-                log::debug!("RedrawRequested - rendering frame");
-                if let Some(ref mut wr) = self.window_renderer {
-                    self.scene.render(
-                        &mut *wr.renderer,
-                        &mut self.world,
-                        wr.mesh_handle,
-                        wr.cube_mesh_handle,
-                        self.camera,
-                    );
-                }
-
-                // Recall staging belt after render
-                #[cfg(feature = "ui-egui")]
-                if let Some(ui_adapter) = &self.ui_adapter
-                    && let Ok(mut a) = ui_adapter.lock()
-                {
-                    a.recall_staging_belt();
-                }
-            }
-            _ => {}
-        }
+        let window_event_handler = app::event_loop::WindowEventHandler::new();
+        window_event_handler.handle_window_event(self, event_loop, event);
     }
 
     fn device_event(
@@ -1418,13 +1000,12 @@ impl ApplicationHandler for App {
         _device_id: DeviceId,
         event: DeviceEvent,
     ) {
-        // Handle raw mouse motion for camera look
-        if let DeviceEvent::MouseMotion { delta } = event {
-            self.handle_mouse_motion(delta);
-        }
+        let window_event_handler = app::event_loop::WindowEventHandler::new();
+        window_event_handler.handle_device_event(self, event);
     }
 }
 
+// Manually remove all duplicate code below this point and keep only the correct main() function
 #[cfg(feature = "backend-wgpu")]
 fn main() {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
@@ -1440,3 +1021,4 @@ fn main() {
     eprintln!("Run with: cargo run --features backend-wgpu");
     std::process::exit(1);
 }
+

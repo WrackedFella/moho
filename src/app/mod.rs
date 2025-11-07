@@ -8,3 +8,4 @@ pub mod audio_init;
 pub mod camera;
 pub mod config;
 pub mod initializer;
+pub mod event_loop;
