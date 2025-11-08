@@ -764,6 +764,135 @@ pub mod gfx {
                 self.pending_draws.clear();
             }
 
+            /// Update camera uniform buffer with view-projection matrix and camera position.
+            fn update_camera_uniforms(
+                &mut self,
+                view_mat: glam::Mat4,
+                proj_mat: glam::Mat4,
+                cam_pos: glam::Vec3,
+            ) {
+                let viewproj = proj_mat * view_mat;
+
+                // Debug: log camera values
+                log::trace!(
+                    "[wgpu] render_mesh: cam_pos={:?} viewproj0={:?}",
+                    cam_pos,
+                    viewproj.to_cols_array()[0]
+                );
+
+                let mut cols = viewproj.to_cols_array().to_vec();
+                cols.push(cam_pos.x);
+                cols.push(cam_pos.y);
+                cols.push(cam_pos.z);
+                cols.push(0.0f32);
+
+                self.queue
+                    .write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&cols));
+            }
+
+            /// Update shadow matrices for cascaded shadow mapping.
+            /// Calculates CSM cascade matrices and uploads to GPU buffers.
+            fn update_shadow_matrices(&mut self, cam_pos: glam::Vec3) {
+                let sun_dir = glam::Vec3::new(
+                    self.shadow.current_lighting.sun_direction[0],
+                    self.shadow.current_lighting.sun_direction[1],
+                    self.shadow.current_lighting.sun_direction[2],
+                );
+
+                // Calculate cascade matrices for CSM
+                let (cascade_matrices, cascade_gpu_data) =
+                    self.shadow.calculate_cascade_matrices(sun_dir, cam_pos);
+
+                // Upload full CSM data to CSM buffer (for shadow rendering)
+                self.queue.write_buffer(
+                    &self.shadow.csm_matrix_buffer,
+                    0,
+                    bytemuck::bytes_of(&cascade_gpu_data),
+                );
+
+                // Extract cascade 0 matrix and write to legacy shadow buffer (for main pass sampling)
+                let cascade0_mat = cascade_matrices[0];
+                let cols = cascade0_mat.to_cols_array_2d();
+                let shadow_matrix_gpu = crate::gpu_types::ShadowMatrixGpu {
+                    sm0: cols[0],
+                    sm1: cols[1],
+                    sm2: cols[2],
+                    sm3: cols[3],
+                };
+                self.queue.write_buffer(
+                    &self.shadow.shadow_matrix_buffer,
+                    0,
+                    bytemuck::bytes_of(&shadow_matrix_gpu),
+                );
+            }
+
+            /// Prepare instance buffer with provided instances.
+            /// Ensures capacity, resizes if needed, and uploads instance data.
+            /// Returns reference to the instance buffer.
+            fn prepare_instance_buffer(
+                &mut self,
+                instances_gpu: &[GpuInstance],
+            ) -> Option<&wgpu::Buffer> {
+                // Ensure capacity
+                if self.instance_capacity < instances_gpu.len().max(1) {
+                    let mut new_cap = self.instance_capacity.max(1);
+                    while new_cap < instances_gpu.len().max(1) {
+                        new_cap = new_cap.saturating_mul(2);
+                    }
+                    let size_bytes =
+                        (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
+                    let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("instance-buffer"),
+                        size: size_bytes,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    self.instance_buffer = Some(buf);
+                    self.instance_capacity = new_cap;
+                }
+
+                // Upload instance data
+                let ibuf = self.instance_buffer.as_ref()?;
+                if !instances_gpu.is_empty() {
+                    self.queue
+                        .write_buffer(ibuf, 0, bytemuck::cast_slice(instances_gpu));
+                } else {
+                    let zero = GpuInstance {
+                        model: [[0.0; 4]; 4],
+                        material: 0,
+                        object_type: 0,
+                        padding: [0, 0],
+                    };
+                    self.queue
+                        .write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
+                }
+
+                Some(ibuf)
+            }
+
+            /// Acquire render target (surface texture view).
+            /// Returns true if successful, false if reconfiguration is needed.
+            fn acquire_render_target(&mut self) -> bool {
+                if self.pending_frame_view.is_some() {
+                    return true; // Already acquired
+                }
+
+                match self.surface.get_current_texture() {
+                    Ok(f) => {
+                        let view = f
+                            .texture
+                            .create_view(&wgpu::TextureViewDescriptor::default());
+                        self.pending_frame = Some(f);
+                        self.pending_frame_view = Some(view);
+                        true
+                    }
+                    Err(_) => {
+                        self.surface.configure(&self.device, &self.config);
+                        false
+                    }
+                }
+            }
+
             /// Inherent method: render a registered mesh by handle.
             pub fn render_mesh(
                 &mut self,
@@ -776,76 +905,70 @@ pub mod gfx {
                 if idx >= self.mesh_table.len() {
                     return;
                 }
-                if self.mesh_table[idx].is_some() {
-                    // update camera
-                    let view_mat = camera.0;
-                    let proj_mat = camera.1;
-                    let cam_pos = camera.2;
-                    let viewproj = proj_mat * view_mat;
-                    // Debug: log camera values for render_mesh path so we can
-                    // correlate main-side camera computation with what the
-                    // renderer writes for mesh-based rendering.
-                    log::trace!(
-                        "[wgpu] render_mesh: cam_pos={:?} viewproj0={:?}",
-                        cam_pos,
-                        viewproj.to_cols_array()[0]
-                    );
-                    let mut cols = viewproj.to_cols_array().to_vec();
-                    cols.push(cam_pos.x);
-                    cols.push(cam_pos.y);
-                    cols.push(cam_pos.z);
-                    cols.push(0.0f32);
-                    self.queue
-                        .write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&cols));
+                if self.mesh_table[idx].is_none() {
+                    return;
+                }
 
-                    // Calculate and update shadow matrix based on current sun direction
-                    let sun_dir = glam::Vec3::new(
-                        self.shadow.current_lighting.sun_direction[0],
-                        self.shadow.current_lighting.sun_direction[1],
-                        self.shadow.current_lighting.sun_direction[2],
-                    );
+                // Update camera uniforms
+                let (view_mat, proj_mat, cam_pos) = camera;
+                self.update_camera_uniforms(view_mat, proj_mat, cam_pos);
 
-                    // CSM Phase 3: Calculate cascade matrices
-                    let (cascade_matrices, cascade_gpu_data) =
-                        self.shadow.calculate_cascade_matrices(sun_dir, cam_pos);
+                // Update shadow matrices
+                self.update_shadow_matrices(cam_pos);
 
-                    // Upload full CSM data to CSM buffer (for shadow rendering)
-                    self.queue.write_buffer(
-                        &self.shadow.csm_matrix_buffer,
-                        0,
-                        bytemuck::bytes_of(&cascade_gpu_data),
-                    );
+                // Convert instances to GPU format
+                let mut instances_gpu: Vec<GpuInstance> = Vec::with_capacity(instances.len());
+                for ic in instances {
+                    instances_gpu.push(GpuInstance {
+                        model: ic.model,
+                        material: ic.material,
+                        object_type: ic.object_type,
+                        padding: ic.padding,
+                    });
+                }
 
-                    // Extract cascade 0 matrix and write to legacy shadow buffer (for main pass sampling)
-                    // This keeps fragment shader compatible while proving CSM cascade 0 works
-                    let cascade0_mat = cascade_matrices[0];
-                    let cols = cascade0_mat.to_cols_array_2d();
-                    let shadow_matrix_gpu = crate::gpu_types::ShadowMatrixGpu {
-                        sm0: cols[0],
-                        sm1: cols[1],
-                        sm2: cols[2],
-                        sm3: cols[3],
+                // Prepare and upload instance buffer
+                if self.prepare_instance_buffer(&instances_gpu).is_none() {
+                    log::error!("instance buffer missing when uploading instances");
+                    return;
+                }
+
+                // Push this draw into pending_draws to batch multiple mesh draws
+                self.pending_draws.push((mesh, instances_gpu));
+
+                // Acquire frame if this is the first pending draw
+                if !self.acquire_render_target() {
+                    return; // Reconfiguration needed
+                }
+
+                // If finalize requested, record render pass for all pending draws
+                if finalize {
+                    // Ensure we have a frame view
+                    let frame_view = match &self.pending_frame_view {
+                        Some(v) => v,
+                        None => return,
                     };
-                    self.queue.write_buffer(
-                        &self.shadow.shadow_matrix_buffer,
-                        0,
-                        bytemuck::bytes_of(&shadow_matrix_gpu),
-                    );
 
-                    // instances
-                    let mut instances_gpu: Vec<GpuInstance> = Vec::with_capacity(instances.len());
-                    for ic in instances {
-                        instances_gpu.push(GpuInstance {
-                            model: ic.model,
-                            material: ic.material,
-                            object_type: ic.object_type,
-                            padding: ic.padding,
-                        });
+                    // Create encoder for batched render pass
+                    let mut encoder =
+                        self.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("batched-encoder"),
+                            });
+
+                    // Flatten all instance lists into contiguous buffer with offsets
+                    let mut all_instances: Vec<GpuInstance> = Vec::new();
+                    let mut offsets: Vec<usize> = Vec::with_capacity(self.pending_draws.len());
+                    for (_m, insts) in &self.pending_draws {
+                        offsets.push(all_instances.len());
+                        all_instances.extend_from_slice(insts);
                     }
 
-                    if self.instance_capacity < instances_gpu.len().max(1) {
+                    // Ensure capacity and upload all instances
+                    let required = all_instances.len().max(1);
+                    if self.instance_capacity < required {
                         let mut new_cap = self.instance_capacity.max(1);
-                        while new_cap < instances_gpu.len().max(1) {
+                        while new_cap < required {
                             new_cap = new_cap.saturating_mul(2);
                         }
                         let size_bytes =
@@ -863,13 +986,14 @@ pub mod gfx {
                     let ibuf = match self.instance_buffer.as_ref() {
                         Some(b) => b,
                         None => {
-                            log::error!("instance buffer missing when uploading instances");
+                            log::error!("instance buffer missing when uploading batched instances");
                             return;
                         }
                     };
-                    if !instances_gpu.is_empty() {
+
+                    if !all_instances.is_empty() {
                         self.queue
-                            .write_buffer(ibuf, 0, bytemuck::cast_slice(&instances_gpu));
+                            .write_buffer(ibuf, 0, bytemuck::cast_slice(&all_instances));
                     } else {
                         let zero = GpuInstance {
                             model: [[0.0; 4]; 4],
@@ -881,109 +1005,14 @@ pub mod gfx {
                             .write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
                     }
 
-                    // Push this draw into pending_draws to batch multiple mesh
-                    // draws into a single render pass per application frame.
-                    self.pending_draws.push((mesh, instances_gpu));
+                    // Render all pending draws into CSM cascades (Phase 1 extracted)
+                    self.render_shadow_passes(&mut encoder, ibuf, &offsets);
 
-                    // If we need to acquire the frame (this is the first pending
-                    // draw), do so now. If acquire fails attempt reconfigure.
-                    if self.pending_frame_view.is_none() {
-                        match self.surface.get_current_texture() {
-                            Ok(f) => {
-                                let view = f
-                                    .texture
-                                    .create_view(&wgpu::TextureViewDescriptor::default());
-                                self.pending_frame = Some(f);
-                                self.pending_frame_view = Some(view);
-                            }
-                            Err(_) => {
-                                self.surface.configure(&self.device, &self.config);
-                                return;
-                            }
-                        }
-                    }
+                    // Render main color pass with skybox and meshes (Phase 1 extracted)
+                    self.render_main_pass(&mut encoder, frame_view, ibuf, &offsets);
 
-                    // If finalize requested, record a single render pass that
-                    // iterates all pending_draws and issues draw calls for each
-                    // registered mesh. We will write instance data for each draw
-                    // into the instance buffer sequentially and use vertex buffer
-                    // offsets when binding if supported; wgpu allows setting the
-                    // vertex buffer with an offset in bytes via slice(offset..).
-                    if finalize {
-                        // Ensure we have a frame view and a pending frame to present
-                        let frame_view = match &self.pending_frame_view {
-                            Some(v) => v,
-                            None => return,
-                        };
-
-                        // Create an encoder to record the batched render pass.
-                        let mut encoder =
-                            self.device
-                                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                    label: Some("batched-encoder"),
-                                });
-
-                        // Before recording, we need to flatten all instance lists
-                        // into a contiguous buffer and record the offsets for each draw.
-                        let mut all_instances: Vec<GpuInstance> = Vec::new();
-                        let mut offsets: Vec<usize> = Vec::with_capacity(self.pending_draws.len());
-                        for (_m, insts) in &self.pending_draws {
-                            offsets.push(all_instances.len());
-                            all_instances.extend_from_slice(insts);
-                        }
-
-                        // Ensure instance buffer capacity for all_instances
-                        let required = all_instances.len().max(1);
-                        if self.instance_capacity < required {
-                            let mut new_cap = self.instance_capacity.max(1);
-                            while new_cap < required {
-                                new_cap = new_cap.saturating_mul(2);
-                            }
-                            let size_bytes = (new_cap * std::mem::size_of::<GpuInstance>())
-                                as wgpu::BufferAddress;
-                            let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                                label: Some("instance-buffer"),
-                                size: size_bytes,
-                                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                                mapped_at_creation: false,
-                            });
-                            self.instance_buffer = Some(buf);
-                            self.instance_capacity = new_cap;
-                        }
-
-                        // Upload all instances into the instance buffer
-                        let ibuf = match self.instance_buffer.as_ref() {
-                            Some(b) => b,
-                            None => {
-                                log::error!(
-                                    "instance buffer missing when uploading batched instances"
-                                );
-                                return;
-                            }
-                        };
-                        if !all_instances.is_empty() {
-                            self.queue
-                                .write_buffer(ibuf, 0, bytemuck::cast_slice(&all_instances));
-                        } else {
-                            let zero = GpuInstance {
-                                model: [[0.0; 4]; 4],
-                                material: 0,
-                                object_type: 0,
-                                padding: [0, 0],
-                            };
-                            self.queue
-                                .write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
-                        }
-
-                        // Render all pending draws into 4 CSM cascades
-                        self.render_shadow_passes(&mut encoder, ibuf, &offsets);
-
-                        // Render main color pass with skybox and all mesh instances
-                        self.render_main_pass(&mut encoder, frame_view, ibuf, &offsets);
-
-                        // Finish rendering and present the frame
-                        self.finish_frame(encoder);
-                    }
+                    // Finish rendering and present frame (Phase 1 extracted)
+                    self.finish_frame(encoder);
                 }
             }
         }
