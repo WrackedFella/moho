@@ -9,6 +9,9 @@
 //!
 //! The grid uses a HashMap for sparse storage, only allocating memory for non-air blocks.
 
+mod chunks;
+mod queries;
+
 use crate::materials::MaterialType;
 use glam::{IVec3, Vec3};
 use std::collections::HashMap;
@@ -244,49 +247,26 @@ impl VoxelGrid {
     ///
     /// Uses `div_euclid` for correct negative coordinate handling.
     pub fn get_chunk_pos(pos: BlockPos, chunk_size: i32) -> IVec3 {
-        IVec3::new(
-            pos.x.div_euclid(chunk_size),
-            pos.y.div_euclid(chunk_size),
-            pos.z.div_euclid(chunk_size),
-        )
+        chunks::get_chunk_pos(pos, chunk_size)
     }
 
     /// Get chunk coordinate from block position (instance method)
     pub fn chunk_pos_of(&self, pos: BlockPos) -> IVec3 {
-        Self::get_chunk_pos(pos, self.chunk_size)
+        chunks::get_chunk_pos(pos, self.chunk_size)
     }
 
     /// Get all blocks in a chunk
     ///
     /// Returns references to all blocks within the specified chunk boundaries.
     pub fn get_chunk_blocks(&self, chunk_pos: IVec3) -> Vec<&VoxelBlock> {
-        let min = chunk_pos * self.chunk_size;
-        let max = min + IVec3::splat(self.chunk_size);
-
-        self.blocks
-            .values()
-            .filter(|b| {
-                b.position.x >= min.x
-                    && b.position.x < max.x
-                    && b.position.y >= min.y
-                    && b.position.y < max.y
-                    && b.position.z >= min.z
-                    && b.position.z < max.z
-            })
-            .collect()
+        chunks::get_chunk_blocks(&self.blocks, chunk_pos, self.chunk_size)
     }
 
     /// Get height at a position (highest Y with a block)
     ///
     /// Scans all blocks at the given (x, z) coordinates and returns the highest Y value.
     pub fn get_height(&self, x: i32, z: i32) -> Option<i32> {
-        let blocks_at_xz: Vec<i32> = self
-            .blocks
-            .keys()
-            .filter(|pos| pos.x == x && pos.z == z)
-            .map(|pos| pos.y)
-            .collect();
-        blocks_at_xz.into_iter().max()
+        queries::get_height(&self.blocks, x, z)
     }
 
     /// Get neighbor heights for smoothing algorithm
@@ -294,12 +274,7 @@ impl VoxelGrid {
     /// Returns heights in cardinal directions: [North, South, East, West]
     /// Used for terrain smoothing to create ramps.
     pub fn get_neighbor_heights(&self, pos: BlockPos) -> [Option<i32>; 4] {
-        [
-            self.get_height(pos.x, pos.z + 1), // North (+Z)
-            self.get_height(pos.x, pos.z - 1), // South (-Z)
-            self.get_height(pos.x + 1, pos.z), // East (+X)
-            self.get_height(pos.x - 1, pos.z), // West (-X)
-        ]
+        queries::get_neighbor_heights(&self.blocks, pos)
     }
 
     /// Check if a block exists at the given position
@@ -364,112 +339,6 @@ mod tests {
         grid.set_block(pos, VoxelBlock::new(pos, 0));
 
         assert!(grid.has_block_at(&pos));
-    }
-
-    #[test]
-    fn test_get_height() {
-        let mut grid = VoxelGrid::new(16);
-
-        // No blocks yet
-        assert_eq!(grid.get_height(0, 0), None);
-
-        // Add blocks at different heights
-        grid.set_block(
-            BlockPos::new(0, 1, 0),
-            VoxelBlock::new(BlockPos::new(0, 1, 0), 0),
-        );
-        grid.set_block(
-            BlockPos::new(0, 3, 0),
-            VoxelBlock::new(BlockPos::new(0, 3, 0), 0),
-        );
-        grid.set_block(
-            BlockPos::new(0, 2, 0),
-            VoxelBlock::new(BlockPos::new(0, 2, 0), 0),
-        );
-
-        // Should return highest Y
-        assert_eq!(grid.get_height(0, 0), Some(3));
-    }
-
-    #[test]
-    fn test_chunk_pos() {
-        // Test positive coordinates
-        assert_eq!(
-            VoxelGrid::get_chunk_pos(BlockPos::new(0, 0, 0), 16),
-            IVec3::new(0, 0, 0)
-        );
-        assert_eq!(
-            VoxelGrid::get_chunk_pos(BlockPos::new(15, 15, 15), 16),
-            IVec3::new(0, 0, 0)
-        );
-        assert_eq!(
-            VoxelGrid::get_chunk_pos(BlockPos::new(16, 16, 16), 16),
-            IVec3::new(1, 1, 1)
-        );
-
-        // Test negative coordinates (div_euclid handles correctly)
-        assert_eq!(
-            VoxelGrid::get_chunk_pos(BlockPos::new(-1, -1, -1), 16),
-            IVec3::new(-1, -1, -1)
-        );
-        assert_eq!(
-            VoxelGrid::get_chunk_pos(BlockPos::new(-16, -16, -16), 16),
-            IVec3::new(-1, -1, -1)
-        );
-    }
-
-    #[test]
-    fn test_get_chunk_blocks() {
-        let mut grid = VoxelGrid::new(16);
-
-        // Add blocks in chunk (0, 0, 0)
-        grid.set_block(
-            BlockPos::new(0, 0, 0),
-            VoxelBlock::new(BlockPos::new(0, 0, 0), 0),
-        );
-        grid.set_block(
-            BlockPos::new(5, 5, 5),
-            VoxelBlock::new(BlockPos::new(5, 5, 5), 0),
-        );
-
-        // Add block in different chunk
-        grid.set_block(
-            BlockPos::new(20, 20, 20),
-            VoxelBlock::new(BlockPos::new(20, 20, 20), 0),
-        );
-
-        let chunk_blocks = grid.get_chunk_blocks(IVec3::new(0, 0, 0));
-        assert_eq!(chunk_blocks.len(), 2);
-
-        let chunk_blocks = grid.get_chunk_blocks(IVec3::new(1, 1, 1));
-        assert_eq!(chunk_blocks.len(), 1);
-    }
-
-    #[test]
-    fn test_get_neighbor_heights() {
-        let mut grid = VoxelGrid::new(16);
-        let center = BlockPos::new(10, 5, 10);
-
-        // Set heights for neighbors
-        grid.set_block(
-            BlockPos::new(10, 3, 11),
-            VoxelBlock::new(BlockPos::new(10, 3, 11), 0),
-        ); // North
-        grid.set_block(
-            BlockPos::new(10, 4, 9),
-            VoxelBlock::new(BlockPos::new(10, 4, 9), 0),
-        ); // South
-        grid.set_block(
-            BlockPos::new(11, 5, 10),
-            VoxelBlock::new(BlockPos::new(11, 5, 10), 0),
-        ); // East
-        grid.set_block(
-            BlockPos::new(9, 6, 10),
-            VoxelBlock::new(BlockPos::new(9, 6, 10), 0),
-        ); // West
-
-        let heights = grid.get_neighbor_heights(center);
-        assert_eq!(heights, [Some(3), Some(4), Some(5), Some(6)]);
     }
 
     #[test]
