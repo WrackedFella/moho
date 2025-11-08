@@ -1,344 +1,38 @@
-use crate::materials::MaterialType;
+//! Voxel system for 3D block-based world representation.
+//!
+//! This module provides a complete voxel system with:
+//! - Grid data structure for storing voxel blocks
+//! - Face culling for rendering optimization
+//! - Mesh generation for voxel rendering
+//! - Terrain smoothing algorithms
+//! - Chunk-based organization
+//!
+//! # Module Organization
+//! - `grid` - Core data structures (VoxelGrid, VoxelBlock)
+//! - `face` - Face direction and culling logic
+//! - `mod` (this file) - Mesh generation and high-level APIs
+//!
+//! # Examples
+//! ```ignore
+//! use moho_core::voxel::{VoxelGrid, VoxelBlock, BlockPos};
+//!
+//! let mut grid = VoxelGrid::new(16); // 16x16x16 chunks
+//! let pos = BlockPos::new(0, 0, 0);
+//! let block = VoxelBlock::new(pos, 0); // material_id = 0 (grass)
+//! grid.set_block(pos, block);
+//! ```
+
+mod face;
+mod grid;
+
+// Re-export core types from submodules
+pub use face::{FaceDirection, get_visible_faces};
+pub use grid::{
+    BlockPos, MaterialRegistry, ResourceData, ResourceRegistry, VoxelBlock, VoxelGrid, VoxelMesh,
+};
+
 use glam::{IVec3, Vec3};
 use std::collections::HashMap;
-
-/// Integer vector for grid coordinates
-pub type BlockPos = IVec3;
-
-/// Direction of a cube face for face culling
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FaceDirection {
-    PosX, // +X (right, east)
-    NegX, // -X (left, west)
-    PosY, // +Y (top, up)
-    NegY, // -Y (bottom, down)
-    PosZ, // +Z (front, north)
-    NegZ, // -Z (back, south)
-}
-
-impl FaceDirection {
-    /// Get the offset vector for this face direction
-    pub fn offset(&self) -> BlockPos {
-        match self {
-            FaceDirection::PosX => BlockPos::new(1, 0, 0),
-            FaceDirection::NegX => BlockPos::new(-1, 0, 0),
-            FaceDirection::PosY => BlockPos::new(0, 1, 0),
-            FaceDirection::NegY => BlockPos::new(0, -1, 0),
-            FaceDirection::PosZ => BlockPos::new(0, 0, 1),
-            FaceDirection::NegZ => BlockPos::new(0, 0, -1),
-        }
-    }
-
-    /// Get all six face directions
-    pub fn all() -> [FaceDirection; 6] {
-        [
-            FaceDirection::PosX,
-            FaceDirection::NegX,
-            FaceDirection::PosY,
-            FaceDirection::NegY,
-            FaceDirection::PosZ,
-            FaceDirection::NegZ,
-        ]
-    }
-
-    /// Get the vertex range for this face in a standard cube mesh
-    /// Standard cube has 24 vertices (4 per face) in order: +X, -X, +Y, -Y, +Z, -Z
-    pub fn vertex_range(&self) -> (usize, usize) {
-        match self {
-            FaceDirection::PosX => (0, 4),  // vertices 0-3
-            FaceDirection::NegX => (4, 4),  // vertices 4-7
-            FaceDirection::PosY => (8, 4),  // vertices 8-11
-            FaceDirection::NegY => (12, 4), // vertices 12-15
-            FaceDirection::PosZ => (16, 4), // vertices 16-19
-            FaceDirection::NegZ => (20, 4), // vertices 20-23
-        }
-    }
-
-    /// Get the index range for this face in a standard cube mesh
-    /// Standard cube has 36 indices (6 per face) in order: +X, -X, +Y, -Y, +Z, -Z
-    pub fn index_range(&self) -> (usize, usize) {
-        match self {
-            FaceDirection::PosX => (0, 6),  // indices 0-5
-            FaceDirection::NegX => (6, 6),  // indices 6-11
-            FaceDirection::PosY => (12, 6), // indices 12-17
-            FaceDirection::NegY => (18, 6), // indices 18-23
-            FaceDirection::PosZ => (24, 6), // indices 24-29
-            FaceDirection::NegZ => (30, 6), // indices 30-35
-        }
-    }
-}
-
-/// Mesh data for a single voxel block
-#[derive(Debug, Clone)]
-pub struct VoxelMesh {
-    pub vertices: Vec<[f32; 3]>,
-    pub normals: Vec<[f32; 3]>,
-    pub indices: Vec<u32>,
-}
-
-impl VoxelMesh {
-    pub fn empty() -> Self {
-        VoxelMesh {
-            vertices: Vec::new(),
-            normals: Vec::new(),
-            indices: Vec::new(),
-        }
-    }
-}
-
-/// Resource data for mining/gathering
-#[derive(Debug, Clone)]
-pub struct ResourceData {
-    pub resource_type: String, // "stone", "ore", "dirt", etc.
-    pub quantity: u32,
-}
-
-/// Material registry - maps material IDs to actual material data
-pub struct MaterialRegistry {
-    materials: Vec<MaterialType>,
-}
-
-impl MaterialRegistry {
-    pub fn new() -> Self {
-        let mut registry = MaterialRegistry {
-            materials: Vec::new(),
-        };
-
-        // Register default materials
-        // ID 0: Grass (green)
-        registry.materials.push(MaterialType::Lambertian {
-            albedo: Vec3::new(0.3, 0.6, 0.3),
-        });
-
-        // ID 1: Dirt (brown)
-        registry.materials.push(MaterialType::Lambertian {
-            albedo: Vec3::new(0.5, 0.4, 0.3),
-        });
-
-        // ID 2: Stone (gray)
-        registry.materials.push(MaterialType::Lambertian {
-            albedo: Vec3::new(0.5, 0.5, 0.5),
-        });
-
-        registry
-    }
-
-    pub fn get(&self, id: u32) -> Option<&MaterialType> {
-        self.materials.get(id as usize)
-    }
-
-    pub fn register(&mut self, material: MaterialType) -> u32 {
-        let id = self.materials.len() as u32;
-        self.materials.push(material);
-        id
-    }
-}
-
-impl Default for MaterialRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Resource registry - maps resource IDs to resource data
-pub struct ResourceRegistry {
-    resources: Vec<ResourceData>,
-}
-
-impl ResourceRegistry {
-    pub fn new() -> Self {
-        let mut registry = ResourceRegistry {
-            resources: Vec::new(),
-        };
-
-        // Register default resources
-        // ID 0: Stone
-        registry.resources.push(ResourceData {
-            resource_type: "stone".to_string(),
-            quantity: 1,
-        });
-
-        // ID 1: Iron ore
-        registry.resources.push(ResourceData {
-            resource_type: "iron_ore".to_string(),
-            quantity: 2,
-        });
-
-        registry
-    }
-
-    pub fn get(&self, id: u32) -> Option<&ResourceData> {
-        self.resources.get(id as usize)
-    }
-
-    pub fn register(&mut self, resource: ResourceData) -> u32 {
-        let id = self.resources.len() as u32;
-        self.resources.push(resource);
-        id
-    }
-}
-
-impl Default for ResourceRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Individual voxel block in the world
-/// All blocks are treated uniformly - material/resource data stored separately
-#[derive(Debug, Clone)]
-pub struct VoxelBlock {
-    pub position: BlockPos,
-    pub mesh_data: VoxelMesh,
-    pub material_id: u32,         // Index into MaterialRegistry
-    pub resource_id: Option<u32>, // Index into ResourceRegistry
-}
-
-impl VoxelBlock {
-    pub fn new(position: BlockPos, material_id: u32) -> Self {
-        VoxelBlock {
-            position,
-            mesh_data: VoxelMesh::empty(),
-            material_id,
-            resource_id: None,
-        }
-    }
-
-    /// Convert grid position to world position (center of block)
-    pub fn world_position(&self) -> Vec3 {
-        Vec3::new(
-            self.position.x as f32,
-            self.position.y as f32,
-            self.position.z as f32,
-        )
-    }
-}
-
-/// 3D grid storing voxel blocks
-pub struct VoxelGrid {
-    blocks: HashMap<BlockPos, VoxelBlock>,
-    chunk_size: i32,
-    pub material_registry: MaterialRegistry,
-    pub resource_registry: ResourceRegistry,
-}
-
-impl VoxelGrid {
-    pub fn new(chunk_size: i32) -> Self {
-        VoxelGrid {
-            blocks: HashMap::new(),
-            chunk_size,
-            material_registry: MaterialRegistry::new(),
-            resource_registry: ResourceRegistry::new(),
-        }
-    }
-
-    /// Get the chunk size
-    pub fn chunk_size(&self) -> i32 {
-        self.chunk_size
-    }
-
-    /// Get iterator over all block positions
-    pub fn block_positions(&self) -> impl Iterator<Item = &BlockPos> {
-        self.blocks.keys()
-    }
-
-    pub fn set_block(&mut self, pos: BlockPos, block: VoxelBlock) {
-        self.blocks.insert(pos, block);
-    }
-
-    pub fn get_block(&self, pos: &BlockPos) -> Option<&VoxelBlock> {
-        self.blocks.get(pos)
-    }
-
-    pub fn get_block_mut(&mut self, pos: &BlockPos) -> Option<&mut VoxelBlock> {
-        self.blocks.get_mut(pos)
-    }
-
-    pub fn remove_block(&mut self, pos: &BlockPos) -> Option<VoxelBlock> {
-        self.blocks.remove(pos)
-    }
-
-    pub fn iter_blocks(&self) -> impl Iterator<Item = &VoxelBlock> {
-        self.blocks.values()
-    }
-
-    pub fn iter_blocks_mut(&mut self) -> impl Iterator<Item = &mut VoxelBlock> {
-        self.blocks.values_mut()
-    }
-
-    /// Get chunk coordinate from block position (static helper)
-    pub fn get_chunk_pos(pos: BlockPos, chunk_size: i32) -> IVec3 {
-        IVec3::new(
-            pos.x.div_euclid(chunk_size),
-            pos.y.div_euclid(chunk_size),
-            pos.z.div_euclid(chunk_size),
-        )
-    }
-
-    /// Get chunk coordinate from block position (instance method)
-    pub fn chunk_pos_of(&self, pos: BlockPos) -> IVec3 {
-        Self::get_chunk_pos(pos, self.chunk_size)
-    }
-
-    /// Get all blocks in a chunk
-    pub fn get_chunk_blocks(&self, chunk_pos: IVec3) -> Vec<&VoxelBlock> {
-        let min = chunk_pos * self.chunk_size;
-        let max = min + IVec3::splat(self.chunk_size);
-
-        self.blocks
-            .values()
-            .filter(|b| {
-                b.position.x >= min.x
-                    && b.position.x < max.x
-                    && b.position.y >= min.y
-                    && b.position.y < max.y
-                    && b.position.z >= min.z
-                    && b.position.z < max.z
-            })
-            .collect()
-    }
-
-    /// Get height at a position (highest Y with a block)
-    pub fn get_height(&self, x: i32, z: i32) -> Option<i32> {
-        let blocks_at_xz: Vec<i32> = self
-            .blocks
-            .keys()
-            .filter(|pos| pos.x == x && pos.z == z)
-            .map(|pos| pos.y)
-            .collect();
-        blocks_at_xz.into_iter().max()
-    }
-
-    /// Get neighbor heights for smoothing algorithm
-    /// Returns [North, South, East, West]
-    pub fn get_neighbor_heights(&self, pos: BlockPos) -> [Option<i32>; 4] {
-        [
-            self.get_height(pos.x, pos.z + 1), // North (+Z)
-            self.get_height(pos.x, pos.z - 1), // South (-Z)
-            self.get_height(pos.x + 1, pos.z), // East (+X)
-            self.get_height(pos.x - 1, pos.z), // West (-X)
-        ]
-    }
-
-    /// Check if a face should be rendered (face culling optimization)
-    /// Returns false if the neighbor block is solid (face is hidden)
-    pub fn should_render_face(&self, pos: BlockPos, direction: FaceDirection) -> bool {
-        let neighbor_pos = pos + direction.offset();
-
-        // If neighbor exists (solid block), don't render this face
-        // If no neighbor (air or out of bounds), render the face
-        !self.blocks.contains_key(&neighbor_pos)
-    }
-
-    /// Get list of visible faces for a block (for face culling)
-    pub fn get_visible_faces(&self, pos: BlockPos) -> Vec<FaceDirection> {
-        FaceDirection::all()
-            .iter()
-            .filter(|&&dir| self.should_render_face(pos, dir))
-            .copied()
-            .collect()
-    }
-}
 
 /// Mesh generation for voxel blocks
 pub struct MeshGenerator;
@@ -528,7 +222,7 @@ impl VoxelChunk {
 
         for block in blocks {
             // Get visible faces for this block (face culling)
-            let visible_faces = grid.get_visible_faces(block.position);
+            let visible_faces = get_visible_faces(grid, block.position);
 
             if visible_faces.is_empty() {
                 continue; // Block is completely surrounded, skip it

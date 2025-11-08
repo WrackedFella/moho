@@ -118,18 +118,18 @@ fn test_face_culling_and_visible_faces() {
 
     // No neighbors -> all faces visible
     for dir in FaceDirection::all().iter() {
-        assert!(grid.should_render_face(pos, *dir));
+        assert!(dir.should_render_face(&grid, pos));
     }
 
     // Add neighbor to the east (+X)
     grid.set_block(IVec3::new(1, 0, 0), VoxelBlock::new(IVec3::new(1, 0, 0), 0));
-    assert!(!grid.should_render_face(pos, FaceDirection::PosX));
+    assert!(!FaceDirection::PosX.should_render_face(&grid, pos));
     // Other faces remain visible
-    assert!(grid.should_render_face(pos, FaceDirection::NegX));
-    assert!(grid.should_render_face(pos, FaceDirection::PosY));
+    assert!(FaceDirection::NegX.should_render_face(&grid, pos));
+    assert!(FaceDirection::PosY.should_render_face(&grid, pos));
 
     // get_visible_faces should reflect the culling
-    let visible = grid.get_visible_faces(pos);
+    let visible = get_visible_faces(&grid, pos);
     assert!(!visible.contains(&FaceDirection::PosX));
     assert!(visible.contains(&FaceDirection::PosY));
     assert!(visible.contains(&FaceDirection::NegX));
