@@ -153,7 +153,9 @@ impl AppConfigBuilder {
 
         AppConfig {
             mouse_sensitivity,
-            input_filtering_enabled: self.input_filtering_enabled.unwrap_or(defaults.input_filtering_enabled),
+            input_filtering_enabled: self
+                .input_filtering_enabled
+                .unwrap_or(defaults.input_filtering_enabled),
             filter_preset: self.filter_preset.unwrap_or(defaults.filter_preset),
             prefs,
         }
@@ -169,7 +171,10 @@ mod tests {
         let config = AppConfig::default();
         assert!(config.mouse_sensitivity > 0.0);
         assert!(config.input_filtering_enabled);
-        assert!(matches!(config.filter_preset, moho_core::input::FilterPreset::Default));
+        assert!(matches!(
+            config.filter_preset,
+            moho_core::input::FilterPreset::Default
+        ));
     }
 
     #[test]
@@ -186,9 +191,7 @@ mod tests {
 
     #[test]
     fn test_builder_partial_customization() {
-        let config = AppConfig::builder()
-            .mouse_sensitivity(0.75)
-            .build();
+        let config = AppConfig::builder().mouse_sensitivity(0.75).build();
 
         assert_eq!(config.mouse_sensitivity, 0.75);
         assert!(config.input_filtering_enabled); // Uses default

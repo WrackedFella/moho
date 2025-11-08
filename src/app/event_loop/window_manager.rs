@@ -40,13 +40,10 @@ impl WindowManager {
     }
 
     /// Create and configure the main application window
-    pub fn create_window(
-        &self,
-        event_loop: &ActiveEventLoop,
-    ) -> WindowResult<Arc<Window>> {
+    pub fn create_window(&self, event_loop: &ActiveEventLoop) -> WindowResult<Arc<Window>> {
         let mut window_attributes = WindowAttributes::default();
         window_attributes.title = "Project: Moho - Prototype".into();
-        
+
         event_loop
             .create_window(window_attributes)
             .map(Arc::new)
@@ -54,11 +51,7 @@ impl WindowManager {
     }
 
     /// Setup renderer and UI for the given window
-    pub fn setup_renderer_and_ui(
-        &self,
-        app: &mut App,
-        window: Arc<Window>,
-    ) -> WindowResult<()> {
+    pub fn setup_renderer_and_ui(&self, app: &mut App, window: Arc<Window>) -> WindowResult<()> {
         app.setup_renderer_and_ui(window)
             .map_err(|e| WindowError::SetupFailed(e.to_string()))
     }
@@ -79,11 +72,7 @@ impl WindowManager {
     }
 
     /// Handle the window resumed event (creates window if needed)
-    pub fn handle_resumed(
-        &self,
-        app: &mut App,
-        event_loop: &ActiveEventLoop,
-    ) -> WindowResult<()> {
+    pub fn handle_resumed(&self, app: &mut App, event_loop: &ActiveEventLoop) -> WindowResult<()> {
         if app.window_renderer.is_none() {
             let window = self.create_window(event_loop)?;
             self.setup_renderer_and_ui(app, window)?;

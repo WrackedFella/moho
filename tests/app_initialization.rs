@@ -25,10 +25,10 @@ fn app_new_creates_instance_successfully() {
     // This test just verifies App::new() completes without panicking
     // In a real environment, App requires window context, so we can't fully test
     // the complete initialization here, but we can verify the structure exists
-    
+
     // Note: App::new() initializes logging, so we might see log output
     // This is expected and part of the current behavior we're documenting
-    
+
     // For now, we just verify the module structure is accessible
     // Once we refactor to support dependency injection, we can test App::new() directly
     assert!(true, "App module structure is accessible");
@@ -55,7 +55,7 @@ fn document_initialization_order() {
     // 11. Create InputRouter
     // 12. Setup InputDispatcher (with feature flag)
     // 13. Create InputSystem with filtering
-    
+
     let init_order = vec![
         "logging",
         "world",
@@ -71,24 +71,30 @@ fn document_initialization_order() {
         "input_dispatcher",
         "input_system",
     ];
-    
+
     assert_eq!(init_order.len(), 13, "App::new() initializes 13 systems");
-    
+
     // Verify critical dependencies:
     // - EventBus must exist before subscribers
     // - Prefs must be loaded before InputSystem (for mouse sensitivity)
     // - SimulationController needs camera position
-    assert!(init_order.iter().position(|&x| x == "event_bus") 
+    assert!(
+        init_order.iter().position(|&x| x == "event_bus")
             < init_order.iter().position(|&x| x == "event_subscribers"),
-            "EventBus must be created before subscribers");
-    
-    assert!(init_order.iter().position(|&x| x == "prefs") 
+        "EventBus must be created before subscribers"
+    );
+
+    assert!(
+        init_order.iter().position(|&x| x == "prefs")
             < init_order.iter().position(|&x| x == "input_system"),
-            "Prefs must be loaded before InputSystem");
-    
-    assert!(init_order.iter().position(|&x| x == "camera") 
+        "Prefs must be loaded before InputSystem"
+    );
+
+    assert!(
+        init_order.iter().position(|&x| x == "camera")
             < init_order.iter().position(|&x| x == "simulation"),
-            "Camera must exist before SimulationController");
+        "Camera must exist before SimulationController"
+    );
 }
 
 /// Test 3: Audio system failure is graceful
@@ -99,13 +105,16 @@ fn document_initialization_order() {
 fn audio_system_failure_is_graceful() {
     // Current behavior: If AudioSystem::new() fails, it logs a warning
     // and stores None. The app continues to function.
-    
+
     // We can't easily simulate audio failure in a test, but we can verify
     // that the Option<AudioSystem> type allows for graceful degradation
     let audio_system: Option<moho_audio::AudioSystem> = None;
-    
+
     // This represents the fallback state - app works without audio
-    assert!(audio_system.is_none(), "App can function without audio system");
+    assert!(
+        audio_system.is_none(),
+        "App can function without audio system"
+    );
 }
 
 /// Test 4: UI initialization paths
@@ -119,7 +128,7 @@ fn ui_initialization_documented() {
     // - InputDispatcher created
     // - Generation channels created
     // - Unconsumed input channels created
-    
+
     assert!(true, "UI features are always available");
 }
 
@@ -130,21 +139,21 @@ fn ui_initialization_documented() {
 #[test]
 fn event_bus_subscribers_documented() {
     use moho_core::EventBus;
-    
+
     // Create a test event bus to verify the pattern
     let event_bus = Arc::new(EventBus::new());
-    
+
     // Current design uses crossbeam channels for collecting events
     let (tx, rx) = crossbeam_channel::unbounded::<moho_core::events::AudioEvent>();
-    
+
     // Subscribe with a closure that sends to the channel
     event_bus.subscribe(move |event: &moho_core::events::AudioEvent| {
         let _ = tx.send(event.clone());
     });
-    
+
     // Verify we can create and subscribe
     assert!(rx.is_empty(), "Initially no events");
-    
+
     // This pattern is repeated for:
     // - UiEvent (with feature flag)
     // - AudioEvent
@@ -159,12 +168,12 @@ fn event_bus_subscribers_documented() {
 fn window_renderer_deferred_initialization_documented() {
     // App::new() creates the App struct but sets window_renderer to None
     // Later, setup_renderer_and_ui() is called with the window after it's created
-    
+
     // This is necessary because:
     // 1. Window creation happens in the winit event loop
     // 2. Renderer needs the window to create the surface
     // 3. App needs to exist before the event loop runs
-    
+
     // We can't test this directly without a window, but we document the pattern
     let window_renderer: Option<()> = None; // Represents the initial state
     assert!(window_renderer.is_none(), "Window renderer starts as None");
@@ -180,22 +189,30 @@ fn default_camera_configuration_documented() {
     let eye = glam::Vec3::new(40.0, 25.0, 40.0);
     let center = glam::Vec3::new(0.0, 8.0, 0.0);
     let up = glam::Vec3::new(0.0, 1.0, 0.0);
-    
+
     let view = glam::Mat4::look_at_rh(eye, center, up);
     let proj = glam::Mat4::perspective_rh(
-        45f32.to_radians(),  // FOV
-        16.0 / 9.0,           // Aspect ratio (assumed, will be adjusted)
-        0.1f32,               // Near plane
-        1500.0f32,            // Far plane (for skybox visibility)
+        45f32.to_radians(), // FOV
+        16.0 / 9.0,         // Aspect ratio (assumed, will be adjusted)
+        0.1f32,             // Near plane
+        1500.0f32,          // Far plane (for skybox visibility)
     );
-    
+
     // Verify camera is positioned correctly
-    assert_eq!(eye, glam::Vec3::new(40.0, 25.0, 40.0), "Default camera position");
-    assert_eq!(center, glam::Vec3::new(0.0, 8.0, 0.0), "Default look-at target");
-    
+    assert_eq!(
+        eye,
+        glam::Vec3::new(40.0, 25.0, 40.0),
+        "Default camera position"
+    );
+    assert_eq!(
+        center,
+        glam::Vec3::new(0.0, 8.0, 0.0),
+        "Default look-at target"
+    );
+
     // Verify matrices are valid (not NaN or infinite)
     assert!(!view.is_nan(), "View matrix is valid");
     assert!(!proj.is_nan(), "Projection matrix is valid");
-    
+
     // These values give a good view of voxel terrain from above and at an angle
 }

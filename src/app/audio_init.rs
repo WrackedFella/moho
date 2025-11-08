@@ -48,7 +48,7 @@ mod tests {
         // We can't reliably test success/failure without mocking hardware,
         // but we can verify the function is callable and returns the right type
         let result = initialize_audio_system();
-        
+
         // Result should be Some or None depending on system state
         // Both are valid - the important part is graceful handling
         match result {
@@ -78,7 +78,7 @@ mod tests {
         // (Though in practice, App only calls this once)
         let _first = initialize_audio_system();
         let _second = initialize_audio_system();
-        
+
         // Both should complete without panic
         assert!(true, "Multiple initialization attempts handled safely");
     }

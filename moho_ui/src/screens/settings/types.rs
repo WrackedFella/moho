@@ -40,7 +40,7 @@ impl SettingsTab {
 }
 
 /// Type-safe identifier for key bindings in the settings menu.
-/// 
+///
 /// Replaces magic numbers (0, 1, 2, 3, 4, 5) with descriptive enum variants
 /// to improve code clarity and prevent binding ID errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -112,4 +112,3 @@ impl BindingId {
         ]
     }
 }
-

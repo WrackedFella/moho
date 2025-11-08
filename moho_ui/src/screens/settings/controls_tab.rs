@@ -133,10 +133,11 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                     ui.label("Mouse Sensitivity:");
                 },
             );
-            
+
             let saved_sensitivity = menu.state.prefs().mouse_sensitivity;
-            let is_dirty = (menu.state.staged().mouse_sensitivity - saved_sensitivity).abs() > f32::EPSILON;
-            
+            let is_dirty =
+                (menu.state.staged().mouse_sensitivity - saved_sensitivity).abs() > f32::EPSILON;
+
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Slider matching keybind button width (120px)
                 ui.allocate_ui_with_layout(
@@ -145,10 +146,13 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                     |ui| {
                         ui.spacing_mut().slider_width = 120.0;
                         let slider = ui.add(
-                            egui::Slider::new(&mut menu.state.staged_mut().mouse_sensitivity, 0.01..=10.0)
-                                .show_value(false)
-                                .min_decimals(0)
-                                .max_decimals(2),
+                            egui::Slider::new(
+                                &mut menu.state.staged_mut().mouse_sensitivity,
+                                0.01..=10.0,
+                            )
+                            .show_value(false)
+                            .min_decimals(0)
+                            .max_decimals(2),
                         );
                         SettingsMenu::paint_dirty_decor(ui, &slider, is_dirty);
                     },
@@ -164,7 +168,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 );
                 SettingsMenu::paint_dirty_decor(ui, &drag, is_dirty);
             });
-            
+
             if is_dirty {
                 menu.state.mark_dirty(SettingsField::MouseSensitivity);
             }
@@ -176,7 +180,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
         {
             let saved_filtering = menu.state.prefs().input_filtering_enabled;
             let is_dirty = menu.state.staged().input_filtering_enabled != saved_filtering;
-            
+
             ui.horizontal(|ui| {
                 ui.allocate_ui_with_layout(
                     egui::vec2(label_width, 28.0),
@@ -186,11 +190,14 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                     },
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let checkbox = ui.checkbox(&mut menu.state.staged_mut().input_filtering_enabled, "Enable");
+                    let checkbox = ui.checkbox(
+                        &mut menu.state.staged_mut().input_filtering_enabled,
+                        "Enable",
+                    );
                     SettingsMenu::paint_dirty_decor(ui, &checkbox, is_dirty);
                 });
             });
-            
+
             if is_dirty {
                 menu.state.mark_dirty(SettingsField::InputFiltering);
             }

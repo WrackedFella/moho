@@ -120,9 +120,7 @@ impl EventProcessor {
                 volume,
                 looped,
             },
-            AudioEvent::MusicStop => {
-                moho_audio::AudioEvent::Stop(moho_audio::AudioCategory::Music)
-            }
+            AudioEvent::MusicStop => moho_audio::AudioEvent::Stop(moho_audio::AudioCategory::Music),
             AudioEvent::MusicVolumeChanged { volume: _ } => {
                 // Skip - not implemented in current audio system
                 // Return a no-op that won't crash but also won't do anything
@@ -180,8 +178,7 @@ impl EventProcessor {
                     let cy = yaw.cos();
                     let cp = pitch.cos();
                     let sp = pitch.sin();
-                    let forward =
-                        glam::Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
+                    let forward = glam::Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
                     let new_pos = app.simulation.position() + forward * dz;
                     app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
                 }
@@ -226,7 +223,7 @@ mod tests {
     #[test]
     fn test_audio_event_mapping() {
         let processor = EventProcessor::new();
-        
+
         // Test basic event mappings
         let mapped = processor.map_audio_event(AudioEvent::ButtonClick);
         assert!(matches!(mapped, moho_audio::AudioEvent::ButtonClick));
@@ -241,12 +238,12 @@ mod tests {
     #[test]
     fn test_audio_event_play_sound_mapping() {
         let processor = EventProcessor::new();
-        
+
         let mapped = processor.map_audio_event(AudioEvent::PlaySound {
             path: "test.wav".into(),
             volume: 0.5,
         });
-        
+
         match mapped {
             moho_audio::AudioEvent::CustomSound { path, volume } => {
                 assert_eq!(path, "test.wav");
@@ -259,15 +256,19 @@ mod tests {
     #[test]
     fn test_audio_event_music_mapping() {
         let processor = EventProcessor::new();
-        
+
         let mapped = processor.map_audio_event(AudioEvent::MusicStart {
             path: "music.ogg".into(),
             volume: 0.8,
             looped: true,
         });
-        
+
         match mapped {
-            moho_audio::AudioEvent::BackgroundMusic { path, volume, looped } => {
+            moho_audio::AudioEvent::BackgroundMusic {
+                path,
+                volume,
+                looped,
+            } => {
                 assert_eq!(path, "music.ogg");
                 assert!((volume - 0.8).abs() < 0.001);
                 assert!(looped);

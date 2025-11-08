@@ -221,7 +221,7 @@ mod tests {
         let moon_dir = glam::Vec3::new(0.0, 1.0, 0.0); // Above horizon
         let intensity = processor.calculate_moon_intensity(moon_dir, 5.0); // 5 AM
         assert_eq!(intensity, 0.4); // Full brightness at start of dawn
-        
+
         let intensity = processor.calculate_moon_intensity(moon_dir, 7.0); // 7 AM
         assert_eq!(intensity, 0.0); // Faded by end of dawn
     }

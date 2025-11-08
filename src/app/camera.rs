@@ -39,22 +39,22 @@ pub type CameraSetup = (Mat4, Mat4, Vec3);
 pub struct CameraBuilder {
     /// Camera position in world space
     eye: Vec3,
-    
+
     /// Point the camera is looking at
     center: Vec3,
-    
+
     /// Up vector (typically +Y)
     up: Vec3,
-    
+
     /// Field of view in degrees
     fov_degrees: f32,
-    
+
     /// Aspect ratio (width / height)
     aspect_ratio: f32,
-    
+
     /// Near clipping plane
     near: f32,
-    
+
     /// Far clipping plane
     far: f32,
 }
@@ -136,7 +136,7 @@ impl CameraBuilder {
             self.near,
             self.far,
         );
-        
+
         (view, proj, self.eye)
     }
 }
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn test_default_camera_values() {
         let builder = CameraBuilder::default();
-        
+
         assert_eq!(builder.eye, Vec3::new(40.0, 25.0, 40.0));
         assert_eq!(builder.center, Vec3::new(0.0, 8.0, 0.0));
         assert_eq!(builder.up, Vec3::new(0.0, 1.0, 0.0));
@@ -168,11 +168,11 @@ mod tests {
     #[test]
     fn test_camera_build_creates_matrices() {
         let (view, proj, eye) = CameraBuilder::default().build();
-        
+
         // Verify matrices are not NaN or infinite
         assert!(!view.is_nan(), "View matrix should be valid");
         assert!(!proj.is_nan(), "Projection matrix should be valid");
-        
+
         // Verify eye position is preserved
         assert_eq!(eye, Vec3::new(40.0, 25.0, 40.0));
     }
@@ -181,23 +181,23 @@ mod tests {
     fn test_camera_builder_customization() {
         let custom_eye = Vec3::new(100.0, 50.0, 100.0);
         let custom_center = Vec3::new(0.0, 0.0, 0.0);
-        
+
         let (_, _, eye) = CameraBuilder::default()
             .with_eye(custom_eye)
             .with_center(custom_center)
             .with_fov_degrees(60.0)
             .build();
-        
+
         assert_eq!(eye, custom_eye);
     }
 
     #[test]
     fn test_create_default_camera() {
         let (view, proj, eye) = create_default_camera();
-        
+
         // Should be identical to builder default
         let (view2, proj2, eye2) = CameraBuilder::default().build();
-        
+
         assert_eq!(view, view2);
         assert_eq!(proj, proj2);
         assert_eq!(eye, eye2);
@@ -215,7 +215,7 @@ mod tests {
             .with_near(0.5)
             .with_far(2000.0)
             .build();
-        
+
         let (_, _, eye) = camera;
         assert_eq!(eye, Vec3::new(1.0, 2.0, 3.0));
     }
@@ -224,7 +224,7 @@ mod tests {
     fn test_camera_matrices_are_different() {
         // View and projection matrices should not be identity
         let (view, proj, _) = CameraBuilder::default().build();
-        
+
         let identity = Mat4::IDENTITY;
         assert_ne!(view, identity, "View matrix should not be identity");
         assert_ne!(proj, identity, "Projection matrix should not be identity");

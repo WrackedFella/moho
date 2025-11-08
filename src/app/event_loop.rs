@@ -10,14 +10,14 @@
 //! Each component is designed to be testable in isolation while maintaining
 //! a clean separation of concerns.
 
-pub mod window_manager;
-pub mod frame_processor;
 pub mod event_processor;
-pub mod window_event_handler;
+pub mod frame_processor;
 pub mod generation_processor;
+pub mod window_event_handler;
+pub mod window_manager;
 
-pub use window_manager::WindowManager;
-pub use frame_processor::FrameProcessor;
 pub use event_processor::EventProcessor;
-pub use window_event_handler::WindowEventHandler;
+pub use frame_processor::FrameProcessor;
 pub use generation_processor::GenerationProcessor;
+pub use window_event_handler::WindowEventHandler;
+pub use window_manager::WindowManager;

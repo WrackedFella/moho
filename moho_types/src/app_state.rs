@@ -10,13 +10,14 @@ use std::fmt;
 /// - Rendering (what gets drawn)
 /// - Cursor mode (grabbed/visible)
 /// - Simulation (running/paused)
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum GameState {
     /// Main menu is active, game world is not running.
     /// - Input: Menu system only
     /// - Rendering: Menu screens
     /// - Cursor: Visible and free
     /// - Simulation: Not running
+    #[default]
     Menu,
 
     /// Actively playing the game.
@@ -111,7 +112,10 @@ impl GameState {
         if self.can_transition_to(new_state) {
             Ok(())
         } else {
-            Err(format!("Invalid state transition: {:?} -> {:?}", self, new_state))
+            Err(format!(
+                "Invalid state transition: {:?} -> {:?}",
+                self, new_state
+            ))
         }
     }
 
@@ -127,7 +131,10 @@ impl GameState {
 
     /// Returns true if the game world should be rendered in this state.
     pub fn should_render_world(self) -> bool {
-        matches!(self, GameState::Playing | GameState::ConsoleOpen | GameState::Paused)
+        matches!(
+            self,
+            GameState::Playing | GameState::ConsoleOpen | GameState::Paused
+        )
     }
 
     /// Returns true if UI overlays should be rendered.
@@ -138,12 +145,6 @@ impl GameState {
     /// Returns true if the main menu should be rendered.
     pub fn should_render_menu(self) -> bool {
         matches!(self, GameState::Menu)
-    }
-}
-
-impl Default for GameState {
-    fn default() -> Self {
-        GameState::Menu
     }
 }
 
@@ -167,10 +168,10 @@ impl fmt::Display for GameState {
 pub struct AppState {
     /// The current game state
     pub game_state: GameState,
-    
+
     /// Whether the application is running
     pub running: bool,
-    
+
     /// Optional window size (width, height)
     pub window_size: Option<(u32, u32)>,
 }
@@ -193,7 +194,7 @@ impl AppState {
             ..Default::default()
         }
     }
-    
+
     /// Create an AppState for testing purposes.
     pub fn for_testing() -> Self {
         Self {

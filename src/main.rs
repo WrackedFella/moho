@@ -122,12 +122,12 @@ impl App {
     fn new() -> Self {
         // Load application configuration
         let config = crate::app::config::AppConfig::from_prefs();
-        
+
         // Initialize all systems using the builder
         let initialized = crate::app::initializer::AppInitializer::new(config)
             .build()
             .expect("Failed to initialize application");
-        
+
         Self {
             world: initialized.world,
             scene: initialized.scene,
@@ -412,17 +412,17 @@ impl App {
         // WorldSpec (e.g. from a loaded or generated scene) so autosaves
         // preserve original metadata; fall back to a minimal spec.
         let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
-        let spec =
-            self.last_world_spec
-                .clone()
-                .unwrap_or(moho_core::scene_builders::WorldSpec {
-                    name: "autosave".to_string(),
-                    seed: None,
-                    size_xz: 64,
-                    day_length_seconds: 600.0,
-                    night_length_seconds: 420.0,
-                    initial_time_of_day: 6.0,
-                });
+        let spec = self
+            .last_world_spec
+            .clone()
+            .unwrap_or(moho_core::scene_builders::WorldSpec {
+                name: "autosave".to_string(),
+                seed: None,
+                size_xz: 64,
+                day_length_seconds: 600.0,
+                night_length_seconds: 420.0,
+                initial_time_of_day: 6.0,
+            });
         save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
         log::info!(
             "Auto-saved scene (envelope) to {:?} (spec={:?})",

@@ -73,7 +73,7 @@ impl BindingRegistry {
     /// ```ignore
     /// let registry = BindingRegistry::from_prefs(&prefs);
     /// let new_binding = Binding::new('W' as u32, 0);
-    /// 
+    ///
     /// // Check if 'W' is already bound (excluding KeyA itself)
     /// if let Some(conflicting_id) = registry.find_conflict(&new_binding, BindingId::KeyA) {
     ///     println!("'W' is already bound to {:?}", conflicting_id);

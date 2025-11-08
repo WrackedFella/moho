@@ -53,7 +53,7 @@ pub struct EventBusSetup {
 /// use moho::app::event_setup::setup_event_bus;
 ///
 /// let setup = setup_event_bus();
-/// 
+///
 /// // Use the event bus for publishing
 /// // let event_bus = setup.event_bus;
 ///
@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn test_event_bus_setup_creates_bus() {
         let setup = setup_event_bus();
-        
+
         // Verify the bus exists and is usable
         assert!(Arc::strong_count(&setup.event_bus) >= 1);
     }
@@ -118,12 +118,14 @@ mod tests {
     #[test]
     fn test_audio_event_subscription() {
         let setup = setup_event_bus();
-        
+
         // Publish an audio event
-        setup.event_bus.publish(moho_core::events::AudioEvent::PlaySound {
-            path: "test.wav".to_string(),
-            volume: 1.0,
-        });
+        setup
+            .event_bus
+            .publish(moho_core::events::AudioEvent::PlaySound {
+                path: "test.wav".to_string(),
+                volume: 1.0,
+            });
 
         // Should receive it on the channel
         let received = setup.audio_event_rx.try_recv();
@@ -133,12 +135,14 @@ mod tests {
     #[test]
     fn test_graphics_event_subscription() {
         let setup = setup_event_bus();
-        
+
         // Publish a graphics event
-        setup.event_bus.publish(moho_core::events::GraphicsEvent::TimeOfDayChanged {
-            time: 12.0,
-            sun_angle: 0.5,
-        });
+        setup
+            .event_bus
+            .publish(moho_core::events::GraphicsEvent::TimeOfDayChanged {
+                time: 12.0,
+                sun_angle: 0.5,
+            });
 
         // Should receive it on the channel
         let received = setup.graphics_event_rx.try_recv();
@@ -148,11 +152,13 @@ mod tests {
     #[test]
     fn test_ui_event_subscription() {
         let setup = setup_event_bus();
-        
+
         // Publish a UI event
-        setup.event_bus.publish(moho_core::events::UiEvent::MenuShown {
-            name: "TestMenu".to_string(),
-        });
+        setup
+            .event_bus
+            .publish(moho_core::events::UiEvent::MenuShown {
+                name: "TestMenu".to_string(),
+            });
 
         // Should receive it on the channel
         let received = setup.ui_event_rx.try_recv();
@@ -162,7 +168,7 @@ mod tests {
     #[test]
     fn test_channels_are_initially_empty() {
         let setup = setup_event_bus();
-        
+
         // Channels should start empty
         assert!(setup.audio_event_rx.is_empty());
         assert!(setup.graphics_event_rx.is_empty());

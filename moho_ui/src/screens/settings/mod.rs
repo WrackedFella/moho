@@ -5,10 +5,10 @@ mod controls_tab;
 mod state;
 mod types;
 
-pub use types::{BindingId, SettingsTab};
 use binding_registry::BindingRegistry;
 use conflict_modal::{ConflictModalState, PendingBinding};
 use state::SettingsState;
+pub use types::{BindingId, SettingsTab};
 
 use super::{FormControls, MenuAction, Screen, ScreenSpec, UiComponent};
 use crate::prefs::Binding;
@@ -141,7 +141,7 @@ impl SettingsMenu {
     /// This function contains the core logic for applying a binding or queuing a
     /// conflict modal when `listening` is active. It's public so unit tests
     /// can exercise the behavior without depending on winit event construction.
-    /// 
+    ///
     /// For testing purposes: allows direct simulation of key input during binding listen mode.
     pub fn apply_key_code_while_listening(&mut self, code: u32, mods_bits: u8) -> bool {
         // If not listening, ignore
@@ -210,6 +210,134 @@ impl SettingsMenu {
             .unwrap_or("Unknown")
     }
 
+    /// Detect active modifier keys and return as bitfield.
+    /// Bit 0: Ctrl, Bit 1: Shift, Bit 2: Alt
+    fn detect_active_modifiers(input: &egui::InputState) -> u8 {
+        let mut mods: u8 = 0;
+        if input.modifiers.ctrl {
+            mods |= 1;
+        }
+        if input.modifiers.shift {
+            mods |= 2;
+        }
+        if input.modifiers.alt {
+            mods |= 4;
+        }
+        mods
+    }
+
+    /// Convert egui modifiers to binding modifier bitfield.
+    fn modifiers_to_bits(modifiers: &egui::Modifiers) -> u8 {
+        let mut mods: u8 = 0;
+        if modifiers.ctrl {
+            mods |= 1;
+        }
+        if modifiers.shift {
+            mods |= 2;
+        }
+        if modifiers.alt {
+            mods |= 4;
+        }
+        mods
+    }
+
+    /// Create a binding from an egui key and modifiers.
+    /// Handles pure modifier keys (Ctrl, Shift, Alt) specially.
+    fn create_binding_from_key(key: &egui::Key, modifiers: &egui::Modifiers) -> Binding {
+        let mut code: u32 = Self::key_to_code(key);
+        let mut mods = Self::modifiers_to_bits(modifiers);
+
+        // Handle pure modifier keys (Ctrl, Shift, Alt)
+        if code == 0 {
+            if mods == 1 {
+                code = 0x205; // Ctrl
+                mods = 0;
+            } else if mods == 2 {
+                code = 0x204; // Shift
+                mods = 0;
+            } else if mods == 4 {
+                code = 0x206; // Alt
+                mods = 0;
+            }
+        }
+
+        Binding::new(code, mods)
+    }
+
+    /// Apply a binding or show conflict modal.
+    /// Returns true if binding was handled (applied or conflict shown).
+    fn apply_binding_or_show_conflict(&mut self, binding: Binding, listen_id: usize) -> bool {
+        // Check for conflicts using registry
+        let registry = BindingRegistry::from_prefs(self.state.staged());
+        let exclude_id = match BindingId::from_usize(listen_id) {
+            Some(id) => id,
+            None => return false, // Invalid listen_id
+        };
+        let conflicting_id = registry.find_conflict(&binding, exclude_id);
+
+        if let Some(conflict_bid) = conflicting_id {
+            // Conflict detected - show modal
+            let conflict_id = conflict_bid.to_usize();
+            let pending = PendingBinding {
+                target_id: listen_id,
+                binding,
+                conflicting_id: Some(conflict_id),
+            };
+            let conflict_key_name = self.get_key_name(conflict_id).to_string();
+            let conflict_binding_desc = Self::binding_label(&binding);
+            self.conflict_modal
+                .show(pending, conflict_key_name, conflict_binding_desc);
+            true
+        } else {
+            // No conflict - apply binding directly
+            let field = match listen_id {
+                0 => SettingsField::KeyW,
+                1 => SettingsField::KeyA,
+                2 => SettingsField::KeyS,
+                3 => SettingsField::KeyD,
+                4 => SettingsField::KeyUp,
+                5 => SettingsField::KeyDown,
+                _ => return false, // Invalid listen_id
+            };
+            self.state.set_staged_binding(field, binding);
+            true
+        }
+    }
+
+    /// Process a single key event during binding capture.
+    /// Returns true if the key was handled (stops listening).
+    fn process_single_key(&mut self, key: &egui::Key, modifiers: &egui::Modifiers) -> bool {
+        // Escape cancels listening mode
+        if *key == egui::Key::Escape {
+            return true; // Stop listening
+        }
+
+        let listen_id = match self.listening {
+            Some(id) => id,
+            None => return false,
+        };
+
+        let binding = Self::create_binding_from_key(key, modifiers);
+        self.apply_binding_or_show_conflict(binding, listen_id)
+    }
+
+    /// Process all key events from egui input.
+    fn process_key_events(&mut self, input: &egui::InputState) {
+        for ev in &input.events {
+            if let egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = ev
+                && self.process_single_key(key, modifiers)
+            {
+                self.listening = None;
+                return;
+            }
+        }
+    }
+
     /// Map egui::Key to numeric code for binding storage.
     /// Letters and digits map to their ASCII uppercased codes.
     fn key_to_code(k: &egui::Key) -> u32 {
@@ -270,104 +398,20 @@ impl SettingsMenu {
     /// # Arguments
     /// * `ctx` - The egui context to read input from
     fn handle_key_capture(&mut self, ctx: &egui::Context) {
-        if let Some(listen_id) = self.listening {
-            ctx.input(|input| {
-                // Detect modifier-only presses via modifiers state
-                let mut cur_mods: u8 = 0;
-                if input.modifiers.ctrl {
-                    cur_mods |= 1;
-                }
-                if input.modifiers.shift {
-                    cur_mods |= 2;
-                }
-                if input.modifiers.alt {
-                    cur_mods |= 4;
-                }
-
-                // Try to capture modifier-only bindings first
-                if self.capture_modifier_if_listening(cur_mods) {
-                    return;
-                }
-
-                // Process normal key events
-                for ev in &input.events {
-                    if let egui::Event::Key {
-                        key,
-                        pressed: true,
-                        modifiers,
-                        ..
-                    } = ev
-                    {
-                        // Escape cancels listening mode
-                        if *key == egui::Key::Escape {
-                            self.listening = None;
-                            return;
-                        }
-
-                        let mut code: u32 = Self::key_to_code(key);
-                        let mut mods: u8 = 0;
-                        if modifiers.ctrl {
-                            mods |= 1;
-                        }
-                        if modifiers.shift {
-                            mods |= 2;
-                        }
-                        if modifiers.alt {
-                            mods |= 4;
-                        }
-
-                        // Handle pure modifier keys (Ctrl, Shift, Alt)
-                        if code == 0 {
-                            if mods == 1 {
-                                code = 0x205; // Ctrl
-                                mods = 0;
-                            } else if mods == 2 {
-                                code = 0x204; // Shift
-                                mods = 0;
-                            } else if mods == 4 {
-                                code = 0x206; // Alt
-                                mods = 0;
-                            }
-                        }
-
-                        let binding = Binding::new(code, mods);
-
-                        // Check for conflicts using registry
-                        let registry = BindingRegistry::from_prefs(self.state.staged());
-                        let exclude_id =
-                            BindingId::from_usize(listen_id).expect("Invalid binding ID");
-                        let conflicting_id = registry.find_conflict(&binding, exclude_id);
-
-                        if let Some(conflict_bid) = conflicting_id {
-                            // Conflict detected - show modal
-                            let conflict_id = conflict_bid.to_usize();
-                            let pending = PendingBinding {
-                                target_id: listen_id,
-                                binding,
-                                conflicting_id: Some(conflict_id),
-                            };
-                            let conflict_key_name = self.get_key_name(conflict_id).to_string();
-                            let conflict_binding_desc = Self::binding_label(&binding);
-                            self.conflict_modal
-                                .show(pending, conflict_key_name, conflict_binding_desc);
-                        } else {
-                            // No conflict - apply binding directly
-                            let field = match listen_id {
-                                0 => SettingsField::KeyW,
-                                1 => SettingsField::KeyA,
-                                2 => SettingsField::KeyS,
-                                3 => SettingsField::KeyD,
-                                4 => SettingsField::KeyUp,
-                                5 => SettingsField::KeyDown,
-                                _ => SettingsField::KeyW, // Fallback (shouldn't happen)
-                            };
-                            self.state.set_staged_binding(field, binding);
-                        }
-                        self.listening = None;
-                    }
-                }
-            });
+        if self.listening.is_none() {
+            return;
         }
+
+        ctx.input(|input| {
+            // Try to capture modifier-only bindings first
+            let cur_mods = Self::detect_active_modifiers(input);
+            if self.capture_modifier_if_listening(cur_mods) {
+                return;
+            }
+
+            // Process normal key events
+            self.process_key_events(input);
+        });
     }
 
     pub(super) fn binding_label(b: &Binding) -> String {
@@ -905,9 +949,7 @@ mod tests {
             menu.render(ctx);
         });
 
-        assert!(
-            menu.state.get_staged_binding(SettingsField::KeyW) == Binding::new(0x205, 0)
-        );
+        assert!(menu.state.get_staged_binding(SettingsField::KeyW) == Binding::new(0x205, 0));
         assert!(menu.listening.is_none());
     }
 

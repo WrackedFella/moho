@@ -19,7 +19,7 @@ impl GenerationProcessor {
         // Take the receiver so we can mutate `self` while processing messages
         if let Some(rx) = app.generation_receiver.take() {
             let mut still_running = true;
-            
+
             while let Ok(msg) = rx.try_recv() {
                 match msg {
                     GenerationMsg::Progress(p) => {
@@ -67,10 +67,10 @@ impl GenerationProcessor {
         spec: moho_core::scene_builders::WorldSpec,
     ) {
         log::info!("Generation completed for spec={:?}", spec.name);
-        
+
         // Remember the last WorldSpec
         app.last_world_spec = Some(spec.clone());
-        
+
         // Complete progress UI
         if let Some(ui_adapter) = &app.ui_adapter
             && let Ok(mut a) = ui_adapter.lock()
