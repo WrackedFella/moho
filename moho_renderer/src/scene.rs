@@ -1,9 +1,8 @@
-use crate::{MaterialTable, RendererBackend};
+use crate::{BufferManager, InstanceCollector, MaterialTable, RendererBackend};
 use bincode::{Decode, Encode};
 use legion::World;
 use legion::query::IntoQuery;
-use moho_core::actors::{Cube, CustomMesh, InstanceGpu, Sphere};
-use moho_core::voxel::VoxelChunk;
+use moho_core::actors::{Cube, InstanceGpu, Sphere};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -20,12 +19,16 @@ const SCENE_FILE_VERSION: u32 = 2;
 /// material deduplication, instance collection, and transparent sorting.
 pub struct Scene {
     pub material_table: MaterialTable,
+    buffer_manager: BufferManager,
+    instance_collector: InstanceCollector,
 }
 
 impl Scene {
     pub fn new() -> Self {
         Scene {
             material_table: MaterialTable::new(),
+            buffer_manager: BufferManager::new(),
+            instance_collector: InstanceCollector::new(),
         }
     }
 
@@ -40,25 +43,16 @@ impl Scene {
         cube_mesh_handle: u32,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
+        // Collect instances from world (delegates to InstanceCollector)
+        self.instance_collector.collect_from_world(
+            world,
+            &mut self.material_table,
+            &mut self.buffer_manager,
+            renderer,
+        );
+
+        // Debug logging (kept from original implementation)
         let material_table = &mut self.material_table;
-        // Build sphere instances and deduplicate materials
-        let mut sphere_instances: Vec<InstanceGpu> = Vec::new();
-
-        let mut q_s = <&Sphere>::query();
-        for s in q_s.iter(world) {
-            let midx = material_table.find_or_push(&s.mat_ptr);
-            sphere_instances.push(s.to_instance_with_material(midx));
-        }
-
-        // Build cube instances and deduplicate materials
-        let mut cube_instances: Vec<InstanceGpu> = Vec::new();
-        let mut q_c = <&Cube>::query();
-        for c in q_c.iter(world) {
-            let midx = material_table.find_or_push(&c.mat_ptr);
-            cube_instances.push(c.to_instance_with_material(midx));
-        }
-
-        // Debug: log material table and instance material indices (kept as-is)
         if !material_table.as_slice().is_empty() {
             log::debug!(
                 "[debug] material_table.len={} ",
@@ -76,83 +70,74 @@ impl Scene {
                 );
             }
         }
-        for (i, inst) in sphere_instances.iter().enumerate().take(8) {
+        for (i, inst) in self
+            .instance_collector
+            .sphere_instances()
+            .iter()
+            .enumerate()
+            .take(8)
+        {
             log::debug!("[debug] sphere_inst[{}].material={}", i, inst.material);
         }
-        for (i, inst) in cube_instances.iter().enumerate().take(8) {
+        for (i, inst) in self
+            .instance_collector
+            .cube_instances()
+            .iter()
+            .enumerate()
+            .take(8)
+        {
             log::debug!("[debug] cube_inst[{}].material={}", i, inst.material);
         }
 
-        // Upload material table to GPU if it changed.
+        // Upload material table to GPU if it changed
         if material_table.is_dirty() {
             renderer.set_materials(material_table.as_slice());
             material_table.clear_dirty();
         }
 
-        // Upload VoxelChunk meshes to renderer (first-time registration)
-        // Query mutable VoxelChunks to store mesh handles
-        {
-            let mut q_chunks_mut = <&mut VoxelChunk>::query();
-            for chunk in q_chunks_mut.iter_mut(world) {
-                // Skip if already uploaded or has no geometry
-                if chunk.is_uploaded() || !chunk.has_geometry() {
-                    continue;
-                }
-
-                // Register the chunk mesh with renderer
-                let handle = renderer.register_indexed_mesh(
-                    chunk.vertices(),
-                    chunk.normals(),
-                    chunk.indices(),
-                );
-                chunk.set_mesh_handle(handle);
-
-                log::info!(
-                    "Uploaded VoxelChunk {:?}: {} verts, {} indices -> handle {}",
-                    chunk.chunk_pos,
-                    chunk.vertices().len(),
-                    chunk.indices().len(),
-                    handle
-                );
-            }
-        }
-
-        // Build VoxelChunk instances (identity transform, mesh already in world space)
-        let mut chunk_renders: Vec<(u32, InstanceGpu)> = Vec::new();
-        {
-            let mut q_chunks = <&VoxelChunk>::query();
-            for chunk in q_chunks.iter(world) {
-                if let Some(handle) = chunk.get_mesh_handle() {
-                    // VoxelChunk uses identity transform (mesh in world space)
-                    // Material index 0 (Lambertian)
-                    let inst = InstanceGpu {
-                        model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                        material: 0,
-                        object_type: 2, // VoxelChunk type
-                        padding: [0, 0],
-                    };
-                    chunk_renders.push((handle, inst));
-                }
-            }
-        }
-
         log::debug!(
             "[Scene::render] VoxelChunks to render: {}",
-            chunk_renders.len()
+            self.instance_collector.chunk_renders().len()
         );
 
-        // Draw by material type (opaque first). Split instances into opaque
-        // and transparent using the material table, then perform a global
-        // back-to-front sort for transparent instances across all meshes so
-        // blending composites correctly.
-        let mats = material_table.as_slice();
+        // Separate opaque and transparent instances
+        let (cube_opaque, sph_opaque, transparent_entries) =
+            self.separate_opaque_transparent(mesh_handle, cube_mesh_handle);
 
-        let mut cube_opaque: Vec<InstanceGpu> = Vec::new();
-        let mut sph_opaque: Vec<InstanceGpu> = Vec::new();
-        // Collect transparent entries across meshes as (mesh_handle, instance)
-        let mut transparent_entries: Vec<(u32, InstanceGpu)> = Vec::new();
+        // Render opaque geometry first (no finalize)
+        renderer.render_mesh(cube_mesh_handle, &cube_opaque, camera, false);
+        renderer.render_mesh(mesh_handle, &sph_opaque, camera, false);
 
-        for inst in &cube_instances {
+        // Render VoxelChunks (opaque, each chunk as separate draw)
+        for (chunk_handle, chunk_inst) in self.instance_collector.chunk_renders() {
+            renderer.render_mesh(*chunk_handle, &[*chunk_inst], camera, false);
+        }
+
+        // Render transparent instances (back-to-front sorted)
+        self.render_transparent(
+            renderer,
+            transparent_entries,
+            camera,
+            mesh_handle,
+            self.instance_collector.chunk_renders(),
+        );
+    }
+
+    /// Separate instances into opaque and transparent groups.
+    ///
+    /// Returns (opaque_cubes, opaque_spheres, transparent_entries)
+    fn separate_opaque_transparent(
+        &self,
+        mesh_handle: u32,
+        cube_mesh_handle: u32,
+    ) -> (Vec<InstanceGpu>, Vec<InstanceGpu>, Vec<(u32, InstanceGpu)>) {
+        let mats = self.material_table.as_slice();
+        let mut cube_opaque = Vec::new();
+        let mut sph_opaque = Vec::new();
+        let mut transparent_entries = Vec::new();
+
+        // Separate cubes
+        for inst in self.instance_collector.cube_instances() {
             let idx = inst.material as usize;
             let is_transparent = if idx < mats.len() {
                 mats[idx].is_transparent()
@@ -165,7 +150,9 @@ impl Scene {
                 cube_opaque.push(*inst);
             }
         }
-        for inst in &sphere_instances {
+
+        // Separate spheres
+        for inst in self.instance_collector.sphere_instances() {
             let idx = inst.material as usize;
             let is_transparent = if idx < mats.len() {
                 mats[idx].is_transparent()
@@ -179,21 +166,20 @@ impl Scene {
             }
         }
 
-        // Render opaque geometry first (no finalize).
-        renderer.render_mesh(cube_mesh_handle, &cube_opaque, camera, false);
-        renderer.render_mesh(mesh_handle, &sph_opaque, camera, false);
+        (cube_opaque, sph_opaque, transparent_entries)
+    }
 
-        // Render VoxelChunks (opaque, each chunk as separate draw)
-        for (chunk_handle, chunk_inst) in &chunk_renders {
-            renderer.render_mesh(*chunk_handle, &[*chunk_inst], camera, false);
-        }
-
-        // If there are transparent entries, compute per-instance depth from the
-        // camera eye and sort furthest-first (back-to-front). We extract the
-        // translation component from the instance model matrix (column 3).
+    /// Render transparent instances sorted back-to-front.
+    fn render_transparent(
+        &self,
+        renderer: &mut dyn RendererBackend,
+        transparent_entries: Vec<(u32, InstanceGpu)>,
+        camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+        mesh_handle: u32,
+        chunk_renders: &[(u32, InstanceGpu)],
+    ) {
+        // If no transparent draws, finalize with empty draw
         if transparent_entries.is_empty() {
-            // No transparent draws: finalize by issuing an empty finalize draw.
-            // Use any valid mesh handle - prefer chunk handle if available, else sphere mesh
             let finalize_handle = chunk_renders
                 .first()
                 .map(|(h, _)| *h)
@@ -203,22 +189,19 @@ impl Scene {
         }
 
         let cam_eye = camera.2;
-        // Build vector of (distance_sq, mesh_handle, instance)
+
+        // Sort transparent entries by depth (back-to-front)
         let mut by_depth: Vec<(f32, u32, InstanceGpu)> =
             Vec::with_capacity(transparent_entries.len());
         for (mesh_h, inst) in transparent_entries {
-            // instance.model is [[f32;4];4] with column-major layout; the
-            // translation lives in column 3 (mat[3][0..2]) as set by `to_instance_with_material`.
             let pos = glam::Vec3::new(inst.model[3][0], inst.model[3][1], inst.model[3][2]);
             let dist2 = (pos - cam_eye).length_squared();
             by_depth.push((dist2, mesh_h, inst));
         }
 
-        // Sort by distance descending (furthest first)
         by_depth.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Group consecutive entries with the same mesh handle to minimize draw calls
-        // while preserving the sorted order.
+        // Group consecutive entries with the same mesh handle
         let mut groups: Vec<(u32, Vec<InstanceGpu>)> = Vec::new();
         for (_d, mesh_h, inst) in by_depth {
             if let Some((last_mesh, vec)) = groups.last_mut()
@@ -230,8 +213,7 @@ impl Scene {
             groups.push((mesh_h, vec![inst]));
         }
 
-        // Issue draws for each group in order. Mark finalize=true for the last
-        // call so the renderer flushes and presents the batched frame.
+        // Render each group, marking the last call for finalization
         for (i, (mesh_h, insts)) in groups.iter().enumerate() {
             let final_call = i + 1 == groups.len();
             renderer.render_mesh(*mesh_h, insts, camera, final_call);

@@ -12,6 +12,9 @@ pub struct MaterialGpu {
     pub params: [f32; 4], // fuzz, ref_idx
 }
 
+/// Type alias for Material (same as MaterialGpu)
+pub type Material = MaterialGpu;
+
 impl MaterialGpu {
     pub fn is_transparent(&self) -> bool {
         self.params[2] > 0.0
@@ -24,6 +27,10 @@ mod scene;
 pub use scene::Scene;
 mod gpu_types;
 pub use gpu_types::{CameraGpu, CascadedShadowMatrixGpu, LightingGpu, ShadowMatrixGpu};
+mod buffer_manager;
+pub use buffer_manager::BufferManager;
+mod instance_collector;
+pub use instance_collector::InstanceCollector;
 
 pub mod device;
 mod render_ops;
