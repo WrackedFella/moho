@@ -18,11 +18,11 @@ pub fn get_chunk_pos(pos: BlockPos, chunk_size: i32) -> IVec3 {
 /// Get all blocks in a chunk
 ///
 /// Returns references to all blocks within the specified chunk boundaries.
-pub fn get_chunk_blocks<'a>(
-    blocks: &'a HashMap<BlockPos, VoxelBlock>,
+pub fn get_chunk_blocks(
+    blocks: &HashMap<BlockPos, VoxelBlock>,
     chunk_pos: IVec3,
     chunk_size: i32,
-) -> Vec<&'a VoxelBlock> {
+) -> Vec<&VoxelBlock> {
     let min = chunk_pos * chunk_size;
     let max = min + IVec3::splat(chunk_size);
 

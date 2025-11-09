@@ -100,6 +100,7 @@ impl AppConfig {
     /// assert_eq!(config.mouse_sensitivity, 0.5);
     /// assert_eq!(config.input_filtering_enabled, false);
     /// ```
+    #[allow(dead_code)] // Builder API for future use
     pub fn builder() -> AppConfigBuilder {
         AppConfigBuilder::default()
     }
@@ -110,6 +111,7 @@ impl AppConfig {
 /// This is particularly useful for testing different configurations
 /// without needing to manipulate preference files.
 #[derive(Default)]
+#[allow(dead_code)] // Builder for future use
 pub struct AppConfigBuilder {
     mouse_sensitivity: Option<f32>,
     input_filtering_enabled: Option<bool>,
@@ -117,6 +119,7 @@ pub struct AppConfigBuilder {
     prefs: Option<Prefs>,
 }
 
+#[allow(dead_code)] // Builder API for future use
 impl AppConfigBuilder {
     /// Set the mouse sensitivity multiplier.
     pub fn mouse_sensitivity(mut self, sensitivity: f32) -> Self {

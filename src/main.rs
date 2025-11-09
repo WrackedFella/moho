@@ -10,12 +10,9 @@ use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, StartCause, Wi
 mod input_dispatcher;
 use crate::input_dispatcher::InputDispatcher;
 mod input_event;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
-
-// Import shared types
-use moho_types::{AppState as SharedAppState, GameState};
+use winit::window::{CursorGrabMode, Window, WindowId};
 
 // Core game state and input routing modules
 mod game_state;

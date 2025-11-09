@@ -21,16 +21,16 @@ use moho_sim::SimulationController;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::input_dispatcher::InputDispatcher;
 use moho_ui::prefs::Prefs;
 
 use super::audio_init::initialize_audio_system;
 use super::camera::create_default_camera;
 use super::config::AppConfig;
-use super::event_setup::{EventBusSetup, setup_event_bus};
+use super::event_setup::setup_event_bus;
 
 /// Error type for application initialization failures.
 #[derive(Debug)]
+#[allow(dead_code)] // Builder error variants for future use
 pub enum AppInitError {
     /// Failed to initialize the event bus
     EventBusSetup(String),

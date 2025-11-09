@@ -77,6 +77,7 @@ impl Default for CameraBuilder {
     }
 }
 
+#[allow(dead_code)] // Builder API for future use
 impl CameraBuilder {
     /// Create a new camera builder with default settings.
     pub fn new() -> Self {
