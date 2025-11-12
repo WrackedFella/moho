@@ -111,4 +111,34 @@ impl BindingId {
             BindingId::KeyDown,
         ]
     }
+
+    /// Convert a numeric listen ID to a BindingId.
+    ///
+    /// This is the same as from_usize but with a more descriptive name
+    /// for the keybind capture context.
+    ///
+    /// # Arguments
+    /// * `listen_id` - Numeric ID from keybind listening (0-5)
+    ///
+    /// # Returns
+    /// The corresponding BindingId, or None if listen_id is out of range.
+    pub fn from_listen_id(listen_id: usize) -> Option<Self> {
+        Self::from_usize(listen_id)
+    }
+
+    /// Convert this BindingId to a SettingsField.
+    ///
+    /// # Returns
+    /// The corresponding SettingsField for updating staged preferences.
+    pub fn to_settings_field(self) -> super::SettingsField {
+        use super::SettingsField;
+        match self {
+            BindingId::KeyW => SettingsField::KeyW,
+            BindingId::KeyA => SettingsField::KeyA,
+            BindingId::KeyS => SettingsField::KeyS,
+            BindingId::KeyD => SettingsField::KeyD,
+            BindingId::KeyUp => SettingsField::KeyUp,
+            BindingId::KeyDown => SettingsField::KeyDown,
+        }
+    }
 }

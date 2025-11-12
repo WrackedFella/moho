@@ -1,6 +1,7 @@
 /// Renders the Controls tab content.
 ///
 /// This includes keybind settings, mouse sensitivity, and input filtering options.
+use super::key_mapping::binding_label;
 use super::{FormControls, SettingsField, SettingsMenu};
 
 pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
@@ -27,7 +28,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
             let clicked = FormControls::keybind_control(
                 ui,
                 "Move Forward:",
-                &SettingsMenu::binding_label(&binding),
+                &binding_label(&binding),
                 is_dirty,
                 menu.is_listening_for(0),
                 label_width,
@@ -44,7 +45,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
             let clicked = FormControls::keybind_control(
                 ui,
                 "Move Left:",
-                &SettingsMenu::binding_label(&binding),
+                &binding_label(&binding),
                 is_dirty,
                 menu.is_listening_for(1),
                 label_width,
@@ -61,7 +62,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
             let clicked = FormControls::keybind_control(
                 ui,
                 "Move Back:",
-                &SettingsMenu::binding_label(&binding),
+                &binding_label(&binding),
                 is_dirty,
                 menu.is_listening_for(2),
                 label_width,
@@ -78,7 +79,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
             let clicked = FormControls::keybind_control(
                 ui,
                 "Move Right:",
-                &SettingsMenu::binding_label(&binding),
+                &binding_label(&binding),
                 is_dirty,
                 menu.is_listening_for(3),
                 label_width,
@@ -95,7 +96,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
             let clicked = FormControls::keybind_control(
                 ui,
                 "Move Up:",
-                &SettingsMenu::binding_label(&binding),
+                &binding_label(&binding),
                 is_dirty,
                 menu.is_listening_for(4),
                 label_width,
@@ -112,7 +113,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
             let clicked = FormControls::keybind_control(
                 ui,
                 "Move Down:",
-                &SettingsMenu::binding_label(&binding),
+                &binding_label(&binding),
                 is_dirty,
                 menu.is_listening_for(5),
                 label_width,

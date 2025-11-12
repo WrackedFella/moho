@@ -24,6 +24,7 @@ moho_core = { path = "../moho_core" }
 serde = { workspace = true, features = ["derive"] }
 bincode = { workspace = true }
 rand = { workspace = true }
+phf = { version = "0.13.1", features = ["macros"] }
 
 [features]
 default = []

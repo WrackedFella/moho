@@ -3,6 +3,7 @@ mod binding_registry;
 mod conflict_modal;
 mod controls_tab;
 mod keybind_capture;
+mod key_mapping;
 mod render_ops;
 mod state;
 mod types;
@@ -106,7 +107,7 @@ impl SettingsMenu {
     }
 
     pub(super) fn binding_label(b: &Binding) -> String {
-        KeybindCaptureHandler::binding_label(b)
+        key_mapping::binding_label(b)
     }
 
     pub fn apply_pending_binding(&mut self) {

@@ -11,6 +11,7 @@
 
 use super::binding_registry::BindingRegistry;
 use super::conflict_modal::{ConflictModalState, PendingBinding};
+use super::key_mapping::{binding_label, key_to_code};
 use super::types::BindingId;
 use super::SettingsField;
 use crate::prefs::Binding;
@@ -175,25 +176,21 @@ impl KeybindCaptureHandler {
                 conflicting_id: Some(conflict_id),
             };
             let conflict_key_name = Self::get_key_name(conflict_id).to_string();
-            let conflict_binding_desc = Self::binding_label(&binding);
+            let conflict_binding_desc = binding_label(&binding);
             self.conflict_modal
                 .show(pending, conflict_key_name, conflict_binding_desc);
             self.listening = None;
             true
         } else {
             // Apply binding using callback
-            let field = match listen_id {
-                0 => SettingsField::KeyW,
-                1 => SettingsField::KeyA,
-                2 => SettingsField::KeyS,
-                3 => SettingsField::KeyD,
-                4 => SettingsField::KeyUp,
-                5 => SettingsField::KeyDown,
-                _ => {
+            let binding_id = match BindingId::from_listen_id(listen_id) {
+                Some(id) => id,
+                None => {
                     self.listening = None;
                     return true;
                 }
             };
+            let field = binding_id.to_settings_field();
             on_binding_changed(field, binding);
             self.listening = None;
             true
@@ -333,7 +330,7 @@ impl KeybindCaptureHandler {
     /// Create a binding from an egui key and modifiers.
     /// Handles pure modifier keys (Ctrl, Shift, Alt) specially.
     fn create_binding_from_key(key: &egui::Key, modifiers: &egui::Modifiers) -> Binding {
-        let mut code: u32 = Self::key_to_code(key);
+        let mut code: u32 = key_to_code(key);
         let mut mods = Self::modifiers_to_bits(modifiers);
 
         // Handle pure modifier keys (Ctrl, Shift, Alt)
@@ -382,21 +379,17 @@ impl KeybindCaptureHandler {
                 conflicting_id: Some(conflict_id),
             };
             let conflict_key_name = Self::get_key_name(conflict_id).to_string();
-            let conflict_binding_desc = Self::binding_label(&binding);
+            let conflict_binding_desc = binding_label(&binding);
             self.conflict_modal
                 .show(pending, conflict_key_name, conflict_binding_desc);
             true
         } else {
             // No conflict - apply binding directly
-            let field = match listen_id {
-                0 => SettingsField::KeyW,
-                1 => SettingsField::KeyA,
-                2 => SettingsField::KeyS,
-                3 => SettingsField::KeyD,
-                4 => SettingsField::KeyUp,
-                5 => SettingsField::KeyDown,
-                _ => return false, // Invalid listen_id
+            let binding_id = match BindingId::from_listen_id(listen_id) {
+                Some(id) => id,
+                None => return false, // Invalid listen_id
             };
+            let field = binding_id.to_settings_field();
             on_binding_changed(field, binding);
             true
         }
@@ -452,60 +445,6 @@ impl KeybindCaptureHandler {
         }
     }
     
-    /// Map egui::Key to numeric code for binding storage.
-    /// Letters and digits map to their ASCII uppercased codes.
-    fn key_to_code(k: &egui::Key) -> u32 {
-        use egui::Key::*;
-        match k {
-            A => 'A' as u32,
-            B => 'B' as u32,
-            C => 'C' as u32,
-            D => 'D' as u32,
-            E => 'E' as u32,
-            F => 'F' as u32,
-            G => 'G' as u32,
-            H => 'H' as u32,
-            I => 'I' as u32,
-            J => 'J' as u32,
-            K => 'K' as u32,
-            L => 'L' as u32,
-            M => 'M' as u32,
-            N => 'N' as u32,
-            O => 'O' as u32,
-            P => 'P' as u32,
-            Q => 'Q' as u32,
-            R => 'R' as u32,
-            S => 'S' as u32,
-            T => 'T' as u32,
-            U => 'U' as u32,
-            V => 'V' as u32,
-            W => 'W' as u32,
-            X => 'X' as u32,
-            Y => 'Y' as u32,
-            Z => 'Z' as u32,
-            Num0 => '0' as u32,
-            Num1 => '1' as u32,
-            Num2 => '2' as u32,
-            Num3 => '3' as u32,
-            Num4 => '4' as u32,
-            Num5 => '5' as u32,
-            Num6 => '6' as u32,
-            Num7 => '7' as u32,
-            Num8 => '8' as u32,
-            Num9 => '9' as u32,
-            ArrowUp => 0x100,
-            ArrowDown => 0x101,
-            ArrowLeft => 0x102,
-            ArrowRight => 0x103,
-            Escape => 0x200,
-            Tab => 0x201,
-            Backspace => 0x202,
-            Enter => 0x203,
-            Space => ' ' as u32,
-            _ => 0,
-        }
-    }
-    
     /// Returns true if a binding was applied or a conflict modal was queued.
     pub(crate) fn capture_modifier_if_listening<F>(
         &mut self,
@@ -541,21 +480,20 @@ impl KeybindCaptureHandler {
                         conflicting_id: Some(conflict_id),
                     };
                     let conflict_key_name = Self::get_key_name(conflict_id).to_string();
-                    let conflict_binding_desc = Self::binding_label(&binding);
+                    let conflict_binding_desc = binding_label(&binding);
                     self.conflict_modal
                         .show(pending, conflict_key_name, conflict_binding_desc);
                     self.last_mods = cur_mods;
                     return true;
                 } else {
-                    let field = match listen_id {
-                        0 => SettingsField::KeyW,
-                        1 => SettingsField::KeyA,
-                        2 => SettingsField::KeyS,
-                        3 => SettingsField::KeyD,
-                        4 => SettingsField::KeyUp,
-                        5 => SettingsField::KeyDown,
-                        _ => SettingsField::KeyW, // Fallback (shouldn't happen)
+                    let binding_id = match BindingId::from_listen_id(listen_id) {
+                        Some(id) => id,
+                        None => {
+                            self.last_mods = cur_mods;
+                            return false;
+                        }
                     };
+                    let field = binding_id.to_settings_field();
                     on_binding_changed(field, binding);
                     self.listening = None;
                     self.last_mods = cur_mods;
@@ -566,106 +504,6 @@ impl KeybindCaptureHandler {
         }
 
         false
-    }
-    
-    /// Format a binding as a human-readable label (public for controls_tab rendering)
-    pub(super) fn binding_label(b: &Binding) -> String {
-        if b.code == 0 && b.mods == 0 {
-            return "Unbound".to_string();
-        }
-
-        let mut s = String::new();
-
-        // If only modifiers are set (no key code), show just the modifier
-        if b.code == 0 {
-            if b.mods & 1 != 0 {
-                s.push_str("Ctrl");
-            }
-            if b.mods & 2 != 0 {
-                if !s.is_empty() {
-                    s.push('+');
-                }
-                s.push_str("Shift");
-            }
-            if b.mods & 4 != 0 {
-                if !s.is_empty() {
-                    s.push('+');
-                }
-                s.push_str("Alt");
-            }
-            return s;
-        }
-
-        // Add modifiers prefix
-        if b.mods & 1 != 0 {
-            s.push_str("Ctrl+");
-        }
-        if b.mods & 2 != 0 {
-            s.push_str("Shift+");
-        }
-        if b.mods & 4 != 0 {
-            s.push_str("Alt+");
-        }
-
-        // Handle special keys first
-        match b.code {
-            0x100 => {
-                s.push_str("ArrowUp");
-                return s;
-            }
-            0x101 => {
-                s.push_str("ArrowDown");
-                return s;
-            }
-            0x102 => {
-                s.push_str("ArrowLeft");
-                return s;
-            }
-            0x103 => {
-                s.push_str("ArrowRight");
-                return s;
-            }
-            0x200 => {
-                s.push_str("Escape");
-                return s;
-            }
-            0x201 => {
-                s.push_str("Tab");
-                return s;
-            }
-            0x202 => {
-                s.push_str("Backspace");
-                return s;
-            }
-            0x203 => {
-                s.push_str("Enter");
-                return s;
-            }
-            _ => {}
-        }
-
-        // Handle Space specially
-        if b.code == ' ' as u32 {
-            s.push_str("Spacebar");
-            return s;
-        }
-
-        // Handle regular ASCII characters
-        if let Some(ch) = std::char::from_u32(b.code)
-            && ch.is_ascii_graphic()
-        {
-            s.push(ch.to_ascii_uppercase());
-            return s;
-        }
-
-        // Handle special keys
-        match b.code {
-            0x204 => s.push_str("Shift"),
-            0x205 => s.push_str("Ctrl"),
-            0x206 => s.push_str("Alt"),
-            _ => s.push_str("Unknown"),
-        }
-        s
     }
 }
 
@@ -830,30 +668,30 @@ mod tests {
     fn test_binding_label_formatting() {
         // Unbound
         let unbound = Binding::new(0, 0);
-        assert_eq!(KeybindCaptureHandler::binding_label(&unbound), "Unbound");
+        assert_eq!(binding_label(&unbound), "Unbound");
         
         // Simple key
         let w_key = Binding::new('W' as u32, 0);
-        assert_eq!(KeybindCaptureHandler::binding_label(&w_key), "W");
+        assert_eq!(binding_label(&w_key), "W");
         
         // Key with Ctrl
         let ctrl_w = Binding::new('W' as u32, 1);
-        assert_eq!(KeybindCaptureHandler::binding_label(&ctrl_w), "Ctrl+W");
+        assert_eq!(binding_label(&ctrl_w), "Ctrl+W");
         
         // Key with multiple modifiers
         let ctrl_shift_w = Binding::new('W' as u32, 3); // Ctrl(1) | Shift(2)
-        assert_eq!(KeybindCaptureHandler::binding_label(&ctrl_shift_w), "Ctrl+Shift+W");
+        assert_eq!(binding_label(&ctrl_shift_w), "Ctrl+Shift+W");
         
         // Modifier-only (Shift alone)
         let shift_only = Binding::new(0x204, 0);
-        assert_eq!(KeybindCaptureHandler::binding_label(&shift_only), "Shift");
+        assert_eq!(binding_label(&shift_only), "Shift");
         
         // Arrow key
         let arrow_up = Binding::new(0x100, 0);
-        assert_eq!(KeybindCaptureHandler::binding_label(&arrow_up), "ArrowUp");
+        assert_eq!(binding_label(&arrow_up), "ArrowUp");
         
         // Space
         let space = Binding::new(' ' as u32, 0);
-        assert_eq!(KeybindCaptureHandler::binding_label(&space), "Spacebar");
+        assert_eq!(binding_label(&space), "Spacebar");
     }
 }
