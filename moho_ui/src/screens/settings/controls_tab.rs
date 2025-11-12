@@ -29,11 +29,11 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 "Move Forward:",
                 &SettingsMenu::binding_label(&binding),
                 is_dirty,
-                menu.listening == Some(0),
+                menu.is_listening_for(0),
                 label_width,
             );
             if clicked {
-                menu.listening = Some(0);
+                menu.start_listening(0);
             }
         }
 
@@ -46,11 +46,11 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 "Move Left:",
                 &SettingsMenu::binding_label(&binding),
                 is_dirty,
-                menu.listening == Some(1),
+                menu.is_listening_for(1),
                 label_width,
             );
             if clicked {
-                menu.listening = Some(1);
+                menu.start_listening(1);
             }
         }
 
@@ -63,11 +63,11 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 "Move Back:",
                 &SettingsMenu::binding_label(&binding),
                 is_dirty,
-                menu.listening == Some(2),
+                menu.is_listening_for(2),
                 label_width,
             );
             if clicked {
-                menu.listening = Some(2);
+                menu.start_listening(2);
             }
         }
 
@@ -80,11 +80,11 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 "Move Right:",
                 &SettingsMenu::binding_label(&binding),
                 is_dirty,
-                menu.listening == Some(3),
+                menu.is_listening_for(3),
                 label_width,
             );
             if clicked {
-                menu.listening = Some(3);
+                menu.start_listening(3);
             }
         }
 
@@ -97,11 +97,11 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 "Move Up:",
                 &SettingsMenu::binding_label(&binding),
                 is_dirty,
-                menu.listening == Some(4),
+                menu.is_listening_for(4),
                 label_width,
             );
             if clicked {
-                menu.listening = Some(4);
+                menu.start_listening(4);
             }
         }
 
@@ -114,11 +114,11 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 "Move Down:",
                 &SettingsMenu::binding_label(&binding),
                 is_dirty,
-                menu.listening == Some(5),
+                menu.is_listening_for(5),
                 label_width,
             );
             if clicked {
-                menu.listening = Some(5);
+                menu.start_listening(5);
             }
         }
 

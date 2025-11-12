@@ -15,6 +15,12 @@
 //! - Pipeline layouts for main rendering and skybox
 //! - Render pipelines for main pass and skybox pass
 //!
+//! # Module Structure
+//!
+//! - `shaders`: Shader loading and compilation
+//! - `layouts`: Bind group and pipeline layout creation
+//! - `mod`: Pipeline orchestration and render pipeline creation
+//!
 //! # Example
 //!
 //! ```no_run
@@ -27,7 +33,9 @@
 //! # }
 //! ```
 
-use crate::gpu_types::{CascadedShadowMatrixGpu, ShadowMatrixGpu};
+mod shaders;
+mod layouts;
+
 use crate::types::{GpuInstance, Vertex};
 
 /// Error type for pipeline initialization failures.
@@ -128,18 +136,18 @@ impl PipelineSetup {
         config: &wgpu::SurfaceConfiguration,
     ) -> Result<Self, PipelineInitError> {
         // 1. Load and compile shaders
-        let (main_shader, skybox_shader) = Self::load_shaders(device)?;
+        let (main_shader, skybox_shader) = shaders::load_shaders(device)?;
 
         // 2. Create bind group layouts
-        let camera_bgl = Self::create_camera_bind_group_layout(device)?;
-        let shadow_bgl = Self::create_shadow_bind_group_layout(device)?;
-        let shadow_pass_bgl = Self::create_shadow_pass_bind_group_layout(device)?;
-        let csm_pass_bgl = Self::create_csm_pass_bind_group_layout(device)?;
+        let camera_bgl = layouts::create_camera_bind_group_layout(device)?;
+        let shadow_bgl = layouts::create_shadow_bind_group_layout(device)?;
+        let shadow_pass_bgl = layouts::create_shadow_pass_bind_group_layout(device)?;
+        let csm_pass_bgl = layouts::create_csm_pass_bind_group_layout(device)?;
 
         // 3. Create pipeline layouts
         let main_pipeline_layout =
-            Self::create_main_pipeline_layout(device, &camera_bgl, &shadow_bgl);
-        let skybox_pipeline_layout = Self::create_skybox_pipeline_layout(device, &camera_bgl);
+            layouts::create_main_pipeline_layout(device, &camera_bgl, &shadow_bgl);
+        let skybox_pipeline_layout = layouts::create_skybox_pipeline_layout(device, &camera_bgl);
 
         // 4. Create render pipelines
         let depth_format = wgpu::TextureFormat::Depth24Plus;
@@ -170,247 +178,6 @@ impl PipelineSetup {
             main_pipeline,
             skybox_pipeline,
             depth_format,
-        })
-    }
-
-    /// Load and compile all shader modules.
-    ///
-    /// The main shader is composed of three WGSL files concatenated together:
-    /// - common.wgsl (shared types and functions)
-    /// - vertex.wgsl (vertex shader)
-    /// - fragment.wgsl (fragment shader)
-    ///
-    /// The skybox shader is loaded from a single file on disk.
-    fn load_shaders(
-        device: &wgpu::Device,
-    ) -> Result<(wgpu::ShaderModule, wgpu::ShaderModule), PipelineInitError> {
-        // Main shader: concatenate 3 files
-        let shader_source = [
-            include_str!("../../shaders/common.wgsl"),
-            include_str!("../../shaders/vertex.wgsl"),
-            include_str!("../../shaders/fragment.wgsl"),
-        ]
-        .join("\n\n");
-        let main_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shader"),
-            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-        });
-
-        // Skybox shader: load from disk
-        let skybox_shader_source = std::fs::read_to_string("shaders/skybox.wgsl")
-            .map_err(|e| PipelineInitError::SkyboxShaderLoad(e.to_string()))?;
-        let skybox_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("skybox-shader"),
-            source: wgpu::ShaderSource::Wgsl(skybox_shader_source.into()),
-        });
-
-        Ok((main_shader, skybox_shader))
-    }
-
-    /// Create the camera bind group layout.
-    ///
-    /// This layout has 3 bindings:
-    /// - Binding 0: Camera uniform buffer (view + projection matrices, 80 bytes)
-    /// - Binding 1: Material storage buffer (array of materials, read-only)
-    /// - Binding 2: Lighting uniform buffer (sun/moon/ambient lighting, 96 bytes)
-    fn create_camera_bind_group_layout(
-        device: &wgpu::Device,
-    ) -> Result<wgpu::BindGroupLayout, PipelineInitError> {
-        let camera_size = std::mem::size_of::<[f32; 20]>() as u64;
-        let lighting_size = std::mem::size_of::<[f32; 24]>() as u64; // 6 vec4s
-
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("camera-bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(std::num::NonZeroU64::new(camera_size).ok_or_else(
-                            || {
-                                PipelineInitError::CameraBufferSize(
-                                    "camera size was zero".to_string(),
-                                )
-                            },
-                        )?),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            std::num::NonZeroU64::new(lighting_size).ok_or_else(|| {
-                                PipelineInitError::LightingBufferSize(
-                                    "lighting size was zero".to_string(),
-                                )
-                            })?,
-                        ),
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        Ok(layout)
-    }
-
-    /// Create the shadow bind group layout for the main render pass.
-    ///
-    /// This layout has 3 bindings:
-    /// - Binding 0: Shadow matrix uniform buffer (light space transforms)
-    /// - Binding 1: Shadow map texture (depth array for all cascades)
-    /// - Binding 2: Shadow sampler (comparison sampler for PCF)
-    fn create_shadow_bind_group_layout(
-        device: &wgpu::Device,
-    ) -> Result<wgpu::BindGroupLayout, PipelineInitError> {
-        let shadow_matrix_size = std::mem::size_of::<ShadowMatrixGpu>() as u64;
-
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow-bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            std::num::NonZeroU64::new(shadow_matrix_size).ok_or_else(|| {
-                                PipelineInitError::ShadowMatrixSize(
-                                    "shadow matrix size was zero".to_string(),
-                                )
-                            })?,
-                        ),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2Array, // Phase 4: Array texture
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                    count: None,
-                },
-            ],
-        });
-
-        Ok(layout)
-    }
-
-    /// Create the shadow pass bind group layout (legacy).
-    ///
-    /// This layout is used for the original shadow pass and has 1 binding:
-    /// - Binding 0: Shadow matrix uniform buffer (vertex shader only)
-    fn create_shadow_pass_bind_group_layout(
-        device: &wgpu::Device,
-    ) -> Result<wgpu::BindGroupLayout, PipelineInitError> {
-        let shadow_matrix_size = std::mem::size_of::<ShadowMatrixGpu>() as u64;
-
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow-pass-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(
-                        std::num::NonZeroU64::new(shadow_matrix_size).ok_or_else(|| {
-                            PipelineInitError::ShadowMatrixSize(
-                                "shadow matrix size was zero".to_string(),
-                            )
-                        })?,
-                    ),
-                },
-                count: None,
-            }],
-        });
-
-        Ok(layout)
-    }
-
-    /// Create the CSM pass bind group layout (Phase 3).
-    ///
-    /// This layout is used for cascaded shadow mapping and has 1 binding:
-    /// - Binding 0: CSM matrix uniform buffer (vertex shader only)
-    fn create_csm_pass_bind_group_layout(
-        device: &wgpu::Device,
-    ) -> Result<wgpu::BindGroupLayout, PipelineInitError> {
-        let csm_matrix_size = std::mem::size_of::<CascadedShadowMatrixGpu>() as u64;
-
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("csm-pass-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(std::num::NonZeroU64::new(csm_matrix_size).ok_or_else(
-                        || PipelineInitError::CsmMatrixSize("csm matrix size was zero".to_string()),
-                    )?),
-                },
-                count: None,
-            }],
-        });
-
-        Ok(layout)
-    }
-
-    /// Create the main render pipeline layout.
-    ///
-    /// This layout uses 2 bind groups:
-    /// - Group 0: Camera (view/proj matrices, materials, lighting)
-    /// - Group 1: Shadow (shadow matrices, shadow map texture, shadow sampler)
-    fn create_main_pipeline_layout(
-        device: &wgpu::Device,
-        camera_bgl: &wgpu::BindGroupLayout,
-        shadow_bgl: &wgpu::BindGroupLayout,
-    ) -> wgpu::PipelineLayout {
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("pipeline-layout"),
-            bind_group_layouts: &[camera_bgl, shadow_bgl],
-            push_constant_ranges: &[],
-        })
-    }
-
-    /// Create the skybox pipeline layout.
-    ///
-    /// This layout uses 1 bind group:
-    /// - Group 0: Camera (only view/proj matrices needed for skybox)
-    fn create_skybox_pipeline_layout(
-        device: &wgpu::Device,
-        camera_bgl: &wgpu::BindGroupLayout,
-    ) -> wgpu::PipelineLayout {
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("skybox-pipeline-layout"),
-            bind_group_layouts: &[camera_bgl],
-            push_constant_ranges: &[],
         })
     }
 
