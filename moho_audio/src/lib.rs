@@ -1,6 +1,7 @@
 pub mod audio_events;
 pub mod audio_settings;
 pub mod audio_source;
+pub mod audio_cache;
 /// Audio system for the Moho game engine.
 ///
 /// This module provides cross-platform audio functionality including:
@@ -16,6 +17,7 @@ pub mod audio_system;
 pub mod error;
 
 // Re-export main types for convenience
+pub use audio_cache::AudioCache;
 pub use audio_events::{AudioCategory, AudioEvent};
 pub use audio_settings::AudioSettings;
 pub use audio_source::AudioSource;

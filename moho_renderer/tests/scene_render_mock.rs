@@ -1,7 +1,6 @@
 use glam::Vec3;
 use legion::World;
 use moho_core::actors::{Cube, Sphere};
-#[cfg(feature = "backend-wgpu")]
 use moho_renderer::FrameCallback;
 use moho_renderer::{MaterialGpu, RendererBackend};
 
@@ -50,9 +49,7 @@ impl RendererBackend for MockRenderer {
             .push("render_mesh_called".to_string());
     }
     fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
-    #[cfg(feature = "backend-wgpu")]
     fn set_frame_callback_raw(&mut self, _ptr: Option<*mut dyn FrameCallback>) {}
-    #[cfg(feature = "backend-wgpu")]
     fn set_frame_callback_arc(
         &mut self,
         _cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,

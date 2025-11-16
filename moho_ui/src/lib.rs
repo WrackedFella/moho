@@ -35,50 +35,36 @@ impl FrameCallback for StubUi {
 }
 
 // Modern egui-based UI system
-#[cfg(feature = "ui-egui")]
 pub mod adapter;
 
-#[cfg(feature = "ui-egui")]
 pub mod screens;
 
-#[cfg(feature = "ui-egui")]
 pub mod overlays;
 
-#[cfg(feature = "ui-egui")]
 pub mod prefs;
 
-#[cfg(feature = "ui-egui")]
 pub mod modal;
 
-#[cfg(feature = "ui-egui")]
 pub mod modals;
 
-#[cfg(feature = "ui-egui")]
 pub mod input_handling;
 
-#[cfg(feature = "ui-egui")]
 pub mod ui_state;
 
 // Re-export the main types for easy access
-#[cfg(feature = "ui-egui")]
 pub use adapter::{
     EguiAdapter, GameState, UI_OVERLAY_VISIBLE, UiAudioEvent, UiEvent, UiReceiver, build_adapter,
 };
 
-#[cfg(feature = "ui-egui")]
 pub use adapter::EguiAdapter as EguiUi;
 
-#[cfg(feature = "ui-egui")]
 pub use screens::{
     FormControls, Menu, MenuAction, MenuItem, NewWorldMenu, Screen, ScreenSpec, SettingsMenu,
     StartMenu, UiComponent,
 };
 
-#[cfg(feature = "ui-egui")]
 pub use overlays::{Console, ConsoleAction};
 
-#[cfg(feature = "ui-egui")]
 pub use modal::{Modal, ModalManager, ModalResult};
 
-#[cfg(feature = "ui-egui")]
 pub use modals::KeybindConflictModal;
