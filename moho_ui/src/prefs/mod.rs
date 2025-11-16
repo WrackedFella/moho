@@ -3,11 +3,13 @@
 //! This module handles loading, saving, and managing user preferences including
 //! key bindings, mouse sensitivity, input filtering, and audio volumes.
 
+mod key_names;
 mod parser;
 
 use std::fs;
 use std::path::PathBuf;
 
+pub use key_names::parse_key_name;
 pub use parser::{binding_to_string, parse_binding};
 
 /// A numeric key binding: key code and modifier bits.

@@ -2,7 +2,10 @@
 //!
 //! This module handles parsing human-readable binding strings (e.g., "Ctrl+W", "ArrowUp")
 //! into Binding structs and serializing them back to strings for INI files.
+//!
+//! Uses PHF (perfect hash functions) for O(1) key name lookups during parsing.
 
+use super::key_names::parse_key_name;
 use super::Binding;
 
 /// Parse a human-readable binding string into a Binding struct.
@@ -69,38 +72,8 @@ pub fn parse_binding(s: &str, fallback: Binding) -> Binding {
         return fallback;
     }
 
-    let code = parse_key_code(key_part, fallback.code);
+    let code = parse_key_name(key_part, fallback.code);
     Binding::new(code, mods)
-}
-
-/// Parse a key name string into a key code.
-///
-/// # Arguments
-/// * `key_part` - The key name (e.g., "ArrowUp", "W", "Escape")
-/// * `fallback` - The key code to return if parsing fails
-///
-/// # Returns
-/// The key code as u32, or fallback on error
-fn parse_key_code(key_part: &str, fallback: u32) -> u32 {
-    match key_part.to_ascii_uppercase().as_str() {
-        "ARROWUP" | "UP" => 0x100,
-        "ARROWDOWN" | "DOWN" => 0x101,
-        "ARROWLEFT" | "LEFT" => 0x102,
-        "ARROWRIGHT" | "RIGHT" => 0x103,
-        "ESC" | "ESCAPE" => 0x200,
-        "TAB" => 0x201,
-        "BACKSPACE" => 0x202,
-        "ENTER" | "RETURN" => 0x203,
-        "SPACE" | "SPACEBAR" => ' ' as u32,
-        "SHIFT" => 0x204,
-        "CTRL" | "CONTROL" => 0x205,
-        "ALT" => 0x206,
-        s if s.len() == 1 => s.chars().next().unwrap() as u32,
-        _ => {
-            // Try parse numeric code as fallback
-            key_part.parse::<u32>().unwrap_or(fallback)
-        }
-    }
 }
 
 /// Convert a Binding to a human-readable string for INI serialization.

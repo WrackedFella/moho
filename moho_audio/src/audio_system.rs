@@ -1,10 +1,10 @@
+use crate::audio_cache::AudioCache;
 use crate::audio_events::{AudioCategory as EventCategory, AudioEvent};
 use crate::audio_settings::AudioSettings;
 use crate::audio_source::{AudioCategory, AudioSource};
 use crate::error::{AudioError, AudioResult};
 use log::{debug, warn};
 use rodio::Source;
-use std::collections::HashMap;
 use std::path::Path;
 
 /// Main audio system for the Moho engine.
@@ -21,11 +21,8 @@ pub struct AudioSystem {
     /// Current audio settings
     settings: AudioSettings,
 
-    /// Cache of loaded audio sources for performance
-    audio_cache: HashMap<String, Vec<u8>>,
-
-    /// Pre-loaded decoders for low-latency UI sounds
-    ui_sound_cache: HashMap<String, Vec<u8>>,
+    /// Audio cache manager (handles loading and caching)
+    audio_cache: AudioCache,
 
     /// Currently playing background music sink (for control)
     music_sink: Option<rodio::Sink>,
@@ -40,40 +37,13 @@ impl AudioSystem {
 
         debug!("Audio system initialized successfully");
 
-        let mut audio_system = Self {
+        Ok(Self {
             _stream: stream,
             stream_handle,
             settings: AudioSettings::default(),
-            audio_cache: HashMap::new(),
-            ui_sound_cache: HashMap::new(),
+            audio_cache: AudioCache::new()?,
             music_sink: None,
-        };
-
-        // Pre-load common UI sounds for low latency
-        audio_system.preload_ui_sounds()?;
-
-        Ok(audio_system)
-    }
-
-    /// Pre-load common UI sounds to eliminate loading delays
-    fn preload_ui_sounds(&mut self) -> AudioResult<()> {
-        let ui_sounds = vec!["assets/audio/ui/button_click.mp3"];
-
-        for sound_path in ui_sounds {
-            if let Ok(audio_data) = std::fs::read(sound_path) {
-                self.ui_sound_cache
-                    .insert(sound_path.to_string(), audio_data);
-                debug!("Pre-loaded UI sound: {}", sound_path);
-            } else {
-                // Don't fail initialization if UI sounds are missing
-                debug!(
-                    "UI sound file not found (will load on-demand): {}",
-                    sound_path
-                );
-            }
-        }
-
-        Ok(())
+        })
     }
 
     /// Get current audio settings
@@ -106,9 +76,9 @@ impl AudioSystem {
 
         // Use pre-loaded data for UI sounds, or load on-demand for others
         let audio_data = if source.category == AudioCategory::UserInterface {
-            self.get_ui_sound_data(&source.path)?
+            self.audio_cache.get_ui_sound(&source.path)?
         } else {
-            self.load_audio_file(&source.path)?
+            self.audio_cache.get_audio(&source.path)?
         };
 
         let cursor = std::io::Cursor::new(audio_data);
@@ -195,8 +165,8 @@ impl AudioSystem {
             return Ok(());
         }
 
-        // Get pre-loaded audio data
-        let audio_data = self.get_ui_sound_data(&path_str)?;
+        // Get pre-loaded audio data (delegate to AudioCache)
+        let audio_data = self.audio_cache.get_ui_sound(&path_str)?;
 
         // Create a new cursor and decoder for this playback
         let cursor = std::io::Cursor::new(audio_data);
@@ -242,53 +212,14 @@ impl AudioSystem {
         }
     }
 
-    /// Get pre-loaded UI sound data for low-latency playback
-    fn get_ui_sound_data(&mut self, path: &str) -> AudioResult<Vec<u8>> {
-        // First check the UI sound cache
-        if let Some(cached_data) = self.ui_sound_cache.get(path) {
-            return Ok(cached_data.clone());
-        }
-
-        // Fall back to regular loading and cache in UI cache for next time
-        let audio_data = std::fs::read(path)
-            .map_err(|e| AudioError::FileNotFound(format!("{}: {}", path, e)))?;
-
-        // Cache in UI cache for future low-latency access
-        self.ui_sound_cache
-            .insert(path.to_string(), audio_data.clone());
-
-        debug!("Loaded and cached UI sound: {}", path);
-        Ok(audio_data)
-    }
-
-    /// Load audio file data, using cache if available
-    fn load_audio_file(&mut self, path: &str) -> AudioResult<Vec<u8>> {
-        // Check cache first
-        if let Some(cached_data) = self.audio_cache.get(path) {
-            return Ok(cached_data.clone());
-        }
-
-        // Load from file
-        let audio_data = std::fs::read(path)
-            .map_err(|e| AudioError::FileNotFound(format!("{}: {}", path, e)))?;
-
-        // Cache for future use
-        self.audio_cache
-            .insert(path.to_string(), audio_data.clone());
-
-        debug!("Loaded and cached audio file: {}", path);
-        Ok(audio_data)
-    }
-
     /// Clear the audio cache to free memory
     pub fn clear_cache(&mut self) {
-        self.audio_cache.clear();
-        debug!("Audio cache cleared");
+        self.audio_cache.clear_audio_cache();
     }
 
     /// Get the number of cached audio files
     pub fn cache_size(&self) -> usize {
-        self.audio_cache.len()
+        self.audio_cache.audio_cache_size()
     }
 }
 

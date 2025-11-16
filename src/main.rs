@@ -655,160 +655,105 @@ impl App {
     }
 
     fn hide_menu(&mut self) {
-        self.game_state = crate::game_state::GameState::Playing;
-
-        if let Some(ui_adapter) = &self.ui_adapter
-            && let Ok(mut adapter) = ui_adapter.lock()
-        {
-            // Set UI to not visible directly
-            adapter.set_visible(false);
-            adapter.set_game_state(moho_ui::GameState::Playing);
-
-            // Update the atomic flag
-            use moho_ui::UI_OVERLAY_VISIBLE;
-            UI_OVERLAY_VISIBLE.store(false, std::sync::atomic::Ordering::SeqCst);
-
-            log::info!("Menu hidden - UI set to invisible");
+        use moho_types::StateTransitionCoordinator;
+        
+        match StateTransitionCoordinator::hide_menu(self.game_state) {
+            Ok(actions) => self.apply_transition(actions),
+            Err(e) => log::warn!("Cannot hide menu: {}", e),
         }
-
-        // Update input router
-        self.input_router
-            .update_for_state(crate::game_state::GameState::Playing);
-
-        // Grab cursor for game mode
-        self.grab_cursor();
     }
 
     fn show_menu(&mut self) {
-        self.game_state = crate::game_state::GameState::Menu;
-
-        if let Some(ui_adapter) = &self.ui_adapter
-            && let Ok(mut adapter) = ui_adapter.lock()
-        {
-            // Set UI to visible
-            adapter.set_visible(true);
-            adapter.set_game_state(moho_ui::GameState::Menu);
-
-            // Update the atomic flag
-            use moho_ui::UI_OVERLAY_VISIBLE;
-            UI_OVERLAY_VISIBLE.store(true, std::sync::atomic::Ordering::SeqCst);
-
-            log::info!("Menu shown - UI set to visible");
+        use moho_types::StateTransitionCoordinator;
+        
+        match StateTransitionCoordinator::show_menu(self.game_state) {
+            Ok(actions) => self.apply_transition(actions),
+            Err(e) => log::warn!("Cannot show menu: {}", e),
         }
-
-        // Update input router
-        self.input_router
-            .update_for_state(crate::game_state::GameState::Menu);
-
-        // Release cursor for menu mode
-        self.release_cursor();
     }
 
     /// Enter console mode (opens debug console over game)
     fn enter_console(&mut self) {
-        use crate::game_state::GameState;
-
-        // Validate transition
-        if !self.game_state.can_transition_to(GameState::ConsoleOpen) {
-            log::warn!("Cannot open console from state: {:?}", self.game_state);
-            return;
+        use moho_types::StateTransitionCoordinator;
+        
+        match StateTransitionCoordinator::enter_console(self.game_state) {
+            Ok(actions) => self.apply_transition(actions),
+            Err(e) => log::warn!("{}", e),
         }
-
-        log::info!("Entering console mode");
-        self.game_state = GameState::ConsoleOpen;
-
-        // Update input router for console state
-        self.input_router.update_for_state(GameState::ConsoleOpen);
-
-        // Make UI visible for console overlay
-        if let Some(ui_adapter) = &self.ui_adapter
-            && let Ok(mut adapter) = ui_adapter.lock()
-        {
-            adapter.set_visible(true);
-            adapter.set_game_state(moho_ui::GameState::ConsoleOpen);
-            use moho_ui::UI_OVERLAY_VISIBLE;
-            UI_OVERLAY_VISIBLE.store(true, std::sync::atomic::Ordering::SeqCst);
-        }
-
-        // Release cursor so user can type
-        self.release_cursor();
     }
 
     /// Exit console mode (return to playing)
     fn exit_console(&mut self) {
-        use crate::game_state::GameState;
-
-        // Validate transition
-        if !self.game_state.can_transition_to(GameState::Playing) {
-            log::warn!("Cannot exit console from state: {:?}", self.game_state);
-            return;
+        use moho_types::StateTransitionCoordinator;
+        
+        match StateTransitionCoordinator::exit_console(self.game_state) {
+            Ok(actions) => self.apply_transition(actions),
+            Err(e) => log::warn!("{}", e),
         }
-
-        log::info!("Exiting console mode");
-        self.game_state = GameState::Playing;
-
-        // Update input router for playing state
-        self.input_router.update_for_state(GameState::Playing);
-
-        // Hide UI when returning to game
-        if let Some(ui_adapter) = &self.ui_adapter
-            && let Ok(mut adapter) = ui_adapter.lock()
-        {
-            adapter.set_visible(false);
-            adapter.set_game_state(moho_ui::GameState::Playing);
-            use moho_ui::UI_OVERLAY_VISIBLE;
-            UI_OVERLAY_VISIBLE.store(false, std::sync::atomic::Ordering::SeqCst);
-        }
-
-        // Grab cursor for game mode
-        self.grab_cursor();
     }
 
     /// Toggle pause state
     #[allow(dead_code)]
     fn toggle_pause(&mut self) {
-        use crate::game_state::GameState;
-
-        match self.game_state {
-            GameState::Playing => {
-                if self.game_state.can_transition_to(GameState::Paused) {
-                    log::info!("Pausing game");
-                    self.game_state = GameState::Paused;
-                    self.input_router.update_for_state(GameState::Paused);
-
-                    if let Some(ui_adapter) = &self.ui_adapter
-                        && let Ok(mut adapter) = ui_adapter.lock()
-                    {
-                        adapter.set_visible(true);
-                        adapter.set_game_state(moho_ui::GameState::Paused);
-                        use moho_ui::UI_OVERLAY_VISIBLE;
-                        UI_OVERLAY_VISIBLE.store(true, std::sync::atomic::Ordering::SeqCst);
-                    }
-
-                    self.release_cursor();
-                }
+        use moho_types::StateTransitionCoordinator;
+        
+        match StateTransitionCoordinator::toggle_pause(self.game_state) {
+            Ok(actions) => self.apply_transition(actions),
+            Err(e) => log::debug!("{}", e),
+        }
+    }
+    
+    /// Apply a state transition with all its side effects.
+    ///
+    /// This method centralizes all the boilerplate for state transitions:
+    /// - Update game_state
+    /// - Update input_router
+    /// - Update UI visibility and state
+    /// - Handle cursor grab/release
+    /// - Show specific menu if requested
+    fn apply_transition(&mut self, actions: moho_types::StateTransitionActions) {
+        log::info!("State transition: {:?} -> {:?}", self.game_state, actions.new_state);
+        
+        // Update core state
+        self.game_state = actions.new_state;
+        self.input_router.update_for_state(actions.new_state);
+        
+        // Update UI visibility and state
+        if let Some(ui_adapter) = &self.ui_adapter
+            && let Ok(mut adapter) = ui_adapter.lock()
+        {
+            adapter.set_visible(actions.ui_visible);
+            
+            // Convert moho_types::GameState to moho_ui::GameState
+            let ui_state = match actions.new_state {
+                moho_types::GameState::Menu => moho_ui::GameState::Menu,
+                moho_types::GameState::Playing => moho_ui::GameState::Playing,
+                moho_types::GameState::ConsoleOpen => moho_ui::GameState::ConsoleOpen,
+                moho_types::GameState::Paused => moho_ui::GameState::Paused,
+            };
+            adapter.set_game_state(ui_state);
+            
+            // Update atomic flag for UI visibility
+            use moho_ui::UI_OVERLAY_VISIBLE;
+            UI_OVERLAY_VISIBLE.store(actions.ui_visible, std::sync::atomic::Ordering::SeqCst);
+            
+            // Show specific menu if requested
+            if let Some(menu_name) = actions.show_menu {
+                adapter.show_menu(menu_name);
             }
-            GameState::Paused => {
-                if self.game_state.can_transition_to(GameState::Playing) {
-                    log::info!("Resuming game");
-                    self.game_state = GameState::Playing;
-                    self.input_router.update_for_state(GameState::Playing);
-
-                    if let Some(ui_adapter) = &self.ui_adapter
-                        && let Ok(mut adapter) = ui_adapter.lock()
-                    {
-                        adapter.set_visible(false);
-                        adapter.set_game_state(moho_ui::GameState::Playing);
-                        use moho_ui::UI_OVERLAY_VISIBLE;
-                        UI_OVERLAY_VISIBLE.store(false, std::sync::atomic::Ordering::SeqCst);
-                    }
-
-                    self.grab_cursor();
-                }
-            }
-            _ => {
-                log::debug!("Cannot toggle pause from state: {:?}", self.game_state);
-            }
+            
+            log::debug!(
+                "UI updated: visible={}, state={:?}",
+                actions.ui_visible,
+                ui_state
+            );
+        }
+        
+        // Handle cursor state
+        if actions.cursor_grabbed {
+            self.grab_cursor();
+        } else {
+            self.release_cursor();
         }
     }
 

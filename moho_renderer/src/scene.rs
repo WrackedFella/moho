@@ -8,6 +8,9 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 
+mod preparation;
+pub use preparation::{PreparedScene, ScenePreparation};
+
 /// Type alias for camera data: (position, yaw, pitch)
 pub type CameraData = (glam::Vec3, f32, f32);
 
@@ -43,70 +46,20 @@ impl Scene {
         cube_mesh_handle: u32,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
-        // Collect instances from world (delegates to InstanceCollector)
-        self.instance_collector.collect_from_world(
+        // Prepare scene: collect instances, process materials, separate by transparency
+        let prepared = ScenePreparation::prepare(
             world,
             &mut self.material_table,
             &mut self.buffer_manager,
+            &mut self.instance_collector,
             renderer,
+            mesh_handle,
+            cube_mesh_handle,
         );
-
-        // Debug logging (kept from original implementation)
-        let material_table = &mut self.material_table;
-        if !material_table.as_slice().is_empty() {
-            log::debug!(
-                "[debug] material_table.len={} ",
-                material_table.as_slice().len()
-            );
-            for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
-                log::debug!(
-                    "[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}",
-                    i,
-                    m.albedo[0],
-                    m.albedo[1],
-                    m.albedo[2],
-                    m.params[0],
-                    m.params[1]
-                );
-            }
-        }
-        for (i, inst) in self
-            .instance_collector
-            .sphere_instances()
-            .iter()
-            .enumerate()
-            .take(8)
-        {
-            log::debug!("[debug] sphere_inst[{}].material={}", i, inst.material);
-        }
-        for (i, inst) in self
-            .instance_collector
-            .cube_instances()
-            .iter()
-            .enumerate()
-            .take(8)
-        {
-            log::debug!("[debug] cube_inst[{}].material={}", i, inst.material);
-        }
-
-        // Upload material table to GPU if it changed
-        if material_table.is_dirty() {
-            renderer.set_materials(material_table.as_slice());
-            material_table.clear_dirty();
-        }
-
-        log::debug!(
-            "[Scene::render] VoxelChunks to render: {}",
-            self.instance_collector.chunk_renders().len()
-        );
-
-        // Separate opaque and transparent instances
-        let (cube_opaque, sph_opaque, transparent_entries) =
-            self.separate_opaque_transparent(mesh_handle, cube_mesh_handle);
 
         // Render opaque geometry first (no finalize)
-        renderer.render_mesh(cube_mesh_handle, &cube_opaque, camera, false);
-        renderer.render_mesh(mesh_handle, &sph_opaque, camera, false);
+        renderer.render_mesh(cube_mesh_handle, &prepared.cube_opaque, camera, false);
+        renderer.render_mesh(mesh_handle, &prepared.sphere_opaque, camera, false);
 
         // Render VoxelChunks (opaque, each chunk as separate draw)
         for (chunk_handle, chunk_inst) in self.instance_collector.chunk_renders() {
@@ -116,57 +69,11 @@ impl Scene {
         // Render transparent instances (back-to-front sorted)
         self.render_transparent(
             renderer,
-            transparent_entries,
+            prepared.transparent_entries,
             camera,
             mesh_handle,
             self.instance_collector.chunk_renders(),
         );
-    }
-
-    /// Separate instances into opaque and transparent groups.
-    ///
-    /// Returns (opaque_cubes, opaque_spheres, transparent_entries)
-    fn separate_opaque_transparent(
-        &self,
-        mesh_handle: u32,
-        cube_mesh_handle: u32,
-    ) -> (Vec<InstanceGpu>, Vec<InstanceGpu>, Vec<(u32, InstanceGpu)>) {
-        let mats = self.material_table.as_slice();
-        let mut cube_opaque = Vec::new();
-        let mut sph_opaque = Vec::new();
-        let mut transparent_entries = Vec::new();
-
-        // Separate cubes
-        for inst in self.instance_collector.cube_instances() {
-            let idx = inst.material as usize;
-            let is_transparent = if idx < mats.len() {
-                mats[idx].is_transparent()
-            } else {
-                false
-            };
-            if is_transparent {
-                transparent_entries.push((cube_mesh_handle, *inst));
-            } else {
-                cube_opaque.push(*inst);
-            }
-        }
-
-        // Separate spheres
-        for inst in self.instance_collector.sphere_instances() {
-            let idx = inst.material as usize;
-            let is_transparent = if idx < mats.len() {
-                mats[idx].is_transparent()
-            } else {
-                false
-            };
-            if is_transparent {
-                transparent_entries.push((mesh_handle, *inst));
-            } else {
-                sph_opaque.push(*inst);
-            }
-        }
-
-        (cube_opaque, sph_opaque, transparent_entries)
     }
 
     /// Render transparent instances sorted back-to-front.

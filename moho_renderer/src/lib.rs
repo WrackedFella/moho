@@ -31,6 +31,8 @@ mod buffer_manager;
 pub use buffer_manager::BufferManager;
 mod instance_collector;
 pub use instance_collector::InstanceCollector;
+mod mesh_renderer;
+pub use mesh_renderer::MeshRenderer;
 
 pub mod device;
 mod render_ops;
@@ -49,6 +51,7 @@ pub mod gfx {
     pub mod wgpu_impl {
         extern crate winit;
         use crate::MaterialGpu;
+        use crate::MeshRenderer;
         use crate::shadow::ShadowSystem;
         use crate::types::{GpuInstance, MeshEntry};
         use wgpu::util::DeviceExt;
@@ -616,8 +619,6 @@ pub mod gfx {
                 Some(ibuf)
             }
 
-            /// Acquire render target (surface texture view).
-            /// Returns true if successful, false if reconfiguration is needed.
             /// Inherent method: render a registered mesh by handle.
             pub fn render_mesh(
                 &mut self,
@@ -626,11 +627,8 @@ pub mod gfx {
                 camera: (glam::Mat4, glam::Mat4, glam::Vec3),
                 finalize: bool,
             ) {
-                let idx = mesh as usize;
-                if idx >= self.mesh_table.len() {
-                    return;
-                }
-                if self.mesh_table[idx].is_none() {
+                // Validate mesh handle (delegate to MeshRenderer)
+                if !MeshRenderer::validate_mesh(mesh, &self.mesh_table) {
                     return;
                 }
 
@@ -651,8 +649,8 @@ pub mod gfx {
                     cam_pos,
                 );
 
-                // Convert instances to GPU format
-                let instances_gpu = self.convert_instances(instances);
+                // Convert instances to GPU format (delegate to MeshRenderer)
+                let instances_gpu = MeshRenderer::prepare_instances(instances);
 
                 // Prepare and upload instance buffer
                 if self.prepare_instance_buffer(&instances_gpu).is_none() {
@@ -674,22 +672,6 @@ pub mod gfx {
                 }
             }
 
-            /// Convert instances from external format to internal GPU format.
-            fn convert_instances(
-                &self,
-                instances: &[moho_core::actors::InstanceGpu],
-            ) -> Vec<GpuInstance> {
-                instances
-                    .iter()
-                    .map(|ic| GpuInstance {
-                        model: ic.model,
-                        material: ic.material,
-                        object_type: ic.object_type,
-                        padding: ic.padding,
-                    })
-                    .collect()
-            }
-
             /// Finalize the current frame: flatten instances, upload to GPU, render passes, present.
             fn finalize_frame(&mut self) {
                 // Ensure we have a frame view
@@ -704,11 +686,17 @@ pub mod gfx {
                             label: Some("batched-encoder"),
                         });
 
-                // Flatten all instance lists into contiguous buffer with offsets
-                let (all_instances, offsets) = self.flatten_instances();
+                // Flatten all instance lists into contiguous buffer with offsets (delegate to MeshRenderer)
+                let (all_instances, offsets) = MeshRenderer::flatten_instances(&self.pending_draws);
 
-                // Ensure capacity and upload all instances
-                if !self.ensure_instance_capacity_and_upload(&all_instances) {
+                // Ensure capacity and upload all instances (delegate to MeshRenderer)
+                if !MeshRenderer::ensure_capacity_and_upload(
+                    &self.device,
+                    &self.queue,
+                    &mut self.instance_buffer,
+                    &mut self.instance_capacity,
+                    &all_instances,
+                ) {
                     log::error!("instance buffer missing when uploading batched instances");
                     return;
                 }
@@ -769,66 +757,6 @@ pub mod gfx {
                 // Clear pending state for next frame
                 self.pending_frame_view = None;
                 self.pending_draws.clear();
-            }
-
-            /// Flatten all pending instance lists into a single contiguous buffer.
-            /// Returns (all_instances, offsets) where offsets[i] is the start index for draw i.
-            fn flatten_instances(&self) -> (Vec<GpuInstance>, Vec<usize>) {
-                let mut all_instances: Vec<GpuInstance> = Vec::new();
-                let mut offsets: Vec<usize> = Vec::with_capacity(self.pending_draws.len());
-                for (_m, insts) in &self.pending_draws {
-                    offsets.push(all_instances.len());
-                    all_instances.extend_from_slice(insts);
-                }
-                (all_instances, offsets)
-            }
-
-            /// Ensure instance buffer has sufficient capacity and upload instances.
-            /// Returns true if successful, false if buffer is missing.
-            fn ensure_instance_capacity_and_upload(
-                &mut self,
-                all_instances: &[GpuInstance],
-            ) -> bool {
-                let required = all_instances.len().max(1);
-                if self.instance_capacity < required {
-                    let mut new_cap = self.instance_capacity.max(1);
-                    while new_cap < required {
-                        new_cap = new_cap.saturating_mul(2);
-                    }
-                    let size_bytes =
-                        (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
-                    let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("instance-buffer"),
-                        size: size_bytes,
-                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
-                    self.instance_buffer = Some(buf);
-                    self.instance_capacity = new_cap;
-                }
-
-                let buffer = match self.instance_buffer.as_ref() {
-                    Some(b) => b,
-                    None => return false,
-                };
-
-                // Upload instances
-                if !all_instances.is_empty() {
-                    self.queue
-                        .write_buffer(buffer, 0, bytemuck::cast_slice(all_instances));
-                } else {
-                    // Upload a zero instance to keep buffer valid
-                    let zero = GpuInstance {
-                        model: [[0.0; 4]; 4],
-                        material: 0,
-                        object_type: 0,
-                        padding: [0, 0],
-                    };
-                    self.queue
-                        .write_buffer(buffer, 0, bytemuck::cast_slice(&[zero]));
-                }
-
-                true
             }
         }
     }
