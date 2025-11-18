@@ -1,0 +1,13 @@
+[package]
+name = "moho_types"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Core dependencies for shared types
+winit = "0.30"
+
+# Optional feature flags
+[features]
+default = []
+ui-egui = []

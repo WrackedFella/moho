@@ -21,65 +21,61 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
 
         // Sound Effect Volume
         {
+            let saved_value = menu.state.prefs().audio_sound_effect_volume;
             let dirty = FormControls::volume_slider(
                 ui,
                 "Sound Effects:",
-                &mut menu.staged.audio_sound_effect_volume,
-                menu.prefs.audio_sound_effect_volume,
+                &mut menu.state.staged_mut().audio_sound_effect_volume,
+                saved_value,
                 label_width,
             );
             if dirty {
-                menu.dirty_fields.insert(SettingsField::AudioSoundEffect);
-            } else {
-                menu.dirty_fields.remove(&SettingsField::AudioSoundEffect);
+                menu.state.mark_dirty(SettingsField::AudioSoundEffect);
             }
         }
 
         // Music Volume
         {
+            let saved_value = menu.state.prefs().audio_music_volume;
             let dirty = FormControls::volume_slider(
                 ui,
                 "Music:",
-                &mut menu.staged.audio_music_volume,
-                menu.prefs.audio_music_volume,
+                &mut menu.state.staged_mut().audio_music_volume,
+                saved_value,
                 label_width,
             );
             if dirty {
-                menu.dirty_fields.insert(SettingsField::AudioMusic);
-            } else {
-                menu.dirty_fields.remove(&SettingsField::AudioMusic);
+                menu.state.mark_dirty(SettingsField::AudioMusic);
             }
         }
 
         // UI Volume
         {
+            let saved_value = menu.state.prefs().audio_ui_volume;
             let dirty = FormControls::volume_slider(
                 ui,
                 "User Interface:",
-                &mut menu.staged.audio_ui_volume,
-                menu.prefs.audio_ui_volume,
+                &mut menu.state.staged_mut().audio_ui_volume,
+                saved_value,
                 label_width,
             );
             if dirty {
-                menu.dirty_fields.insert(SettingsField::AudioUI);
-            } else {
-                menu.dirty_fields.remove(&SettingsField::AudioUI);
+                menu.state.mark_dirty(SettingsField::AudioUI);
             }
         }
 
         // Voice Volume
         {
+            let saved_value = menu.state.prefs().audio_voice_volume;
             let dirty = FormControls::volume_slider(
                 ui,
                 "Voice:",
-                &mut menu.staged.audio_voice_volume,
-                menu.prefs.audio_voice_volume,
+                &mut menu.state.staged_mut().audio_voice_volume,
+                saved_value,
                 label_width,
             );
             if dirty {
-                menu.dirty_fields.insert(SettingsField::AudioVoice);
-            } else {
-                menu.dirty_fields.remove(&SettingsField::AudioVoice);
+                menu.state.mark_dirty(SettingsField::AudioVoice);
             }
         }
     });

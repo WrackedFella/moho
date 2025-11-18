@@ -2,11 +2,7 @@ pub mod prelude {
     pub use crate::Renderer;
 }
 
-#[cfg(feature = "backend-wgpu")]
 pub type TextureFormatRepr = wgpu::TextureFormat;
-
-#[cfg(not(feature = "backend-wgpu"))]
-pub type TextureFormatRepr = ();
 
 /// GPU material layout (32-byte stride for WGSL vec4 alignment)
 #[repr(C)]
@@ -15,6 +11,9 @@ pub struct MaterialGpu {
     pub albedo: [f32; 4],
     pub params: [f32; 4], // fuzz, ref_idx
 }
+
+/// Type alias for Material (same as MaterialGpu)
+pub type Material = MaterialGpu;
 
 impl MaterialGpu {
     pub fn is_transparent(&self) -> bool {
@@ -28,21 +27,33 @@ mod scene;
 pub use scene::Scene;
 mod gpu_types;
 pub use gpu_types::{CameraGpu, CascadedShadowMatrixGpu, LightingGpu, ShadowMatrixGpu};
+mod buffer_manager;
+pub use buffer_manager::BufferManager;
+mod instance_collector;
+pub use instance_collector::InstanceCollector;
+mod mesh_renderer;
+pub use mesh_renderer::MeshRenderer;
 
-#[cfg(feature = "backend-wgpu")]
+pub mod device;
+mod render_ops;
 mod shadow;
-#[cfg(feature = "backend-wgpu")]
 mod types;
+pub use device::{DeviceInitError, DeviceSetup};
+pub mod pipeline;
+pub use pipeline::{PipelineInitError, PipelineSetup};
+pub mod resources;
+pub use resources::ResourcePool;
+pub mod builder;
+pub use builder::RendererBuilder;
 
 pub mod gfx {
 
-    #[cfg(feature = "backend-wgpu")]
     pub mod wgpu_impl {
         extern crate winit;
         use crate::MaterialGpu;
-        use crate::gpu_types::{CascadedShadowMatrixGpu, ShadowMatrixGpu};
-        use crate::shadow::{NUM_SHADOW_CASCADES, ShadowSystem};
-        use crate::types::{GpuInstance, MeshEntry, Vertex};
+        use crate::MeshRenderer;
+        use crate::shadow::ShadowSystem;
+        use crate::types::{GpuInstance, MeshEntry};
         use wgpu::util::DeviceExt;
 
         pub struct Renderer<'a> {
@@ -80,574 +91,57 @@ pub mod gfx {
         }
 
         impl<'a> Renderer<'a> {
-            pub fn new(
+            /// Internal constructor used by RendererBuilder.
+            ///
+            /// This is intentionally not public to enforce using the builder pattern
+            /// for initialization, which ensures all stages happen in the correct order.
+            pub(crate) fn from_components(
                 window: &'a winit::window::Window,
-            ) -> Result<Self, Box<dyn std::error::Error>> {
-                log::info!("(wgpu) Initializing renderer (instanced cubes)");
-                // Use the borrowed window directly. The Surface is created
-                // with a reference to the provided Window; the returned
-                // Surface borrows the Window for the same lifetime.
-                let size = window.inner_size();
-                // Initialize wgpu
-                let instance_desc = wgpu::InstanceDescriptor {
-                    backends: wgpu::Backends::all(),
-                    ..Default::default()
-                };
-                let instance = wgpu::Instance::new(&instance_desc);
-                // create_surface takes a reference to the window; pass a borrow
-                // from the Arc. Keep the Arc in the struct so the Window
-                // remains alive for the Surface's use.
-                let surface = instance
-                    .create_surface(window)
-                    .map_err(|e| format!("create_surface failed: {:?}", e))?;
-
-                let adapter =
-                    pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                        power_preference: wgpu::PowerPreference::HighPerformance,
-                        compatible_surface: Some(&surface),
-                        force_fallback_adapter: false,
-                    }))
-                    .map_err(|e| format!("Failed to request adapter: {:?}", e))?;
-
-                // Gate experimental features behind an explicit cargo feature.
-                let experimental = {
-                    #[cfg(feature = "wgpu-experimental")]
-                    {
-                        unsafe { wgpu::ExperimentalFeatures::enabled() }
-                    }
-                    #[cfg(not(feature = "wgpu-experimental"))]
-                    {
-                        wgpu::ExperimentalFeatures::disabled()
-                    }
-                };
-
-                // Only request features the adapter actually supports.
-                let desired_features = wgpu::Features::PUSH_CONSTANTS;
-                let required_features = desired_features & adapter.features();
-
-                // Set push constant size limit if feature is supported
-                let mut limits = wgpu::Limits::default();
-                if required_features.contains(wgpu::Features::PUSH_CONSTANTS) {
-                    limits.max_push_constant_size = 128; // Minimum guaranteed by spec
-                }
-
-                let (device, queue) =
-                    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-                        label: None,
-                        required_features,
-                        required_limits: limits,
-                        memory_hints: Default::default(),
-                        trace: Default::default(),
-                        experimental_features: experimental,
-                    }))
-                    .map_err(|e| format!("Failed to create device: {:?}", e))?;
-
-                let supported_formats = surface.get_capabilities(&adapter).formats;
-                let config = wgpu::SurfaceConfiguration {
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    format: supported_formats[0],
-                    width: size.width,
-                    height: size.height,
-                    present_mode: wgpu::PresentMode::Fifo,
-                    alpha_mode: wgpu::CompositeAlphaMode::Auto,
-                    view_formats: vec![],
-                    desired_maximum_frame_latency: 0,
-                };
-                surface.configure(&device, &config);
-
-                let vertex_buffer = None;
-                let vertex_count = 0u32;
-
-                let shader_source = [
-                    include_str!("../../shaders/common.wgsl"),
-                    include_str!("../../shaders/vertex.wgsl"),
-                    include_str!("../../shaders/fragment.wgsl"),
-                ]
-                .join("\n\n");
-                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("shader"),
-                    source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-                });
-
-                let camera_size = std::mem::size_of::<[f32; 20]>() as u64;
-                let lighting_size = std::mem::size_of::<[f32; 24]>() as u64; // 6 vec4s: sun_dir, sun_col, moon_dir, moon_col, ambient, time_of_day
-                let camera_bgl =
-                    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                        label: Some("camera-bgl"),
-                        entries: &[
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 0,
-                                visibility: wgpu::ShaderStages::VERTEX
-                                    | wgpu::ShaderStages::FRAGMENT,
-                                ty: wgpu::BindingType::Buffer {
-                                    ty: wgpu::BufferBindingType::Uniform,
-                                    has_dynamic_offset: false,
-                                    min_binding_size: Some(
-                                        std::num::NonZeroU64::new(camera_size)
-                                            .ok_or("camera size was zero")?,
-                                    ),
-                                },
-                                count: None,
-                            },
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 1,
-                                visibility: wgpu::ShaderStages::FRAGMENT,
-                                ty: wgpu::BindingType::Buffer {
-                                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                    has_dynamic_offset: false,
-                                    min_binding_size: None,
-                                },
-                                count: None,
-                            },
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 2,
-                                visibility: wgpu::ShaderStages::FRAGMENT,
-                                ty: wgpu::BindingType::Buffer {
-                                    ty: wgpu::BufferBindingType::Uniform,
-                                    has_dynamic_offset: false,
-                                    min_binding_size: Some(
-                                        std::num::NonZeroU64::new(lighting_size)
-                                            .ok_or("lighting size was zero")?,
-                                    ),
-                                },
-                                count: None,
-                            },
-                        ],
-                    });
-
-                // Create shadow bind group layout for main pass (group 1: shadow sampling)
-                let shadow_bind_group_layout =
-                    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                        label: Some("shadow-bgl"),
-                        entries: &[
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 0,
-                                visibility: wgpu::ShaderStages::VERTEX
-                                    | wgpu::ShaderStages::FRAGMENT,
-                                ty: wgpu::BindingType::Buffer {
-                                    ty: wgpu::BufferBindingType::Uniform,
-                                    has_dynamic_offset: false,
-                                    min_binding_size: Some(
-                                        std::num::NonZeroU64::new(
-                                            std::mem::size_of::<ShadowMatrixGpu>() as u64,
-                                        )
-                                        .ok_or("shadow matrix size was zero")?,
-                                    ),
-                                },
-                                count: None,
-                            },
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 1,
-                                visibility: wgpu::ShaderStages::FRAGMENT,
-                                ty: wgpu::BindingType::Texture {
-                                    sample_type: wgpu::TextureSampleType::Depth,
-                                    view_dimension: wgpu::TextureViewDimension::D2Array, // Phase 4: Array texture for all cascades
-                                    multisampled: false,
-                                },
-                                count: None,
-                            },
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 2,
-                                visibility: wgpu::ShaderStages::FRAGMENT,
-                                ty: wgpu::BindingType::Sampler(
-                                    wgpu::SamplerBindingType::Comparison,
-                                ),
-                                count: None,
-                            },
-                        ],
-                    });
-
-                // Create shadow pass bind group layout (group 0 for shadow pass: just shadow matrix - legacy)
-                let _shadow_pass_bind_group_layout =
-                    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                        label: Some("shadow-pass-bgl"),
-                        entries: &[wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: Some(
-                                    std::num::NonZeroU64::new(
-                                        std::mem::size_of::<ShadowMatrixGpu>() as u64,
-                                    )
-                                    .ok_or("shadow matrix size was zero")?,
-                                ),
-                            },
-                            count: None,
-                        }],
-                    });
-
-                // CSM pass bind group layout (Phase 3: single CSM matrix for cascade 0)
-                let _csm_pass_bind_group_layout =
-                    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                        label: Some("csm-pass-bgl"),
-                        entries: &[wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: Some(
-                                    std::num::NonZeroU64::new(std::mem::size_of::<
-                                        CascadedShadowMatrixGpu,
-                                    >(
-                                    )
-                                        as u64)
-                                    .ok_or("csm matrix size was zero")?,
-                                ),
-                            },
-                            count: None,
-                        }],
-                    });
-
-                let pipeline_layout =
-                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some("pipeline-layout"),
-                        bind_group_layouts: &[&camera_bgl, &shadow_bind_group_layout],
-                        push_constant_ranges: &[],
-                    });
-
-                // Skybox pipeline layout (only needs camera bind group, no shadows)
-                let skybox_pipeline_layout =
-                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some("skybox-pipeline-layout"),
-                        bind_group_layouts: &[&camera_bgl],
-                        push_constant_ranges: &[],
-                    });
-
-                // Create camera uniform buffer (mat4x4<f32> + cam_pos vec4)
-                let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("camera-buffer"),
-                    size: camera_size as wgpu::BufferAddress,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-
-                // Create lighting uniform buffer with default lighting
-                use crate::gpu_types::LightingGpu;
-                let initial_lighting = LightingGpu::default();
-                let lighting_buffer =
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("lighting-buffer"),
-                        contents: bytemuck::bytes_of(&initial_lighting),
-                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    });
-
-                // Create an initial one-element material storage buffer so we can
-                // create the bind group now. It will be replaced when the app
-                // uploads real materials.
-                let initial_material = MaterialGpu {
-                    albedo: [1.0, 1.0, 1.0, 0.0],
-                    params: [0.0, 0.0, 0.0, 0.0],
-                };
-                let material_buffer =
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("material-buffer-initial"),
-                        contents: bytemuck::bytes_of(&initial_material),
-                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    });
-
-                let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    layout: &camera_bgl,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: camera_buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: material_buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: lighting_buffer.as_entire_binding(),
-                        },
-                    ],
-                    label: Some("camera-bind-group"),
-                });
-
-                // Create a depth texture
-                let depth_format = wgpu::TextureFormat::Depth24Plus;
-                let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("depth-texture"),
-                    size: wgpu::Extent3d {
-                        width: config.width,
-                        height: config.height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: depth_format,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    view_formats: &[],
-                });
-                let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-                let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("render-pipeline"),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        compilation_options: Default::default(),
-                        buffers: &[
-                            // Vertex positions + normals
-                            wgpu::VertexBufferLayout {
-                                array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                                step_mode: wgpu::VertexStepMode::Vertex,
-                                attributes: &wgpu::vertex_attr_array![
-                                    0 => Float32x3,
-                                    1 => Float32x3,
-                                ],
-                            },
-                            // Per-instance data: model matrix (4x vec4) + material(u32) + object_type(u32)
-                            // followed by per-instance material params: albedo(vec3), fuzz(f32), ref_idx(f32)
-                            wgpu::VertexBufferLayout {
-                                array_stride: std::mem::size_of::<GpuInstance>()
-                                    as wgpu::BufferAddress,
-                                step_mode: wgpu::VertexStepMode::Instance,
-                                attributes: &wgpu::vertex_attr_array![
-                                    2 => Float32x4,
-                                    3 => Float32x4,
-                                    4 => Float32x4,
-                                    5 => Float32x4,
-                                    6 => Uint32,
-                                    7 => Uint32,
-                                ],
-                            },
-                        ],
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_main"),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: config.format,
-                            blend: Some(wgpu::BlendState {
-                                color: wgpu::BlendComponent {
-                                    src_factor: wgpu::BlendFactor::SrcAlpha,
-                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                    operation: wgpu::BlendOperation::Add,
-                                },
-                                alpha: wgpu::BlendComponent {
-                                    src_factor: wgpu::BlendFactor::One,
-                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                    operation: wgpu::BlendOperation::Add,
-                                },
-                            }),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        strip_index_format: None,
-                        front_face: wgpu::FrontFace::Ccw, // Counter-clockwise winding
-                        cull_mode: Some(wgpu::Face::Back), // Enable back-face culling
-                        unclipped_depth: false,
-                        polygon_mode: wgpu::PolygonMode::Fill,
-                        conservative: false,
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: depth_format,
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                    cache: None,
-                });
-
-                // create a tiny initial instance buffer (1 element) to avoid special cases
-                let initial_instance = GpuInstance {
-                    model: [[0.0; 4]; 4],
-                    material: 0,
-                    object_type: 0,
-                    padding: [0, 0],
-                };
-                let instance_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("instance-buffer-initial"),
-                    contents: bytemuck::cast_slice(&[initial_instance]),
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                });
-
-                // Create skybox rendering resources
-                let skybox_shader_source = std::fs::read_to_string("shaders/skybox.wgsl")
-                    .map_err(|e| format!("Failed to read skybox shader: {}", e))?;
-                let skybox_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("skybox-shader"),
-                    source: wgpu::ShaderSource::Wgsl(skybox_shader_source.into()),
-                });
-
-                // Create skybox pipeline
-                let skybox_pipeline =
-                    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                        label: Some("skybox-pipeline"),
-                        layout: Some(&skybox_pipeline_layout),
-                        vertex: wgpu::VertexState {
-                            module: &skybox_shader,
-                            entry_point: Some("vs_main"),
-                            compilation_options: Default::default(),
-                            buffers: &[wgpu::VertexBufferLayout {
-                                array_stride: std::mem::size_of::<[f32; 3]>()
-                                    as wgpu::BufferAddress,
-                                step_mode: wgpu::VertexStepMode::Vertex,
-                                attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                            }],
-                        },
-                        fragment: Some(wgpu::FragmentState {
-                            module: &skybox_shader,
-                            entry_point: Some("fs_main"),
-                            compilation_options: Default::default(),
-                            targets: &[Some(wgpu::ColorTargetState {
-                                format: config.format,
-                                blend: None, // No blending for skybox
-                                write_mask: wgpu::ColorWrites::ALL,
-                            })],
-                        }),
-                        primitive: wgpu::PrimitiveState {
-                            topology: wgpu::PrimitiveTopology::TriangleList,
-                            strip_index_format: None,
-                            front_face: wgpu::FrontFace::Ccw,
-                            cull_mode: None, // No culling for skybox (inside a sphere)
-                            unclipped_depth: false,
-                            polygon_mode: wgpu::PolygonMode::Fill,
-                            conservative: false,
-                        },
-                        depth_stencil: Some(wgpu::DepthStencilState {
-                            format: depth_format,
-                            depth_write_enabled: false, // Don't write depth for skybox
-                            depth_compare: wgpu::CompareFunction::LessEqual, // Render at far plane
-                            stencil: wgpu::StencilState::default(),
-                            bias: wgpu::DepthBiasState::default(),
-                        }),
-                        multisample: wgpu::MultisampleState::default(),
-                        multiview: None,
-                        cache: None,
-                    });
-
-                // Generate skybox as fullscreen quad (two triangles covering the screen)
-                let (skybox_vertices, skybox_vertex_count) = Self::generate_skybox_quad();
-                log::info!(
-                    "Generated skybox fullscreen quad with {} vertices",
-                    skybox_vertex_count
-                );
-                let skybox_vertex_buffer =
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("skybox-vertex-buffer"),
-                        contents: bytemuck::cast_slice(&skybox_vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
-
-                let shadow = ShadowSystem::new(&device, &camera_bgl, &shadow_bind_group_layout)?;
-
-                Ok(Renderer {
+                device_setup: crate::device::DeviceSetup<'a>,
+                pipeline_setup: &crate::pipeline::PipelineSetup,
+                resources: crate::resources::ResourcePool,
+                shadow: ShadowSystem,
+            ) -> Self {
+                Self {
                     window,
-                    surface,
-                    device,
-                    queue,
-                    config,
-                    vertex_buffer,
-                    pipeline,
-                    camera_buffer,
-                    camera_bind_group,
-                    camera_bind_group_layout: camera_bgl,
-                    material_buffer: Some(material_buffer),
-                    lighting_buffer,
-                    _depth_texture: depth_texture,
-                    depth_texture_view: depth_view,
-                    depth_format,
-                    instance_buffer: Some(instance_buf),
-                    instance_capacity: 1,
-                    vertex_count,
-                    // window is owned by the application; don't store it here
+                    surface: device_setup.surface,
+                    device: device_setup.device,
+                    queue: device_setup.queue,
+                    config: device_setup.config,
+                    vertex_buffer: None,
+                    pipeline: pipeline_setup.main_pipeline().clone(),
+                    camera_buffer: resources.camera_buffer,
+                    camera_bind_group: resources.camera_bind_group,
+                    camera_bind_group_layout: pipeline_setup.camera_bind_group_layout().clone(),
+                    material_buffer: Some(resources.material_buffer),
+                    lighting_buffer: resources.lighting_buffer,
+                    _depth_texture: resources.depth_texture,
+                    depth_texture_view: resources.depth_texture_view,
+                    depth_format: pipeline_setup.depth_format(),
+                    instance_buffer: Some(resources.instance_buffer),
+                    instance_capacity: resources.instance_capacity,
+                    vertex_count: 0,
                     mesh_table: Vec::new(),
                     pending_frame: None,
                     pending_draws: Vec::new(),
                     pending_frame_view: None,
                     frame_callback_raw: None,
                     frame_callback_arc: None,
-                    skybox_pipeline,
-                    skybox_vertex_buffer,
-                    skybox_vertex_count,
+                    skybox_pipeline: pipeline_setup.skybox_pipeline().clone(),
+                    skybox_vertex_buffer: resources.skybox_vertex_buffer,
+                    skybox_vertex_count: resources.skybox_vertex_count,
                     shadow,
-                })
+                }
             }
 
-            /// Generate a UV sphere for the skybox
-            /// Returns (vertices, vertex_count)
-            /// Generate a fullscreen quad for skybox rendering (renders at far plane depth)
-            fn generate_skybox_quad() -> (Vec<[f32; 3]>, u32) {
-                // Fullscreen quad in clip space coordinates [-1, 1]
-                // Two triangles covering the entire screen
-                let vertices = vec![
-                    // First triangle (bottom-left, top-left, bottom-right)
-                    [-1.0, -1.0, 0.0], // Bottom-left
-                    [-1.0, 1.0, 0.0],  // Top-left
-                    [1.0, -1.0, 0.0],  // Bottom-right
-                    // Second triangle (bottom-right, top-left, top-right)
-                    [1.0, -1.0, 0.0], // Bottom-right
-                    [-1.0, 1.0, 0.0], // Top-left
-                    [1.0, 1.0, 0.0],  // Top-right
-                ];
-
-                let vertex_count = vertices.len() as u32;
-                (vertices, vertex_count)
-            }
-
-            // Old sphere generation method (keeping for reference, can be removed later)
-            #[allow(dead_code)]
-            fn generate_skybox_sphere(
-                longitude_segments: u32,
-                latitude_segments: u32,
-            ) -> (Vec<[f32; 3]>, u32) {
-                let mut vertices = Vec::new();
-
-                // Generate vertices for UV sphere
-                for lat in 0..=latitude_segments {
-                    let theta = std::f32::consts::PI * (lat as f32) / (latitude_segments as f32);
-                    let sin_theta = theta.sin();
-                    let cos_theta = theta.cos();
-
-                    for lon in 0..=longitude_segments {
-                        let phi =
-                            2.0 * std::f32::consts::PI * (lon as f32) / (longitude_segments as f32);
-                        let sin_phi = phi.sin();
-                        let cos_phi = phi.cos();
-
-                        // Unit sphere position
-                        let x = sin_theta * cos_phi;
-                        let y = cos_theta;
-                        let z = sin_theta * sin_phi;
-
-                        vertices.push([x, y, z]);
-                    }
-                }
-
-                // Generate triangle indices (convert to triangle list)
-                let mut triangle_vertices = Vec::new();
-                for lat in 0..latitude_segments {
-                    for lon in 0..longitude_segments {
-                        let current = (lat * (longitude_segments + 1) + lon) as usize;
-                        let next = current + (longitude_segments + 1) as usize;
-
-                        // First triangle
-                        triangle_vertices.push(vertices[current]);
-                        triangle_vertices.push(vertices[next]);
-                        triangle_vertices.push(vertices[current + 1]);
-
-                        // Second triangle
-                        triangle_vertices.push(vertices[current + 1]);
-                        triangle_vertices.push(vertices[next]);
-                        triangle_vertices.push(vertices[next + 1]);
-                    }
-                }
-
-                let vertex_count = triangle_vertices.len() as u32;
-                (triangle_vertices, vertex_count)
+            pub fn new(
+                window: &'a winit::window::Window,
+            ) -> Result<Self, Box<dyn std::error::Error>> {
+                crate::builder::RendererBuilder::new(window)
+                    .init_device()?
+                    .create_pipelines()?
+                    .allocate_resources()?
+                    .build()
             }
 
             /// Return the configured surface format for the renderer.
@@ -1054,6 +548,77 @@ pub mod gfx {
                 }
             }
 
+            /// Render all pending draws into the 4 CSM (Cascaded Shadow Map) cascades.
+            ///
+            /// This creates a separate depth-only render pass for each cascade, using
+            /// the shadow pipeline. Each cascade renders all pending meshes from the
+            /// Acquire render target (surface texture view).
+            /// Returns true if successful, false if reconfiguration is needed.
+            fn acquire_render_target(&mut self) -> bool {
+                if self.pending_frame_view.is_some() {
+                    return true; // Already acquired
+                }
+
+                match self.surface.get_current_texture() {
+                    Ok(f) => {
+                        let view = f
+                            .texture
+                            .create_view(&wgpu::TextureViewDescriptor::default());
+                        self.pending_frame = Some(f);
+                        self.pending_frame_view = Some(view);
+                        true
+                    }
+                    Err(_) => {
+                        self.surface.configure(&self.device, &self.config);
+                        false
+                    }
+                }
+            }
+
+            /// Prepare instance buffer with provided instances.
+            /// Ensures capacity, resizes if needed, and uploads instance data.
+            /// Returns reference to the instance buffer.
+            fn prepare_instance_buffer(
+                &mut self,
+                instances_gpu: &[GpuInstance],
+            ) -> Option<&wgpu::Buffer> {
+                // Ensure capacity
+                if self.instance_capacity < instances_gpu.len().max(1) {
+                    let mut new_cap = self.instance_capacity.max(1);
+                    while new_cap < instances_gpu.len().max(1) {
+                        new_cap = new_cap.saturating_mul(2);
+                    }
+                    let size_bytes =
+                        (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
+                    let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("instance-buffer"),
+                        size: size_bytes,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    self.instance_buffer = Some(buf);
+                    self.instance_capacity = new_cap;
+                }
+
+                // Upload instance data
+                let ibuf = self.instance_buffer.as_ref()?;
+                if !instances_gpu.is_empty() {
+                    self.queue
+                        .write_buffer(ibuf, 0, bytemuck::cast_slice(instances_gpu));
+                } else {
+                    let zero = GpuInstance {
+                        model: [[0.0; 4]; 4],
+                        material: 0,
+                        object_type: 0,
+                        padding: [0, 0],
+                    };
+                    self.queue
+                        .write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
+                }
+
+                Some(ibuf)
+            }
+
             /// Inherent method: render a registered mesh by handle.
             pub fn render_mesh(
                 &mut self,
@@ -1062,454 +627,141 @@ pub mod gfx {
                 camera: (glam::Mat4, glam::Mat4, glam::Vec3),
                 finalize: bool,
             ) {
-                let idx = mesh as usize;
-                if idx >= self.mesh_table.len() {
+                // Validate mesh handle (delegate to MeshRenderer)
+                if !MeshRenderer::validate_mesh(mesh, &self.mesh_table) {
                     return;
                 }
-                if self.mesh_table[idx].is_some() {
-                    // update camera
-                    let view_mat = camera.0;
-                    let proj_mat = camera.1;
-                    let cam_pos = camera.2;
-                    let viewproj = proj_mat * view_mat;
-                    // Debug: log camera values for render_mesh path so we can
-                    // correlate main-side camera computation with what the
-                    // renderer writes for mesh-based rendering.
-                    log::trace!(
-                        "[wgpu] render_mesh: cam_pos={:?} viewproj0={:?}",
-                        cam_pos,
-                        viewproj.to_cols_array()[0]
-                    );
-                    let mut cols = viewproj.to_cols_array().to_vec();
-                    cols.push(cam_pos.x);
-                    cols.push(cam_pos.y);
-                    cols.push(cam_pos.z);
-                    cols.push(0.0f32);
-                    self.queue
-                        .write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&cols));
 
-                    // Calculate and update shadow matrix based on current sun direction
-                    let sun_dir = glam::Vec3::new(
-                        self.shadow.current_lighting.sun_direction[0],
-                        self.shadow.current_lighting.sun_direction[1],
-                        self.shadow.current_lighting.sun_direction[2],
-                    );
+                // Update camera uniforms (delegate to render_ops)
+                let (view_mat, proj_mat, cam_pos) = camera;
+                crate::render_ops::camera_ops::update_camera_uniforms(
+                    &self.queue,
+                    &self.camera_buffer,
+                    view_mat,
+                    proj_mat,
+                    cam_pos,
+                );
 
-                    // CSM Phase 3: Calculate cascade matrices
-                    let (cascade_matrices, cascade_gpu_data) =
-                        self.shadow.calculate_cascade_matrices(sun_dir, cam_pos);
+                // Update shadow matrices (delegate to render_ops)
+                crate::render_ops::shadow_ops::update_shadow_matrices(
+                    &mut self.shadow,
+                    &self.queue,
+                    cam_pos,
+                );
 
-                    // Upload full CSM data to CSM buffer (for shadow rendering)
-                    self.queue.write_buffer(
-                        &self.shadow.csm_matrix_buffer,
-                        0,
-                        bytemuck::bytes_of(&cascade_gpu_data),
-                    );
+                // Convert instances to GPU format (delegate to MeshRenderer)
+                let instances_gpu = MeshRenderer::prepare_instances(instances);
 
-                    // Extract cascade 0 matrix and write to legacy shadow buffer (for main pass sampling)
-                    // This keeps fragment shader compatible while proving CSM cascade 0 works
-                    let cascade0_mat = cascade_matrices[0];
-                    let cols = cascade0_mat.to_cols_array_2d();
-                    let shadow_matrix_gpu = crate::gpu_types::ShadowMatrixGpu {
-                        sm0: cols[0],
-                        sm1: cols[1],
-                        sm2: cols[2],
-                        sm3: cols[3],
-                    };
-                    self.queue.write_buffer(
-                        &self.shadow.shadow_matrix_buffer,
-                        0,
-                        bytemuck::bytes_of(&shadow_matrix_gpu),
-                    );
+                // Prepare and upload instance buffer
+                if self.prepare_instance_buffer(&instances_gpu).is_none() {
+                    log::error!("instance buffer missing when uploading instances");
+                    return;
+                }
 
-                    // instances
-                    let mut instances_gpu: Vec<GpuInstance> = Vec::with_capacity(instances.len());
-                    for ic in instances {
-                        instances_gpu.push(GpuInstance {
-                            model: ic.model,
-                            material: ic.material,
-                            object_type: ic.object_type,
-                            padding: ic.padding,
-                        });
-                    }
+                // Push this draw into pending_draws to batch multiple mesh draws
+                self.pending_draws.push((mesh, instances_gpu));
 
-                    if self.instance_capacity < instances_gpu.len().max(1) {
-                        let mut new_cap = self.instance_capacity.max(1);
-                        while new_cap < instances_gpu.len().max(1) {
-                            new_cap = new_cap.saturating_mul(2);
-                        }
-                        let size_bytes =
-                            (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
-                        let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("instance-buffer"),
-                            size: size_bytes,
-                            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                            mapped_at_creation: false,
-                        });
-                        self.instance_buffer = Some(buf);
-                        self.instance_capacity = new_cap;
-                    }
+                // Acquire frame if this is the first pending draw
+                if !self.acquire_render_target() {
+                    return; // Reconfiguration needed
+                }
 
-                    let ibuf = match self.instance_buffer.as_ref() {
-                        Some(b) => b,
-                        None => {
-                            log::error!("instance buffer missing when uploading instances");
-                            return;
-                        }
-                    };
-                    if !instances_gpu.is_empty() {
-                        self.queue
-                            .write_buffer(ibuf, 0, bytemuck::cast_slice(&instances_gpu));
-                    } else {
-                        let zero = GpuInstance {
-                            model: [[0.0; 4]; 4],
-                            material: 0,
-                            object_type: 0,
-                            padding: [0, 0],
-                        };
-                        self.queue
-                            .write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
-                    }
-
-                    // Push this draw into pending_draws to batch multiple mesh
-                    // draws into a single render pass per application frame.
-                    self.pending_draws.push((mesh, instances_gpu));
-
-                    // If we need to acquire the frame (this is the first pending
-                    // draw), do so now. If acquire fails attempt reconfigure.
-                    if self.pending_frame_view.is_none() {
-                        match self.surface.get_current_texture() {
-                            Ok(f) => {
-                                let view = f
-                                    .texture
-                                    .create_view(&wgpu::TextureViewDescriptor::default());
-                                self.pending_frame = Some(f);
-                                self.pending_frame_view = Some(view);
-                            }
-                            Err(_) => {
-                                self.surface.configure(&self.device, &self.config);
-                                return;
-                            }
-                        }
-                    }
-
-                    // If finalize requested, record a single render pass that
-                    // iterates all pending_draws and issues draw calls for each
-                    // registered mesh. We will write instance data for each draw
-                    // into the instance buffer sequentially and use vertex buffer
-                    // offsets when binding if supported; wgpu allows setting the
-                    // vertex buffer with an offset in bytes via slice(offset..).
-                    if finalize {
-                        // Ensure we have a frame view and a pending frame to present
-                        let frame_view = match &self.pending_frame_view {
-                            Some(v) => v,
-                            None => return,
-                        };
-
-                        // Create an encoder to record the batched render pass.
-                        let mut encoder =
-                            self.device
-                                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                    label: Some("batched-encoder"),
-                                });
-
-                        // Before recording, we need to flatten all instance lists
-                        // into a contiguous buffer and record the offsets for each draw.
-                        let mut all_instances: Vec<GpuInstance> = Vec::new();
-                        let mut offsets: Vec<usize> = Vec::with_capacity(self.pending_draws.len());
-                        for (_m, insts) in &self.pending_draws {
-                            offsets.push(all_instances.len());
-                            all_instances.extend_from_slice(insts);
-                        }
-
-                        // Ensure instance buffer capacity for all_instances
-                        let required = all_instances.len().max(1);
-                        if self.instance_capacity < required {
-                            let mut new_cap = self.instance_capacity.max(1);
-                            while new_cap < required {
-                                new_cap = new_cap.saturating_mul(2);
-                            }
-                            let size_bytes = (new_cap * std::mem::size_of::<GpuInstance>())
-                                as wgpu::BufferAddress;
-                            let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                                label: Some("instance-buffer"),
-                                size: size_bytes,
-                                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                                mapped_at_creation: false,
-                            });
-                            self.instance_buffer = Some(buf);
-                            self.instance_capacity = new_cap;
-                        }
-
-                        // Upload all instances into the instance buffer
-                        let ibuf = match self.instance_buffer.as_ref() {
-                            Some(b) => b,
-                            None => {
-                                log::error!(
-                                    "instance buffer missing when uploading batched instances"
-                                );
-                                return;
-                            }
-                        };
-                        if !all_instances.is_empty() {
-                            self.queue
-                                .write_buffer(ibuf, 0, bytemuck::cast_slice(&all_instances));
-                        } else {
-                            let zero = GpuInstance {
-                                model: [[0.0; 4]; 4],
-                                material: 0,
-                                object_type: 0,
-                                padding: [0, 0],
-                            };
-                            self.queue
-                                .write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
-                        }
-
-                        // CSM PHASE 4: Render to all 4 cascades
-                        for cascade_idx in 0..NUM_SHADOW_CASCADES {
-                            let mut shadow_pass =
-                                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                    label: Some(&format!("csm-cascade-{}-pass", cascade_idx)),
-                                    color_attachments: &[],
-                                    depth_stencil_attachment: Some(
-                                        wgpu::RenderPassDepthStencilAttachment {
-                                            view: &self.shadow.csm_cascade_views
-                                                [cascade_idx as usize],
-                                            depth_ops: Some(wgpu::Operations {
-                                                load: wgpu::LoadOp::Clear(1.0),
-                                                store: wgpu::StoreOp::Store,
-                                            }),
-                                            stencil_ops: None,
-                                        },
-                                    ),
-                                    occlusion_query_set: None,
-                                    timestamp_writes: None,
-                                });
-
-                            shadow_pass.set_pipeline(&self.shadow.shadow_pipeline);
-                            shadow_pass.set_bind_group(0, &self.shadow.csm_pass_bind_group, &[]);
-
-                            // Set cascade index via push constant (Phase 4)
-                            shadow_pass.set_push_constants(
-                                wgpu::ShaderStages::VERTEX,
-                                0,
-                                bytemuck::bytes_of(&cascade_idx),
-                            ); // Draw all pending meshes from light's perspective with instances
-                            for (i, (mesh_handle, insts)) in self.pending_draws.iter().enumerate() {
-                                let idx = *mesh_handle as usize;
-                                if idx >= self.mesh_table.len() {
-                                    continue;
-                                }
-                                if let Some(me) = &self.mesh_table[idx] {
-                                    shadow_pass.set_vertex_buffer(0, me.buffer.slice(..));
-
-                                    // Bind instance buffer with offset for this draw
-                                    let offset_instances = offsets[i];
-                                    let actual_instance_count = insts.len();
-
-                                    if actual_instance_count > 0 {
-                                        let offset_bytes = (offset_instances
-                                            * std::mem::size_of::<GpuInstance>())
-                                            as wgpu::BufferAddress;
-                                        let end_bytes = ((offset_instances + actual_instance_count)
-                                            * std::mem::size_of::<GpuInstance>())
-                                            as wgpu::BufferAddress;
-                                        shadow_pass.set_vertex_buffer(
-                                            1,
-                                            ibuf.slice(offset_bytes..end_bytes),
-                                        );
-
-                                        let instance_count_u32 = actual_instance_count as u32;
-                                        if let Some(idx_buf) = &me.index_buffer {
-                                            shadow_pass.set_index_buffer(
-                                                idx_buf.slice(..),
-                                                wgpu::IndexFormat::Uint32,
-                                            );
-                                            shadow_pass.draw_indexed(
-                                                0..me.index_count,
-                                                0,
-                                                0..instance_count_u32,
-                                            );
-                                        } else {
-                                            shadow_pass
-                                                .draw(0..me.vertex_count, 0..instance_count_u32);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Begin the single render pass and issue draw calls for
-                        // each pending draw in order.
-                        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("batched-rpass"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: frame_view,
-                                resolve_target: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                    store: wgpu::StoreOp::Store,
-                                },
-                                depth_slice: None,
-                            })],
-                            depth_stencil_attachment: Some(
-                                wgpu::RenderPassDepthStencilAttachment {
-                                    view: &self.depth_texture_view,
-                                    depth_ops: Some(wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(1.0),
-                                        store: wgpu::StoreOp::Store,
-                                    }),
-                                    stencil_ops: None,
-                                },
-                            ),
-                            occlusion_query_set: None,
-                            timestamp_writes: None,
-                        });
-
-                        // Render skybox first (at maximum depth, behind everything)
-                        rpass.set_pipeline(&self.skybox_pipeline);
-                        rpass.set_bind_group(0, &self.camera_bind_group, &[]);
-                        rpass.set_vertex_buffer(0, self.skybox_vertex_buffer.slice(..));
-                        rpass.draw(0..self.skybox_vertex_count, 0..1);
-
-                        // Then render main scene
-                        rpass.set_pipeline(&self.pipeline);
-                        rpass.set_bind_group(0, &self.camera_bind_group, &[]);
-                        // CSM Phase 3: Use cascade 0 for shadow sampling
-                        rpass.set_bind_group(1, &self.shadow.csm_shadow_bind_group, &[]);
-
-                        // Iterate draws and issue draw calls
-                        for (i, (mesh_handle, insts)) in self.pending_draws.iter().enumerate() {
-                            let idx = *mesh_handle as usize;
-                            if idx >= self.mesh_table.len() {
-                                continue;
-                            }
-                            if let Some(me) = &self.mesh_table[idx] {
-                                // Bind the mesh's vertex buffer
-                                rpass.set_vertex_buffer(0, me.buffer.slice(..));
-
-                                // Bind the instance buffer with offset for this draw
-                                // Skip instance buffer binding if there are no instances (finalize draw)
-                                let offset_instances = offsets[i];
-                                let actual_instance_count = insts.len();
-
-                                if actual_instance_count > 0 {
-                                    let offset_bytes = (offset_instances
-                                        * std::mem::size_of::<GpuInstance>())
-                                        as wgpu::BufferAddress;
-                                    let end_bytes = ((offset_instances + actual_instance_count)
-                                        * std::mem::size_of::<GpuInstance>())
-                                        as wgpu::BufferAddress;
-                                    rpass.set_vertex_buffer(1, ibuf.slice(offset_bytes..end_bytes));
-
-                                    // Draw with actual instance count
-                                    let instance_count_u32 = actual_instance_count as u32;
-                                    if let Some(idx_buf) = &me.index_buffer {
-                                        rpass.set_index_buffer(
-                                            idx_buf.slice(..),
-                                            wgpu::IndexFormat::Uint32,
-                                        );
-                                        rpass.draw_indexed(
-                                            0..me.index_count,
-                                            0,
-                                            0..instance_count_u32,
-                                        );
-                                    } else {
-                                        rpass.draw(0..me.vertex_count, 0..instance_count_u32);
-                                    }
-                                }
-                                // If actual_instance_count is 0, this is a finalize-only draw, skip rendering
-                            }
-                        }
-
-                        drop(rpass);
-
-                        // If an application registered a FrameCallback, call it
-                        // now so it can record UI commands into the same encoder
-                        // before we finish and submit it. Prefer the safe Arc<Mutex<..>>
-                        // wrapper when available, otherwise fall back to the raw
-                        // pointer path for backward compatibility.
-                        if let Some(cb_arc) = &self.frame_callback_arc {
-                            log::debug!("[wgpu] finalize: calling frame_callback_arc");
-                            if let Some(view) = self.pending_frame_view.as_ref() {
-                                // Lock the mutex briefly while calling into the callback.
-                                if let Ok(mut guard) = cb_arc.lock() {
-                                    guard.call(
-                                        &self.device,
-                                        &self.queue,
-                                        view,
-                                        &mut encoder,
-                                        self.config.width,
-                                        self.config.height,
-                                    );
-                                    log::debug!("[wgpu] finalize: frame_callback_arc returned");
-                                } else {
-                                    log::warn!(
-                                        "[wgpu] finalize: failed to lock frame_callback_arc"
-                                    );
-                                }
-                            }
-                        } else if let Some(cb_ptr) = self.frame_callback_raw {
-                            unsafe {
-                                log::info!("[wgpu] finalize: calling frame_callback_raw");
-                                if let Some(view) = self.pending_frame_view.as_ref() {
-                                    let cb: &mut dyn crate::FrameCallback = &mut *cb_ptr;
-                                    cb.call(
-                                        &self.device,
-                                        &self.queue,
-                                        view,
-                                        &mut encoder,
-                                        self.config.width,
-                                        self.config.height,
-                                    );
-                                    log::info!("[wgpu] finalize: frame_callback_raw returned");
-                                }
-                            }
-                        }
-
-                        // Submit and present
-                        let finished = encoder.finish();
-                        // Debug: print that we're about to submit/present a batched frame
-                        log::debug!(
-                            "[wgpu] finalize: submitting {} draws",
-                            self.pending_draws.len()
-                        );
-                        if let Some(frame) = self.pending_frame.take() {
-                            self.queue.submit(Some(finished));
-                            frame.present();
-                        }
-
-                        // Clear pending state
-                        self.pending_frame_view = None;
-                        self.pending_draws.clear();
-                    }
+                // If finalize requested, record render pass for all pending draws
+                if finalize {
+                    self.finalize_frame();
                 }
             }
-        }
-    }
 
-    #[cfg(not(feature = "backend-wgpu"))]
-    pub mod placeholder {
-        use moho_core::actors::InstanceGpu;
-        pub struct Renderer {}
-        impl Default for Renderer {
-            fn default() -> Self {
-                Self::new()
+            /// Finalize the current frame: flatten instances, upload to GPU, render passes, present.
+            fn finalize_frame(&mut self) {
+                // Ensure we have a frame view
+                if self.pending_frame_view.is_none() {
+                    return;
+                }
+
+                // Create encoder for batched render pass
+                let mut encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("batched-encoder"),
+                        });
+
+                // Flatten all instance lists into contiguous buffer with offsets (delegate to MeshRenderer)
+                let (all_instances, offsets) = MeshRenderer::flatten_instances(&self.pending_draws);
+
+                // Ensure capacity and upload all instances (delegate to MeshRenderer)
+                if !MeshRenderer::ensure_capacity_and_upload(
+                    &self.device,
+                    &self.queue,
+                    &mut self.instance_buffer,
+                    &mut self.instance_capacity,
+                    &all_instances,
+                ) {
+                    log::error!("instance buffer missing when uploading batched instances");
+                    return;
+                }
+
+                // Get references we need for rendering (avoids borrow conflicts)
+                let ibuf = self.instance_buffer.as_ref().unwrap();
+                let frame_view = self.pending_frame_view.as_ref().unwrap();
+
+                // Render all pending draws into CSM cascades (delegate to render_ops)
+                crate::render_ops::shadow_ops::render_shadow_passes(
+                    &mut encoder,
+                    &self.shadow,
+                    ibuf,
+                    &self.pending_draws,
+                    &self.mesh_table,
+                    &offsets,
+                );
+
+                // Render main color pass with skybox and meshes (delegate to render_ops)
+                crate::render_ops::main_pass_ops::render_main_pass(
+                    &mut encoder,
+                    frame_view,
+                    &self.depth_texture_view,
+                    &self.skybox_pipeline,
+                    &self.skybox_vertex_buffer,
+                    self.skybox_vertex_count,
+                    &self.pipeline,
+                    &self.camera_bind_group,
+                    &self.shadow,
+                    ibuf,
+                    &self.pending_draws,
+                    &self.mesh_table,
+                    &offsets,
+                );
+
+                // Finish rendering and present frame (delegate to render_ops)
+                let frame_callback = if let Some(cb_arc) = &self.frame_callback_arc {
+                    crate::render_ops::frame_ops::FrameCallbackWrapper::Arc(cb_arc)
+                } else if let Some(cb_ptr) = self.frame_callback_raw {
+                    crate::render_ops::frame_ops::FrameCallbackWrapper::Raw(cb_ptr)
+                } else {
+                    crate::render_ops::frame_ops::FrameCallbackWrapper::None
+                };
+
+                let draw_count = self.pending_draws.len();
+                crate::render_ops::frame_ops::finish_frame(
+                    encoder,
+                    &self.queue,
+                    self.pending_frame.take(),
+                    self.pending_frame_view.as_ref(),
+                    frame_callback,
+                    self.config.width,
+                    self.config.height,
+                    &self.device,
+                    draw_count,
+                );
+
+                // Clear pending state for next frame
+                self.pending_frame_view = None;
+                self.pending_draws.clear();
             }
-        }
-        impl Renderer {
-            pub fn new() -> Self {
-                Renderer {}
-            }
-            pub fn request_redraw(&self) {}
-            pub fn resize(&mut self, _w: u32, _h: u32) {}
         }
     }
 
     // re-export the concrete renderer at gfx level for convenience
-    #[cfg(not(feature = "backend-wgpu"))]
-    pub use placeholder::Renderer;
-    #[cfg(feature = "backend-wgpu")]
     pub use wgpu_impl::Renderer;
 }
 
@@ -1575,19 +827,16 @@ pub trait RendererBackend {
     /// Set an optional raw FrameCallback pointer. The renderer will call the
     /// callback during finalization so the application can record UI commands
     /// into the frame encoder. The pointer must remain valid until cleared.
-    #[cfg(feature = "backend-wgpu")]
     fn set_frame_callback_raw(&mut self, ptr: Option<*mut dyn FrameCallback>);
     /// Set an optional safe Arc<Mutex<dyn FrameCallback>>. Prefer this
     /// registration method when possible; it's thread-safe and avoids raw
     /// pointer lifetime issues. Passing `None` clears the registration.
-    #[cfg(feature = "backend-wgpu")]
     fn set_frame_callback_arc(
         &mut self,
         cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
     );
 }
 
-#[cfg(feature = "backend-wgpu")]
 impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     fn request_redraw(&self) {
         // Renderer no longer owns the Window; request_redraw must be
@@ -1629,11 +878,9 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     fn surface_format(&self) -> Option<TextureFormatRepr> {
         Some(self.surface_format())
     }
-    #[cfg(feature = "backend-wgpu")]
     fn set_frame_callback_raw(&mut self, ptr: Option<*mut dyn FrameCallback>) {
         self.set_frame_callback_raw_inherent(ptr);
     }
-    #[cfg(feature = "backend-wgpu")]
     fn set_frame_callback_arc(
         &mut self,
         cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
@@ -1649,61 +896,8 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     }
 }
 
-#[cfg(not(feature = "backend-wgpu"))]
-impl RendererBackend for gfx::placeholder::Renderer {
-    fn request_redraw(&self) {
-        gfx::placeholder::Renderer::request_redraw(self)
-    }
-    fn resize(&mut self, width: u32, height: u32) {
-        gfx::placeholder::Renderer::resize(self, width, height)
-    }
-    fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
-        // placeholder: no GPU, just return a constant handle (0)
-        0
-    }
-    fn unregister_mesh(&mut self, _mesh: u32) {}
-    fn render_mesh(
-        &mut self,
-        _mesh: u32,
-        _instances: &[moho_core::actors::InstanceGpu],
-        _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-        _finalize: bool,
-    ) {
-        // no-op in placeholder
-    }
-    fn register_indexed_mesh(
-        &mut self,
-        _vertices: &[[f32; 3]],
-        _normals: &[[f32; 3]],
-        _indices: &[u32],
-    ) -> u32 {
-        0
-    }
-    fn set_materials(&mut self, _materials: &[crate::MaterialGpu]) {}
-
-    fn update_lighting(&mut self, _lighting: crate::gpu_types::LightingGpu) {
-        // no-op in placeholder
-    }
-
-    fn surface_format(&self) -> Option<TextureFormatRepr> {
-        None
-    }
-
-    fn set_cursor_visible(&self, _visible: bool) {
-        // placeholder: no-op
-    }
-
-    fn set_cursor_grab(&self, _locked: bool) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-}
-
-/// Create a boxed renderer backend. When `backend-wgpu` is enabled the
-/// function takes the `EventLoop` and `Window` so the backend can create a
-/// surface. When disabled the parameterless form is provided.
 /// Create a boxed renderer backend. Always returns a Result so callers have a
-/// single, fallible API to initialize a renderer regardless of feature flags.
-#[cfg(feature = "backend-wgpu")]
+/// single, fallible API to initialize a renderer.
 pub fn create_renderer<'a>(
     window: Option<&'a winit::window::Window>,
 ) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> {
@@ -1714,38 +908,6 @@ pub fn create_renderer<'a>(
         Box::new(RendererInitError::WgpuInit(msg)) as Box<dyn std::error::Error>
     })?;
     Ok(Box::new(r))
-}
-
-#[cfg(not(feature = "backend-wgpu"))]
-pub fn create_renderer(
-    _window: Option<std::sync::Arc<()>>,
-) -> Result<Box<dyn RendererBackend>, Box<dyn std::error::Error>> {
-    Ok(Box::new(gfx::placeholder::Renderer::new()))
-}
-
-/// Compatibility wrapper: always return a Result<Box<dyn RendererBackend>, Box<dyn Error>>.
-/// This lets callers use a single API regardless of whether the crate was built with
-/// the `backend-wgpu` feature enabled (which changes the signature of `create_renderer`).
-pub fn create_renderer_any<'a>(
-    _window: Option<&'a ()>,
-) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> {
-    // Avoid referencing winit types in the signature so this function
-    // compiles regardless of feature flags. When the GPU backend is
-    // enabled callers should call `create_renderer` directly with a
-    // `winit::window::Window` reference. This helper is intended for
-    // the non-backend placeholder path and will return an Err when the
-    // backend is enabled to make that explicit.
-    #[cfg(feature = "backend-wgpu")]
-    {
-        Err(Box::from(
-            "create_renderer_any is not available when backend-wgpu is enabled; call create_renderer instead",
-        ))
-    }
-
-    #[cfg(not(feature = "backend-wgpu"))]
-    {
-        Ok(Box::new(gfx::placeholder::Renderer::new()))
-    }
 }
 
 /// Convenience helper: create a renderer from an Arc<Window>.
@@ -1759,26 +921,14 @@ pub fn create_renderer_any<'a>(
 /// Note: this helper intentionally takes `&Arc<...>` rather than consuming
 /// the Arc. The caller retains ownership and is responsible for ensuring
 /// the Arc (and the underlying Window) outlives the renderer.
-#[cfg(feature = "backend-wgpu")]
 pub fn create_renderer_from_arc<'a>(
     window: &'a std::sync::Arc<winit::window::Window>,
 ) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> {
     create_renderer(Some(std::sync::Arc::as_ref(window)))
 }
 
-#[cfg(not(feature = "backend-wgpu"))]
-pub fn create_renderer_from_arc(
-    _window: &std::sync::Arc<()>,
-) -> Result<Box<dyn RendererBackend>, Box<dyn std::error::Error>> {
-    // Placeholder backend ignores the window. Match the placeholder
-    // factory's parameter type (Arc<()>) so this helper is available
-    // even when the wgpu/backend feature is disabled.
-    create_renderer(None)
-}
-
 /// Callback trait for UI rendering. Implement this to composite UI elements
 /// into the renderer's command encoder.
-#[cfg(feature = "backend-wgpu")]
 pub trait FrameCallback {
     fn call(
         &mut self,

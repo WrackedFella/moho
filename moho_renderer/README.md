@@ -21,6 +21,30 @@ The renderer is built with a clean separation between scene data and GPU backend
 - **`MaterialTable`** - Material management with deduplication
 - **`ShadowSystem`** - Cascaded shadow map generation and management
 
+### Rendering Pipeline
+
+The frame rendering workflow is organized into three phases:
+
+**Phase 1: Scene Preparation (Blocking)**
+- Collect instances from ECS (`InstanceCollector`)
+- Upload materials to GPU if dirty (`MaterialTable`)
+- Separate opaque and transparent geometry
+- Implementation: `scene/preparation.rs`
+
+**Phase 2: Render Execution (Principal Photography)**
+- Shadow pass: Generate cascaded shadow maps
+- Opaque pass: Render solid geometry with lighting
+- Skybox pass: Render atmospheric background
+- Implementation: `Scene::render()`, `render_ops/*`
+
+**Phase 3: Transparency (Compositing)**
+- Sort transparent geometry back-to-front
+- Batch by mesh for efficiency
+- Render with alpha blending
+- Implementation: `Scene::render_transparent()`
+
+> **Note**: The phase names (blocking, principal photography, compositing) are inspired by film production workflow to help organize the mental model. All code uses standard graphics terminology.
+
 ## Quick Start
 
 ### Creating a Renderer

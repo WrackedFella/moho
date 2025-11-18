@@ -9,7 +9,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["moho_core", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_sim"]
+members = ["moho_core", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_sim", "moho_types"]
 
 [workspace.dependencies]
 bincode = "2.0"
@@ -60,24 +60,23 @@ path = "moho_renderer"
 [dependencies.moho_sim]
 path = "moho_sim"
 
+[dependencies.moho_types]
+path = "moho_types"
+
 [dependencies.moho_ui]
 path = "moho_ui"
-optional = true
 
 [dependencies.pollster]
-version = "0.4"
-optional = true
+workspace = true
 
 [dependencies.rand]
 workspace = true
 
 [dependencies.wgpu]
 workspace = true
-optional = true
 
 [dependencies.winit]
-version = "0.30"
-optional = true
+workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -87,6 +86,4 @@ name = "event_bus_bench"
 harness = false
 
 [features]
-backend-wgpu = ["wgpu", "winit", "pollster", "moho_renderer/backend-wgpu"]
-ui-egui = ["moho_ui/ui-egui"]
 ui-egui-debug = ["moho_ui/ui-egui-debug"]

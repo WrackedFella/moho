@@ -15,6 +15,15 @@ applyTo: '**'
 - Use doc comments (`///`) for public APIs and complex functions.
 - Push back if user requests something that is not idiomatic or goes against best practices.
 
+## Domain-Driven Design (DDD)
+- **Follow Domain-Driven Design principles** for all architecture and naming decisions.
+- **Ubiquitous Language**: Use consistent domain terminology in code, docs, and communication.
+- **Bounded Contexts**: Different subsystems can have different vocabularies (rendering, input, audio, physics).
+- **Explicit Intent**: Name types and functions after what they **do** in the domain, not technical implementation.
+- **Self-Documenting**: Prefer domain terms over technical jargon when the meaning is clearer.
+- **Aggregates**: Group related objects with clear boundaries and ownership (e.g., Scene owns MaterialTable).
+- **Value Objects**: Use immutable types for data that doesn't have identity (e.g., OpaqueCast).
+
 ## Git Operations (NEVER Perform Automatically)
 - **NEVER run `git commit` or `git push` commands without explicit user instruction.**
 - **NEVER stage files with `git add` unless explicitly requested.**

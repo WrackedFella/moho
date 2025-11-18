@@ -2,6 +2,9 @@
 //!
 //! This adapter manages menus and UI state in a scalable way,
 //! allowing easy addition of new menus and menu types.
+mod event_routing;
+mod gpu_ops;
+mod rendering;
 
 use crate::prefs::Prefs;
 use crate::screens::{Menu, MenuAction};
@@ -247,53 +250,6 @@ impl EguiAdapter {
         }
     }
 
-    /// Process menu actions and convert to UI events
-    fn process_menu_action(&mut self, action: MenuAction) {
-        use moho_core::events::UiEvent as CoreUiEvent;
-
-        match action {
-            MenuAction::LoadScene(path) => {
-                self.emit_audio_event(UiAudioEvent::Confirm);
-                self.event_bus
-                    .publish(CoreUiEvent::LoadSceneRequested { path });
-            }
-            MenuAction::NewWorld => {
-                // Open the New World menu so the user can specify params.
-                self.emit_audio_event(UiAudioEvent::Confirm);
-                self.show_menu("new_world");
-            }
-            MenuAction::GenerateWorld(spec) => {
-                // User confirmed generation with a WorldSpec payload from the new_world menu
-                self.emit_audio_event(UiAudioEvent::Confirm);
-                self.event_bus.publish(CoreUiEvent::NewWorldRequested {
-                    name: "New World".to_string(),
-                    seed: spec.seed,
-                    size: spec.size_xz,
-                });
-            }
-            MenuAction::Exit => {
-                self.emit_audio_event(UiAudioEvent::ButtonClick);
-                self.event_bus.publish(CoreUiEvent::ExitRequested);
-            }
-            MenuAction::ShowMenu(name) => {
-                self.emit_audio_event(UiAudioEvent::MenuNavigate);
-                self.event_bus
-                    .publish(CoreUiEvent::MenuShown { name: name.clone() });
-            }
-            MenuAction::Close => {
-                self.emit_audio_event(UiAudioEvent::Cancel);
-                self.hide_menus();
-            }
-            MenuAction::SettingsSaved(_prefs) => {
-                self.emit_audio_event(UiAudioEvent::Confirm);
-                self.event_bus.publish(CoreUiEvent::SettingsSaved);
-            }
-            MenuAction::None => {
-                // No action
-            }
-        }
-    }
-
     /// Get input from egui_winit
     fn take_egui_input(&mut self) -> egui::RawInput {
         if let (Some(state), Some(window)) = (&mut self.winit_state, &self.window) {
@@ -315,21 +271,6 @@ impl EguiAdapter {
         // This is called by the main application after rendering
         // No-op for now, but could be used for cleanup
     }
-
-    /// Emit an audio event
-    fn emit_audio_event(&mut self, audio_event: UiAudioEvent) {
-        use moho_core::events::AudioEvent;
-
-        let core_event = match audio_event {
-            UiAudioEvent::ButtonClick => AudioEvent::ButtonClick,
-            UiAudioEvent::MenuNavigate => AudioEvent::MenuNavigate,
-            UiAudioEvent::Confirm => AudioEvent::Confirm,
-            UiAudioEvent::Cancel => AudioEvent::Cancel,
-            UiAudioEvent::Error => AudioEvent::Error,
-        };
-
-        self.event_bus.publish(core_event);
-    }
 }
 
 impl FrameCallback for EguiAdapter {
@@ -342,11 +283,6 @@ impl FrameCallback for EguiAdapter {
         surface_width: u32,
         surface_height: u32,
     ) {
-        // Note: We need GameState to determine what to render.
-        // For now, use the visible flag. The main app will need to pass GameState
-        // or we can read it from the event bus in the future.
-        // TODO: Accept GameState as parameter or store in adapter
-
         // Skip rendering if UI is not visible
         if !self.ui_state.visible {
             return;
@@ -366,119 +302,35 @@ impl FrameCallback for EguiAdapter {
         // Take input from winit integration
         let raw_input = self.take_egui_input();
 
-        // Run egui and collect menu actions
+        // Run egui and collect menu actions + modal result
         let mut menu_actions = Vec::new();
         let mut modal_result = crate::modal::ModalResult::None;
 
         let full_output = self.context.run(raw_input, |ctx| {
-            // Render based on current game state
-            match self.current_game_state {
-                GameState::Menu => {
-                    // Render menu screens
-                    if let Some(screen) = self.ui_state.active_screen_mut() {
-                        let items = screen.render(ctx);
+            // Render based on current game state (delegates to rendering module)
+            let actions = rendering::render_game_state(
+                ctx,
+                &mut self.ui_state,
+                self.current_game_state,
+                &self.event_bus,
+            );
+            menu_actions.extend(actions);
 
-                        // Collect clicked actions for processing outside the closure
-                        for item in items {
-                            if item.clicked && item.enabled {
-                                menu_actions.push(item.action);
-                            }
-                        }
-                    }
+            // Check if any screen wants to show a modal
+            if let Some(screen) = self.ui_state.active_screen_mut()
+                && let Some(modal) = screen.take_pending_modal()
+            {
+                self.ui_state.modal_manager.show(modal);
+            }
 
-                    // Check if any screen wants to show a modal
-                    if let Some(screen) = self.ui_state.active_screen_mut()
-                        && let Some(modal) = screen.take_pending_modal()
-                    {
-                        self.ui_state.modal_manager.show(modal);
-                    }
+            // Render modal on top of menu (if active)
+            if self.current_game_state == GameState::Menu {
+                modal_result = self.ui_state.modal_manager.render(ctx);
+            }
 
-                    // Render modal on top of menu (if active)
-                    modal_result = self.ui_state.modal_manager.render(ctx);
-                }
-                GameState::ConsoleOpen => {
-                    // Render console overlay (game world is rendered by main renderer)
-                    let console_action = self.ui_state.console.render(ctx);
-
-                    // Process console action
-                    use crate::overlays::ConsoleAction;
-                    match console_action {
-                        ConsoleAction::Close => {
-                            use moho_core::events::UiEvent;
-                            self.event_bus.publish(UiEvent::MenuHidden {
-                                name: "console".to_string(),
-                            });
-                        }
-                        ConsoleAction::Quit => {
-                            use moho_core::events::UiEvent;
-                            self.event_bus.publish(UiEvent::ExitRequested);
-                        }
-                        ConsoleAction::ToggleGodMode => {
-                            use moho_core::events::DebugEvent;
-                            self.event_bus
-                                .publish(DebugEvent::ToggleGodMode { enabled: true });
-                        }
-                        ConsoleAction::ToggleNoclip => {
-                            use moho_core::events::DebugEvent;
-                            self.event_bus
-                                .publish(DebugEvent::ToggleCollision { enabled: false });
-                        }
-                        ConsoleAction::SetSunDirection(yaw, pitch) => {
-                            use moho_core::events::GraphicsEvent;
-                            // Convert degrees to radians
-                            let yaw_rad = yaw.to_radians();
-                            let pitch_rad = pitch.to_radians();
-                            self.event_bus.publish(GraphicsEvent::SunDirectionChanged {
-                                yaw: yaw_rad,
-                                pitch: pitch_rad,
-                            });
-                        }
-                        ConsoleAction::SetTimeOfDay(time) => {
-                            use moho_core::events::GraphicsEvent;
-                            // Time is now in hours (0-24) and will be set directly on the game clock
-                            // The sun_angle field is kept for backward compatibility but not used
-                            self.event_bus.publish(GraphicsEvent::TimeOfDayChanged {
-                                time,
-                                sun_angle: 0.0,
-                            });
-                        }
-                        ConsoleAction::None => {}
-                    }
-                }
-                GameState::Paused => {
-                    // TODO: Render pause menu overlay when implemented
-                    // For now, just render a simple "Paused" message
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        ui.centered_and_justified(|ui| {
-                            ui.heading("Paused");
-                            ui.label("Press ESC to resume");
-                        });
-                    });
-                }
-                GameState::Playing => {
-                    // No UI rendering when playing (game world only)
-                    // This path should rarely be hit since ui_state.visible should be false
-                }
-            } // Progress overlay (renders above menus). Keep it simple: a centered
-            // window with a progress bar and optional Cancel button. The cancel
-            // flag is stored in the ProgressState so the caller can poll it.
+            // Render progress overlay (if present)
             if let Some(progress) = self.progress.as_mut() {
-                use egui::{Align2, RichText};
-                egui::Area::new("progress_overlay_area".into())
-                    .anchor(Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                    .show(ctx, |ui| {
-                        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                            ui.add_space(8.0);
-                            ui.label(RichText::new(&progress.title).heading());
-                            ui.add_space(6.0);
-                            ui.add(egui::ProgressBar::new(progress.percent).show_percentage());
-                            ui.add_space(8.0);
-                            if progress.cancellable && ui.add(egui::Button::new("Cancel")).clicked()
-                            {
-                                progress.canceled = true;
-                            }
-                        });
-                    });
+                rendering::render_progress_overlay(ctx, progress);
             }
         });
 
@@ -498,15 +350,23 @@ impl FrameCallback for EguiAdapter {
             ModalResult::None => {}
         }
 
-        // Process menu actions outside the egui context
-        for action in menu_actions {
-            self.process_menu_action(action);
+        // Process menu actions (delegates to event_routing module)
+        for action in &menu_actions {
+            event_routing::process_menu_action(action, &self.event_bus);
+        }
+        
+        // Handle Close action locally (hide menus)
+        for action in &menu_actions {
+            if matches!(action, MenuAction::Close) {
+                self.hide_menus();
+                break;
+            }
         }
 
         // Handle platform output
         self.handle_platform_output(full_output.platform_output);
 
-        // Render to screen
+        // Render to GPU (delegates to gpu_ops module)
         if let Some(renderer) = &mut self.renderer {
             let screen_descriptor = egui_wgpu::ScreenDescriptor {
                 size_in_pixels: [surface_width, surface_height],
@@ -517,48 +377,17 @@ impl FrameCallback for EguiAdapter {
                 .context
                 .tessellate(full_output.shapes, full_output.pixels_per_point);
 
-            // Update textures
-            for (id, image_delta) in &full_output.textures_delta.set {
-                renderer.update_texture(device, queue, *id, image_delta);
-            }
+            // Update textures (delegate)
+            gpu_ops::update_textures(renderer, device, queue, &full_output.textures_delta);
 
-            // Update GPU buffers
-            renderer.update_buffers(
-                device,
-                queue,
-                encoder,
-                &clipped_primitives,
-                &screen_descriptor,
-            );
+            // Update buffers (delegate)
+            gpu_ops::update_buffers(renderer, device, queue, encoder, &clipped_primitives, &screen_descriptor);
 
-            // Create render pass and render
-            {
-                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("egui_render_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
+            // Execute render pass (delegate)
+            gpu_ops::execute_render_pass(renderer, encoder, view, &clipped_primitives, &screen_descriptor);
 
-                // Use unsafe transmute to satisfy egui_wgpu lifetime requirements
-                let render_pass_static: &mut wgpu::RenderPass<'static> =
-                    unsafe { std::mem::transmute(&mut render_pass) };
-                renderer.render(render_pass_static, &clipped_primitives, &screen_descriptor);
-            }
-
-            // Free textures
-            for id in &full_output.textures_delta.free {
-                renderer.free_texture(id);
-            }
+            // Free textures (delegate)
+            gpu_ops::free_textures(renderer, &full_output.textures_delta.free);
         }
     }
 }

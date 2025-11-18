@@ -1,7 +1,7 @@
 # Moho Documentation Index
 
-**Last Updated**: November 6, 2025  
-**Status**: Production Ready - Event Bus, Day/Night Cycle, Shadows
+**Last Updated**: November 17, 2025  
+**Status**: Production Ready - Event Bus, Day/Night Cycle, Shadows, Phase 4 Complete
 
 ---
 
@@ -13,6 +13,10 @@
 ### 🎯 Event Bus (Production Ready)
 - **[Best Practices](engine_core/EVENT_BUS_BEST_PRACTICES.md)** ⭐ Usage patterns, common pitfalls, design patterns
 - **[Performance Analysis](engine_core/EVENT_BUS_PERFORMANCE.md)** - Benchmark results (11.4M events/sec, <1% frame budget)
+
+### 🎨 Rendering System
+- **[moho_renderer README](../moho_renderer/README.md)** - Renderer architecture with pipeline phases
+- Key concepts: Scene preparation (blocking), render execution, transparency compositing
 
 ### 🏗️ Core Systems
 
