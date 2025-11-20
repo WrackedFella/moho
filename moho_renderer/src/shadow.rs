@@ -1,14 +1,14 @@
 use wgpu::util::DeviceExt;
 
 /// Number of cascaded shadow map cascades
-pub const NUM_SHADOW_CASCADES: u32 = 4;
+/// Reduced to 2 for performance (50% fewer shadow passes and memory)
+pub const NUM_SHADOW_CASCADES: u32 = 2;
 
 /// Shadow map resolution per cascade
 pub const SHADOW_MAP_SIZE: u32 = 4096;
 
 /// Cascade split distances from camera (in world units)
-/// Scaled up for increased view distance - covers near terrain to distant features
-pub const CASCADE_SPLIT_DISTANCES: [f32; 4] = [50.0, 150.0, 400.0, 800.0];
+pub const CASCADE_SPLIT_DISTANCES: [f32; 2] = [400.0, 1500.0];
 
 #[allow(dead_code)]
 const CSM_DEBUG_MODE: bool = false;
@@ -209,7 +209,7 @@ impl ShadowSystem {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: shadow_matrix_buffer.as_entire_binding(),
+                    resource: csm_matrix_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -423,8 +423,6 @@ impl ShadowSystem {
 
         let cols0 = matrices[0].to_cols_array_2d();
         let cols1 = matrices[1].to_cols_array_2d();
-        let cols2 = matrices[2].to_cols_array_2d();
-        let cols3 = matrices[3].to_cols_array_2d();
 
         let gpu_data = crate::gpu_types::CascadedShadowMatrixGpu {
             cascade0_m0: cols0[0],
@@ -435,15 +433,12 @@ impl ShadowSystem {
             cascade1_m1: cols1[1],
             cascade1_m2: cols1[2],
             cascade1_m3: cols1[3],
-            cascade2_m0: cols2[0],
-            cascade2_m1: cols2[1],
-            cascade2_m2: cols2[2],
-            cascade2_m3: cols2[3],
-            cascade3_m0: cols3[0],
-            cascade3_m1: cols3[1],
-            cascade3_m2: cols3[2],
-            cascade3_m3: cols3[3],
-            split_distances: CASCADE_SPLIT_DISTANCES,
+            split_distances: [
+                CASCADE_SPLIT_DISTANCES[0],
+                CASCADE_SPLIT_DISTANCES[1],
+                0.0, // unused
+                0.0, // unused
+            ],
         };
 
         if !self.csm_logged_once.get() {

@@ -81,7 +81,7 @@ pub fn create_camera_bind_group_layout(
 /// Create the shadow bind group layout for the main render pass.
 ///
 /// This layout has 3 bindings:
-/// - Binding 0: Shadow matrix uniform buffer (light space transforms)
+/// - Binding 0: Cascaded shadow matrix uniform buffer (light space transforms for all cascades + split distances)
 /// - Binding 1: Shadow map texture (depth array for all cascades)
 /// - Binding 2: Shadow sampler (comparison sampler for PCF)
 ///
@@ -91,7 +91,7 @@ pub fn create_camera_bind_group_layout(
 pub fn create_shadow_bind_group_layout(
     device: &wgpu::Device,
 ) -> Result<wgpu::BindGroupLayout, PipelineInitError> {
-    let shadow_matrix_size = std::mem::size_of::<ShadowMatrixGpu>() as u64;
+    let shadow_matrix_size = std::mem::size_of::<CascadedShadowMatrixGpu>() as u64;
 
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("shadow-bgl"),

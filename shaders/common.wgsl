@@ -16,11 +16,20 @@ struct Lighting {
     time_of_day: vec4<f32>,    // x = 0-24 hours, yzw = unused
 }
 
-struct ShadowMatrix {
-    sm0: vec4<f32>,
-    sm1: vec4<f32>,
-    sm2: vec4<f32>,
-    sm3: vec4<f32>,
+// Cascaded shadow matrix buffer (144 bytes total for 2 cascades)
+struct CascadedShadowMatrix {
+    // Cascade 0 matrix (near)
+    cascade0_m0: vec4<f32>,
+    cascade0_m1: vec4<f32>,
+    cascade0_m2: vec4<f32>,
+    cascade0_m3: vec4<f32>,
+    // Cascade 1 matrix (far)
+    cascade1_m0: vec4<f32>,
+    cascade1_m1: vec4<f32>,
+    cascade1_m2: vec4<f32>,
+    cascade1_m3: vec4<f32>,
+    // Split distances for cascade boundaries (x = near far plane, y = far far plane, zw unused)
+    split_distances: vec4<f32>,
 }
 
 @group(0) @binding(0)
@@ -34,10 +43,10 @@ var<uniform> lighting: Lighting;
 
 // Shadow mapping resources (group 1)
 @group(1) @binding(0)
-var<uniform> shadow_matrix: ShadowMatrix;
+var<uniform> shadow_matrix: CascadedShadowMatrix;
 
 @group(1) @binding(1)
-var shadow_map: texture_depth_2d_array; // Phase 4: Array texture for all 4 cascades
+var shadow_map: texture_depth_2d_array; // Array texture for all 4 cascades
 
 @group(1) @binding(2)
 var shadow_sampler: sampler_comparison;

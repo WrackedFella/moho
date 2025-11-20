@@ -151,20 +151,21 @@ mod tests {
     #[test]
     fn test_cascaded_shadow_matrix_gpu_layout() {
         // Verify CascadedShadowMatrixGpu has expected size for GPU alignment
-        // 4 cascades * 16 floats per matrix * 4 bytes per float = 256 bytes minimum
-        // Actual size may be 272 bytes due to padding for alignment
+        // 2 cascades * 16 floats per matrix * 4 bytes per float = 128 bytes
+        // Plus 1 vec4 for split distances = 16 bytes
+        // Total expected: 144 bytes
         let size = std::mem::size_of::<CascadedShadowMatrixGpu>();
-        assert!(
-            size >= 256 && size <= 272,
-            "CascadedShadowMatrixGpu should be between 256-272 bytes (4 matrices with padding), got {}",
+        assert_eq!(
+            size, 144,
+            "CascadedShadowMatrixGpu should be 144 bytes (2 matrices + split distances), got {}",
             size
         );
     }
 
     #[test]
     fn test_num_shadow_cascades() {
-        // Verify cascade count matches expected value
-        assert_eq!(NUM_SHADOW_CASCADES, 4, "Should have 4 shadow cascades");
+        // Verify cascade count matches expected value (reduced to 2 for performance)
+        assert_eq!(NUM_SHADOW_CASCADES, 2, "Should have 2 shadow cascades for optimized 2-cascade system");
     }
 
     #[test]

@@ -21,26 +21,85 @@ fn debug_shadow_coords(light_space_pos: vec4<f32>) -> vec3<f32> {
     return debug_color;
 }
 
-// CSM Phase 4: Select appropriate cascade based on view-space depth
-// Returns cascade index (0-3) based on split distances
-fn select_cascade(view_depth: f32) -> u32 {
-    // Cascade split distances: [20, 50, 100, 200] units
-    if (view_depth < 20.0) {
-        return 0u; // Closest cascade (highest detail)
-    } else if (view_depth < 50.0) {
-        return 1u;
-    } else if (view_depth < 100.0) {
-        return 2u;
+// CSM: Select appropriate cascade based on view-space depth
+// Returns cascade index (0-1) for 2-cascade system
+// Also returns a blend factor for smooth transitions between cascades
+fn select_cascade_with_blend(view_depth: f32) -> vec2<u32> {
+    // Use split distances from the uniform buffer
+    let splits = shadow_matrix.split_distances;
+    
+    // Blend zone size (units before cascade boundary to start blending)
+    let blend_zone = 5.0;
+    
+    let cascade0_end = splits.x;
+    let cascade1_end = splits.y;
+    
+    if (view_depth < cascade0_end - blend_zone) {
+        // Fully in cascade 0
+        return vec2<u32>(0u, 0u); // cascade_index, blend_amount (0 = no blend)
+    } else if (view_depth < cascade0_end + blend_zone) {
+        // Blend zone between cascade 0 and 1
+        return vec2<u32>(0u, 1u); // Will blend between 0 and 1
     } else {
-        return 3u; // Farthest cascade (lowest detail, largest area)
+        // Fully in cascade 1
+        return vec2<u32>(1u, 0u);
     }
 }
 
-// Calculate shadow factor using PCF (Percentage Closer Filtering) with CSM
-// Phase 4: Selects appropriate cascade based on fragment depth
-fn calculate_shadow(light_space_pos: vec4<f32>, normal: vec3<f32>, light_dir: vec3<f32>, view_depth: f32) -> f32 {
-    // Select cascade based on view-space depth
-    let cascade_index = select_cascade(view_depth);
+// Simple cascade selection for debug visualization (no blending)
+fn select_cascade(view_depth: f32) -> u32 {
+    let splits = shadow_matrix.split_distances;
+    if (view_depth < splits.x) {
+        return 0u;
+    } else {
+        return 1u;
+    }
+}
+
+// Transform world position to light space using the specified cascade matrix
+fn world_to_light_space(world_pos: vec3<f32>, cascade_idx: u32) -> vec4<f32> {
+    let world_pos_h = vec4<f32>(world_pos, 1.0);
+    
+    if (cascade_idx == 0u) {
+        // Use cascade 0 matrix
+        let sm0 = shadow_matrix.cascade0_m0;
+        let sm1 = shadow_matrix.cascade0_m1;
+        let sm2 = shadow_matrix.cascade0_m2;
+        let sm3 = shadow_matrix.cascade0_m3;
+        let sm_r0 = vec4<f32>(sm0.x, sm1.x, sm2.x, sm3.x);
+        let sm_r1 = vec4<f32>(sm0.y, sm1.y, sm2.y, sm3.y);
+        let sm_r2 = vec4<f32>(sm0.z, sm1.z, sm2.z, sm3.z);
+        let sm_r3 = vec4<f32>(sm0.w, sm1.w, sm2.w, sm3.w);
+        return vec4<f32>(
+            dot(sm_r0, world_pos_h),
+            dot(sm_r1, world_pos_h),
+            dot(sm_r2, world_pos_h),
+            dot(sm_r3, world_pos_h)
+        );
+    } else {
+        // Use cascade 1 matrix
+        let sm0 = shadow_matrix.cascade1_m0;
+        let sm1 = shadow_matrix.cascade1_m1;
+        let sm2 = shadow_matrix.cascade1_m2;
+        let sm3 = shadow_matrix.cascade1_m3;
+        let sm_r0 = vec4<f32>(sm0.x, sm1.x, sm2.x, sm3.x);
+        let sm_r1 = vec4<f32>(sm0.y, sm1.y, sm2.y, sm3.y);
+        let sm_r2 = vec4<f32>(sm0.z, sm1.z, sm2.z, sm3.z);
+        let sm_r3 = vec4<f32>(sm0.w, sm1.w, sm2.w, sm3.w);
+        return vec4<f32>(
+            dot(sm_r0, world_pos_h),
+            dot(sm_r1, world_pos_h),
+            dot(sm_r2, world_pos_h),
+            dot(sm_r3, world_pos_h)
+        );
+    }
+}
+
+// Helper: Sample shadow at a specific cascade with PCF
+// Takes world position and transforms it with the correct cascade matrix
+fn sample_shadow_cascade_from_world(cascade_idx: u32, world_pos: vec3<f32>, bias: f32) -> f32 {
+    // Transform world position to light space using this cascade's matrix
+    let light_space_pos = world_to_light_space(world_pos, cascade_idx);
     
     // Perspective divide
     var proj_coords = light_space_pos.xyz / light_space_pos.w;
@@ -51,11 +110,47 @@ fn calculate_shadow(light_space_pos: vec4<f32>, normal: vec3<f32>, light_dir: ve
     // Flip Y coordinate (texture coordinates are top-left origin)
     proj_coords.y = 1.0 - proj_coords.y;
     
-    // Outside shadow map bounds? Full light
+    // Outside shadow map bounds? Return no shadow
     if (proj_coords.x < 0.0 || proj_coords.x > 1.0 ||
         proj_coords.y < 0.0 || proj_coords.y > 1.0 ||
         proj_coords.z < 0.0 || proj_coords.z > 1.0) {
         return 1.0;
+    }
+    
+    // PCF for soft shadows - 3x3 kernel
+    let texel_size = 1.0 / 4096.0;
+    var shadow_sum = 0.0;
+    
+    for (var x = -1.0; x <= 1.0; x += 1.0) {
+        for (var y = -1.0; y <= 1.0; y += 1.0) {
+            let offset = vec2<f32>(x, y) * texel_size;
+            let sample_coords = proj_coords.xy + offset;
+            shadow_sum += textureSampleCompareLevel(
+                shadow_map, 
+                shadow_sampler, 
+                sample_coords, 
+                i32(cascade_idx), 
+                proj_coords.z - bias
+            );
+        }
+    }
+    return shadow_sum / 9.0;
+}
+
+// Calculate shadow factor using PCF (Percentage Closer Filtering) with CSM
+// Includes cascade blending for smooth transitions and far-distance fade
+// Now correctly transforms world position using the appropriate cascade matrix
+fn calculate_shadow(world_pos: vec3<f32>, normal: vec3<f32>, light_dir: vec3<f32>, view_depth: f32) -> f32 {
+    let splits = shadow_matrix.split_distances;
+    let cascade1_end = splits.y;
+    
+    // Objects beyond far cascade - fade to ambient shadow
+    if (view_depth > cascade1_end) {
+        // Fade from 0.7 (slight shadow) at cascade1_end to 0.95 (almost no shadow) at 2x distance
+        let fade_distance = cascade1_end;
+        let beyond_distance = view_depth - cascade1_end;
+        let fade_factor = clamp(beyond_distance / fade_distance, 0.0, 1.0);
+        return mix(0.7, 0.95, fade_factor);
     }
     
     // Slope-scale depth bias for shadow acne prevention
@@ -63,25 +158,28 @@ fn calculate_shadow(light_space_pos: vec4<f32>, normal: vec3<f32>, light_dir: ve
     let base_bias = 0.0012;
     let slope_bias = 0.0025 * sqrt(1.0 - ndotl * ndotl) / max(ndotl, 0.1);
     let bias = base_bias + slope_bias;
-    let biased_depth = proj_coords.z - bias;
     
-    // PCF for soft shadows - 3x3 kernel
-    let texel_size = 1.0 / 4096.0; // Shadow map size (4096x4096 per cascade)
-    var shadow = 0.0;
-    let pcf_radius = 1.0;
+    // Determine cascade and blend info
+    let cascade_info = select_cascade_with_blend(view_depth);
+    let cascade_index = cascade_info.x;
+    let should_blend = cascade_info.y;
     
-    // 3x3 kernel - sample from selected cascade layer
-    for (var x = -1.0; x <= 1.0; x += 1.0) {
-        for (var y = -1.0; y <= 1.0; y += 1.0) {
-            let offset = vec2<f32>(x, y) * texel_size * pcf_radius;
-            let sample_coords = proj_coords.xy + offset;
-            // Sample from cascade array texture at selected layer
-            shadow += textureSampleCompareLevel(shadow_map, shadow_sampler, sample_coords, i32(cascade_index), biased_depth);
-        }
+    // Sample shadow(s) - now using correct cascade matrices
+    if (should_blend == 1u) {
+        // Blend between cascade 0 and 1
+        let blend_zone = 5.0;
+        let blend_start = splits.x - blend_zone;
+        let blend_end = splits.x + blend_zone;
+        let blend_factor = clamp((view_depth - blend_start) / (blend_end - blend_start), 0.0, 1.0);
+        
+        let shadow0 = sample_shadow_cascade_from_world(0u, world_pos, bias);
+        let shadow1 = sample_shadow_cascade_from_world(1u, world_pos, bias);
+        
+        return mix(shadow0, shadow1, blend_factor);
+    } else {
+        // Sample single cascade with correct matrix
+        return sample_shadow_cascade_from_world(cascade_index, world_pos, bias);
     }
-    shadow /= 9.0;
-    
-    return shadow; // 0.0 = full shadow, 1.0 = full light
 }
 
 @fragment
@@ -109,22 +207,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let view_depth = length(in.world_pos - cam_pos_vec);
     
     // Calculate shadow factor with CSM cascade selection
-    let shadow = calculate_shadow(in.light_space_pos, N, L, view_depth);
+    // Pass world_pos so we can transform it with the correct cascade matrix
+    let shadow = calculate_shadow(in.world_pos, N, L, view_depth);
     
-    // CSM Phase 4: Debug visualization - color-code cascades
-    // Set to false to disable, true to see cascade bands
-    let csm_debug = false; // Disabled - using proper CSM shadows
+    // CSM Debug visualization - color-code cascades to visualize split distances
+    // Set to true to see cascade bands, false for normal shadow rendering
+    let csm_debug = false; // ENABLED for debugging
     if (csm_debug) {
         let cascade_idx = select_cascade(view_depth);
         var cascade_color = vec3<f32>(1.0, 1.0, 1.0); // White fallback
         if (cascade_idx == 0u) {
-            cascade_color = vec3<f32>(1.0, 0.0, 0.0); // Red: 0-20 units
-        } else if (cascade_idx == 1u) {
-            cascade_color = vec3<f32>(0.0, 1.0, 0.0); // Green: 20-50 units
-        } else if (cascade_idx == 2u) {
-            cascade_color = vec3<f32>(0.0, 0.0, 1.0); // Blue: 50-100 units
+            cascade_color = vec3<f32>(1.0, 0.0, 0.0); // Red: Near cascade (0-50 units)
         } else {
-            cascade_color = vec3<f32>(1.0, 1.0, 0.0); // Yellow: 100-200 units
+            cascade_color = vec3<f32>(0.0, 1.0, 0.0); // Green: Far cascade (50-200 units)
         }
         return vec4<f32>(cascade_color, 1.0);
     }

@@ -1,29 +1,19 @@
 // Shadow mapping shader - renders scene from light's perspective
 // Outputs depth values to shadow map texture
-// CSM Phase 3: Updated to support cascaded shadow maps
+// CSM: Updated to support 2-cascade shadow maps
 
-// Cascaded shadow matrix buffer (272 bytes total)
+// Cascaded shadow matrix buffer (144 bytes total for 2 cascades)
 struct CascadedShadowMatrix {
-    // Cascade 0 matrix (we'll only use this one for Phase 3)
+    // Cascade 0 matrix (near)
     cascade0_m0: vec4<f32>,
     cascade0_m1: vec4<f32>,
     cascade0_m2: vec4<f32>,
     cascade0_m3: vec4<f32>,
-    // Cascade 1 matrix
+    // Cascade 1 matrix (far)
     cascade1_m0: vec4<f32>,
     cascade1_m1: vec4<f32>,
     cascade1_m2: vec4<f32>,
     cascade1_m3: vec4<f32>,
-    // Cascade 2 matrix
-    cascade2_m0: vec4<f32>,
-    cascade2_m1: vec4<f32>,
-    cascade2_m2: vec4<f32>,
-    cascade2_m3: vec4<f32>,
-    // Cascade 3 matrix
-    cascade3_m0: vec4<f32>,
-    cascade3_m1: vec4<f32>,
-    cascade3_m2: vec4<f32>,
-    cascade3_m3: vec4<f32>,
     // Split distances
     split_distances: vec4<f32>,
 }
@@ -31,7 +21,7 @@ struct CascadedShadowMatrix {
 @group(0) @binding(0)
 var<uniform> csm_matrix: CascadedShadowMatrix;
 
-// Push constant for cascade index (Phase 4)
+// Push constant for cascade index
 struct PushConstants {
     cascade_index: u32,
 }
@@ -46,21 +36,12 @@ fn get_cascade_matrix(index: u32) -> array<vec4<f32>, 4> {
         result[1] = csm_matrix.cascade0_m1;
         result[2] = csm_matrix.cascade0_m2;
         result[3] = csm_matrix.cascade0_m3;
-    } else if (index == 1u) {
+    } else {
+        // index == 1u (only 2 cascades)
         result[0] = csm_matrix.cascade1_m0;
         result[1] = csm_matrix.cascade1_m1;
         result[2] = csm_matrix.cascade1_m2;
         result[3] = csm_matrix.cascade1_m3;
-    } else if (index == 2u) {
-        result[0] = csm_matrix.cascade2_m0;
-        result[1] = csm_matrix.cascade2_m1;
-        result[2] = csm_matrix.cascade2_m2;
-        result[3] = csm_matrix.cascade2_m3;
-    } else {
-        result[0] = csm_matrix.cascade3_m0;
-        result[1] = csm_matrix.cascade3_m1;
-        result[2] = csm_matrix.cascade3_m2;
-        result[3] = csm_matrix.cascade3_m3;
     }
     return result;
 }

@@ -279,7 +279,7 @@ pub mod gfx {
             }
 
             /// CSM: Calculate all cascade matrices based on sun direction and camera position.
-            /// Returns an array of 4 matrices and the CascadedShadowMatrixGpu structure.
+            /// Returns an array of 2 matrices and the CascadedShadowMatrixGpu structure.
             fn calculate_cascade_matrices(
                 &self,
                 sun_dir: glam::Vec3,
@@ -300,11 +300,9 @@ pub mod gfx {
                     matrices[i] = self.calculate_cascade_matrix(i as u32, light_dir, cam_pos, near, far);
                 }
 
-                // Convert to GPU structure
+                // Convert to GPU structure (2 cascades)
                 let cols0 = matrices[0].to_cols_array_2d();
                 let cols1 = matrices[1].to_cols_array_2d();
-                let cols2 = matrices[2].to_cols_array_2d();
-                let cols3 = matrices[3].to_cols_array_2d();
 
                 let gpu_data = crate::gpu_types::CascadedShadowMatrixGpu {
                     cascade0_m0: cols0[0],
@@ -317,17 +315,12 @@ pub mod gfx {
                     cascade1_m2: cols1[2],
                     cascade1_m3: cols1[3],
 
-                    cascade2_m0: cols2[0],
-                    cascade2_m1: cols2[1],
-                    cascade2_m2: cols2[2],
-                    cascade2_m3: cols2[3],
-
-                    cascade3_m0: cols3[0],
-                    cascade3_m1: cols3[1],
-                    cascade3_m2: cols3[2],
-                    cascade3_m3: cols3[3],
-
-                    split_distances: CASCADE_SPLIT_DISTANCES,
+                    split_distances: [
+                        CASCADE_SPLIT_DISTANCES[0],
+                        CASCADE_SPLIT_DISTANCES[1],
+                        0.0, // unused
+                        0.0, // unused
+                    ],
                 };
 
                 // Mark that we've logged once and set the flag
