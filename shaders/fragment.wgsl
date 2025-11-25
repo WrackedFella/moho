@@ -21,51 +21,79 @@ fn debug_shadow_coords(light_space_pos: vec4<f32>) -> vec3<f32> {
     return debug_color;
 }
 
-// CSM: Select appropriate cascade based on view-space depth
-// Returns cascade index (0-1) for 2-cascade system
-// Also returns a blend factor for smooth transitions between cascades
-fn select_cascade_with_blend(view_depth: f32) -> vec2<u32> {
-    // Use split distances from the uniform buffer
-    let splits = shadow_matrix.split_distances;
-    
-    // Blend zone size (units before cascade boundary to start blending)
-    let blend_zone = 5.0;
-    
-    let cascade0_end = splits.x;
-    let cascade1_end = splits.y;
-    
-    if (view_depth < cascade0_end - blend_zone) {
-        // Fully in cascade 0
-        return vec2<u32>(0u, 0u); // cascade_index, blend_amount (0 = no blend)
-    } else if (view_depth < cascade0_end + blend_zone) {
-        // Blend zone between cascade 0 and 1
-        return vec2<u32>(0u, 1u); // Will blend between 0 and 1
+// Check if a light is active based on its intensity
+fn is_light_active(light_idx: u32) -> bool {
+    let intensities = shadow_matrices.light_intensities;
+    if (light_idx == 0u) {
+        return intensities.x > 0.01;
+    } else if (light_idx == 1u) {
+        return intensities.y > 0.01;
+    } else if (light_idx == 2u) {
+        return intensities.z > 0.01;
     } else {
-        // Fully in cascade 1
-        return vec2<u32>(1u, 0u);
+        return intensities.w > 0.01;
     }
 }
 
-// Simple cascade selection for debug visualization (no blending)
-fn select_cascade(view_depth: f32) -> u32 {
-    let splits = shadow_matrix.split_distances;
-    if (view_depth < splits.x) {
-        return 0u;
+// Get light intensity by index
+fn get_light_intensity(light_idx: u32) -> f32 {
+    let intensities = shadow_matrices.light_intensities;
+    if (light_idx == 0u) {
+        return intensities.x;
+    } else if (light_idx == 1u) {
+        return intensities.y;
+    } else if (light_idx == 2u) {
+        return intensities.z;
     } else {
-        return 1u;
+        return intensities.w;
     }
 }
 
-// Transform world position to light space using the specified cascade matrix
-fn world_to_light_space(world_pos: vec3<f32>, cascade_idx: u32) -> vec4<f32> {
+// Transform world position to light space using the specified light's matrix
+// Light indices: 0 = Sun, 1 = Moon, 2 = Dynamic1, 3 = Dynamic2
+fn world_to_light_space(world_pos: vec3<f32>, light_idx: u32) -> vec4<f32> {
     let world_pos_h = vec4<f32>(world_pos, 1.0);
     
-    if (cascade_idx == 0u) {
-        // Use cascade 0 matrix
-        let sm0 = shadow_matrix.cascade0_m0;
-        let sm1 = shadow_matrix.cascade0_m1;
-        let sm2 = shadow_matrix.cascade0_m2;
-        let sm3 = shadow_matrix.cascade0_m3;
+    // Each light has its own shadow matrix stored in columns
+    // We reconstruct rows for proper multiplication
+    if (light_idx == 0u) {
+        // Sun shadow matrix (light 0)
+        let sm0 = shadow_matrices.light0_m0;
+        let sm1 = shadow_matrices.light0_m1;
+        let sm2 = shadow_matrices.light0_m2;
+        let sm3 = shadow_matrices.light0_m3;
+        let sm_r0 = vec4<f32>(sm0.x, sm1.x, sm2.x, sm3.x);
+        let sm_r1 = vec4<f32>(sm0.y, sm1.y, sm2.y, sm3.y);
+        let sm_r2 = vec4<f32>(sm0.z, sm1.z, sm2.z, sm3.z);
+        let sm_r3 = vec4<f32>(sm0.w, sm1.w, sm2.w, sm3.w);
+        return vec4<f32>(
+            dot(sm_r0, world_pos_h),
+            dot(sm_r1, world_pos_h),
+            dot(sm_r2, world_pos_h),
+            dot(sm_r3, world_pos_h)
+        );
+    } else if (light_idx == 1u) {
+        // Moon shadow matrix (light 1)
+        let sm0 = shadow_matrices.light1_m0;
+        let sm1 = shadow_matrices.light1_m1;
+        let sm2 = shadow_matrices.light1_m2;
+        let sm3 = shadow_matrices.light1_m3;
+        let sm_r0 = vec4<f32>(sm0.x, sm1.x, sm2.x, sm3.x);
+        let sm_r1 = vec4<f32>(sm0.y, sm1.y, sm2.y, sm3.y);
+        let sm_r2 = vec4<f32>(sm0.z, sm1.z, sm2.z, sm3.z);
+        let sm_r3 = vec4<f32>(sm0.w, sm1.w, sm2.w, sm3.w);
+        return vec4<f32>(
+            dot(sm_r0, world_pos_h),
+            dot(sm_r1, world_pos_h),
+            dot(sm_r2, world_pos_h),
+            dot(sm_r3, world_pos_h)
+        );
+    } else if (light_idx == 2u) {
+        // Dynamic light 1 shadow matrix
+        let sm0 = shadow_matrices.light2_m0;
+        let sm1 = shadow_matrices.light2_m1;
+        let sm2 = shadow_matrices.light2_m2;
+        let sm3 = shadow_matrices.light2_m3;
         let sm_r0 = vec4<f32>(sm0.x, sm1.x, sm2.x, sm3.x);
         let sm_r1 = vec4<f32>(sm0.y, sm1.y, sm2.y, sm3.y);
         let sm_r2 = vec4<f32>(sm0.z, sm1.z, sm2.z, sm3.z);
@@ -77,11 +105,11 @@ fn world_to_light_space(world_pos: vec3<f32>, cascade_idx: u32) -> vec4<f32> {
             dot(sm_r3, world_pos_h)
         );
     } else {
-        // Use cascade 1 matrix
-        let sm0 = shadow_matrix.cascade1_m0;
-        let sm1 = shadow_matrix.cascade1_m1;
-        let sm2 = shadow_matrix.cascade1_m2;
-        let sm3 = shadow_matrix.cascade1_m3;
+        // Dynamic light 2 shadow matrix (light 3)
+        let sm0 = shadow_matrices.light3_m0;
+        let sm1 = shadow_matrices.light3_m1;
+        let sm2 = shadow_matrices.light3_m2;
+        let sm3 = shadow_matrices.light3_m3;
         let sm_r0 = vec4<f32>(sm0.x, sm1.x, sm2.x, sm3.x);
         let sm_r1 = vec4<f32>(sm0.y, sm1.y, sm2.y, sm3.y);
         let sm_r2 = vec4<f32>(sm0.z, sm1.z, sm2.z, sm3.z);
@@ -95,11 +123,11 @@ fn world_to_light_space(world_pos: vec3<f32>, cascade_idx: u32) -> vec4<f32> {
     }
 }
 
-// Helper: Sample shadow at a specific cascade with PCF
-// Takes world position and transforms it with the correct cascade matrix
-fn sample_shadow_cascade_from_world(cascade_idx: u32, world_pos: vec3<f32>, bias: f32) -> f32 {
-    // Transform world position to light space using this cascade's matrix
-    let light_space_pos = world_to_light_space(world_pos, cascade_idx);
+// Sample shadow for a specific light using PCF (Percentage Closer Filtering)
+// Takes world position and transforms it with the correct light's matrix
+fn sample_light_shadow(light_idx: u32, world_pos: vec3<f32>, bias: f32) -> f32 {
+    // Transform world position to this light's space
+    let light_space_pos = world_to_light_space(world_pos, light_idx);
     
     // Perspective divide
     var proj_coords = light_space_pos.xyz / light_space_pos.w;
@@ -110,7 +138,7 @@ fn sample_shadow_cascade_from_world(cascade_idx: u32, world_pos: vec3<f32>, bias
     // Flip Y coordinate (texture coordinates are top-left origin)
     proj_coords.y = 1.0 - proj_coords.y;
     
-    // Outside shadow map bounds? Return no shadow
+    // Outside shadow map bounds? Return no shadow (fully lit)
     if (proj_coords.x < 0.0 || proj_coords.x > 1.0 ||
         proj_coords.y < 0.0 || proj_coords.y > 1.0 ||
         proj_coords.z < 0.0 || proj_coords.z > 1.0) {
@@ -129,7 +157,7 @@ fn sample_shadow_cascade_from_world(cascade_idx: u32, world_pos: vec3<f32>, bias
                 shadow_map, 
                 shadow_sampler, 
                 sample_coords, 
-                i32(cascade_idx), 
+                i32(light_idx),  // Use light index as array layer
                 proj_coords.z - bias
             );
         }
@@ -137,20 +165,26 @@ fn sample_shadow_cascade_from_world(cascade_idx: u32, world_pos: vec3<f32>, bias
     return shadow_sum / 9.0;
 }
 
-// Calculate shadow factor using PCF (Percentage Closer Filtering) with CSM
-// Includes cascade blending for smooth transitions and far-distance fade
-// Now correctly transforms world position using the appropriate cascade matrix
-fn calculate_shadow(world_pos: vec3<f32>, normal: vec3<f32>, light_dir: vec3<f32>, view_depth: f32) -> f32 {
-    let splits = shadow_matrix.split_distances;
-    let cascade1_end = splits.y;
+// Calculate shadow factor for a specific light with distance fade
+// Light indices: 0 = Sun, 1 = Moon, 2 = Dynamic1, 3 = Dynamic2
+fn calculate_light_shadow(light_idx: u32, world_pos: vec3<f32>, normal: vec3<f32>, light_dir: vec3<f32>, view_depth: f32) -> f32 {
+    // Check if this light is active
+    if (!is_light_active(light_idx)) {
+        return 1.0; // No shadow from inactive lights
+    }
     
-    // Objects beyond far cascade - fade to ambient shadow
-    if (view_depth > cascade1_end) {
-        // Fade from 0.7 (slight shadow) at cascade1_end to 0.95 (almost no shadow) at 2x distance
-        let fade_distance = cascade1_end;
-        let beyond_distance = view_depth - cascade1_end;
-        let fade_factor = clamp(beyond_distance / fade_distance, 0.0, 1.0);
-        return mix(0.7, 0.95, fade_factor);
+    // Shadow distance (from metadata.x in uniform)
+    let shadow_distance = shadow_matrices.metadata.x;
+    if (shadow_distance <= 0.0) {
+        return 1.0; // Shadow disabled
+    }
+    
+    // Objects beyond shadow distance - fade to no shadow
+    if (view_depth > shadow_distance) {
+        // Fade from slight shadow at shadow_distance to no shadow at 2x distance
+        let beyond_distance = view_depth - shadow_distance;
+        let fade_factor = clamp(beyond_distance / shadow_distance, 0.0, 1.0);
+        return mix(0.7, 1.0, fade_factor);
     }
     
     // Slope-scale depth bias for shadow acne prevention
@@ -159,27 +193,8 @@ fn calculate_shadow(world_pos: vec3<f32>, normal: vec3<f32>, light_dir: vec3<f32
     let slope_bias = 0.0025 * sqrt(1.0 - ndotl * ndotl) / max(ndotl, 0.1);
     let bias = base_bias + slope_bias;
     
-    // Determine cascade and blend info
-    let cascade_info = select_cascade_with_blend(view_depth);
-    let cascade_index = cascade_info.x;
-    let should_blend = cascade_info.y;
-    
-    // Sample shadow(s) - now using correct cascade matrices
-    if (should_blend == 1u) {
-        // Blend between cascade 0 and 1
-        let blend_zone = 5.0;
-        let blend_start = splits.x - blend_zone;
-        let blend_end = splits.x + blend_zone;
-        let blend_factor = clamp((view_depth - blend_start) / (blend_end - blend_start), 0.0, 1.0);
-        
-        let shadow0 = sample_shadow_cascade_from_world(0u, world_pos, bias);
-        let shadow1 = sample_shadow_cascade_from_world(1u, world_pos, bias);
-        
-        return mix(shadow0, shadow1, blend_factor);
-    } else {
-        // Sample single cascade with correct matrix
-        return sample_shadow_cascade_from_world(cascade_index, world_pos, bias);
-    }
+    // Sample shadow for this light
+    return sample_light_shadow(light_idx, world_pos, bias);
 }
 
 @fragment
@@ -202,26 +217,22 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let L_moon = moon_dir;
     let diff_moon = max(dot(N, L_moon), 0.0);
     
-    // Calculate view-space depth for cascade selection (Phase 4: CSM)
+    // Calculate view-space depth for shadow distance calculations
     let cam_pos_vec = vec3<f32>(camera.cam_pos.x, camera.cam_pos.y, camera.cam_pos.z);
     let view_depth = length(in.world_pos - cam_pos_vec);
     
-    // Calculate shadow factor with CSM cascade selection
-    // Pass world_pos so we can transform it with the correct cascade matrix
-    let shadow = calculate_shadow(in.world_pos, N, L, view_depth);
+    // Calculate shadow factors for sun (light 0) and moon (light 1)
+    let sun_shadow = calculate_light_shadow(0u, in.world_pos, N, L, view_depth);
+    let moon_shadow = calculate_light_shadow(1u, in.world_pos, N, L_moon, view_depth);
     
-    // CSM Debug visualization - color-code cascades to visualize split distances
-    // Set to true to see cascade bands, false for normal shadow rendering
-    let csm_debug = false; // ENABLED for debugging
-    if (csm_debug) {
-        let cascade_idx = select_cascade(view_depth);
-        var cascade_color = vec3<f32>(1.0, 1.0, 1.0); // White fallback
-        if (cascade_idx == 0u) {
-            cascade_color = vec3<f32>(1.0, 0.0, 0.0); // Red: Near cascade (0-50 units)
-        } else {
-            cascade_color = vec3<f32>(0.0, 1.0, 0.0); // Green: Far cascade (50-200 units)
-        }
-        return vec4<f32>(cascade_color, 1.0);
+    // Multi-light shadow debug visualization
+    // Set to true to see which lights are casting shadows
+    let shadow_debug = false;
+    if (shadow_debug) {
+        // Visualize sun shadow (red) and moon shadow (green)
+        let sun_contrib = (1.0 - sun_shadow) * sun_intensity;
+        let moon_contrib = (1.0 - moon_shadow) * moon_intensity;
+        return vec4<f32>(sun_contrib, moon_contrib, 0.0, 1.0);
     }
     
     // use camera-provided world position for view direction
@@ -266,21 +277,23 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let F = R0 + (1.0 - R0) * pow(1.0 - cos_theta, 5.0);
 
         // Strong, sharp specular for dielectrics; use a high exponent
-        // Apply shadow to sun lighting only
-        let spec_diel = vec3<f32>(F) * pow(max(dot(N, H), 0.0), 128.0) * sun_col * sun_intensity * shadow;
+        // Apply sun shadow to sun lighting
+        let spec_diel = vec3<f32>(F) * pow(max(dot(N, H), 0.0), 128.0) * sun_col * sun_intensity * sun_shadow;
         
-        // Moon specular for dielectrics (no shadow)
+        // Moon specular for dielectrics (with moon shadow)
         let H_moon = normalize(L_moon + V);
-        let spec_diel_moon = vec3<f32>(F) * pow(max(dot(N, H_moon), 0.0), 128.0) * moon_col * moon_intensity * 0.5;
+        let spec_diel_moon = vec3<f32>(F) * pow(max(dot(N, H_moon), 0.0), 128.0) * moon_col * moon_intensity * 0.5 * moon_shadow;
 
         // Approximate transmitted light (tint) scaled by (1 - F). This is a
         // cheap stand-in for refraction/transmission and helps the object
         // look glassy when combined with specular.
-        let trans = final_albedo * (1.0 - F) * 0.6 * sun_col * sun_intensity * shadow;
-        let trans_moon = final_albedo * (1.0 - F) * 0.6 * moon_col * moon_intensity * 0.5;
+        let trans = final_albedo * (1.0 - F) * 0.6 * sun_col * sun_intensity * sun_shadow;
+        let trans_moon = final_albedo * (1.0 - F) * 0.6 * moon_col * moon_intensity * 0.5 * moon_shadow;
 
         // Reduce ambient in shadowed areas AND on back-facing surfaces
-        let shadow_darkening = mix(0.2, 1.0, shadow);
+        // Use minimum of both shadows for ambient darkening
+        let combined_shadow = min(sun_shadow, moon_shadow);
+        let shadow_darkening = mix(0.2, 1.0, combined_shadow);
         let backface_darkening = mix(0.15, 1.0, diff);
         let total_darkening = shadow_darkening * backface_darkening;
         color = ambient_col * ambient_intensity * final_albedo * 0.1 * total_darkening + ao * (spec_diel + trans + spec_diel_moon + trans_moon);
@@ -297,11 +310,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // For metals: reduce diffuse, increase specular
         // For lambertian: normal diffuse, minimal specular
         let diff_strength = mix(1.0, 0.3, is_metal);
-        // Apply shadow to diffuse lighting (sun)
-        let diff_color = final_albedo * diff * diff_strength * sun_col * sun_intensity * shadow;
+        // Apply sun shadow to sun diffuse lighting
+        let diff_color = final_albedo * diff * diff_strength * sun_col * sun_intensity * sun_shadow;
         
-        // Moon diffuse lighting (no shadows for moon - simpler lighting model)
-        let diff_color_moon = final_albedo * diff_moon * diff_strength * moon_col * moon_intensity;
+        // Moon diffuse lighting with moon shadow
+        let diff_color_moon = final_albedo * diff_moon * diff_strength * moon_col * moon_intensity * moon_shadow;
         
         // Metal specular: strong but affected by fuzz (roughness)
         // Lambertian specular: very weak
@@ -319,14 +332,16 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let spec_highlight_moon = pow(max(dot(N, H_moon), 0.0), spec_power * 0.8);
         
         // For metals the specular should be tinted by albedo and light color
-        // Apply shadow to sun specular only
-        let spec_color = final_albedo * spec_strength * spec_highlight * sun_col * sun_intensity * shadow;
-        let spec_color_moon = final_albedo * spec_strength * spec_highlight_moon * moon_col * moon_intensity * 0.5;
+        // Apply respective shadow to each light source
+        let spec_color = final_albedo * spec_strength * spec_highlight * sun_col * sun_intensity * sun_shadow;
+        let spec_color_moon = final_albedo * spec_strength * spec_highlight_moon * moon_col * moon_intensity * 0.5 * moon_shadow;
 
         // Reduce ambient in shadowed areas AND on back-facing surfaces
         // Surfaces in complete shadow should be much darker
         // Also darken surfaces facing away from light (diff close to 0)
-        let shadow_darkening = mix(0.2, 1.0, shadow); // Darken by 80% in full shadow
+        // Use minimum of both shadows for ambient darkening
+        let combined_shadow = min(sun_shadow, moon_shadow);
+        let shadow_darkening = mix(0.2, 1.0, combined_shadow); // Darken by 80% in full shadow
         let backface_darkening = mix(0.15, 1.0, diff); // Darken by 85% when facing away
         let total_darkening = shadow_darkening * backface_darkening;
         color = ambient_col * ambient_intensity * final_albedo * total_darkening + ao * (diff_color + spec_color + diff_color_moon + spec_color_moon);

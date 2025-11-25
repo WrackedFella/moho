@@ -8,7 +8,7 @@
 //! - Main pipeline layout (camera + shadow bind groups)
 //! - Skybox pipeline layout (camera bind group only)
 
-use crate::gpu_types::{CascadedShadowMatrixGpu, ShadowMatrixGpu};
+use crate::gpu_types::{CascadedShadowMatrixGpu, MultiLightShadowGpu, ShadowMatrixGpu};
 use super::PipelineInitError;
 
 /// Create the camera bind group layout.
@@ -87,11 +87,18 @@ pub fn create_camera_bind_group_layout(
 ///
 /// # Errors
 ///
+/// Create bind group layout for shadow pass (used in main render pipeline).
+///
+/// This layout has 3 bindings:
+/// - Binding 0: Shadow matrices uniform buffer (multi-light shadow data, 288 bytes)
+/// - Binding 1: Shadow map texture array (depth texture, one layer per light)
+/// - Binding 2: Shadow sampler (comparison sampler for PCF)
+///
 /// Returns `PipelineInitError` if shadow matrix size calculation fails.
 pub fn create_shadow_bind_group_layout(
     device: &wgpu::Device,
 ) -> Result<wgpu::BindGroupLayout, PipelineInitError> {
-    let shadow_matrix_size = std::mem::size_of::<CascadedShadowMatrixGpu>() as u64;
+    let shadow_matrix_size = std::mem::size_of::<MultiLightShadowGpu>() as u64;
 
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("shadow-bgl"),
@@ -117,7 +124,7 @@ pub fn create_shadow_bind_group_layout(
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Depth,
-                    view_dimension: wgpu::TextureViewDimension::D2Array, // Phase 4: Array texture
+                    view_dimension: wgpu::TextureViewDimension::D2Array, // Array texture for multiple lights
                     multisampled: false,
                 },
                 count: None,
@@ -177,11 +184,15 @@ pub fn create_shadow_pass_bind_group_layout(
 ///
 /// # Errors
 ///
-/// Returns `PipelineInitError` if CSM matrix size calculation fails.
+/// Create bind group layout for multi-light shadow pass.
+///
+/// This layout provides the shadow matrices for all active lights (sun, moon, dynamic lights).
+///
+/// Returns `PipelineInitError` if shadow matrix size calculation fails.
 pub fn create_csm_pass_bind_group_layout(
     device: &wgpu::Device,
 ) -> Result<wgpu::BindGroupLayout, PipelineInitError> {
-    let csm_matrix_size = std::mem::size_of::<CascadedShadowMatrixGpu>() as u64;
+    let csm_matrix_size = std::mem::size_of::<MultiLightShadowGpu>() as u64;
 
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("csm-pass-bgl"),

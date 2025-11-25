@@ -1,19 +1,41 @@
 use wgpu::util::DeviceExt;
 
-/// Number of cascaded shadow map cascades
+use crate::gpu_types::MAX_SHADOW_LIGHTS;
+
+/// Number of cascaded shadow map cascades (legacy - kept for compatibility)
 /// Reduced to 2 for performance (50% fewer shadow passes and memory)
 pub const NUM_SHADOW_CASCADES: u32 = 2;
 
-/// Shadow map resolution per cascade
+/// Shadow map resolution per cascade/light
 pub const SHADOW_MAP_SIZE: u32 = 4096;
 
 /// Cascade split distances from camera (in world units)
 pub const CASCADE_SPLIT_DISTANCES: [f32; 2] = [400.0, 1500.0];
 
+/// Shadow distance for multi-light system
+pub const SHADOW_DISTANCE: f32 = 1000.0;
+
 #[allow(dead_code)]
 const CSM_DEBUG_MODE: bool = false;
 
 const CSM_VERBOSE_LOGGING: bool = false;
+
+/// Light type for shadow system
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LightType {
+    Sun,
+    Moon,
+    Dynamic,
+}
+
+/// Active shadow-casting light
+#[derive(Debug, Clone)]
+pub struct ActiveShadowLight {
+    pub light_type: LightType,
+    pub light_index: u32, // 0-3 for shader array index
+    pub matrix: glam::Mat4,
+    pub intensity: f32,
+}
 
 /// Shadow system resources and state
 pub struct ShadowSystem {
@@ -28,6 +50,8 @@ pub struct ShadowSystem {
     pub csm_pass_bind_group: wgpu::BindGroup,
     pub csm_shadow_bind_group: wgpu::BindGroup,
     pub current_lighting: crate::gpu_types::LightingGpu,
+    /// Active shadow-casting lights for current frame
+    pub active_lights: Vec<ActiveShadowLight>,
     csm_logged_once: std::cell::Cell<bool>,
 }
 
@@ -56,13 +80,13 @@ impl ShadowSystem {
         let shadow_map_view =
             shadow_map_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // CSM texture array
+        // Multi-light shadow map array (one layer per light)
         let csm_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("csm-texture-array"),
+            label: Some("multi-light-shadow-array"),
             size: wgpu::Extent3d {
                 width: SHADOW_MAP_SIZE,
                 height: SHADOW_MAP_SIZE,
-                depth_or_array_layers: NUM_SHADOW_CASCADES,
+                depth_or_array_layers: MAX_SHADOW_LIGHTS as u32,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -74,20 +98,21 @@ impl ShadowSystem {
 
         if CSM_VERBOSE_LOGGING {
             log::info!(
-                "Created CSM texture array: {}x{} with {} layers",
+                "Created multi-light shadow array: {}x{} x {} lights",
                 SHADOW_MAP_SIZE,
                 SHADOW_MAP_SIZE,
-                NUM_SHADOW_CASCADES
+                MAX_SHADOW_LIGHTS
             );
         }
 
-        let csm_cascade_views: Vec<wgpu::TextureView> = (0..NUM_SHADOW_CASCADES)
+        // Create individual views for each light layer
+        let csm_cascade_views: Vec<wgpu::TextureView> = (0..MAX_SHADOW_LIGHTS as u32)
             .map(|i| {
                 csm_texture.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some(&format!("csm-cascade-{}-view", i)),
+                    label: Some(&format!("shadow-light-{}-view", i)),
                     format: Some(wgpu::TextureFormat::Depth32Float),
                     dimension: Some(wgpu::TextureViewDimension::D2),
-                    aspect: wgpu::TextureAspect::All,
+                    aspect: wgpu::TextureAspect::DepthOnly,
                     base_mip_level: 0,
                     mip_level_count: None,
                     base_array_layer: i,
@@ -100,22 +125,29 @@ impl ShadowSystem {
             })
             .collect();
 
+        if CSM_VERBOSE_LOGGING {
+            log::info!(
+                "Created {} light views for shadow rendering",
+                csm_cascade_views.len()
+            );
+        }
+
         let csm_array_view = csm_texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("csm-array-view"),
+            label: Some("multi-light-shadow-array-view"),
             format: Some(wgpu::TextureFormat::Depth32Float),
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             aspect: wgpu::TextureAspect::All,
             base_mip_level: 0,
             mip_level_count: None,
             base_array_layer: 0,
-            array_layer_count: Some(NUM_SHADOW_CASCADES),
+            array_layer_count: Some(MAX_SHADOW_LIGHTS as u32),
             usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
         });
 
         if CSM_VERBOSE_LOGGING {
             log::info!(
-                "Created {} cascade views + 1 array view for CSM sampling",
-                NUM_SHADOW_CASCADES
+                "Created multi-light shadow array view: {} layers",
+                MAX_SHADOW_LIGHTS
             );
         }
 
@@ -127,18 +159,18 @@ impl ShadowSystem {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        use crate::gpu_types::CascadedShadowMatrixGpu;
-        let initial_csm_matrix = CascadedShadowMatrixGpu::default();
+        use crate::gpu_types::MultiLightShadowGpu;
+        let initial_csm_matrix = MultiLightShadowGpu::default();
         let csm_matrix_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("csm-matrix-buffer"),
+            label: Some("multi-light-shadow-buffer"),
             contents: bytemuck::bytes_of(&initial_csm_matrix),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
         if CSM_VERBOSE_LOGGING {
             log::info!(
-                "Created CSM matrix buffer: {} bytes",
-                std::mem::size_of::<CascadedShadowMatrixGpu>()
+                "Created multi-light shadow buffer: {} bytes",
+                std::mem::size_of::<MultiLightShadowGpu>()
             );
         }
 
@@ -308,6 +340,7 @@ impl ShadowSystem {
             csm_pass_bind_group,
             csm_shadow_bind_group,
             current_lighting: crate::gpu_types::LightingGpu::default(),
+            active_lights: Vec::new(),
             csm_logged_once: std::cell::Cell::new(false),
         })
     }
@@ -447,5 +480,120 @@ impl ShadowSystem {
         }
 
         (matrices, gpu_data)
+    }
+
+    /// Calculate light matrix for a directional light at given direction
+    fn calculate_light_matrix(
+        &self,
+        light_dir: glam::Vec3,
+        cam_pos: glam::Vec3,
+    ) -> glam::Mat4 {
+        let light_dir = light_dir.normalize();
+        let cascade_center = cam_pos;
+        let light_distance = SHADOW_DISTANCE * 2.0;
+        let light_pos = cascade_center - light_dir * light_distance;
+
+        let light_view = glam::Mat4::look_at_rh(light_pos, cascade_center, glam::Vec3::Y);
+        let cascade_radius = SHADOW_DISTANCE * 1.5;
+
+        let light_proj = glam::Mat4::orthographic_rh(
+            -cascade_radius,
+            cascade_radius,
+            -cascade_radius,
+            cascade_radius,
+            1.0,
+            light_distance + SHADOW_DISTANCE,
+        );
+
+        light_proj * light_view
+    }
+
+    /// Calculate multi-light shadow matrices for sun and moon
+    /// Returns updated active_lights list and GPU data for shader
+    pub fn calculate_multi_light_matrices(
+        &mut self,
+        sun_dir: glam::Vec3,
+        moon_dir: glam::Vec3,
+        cam_pos: glam::Vec3,
+    ) -> crate::gpu_types::MultiLightShadowGpu {
+        // Clear previous frame's active lights
+        self.active_lights.clear();
+
+        // Use intensity values from current_lighting (set by update_lighting)
+        // These are calculated by the frame processor based on time of day
+        let sun_intensity = self.current_lighting.sun_direction[3];
+        let moon_intensity = self.current_lighting.moon_direction[3];
+
+        // Calculate sun shadow matrix (light 0)
+        let sun_matrix = self.calculate_light_matrix(sun_dir, cam_pos);
+
+        // Calculate moon shadow matrix (light 1)
+        let moon_matrix = self.calculate_light_matrix(moon_dir, cam_pos);
+
+        // Add sun to active lights if above horizon
+        if sun_intensity > 0.01 {
+            self.active_lights.push(ActiveShadowLight {
+                light_type: LightType::Sun,
+                light_index: 0,
+                matrix: sun_matrix,
+                intensity: sun_intensity,
+            });
+        }
+
+        // Add moon to active lights if above horizon
+        if moon_intensity > 0.01 {
+            self.active_lights.push(ActiveShadowLight {
+                light_type: LightType::Moon,
+                light_index: 1,
+                matrix: moon_matrix,
+                intensity: moon_intensity,
+            });
+        }
+
+        if !self.csm_logged_once.get() {
+            log::info!(
+                "Multi-light shadows: sun_intensity={:.2}, moon_intensity={:.2}, active_lights={}",
+                sun_intensity,
+                moon_intensity,
+                self.active_lights.len()
+            );
+        }
+
+        // Build GPU data structure
+        let sun_cols = sun_matrix.to_cols_array_2d();
+        let moon_cols = moon_matrix.to_cols_array_2d();
+
+        let gpu_data = crate::gpu_types::MultiLightShadowGpu {
+            light0_m0: sun_cols[0],
+            light0_m1: sun_cols[1],
+            light0_m2: sun_cols[2],
+            light0_m3: sun_cols[3],
+
+            light1_m0: moon_cols[0],
+            light1_m1: moon_cols[1],
+            light1_m2: moon_cols[2],
+            light1_m3: moon_cols[3],
+
+            // Lights 2-3 are identity (unused for now)
+            light2_m0: [1.0, 0.0, 0.0, 0.0],
+            light2_m1: [0.0, 1.0, 0.0, 0.0],
+            light2_m2: [0.0, 0.0, 1.0, 0.0],
+            light2_m3: [0.0, 0.0, 0.0, 1.0],
+
+            light3_m0: [1.0, 0.0, 0.0, 0.0],
+            light3_m1: [0.0, 1.0, 0.0, 0.0],
+            light3_m2: [0.0, 0.0, 1.0, 0.0],
+            light3_m3: [0.0, 0.0, 0.0, 1.0],
+
+            light_intensities: [sun_intensity, moon_intensity, 0.0, 0.0],
+            metadata: [SHADOW_DISTANCE, 0.0, 0.0, 0.0],
+        };
+
+        if !self.csm_logged_once.get() {
+            log::info!("Multi-light shadow matrices calculated successfully");
+            self.csm_logged_once.set(true);
+        }
+
+        gpu_data
     }
 }
