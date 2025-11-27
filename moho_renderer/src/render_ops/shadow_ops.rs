@@ -1,50 +1,58 @@
 //! Shadow rendering operations.
 //!
 //! This module handles shadow matrix calculation and shadow pass rendering
-//! for cascaded shadow mapping (CSM).
+//! for multi-light shadow mapping (Sun, Moon, Dynamic lights).
 
-use crate::gpu_types::ShadowMatrixGpu;
-use crate::shadow::{NUM_SHADOW_CASCADES, ShadowSystem};
+use crate::gpu_types::{ShadowMatrixGpu, MAX_SHADOW_LIGHTS};
+use crate::shadow::ShadowSystem;
 use crate::types::{GpuInstance, MeshEntry};
 use glam::Vec3;
 use wgpu::{Buffer, CommandEncoder, Queue};
 
-/// Update shadow matrices for cascaded shadow mapping.
+/// Update shadow matrices for multi-light shadow mapping.
 ///
-/// Calculates CSM cascade matrices and uploads to GPU buffers:
-/// - Full CSM data to csm_matrix_buffer (for shadow rendering)
-/// - Cascade 0 matrix to legacy shadow_matrix_buffer (for main pass sampling)
+/// Calculates shadow matrices for sun, moon, and dynamic lights,
+/// uploading to GPU buffers for shadow rendering and sampling.
 ///
 /// # Arguments
 /// * `shadow_system` - Shadow system containing buffers and state
 /// * `queue` - WGPU queue for buffer writes
 /// * `cam_pos` - Camera position in world space
 pub fn update_shadow_matrices(shadow_system: &mut ShadowSystem, queue: &Queue, cam_pos: Vec3) {
+    let lighting = &shadow_system.current_lighting;
+    
     let sun_dir = Vec3::new(
-        shadow_system.current_lighting.sun_direction[0],
-        shadow_system.current_lighting.sun_direction[1],
-        shadow_system.current_lighting.sun_direction[2],
+        lighting.sun_direction[0],
+        lighting.sun_direction[1],
+        lighting.sun_direction[2],
+    );
+    
+    let moon_dir = Vec3::new(
+        lighting.moon_direction[0],
+        lighting.moon_direction[1],
+        lighting.moon_direction[2],
     );
 
-    // Calculate cascade matrices for CSM
-    let (cascade_matrices, cascade_gpu_data) =
-        shadow_system.calculate_cascade_matrices(sun_dir, cam_pos);
+    // Calculate multi-light shadow matrices
+    let multi_light_gpu = shadow_system.calculate_multi_light_matrices(
+        sun_dir,
+        moon_dir,
+        cam_pos,
+    );
 
-    // Upload full CSM data to CSM buffer (for shadow rendering)
+    // Upload multi-light shadow data to csm buffer (which is now used for multi-light)
     queue.write_buffer(
         &shadow_system.csm_matrix_buffer,
         0,
-        bytemuck::bytes_of(&cascade_gpu_data),
+        bytemuck::bytes_of(&multi_light_gpu),
     );
 
-    // Extract cascade 0 matrix and write to legacy shadow buffer (for main pass sampling)
-    let cascade0_mat = cascade_matrices[0];
-    let cols = cascade0_mat.to_cols_array_2d();
+    // For backward compatibility, also write sun (light 0) matrix to legacy buffer
     let shadow_matrix_gpu = ShadowMatrixGpu {
-        sm0: cols[0],
-        sm1: cols[1],
-        sm2: cols[2],
-        sm3: cols[3],
+        sm0: multi_light_gpu.light0_m0,
+        sm1: multi_light_gpu.light0_m1,
+        sm2: multi_light_gpu.light0_m2,
+        sm3: multi_light_gpu.light0_m3,
     };
     queue.write_buffer(
         &shadow_system.shadow_matrix_buffer,
@@ -53,9 +61,9 @@ pub fn update_shadow_matrices(shadow_system: &mut ShadowSystem, queue: &Queue, c
     );
 }
 
-/// Render all meshes into shadow cascade maps.
+/// Render all meshes into shadow maps for active lights.
 ///
-/// Creates one render pass per cascade to render the scene from the light's
+/// Creates one render pass per active light to render the scene from the light's
 /// perspective into the shadow depth maps.
 ///
 /// # Arguments
@@ -73,12 +81,20 @@ pub fn render_shadow_passes(
     mesh_table: &[Option<MeshEntry>],
     offsets: &[usize],
 ) {
-    for cascade_idx in 0..NUM_SHADOW_CASCADES {
+    // Render shadow map for each active light
+    for active_light in &shadow_system.active_lights {
+        let light_idx = active_light.light_index;
+        
+        // Skip inactive lights
+        if active_light.intensity < 0.01 {
+            continue;
+        }
+        
         let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some(&format!("csm-cascade-{}-pass", cascade_idx)),
+            label: Some(&format!("shadow-light-{}-pass", light_idx)),
             color_attachments: &[],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &shadow_system.csm_cascade_views[cascade_idx as usize],
+                view: &shadow_system.csm_cascade_views[light_idx as usize],
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
@@ -92,11 +108,11 @@ pub fn render_shadow_passes(
         shadow_pass.set_pipeline(&shadow_system.shadow_pipeline);
         shadow_pass.set_bind_group(0, &shadow_system.csm_pass_bind_group, &[]);
 
-        // Set cascade index via push constant
+        // Set light index via push constant (same as cascade_idx was used before)
         shadow_pass.set_push_constants(
             wgpu::ShaderStages::VERTEX,
             0,
-            bytemuck::bytes_of(&cascade_idx),
+            bytemuck::bytes_of(&light_idx),
         );
 
         // Draw all pending meshes from light's perspective
@@ -136,7 +152,7 @@ pub fn render_shadow_passes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gpu_types::CascadedShadowMatrixGpu;
+    use crate::gpu_types::{CascadedShadowMatrixGpu, MultiLightShadowGpu};
 
     #[test]
     fn test_shadow_matrix_gpu_layout() {
@@ -151,20 +167,35 @@ mod tests {
     #[test]
     fn test_cascaded_shadow_matrix_gpu_layout() {
         // Verify CascadedShadowMatrixGpu has expected size for GPU alignment
-        // 4 cascades * 16 floats per matrix * 4 bytes per float = 256 bytes minimum
-        // Actual size may be 272 bytes due to padding for alignment
+        // 2 cascades * 16 floats per matrix * 4 bytes per float = 128 bytes
+        // Plus 1 vec4 for split distances = 16 bytes
+        // Total expected: 144 bytes
         let size = std::mem::size_of::<CascadedShadowMatrixGpu>();
-        assert!(
-            size >= 256 && size <= 272,
-            "CascadedShadowMatrixGpu should be between 256-272 bytes (4 matrices with padding), got {}",
+        assert_eq!(
+            size, 144,
+            "CascadedShadowMatrixGpu should be 144 bytes (2 matrices + split distances), got {}",
             size
         );
     }
 
     #[test]
-    fn test_num_shadow_cascades() {
-        // Verify cascade count matches expected value
-        assert_eq!(NUM_SHADOW_CASCADES, 4, "Should have 4 shadow cascades");
+    fn test_multi_light_shadow_gpu_layout() {
+        // Verify MultiLightShadowGpu has expected size for GPU alignment
+        // 4 lights * 64 bytes (4x4 matrix) = 256 bytes
+        // Plus 2 vec4s (light_intensities + metadata) = 32 bytes
+        // Total expected: 288 bytes
+        let size = std::mem::size_of::<MultiLightShadowGpu>();
+        assert_eq!(
+            size, 288,
+            "MultiLightShadowGpu should be 288 bytes (4 matrices + 2 vec4s), got {}",
+            size
+        );
+    }
+
+    #[test]
+    fn test_max_shadow_lights() {
+        // Verify max shadow lights matches expected value
+        assert_eq!(MAX_SHADOW_LIGHTS, 4, "Should have 4 shadow light slots");
     }
 
     #[test]

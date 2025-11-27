@@ -16,11 +16,32 @@ struct Lighting {
     time_of_day: vec4<f32>,    // x = 0-24 hours, yzw = unused
 }
 
-struct ShadowMatrix {
-    sm0: vec4<f32>,
-    sm1: vec4<f32>,
-    sm2: vec4<f32>,
-    sm3: vec4<f32>,
+// Multi-light shadow matrix buffer (288 bytes total for 4 lights)
+struct MultiLightShadowMatrix {
+    // Light 0 matrix (Sun)
+    light0_m0: vec4<f32>,
+    light0_m1: vec4<f32>,
+    light0_m2: vec4<f32>,
+    light0_m3: vec4<f32>,
+    // Light 1 matrix (Moon)
+    light1_m0: vec4<f32>,
+    light1_m1: vec4<f32>,
+    light1_m2: vec4<f32>,
+    light1_m3: vec4<f32>,
+    // Light 2 matrix (Dynamic 1)
+    light2_m0: vec4<f32>,
+    light2_m1: vec4<f32>,
+    light2_m2: vec4<f32>,
+    light2_m3: vec4<f32>,
+    // Light 3 matrix (Dynamic 2)
+    light3_m0: vec4<f32>,
+    light3_m1: vec4<f32>,
+    light3_m2: vec4<f32>,
+    light3_m3: vec4<f32>,
+    // Light intensities (x=Sun, y=Moon, z=Dynamic1, w=Dynamic2)
+    light_intensities: vec4<f32>,
+    // Metadata (x=active_count, yzw=unused)
+    metadata: vec4<f32>,
 }
 
 @group(0) @binding(0)
@@ -34,10 +55,10 @@ var<uniform> lighting: Lighting;
 
 // Shadow mapping resources (group 1)
 @group(1) @binding(0)
-var<uniform> shadow_matrix: ShadowMatrix;
+var<uniform> shadow_matrices: MultiLightShadowMatrix;
 
 @group(1) @binding(1)
-var shadow_map: texture_depth_2d_array; // Phase 4: Array texture for all 4 cascades
+var shadow_map: texture_depth_2d_array; // Array texture for all 4 lights
 
 @group(1) @binding(2)
 var shadow_sampler: sampler_comparison;
