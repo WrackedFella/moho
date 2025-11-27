@@ -9,7 +9,9 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 mod preparation;
-pub use preparation::{PreparedScene, ScenePreparation};
+#[allow(unused_imports)] // Public API, used externally
+pub use preparation::PreparedScene;
+pub use preparation::ScenePreparation;
 
 /// Type alias for camera data: (position, yaw, pitch)
 pub type CameraData = (glam::Vec3, f32, f32);

@@ -71,7 +71,7 @@ impl TerrainSmoother {
 /// # World Space Vertices
 /// Chunk vertices are already transformed to world space, so the chunk
 /// uses an identity transform when rendering.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct VoxelChunk {
     pub chunk_pos: IVec3,         // Chunk coordinates
     pub vertices: Vec<[f32; 3]>,  // Merged mesh vertices (world space)

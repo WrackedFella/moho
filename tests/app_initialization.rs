@@ -13,7 +13,6 @@
 //! not necessarily what it should do. During refactoring, these tests act as a
 //! safety net to detect unintended behavioral changes.
 
-use moho_types::{AppState, GameState};
 use std::sync::Arc;
 
 /// Test 1: App can be created with default configuration
@@ -31,7 +30,8 @@ fn app_new_creates_instance_successfully() {
 
     // For now, we just verify the module structure is accessible
     // Once we refactor to support dependency injection, we can test App::new() directly
-    assert!(true, "App module structure is accessible");
+
+    // TODO: Add actual App creation test when dependency injection is implemented
 }
 
 /// Test 2: Document current initialization order
@@ -129,7 +129,7 @@ fn ui_initialization_documented() {
     // - Generation channels created
     // - Unconsumed input channels created
 
-    assert!(true, "UI features are always available");
+    // TODO: Add actual UI feature verification when testable
 }
 
 /// Test 5: Event bus subscribers are set up correctly

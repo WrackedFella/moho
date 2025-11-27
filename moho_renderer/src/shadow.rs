@@ -483,11 +483,7 @@ impl ShadowSystem {
     }
 
     /// Calculate light matrix for a directional light at given direction
-    fn calculate_light_matrix(
-        &self,
-        light_dir: glam::Vec3,
-        cam_pos: glam::Vec3,
-    ) -> glam::Mat4 {
+    fn calculate_light_matrix(&self, light_dir: glam::Vec3, cam_pos: glam::Vec3) -> glam::Mat4 {
         let light_dir = light_dir.normalize();
         let cascade_center = cam_pos;
         let light_distance = SHADOW_DISTANCE * 2.0;

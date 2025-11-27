@@ -214,10 +214,8 @@ mod tests {
     #[test]
     fn test_initializer_with_default_config() {
         let config = AppConfig::default();
-        let initializer = AppInitializer::new(config);
-
+        let _initializer = AppInitializer::new(config);
         // Should be able to create initializer without panicking
-        assert!(true);
     }
 
     #[test]
@@ -227,8 +225,8 @@ mod tests {
             .input_filtering(false)
             .build();
 
-        let initializer = AppInitializer::new(config);
-        assert!(true);
+        let _initializer = AppInitializer::new(config);
+        // Should be able to create initializer without panicking
     }
 
     #[test]
@@ -319,8 +317,10 @@ mod tests {
 
     #[test]
     fn test_build_includes_prefs() {
-        let mut prefs = Prefs::default();
-        prefs.mouse_sensitivity = 2.5;
+        let prefs = Prefs {
+            mouse_sensitivity: 2.5,
+            ..Default::default()
+        };
 
         let config = AppConfig::from_prefs_struct(prefs.clone());
         let result = AppInitializer::new(config).build();

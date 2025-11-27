@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn test_frame_processor_default() {
-        let _processor = FrameProcessor::default();
+        let _processor = FrameProcessor;
         // Just verify it compiles and constructs
     }
 

@@ -33,8 +33,8 @@
 //! # }
 //! ```
 
-mod shaders;
 mod layouts;
+mod shaders;
 
 use crate::types::{GpuInstance, Vertex};
 

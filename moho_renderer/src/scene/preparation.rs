@@ -20,11 +20,13 @@ pub struct PreparedScene {
     /// Transparent instances with their mesh handles (requires depth sorting)
     pub transparent_entries: Vec<(u32, InstanceGpu)>,
     /// Whether materials were uploaded to GPU this frame
+    #[allow(dead_code)] // Will be used for conditional material updates
     pub materials_uploaded: bool,
 }
 
 impl PreparedScene {
     /// Create an empty prepared scene (useful for testing or when no geometry exists).
+    #[allow(dead_code)] // Used in tests
     pub fn empty() -> Self {
         Self {
             cube_opaque: Vec::new(),
@@ -35,6 +37,7 @@ impl PreparedScene {
     }
 
     /// Check if this prepared scene has any geometry to render.
+    #[allow(dead_code)] // Used in tests
     pub fn is_empty(&self) -> bool {
         self.cube_opaque.is_empty()
             && self.sphere_opaque.is_empty()
@@ -98,13 +101,12 @@ impl ScenePreparation {
         );
 
         // Step 4: Separate instances by transparency
-        let (cube_opaque, sphere_opaque, transparent_entries) =
-            Self::separate_by_transparency(
-                material_table,
-                instance_collector,
-                mesh_handle,
-                cube_mesh_handle,
-            );
+        let (cube_opaque, sphere_opaque, transparent_entries) = Self::separate_by_transparency(
+            material_table,
+            instance_collector,
+            mesh_handle,
+            cube_mesh_handle,
+        );
 
         PreparedScene {
             cube_opaque,

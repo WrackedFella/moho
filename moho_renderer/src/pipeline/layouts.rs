@@ -8,8 +8,8 @@
 //! - Main pipeline layout (camera + shadow bind groups)
 //! - Skybox pipeline layout (camera bind group only)
 
-use crate::gpu_types::{CascadedShadowMatrixGpu, MultiLightShadowGpu, ShadowMatrixGpu};
 use super::PipelineInitError;
+use crate::gpu_types::{MultiLightShadowGpu, ShadowMatrixGpu};
 
 /// Create the camera bind group layout.
 ///
@@ -37,11 +37,7 @@ pub fn create_camera_bind_group_layout(
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size: Some(std::num::NonZeroU64::new(camera_size).ok_or_else(
-                        || {
-                            PipelineInitError::CameraBufferSize(
-                                "camera size was zero".to_string(),
-                            )
-                        },
+                        || PipelineInitError::CameraBufferSize("camera size was zero".to_string()),
                     )?),
                 },
                 count: None,
@@ -62,13 +58,13 @@ pub fn create_camera_bind_group_layout(
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: Some(
-                        std::num::NonZeroU64::new(lighting_size).ok_or_else(|| {
+                    min_binding_size: Some(std::num::NonZeroU64::new(lighting_size).ok_or_else(
+                        || {
                             PipelineInitError::LightingBufferSize(
                                 "lighting size was zero".to_string(),
                             )
-                        })?,
-                    ),
+                        },
+                    )?),
                 },
                 count: None,
             },
@@ -162,13 +158,13 @@ pub fn create_shadow_pass_bind_group_layout(
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
-                min_binding_size: Some(
-                    std::num::NonZeroU64::new(shadow_matrix_size).ok_or_else(|| {
+                min_binding_size: Some(std::num::NonZeroU64::new(shadow_matrix_size).ok_or_else(
+                    || {
                         PipelineInitError::ShadowMatrixSize(
                             "shadow matrix size was zero".to_string(),
                         )
-                    })?,
-                ),
+                    },
+                )?),
             },
             count: None,
         }],
@@ -248,6 +244,7 @@ pub fn create_skybox_pipeline_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gpu_types::CascadedShadowMatrixGpu;
 
     #[test]
     fn test_camera_buffer_size_nonzero() {

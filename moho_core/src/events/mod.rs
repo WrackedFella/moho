@@ -70,6 +70,7 @@ pub use types::{
     AudioEvent,
     // World events
     BiomeType,
+    BlockChangeReason,
     // Debug events
     ConsoleLevel,
     DebugEvent,

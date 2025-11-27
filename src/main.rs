@@ -656,7 +656,7 @@ impl App {
 
     fn hide_menu(&mut self) {
         use moho_types::StateTransitionCoordinator;
-        
+
         match StateTransitionCoordinator::hide_menu(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
             Err(e) => log::warn!("Cannot hide menu: {}", e),
@@ -665,7 +665,7 @@ impl App {
 
     fn show_menu(&mut self) {
         use moho_types::StateTransitionCoordinator;
-        
+
         match StateTransitionCoordinator::show_menu(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
             Err(e) => log::warn!("Cannot show menu: {}", e),
@@ -675,7 +675,7 @@ impl App {
     /// Enter console mode (opens debug console over game)
     fn enter_console(&mut self) {
         use moho_types::StateTransitionCoordinator;
-        
+
         match StateTransitionCoordinator::enter_console(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
             Err(e) => log::warn!("{}", e),
@@ -685,7 +685,7 @@ impl App {
     /// Exit console mode (return to playing)
     fn exit_console(&mut self) {
         use moho_types::StateTransitionCoordinator;
-        
+
         match StateTransitionCoordinator::exit_console(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
             Err(e) => log::warn!("{}", e),
@@ -696,13 +696,13 @@ impl App {
     #[allow(dead_code)]
     fn toggle_pause(&mut self) {
         use moho_types::StateTransitionCoordinator;
-        
+
         match StateTransitionCoordinator::toggle_pause(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
             Err(e) => log::debug!("{}", e),
         }
     }
-    
+
     /// Apply a state transition with all its side effects.
     ///
     /// This method centralizes all the boilerplate for state transitions:
@@ -712,18 +712,22 @@ impl App {
     /// - Handle cursor grab/release
     /// - Show specific menu if requested
     fn apply_transition(&mut self, actions: moho_types::StateTransitionActions) {
-        log::info!("State transition: {:?} -> {:?}", self.game_state, actions.new_state);
-        
+        log::info!(
+            "State transition: {:?} -> {:?}",
+            self.game_state,
+            actions.new_state
+        );
+
         // Update core state
         self.game_state = actions.new_state;
         self.input_router.update_for_state(actions.new_state);
-        
+
         // Update UI visibility and state
         if let Some(ui_adapter) = &self.ui_adapter
             && let Ok(mut adapter) = ui_adapter.lock()
         {
             adapter.set_visible(actions.ui_visible);
-            
+
             // Convert moho_types::GameState to moho_ui::GameState
             let ui_state = match actions.new_state {
                 moho_types::GameState::Menu => moho_ui::GameState::Menu,
@@ -732,23 +736,23 @@ impl App {
                 moho_types::GameState::Paused => moho_ui::GameState::Paused,
             };
             adapter.set_game_state(ui_state);
-            
+
             // Update atomic flag for UI visibility
             use moho_ui::UI_OVERLAY_VISIBLE;
             UI_OVERLAY_VISIBLE.store(actions.ui_visible, std::sync::atomic::Ordering::SeqCst);
-            
+
             // Show specific menu if requested
             if let Some(menu_name) = actions.show_menu {
                 adapter.show_menu(menu_name);
             }
-            
+
             log::debug!(
                 "UI updated: visible={}, state={:?}",
                 actions.ui_visible,
                 ui_state
             );
         }
-        
+
         // Handle cursor state
         if actions.cursor_grabbed {
             self.grab_cursor();

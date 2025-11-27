@@ -2,10 +2,10 @@
 
 ## Overview
 
-This document outlines a phased implementation strategy for upgrading the lighting and shadow system in the Moho voxel engine.  The plan supports **hybrid geometry** (smoothed terrain + blocky structures) with modern lighting techniques and **runtime terrain modification**.
+This document outlines a phased implementation strategy for upgrading the lighting and shadow system in the Moho voxel engine. The plan supports **hybrid geometry** (smoothed terrain + blocky structures) with modern lighting techniques and **runtime terrain modification**. 
 
 ### Target Features
-- Hard/soft shadow toggle
+- Physically-based soft shadows (distance-dependent softness via PCSS)
 - Multiple light sources
 - Light propagation (torch lighting, emissives)
 - Volumetric lighting (god rays)
@@ -24,50 +24,65 @@ The engine already has:
 
 1. **Unified rendering pipeline** with material-driven distinction between smooth terrain and blocky structures.  Both geometry types share the same shaders, shadows, and lighting—only mesh generation and ambient occlusion sourcing differ.
 
-2.  **Async mesh generation** for smooth terrain to maintain frame rate during modifications.
+2.  **Async mesh generation** for smooth terrain to maintain frame rate during modifications. 
 
 3. **Incremental light propagation** to avoid full recomputation on every block change.
+
+4. **Percentage Closer Soft Shadows (PCSS)** for physically-accurate shadow softness based on occluder-to-receiver distance. 
 
 ---
 
 ## Phase 0: Terrain Modification Infrastructure
 
+**Status: ✅ COMPLETE**
+
 **Goal:** Establish the systems needed for runtime terrain changes before implementing lighting features.
 
 ### Tasks
 
-1. **Block modification API**
+1. **Block modification API** ✅
    - Implement `set_block(pos, block)` with automatic chunk dirtying
    - Implement `remove_block(pos)` with cleanup
    - Support batch modifications for bulk edits (explosions, world gen)
 
-2. **Chunk state management**
+2. **Chunk state management** ✅
    - Add dirty flags: `terrain_mesh_dirty`, `structure_mesh_dirty`, `light_dirty`
    - Define generation states: `Idle`, `Queued`, `Generating`, `Ready`
    - Implement pending mesh buffer for double-buffering
 
-3. **Background worker system**
+3. **Background worker system** ✅
    - Create thread pool for mesh generation jobs
    - Implement job queue with priority (distance to player)
    - Support job cancellation when player moves away
 
-4. **Neighbor chunk invalidation**
+4. **Neighbor chunk invalidation** ✅
    - Detect when block changes affect chunk boundaries
    - Automatically dirty adjacent chunks for edge blocks
    - Propagate invalidation for both mesh and lighting
 
-5. **Mesh double-buffering**
+5. **Mesh double-buffering** ✅
    - Render old mesh while new one generates in background
    - Atomic swap when new mesh is ready
    - GPU buffer reuse/pooling to reduce allocations
 
-### Deliverables
+### Deliverables ✅
 - `ChunkState` struct with dirty flags and generation state
-- `BlockModificationApi` with automatic propagation
-- `MeshJobQueue` with priority and cancellation
-- Double-buffered mesh swap system
+- `BlockModifier` API with automatic neighbor propagation
+- `MeshJobQueue` with priority and cancellation tokens
+- Double-buffered mesh swap system in `BufferManager`
+
+### Implementation Summary
+
+| Component | File | Description |
+|-----------|------|-------------|
+| `ChunkState` | `moho_core/src/voxel/state.rs` | State machine with `DirtyFlags` and `GenerationState` |
+| `BlockModifier` | `moho_core/src/voxel/modification.rs` | High-level API wrapping `VoxelGrid` with auto-dirtying |
+| `MeshJobQueue` | `moho_core/src/voxel/jobs.rs` | Priority queue with `CancellationToken` support |
+| World events | `moho_core/src/events/types/world.rs` | `BlockPlaced`, `BlockRemoved`, `ChunkMeshDirty`, etc. |
+| Double-buffering | `moho_renderer/src/buffer_manager.rs` | `upload_pending_mesh()`, `swap_chunk_mesh()`, buffer pooling |
 
 ### Performance Targets
+
 | Operation | Target |
 |-----------|--------|
 | Single blocky block edit | < 5ms (can be synchronous) |
@@ -132,7 +147,7 @@ The engine already has:
 ### Tasks
 
 1. **Extend vertex attributes**
-   - Add `ao: f32` (0.0–1.0, per-vertex AO for blocky; 1.0 for smooth)
+   - Add `ao: f32` (0. 0–1.0, per-vertex AO for blocky; 1.0 for smooth)
    - Add `geometry_type: u32` (0 = smooth, 1 = blocky)
 
 2. **Update vertex shader**
@@ -193,50 +208,121 @@ SSAO is particularly valuable with modifiable terrain because it requires no rec
 
 ---
 
-## Phase 4: Shadow Quality Improvements
+## Phase 4: Percentage Closer Soft Shadows (PCSS)
 
-**Goal:** Improve shadow quality for smooth surfaces and add hard/soft toggle. 
+**Goal:** Implement physically-based soft shadows where shadow softness varies automatically with distance from occluder to receiver.  Objects close to shadow casters produce hard shadows; distant shadows become naturally soft.
 
-Shadow maps automatically update each frame, so terrain modifications require no special handling. 
+### Physical Basis
+
+Real lights have physical size (area lights).  The penumbra (soft shadow region) grows with distance:
+
+```
+penumbra_width = light_size × (d_receiver - d_blocker) / d_blocker
+```
+
+Where:
+- `light_size` = angular size of light source (artistic parameter)
+- `d_receiver` = depth of surface being shaded
+- `d_blocker` = depth of shadow-casting geometry
 
 ### Tasks
 
-1. **Add normal offset bias**
+1. **Implement PCSS blocker search**
+   - Sample shadow map in Poisson disk pattern around fragment
+   - Configurable search radius based on light size
+   - Compute average blocker depth from samples that contain occluders
+   - Early-out when no blockers found (full light, skip PCF)
+
+2.  **Implement penumbra estimation**
+   - Add `light_size` uniform representing angular diameter of sun
+   - Calculate penumbra width from depth difference ratio
+   - Clamp to minimum (avoids aliasing) and maximum (performance limit)
+
+3. **Implement variable-radius PCF**
+   - Poisson disk sampling with radius scaled by penumbra estimate
+   - Sample count scales with penumbra size:
+     - Small penumbra → fewer samples (shadow is sharp anyway)
+     - Large penumbra → more samples (need smooth gradient)
+   - Rotate disk per-pixel using screen-space noise to reduce banding
+
+4. **Add normal offset bias**
    - Offset shadow sample position along surface normal
    - Reduces peter-panning and acne on curved surfaces
-   - Complement existing slope-scale bias
+   - Complements existing slope-scale bias
 
-2. **Upgrade PCF kernel**
-   - Implement 5x5 or 7x7 PCF option
-   - Alternative: Poisson disk sampling (16–25 samples)
-   - Rotated kernel per-pixel to reduce banding
-
-3. **Implement cascade blending**
+5.  **Implement cascade blending**
    - Detect fragments near cascade boundaries
-   - Sample both cascades, blend based on distance to boundary
+   - Sample both cascades with PCSS independently
+   - Blend results based on distance to boundary
    - Eliminates visible seams on smooth terrain
 
-4. **Add hard/soft shadow toggle**
-   - Hard: Single shadow map sample, no filtering
-   - Soft: Full PCF with selected kernel size
-   - Expose as uniform for runtime switching
+6. **Per-cascade quality scaling**
+   - Cascade 0 (near): Full PCSS quality, highest sample counts
+   - Cascade 1-2 (mid): Reduced blocker search samples
+   - Cascade 3 (far): Simplified PCF acceptable (shadows less noticeable at distance)
 
-5. **Shadow quality presets**
-   - Low: Hard shadows, 2048 shadow map
-   - Medium: PCF 3x3, 4096 shadow map
-   - High: PCF 5x5 + cascade blending, 4096 shadow map
+7. **Quality presets**
+   - Low: Fixed PCF 3x3 (no PCSS, for low-end hardware)
+   - Medium: PCSS with 8 blocker + 16 PCF samples
+   - High: PCSS with 16 blocker + 32 PCF samples
+   - `light_size` exposed as artistic tuning parameter
+
+### Algorithm Overview
+
+```
+PCSS Shadow Calculation
+         │
+         ▼
+┌─────────────────────────┐
+│ 1. Blocker Search       │ Sample shadow map in disk pattern
+│    Find avg depth of    │ around current fragment
+│    occluding geometry   │
+└───────────┬─────────────┘
+            │
+            ▼ No blockers?  → Return 1.0 (full light)
+            │
+            ▼
+┌─────────────────────────┐
+│ 2.  Penumbra Estimation  │ penumbra = light_size ×
+│    Calculate filter     │   (receiver_depth - blocker_depth)
+│    radius from depths   │   / blocker_depth
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│ 3. Variable PCF         │ Sample shadow map with kernel
+│    Filter with scaled   │ radius = penumbra estimate
+│    kernel size          │
+└─────────────────────────┘
+```
+
+### Visual Behavior
+
+| Scenario | Shadow Appearance |
+|----------|-------------------|
+| Tree shadow on its own trunk | Hard (leaves close to trunk) |
+| Tree shadow 10m from tree | Soft (leaves far from ground) |
+| Character shadow at feet | Hard (body close to ground) |
+| Character shadow of raised arm | Softer (arm farther from ground) |
+| Building shadow at base | Hard |
+| Building shadow across street | Very soft |
+| Overhead sun, flat ground | Uniformly hard (parallel rays) |
+| Low sun, long shadows | Soft at tips, hard near base |
 
 ### Deliverables
-- Normal offset bias in shadow calculation
-- Configurable PCF kernel size
-- Cascade blending logic in fragment shader
-- Shadow quality uniform and preset system
+- PCSS blocker search function
+- Penumbra estimation with `light_size` uniform
+- Variable-radius PCF with Poisson disk sampling
+- Normal offset bias implementation
+- Cascade blending with per-cascade PCSS
+- Quality preset system
+- Per-cascade quality scaling
 
 ---
 
 ## Phase 5: Multiple Light Sources
 
-**Goal:** Support N dynamic point/spot lights beyond sun and moon.
+**Goal:** Support N dynamic point/spot lights beyond sun and moon. 
 
 ### Tasks
 
@@ -245,6 +331,7 @@ Shadow maps automatically update each frame, so terrain modifications require no
    - Light type (point, spot, directional)
    - Spot lights: direction, inner/outer cone angles
    - Attenuation parameters
+   - Light size (for PCSS-style soft shadows on point/spot lights)
 
 2. **Create light storage buffer**
    - SSBO with array of light structs
@@ -261,8 +348,8 @@ Shadow maps automatically update each frame, so terrain modifications require no
    - Optional: tile-based or clustered light culling for many lights
 
 5. **Shadow support for additional lights (optional/future)**
-   - Point lights: cubemap shadows (expensive)
-   - Spot lights: single shadow map per light
+   - Point lights: cubemap shadows with PCSS adaptation
+   - Spot lights: single shadow map per light with PCSS
    - Consider limiting shadowed lights (e.g., 4 max)
 
 ### Deliverables
@@ -295,8 +382,8 @@ Shadow maps automatically update each frame, so terrain modifications require no
 
 4. **Implement light removal algorithm**
    - When light source removed or block placed in light path:
-     - Phase 1: BFS to find all blocks lit by removed source (collect in removal set)
-     - Phase 2: Clear light values in removal set
+     - Phase 1: BFS to find all blocks lit by removed source
+     - Phase 2: Clear light values in affected region
      - Phase 3: BFS re-flood from all adjacent light sources
    - More complex than addition but necessary for correctness
 
@@ -357,6 +444,7 @@ Volumetrics sample the shadow map each frame, so terrain modifications are autom
    - Transform each march position to light space
    - Sample CSM (cascade 0 or select by depth)
    - Accumulate unshadowed samples
+   - Note: Use simple shadow test here, not full PCSS (performance)
 
 3. **Apply as screen-space effect**
    - Output to volumetric texture (half or quarter resolution)
@@ -394,9 +482,9 @@ Volumetrics sample the shadow map each frame, so terrain modifications are autom
 2. **Weather affects lighting**
    - Modulate `sun_intensity` (reduce in clouds/rain)
    - Modulate `ambient` color and intensity
-   - Adjust shadow softness (softer in overcast)
+   - Increase `light_size` in overcast (larger apparent light source = softer shadows)
 
-3.  **Distance fog**
+3. **Distance fog**
    - Exponential or exponential-squared fog
    - Fog density tied to weather state
    - Fog color from sky/ambient
@@ -404,7 +492,7 @@ Volumetrics sample the shadow map each frame, so terrain modifications are autom
 4. **Sky rendering updates**
    - Cloud coverage affects sky gradient
    - Storm darkening
-   - Already have time-of-day in `skybox. wgsl`—extend with weather
+   - Extend existing time-of-day with weather
 
 5. **Rain/snow particle effects (optional)**
    - Particle system for precipitation
@@ -412,7 +500,7 @@ Volumetrics sample the shadow map each frame, so terrain modifications are autom
 
 ### Deliverables
 - Weather state enum and transition system
-- Weather-to-lighting parameter mapping
+- Weather-to-lighting parameter mapping (including `light_size`)
 - Fog uniforms and shader integration
 - Extended skybox shader
 
@@ -425,43 +513,50 @@ Volumetrics sample the shadow map each frame, so terrain modifications are autom
 ### Tasks
 
 1. **Profile and optimize**
-   - GPU timing for each pass
+   - GPU timing for each pass (especially PCSS blocker search)
    - CPU timing for mesh generation and light propagation
    - Identify bottlenecks per operation type
 
-2. **Modification performance budget**
+2. **PCSS optimization**
+   - Early-out paths when no blockers found
+   - Adaptive sample counts based on penumbra size
+   - Consider temporal stability (cache blocker search results)
+
+3. **Modification performance budget**
    - Target: No frame drop for single block edit
    - Target: < 100ms total for chunk rebuild (async)
    - Target: Smooth light updates without popping
 
-3. **Memory management**
+4. **Memory management**
    - GPU buffer pooling for mesh double-buffering
    - Old mesh cleanup after swap
    - Light grid memory optimization
 
-4. **LOD considerations**
-   - Reduce shadow quality for distant chunks
+5. **LOD considerations**
+   - Reduce PCSS quality for distant cascades
    - Reduce AO sample count at distance
    - Consider Transvoxel for smooth terrain LOD
 
-5. **Quality presets**
-   - Low: No SSAO, hard shadows, no volumetrics, sync blocky mesh
-   - Medium: SSAO low, PCF 3x3, volumetrics half-res
-   - High: GTAO full, PCF 5x5 + cascade blend, volumetrics full
+6. **Quality presets**
+   - Low: No SSAO, fixed PCF (no PCSS), no volumetrics
+   - Medium: SSAO low, PCSS medium, volumetrics half-res
+   - High: GTAO full, PCSS high, volumetrics full
 
-6. **Settings UI integration**
-   - Expose all quality options in settings menu
+7. **Settings UI integration**
+   - Expose quality options in settings menu
+   - `light_size` as advanced/artistic option
    - Runtime switching without restart
 
-7. **Debug visualization modes**
+8. **Debug visualization modes**
    - Cascade visualization (already exists)
    - AO buffer view
    - Light level heat map
+   - Penumbra size visualization (color-code by softness)
    - Chunk state visualization (dirty/generating/ready)
-   - Mesh generation queue depth
 
 ### Deliverables
 - Performance profiling data and benchmarks
+- PCSS optimization passes
 - Memory pooling system
 - Quality preset system
 - Settings UI integration
@@ -482,12 +577,12 @@ Volumetrics sample the shadow map each frame, so terrain modifications are autom
 | Light grid sampling | Trilinear interpolation | Direct lookup |
 | Modification rebuild | Always async | Sync for single block, async for chunk |
 
-### Shadow Pipeline Summary
+### Shadow Pipeline Summary (with PCSS)
 
 ```
-Sun Direction
-     │
-     ▼
+Sun Direction + Light Size
+         │
+         ▼
 ┌─────────────────┐
 │ Calculate CSM   │ ◄── 4 cascade matrices based on camera position
 │ Matrices        │
@@ -501,21 +596,46 @@ Sun Direction
          │
          ▼
 ┌─────────────────┐
-│ Main Pass       │ ◄── Sample CSM with PCF, apply shadow factor
 │ Fragment Shader │
+│                 │
+│ ┌─────────────┐ │
+│ │ 1.  Blocker  │ │ ◄── Search for occluder depths
+│ │    Search   │ │
+│ └──────┬──────┘ │
+│        ▼        │
+│ ┌─────────────┐ │
+│ │ 2. Penumbra │ │ ◄── Estimate shadow softness from distance
+│ │    Estimate │ │
+│ └──────┬──────┘ │
+│        ▼        │
+│ ┌─────────────┐ │
+│ │ 3. Variable │ │ ◄── PCF with dynamic kernel size
+│ │    PCF      │ │
+│ └─────────────┘ │
 └─────────────────┘
 ```
+
+### PCSS Parameters
+
+| Parameter | Description | Typical Range |
+|-----------|-------------|---------------|
+| `light_size` | Angular diameter of sun | 0.01 – 0.1 |
+| `search_radius` | Blocker search area | 5 – 20 texels |
+| `min_penumbra` | Minimum filter radius | 1 texel |
+| `max_penumbra` | Maximum filter radius | 20 – 40 texels |
+| `blocker_samples` | Samples for blocker search | 8 – 16 |
+| `pcf_samples` | Samples for filtering | 16 – 64 |
 
 ### Lighting Accumulation Order
 
 1.  Ambient × AO (SSAO blended with per-vertex)
-2. Sun diffuse × shadow
-3. Sun specular × shadow
-4. Moon diffuse (no shadow)
-5. Moon specular (no shadow)
-6. Point/spot light loop (with optional shadows)
+2. Sun diffuse × PCSS shadow
+3. Sun specular × PCSS shadow
+4. Moon diffuse (no shadow or simplified)
+5. Moon specular (no shadow or simplified)
+6. Point/spot light loop (with optional per-light soft shadows)
 7. Emissive/light propagation contribution
-8.  Volumetric additive blend
+8. Volumetric additive blend
 9.  Fog application
 
 ### Modification Event Flow
@@ -535,7 +655,7 @@ Block Changed
      │         ├──► Light added?  Incremental flood
      │         └──► Light removed/blocked? Two-phase removal + re-flood
      │
-     └──► Notify gameplay systems (optional)
+     └──► Shadow maps update automatically next frame
 ```
 
 ### Chunk State Machine
@@ -547,7 +667,7 @@ Block Changed
           │ Block modified                    │
           ▼                                   │
      ┌─────────┐                              │
-     │ Dirty   │                              │
+     │  Dirty  │                              │
      └────┬────┘                              │
           │ Job scheduled                     │
           ▼                                   │
@@ -595,12 +715,17 @@ Phase 3: Re-flood from neighbors
 
 | Component | Path |
 |-----------|------|
-| Fragment shader | `shaders/fragment. wgsl` |
+| Fragment shader | `shaders/fragment.wgsl` |
 | Skybox shader | `shaders/skybox.wgsl` |
 | Voxel chunk | `moho_core/src/voxel/chunk.rs` |
-| Mesh generation | `moho_core/src/voxel/mesh. rs` |
+| Chunk state | `moho_core/src/voxel/state.rs` |
+| Block modifier | `moho_core/src/voxel/modification.rs` |
+| Mesh job queue | `moho_core/src/voxel/jobs.rs` |
+| Mesh generation | `moho_core/src/voxel/mesh.rs` |
+| World events | `moho_core/src/events/types/world.rs` |
+| Buffer manager | `moho_renderer/src/buffer_manager.rs` |
 | Renderer | `moho_renderer/src/lib.rs` |
-| Shadow system | `moho_renderer/src/shadow. rs` |
+| Shadow system | `moho_renderer/src/shadow.rs` |
 | GPU types | `moho_renderer/src/gpu_types.rs` |
 
 ---
@@ -611,13 +736,23 @@ Phase 3: Re-flood from neighbors
 
 | System | Budget | Notes |
 |--------|--------|-------|
-| Shadow passes (4 cascades) | 2-3ms | Already implemented |
-| Main render pass | 4-6ms | Geometry dependent |
-| SSAO + blur | 1-2ms | Quarter-res helps |
-| Volumetrics | 1-2ms | Half-res, 32 steps |
+| Shadow passes (4 cascades) | 2–3ms | Already implemented |
+| Main render pass | 4–6ms | Geometry dependent |
+| PCSS overhead vs fixed PCF | +1–2ms | Blocker search cost |
+| SSAO + blur | 1–2ms | Quarter-res helps |
+| Volumetrics | 1–2ms | Half-res, 32 steps |
 | Light grid upload | < 0.5ms | Dirty regions only |
 | Mesh swaps | < 0.5ms | Pre-uploaded buffers |
-| **Total rendering** | ~10-14ms | Leaves headroom |
+| **Total rendering** | ~11–16ms | Tight but achievable |
+
+### PCSS Sample Budget by Quality
+
+| Quality | Blocker Samples | PCF Samples | Cascades with Full PCSS |
+|---------|-----------------|-------------|-------------------------|
+| Low | 0 (fixed PCF) | 9 | None |
+| Medium | 8 | 16 | 0–1 |
+| High | 16 | 32 | 0–2 |
+| Ultra | 24 | 48 | 0–3 |
 
 ### Per-Modification Budget
 
@@ -632,7 +767,41 @@ Phase 3: Re-flood from neighbors
 
 ---
 
-## Appendix C: Future Considerations
+## Appendix C: PCSS Tuning Guide
+
+### Light Size Effects
+
+| `light_size` Value | Visual Effect | Use Case |
+|--------------------|---------------|----------|
+| 0.01 | Nearly hard shadows | Harsh midday sun |
+| 0.03 | Subtle softening at distance | Clear day default |
+| 0.05 | Noticeable soft shadows | Slightly hazy |
+| 0. 08 | Very soft distant shadows | Overcast starting |
+| 0.10+ | Extremely soft | Heavy overcast |
+
+### Weather Integration
+
+| Weather State | Suggested `light_size` | Sun Intensity |
+|---------------|------------------------|---------------|
+| Clear | 0.02–0.03 | 1.0 |
+| Partly Cloudy | 0.04–0.05 | 0. 8 |
+| Overcast | 0.08–0.10 | 0.4 |
+| Rain | 0.10–0.15 | 0.3 |
+| Storm | 0.15+ | 0.2 |
+
+### Common Issues and Solutions
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Banding in soft shadows | Too few PCF samples | Increase samples or add noise rotation |
+| Performance drop in shadowed areas | Full PCSS on every fragment | Early-out when no blockers, reduce far cascade quality |
+| Shadows too soft everywhere | `light_size` too high | Reduce value, check penumbra clamp |
+| Shadows too hard | `light_size` too low or `max_penumbra` clamped | Increase values |
+| Flickering shadow edges | Temporal instability | Add temporal filtering or jittered sampling |
+
+---
+
+## Appendix D: Future Considerations
 
 ### Not in Current Scope (But Worth Noting)
 
@@ -653,12 +822,17 @@ Phase 3: Re-flood from neighbors
 
 4. **Multiplayer Synchronization**
    - Block change replication
-   - Light state sync vs. recompute
+   - Light state sync vs.  recompute
    - Prediction for responsive feel
 
 5. **Persistent Light Storage**
    - Save/load light grid with world
    - Faster world load (skip full propagation)
+
+6. **Area Light Shadows**
+   - True area light shadow calculation
+   - More accurate than PCSS approximation
+   - Significantly more expensive
 
 ---
 
@@ -668,3 +842,5 @@ Phase 3: Re-flood from neighbors
 |---------|------|---------|
 | 1.0 | 2025-11-27 | Initial plan with hybrid geometry support |
 | 2.0 | 2025-11-27 | Added Phase 0 for modification infrastructure, incremental light propagation, async mesh generation, performance budgets |
+| 3.0 | 2025-11-27 | Replaced hard/soft shadow toggle with PCSS for distance-based shadow softness, added PCSS tuning guide, weather integration with light_size |
+| 3.1 | 2025-11-27 | Phase 0 complete: ChunkState, BlockModifier, MeshJobQueue, double-buffering, world events implemented and tested |

@@ -87,9 +87,6 @@ mod tests {
         // - common.wgsl: Shared types and uniforms
         // - vertex.wgsl: Vertex shader entry point
         // - fragment.wgsl: Fragment shader entry point
-        assert!(
-            true,
-            "Main shader is composed of 3 WGSL files concatenated"
-        );
+        assert!(true, "Main shader is composed of 3 WGSL files concatenated");
     }
 }

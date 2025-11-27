@@ -1,5 +1,4 @@
 use crate::types::{GpuInstance, MeshEntry};
-use wgpu::util::DeviceExt;
 
 /// Mesh rendering coordinator - handles instance preparation, buffer management,
 /// and draw call batching for mesh rendering operations.
@@ -23,9 +22,7 @@ impl MeshRenderer {
     ///
     /// # Returns
     /// Vector of GPU-ready instance data
-    pub fn prepare_instances(
-        instances: &[moho_core::actors::InstanceGpu],
-    ) -> Vec<GpuInstance> {
+    pub fn prepare_instances(instances: &[moho_core::actors::InstanceGpu]) -> Vec<GpuInstance> {
         instances
             .iter()
             .map(|ic| GpuInstance {
@@ -73,8 +70,7 @@ impl MeshRenderer {
                 new_cap = new_cap.saturating_mul(2);
             }
 
-            let size_bytes =
-                (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
+            let size_bytes = (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
             let new_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("instance-buffer"),
                 size: size_bytes,
@@ -250,9 +246,9 @@ mod tests {
         };
 
         let pending_draws = vec![
-            (1u32, vec![gpu_inst, gpu_inst, gpu_inst]),     // 3 instances, offset 0
-            (2u32, vec![gpu_inst, gpu_inst]),               // 2 instances, offset 3
-            (3u32, vec![gpu_inst]),                         // 1 instance, offset 5
+            (1u32, vec![gpu_inst, gpu_inst, gpu_inst]), // 3 instances, offset 0
+            (2u32, vec![gpu_inst, gpu_inst]),           // 2 instances, offset 3
+            (3u32, vec![gpu_inst]),                     // 1 instance, offset 5
         ];
 
         let (instances, offsets) = MeshRenderer::flatten_instances(&pending_draws);

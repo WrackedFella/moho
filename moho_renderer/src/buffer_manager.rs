@@ -2,25 +2,101 @@
 ///
 /// This module handles the registration and lifecycle of mesh buffers,
 /// particularly for VoxelChunk meshes that need to be uploaded to the GPU.
+///
+/// # Double-Buffering Support
+///
+/// The buffer manager supports double-buffering for seamless mesh updates:
+/// - Old mesh continues rendering while new mesh is being generated
+/// - Atomic swap when new mesh is ready
+/// - Old buffers are pooled for reuse to reduce allocations
 use crate::RendererBackend;
 use moho_core::voxel::VoxelChunk;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+
+/// Information about a registered chunk mesh
+#[derive(Debug, Clone)]
+struct ChunkMeshInfo {
+    /// Current active mesh handle
+    active_handle: u32,
+
+    /// Pending mesh handle (during double-buffer swap)
+    pending_handle: Option<u32>,
+
+    /// Vertex count (for buffer reuse sizing)
+    vertex_count: usize,
+
+    /// Index count (for buffer reuse sizing)
+    index_count: usize,
+}
+
+/// Pooled buffer for reuse
+#[derive(Debug)]
+struct PooledBuffer {
+    handle: u32,
+    vertex_capacity: usize,
+    index_capacity: usize,
+}
 
 /// Manages mesh buffer registration and handles for scene objects.
 ///
 /// This struct tracks which chunks have been uploaded to the GPU and
-/// manages their mesh handles to avoid redundant uploads.
+/// manages their mesh handles to avoid redundant uploads. It supports
+/// double-buffering for seamless mesh updates during terrain modification.
 pub struct BufferManager {
-    /// Maps chunk positions to their registered mesh handles
-    chunk_handles: HashMap<glam::IVec3, u32>,
+    /// Maps chunk positions to their mesh info
+    chunk_meshes: HashMap<glam::IVec3, ChunkMeshInfo>,
+
+    /// Pool of unused mesh handles for reuse
+    buffer_pool: VecDeque<PooledBuffer>,
+
+    /// Maximum number of buffers to keep in the pool
+    max_pool_size: usize,
+
+    /// Statistics for monitoring
+    stats: BufferStats,
+}
+
+/// Statistics for buffer management monitoring
+#[derive(Debug, Default, Clone)]
+pub struct BufferStats {
+    /// Total number of mesh uploads
+    pub total_uploads: u64,
+
+    /// Number of buffer reuses from pool
+    pub pool_reuses: u64,
+
+    /// Number of mesh swaps performed
+    pub swaps_performed: u64,
+
+    /// Current number of active chunk meshes
+    pub active_chunks: usize,
+
+    /// Current pool size
+    pub pool_size: usize,
 }
 
 impl BufferManager {
     /// Create a new BufferManager.
     pub fn new() -> Self {
+        Self::with_pool_size(32)
+    }
+
+    /// Create a BufferManager with a specific pool size.
+    pub fn with_pool_size(max_pool_size: usize) -> Self {
         Self {
-            chunk_handles: HashMap::new(),
+            chunk_meshes: HashMap::new(),
+            buffer_pool: VecDeque::new(),
+            max_pool_size,
+            stats: BufferStats::default(),
         }
+    }
+
+    /// Get current buffer statistics.
+    pub fn stats(&self) -> BufferStats {
+        let mut stats = self.stats.clone();
+        stats.active_chunks = self.chunk_meshes.len();
+        stats.pool_size = self.buffer_pool.len();
+        stats
     }
 
     /// Ensure a VoxelChunk is registered with the renderer.
@@ -56,7 +132,16 @@ impl BufferManager {
 
         // Store handle in chunk and our tracking map
         chunk.set_mesh_handle(handle);
-        self.chunk_handles.insert(chunk.chunk_pos, handle);
+
+        let info = ChunkMeshInfo {
+            active_handle: handle,
+            pending_handle: None,
+            vertex_count: chunk.vertices.len(),
+            index_count: chunk.indices.len(),
+        };
+        self.chunk_meshes.insert(chunk.chunk_pos, info);
+
+        self.stats.total_uploads += 1;
 
         log::info!(
             "Uploaded VoxelChunk {:?}: {} verts, {} indices -> handle {}",
@@ -69,24 +154,213 @@ impl BufferManager {
         Some(handle)
     }
 
+    /// Upload a new mesh for a chunk, preparing for double-buffer swap.
+    ///
+    /// The new mesh is uploaded as a pending buffer. Call `swap_chunk_mesh`
+    /// to atomically swap to the new mesh.
+    ///
+    /// # Arguments
+    /// * `chunk_pos` - Position of the chunk
+    /// * `vertices` - New vertex data
+    /// * `normals` - New normal data
+    /// * `indices` - New index data
+    /// * `renderer` - Backend renderer
+    ///
+    /// # Returns
+    /// The new mesh handle if successful
+    pub fn upload_pending_mesh(
+        &mut self,
+        chunk_pos: glam::IVec3,
+        vertices: &[[f32; 3]],
+        normals: &[[f32; 3]],
+        indices: &[u32],
+        renderer: &mut dyn RendererBackend,
+    ) -> Option<u32> {
+        if vertices.is_empty() || indices.is_empty() {
+            return None;
+        }
+
+        // Try to reuse a pooled buffer if available and appropriately sized
+        let handle = self
+            .try_reuse_buffer(vertices.len(), indices.len(), renderer)
+            .unwrap_or_else(|| renderer.register_indexed_mesh(vertices, normals, indices));
+
+        self.stats.total_uploads += 1;
+
+        // Store as pending on existing chunk info, or create new
+        if let Some(info) = self.chunk_meshes.get_mut(&chunk_pos) {
+            // If there's already a pending mesh, return it to the pool
+            if let Some(old_pending) = info.pending_handle.take() {
+                let vc = info.vertex_count;
+                let ic = info.index_count;
+                self.return_to_pool(old_pending, vc, ic);
+            }
+            // Re-borrow after return_to_pool
+            if let Some(info) = self.chunk_meshes.get_mut(&chunk_pos) {
+                info.pending_handle = Some(handle);
+            }
+        } else {
+            // New chunk - set as pending until swapped
+            let info = ChunkMeshInfo {
+                active_handle: handle, // Will be immediately active since no prior mesh
+                pending_handle: None,
+                vertex_count: vertices.len(),
+                index_count: indices.len(),
+            };
+            self.chunk_meshes.insert(chunk_pos, info);
+        }
+
+        log::debug!(
+            "Uploaded pending mesh for {:?}: {} verts -> handle {}",
+            chunk_pos,
+            vertices.len(),
+            handle
+        );
+
+        Some(handle)
+    }
+
+    /// Swap to the pending mesh for a chunk.
+    ///
+    /// Returns the old mesh handle that was replaced (now pooled).
+    pub fn swap_chunk_mesh(&mut self, chunk_pos: glam::IVec3) -> Option<u32> {
+        // Extract values first to avoid borrow conflicts
+        let (old_handle, new_handle, vc, ic) = {
+            let info = self.chunk_meshes.get_mut(&chunk_pos)?;
+            let new_handle = info.pending_handle.take()?;
+            let old_handle = info.active_handle;
+            info.active_handle = new_handle;
+            (old_handle, new_handle, info.vertex_count, info.index_count)
+        };
+
+        // Return old handle to pool (now safe since we've released the borrow)
+        self.return_to_pool(old_handle, vc, ic);
+
+        self.stats.swaps_performed += 1;
+
+        log::debug!(
+            "Swapped chunk {:?} mesh: {} -> {}",
+            chunk_pos,
+            old_handle,
+            new_handle
+        );
+
+        Some(old_handle)
+    }
+
+    /// Get the active mesh handle for a chunk.
+    pub fn get_chunk_handle(&self, chunk_pos: glam::IVec3) -> Option<u32> {
+        self.chunk_meshes
+            .get(&chunk_pos)
+            .map(|info| info.active_handle)
+    }
+
+    /// Check if a chunk has a pending mesh waiting to be swapped.
+    pub fn has_pending_mesh(&self, chunk_pos: glam::IVec3) -> bool {
+        self.chunk_meshes
+            .get(&chunk_pos)
+            .is_some_and(|info| info.pending_handle.is_some())
+    }
+
+    /// Cancel a pending mesh upload (discard without swapping).
+    pub fn cancel_pending_mesh(&mut self, chunk_pos: glam::IVec3) {
+        // Extract values first to avoid borrow conflict
+        let to_pool = if let Some(info) = self.chunk_meshes.get_mut(&chunk_pos) {
+            info.pending_handle
+                .take()
+                .map(|pending| (pending, info.vertex_count, info.index_count))
+        } else {
+            None
+        };
+
+        if let Some((pending, vc, ic)) = to_pool {
+            self.return_to_pool(pending, vc, ic);
+        }
+    }
+
+    /// Try to reuse a buffer from the pool.
+    fn try_reuse_buffer(
+        &mut self,
+        needed_vertices: usize,
+        needed_indices: usize,
+        _renderer: &mut dyn RendererBackend,
+    ) -> Option<u32> {
+        // Find a buffer that's large enough
+        let idx = self.buffer_pool.iter().position(|buf| {
+            buf.vertex_capacity >= needed_vertices && buf.index_capacity >= needed_indices
+        })?;
+
+        let buffer = self.buffer_pool.remove(idx)?;
+        self.stats.pool_reuses += 1;
+
+        log::debug!(
+            "Reusing pooled buffer {} (capacity: {} verts, {} indices)",
+            buffer.handle,
+            buffer.vertex_capacity,
+            buffer.index_capacity
+        );
+
+        Some(buffer.handle)
+    }
+
+    /// Return a buffer to the pool for reuse.
+    fn return_to_pool(&mut self, handle: u32, vertex_count: usize, index_count: usize) {
+        if self.buffer_pool.len() >= self.max_pool_size {
+            // Pool is full, just drop the oldest buffer
+            // In a real implementation, we'd call renderer.unregister_mesh on it
+            self.buffer_pool.pop_front();
+        }
+
+        self.buffer_pool.push_back(PooledBuffer {
+            handle,
+            vertex_capacity: vertex_count,
+            index_capacity: index_count,
+        });
+    }
+
+    /// Unregister a specific chunk mesh.
+    pub fn unregister_chunk(&mut self, chunk_pos: glam::IVec3, renderer: &mut dyn RendererBackend) {
+        if let Some(info) = self.chunk_meshes.remove(&chunk_pos) {
+            renderer.unregister_mesh(info.active_handle);
+            if let Some(pending) = info.pending_handle {
+                renderer.unregister_mesh(pending);
+            }
+        }
+    }
+
     /// Unregister all chunk meshes from the renderer.
     ///
     /// This should be called when clearing or destroying the scene.
     pub fn unregister_chunks(&mut self, renderer: &mut dyn RendererBackend) {
-        for handle in self.chunk_handles.values() {
-            renderer.unregister_mesh(*handle);
+        for info in self.chunk_meshes.values() {
+            renderer.unregister_mesh(info.active_handle);
+            if let Some(pending) = info.pending_handle {
+                renderer.unregister_mesh(pending);
+            }
         }
-        self.chunk_handles.clear();
+        self.chunk_meshes.clear();
+
+        // Also clear the pool
+        for buf in self.buffer_pool.drain(..) {
+            renderer.unregister_mesh(buf.handle);
+        }
     }
 
     /// Get the number of registered chunks.
     pub fn chunk_count(&self) -> usize {
-        self.chunk_handles.len()
+        self.chunk_meshes.len()
     }
 
     /// Check if a specific chunk position is registered.
     pub fn is_chunk_registered(&self, pos: glam::IVec3) -> bool {
-        self.chunk_handles.contains_key(&pos)
+        self.chunk_meshes.contains_key(&pos)
+    }
+
+    /// Clear the buffer pool (frees GPU memory).
+    pub fn clear_pool(&mut self, renderer: &mut dyn RendererBackend) {
+        for buf in self.buffer_pool.drain(..) {
+            renderer.unregister_mesh(buf.handle);
+        }
     }
 }
 

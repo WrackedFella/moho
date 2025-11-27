@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn test_generation_processor_default() {
-        let _processor = GenerationProcessor::default();
+        let _processor = GenerationProcessor;
         // Just verify it compiles and constructs
     }
 }

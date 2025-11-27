@@ -26,7 +26,10 @@ pub use materials::MaterialTable;
 mod scene;
 pub use scene::Scene;
 mod gpu_types;
-pub use gpu_types::{CameraGpu, CascadedShadowMatrixGpu, LightingGpu, MultiLightShadowGpu, ShadowMatrixGpu, MAX_SHADOW_LIGHTS};
+pub use gpu_types::{
+    CameraGpu, CascadedShadowMatrixGpu, LightingGpu, MAX_SHADOW_LIGHTS, MultiLightShadowGpu,
+    ShadowMatrixGpu,
+};
 mod buffer_manager;
 pub use buffer_manager::BufferManager;
 mod instance_collector;

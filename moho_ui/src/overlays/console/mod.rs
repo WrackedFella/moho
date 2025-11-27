@@ -6,8 +6,8 @@
 mod commands;
 mod output;
 
-pub use commands::{ConsoleAction, CommandResult};
 use commands::CommandProcessor;
+pub use commands::{CommandResult, ConsoleAction};
 use output::ConsoleOutput;
 
 /// Console overlay component for debugging and command execution.
@@ -231,7 +231,10 @@ mod tests {
         let initial_len = console.output.lines().len();
         console.log("Test message".to_string());
         assert_eq!(console.output.lines().len(), initial_len + 1);
-        assert_eq!(console.output.lines().back(), Some(&"Test message".to_string()));
+        assert_eq!(
+            console.output.lines().back(),
+            Some(&"Test message".to_string())
+        );
     }
 
     #[test]
@@ -249,11 +252,17 @@ mod tests {
         let mut console = Console::new();
         console.output.clear_output();
         console.input_buffer = "help".to_string();
-        
+
         let action = console.execute_command();
-        
+
         assert_eq!(action, ConsoleAction::None);
-        assert!(console.output.lines().iter().any(|line| line.contains("Available commands")));
+        assert!(
+            console
+                .output
+                .lines()
+                .iter()
+                .any(|line| line.contains("Available commands"))
+        );
         assert!(console.input_buffer.is_empty());
     }
 
@@ -261,9 +270,9 @@ mod tests {
     fn test_execute_quit_command() {
         let mut console = Console::new();
         console.input_buffer = "quit".to_string();
-        
+
         let action = console.execute_command();
-        
+
         assert_eq!(action, ConsoleAction::Quit);
         assert!(console.input_buffer.is_empty());
     }
@@ -274,9 +283,9 @@ mod tests {
         console.log("Test 1".to_string());
         console.log("Test 2".to_string());
         console.input_buffer = "clear".to_string();
-        
+
         let action = console.execute_command();
-        
+
         assert_eq!(action, ConsoleAction::None);
         assert_eq!(console.output.lines().len(), 0);
     }
@@ -286,11 +295,17 @@ mod tests {
         let mut console = Console::new();
         console.output.clear_output();
         console.input_buffer = "unknowncommand".to_string();
-        
+
         let action = console.execute_command();
-        
+
         assert_eq!(action, ConsoleAction::None);
-        assert!(console.output.lines().iter().any(|line| line.contains("Unknown command")));
+        assert!(
+            console
+                .output
+                .lines()
+                .iter()
+                .any(|line| line.contains("Unknown command"))
+        );
     }
 
     #[test]
@@ -298,9 +313,9 @@ mod tests {
         let mut console = Console::new();
         console.just_opened = false;
         console.focus_input = false;
-        
+
         console.reset_on_open();
-        
+
         assert!(console.just_opened);
         assert!(console.focus_input);
     }

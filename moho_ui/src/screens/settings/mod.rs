@@ -2,8 +2,8 @@ mod audio_tab;
 mod binding_registry;
 mod conflict_modal;
 mod controls_tab;
-mod keybind_capture;
 mod key_mapping;
+mod keybind_capture;
 mod render_ops;
 mod state;
 mod types;
@@ -94,20 +94,17 @@ impl SettingsMenu {
     pub fn is_listening(&self) -> bool {
         self.keybind_capture.is_listening()
     }
-    
+
     /// Return true if listening for a specific binding ID.
     /// For rendering purposes - allows UI to show "Listening..." state on specific controls.
     pub(super) fn is_listening_for(&self, binding_id: usize) -> bool {
-        self.keybind_capture.is_listening() && self.keybind_capture.listening_id() == Some(binding_id)
+        self.keybind_capture.is_listening()
+            && self.keybind_capture.listening_id() == Some(binding_id)
     }
 
     /// Get a reference to the conflict modal state (for testing).
     pub fn conflict_modal(&self) -> &ConflictModalState {
         self.keybind_capture.conflict_modal()
-    }
-
-    pub(super) fn binding_label(b: &Binding) -> String {
-        key_mapping::binding_label(b)
     }
 
     pub fn apply_pending_binding(&mut self) {
@@ -139,7 +136,7 @@ impl SettingsMenu {
     pub fn start_listening(&mut self, binding_id: usize) {
         self.keybind_capture.start_listening(binding_id);
     }
-    
+
     /// Testable helper: apply a resolved key code while the menu is listening.
     ///
     /// This function contains the core logic for applying a binding or queuing a
@@ -238,9 +235,10 @@ impl UiComponent for SettingsMenu {
 
         // Handle key capture when listening for a binding - delegates to keybind_capture
         let staged_prefs = self.state.staged().clone();
-        self.keybind_capture.handle_key_capture(ctx, &staged_prefs, |field, binding| {
-            self.state.set_staged_binding(field, binding);
-        });
+        self.keybind_capture
+            .handle_key_capture(ctx, &staged_prefs, |field, binding| {
+                self.state.set_staged_binding(field, binding);
+            });
 
         items
     }
@@ -268,20 +266,23 @@ impl Screen for SettingsMenu {
     /// Handle raw input for keybind capture
     fn handle_raw_input(&mut self, event: &winit::event::WindowEvent) -> bool {
         let staged_prefs = self.state.staged().clone();
-        self.keybind_capture.handle_winit_event(event, &staged_prefs, |field, binding| {
-            self.state.set_staged_binding(field, binding);
-        })
+        self.keybind_capture
+            .handle_winit_event(event, &staged_prefs, |field, binding| {
+                self.state.set_staged_binding(field, binding);
+            })
     }
 
     /// Check if settings wants to show the keybind conflict modal
     fn take_pending_modal(&mut self) -> Option<Box<dyn crate::modal::Modal>> {
-        self.keybind_capture.take_conflict_modal().map(|conflict_modal| {
-            use crate::modals::KeybindConflictModal;
-            Box::new(KeybindConflictModal::new(
-                conflict_modal.conflict_key_name().to_string(),
-                conflict_modal.conflict_binding_desc().to_string(),
-            )) as Box<dyn crate::modal::Modal>
-        })
+        self.keybind_capture
+            .take_conflict_modal()
+            .map(|conflict_modal| {
+                use crate::modals::KeybindConflictModal;
+                Box::new(KeybindConflictModal::new(
+                    conflict_modal.conflict_key_name().to_string(),
+                    conflict_modal.conflict_binding_desc().to_string(),
+                )) as Box<dyn crate::modal::Modal>
+            })
     }
 
     /// Apply pending keybind when modal is confirmed
@@ -311,7 +312,7 @@ mod tests {
                 menu.state.set_staged_binding(field, binding);
             },
         );
-        
+
         assert!(applied, "modifier capture should apply");
         assert!(
             !menu.keybind_capture.is_listening(),
@@ -339,15 +340,23 @@ mod tests {
                 menu.state.set_staged_binding(field, binding);
             },
         );
-        
+
         assert!(applied, "modifier conflict should be processed");
         assert!(
             menu.keybind_capture.conflict_modal().is_visible(),
             "conflict modal should be visible when conflict is detected"
         );
         // Verify the modal has the correct conflict info
-        assert_eq!(menu.keybind_capture.conflict_modal().conflict_key_name(), "Move Left");
-        assert_eq!(menu.keybind_capture.conflict_modal().conflict_binding_desc(), "Ctrl");
+        assert_eq!(
+            menu.keybind_capture.conflict_modal().conflict_key_name(),
+            "Move Left"
+        );
+        assert_eq!(
+            menu.keybind_capture
+                .conflict_modal()
+                .conflict_binding_desc(),
+            "Ctrl"
+        );
     }
 
     #[test]
@@ -364,7 +373,7 @@ mod tests {
                 menu.state.set_staged_binding(field, binding);
             },
         );
-        
+
         assert!(!applied, "combined modifiers should not be captured");
         assert!(
             menu.keybind_capture.is_listening(),

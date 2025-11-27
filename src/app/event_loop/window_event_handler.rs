@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn test_window_event_handler_default() {
-        let _handler = WindowEventHandler::default();
+        let _handler = WindowEventHandler;
         // Just verify it compiles and constructs
     }
 }

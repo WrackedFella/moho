@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn test_event_processor_default() {
-        let _processor = EventProcessor::default();
+        let _processor = EventProcessor;
         // Just verify it compiles and constructs
     }
 
