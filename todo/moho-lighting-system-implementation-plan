@@ -1,0 +1,670 @@
+# Moho Voxel Engine: Lighting & Shadow System Implementation Plan
+
+## Overview
+
+This document outlines a phased implementation strategy for upgrading the lighting and shadow system in the Moho voxel engine.  The plan supports **hybrid geometry** (smoothed terrain + blocky structures) with modern lighting techniques and **runtime terrain modification**.
+
+### Target Features
+- Hard/soft shadow toggle
+- Multiple light sources
+- Light propagation (torch lighting, emissives)
+- Volumetric lighting (god rays)
+- Environment effects affecting lighting (weather, time of day)
+- Runtime terrain modification with responsive updates
+
+### Current State
+The engine already has:
+- 4-cascade CSM with split distances at [20, 50, 100, 200] units
+- PCF 3x3 soft shadows with slope-scale depth bias
+- Sun/moon dual lighting with day/night cycle
+- Basic ambient occlusion approximation (contact shadows)
+- Voxel chunk system with face culling
+
+### Key Architectural Decisions
+
+1. **Unified rendering pipeline** with material-driven distinction between smooth terrain and blocky structures.  Both geometry types share the same shaders, shadows, and lighting—only mesh generation and ambient occlusion sourcing differ.
+
+2.  **Async mesh generation** for smooth terrain to maintain frame rate during modifications.
+
+3. **Incremental light propagation** to avoid full recomputation on every block change.
+
+---
+
+## Phase 0: Terrain Modification Infrastructure
+
+**Goal:** Establish the systems needed for runtime terrain changes before implementing lighting features.
+
+### Tasks
+
+1. **Block modification API**
+   - Implement `set_block(pos, block)` with automatic chunk dirtying
+   - Implement `remove_block(pos)` with cleanup
+   - Support batch modifications for bulk edits (explosions, world gen)
+
+2. **Chunk state management**
+   - Add dirty flags: `terrain_mesh_dirty`, `structure_mesh_dirty`, `light_dirty`
+   - Define generation states: `Idle`, `Queued`, `Generating`, `Ready`
+   - Implement pending mesh buffer for double-buffering
+
+3. **Background worker system**
+   - Create thread pool for mesh generation jobs
+   - Implement job queue with priority (distance to player)
+   - Support job cancellation when player moves away
+
+4. **Neighbor chunk invalidation**
+   - Detect when block changes affect chunk boundaries
+   - Automatically dirty adjacent chunks for edge blocks
+   - Propagate invalidation for both mesh and lighting
+
+5. **Mesh double-buffering**
+   - Render old mesh while new one generates in background
+   - Atomic swap when new mesh is ready
+   - GPU buffer reuse/pooling to reduce allocations
+
+### Deliverables
+- `ChunkState` struct with dirty flags and generation state
+- `BlockModificationApi` with automatic propagation
+- `MeshJobQueue` with priority and cancellation
+- Double-buffered mesh swap system
+
+### Performance Targets
+| Operation | Target |
+|-----------|--------|
+| Single blocky block edit | < 5ms (can be synchronous) |
+| Single smooth block edit | < 1 frame stutter (async required) |
+| Chunk mesh swap | < 1ms |
+
+---
+
+## Phase 1: Dual Mesh Generation
+
+**Goal:** Implement hybrid mesh generation supporting both smooth terrain and blocky structures with modification support.
+
+### Tasks
+
+1. **Block smoothness determination**
+   - Add `is_smooth()` method to block based on material ID
+   - Natural materials (dirt, stone, grass) → smooth
+   - Crafted materials (planks, bricks, metal) → blocky
+   - Simple ID range check or lookup table
+
+2. **Implement isosurface extraction for terrain**
+   - Add Marching Cubes algorithm for smooth geometry
+   - Compute normals from density field gradient using central differences
+   - Structure blocks act as solid boundaries in the density field
+
+3. **Retain greedy meshing for structures**
+   - Keep existing face culling and mesh merging for blocky geometry
+   - Compute per-vertex AO using 4-corner neighbor occupancy lookup
+
+4. **Handle mixed chunks**
+   - Detect chunks containing both terrain and structure blocks
+   - Generate sub-meshes independently (can dirty one without the other)
+   - Concatenate into single vertex buffer for rendering
+
+5. **Integrate with async system**
+   - Mesh generation runs on background threads
+   - Smooth terrain always async; blocky can be sync for single edits
+   - Priority based on player distance and visibility
+
+### Deliverables
+- `VoxelBlock::is_smooth()` method
+- `SmoothMeshGenerator` using Marching Cubes
+- `BlockyMeshGenerator` with per-vertex AO computation
+- Updated `VoxelChunk` with separate dirty tracking per geometry type
+- Integration with Phase 0 job queue
+
+### Mesh Generation Performance
+
+| Geometry Type | Sync Feasible | Async Required |
+|---------------|---------------|----------------|
+| Blocky (single block) | Yes | No |
+| Blocky (chunk rebuild) | Maybe | Recommended |
+| Smooth (any change) | No | Yes |
+| Mixed chunk | No | Yes |
+
+---
+
+## Phase 2: Extended Vertex Format & Shader Foundation
+
+**Goal:** Extend the vertex format to carry ambient occlusion and geometry type data through the pipeline.
+
+### Tasks
+
+1. **Extend vertex attributes**
+   - Add `ao: f32` (0.0–1.0, per-vertex AO for blocky; 1.0 for smooth)
+   - Add `geometry_type: u32` (0 = smooth, 1 = blocky)
+
+2. **Update vertex shader**
+   - Pass new attributes through to fragment shader
+   - Use `@interpolate(flat)` for geometry_type to avoid interpolation artifacts
+
+3. **Prepare fragment shader for hybrid AO**
+   - Add uniform/flag for AO mode (will be used when SSAO is added)
+   - Structure lighting code to accept AO as a multiplier
+
+4. **Update mesh registration**
+   - Modify `register_indexed_mesh` to handle extended vertex layout
+   - Update vertex buffer descriptor in pipeline setup
+
+### Deliverables
+- Extended `VoxelVertex` struct in mesh generation
+- Updated WGSL vertex/fragment shaders with new attributes
+- Pipeline vertex buffer layout changes
+
+---
+
+## Phase 3: Screen-Space Ambient Occlusion (GTAO)
+
+**Goal:** Implement Ground Truth Ambient Occlusion for smooth geometry and additional detail on blocky geometry. 
+
+SSAO is particularly valuable with modifiable terrain because it requires no recalculation when geometry changes—it's computed per-frame from the depth buffer.
+
+### Tasks
+
+1. **Add G-buffer or reuse existing buffers**
+   - Depth buffer (already exists)
+   - Normal buffer (may need separate pass or encode in existing output)
+
+2. **Implement GTAO compute/fragment pass**
+   - Sample depth buffer in screen space
+   - Compute horizon-based occlusion using view-space positions
+   - Output to AO texture
+
+3. **Add spatial blur pass**
+   - Bilateral blur to reduce noise while preserving edges
+   - 4x4 or similar kernel
+
+4. **Integrate into main lighting**
+   - Sample AO texture in fragment shader
+   - Blend with per-vertex AO based on geometry type:
+     - Blocky: `final_ao = vertex_ao * ssao`
+     - Smooth: `final_ao = ssao`
+
+5. **Add quality settings**
+   - Sample count (low/medium/high)
+   - AO radius and intensity uniforms
+
+### Deliverables
+- GTAO shader pass (compute or fragment)
+- Blur pass shader
+- AO texture and sampler bindings
+- Quality setting uniforms
+
+---
+
+## Phase 4: Shadow Quality Improvements
+
+**Goal:** Improve shadow quality for smooth surfaces and add hard/soft toggle. 
+
+Shadow maps automatically update each frame, so terrain modifications require no special handling. 
+
+### Tasks
+
+1. **Add normal offset bias**
+   - Offset shadow sample position along surface normal
+   - Reduces peter-panning and acne on curved surfaces
+   - Complement existing slope-scale bias
+
+2. **Upgrade PCF kernel**
+   - Implement 5x5 or 7x7 PCF option
+   - Alternative: Poisson disk sampling (16–25 samples)
+   - Rotated kernel per-pixel to reduce banding
+
+3. **Implement cascade blending**
+   - Detect fragments near cascade boundaries
+   - Sample both cascades, blend based on distance to boundary
+   - Eliminates visible seams on smooth terrain
+
+4. **Add hard/soft shadow toggle**
+   - Hard: Single shadow map sample, no filtering
+   - Soft: Full PCF with selected kernel size
+   - Expose as uniform for runtime switching
+
+5. **Shadow quality presets**
+   - Low: Hard shadows, 2048 shadow map
+   - Medium: PCF 3x3, 4096 shadow map
+   - High: PCF 5x5 + cascade blending, 4096 shadow map
+
+### Deliverables
+- Normal offset bias in shadow calculation
+- Configurable PCF kernel size
+- Cascade blending logic in fragment shader
+- Shadow quality uniform and preset system
+
+---
+
+## Phase 5: Multiple Light Sources
+
+**Goal:** Support N dynamic point/spot lights beyond sun and moon.
+
+### Tasks
+
+1. **Design light data structure**
+   - Position, color, intensity, range
+   - Light type (point, spot, directional)
+   - Spot lights: direction, inner/outer cone angles
+   - Attenuation parameters
+
+2. **Create light storage buffer**
+   - SSBO with array of light structs
+   - Light count uniform
+   - Maximum light limit (e.g., 64–128)
+
+3. **Implement light accumulation loop**
+   - Iterate over active lights in fragment shader
+   - Accumulate diffuse and specular contributions
+   - Apply attenuation based on distance
+
+4. **Culling and optimization**
+   - CPU-side frustum culling of lights
+   - Optional: tile-based or clustered light culling for many lights
+
+5. **Shadow support for additional lights (optional/future)**
+   - Point lights: cubemap shadows (expensive)
+   - Spot lights: single shadow map per light
+   - Consider limiting shadowed lights (e.g., 4 max)
+
+### Deliverables
+- `LightGpu` struct and light buffer
+- Light manager on CPU side
+- Fragment shader light loop
+- Basic frustum culling
+
+---
+
+## Phase 6: Light Propagation
+
+**Goal:** Implement Minecraft-style light spreading for torches, emissives, and cave lighting with incremental updates for terrain modification.
+
+### Tasks
+
+1. **Add light level to voxel data**
+   - `light_level: u8` per block (0–15 scale)
+   - Separate sky light and block light channels (optional)
+
+2. **Implement initial flood-fill propagation**
+   - BFS from light-emitting blocks
+   - Decrease light level by 1 per block traveled
+   - Used for initial world load and large regenerations
+
+3. **Implement incremental light addition**
+   - When light source placed: BFS outward from source
+   - Only update blocks that would receive more light
+   - Stop when existing light is brighter
+
+4. **Implement light removal algorithm**
+   - When light source removed or block placed in light path:
+     - Phase 1: BFS to find all blocks lit by removed source (collect in removal set)
+     - Phase 2: Clear light values in removal set
+     - Phase 3: BFS re-flood from all adjacent light sources
+   - More complex than addition but necessary for correctness
+
+5. **Chunk boundary handling**
+   - Propagate across chunk boundaries
+   - Mark neighbor chunks dirty when edge light changes
+   - Handle async: queue neighbor updates
+
+6. **Shader sampling**
+   - For blocky geometry: direct grid lookup
+   - For smooth geometry: trilinear interpolation of light grid
+   - Multiply with surface lighting
+
+7. **Async light updates**
+   - Large changes (explosions) affect many chunks
+   - Process incrementally over multiple frames
+   - Priority queue based on player distance
+
+8. **Dirty region tracking**
+   - Track bounding box of light changes per chunk
+   - Only upload affected regions to GPU
+   - Reduces bandwidth for small edits
+
+### Deliverables
+- Light level storage in voxel grid
+- Initial flood-fill algorithm
+- Incremental light addition algorithm
+- Light removal algorithm (two-phase BFS)
+- Trilinear light grid sampling in shader
+- Async light update queue
+- Dirty region tracking for GPU upload
+
+### Light Update Performance Targets
+
+| Operation | Target |
+|-----------|--------|
+| Single torch place | < 2ms |
+| Single torch remove | < 5ms |
+| Block place (shadows existing light) | < 3ms |
+| Large edit (16³ blocks) | Spread over multiple frames |
+
+---
+
+## Phase 7: Volumetric Lighting
+
+**Goal:** Add god rays and atmospheric light scattering. 
+
+Volumetrics sample the shadow map each frame, so terrain modifications are automatically reflected. 
+
+### Tasks
+
+1. **Implement ray marching pass**
+   - March from camera toward sun direction
+   - Fixed step count (32–64 steps typical)
+   - Accumulate "in-light" samples by querying shadow cascade
+
+2. **Shadow cascade sampling during march**
+   - Transform each march position to light space
+   - Sample CSM (cascade 0 or select by depth)
+   - Accumulate unshadowed samples
+
+3. **Apply as screen-space effect**
+   - Output to volumetric texture (half or quarter resolution)
+   - Bilateral upscale to full resolution
+   - Additive blend with final image
+
+4. **Temporal filtering (optional)**
+   - Jitter ray start position per frame
+   - Accumulate over multiple frames
+   - Reduces noise with fewer samples
+
+5. **Quality settings**
+   - Step count (16/32/64)
+   - Resolution scale (1/4, 1/2, full)
+   - Intensity and decay uniforms
+
+### Deliverables
+- Volumetric ray march shader
+- Half-res volumetric texture
+- Upscale and composite pass
+- Quality and intensity controls
+
+---
+
+## Phase 8: Environment Effects
+
+**Goal:** Integrate weather, fog, and atmospheric conditions with lighting.
+
+### Tasks
+
+1. **Weather state system**
+   - Define states: Clear, Cloudy, Overcast, Rain, Storm
+   - Transition smoothing between states
+
+2. **Weather affects lighting**
+   - Modulate `sun_intensity` (reduce in clouds/rain)
+   - Modulate `ambient` color and intensity
+   - Adjust shadow softness (softer in overcast)
+
+3.  **Distance fog**
+   - Exponential or exponential-squared fog
+   - Fog density tied to weather state
+   - Fog color from sky/ambient
+
+4. **Sky rendering updates**
+   - Cloud coverage affects sky gradient
+   - Storm darkening
+   - Already have time-of-day in `skybox. wgsl`—extend with weather
+
+5. **Rain/snow particle effects (optional)**
+   - Particle system for precipitation
+   - Affected by lighting
+
+### Deliverables
+- Weather state enum and transition system
+- Weather-to-lighting parameter mapping
+- Fog uniforms and shader integration
+- Extended skybox shader
+
+---
+
+## Phase 9: Polish & Optimization
+
+**Goal:** Performance tuning, quality presets, and final integration with focus on modification responsiveness.
+
+### Tasks
+
+1. **Profile and optimize**
+   - GPU timing for each pass
+   - CPU timing for mesh generation and light propagation
+   - Identify bottlenecks per operation type
+
+2. **Modification performance budget**
+   - Target: No frame drop for single block edit
+   - Target: < 100ms total for chunk rebuild (async)
+   - Target: Smooth light updates without popping
+
+3. **Memory management**
+   - GPU buffer pooling for mesh double-buffering
+   - Old mesh cleanup after swap
+   - Light grid memory optimization
+
+4. **LOD considerations**
+   - Reduce shadow quality for distant chunks
+   - Reduce AO sample count at distance
+   - Consider Transvoxel for smooth terrain LOD
+
+5. **Quality presets**
+   - Low: No SSAO, hard shadows, no volumetrics, sync blocky mesh
+   - Medium: SSAO low, PCF 3x3, volumetrics half-res
+   - High: GTAO full, PCF 5x5 + cascade blend, volumetrics full
+
+6. **Settings UI integration**
+   - Expose all quality options in settings menu
+   - Runtime switching without restart
+
+7. **Debug visualization modes**
+   - Cascade visualization (already exists)
+   - AO buffer view
+   - Light level heat map
+   - Chunk state visualization (dirty/generating/ready)
+   - Mesh generation queue depth
+
+### Deliverables
+- Performance profiling data and benchmarks
+- Memory pooling system
+- Quality preset system
+- Settings UI integration
+- Debug visualization shaders
+
+---
+
+## Appendix A: Technical Reference
+
+### Geometry Type Handling Summary
+
+| Aspect | Smooth Terrain | Blocky Structures |
+|--------|----------------|-------------------|
+| Mesh generation | Marching Cubes | Greedy meshing |
+| Normals | Density field gradient | Face normals |
+| Per-vertex AO | 1. 0 (deferred to SSAO) | 4-corner neighbor lookup |
+| Geometry type flag | 0 | 1 |
+| Light grid sampling | Trilinear interpolation | Direct lookup |
+| Modification rebuild | Always async | Sync for single block, async for chunk |
+
+### Shadow Pipeline Summary
+
+```
+Sun Direction
+     │
+     ▼
+┌─────────────────┐
+│ Calculate CSM   │ ◄── 4 cascade matrices based on camera position
+│ Matrices        │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Shadow Passes   │ ◄── Render depth to each cascade layer
+│ (4 cascades)    │     (automatically includes modified geometry)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Main Pass       │ ◄── Sample CSM with PCF, apply shadow factor
+│ Fragment Shader │
+└─────────────────┘
+```
+
+### Lighting Accumulation Order
+
+1.  Ambient × AO (SSAO blended with per-vertex)
+2. Sun diffuse × shadow
+3. Sun specular × shadow
+4. Moon diffuse (no shadow)
+5. Moon specular (no shadow)
+6. Point/spot light loop (with optional shadows)
+7. Emissive/light propagation contribution
+8.  Volumetric additive blend
+9.  Fog application
+
+### Modification Event Flow
+
+```
+Block Changed
+     │
+     ├──► Dirty chunk mesh flags
+     │         │
+     │         ├──► Smooth?  Queue async rebuild
+     │         └──► Blocky single block? Sync or async rebuild
+     │
+     ├──► Dirty neighbor chunks (if edge block)
+     │
+     ├──► Queue light propagation update
+     │         │
+     │         ├──► Light added?  Incremental flood
+     │         └──► Light removed/blocked? Two-phase removal + re-flood
+     │
+     └──► Notify gameplay systems (optional)
+```
+
+### Chunk State Machine
+
+```
+     ┌─────────┐
+     │  Idle   │◄─────────────────────────────┐
+     └────┬────┘                              │
+          │ Block modified                    │
+          ▼                                   │
+     ┌─────────┐                              │
+     │ Dirty   │                              │
+     └────┬────┘                              │
+          │ Job scheduled                     │
+          ▼                                   │
+     ┌─────────┐                              │
+     │ Queued  │──── Cancelled ───────────────┤
+     └────┬────┘     (player moved away)      │
+          │ Worker picks up                   │
+          ▼                                   │
+     ┌────────────┐                           │
+     │ Generating │──── Cancelled ────────────┤
+     └─────┬──────┘                           │
+           │ Complete                         │
+           ▼                                  │
+     ┌─────────┐                              │
+     │  Ready  │──── Swap mesh, return to ────┘
+     └─────────┘     Idle
+```
+
+### Light Propagation: Removal Algorithm
+
+```
+Light Source Removed (or block placed in light path)
+     │
+     ▼
+Phase 1: Identify affected blocks
+     │
+     ├──► BFS from removal point
+     ├──► Collect blocks whose light came from this source
+     └──► Stop at blocks with different/stronger light source
+     │
+     ▼
+Phase 2: Clear light values
+     │
+     └──► Set light_level = 0 for all collected blocks
+     │
+     ▼
+Phase 3: Re-flood from neighbors
+     │
+     ├──► Find all light sources adjacent to cleared region
+     └──► BFS flood-fill from each source
+           (standard addition algorithm)
+```
+
+### File Locations (Current)
+
+| Component | Path |
+|-----------|------|
+| Fragment shader | `shaders/fragment. wgsl` |
+| Skybox shader | `shaders/skybox.wgsl` |
+| Voxel chunk | `moho_core/src/voxel/chunk.rs` |
+| Mesh generation | `moho_core/src/voxel/mesh. rs` |
+| Renderer | `moho_renderer/src/lib.rs` |
+| Shadow system | `moho_renderer/src/shadow. rs` |
+| GPU types | `moho_renderer/src/gpu_types.rs` |
+
+---
+
+## Appendix B: Performance Budget
+
+### Per-Frame Budget (60 FPS = 16. 6ms)
+
+| System | Budget | Notes |
+|--------|--------|-------|
+| Shadow passes (4 cascades) | 2-3ms | Already implemented |
+| Main render pass | 4-6ms | Geometry dependent |
+| SSAO + blur | 1-2ms | Quarter-res helps |
+| Volumetrics | 1-2ms | Half-res, 32 steps |
+| Light grid upload | < 0.5ms | Dirty regions only |
+| Mesh swaps | < 0.5ms | Pre-uploaded buffers |
+| **Total rendering** | ~10-14ms | Leaves headroom |
+
+### Per-Modification Budget
+
+| Operation | Sync Budget | Async Budget |
+|-----------|-------------|--------------|
+| Single blocky block | < 5ms | N/A |
+| Blocky chunk rebuild | N/A | < 50ms |
+| Single smooth block | N/A | < 100ms |
+| Smooth chunk rebuild | N/A | < 200ms |
+| Light update (local) | < 3ms | N/A |
+| Light update (large) | N/A | Spread over frames |
+
+---
+
+## Appendix C: Future Considerations
+
+### Not in Current Scope (But Worth Noting)
+
+1. **Global Illumination**
+   - Light probe grids for indirect lighting
+   - Would enhance cave/interior lighting
+   - Significant complexity increase
+
+2. **Reflections**
+   - Screen-space reflections (SSR)
+   - Reflection probes for water/metal
+   - Adds to smooth surface quality
+
+3. **Mesh LOD for Smooth Terrain**
+   - Transvoxel algorithm for seamless LOD
+   - Critical for large view distances
+   - Interacts with modification system
+
+4. **Multiplayer Synchronization**
+   - Block change replication
+   - Light state sync vs. recompute
+   - Prediction for responsive feel
+
+5. **Persistent Light Storage**
+   - Save/load light grid with world
+   - Faster world load (skip full propagation)
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2025-11-27 | Initial plan with hybrid geometry support |
+| 2.0 | 2025-11-27 | Added Phase 0 for modification infrastructure, incremental light propagation, async mesh generation, performance budgets |
