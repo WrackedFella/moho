@@ -93,41 +93,59 @@ The engine already has:
 
 ## Phase 1: Dual Mesh Generation
 
+**Status: ✅ COMPLETE (Visually Tested & Validated)**
+
 **Goal:** Implement hybrid mesh generation supporting both smooth terrain and blocky structures with modification support.
 
 ### Tasks
 
-1. **Block smoothness determination**
+1. **Block smoothness determination** ✅
    - Add `is_smooth()` method to block based on material ID
    - Natural materials (dirt, stone, grass) → smooth
    - Crafted materials (planks, bricks, metal) → blocky
    - Simple ID range check or lookup table
 
-2. **Implement isosurface extraction for terrain**
+2. **Implement isosurface extraction for terrain** ✅
    - Add Marching Cubes algorithm for smooth geometry
    - Compute normals from density field gradient using central differences
    - Structure blocks act as solid boundaries in the density field
 
-3. **Retain greedy meshing for structures**
+3. **Retain greedy meshing for structures** ✅
    - Keep existing face culling and mesh merging for blocky geometry
    - Compute per-vertex AO using 4-corner neighbor occupancy lookup
 
-4. **Handle mixed chunks**
+4. **Handle mixed chunks** ✅
    - Detect chunks containing both terrain and structure blocks
    - Generate sub-meshes independently (can dirty one without the other)
    - Concatenate into single vertex buffer for rendering
 
-5. **Integrate with async system**
+5. **Integrate with async system** ✅
    - Mesh generation runs on background threads
    - Smooth terrain always async; blocky can be sync for single edits
    - Priority based on player distance and visibility
 
-### Deliverables
-- `VoxelBlock::is_smooth()` method
-- `SmoothMeshGenerator` using Marching Cubes
-- `BlockyMeshGenerator` with per-vertex AO computation
-- Updated `VoxelChunk` with separate dirty tracking per geometry type
-- Integration with Phase 0 job queue
+### Deliverables ✅
+- `VoxelBlock::is_smooth()` method and `BlockCategory` enum
+- `MarchingCubes` using isosurface extraction with density fields
+- `BlockyMeshGenerator` with per-vertex AO computation (4-corner method)
+- `HybridMeshGenerator` with chunk content classification
+- Integration with Phase 0 job queue via `create_hybrid_generator()`
+- All 85 voxel tests passing
+- **Visual validation complete: Smooth terrain renders correctly with proper surface continuity**
+
+### Implementation Summary
+
+| Component | File | Description |
+|-----------|------|-------------|
+| Block classification | `moho_core/src/voxel/grid.rs` | `BlockCategory` enum, `is_smooth()` method |
+| Marching Cubes | `moho_core/src/voxel/mesh/marching_cubes.rs` | Smooth terrain mesh generation (triangle indexing bug fixed) |
+| Blocky mesh + AO | `moho_core/src/voxel/mesh/blocky.rs` | Per-vertex AO using neighbor lookup |
+| Hybrid generator | `moho_core/src/voxel/mesh/hybrid.rs` | Content analysis and mesh concatenation |
+| Job queue integration | `moho_core/src/voxel/jobs.rs` | `create_hybrid_generator()` helper |
+| VoxelChunk constructor | `moho_core/src/voxel/chunk.rs` | `from_grid_hybrid()` method |
+| Scene generation | `moho_core/src/scene_builders.rs` | Updated to use hybrid system with chunk_size=16 |
+
+**Critical Bug Fix:** Triangle indexing in Marching Cubes required moving `base_vertex` calculation inside triangle loop to ensure correct vertex references for multi-triangle cells. This resolved holes in terrain rendering.
 
 ### Mesh Generation Performance
 
@@ -844,3 +862,5 @@ Phase 3: Re-flood from neighbors
 | 2.0 | 2025-11-27 | Added Phase 0 for modification infrastructure, incremental light propagation, async mesh generation, performance budgets |
 | 3.0 | 2025-11-27 | Replaced hard/soft shadow toggle with PCSS for distance-based shadow softness, added PCSS tuning guide, weather integration with light_size |
 | 3.1 | 2025-11-27 | Phase 0 complete: ChunkState, BlockModifier, MeshJobQueue, double-buffering, world events implemented and tested |
+| 3.2 | 2025-11-27 | Phase 1 complete: BlockCategory, Marching Cubes, BlockyMeshGenerator with per-vertex AO, HybridMeshGenerator, async job queue integration, 85 tests passing |
+| 3.3 | 2025-11-27 | Phase 1 visual testing complete: Fixed Marching Cubes triangle indexing bug, smooth terrain rendering correctly with proper surface continuity, hybrid system functional |

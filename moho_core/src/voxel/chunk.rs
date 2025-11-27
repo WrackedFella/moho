@@ -159,6 +159,47 @@ impl VoxelChunk {
         }
     }
 
+    /// Generate chunk mesh using hybrid mesh generation (Phase 1).
+    ///
+    /// Automatically detects smooth terrain vs blocky structures and generates
+    /// appropriate meshes with ambient occlusion.
+    ///
+    /// # Arguments
+    /// * `grid` - Source voxel grid containing blocks
+    /// * `chunk_pos` - Chunk coordinates to generate mesh for
+    ///
+    /// # Returns
+    /// A `VoxelChunk` with hybrid mesh generation applied
+    pub fn from_grid_hybrid(grid: &VoxelGrid, chunk_pos: IVec3) -> Self {
+        use super::mesh::HybridMeshGenerator;
+        
+        let chunk_size = grid.chunk_size();
+        let mesh = HybridMeshGenerator::generate_chunk_mesh(grid, chunk_pos, chunk_size);
+
+        // Determine primary material from blocks in chunk
+        let blocks = grid.get_chunk_blocks(chunk_pos);
+        let mut material_counts: HashMap<u32, usize> = HashMap::new();
+
+        for block in &blocks {
+            *material_counts.entry(block.material_id).or_insert(0) += 1;
+        }
+
+        let material_id = material_counts
+            .into_iter()
+            .max_by_key(|&(_, count)| count)
+            .map(|(id, _)| id)
+            .unwrap_or(0);
+
+        VoxelChunk {
+            chunk_pos,
+            vertices: mesh.vertices,
+            normals: mesh.normals,
+            indices: mesh.indices,
+            material_id,
+            mesh_handle: None,
+        }
+    }
+
     /// Check if chunk has any geometry
     pub fn is_empty(&self) -> bool {
         self.vertices.is_empty()

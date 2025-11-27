@@ -73,10 +73,12 @@ mod tests {
     fn make_full_cube_mesh() -> VoxelMesh {
         // Use real cube mesh from Cube::unit_cube_indexed()
         let (verts, normals, indices) = Cube::unit_cube_indexed();
+        let ao = vec![1.0; verts.len()];
         VoxelMesh {
             vertices: verts,
             normals,
             indices,
+            ambient_occlusion: ao,
         }
     }
 

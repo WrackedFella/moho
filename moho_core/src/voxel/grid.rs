@@ -25,6 +25,8 @@ pub struct VoxelMesh {
     pub vertices: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
+    /// Ambient occlusion values per vertex (0.0 = fully occluded, 1.0 = no occlusion)
+    pub ambient_occlusion: Vec<f32>,
 }
 
 impl VoxelMesh {
@@ -33,6 +35,7 @@ impl VoxelMesh {
             vertices: Vec::new(),
             normals: Vec::new(),
             indices: Vec::new(),
+            ambient_occlusion: Vec::new(),
         }
     }
 }
@@ -145,6 +148,15 @@ pub struct VoxelBlock {
     pub resource_id: Option<u32>, // Index into ResourceRegistry
 }
 
+/// Block geometry category for mesh generation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockCategory {
+    /// Natural terrain - uses Marching Cubes for smooth surfaces
+    Smooth,
+    /// Crafted/structure blocks - uses greedy meshing with sharp edges
+    Blocky,
+}
+
 impl VoxelBlock {
     pub fn new(position: BlockPos, material_id: u32) -> Self {
         VoxelBlock {
@@ -152,6 +164,33 @@ impl VoxelBlock {
             mesh_data: VoxelMesh::empty(),
             material_id,
             resource_id: None,
+        }
+    }
+
+    /// Determine if this block should use smooth (Marching Cubes) mesh generation.
+    ///
+    /// Natural materials like grass, dirt, and stone produce smooth terrain.
+    /// Crafted materials like planks and bricks produce blocky structures.
+    ///
+    /// # Material ID Ranges
+    /// - 0-99: Natural/terrain materials (smooth)
+    /// - 100+: Crafted/structure materials (blocky)
+    #[inline]
+    pub fn is_smooth(&self) -> bool {
+        self.category() == BlockCategory::Smooth
+    }
+
+    /// Get the geometry category for this block.
+    ///
+    /// Used to determine mesh generation strategy and AO computation method.
+    #[inline]
+    pub fn category(&self) -> BlockCategory {
+        // Natural materials: IDs 0-99
+        // Crafted materials: IDs 100+
+        if self.material_id < 100 {
+            BlockCategory::Smooth
+        } else {
+            BlockCategory::Blocky
         }
     }
 
@@ -284,6 +323,13 @@ impl VoxelGrid {
         self.blocks.contains_key(pos)
     }
 
+    /// Check if a block position is occupied (has a block)
+    ///
+    /// Convenience method for ambient occlusion calculations.
+    pub fn is_block_occupied(&self, pos: BlockPos) -> bool {
+        self.blocks.contains_key(&pos)
+    }
+
     /// Get the number of blocks in the grid
     pub fn block_count(&self) -> usize {
         self.blocks.len()
@@ -381,5 +427,55 @@ mod tests {
         });
         assert_eq!(new_id, 2);
         assert!(registry.get(2).is_some());
+    }
+
+    #[test]
+    fn test_block_category_natural_materials() {
+        // Natural materials (IDs 0-99) should be smooth
+        let grass_block = VoxelBlock::new(BlockPos::new(0, 0, 0), 0);
+        assert!(grass_block.is_smooth());
+        assert_eq!(grass_block.category(), BlockCategory::Smooth);
+
+        let dirt_block = VoxelBlock::new(BlockPos::new(0, 0, 0), 1);
+        assert!(dirt_block.is_smooth());
+        assert_eq!(dirt_block.category(), BlockCategory::Smooth);
+
+        let stone_block = VoxelBlock::new(BlockPos::new(0, 0, 0), 2);
+        assert!(stone_block.is_smooth());
+        assert_eq!(stone_block.category(), BlockCategory::Smooth);
+
+        // Edge of natural range
+        let block_99 = VoxelBlock::new(BlockPos::new(0, 0, 0), 99);
+        assert!(block_99.is_smooth());
+        assert_eq!(block_99.category(), BlockCategory::Smooth);
+    }
+
+    #[test]
+    fn test_block_category_crafted_materials() {
+        // Crafted materials (IDs 100+) should be blocky
+        let planks_block = VoxelBlock::new(BlockPos::new(0, 0, 0), 100);
+        assert!(!planks_block.is_smooth());
+        assert_eq!(planks_block.category(), BlockCategory::Blocky);
+
+        let bricks_block = VoxelBlock::new(BlockPos::new(0, 0, 0), 101);
+        assert!(!bricks_block.is_smooth());
+        assert_eq!(bricks_block.category(), BlockCategory::Blocky);
+
+        // High ID crafted material
+        let metal_block = VoxelBlock::new(BlockPos::new(0, 0, 0), 500);
+        assert!(!metal_block.is_smooth());
+        assert_eq!(metal_block.category(), BlockCategory::Blocky);
+    }
+
+    #[test]
+    fn test_block_category_boundary() {
+        // Test the boundary between smooth and blocky (99 vs 100)
+        let last_smooth = VoxelBlock::new(BlockPos::new(0, 0, 0), 99);
+        let first_blocky = VoxelBlock::new(BlockPos::new(0, 0, 0), 100);
+
+        assert!(last_smooth.is_smooth());
+        assert!(!first_blocky.is_smooth());
+        assert_eq!(last_smooth.category(), BlockCategory::Smooth);
+        assert_eq!(first_blocky.category(), BlockCategory::Blocky);
     }
 }

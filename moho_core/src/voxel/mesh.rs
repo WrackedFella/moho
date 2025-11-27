@@ -5,9 +5,19 @@
 //! - Standard cube meshes (baseline)
 //! - Smoothed meshes with terrain adaptation
 //! - Normal recalculation for deformed geometry
+//! - Marching Cubes for smooth terrain
+//! - Blocky meshes with per-vertex ambient occlusion
+//! - Hybrid mesh generation for mixed chunks
 
+mod blocky;
 mod deform;
+mod hybrid;
+mod marching_cubes;
 mod normals;
+
+pub use blocky::BlockyMeshGenerator;
+pub use hybrid::{ChunkContent, HybridMeshGenerator};
+pub use marching_cubes::MarchingCubes;
 
 use super::grid::{BlockPos, VoxelMesh};
 use crate::actors::Cube;
@@ -23,10 +33,12 @@ impl MeshGenerator {
     /// suitable for rendering at block positions.
     pub fn cube_mesh() -> VoxelMesh {
         let (verts, normals, indices) = Cube::unit_cube_indexed();
+        let ao = vec![1.0; verts.len()]; // No occlusion for basic cube
         VoxelMesh {
             vertices: verts,
             normals,
             indices,
+            ambient_occlusion: ao,
         }
     }
 
@@ -69,10 +81,12 @@ impl MeshGenerator {
         // Recalculate normals for deformed faces
         normals::recalculate_normals(&verts, &indices, &mut normals);
 
+        let ao = vec![1.0; verts.len()]; // No occlusion for smoothed mesh (could be enhanced later)
         VoxelMesh {
             vertices: verts,
             normals,
             indices,
+            ambient_occlusion: ao,
         }
     }
 }

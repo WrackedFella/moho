@@ -529,6 +529,69 @@ impl Default for MeshJobQueueBuilder {
     }
 }
 
+/// Create a hybrid mesh generator function for use with MeshJobQueue.
+///
+/// This generator uses Phase 1's hybrid mesh generation system, automatically
+/// selecting between smooth (Marching Cubes) and blocky (greedy meshing) based
+/// on block material types.
+///
+/// # Returns
+/// A `MeshGeneratorFn` that can be passed to `MeshJobQueue::new()`
+///
+/// # Example
+/// ```ignore
+/// let grid = Arc::new(RwLock::new(VoxelGrid::new(16)));
+/// let generator = create_hybrid_generator();
+/// let queue = MeshJobQueue::new(4, grid, generator, 1000);
+/// ```
+pub fn create_hybrid_generator() -> MeshGeneratorFn {
+    Box::new(|grid: &VoxelGrid, chunk_pos: IVec3, _job_type: MeshJobType, token: &CancellationToken| {
+        // Check cancellation before starting
+        if token.is_cancelled() {
+            return None;
+        }
+
+        // Generate mesh using hybrid system
+        let chunk = VoxelChunk::from_grid_hybrid(grid, chunk_pos);
+
+        // Check cancellation after generation
+        if token.is_cancelled() {
+            return None;
+        }
+
+        // Return None for empty chunks
+        if chunk.is_empty() {
+            None
+        } else {
+            Some(chunk)
+        }
+    })
+}
+
+/// Create a legacy mesh generator function (Phase 0 style).
+///
+/// Uses the original block-by-block face culling approach. Provided for
+/// compatibility and comparison purposes.
+pub fn create_legacy_generator() -> MeshGeneratorFn {
+    Box::new(|grid: &VoxelGrid, chunk_pos: IVec3, _job_type: MeshJobType, token: &CancellationToken| {
+        if token.is_cancelled() {
+            return None;
+        }
+
+        let chunk = VoxelChunk::from_grid(grid, chunk_pos);
+
+        if token.is_cancelled() {
+            return None;
+        }
+
+        if chunk.is_empty() {
+            None
+        } else {
+            Some(chunk)
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

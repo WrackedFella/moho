@@ -179,7 +179,9 @@ pub fn voxel_terrain_scene(world: &mut World) {
 /// control the PRNG seed (and later other parameters) when generating a
 /// terrain for new-world generation.
 pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig) {
-    let mut grid = VoxelGrid::new(64); // 64×64×64 chunks
+    // NOTE: Hybrid mesh generation currently requires chunk_size=16
+    // due to hardcoded density field size in Marching Cubes
+    let mut grid = VoxelGrid::new(16); // 16×16×16 chunks
 
     log::info!("Generating voxel terrain (seed={})...", config.seed);
     generate_terrain(&mut grid, config);
@@ -311,7 +313,7 @@ fn grid_to_chunks(grid: &VoxelGrid) -> Vec<VoxelChunk> {
     // Generate a VoxelChunk for each chunk position
     let mut chunks = Vec::new();
     for chunk_pos in chunk_positions {
-        let chunk = VoxelChunk::from_grid(grid, chunk_pos);
+        let chunk = VoxelChunk::from_grid_hybrid(grid, chunk_pos);
 
         // Only include non-empty chunks
         if !chunk.is_empty() {

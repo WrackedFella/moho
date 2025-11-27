@@ -45,12 +45,13 @@ mod state;
 pub use chunk::{TerrainSmoother, VoxelChunk};
 pub use face::{FaceDirection, get_visible_faces};
 pub use grid::{
-    BlockPos, MaterialRegistry, ResourceData, ResourceRegistry, VoxelBlock, VoxelGrid, VoxelMesh,
+    BlockCategory, BlockPos, MaterialRegistry, ResourceData, ResourceRegistry, VoxelBlock,
+    VoxelGrid, VoxelMesh,
 };
 pub use jobs::{
-    CancellationToken, MeshGeneratorFn, MeshJob, MeshJobQueue, MeshJobQueueBuilder, MeshJobResult,
-    MeshJobType,
+    create_hybrid_generator, create_legacy_generator, CancellationToken, MeshGeneratorFn, MeshJob,
+    MeshJobQueue, MeshJobQueueBuilder, MeshJobResult, MeshJobType,
 };
-pub use mesh::MeshGenerator;
+pub use mesh::{BlockyMeshGenerator, ChunkContent, HybridMeshGenerator, MarchingCubes, MeshGenerator};
 pub use modification::{BlockModifier, ModificationResult};
 pub use state::{ChunkState, DirtyFlags, GenerationState, JobId};
