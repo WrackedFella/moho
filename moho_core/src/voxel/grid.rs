@@ -27,6 +27,8 @@ pub struct VoxelMesh {
     pub indices: Vec<u32>,
     /// Ambient occlusion values per vertex (0.0 = fully occluded, 1.0 = no occlusion)
     pub ambient_occlusion: Vec<f32>,
+    /// Geometry type per vertex (0 = smooth terrain, 1 = blocky structure)
+    pub geometry_type: Vec<u32>,
 }
 
 impl VoxelMesh {
@@ -36,6 +38,7 @@ impl VoxelMesh {
             normals: Vec::new(),
             indices: Vec::new(),
             ambient_occlusion: Vec::new(),
+            geometry_type: Vec::new(),
         }
     }
 }

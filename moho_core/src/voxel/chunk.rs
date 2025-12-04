@@ -73,12 +73,14 @@ impl TerrainSmoother {
 /// uses an identity transform when rendering.
 #[derive(Clone, Debug)]
 pub struct VoxelChunk {
-    pub chunk_pos: IVec3,         // Chunk coordinates
-    pub vertices: Vec<[f32; 3]>,  // Merged mesh vertices (world space)
-    pub normals: Vec<[f32; 3]>,   // Merged mesh normals
-    pub indices: Vec<u32>,        // Merged mesh indices
-    pub material_id: u32,         // Primary material ID
-    pub mesh_handle: Option<u32>, // Renderer mesh handle (None = not uploaded)
+    pub chunk_pos: IVec3,              // Chunk coordinates
+    pub vertices: Vec<[f32; 3]>,       // Merged mesh vertices (world space)
+    pub normals: Vec<[f32; 3]>,        // Merged mesh normals
+    pub ambient_occlusion: Vec<f32>,   // Per-vertex AO values
+    pub geometry_type: Vec<u32>,       // Per-vertex geometry type (0=smooth, 1=blocky)
+    pub indices: Vec<u32>,             // Merged mesh indices
+    pub material_id: u32,              // Primary material ID
+    pub mesh_handle: Option<u32>,      // Renderer mesh handle (None = not uploaded)
 }
 
 impl VoxelChunk {
@@ -93,6 +95,8 @@ impl VoxelChunk {
     pub fn from_grid(grid: &VoxelGrid, chunk_pos: IVec3) -> Self {
         let mut vertices = Vec::new();
         let mut normals = Vec::new();
+        let mut ambient_occlusion = Vec::new();
+        let mut geometry_type = Vec::new();
         let mut indices = Vec::new();
         let mut vertex_offset = 0u32;
 
@@ -121,7 +125,7 @@ impl VoxelChunk {
             }
 
             // Generate mesh for this block with only visible faces
-            let (block_verts, block_normals, block_indices) =
+            let (block_verts, block_normals, block_ao, block_geo_type, block_indices) =
                 extraction::extract_visible_faces(&block.mesh_data, &visible_faces);
 
             if block_verts.is_empty() {
@@ -139,8 +143,10 @@ impl VoxelChunk {
                 ]);
             }
 
-            // Copy normals
+            // Copy normals, AO, and geometry type
             normals.extend_from_slice(&block_normals);
+            ambient_occlusion.extend_from_slice(&block_ao);
+            geometry_type.extend_from_slice(&block_geo_type);
 
             // Offset indices to account for merged vertices
             for idx in block_indices {
@@ -153,6 +159,8 @@ impl VoxelChunk {
             chunk_pos,
             vertices,
             normals,
+            ambient_occlusion,
+            geometry_type,
             indices,
             material_id,
             mesh_handle: None, // Mesh not yet uploaded to renderer
@@ -194,6 +202,8 @@ impl VoxelChunk {
             chunk_pos,
             vertices: mesh.vertices,
             normals: mesh.normals,
+            ambient_occlusion: mesh.ambient_occlusion,
+            geometry_type: mesh.geometry_type,
             indices: mesh.indices,
             material_id,
             mesh_handle: None,
@@ -321,6 +331,8 @@ mod tests {
             chunk_pos: IVec3::ZERO,
             vertices: Vec::new(),
             normals: Vec::new(),
+            ambient_occlusion: Vec::new(),
+            geometry_type: Vec::new(),
             indices: Vec::new(),
             material_id: 0,
             mesh_handle: None,
@@ -337,6 +349,8 @@ mod tests {
             chunk_pos: IVec3::ZERO,
             vertices: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             normals: vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+            ambient_occlusion: vec![1.0, 1.0, 1.0],
+            geometry_type: vec![1, 1, 1],
             indices: vec![0, 1, 2],
             material_id: 0,
             mesh_handle: None,
@@ -353,6 +367,8 @@ mod tests {
             chunk_pos: IVec3::ZERO,
             vertices: vec![[0.0, 0.0, 0.0]],
             normals: vec![[0.0, 1.0, 0.0]],
+            ambient_occlusion: vec![1.0],
+            geometry_type: vec![1],
             indices: vec![0],
             material_id: 0,
             mesh_handle: None,
@@ -371,12 +387,14 @@ mod tests {
             chunk_pos: IVec3::ZERO,
             vertices: vec![[0.0, 0.0, 0.0]; 100],
             normals: vec![[0.0, 1.0, 0.0]; 100],
+            ambient_occlusion: vec![1.0; 100],
+            geometry_type: vec![1; 100],
             indices: vec![0; 150],
             material_id: 0,
             mesh_handle: None,
         };
 
-        let expected = 100 * 12 + 100 * 12 + 150 * 4; // verts + normals + indices
+        let expected = 100 * 12 + 100 * 12 + 100 * 4 + 100 * 4 + 150 * 4; // verts + normals + ao + geo_type + indices
         assert_eq!(chunk.memory_size(), expected);
     }
 
@@ -392,11 +410,13 @@ mod tests {
             FaceDirection::NegZ,
         ];
 
-        let (verts, normals, indices) = extraction::extract_visible_faces(&mesh, &all_faces);
+        let (verts, normals, ao, geo_type, indices) = extraction::extract_visible_faces(&mesh, &all_faces);
 
         // Should return complete mesh
         assert_eq!(verts.len(), mesh.vertices.len());
         assert_eq!(normals.len(), mesh.normals.len());
+        assert_eq!(ao.len(), mesh.ambient_occlusion.len());
+        assert_eq!(geo_type.len(), mesh.geometry_type.len());
         assert_eq!(indices.len(), mesh.indices.len());
     }
 
@@ -405,11 +425,13 @@ mod tests {
         let mesh = MeshGenerator::cube_mesh();
         let no_faces = vec![];
 
-        let (verts, normals, indices) = extraction::extract_visible_faces(&mesh, &no_faces);
+        let (verts, normals, ao, geo_type, indices) = extraction::extract_visible_faces(&mesh, &no_faces);
 
         // Should return empty mesh
         assert!(verts.is_empty());
         assert!(normals.is_empty());
+        assert!(ao.is_empty());
+        assert!(geo_type.is_empty());
         assert!(indices.is_empty());
     }
 
@@ -418,7 +440,7 @@ mod tests {
         let mesh = MeshGenerator::cube_mesh();
         let some_faces = vec![FaceDirection::PosY, FaceDirection::NegY];
 
-        let (verts, _normals, indices) = extraction::extract_visible_faces(&mesh, &some_faces);
+        let (verts, _normals, _ao, _geo_type, indices) = extraction::extract_visible_faces(&mesh, &some_faces);
 
         // Should return subset of mesh (2 faces out of 6)
         assert!(!verts.is_empty());

@@ -42,5 +42,9 @@ fn vs_main(v: VertexIn, i: InstanceIn) -> VsOut {
         dot(sm_r3, world_pos)
     );
     
+    // Pass through AO and geometry type
+    out.ao = v.ao;
+    out.geometry_type = v.geometry_type;
+    
     return out;
 }

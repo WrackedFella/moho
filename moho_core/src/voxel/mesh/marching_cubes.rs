@@ -33,6 +33,7 @@ impl MarchingCubes {
         let mut normals = Vec::new();
         let mut indices = Vec::new();
         let mut ambient_occlusion = Vec::new();
+        let mut geometry_type = Vec::new();
 
         // Marching cubes processes cells between density samples
         // density_field is [18][18][18] with samples at indices 0..17
@@ -52,6 +53,7 @@ impl MarchingCubes {
                         &mut normals,
                         &mut indices,
                         &mut ambient_occlusion,
+                        &mut geometry_type,
                     );
                 }
             }
@@ -62,6 +64,7 @@ impl MarchingCubes {
             normals,
             indices,
             ambient_occlusion,
+            geometry_type,
         }
     }
 
@@ -75,6 +78,7 @@ impl MarchingCubes {
         normals: &mut Vec<[f32; 3]>,
         indices: &mut Vec<u32>,
         ambient_occlusion: &mut Vec<f32>,
+        geometry_type: &mut Vec<u32>,
     ) {
         // Get the 8 corner values for this cube
         let corners = [
@@ -159,6 +163,9 @@ impl MarchingCubes {
                 let density = Self::sample_density(density_field, vert[0], vert[1], vert[2]);
                 let ao = 0.6 + (1.0 - density) * 0.4; // Range [0.6, 1.0]
                 ambient_occlusion.push(ao);
+
+                // Mark as smooth terrain (0 = smooth, 1 = blocky)
+                geometry_type.push(0);
             }
 
             // Add indices (counter-clockwise winding)
@@ -633,8 +640,15 @@ mod tests {
         let field = MarchingCubes::create_density_field(&blocks);
         let mesh = MarchingCubes::generate_mesh(&field, 16);
 
-        // Full field should also produce no geometry (all inside)
-        assert_eq!(mesh.vertices.len(), 0);
-        assert_eq!(mesh.indices.len(), 0);
+        // Full field should generate boundary geometry (outer shell)
+        // The 16x16x16 block will have an isosurface at its boundary with air
+        assert!(mesh.vertices.len() > 0, "Expected boundary geometry for solid block");
+        assert!(mesh.indices.len() > 0, "Expected indices for boundary geometry");
+        assert_eq!(mesh.vertices.len(), mesh.normals.len(), "Each vertex should have a normal");
+        assert_eq!(mesh.vertices.len(), mesh.ambient_occlusion.len(), "Each vertex should have AO");
+        assert_eq!(mesh.vertices.len(), mesh.geometry_type.len(), "Each vertex should have geometry type");
+        
+        // All vertices should be marked as smooth terrain (geometry_type = 0)
+        assert!(mesh.geometry_type.iter().all(|&t| t == 0), "All vertices should be smooth terrain");
     }
 }

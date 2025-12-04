@@ -34,11 +34,13 @@ impl MeshGenerator {
     pub fn cube_mesh() -> VoxelMesh {
         let (verts, normals, indices) = Cube::unit_cube_indexed();
         let ao = vec![1.0; verts.len()]; // No occlusion for basic cube
+        let geometry_type = vec![1; verts.len()]; // Blocky geometry
         VoxelMesh {
             vertices: verts,
             normals,
             indices,
             ambient_occlusion: ao,
+            geometry_type,
         }
     }
 
@@ -82,11 +84,13 @@ impl MeshGenerator {
         normals::recalculate_normals(&verts, &indices, &mut normals);
 
         let ao = vec![1.0; verts.len()]; // No occlusion for smoothed mesh (could be enhanced later)
+        let geometry_type = vec![1; verts.len()]; // Blocky geometry
         VoxelMesh {
             vertices: verts,
             normals,
             indices,
             ambient_occlusion: ao,
+            geometry_type,
         }
     }
 }

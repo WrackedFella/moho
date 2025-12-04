@@ -127,8 +127,13 @@ impl BufferManager {
         }
 
         // Register the chunk mesh with the renderer
-        let handle =
-            renderer.register_indexed_mesh(&chunk.vertices, &chunk.normals, &chunk.indices);
+        let handle = renderer.register_indexed_mesh(
+            &chunk.vertices,
+            &chunk.normals,
+            &chunk.ambient_occlusion,
+            &chunk.geometry_type,
+            &chunk.indices,
+        );
 
         // Store handle in chunk and our tracking map
         chunk.set_mesh_handle(handle);
@@ -173,6 +178,8 @@ impl BufferManager {
         chunk_pos: glam::IVec3,
         vertices: &[[f32; 3]],
         normals: &[[f32; 3]],
+        ao: &[f32],
+        geometry_type: &[u32],
         indices: &[u32],
         renderer: &mut dyn RendererBackend,
     ) -> Option<u32> {
@@ -183,7 +190,7 @@ impl BufferManager {
         // Try to reuse a pooled buffer if available and appropriately sized
         let handle = self
             .try_reuse_buffer(vertices.len(), indices.len(), renderer)
-            .unwrap_or_else(|| renderer.register_indexed_mesh(vertices, normals, indices));
+            .unwrap_or_else(|| renderer.register_indexed_mesh(vertices, normals, ao, geometry_type, indices));
 
         self.stats.total_uploads += 1;
 
@@ -394,6 +401,8 @@ mod tests {
             &mut self,
             _vertices: &[[f32; 3]],
             _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
             _indices: &[u32],
         ) -> u32 {
             let handle = self.next_handle;

@@ -102,6 +102,11 @@ impl BlockyMeshGenerator {
         let ao_values = direction.compute_ao(grid, position);
         mesh.ambient_occlusion.extend_from_slice(&ao_values);
         
+        // Mark as blocky geometry (0 = smooth, 1 = blocky)
+        for _ in 0..4 {
+            mesh.geometry_type.push(1);
+        }
+        
         // Add indices (2 triangles per face)
         mesh.indices.push(base_index);
         mesh.indices.push(base_index + 1);

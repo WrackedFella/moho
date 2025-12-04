@@ -181,6 +181,7 @@ impl HybridMeshGenerator {
             final_mesh.vertices.push(vertex);
             final_mesh.normals.push(smooth_mesh.normals[i]);
             final_mesh.ambient_occlusion.push(smooth_mesh.ambient_occlusion[i]);
+            final_mesh.geometry_type.push(smooth_mesh.geometry_type[i]);
         }
 
         let smooth_index_offset = smooth_mesh.vertices.len() as u32;
@@ -270,9 +271,10 @@ impl HybridMeshGenerator {
             ]);
         }
 
-        // Copy normals and AO
+        // Copy normals, AO, and geometry type
         target.normals.extend_from_slice(&source.normals);
         target.ambient_occlusion.extend_from_slice(&source.ambient_occlusion);
+        target.geometry_type.extend_from_slice(&source.geometry_type);
 
         // Add indices with offset
         for &index in &source.indices {
@@ -298,9 +300,10 @@ impl HybridMeshGenerator {
             ]);
         }
 
-        // Copy normals and AO
+        // Copy normals, AO, and geometry type
         target.normals.extend_from_slice(&source.normals);
         target.ambient_occlusion.extend_from_slice(&source.ambient_occlusion);
+        target.geometry_type.extend_from_slice(&source.geometry_type);
 
         // Add indices with combined offset
         for &index in &source.indices {

@@ -241,13 +241,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let H = normalize(L + V);
     let spec = pow(max(dot(N, H), 0.0), 64.0);
 
-    // Simple ambient occlusion-like term based on N·L to darken occluded areas
-    // and a cheap contact shadow near the ground (y ~= 0) to restore the
-    // perception of objects sitting on the ground plane.
-    // Reduced minimum from 0.3 to 0.05 so back-faces are much darker
-    let ao_from_light = clamp(0.05 + 0.95 * diff, 0.0, 1.0);
-    let contact = exp(-10.0 * max(in.world_pos.y, 0.0)); // strong near y=0
-    let ao = ao_from_light * mix(1.0, 0.6, contact);
+    // Use per-vertex ambient occlusion from mesh generation
+    // For blocky geometry: This is computed from neighbor occupancy (4-corner method)
+    // For smooth terrain: This is computed from density field approximation
+    // Phase 3 will blend this with SSAO for smooth geometry
+    let ao = in.ao;
 
     let mat = materials[in.material];
     let albedo = mat.albedo.xyz;

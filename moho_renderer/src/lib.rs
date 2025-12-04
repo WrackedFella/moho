@@ -455,14 +455,18 @@ pub mod gfx {
                 &mut self,
                 vertices: &[[f32; 3]],
                 normals: &[[f32; 3]],
+                ao: &[f32],
+                geometry_type: &[u32],
                 indices: &[u32],
             ) -> u32 {
-                // Interleave positions and normals into the Vertex struct
+                // Interleave positions, normals, AO, and geometry type into the Vertex struct
                 #[repr(C)]
                 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
                 struct InterleavedVertex {
                     pos: [f32; 3],
                     nor: [f32; 3],
+                    ao: f32,
+                    geometry_type: u32,
                 }
                 // Build a temporary vec of interleaved vertices
                 let mut iv: Vec<InterleavedVertex> = Vec::with_capacity(vertices.len());
@@ -470,6 +474,8 @@ pub mod gfx {
                     iv.push(InterleavedVertex {
                         pos: vertices[i],
                         nor: normals[i],
+                        ao: ao.get(i).copied().unwrap_or(1.0),
+                        geometry_type: geometry_type.get(i).copied().unwrap_or(0),
                     });
                 }
                 // Debug: print first few interleaved vertices to ensure normals exist
@@ -797,6 +803,8 @@ pub trait RendererBackend {
         &mut self,
         vertices: &[[f32; 3]],
         normals: &[[f32; 3]],
+        ao: &[f32],
+        geometry_type: &[u32],
         indices: &[u32],
     ) -> u32;
     /// Unregister a previously-registered mesh handle and free GPU resources.
@@ -850,9 +858,11 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
         &mut self,
         vertices: &[[f32; 3]],
         normals: &[[f32; 3]],
+        ao: &[f32],
+        geometry_type: &[u32],
         indices: &[u32],
     ) -> u32 {
-        gfx::wgpu_impl::Renderer::register_indexed_mesh(self, vertices, normals, indices)
+        gfx::wgpu_impl::Renderer::register_indexed_mesh(self, vertices, normals, ao, geometry_type, indices)
     }
     fn unregister_mesh(&mut self, mesh: u32) {
         gfx::wgpu_impl::Renderer::unregister_mesh(self, mesh)

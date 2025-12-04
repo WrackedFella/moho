@@ -315,6 +315,7 @@ impl Scene {
 
         // Load VoxelChunks
         for chunk_desc in desc.voxel_chunks {
+            let vertex_count = chunk_desc.vertices.len();
             let chunk = moho_core::voxel::VoxelChunk {
                 chunk_pos: glam::IVec3::new(
                     chunk_desc.chunk_pos[0],
@@ -323,6 +324,8 @@ impl Scene {
                 ),
                 vertices: chunk_desc.vertices,
                 normals: chunk_desc.normals,
+                ambient_occlusion: vec![1.0; vertex_count], // Default full brightness for loaded chunks
+                geometry_type: vec![1; vertex_count], // Default to blocky for loaded chunks
                 indices: chunk_desc.indices,
                 material_id: chunk_desc.material_id,
                 mesh_handle: None, // Will be uploaded on next render

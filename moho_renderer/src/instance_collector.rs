@@ -143,6 +143,8 @@ mod tests {
             &mut self,
             _vertices: &[[f32; 3]],
             _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
             _indices: &[u32],
         ) -> u32 {
             let handle = self.next_handle;

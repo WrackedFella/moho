@@ -176,12 +176,16 @@ impl App {
 
         // Create sphere mesh data using the proper sphere geometry
         let (vertices, normals, indices) = moho_core::actors::Sphere::unit_sphere_indexed(16, 16);
-        let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &indices);
+        let ao_data = vec![1.0; vertices.len()]; // Full brightness for non-voxel geometry
+        let geo_type = vec![1; vertices.len()];  // Type 1 (blocky/non-voxel)
+        let mesh_handle = renderer.register_indexed_mesh(&vertices, &normals, &ao_data, &indices, &geo_type);
 
         let (cube_vertices, cube_normals, cube_indices) =
             moho_core::actors::Cube::unit_cube_indexed();
+        let cube_ao = vec![1.0; cube_vertices.len()];
+        let cube_geo_type = vec![1; cube_vertices.len()];
         let cube_mesh_handle =
-            renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_indices);
+            renderer.register_indexed_mesh(&cube_vertices, &cube_normals, &cube_ao, &cube_indices, &cube_geo_type);
 
         // UI setup
         {
