@@ -20,6 +20,106 @@ const CSM_DEBUG_MODE: bool = false;
 
 const CSM_VERBOSE_LOGGING: bool = false;
 
+/// PCSS (Percentage Closer Soft Shadows) quality levels
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PcssQuality {
+    /// Disabled: Use fixed 3x3 PCF (best performance)
+    Off = 0,
+    /// Low: 8 blocker samples + 16 PCF samples
+    Low = 1,
+    /// Medium: 12 blocker samples + 24 PCF samples
+    Medium = 2,
+    /// High: 16 blocker samples + 32 PCF samples
+    High = 3,
+}
+
+impl PcssQuality {
+    /// Get blocker search sample count for this quality level
+    pub fn blocker_samples(self) -> u32 {
+        match self {
+            PcssQuality::Off => 0,
+            PcssQuality::Low => 8,
+            PcssQuality::Medium => 12,
+            PcssQuality::High => 16,
+        }
+    }
+
+    /// Get PCF sample count for this quality level
+    pub fn pcf_samples(self) -> u32 {
+        match self {
+            PcssQuality::Off => 9,  // 3x3 fixed kernel
+            PcssQuality::Low => 16,
+            PcssQuality::Medium => 24,
+            PcssQuality::High => 32,
+        }
+    }
+}
+
+/// PCSS settings for configuring shadow softness
+#[derive(Debug, Clone, Copy)]
+pub struct PcssSettings {
+    /// Quality level
+    pub quality: PcssQuality,
+    /// Angular size of light source (affects penumbra width)
+    /// Typical range: 0.01-0.1 (0.03 is a good default for sun)
+    pub light_size: f32,
+    /// Search radius for blocker search (in shadow map texels)
+    pub search_radius: f32,
+    /// Minimum penumbra size (prevents aliasing)
+    pub min_penumbra: f32,
+    /// Maximum penumbra size (performance limit)
+    pub max_penumbra: f32,
+}
+
+impl Default for PcssSettings {
+    fn default() -> Self {
+        Self {
+            quality: PcssQuality::Off,  // Temporarily disabled for testing
+            light_size: 0.03,          // Clear day default
+            search_radius: 15.0,       // Search area in texels
+            min_penumbra: 1.0,         // At least 1 texel
+            max_penumbra: 32.0,        // Max 32 texel radius
+        }
+    }
+}
+
+impl PcssSettings {
+    /// Create settings for a specific quality level with default parameters
+    pub fn from_quality(quality: PcssQuality) -> Self {
+        Self {
+            quality,
+            ..Default::default()
+        }
+    }
+
+    /// Create settings for specific weather conditions
+    pub fn for_weather(weather: &str) -> Self {
+        match weather {
+            "clear" => Self {
+                quality: PcssQuality::High,
+                light_size: 0.02,
+                ..Default::default()
+            },
+            "cloudy" => Self {
+                quality: PcssQuality::Medium,
+                light_size: 0.05,
+                ..Default::default()
+            },
+            "overcast" => Self {
+                quality: PcssQuality::Medium,
+                light_size: 0.08,
+                ..Default::default()
+            },
+            "rain" | "storm" => Self {
+                quality: PcssQuality::Low,
+                light_size: 0.12,
+                ..Default::default()
+            },
+            _ => Default::default(),
+        }
+    }
+}
+
 /// Light type for shadow system
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LightType {
@@ -52,6 +152,8 @@ pub struct ShadowSystem {
     pub current_lighting: crate::gpu_types::LightingGpu,
     /// Active shadow-casting lights for current frame
     pub active_lights: Vec<ActiveShadowLight>,
+    /// PCSS (Percentage Closer Soft Shadows) settings
+    pub pcss_settings: PcssSettings,
     csm_logged_once: std::cell::Cell<bool>,
 }
 
@@ -341,6 +443,7 @@ impl ShadowSystem {
             csm_shadow_bind_group,
             current_lighting: crate::gpu_types::LightingGpu::default(),
             active_lights: Vec::new(),
+            pcss_settings: PcssSettings::default(),
             csm_logged_once: std::cell::Cell::new(false),
         })
     }
@@ -582,7 +685,13 @@ impl ShadowSystem {
             light3_m3: [0.0, 0.0, 0.0, 1.0],
 
             light_intensities: [sun_intensity, moon_intensity, 0.0, 0.0],
-            metadata: [SHADOW_DISTANCE, 0.0, 0.0, 0.0],
+            // metadata: [shadow_distance, light_size, pcss_quality, unused]
+            metadata: [
+                SHADOW_DISTANCE,
+                self.pcss_settings.light_size,
+                self.pcss_settings.quality as u32 as f32,
+                0.0,
+            ],
         };
 
         if !self.csm_logged_once.get() {
@@ -591,5 +700,21 @@ impl ShadowSystem {
         }
 
         gpu_data
+    }
+
+    /// Update PCSS settings for shadow softness control
+    /// Changes take effect on the next frame when shadow matrices are recalculated
+    pub fn set_pcss_settings(&mut self, settings: PcssSettings) {
+        self.pcss_settings = settings;
+        log::info!(
+            "PCSS settings updated: quality={:?}, light_size={:.3}",
+            settings.quality,
+            settings.light_size
+        );
+    }
+
+    /// Get current PCSS settings
+    pub fn pcss_settings(&self) -> &PcssSettings {
+        &self.pcss_settings
     }
 }

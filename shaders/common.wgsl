@@ -40,7 +40,7 @@ struct MultiLightShadowMatrix {
     light3_m3: vec4<f32>,
     // Light intensities (x=Sun, y=Moon, z=Dynamic1, w=Dynamic2)
     light_intensities: vec4<f32>,
-    // Metadata (x=active_count, yzw=unused)
+    // Metadata: x=shadow_distance, y=light_size (for PCSS), z=pcss_quality (0=off, 1=low, 2=med, 3=high), w=unused
     metadata: vec4<f32>,
 }
 
@@ -53,6 +53,12 @@ var<storage, read> materials: array<Material>;
 @group(0) @binding(2)
 var<uniform> lighting: Lighting;
 
+@group(0) @binding(3)
+var ssao_texture: texture_2d<f32>;
+
+@group(0) @binding(4)
+var ssao_sampler: sampler;
+
 // Shadow mapping resources (group 1)
 @group(1) @binding(0)
 var<uniform> shadow_matrices: MultiLightShadowMatrix;
@@ -62,6 +68,9 @@ var shadow_map: texture_depth_2d_array; // Array texture for all 4 lights
 
 @group(1) @binding(2)
 var shadow_sampler: sampler_comparison;
+
+@group(1) @binding(3)
+var shadow_sampler_nearest: sampler; // For PCSS blocker search (depth reads)
 
 struct VertexIn {
     @location(0) position: vec3<f32>,

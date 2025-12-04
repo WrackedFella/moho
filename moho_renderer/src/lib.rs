@@ -40,7 +40,9 @@ pub use mesh_renderer::MeshRenderer;
 pub mod device;
 mod render_ops;
 mod shadow;
-pub use shadow::{ActiveShadowLight, LightType, ShadowSystem};
+pub use shadow::{ActiveShadowLight, LightType, PcssQuality, PcssSettings, ShadowSystem};
+mod ssao;
+pub use ssao::{SsaoQuality, SsaoSettings, SsaoSystem};
 mod types;
 pub use device::{DeviceInitError, DeviceSetup};
 pub mod pipeline;
@@ -92,6 +94,8 @@ pub mod gfx {
             skybox_vertex_buffer: wgpu::Buffer,
             skybox_vertex_count: u32,
             shadow: ShadowSystem,
+            ssao: Option<crate::ssao::SsaoSystem>,
+            depth_sampler: wgpu::Sampler,
         }
 
         impl<'a> Renderer<'a> {
@@ -106,7 +110,27 @@ pub mod gfx {
                 resources: crate::resources::ResourcePool,
                 shadow: ShadowSystem,
             ) -> Self {
-                Self {
+                // Create depth sampler for SSAO
+                let depth_sampler = device_setup.device.create_sampler(&wgpu::SamplerDescriptor {
+                    label: Some("depth-sampler"),
+                    address_mode_u: wgpu::AddressMode::ClampToEdge,
+                    address_mode_v: wgpu::AddressMode::ClampToEdge,
+                    address_mode_w: wgpu::AddressMode::ClampToEdge,
+                    mag_filter: wgpu::FilterMode::Linear,
+                    min_filter: wgpu::FilterMode::Linear,
+                    mipmap_filter: wgpu::FilterMode::Nearest,
+                    ..Default::default()
+                });
+
+                // Initialize SSAO system
+                let ssao = crate::ssao::SsaoSystem::new(
+                    &device_setup.device,
+                    device_setup.config.width,
+                    device_setup.config.height,
+                    crate::ssao::SsaoSettings::default(),
+                ).ok(); // Ignore errors for now (SSAO is optional)
+
+                let mut renderer = Self {
                     window,
                     surface: device_setup.surface,
                     device: device_setup.device,
@@ -135,7 +159,16 @@ pub mod gfx {
                     skybox_vertex_buffer: resources.skybox_vertex_buffer,
                     skybox_vertex_count: resources.skybox_vertex_count,
                     shadow,
+                    ssao,
+                    depth_sampler,
+                };
+
+                // Recreate camera bind group with SSAO textures if available
+                if renderer.ssao.is_some() {
+                    renderer.recreate_camera_bind_group();
                 }
+
+                renderer
             }
 
             pub fn new(
@@ -422,11 +455,65 @@ pub mod gfx {
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: self.depth_format,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                     view_formats: &[],
                 });
                 self.depth_texture_view =
                     depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+                
+                // Resize SSAO textures if system is initialized
+                if let Some(ssao) = &mut self.ssao {
+                    ssao.resize(&self.device, width, height);
+                    // Recreate camera bind group to include new SSAO textures
+                    self.recreate_camera_bind_group();
+                }
+            }
+
+            /// Recreate the camera bind group with all current resources including SSAO.
+            fn recreate_camera_bind_group(&mut self) {
+                let mat_buffer = match &self.material_buffer {
+                    Some(b) => b,
+                    None => {
+                        log::error!("material buffer missing when creating camera bind group");
+                        return;
+                    }
+                };
+
+                // Get SSAO texture view and sampler (use default if not available)
+                let (ssao_view, ssao_sampler) = if let Some(ssao) = &self.ssao {
+                    (ssao.blurred_ao_view(), &ssao.ao_sampler)
+                } else {
+                    // SSAO not available - this shouldn't happen in normal operation
+                    log::warn!("recreate_camera_bind_group called without SSAO system");
+                    return;
+                };
+
+                self.camera_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: &self.camera_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: self.camera_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: mat_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: self.lighting_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(ssao_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::Sampler(ssao_sampler),
+                        },
+                    ],
+                    label: Some("camera-bind-group"),
+                });
             }
 
             /// Inherent method: register a mesh into the renderer's mesh table.
@@ -645,6 +732,13 @@ pub mod gfx {
                     cam_pos,
                 );
 
+                // Update SSAO camera uniforms (inv_proj for depth reconstruction)
+                if let Some(ssao) = &self.ssao {
+                    let inv_proj = proj_mat.inverse();
+                    let inv_proj_array = inv_proj.to_cols_array_2d();
+                    ssao.update_camera(&self.queue, &inv_proj_array);
+                }
+
                 // Update shadow matrices (delegate to render_ops)
                 crate::render_ops::shadow_ops::update_shadow_matrices(
                     &mut self.shadow,
@@ -734,6 +828,16 @@ pub mod gfx {
                     &self.mesh_table,
                     &offsets,
                 );
+
+                // Compute SSAO for next frame (uses depth from current frame)
+                if let Some(ssao) = &self.ssao {
+                    ssao.compute_ao(
+                        &self.device,
+                        &mut encoder,
+                        &self.depth_texture_view,
+                        &self.depth_sampler,
+                    );
+                }
 
                 // Finish rendering and present frame (delegate to render_ops)
                 let frame_callback = if let Some(cb_arc) = &self.frame_callback_arc {

@@ -13,10 +13,12 @@ use crate::gpu_types::{MultiLightShadowGpu, ShadowMatrixGpu};
 
 /// Create the camera bind group layout.
 ///
-/// This layout has 3 bindings:
+/// This layout has 5 bindings:
 /// - Binding 0: Camera uniform buffer (view + projection matrices, 80 bytes)
 /// - Binding 1: Material storage buffer (array of materials, read-only)
 /// - Binding 2: Lighting uniform buffer (sun/moon/ambient lighting, 96 bytes)
+/// - Binding 3: SSAO texture (ambient occlusion, R8Unorm)
+/// - Binding 4: SSAO sampler (linear filtering)
 ///
 /// # Errors
 ///
@@ -66,6 +68,22 @@ pub fn create_camera_bind_group_layout(
                         },
                     )?),
                 },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
         ],

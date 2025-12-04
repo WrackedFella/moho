@@ -95,7 +95,7 @@ pub struct MultiLightShadowGpu {
     /// Light intensities for blending (x=Sun, y=Moon, z=Dynamic1, w=Dynamic2)
     pub light_intensities: [f32; 4],
 
-    /// Active light count and metadata (x=count, yzw=unused)
+    /// Metadata: x=shadow_distance, y=light_size (for PCSS), z=pcss_quality (0=off, 1=low, 2=med, 3=high), w=unused
     pub metadata: [f32; 4],
 }
 
