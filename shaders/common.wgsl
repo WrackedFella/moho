@@ -44,6 +44,18 @@ struct MultiLightShadowMatrix {
     metadata: vec4<f32>,
 }
 
+// Point light structure (32 bytes)
+struct PointLight {
+    position_range: vec4<f32>,    // xyz = position, w = range
+    color_intensity: vec4<f32>,   // xyz = color, w = intensity
+}
+
+// Dynamic lights buffer (max 64 lights)
+struct DynamicLights {
+    light_count: vec4<u32>,       // x = count, yzw = padding (16 bytes for alignment)
+    lights: array<PointLight, 64>,
+}
+
 @group(0) @binding(0)
 var<uniform> camera: Camera;
 
@@ -58,6 +70,9 @@ var ssao_texture: texture_2d<f32>;
 
 @group(0) @binding(4)
 var ssao_sampler: sampler;
+
+@group(0) @binding(5)
+var<storage, read> dynamic_lights: DynamicLights;
 
 // Shadow mapping resources (group 1)
 @group(1) @binding(0)
@@ -77,6 +92,7 @@ struct VertexIn {
     @location(1) normal: vec3<f32>,
     @location(2) ao: f32,
     @location(3) geometry_type: u32,
+    @location(10) light_level: f32,
 }
 
 struct InstanceIn {
@@ -101,4 +117,5 @@ struct VsOut {
     @location(3) light_space_pos: vec4<f32>,
     @location(4) ao: f32,
     @location(5) @interpolate(flat) geometry_type: u32,
+    @location(6) light_level: f32,
 }

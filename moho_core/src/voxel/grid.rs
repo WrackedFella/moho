@@ -29,6 +29,8 @@ pub struct VoxelMesh {
     pub ambient_occlusion: Vec<f32>,
     /// Geometry type per vertex (0 = smooth terrain, 1 = blocky structure)
     pub geometry_type: Vec<u32>,
+    /// Light level per vertex (0.0 = dark, 1.0 = full brightness)
+    pub light_level: Vec<f32>,
 }
 
 impl VoxelMesh {
@@ -39,6 +41,7 @@ impl VoxelMesh {
             indices: Vec::new(),
             ambient_occlusion: Vec::new(),
             geometry_type: Vec::new(),
+            light_level: Vec::new(),
         }
     }
 }
@@ -149,6 +152,10 @@ pub struct VoxelBlock {
     pub mesh_data: VoxelMesh,
     pub material_id: u32,         // Index into MaterialRegistry
     pub resource_id: Option<u32>, // Index into ResourceRegistry
+    /// Sky light level (0-15, from sun/moon penetrating downward)
+    pub sky_light: u8,
+    /// Block light level (0-15, from torches and emissive blocks)
+    pub block_light: u8,
 }
 
 /// Block geometry category for mesh generation
@@ -167,6 +174,8 @@ impl VoxelBlock {
             mesh_data: VoxelMesh::empty(),
             material_id,
             resource_id: None,
+            sky_light: 0,
+            block_light: 0,
         }
     }
 
@@ -204,6 +213,49 @@ impl VoxelBlock {
             self.position.y as f32,
             self.position.z as f32,
         )
+    }
+
+    /// Get the combined light level (max of sky and block light)
+    #[inline]
+    pub fn light_level(&self) -> u8 {
+        self.sky_light.max(self.block_light)
+    }
+
+    /// Set sky light level (0-15)
+    #[inline]
+    pub fn set_sky_light(&mut self, level: u8) {
+        self.sky_light = level.min(15);
+    }
+
+    /// Set block light level (0-15)
+    #[inline]
+    pub fn set_block_light(&mut self, level: u8) {
+        self.block_light = level.min(15);
+    }
+
+    /// Check if this block emits light (future: based on material properties)
+    #[inline]
+    pub fn is_light_source(&self) -> bool {
+        // TODO: Check material properties for emissive blocks
+        // For now, no blocks emit light by default
+        false
+    }
+
+    /// Get the light emission level (0-15) for this block
+    #[inline]
+    pub fn emission_level(&self) -> u8 {
+        // TODO: Return based on material properties
+        // For now, torches/emissives not yet implemented
+        0
+    }
+
+    /// Check if light can pass through this block
+    #[inline]
+    pub fn is_transparent(&self) -> bool {
+        // Air blocks are represented by absence in the HashMap
+        // All stored blocks are currently opaque
+        // TODO: Add transparency property to materials (glass, water, etc.)
+        false
     }
 }
 

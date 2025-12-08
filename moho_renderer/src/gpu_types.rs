@@ -99,6 +99,50 @@ pub struct MultiLightShadowGpu {
     pub metadata: [f32; 4],
 }
 
+/// Maximum number of dynamic point/spot lights supported
+pub const MAX_DYNAMIC_LIGHTS: usize = 64;
+
+/// Single point light data for GPU (32 bytes aligned to 16-byte boundaries)
+/// Position and attenuation parameters for distance-based light falloff
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct PointLightGpu {
+    /// Position (xyz) and range (w) - maximum distance light reaches
+    pub position_range: [f32; 4],
+    /// Color (rgb) and intensity (w) - brightness multiplier
+    pub color_intensity: [f32; 4],
+}
+
+/// Dynamic lights buffer containing active point lights (1040 bytes max)
+/// Sent to GPU as storage buffer for light accumulation loop
+/// Structure: light_count (16 bytes) + lights array (64 × 32 = 2048 bytes)
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct DynamicLightsGpu {
+    /// Number of active lights (x) and padding (yzw). Total 16 bytes for alignment.
+    pub light_count: [u32; 4],
+    /// Array of point lights (up to MAX_DYNAMIC_LIGHTS)
+    pub lights: [PointLightGpu; MAX_DYNAMIC_LIGHTS],
+}
+
+impl Default for DynamicLightsGpu {
+    fn default() -> Self {
+        Self {
+            light_count: [0, 0, 0, 0],
+            lights: [PointLightGpu::default(); MAX_DYNAMIC_LIGHTS],
+        }
+    }
+}
+
+impl Default for PointLightGpu {
+    fn default() -> Self {
+        Self {
+            position_range: [0.0, 0.0, 0.0, 10.0], // Default range of 10 units
+            color_intensity: [1.0, 1.0, 1.0, 0.0], // White light, intensity 0 (off)
+        }
+    }
+}
+
 impl Default for MultiLightShadowGpu {
     fn default() -> Self {
         Self {

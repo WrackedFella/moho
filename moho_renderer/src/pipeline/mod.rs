@@ -203,7 +203,7 @@ impl PipelineSetup {
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
                 buffers: &[
-                    // Vertex positions + normals + AO + geometry type
+                    // Vertex positions + normals + AO + geometry type + padding + light level
                     wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Vertex,
@@ -212,6 +212,7 @@ impl PipelineSetup {
                             1 => Float32x3,  // normal
                             2 => Float32,    // ao
                             3 => Uint32,     // geometry_type
+                            10 => Float32,   // light_level (at location 10)
                         ],
                     },
                     // Per-instance data: model matrix (4x vec4) + material(u32) + object_type(u32)

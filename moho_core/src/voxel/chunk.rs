@@ -78,6 +78,7 @@ pub struct VoxelChunk {
     pub normals: Vec<[f32; 3]>,        // Merged mesh normals
     pub ambient_occlusion: Vec<f32>,   // Per-vertex AO values
     pub geometry_type: Vec<u32>,       // Per-vertex geometry type (0=smooth, 1=blocky)
+    pub light_level: Vec<f32>,         // Per-vertex light level (0.0-1.0, from block light)
     pub indices: Vec<u32>,             // Merged mesh indices
     pub material_id: u32,              // Primary material ID
     pub mesh_handle: Option<u32>,      // Renderer mesh handle (None = not uploaded)
@@ -97,6 +98,7 @@ impl VoxelChunk {
         let mut normals = Vec::new();
         let mut ambient_occlusion = Vec::new();
         let mut geometry_type = Vec::new();
+        let mut light_level = Vec::new();
         let mut indices = Vec::new();
         let mut vertex_offset = 0u32;
 
@@ -132,6 +134,9 @@ impl VoxelChunk {
                 continue; // No geometry to add
             }
 
+            // Get block's light level (max of sky and block light, normalized to 0-1)
+            let block_light = block.light_level() as f32 / 15.0;
+
             // Transform vertices to world position
             let world_pos = block.world_position();
             let vert_count = block_verts.len() as u32;
@@ -143,10 +148,13 @@ impl VoxelChunk {
                 ]);
             }
 
-            // Copy normals, AO, and geometry type
+            // Copy normals, AO, geometry type, and light level
             normals.extend_from_slice(&block_normals);
             ambient_occlusion.extend_from_slice(&block_ao);
             geometry_type.extend_from_slice(&block_geo_type);
+            
+            // Fill light level for all vertices of this block
+            light_level.resize(light_level.len() + vert_count as usize, block_light);
 
             // Offset indices to account for merged vertices
             for idx in block_indices {
@@ -161,6 +169,7 @@ impl VoxelChunk {
             normals,
             ambient_occlusion,
             geometry_type,
+            light_level,
             indices,
             material_id,
             mesh_handle: None, // Mesh not yet uploaded to renderer
@@ -204,6 +213,7 @@ impl VoxelChunk {
             normals: mesh.normals,
             ambient_occlusion: mesh.ambient_occlusion,
             geometry_type: mesh.geometry_type,
+            light_level: mesh.light_level,
             indices: mesh.indices,
             material_id,
             mesh_handle: None,
@@ -219,6 +229,9 @@ impl VoxelChunk {
     pub fn memory_size(&self) -> usize {
         self.vertices.len() * std::mem::size_of::<[f32; 3]>()
             + self.normals.len() * std::mem::size_of::<[f32; 3]>()
+            + self.ambient_occlusion.len() * std::mem::size_of::<f32>()
+            + self.geometry_type.len() * std::mem::size_of::<u32>()
+            + self.light_level.len() * std::mem::size_of::<f32>()
             + self.indices.len() * std::mem::size_of::<u32>()
     }
 
@@ -333,6 +346,7 @@ mod tests {
             normals: Vec::new(),
             ambient_occlusion: Vec::new(),
             geometry_type: Vec::new(),
+            light_level: Vec::new(),
             indices: Vec::new(),
             material_id: 0,
             mesh_handle: None,
@@ -351,6 +365,7 @@ mod tests {
             normals: vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
             ambient_occlusion: vec![1.0, 1.0, 1.0],
             geometry_type: vec![1, 1, 1],
+            light_level: vec![1.0, 1.0, 1.0],
             indices: vec![0, 1, 2],
             material_id: 0,
             mesh_handle: None,
@@ -369,6 +384,7 @@ mod tests {
             normals: vec![[0.0, 1.0, 0.0]],
             ambient_occlusion: vec![1.0],
             geometry_type: vec![1],
+            light_level: vec![1.0],
             indices: vec![0],
             material_id: 0,
             mesh_handle: None,
@@ -389,12 +405,13 @@ mod tests {
             normals: vec![[0.0, 1.0, 0.0]; 100],
             ambient_occlusion: vec![1.0; 100],
             geometry_type: vec![1; 100],
+            light_level: vec![1.0; 100],
             indices: vec![0; 150],
             material_id: 0,
             mesh_handle: None,
         };
 
-        let expected = 100 * 12 + 100 * 12 + 100 * 4 + 100 * 4 + 150 * 4; // verts + normals + ao + geo_type + indices
+        let expected = 100 * 12 + 100 * 12 + 100 * 4 + 100 * 4 + 100 * 4 + 150 * 4; // verts + normals + ao + geo_type + light + indices
         assert_eq!(chunk.memory_size(), expected);
     }
 

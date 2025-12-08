@@ -59,12 +59,16 @@ impl MarchingCubes {
             }
         }
 
+        // For now, smooth terrain gets full light (TODO: implement proper trilinear sampling)
+        let light_level = vec![1.0; vertices.len()];
+
         VoxelMesh {
             vertices,
             normals,
             indices,
             ambient_occlusion,
             geometry_type,
+            light_level,
         }
     }
 

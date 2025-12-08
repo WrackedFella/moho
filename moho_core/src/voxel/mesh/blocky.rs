@@ -107,6 +107,18 @@ impl BlockyMeshGenerator {
             mesh.geometry_type.push(1);
         }
         
+        // Get block's light level (max of sky and block light, normalized to 0-1)
+        let light = if let Some(block) = grid.get_block(&position) {
+            block.light_level() as f32 / 15.0
+        } else {
+            1.0 // Default to full light if block not found
+        };
+        
+        // Apply same light level to all 4 vertices of this face
+        for _ in 0..4 {
+            mesh.light_level.push(light);
+        }
+        
         // Add indices (2 triangles per face)
         mesh.indices.push(base_index);
         mesh.indices.push(base_index + 1);

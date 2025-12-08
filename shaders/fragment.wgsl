@@ -503,6 +503,57 @@ fn calculate_light_shadow(light_idx: u32, world_pos: vec3<f32>, normal: vec3<f32
     return sample_light_shadow(light_idx, offset_pos, bias, screen_pos);
 }
 
+// Calculate contribution from a single point light
+// Returns (diffuse_contrib, specular_contrib) as separate vec3s for flexibility
+fn calculate_point_light(
+    light_pos: vec3<f32>,
+    light_color: vec3<f32>,
+    light_intensity: f32,
+    light_range: f32,
+    world_pos: vec3<f32>,
+    normal: vec3<f32>,
+    view_dir: vec3<f32>,
+    albedo: vec3<f32>,
+    is_metal: bool,
+    spec_strength: f32,
+    spec_power: f32,
+) -> vec3<f32> {
+    // Vector from surface to light
+    let light_dir = light_pos - world_pos;
+    let distance = length(light_dir);
+    
+    // Early out if beyond range
+    if (distance > light_range) {
+        return vec3<f32>(0.0, 0.0, 0.0);
+    }
+    
+    let L = normalize(light_dir);
+    
+    // Distance attenuation using inverse square law with smooth falloff
+    // Attenuation = intensity / (1 + distance² / range²)
+    // This ensures light reaches 0 at exactly `range` distance
+    let dist_ratio = distance / light_range;
+    let attenuation = light_intensity / (1.0 + dist_ratio * dist_ratio * 4.0);
+    
+    if (attenuation < 0.001) {
+        return vec3<f32>(0.0, 0.0, 0.0); // Too dim to matter
+    }
+    
+    // Lambertian diffuse
+    let ndotl = max(dot(normal, L), 0.0);
+    
+    // Reduce diffuse for metals (they reflect more than absorb)
+    let diff_strength = select(1.0, 0.3, is_metal);
+    let diffuse = albedo * ndotl * diff_strength * light_color * attenuation;
+    
+    // Blinn-Phong specular
+    let H = normalize(L + view_dir);
+    let spec_highlight = pow(max(dot(normal, H), 0.0), spec_power);
+    let specular = albedo * spec_strength * spec_highlight * light_color * attenuation;
+    
+    return diffuse + specular;
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Extract lighting parameters from uniform
@@ -665,11 +716,59 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         color = ambient_col * ambient_intensity * final_albedo * total_darkening + ao * (diff_color + spec_color + diff_color_moon + spec_color_moon);
     }
     
+    // Accumulate dynamic point light contributions
+    // Iterate over all active point lights and add their contributions
+    let num_lights = dynamic_lights.light_count.x;
+    if (num_lights > 0u) {
+        // Determine material properties for point lights (reuse from above)
+        let is_metal = step(0.01, fuzz);
+        let base_spec_strength = mix(0.04, 0.85, is_metal);
+        let fuzz_factor = mix(1.0, 0.4, clamp(fuzz, 0.0, 1.0));
+        let spec_strength = base_spec_strength * fuzz_factor;
+        let spec_power = mix(64.0, 96.0, is_metal);
+        
+        // Accumulate point light contributions
+        var point_light_contrib = vec3<f32>(0.0, 0.0, 0.0);
+        for (var i = 0u; i < num_lights; i = i + 1u) {
+            let light = dynamic_lights.lights[i];
+            let light_pos = light.position_range.xyz;
+            let light_range = light.position_range.w;
+            let light_color = light.color_intensity.xyz;
+            let light_intensity = light.color_intensity.w;
+            
+            // Calculate light contribution (diffuse + specular)
+            let contrib = calculate_point_light(
+                light_pos,
+                light_color,
+                light_intensity,
+                light_range,
+                in.world_pos,
+                N,
+                V,
+                final_albedo,
+                is_metal > 0.5,
+                spec_strength,
+                spec_power
+            );
+            
+            point_light_contrib += contrib;
+        }
+        
+        // Add point light contribution with AO applied
+        color += ao * point_light_contrib;
+    }
+    
     // DEBUG: Visualize shadow coordinates (comment out for normal rendering)
     // Uncomment the line below to see shadow map coverage:
     // Red = outside X bounds, Green = outside Y bounds, Blue = outside Z bounds (depth)
     // Color gradient = inside bounds (shows UV coords)
     // return vec4<f32>(debug_shadow_coords(in.light_space_pos), 1.0);
+    
+    // Apply light level from light propagation system (0.0 = dark, 1.0 = full light)
+    // Currently all blocks receive full sky light (15) after flood-fill propagation
+    // TODO: Implement proper light occlusion - blocks should prevent light from
+    // reaching surfaces in crevices/caves (requires transparency checks in propagation)
+    color = color * in.light_level;
     
     // For dielectrics we computed `alpha` above; otherwise alpha is opaque.
     var out_alpha: f32 = 1.0;

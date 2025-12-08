@@ -35,12 +35,14 @@ impl MeshGenerator {
         let (verts, normals, indices) = Cube::unit_cube_indexed();
         let ao = vec![1.0; verts.len()]; // No occlusion for basic cube
         let geometry_type = vec![1; verts.len()]; // Blocky geometry
+        let light_level = vec![1.0; verts.len()]; // Full light by default
         VoxelMesh {
             vertices: verts,
             normals,
             indices,
             ambient_occlusion: ao,
             geometry_type,
+            light_level,
         }
     }
 
@@ -85,12 +87,14 @@ impl MeshGenerator {
 
         let ao = vec![1.0; verts.len()]; // No occlusion for smoothed mesh (could be enhanced later)
         let geometry_type = vec![1; verts.len()]; // Blocky geometry
+        let light_level = vec![1.0; verts.len()]; // Full light by default
         VoxelMesh {
             vertices: verts,
             normals,
             indices,
             ambient_occlusion: ao,
             geometry_type,
+            light_level,
         }
     }
 }

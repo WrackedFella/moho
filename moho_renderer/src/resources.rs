@@ -129,6 +129,17 @@ impl ResourcePool {
             ..Default::default()
         });
 
+        // Create placeholder dynamic lights buffer (will be replaced when renderer initializes light manager)
+        use crate::gpu_types::DynamicLightsGpu;
+        let placeholder_dynamic_lights = DynamicLightsGpu::default();
+        let placeholder_dynamic_lights_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("placeholder-dynamic-lights-buffer"),
+                contents: bytemuck::bytes_of(&placeholder_dynamic_lights),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            }
+        );
+
         // Create camera bind group
         let camera_bind_group = Self::create_camera_bind_group(
             device,
@@ -138,6 +149,7 @@ impl ResourcePool {
             &lighting_buffer,
             &placeholder_ssao_view,
             &placeholder_ssao_sampler,
+            &placeholder_dynamic_lights_buffer,
         );
 
         // Create depth texture
@@ -223,6 +235,7 @@ impl ResourcePool {
         lighting_buffer: &wgpu::Buffer,
         ssao_texture_view: &wgpu::TextureView,
         ssao_sampler: &wgpu::Sampler,
+        dynamic_lights_buffer: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: camera_bgl,
@@ -246,6 +259,10 @@ impl ResourcePool {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::Sampler(ssao_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: dynamic_lights_buffer.as_entire_binding(),
                 },
             ],
             label: Some("camera-bind-group"),

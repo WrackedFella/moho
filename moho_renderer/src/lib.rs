@@ -43,6 +43,8 @@ mod shadow;
 pub use shadow::{ActiveShadowLight, LightType, PcssQuality, PcssSettings, ShadowSystem};
 mod ssao;
 pub use ssao::{SsaoQuality, SsaoSettings, SsaoSystem};
+mod lights;
+pub use lights::{Light, LightManager};
 mod types;
 pub use device::{DeviceInitError, DeviceSetup};
 pub mod pipeline;
@@ -96,6 +98,8 @@ pub mod gfx {
             shadow: ShadowSystem,
             ssao: Option<crate::ssao::SsaoSystem>,
             depth_sampler: wgpu::Sampler,
+            light_manager: crate::lights::LightManager,
+            dynamic_lights_buffer: wgpu::Buffer,
         }
 
         impl<'a> Renderer<'a> {
@@ -130,6 +134,16 @@ pub mod gfx {
                     crate::ssao::SsaoSettings::default(),
                 ).ok(); // Ignore errors for now (SSAO is optional)
 
+                // Initialize light manager and dynamic lights buffer
+                let light_manager = crate::lights::LightManager::new();
+                let dynamic_lights_buffer = device_setup.device.create_buffer_init(
+                    &wgpu::util::BufferInitDescriptor {
+                        label: Some("dynamic-lights-buffer"),
+                        contents: bytemuck::bytes_of(light_manager.gpu_data()),
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    }
+                );
+
                 let mut renderer = Self {
                     window,
                     surface: device_setup.surface,
@@ -161,6 +175,8 @@ pub mod gfx {
                     shadow,
                     ssao,
                     depth_sampler,
+                    light_manager,
+                    dynamic_lights_buffer,
                 };
 
                 // Recreate camera bind group with SSAO textures if available
@@ -191,6 +207,49 @@ pub mod gfx {
                 self.shadow.current_lighting = lighting;
                 self.queue
                     .write_buffer(&self.lighting_buffer, 0, bytemuck::bytes_of(&lighting));
+            }
+
+            /// Add a dynamic point light to the scene
+            /// Returns the light ID for future updates/removal
+            pub fn add_point_light(
+                &mut self,
+                position: glam::Vec3,
+                color: glam::Vec3,
+                intensity: f32,
+                range: f32,
+            ) -> u32 {
+                let light = crate::lights::Light::new_point(position, color, intensity, range);
+                self.light_manager.add_light(light)
+            }
+
+            /// Remove a dynamic light by ID
+            pub fn remove_light(&mut self, id: u32) -> bool {
+                self.light_manager.remove_light(id)
+            }
+
+            /// Update a light's position
+            pub fn set_light_position(&mut self, id: u32, position: glam::Vec3) {
+                self.light_manager.set_light_position(id, position);
+            }
+
+            /// Enable or disable a light
+            pub fn set_light_enabled(&mut self, id: u32, enabled: bool) {
+                self.light_manager.set_light_enabled(id, enabled);
+            }
+
+            /// Get mutable access to a light for detailed modifications
+            pub fn get_light_mut(&mut self, id: u32) -> Option<&mut crate::lights::Light> {
+                self.light_manager.get_light_mut(id)
+            }
+
+            /// Get read-only access to a light
+            pub fn get_light(&self, id: u32) -> Option<&crate::lights::Light> {
+                self.light_manager.get_light(id)
+            }
+
+            /// Get the number of visible lights after frustum culling
+            pub fn visible_light_count(&self) -> usize {
+                self.light_manager.visible_light_count()
             }
 
             // Shadow calculation methods moved to shadow module
@@ -511,6 +570,10 @@ pub mod gfx {
                             binding: 4,
                             resource: wgpu::BindingResource::Sampler(ssao_sampler),
                         },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: self.dynamic_lights_buffer.as_entire_binding(),
+                        },
                     ],
                     label: Some("camera-bind-group"),
                 });
@@ -544,9 +607,10 @@ pub mod gfx {
                 normals: &[[f32; 3]],
                 ao: &[f32],
                 geometry_type: &[u32],
+                light_level: &[f32],
                 indices: &[u32],
             ) -> u32 {
-                // Interleave positions, normals, AO, and geometry type into the Vertex struct
+                // Interleave positions, normals, AO, geometry type, and light level into the Vertex struct
                 #[repr(C)]
                 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
                 struct InterleavedVertex {
@@ -554,6 +618,8 @@ pub mod gfx {
                     nor: [f32; 3],
                     ao: f32,
                     geometry_type: u32,
+                    _padding: [u32; 6],  // Padding to reach @location(10)
+                    light_level: f32,
                 }
                 // Build a temporary vec of interleaved vertices
                 let mut iv: Vec<InterleavedVertex> = Vec::with_capacity(vertices.len());
@@ -563,6 +629,8 @@ pub mod gfx {
                         nor: normals[i],
                         ao: ao.get(i).copied().unwrap_or(1.0),
                         geometry_type: geometry_type.get(i).copied().unwrap_or(0),
+                        _padding: [0; 6],
+                        light_level: light_level.get(i).copied().unwrap_or(1.0),
                     });
                 }
                 // Debug: print first few interleaved vertices to ensure normals exist
@@ -739,6 +807,16 @@ pub mod gfx {
                     ssao.update_camera(&self.queue, &inv_proj_array);
                 }
 
+                // Update dynamic lights: frustum cull and upload to GPU
+                let view_proj = proj_mat * view_mat;
+                self.light_manager.cull_lights(&view_proj);
+                self.light_manager.update_gpu_data();
+                self.queue.write_buffer(
+                    &self.dynamic_lights_buffer,
+                    0,
+                    bytemuck::bytes_of(self.light_manager.gpu_data()),
+                );
+
                 // Update shadow matrices (delegate to render_ops)
                 crate::render_ops::shadow_ops::update_shadow_matrices(
                     &mut self.shadow,
@@ -909,6 +987,7 @@ pub trait RendererBackend {
         normals: &[[f32; 3]],
         ao: &[f32],
         geometry_type: &[u32],
+        light_level: &[f32],
         indices: &[u32],
     ) -> u32;
     /// Unregister a previously-registered mesh handle and free GPU resources.
@@ -927,6 +1006,26 @@ pub trait RendererBackend {
     fn set_materials(&mut self, materials: &[crate::MaterialGpu]);
     /// Update lighting parameters (sun, moon, ambient) and write to GPU buffer.
     fn update_lighting(&mut self, lighting: crate::gpu_types::LightingGpu);
+    
+    /// Add a dynamic point light to the scene
+    /// Returns the light ID for future updates/removal
+    fn add_point_light(
+        &mut self,
+        position: glam::Vec3,
+        color: glam::Vec3,
+        intensity: f32,
+        range: f32,
+    ) -> u32;
+    
+    /// Remove a dynamic light by ID
+    fn remove_light(&mut self, id: u32) -> bool;
+    
+    /// Update a light's position
+    fn set_light_position(&mut self, id: u32, position: glam::Vec3);
+    
+    /// Enable or disable a light
+    fn set_light_enabled(&mut self, id: u32, enabled: bool);
+    
     /// Return the surface texture format used by the renderer (if applicable).
     /// This is useful for UI integrations that need to create GPU pipelines
     /// with the same format as the swapchain.
@@ -964,9 +1063,10 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
         normals: &[[f32; 3]],
         ao: &[f32],
         geometry_type: &[u32],
+        light_level: &[f32],
         indices: &[u32],
     ) -> u32 {
-        gfx::wgpu_impl::Renderer::register_indexed_mesh(self, vertices, normals, ao, geometry_type, indices)
+        gfx::wgpu_impl::Renderer::register_indexed_mesh(self, vertices, normals, ao, geometry_type, light_level, indices)
     }
     fn unregister_mesh(&mut self, mesh: u32) {
         gfx::wgpu_impl::Renderer::unregister_mesh(self, mesh)
@@ -1004,6 +1104,24 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     fn set_cursor_grab(&self, _locked: bool) -> Result<(), Box<dyn std::error::Error>> {
         // no-op: application should control cursor grab on the Window
         Ok(())
+    }
+    fn add_point_light(
+        &mut self,
+        position: glam::Vec3,
+        color: glam::Vec3,
+        intensity: f32,
+        range: f32,
+    ) -> u32 {
+        gfx::wgpu_impl::Renderer::add_point_light(self, position, color, intensity, range)
+    }
+    fn remove_light(&mut self, id: u32) -> bool {
+        gfx::wgpu_impl::Renderer::remove_light(self, id)
+    }
+    fn set_light_position(&mut self, id: u32, position: glam::Vec3) {
+        gfx::wgpu_impl::Renderer::set_light_position(self, id, position);
+    }
+    fn set_light_enabled(&mut self, id: u32, enabled: bool) {
+        gfx::wgpu_impl::Renderer::set_light_enabled(self, id, enabled);
     }
 }
 
