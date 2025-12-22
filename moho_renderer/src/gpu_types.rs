@@ -44,8 +44,11 @@ pub struct LightingGpu {
     pub moon_color: [f32; 4],
     /// Ambient light color (rgb) and intensity (w)
     pub ambient: [f32; 4],
-    /// Time of day (x = 0-24 hours, yzw = unused)
-    pub time_of_day: [f32; 4],
+    /// Shader parameters:
+    /// x = Time of day (0-24 hours)
+    /// y = Debug Mode (0=None, 1=Normals, 2=Bias, 3=Cascades, 4=Shadows)
+    /// zw = Unused
+    pub params: [f32; 4],
 }
 
 /// GPU-visible shadow matrix for light-space transformation (single shadow map - legacy)
@@ -246,7 +249,7 @@ impl Default for LightingGpu {
             // Reduced ambient light to make shadows more visible
             ambient: [0.4, 0.5, 0.6, 0.1], // Cool ambient, intensity=0.1 (reduced from 0.3)
             // Default to dawn (6:00)
-            time_of_day: [6.0, 0.0, 0.0, 0.0],
+            params: [6.0, 0.0, 0.0, 0.0],
         }
     }
 }

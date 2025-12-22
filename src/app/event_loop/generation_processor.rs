@@ -25,8 +25,8 @@ impl GenerationProcessor {
                     GenerationMsg::Progress(p) => {
                         self.handle_progress(app, p);
                     }
-                    GenerationMsg::Completed { scene_bytes, spec } => {
-                        self.handle_completed(app, scene_bytes, spec);
+                    GenerationMsg::Completed { scene_bytes, spec, grid } => {
+                        self.handle_completed(app, scene_bytes, spec, grid);
                         still_running = false;
                     }
                     GenerationMsg::Canceled => {
@@ -65,11 +65,19 @@ impl GenerationProcessor {
         app: &mut App,
         scene_bytes: Vec<u8>,
         spec: moho_core::scene_builders::WorldSpec,
+        grid: moho_core::voxel::VoxelGrid,
     ) {
         log::info!("Generation completed for spec={:?}", spec.name);
 
         // Remember the last WorldSpec
         app.last_world_spec = Some(spec.clone());
+
+        // Initialize LightSystem with the generated grid
+        log::info!("Initializing LightSystem with generated grid");
+        app.light_system = Some(moho_core::voxel::LightSystem::with_default_budget(
+            grid,
+            app.event_bus.clone(),
+        ));
 
         // Complete progress UI
         if let Some(ui_adapter) = &app.ui_adapter

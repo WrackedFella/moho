@@ -56,6 +56,28 @@ impl FrameProcessor {
         app.camera = (view, proj, eye);
     }
 
+    /// Update light propagation system for the current frame
+    pub fn update_light_system(&self, app: &mut App) {
+        if app.game_state != crate::game_state::GameState::Playing {
+            return;
+        }
+
+        if let Some(ref mut light_system) = app.light_system {
+            // Update player position for priority calculation
+            let player_pos = app.camera.2; // Camera eye position
+            light_system.set_player_position(player_pos);
+
+            // Process light updates within frame budget
+            light_system.process_frame();
+
+            // Emit mesh dirty events for affected chunks
+            let dirty_count = light_system.emit_dirty_events();
+            if dirty_count > 0 {
+                log::trace!("Light system emitted {} mesh dirty events", dirty_count);
+            }
+        }
+    }
+
     /// Update lighting based on celestial positions and time of day
     pub fn update_lighting(&self, app: &mut App) {
         if app.game_state != crate::game_state::GameState::Playing {
@@ -86,7 +108,7 @@ impl FrameProcessor {
                     ambient_color[2],
                     ambient_intensity,
                 ],
-                time_of_day: [time, 0.0, 0.0, 0.0],
+                params: [time, app.debug_mode as f32, 0.0, 0.0],
             };
             wr.renderer.update_lighting(lighting);
         }
@@ -170,6 +192,7 @@ impl FrameProcessor {
         // Frame lifecycle
         let frame_number = self.publish_frame_start(app, dt);
         self.update_game_state(app, dt);
+        self.update_light_system(app); // Process light propagation after game state
         self.update_lighting(app);
         self.request_redraw(app);
         self.publish_frame_end(app, frame_number);

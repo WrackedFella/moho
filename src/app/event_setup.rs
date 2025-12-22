@@ -33,6 +33,9 @@ pub struct EventBusSetup {
 
     /// Receiver for graphics events
     pub graphics_event_rx: Receiver<moho_core::events::GraphicsEvent>,
+
+    /// Receiver for world events (chunk updates, block changes)
+    pub world_event_rx: Receiver<moho_core::events::WorldEvent>,
 }
 
 /// Initialize the event bus and set up all event subscribers.
@@ -69,6 +72,7 @@ pub fn setup_event_bus() -> EventBusSetup {
     let (ui_event_tx, ui_event_rx) = unbounded::<moho_core::events::UiEvent>();
     let (audio_event_tx, audio_event_rx) = unbounded::<moho_core::events::AudioEvent>();
     let (graphics_event_tx, graphics_event_rx) = unbounded::<moho_core::events::GraphicsEvent>();
+    let (world_event_tx, world_event_rx) = unbounded::<moho_core::events::WorldEvent>();
 
     // Subscribe to UI events
     {
@@ -95,11 +99,20 @@ pub fn setup_event_bus() -> EventBusSetup {
         });
     }
 
+    // Subscribe to World events
+    {
+        let bus = event_bus.clone();
+        bus.subscribe(move |event: &moho_core::events::WorldEvent| {
+            let _ = world_event_tx.send(event.clone());
+        });
+    }
+
     EventBusSetup {
         event_bus,
         ui_event_rx,
         audio_event_rx,
         graphics_event_rx,
+        world_event_rx,
     }
 }
 

@@ -327,7 +327,7 @@ fn compute_pcss_with_samples(
     );
 }
 
-fn sample_light_shadow(light_idx: u32, world_pos: vec3<f32>, bias: f32, screen_pos: vec2<f32>) -> f32 {
+fn sample_light_shadow(light_idx: u32, world_pos: vec3<f32>, bias: f32, screen_pos: vec2<f32>, view_depth: f32) -> f32 {
     // Transform world position to this light's space
     let light_space_pos = world_to_light_space(world_pos, light_idx);
     
@@ -335,7 +335,11 @@ fn sample_light_shadow(light_idx: u32, world_pos: vec3<f32>, bias: f32, screen_p
     var proj_coords = light_space_pos.xyz / light_space_pos.w;
     
     // Transform from [-1, 1] to [0, 1] for texture coordinates
-    proj_coords = proj_coords * 0.5 + 0.5;
+    // XY are in Clip Space (-1..1), so we map to 0..1
+    // Z is ALREADY in 0..1 (because we fixed the projection matrix to be Zero-to-One)
+    proj_coords.x = proj_coords.x * 0.5 + 0.5;
+    proj_coords.y = proj_coords.y * 0.5 + 0.5;
+    // proj_coords.z is kept as-is
     
     // Flip Y coordinate (texture coordinates are top-left origin)
     proj_coords.y = 1.0 - proj_coords.y;
@@ -373,10 +377,8 @@ fn sample_light_shadow(light_idx: u32, world_pos: vec3<f32>, bias: f32, screen_p
         }
         
         // Depth-based quality scaling with blending
-        // Near (0-50%): Full quality
-        // Mid (50-75%): Blend from full to reduced (70%)
-        // Far (75-100%): Blend from reduced to minimal (40%)
-        let depth_fraction = proj_coords.z;
+        // Use view_depth (distance from camera) instead of light space depth
+        let depth_fraction = clamp(view_depth / shadow_distance, 0.0, 1.0);
         
         // Define transition zones (blend over 10% ranges to avoid popping)
         let mid_start = 0.45;
@@ -489,21 +491,29 @@ fn calculate_light_shadow(light_idx: u32, world_pos: vec3<f32>, normal: vec3<f32
     }
     
     // Normal offset bias: Move sample point along normal to reduce acne on curved surfaces
-    // Reduced values for fixed PCF (less aggressive than PCSS needs)
+    // DISABLED (Exp 17): Using Hardware Depth Bias instead.
     let ndotl = max(dot(normal, light_dir), 0.0);
-    let normal_offset = 0.02 * (1.0 - ndotl); // Conservative offset
-    let offset_pos = world_pos + normal * normal_offset;
+    let normal_offset = 0.0; 
+    let offset_pos = world_pos;
     
     // Slope-scale depth bias for shadow acne prevention
-    let base_bias = 0.0015;  // Conservative base bias
-    let slope_bias = 0.005 * sqrt(1.0 - ndotl * ndotl) / max(ndotl, 0.1); // Moderate slope scaling
-    let bias = base_bias + slope_bias;
+    // DISABLED (Exp 17): Using Hardware Depth Bias instead.
+    // We keep a tiny epsilon just for float precision.
+    let bias = 0.000005; 
     
     // Sample shadow for this light (with PCSS if enabled)
-    return sample_light_shadow(light_idx, offset_pos, bias, screen_pos);
-}
-
-// Calculate contribution from a single point light
+    let shadow = sample_light_shadow(light_idx, offset_pos, bias, screen_pos, view_depth);
+    
+    // Fade shadow at distance to avoid hard cut
+    // Fade from 80% to 100% of shadow_distance
+    let fade_start = shadow_distance * 0.8;
+    if (view_depth > fade_start) {
+        let fade_factor = clamp((view_depth - fade_start) / (shadow_distance - fade_start), 0.0, 1.0);
+        return mix(shadow, 1.0, fade_factor);
+    }
+    
+    return shadow;
+}// Calculate contribution from a single point light
 // Returns (diffuse_contrib, specular_contrib) as separate vec3s for flexibility
 fn calculate_point_light(
     light_pos: vec3<f32>,
@@ -610,13 +620,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let screen_ssao = sample_ssao(in.clip);
     
     // Blend based on geometry type:
-    // Blocky: 100% vertex AO (SSAO doesn't work well with hard edges)
-    // Smooth: Multiply both AOs (darker in both macro and micro occluded areas)
-    let ao = select(
-        vertex_ao * screen_ssao, // Smooth: multiply both (geometry_type == 0)
-        vertex_ao,               // Blocky: vertex only (geometry_type == 1)
-        in.geometry_type == 1u
-    );
+    // Apply SSAO to both smooth and blocky geometry to ensure contact shadows in crevices
+    let ao = vertex_ao * screen_ssao;
 
     let mat = materials[in.material];
     let albedo = mat.albedo.xyz;
@@ -768,12 +773,38 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Currently all blocks receive full sky light (15) after flood-fill propagation
     // TODO: Implement proper light occlusion - blocks should prevent light from
     // reaching surfaces in crevices/caves (requires transparency checks in propagation)
-    color = color * in.light_level;
+    // Ensure minimum brightness so geometry isn't completely black if light level is 0
+    color = color * max(in.light_level, 0.1);
     
     // For dielectrics we computed `alpha` above; otherwise alpha is opaque.
     var out_alpha: f32 = 1.0;
     if (ref_idx > 0.0) {
         out_alpha = clamp((1.0 - ( (1.0 - ref_idx) / (1.0 + ref_idx) ) * ((1.0 - ref_idx) / (1.0 + ref_idx))) * 0.6 + 0.05, 0.02, 1.0);
     }
+
+    // DEBUG VISUALIZATION
+    let debug_mode = u32(lighting.params.y);
+    if (debug_mode == 1u) {
+        // Mode 1: World Normals (RGB = Normal * 0.5 + 0.5)
+        return vec4<f32>(N * 0.5 + 0.5, 1.0);
+    } else if (debug_mode == 2u) {
+        // Mode 2: Bias Heatmap (Red = High Bias)
+        // Re-calculate bias to visualize it
+        let ndotl = max(dot(N, sun_dir), 0.0);
+        // MATCH THE FIX:
+        let raw_slope_bias = 0.000005 * sqrt(1.0 - ndotl * ndotl) / max(ndotl, 0.05);
+        let slope_bias = min(raw_slope_bias, 0.00002);
+        
+        // Visualize bias magnitude
+        // 0.00002 * 40000.0 = 0.8 (Bright Red)
+        return vec4<f32>(slope_bias * 40000.0, 0.0, 0.0, 1.0);
+    } else if (debug_mode == 3u) {
+        // Mode 3: Shadow Factor (White = Lit, Black = Shadow)
+        return vec4<f32>(vec3<f32>(sun_shadow), 1.0);
+    } else if (debug_mode == 4u) {
+        // Mode 4: Raw Light Level
+        return vec4<f32>(vec3<f32>(in.light_level), 1.0);
+    }
+
     return vec4<f32>(color, out_alpha);
 }

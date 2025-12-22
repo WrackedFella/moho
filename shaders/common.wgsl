@@ -13,7 +13,7 @@ struct Lighting {
     moon_direction: vec4<f32>, // xyz = direction (normalized), w = intensity
     moon_color: vec4<f32>,     // xyz = color, w = unused
     ambient: vec4<f32>,        // xyz = color, w = intensity
-    time_of_day: vec4<f32>,    // x = 0-24 hours, yzw = unused
+    params: vec4<f32>,         // x = time of day, y = debug mode, zw = unused
 }
 
 // Multi-light shadow matrix buffer (288 bytes total for 4 lights)

@@ -111,7 +111,13 @@ pub fn process_console_action(action: crate::overlays::ConsoleAction, event_bus:
                 sun_angle: 0.0,
             });
         }
-        ConsoleAction::None => {}
+        ConsoleAction::SetDebugView(mode) => {
+            use moho_core::events::GraphicsEvent;
+            event_bus.publish(GraphicsEvent::DebugViewChanged { mode });
+        }
+        ConsoleAction::None => {
+            // No action
+        }
     }
 }
 

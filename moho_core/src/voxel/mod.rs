@@ -37,7 +37,9 @@ mod chunk;
 mod face;
 mod grid;
 mod jobs;
+mod light_jobs;
 mod light_propagation;
+mod light_system;
 mod mesh;
 mod modification;
 mod state;
@@ -53,7 +55,12 @@ pub use jobs::{
     create_hybrid_generator, create_legacy_generator, CancellationToken, MeshGeneratorFn, MeshJob,
     MeshJobQueue, MeshJobQueueBuilder, MeshJobResult, MeshJobType,
 };
+pub use light_jobs::{
+    LightCancellationToken, LightFrameBudget, LightJobQueue, LightJobStats, LightUpdateJob,
+    LightUpdateOp, LightUpdateResult,
+};
 pub use light_propagation::{LightChannel, LightPropagator};
+pub use light_system::{LightSystem, LightSystemStats};
 pub use mesh::{BlockyMeshGenerator, ChunkContent, HybridMeshGenerator, MarchingCubes, MeshGenerator};
 pub use modification::{BlockModifier, ModificationResult};
 pub use state::{ChunkState, DirtyFlags, GenerationState, JobId};

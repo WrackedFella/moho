@@ -19,6 +19,9 @@ pub enum GraphicsEvent {
 
     /// Rendering mode changed
     RenderModeChanged { mode: RenderMode },
+
+    /// Debug view mode changed
+    DebugViewChanged { mode: u32 },
 }
 
 #[derive(Clone, Debug)]

@@ -170,15 +170,17 @@ impl Default for TerrainConfig {
 
 /// Generate voxel-based terrain using Perlin noise
 /// Two-pass algorithm: 1) Place blocks, 2) Smooth transitions
-pub fn voxel_terrain_scene(world: &mut World) {
+pub fn voxel_terrain_scene(world: &mut World) -> VoxelGrid {
     let config = TerrainConfig::default();
-    voxel_terrain_scene_with_config(world, &config);
+    voxel_terrain_scene_with_config(world, &config)
 }
 
 /// Variant that accepts a custom `TerrainConfig`. This allows callers to
 /// control the PRNG seed (and later other parameters) when generating a
 /// terrain for new-world generation.
-pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig) {
+/// 
+/// Returns the VoxelGrid for use with light propagation system.
+pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig) -> VoxelGrid {
     // NOTE: Hybrid mesh generation currently requires chunk_size=16
     // due to hardcoded density field size in Marching Cubes
     let mut grid = VoxelGrid::new(16); // 16×16×16 chunks
@@ -214,6 +216,9 @@ pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig
         "Voxel terrain scene ready with {} chunk entities",
         world.len()
     );
+
+    // Return the grid so it can be stored by the caller for light propagation
+    grid
 }
 
 /// Generate terrain blocks based on noise

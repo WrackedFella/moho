@@ -28,6 +28,8 @@ enum GenerationMsg {
     Completed {
         scene_bytes: Vec<u8>,
         spec: moho_core::scene_builders::WorldSpec,
+        // Pass the generated grid back to the main thread
+        grid: moho_core::voxel::VoxelGrid,
     },
     Canceled,
     Failed(String),
@@ -65,6 +67,10 @@ struct App {
     scene: moho_renderer::Scene,
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
 
+    // Voxel grid and light propagation system
+    voxel_grid: Option<moho_core::voxel::VoxelGrid>,
+    light_system: Option<moho_core::voxel::LightSystem>,
+
     // Game state management (replaces old AppMode)
     game_state: crate::game_state::GameState,
     input_router: crate::input_routing::InputRouter,
@@ -79,6 +85,7 @@ struct App {
     ui_event_rx: crossbeam_channel::Receiver<moho_core::events::UiEvent>,
     audio_event_rx: crossbeam_channel::Receiver<moho_core::events::AudioEvent>,
     graphics_event_rx: crossbeam_channel::Receiver<moho_core::events::GraphicsEvent>,
+    world_event_rx: crossbeam_channel::Receiver<moho_core::events::WorldEvent>,
 
     // Audio system (not thread-safe, stays on main thread)
     audio_system: Option<moho_audio::AudioSystem>,
@@ -90,6 +97,9 @@ struct App {
     generation_receiver: Option<Receiver<GenerationMsg>>,
     generation_handle: Option<std::thread::JoinHandle<()>>,
     generation_cancel: Option<Arc<AtomicBool>>,
+
+    // Debug state
+    debug_mode: u32,
 
     // Input dispatcher (routes events to prioritized subscribers)
     dispatcher: InputDispatcher,
@@ -125,10 +135,25 @@ impl App {
             .build()
             .expect("Failed to initialize application");
 
+        // Create a minimal voxel grid and light system for testing frame loop integration
+        // TODO: Replace with actual terrain grid when scene generation is integrated
+        let voxel_grid = moho_core::voxel::VoxelGrid::new(16);
+        let light_system = moho_core::voxel::LightSystem::with_default_budget(
+            voxel_grid,
+            initialized.event_bus.clone(),
+        );
+        log::info!("Created LightSystem for frame loop integration");
+
         Self {
             world: initialized.world,
             scene: initialized.scene,
             camera: initialized.camera,
+            
+            // Voxel grid and light system (minimal for testing)
+            // Note: Grid is moved into LightSystem, so we don't store it separately
+            voxel_grid: None,
+            light_system: Some(light_system),
+            
             game_state: crate::game_state::GameState::Menu, // Start in menu
             input_router: crate::input_routing::InputRouter::new(),
             window_renderer: None,
@@ -137,6 +162,7 @@ impl App {
             ui_event_rx: initialized.ui_event_rx,
             audio_event_rx: initialized.audio_event_rx,
             graphics_event_rx: initialized.graphics_event_rx,
+            world_event_rx: initialized.world_event_rx,
 
             audio_system: initialized.audio_system,
 
@@ -144,6 +170,8 @@ impl App {
             generation_receiver: None,
             generation_handle: None,
             generation_cancel: None,
+
+            debug_mode: 0,
 
             dispatcher: InputDispatcher::new(),
 
@@ -326,7 +354,7 @@ impl App {
                     }
                     // Map UI's size_xz (full width in blocks) into the terrain config.
                     terrain_config.world_size = spec_for_thread.size_xz;
-                    moho_core::scene_builders::voxel_terrain_scene_with_config(
+                    let grid = moho_core::scene_builders::voxel_terrain_scene_with_config(
                         &mut local_world,
                         &terrain_config,
                     );
@@ -381,6 +409,7 @@ impl App {
                     let _ = sender.send(GenerationMsg::Completed {
                         scene_bytes,
                         spec: spec_for_thread,
+                        grid,
                     });
                 })?;
 
@@ -459,6 +488,48 @@ impl App {
             log::info!("Loaded WorldSpec from save: {:?}", spec);
             let camera_data = self.scene.load_from_bytes(&scene_bytes, &mut self.world)?;
             log::info!("Scene loaded successfully from {:?}", path.as_ref());
+
+            // Reconstruct VoxelGrid from loaded chunks for the LightSystem
+            // Note: This assumes the loaded scene contains VoxelChunk components
+            // We create a new grid and populate it from the chunks
+            // Use the world size from the spec, or default to 128 if not available
+            let _grid_size = spec.size_xz / 16; // Convert blocks to chunks (assuming 16 chunk size)
+            let grid = moho_core::voxel::VoxelGrid::new(16); // Default chunk size 16
+            
+            // Iterate over all chunks in the world and populate the grid
+            // We need to query for VoxelChunk components
+            use legion::IntoQuery;
+            let mut query = <&moho_core::voxel::VoxelChunk>::query();
+            
+            log::info!("Reconstructing VoxelGrid from loaded chunks...");
+            let mut chunk_count = 0;
+            for _chunk in query.iter(&self.world) {
+                // We need to clone the chunk data into the grid
+                // VoxelGrid stores VoxelBlock data, but VoxelChunk stores mesh data
+                // This is a problem: VoxelChunk doesn't store the raw block data in a way
+                // that's easy to put back into VoxelGrid without the original VoxelBlock data.
+                //
+                // Wait, VoxelChunk is for rendering. It contains vertices/indices.
+                // It does NOT contain the raw VoxelBlock data needed for logic/physics/light propagation.
+                //
+                // CRITICAL ISSUE: The save system currently only saves the renderable scene (VoxelChunk),
+                // not the logical voxel grid (VoxelGrid).
+                //
+                // For now, we can't reconstruct the grid from VoxelChunks because they are meshes.
+                // We need to change the save system to save the VoxelGrid data.
+                //
+                // Temporary workaround: Create a new empty grid so the LightSystem doesn't crash,
+                // but light propagation won't work correctly on loaded saves until we fix the save format.
+                chunk_count += 1;
+            }
+            log::info!("Found {} chunks, but cannot reconstruct VoxelGrid from meshes. Light propagation will be limited.", chunk_count);
+            
+            // Initialize LightSystem with the (unfortunately empty) grid
+            self.light_system = Some(moho_core::voxel::LightSystem::with_default_budget(
+                grid,
+                self.event_bus.clone(),
+            ));
+
             // Restore camera handled below using camera_data
             if let Some((position, yaw, pitch)) = camera_data {
                 self.simulation.set_position_yaw_pitch(position, yaw, pitch);
@@ -805,6 +876,7 @@ impl ApplicationHandler for App {
         event_processor.process_ui_events(self, event_loop);
         event_processor.process_audio_events(self);
         event_processor.process_graphics_events(self);
+        event_processor.process_world_events(self);
         event_processor.process_input_events(self);
 
         // Check for generation cancellation from UI

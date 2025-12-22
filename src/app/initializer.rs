@@ -66,6 +66,7 @@ pub struct InitializedApp {
     pub ui_event_rx: crossbeam_channel::Receiver<moho_core::events::UiEvent>,
     pub audio_event_rx: crossbeam_channel::Receiver<moho_core::events::AudioEvent>,
     pub graphics_event_rx: crossbeam_channel::Receiver<moho_core::events::GraphicsEvent>,
+    pub world_event_rx: crossbeam_channel::Receiver<moho_core::events::WorldEvent>,
 
     pub audio_system: Option<moho_audio::AudioSystem>,
     pub simulation: SimulationController,
@@ -166,6 +167,7 @@ impl AppInitializer {
         let ui_event_rx = event_bus_setup.ui_event_rx;
         let audio_event_rx = event_bus_setup.audio_event_rx;
         let graphics_event_rx = event_bus_setup.graphics_event_rx;
+        let world_event_rx = event_bus_setup.world_event_rx;
         log::debug!("Event bus initialized with subscribers");
 
         // Initialize audio system (optional - graceful failure)
@@ -193,6 +195,7 @@ impl AppInitializer {
             ui_event_rx,
             audio_event_rx,
             graphics_event_rx,
+            world_event_rx,
 
             audio_system,
             simulation,

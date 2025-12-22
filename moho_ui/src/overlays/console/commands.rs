@@ -18,6 +18,8 @@ pub enum ConsoleAction {
     SetSunDirection(f32, f32),
     /// Set time of day in hours (0.0 = midnight, 6.0 = dawn, 12.0 = noon, 18.0 = dusk, 24.0 = midnight)
     SetTimeOfDay(f32),
+    /// Set debug view mode (0=None, 1=Normals, 2=Bias, 3=Cascades, 4=Shadows)
+    SetDebugView(u32),
     /// No action
     None,
 }
@@ -94,6 +96,7 @@ impl CommandProcessor {
             "noclip" => self.noclip_command(),
             "sun" => self.sun_command(&parts),
             "time" => self.time_command(&parts),
+            "r_debug_view" => self.debug_view_command(&parts),
             _ => self.unknown_command(parts[0]),
         }
     }
@@ -109,6 +112,7 @@ impl CommandProcessor {
             "  noclip - Toggle noclip mode (fly through walls)".to_string(),
             "  sun <yaw> <pitch> - Set sun direction (degrees)".to_string(),
             "  time <0-24> - Set time of day (0=midnight, 6=dawn, 12=noon, 18=dusk)".to_string(),
+            "  r_debug_view <mode> - Set debug view mode".to_string(),
         ])
     }
 
@@ -172,6 +176,35 @@ impl CommandProcessor {
             }
             Err(_) => {
                 CommandResult::message("Error: time must be a number between 0 and 24".to_string())
+            }
+        }
+    }
+
+    /// Handle debug view command
+    fn debug_view_command(&self, parts: &[&str]) -> CommandResult {
+        if parts.len() != 2 {
+            return CommandResult::messages(vec![
+                "Usage: r_debug_view <mode>".to_string(),
+                "  0 = None".to_string(),
+                "  1 = World Normals".to_string(),
+                "  2 = Bias Heatmap".to_string(),
+                "  3 = Shadow Factor".to_string(),
+                "  4 = Raw Light Level".to_string(),
+            ]);
+        }
+
+        match parts[1].parse::<u32>() {
+            Ok(mode) => {
+                if mode > 4 {
+                    return CommandResult::message("Error: mode must be between 0 and 4".to_string());
+                }
+                CommandResult::with_action(
+                    format!("Setting debug view mode to {}", mode),
+                    ConsoleAction::SetDebugView(mode),
+                )
+            }
+            Err(_) => {
+                CommandResult::message("Error: mode must be a number".to_string())
             }
         }
     }

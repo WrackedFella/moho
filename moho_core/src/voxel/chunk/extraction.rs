@@ -81,12 +81,14 @@ mod tests {
         let (verts, normals, indices) = Cube::unit_cube_indexed();
         let ao = vec![1.0; verts.len()];
         let geometry_type = vec![1; verts.len()]; // Blocky geometry
+        let light_level = vec![1.0; verts.len()]; // Full light
         VoxelMesh {
             vertices: verts,
             normals,
             indices,
             ambient_occlusion: ao,
             geometry_type,
+            light_level,
         }
     }
 

@@ -8,7 +8,9 @@
 
 use crate::App;
 use crate::input_event::InputEvent;
-use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent};
+use legion::IntoQuery;
+use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent, WorldEvent};
+use moho_core::voxel::VoxelChunk;
 use winit::event_loop::ActiveEventLoop;
 
 /// Handles processing of all event types
@@ -143,6 +145,10 @@ impl EventProcessor {
                         app.simulation.game_clock().time_string()
                     );
                 }
+                GraphicsEvent::DebugViewChanged { mode } => {
+                    app.debug_mode = mode;
+                    log::info!("Debug view mode set to {}", mode);
+                }
                 _ => {
                     // Other graphics events not yet handled
                 }
@@ -194,6 +200,45 @@ impl EventProcessor {
             && let Some(cancel_flag) = &app.generation_cancel
         {
             cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Process all pending world events (chunk updates, etc.)
+    pub fn process_world_events(&self, app: &mut App) {
+        while let Ok(event) = app.world_event_rx.try_recv() {
+            match event {
+                WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                    // Regenerate chunk mesh
+                    // We need to scope the borrow of light_system so we can access world later
+                    let new_chunk = if let Some(light_system) = &app.light_system {
+                        let grid = light_system.grid();
+                        Some(VoxelChunk::from_grid(grid, chunk_pos))
+                    } else {
+                        None
+                    };
+
+                    if let Some(chunk) = new_chunk {
+                        // Update or insert into ECS world
+                        // We need to find the entity with this chunk_pos
+                        let mut query = <(legion::Entity, &VoxelChunk)>::query();
+                        let entity = query.iter(&app.world)
+                            .find(|(_, c)| c.chunk_pos == chunk_pos)
+                            .map(|(e, _)| *e);
+                            
+                        if let Some(e) = entity {
+                            if let Some(mut entry) = app.world.entry(e) {
+                                entry.add_component(chunk);
+                                log::trace!("Updated mesh for chunk {:?}", chunk_pos);
+                            }
+                        } else {
+                            // New chunk
+                            app.world.push((chunk,));
+                            log::trace!("Created new mesh for chunk {:?}", chunk_pos);
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }
