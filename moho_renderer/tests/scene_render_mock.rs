@@ -32,11 +32,30 @@ impl RendererBackend for MockRenderer {
         &mut self,
         _vertices: &[[f32; 3]],
         _normals: &[[f32; 3]],
+        _ao: &[f32],
+        _geometry_type: &[u32],
+        _light_level: &[f32],
         _indices: &[u32],
     ) -> u32 {
         0
     }
     fn unregister_mesh(&mut self, _mesh: u32) {}
+    fn add_point_light(
+        &mut self,
+        _position: glam::Vec3,
+        _color: glam::Vec3,
+        _intensity: f32,
+        _range: f32,
+    ) -> u32 {
+        0
+    }
+    fn remove_light(&mut self, _id: u32) -> bool {
+        true
+    }
+    fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
+    fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+    fn set_shadow_quality(&mut self, _quality: u8) {}
+    fn set_ssao_quality(&mut self, _quality: u8) {}
     fn render_mesh(
         &mut self,
         _mesh: u32,

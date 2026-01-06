@@ -466,6 +466,7 @@ impl LightPropagator {
 
     /// Check if a block position is at a chunk boundary
     #[inline]
+    #[allow(dead_code)]
     fn is_at_chunk_boundary(&self, pos: &BlockPos) -> bool {
         pos.x % self.chunk_size == 0
             || pos.x % self.chunk_size == self.chunk_size - 1

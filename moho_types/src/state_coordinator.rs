@@ -156,9 +156,9 @@ mod tests {
     fn test_show_menu_from_playing() {
         let actions = StateTransitionCoordinator::show_menu(GameState::Playing).unwrap();
         assert_eq!(actions.new_state, GameState::Menu);
-        assert_eq!(actions.ui_visible, true);
-        assert_eq!(actions.cursor_grabbed, false);
-        assert_eq!(actions.cursor_visible, true);
+        assert!(actions.ui_visible);
+        assert!(!actions.cursor_grabbed);
+        assert!(actions.cursor_visible);
         assert_eq!(actions.show_menu, Some("start"));
     }
 
@@ -173,9 +173,9 @@ mod tests {
     fn test_hide_menu() {
         let actions = StateTransitionCoordinator::hide_menu(GameState::Menu).unwrap();
         assert_eq!(actions.new_state, GameState::Playing);
-        assert_eq!(actions.ui_visible, false);
-        assert_eq!(actions.cursor_grabbed, true);
-        assert_eq!(actions.cursor_visible, false);
+        assert!(!actions.ui_visible);
+        assert!(actions.cursor_grabbed);
+        assert!(!actions.cursor_visible);
         assert_eq!(actions.show_menu, None);
     }
 
@@ -183,9 +183,9 @@ mod tests {
     fn test_enter_console() {
         let actions = StateTransitionCoordinator::enter_console(GameState::Playing).unwrap();
         assert_eq!(actions.new_state, GameState::ConsoleOpen);
-        assert_eq!(actions.ui_visible, true);
-        assert_eq!(actions.cursor_grabbed, false);
-        assert_eq!(actions.cursor_visible, true);
+        assert!(actions.ui_visible);
+        assert!(!actions.cursor_grabbed);
+        assert!(actions.cursor_visible);
     }
 
     #[test]
@@ -198,16 +198,16 @@ mod tests {
     fn test_exit_console() {
         let actions = StateTransitionCoordinator::exit_console(GameState::ConsoleOpen).unwrap();
         assert_eq!(actions.new_state, GameState::Playing);
-        assert_eq!(actions.ui_visible, false);
-        assert_eq!(actions.cursor_grabbed, true);
+        assert!(!actions.ui_visible);
+        assert!(actions.cursor_grabbed);
     }
 
     #[test]
     fn test_pause_game() {
         let actions = StateTransitionCoordinator::pause_game(GameState::Playing).unwrap();
         assert_eq!(actions.new_state, GameState::Paused);
-        assert_eq!(actions.ui_visible, true);
-        assert_eq!(actions.cursor_grabbed, false);
+        assert!(actions.ui_visible);
+        assert!(!actions.cursor_grabbed);
         assert_eq!(actions.show_menu, Some("pause"));
     }
 
@@ -215,8 +215,8 @@ mod tests {
     fn test_resume_game() {
         let actions = StateTransitionCoordinator::resume_game(GameState::Paused).unwrap();
         assert_eq!(actions.new_state, GameState::Playing);
-        assert_eq!(actions.ui_visible, false);
-        assert_eq!(actions.cursor_grabbed, true);
+        assert!(!actions.ui_visible);
+        assert!(actions.cursor_grabbed);
     }
 
     #[test]

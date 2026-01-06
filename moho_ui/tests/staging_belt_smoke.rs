@@ -1,4 +1,3 @@
-#![cfg(feature = "ui-egui")]
 use moho_ui::EguiUi;
 use std::sync::Arc;
 

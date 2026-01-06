@@ -172,16 +172,14 @@ impl HybridMeshGenerator {
             for y in 0..chunk_size {
                 for z in 0..chunk_size {
                     let pos = base_pos + IVec3::new(x, y, z);
-                    if let Some(block) = grid.get_block(&pos) {
-                        if !block.is_smooth() {
-                            let block_mesh = BlockyMeshGenerator::generate_mesh(grid, pos);
-                            Self::append_mesh_with_offset(
-                                &mut final_mesh,
-                                &block_mesh,
-                                pos,
-                                smooth_index_offset,
-                            );
-                        }
+                    if grid.get_block(&pos).is_some_and(|block| !block.is_smooth()) {
+                        let block_mesh = BlockyMeshGenerator::generate_mesh(grid, pos);
+                        Self::append_mesh_with_offset(
+                            &mut final_mesh,
+                            &block_mesh,
+                            pos,
+                            smooth_index_offset,
+                        );
                     }
                 }
             }
@@ -213,9 +211,9 @@ impl HybridMeshGenerator {
         let base_pos = chunk_pos * chunk_size;
 
         // Sample with padding (-1 to chunk_size+1)
-        for x in 0..18 {
-            for y in 0..18 {
-                for z in 0..18 {
+        for (x, plane) in field.iter_mut().enumerate() {
+            for (y, row) in plane.iter_mut().enumerate() {
+                for (z, col) in row.iter_mut().enumerate() {
                     let world_pos = base_pos + IVec3::new(x as i32 - 1, y as i32 - 1, z as i32 - 1);
 
                     let is_solid = if let Some(block) = grid.get_block(&world_pos) {
@@ -224,7 +222,7 @@ impl HybridMeshGenerator {
                         false
                     };
 
-                    field[x][y][z] = if is_solid { 1.0 } else { 0.0 };
+                    *col = if is_solid { 1.0 } else { 0.0 };
                 }
             }
         }

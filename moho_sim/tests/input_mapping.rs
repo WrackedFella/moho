@@ -79,5 +79,5 @@ fn stamp_and_apply_timed_inputs_via_simulation() {
     let mut sim = Simulation::new(0x10);
     sim.tick_timed(&timed);
     // right move adds dx=1, seed is added in tick: seed low bits=0x10 -> +16
-    assert_eq!(sim.x, 1 + ((0x10 & 0xffff) as i32));
+    assert_eq!(sim.x, 1 + (0x10 & 0xffff));
 }

@@ -69,16 +69,14 @@ pub fn raycast(
     while distance <= max_distance {
         // Check if current voxel is solid
         let pos = IVec3::new(x, y, z);
-        if let Some(block) = grid.get_block(&pos) {
-            if block.material_id != 0 {
-                // Assuming 0 is air/empty
-                return Some(RaycastResult {
-                    block_pos: pos,
-                    normal,
-                    position: origin + dir * distance,
-                    distance,
-                });
-            }
+        if grid.get_block(&pos).is_some_and(|block| block.material_id != 0) {
+            // Assuming 0 is air/empty
+            return Some(RaycastResult {
+                block_pos: pos,
+                normal,
+                position: origin + dir * distance,
+                distance,
+            });
         }
 
         // Move to next voxel
@@ -94,18 +92,16 @@ pub fn raycast(
                 t_max_z += t_delta_z;
                 normal = IVec3::new(0, 0, -step_z);
             }
+        } else if t_max_y < t_max_z {
+            y += step_y;
+            distance = t_max_y;
+            t_max_y += t_delta_y;
+            normal = IVec3::new(0, -step_y, 0);
         } else {
-            if t_max_y < t_max_z {
-                y += step_y;
-                distance = t_max_y;
-                t_max_y += t_delta_y;
-                normal = IVec3::new(0, -step_y, 0);
-            } else {
-                z += step_z;
-                distance = t_max_z;
-                t_max_z += t_delta_z;
-                normal = IVec3::new(0, 0, -step_z);
-            }
+            z += step_z;
+            distance = t_max_z;
+            t_max_z += t_delta_z;
+            normal = IVec3::new(0, 0, -step_z);
         }
     }
 

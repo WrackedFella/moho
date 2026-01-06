@@ -1,4 +1,3 @@
-#![cfg(feature = "ui-egui")]
 //! Tests for the menu system functionality
 
 use moho_ui::UiComponent;

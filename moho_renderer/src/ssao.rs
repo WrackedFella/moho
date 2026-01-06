@@ -489,8 +489,8 @@ impl SsaoSystem {
             compute_pass.set_bind_group(0, &gtao_bind_group, &[]);
 
             // Dispatch with 8x8 workgroups
-            let workgroup_count_x = (self.width + 7) / 8;
-            let workgroup_count_y = (self.height + 7) / 8;
+            let workgroup_count_x = self.width.div_ceil(8);
+            let workgroup_count_y = self.height.div_ceil(8);
             compute_pass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
         }
 
@@ -533,8 +533,8 @@ impl SsaoSystem {
             compute_pass.set_bind_group(0, &blur_bind_group, &[]);
 
             // Dispatch with 8x8 workgroups
-            let workgroup_count_x = (self.width + 7) / 8;
-            let workgroup_count_y = (self.height + 7) / 8;
+            let workgroup_count_x = self.width.div_ceil(8);
+            let workgroup_count_y = self.height.div_ceil(8);
             compute_pass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
         }
     }

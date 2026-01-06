@@ -105,7 +105,7 @@ fn document_shader_requirements() {
     // - Main shader: common.wgsl + vertex.wgsl + fragment.wgsl (concatenated)
     // - Skybox shader: skybox.wgsl (separate file, loaded from disk)
 
-    let main_shader_components = vec!["common.wgsl", "vertex.wgsl", "fragment.wgsl"];
+    let main_shader_components = ["common.wgsl", "vertex.wgsl", "fragment.wgsl"];
     assert_eq!(
         main_shader_components.len(),
         3,
@@ -225,7 +225,7 @@ fn document_feature_requirements() {
     // Required features:
     // - None (renderer works with basic wgpu feature set)
 
-    let desired_features = vec!["PUSH_CONSTANTS"];
+    let desired_features = ["PUSH_CONSTANTS"];
     let required_features: Vec<&str> = vec![]; // No hard requirements
 
     assert_eq!(desired_features.len(), 1, "1 optional feature requested");
@@ -272,7 +272,7 @@ fn document_shadow_system() {
     // - Depth textures for shadow rendering
     // - Shadow matrix uniforms
 
-    let shadow_system_dependencies = vec![
+    let shadow_system_dependencies = [
         "device",
         "camera_bind_group_layout",
         "shadow_bind_group_layout",
@@ -300,8 +300,4 @@ fn test_renderer_creation_requires_gpu() {
     // - Separating "device initialization" from "renderer construction"
 
     // Note: This test intentionally does nothing but document the limitation
-    assert!(
-        true,
-        "Renderer creation requires GPU and cannot be tested in CI"
-    );
 }

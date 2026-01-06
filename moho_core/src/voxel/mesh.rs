@@ -118,7 +118,7 @@ mod tests {
         // Verify vertices are in unit cube range
         for vert in &mesh.vertices {
             for &coord in vert {
-                assert!(coord >= -0.51 && coord <= 0.51);
+                assert!((-0.51..=0.51).contains(&coord));
             }
         }
     }

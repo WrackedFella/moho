@@ -1,5 +1,3 @@
-#![cfg(feature = "ui-egui")]
-
 use moho_ui::StartMenu;
 use moho_ui::UiComponent;
 use std::path::PathBuf;

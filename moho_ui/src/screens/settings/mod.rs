@@ -113,6 +113,10 @@ impl SettingsMenu {
         });
     }
 
+    pub fn cancel_pending_binding(&mut self) {
+        self.keybind_capture.cancel_pending_binding();
+    }
+
     fn is_dirty(&self) -> bool {
         self.state.is_dirty()
     }

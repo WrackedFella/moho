@@ -1,5 +1,3 @@
-#![cfg(feature = "ui-egui")]
-
 //! Integration tests for SettingsMenu
 //!
 //! # Test Isolation
