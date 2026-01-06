@@ -71,14 +71,17 @@ impl TerrainSmoother {
 /// # World Space Vertices
 /// Chunk vertices are already transformed to world space, so the chunk
 /// uses an identity transform when rendering.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct VoxelChunk {
-    pub chunk_pos: IVec3,         // Chunk coordinates
-    pub vertices: Vec<[f32; 3]>,  // Merged mesh vertices (world space)
-    pub normals: Vec<[f32; 3]>,   // Merged mesh normals
-    pub indices: Vec<u32>,        // Merged mesh indices
-    pub material_id: u32,         // Primary material ID
-    pub mesh_handle: Option<u32>, // Renderer mesh handle (None = not uploaded)
+    pub chunk_pos: IVec3,            // Chunk coordinates
+    pub vertices: Vec<[f32; 3]>,     // Merged mesh vertices (world space)
+    pub normals: Vec<[f32; 3]>,      // Merged mesh normals
+    pub ambient_occlusion: Vec<f32>, // Per-vertex AO values
+    pub geometry_type: Vec<u32>,     // Per-vertex geometry type (0=smooth, 1=blocky)
+    pub light_level: Vec<f32>,       // Per-vertex light level (0.0-1.0, from block light)
+    pub indices: Vec<u32>,           // Merged mesh indices
+    pub material_id: u32,            // Primary material ID
+    pub mesh_handle: Option<u32>,    // Renderer mesh handle (None = not uploaded)
 }
 
 impl VoxelChunk {
@@ -93,6 +96,9 @@ impl VoxelChunk {
     pub fn from_grid(grid: &VoxelGrid, chunk_pos: IVec3) -> Self {
         let mut vertices = Vec::new();
         let mut normals = Vec::new();
+        let mut ambient_occlusion = Vec::new();
+        let mut geometry_type = Vec::new();
+        let mut light_level = Vec::new();
         let mut indices = Vec::new();
         let mut vertex_offset = 0u32;
 
@@ -121,12 +127,15 @@ impl VoxelChunk {
             }
 
             // Generate mesh for this block with only visible faces
-            let (block_verts, block_normals, block_indices) =
+            let (block_verts, block_normals, block_ao, block_geo_type, block_indices) =
                 extraction::extract_visible_faces(&block.mesh_data, &visible_faces);
 
             if block_verts.is_empty() {
                 continue; // No geometry to add
             }
+
+            // Get block's light level (max of sky and block light, normalized to 0-1)
+            let block_light = block.light_level() as f32 / 15.0;
 
             // Transform vertices to world position
             let world_pos = block.world_position();
@@ -139,8 +148,13 @@ impl VoxelChunk {
                 ]);
             }
 
-            // Copy normals
+            // Copy normals, AO, geometry type, and light level
             normals.extend_from_slice(&block_normals);
+            ambient_occlusion.extend_from_slice(&block_ao);
+            geometry_type.extend_from_slice(&block_geo_type);
+
+            // Fill light level for all vertices of this block
+            light_level.resize(light_level.len() + vert_count as usize, block_light);
 
             // Offset indices to account for merged vertices
             for idx in block_indices {
@@ -153,9 +167,56 @@ impl VoxelChunk {
             chunk_pos,
             vertices,
             normals,
+            ambient_occlusion,
+            geometry_type,
+            light_level,
             indices,
             material_id,
             mesh_handle: None, // Mesh not yet uploaded to renderer
+        }
+    }
+
+    /// Generate chunk mesh using hybrid mesh generation (Phase 1).
+    ///
+    /// Automatically detects smooth terrain vs blocky structures and generates
+    /// appropriate meshes with ambient occlusion.
+    ///
+    /// # Arguments
+    /// * `grid` - Source voxel grid containing blocks
+    /// * `chunk_pos` - Chunk coordinates to generate mesh for
+    ///
+    /// # Returns
+    /// A `VoxelChunk` with hybrid mesh generation applied
+    pub fn from_grid_hybrid(grid: &VoxelGrid, chunk_pos: IVec3) -> Self {
+        use super::mesh::HybridMeshGenerator;
+
+        let chunk_size = grid.chunk_size();
+        let mesh = HybridMeshGenerator::generate_chunk_mesh(grid, chunk_pos, chunk_size);
+
+        // Determine primary material from blocks in chunk
+        let blocks = grid.get_chunk_blocks(chunk_pos);
+        let mut material_counts: HashMap<u32, usize> = HashMap::new();
+
+        for block in &blocks {
+            *material_counts.entry(block.material_id).or_insert(0) += 1;
+        }
+
+        let material_id = material_counts
+            .into_iter()
+            .max_by_key(|&(_, count)| count)
+            .map(|(id, _)| id)
+            .unwrap_or(0);
+
+        VoxelChunk {
+            chunk_pos,
+            vertices: mesh.vertices,
+            normals: mesh.normals,
+            ambient_occlusion: mesh.ambient_occlusion,
+            geometry_type: mesh.geometry_type,
+            light_level: mesh.light_level,
+            indices: mesh.indices,
+            material_id,
+            mesh_handle: None,
         }
     }
 
@@ -168,6 +229,9 @@ impl VoxelChunk {
     pub fn memory_size(&self) -> usize {
         self.vertices.len() * std::mem::size_of::<[f32; 3]>()
             + self.normals.len() * std::mem::size_of::<[f32; 3]>()
+            + self.ambient_occlusion.len() * std::mem::size_of::<f32>()
+            + self.geometry_type.len() * std::mem::size_of::<u32>()
+            + self.light_level.len() * std::mem::size_of::<f32>()
             + self.indices.len() * std::mem::size_of::<u32>()
     }
 
@@ -280,6 +344,9 @@ mod tests {
             chunk_pos: IVec3::ZERO,
             vertices: Vec::new(),
             normals: Vec::new(),
+            ambient_occlusion: Vec::new(),
+            geometry_type: Vec::new(),
+            light_level: Vec::new(),
             indices: Vec::new(),
             material_id: 0,
             mesh_handle: None,
@@ -296,6 +363,9 @@ mod tests {
             chunk_pos: IVec3::ZERO,
             vertices: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             normals: vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+            ambient_occlusion: vec![1.0, 1.0, 1.0],
+            geometry_type: vec![1, 1, 1],
+            light_level: vec![1.0, 1.0, 1.0],
             indices: vec![0, 1, 2],
             material_id: 0,
             mesh_handle: None,
@@ -312,6 +382,9 @@ mod tests {
             chunk_pos: IVec3::ZERO,
             vertices: vec![[0.0, 0.0, 0.0]],
             normals: vec![[0.0, 1.0, 0.0]],
+            ambient_occlusion: vec![1.0],
+            geometry_type: vec![1],
+            light_level: vec![1.0],
             indices: vec![0],
             material_id: 0,
             mesh_handle: None,
@@ -330,12 +403,15 @@ mod tests {
             chunk_pos: IVec3::ZERO,
             vertices: vec![[0.0, 0.0, 0.0]; 100],
             normals: vec![[0.0, 1.0, 0.0]; 100],
+            ambient_occlusion: vec![1.0; 100],
+            geometry_type: vec![1; 100],
+            light_level: vec![1.0; 100],
             indices: vec![0; 150],
             material_id: 0,
             mesh_handle: None,
         };
 
-        let expected = 100 * 12 + 100 * 12 + 150 * 4; // verts + normals + indices
+        let expected = 100 * 12 + 100 * 12 + 100 * 4 + 100 * 4 + 100 * 4 + 150 * 4; // verts + normals + ao + geo_type + light + indices
         assert_eq!(chunk.memory_size(), expected);
     }
 
@@ -351,11 +427,14 @@ mod tests {
             FaceDirection::NegZ,
         ];
 
-        let (verts, normals, indices) = extraction::extract_visible_faces(&mesh, &all_faces);
+        let (verts, normals, ao, geo_type, indices) =
+            extraction::extract_visible_faces(&mesh, &all_faces);
 
         // Should return complete mesh
         assert_eq!(verts.len(), mesh.vertices.len());
         assert_eq!(normals.len(), mesh.normals.len());
+        assert_eq!(ao.len(), mesh.ambient_occlusion.len());
+        assert_eq!(geo_type.len(), mesh.geometry_type.len());
         assert_eq!(indices.len(), mesh.indices.len());
     }
 
@@ -364,11 +443,14 @@ mod tests {
         let mesh = MeshGenerator::cube_mesh();
         let no_faces = vec![];
 
-        let (verts, normals, indices) = extraction::extract_visible_faces(&mesh, &no_faces);
+        let (verts, normals, ao, geo_type, indices) =
+            extraction::extract_visible_faces(&mesh, &no_faces);
 
         // Should return empty mesh
         assert!(verts.is_empty());
         assert!(normals.is_empty());
+        assert!(ao.is_empty());
+        assert!(geo_type.is_empty());
         assert!(indices.is_empty());
     }
 
@@ -377,7 +459,8 @@ mod tests {
         let mesh = MeshGenerator::cube_mesh();
         let some_faces = vec![FaceDirection::PosY, FaceDirection::NegY];
 
-        let (verts, _normals, indices) = extraction::extract_visible_faces(&mesh, &some_faces);
+        let (verts, _normals, _ao, _geo_type, indices) =
+            extraction::extract_visible_faces(&mesh, &some_faces);
 
         // Should return subset of mesh (2 faces out of 6)
         assert!(!verts.is_empty());

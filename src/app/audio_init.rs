@@ -53,12 +53,10 @@ mod tests {
         // Both are valid - the important part is graceful handling
         match result {
             Some(_) => {
-                // Audio initialized successfully
-                assert!(true, "Audio system available");
+                // Audio initialized successfully - test passes
             }
             None => {
-                // Audio initialization failed (expected on some CI systems)
-                assert!(true, "Audio system not available (gracefully degraded)");
+                // Audio initialization failed (expected on some CI systems) - test passes
             }
         }
     }
@@ -68,8 +66,7 @@ mod tests {
         // The most important test - initialization should never panic
         // This ensures the application can always start even without audio
         let _result = initialize_audio_system();
-        // If we reach here, no panic occurred
-        assert!(true, "Audio initialization completed without panic");
+        // If we reach here, no panic occurred - test passes
     }
 
     #[test]
@@ -78,8 +75,6 @@ mod tests {
         // (Though in practice, App only calls this once)
         let _first = initialize_audio_system();
         let _second = initialize_audio_system();
-
-        // Both should complete without panic
-        assert!(true, "Multiple initialization attempts handled safely");
+        // Both should complete without panic - test passes
     }
 }

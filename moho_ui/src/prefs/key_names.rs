@@ -24,7 +24,7 @@ pub static KEY_NAME_TO_CODE: phf::Map<&'static str, u32> = phf_map! {
     "LEFT" => 0x102,
     "ARROWRIGHT" => 0x103,
     "RIGHT" => 0x103,
-    
+
     // Special keys
     "ESCAPE" => 0x200,
     "ESC" => 0x200,
@@ -34,13 +34,13 @@ pub static KEY_NAME_TO_CODE: phf::Map<&'static str, u32> = phf_map! {
     "RETURN" => 0x203,
     "SPACE" => ' ' as u32,
     "SPACEBAR" => ' ' as u32,
-    
+
     // Modifier keys (as key codes, not as modifiers)
     "SHIFT" => 0x204,
     "CTRL" => 0x205,
     "CONTROL" => 0x205,
     "ALT" => 0x206,
-    
+
     // Letters (A-Z)
     "A" => 'A' as u32,
     "B" => 'B' as u32,
@@ -68,7 +68,7 @@ pub static KEY_NAME_TO_CODE: phf::Map<&'static str, u32> = phf_map! {
     "X" => 'X' as u32,
     "Y" => 'Y' as u32,
     "Z" => 'Z' as u32,
-    
+
     // Numbers (0-9)
     "0" => '0' as u32,
     "1" => '1' as u32,
@@ -80,7 +80,7 @@ pub static KEY_NAME_TO_CODE: phf::Map<&'static str, u32> = phf_map! {
     "7" => '7' as u32,
     "8" => '8' as u32,
     "9" => '9' as u32,
-    
+
     // Common punctuation
     "." => '.' as u32,
     "," => ',' as u32,
@@ -120,14 +120,14 @@ pub fn parse_key_name(key_part: &str, fallback: u32) -> u32 {
     if let Some(&code) = KEY_NAME_TO_CODE.get(uppercase.as_str()) {
         return code;
     }
-    
+
     // Fallback: Try single character
-    if key_part.len() == 1 {
-        if let Some(ch) = key_part.chars().next() {
-            return ch.to_ascii_uppercase() as u32;
-        }
+    if key_part.len() == 1
+        && let Some(ch) = key_part.chars().next()
+    {
+        return ch.to_ascii_uppercase() as u32;
     }
-    
+
     // Fallback: Try parse as numeric code
     key_part.parse::<u32>().unwrap_or(fallback)
 }
@@ -135,7 +135,7 @@ pub fn parse_key_name(key_part: &str, fallback: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_parse_arrow_keys() {
         assert_eq!(parse_key_name("ArrowUp", 0), 0x100);
@@ -147,7 +147,7 @@ mod tests {
         assert_eq!(parse_key_name("ArrowRight", 0), 0x103);
         assert_eq!(parse_key_name("RIGHT", 0), 0x103);
     }
-    
+
     #[test]
     fn test_parse_special_keys() {
         assert_eq!(parse_key_name("Escape", 0), 0x200);
@@ -159,7 +159,7 @@ mod tests {
         assert_eq!(parse_key_name("Spacebar", 0), ' ' as u32);
         assert_eq!(parse_key_name("SPACE", 0), ' ' as u32);
     }
-    
+
     #[test]
     fn test_parse_letters() {
         assert_eq!(parse_key_name("A", 0), 'A' as u32);
@@ -169,21 +169,21 @@ mod tests {
         assert_eq!(parse_key_name("w", 0), 'W' as u32);
         assert_eq!(parse_key_name("a", 0), 'A' as u32);
     }
-    
+
     #[test]
     fn test_parse_numbers() {
         assert_eq!(parse_key_name("0", 0), '0' as u32);
         assert_eq!(parse_key_name("5", 0), '5' as u32);
         assert_eq!(parse_key_name("9", 0), '9' as u32);
     }
-    
+
     #[test]
     fn test_parse_punctuation() {
         assert_eq!(parse_key_name(".", 0), '.' as u32);
         assert_eq!(parse_key_name(",", 0), ',' as u32);
         assert_eq!(parse_key_name("/", 0), '/' as u32);
     }
-    
+
     #[test]
     fn test_parse_modifier_keys() {
         assert_eq!(parse_key_name("Shift", 0), 0x204);
@@ -191,19 +191,19 @@ mod tests {
         assert_eq!(parse_key_name("CONTROL", 0), 0x205);
         assert_eq!(parse_key_name("Alt", 0), 0x206);
     }
-    
+
     #[test]
     fn test_parse_unknown_returns_fallback() {
         assert_eq!(parse_key_name("unknown_key", 42), 42);
         assert_eq!(parse_key_name("", 99), 99);
     }
-    
+
     #[test]
     fn test_parse_numeric_string() {
         assert_eq!(parse_key_name("256", 0), 256);
         assert_eq!(parse_key_name("0x100", 0), 0); // Hex not supported, uses fallback
     }
-    
+
     #[test]
     fn test_case_insensitivity() {
         assert_eq!(parse_key_name("arrowup", 0), 0x100);

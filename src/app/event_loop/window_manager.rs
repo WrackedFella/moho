@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn test_window_manager_default() {
-        let _manager = WindowManager::default();
+        let _manager = WindowManager;
         // Just verify it compiles and constructs
     }
 

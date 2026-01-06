@@ -9,7 +9,9 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 mod preparation;
-pub use preparation::{PreparedScene, ScenePreparation};
+#[allow(unused_imports)] // Public API, used externally
+pub use preparation::PreparedScene;
+pub use preparation::ScenePreparation;
 
 /// Type alias for camera data: (position, yaw, pitch)
 pub type CameraData = (glam::Vec3, f32, f32);
@@ -313,6 +315,7 @@ impl Scene {
 
         // Load VoxelChunks
         for chunk_desc in desc.voxel_chunks {
+            let vertex_count = chunk_desc.vertices.len();
             let chunk = moho_core::voxel::VoxelChunk {
                 chunk_pos: glam::IVec3::new(
                     chunk_desc.chunk_pos[0],
@@ -321,6 +324,9 @@ impl Scene {
                 ),
                 vertices: chunk_desc.vertices,
                 normals: chunk_desc.normals,
+                ambient_occlusion: vec![1.0; vertex_count], // Default full brightness for loaded chunks
+                geometry_type: vec![1; vertex_count],       // Default to blocky for loaded chunks
+                light_level: vec![1.0; vertex_count], // Default to full light for loaded chunks
                 indices: chunk_desc.indices,
                 material_id: chunk_desc.material_id,
                 mesh_handle: None, // Will be uploaded on next render

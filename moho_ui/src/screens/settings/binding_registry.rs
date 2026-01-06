@@ -161,9 +161,11 @@ mod tests {
 
     #[test]
     fn find_conflict_detects_duplicate_bindings() {
-        let mut prefs = Prefs::default();
-        prefs.key_w = Binding::new('W' as u32, 0);
-        prefs.key_a = Binding::new('A' as u32, 0);
+        let prefs = Prefs {
+            key_w: Binding::new('W' as u32, 0),
+            key_a: Binding::new('A' as u32, 0),
+            ..Default::default()
+        };
 
         let registry = BindingRegistry::from_prefs(&prefs);
 
@@ -178,8 +180,10 @@ mod tests {
 
     #[test]
     fn find_conflict_ignores_exclude_id() {
-        let mut prefs = Prefs::default();
-        prefs.key_w = Binding::new('W' as u32, 0);
+        let prefs = Prefs {
+            key_w: Binding::new('W' as u32, 0),
+            ..Default::default()
+        };
 
         let registry = BindingRegistry::from_prefs(&prefs);
 

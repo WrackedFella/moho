@@ -44,8 +44,11 @@ pub struct LightingGpu {
     pub moon_color: [f32; 4],
     /// Ambient light color (rgb) and intensity (w)
     pub ambient: [f32; 4],
-    /// Time of day (x = 0-24 hours, yzw = unused)
-    pub time_of_day: [f32; 4],
+    /// Shader parameters:
+    /// x = Time of day (0-24 hours)
+    /// y = Debug Mode (0=None, 1=Normals, 2=Bias, 3=Cascades, 4=Shadows)
+    /// zw = Unused
+    pub params: [f32; 4],
 }
 
 /// GPU-visible shadow matrix for light-space transformation (single shadow map - legacy)
@@ -95,8 +98,52 @@ pub struct MultiLightShadowGpu {
     /// Light intensities for blending (x=Sun, y=Moon, z=Dynamic1, w=Dynamic2)
     pub light_intensities: [f32; 4],
 
-    /// Active light count and metadata (x=count, yzw=unused)
+    /// Metadata: x=shadow_distance, y=light_size (for PCSS), z=pcss_quality (0=off, 1=low, 2=med, 3=high), w=unused
     pub metadata: [f32; 4],
+}
+
+/// Maximum number of dynamic point/spot lights supported
+pub const MAX_DYNAMIC_LIGHTS: usize = 64;
+
+/// Single point light data for GPU (32 bytes aligned to 16-byte boundaries)
+/// Position and attenuation parameters for distance-based light falloff
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct PointLightGpu {
+    /// Position (xyz) and range (w) - maximum distance light reaches
+    pub position_range: [f32; 4],
+    /// Color (rgb) and intensity (w) - brightness multiplier
+    pub color_intensity: [f32; 4],
+}
+
+/// Dynamic lights buffer containing active point lights (1040 bytes max)
+/// Sent to GPU as storage buffer for light accumulation loop
+/// Structure: light_count (16 bytes) + lights array (64 × 32 = 2048 bytes)
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct DynamicLightsGpu {
+    /// Number of active lights (x) and padding (yzw). Total 16 bytes for alignment.
+    pub light_count: [u32; 4],
+    /// Array of point lights (up to MAX_DYNAMIC_LIGHTS)
+    pub lights: [PointLightGpu; MAX_DYNAMIC_LIGHTS],
+}
+
+impl Default for DynamicLightsGpu {
+    fn default() -> Self {
+        Self {
+            light_count: [0, 0, 0, 0],
+            lights: [PointLightGpu::default(); MAX_DYNAMIC_LIGHTS],
+        }
+    }
+}
+
+impl Default for PointLightGpu {
+    fn default() -> Self {
+        Self {
+            position_range: [0.0, 0.0, 0.0, 10.0], // Default range of 10 units
+            color_intensity: [1.0, 1.0, 1.0, 0.0], // White light, intensity 0 (off)
+        }
+    }
 }
 
 impl Default for MultiLightShadowGpu {
@@ -202,7 +249,7 @@ impl Default for LightingGpu {
             // Reduced ambient light to make shadows more visible
             ambient: [0.4, 0.5, 0.6, 0.1], // Cool ambient, intensity=0.1 (reduced from 0.3)
             // Default to dawn (6:00)
-            time_of_day: [6.0, 0.0, 0.0, 0.0],
+            params: [6.0, 0.0, 0.0, 0.0],
         }
     }
 }

@@ -8,15 +8,17 @@
 //! - Main pipeline layout (camera + shadow bind groups)
 //! - Skybox pipeline layout (camera bind group only)
 
-use crate::gpu_types::{CascadedShadowMatrixGpu, MultiLightShadowGpu, ShadowMatrixGpu};
 use super::PipelineInitError;
+use crate::gpu_types::{MultiLightShadowGpu, ShadowMatrixGpu};
 
 /// Create the camera bind group layout.
 ///
-/// This layout has 3 bindings:
+/// This layout has 5 bindings:
 /// - Binding 0: Camera uniform buffer (view + projection matrices, 80 bytes)
 /// - Binding 1: Material storage buffer (array of materials, read-only)
 /// - Binding 2: Lighting uniform buffer (sun/moon/ambient lighting, 96 bytes)
+/// - Binding 3: SSAO texture (ambient occlusion, R8Unorm)
+/// - Binding 4: SSAO sampler (linear filtering)
 ///
 /// # Errors
 ///
@@ -37,11 +39,7 @@ pub fn create_camera_bind_group_layout(
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size: Some(std::num::NonZeroU64::new(camera_size).ok_or_else(
-                        || {
-                            PipelineInitError::CameraBufferSize(
-                                "camera size was zero".to_string(),
-                            )
-                        },
+                        || PipelineInitError::CameraBufferSize("camera size was zero".to_string()),
                     )?),
                 },
                 count: None,
@@ -62,13 +60,39 @@ pub fn create_camera_bind_group_layout(
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: Some(
-                        std::num::NonZeroU64::new(lighting_size).ok_or_else(|| {
+                    min_binding_size: Some(std::num::NonZeroU64::new(lighting_size).ok_or_else(
+                        || {
                             PipelineInitError::LightingBufferSize(
                                 "lighting size was zero".to_string(),
                             )
-                        })?,
-                    ),
+                        },
+                    )?),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None, // Dynamic lights buffer size varies
                 },
                 count: None,
             },
@@ -162,13 +186,13 @@ pub fn create_shadow_pass_bind_group_layout(
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
-                min_binding_size: Some(
-                    std::num::NonZeroU64::new(shadow_matrix_size).ok_or_else(|| {
+                min_binding_size: Some(std::num::NonZeroU64::new(shadow_matrix_size).ok_or_else(
+                    || {
                         PipelineInitError::ShadowMatrixSize(
                             "shadow matrix size was zero".to_string(),
                         )
-                    })?,
-                ),
+                    },
+                )?),
             },
             count: None,
         }],
@@ -248,6 +272,7 @@ pub fn create_skybox_pipeline_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gpu_types::CascadedShadowMatrixGpu;
 
     #[test]
     fn test_camera_buffer_size_nonzero() {

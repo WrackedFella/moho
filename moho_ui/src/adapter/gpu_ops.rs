@@ -27,7 +27,13 @@ pub fn update_buffers(
     clipped_primitives: &[egui::ClippedPrimitive],
     screen_descriptor: &egui_wgpu::ScreenDescriptor,
 ) {
-    renderer.update_buffers(device, queue, encoder, clipped_primitives, screen_descriptor);
+    renderer.update_buffers(
+        device,
+        queue,
+        encoder,
+        clipped_primitives,
+        screen_descriptor,
+    );
 }
 
 /// Execute the egui render pass
@@ -94,7 +100,7 @@ mod tests {
             size_in_pixels: [1920, 1080],
             pixels_per_point: 1.0,
         };
-        
+
         assert_eq!(descriptor.size_in_pixels[0], 1920);
         assert_eq!(descriptor.size_in_pixels[1], 1080);
     }

@@ -5,9 +5,19 @@
 //! - Standard cube meshes (baseline)
 //! - Smoothed meshes with terrain adaptation
 //! - Normal recalculation for deformed geometry
+//! - Marching Cubes for smooth terrain
+//! - Blocky meshes with per-vertex ambient occlusion
+//! - Hybrid mesh generation for mixed chunks
 
+mod blocky;
 mod deform;
+mod hybrid;
+mod marching_cubes;
 mod normals;
+
+pub use blocky::BlockyMeshGenerator;
+pub use hybrid::{ChunkContent, HybridMeshGenerator};
+pub use marching_cubes::MarchingCubes;
 
 use super::grid::{BlockPos, VoxelMesh};
 use crate::actors::Cube;
@@ -23,10 +33,16 @@ impl MeshGenerator {
     /// suitable for rendering at block positions.
     pub fn cube_mesh() -> VoxelMesh {
         let (verts, normals, indices) = Cube::unit_cube_indexed();
+        let ao = vec![1.0; verts.len()]; // No occlusion for basic cube
+        let geometry_type = vec![1; verts.len()]; // Blocky geometry
+        let light_level = vec![1.0; verts.len()]; // Full light by default
         VoxelMesh {
             vertices: verts,
             normals,
             indices,
+            ambient_occlusion: ao,
+            geometry_type,
+            light_level,
         }
     }
 
@@ -69,10 +85,16 @@ impl MeshGenerator {
         // Recalculate normals for deformed faces
         normals::recalculate_normals(&verts, &indices, &mut normals);
 
+        let ao = vec![1.0; verts.len()]; // No occlusion for smoothed mesh (could be enhanced later)
+        let geometry_type = vec![1; verts.len()]; // Blocky geometry
+        let light_level = vec![1.0; verts.len()]; // Full light by default
         VoxelMesh {
             vertices: verts,
             normals,
             indices,
+            ambient_occlusion: ao,
+            geometry_type,
+            light_level,
         }
     }
 }
@@ -96,7 +118,7 @@ mod tests {
         // Verify vertices are in unit cube range
         for vert in &mesh.vertices {
             for &coord in vert {
-                assert!(coord >= -0.51 && coord <= 0.51);
+                assert!((-0.51..=0.51).contains(&coord));
             }
         }
     }

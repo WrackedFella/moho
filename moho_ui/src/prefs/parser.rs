@@ -5,8 +5,8 @@
 //!
 //! Uses PHF (perfect hash functions) for O(1) key name lookups during parsing.
 
-use super::key_names::parse_key_name;
 use super::Binding;
+use super::key_names::parse_key_name;
 
 /// Parse a human-readable binding string into a Binding struct.
 ///

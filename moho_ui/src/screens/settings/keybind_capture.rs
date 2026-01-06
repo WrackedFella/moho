@@ -9,11 +9,11 @@
 //! This module will be used by the future dedicated "Keybinds" screen/tab
 //! (accessed via "Edit Keybinds" button).
 
+use super::SettingsField;
 use super::binding_registry::BindingRegistry;
 use super::conflict_modal::{ConflictModalState, PendingBinding};
 use super::key_mapping::{binding_label, key_to_code};
 use super::types::BindingId;
-use super::SettingsField;
 use crate::prefs::Binding;
 
 /// Keybind capture handler for configuring input bindings.
@@ -26,10 +26,10 @@ use crate::prefs::Binding;
 pub struct KeybindCaptureHandler {
     /// Index of the binding currently being listened for (None if not listening)
     listening: Option<usize>,
-    
+
     /// Last known modifier state (for modifier-only bindings)
     last_mods: u8,
-    
+
     /// Conflict modal state (for showing conflict dialog)
     conflict_modal: ConflictModalState,
 }
@@ -42,13 +42,13 @@ impl KeybindCaptureHandler {
             conflict_modal: ConflictModalState::new(),
         }
     }
-    
+
     /// Start listening for a new keybind for the given field
     pub fn start_listening(&mut self, binding_id: usize) {
         self.listening = Some(binding_id);
         self.last_mods = 0;
     }
-    
+
     // Note: stop_listening is provided for API completeness but currently unused.
     // It may be needed when implementing cancel/reset functionality in the future.
     #[allow(dead_code)]
@@ -56,22 +56,22 @@ impl KeybindCaptureHandler {
         self.listening = None;
         self.last_mods = 0;
     }
-    
+
     /// Check if currently listening for input
     pub fn is_listening(&self) -> bool {
         self.listening.is_some()
     }
-    
+
     /// Get the binding ID currently being listened for (for UI rendering)
     pub fn listening_id(&self) -> Option<usize> {
         self.listening
     }
-    
+
     /// Get a reference to the conflict modal state (for testing)
     pub fn conflict_modal(&self) -> &ConflictModalState {
         &self.conflict_modal
     }
-    
+
     /// Handle a winit WindowEvent when listening for a binding.
     /// Returns true if the event was consumed (binding applied or cancelled).
     ///
@@ -113,11 +113,16 @@ impl KeybindCaptureHandler {
             // the post-mapping logic without constructing full winit KeyEvent structs.
             let mods_bits = 0u8;
 
-            return self.apply_key_code_while_listening(code, mods_bits, staged_prefs, on_binding_changed);
+            return self.apply_key_code_while_listening(
+                code,
+                mods_bits,
+                staged_prefs,
+                on_binding_changed,
+            );
         }
         false
     }
-    
+
     /// Testable helper: apply a resolved key code while the menu is listening.
     ///
     /// This function contains the core logic for applying a binding or queuing a
@@ -196,7 +201,7 @@ impl KeybindCaptureHandler {
             true
         }
     }
-    
+
     /// Handle key capture when listening for a binding.
     /// Processes keyboard input from egui context to update bindings.
     ///
@@ -227,7 +232,7 @@ impl KeybindCaptureHandler {
             self.process_key_events(input, staged_prefs, on_binding_changed);
         });
     }
-    
+
     /// Check if there's a pending binding to apply (after modal confirmation)
     // Note: has_pending_binding is provided for API completeness but currently unused.
     // The conflict modal visibility is checked directly in most cases.
@@ -235,7 +240,7 @@ impl KeybindCaptureHandler {
     pub fn has_pending_binding(&self) -> bool {
         self.conflict_modal.is_visible()
     }
-    
+
     /// Apply the pending binding (called after user confirms in modal)
     ///
     /// # Arguments
@@ -273,12 +278,12 @@ impl KeybindCaptureHandler {
         }
         self.conflict_modal.hide();
     }
-    
+
     /// Cancel the pending binding (called when user cancels modal)
     pub fn cancel_pending_binding(&mut self) {
         self.conflict_modal.clear();
     }
-    
+
     /// Get conflict modal state (for checking if modal should be shown)
     pub fn take_conflict_modal(&mut self) -> Option<ConflictModalState> {
         if self.conflict_modal.is_visible() {
@@ -287,15 +292,15 @@ impl KeybindCaptureHandler {
             None
         }
     }
-    
+
     // ========== Private Helper Methods ==========
-    
+
     fn get_key_name(id: usize) -> &'static str {
         BindingId::from_usize(id)
             .map(|bid| bid.display_name())
             .unwrap_or("Unknown")
     }
-    
+
     /// Detect active modifier keys and return as bitfield.
     /// Bit 0: Ctrl, Bit 1: Shift, Bit 2: Alt
     fn detect_active_modifiers(input: &egui::InputState) -> u8 {
@@ -311,7 +316,7 @@ impl KeybindCaptureHandler {
         }
         mods
     }
-    
+
     /// Convert egui modifiers to binding modifier bitfield.
     fn modifiers_to_bits(modifiers: &egui::Modifiers) -> u8 {
         let mut mods: u8 = 0;
@@ -326,7 +331,7 @@ impl KeybindCaptureHandler {
         }
         mods
     }
-    
+
     /// Create a binding from an egui key and modifiers.
     /// Handles pure modifier keys (Ctrl, Shift, Alt) specially.
     fn create_binding_from_key(key: &egui::Key, modifiers: &egui::Modifiers) -> Binding {
@@ -349,7 +354,7 @@ impl KeybindCaptureHandler {
 
         Binding::new(code, mods)
     }
-    
+
     /// Apply a binding or show conflict modal.
     /// Returns true if binding was handled (applied or conflict shown).
     fn apply_binding_or_show_conflict<F>(
@@ -394,7 +399,7 @@ impl KeybindCaptureHandler {
             true
         }
     }
-    
+
     /// Process a single key event during binding capture.
     /// Returns true if the key was handled (stops listening).
     fn process_single_key<F>(
@@ -420,7 +425,7 @@ impl KeybindCaptureHandler {
         let binding = Self::create_binding_from_key(key, modifiers);
         self.apply_binding_or_show_conflict(binding, listen_id, staged_prefs, on_binding_changed)
     }
-    
+
     /// Process all key events from egui input.
     fn process_key_events<F>(
         &mut self,
@@ -444,7 +449,7 @@ impl KeybindCaptureHandler {
             }
         }
     }
-    
+
     /// Returns true if a binding was applied or a conflict modal was queued.
     pub(crate) fn capture_modifier_if_listening<F>(
         &mut self,
@@ -515,181 +520,172 @@ mod tests {
     fn test_start_stop_listening() {
         let mut handler = KeybindCaptureHandler::new();
         assert!(!handler.is_listening());
-        
+
         handler.start_listening(0);
         assert!(handler.is_listening());
-        
+
         handler.stop_listening();
         assert!(!handler.is_listening());
     }
-    
+
     #[test]
     fn test_escape_cancels_listening() {
         let mut handler = KeybindCaptureHandler::new();
         let prefs = crate::prefs::Prefs::default();
         let mut bindings_changed = vec![];
-        
+
         handler.start_listening(0);
-        
+
         // Escape key code is 0x200
-        let consumed = handler.apply_key_code_while_listening(
-            0x200,
-            0,
-            &prefs,
-            |field, binding| bindings_changed.push((field, binding)),
-        );
-        
+        let consumed =
+            handler.apply_key_code_while_listening(0x200, 0, &prefs, |field, binding| {
+                bindings_changed.push((field, binding))
+            });
+
         assert!(consumed);
         assert!(!handler.is_listening());
         assert!(bindings_changed.is_empty()); // No binding should be applied
     }
-    
+
     #[test]
     fn test_modifier_only_capture() {
         let mut handler = KeybindCaptureHandler::new();
         let prefs = crate::prefs::Prefs::default();
         let mut bindings_changed = vec![];
-        
+
         handler.start_listening(0);
-        
+
         // Alt modifier-only binding (code 0x206, mods 0)
         // Note: Default prefs uses Shift (0x204) for key_down, so use Alt to avoid conflict
-        let consumed = handler.apply_key_code_while_listening(
-            0x206,
-            0,
-            &prefs,
-            |field, binding| bindings_changed.push((field, binding)),
-        );
-        
+        let consumed =
+            handler.apply_key_code_while_listening(0x206, 0, &prefs, |field, binding| {
+                bindings_changed.push((field, binding))
+            });
+
         assert!(consumed);
         assert!(!handler.is_listening());
         assert_eq!(bindings_changed.len(), 1);
-        
+
         let (field, binding) = bindings_changed[0];
         assert!(matches!(field, SettingsField::KeyW));
         assert_eq!(binding.code, 0x206);
         assert_eq!(binding.mods, 0);
     }
-    
+
     #[test]
     fn test_normal_key_capture() {
         let mut handler = KeybindCaptureHandler::new();
         let prefs = crate::prefs::Prefs::default();
         let mut bindings_changed = vec![];
-        
+
         handler.start_listening(1); // KeyA
-        
+
         // Press 'W' key with Ctrl modifier
         let w_code = 'W' as u32;
         let ctrl_mods = 1u8;
-        let consumed = handler.apply_key_code_while_listening(
-            w_code,
-            ctrl_mods,
-            &prefs,
-            |field, binding| bindings_changed.push((field, binding)),
-        );
-        
+        let consumed =
+            handler.apply_key_code_while_listening(w_code, ctrl_mods, &prefs, |field, binding| {
+                bindings_changed.push((field, binding))
+            });
+
         assert!(consumed);
         assert!(!handler.is_listening());
         assert_eq!(bindings_changed.len(), 1);
-        
+
         let (field, binding) = bindings_changed[0];
         assert!(matches!(field, SettingsField::KeyA));
         assert_eq!(binding.code, w_code);
         assert_eq!(binding.mods, ctrl_mods);
     }
-    
+
     #[test]
     fn test_conflict_detection() {
         let mut handler = KeybindCaptureHandler::new();
-        
+
         // Create prefs where KeyW is already bound to 'W'
-        let mut prefs = crate::prefs::Prefs::default();
-        prefs.key_w = Binding::new('W' as u32, 0);
-        
+        let prefs = crate::prefs::Prefs {
+            key_w: Binding::new('W' as u32, 0),
+            ..Default::default()
+        };
+
         let mut bindings_changed = vec![];
-        
+
         // Try to bind KeyA to the same key 'W'
         handler.start_listening(1); // KeyA
-        
-        let consumed = handler.apply_key_code_while_listening(
-            'W' as u32,
-            0,
-            &prefs,
-            |field, binding| bindings_changed.push((field, binding)),
-        );
-        
+
+        let consumed =
+            handler.apply_key_code_while_listening('W' as u32, 0, &prefs, |field, binding| {
+                bindings_changed.push((field, binding))
+            });
+
         assert!(consumed);
         assert!(!handler.is_listening());
         assert!(bindings_changed.is_empty()); // No binding applied yet
         assert!(handler.has_pending_binding()); // Conflict modal should be triggered
     }
-    
+
     #[test]
     fn test_pending_binding_apply() {
         let mut handler = KeybindCaptureHandler::new();
-        
+
         // Create prefs where KeyW is already bound to 'W'
-        let mut prefs = crate::prefs::Prefs::default();
-        prefs.key_w = Binding::new('W' as u32, 0);
-        
+        let prefs = crate::prefs::Prefs {
+            key_w: Binding::new('W' as u32, 0),
+            ..Default::default()
+        };
+
         // Try to bind KeyA to 'W' (conflict)
         handler.start_listening(1); // KeyA
-        handler.apply_key_code_while_listening(
-            'W' as u32,
-            0,
-            &prefs,
-            |_, _| {},
-        );
-        
+        handler.apply_key_code_while_listening('W' as u32, 0, &prefs, |_, _| {});
+
         assert!(handler.has_pending_binding());
-        
+
         // Apply pending binding
         let mut bindings_changed = vec![];
         handler.apply_pending(|field, binding| bindings_changed.push((field, binding)));
-        
+
         // Should clear KeyW and apply KeyA
         assert_eq!(bindings_changed.len(), 2);
-        
+
         // First change: clear KeyW
         let (field1, binding1) = bindings_changed[0];
         assert!(matches!(field1, SettingsField::KeyW));
         assert_eq!(binding1.code, 0);
         assert_eq!(binding1.mods, 0);
-        
+
         // Second change: apply KeyA
         let (field2, binding2) = bindings_changed[1];
         assert!(matches!(field2, SettingsField::KeyA));
         assert_eq!(binding2.code, 'W' as u32);
         assert_eq!(binding2.mods, 0);
     }
-    
+
     #[test]
     fn test_binding_label_formatting() {
         // Unbound
         let unbound = Binding::new(0, 0);
         assert_eq!(binding_label(&unbound), "Unbound");
-        
+
         // Simple key
         let w_key = Binding::new('W' as u32, 0);
         assert_eq!(binding_label(&w_key), "W");
-        
+
         // Key with Ctrl
         let ctrl_w = Binding::new('W' as u32, 1);
         assert_eq!(binding_label(&ctrl_w), "Ctrl+W");
-        
+
         // Key with multiple modifiers
         let ctrl_shift_w = Binding::new('W' as u32, 3); // Ctrl(1) | Shift(2)
         assert_eq!(binding_label(&ctrl_shift_w), "Ctrl+Shift+W");
-        
+
         // Modifier-only (Shift alone)
         let shift_only = Binding::new(0x204, 0);
         assert_eq!(binding_label(&shift_only), "Shift");
-        
+
         // Arrow key
         let arrow_up = Binding::new(0x100, 0);
         assert_eq!(binding_label(&arrow_up), "ArrowUp");
-        
+
         // Space
         let space = Binding::new(' ' as u32, 0);
         assert_eq!(binding_label(&space), "Spacebar");

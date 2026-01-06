@@ -22,11 +22,18 @@ pub enum DebugEvent {
     /// Spawn entity command
     SpawnEntity {
         entity_type: String,
+        args: Option<String>,
         position: Option<glam::Vec3>,
     },
 
     /// Teleport player
     TeleportPlayer { position: glam::Vec3 },
+
+    /// Set shadow quality
+    SetShadowQuality { quality: u32 },
+
+    /// Set SSAO quality
+    SetSsaoQuality { quality: u32 },
 }
 
 #[derive(Clone, Debug)]

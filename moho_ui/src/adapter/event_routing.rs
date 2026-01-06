@@ -4,8 +4,8 @@
 //! - Menu action to event bus conversion
 //! - Audio event emission
 //! - Console action processing
-use crate::screens::MenuAction;
 use crate::UiAudioEvent;
+use crate::screens::MenuAction;
 use moho_core::EventBus;
 
 /// Process a menu action and publish corresponding events to the event bus
@@ -111,7 +111,29 @@ pub fn process_console_action(action: crate::overlays::ConsoleAction, event_bus:
                 sun_angle: 0.0,
             });
         }
-        ConsoleAction::None => {}
+        ConsoleAction::SetDebugView(mode) => {
+            use moho_core::events::GraphicsEvent;
+            event_bus.publish(GraphicsEvent::DebugViewChanged { mode });
+        }
+        ConsoleAction::SetShadowQuality(quality) => {
+            use moho_core::events::DebugEvent;
+            event_bus.publish(DebugEvent::SetShadowQuality { quality });
+        }
+        ConsoleAction::SetSsaoQuality(quality) => {
+            use moho_core::events::DebugEvent;
+            event_bus.publish(DebugEvent::SetSsaoQuality { quality });
+        }
+        ConsoleAction::Spawn(entity_type, args) => {
+            use moho_core::events::DebugEvent;
+            event_bus.publish(DebugEvent::SpawnEntity {
+                entity_type,
+                args,
+                position: None, // Position will be determined by raycast in the handler
+            });
+        }
+        ConsoleAction::None => {
+            // No action
+        }
     }
 }
 
@@ -126,9 +148,9 @@ mod tests {
     fn test_process_load_scene_action() {
         let bus = Arc::new(EventBus::new());
         let action = MenuAction::LoadScene(std::path::PathBuf::from("test.bin"));
-        
+
         process_menu_action(&action, &bus);
-        
+
         // Event bus doesn't provide a way to read published events in tests,
         // but we verify no panic occurs
     }
@@ -137,7 +159,7 @@ mod tests {
     fn test_process_new_world_action() {
         let bus = Arc::new(EventBus::new());
         let action = MenuAction::NewWorld;
-        
+
         process_menu_action(&action, &bus);
         // Verify no panic
     }
@@ -154,7 +176,7 @@ mod tests {
             initial_time_of_day: 6.0,
         };
         let action = MenuAction::GenerateWorld(spec);
-        
+
         process_menu_action(&action, &bus);
         // Verify no panic
     }
@@ -163,7 +185,7 @@ mod tests {
     fn test_process_exit_action() {
         let bus = Arc::new(EventBus::new());
         let action = MenuAction::Exit;
-        
+
         process_menu_action(&action, &bus);
         // Verify no panic
     }
@@ -172,7 +194,7 @@ mod tests {
     fn test_process_show_menu_action() {
         let bus = Arc::new(EventBus::new());
         let action = MenuAction::ShowMenu("settings".to_string());
-        
+
         process_menu_action(&action, &bus);
         // Verify no panic
     }
@@ -180,13 +202,13 @@ mod tests {
     #[test]
     fn test_emit_audio_events() {
         let bus = Arc::new(EventBus::new());
-        
+
         emit_audio_event(&bus, UiAudioEvent::ButtonClick);
         emit_audio_event(&bus, UiAudioEvent::MenuNavigate);
         emit_audio_event(&bus, UiAudioEvent::Confirm);
         emit_audio_event(&bus, UiAudioEvent::Cancel);
         emit_audio_event(&bus, UiAudioEvent::Error);
-        
+
         // Verify no panics
     }
 }

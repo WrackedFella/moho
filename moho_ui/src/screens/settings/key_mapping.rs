@@ -13,13 +13,13 @@ static CODE_TO_LABEL_MAP: phf::Map<u32, &'static str> = phf::phf_map! {
     0x101u32 => "ArrowDown",
     0x102u32 => "ArrowLeft",
     0x103u32 => "ArrowRight",
-    
+
     // Control keys
     0x200u32 => "Escape",
     0x201u32 => "Tab",
     0x202u32 => "Backspace",
     0x203u32 => "Enter",
-    
+
     // Modifier keys (used when pressed alone)
     0x204u32 => "Shift",
     0x205u32 => "Ctrl",
@@ -27,7 +27,7 @@ static CODE_TO_LABEL_MAP: phf::Map<u32, &'static str> = phf::phf_map! {
 };
 
 /// Map egui::Key to numeric code for binding storage.
-/// 
+///
 /// Uses a match statement but with cleaner organization. The complexity comes from
 /// the inherent need to map 40+ enum variants, not from unnecessary logic.
 /// Letters and digits map to their ASCII uppercased codes.
@@ -67,7 +67,7 @@ pub fn key_to_code(k: &egui::Key) -> u32 {
         X => 'X' as u32,
         Y => 'Y' as u32,
         Z => 'Z' as u32,
-        
+
         // Numbers (0-9) - map to ASCII digits
         Num0 => '0' as u32,
         Num1 => '1' as u32,
@@ -79,20 +79,20 @@ pub fn key_to_code(k: &egui::Key) -> u32 {
         Num7 => '7' as u32,
         Num8 => '8' as u32,
         Num9 => '9' as u32,
-        
+
         // Arrow keys - custom range 0x100-0x103
         ArrowUp => 0x100,
         ArrowDown => 0x101,
         ArrowLeft => 0x102,
         ArrowRight => 0x103,
-        
+
         // Special keys - custom range 0x200+
         Escape => 0x200,
         Tab => 0x201,
         Backspace => 0x202,
         Enter => 0x203,
         Space => ' ' as u32,
-        
+
         // Unmapped keys return 0
         _ => 0,
     }
@@ -213,10 +213,10 @@ mod tests {
     fn test_binding_label_with_modifiers() {
         let binding = Binding::new('W' as u32, 1); // Ctrl+W
         assert_eq!(binding_label(&binding), "Ctrl+W");
-        
+
         let binding = Binding::new('W' as u32, 2); // Shift+W
         assert_eq!(binding_label(&binding), "Shift+W");
-        
+
         let binding = Binding::new('W' as u32, 7); // Ctrl+Shift+Alt+W
         assert_eq!(binding_label(&binding), "Ctrl+Shift+Alt+W");
     }
@@ -225,10 +225,10 @@ mod tests {
     fn test_binding_label_modifier_only() {
         let binding = Binding::new(0x205, 0); // Ctrl key alone
         assert_eq!(binding_label(&binding), "Ctrl");
-        
+
         let binding = Binding::new(0x204, 0); // Shift key alone
         assert_eq!(binding_label(&binding), "Shift");
-        
+
         let binding = Binding::new(0x206, 0); // Alt key alone
         assert_eq!(binding_label(&binding), "Alt");
     }
@@ -237,10 +237,10 @@ mod tests {
     fn test_binding_label_special_keys() {
         let binding = Binding::new(0x100, 0); // ArrowUp
         assert_eq!(binding_label(&binding), "ArrowUp");
-        
+
         let binding = Binding::new(0x200, 0); // Escape
         assert_eq!(binding_label(&binding), "Escape");
-        
+
         let binding = Binding::new(' ' as u32, 0); // Space
         assert_eq!(binding_label(&binding), "Spacebar");
     }

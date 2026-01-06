@@ -66,6 +66,8 @@ pub struct InitializedApp {
     pub ui_event_rx: crossbeam_channel::Receiver<moho_core::events::UiEvent>,
     pub audio_event_rx: crossbeam_channel::Receiver<moho_core::events::AudioEvent>,
     pub graphics_event_rx: crossbeam_channel::Receiver<moho_core::events::GraphicsEvent>,
+    pub world_event_rx: crossbeam_channel::Receiver<moho_core::events::WorldEvent>,
+    pub debug_event_rx: crossbeam_channel::Receiver<moho_core::events::DebugEvent>,
 
     pub audio_system: Option<moho_audio::AudioSystem>,
     pub simulation: SimulationController,
@@ -166,6 +168,8 @@ impl AppInitializer {
         let ui_event_rx = event_bus_setup.ui_event_rx;
         let audio_event_rx = event_bus_setup.audio_event_rx;
         let graphics_event_rx = event_bus_setup.graphics_event_rx;
+        let world_event_rx = event_bus_setup.world_event_rx;
+        let debug_event_rx = event_bus_setup.debug_event_rx;
         log::debug!("Event bus initialized with subscribers");
 
         // Initialize audio system (optional - graceful failure)
@@ -193,6 +197,8 @@ impl AppInitializer {
             ui_event_rx,
             audio_event_rx,
             graphics_event_rx,
+            world_event_rx,
+            debug_event_rx,
 
             audio_system,
             simulation,
@@ -214,10 +220,8 @@ mod tests {
     #[test]
     fn test_initializer_with_default_config() {
         let config = AppConfig::default();
-        let initializer = AppInitializer::new(config);
-
+        let _initializer = AppInitializer::new(config);
         // Should be able to create initializer without panicking
-        assert!(true);
     }
 
     #[test]
@@ -227,8 +231,8 @@ mod tests {
             .input_filtering(false)
             .build();
 
-        let initializer = AppInitializer::new(config);
-        assert!(true);
+        let _initializer = AppInitializer::new(config);
+        // Should be able to create initializer without panicking
     }
 
     #[test]
@@ -319,8 +323,10 @@ mod tests {
 
     #[test]
     fn test_build_includes_prefs() {
-        let mut prefs = Prefs::default();
-        prefs.mouse_sensitivity = 2.5;
+        let prefs = Prefs {
+            mouse_sensitivity: 2.5,
+            ..Default::default()
+        };
 
         let config = AppConfig::from_prefs_struct(prefs.clone());
         let result = AppInitializer::new(config).build();

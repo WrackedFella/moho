@@ -14,13 +14,13 @@ use std::collections::HashMap;
 /// * `visible_faces` - List of faces that should be rendered
 ///
 /// # Returns
-/// Tuple of (vertices, normals, indices) containing only visible geometry
+/// Tuple of (vertices, normals, ao, geometry_type, indices) containing only visible geometry
 pub fn extract_visible_faces(
     block_mesh: &VoxelMesh,
     visible_faces: &[FaceDirection],
-) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<f32>, Vec<u32>, Vec<u32>) {
     if visible_faces.is_empty() {
-        return (Vec::new(), Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
     // Check if all faces are visible (common case for isolated blocks)
@@ -29,6 +29,8 @@ pub fn extract_visible_faces(
         return (
             block_mesh.vertices.clone(),
             block_mesh.normals.clone(),
+            block_mesh.ambient_occlusion.clone(),
+            block_mesh.geometry_type.clone(),
             block_mesh.indices.clone(),
         );
     }
@@ -36,6 +38,8 @@ pub fn extract_visible_faces(
     // Some faces culled - extract only visible faces
     let mut vertices = Vec::new();
     let mut normals = Vec::new();
+    let mut ao = Vec::new();
+    let mut geo_type = Vec::new();
     let mut indices = Vec::new();
     let mut vertex_map: HashMap<u32, u32> = HashMap::new();
     let mut next_vertex_id = 0u32;
@@ -56,13 +60,15 @@ pub fn extract_visible_faces(
 
                 vertices.push(block_mesh.vertices[original_idx as usize]);
                 normals.push(block_mesh.normals[original_idx as usize]);
+                ao.push(block_mesh.ambient_occlusion[original_idx as usize]);
+                geo_type.push(block_mesh.geometry_type[original_idx as usize]);
 
                 next_vertex_id += 1;
             }
         }
     }
 
-    (vertices, normals, indices)
+    (vertices, normals, ao, geo_type, indices)
 }
 
 #[cfg(test)]
@@ -73,10 +79,16 @@ mod tests {
     fn make_full_cube_mesh() -> VoxelMesh {
         // Use real cube mesh from Cube::unit_cube_indexed()
         let (verts, normals, indices) = Cube::unit_cube_indexed();
+        let ao = vec![1.0; verts.len()];
+        let geometry_type = vec![1; verts.len()]; // Blocky geometry
+        let light_level = vec![1.0; verts.len()]; // Full light
         VoxelMesh {
             vertices: verts,
             normals,
             indices,
+            ambient_occlusion: ao,
+            geometry_type,
+            light_level,
         }
     }
 
@@ -92,7 +104,7 @@ mod tests {
             FaceDirection::NegZ,
         ];
 
-        let (verts, normals, indices) = extract_visible_faces(&mesh, &all_faces);
+        let (verts, normals, ao, indices, geo_type) = extract_visible_faces(&mesh, &all_faces);
 
         // Should return entire mesh (fast path)
         assert_eq!(verts.len(), mesh.vertices.len());
@@ -105,7 +117,7 @@ mod tests {
         let mesh = make_full_cube_mesh();
         let no_faces = vec![];
 
-        let (verts, normals, indices) = extract_visible_faces(&mesh, &no_faces);
+        let (verts, normals, ao, indices, geo_type) = extract_visible_faces(&mesh, &no_faces);
 
         // Should return empty mesh
         assert_eq!(verts.len(), 0);
@@ -118,7 +130,7 @@ mod tests {
         let mesh = make_full_cube_mesh();
         let single_face = vec![FaceDirection::PosZ];
 
-        let (verts, normals, indices) = extract_visible_faces(&mesh, &single_face);
+        let (verts, normals, ao, indices, geo_type) = extract_visible_faces(&mesh, &single_face);
 
         // Should extract only one face (6 indices for 2 triangles)
         assert_eq!(indices.len(), 6);
@@ -132,7 +144,7 @@ mod tests {
         let mesh = make_full_cube_mesh();
         let two_faces = vec![FaceDirection::PosZ, FaceDirection::NegZ];
 
-        let (verts, normals, indices) = extract_visible_faces(&mesh, &two_faces);
+        let (verts, normals, ao, indices, geo_type) = extract_visible_faces(&mesh, &two_faces);
 
         // Should extract two faces (12 indices for 4 triangles)
         assert_eq!(indices.len(), 12);
@@ -146,7 +158,7 @@ mod tests {
         let mesh = make_full_cube_mesh();
         let single_face = vec![FaceDirection::PosZ];
 
-        let (verts, _normals, indices) = extract_visible_faces(&mesh, &single_face);
+        let (verts, _normals, _ao, indices, _geo_type) = extract_visible_faces(&mesh, &single_face);
 
         // All indices should be in range [0, verts.len())
         for &idx in &indices {
@@ -163,7 +175,7 @@ mod tests {
         let mesh = make_full_cube_mesh();
         let single_face = vec![FaceDirection::PosZ];
 
-        let (verts, normals, _indices) = extract_visible_faces(&mesh, &single_face);
+        let (verts, normals, _ao, _indices, _geo_type) = extract_visible_faces(&mesh, &single_face);
 
         // Extracted vertices should match original (order may differ due to remapping)
         assert_eq!(verts.len(), 4);

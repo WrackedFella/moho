@@ -2,13 +2,73 @@ use crate::events::Event;
 use glam::{IVec2, IVec3, Vec3};
 use std::any::Any;
 
+/// Reason a block was modified (for gameplay/analytics)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BlockChangeReason {
+    /// Player placed or removed the block
+    Player,
+    /// World generation created this block
+    WorldGen,
+    /// Explosion destroyed or modified blocks
+    Explosion,
+    /// Physics simulation (falling blocks, water flow)
+    Physics,
+    /// Game mechanic (growth, decay, etc.)
+    Mechanic,
+    /// Unknown or unspecified reason
+    Unknown,
+}
+
 /// World generation and modification events
 #[derive(Clone, Debug)]
 pub enum WorldEvent {
-    /// Chunk generated
+    /// Single block placed
+    BlockPlaced {
+        position: IVec3,
+        material_id: u32,
+        reason: BlockChangeReason,
+    },
+
+    /// Single block removed
+    BlockRemoved {
+        position: IVec3,
+        old_material_id: u32,
+        reason: BlockChangeReason,
+    },
+
+    /// Batch of blocks modified (for bulk operations like explosions)
+    BlocksBatchModified {
+        chunk_pos: IVec3,
+        positions: Vec<IVec3>,
+        reason: BlockChangeReason,
+    },
+
+    /// Chunk mesh needs regeneration
+    ChunkMeshDirty {
+        chunk_pos: IVec3,
+        terrain_dirty: bool,
+        structure_dirty: bool,
+    },
+
+    /// Chunk mesh generation started
+    ChunkMeshGenerating { chunk_pos: IVec3, job_id: u64 },
+
+    /// Chunk mesh generation completed
+    ChunkMeshReady { chunk_pos: IVec3, job_id: u64 },
+
+    /// Chunk mesh swapped to GPU
+    ChunkMeshSwapped { chunk_pos: IVec3 },
+
+    /// Light levels need recalculation
+    LightDirty {
+        chunk_pos: IVec3,
+        affected_positions: Vec<IVec3>,
+    },
+
+    /// Chunk generated (legacy, for compatibility)
     ChunkGenerated { chunk_pos: IVec2 },
 
-    /// Chunk modified
+    /// Chunk modified (legacy, for compatibility)
     ChunkModified {
         chunk_pos: IVec2,
         voxel_changes: u32,
@@ -23,7 +83,7 @@ pub enum WorldEvent {
     /// Cave discovered
     CaveDiscovered { entrance_pos: Vec3 },
 
-    /// Material placed
+    /// Material placed (legacy, prefer BlockPlaced)
     MaterialPlaced {
         position: IVec3,
         material: MaterialType,
@@ -73,7 +133,13 @@ impl Event for WorldEvent {
     }
 
     fn should_record(&self) -> bool {
-        // Don't record frequent progress updates
-        !matches!(self, WorldEvent::GenerationProgress { .. })
+        // Don't record frequent/internal events
+        !matches!(
+            self,
+            WorldEvent::GenerationProgress { .. }
+                | WorldEvent::ChunkMeshGenerating { .. }
+                | WorldEvent::ChunkMeshReady { .. }
+                | WorldEvent::ChunkMeshSwapped { .. }
+        )
     }
 }

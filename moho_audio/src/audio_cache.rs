@@ -1,8 +1,7 @@
-///! Audio Caching System
-///!
-///! Manages loading and caching of audio files for performance optimization.
-///! Pre-loads UI sounds for low latency and caches other audio on-demand.
-
+//! Audio Caching System
+//!
+//! Manages loading and caching of audio files for performance optimization.
+//! Pre-loads UI sounds for low latency and caches other audio on-demand.
 use crate::error::{AudioError, AudioResult};
 use log::debug;
 use std::collections::HashMap;
@@ -15,7 +14,7 @@ use std::collections::HashMap;
 pub struct AudioCache {
     /// General audio file cache (loaded on-demand)
     audio_cache: HashMap<String, Vec<u8>>,
-    
+
     /// Pre-loaded UI sounds for low-latency playback
     ui_sound_cache: HashMap<String, Vec<u8>>,
 }
@@ -27,11 +26,11 @@ impl AudioCache {
             audio_cache: HashMap::new(),
             ui_sound_cache: HashMap::new(),
         };
-        
+
         cache.preload_ui_sounds()?;
         Ok(cache)
     }
-    
+
     /// Pre-load common UI sounds to eliminate loading delays
     fn preload_ui_sounds(&mut self) -> AudioResult<()> {
         let ui_sounds = vec!["assets/audio/ui/button_click.mp3"];
@@ -52,7 +51,7 @@ impl AudioCache {
 
         Ok(())
     }
-    
+
     /// Get UI sound data with low-latency access.
     ///
     /// First checks pre-loaded cache, then loads and caches if not found.
@@ -74,7 +73,7 @@ impl AudioCache {
         debug!("Loaded and cached UI sound: {}", path);
         Ok(audio_data)
     }
-    
+
     /// Load audio file data, using cache if available.
     ///
     /// First checks cache, then loads from filesystem if needed.
@@ -96,30 +95,30 @@ impl AudioCache {
         debug!("Loaded and cached audio file: {}", path);
         Ok(audio_data)
     }
-    
+
     /// Clear all caches to free memory.
     pub fn clear(&mut self) {
         self.audio_cache.clear();
         self.ui_sound_cache.clear();
         debug!("Audio caches cleared");
     }
-    
+
     /// Clear only the general audio cache (keeps UI sounds cached).
     pub fn clear_audio_cache(&mut self) {
         self.audio_cache.clear();
         debug!("Audio cache cleared (UI sounds retained)");
     }
-    
+
     /// Get the number of cached audio files (excluding UI sounds).
     pub fn audio_cache_size(&self) -> usize {
         self.audio_cache.len()
     }
-    
+
     /// Get the number of cached UI sounds.
     pub fn ui_cache_size(&self) -> usize {
         self.ui_sound_cache.len()
     }
-    
+
     /// Get total number of cached items.
     pub fn total_cache_size(&self) -> usize {
         self.audio_cache.len() + self.ui_sound_cache.len()
@@ -152,11 +151,17 @@ mod tests {
             audio_cache: HashMap::new(),
             ui_sound_cache: HashMap::new(),
         };
-        
-        cache.audio_cache.insert("test1.mp3".to_string(), vec![1, 2, 3]);
-        cache.audio_cache.insert("test2.mp3".to_string(), vec![4, 5, 6]);
-        cache.ui_sound_cache.insert("ui_sound.mp3".to_string(), vec![7, 8, 9]);
-        
+
+        cache
+            .audio_cache
+            .insert("test1.mp3".to_string(), vec![1, 2, 3]);
+        cache
+            .audio_cache
+            .insert("test2.mp3".to_string(), vec![4, 5, 6]);
+        cache
+            .ui_sound_cache
+            .insert("ui_sound.mp3".to_string(), vec![7, 8, 9]);
+
         assert_eq!(cache.audio_cache_size(), 2);
         assert_eq!(cache.ui_cache_size(), 1);
         assert_eq!(cache.total_cache_size(), 3);
@@ -168,12 +173,16 @@ mod tests {
             audio_cache: HashMap::new(),
             ui_sound_cache: HashMap::new(),
         };
-        
-        cache.audio_cache.insert("test.mp3".to_string(), vec![1, 2, 3]);
-        cache.ui_sound_cache.insert("ui.mp3".to_string(), vec![4, 5, 6]);
-        
+
+        cache
+            .audio_cache
+            .insert("test.mp3".to_string(), vec![1, 2, 3]);
+        cache
+            .ui_sound_cache
+            .insert("ui.mp3".to_string(), vec![4, 5, 6]);
+
         cache.clear_audio_cache();
-        
+
         assert_eq!(cache.audio_cache_size(), 0);
         assert_eq!(cache.ui_cache_size(), 1); // UI cache retained
     }
@@ -184,12 +193,16 @@ mod tests {
             audio_cache: HashMap::new(),
             ui_sound_cache: HashMap::new(),
         };
-        
-        cache.audio_cache.insert("test.mp3".to_string(), vec![1, 2, 3]);
-        cache.ui_sound_cache.insert("ui.mp3".to_string(), vec![4, 5, 6]);
-        
+
+        cache
+            .audio_cache
+            .insert("test.mp3".to_string(), vec![1, 2, 3]);
+        cache
+            .ui_sound_cache
+            .insert("ui.mp3".to_string(), vec![4, 5, 6]);
+
         cache.clear();
-        
+
         assert_eq!(cache.audio_cache_size(), 0);
         assert_eq!(cache.ui_cache_size(), 0);
     }

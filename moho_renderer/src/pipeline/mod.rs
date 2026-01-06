@@ -33,8 +33,8 @@
 //! # }
 //! ```
 
-mod shaders;
 mod layouts;
+mod shaders;
 
 use crate::types::{GpuInstance, Vertex};
 
@@ -203,13 +203,16 @@ impl PipelineSetup {
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
                 buffers: &[
-                    // Vertex positions + normals
+                    // Vertex positions + normals + AO + geometry type + padding + light level
                     wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![
-                            0 => Float32x3,
-                            1 => Float32x3,
+                            0 => Float32x3,  // position
+                            1 => Float32x3,  // normal
+                            2 => Float32,    // ao
+                            3 => Uint32,     // geometry_type
+                            10 => Float32,   // light_level (at location 10)
                         ],
                     },
                     // Per-instance data: model matrix (4x vec4) + material(u32) + object_type(u32)
@@ -217,12 +220,12 @@ impl PipelineSetup {
                         array_stride: std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &wgpu::vertex_attr_array![
-                            2 => Float32x4,
-                            3 => Float32x4,
                             4 => Float32x4,
                             5 => Float32x4,
-                            6 => Uint32,
-                            7 => Uint32,
+                            6 => Float32x4,
+                            7 => Float32x4,
+                            8 => Uint32,
+                            9 => Uint32,
                         ],
                     },
                 ],

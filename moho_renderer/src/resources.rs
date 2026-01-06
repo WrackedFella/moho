@@ -101,6 +101,45 @@ impl ResourcePool {
         let lighting_buffer = Self::create_lighting_buffer(device);
         let material_buffer = Self::create_initial_material_buffer(device);
 
+        // Create placeholder SSAO texture and sampler for initial bind group
+        // (Will be replaced when SSAO system is initialized)
+        let placeholder_ssao_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("placeholder-ssao-texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let placeholder_ssao_view =
+            placeholder_ssao_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let placeholder_ssao_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("placeholder-ssao-sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        // Create placeholder dynamic lights buffer (will be replaced when renderer initializes light manager)
+        use crate::gpu_types::DynamicLightsGpu;
+        let placeholder_dynamic_lights = DynamicLightsGpu::default();
+        let placeholder_dynamic_lights_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("placeholder-dynamic-lights-buffer"),
+                contents: bytemuck::bytes_of(&placeholder_dynamic_lights),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+
         // Create camera bind group
         let camera_bind_group = Self::create_camera_bind_group(
             device,
@@ -108,6 +147,9 @@ impl ResourcePool {
             &camera_buffer,
             &material_buffer,
             &lighting_buffer,
+            &placeholder_ssao_view,
+            &placeholder_ssao_sampler,
+            &placeholder_dynamic_lights_buffer,
         );
 
         // Create depth texture
@@ -179,16 +221,21 @@ impl ResourcePool {
 
     /// Create the camera bind group.
     ///
-    /// This combines three buffers:
+    /// This combines buffers and SSAO textures:
     /// - Binding 0: Camera uniform buffer
     /// - Binding 1: Material storage buffer
     /// - Binding 2: Lighting uniform buffer
+    /// - Binding 3: SSAO texture (placeholder initially)
+    /// - Binding 4: SSAO sampler (placeholder initially)
     fn create_camera_bind_group(
         device: &wgpu::Device,
         camera_bgl: &wgpu::BindGroupLayout,
         camera_buffer: &wgpu::Buffer,
         material_buffer: &wgpu::Buffer,
         lighting_buffer: &wgpu::Buffer,
+        ssao_texture_view: &wgpu::TextureView,
+        ssao_sampler: &wgpu::Sampler,
+        dynamic_lights_buffer: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: camera_bgl,
@@ -205,6 +252,18 @@ impl ResourcePool {
                     binding: 2,
                     resource: lighting_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(ssao_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(ssao_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: dynamic_lights_buffer.as_entire_binding(),
+                },
             ],
             label: Some("camera-bind-group"),
         })
@@ -213,7 +272,7 @@ impl ResourcePool {
     /// Create the depth texture and view.
     ///
     /// Format: Depth24Plus (24-bit depth, no stencil)
-    /// Usage: Render attachment only
+    /// Usage: Render attachment + texture binding (for SSAO)
     fn create_depth_texture(
         device: &wgpu::Device,
         depth_format: wgpu::TextureFormat,
@@ -231,7 +290,7 @@ impl ResourcePool {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: depth_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());

@@ -3,7 +3,7 @@
 //! This module handles shadow matrix calculation and shadow pass rendering
 //! for multi-light shadow mapping (Sun, Moon, Dynamic lights).
 
-use crate::gpu_types::{ShadowMatrixGpu, MAX_SHADOW_LIGHTS};
+use crate::gpu_types::ShadowMatrixGpu;
 use crate::shadow::ShadowSystem;
 use crate::types::{GpuInstance, MeshEntry};
 use glam::Vec3;
@@ -20,13 +20,13 @@ use wgpu::{Buffer, CommandEncoder, Queue};
 /// * `cam_pos` - Camera position in world space
 pub fn update_shadow_matrices(shadow_system: &mut ShadowSystem, queue: &Queue, cam_pos: Vec3) {
     let lighting = &shadow_system.current_lighting;
-    
+
     let sun_dir = Vec3::new(
         lighting.sun_direction[0],
         lighting.sun_direction[1],
         lighting.sun_direction[2],
     );
-    
+
     let moon_dir = Vec3::new(
         lighting.moon_direction[0],
         lighting.moon_direction[1],
@@ -34,11 +34,7 @@ pub fn update_shadow_matrices(shadow_system: &mut ShadowSystem, queue: &Queue, c
     );
 
     // Calculate multi-light shadow matrices
-    let multi_light_gpu = shadow_system.calculate_multi_light_matrices(
-        sun_dir,
-        moon_dir,
-        cam_pos,
-    );
+    let multi_light_gpu = shadow_system.calculate_multi_light_matrices(sun_dir, moon_dir, cam_pos);
 
     // Upload multi-light shadow data to csm buffer (which is now used for multi-light)
     queue.write_buffer(
@@ -84,12 +80,12 @@ pub fn render_shadow_passes(
     // Render shadow map for each active light
     for active_light in &shadow_system.active_lights {
         let light_idx = active_light.light_index;
-        
+
         // Skip inactive lights
         if active_light.intensity < 0.01 {
             continue;
         }
-        
+
         let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(&format!("shadow-light-{}-pass", light_idx)),
             color_attachments: &[],
@@ -194,6 +190,7 @@ mod tests {
 
     #[test]
     fn test_max_shadow_lights() {
+        use crate::gpu_types::MAX_SHADOW_LIGHTS;
         // Verify max shadow lights matches expected value
         assert_eq!(MAX_SHADOW_LIGHTS, 4, "Should have 4 shadow light slots");
     }

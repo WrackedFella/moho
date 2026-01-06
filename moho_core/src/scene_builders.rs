@@ -4,7 +4,9 @@ use legion::World;
 use crate::actors::{Cube, Sphere};
 use crate::materials::MaterialType;
 use crate::vector_length;
-use crate::voxel::{BlockPos, MeshGenerator, VoxelBlock, VoxelChunk, VoxelGrid};
+use crate::voxel::{
+    BlockPos, LightChannel, LightPropagator, MeshGenerator, VoxelBlock, VoxelChunk, VoxelGrid,
+};
 use bincode::{Decode, Encode};
 use noise::{NoiseFn, Perlin};
 use rand::{Rng, rng};
@@ -170,19 +172,31 @@ impl Default for TerrainConfig {
 
 /// Generate voxel-based terrain using Perlin noise
 /// Two-pass algorithm: 1) Place blocks, 2) Smooth transitions
-pub fn voxel_terrain_scene(world: &mut World) {
+pub fn voxel_terrain_scene(world: &mut World) -> VoxelGrid {
     let config = TerrainConfig::default();
-    voxel_terrain_scene_with_config(world, &config);
+    voxel_terrain_scene_with_config(world, &config)
 }
 
 /// Variant that accepts a custom `TerrainConfig`. This allows callers to
 /// control the PRNG seed (and later other parameters) when generating a
 /// terrain for new-world generation.
-pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig) {
-    let mut grid = VoxelGrid::new(64); // 64×64×64 chunks
+///
+/// Returns the VoxelGrid for use with light propagation system.
+pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig) -> VoxelGrid {
+    // NOTE: Hybrid mesh generation currently requires chunk_size=16
+    // due to hardcoded density field size in Marching Cubes
+    let mut grid = VoxelGrid::new(16); // 16×16×16 chunks
 
     log::info!("Generating voxel terrain (seed={})...", config.seed);
     generate_terrain(&mut grid, config);
+
+    // Initialize light propagation system
+    log::info!("Initializing light propagation...");
+    let mut light_propagator = LightPropagator::new(grid.chunk_size());
+
+    // Flood-fill sky light from the top down
+    light_propagator.flood_fill(&mut grid, LightChannel::Sky);
+    log::info!("Sky light propagation complete");
 
     // TODO: Consider making grid size configurable via the config struct
     // (e.g., grid_size: u32) so callers can control world extents.
@@ -204,6 +218,9 @@ pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig
         "Voxel terrain scene ready with {} chunk entities",
         world.len()
     );
+
+    // Return the grid so it can be stored by the caller for light propagation
+    grid
 }
 
 /// Generate terrain blocks based on noise
@@ -311,7 +328,7 @@ fn grid_to_chunks(grid: &VoxelGrid) -> Vec<VoxelChunk> {
     // Generate a VoxelChunk for each chunk position
     let mut chunks = Vec::new();
     for chunk_pos in chunk_positions {
-        let chunk = VoxelChunk::from_grid(grid, chunk_pos);
+        let chunk = VoxelChunk::from_grid_hybrid(grid, chunk_pos);
 
         // Only include non-empty chunks
         if !chunk.is_empty() {

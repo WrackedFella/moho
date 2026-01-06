@@ -58,7 +58,7 @@ fn render_menu(ctx: &egui::Context, ui_state: &mut UiStateManager) -> Vec<MenuAc
 /// Render console overlay and process console actions
 fn render_console(ctx: &egui::Context, ui_state: &mut UiStateManager, event_bus: &EventBus) {
     let console_action = ui_state.console.render(ctx);
-    
+
     // Process console action through event routing
     super::event_routing::process_console_action(console_action, event_bus);
 }

@@ -286,8 +286,10 @@ mod tests {
 
     #[test]
     fn from_prefs_creates_clean_state() {
-        let mut prefs = Prefs::default();
-        prefs.key_w = Binding::new('Q' as u32, 0);
+        let prefs = Prefs {
+            key_w: Binding::new('Q' as u32, 0),
+            ..Default::default()
+        };
 
         let state = SettingsState::from_prefs(prefs.clone());
 

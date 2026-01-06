@@ -189,7 +189,7 @@ mod tests {
             .build();
 
         assert_eq!(config.mouse_sensitivity, 0.5);
-        assert_eq!(config.input_filtering_enabled, false);
+        assert!(!config.input_filtering_enabled);
     }
 
     #[test]
@@ -202,21 +202,25 @@ mod tests {
 
     #[test]
     fn test_from_prefs_struct() {
-        let mut prefs = Prefs::default();
-        prefs.mouse_sensitivity = 2.0;
-        prefs.input_filtering_enabled = false;
+        let prefs = Prefs {
+            mouse_sensitivity: 2.0,
+            input_filtering_enabled: false,
+            ..Default::default()
+        };
 
         let config = AppConfig::from_prefs_struct(prefs.clone());
 
         assert_eq!(config.mouse_sensitivity, 2.0 * 0.002);
-        assert_eq!(config.input_filtering_enabled, false);
+        assert!(!config.input_filtering_enabled);
         assert_eq!(config.prefs.mouse_sensitivity, 2.0);
     }
 
     #[test]
     fn test_builder_with_prefs() {
-        let mut prefs = Prefs::default();
-        prefs.mouse_sensitivity = 3.0;
+        let prefs = Prefs {
+            mouse_sensitivity: 3.0,
+            ..Default::default()
+        };
 
         let config = AppConfig::builder()
             .prefs(prefs.clone())

@@ -354,7 +354,7 @@ impl FrameCallback for EguiAdapter {
         for action in &menu_actions {
             event_routing::process_menu_action(action, &self.event_bus);
         }
-        
+
         // Handle Close action locally (hide menus)
         for action in &menu_actions {
             if matches!(action, MenuAction::Close) {
@@ -381,10 +381,23 @@ impl FrameCallback for EguiAdapter {
             gpu_ops::update_textures(renderer, device, queue, &full_output.textures_delta);
 
             // Update buffers (delegate)
-            gpu_ops::update_buffers(renderer, device, queue, encoder, &clipped_primitives, &screen_descriptor);
+            gpu_ops::update_buffers(
+                renderer,
+                device,
+                queue,
+                encoder,
+                &clipped_primitives,
+                &screen_descriptor,
+            );
 
             // Execute render pass (delegate)
-            gpu_ops::execute_render_pass(renderer, encoder, view, &clipped_primitives, &screen_descriptor);
+            gpu_ops::execute_render_pass(
+                renderer,
+                encoder,
+                view,
+                &clipped_primitives,
+                &screen_descriptor,
+            );
 
             // Free textures (delegate)
             gpu_ops::free_textures(renderer, &full_output.textures_delta.free);

@@ -4,6 +4,10 @@
 pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
+    pub ao: f32,
+    pub geometry_type: u32,
+    pub _padding: [u32; 6], // Padding to reach @location(10)
+    pub light_level: f32,
 }
 
 /// GPU-side per-instance data: model matrix + material index + object type
