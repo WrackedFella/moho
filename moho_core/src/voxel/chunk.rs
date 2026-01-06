@@ -73,15 +73,15 @@ impl TerrainSmoother {
 /// uses an identity transform when rendering.
 #[derive(Clone, Debug)]
 pub struct VoxelChunk {
-    pub chunk_pos: IVec3,              // Chunk coordinates
-    pub vertices: Vec<[f32; 3]>,       // Merged mesh vertices (world space)
-    pub normals: Vec<[f32; 3]>,        // Merged mesh normals
-    pub ambient_occlusion: Vec<f32>,   // Per-vertex AO values
-    pub geometry_type: Vec<u32>,       // Per-vertex geometry type (0=smooth, 1=blocky)
-    pub light_level: Vec<f32>,         // Per-vertex light level (0.0-1.0, from block light)
-    pub indices: Vec<u32>,             // Merged mesh indices
-    pub material_id: u32,              // Primary material ID
-    pub mesh_handle: Option<u32>,      // Renderer mesh handle (None = not uploaded)
+    pub chunk_pos: IVec3,            // Chunk coordinates
+    pub vertices: Vec<[f32; 3]>,     // Merged mesh vertices (world space)
+    pub normals: Vec<[f32; 3]>,      // Merged mesh normals
+    pub ambient_occlusion: Vec<f32>, // Per-vertex AO values
+    pub geometry_type: Vec<u32>,     // Per-vertex geometry type (0=smooth, 1=blocky)
+    pub light_level: Vec<f32>,       // Per-vertex light level (0.0-1.0, from block light)
+    pub indices: Vec<u32>,           // Merged mesh indices
+    pub material_id: u32,            // Primary material ID
+    pub mesh_handle: Option<u32>,    // Renderer mesh handle (None = not uploaded)
 }
 
 impl VoxelChunk {
@@ -152,7 +152,7 @@ impl VoxelChunk {
             normals.extend_from_slice(&block_normals);
             ambient_occlusion.extend_from_slice(&block_ao);
             geometry_type.extend_from_slice(&block_geo_type);
-            
+
             // Fill light level for all vertices of this block
             light_level.resize(light_level.len() + vert_count as usize, block_light);
 
@@ -189,7 +189,7 @@ impl VoxelChunk {
     /// A `VoxelChunk` with hybrid mesh generation applied
     pub fn from_grid_hybrid(grid: &VoxelGrid, chunk_pos: IVec3) -> Self {
         use super::mesh::HybridMeshGenerator;
-        
+
         let chunk_size = grid.chunk_size();
         let mesh = HybridMeshGenerator::generate_chunk_mesh(grid, chunk_pos, chunk_size);
 
@@ -427,7 +427,8 @@ mod tests {
             FaceDirection::NegZ,
         ];
 
-        let (verts, normals, ao, geo_type, indices) = extraction::extract_visible_faces(&mesh, &all_faces);
+        let (verts, normals, ao, geo_type, indices) =
+            extraction::extract_visible_faces(&mesh, &all_faces);
 
         // Should return complete mesh
         assert_eq!(verts.len(), mesh.vertices.len());
@@ -442,7 +443,8 @@ mod tests {
         let mesh = MeshGenerator::cube_mesh();
         let no_faces = vec![];
 
-        let (verts, normals, ao, geo_type, indices) = extraction::extract_visible_faces(&mesh, &no_faces);
+        let (verts, normals, ao, geo_type, indices) =
+            extraction::extract_visible_faces(&mesh, &no_faces);
 
         // Should return empty mesh
         assert!(verts.is_empty());
@@ -457,7 +459,8 @@ mod tests {
         let mesh = MeshGenerator::cube_mesh();
         let some_faces = vec![FaceDirection::PosY, FaceDirection::NegY];
 
-        let (verts, _normals, _ao, _geo_type, indices) = extraction::extract_visible_faces(&mesh, &some_faces);
+        let (verts, _normals, _ao, _geo_type, indices) =
+            extraction::extract_visible_faces(&mesh, &some_faces);
 
         // Should return subset of mesh (2 faces out of 6)
         assert!(!verts.is_empty());

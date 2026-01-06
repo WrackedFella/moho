@@ -25,30 +25,38 @@ use wgpu::util::DeviceExt;
 /// SSAO quality presets
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SsaoQuality {
+    /// Off: SSAO disabled
+    Off,
     /// Low quality: 4 samples, small radius
     Low,
     /// Medium quality: 8 samples, medium radius
     Medium,
     /// High quality: 16 samples, large radius
     High,
+    /// Ultra quality: 32 samples, very large radius
+    Ultra,
 }
 
 impl SsaoQuality {
     /// Get the number of samples for this quality level
     pub fn sample_count(self) -> u32 {
         match self {
+            SsaoQuality::Off => 0,
             SsaoQuality::Low => 4,
             SsaoQuality::Medium => 8,
             SsaoQuality::High => 16,
+            SsaoQuality::Ultra => 32,
         }
     }
 
     /// Get the sampling radius for this quality level (in pixels)
     pub fn radius(self) -> f32 {
         match self {
+            SsaoQuality::Off => 0.0,
             SsaoQuality::Low => 8.0,
             SsaoQuality::Medium => 12.0,
             SsaoQuality::High => 16.0,
+            SsaoQuality::Ultra => 24.0,
         }
     }
 }
@@ -140,7 +148,8 @@ impl SsaoSystem {
         settings: SsaoSettings,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // Create AO textures
-        let (ao_texture, ao_texture_view) = Self::create_ao_texture(device, width, height, "ao-texture");
+        let (ao_texture, ao_texture_view) =
+            Self::create_ao_texture(device, width, height, "ao-texture");
         let (blurred_ao_texture, blurred_ao_texture_view) =
             Self::create_ao_texture(device, width, height, "blurred-ao-texture");
 
@@ -181,62 +190,63 @@ impl SsaoSystem {
         });
 
         // Create GTAO bind group layout
-        let gtao_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("gtao-bind-group-layout"),
-            entries: &[
-                // @binding(0): depth_texture
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+        let gtao_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("gtao-bind-group-layout"),
+                entries: &[
+                    // @binding(0): depth_texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // @binding(1): depth_sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // @binding(2): ao_output (storage texture)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    // @binding(1): depth_sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
                     },
-                    count: None,
-                },
-                // @binding(3): settings uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // @binding(2): ao_output (storage texture)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // @binding(4): camera uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // @binding(3): settings uniform
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                    // @binding(4): camera uniform
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
 
         // Create GTAO pipeline
         let gtao_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -263,58 +273,59 @@ impl SsaoSystem {
         });
 
         // Create blur bind group layout
-        let blur_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("blur-bind-group-layout"),
-            entries: &[
-                // @binding(0): input_texture (raw AO)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+        let blur_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("blur-bind-group-layout"),
+                entries: &[
+                    // @binding(0): input_texture (raw AO)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // @binding(1): input_sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // @binding(2): depth_texture
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                    // @binding(1): input_sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
                     },
-                    count: None,
-                },
-                // @binding(3): depth_sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // @binding(4): output_texture (blurred AO)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    // @binding(2): depth_texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                    // @binding(3): depth_sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // @binding(4): output_texture (blurred AO)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                ],
+            });
 
         // Create blur pipeline
         let blur_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -386,16 +397,23 @@ impl SsaoSystem {
         queue.write_buffer(&self.settings_buffer, 0, bytemuck::cast_slice(&[settings]));
     }
 
+    /// Set SSAO quality level
+    pub fn set_quality(&mut self, queue: &wgpu::Queue, quality: SsaoQuality) {
+        self.settings.sample_count = quality.sample_count();
+        self.settings.radius = quality.radius();
+        queue.write_buffer(
+            &self.settings_buffer,
+            0,
+            bytemuck::cast_slice(&[self.settings]),
+        );
+    }
+
     /// Update camera matrices for SSAO computation
-    /// 
+    ///
     /// # Arguments
     /// * `queue` - WGPU queue for buffer writes
     /// * `inv_proj` - Inverse projection matrix (for depth reconstruction)
-    pub fn update_camera(
-        &self,
-        queue: &wgpu::Queue,
-        inv_proj: &[[f32; 4]; 4],
-    ) {
+    pub fn update_camera(&self, queue: &wgpu::Queue, inv_proj: &[[f32; 4]; 4]) {
         // Pack inverse projection matrix (64 bytes)
         let mut camera_data = Vec::with_capacity(64);
         for row in inv_proj {

@@ -47,6 +47,9 @@ pub struct Prefs {
     pub audio_music_volume: f32,
     pub audio_ui_volume: f32,
     pub audio_voice_volume: f32,
+    // Graphics settings
+    pub graphics_shadow_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    pub graphics_ssao_quality: u32,   // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
 }
 
 impl Default for Prefs {
@@ -65,6 +68,9 @@ impl Default for Prefs {
             audio_music_volume: 5.0,
             audio_ui_volume: 8.0,
             audio_voice_volume: 7.0,
+            // Default graphics settings (High)
+            graphics_shadow_quality: 3,
+            graphics_ssao_quality: 3,
         }
     }
 }
@@ -150,6 +156,23 @@ impl Prefs {
             prefs.audio_voice_volume = get_f32("voice_volume", prefs.audio_voice_volume);
         }
 
+        // Load graphics settings from [graphics] section if present
+        if let Ok(map) = ini::macro_safe_read(&content)
+            && let Some(graphics_section) = map.get("graphics")
+        {
+            let get_u32 = |k: &str, def: u32| {
+                graphics_section
+                    .get(k)
+                    .and_then(|o| o.clone())
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(def)
+            };
+
+            prefs.graphics_shadow_quality =
+                get_u32("shadow_quality", prefs.graphics_shadow_quality);
+            prefs.graphics_ssao_quality = get_u32("ssao_quality", prefs.graphics_ssao_quality);
+        }
+
         prefs
     }
 
@@ -203,6 +226,14 @@ impl Prefs {
         out.push_str(&format!("music_volume={:.1}\n", self.audio_music_volume));
         out.push_str(&format!("ui_volume={:.1}\n", self.audio_ui_volume));
         out.push_str(&format!("voice_volume={:.1}\n", self.audio_voice_volume));
+
+        // Graphics section
+        out.push_str("\n[graphics]\n");
+        out.push_str(&format!(
+            "shadow_quality={}\n",
+            self.graphics_shadow_quality
+        ));
+        out.push_str(&format!("ssao_quality={}\n", self.graphics_ssao_quality));
 
         fs::write(path, out)?;
         Ok(())

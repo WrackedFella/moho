@@ -9,7 +9,7 @@
 use crate::App;
 use crate::input_event::InputEvent;
 use legion::IntoQuery;
-use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent, WorldEvent};
+use moho_core::events::{AudioEvent, DebugEvent, GraphicsEvent, UiEvent, WorldEvent};
 use moho_core::voxel::VoxelChunk;
 use winit::event_loop::ActiveEventLoop;
 
@@ -221,10 +221,11 @@ impl EventProcessor {
                         // Update or insert into ECS world
                         // We need to find the entity with this chunk_pos
                         let mut query = <(legion::Entity, &VoxelChunk)>::query();
-                        let entity = query.iter(&app.world)
+                        let entity = query
+                            .iter(&app.world)
                             .find(|(_, c)| c.chunk_pos == chunk_pos)
                             .map(|(e, _)| *e);
-                            
+
                         if let Some(e) = entity {
                             if let Some(mut entry) = app.world.entry(e) {
                                 entry.add_component(chunk);
@@ -239,6 +240,188 @@ impl EventProcessor {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// Process all pending debug events from the event bus
+    pub fn process_debug_events(&self, app: &mut App) {
+        while let Ok(event) = app.debug_event_rx.try_recv() {
+            self.handle_debug_event(app, event);
+        }
+    }
+
+    /// Process a single debug event
+    fn handle_debug_event(&self, app: &mut App, event: moho_core::events::DebugEvent) {
+        use moho_core::events::DebugEvent;
+
+        match event {
+            DebugEvent::SpawnEntity {
+                entity_type,
+                args,
+                position: _,
+            } => {
+                // If position is None (from console), raycast to find it
+                // We need the camera position and forward vector
+                let (view_matrix, _, _) = app.camera;
+                let camera_pos = view_matrix.inverse().col(3).truncate();
+                let forward = -view_matrix.inverse().col(2).truncate().normalize();
+
+                // Raycast
+                let grid_opt = if let Some(grid) = &mut app.voxel_grid {
+                    Some(grid)
+                } else if let Some(ls) = &mut app.light_system {
+                    Some(ls.grid_mut())
+                } else {
+                    None
+                };
+
+                if let Some(grid) = grid_opt {
+                    // Use raycast utility
+                    // Max distance 100 units
+                    let hit = moho_core::raycast::raycast(grid, camera_pos, forward, 100.0);
+
+                    let spawn_pos = if let Some(hit) = hit {
+                        // Spawn at hit position + normal * offset
+                        hit.position
+                            + glam::Vec3::new(
+                                hit.normal.x as f32,
+                                hit.normal.y as f32,
+                                hit.normal.z as f32,
+                            ) * 0.5
+                    } else {
+                        // Spawn in front of camera if no hit
+                        camera_pos + forward * 5.0
+                    };
+
+                    log::info!("Spawning {} at {:?}", entity_type, spawn_pos);
+
+                    match entity_type.to_lowercase().as_str() {
+                        "torch" => {
+                            // Set block to torch
+                            // Assuming torch ID is 3 (need to verify or look up)
+                            // For now, let's use a hardcoded ID or look it up if possible
+                            // MaterialRegistry is in VoxelGrid but not easily accessible by name here
+                            // Let's assume 3 for now as a placeholder
+                            let torch_id = 3;
+                            let block_pos = glam::IVec3::new(
+                                spawn_pos.x.floor() as i32,
+                                spawn_pos.y.floor() as i32,
+                                spawn_pos.z.floor() as i32,
+                            );
+
+                            // Use LightSystem to handle block placement if available (it handles events)
+                            // Or modify grid directly and notify
+
+                            // Better approach: Publish BlockPlaced event
+                            // But we are in event processor, we can modify app state directly
+
+                            // If we have light system, use it to handle events?
+                            // Actually, we should modify the grid and let the system react
+
+                            // Let's use the event bus to trigger block placement properly
+                            // This ensures all systems (light, mesh) get notified
+                            app.event_bus.publish(WorldEvent::BlockPlaced {
+                                position: block_pos,
+                                material_id: torch_id,
+                                reason: moho_core::events::BlockChangeReason::Player,
+                            });
+                        }
+                        "light" => {
+                            // Spawn dynamic light
+                            // We need to access the renderer backend to add a light
+                            if let Some(wr) = &mut app.window_renderer {
+                                // Parse color from args if present
+                                let color = if let Some(arg_str) = &args {
+                                    // Simple parsing: "r g b"
+                                    let parts: Vec<&str> = arg_str.split_whitespace().collect();
+                                    if parts.len() >= 3 {
+                                        glam::Vec3::new(
+                                            parts[0].parse().unwrap_or(1.0),
+                                            parts[1].parse().unwrap_or(1.0),
+                                            parts[2].parse().unwrap_or(1.0),
+                                        )
+                                    } else {
+                                        glam::Vec3::ONE // White default
+                                    }
+                                } else {
+                                    glam::Vec3::ONE // White default
+                                };
+
+                                wr.renderer.add_point_light(
+                                    spawn_pos, color, 5.0,  // Intensity
+                                    20.0, // Range
+                                );
+                                log::info!("Added point light at {:?}", spawn_pos);
+                            }
+                        }
+                        "cube" => {
+                            // Spawn cube actor
+                            use moho_core::actors::Cube;
+                            use moho_core::materials::MaterialType;
+
+                            let cube = Cube::new(
+                                spawn_pos,
+                                1.0,
+                                1.0,
+                                1.0,
+                                MaterialType::Lambertian {
+                                    albedo: glam::Vec3::new(0.8, 0.2, 0.2),
+                                },
+                            );
+                            app.world.push((cube,));
+                            log::info!("Spawned cube at {:?}", spawn_pos);
+                        }
+                        "sphere" => {
+                            // Spawn sphere actor
+                            use moho_core::actors::Sphere;
+                            use moho_core::materials::MaterialType;
+
+                            let sphere = Sphere::new(
+                                spawn_pos,
+                                0.5,
+                                MaterialType::Metal {
+                                    albedo: glam::Vec3::new(0.8, 0.8, 0.8),
+                                    fuzz: 0.1,
+                                },
+                            );
+                            app.world.push((sphere,));
+                            log::info!("Spawned sphere at {:?}", spawn_pos);
+                        }
+                        _ => {
+                            log::warn!("Unknown entity type: {}", entity_type);
+                        }
+                    }
+                }
+            }
+            DebugEvent::ToggleGodMode { enabled } => {
+                log::info!("God mode toggled: {}", enabled);
+                // TODO: Implement god mode logic
+            }
+            DebugEvent::ToggleCollision { enabled } => {
+                log::info!("Collision toggled: {}", enabled);
+                // TODO: Implement collision toggle logic
+            }
+            DebugEvent::SetShadowQuality { quality } => {
+                log::info!("Setting shadow quality to: {}", quality);
+                if let Some(wr) = &mut app.window_renderer {
+                    wr.renderer.set_shadow_quality(quality as u8);
+
+                    // Update prefs
+                    app.prefs.graphics_shadow_quality = quality;
+                    let _ = app.prefs.save();
+                }
+            }
+            DebugEvent::SetSsaoQuality { quality } => {
+                log::info!("Setting SSAO quality to: {}", quality);
+                if let Some(wr) = &mut app.window_renderer {
+                    wr.renderer.set_ssao_quality(quality as u8);
+
+                    // Update prefs
+                    app.prefs.graphics_ssao_quality = quality;
+                    let _ = app.prefs.save();
+                }
+            }
+            _ => {}
         }
     }
 }

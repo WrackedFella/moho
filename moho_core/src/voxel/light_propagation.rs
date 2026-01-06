@@ -211,7 +211,7 @@ impl LightPropagator {
 
         // Phase 1: BFS to find all blocks that need to be cleared
         // We clear any block that has weaker light than its neighbors would provide
-        
+
         removal_queue.push_back(source_pos);
         visited.insert(source_pos);
 
@@ -341,7 +341,8 @@ impl LightPropagator {
     /// Enqueue sky light sources (top layer of blocks exposed to sky)
     fn enqueue_sky_sources(&mut self, grid: &VoxelGrid) {
         // Get all block positions and find the highest Y for each X,Z column
-        let mut columns: std::collections::HashMap<(i32, i32), i32> = std::collections::HashMap::new();
+        let mut columns: std::collections::HashMap<(i32, i32), i32> =
+            std::collections::HashMap::new();
 
         for pos in grid.block_positions() {
             let column = (pos.x, pos.z);
@@ -440,7 +441,7 @@ impl LightPropagator {
     fn can_receive_light(&self, grid: &VoxelGrid, pos: &BlockPos, channel: LightChannel) -> bool {
         // Check if there's a block at this position
         let has_block = grid.get_block(pos).is_some();
-        
+
         match channel {
             LightChannel::Sky => {
                 // Sky light propagates to blocks only (not infinite air)
@@ -642,7 +643,10 @@ mod tests {
 
         // Check that neighbors are also dark
         if let Some(block) = grid.get_block(&neighbor) {
-            assert_eq!(block.block_light, 0, "Neighbor should be dark after removal");
+            assert_eq!(
+                block.block_light, 0,
+                "Neighbor should be dark after removal"
+            );
         }
 
         // Check that affected chunks were tracked
@@ -671,7 +675,10 @@ mod tests {
         // Middle block should have light from both sources
         let middle_pos = IVec3::new(5, 0, 0);
         if let Some(block) = grid.get_block(&middle_pos) {
-            assert!(block.block_light > 0, "Middle should have light from both sources");
+            assert!(
+                block.block_light > 0,
+                "Middle should have light from both sources"
+            );
         }
 
         // Remove the first light source
@@ -728,7 +735,11 @@ mod tests {
 
         // Extend in +X, +Y, +Z directions
         for i in 1..5 {
-            for &dir in &[IVec3::new(i, 0, 0), IVec3::new(0, i, 0), IVec3::new(0, 0, i)] {
+            for &dir in &[
+                IVec3::new(i, 0, 0),
+                IVec3::new(0, i, 0),
+                IVec3::new(0, 0, i),
+            ] {
                 let pos = center + dir;
                 let mut block = VoxelBlock::new(pos, 0);
                 block.set_block_light(0);
@@ -741,7 +752,11 @@ mod tests {
 
         // Check that all arms have light
         for i in 1..5 {
-            for &dir in &[IVec3::new(i, 0, 0), IVec3::new(0, i, 0), IVec3::new(0, 0, i)] {
+            for &dir in &[
+                IVec3::new(i, 0, 0),
+                IVec3::new(0, i, 0),
+                IVec3::new(0, 0, i),
+            ] {
                 let pos = center + dir;
                 if let Some(block) = grid.get_block(&pos) {
                     assert!(block.block_light > 0, "Arm block should have light");
@@ -758,7 +773,11 @@ mod tests {
         }
 
         for i in 1..5 {
-            for &dir in &[IVec3::new(i, 0, 0), IVec3::new(0, i, 0), IVec3::new(0, 0, i)] {
+            for &dir in &[
+                IVec3::new(i, 0, 0),
+                IVec3::new(0, i, 0),
+                IVec3::new(0, 0, i),
+            ] {
                 let pos = center + dir;
                 if let Some(block) = grid.get_block(&pos) {
                     assert_eq!(block.block_light, 0, "Arm block should be dark");
@@ -775,14 +794,14 @@ mod tests {
         // Place a light source at the edge of chunk (0,0,0)
         // at position (15, 8, 8) - this is the last X block in the chunk
         let light_pos = IVec3::new(15, 8, 8);
-        
+
         // Create blocks in two adjacent chunks
         // Chunk (0,0,0): blocks at x=14, x=15
         // Chunk (1,0,0): blocks at x=16, x=17, x=18
         for x in 14..=18 {
             let pos = IVec3::new(x, 8, 8);
             let mut block = VoxelBlock::new(pos, 0);
-            block.set_block_light(0);  // Start with no light
+            block.set_block_light(0); // Start with no light
             grid.set_block(pos, block);
         }
 
@@ -807,7 +826,7 @@ mod tests {
         // x=17: 13 (in chunk 1)
         // x=18: 12 (in chunk 1)
         let expected_levels = [(15, 15), (16, 14), (17, 13), (18, 12)];
-        
+
         for (x, expected_light) in expected_levels {
             let pos = IVec3::new(x, 8, 8);
             if let Some(block) = grid.get_block(&pos) {

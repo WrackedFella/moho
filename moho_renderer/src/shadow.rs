@@ -31,6 +31,8 @@ pub enum PcssQuality {
     Medium = 2,
     /// High: 16 blocker samples + 32 PCF samples
     High = 3,
+    /// Ultra: 24 blocker samples + 48 PCF samples
+    Ultra = 4,
 }
 
 impl PcssQuality {
@@ -41,16 +43,18 @@ impl PcssQuality {
             PcssQuality::Low => 8,
             PcssQuality::Medium => 12,
             PcssQuality::High => 16,
+            PcssQuality::Ultra => 24,
         }
     }
 
     /// Get PCF sample count for this quality level
     pub fn pcf_samples(self) -> u32 {
         match self {
-            PcssQuality::Off => 9,  // 3x3 fixed kernel
+            PcssQuality::Off => 9, // 3x3 fixed kernel
             PcssQuality::Low => 16,
             PcssQuality::Medium => 24,
             PcssQuality::High => 32,
+            PcssQuality::Ultra => 48,
         }
     }
 }
@@ -74,7 +78,7 @@ pub struct PcssSettings {
 impl Default for PcssSettings {
     fn default() -> Self {
         Self {
-            quality: PcssQuality::Off,  // Temporarily disabled for testing
+            quality: PcssQuality::Off, // Temporarily disabled for testing
             light_size: 0.03,          // Clear day default
             search_radius: 15.0,       // Search area in texels
             min_penumbra: 1.0,         // At least 1 texel
@@ -511,14 +515,14 @@ impl ShadowSystem {
         // However, for stability, we often center it on the camera but with a radius equal to 'far'.
         // Let's stick to the "Center on Camera" approach for now, but use 'far' as radius.
         let cascade_center = cam_pos;
-        
+
         // Light distance needs to be enough to cover the scene height
         let light_distance = far * 2.0 + 1000.0; // Add buffer for height
         // light_dir points TO the light (sun_dir), so we add it to center to get light position
         let light_pos = cascade_center + light_dir * light_distance;
 
         let light_view = glam::Mat4::look_at_rh(light_pos, cascade_center, glam::Vec3::Y);
-        
+
         // Radius must cover the 'far' distance (diagonal of frustum)
         // sqrt(far^2 + far^2) approx 1.414 * far. 1.5 is safe.
         let cascade_radius = far * 1.5;
@@ -526,7 +530,7 @@ impl ShadowSystem {
         // Texel Snapping for Cascades
         let shadow_map_size = SHADOW_MAP_SIZE as f32;
         let world_units_per_texel = (2.0 * cascade_radius) / shadow_map_size;
-        
+
         // Standard Orthographic Projection (-1..1 Z)
         let light_proj = glam::Mat4::orthographic_rh(
             -cascade_radius,
@@ -536,7 +540,7 @@ impl ShadowSystem {
             1.0,
             light_distance + far,
         );
-        
+
         // WGPU Correction Matrix: Maps -1..1 Z to 0..1 Z
         let correction_matrix = glam::Mat4::from_cols(
             glam::Vec4::new(1.0, 0.0, 0.0, 0.0),
@@ -547,8 +551,10 @@ impl ShadowSystem {
 
         // Snap based on World Origin
         let origin_light_space = light_view.transform_point3(glam::Vec3::ZERO);
-        let snapped_x = (origin_light_space.x / world_units_per_texel).floor() * world_units_per_texel;
-        let snapped_y = (origin_light_space.y / world_units_per_texel).floor() * world_units_per_texel;
+        let snapped_x =
+            (origin_light_space.x / world_units_per_texel).floor() * world_units_per_texel;
+        let snapped_y =
+            (origin_light_space.y / world_units_per_texel).floor() * world_units_per_texel;
         let diff_x = snapped_x - origin_light_space.x;
         let diff_y = snapped_y - origin_light_space.y;
         let correction = glam::Mat4::from_translation(glam::Vec3::new(diff_x, diff_y, 0.0));
@@ -629,7 +635,7 @@ impl ShadowSystem {
         let light_pos = cascade_center + light_dir * light_distance;
 
         let light_view = glam::Mat4::look_at_rh(light_pos, cascade_center, glam::Vec3::Y);
-        
+
         // Texel Snapping: Stabilize shadow map by snapping projection to texel grid
         // This prevents "shimmering" or "flame-like" flickering when camera moves
         let shadow_map_size = SHADOW_MAP_SIZE as f32;
@@ -645,7 +651,7 @@ impl ShadowSystem {
             1.0,
             light_distance + SHADOW_DISTANCE,
         );
-        
+
         // WGPU Correction Matrix: Maps -1..1 Z to 0..1 Z
         // X: 1, Y: 1, Z: 0.5, W: 1
         // Z offset: 0.5
@@ -655,25 +661,27 @@ impl ShadowSystem {
             glam::Vec4::new(0.0, 0.0, 0.5, 0.0),
             glam::Vec4::new(0.0, 0.0, 0.5, 1.0),
         );
-        
+
         // Combine: Correction * Proj * View
         let view_proj = correction_matrix * light_proj * light_view;
-        
+
         // Snap based on World Origin (Vec3::ZERO) to ensure grid stability
         // 1. Calculate where the World Origin IS in light space (View Space)
         let origin_light_space = light_view.transform_point3(glam::Vec3::ZERO);
-        
+
         // 2. Calculate the snapped position
-        let snapped_x = (origin_light_space.x / world_units_per_texel).floor() * world_units_per_texel;
-        let snapped_y = (origin_light_space.y / world_units_per_texel).floor() * world_units_per_texel;
-        
+        let snapped_x =
+            (origin_light_space.x / world_units_per_texel).floor() * world_units_per_texel;
+        let snapped_y =
+            (origin_light_space.y / world_units_per_texel).floor() * world_units_per_texel;
+
         // 3. Calculate the difference
         let diff_x = snapped_x - origin_light_space.x;
         let diff_y = snapped_y - origin_light_space.y;
-        
+
         // 4. Create a correction matrix (translation)
         let correction = glam::Mat4::from_translation(glam::Vec3::new(diff_x, diff_y, 0.0));
-        
+
         // Final matrix: Proj * Correction * View
         correction_matrix * light_proj * correction * light_view
     }

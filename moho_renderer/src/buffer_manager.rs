@@ -192,7 +192,16 @@ impl BufferManager {
         // Try to reuse a pooled buffer if available and appropriately sized
         let handle = self
             .try_reuse_buffer(vertices.len(), indices.len(), renderer)
-            .unwrap_or_else(|| renderer.register_indexed_mesh(vertices, normals, ao, geometry_type, light_level, indices));
+            .unwrap_or_else(|| {
+                renderer.register_indexed_mesh(
+                    vertices,
+                    normals,
+                    ao,
+                    geometry_type,
+                    light_level,
+                    indices,
+                )
+            });
 
         self.stats.total_uploads += 1;
 

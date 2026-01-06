@@ -81,37 +81,23 @@ impl HybridMeshGenerator {
     ///
     /// # Returns
     /// A VoxelMesh combining smooth and blocky geometry as appropriate
-    pub fn generate_chunk_mesh(
-        grid: &VoxelGrid,
-        chunk_pos: IVec3,
-        chunk_size: i32,
-    ) -> VoxelMesh {
+    pub fn generate_chunk_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
         let (content, _smooth_count, _blocky_count) =
             Self::analyze_chunk(grid, chunk_pos, chunk_size);
 
         match content {
             ChunkContent::Empty => VoxelMesh::empty(),
 
-            ChunkContent::AllSmooth => {
-                Self::generate_smooth_mesh(grid, chunk_pos, chunk_size)
-            }
+            ChunkContent::AllSmooth => Self::generate_smooth_mesh(grid, chunk_pos, chunk_size),
 
-            ChunkContent::AllBlocky => {
-                Self::generate_blocky_mesh(grid, chunk_pos, chunk_size)
-            }
+            ChunkContent::AllBlocky => Self::generate_blocky_mesh(grid, chunk_pos, chunk_size),
 
-            ChunkContent::Mixed => {
-                Self::generate_mixed_mesh(grid, chunk_pos, chunk_size)
-            }
+            ChunkContent::Mixed => Self::generate_mixed_mesh(grid, chunk_pos, chunk_size),
         }
     }
 
     /// Generate mesh using Marching Cubes for smooth terrain
-    fn generate_smooth_mesh(
-        grid: &VoxelGrid,
-        chunk_pos: IVec3,
-        chunk_size: i32,
-    ) -> VoxelMesh {
+    fn generate_smooth_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
         // Create density field from blocks
         let density_field = Self::create_density_field_for_chunk(grid, chunk_pos, chunk_size);
 
@@ -130,11 +116,7 @@ impl HybridMeshGenerator {
     }
 
     /// Generate mesh using greedy meshing for blocky structures
-    fn generate_blocky_mesh(
-        grid: &VoxelGrid,
-        chunk_pos: IVec3,
-        chunk_size: i32,
-    ) -> VoxelMesh {
+    fn generate_blocky_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
         let mut mesh = VoxelMesh::empty();
         let base_pos = chunk_pos * chunk_size;
 
@@ -155,20 +137,13 @@ impl HybridMeshGenerator {
     }
 
     /// Generate mesh for mixed chunk (smooth + blocky)
-    fn generate_mixed_mesh(
-        grid: &VoxelGrid,
-        chunk_pos: IVec3,
-        chunk_size: i32,
-    ) -> VoxelMesh {
+    fn generate_mixed_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
         let mut final_mesh = VoxelMesh::empty();
         let base_pos = chunk_pos * chunk_size;
 
         // Generate smooth terrain mesh (only for smooth blocks)
         let smooth_density = Self::create_selective_density_field(
-            grid,
-            chunk_pos,
-            chunk_size,
-            true, // only smooth blocks
+            grid, chunk_pos, chunk_size, true, // only smooth blocks
         );
         let smooth_mesh = MarchingCubes::generate_mesh(&smooth_density, chunk_size as usize);
 
@@ -180,7 +155,9 @@ impl HybridMeshGenerator {
             vertex[2] += base_pos.z as f32;
             final_mesh.vertices.push(vertex);
             final_mesh.normals.push(smooth_mesh.normals[i]);
-            final_mesh.ambient_occlusion.push(smooth_mesh.ambient_occlusion[i]);
+            final_mesh
+                .ambient_occlusion
+                .push(smooth_mesh.ambient_occlusion[i]);
             final_mesh.geometry_type.push(smooth_mesh.geometry_type[i]);
             final_mesh.light_level.push(smooth_mesh.light_level[i]);
         }
@@ -240,13 +217,9 @@ impl HybridMeshGenerator {
             for y in 0..18 {
                 for z in 0..18 {
                     let world_pos = base_pos + IVec3::new(x as i32 - 1, y as i32 - 1, z as i32 - 1);
-                    
+
                     let is_solid = if let Some(block) = grid.get_block(&world_pos) {
-                        if only_smooth {
-                            block.is_smooth()
-                        } else {
-                            true
-                        }
+                        if only_smooth { block.is_smooth() } else { true }
                     } else {
                         false
                     };
@@ -274,8 +247,12 @@ impl HybridMeshGenerator {
 
         // Copy normals, AO, geometry type, and light level
         target.normals.extend_from_slice(&source.normals);
-        target.ambient_occlusion.extend_from_slice(&source.ambient_occlusion);
-        target.geometry_type.extend_from_slice(&source.geometry_type);
+        target
+            .ambient_occlusion
+            .extend_from_slice(&source.ambient_occlusion);
+        target
+            .geometry_type
+            .extend_from_slice(&source.geometry_type);
         target.light_level.extend_from_slice(&source.light_level);
 
         // Add indices with offset
@@ -304,8 +281,12 @@ impl HybridMeshGenerator {
 
         // Copy normals, AO, geometry type, and light level
         target.normals.extend_from_slice(&source.normals);
-        target.ambient_occlusion.extend_from_slice(&source.ambient_occlusion);
-        target.geometry_type.extend_from_slice(&source.geometry_type);
+        target
+            .ambient_occlusion
+            .extend_from_slice(&source.ambient_occlusion);
+        target
+            .geometry_type
+            .extend_from_slice(&source.geometry_type);
         target.light_level.extend_from_slice(&source.light_level);
 
         // Add indices with combined offset
@@ -333,7 +314,7 @@ mod tests {
     #[test]
     fn test_analyze_all_smooth_chunk() {
         let mut grid = VoxelGrid::new(16);
-        
+
         // Add smooth blocks (material ID < 100)
         for x in 0..4 {
             for y in 0..4 {
@@ -354,7 +335,7 @@ mod tests {
     #[test]
     fn test_analyze_all_blocky_chunk() {
         let mut grid = VoxelGrid::new(16);
-        
+
         // Add blocky blocks (material ID >= 100)
         for x in 0..4 {
             for y in 0..4 {
@@ -375,7 +356,7 @@ mod tests {
     #[test]
     fn test_analyze_mixed_chunk() {
         let mut grid = VoxelGrid::new(16);
-        
+
         // Add mix of smooth and blocky blocks
         for x in 0..2 {
             for y in 0..2 {

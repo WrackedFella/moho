@@ -4,7 +4,9 @@ use legion::World;
 use crate::actors::{Cube, Sphere};
 use crate::materials::MaterialType;
 use crate::vector_length;
-use crate::voxel::{BlockPos, LightChannel, LightPropagator, MeshGenerator, VoxelBlock, VoxelChunk, VoxelGrid};
+use crate::voxel::{
+    BlockPos, LightChannel, LightPropagator, MeshGenerator, VoxelBlock, VoxelChunk, VoxelGrid,
+};
 use bincode::{Decode, Encode};
 use noise::{NoiseFn, Perlin};
 use rand::{Rng, rng};
@@ -178,7 +180,7 @@ pub fn voxel_terrain_scene(world: &mut World) -> VoxelGrid {
 /// Variant that accepts a custom `TerrainConfig`. This allows callers to
 /// control the PRNG seed (and later other parameters) when generating a
 /// terrain for new-world generation.
-/// 
+///
 /// Returns the VoxelGrid for use with light propagation system.
 pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig) -> VoxelGrid {
     // NOTE: Hybrid mesh generation currently requires chunk_size=16
@@ -191,7 +193,7 @@ pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig
     // Initialize light propagation system
     log::info!("Initializing light propagation...");
     let mut light_propagator = LightPropagator::new(grid.chunk_size());
-    
+
     // Flood-fill sky light from the top down
     light_propagator.flood_fill(&mut grid, LightChannel::Sky);
     log::info!("Sky light propagation complete");

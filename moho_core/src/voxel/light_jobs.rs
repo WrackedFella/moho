@@ -27,8 +27,8 @@ use super::light_propagation::{LightChannel, LightPropagator};
 use super::state::JobId;
 use glam::{IVec3, Vec3};
 use std::collections::{BinaryHeap, HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Type of light update operation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,7 +198,7 @@ impl Default for LightFrameBudget {
     fn default() -> Self {
         Self {
             max_blocks_per_frame: 100, // Conservative default
-            max_time_us: 2000,          // 2ms target
+            max_time_us: 2000,         // 2ms target
         }
     }
 }
@@ -394,17 +394,16 @@ impl LightJobQueue {
 
         let (affected_chunks, blocks_processed) = match job.op {
             LightUpdateOp::Add => {
-                let chunks = self.propagator.add_light(
-                    grid,
-                    job.source_pos,
-                    job.light_level,
-                    job.channel,
-                );
+                let chunks =
+                    self.propagator
+                        .add_light(grid, job.source_pos, job.light_level, job.channel);
                 let blocks = self.estimate_blocks_affected(&chunks);
                 (chunks, blocks)
             }
             LightUpdateOp::Remove => {
-                let chunks = self.propagator.remove_light(grid, job.source_pos, job.channel);
+                let chunks = self
+                    .propagator
+                    .remove_light(grid, job.source_pos, job.channel);
                 let blocks = self.estimate_blocks_affected(&chunks);
                 (chunks, blocks)
             }
@@ -519,7 +518,7 @@ mod tests {
 
         // First cancel should succeed
         assert!(queue.cancel(job_id));
-        
+
         // Second cancel of same job should also return true (cancellation token still exists)
         assert!(queue.cancel(job_id));
     }
@@ -603,7 +602,7 @@ mod tests {
     #[test]
     fn test_frame_budget() {
         let mut grid = VoxelGrid::new(16);
-        
+
         // Create a conservative budget
         let budget = LightFrameBudget::conservative();
         let mut queue = LightJobQueue::new(16, budget);
@@ -620,12 +619,8 @@ mod tests {
 
         // Submit multiple light jobs
         for i in 0..5 {
-            let job = LightUpdateJob::add_light(
-                IVec3::new(i * 2, 5, 5),
-                15,
-                LightChannel::Block,
-                i,
-            );
+            let job =
+                LightUpdateJob::add_light(IVec3::new(i * 2, 5, 5), 15, LightChannel::Block, i);
             queue.submit(job);
         }
 
@@ -654,13 +649,8 @@ mod tests {
         )
         .with_player_distance(player_pos);
 
-        let job_far = LightUpdateJob::add_light(
-            IVec3::new(50, 0, 0),
-            15,
-            LightChannel::Block,
-            100,
-        )
-        .with_player_distance(player_pos);
+        let job_far = LightUpdateJob::add_light(IVec3::new(50, 0, 0), 15, LightChannel::Block, 100)
+            .with_player_distance(player_pos);
 
         // Closer job should have lower priority value (higher priority)
         assert!(job_close.priority < job_far.priority);
@@ -683,12 +673,7 @@ mod tests {
 
         // Process a few jobs
         for i in 0..3 {
-            let job = LightUpdateJob::add_light(
-                IVec3::new(i, 2, 2),
-                15,
-                LightChannel::Block,
-                10,
-            );
+            let job = LightUpdateJob::add_light(IVec3::new(i, 2, 2), 15, LightChannel::Block, 10);
             queue.submit(job);
         }
 

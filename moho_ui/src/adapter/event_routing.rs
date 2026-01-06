@@ -115,6 +115,22 @@ pub fn process_console_action(action: crate::overlays::ConsoleAction, event_bus:
             use moho_core::events::GraphicsEvent;
             event_bus.publish(GraphicsEvent::DebugViewChanged { mode });
         }
+        ConsoleAction::SetShadowQuality(quality) => {
+            use moho_core::events::DebugEvent;
+            event_bus.publish(DebugEvent::SetShadowQuality { quality });
+        }
+        ConsoleAction::SetSsaoQuality(quality) => {
+            use moho_core::events::DebugEvent;
+            event_bus.publish(DebugEvent::SetSsaoQuality { quality });
+        }
+        ConsoleAction::Spawn(entity_type, args) => {
+            use moho_core::events::DebugEvent;
+            event_bus.publish(DebugEvent::SpawnEntity {
+                entity_type,
+                args,
+                position: None, // Position will be determined by raycast in the handler
+            });
+        }
         ConsoleAction::None => {
             // No action
         }

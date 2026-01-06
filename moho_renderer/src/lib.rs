@@ -115,16 +115,18 @@ pub mod gfx {
                 shadow: ShadowSystem,
             ) -> Self {
                 // Create depth sampler for SSAO
-                let depth_sampler = device_setup.device.create_sampler(&wgpu::SamplerDescriptor {
-                    label: Some("depth-sampler"),
-                    address_mode_u: wgpu::AddressMode::ClampToEdge,
-                    address_mode_v: wgpu::AddressMode::ClampToEdge,
-                    address_mode_w: wgpu::AddressMode::ClampToEdge,
-                    mag_filter: wgpu::FilterMode::Linear,
-                    min_filter: wgpu::FilterMode::Linear,
-                    mipmap_filter: wgpu::FilterMode::Nearest,
-                    ..Default::default()
-                });
+                let depth_sampler = device_setup
+                    .device
+                    .create_sampler(&wgpu::SamplerDescriptor {
+                        label: Some("depth-sampler"),
+                        address_mode_u: wgpu::AddressMode::ClampToEdge,
+                        address_mode_v: wgpu::AddressMode::ClampToEdge,
+                        address_mode_w: wgpu::AddressMode::ClampToEdge,
+                        mag_filter: wgpu::FilterMode::Linear,
+                        min_filter: wgpu::FilterMode::Linear,
+                        mipmap_filter: wgpu::FilterMode::Nearest,
+                        ..Default::default()
+                    });
 
                 // Initialize SSAO system
                 let ssao = crate::ssao::SsaoSystem::new(
@@ -132,17 +134,19 @@ pub mod gfx {
                     device_setup.config.width,
                     device_setup.config.height,
                     crate::ssao::SsaoSettings::default(),
-                ).ok(); // Ignore errors for now (SSAO is optional)
+                )
+                .ok(); // Ignore errors for now (SSAO is optional)
 
                 // Initialize light manager and dynamic lights buffer
                 let light_manager = crate::lights::LightManager::new();
-                let dynamic_lights_buffer = device_setup.device.create_buffer_init(
-                    &wgpu::util::BufferInitDescriptor {
-                        label: Some("dynamic-lights-buffer"),
-                        contents: bytemuck::bytes_of(light_manager.gpu_data()),
-                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    }
-                );
+                let dynamic_lights_buffer =
+                    device_setup
+                        .device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("dynamic-lights-buffer"),
+                            contents: bytemuck::bytes_of(light_manager.gpu_data()),
+                            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        });
 
                 let mut renderer = Self {
                     window,
@@ -456,28 +460,7 @@ pub mod gfx {
                     });
                 self.material_buffer = Some(mat_buf);
                 // Recreate the camera bind group to include the new material buffer.
-                let mat_resource = match self.material_buffer.as_ref() {
-                    Some(b) => b.as_entire_binding(),
-                    None => {
-                        log::error!("material buffer missing when creating bind group");
-                        return;
-                    }
-                };
-                self.camera_bind_group =
-                    self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        layout: &self.camera_bind_group_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: self.camera_buffer.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: mat_resource,
-                            },
-                        ],
-                        label: Some("camera-bind-group"),
-                    });
+                self.recreate_camera_bind_group();
             }
 
             /// Inherent setter for the optional raw FrameCallback pointer.
@@ -514,12 +497,13 @@ pub mod gfx {
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: self.depth_format,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
                     view_formats: &[],
                 });
                 self.depth_texture_view =
                     depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-                
+
                 // Resize SSAO textures if system is initialized
                 if let Some(ssao) = &mut self.ssao {
                     ssao.resize(&self.device, width, height);
@@ -547,36 +531,37 @@ pub mod gfx {
                     return;
                 };
 
-                self.camera_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    layout: &self.camera_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: self.camera_buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: mat_buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: self.lighting_buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::TextureView(ssao_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 4,
-                            resource: wgpu::BindingResource::Sampler(ssao_sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 5,
-                            resource: self.dynamic_lights_buffer.as_entire_binding(),
-                        },
-                    ],
-                    label: Some("camera-bind-group"),
-                });
+                self.camera_bind_group =
+                    self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        layout: &self.camera_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: self.camera_buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: mat_buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: self.lighting_buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::TextureView(ssao_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: wgpu::BindingResource::Sampler(ssao_sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: self.dynamic_lights_buffer.as_entire_binding(),
+                            },
+                        ],
+                        label: Some("camera-bind-group"),
+                    });
             }
 
             /// Inherent method: register a mesh into the renderer's mesh table.
@@ -618,7 +603,7 @@ pub mod gfx {
                     nor: [f32; 3],
                     ao: f32,
                     geometry_type: u32,
-                    _padding: [u32; 6],  // Padding to reach @location(10)
+                    _padding: [u32; 6], // Padding to reach @location(10)
                     light_level: f32,
                 }
                 // Build a temporary vec of interleaved vertices
@@ -847,6 +832,33 @@ pub mod gfx {
                 }
             }
 
+            pub fn set_shadow_quality(&mut self, quality: u8) {
+                let quality_enum = match quality {
+                    0 => crate::shadow::PcssQuality::Off,
+                    1 => crate::shadow::PcssQuality::Low,
+                    2 => crate::shadow::PcssQuality::Medium,
+                    3 => crate::shadow::PcssQuality::High,
+                    4 => crate::shadow::PcssQuality::Ultra,
+                    _ => crate::shadow::PcssQuality::Medium,
+                };
+                self.shadow.pcss_settings.quality = quality_enum;
+            }
+
+            pub fn set_ssao_quality(&mut self, quality: u8) {
+                let quality_enum = match quality {
+                    0 => crate::ssao::SsaoQuality::Off,
+                    1 => crate::ssao::SsaoQuality::Low,
+                    2 => crate::ssao::SsaoQuality::Medium,
+                    3 => crate::ssao::SsaoQuality::High,
+                    4 => crate::ssao::SsaoQuality::Ultra,
+                    _ => crate::ssao::SsaoQuality::Medium,
+                };
+
+                if let Some(ssao) = &mut self.ssao {
+                    ssao.set_quality(&self.queue, quality_enum);
+                }
+            }
+
             /// Finalize the current frame: flatten instances, upload to GPU, render passes, present.
             fn finalize_frame(&mut self) {
                 // Ensure we have a frame view
@@ -1006,7 +1018,7 @@ pub trait RendererBackend {
     fn set_materials(&mut self, materials: &[crate::MaterialGpu]);
     /// Update lighting parameters (sun, moon, ambient) and write to GPU buffer.
     fn update_lighting(&mut self, lighting: crate::gpu_types::LightingGpu);
-    
+
     /// Add a dynamic point light to the scene
     /// Returns the light ID for future updates/removal
     fn add_point_light(
@@ -1016,16 +1028,22 @@ pub trait RendererBackend {
         intensity: f32,
         range: f32,
     ) -> u32;
-    
+
     /// Remove a dynamic light by ID
     fn remove_light(&mut self, id: u32) -> bool;
-    
+
     /// Update a light's position
     fn set_light_position(&mut self, id: u32, position: glam::Vec3);
-    
+
     /// Enable or disable a light
     fn set_light_enabled(&mut self, id: u32, enabled: bool);
-    
+
+    /// Set shadow quality level
+    fn set_shadow_quality(&mut self, quality: u8);
+
+    /// Set SSAO quality level
+    fn set_ssao_quality(&mut self, quality: u8);
+
     /// Return the surface texture format used by the renderer (if applicable).
     /// This is useful for UI integrations that need to create GPU pipelines
     /// with the same format as the swapchain.
@@ -1066,7 +1084,15 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
         light_level: &[f32],
         indices: &[u32],
     ) -> u32 {
-        gfx::wgpu_impl::Renderer::register_indexed_mesh(self, vertices, normals, ao, geometry_type, light_level, indices)
+        gfx::wgpu_impl::Renderer::register_indexed_mesh(
+            self,
+            vertices,
+            normals,
+            ao,
+            geometry_type,
+            light_level,
+            indices,
+        )
     }
     fn unregister_mesh(&mut self, mesh: u32) {
         gfx::wgpu_impl::Renderer::unregister_mesh(self, mesh)
@@ -1122,6 +1148,12 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     }
     fn set_light_enabled(&mut self, id: u32, enabled: bool) {
         gfx::wgpu_impl::Renderer::set_light_enabled(self, id, enabled);
+    }
+    fn set_shadow_quality(&mut self, quality: u8) {
+        gfx::wgpu_impl::Renderer::set_shadow_quality(self, quality);
+    }
+    fn set_ssao_quality(&mut self, quality: u8) {
+        gfx::wgpu_impl::Renderer::set_ssao_quality(self, quality);
     }
 }
 

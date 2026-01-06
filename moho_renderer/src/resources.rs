@@ -117,7 +117,8 @@ impl ResourcePool {
             usage: wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let placeholder_ssao_view = placeholder_ssao_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let placeholder_ssao_view =
+            placeholder_ssao_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let placeholder_ssao_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("placeholder-ssao-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -132,13 +133,12 @@ impl ResourcePool {
         // Create placeholder dynamic lights buffer (will be replaced when renderer initializes light manager)
         use crate::gpu_types::DynamicLightsGpu;
         let placeholder_dynamic_lights = DynamicLightsGpu::default();
-        let placeholder_dynamic_lights_buffer = device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let placeholder_dynamic_lights_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("placeholder-dynamic-lights-buffer"),
                 contents: bytemuck::bytes_of(&placeholder_dynamic_lights),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            }
-        );
+            });
 
         // Create camera bind group
         let camera_bind_group = Self::create_camera_bind_group(

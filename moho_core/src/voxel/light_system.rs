@@ -143,14 +143,12 @@ impl LightSystem {
                 let current_light = block.light_level();
                 if current_light > 0 {
                     // There was light here, need to recalculate
-                    let job =
-                        LightUpdateJob::remove_light(position, LightChannel::Sky, 0)
-                            .with_player_distance(self.player_pos);
+                    let job = LightUpdateJob::remove_light(position, LightChannel::Sky, 0)
+                        .with_player_distance(self.player_pos);
                     self.job_queue.submit(job);
 
-                    let job =
-                        LightUpdateJob::remove_light(position, LightChannel::Block, 0)
-                            .with_player_distance(self.player_pos);
+                    let job = LightUpdateJob::remove_light(position, LightChannel::Block, 0)
+                        .with_player_distance(self.player_pos);
                     self.job_queue.submit(job);
 
                     self.total_jobs_submitted += 2;
@@ -172,7 +170,7 @@ impl LightSystem {
         // Check if removed block was a light source
         // Note: We need to check the OLD block state, which we don't have here
         // For now, assume any block removal might affect light
-        
+
         // Remove light at this position (both channels)
         let job_sky = LightUpdateJob::remove_light(position, LightChannel::Sky, 0)
             .with_player_distance(self.player_pos);
@@ -197,11 +195,7 @@ impl LightSystem {
     /// Handle a batch block modification event
     ///
     /// Enqueues light update jobs for all affected positions
-    pub fn on_blocks_batch_modified(
-        &mut self,
-        positions: &[IVec3],
-        reason: &BlockChangeReason,
-    ) {
+    pub fn on_blocks_batch_modified(&mut self, positions: &[IVec3], reason: &BlockChangeReason) {
         log::debug!(
             "Batch modification of {} blocks (reason: {:?})",
             positions.len(),
@@ -211,19 +205,15 @@ impl LightSystem {
         // For batch operations, we can optimize by:
         // 1. Collecting all affected chunks
         // 2. Submitting fewer, larger jobs
-        
+
         // For now, simple approach: submit individual jobs for each position
         for &position in positions {
             if let Some(block) = self.grid.get_block(&position) {
                 if block.is_light_source() {
                     let light_level = block.emission_level();
-                    let job = LightUpdateJob::add_light(
-                        position,
-                        light_level,
-                        LightChannel::Block,
-                        0,
-                    )
-                    .with_player_distance(self.player_pos);
+                    let job =
+                        LightUpdateJob::add_light(position, light_level, LightChannel::Block, 0)
+                            .with_player_distance(self.player_pos);
                     self.job_queue.submit(job);
                     self.total_jobs_submitted += 1;
                 } else {
@@ -245,7 +235,7 @@ impl LightSystem {
 
         // Collect results and track affected chunks
         let results = self.job_queue.collect_results();
-        
+
         for result in results {
             // Track affected chunks
             for &chunk_pos in &result.affected_chunks {
@@ -337,7 +327,7 @@ impl LightSystem {
         // Note: Event subscription would typically use callbacks or channels
         // For now, events should be forwarded to on_block_placed/on_block_removed
         // by the caller (e.g., main game loop or BlockModifier)
-        
+
         log::info!("LightSystem ready to process block modification events");
     }
 
@@ -361,9 +351,7 @@ impl LightSystem {
                 self.on_block_removed(*position, *old_material_id);
             }
             WorldEvent::BlocksBatchModified {
-                positions,
-                reason,
-                ..
+                positions, reason, ..
             } => {
                 self.on_blocks_batch_modified(positions, reason);
             }
@@ -373,12 +361,12 @@ impl LightSystem {
         }
     }
 
-    /// Get reference to the voxel grid
+    /// Get reference to the underlying voxel grid
     pub fn grid(&self) -> &VoxelGrid {
         &self.grid
     }
 
-    /// Get mutable reference to the voxel grid
+    /// Get mutable reference to the underlying voxel grid
     pub fn grid_mut(&mut self) -> &mut VoxelGrid {
         &mut self.grid
     }

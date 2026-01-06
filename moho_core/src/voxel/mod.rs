@@ -52,8 +52,8 @@ pub use grid::{
     VoxelGrid, VoxelMesh,
 };
 pub use jobs::{
-    create_hybrid_generator, create_legacy_generator, CancellationToken, MeshGeneratorFn, MeshJob,
-    MeshJobQueue, MeshJobQueueBuilder, MeshJobResult, MeshJobType,
+    CancellationToken, MeshGeneratorFn, MeshJob, MeshJobQueue, MeshJobQueueBuilder, MeshJobResult,
+    MeshJobType, create_hybrid_generator, create_legacy_generator,
 };
 pub use light_jobs::{
     LightCancellationToken, LightFrameBudget, LightJobQueue, LightJobStats, LightUpdateJob,
@@ -61,6 +61,8 @@ pub use light_jobs::{
 };
 pub use light_propagation::{LightChannel, LightPropagator};
 pub use light_system::{LightSystem, LightSystemStats};
-pub use mesh::{BlockyMeshGenerator, ChunkContent, HybridMeshGenerator, MarchingCubes, MeshGenerator};
+pub use mesh::{
+    BlockyMeshGenerator, ChunkContent, HybridMeshGenerator, MarchingCubes, MeshGenerator,
+};
 pub use modification::{BlockModifier, ModificationResult};
 pub use state::{ChunkState, DirtyFlags, GenerationState, JobId};

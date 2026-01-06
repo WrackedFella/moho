@@ -545,27 +545,25 @@ impl Default for MeshJobQueueBuilder {
 /// let queue = MeshJobQueue::new(4, grid, generator, 1000);
 /// ```
 pub fn create_hybrid_generator() -> MeshGeneratorFn {
-    Box::new(|grid: &VoxelGrid, chunk_pos: IVec3, _job_type: MeshJobType, token: &CancellationToken| {
-        // Check cancellation before starting
-        if token.is_cancelled() {
-            return None;
-        }
+    Box::new(
+        |grid: &VoxelGrid, chunk_pos: IVec3, _job_type: MeshJobType, token: &CancellationToken| {
+            // Check cancellation before starting
+            if token.is_cancelled() {
+                return None;
+            }
 
-        // Generate mesh using hybrid system
-        let chunk = VoxelChunk::from_grid_hybrid(grid, chunk_pos);
+            // Generate mesh using hybrid system
+            let chunk = VoxelChunk::from_grid_hybrid(grid, chunk_pos);
 
-        // Check cancellation after generation
-        if token.is_cancelled() {
-            return None;
-        }
+            // Check cancellation after generation
+            if token.is_cancelled() {
+                return None;
+            }
 
-        // Return None for empty chunks
-        if chunk.is_empty() {
-            None
-        } else {
-            Some(chunk)
-        }
-    })
+            // Return None for empty chunks
+            if chunk.is_empty() { None } else { Some(chunk) }
+        },
+    )
 }
 
 /// Create a legacy mesh generator function (Phase 0 style).
@@ -573,23 +571,21 @@ pub fn create_hybrid_generator() -> MeshGeneratorFn {
 /// Uses the original block-by-block face culling approach. Provided for
 /// compatibility and comparison purposes.
 pub fn create_legacy_generator() -> MeshGeneratorFn {
-    Box::new(|grid: &VoxelGrid, chunk_pos: IVec3, _job_type: MeshJobType, token: &CancellationToken| {
-        if token.is_cancelled() {
-            return None;
-        }
+    Box::new(
+        |grid: &VoxelGrid, chunk_pos: IVec3, _job_type: MeshJobType, token: &CancellationToken| {
+            if token.is_cancelled() {
+                return None;
+            }
 
-        let chunk = VoxelChunk::from_grid(grid, chunk_pos);
+            let chunk = VoxelChunk::from_grid(grid, chunk_pos);
 
-        if token.is_cancelled() {
-            return None;
-        }
+            if token.is_cancelled() {
+                return None;
+            }
 
-        if chunk.is_empty() {
-            None
-        } else {
-            Some(chunk)
-        }
-    })
+            if chunk.is_empty() { None } else { Some(chunk) }
+        },
+    )
 }
 
 #[cfg(test)]

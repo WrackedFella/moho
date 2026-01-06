@@ -25,7 +25,11 @@ impl GenerationProcessor {
                     GenerationMsg::Progress(p) => {
                         self.handle_progress(app, p);
                     }
-                    GenerationMsg::Completed { scene_bytes, spec, grid } => {
+                    GenerationMsg::Completed {
+                        scene_bytes,
+                        spec,
+                        grid,
+                    } => {
                         self.handle_completed(app, scene_bytes, spec, grid);
                         still_running = false;
                     }

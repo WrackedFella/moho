@@ -1,9 +1,8 @@
 /// Dynamic light management system for point and spot lights
 /// Handles light registration, updates, frustum culling, and GPU buffer management
-
 use glam::{Mat4, Vec3, Vec4};
 
-use crate::gpu_types::{DynamicLightsGpu, PointLightGpu, MAX_DYNAMIC_LIGHTS};
+use crate::gpu_types::{DynamicLightsGpu, MAX_DYNAMIC_LIGHTS, PointLightGpu};
 
 /// Light type enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +30,7 @@ pub struct Light {
     pub range: f32,
     /// Whether this light is currently active
     pub enabled: bool,
-    
+
     // Spot light parameters (future use)
     /// Spot light direction (for spotlight)
     pub direction: Option<Vec3>,
@@ -46,7 +45,7 @@ impl Light {
     pub fn new_point(position: Vec3, color: Vec3, intensity: f32, range: f32) -> Self {
         static NEXT_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        
+
         Self {
             id,
             light_type: LightType::Point,
@@ -60,36 +59,45 @@ impl Light {
             outer_angle: None,
         }
     }
-    
+
     /// Convert to GPU representation
     fn to_gpu(&self) -> PointLightGpu {
         PointLightGpu {
-            position_range: [self.position.x, self.position.y, self.position.z, self.range],
+            position_range: [
+                self.position.x,
+                self.position.y,
+                self.position.z,
+                self.range,
+            ],
             color_intensity: [self.color.x, self.color.y, self.color.z, self.intensity],
         }
     }
-    
+
     /// Check if light is within camera frustum (simple sphere test)
     /// Returns true if the light's bounding sphere intersects the frustum
     pub fn is_in_frustum(&self, view_proj: &Mat4) -> bool {
         // Transform light position to clip space
-        let clip_pos = *view_proj * Vec4::new(self.position.x, self.position.y, self.position.z, 1.0);
-        
+        let clip_pos =
+            *view_proj * Vec4::new(self.position.x, self.position.y, self.position.z, 1.0);
+
         // Perspective divide
         let w = clip_pos.w;
         if w.abs() < 0.001 {
             return false; // Behind camera
         }
         let ndc = Vec3::new(clip_pos.x / w, clip_pos.y / w, clip_pos.z / w);
-        
+
         // Check if light sphere intersects NDC cube [-1, 1]³
         // Simplified test: if light center is within extended bounds (accounting for range)
         // A proper frustum test would check all 6 planes, but this is sufficient for now
         let margin = self.range * 0.1; // Convert range to NDC-space margin (approximate)
-        
-        ndc.x >= -1.0 - margin && ndc.x <= 1.0 + margin &&
-        ndc.y >= -1.0 - margin && ndc.y <= 1.0 + margin &&
-        ndc.z >= 0.0 - margin && ndc.z <= 1.0 + margin
+
+        ndc.x >= -1.0 - margin
+            && ndc.x <= 1.0 + margin
+            && ndc.y >= -1.0 - margin
+            && ndc.y <= 1.0 + margin
+            && ndc.z >= 0.0 - margin
+            && ndc.z <= 1.0 + margin
     }
 }
 
@@ -115,7 +123,7 @@ impl LightManager {
             dirty: true,
         }
     }
-    
+
     /// Add a new light and return its ID
     pub fn add_light(&mut self, light: Light) -> u32 {
         let id = light.id;
@@ -123,7 +131,7 @@ impl LightManager {
         self.dirty = true;
         id
     }
-    
+
     /// Remove a light by ID
     pub fn remove_light(&mut self, id: u32) -> bool {
         if let Some(pos) = self.lights.iter().position(|l| l.id == id) {
@@ -134,91 +142,91 @@ impl LightManager {
             false
         }
     }
-    
+
     /// Get a mutable reference to a light by ID
     pub fn get_light_mut(&mut self, id: u32) -> Option<&mut Light> {
         self.dirty = true; // Assume mutation will occur
         self.lights.iter_mut().find(|l| l.id == id)
     }
-    
+
     /// Get an immutable reference to a light by ID
     pub fn get_light(&self, id: u32) -> Option<&Light> {
         self.lights.iter().find(|l| l.id == id)
     }
-    
+
     /// Update light position
     pub fn set_light_position(&mut self, id: u32, position: Vec3) {
         if let Some(light) = self.get_light_mut(id) {
             light.position = position;
         }
     }
-    
+
     /// Enable or disable a light
     pub fn set_light_enabled(&mut self, id: u32, enabled: bool) {
         if let Some(light) = self.get_light_mut(id) {
             light.enabled = enabled;
         }
     }
-    
+
     /// Perform frustum culling on all lights
     /// Updates internal culled_lights list with visible light indices
     pub fn cull_lights(&mut self, view_proj: &Mat4) {
         self.culled_lights.clear();
-        
+
         for (idx, light) in self.lights.iter().enumerate() {
             if !light.enabled {
                 continue;
             }
-            
+
             if light.is_in_frustum(view_proj) {
                 self.culled_lights.push(idx);
             }
         }
-        
+
         self.dirty = true;
     }
-    
+
     /// Update GPU buffer with culled lights
     /// Should be called after frustum culling
     pub fn update_gpu_data(&mut self) {
         if !self.dirty {
             return;
         }
-        
+
         // Limit to MAX_DYNAMIC_LIGHTS
         let num_lights = self.culled_lights.len().min(MAX_DYNAMIC_LIGHTS);
-        
+
         // Update light count
         self.gpu_data.light_count[0] = num_lights as u32;
-        
+
         // Copy culled lights to GPU buffer
         for (dst_idx, &src_idx) in self.culled_lights.iter().take(num_lights).enumerate() {
             self.gpu_data.lights[dst_idx] = self.lights[src_idx].to_gpu();
         }
-        
+
         // Zero out remaining slots (not strictly necessary but good practice)
         for dst_idx in num_lights..MAX_DYNAMIC_LIGHTS {
             self.gpu_data.lights[dst_idx] = PointLightGpu::default();
         }
-        
+
         self.dirty = false;
     }
-    
+
     /// Get GPU data for uploading to buffer
     pub fn gpu_data(&self) -> &DynamicLightsGpu {
         &self.gpu_data
     }
-    
+
     /// Get number of visible lights after culling
     pub fn visible_light_count(&self) -> usize {
         self.culled_lights.len().min(MAX_DYNAMIC_LIGHTS)
     }
-    
+
     /// Get total number of registered lights
     pub fn total_light_count(&self) -> usize {
         self.lights.len()
     }
-    
+
     /// Mark as dirty (forces GPU update next frame)
     pub fn mark_dirty(&mut self) {
         self.dirty = true;

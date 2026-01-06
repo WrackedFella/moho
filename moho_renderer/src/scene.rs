@@ -325,7 +325,7 @@ impl Scene {
                 vertices: chunk_desc.vertices,
                 normals: chunk_desc.normals,
                 ambient_occlusion: vec![1.0; vertex_count], // Default full brightness for loaded chunks
-                geometry_type: vec![1; vertex_count], // Default to blocky for loaded chunks
+                geometry_type: vec![1; vertex_count],       // Default to blocky for loaded chunks
                 light_level: vec![1.0; vertex_count], // Default to full light for loaded chunks
                 indices: chunk_desc.indices,
                 material_id: chunk_desc.material_id,

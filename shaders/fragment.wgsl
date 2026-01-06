@@ -724,6 +724,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Accumulate dynamic point light contributions
     // Iterate over all active point lights and add their contributions
     let num_lights = dynamic_lights.light_count.x;
+    var point_light_contrib = vec3<f32>(0.0, 0.0, 0.0);
+    
     if (num_lights > 0u) {
         // Determine material properties for point lights (reuse from above)
         let is_metal = step(0.01, fuzz);
@@ -733,7 +735,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let spec_power = mix(64.0, 96.0, is_metal);
         
         // Accumulate point light contributions
-        var point_light_contrib = vec3<f32>(0.0, 0.0, 0.0);
         for (var i = 0u; i < num_lights; i = i + 1u) {
             let light = dynamic_lights.lights[i];
             let light_pos = light.position_range.xyz;
@@ -804,6 +805,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     } else if (debug_mode == 4u) {
         // Mode 4: Raw Light Level
         return vec4<f32>(vec3<f32>(in.light_level), 1.0);
+    } else if (debug_mode == 5u) {
+        // Mode 5: Point Lights Contribution
+        return vec4<f32>(point_light_contrib, 1.0);
     }
 
     return vec4<f32>(color, out_alpha);
