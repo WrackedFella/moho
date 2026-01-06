@@ -222,7 +222,7 @@ mod tests {
         let mat = MaterialType::Lambertian {
             albedo: glam::Vec3::new(1.0, 0.0, 0.0),
         };
-        world.push((Sphere::new(glam::Vec3::ZERO, 1.0, mat.clone()),));
+        world.push((Sphere::new(glam::Vec3::ZERO, 1.0, mat),));
         world.push((Sphere::new(glam::Vec3::new(5.0, 0.0, 0.0), 2.0, mat),));
 
         collector.collect_from_world(
@@ -251,7 +251,7 @@ mod tests {
             albedo: glam::Vec3::new(0.8, 0.8, 0.8),
             fuzz: 0.1,
         };
-        world.push((Cube::new(glam::Vec3::ZERO, 1.0, 1.0, 1.0, mat.clone()),));
+        world.push((Cube::new(glam::Vec3::ZERO, 1.0, 1.0, 1.0, mat),));
         world.push((Cube::new(
             glam::Vec3::new(3.0, 0.0, 0.0),
             2.0,
@@ -329,7 +329,7 @@ mod tests {
             fuzz: 0.1,
         };
 
-        world.push((Sphere::new(glam::Vec3::ZERO, 1.0, mat1.clone()),));
+        world.push((Sphere::new(glam::Vec3::ZERO, 1.0, mat1),));
         world.push((Cube::new(
             glam::Vec3::new(3.0, 0.0, 0.0),
             1.0,

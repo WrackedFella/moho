@@ -505,7 +505,7 @@ impl ShadowSystem {
         cascade_idx: u32,
         light_dir: glam::Vec3,
         cam_pos: glam::Vec3,
-        near: f32,
+        _near: f32,
         far: f32,
     ) -> glam::Mat4 {
         // Calculate cascade center based on split distances
@@ -663,7 +663,7 @@ impl ShadowSystem {
         );
 
         // Combine: Correction * Proj * View
-        let view_proj = correction_matrix * light_proj * light_view;
+        let _view_proj = correction_matrix * light_proj * light_view;
 
         // Snap based on World Origin (Vec3::ZERO) to ensure grid stability
         // 1. Calculate where the World Origin IS in light space (View Space)

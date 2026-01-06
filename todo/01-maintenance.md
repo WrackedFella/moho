@@ -4,17 +4,23 @@
 
 ## Tasks
 
-### 1. Reverse Console Scroll
+### 1. Reverse Console Scroll (Completed)
 - **Problem:** Console appends messages to the top (oldest on bottom), making it hard to read the latest logs.
 - **Fix:** Update UI logic in `moho_ui` to append messages to the bottom (newest on bottom) and auto-scroll.
 
-### 2. Clean Shutdown
+### 2. Code Quality Check (Completed)
+- **Action:** Run `cargo fmt` and `cargo clippy`. Fixed multiple warnings (unused variables, type complexity, len_zero, etc.).
+
+### 3. Clean Shutdown (Completed)
 - **Problem:** App may leave dangling threads or GPU resources on exit.
-- **Fix:** Review `Drop` implementations and main loop exit condition to ensure clean termination.
+- **Fix:** Implemented `Drop` for `App` struct to signal limits and join background generation threads.
 
-### 3. Prune Outdated Tests
+### 4. Prune Outdated Tests (Completed)
 - **Problem:** Test suite has rot over time.
-- **Action:** Run `cargo test`, identify failing tests, and either update them or remove them if effectively dead code.
+- **Action:** Run `cargo test`. Pruned failing tests in `moho_core` (`extraction.rs`) that relied on outdated mesh assumptions. Fixed clippy warnings in tests.
 
-### 4. Local READMEs
-- **Action:** Add a simple `README.md` to each crate folder (`moho_core`, `moho_renderer`, etc.) explaining its purpose and responsibility.
+### 5. Local READMEs (Completed)
+- **Action:**
+    - Created `moho_types/README.md`.
+    - Fixed corrupted/duplicated content in `moho_ui/README.md`.
+    - Verified existence of other crate READMEs.

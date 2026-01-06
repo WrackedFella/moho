@@ -80,13 +80,4 @@ mod tests {
             "Should contain shader types from common.wgsl"
         );
     }
-
-    #[test]
-    fn test_main_shader_structure_documented() {
-        // This test documents the main shader structure:
-        // - common.wgsl: Shared types and uniforms
-        // - vertex.wgsl: Vertex shader entry point
-        // - fragment.wgsl: Fragment shader entry point
-        assert!(true, "Main shader is composed of 3 WGSL files concatenated");
-    }
 }

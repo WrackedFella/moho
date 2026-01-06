@@ -936,6 +936,25 @@ impl ApplicationHandler for App {
     }
 }
 
+impl Drop for App {
+    fn drop(&mut self) {
+        log::info!("Shutting down application...");
+
+        // Signal cancellation to any running background generation
+        if let Some(cancel) = &self.generation_cancel {
+            cancel.store(true, Ordering::SeqCst);
+        }
+
+        // Wait for generation thread to finish
+        if let Some(handle) = self.generation_handle.take() {
+            log::info!("Waiting for background generation to finish...");
+            if handle.join().is_err() {
+                log::error!("Failed to join generation thread");
+            }
+        }
+    }
+}
+
 fn main() {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut app = App::new();

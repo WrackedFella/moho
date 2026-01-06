@@ -19,7 +19,7 @@ mod event_bus_tests {
 
     #[derive(Clone, Debug)]
     struct HighPriorityEvent {
-        message: String,
+        _message: String,
     }
 
     impl Event for HighPriorityEvent {
@@ -34,7 +34,7 @@ mod event_bus_tests {
 
     #[derive(Clone, Debug)]
     struct HighFrequencyEvent {
-        count: u32,
+        _count: u32,
     }
 
     impl Event for HighFrequencyEvent {
@@ -149,7 +149,7 @@ mod event_bus_tests {
 
         bus.publish(TestEvent { value: 1 });
         bus.publish(HighPriorityEvent {
-            message: "test".to_string(),
+            _message: "test".to_string(),
         });
         bus.publish(TestEvent { value: 2 });
 
@@ -165,7 +165,7 @@ mod event_bus_tests {
 
         bus.publish(TestEvent { value: 1 });
         bus.publish(TestEvent { value: 2 });
-        bus.publish(HighFrequencyEvent { count: 100 }); // Should not be recorded
+        bus.publish(HighFrequencyEvent { _count: 100 }); // Should not be recorded
 
         std::thread::sleep(std::time::Duration::from_millis(10));
 
