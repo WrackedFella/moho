@@ -174,6 +174,7 @@ impl BufferManager {
     ///
     /// # Returns
     /// The new mesh handle if successful
+    #[allow(clippy::too_many_arguments)]
     pub fn upload_pending_mesh(
         &mut self,
         chunk_pos: glam::IVec3,

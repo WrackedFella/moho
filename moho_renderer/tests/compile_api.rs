@@ -4,6 +4,7 @@
 // The API always uses wgpu backend now. The factory signature takes a Window reference
 // and returns a boxed `RendererBackend` with the same lifetime.
 #[test]
+#[allow(clippy::type_complexity)]
 fn api_compiles() {
     use moho_renderer::RendererBackend;
     use moho_renderer::create_renderer;

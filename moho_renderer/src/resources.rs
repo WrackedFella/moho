@@ -227,6 +227,7 @@ impl ResourcePool {
     /// - Binding 2: Lighting uniform buffer
     /// - Binding 3: SSAO texture (placeholder initially)
     /// - Binding 4: SSAO sampler (placeholder initially)
+    #[allow(clippy::too_many_arguments)]
     fn create_camera_bind_group(
         device: &wgpu::Device,
         camera_bgl: &wgpu::BindGroupLayout,

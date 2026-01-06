@@ -141,16 +141,20 @@ impl Console {
                         .max_height(250.0)
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 2.0);
+                            // Force top-down layout for the log lines so newest are at the bottom
+                            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                                ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 2.0);
 
-                            // Use full available width for output
-                            ui.set_width(ui.available_width());
+                                // Use full available width for output
+                                ui.set_width(ui.available_width());
 
-                            for line in self.output.lines() {
-                                ui.label(
-                                    egui::RichText::new(line).family(egui::FontFamily::Monospace),
-                                );
-                            }
+                                for line in self.output.lines() {
+                                    ui.label(
+                                        egui::RichText::new(line)
+                                            .family(egui::FontFamily::Monospace),
+                                    );
+                                }
+                            });
                         });
                 });
             });

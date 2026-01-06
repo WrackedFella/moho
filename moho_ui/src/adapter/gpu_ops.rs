@@ -80,13 +80,6 @@ mod tests {
     // Full testing would require mock GPU context or integration tests
 
     #[test]
-    fn test_module_compiles() {
-        // This test ensures all functions are properly defined
-        // Actual GPU operations require real wgpu context
-        assert!(true);
-    }
-
-    #[test]
     fn test_free_textures_empty() {
         // Verify empty texture list doesn't panic
         // Would need mock renderer for actual test
@@ -103,12 +96,5 @@ mod tests {
 
         assert_eq!(descriptor.size_in_pixels[0], 1920);
         assert_eq!(descriptor.size_in_pixels[1], 1080);
-    }
-
-    #[test]
-    fn test_render_pass_descriptor() {
-        // Verify render pass descriptor structure is correct
-        // This test ensures the types and fields are properly defined
-        assert!(true);
     }
 }

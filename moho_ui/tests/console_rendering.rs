@@ -6,5 +6,4 @@
 #[ignore]
 fn console_renders_in_consoleopen_state() {
     // TODO: Implement with headless wgpu mock or renderer test harness
-    assert!(true);
 }

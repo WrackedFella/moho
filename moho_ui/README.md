@@ -1,186 +1,186 @@
-# moho_ui# moho_ui
+﻿# moho_ui
 
 
 
-egui-based UI system for the Moho engine. Provides menus, settings screens, overlays, and console integration with event-driven communication to the main engine.egui-based UI system for the Moho engine. Provides menus, settings screens, overlays, and console integration with event-driven communication to the main engine.
+egui-based UI system for the Moho engine. Provides menus, settings screens, overlays, and console integration with event-driven communication to the main engine.
 
 
 
-## Features## Features
+## Features
 
 
 
-- **Start Menu** - Main menu with New World, Continue, Settings, Exit- **Start Menu** - Main menu with New World, Continue, Settings, Exit
+- **Start Menu** - Main menu with New World, Continue, Settings, Exit
 
-- **Settings Screen** - Tabbed interface for Controls and Audio settings- **Settings Screen** - Tabbed interface for Controls and Audio settings
+- **Settings Screen** - Tabbed interface for Controls and Audio settings
 
-- **New World Menu** - World generation configuration (size, seed, terrain type)- **New World Menu** - World generation configuration (size, seed, terrain type)
+- **New World Menu** - World generation configuration (size, seed, terrain type)
 
-- **Debug Console** - Command execution and output display- **Debug Console** - Command execution and output display
+- **Debug Console** - Command execution and output display
 
-- **HUD Overlay** - In-game information display- **HUD Overlay** - In-game information display
+- **HUD Overlay** - In-game information display
 
-- **Modal Dialogs** - Confirmation prompts and notifications- **Modal Dialogs** - Confirmation prompts and notifications
+- **Modal Dialogs** - Confirmation prompts and notifications
 
-- **Event-Driven** - Publishes `UiEvent` to engine event bus- **Event-Driven** - Publishes `UiEvent` to engine event bus
+- **Event-Driven** - Publishes `UiEvent` to engine event bus
 
-- **Keybind Capture** - Click-to-rebind input controls- **Keybind Capture** - Click-to-rebind input controls
+- **Keybind Capture** - Click-to-rebind input controls
 
-- **Persistent Settings** - Saves preferences to `config/prefs.ini`- **Persistent Settings** - Saves preferences to `config/prefs.ini`
+- **Persistent Settings** - Saves preferences to `config/prefs.ini`
 
 
 
-## Architecture## Architecture
+## Architecture
 
 
 
-### Core Components### Core Components
+### Core Components
 
 
 
-- **`EguiAdapter`** - Integrates egui with wgpu/winit, handles rendering lifecycle- **`EguiAdapter`** - Integrates egui with wgpu/winit, handles rendering lifecycle
+- **`EguiAdapter`** - Integrates egui with wgpu/winit, handles rendering lifecycle
 
-- **`UiStateManager`** - Manages which screen/overlay is currently active- **`UiStateManager`** - Manages which screen/overlay is currently active
+- **`UiStateManager`** - Manages which screen/overlay is currently active
 
-- **`ScreenSpec`** - Trait defining full-screen UIs (menus, settings, etc.)- **`ScreenSpec`** - Trait defining full-screen UIs (menus, settings, etc.)
+- **`ScreenSpec`** - Trait defining full-screen UIs (menus, settings, etc.)
 
-- **`Overlay`** - Trait for in-game overlays (console, HUD, etc.)- **`Overlay`** - Trait for in-game overlays (console, HUD, etc.)
+- **`Overlay`** - Trait for in-game overlays (console, HUD, etc.)
 
-- **`FormControls`** - Reusable UI control helpers (buttons, sliders, text fields, tabs)- **`FormControls`** - Reusable UI control helpers (buttons, sliders, text fields, tabs)
+- **`FormControls`** - Reusable UI control helpers (buttons, sliders, text fields, tabs)
 
 
 
-### Screen Flow### Screen Flow
+### Screen Flow
 
 
 
-``````
+```
 
-StartMenu → NewWorldMenu → Playing (with HUD)StartMenu → NewWorldMenu → Playing (with HUD)
+StartMenu â†’ NewWorldMenu â†’ Playing (with HUD)
 
-         ↓                      ↓         ↓                      ↓
+         â†“                      â†“
 
-    SettingsMenu ←────────── Console (backtick key)    SettingsMenu ←────────── Console (backtick key)
+    SettingsMenu â†â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Console (backtick key)
 
-         ↓         ↓
+         â†“
 
-    StartMenu    StartMenu
+    StartMenu
 
-``````
+```
 
 
 
-## Quick Start## Quick Start
+## Quick Start
 
 
 
-### Building with UI### Building with UI
+### Building with UI
 
 
 
-```bash```bash
+```bash
 
-# Run with egui UI# Run with egui UI
+# Run with egui UI
 
-cargo run --features "backend-wgpu ui-egui"cargo run --features "backend-wgpu ui-egui"
+cargo run --features "backend-wgpu ui-egui"
 
 
 
-# Run with debug output# Run with debug output
+# Run with debug output
 
-cargo run --features "backend-wgpu ui-egui ui-egui-debug"cargo run --features "backend-wgpu ui-egui ui-egui-debug"
+cargo run --features "backend-wgpu ui-egui ui-egui-debug"
 
-``````
+```
 
 
 
-### Basic Integration### Basic Integration
+### Basic Integration
 
 
 
-```rust```rust
+```rust
 
-use moho_ui::{EguiAdapter, UiStateManager};use moho_ui::{EguiAdapter, UiStateManager};
+use moho_ui::{EguiAdapter, UiStateManager};
 
-use moho_core::events::EventBus;use moho_core::events::EventBus;
+use moho_core::events::EventBus;
 
-use std::sync::Arc;use std::sync::Arc;
+use std::sync::Arc;
 
 
 
-// Create UI adapter// Create UI adapter
+// Create UI adapter
 
-let event_bus = Arc::new(EventBus::new());let event_bus = Arc::new(EventBus::new());
+let event_bus = Arc::new(EventBus::new());
 
-let adapter = EguiAdapter::new(let adapter = EguiAdapter::new(
+let adapter = EguiAdapter::new(
 
-    Some(window.clone()),    Some(window.clone()),
+    Some(window.clone()),
 
-    event_bus.clone(),    event_bus.clone(),
+    event_bus.clone(),
 
-););
+);
 
 
 
-// Create UI state manager// Create UI state manager
+// Create UI state manager
 
-let mut ui_manager = UiStateManager::new();let mut ui_manager = UiStateManager::new();
+let mut ui_manager = UiStateManager::new();
 
 
 
-// Each frame// Each frame
+// Each frame
 
-adapter.handle_window_event(&event, &window);adapter.handle_window_event(&event, &window);
+adapter.handle_window_event(&event, &window);
 
-adapter.render_frame(&mut ui_manager, &game_state)?;adapter.render_frame(&mut ui_manager, &game_state)?;
+adapter.render_frame(&mut ui_manager, &game_state)?;
 
-``````
+```
 
 
 
-### Handling UI Events### Handling UI Events
+### Handling UI Events
 
 
 
-UI events are published to the engine's `EventBus`:UI events are published to the engine's `EventBus`:
+UI events are published to the engine's `EventBus`:
 
 
 
-```rust```rust
+```rust
 
-use moho_core::events::{EventBus, UiEvent};use moho_core::events::{EventBus, UiEvent};
+use moho_core::events::{EventBus, UiEvent};
 
 
 
-bus.subscribe(|event: &UiEvent| {bus.subscribe(|event: &UiEvent| {
+bus.subscribe(|event: &UiEvent| {
 
-    match event {    match event {
+    match event {
 
-        UiEvent::NewWorldRequested { size_xz, seed, terrain_type } => {        UiEvent::NewWorldRequested { size_xz, seed, terrain_type } => {
+        UiEvent::NewWorldRequested { size_xz, seed, terrain_type } => {
 
-            // Generate new world            // Generate new world
+            // Generate new world
 
-        }        }
+        }
 
-        UiEvent::ButtonClicked { name } => {        UiEvent::ButtonClicked { name } => {
+        UiEvent::ButtonClicked { name } => {
 
-            println!("Button clicked: {}", name);            println!("Button clicked: {}", name);
+            println!("Button clicked: {}", name);
 
-        }        }
+        }
 
-        UiEvent::MenuShown { name } => {        UiEvent::MenuShown { name } => {
+        UiEvent::MenuShown { name } => {
 
-            println!("Menu shown: {}", name);            println!("Menu shown: {}", name);
+            println!("Menu shown: {}", name);
 
-        }        }
+        }
 
-        _ => {}        _ => {}
+        _ => {}
 
-    }    }
+    }
 
-});});
+});
 
-``````
+```
 
 
 
@@ -188,7 +188,7 @@ bus.subscribe(|event: &UiEvent| {bus.subscribe(|event: &UiEvent| {
 
 - Short diagnosis: The non-egui fallback used a different geometry/coordinate
 
-Implement the `ScreenSpec` trait for full-screen UIs:  space than the painted egui widgets — at one point the fallback used hard
+Implement the `ScreenSpec` trait for full-screen UIs:  space than the painted egui widgets â€” at one point the fallback used hard
 
   coded rectangles while the painted UI moved/laid out buttons based on
 
@@ -238,7 +238,7 @@ impl ScreenSpec for MyCustomScreen {     geometry definitions and makes the fall
 
     fn should_capture_mouse(&self) -> bool {  you fully trust egui_winit in your platform/versions you can remove the
 
-        true // Screen captures mouse input  fallback code — but keep in mind press+release between frames can still
+        true // Screen captures mouse input  fallback code â€” but keep in mind press+release between frames can still
 
     }  happen and may be surprising without the fallback.
 
@@ -252,7 +252,7 @@ impl ScreenSpec for MyCustomScreen {     geometry definitions and makes the fall
 
 - If you port or update egui/egui-winit/egui-wgpu versions, re-check the
 
-Implement the `Overlay` trait for in-game overlays:  `egui_winit::State` constructor and any `egui_wgpu::Renderer` API — egui
+Implement the `Overlay` trait for in-game overlays:  `egui_winit::State` constructor and any `egui_wgpu::Renderer` API â€” egui
 
   and friends have historically changed their initialization signatures
 
@@ -278,7 +278,7 @@ impl Overlay for MyOverlay {8) egui Slider width control quirk
 
     }  will NOT make the slider's draggable bar expand to fill the specified width.
 
-  
+ 
 
     fn toggle(&mut self) {- **Root cause**: egui's `Slider` widget has internal sizing logic that uses
 
@@ -326,7 +326,7 @@ use moho_ui::FormControls;  ```
 
 let controls = FormControls::new(360.0, 180.0); // field_width, label_width- **Example**: In `NewWorldMenu`, we wanted the World Size slider to be 50% wider
 
-  than the text fields (360px → 540px). Using `add_sized` alone did not work.
+  than the text fields (360px â†’ 540px). Using `add_sized` alone did not work.
 
 // Standard button  Setting `ui.spacing_mut().slider_width = 480.0` (540px - 60px) before adding
 
@@ -392,7 +392,7 @@ ui.add(egui::Slider::new(&mut value, 0..=100).suffix("%"));
 
 ### Tabs- InputDispatcher: the app now uses a small prioritized dispatcher to route `WindowEvent`s. The settings keybind capture registers at a higher priority so it can intercept events while the settings menu is listening.
 
-- Shared mapping: the physical key → binding mapping lives in the workspace crate `moho_input` to avoid duplication between the binary and `moho_ui`.
+- Shared mapping: the physical key â†’ binding mapping lives in the workspace crate `moho_input` to avoid duplication between the binary and `moho_ui`.
 
 ```rust- Wheel policy: mouse-wheel events are forwarded to the game only when the UI overlay is hidden. The forwarder uses a conservative `try_lock()` behavior and will *not* forward if the UI lock cannot be obtained.
 

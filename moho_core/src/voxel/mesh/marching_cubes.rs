@@ -70,6 +70,7 @@ impl MarchingCubes {
     }
 
     /// Process a single cell in the marching cubes algorithm
+    #[allow(clippy::too_many_arguments)]
     fn process_cell(
         density_field: &[[[f32; 18]; 18]; 18],
         x: usize,
@@ -170,7 +171,7 @@ impl MarchingCubes {
             }
 
             // Add indices (counter-clockwise winding)
-            indices.push(base_vertex + 0);
+            indices.push(base_vertex);
             indices.push(base_vertex + 1);
             indices.push(base_vertex + 2);
         }
@@ -893,11 +894,11 @@ mod tests {
         // Full field should generate boundary geometry (outer shell)
         // The 16x16x16 block will have an isosurface at its boundary with air
         assert!(
-            mesh.vertices.len() > 0,
+            !mesh.vertices.is_empty(),
             "Expected boundary geometry for solid block"
         );
         assert!(
-            mesh.indices.len() > 0,
+            !mesh.indices.is_empty(),
             "Expected indices for boundary geometry"
         );
         assert_eq!(

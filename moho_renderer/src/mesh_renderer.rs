@@ -205,8 +205,8 @@ mod tests {
         let instances = MeshRenderer::prepare_instances(&ext_instances);
 
         assert_eq!(instances.len(), 5);
-        for i in 0..5 {
-            assert_eq!(instances[i].material, i as u32);
+        for (i, instance) in instances.iter().enumerate() {
+            assert_eq!(instance.material, i as u32);
         }
     }
 
@@ -263,13 +263,13 @@ mod tests {
     #[test]
     fn test_validate_mesh_invalid_handle() {
         let mesh_table: Vec<Option<MeshEntry>> = vec![None, None, None];
-        assert_eq!(MeshRenderer::validate_mesh(5, &mesh_table), false);
+        assert!(!MeshRenderer::validate_mesh(5, &mesh_table));
     }
 
     #[test]
     fn test_validate_mesh_empty_slot() {
         let mesh_table: Vec<Option<MeshEntry>> = vec![None, None, None];
-        assert_eq!(MeshRenderer::validate_mesh(1, &mesh_table), false);
+        assert!(!MeshRenderer::validate_mesh(1, &mesh_table));
     }
 
     // Note: We can't test ensure_capacity_and_upload without a real GPU device,
