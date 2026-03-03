@@ -191,16 +191,24 @@ impl EventProcessor {
             InputEvent::MouseWheel { delta_y } => {
                 // Only act on wheel events in game mode
                 if app.game_state == crate::game_state::GameState::Playing {
-                    // Simple zoom: move player forward/back along look direction
-                    let dz = delta_y * MOUSE_WHEEL_ZOOM_FACTOR;
-                    let (yaw, pitch) = app.simulation.yaw_pitch();
-                    let sy = yaw.sin();
-                    let cy = yaw.cos();
-                    let cp = pitch.cos();
-                    let sp = pitch.sin();
-                    let forward = glam::Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
-                    let new_pos = app.simulation.position() + forward * dz;
-                    app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
+                    match app.simulation.camera_mode() {
+                        moho_core::controller::CameraMode::FirstPerson => {
+                            // First-person: scroll moves forward/back along look direction
+                            let dz = delta_y * MOUSE_WHEEL_ZOOM_FACTOR;
+                            let (yaw, pitch) = app.simulation.yaw_pitch();
+                            let sy = yaw.sin();
+                            let cy = yaw.cos();
+                            let cp = pitch.cos();
+                            let sp = pitch.sin();
+                            let forward = glam::Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
+                            let new_pos = app.simulation.position() + forward * dz;
+                            app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
+                        }
+                        moho_core::controller::CameraMode::Isometric => {
+                            // RTS camera: scroll adjusts camera height (zoom)
+                            app.simulation.controller_input.zoom_delta = delta_y;
+                        }
+                    }
                 }
             }
         }

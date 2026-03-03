@@ -641,6 +641,8 @@ impl App {
         self.simulation.controller_input.right = right;
         self.simulation.controller_input.up = up;
         self.simulation.controller_input.sprint = sprint;
+        // Zoom is handled separately via mouse wheel input
+        self.simulation.controller_input.zoom_delta = 0.0;
     }
 
     /// Handle keyboard input for camera controls
@@ -709,24 +711,6 @@ impl App {
                 } else {
                     self.active_keys.remove(&key_binding);
                 }
-            }
-
-            // Handle special keys (only in Playing state at this point)
-            if keycode == KeyCode::Tab && pressed {
-                // Toggle camera mode
-                let new_mode = match self.simulation.camera_mode() {
-                    moho_core::controller::CameraMode::FirstPerson => {
-                        moho_core::controller::CameraMode::Isometric
-                    }
-                    moho_core::controller::CameraMode::Isometric => {
-                        moho_core::controller::CameraMode::FirstPerson
-                    }
-                };
-                self.simulation.set_camera_mode(new_mode);
-                log::info!(
-                    "Switched to camera mode: {:?}",
-                    self.simulation.camera_mode()
-                );
             }
         }
     }
@@ -925,6 +909,35 @@ impl ApplicationHandler for App {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Handle Tab key BEFORE dispatcher to prevent UI from consuming it
+        if let WindowEvent::KeyboardInput {
+            event:
+                KeyEvent {
+                    physical_key: PhysicalKey::Code(KeyCode::Tab),
+                    state: ElementState::Pressed,
+                    ..
+                },
+            ..
+        } = &event
+        {
+            if self.game_state == crate::game_state::GameState::Playing {
+                let new_mode = match self.simulation.camera_mode() {
+                    moho_core::controller::CameraMode::FirstPerson => {
+                        moho_core::controller::CameraMode::Isometric
+                    }
+                    moho_core::controller::CameraMode::Isometric => {
+                        moho_core::controller::CameraMode::FirstPerson
+                    }
+                };
+                self.simulation.set_camera_mode(new_mode);
+                log::info!(
+                    "Switched to camera mode: {:?}",
+                    self.simulation.camera_mode()
+                );
+                return; // Don't dispatch Tab further
+            }
+        }
+
         // Dispatch the event to registered subscribers (UI first). If consumed,
         // skip further application-level handling.
         if self.dispatcher.dispatch(&event) {

@@ -54,6 +54,9 @@ impl FrameProcessor {
         // Apply input via simulation wrapper and update camera from returned tuple
         let (view, proj, eye) = app.simulation.apply_input(dt);
         app.camera = (view, proj, eye);
+
+        // Clear zoom delta after use
+        app.simulation.controller_input.zoom_delta = 0.0;
     }
 
     /// Update light propagation system for the current frame

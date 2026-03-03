@@ -6,6 +6,9 @@ const SPRINT_SPEED_MULTIPLIER: f32 = 1.5;
 /// Nearly ±π/2 (≈ ±88.3°), prevents gimbal lock at the poles.
 const PITCH_LIMIT_RAD: f32 = 1.54;
 const ISOMETRIC_CAMERA_OFFSET: Vec3 = Vec3::new(10.0, 10.0, 10.0);
+const RTS_MIN_HEIGHT: f32 = 5.0;
+const RTS_MAX_HEIGHT: f32 = 50.0;
+const RTS_DEFAULT_HEIGHT: f32 = 20.0;
 
 const DEFAULT_FOV_DEG: f32 = 45.0;
 const DEFAULT_ASPECT_RATIO: f32 = 16.0 / 9.0;
@@ -29,6 +32,7 @@ pub struct ControllerInput {
     pub yaw_delta: f32,
     pub pitch_delta: f32,
     pub sprint: bool,
+    pub zoom_delta: f32,
 }
 
 /// A minimal first-person player controller stored as a component.
@@ -39,6 +43,7 @@ pub struct PlayerController {
     pub pitch: f32,
     pub speed: f32,
     pub camera_mode: CameraMode,
+    pub rts_height: f32,
 }
 
 impl PlayerController {
@@ -49,6 +54,7 @@ impl PlayerController {
             pitch: 0.0,
             speed: DEFAULT_MOVE_SPEED,
             camera_mode: CameraMode::FirstPerson,
+            rts_height: RTS_DEFAULT_HEIGHT,
         }
     }
 
@@ -93,9 +99,13 @@ impl PlayerController {
                 }
             }
             CameraMode::Isometric => {
-                // In isometric mode, movement is relative to camera view
-                // Camera is at offset (10, 10, 10), looking down at the position
-                // Calculate camera-relative directions (projected onto ground plane)
+                // RTS camera: birds-eye view with scroll-wheel zoom
+                // Adjust height based on zoom input
+                self.rts_height = (self.rts_height - input.zoom_delta * 2.0)
+                    .clamp(RTS_MIN_HEIGHT, RTS_MAX_HEIGHT);
+
+                // Movement is relative to camera view
+                // Camera is at offset relative to position, looking down
                 let camera_offset = ISOMETRIC_CAMERA_OFFSET;
                 let to_camera = camera_offset.normalize_or_zero();
 
@@ -143,8 +153,11 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
             (view, proj, eye)
         }
         CameraMode::Isometric => {
-            // Isometric camera: fixed angle looking down at 45 degrees
-            let eye = pc.position + ISOMETRIC_CAMERA_OFFSET;
+            // RTS camera: birds-eye view with zoomable height
+            // Camera distance scales with height for consistent zoom feel
+            let height_ratio = pc.rts_height / RTS_DEFAULT_HEIGHT;
+            let camera_offset = ISOMETRIC_CAMERA_OFFSET * height_ratio;
+            let eye = pc.position + camera_offset;
             let center = pc.position;
             let up = Vec3::Y;
             let view = Mat4::look_at_rh(eye, center, up);

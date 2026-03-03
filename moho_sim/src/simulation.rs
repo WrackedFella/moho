@@ -66,6 +66,7 @@ impl TryFrom<SimulationSnapshot> for SimulationController {
             yaw_delta: ss.yaw_delta,
             pitch_delta: ss.pitch_delta,
             sprint: false,
+            zoom_delta: 0.0,
         };
         Ok(SimulationController {
             player_controller: pc,
