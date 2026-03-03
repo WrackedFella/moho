@@ -2,6 +2,7 @@ use glam::{Mat4, Vec3};
 
 // ── Camera / movement defaults ─────────────────────────────────────────
 const DEFAULT_MOVE_SPEED: f32 = 4.0;
+const SPRINT_SPEED_MULTIPLIER: f32 = 1.5;
 /// Nearly ±π/2 (≈ ±88.3°), prevents gimbal lock at the poles.
 const PITCH_LIMIT_RAD: f32 = 1.54;
 const ISOMETRIC_CAMERA_OFFSET: Vec3 = Vec3::new(10.0, 10.0, 10.0);
@@ -27,6 +28,7 @@ pub struct ControllerInput {
     pub up: f32,
     pub yaw_delta: f32,
     pub pitch_delta: f32,
+    pub sprint: bool,
 }
 
 /// A minimal first-person player controller stored as a component.
@@ -58,9 +60,22 @@ impl PlayerController {
                 self.pitch =
                     (self.pitch + input.pitch_delta).clamp(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD);
 
-                // Build forward/right vectors from yaw (assume Y up)
-                let forward = Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos()).normalize_or_zero();
-                let right = Vec3::new(-forward.z, 0.0, forward.x);
+                // Build horizontal forward direction (for right vector and pitch-less reference)
+                let forward_horizontal =
+                    Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos()).normalize_or_zero();
+
+                // Right vector stays perpendicular to forward in horizontal plane (for strafe)
+                let right = Vec3::new(-forward_horizontal.z, 0.0, forward_horizontal.x);
+
+                // Forward vector includes both yaw and pitch - so forward/back follows camera look angle
+                let pitch_cos = self.pitch.cos();
+                let pitch_sin = self.pitch.sin();
+                let forward = Vec3::new(
+                    self.yaw.sin() * pitch_cos,
+                    pitch_sin,
+                    self.yaw.cos() * pitch_cos,
+                )
+                .normalize_or_zero();
 
                 let mut dir = Vec3::ZERO;
                 dir += forward * input.forward;
@@ -68,7 +83,13 @@ impl PlayerController {
                 dir += Vec3::Y * input.up;
 
                 if dir.length_squared() > 0.0 {
-                    self.position += dir.normalize_or_zero() * self.speed * dt;
+                    // Apply sprint multiplier if active
+                    let speed = if input.sprint {
+                        self.speed * SPRINT_SPEED_MULTIPLIER
+                    } else {
+                        self.speed
+                    };
+                    self.position += dir.normalize_or_zero() * speed * dt;
                 }
             }
             CameraMode::Isometric => {

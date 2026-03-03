@@ -40,6 +40,7 @@ pub struct Prefs {
     key_d: Binding,
     key_up: Binding,
     key_down: Binding,
+    key_sprint: Binding,
     mouse_sensitivity: f32,
     input_filtering_enabled: bool,
     // Audio settings (values 1.0 to 10.0)
@@ -76,6 +77,10 @@ impl Prefs {
         self.key_down
     }
 
+    pub fn key_sprint(&self) -> Binding {
+        self.key_sprint
+    }
+
     pub fn set_key_w(&mut self, b: Binding) {
         self.key_w = b;
     }
@@ -93,6 +98,10 @@ impl Prefs {
     }
     pub fn set_key_down(&mut self, b: Binding) {
         self.key_down = b;
+    }
+
+    pub fn set_key_sprint(&mut self, b: Binding) {
+        self.key_sprint = b;
     }
 
     // --- Scalar getters ---
@@ -181,7 +190,8 @@ impl Default for Prefs {
             key_s: Binding::new('S' as u32, 0),
             key_d: Binding::new('D' as u32, 0),
             key_up: Binding::new(' ' as u32, 0), // Space
-            key_down: Binding::new(0x204, 0),    // Shift
+            key_down: Binding::new(0x205, 0),    // Ctrl
+            key_sprint: Binding::new(0x204, 0),  // Shift
             mouse_sensitivity: 1.0,
             input_filtering_enabled: true,
             // Default audio volumes (mid-range)
@@ -250,6 +260,9 @@ impl Prefs {
             }
             if let Some(s) = get_str("key_down") {
                 prefs.key_down = parser::parse_binding(&s, prefs.key_down);
+            }
+            if let Some(s) = get_str("key_sprint") {
+                prefs.key_sprint = parser::parse_binding(&s, prefs.key_sprint);
             }
             prefs.mouse_sensitivity = get_f32("mouse_sensitivity", prefs.mouse_sensitivity);
 

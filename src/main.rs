@@ -634,9 +634,13 @@ impl App {
             0.0 // No up/down in isometric mode
         };
 
+        // Check if sprint is active (Shift)
+        let sprint = is_active(&self.prefs.key_sprint());
+
         self.simulation.controller_input.forward = forward;
         self.simulation.controller_input.right = right;
         self.simulation.controller_input.up = up;
+        self.simulation.controller_input.sprint = sprint;
     }
 
     /// Handle keyboard input for camera controls
