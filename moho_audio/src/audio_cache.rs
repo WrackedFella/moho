@@ -11,6 +11,7 @@ use std::collections::HashMap;
 /// This module handles two types of caching:
 /// - **UI Sound Cache**: Pre-loaded for ultra-low latency (<1ms access)
 /// - **General Audio Cache**: On-demand loading with caching for reuse
+#[derive(Debug)]
 pub struct AudioCache {
     /// General audio file cache (loaded on-demand)
     audio_cache: HashMap<String, Vec<u8>>,
@@ -126,8 +127,12 @@ impl AudioCache {
 }
 
 impl Default for AudioCache {
+    /// Creates an empty cache without pre-loading sounds.
     fn default() -> Self {
-        Self::new().expect("Failed to initialize audio cache")
+        Self {
+            audio_cache: HashMap::new(),
+            ui_sound_cache: HashMap::new(),
+        }
     }
 }
 

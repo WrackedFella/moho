@@ -12,6 +12,7 @@ use moho_core::voxel::VoxelChunk;
 ///
 /// This struct handles the per-frame collection of renderable objects
 /// from the ECS world, including material deduplication and mesh registration.
+#[derive(Debug)]
 pub struct InstanceCollector {
     sphere_instances: Vec<InstanceGpu>,
     cube_instances: Vec<InstanceGpu>,
@@ -282,17 +283,16 @@ mod tests {
         let mut renderer = MockRenderer::new();
 
         // Add a voxel chunk with geometry
-        let chunk = VoxelChunk {
-            chunk_pos: glam::IVec3::new(0, 0, 0),
-            vertices: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            normals: vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
-            ambient_occlusion: vec![1.0; 3],
-            geometry_type: vec![0; 3],
-            light_level: vec![1.0; 3],
-            indices: vec![0, 1, 2],
-            material_id: 0,
-            mesh_handle: None,
-        };
+        let chunk = VoxelChunk::new(
+            glam::IVec3::new(0, 0, 0),
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+            vec![1.0; 3],
+            vec![0; 3],
+            vec![1.0; 3],
+            vec![0, 1, 2],
+            0,
+        );
         world.push((chunk,));
 
         collector.collect_from_world(
@@ -338,17 +338,16 @@ mod tests {
             mat2,
         ),));
 
-        let chunk = VoxelChunk {
-            chunk_pos: glam::IVec3::new(0, 0, 0),
-            vertices: vec![[0.0, 0.0, 0.0]],
-            normals: vec![[0.0, 0.0, 1.0]],
-            ambient_occlusion: vec![1.0],
-            geometry_type: vec![0],
-            light_level: vec![1.0],
-            indices: vec![0],
-            material_id: 0,
-            mesh_handle: None,
-        };
+        let chunk = VoxelChunk::new(
+            glam::IVec3::new(0, 0, 0),
+            vec![[0.0, 0.0, 0.0]],
+            vec![[0.0, 0.0, 1.0]],
+            vec![1.0],
+            vec![0],
+            vec![1.0],
+            vec![0],
+            0,
+        );
         world.push((chunk,));
 
         collector.collect_from_world(

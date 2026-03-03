@@ -9,7 +9,7 @@ fn snapshot_roundtrip_and_restore() {
     sim.controller_input.forward = 0.9;
     sim.controller_input.right = -0.4;
 
-    let bytes = sim.snapshot_bytes();
+    let bytes = sim.snapshot_bytes().expect("snapshot_bytes");
     let restored =
         moho_sim::SimulationController::restore_from_bytes(&bytes).expect("restore should succeed");
 
@@ -32,7 +32,7 @@ fn snapshot_roundtrip_and_restore() {
 #[test]
 fn snapshot_corruption_is_detected() {
     let sim = moho_sim::SimulationController::new(Vec3::new(0.0, 0.0, 0.0));
-    let mut bytes = sim.snapshot_bytes();
+    let mut bytes = sim.snapshot_bytes().expect("snapshot_bytes");
 
     // Flip one payload byte (payload starts at offset 14)
     if bytes.len() > 14 {

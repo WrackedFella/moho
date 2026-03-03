@@ -1,3 +1,5 @@
+use crate::audio_source::AudioCategory;
+
 /// Events that trigger audio playback in the Moho engine.
 ///
 /// This event-driven approach allows for clean separation between
@@ -30,19 +32,6 @@ pub enum AudioEvent {
         looped: bool,
     },
 
-    /// Stop all audio or specific category
-    Stop(AudioCategory),
-}
-
-/// Categories of audio for selective control
-#[derive(Debug, Clone, PartialEq)]
-pub enum AudioCategory {
-    /// All audio sources
-    All,
-    /// Sound effects only
-    SoundEffects,
-    /// Background music only
-    Music,
-    /// UI interaction sounds only
-    UserInterface,
+    /// Stop audio. `None` stops all categories.
+    Stop(Option<AudioCategory>),
 }

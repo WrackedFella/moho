@@ -5,11 +5,11 @@
 //! - Console overlay rendering
 //! - Progress overlay rendering
 //! - Pause overlay rendering
-use crate::adapter::GameState;
 use crate::adapter::ProgressState;
 use crate::screens::MenuAction;
 use crate::ui_state::UiStateManager;
 use moho_core::EventBus;
+use moho_types::GameState;
 
 /// Render the UI based on current game state
 ///

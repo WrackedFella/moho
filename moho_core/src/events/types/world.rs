@@ -86,7 +86,7 @@ pub enum WorldEvent {
     /// Material placed (legacy, prefer BlockPlaced)
     MaterialPlaced {
         position: IVec3,
-        material: MaterialType,
+        material: BlockMaterial,
     },
 
     /// World generation started
@@ -109,7 +109,7 @@ pub enum BiomeType {
 }
 
 #[derive(Clone, Debug)]
-pub enum MaterialType {
+pub enum BlockMaterial {
     Air,
     Stone,
     Dirt,

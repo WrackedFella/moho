@@ -22,6 +22,7 @@ const SCENE_FILE_VERSION: u32 = 2;
 /// Scene manager that owns the `MaterialTable` and provides a simple
 /// `render` API to submit an ECS world for drawing. This centralizes
 /// material deduplication, instance collection, and transparent sorting.
+#[derive(Debug)]
 pub struct Scene {
     pub material_table: MaterialTable,
     buffer_manager: BufferManager,
@@ -167,11 +168,15 @@ impl Scene {
         let mut qv = <&moho_core::voxel::VoxelChunk>::query();
         for chunk in qv.iter(world) {
             voxel_chunks.push(VoxelChunkDesc {
-                chunk_pos: [chunk.chunk_pos.x, chunk.chunk_pos.y, chunk.chunk_pos.z],
-                vertices: chunk.vertices.clone(),
-                normals: chunk.normals.clone(),
-                indices: chunk.indices.clone(),
-                material_id: chunk.material_id,
+                chunk_pos: [
+                    chunk.chunk_pos().x,
+                    chunk.chunk_pos().y,
+                    chunk.chunk_pos().z,
+                ],
+                vertices: chunk.vertices().to_vec(),
+                normals: chunk.normals().to_vec(),
+                indices: chunk.indices().to_vec(),
+                material_id: chunk.material_id(),
             });
         }
 
@@ -229,11 +234,15 @@ impl Scene {
         let mut qv = <&moho_core::voxel::VoxelChunk>::query();
         for chunk in qv.iter(world) {
             voxel_chunks.push(VoxelChunkDesc {
-                chunk_pos: [chunk.chunk_pos.x, chunk.chunk_pos.y, chunk.chunk_pos.z],
-                vertices: chunk.vertices.clone(),
-                normals: chunk.normals.clone(),
-                indices: chunk.indices.clone(),
-                material_id: chunk.material_id,
+                chunk_pos: [
+                    chunk.chunk_pos().x,
+                    chunk.chunk_pos().y,
+                    chunk.chunk_pos().z,
+                ],
+                vertices: chunk.vertices().to_vec(),
+                normals: chunk.normals().to_vec(),
+                indices: chunk.indices().to_vec(),
+                material_id: chunk.material_id(),
             });
         }
 
@@ -316,21 +325,20 @@ impl Scene {
         // Load VoxelChunks
         for chunk_desc in desc.voxel_chunks {
             let vertex_count = chunk_desc.vertices.len();
-            let chunk = moho_core::voxel::VoxelChunk {
-                chunk_pos: glam::IVec3::new(
+            let chunk = moho_core::voxel::VoxelChunk::new(
+                glam::IVec3::new(
                     chunk_desc.chunk_pos[0],
                     chunk_desc.chunk_pos[1],
                     chunk_desc.chunk_pos[2],
                 ),
-                vertices: chunk_desc.vertices,
-                normals: chunk_desc.normals,
-                ambient_occlusion: vec![1.0; vertex_count], // Default full brightness for loaded chunks
-                geometry_type: vec![1; vertex_count],       // Default to blocky for loaded chunks
-                light_level: vec![1.0; vertex_count], // Default to full light for loaded chunks
-                indices: chunk_desc.indices,
-                material_id: chunk_desc.material_id,
-                mesh_handle: None, // Will be uploaded on next render
-            };
+                chunk_desc.vertices,
+                chunk_desc.normals,
+                vec![1.0; vertex_count], // Default full brightness for loaded chunks
+                vec![1; vertex_count],   // Default to blocky for loaded chunks
+                vec![1.0; vertex_count], // Default to full light for loaded chunks
+                chunk_desc.indices,
+                chunk_desc.material_id,
+            );
             world.push((chunk,));
         }
 

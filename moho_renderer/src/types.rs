@@ -1,6 +1,6 @@
 /// Vertex data for rendering
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
@@ -12,7 +12,7 @@ pub struct Vertex {
 
 /// GPU-side per-instance data: model matrix + material index + object type
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuInstance {
     pub model: [[f32; 4]; 4],
     pub material: u32,
@@ -21,6 +21,7 @@ pub struct GpuInstance {
 }
 
 /// Per-mesh GPU data with optional index buffer
+#[derive(Debug)]
 pub struct MeshEntry {
     pub buffer: wgpu::Buffer,
     pub vertex_count: u32,

@@ -3,17 +3,17 @@ use super::handler::{Handler, HandlerFn, HandlerList};
 use super::metrics::{EventMetrics, MetricsTracker};
 use std::any::TypeId;
 use std::collections::{HashMap, VecDeque};
+use std::fmt;
 use std::sync::{Arc, Mutex, RwLock};
 
-/// Deferred event wrapper for processing later
-#[allow(dead_code)] // Fields used when process_deferred() is implemented
+/// Deferred event wrapper that captures its own dispatch logic.
+///
+/// The closure retains the concrete event type, avoiding the need
+/// to recover type information from a `Box<dyn Any>` at dispatch time.
 struct DeferredEvent {
-    event: Box<dyn Any + Send>,
-    type_id: TypeId,
+    dispatch: Box<dyn FnOnce(&EventBus) + Send>,
     type_name: String,
 }
-
-use std::any::Any;
 
 /// Central event bus for application-wide event distribution
 ///
@@ -176,8 +176,6 @@ impl EventBus {
     where
         E: Event,
     {
-        let type_id = TypeId::of::<E>();
-
         // Record metrics
         self.metrics_tracker.increment_published();
 
@@ -192,7 +190,15 @@ impl EventBus {
             }
         }
 
-        // Execute synchronous handlers
+        self.dispatch_to_handlers(&event);
+    }
+
+    /// Dispatch an event to all registered synchronous handlers.
+    ///
+    /// Shared by both `publish` (immediate) and `process_deferred` (end-of-frame).
+    fn dispatch_to_handlers<E: Event>(&self, event: &E) {
+        let type_id = TypeId::of::<E>();
+
         let handlers = self.sync_handlers.read().unwrap();
         if let Some(handler_list) = handlers.get(&type_id)
             && !handler_list.is_empty()
@@ -210,7 +216,7 @@ impl EventBus {
             if let Some(handler_list) = handlers.get(&type_id) {
                 for handler in handler_list.handlers() {
                     if let Some(handler_fn) = handler.downcast::<E>() {
-                        handler_fn(&event);
+                        handler_fn(event);
                         self.metrics_tracker.increment_processed();
                     }
                 }
@@ -244,15 +250,25 @@ impl EventBus {
     where
         E: Event,
     {
-        let type_id = TypeId::of::<E>();
         let type_name = std::any::type_name::<E>().to_string();
 
         // Record metrics
         self.metrics_tracker.increment_published();
 
+        // Record history at defer time so the event is visible even before
+        // process_deferred() runs.
+        if self.history_enabled && event.should_record() {
+            let mut history = self.history.lock().unwrap();
+            history.push_back(format!("{:?}", event));
+            while history.len() > self.max_history {
+                history.pop_front();
+            }
+        }
+
         let deferred = DeferredEvent {
-            event: Box::new(event),
-            type_id,
+            dispatch: Box::new(move |bus: &EventBus| {
+                bus.dispatch_to_handlers(&event);
+            }),
             type_name,
         };
 
@@ -260,30 +276,19 @@ impl EventBus {
         queue.push_back(deferred);
     }
 
-    /// Process all deferred events (call once per frame)
+    /// Process all deferred events (call once per frame).
     ///
-    /// Drains the deferred event queue and processes each event
-    /// in FIFO order. Call this at the end of each game frame.
-    ///
-    /// # Note
-    ///
-    /// Current implementation has limited type-safe deferred processing.
-    /// Events are logged but handlers may not execute properly.
-    /// This will be improved in future versions.
+    /// Drains the deferred event queue and dispatches each event
+    /// to registered handlers in FIFO order.
     pub fn process_deferred(&self) {
-        let mut queue = self.deferred_queue.lock().unwrap();
-        let events: Vec<_> = queue.drain(..).collect();
-        drop(queue);
+        let events: Vec<_> = {
+            let mut queue = self.deferred_queue.lock().unwrap();
+            queue.drain(..).collect()
+        };
 
         for deferred in events {
-            self.metrics_tracker.increment_processed();
-
-            // Note: Deferred event processing is simplified for now
-            // Full type-safe processing requires more complex trait bounds
-            log::debug!(
-                "Processing deferred event: {} (full type-safe processing pending)",
-                deferred.type_name
-            );
+            log::debug!("Processing deferred event: {}", deferred.type_name);
+            (deferred.dispatch)(self);
         }
     }
 
@@ -335,6 +340,14 @@ impl Default for EventBus {
     }
 }
 
-// EventBus is Send + Sync for cross-thread usage
-unsafe impl Send for EventBus {}
-unsafe impl Sync for EventBus {}
+impl fmt::Debug for EventBus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let handler_count = self.sync_handlers.read().map(|h| h.len()).unwrap_or(0);
+        let queue_size = self.deferred_queue.lock().map(|q| q.len()).unwrap_or(0);
+        f.debug_struct("EventBus")
+            .field("handler_types", &handler_count)
+            .field("deferred_queue_size", &queue_size)
+            .field("history_enabled", &self.history_enabled)
+            .finish()
+    }
+}

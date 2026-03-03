@@ -24,7 +24,7 @@ fn simulation_is_deterministic_given_seed_and_inputs() {
     );
 
     // Verify snapshot/restore also preserves state
-    let snap = sim1.snapshot();
-    let restored = Simulation::restore(&snap);
+    let snap = sim1.snapshot().expect("snapshot");
+    let restored = Simulation::restore(&snap).expect("restore");
     assert_eq!((restored.x, restored.y), final1);
 }

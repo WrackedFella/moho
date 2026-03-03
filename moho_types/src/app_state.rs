@@ -39,7 +39,6 @@ pub enum GameState {
     /// - Rendering: Game world (frozen) + pause menu overlay
     /// - Cursor: Visible and free
     /// - Simulation: Paused
-    #[allow(dead_code)]
     Paused,
 }
 
@@ -49,7 +48,7 @@ impl GameState {
     /// # Examples
     ///
     /// ```
-    /// use moho_types::{GameState, AppState};
+    /// use moho_types::GameState;
     ///
     /// assert!(GameState::Playing.can_transition_to(GameState::ConsoleOpen));
     /// assert!(GameState::Playing.can_transition_to(GameState::Paused));
@@ -91,8 +90,8 @@ impl GameState {
         }
     }
 
-    /// Returns whether the cursor should be grabbed in this state.
-    pub fn cursor_grabbed(self) -> bool {
+    /// Returns whether the cursor should be grabbed and hidden in this state.
+    pub fn should_grab_cursor(self) -> bool {
         match self {
             GameState::Playing => true,
             GameState::Menu | GameState::ConsoleOpen | GameState::Paused => false,
@@ -100,7 +99,7 @@ impl GameState {
     }
 
     /// Returns whether the simulation should be running in this state.
-    pub fn simulation_running(self) -> bool {
+    pub fn is_simulating(self) -> bool {
         match self {
             GameState::Playing => true,
             GameState::Menu | GameState::ConsoleOpen | GameState::Paused => false,
@@ -117,16 +116,6 @@ impl GameState {
                 self, new_state
             ))
         }
-    }
-
-    /// Returns true if the game simulation should be running in this state.
-    pub fn is_simulating(self) -> bool {
-        self.simulation_running()
-    }
-
-    /// Returns true if the cursor should be grabbed and hidden in this state.
-    pub fn should_grab_cursor(self) -> bool {
-        self.cursor_grabbed()
     }
 
     /// Returns true if the game world should be rendered in this state.
@@ -155,52 +144,6 @@ impl fmt::Display for GameState {
             GameState::Playing => write!(f, "Playing"),
             GameState::ConsoleOpen => write!(f, "ConsoleOpen"),
             GameState::Paused => write!(f, "Paused"),
-        }
-    }
-}
-
-/// Basic application state information.
-///
-/// This struct provides a minimal, testable representation of the application
-/// state that can be used in integration tests without pulling in the entire
-/// App structure with all its dependencies.
-#[derive(Clone, Debug)]
-pub struct AppState {
-    /// The current game state
-    pub game_state: GameState,
-
-    /// Whether the application is running
-    pub running: bool,
-
-    /// Optional window size (width, height)
-    pub window_size: Option<(u32, u32)>,
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            game_state: GameState::Menu,
-            running: true,
-            window_size: None,
-        }
-    }
-}
-
-impl AppState {
-    /// Create a new AppState with the given game state.
-    pub fn new(game_state: GameState) -> Self {
-        Self {
-            game_state,
-            ..Default::default()
-        }
-    }
-
-    /// Create an AppState for testing purposes.
-    pub fn for_testing() -> Self {
-        Self {
-            game_state: GameState::Menu,
-            running: true,
-            window_size: Some((800, 600)),
         }
     }
 }

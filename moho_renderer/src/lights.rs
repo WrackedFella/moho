@@ -4,12 +4,12 @@ use glam::{Mat4, Vec3, Vec4};
 
 use crate::gpu_types::{DynamicLightsGpu, MAX_DYNAMIC_LIGHTS, PointLightGpu};
 
-/// Light type enumeration
+/// Dynamic light shape (point vs directional spot)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LightType {
+pub enum LightShape {
     /// Omnidirectional point light
     Point,
-    /// Directional spotlight (future - not yet implemented)
+    /// Directional spotlight (future — not yet implemented)
     Spot,
 }
 
@@ -18,8 +18,8 @@ pub enum LightType {
 pub struct Light {
     /// Unique identifier for this light
     pub id: u32,
-    /// Light type (point or spot)
-    pub light_type: LightType,
+    /// Light shape (point or spot)
+    pub light_shape: LightShape,
     /// World position
     pub position: Vec3,
     /// Light color (RGB)
@@ -48,7 +48,7 @@ impl Light {
 
         Self {
             id,
-            light_type: LightType::Point,
+            light_shape: LightShape::Point,
             position,
             color,
             intensity,
@@ -102,6 +102,7 @@ impl Light {
 }
 
 /// Light manager handles collections of dynamic lights
+#[derive(Debug)]
 pub struct LightManager {
     /// All registered lights
     lights: Vec<Light>,

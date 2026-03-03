@@ -20,6 +20,27 @@ const CSM_DEBUG_MODE: bool = false;
 
 const CSM_VERBOSE_LOGGING: bool = false;
 
+// ── PCSS default tuning ────────────────────────────────────────────────
+const DEFAULT_PCSS_LIGHT_SIZE: f32 = 0.03;
+const DEFAULT_PCSS_SEARCH_RADIUS: f32 = 15.0;
+const DEFAULT_PCSS_MAX_PENUMBRA: f32 = 32.0;
+
+// ── Weather-specific PCSS light sizes ──────────────────────────────────
+const PCSS_LIGHT_SIZE_CLEAR: f32 = 0.02;
+const PCSS_LIGHT_SIZE_CLOUDY: f32 = 0.05;
+const PCSS_LIGHT_SIZE_OVERCAST: f32 = 0.08;
+const PCSS_LIGHT_SIZE_STORM: f32 = 0.12;
+
+// ── Shadow geometry ────────────────────────────────────────────────────
+/// Depth bias constant factor applied to shadow map.
+const SHADOW_DEPTH_BIAS_CONSTANT: i32 = 2;
+/// Depth bias slope scale applied to shadow map.
+const SHADOW_DEPTH_BIAS_SLOPE: f32 = 2.0;
+/// Multiplier on cascade distance to get a generous frustum radius.
+const CASCADE_RADIUS_MULTIPLIER: f32 = 1.5;
+/// Minimum light intensity required to cast shadows.
+const MIN_SHADOW_LIGHT_INTENSITY: f32 = 0.01;
+
 /// PCSS (Percentage Closer Soft Shadows) quality levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PcssQuality {
@@ -78,11 +99,11 @@ pub struct PcssSettings {
 impl Default for PcssSettings {
     fn default() -> Self {
         Self {
-            quality: PcssQuality::Off, // Temporarily disabled for testing
-            light_size: 0.03,          // Clear day default
-            search_radius: 15.0,       // Search area in texels
-            min_penumbra: 1.0,         // At least 1 texel
-            max_penumbra: 32.0,        // Max 32 texel radius
+            quality: PcssQuality::Off,
+            light_size: DEFAULT_PCSS_LIGHT_SIZE,
+            search_radius: DEFAULT_PCSS_SEARCH_RADIUS,
+            min_penumbra: 1.0,
+            max_penumbra: DEFAULT_PCSS_MAX_PENUMBRA,
         }
     }
 }
@@ -101,22 +122,22 @@ impl PcssSettings {
         match weather {
             "clear" => Self {
                 quality: PcssQuality::High,
-                light_size: 0.02,
+                light_size: PCSS_LIGHT_SIZE_CLEAR,
                 ..Default::default()
             },
             "cloudy" => Self {
                 quality: PcssQuality::Medium,
-                light_size: 0.05,
+                light_size: PCSS_LIGHT_SIZE_CLOUDY,
                 ..Default::default()
             },
             "overcast" => Self {
                 quality: PcssQuality::Medium,
-                light_size: 0.08,
+                light_size: PCSS_LIGHT_SIZE_OVERCAST,
                 ..Default::default()
             },
             "rain" | "storm" => Self {
                 quality: PcssQuality::Low,
-                light_size: 0.12,
+                light_size: PCSS_LIGHT_SIZE_STORM,
                 ..Default::default()
             },
             _ => Default::default(),
@@ -142,6 +163,7 @@ pub struct ActiveShadowLight {
 }
 
 /// Shadow system resources and state
+#[derive(Debug)]
 pub struct ShadowSystem {
     pub shadow_pipeline: wgpu::RenderPipeline,
     pub shadow_matrix_buffer: wgpu::Buffer,
@@ -428,8 +450,8 @@ impl ShadowSystem {
                 stencil: wgpu::StencilState::default(),
                 // Enable Hardware Depth Bias (Exp 17)
                 bias: wgpu::DepthBiasState {
-                    constant: 2,      // Base bias
-                    slope_scale: 2.0, // Slope-dependent bias
+                    constant: SHADOW_DEPTH_BIAS_CONSTANT,
+                    slope_scale: SHADOW_DEPTH_BIAS_SLOPE,
                     clamp: 0.0,
                 },
             }),
@@ -525,7 +547,7 @@ impl ShadowSystem {
 
         // Radius must cover the 'far' distance (diagonal of frustum)
         // sqrt(far^2 + far^2) approx 1.414 * far. 1.5 is safe.
-        let cascade_radius = far * 1.5;
+        let cascade_radius = far * CASCADE_RADIUS_MULTIPLIER;
 
         // Texel Snapping for Cascades
         let shadow_map_size = SHADOW_MAP_SIZE as f32;
@@ -639,7 +661,7 @@ impl ShadowSystem {
         // Texel Snapping: Stabilize shadow map by snapping projection to texel grid
         // This prevents "shimmering" or "flame-like" flickering when camera moves
         let shadow_map_size = SHADOW_MAP_SIZE as f32;
-        let cascade_radius = SHADOW_DISTANCE * 1.5;
+        let cascade_radius = SHADOW_DISTANCE * CASCADE_RADIUS_MULTIPLIER;
         let world_units_per_texel = (2.0 * cascade_radius) / shadow_map_size;
 
         // Standard Orthographic Projection (-1..1 Z)
@@ -709,7 +731,7 @@ impl ShadowSystem {
         let moon_matrix = self.calculate_light_matrix(moon_dir, cam_pos);
 
         // Add sun to active lights if above horizon
-        if sun_intensity > 0.01 {
+        if sun_intensity > MIN_SHADOW_LIGHT_INTENSITY {
             self.active_lights.push(ActiveShadowLight {
                 light_type: LightType::Sun,
                 light_index: 0,
@@ -719,7 +741,7 @@ impl ShadowSystem {
         }
 
         // Add moon to active lights if above horizon
-        if moon_intensity > 0.01 {
+        if moon_intensity > MIN_SHADOW_LIGHT_INTENSITY {
             self.active_lights.push(ActiveShadowLight {
                 light_type: LightType::Moon,
                 light_index: 1,

@@ -14,7 +14,6 @@ pub struct MaterialGpu {
 impl MaterialGpu {
     /// Return true if this material was marked as potentially
     /// transparent by the application (params[2] > 0.0).
-    #[allow(dead_code)]
     pub fn is_transparent(&self) -> bool {
         self.params[2] > 0.0
     }

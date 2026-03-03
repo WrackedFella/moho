@@ -51,6 +51,7 @@ impl MaterialKey {
 ///   material index used by instance descriptors.
 /// - When `is_dirty()` returns true upload `as_slice()` with
 ///   `RendererBackend::set_materials(...)` and then call `clear_dirty()`.
+#[derive(Debug)]
 pub struct MaterialTable {
     map: HashMap<MaterialKey, u32>,
     list: Vec<MaterialGpu>,

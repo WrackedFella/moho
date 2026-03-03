@@ -6,6 +6,7 @@
 use moho_renderer::FrameCallback;
 
 /// Stub UI implementation for when no UI features are enabled
+#[derive(Debug)]
 pub struct StubUi;
 
 impl StubUi {

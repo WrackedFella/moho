@@ -27,6 +27,14 @@ pub struct ModalManager {
     backdrop_color: egui::Color32,
 }
 
+impl std::fmt::Debug for ModalManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModalManager")
+            .field("is_active", &self.active_modal.is_some())
+            .finish()
+    }
+}
+
 impl Default for ModalManager {
     fn default() -> Self {
         Self::new()

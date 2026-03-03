@@ -45,8 +45,8 @@ impl Default for AppConfig {
         let prefs = Prefs::default();
 
         Self {
-            mouse_sensitivity: prefs.mouse_sensitivity * 0.002,
-            input_filtering_enabled: prefs.input_filtering_enabled,
+            mouse_sensitivity: prefs.mouse_sensitivity() * 0.002,
+            input_filtering_enabled: prefs.input_filtering_enabled(),
             filter_preset: moho_core::input::FilterPreset::Default,
             prefs,
         }
@@ -75,8 +75,8 @@ impl AppConfig {
     ///
     /// This is useful for testing or when you already have a Prefs instance.
     pub fn from_prefs_struct(prefs: Prefs) -> Self {
-        let mouse_sensitivity = prefs.mouse_sensitivity * 0.002;
-        let input_filtering_enabled = prefs.input_filtering_enabled;
+        let mouse_sensitivity = prefs.mouse_sensitivity() * 0.002;
+        let input_filtering_enabled = prefs.input_filtering_enabled();
 
         Self {
             mouse_sensitivity,
@@ -202,25 +202,20 @@ mod tests {
 
     #[test]
     fn test_from_prefs_struct() {
-        let prefs = Prefs {
-            mouse_sensitivity: 2.0,
-            input_filtering_enabled: false,
-            ..Default::default()
-        };
+        let prefs = Prefs::default()
+            .with_mouse_sensitivity(2.0)
+            .with_input_filtering_enabled(false);
 
         let config = AppConfig::from_prefs_struct(prefs.clone());
 
         assert_eq!(config.mouse_sensitivity, 2.0 * 0.002);
         assert!(!config.input_filtering_enabled);
-        assert_eq!(config.prefs.mouse_sensitivity, 2.0);
+        assert_eq!(config.prefs.mouse_sensitivity(), 2.0);
     }
 
     #[test]
     fn test_builder_with_prefs() {
-        let prefs = Prefs {
-            mouse_sensitivity: 3.0,
-            ..Default::default()
-        };
+        let prefs = Prefs::default().with_mouse_sensitivity(3.0);
 
         let config = AppConfig::builder()
             .prefs(prefs.clone())
@@ -228,6 +223,6 @@ mod tests {
             .build();
 
         assert_eq!(config.mouse_sensitivity, 0.5);
-        assert_eq!(config.prefs.mouse_sensitivity, 3.0);
+        assert_eq!(config.prefs.mouse_sensitivity(), 3.0);
     }
 }

@@ -323,10 +323,7 @@ mod tests {
 
     #[test]
     fn test_build_includes_prefs() {
-        let prefs = Prefs {
-            mouse_sensitivity: 2.5,
-            ..Default::default()
-        };
+        let prefs = Prefs::default().with_mouse_sensitivity(2.5);
 
         let config = AppConfig::from_prefs_struct(prefs.clone());
         let result = AppInitializer::new(config).build();
@@ -334,6 +331,6 @@ mod tests {
         assert!(result.is_ok());
         let initialized = result.unwrap();
 
-        assert_eq!(initialized.prefs.mouse_sensitivity, 2.5);
+        assert_eq!(initialized.prefs.mouse_sensitivity(), 2.5);
     }
 }

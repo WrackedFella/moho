@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use super::face::FaceDirection;
 
 /// Terrain smoothing algorithm
+#[derive(Debug)]
 pub struct TerrainSmoother;
 
 impl TerrainSmoother {
@@ -73,15 +74,83 @@ impl TerrainSmoother {
 /// uses an identity transform when rendering.
 #[derive(Clone, Debug)]
 pub struct VoxelChunk {
-    pub chunk_pos: IVec3,            // Chunk coordinates
-    pub vertices: Vec<[f32; 3]>,     // Merged mesh vertices (world space)
-    pub normals: Vec<[f32; 3]>,      // Merged mesh normals
-    pub ambient_occlusion: Vec<f32>, // Per-vertex AO values
-    pub geometry_type: Vec<u32>,     // Per-vertex geometry type (0=smooth, 1=blocky)
-    pub light_level: Vec<f32>,       // Per-vertex light level (0.0-1.0, from block light)
-    pub indices: Vec<u32>,           // Merged mesh indices
-    pub material_id: u32,            // Primary material ID
-    pub mesh_handle: Option<u32>,    // Renderer mesh handle (None = not uploaded)
+    chunk_pos: IVec3,
+    vertices: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    ambient_occlusion: Vec<f32>,
+    geometry_type: Vec<u32>,
+    light_level: Vec<f32>,
+    indices: Vec<u32>,
+    material_id: u32,
+    mesh_handle: Option<u32>,
+}
+
+impl VoxelChunk {
+    /// Construct a new VoxelChunk from raw mesh data.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        chunk_pos: IVec3,
+        vertices: Vec<[f32; 3]>,
+        normals: Vec<[f32; 3]>,
+        ambient_occlusion: Vec<f32>,
+        geometry_type: Vec<u32>,
+        light_level: Vec<f32>,
+        indices: Vec<u32>,
+        material_id: u32,
+    ) -> Self {
+        Self {
+            chunk_pos,
+            vertices,
+            normals,
+            ambient_occlusion,
+            geometry_type,
+            light_level,
+            indices,
+            material_id,
+            mesh_handle: None,
+        }
+    }
+
+    /// Create an empty chunk at the given position (useful for tests).
+    pub fn empty(chunk_pos: IVec3) -> Self {
+        Self::new(
+            chunk_pos,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            0,
+        )
+    }
+
+    // --- Getters ---
+
+    pub fn chunk_pos(&self) -> IVec3 {
+        self.chunk_pos
+    }
+    pub fn vertices(&self) -> &[[f32; 3]] {
+        &self.vertices
+    }
+    pub fn normals(&self) -> &[[f32; 3]] {
+        &self.normals
+    }
+    pub fn ambient_occlusion(&self) -> &[f32] {
+        &self.ambient_occlusion
+    }
+    pub fn geometry_type(&self) -> &[u32] {
+        &self.geometry_type
+    }
+    pub fn light_level(&self) -> &[f32] {
+        &self.light_level
+    }
+    pub fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+    pub fn material_id(&self) -> u32 {
+        self.material_id
+    }
 }
 
 impl VoxelChunk {
@@ -340,17 +409,7 @@ mod tests {
 
     #[test]
     fn test_chunk_empty() {
-        let chunk = VoxelChunk {
-            chunk_pos: IVec3::ZERO,
-            vertices: Vec::new(),
-            normals: Vec::new(),
-            ambient_occlusion: Vec::new(),
-            geometry_type: Vec::new(),
-            light_level: Vec::new(),
-            indices: Vec::new(),
-            material_id: 0,
-            mesh_handle: None,
-        };
+        let chunk = VoxelChunk::empty(IVec3::ZERO);
 
         assert!(chunk.is_empty());
         assert!(!chunk.has_geometry());
@@ -359,17 +418,16 @@ mod tests {
 
     #[test]
     fn test_chunk_with_geometry() {
-        let chunk = VoxelChunk {
-            chunk_pos: IVec3::ZERO,
-            vertices: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            normals: vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
-            ambient_occlusion: vec![1.0, 1.0, 1.0],
-            geometry_type: vec![1, 1, 1],
-            light_level: vec![1.0, 1.0, 1.0],
-            indices: vec![0, 1, 2],
-            material_id: 0,
-            mesh_handle: None,
-        };
+        let chunk = VoxelChunk::new(
+            IVec3::ZERO,
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+            vec![1.0, 1.0, 1.0],
+            vec![1, 1, 1],
+            vec![1.0, 1.0, 1.0],
+            vec![0, 1, 2],
+            0,
+        );
 
         assert!(!chunk.is_empty());
         assert!(chunk.has_geometry());
@@ -378,17 +436,16 @@ mod tests {
 
     #[test]
     fn test_chunk_mesh_handle() {
-        let mut chunk = VoxelChunk {
-            chunk_pos: IVec3::ZERO,
-            vertices: vec![[0.0, 0.0, 0.0]],
-            normals: vec![[0.0, 1.0, 0.0]],
-            ambient_occlusion: vec![1.0],
-            geometry_type: vec![1],
-            light_level: vec![1.0],
-            indices: vec![0],
-            material_id: 0,
-            mesh_handle: None,
-        };
+        let mut chunk = VoxelChunk::new(
+            IVec3::ZERO,
+            vec![[0.0, 0.0, 0.0]],
+            vec![[0.0, 1.0, 0.0]],
+            vec![1.0],
+            vec![1],
+            vec![1.0],
+            vec![0],
+            0,
+        );
 
         assert_eq!(chunk.get_mesh_handle(), None);
 
@@ -399,17 +456,16 @@ mod tests {
 
     #[test]
     fn test_chunk_memory_size() {
-        let chunk = VoxelChunk {
-            chunk_pos: IVec3::ZERO,
-            vertices: vec![[0.0, 0.0, 0.0]; 100],
-            normals: vec![[0.0, 1.0, 0.0]; 100],
-            ambient_occlusion: vec![1.0; 100],
-            geometry_type: vec![1; 100],
-            light_level: vec![1.0; 100],
-            indices: vec![0; 150],
-            material_id: 0,
-            mesh_handle: None,
-        };
+        let chunk = VoxelChunk::new(
+            IVec3::ZERO,
+            vec![[0.0, 0.0, 0.0]; 100],
+            vec![[0.0, 1.0, 0.0]; 100],
+            vec![1.0; 100],
+            vec![1; 100],
+            vec![1.0; 100],
+            vec![0; 150],
+            0,
+        );
 
         let expected = 100 * 12 + 100 * 12 + 100 * 4 + 100 * 4 + 100 * 4 + 150 * 4; // verts + normals + ao + geo_type + light + indices
         assert_eq!(chunk.memory_size(), expected);

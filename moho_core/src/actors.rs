@@ -1,4 +1,3 @@
-extern crate glam;
 use crate::materials::MaterialType;
 use crate::*;
 use bytemuck::{Pod, Zeroable};
@@ -6,14 +5,14 @@ use glam::Vec3;
 use legion::World;
 use legion::query::IntoQuery;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Sphere {
     pub center: Vec3,
     pub radius: f32,
     pub mat_ptr: MaterialType,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Cube {
     pub center: Vec3,
     pub length: f32,
@@ -85,7 +84,7 @@ pub trait CustomMesh {
 
 /// Serializable mesh data for passing to renderer.
 /// Contains owned copies of mesh data to avoid lifetime issues.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CustomMeshData {
     pub vertices: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,

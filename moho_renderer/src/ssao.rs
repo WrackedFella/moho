@@ -98,6 +98,7 @@ impl SsaoSettings {
 }
 
 /// SSAO system managing textures, bind groups, and compute passes
+#[derive(Debug)]
 pub struct SsaoSystem {
     /// Raw AO texture (output of GTAO pass)
     ao_texture: wgpu::Texture,

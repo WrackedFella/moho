@@ -1,3 +1,9 @@
+//! Moho — a voxel game engine and application binary.
+//!
+//! This is the main executable that wires together the engine crates
+//! ([`moho_core`], [`moho_renderer`], [`moho_audio`], [`moho_ui`],
+//! [`moho_sim`]) into a runnable application via [`winit`]'s event loop.
+
 use crossbeam_channel::{Receiver, unbounded};
 use legion::World;
 use moho_ui::prefs::Prefs;
@@ -205,8 +211,8 @@ impl App {
         let mut renderer = moho_renderer::create_renderer(Some(window_ref))?;
 
         // Apply initial quality settings
-        renderer.set_shadow_quality(self.prefs.graphics_shadow_quality as u8);
-        renderer.set_ssao_quality(self.prefs.graphics_ssao_quality as u8);
+        renderer.set_shadow_quality(self.prefs.shadow_quality() as u8);
+        renderer.set_ssao_quality(self.prefs.ssao_quality() as u8);
 
         // Create sphere mesh data using the proper sphere geometry
         let (vertices, normals, indices) = moho_core::actors::Sphere::unit_sphere_indexed(16, 16);
@@ -591,22 +597,22 @@ impl App {
         };
 
         // Calculate forward/backward
-        let forward = if is_active(&self.prefs.key_w) {
+        let forward = if is_active(&self.prefs.key_w()) {
             1.0
         } else {
             0.0
-        } - if is_active(&self.prefs.key_s) {
+        } - if is_active(&self.prefs.key_s()) {
             1.0
         } else {
             0.0
         };
 
         // Calculate left/right (A is left, so negative)
-        let right = if is_active(&self.prefs.key_d) {
+        let right = if is_active(&self.prefs.key_d()) {
             1.0
         } else {
             0.0
-        } - if is_active(&self.prefs.key_a) {
+        } - if is_active(&self.prefs.key_a()) {
             1.0
         } else {
             0.0
@@ -615,11 +621,11 @@ impl App {
         // Calculate up/down - only in first person mode
         let up = if self.simulation.camera_mode() == moho_core::controller::CameraMode::FirstPerson
         {
-            (if is_active(&self.prefs.key_up) {
+            (if is_active(&self.prefs.key_up()) {
                 1.0
             } else {
                 0.0
-            }) - (if is_active(&self.prefs.key_down) {
+            }) - (if is_active(&self.prefs.key_down()) {
                 1.0
             } else {
                 0.0

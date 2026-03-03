@@ -34,22 +34,143 @@ impl Default for Binding {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Prefs {
-    pub key_w: Binding,
-    pub key_a: Binding,
-    pub key_s: Binding,
-    pub key_d: Binding,
-    pub key_up: Binding,
-    pub key_down: Binding,
-    pub mouse_sensitivity: f32,
-    pub input_filtering_enabled: bool,
+    key_w: Binding,
+    key_a: Binding,
+    key_s: Binding,
+    key_d: Binding,
+    key_up: Binding,
+    key_down: Binding,
+    mouse_sensitivity: f32,
+    input_filtering_enabled: bool,
     // Audio settings (values 1.0 to 10.0)
-    pub audio_sound_effect_volume: f32,
-    pub audio_music_volume: f32,
-    pub audio_ui_volume: f32,
-    pub audio_voice_volume: f32,
+    audio_sound_effect_volume: f32,
+    audio_music_volume: f32,
+    audio_ui_volume: f32,
+    audio_voice_volume: f32,
     // Graphics settings
-    pub graphics_shadow_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
-    pub graphics_ssao_quality: u32,   // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    graphics_shadow_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    graphics_ssao_quality: u32,   // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+}
+
+const MAX_GRAPHICS_QUALITY: u32 = 4;
+
+impl Prefs {
+    // --- Binding accessors ---
+
+    pub fn key_w(&self) -> Binding {
+        self.key_w
+    }
+    pub fn key_a(&self) -> Binding {
+        self.key_a
+    }
+    pub fn key_s(&self) -> Binding {
+        self.key_s
+    }
+    pub fn key_d(&self) -> Binding {
+        self.key_d
+    }
+    pub fn key_up(&self) -> Binding {
+        self.key_up
+    }
+    pub fn key_down(&self) -> Binding {
+        self.key_down
+    }
+
+    pub fn set_key_w(&mut self, b: Binding) {
+        self.key_w = b;
+    }
+    pub fn set_key_a(&mut self, b: Binding) {
+        self.key_a = b;
+    }
+    pub fn set_key_s(&mut self, b: Binding) {
+        self.key_s = b;
+    }
+    pub fn set_key_d(&mut self, b: Binding) {
+        self.key_d = b;
+    }
+    pub fn set_key_up(&mut self, b: Binding) {
+        self.key_up = b;
+    }
+    pub fn set_key_down(&mut self, b: Binding) {
+        self.key_down = b;
+    }
+
+    // --- Scalar getters ---
+
+    pub fn mouse_sensitivity(&self) -> f32 {
+        self.mouse_sensitivity
+    }
+    pub fn input_filtering_enabled(&self) -> bool {
+        self.input_filtering_enabled
+    }
+    pub fn sound_effect_volume(&self) -> f32 {
+        self.audio_sound_effect_volume
+    }
+    pub fn music_volume(&self) -> f32 {
+        self.audio_music_volume
+    }
+    pub fn ui_volume(&self) -> f32 {
+        self.audio_ui_volume
+    }
+    pub fn voice_volume(&self) -> f32 {
+        self.audio_voice_volume
+    }
+    pub fn shadow_quality(&self) -> u32 {
+        self.graphics_shadow_quality
+    }
+    pub fn ssao_quality(&self) -> u32 {
+        self.graphics_ssao_quality
+    }
+
+    // --- Mutable accessors (for egui widget binding) ---
+
+    pub fn mouse_sensitivity_mut(&mut self) -> &mut f32 {
+        &mut self.mouse_sensitivity
+    }
+    pub fn input_filtering_enabled_mut(&mut self) -> &mut bool {
+        &mut self.input_filtering_enabled
+    }
+    pub fn sound_effect_volume_mut(&mut self) -> &mut f32 {
+        &mut self.audio_sound_effect_volume
+    }
+    pub fn music_volume_mut(&mut self) -> &mut f32 {
+        &mut self.audio_music_volume
+    }
+    pub fn ui_volume_mut(&mut self) -> &mut f32 {
+        &mut self.audio_ui_volume
+    }
+    pub fn voice_volume_mut(&mut self) -> &mut f32 {
+        &mut self.audio_voice_volume
+    }
+
+    // --- Validated setters ---
+
+    pub fn set_shadow_quality(&mut self, quality: u32) {
+        self.graphics_shadow_quality = quality.min(MAX_GRAPHICS_QUALITY);
+    }
+
+    pub fn set_ssao_quality(&mut self, quality: u32) {
+        self.graphics_ssao_quality = quality.min(MAX_GRAPHICS_QUALITY);
+    }
+
+    // --- Builder methods (for construction in tests) ---
+
+    pub fn with_key_w(mut self, b: Binding) -> Self {
+        self.key_w = b;
+        self
+    }
+    pub fn with_key_a(mut self, b: Binding) -> Self {
+        self.key_a = b;
+        self
+    }
+    pub fn with_mouse_sensitivity(mut self, v: f32) -> Self {
+        self.mouse_sensitivity = v;
+        self
+    }
+    pub fn with_input_filtering_enabled(mut self, v: bool) -> Self {
+        self.input_filtering_enabled = v;
+        self
+    }
 }
 
 impl Default for Prefs {
@@ -247,9 +368,9 @@ mod tests {
     #[test]
     fn test_default_prefs() {
         let prefs = Prefs::default();
-        assert_eq!(prefs.key_w.code, 'W' as u32);
-        assert_eq!(prefs.mouse_sensitivity, 1.0);
-        assert!(prefs.input_filtering_enabled);
+        assert_eq!(prefs.key_w().code, 'W' as u32);
+        assert_eq!(prefs.mouse_sensitivity(), 1.0);
+        assert!(prefs.input_filtering_enabled());
     }
 
     #[test]

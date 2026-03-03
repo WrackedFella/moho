@@ -39,6 +39,7 @@ impl MaterialKey {
 /// Incremental material table that assigns compact indices to distinct
 /// materials and stores GPU-ready `MaterialGpu` values. It avoids re-creating
 /// the GPU buffer unless a new material is added.
+#[derive(Debug)]
 pub struct MaterialTable {
     map: HashMap<MaterialKey, u32>,
     list: Vec<moho_renderer::MaterialGpu>,

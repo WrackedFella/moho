@@ -1,5 +1,17 @@
 use glam::{Mat4, Vec3};
 
+// ── Camera / movement defaults ─────────────────────────────────────────
+const DEFAULT_MOVE_SPEED: f32 = 4.0;
+/// Nearly ±π/2 (≈ ±88.3°), prevents gimbal lock at the poles.
+const PITCH_LIMIT_RAD: f32 = 1.54;
+const ISOMETRIC_CAMERA_OFFSET: Vec3 = Vec3::new(10.0, 10.0, 10.0);
+
+const DEFAULT_FOV_DEG: f32 = 45.0;
+const DEFAULT_ASPECT_RATIO: f32 = 16.0 / 9.0;
+const NEAR_CLIP: f32 = 0.1;
+/// Extended to keep the skybox visible.
+const FAR_CLIP: f32 = 1500.0;
+
 /// Camera mode for different viewing styles
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CameraMode {
@@ -33,7 +45,7 @@ impl PlayerController {
             position,
             yaw: 0.0,
             pitch: 0.0,
-            speed: 4.0,
+            speed: DEFAULT_MOVE_SPEED,
             camera_mode: CameraMode::FirstPerson,
         }
     }
@@ -43,7 +55,8 @@ impl PlayerController {
             CameraMode::FirstPerson => {
                 // Apply look deltas
                 self.yaw += input.yaw_delta;
-                self.pitch = (self.pitch + input.pitch_delta).clamp(-1.54, 1.54);
+                self.pitch =
+                    (self.pitch + input.pitch_delta).clamp(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD);
 
                 // Build forward/right vectors from yaw (assume Y up)
                 let forward = Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos()).normalize_or_zero();
@@ -62,7 +75,7 @@ impl PlayerController {
                 // In isometric mode, movement is relative to camera view
                 // Camera is at offset (10, 10, 10), looking down at the position
                 // Calculate camera-relative directions (projected onto ground plane)
-                let camera_offset = Vec3::new(10.0, 10.0, 10.0);
+                let camera_offset = ISOMETRIC_CAMERA_OFFSET;
                 let to_camera = camera_offset.normalize_or_zero();
 
                 // Forward in camera space (away from camera, projected to ground)
@@ -100,16 +113,26 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
             let center = eye + forward;
             let up = Vec3::Y;
             let view = Mat4::look_at_rh(eye, center, up);
-            let proj = Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 1500.0f32); // Increased for skybox visibility
+            let proj = Mat4::perspective_rh(
+                DEFAULT_FOV_DEG.to_radians(),
+                DEFAULT_ASPECT_RATIO,
+                NEAR_CLIP,
+                FAR_CLIP,
+            );
             (view, proj, eye)
         }
         CameraMode::Isometric => {
             // Isometric camera: fixed angle looking down at 45 degrees
-            let eye = pc.position + Vec3::new(10.0, 10.0, 10.0); // Offset above and to the side
-            let center = pc.position; // Look at the controller position
+            let eye = pc.position + ISOMETRIC_CAMERA_OFFSET;
+            let center = pc.position;
             let up = Vec3::Y;
             let view = Mat4::look_at_rh(eye, center, up);
-            let proj = Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 1500.0f32); // Increased for skybox visibility
+            let proj = Mat4::perspective_rh(
+                DEFAULT_FOV_DEG.to_radians(),
+                DEFAULT_ASPECT_RATIO,
+                NEAR_CLIP,
+                FAR_CLIP,
+            );
             (view, proj, eye)
         }
     }

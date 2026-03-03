@@ -42,6 +42,7 @@ struct PooledBuffer {
 /// This struct tracks which chunks have been uploaded to the GPU and
 /// manages their mesh handles to avoid redundant uploads. It supports
 /// double-buffering for seamless mesh updates during terrain modification.
+#[derive(Debug)]
 pub struct BufferManager {
     /// Maps chunk positions to their mesh info
     chunk_meshes: HashMap<glam::IVec3, ChunkMeshInfo>,
@@ -128,12 +129,12 @@ impl BufferManager {
 
         // Register the chunk mesh with the renderer
         let handle = renderer.register_indexed_mesh(
-            &chunk.vertices,
-            &chunk.normals,
-            &chunk.ambient_occlusion,
-            &chunk.geometry_type,
-            &chunk.light_level,
-            &chunk.indices,
+            chunk.vertices(),
+            chunk.normals(),
+            chunk.ambient_occlusion(),
+            chunk.geometry_type(),
+            chunk.light_level(),
+            chunk.indices(),
         );
 
         // Store handle in chunk and our tracking map
@@ -142,18 +143,18 @@ impl BufferManager {
         let info = ChunkMeshInfo {
             active_handle: handle,
             pending_handle: None,
-            vertex_count: chunk.vertices.len(),
-            index_count: chunk.indices.len(),
+            vertex_count: chunk.vertices().len(),
+            index_count: chunk.indices().len(),
         };
-        self.chunk_meshes.insert(chunk.chunk_pos, info);
+        self.chunk_meshes.insert(chunk.chunk_pos(), info);
 
         self.stats.total_uploads += 1;
 
         log::info!(
             "Uploaded VoxelChunk {:?}: {} verts, {} indices -> handle {}",
-            chunk.chunk_pos,
-            chunk.vertices.len(),
-            chunk.indices.len(),
+            chunk.chunk_pos(),
+            chunk.vertices().len(),
+            chunk.indices().len(),
             handle
         );
 
@@ -485,17 +486,16 @@ mod tests {
         let mut manager = BufferManager::new();
         let mut renderer = MockRenderer::new();
 
-        let mut chunk = VoxelChunk {
-            chunk_pos: glam::IVec3::new(0, 0, 0),
-            vertices: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            normals: vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
-            ambient_occlusion: vec![1.0; 3],
-            geometry_type: vec![0; 3],
-            light_level: vec![1.0; 3],
-            indices: vec![0, 1, 2],
-            material_id: 0,
-            mesh_handle: None,
-        };
+        let mut chunk = VoxelChunk::new(
+            glam::IVec3::new(0, 0, 0),
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+            vec![1.0; 3],
+            vec![0; 3],
+            vec![1.0; 3],
+            vec![0, 1, 2],
+            0,
+        );
 
         let handle = manager.ensure_chunk_registered(&mut chunk, &mut renderer);
 
@@ -511,17 +511,7 @@ mod tests {
         let mut manager = BufferManager::new();
         let mut renderer = MockRenderer::new();
 
-        let mut chunk = VoxelChunk {
-            chunk_pos: glam::IVec3::new(1, 1, 1),
-            vertices: vec![],
-            normals: vec![],
-            ambient_occlusion: vec![],
-            geometry_type: vec![],
-            light_level: vec![],
-            indices: vec![],
-            material_id: 0,
-            mesh_handle: None,
-        };
+        let mut chunk = VoxelChunk::empty(glam::IVec3::new(1, 1, 1));
 
         let handle = manager.ensure_chunk_registered(&mut chunk, &mut renderer);
 
@@ -535,17 +525,17 @@ mod tests {
         let mut manager = BufferManager::new();
         let mut renderer = MockRenderer::new();
 
-        let mut chunk = VoxelChunk {
-            chunk_pos: glam::IVec3::new(2, 2, 2),
-            vertices: vec![[0.0, 0.0, 0.0]],
-            normals: vec![[0.0, 0.0, 1.0]],
-            ambient_occlusion: vec![1.0],
-            geometry_type: vec![0],
-            light_level: vec![1.0],
-            indices: vec![0],
-            material_id: 0,
-            mesh_handle: Some(42), // Already has a handle
-        };
+        let mut chunk = VoxelChunk::new(
+            glam::IVec3::new(2, 2, 2),
+            vec![[0.0, 0.0, 0.0]],
+            vec![[0.0, 0.0, 1.0]],
+            vec![1.0],
+            vec![0],
+            vec![1.0],
+            vec![0],
+            0,
+        );
+        chunk.set_mesh_handle(42); // Already has a handle
 
         let handle = manager.ensure_chunk_registered(&mut chunk, &mut renderer);
 
@@ -561,17 +551,16 @@ mod tests {
 
         // Register several chunks
         for i in 0..3 {
-            let mut chunk = VoxelChunk {
-                chunk_pos: glam::IVec3::new(i, 0, 0),
-                vertices: vec![[0.0, 0.0, 0.0]],
-                normals: vec![[0.0, 0.0, 1.0]],
-                ambient_occlusion: vec![1.0],
-                geometry_type: vec![0],
-                light_level: vec![1.0],
-                indices: vec![0],
-                material_id: 0,
-                mesh_handle: None,
-            };
+            let mut chunk = VoxelChunk::new(
+                glam::IVec3::new(i, 0, 0),
+                vec![[0.0, 0.0, 0.0]],
+                vec![[0.0, 0.0, 1.0]],
+                vec![1.0],
+                vec![0],
+                vec![1.0],
+                vec![0],
+                0,
+            );
             manager.ensure_chunk_registered(&mut chunk, &mut renderer);
         }
 

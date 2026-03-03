@@ -603,10 +603,7 @@ mod tests {
         let mut handler = KeybindCaptureHandler::new();
 
         // Create prefs where KeyW is already bound to 'W'
-        let prefs = crate::prefs::Prefs {
-            key_w: Binding::new('W' as u32, 0),
-            ..Default::default()
-        };
+        let prefs = crate::prefs::Prefs::default().with_key_w(Binding::new('W' as u32, 0));
 
         let mut bindings_changed = vec![];
 
@@ -629,10 +626,7 @@ mod tests {
         let mut handler = KeybindCaptureHandler::new();
 
         // Create prefs where KeyW is already bound to 'W'
-        let prefs = crate::prefs::Prefs {
-            key_w: Binding::new('W' as u32, 0),
-            ..Default::default()
-        };
+        let prefs = crate::prefs::Prefs::default().with_key_w(Binding::new('W' as u32, 0));
 
         // Try to bind KeyA to 'W' (conflict)
         handler.start_listening(1); // KeyA

@@ -71,6 +71,7 @@ pub use types::{
     // World events
     BiomeType,
     BlockChangeReason,
+    BlockMaterial,
     // Debug events
     ConsoleLevel,
     DebugEvent,
@@ -80,7 +81,6 @@ pub use types::{
     GraphicsSetting,
     // Input events
     InputEvent,
-    MaterialType,
     // Network events
     NetworkEvent,
     OreType,

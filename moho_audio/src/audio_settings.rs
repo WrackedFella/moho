@@ -6,22 +6,22 @@
 #[derive(Debug, Clone)]
 pub struct AudioSettings {
     /// Master volume (0.0 to 1.0)
-    pub master_volume: f32,
+    master_volume: f32,
 
     /// Sound effects volume (0.0 to 1.0)
-    pub sound_effects_volume: f32,
+    sound_effects_volume: f32,
 
     /// Background music volume (0.0 to 1.0)
-    pub music_volume: f32,
+    music_volume: f32,
 
     /// UI sounds volume (0.0 to 1.0)
-    pub ui_volume: f32,
+    ui_volume: f32,
 
     /// Voice/dialogue volume (0.0 to 1.0)
-    pub voice_volume: f32,
+    voice_volume: f32,
 
     /// Whether audio is globally muted
-    pub muted: bool,
+    muted: bool,
 }
 
 impl Default for AudioSettings {

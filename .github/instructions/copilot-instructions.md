@@ -24,25 +24,12 @@ applyTo: '**'
 - **Aggregates**: Group related objects with clear boundaries and ownership (e.g., Scene owns MaterialTable).
 - **Value Objects**: Use immutable types for data that doesn't have identity (e.g., OpaqueCast).
 
-## Git Operations (NEVER Perform Automatically)
-- **NEVER run `git commit` or `git push` commands without explicit user instruction.**
-- **NEVER stage files with `git add` unless explicitly requested.**
-- You may run `git status`, `git diff`, or other read-only git commands to gather information.
-- When changes are ready, inform the user and let them decide when to commit/push.
-- Exception: User explicitly says "commit this", "push these changes", or similar direct instruction.
-
 ## Documentation Rules (STRICT - Always Ask First)
-- **NEVER create, update, or alter ANY .md files without EXPLICIT permission from the user.**
-- This applies to ALL markdown files regardless of purpose:
-  - Progress tracking, todo lists, or plan files
-  - Technical analysis, decision records, or comparison documents  
-  - Architecture documentation or implementation proposals
-  - Summary documents, meeting notes, or status reports
-- **"Proceed" does NOT mean "create documentation"** - it means implement the requested changes only.
-- **Always present analysis in chat first** using formatted markdown (tables, lists, code blocks).
-- **Ask explicitly** before creating any .md file: "Would you like me to create a document for [purpose]?"
-- Wait for clear affirmative response ("yes", "create a doc", "document this") before creating files.
-- Exception: User explicitly requests documentation with phrases like "document this", "create a README", or "write this up".
+- Keep documentation succinct.
+- Update docs as needed.
+- Ask permission to create new docs, unless the user requests so explicitly.
+- Each crate should have it's own Readme that covers the basics of that crate and it's usage.
+- Recommend additional documentation as needed.
 
 ## Code Comments - Minimal and Purposeful
 - **NEVER add comments purely for documentation without explicit permission.**

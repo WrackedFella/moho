@@ -3,7 +3,6 @@ use legion::World;
 
 use crate::actors::{Cube, Sphere};
 use crate::materials::MaterialType;
-use crate::vector_length;
 use crate::voxel::{
     BlockPos, LightChannel, LightPropagator, MeshGenerator, VoxelBlock, VoxelChunk, VoxelGrid,
 };
@@ -37,7 +36,7 @@ pub fn random_scene(world: &mut World) {
                 0.2f32,
                 b as f32 + 0.9f32 * rng_local.random::<f32>(),
             );
-            if vector_length(center - Vec3::new(4f32, 0.2f32, 0f32)) > 0.9f32 {
+            if (center - Vec3::new(4f32, 0.2f32, 0f32)).length() > 0.9f32 {
                 if choose_mat < 0.8f32 {
                     // diffuse
                     let sphere = Sphere::new(
@@ -335,8 +334,8 @@ fn grid_to_chunks(grid: &VoxelGrid) -> Vec<VoxelChunk> {
             log::debug!(
                 "Chunk at {:?}: {} vertices, {} indices",
                 chunk_pos,
-                chunk.vertices.len(),
-                chunk.indices.len()
+                chunk.vertices().len(),
+                chunk.indices().len()
             );
             chunks.push(chunk);
         }

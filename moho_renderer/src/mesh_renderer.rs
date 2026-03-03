@@ -8,6 +8,7 @@ use crate::types::{GpuInstance, MeshEntry};
 /// - Instance format conversion (external → internal GPU format)
 /// - Instance buffer management (capacity, resizing, uploads)
 /// - Draw call batching (accumulate multiple renders before GPU submission)
+#[derive(Debug)]
 pub struct MeshRenderer;
 
 impl MeshRenderer {

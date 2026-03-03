@@ -10,6 +10,7 @@ use crate::prefs::Prefs;
 use crate::screens::{Menu, MenuAction};
 use crate::ui_state::UiStateManager;
 use moho_renderer::FrameCallback;
+pub use moho_types::GameState;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -74,16 +75,7 @@ pub struct EguiAdapter {
     surface_config: Option<wgpu::SurfaceConfiguration>,
 }
 
-/// Game state enum (re-exported from main crate for UI use)
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GameState {
-    Menu,
-    Playing,
-    ConsoleOpen,
-    Paused,
-}
-
-/// Lightweight progress state used by the adapter to render an overlay.
+/// Re-export from moho_types \u2014 single source of truth for game states.\npub use moho_types::GameState;\n\n/// Lightweight progress state used by the adapter to render an overlay.
 #[derive(Debug, Clone)]
 pub struct ProgressState {
     pub title: String,

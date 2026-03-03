@@ -10,8 +10,8 @@ glam = { workspace = true }
 winit = { workspace = true, default-features = true }
 rand = { workspace = true }
 bytemuck = { workspace = true, features = ["derive"] }
-legion = "0.4"
+legion = { workspace = true }
 log = { workspace = true }
-noise = "0.9"
+noise = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 bincode = { workspace = true }
