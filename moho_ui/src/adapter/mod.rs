@@ -263,6 +263,16 @@ impl EguiAdapter {
         // This is called by the main application after rendering
         // No-op for now, but could be used for cleanup
     }
+
+    /// Update overlay HUD data for the current frame.
+    pub fn update_hud_data(&mut self, data: crate::overlays::HudData) {
+        self.ui_state.overlay_manager.update_data(data);
+    }
+
+    /// Toggle the debug HUD overlay (F3).
+    pub fn toggle_debug_hud(&mut self) {
+        self.ui_state.overlay_manager.toggle("debug");
+    }
 }
 
 impl FrameCallback for EguiAdapter {
@@ -275,13 +285,15 @@ impl FrameCallback for EguiAdapter {
         surface_width: u32,
         surface_height: u32,
     ) {
-        // Skip rendering if UI is not visible
-        if !self.ui_state.visible {
+        // Update global visibility flag (tracks menu visibility for input routing)
+        UI_OVERLAY_VISIBLE.store(self.ui_state.visible, Ordering::SeqCst);
+
+        // Render when menus are visible OR during any gameplay state (for overlays)
+        let needs_render = self.ui_state.visible
+            || self.current_game_state != GameState::Menu;
+        if !needs_render {
             return;
         }
-
-        // Update global visibility flag
-        UI_OVERLAY_VISIBLE.store(self.ui_state.visible, Ordering::SeqCst);
 
         // Initialize renderer if needed
         let format = self

@@ -23,18 +23,25 @@ pub fn render_game_state(
     match game_state {
         GameState::Menu => render_menu(ctx, ui_state),
         GameState::ConsoleOpen => {
+            render_overlays(ctx, ui_state);
             render_console(ctx, ui_state, event_bus);
             Vec::new()
         }
         GameState::Paused => {
+            render_overlays(ctx, ui_state);
             render_pause_overlay(ctx);
             Vec::new()
         }
         GameState::Playing => {
-            // No UI rendering when playing
+            render_overlays(ctx, ui_state);
             Vec::new()
         }
     }
+}
+
+/// Render all active overlay layers (HUDs, debug info)
+fn render_overlays(ctx: &egui::Context, ui_state: &mut UiStateManager) {
+    ui_state.overlay_manager.render_all(ctx);
 }
 
 /// Render active menu screen and collect clicked actions

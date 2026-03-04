@@ -197,9 +197,43 @@ impl FrameProcessor {
         self.update_game_state(app, dt);
         self.update_light_system(app); // Process light propagation after game state
         self.update_lighting(app);
+        self.update_hud_data(app);
         self.request_redraw(app);
         self.publish_frame_end(app, frame_number);
         self.update_control_flow(app, event_loop);
+    }
+
+    /// Push current world state into the overlay HUD data.
+    fn update_hud_data(&self, app: &mut App) {
+        let ui_adapter = match &app.ui_adapter {
+            Some(a) => a,
+            None => return,
+        };
+
+        let pos = app.simulation.position();
+        let chunk_size = 16i32;
+        let chunk_pos = [
+            (pos.x.floor() as i32).div_euclid(chunk_size),
+            (pos.y.floor() as i32).div_euclid(chunk_size),
+            (pos.z.floor() as i32).div_euclid(chunk_size),
+        ];
+
+        let mode = app.simulation.camera_mode();
+        let is_fps = mode == moho_core::controller::CameraMode::FirstPerson;
+
+        let data = moho_ui::overlays::HudData {
+            player_position: [pos.x, pos.y, pos.z],
+            chunk_position: chunk_pos,
+            camera_mode: format!("{mode:?}"),
+            is_fps_mode: is_fps,
+            frame_time_secs: app.frame_duration.as_secs_f32(),
+            time_of_day: app.simulation.time_of_day(),
+            material_under_crosshair: None,
+        };
+
+        if let Ok(mut adapter) = ui_adapter.lock() {
+            adapter.update_hud_data(data);
+        }
     }
 }
 

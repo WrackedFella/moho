@@ -27,15 +27,25 @@
     - Smooth zoom along horizontal/vertical distance maintaining aspect ratio
 - **Completed:** 2-3 SP
 
-### 3. HUD Debug Info
-- **Goal:** Toggleable overlay to verify world state.
+### 3. HUD & Overlay System ✅
+- **Goal:** Overlay manager + gameplay HUDs + toggleable debug overlay.
+- **Status:** COMPLETE
+- **Implemented:**
+    - **Overlay system** (`moho_ui::overlays`): generic `Overlay` trait + `OverlayManager` — registers, renders, and toggles named overlay layers with shared `HudData`.
+    - **FPS HUD** (`fps_hud`): crosshair at screen center + time-of-day badge (top-right). Auto-hides in Isometric mode.
+    - **RTS HUD** (`rts_hud`): stub — time-of-day badge only. Auto-hides in FirstPerson mode. Ready for mini-map, selection info, etc.
+    - **Debug HUD** (`debug_hud`): toggled with **F3**. Displays FPS (smoothed), frame time, player position, chunk coordinates, camera mode, material under crosshair (placeholder).
+    - Overlays render during Playing, Paused, and ConsoleOpen states.
+    - `HudData` updated every frame from the main loop (position, chunk, camera mode, dt, time of day).
+    - Adapter visibility gate fixed so overlays render during gameplay even when menus are hidden.
 - **Data Points:**
     - Player World Coordinates (x, y, z)
-    - Material ID under crosshair (Raycast result)
+    - Material ID under crosshair (stub — raycast wiring needed)
     - Current Chunk ID
     - FPS / Frame Time
-- **Implementation:** Simple text block in `moho_ui`.
-- **Estimate:** 1-2 SP
+    - Camera Mode (FirstPerson / Isometric)
+    - Time of Day
+- **Completed:** 2 SP
 
 ### 4. Fix Lights "Turning Off"
 - **Problem:** Multiple light-related issues discovered:

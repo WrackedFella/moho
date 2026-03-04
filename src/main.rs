@@ -664,6 +664,17 @@ impl App {
                     }
                     return; // Don't process further
                 }
+                KeyCode::F3 => {
+                    // F3 toggles the debug HUD overlay
+                    if pressed {
+                        if let Some(ui_adapter) = &self.ui_adapter {
+                            if let Ok(mut adapter) = ui_adapter.lock() {
+                                adapter.toggle_debug_hud();
+                            }
+                        }
+                    }
+                    return;
+                }
                 KeyCode::Escape => {
                     // Escape closes console if open, otherwise opens menu
                     if pressed {
