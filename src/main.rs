@@ -271,11 +271,17 @@ impl App {
                 false
             });
 
-            // Register UI adapter as a normal UI subscriber
+            // Register UI adapter as a normal UI subscriber.
+            // Only forward events to egui when menus/console are visible;
+            // during gameplay the overlays are passive and don't need input.
             let ui_adapter_clone = ui_adapter.clone();
             self.dispatcher.register(100, move |event: &WindowEvent| {
                 if let Ok(mut a) = ui_adapter_clone.lock() {
-                    a.handle_winit_event(event)
+                    if a.is_visible() {
+                        a.handle_winit_event(event)
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 }
