@@ -47,19 +47,14 @@
     - Time of Day
 - **Completed:** 2 SP
 
-### 4. Fix Lights "Turning Off"
-- **Problem:** Multiple light-related issues discovered:
-    1. Point lights cut out when the camera moves (AABB/Frustum culling issue in `moho_renderer`)
-    2. Spawned lights do not persist between loads (not saved in save format?)
-    3. New actors do not block light/cast shadows/occlude light sources
-        - *Note:* This may have been an accepted design compromise during light system implementation. Assessment needed: what is the effort to enable actor shadowing?
-- **Depends on:** Better camera controls to reproduce and debug issues (now resolved).
-- **Action:** 
-    - Investigate and fix frustum culling logic in `moho_renderer::lights`
-    - Review save format: determine if lights need explicit persistence or should be derived from actor state
-    - Assess actor blocking: check if `VoxelChunk` shadowing is a mesh-only vs actor limitation
-- **Verify:** 
-    - Lights persist when camera moves (source off-screen but visible radius in-screen)
-    - Spawned lights remain after save/load
-    - New actors properly interact with light propagation
-- **Estimate:** 2-3 SP (larger due to investigation scope)
+### 4. Fix Lights "Turning Off" ✅
+- **Problem:** Multiple light-related issues discovered.
+- **Status:** COMPLETE (core issues resolved; one item deferred to backlog)
+- **Implemented:**
+    - **Frustum culling fix** (`moho_renderer::lights`): Replaced the broken NDC-space point test with a proper Gribb-Hartmann frustum-plane vs. bounding-sphere intersection. Lights whose radius overlaps the frustum are now correctly included regardless of whether their center is off-screen or behind the camera.
+    - **Light persistence** (`moho_renderer::scene`): Added `LightDesc` to the scene save format (v3). `encode_to_bytes` and `load_from_bytes` now accept/return light descriptors. Autosave collects lights from the renderer via `all_lights_as_descs()`; on load, lights are re-added to the renderer. Backward compatible: v1/v2 saves load fine with an empty lights list.
+    - **Debug light gizmo**: Spawning a light via `spawn light` now also spawns a small sphere (radius 0.15) at the light position using the light's own color as albedo. The gizmo entity is tracked in `App::light_gizmos` (keyed by light ID) for future removal support.
+- **Deferred to backlog:**
+    - **Point light shadow casting** (`06-gameplay-systems.md`): Dynamic point lights currently illuminate scene geometry without occlusion (no shadow maps). Directional sun/moon shadows already work for all actor geometry. Implementing point light shadow maps (cube shadow maps) is a new feature (~5 SP) logged in the gameplay backlog.
+    - **Shadow exclusion flag for actors**: A `cast_shadows` flag on `Sphere`/`Cube` actors (to suppress gizmo sphere shadows) is deferred alongside the shadow pipeline work.
+- **Completed:** 3 SP

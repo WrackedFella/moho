@@ -155,7 +155,7 @@ impl Cube {
         InstanceGpu {
             model: mat,
             material: material_index,
-            object_type: 2u32,
+            object_type: 1u32, // Cube actor
             padding: [0u32; 2],
         }
     }
@@ -316,7 +316,7 @@ impl Sphere {
         InstanceGpu {
             model: mat,
             material: material_index,
-            object_type: 0u32,
+            object_type: 2u32, // Sphere actor
             padding: [0u32; 2],
         }
     }

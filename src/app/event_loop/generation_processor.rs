@@ -94,7 +94,8 @@ impl GenerationProcessor {
         // Load produced scene bytes into the main world
         app.world.clear();
         match app.scene.load_from_bytes(&scene_bytes, &mut app.world) {
-            Ok(camera_data) => {
+            Ok((camera_data, _lights)) => {
+                // Generated worlds have no pre-spawned lights; nothing to restore.
                 if let Some((position, yaw, pitch)) = camera_data {
                     app.simulation.set_position_yaw_pitch(position, yaw, pitch);
                     app.input_system.clear_pending_input();

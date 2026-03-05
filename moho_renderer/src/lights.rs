@@ -218,7 +218,10 @@ impl LightManager {
     pub fn total_light_count(&self) -> usize {
         self.lights.len()
     }
-
+    /// Get all registered lights (regardless of culling state).
+    pub fn all_lights(&self) -> &[Light] {
+        &self.lights
+    }
     /// Mark as dirty (forces GPU update next frame)
     pub fn mark_dirty(&mut self) {
         self.dirty = true;

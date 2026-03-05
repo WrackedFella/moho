@@ -130,6 +130,9 @@ struct App {
     // Frame timing
     frame_duration: Duration,
     last_frame: Instant,
+
+    // Tracks gizmo spheres spawned alongside debug point lights (light_id -> entity)
+    light_gizmos: std::collections::HashMap<u32, legion::Entity>,
 }
 
 impl App {
@@ -198,6 +201,8 @@ impl App {
 
             frame_duration: initialized.frame_duration,
             last_frame: initialized.last_frame,
+
+            light_gizmos: std::collections::HashMap::new(),
         }
     }
 
@@ -409,6 +414,7 @@ impl App {
                     let scene_bytes = match local_scene.encode_to_bytes(
                         &local_world,
                         Some((camera_position, camera_yaw, camera_pitch)),
+                        &[], // fresh world — no spawned lights
                     ) {
                         Ok(b) => b,
                         Err(e) => {
@@ -474,7 +480,14 @@ impl App {
         // Encode scene bytes and write envelope. Prefer the last known
         // WorldSpec (e.g. from a loaded or generated scene) so autosaves
         // preserve original metadata; fall back to a minimal spec.
-        let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
+        let scene_bytes = self.scene.encode_to_bytes(
+            &self.world,
+            camera_data,
+            &self
+                .window_renderer
+                .as_ref()
+                .map_or_else(Vec::new, |wr| wr.renderer.all_lights_as_descs()),
+        )?;
         let spec = self
             .last_world_spec
             .clone()
@@ -517,8 +530,22 @@ impl App {
             // subsequent writes preserve the original metadata.
             self.last_world_spec = Some(spec.clone());
             log::info!("Loaded WorldSpec from save: {:?}", spec);
-            let camera_data = self.scene.load_from_bytes(&scene_bytes, &mut self.world)?;
-            log::info!("Scene loaded successfully from {:?}", path.as_ref());
+            let (camera_data, lights) = self.scene.load_from_bytes(&scene_bytes, &mut self.world)?;
+            log::info!("Scene loaded successfully from {:?}, {} lights", path.as_ref(), lights.len());
+
+            // Re-add persisted lights to the renderer
+            if let Some(ref mut wr) = self.window_renderer {
+                for desc in &lights {
+                    if desc.enabled {
+                        wr.renderer.add_point_light(
+                            glam::Vec3::from_array(desc.position),
+                            glam::Vec3::from_array(desc.color),
+                            desc.intensity,
+                            desc.range,
+                        );
+                    }
+                }
+            }
 
             // Reconstruct VoxelGrid from loaded chunks for the LightSystem
             // Note: This assumes the loaded scene contains VoxelChunk components

@@ -22,7 +22,7 @@ pub type Material = MaterialGpu;
 mod materials;
 pub use materials::MaterialTable;
 mod scene;
-pub use scene::Scene;
+pub use scene::{Scene, LightDesc};
 mod gpu_types;
 pub use gpu_types::{
     CameraGpu, CascadedShadowMatrixGpu, LightingGpu, MAX_SHADOW_LIGHTS, MaterialGpu,
@@ -247,6 +247,21 @@ pub mod gfx {
             /// Get read-only access to a light
             pub fn get_light(&self, id: u32) -> Option<&crate::lights::Light> {
                 self.light_manager.get_light(id)
+            }
+
+            /// Get all lights as serializable descriptors (for save/load).
+            pub fn all_lights_as_descs(&self) -> Vec<crate::scene::LightDesc> {
+                self.light_manager
+                    .all_lights()
+                    .iter()
+                    .map(|l| crate::scene::LightDesc {
+                        position: l.position.to_array(),
+                        color: l.color.to_array(),
+                        intensity: l.intensity,
+                        range: l.range,
+                        enabled: l.enabled,
+                    })
+                    .collect()
             }
 
             /// Get the number of visible lights after frustum culling
@@ -851,6 +866,12 @@ pub trait RendererBackend {
     /// Enable or disable a light
     fn set_light_enabled(&mut self, id: u32, enabled: bool);
 
+    /// Get all registered lights as serializable descriptors (for save/load).
+    /// Default returns empty; only the real renderer overrides this.
+    fn all_lights_as_descs(&self) -> Vec<crate::scene::LightDesc> {
+        Vec::new()
+    }
+
     /// Set shadow quality level
     fn set_shadow_quality(&mut self, quality: u8);
 
@@ -961,6 +982,9 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     }
     fn set_light_enabled(&mut self, id: u32, enabled: bool) {
         gfx::wgpu_impl::Renderer::set_light_enabled(self, id, enabled);
+    }
+    fn all_lights_as_descs(&self) -> Vec<crate::scene::LightDesc> {
+        gfx::wgpu_impl::Renderer::all_lights_as_descs(self)
     }
     fn set_shadow_quality(&mut self, quality: u8) {
         gfx::wgpu_impl::Renderer::set_shadow_quality(self, quality);

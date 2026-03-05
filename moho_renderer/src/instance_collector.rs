@@ -66,15 +66,22 @@ impl InstanceCollector {
         }
 
         // Register VoxelChunk meshes and collect instances
+        // Pre-register the default VoxelTerrain material so all terrain chunks
+        // share a single GPU material entry sourcing colours from the material buffer
+        // rather than hardcoding them in the shader.
+        let terrain_mat = moho_core::materials::MaterialType::VoxelTerrain {
+            top_albedo: glam::Vec3::new(0.3, 0.6, 0.3),   // grass green
+            side_albedo: glam::Vec3::new(0.6, 0.5, 0.4),  // dirt brown
+        };
+        let terrain_mat_idx = material_table.find_or_push(&terrain_mat);
         let mut q_chunks_mut = <&mut VoxelChunk>::query();
         for chunk in q_chunks_mut.iter_mut(world) {
             if let Some(handle) = buffer_manager.ensure_chunk_registered(chunk, renderer) {
                 // VoxelChunk uses identity transform (mesh in world space)
-                // Material index 0 (Lambertian default)
                 let inst = InstanceGpu {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    material: 0,
-                    object_type: 2, // VoxelChunk type
+                    material: terrain_mat_idx,
+                    object_type: 0, // terrain — fragment shader applies normal-based colour
                     padding: [0, 0],
                 };
                 self.chunk_renders.push((handle, inst));

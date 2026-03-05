@@ -625,18 +625,29 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     let mat = materials[in.material];
     let albedo = mat.albedo.xyz;
-    let fuzz = mat.params.x;
-    let ref_idx = mat.params.y;
+    // For terrain (object_type 0) params.xyz encodes the side-face colour, not
+    // material properties — zero them out so we don't accidentally enter the
+    // dielectric or metal branches below.
+    let is_terrain = in.object_type == 0u;
+    let fuzz    = select(mat.params.x, 0.0, is_terrain);
+    let ref_idx = select(mat.params.y, 0.0, is_terrain);
 
-    // Override albedo based on face normal for voxel terrain
-    // Top faces (normal pointing up) = green, Side faces = light brown
-    let is_top_face = abs(N.y) > 0.9; // Normal mostly vertical
+    // Emissive short-circuit: skip all lighting, output flat colour * intensity.
+    // Any material with params.w > 0 is treated as self-illuminating.
+    if mat.params.w > 0.0 {
+        return vec4<f32>(mat.albedo.xyz * mat.params.w, 1.0);
+    }
+
+    // Terrain (object_type 0): normal-based face colour sourced from the material.
+    //   mat.albedo.xyz = top-face colour (grass), mat.params.xyz = side-face colour (dirt).
+    // All other geometry: use material albedo directly.
+    let is_top_face = abs(N.y) > 0.9;
     let voxel_albedo = select(
-        vec3<f32>(0.6, 0.5, 0.4), // Light brown for sides
-        vec3<f32>(0.3, 0.6, 0.3), // Green for top
+        mat.params.xyz,  // side colour for terrain
+        mat.albedo.xyz,  // top colour for terrain
         is_top_face
     );
-    let final_albedo = voxel_albedo;
+    let final_albedo = select(albedo, voxel_albedo, is_terrain);
 
     // If ref_idx > 0 we treat the material as a dielectric (glass-like).
     // We don't implement true refraction here (no background sampling), but

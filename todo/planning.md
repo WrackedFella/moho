@@ -8,12 +8,8 @@ This document outlines the high-level phases for upcoming development. Detailed 
 
 ## Phase 2: Debugging & Tools (High Utility)
 *Focus: Tools that make future work easier and fixing high-visibility bugs.*
-- **[Details](./02-debug-tools.md)** ⏳ IN PROGRESS
-- **Completed:** FPS Controls (1 SP) ✅ + RTS Camera (2-3 SP) ✅
-- **Current:** HUD Debug Info (1-2 SP) ⏳
-- **Remaining:** Fix Lights (2-3 SP) ⏳
-- **Sequenced approach:** FPS Controls ✅ → RTS Camera ✅ → HUD Debug → Fix Lights
-- **Rationale:** Better controls and cameras make light debugging significantly easier.
+- **[Details](./02-debug-tools.md)** ✅ COMPLETE
+- **Completed:** FPS Controls (1 SP) ✅ + RTS Camera (2-3 SP) ✅ + HUD Debug (2 SP) ✅ + Fix Lights (3 SP) ✅
 
 ## Phase 3: UI & Settings (Isolated Systems)
 *Focus: Polish that doesn't touch the simulation core.*

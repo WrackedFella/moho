@@ -33,9 +33,9 @@ const PCSS_LIGHT_SIZE_STORM: f32 = 0.12;
 
 // ── Shadow geometry ────────────────────────────────────────────────────
 /// Depth bias constant factor applied to shadow map.
-const SHADOW_DEPTH_BIAS_CONSTANT: i32 = 2;
+const SHADOW_DEPTH_BIAS_CONSTANT: i32 = 4;
 /// Depth bias slope scale applied to shadow map.
-const SHADOW_DEPTH_BIAS_SLOPE: f32 = 2.0;
+const SHADOW_DEPTH_BIAS_SLOPE: f32 = 3.0;
 /// Multiplier on cascade distance to get a generous frustum radius.
 const CASCADE_RADIUS_MULTIPLIER: f32 = 1.5;
 /// Minimum light intensity required to cast shadows.

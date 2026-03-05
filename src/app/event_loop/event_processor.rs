@@ -369,13 +369,27 @@ impl EventProcessor {
                                     glam::Vec3::ONE // White default
                                 };
 
-                                wr.renderer.add_point_light(
+                                let light_id = wr.renderer.add_point_light(
                                     spawn_pos,
                                     color,
                                     DEFAULT_POINT_LIGHT_INTENSITY,
                                     DEFAULT_POINT_LIGHT_RANGE,
                                 );
                                 log::info!("Added point light at {:?}", spawn_pos);
+
+                                // Spawn a small gizmo sphere so the light origin is
+                                // visible in world space. Emissive material bypasses
+                                // lighting so the gizmo glows at the light's own colour.
+                                let gizmo = moho_core::actors::Sphere::new(
+                                    spawn_pos,
+                                    0.15,
+                                    moho_core::materials::MaterialType::Emissive {
+                                        color,
+                                        intensity: 1.5,
+                                    },
+                                );
+                                let entity = app.world.push((gizmo,));
+                                app.light_gizmos.insert(light_id, entity);
                             }
                         }
                         "cube" => {
