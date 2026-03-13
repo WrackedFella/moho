@@ -5,7 +5,7 @@
 
 use crate::modal::ModalManager;
 use crate::overlays::Console;
-use crate::overlays::{DebugHud, FpsHud, OverlayManager, RtsHud};
+use crate::overlays::{DebugHud, FpsHud, GameplayHud, OverlayManager, RtsHud};
 use crate::screens::Menu;
 use std::collections::HashMap;
 
@@ -47,6 +47,7 @@ impl UiStateManager {
         overlay_manager.register(Box::new(FpsHud::new()));
         overlay_manager.register(Box::new(RtsHud::new()));
         overlay_manager.register(Box::new(DebugHud::new()));
+        overlay_manager.register(Box::new(GameplayHud::new()));
 
         Self {
             screens,

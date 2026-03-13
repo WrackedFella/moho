@@ -2,6 +2,14 @@ use crate::events::Event;
 use std::any::Any;
 use std::path::PathBuf;
 
+/// Window display mode — mirrors `moho_ui::prefs::WindowMode` without a dependency.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowMode {
+    Windowed,
+    Fullscreen,
+    Borderless,
+}
+
 /// UI interaction and state events
 #[derive(Clone, Debug)]
 pub enum UiEvent {
@@ -29,6 +37,9 @@ pub enum UiEvent {
 
     /// Exit requested
     ExitRequested,
+
+    /// Window/display settings changed (emitted after saving video prefs)
+    WindowSettingsChanged { mode: WindowMode, width: u32, height: u32 },
 }
 
 impl Event for UiEvent {

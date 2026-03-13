@@ -92,6 +92,7 @@ pub use types::{
     SystemEvent,
     // UI events
     UiEvent,
+    WindowMode,
     WorldEvent,
 };
 

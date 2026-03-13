@@ -4,6 +4,7 @@
 //! - Menu action to event bus conversion
 //! - Audio event emission
 //! - Console action processing
+//! - Background music lifecycle for the main menu
 use crate::UiAudioEvent;
 use crate::screens::MenuAction;
 use moho_core::EventBus;
@@ -44,9 +45,18 @@ pub fn process_menu_action(action: &MenuAction, event_bus: &EventBus) {
             emit_audio_event(event_bus, UiAudioEvent::Cancel);
             // Note: Menu hiding is handled by adapter, not through event bus
         }
-        MenuAction::SettingsSaved(_prefs) => {
+        MenuAction::SettingsSaved(prefs) => {
             emit_audio_event(event_bus, UiAudioEvent::Confirm);
             event_bus.publish(CoreUiEvent::SettingsSaved);
+
+            // Emit window settings change so main.rs can apply them
+            let mode = match prefs.window_mode() {
+                crate::prefs::WindowMode::Windowed => moho_core::events::WindowMode::Windowed,
+                crate::prefs::WindowMode::Fullscreen => moho_core::events::WindowMode::Fullscreen,
+                crate::prefs::WindowMode::Borderless => moho_core::events::WindowMode::Borderless,
+            };
+            let (width, height) = prefs.window_resolution();
+            event_bus.publish(CoreUiEvent::WindowSettingsChanged { mode, width, height });
         }
         MenuAction::None => {
             // No action
@@ -67,6 +77,54 @@ pub fn emit_audio_event(event_bus: &EventBus, audio_event: UiAudioEvent) {
     };
 
     event_bus.publish(core_event);
+}
+
+/// Manage menu background music lifecycle.
+///
+/// Starts music when the player navigates to the start menu, stops it when
+/// they leave. Silently no-ops if the music file does not exist on disk.
+pub fn update_menu_music(
+    actions: &[MenuAction],
+    event_bus: &EventBus,
+    music_playing: &mut bool,
+) {
+    use moho_core::events::AudioEvent;
+    use std::path::Path;
+
+    const MENU_MUSIC_PATH: &str = "audio/music/menu.ogg";
+
+    for action in actions {
+        match action {
+            // Entering the start menu — start music
+            MenuAction::ShowMenu(name) if name == "start" => {
+                if !*music_playing && Path::new(MENU_MUSIC_PATH).exists() {
+                    event_bus.publish(AudioEvent::MusicStart {
+                        path: MENU_MUSIC_PATH.to_string(),
+                        volume: 1.0,
+                        looped: true,
+                    });
+                    *music_playing = true;
+                }
+            }
+            // Leaving the menu (loading, new world, exit, or switching to non-start screen)
+            MenuAction::LoadScene(_)
+            | MenuAction::GenerateWorld(_)
+            | MenuAction::Exit => {
+                if *music_playing {
+                    event_bus.publish(AudioEvent::MusicStop);
+                    *music_playing = false;
+                }
+            }
+            // Navigating to any screen other than start also stops music
+            MenuAction::ShowMenu(_) => {
+                if *music_playing {
+                    event_bus.publish(AudioEvent::MusicStop);
+                    *music_playing = false;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Process console action and publish corresponding events
@@ -210,5 +268,48 @@ mod tests {
         emit_audio_event(&bus, UiAudioEvent::Error);
 
         // Verify no panics
+    }
+
+    #[test]
+    fn menu_music_starts_on_show_start() {
+        let bus = Arc::new(EventBus::new());
+        let mut playing = false;
+        let actions = vec![MenuAction::ShowMenu("start".to_string())];
+
+        // File doesn't exist in test environment, so music won't actually start.
+        // Verify the function completes without panic.
+        update_menu_music(&actions, &bus, &mut playing);
+        // music_playing stays false because the file doesn't exist
+        assert!(!playing);
+    }
+
+    #[test]
+    fn menu_music_stops_on_load_scene() {
+        let bus = Arc::new(EventBus::new());
+        let mut playing = true; // simulate music is already playing
+        let actions = vec![MenuAction::LoadScene(std::path::PathBuf::from("saves/scene.bin"))];
+
+        update_menu_music(&actions, &bus, &mut playing);
+        assert!(!playing, "music should stop when loading a scene");
+    }
+
+    #[test]
+    fn menu_music_stops_on_navigate_away() {
+        let bus = Arc::new(EventBus::new());
+        let mut playing = true;
+        let actions = vec![MenuAction::ShowMenu("settings".to_string())];
+
+        update_menu_music(&actions, &bus, &mut playing);
+        assert!(!playing, "music should stop when navigating away from start");
+    }
+
+    #[test]
+    fn menu_music_no_double_stop() {
+        let bus = Arc::new(EventBus::new());
+        let mut playing = false; // already not playing
+        let actions = vec![MenuAction::Exit];
+
+        update_menu_music(&actions, &bus, &mut playing);
+        assert!(!playing); // still false, no panic
     }
 }

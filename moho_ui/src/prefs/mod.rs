@@ -1,7 +1,7 @@
 //! Preferences management for the game.
 //!
 //! This module handles loading, saving, and managing user preferences including
-//! key bindings, mouse sensitivity, input filtering, and audio volumes.
+//! key bindings, mouse sensitivity, input filtering, audio volumes, and video settings.
 
 mod key_names;
 mod parser;
@@ -11,6 +11,41 @@ use std::path::PathBuf;
 
 pub use key_names::parse_key_name;
 pub use parser::{binding_to_string, parse_binding};
+
+/// Window display mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum WindowMode {
+    #[default]
+    Windowed,
+    Fullscreen,
+    Borderless,
+}
+
+impl WindowMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            WindowMode::Windowed => "Windowed",
+            WindowMode::Fullscreen => "Fullscreen",
+            WindowMode::Borderless => "Borderless",
+        }
+    }
+
+    fn from_str(s: &str) -> Self {
+        match s {
+            "Fullscreen" => WindowMode::Fullscreen,
+            "Borderless" => WindowMode::Borderless,
+            _ => WindowMode::Windowed,
+        }
+    }
+}
+
+/// Standard resolution presets.
+pub const RESOLUTION_PRESETS: &[(&str, (u32, u32))] = &[
+    ("1280×720 (HD)", (1280, 720)),
+    ("1920×1080 (FHD)", (1920, 1080)),
+    ("2560×1440 (QHD)", (2560, 1440)),
+    ("3840×2160 (4K)", (3840, 2160)),
+];
 
 /// A numeric key binding: key code and modifier bits.
 /// mods bitflags: bit0 = ctrl, bit1 = shift, bit2 = alt
@@ -51,6 +86,9 @@ pub struct Prefs {
     // Graphics settings
     graphics_shadow_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
     graphics_ssao_quality: u32,   // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    // Video settings
+    window_mode: WindowMode,
+    window_resolution: (u32, u32),
 }
 
 const MAX_GRAPHICS_QUALITY: u32 = 4;
@@ -130,6 +168,12 @@ impl Prefs {
     pub fn ssao_quality(&self) -> u32 {
         self.graphics_ssao_quality
     }
+    pub fn window_mode(&self) -> WindowMode {
+        self.window_mode
+    }
+    pub fn window_resolution(&self) -> (u32, u32) {
+        self.window_resolution
+    }
 
     // --- Mutable accessors (for egui widget binding) ---
 
@@ -162,6 +206,14 @@ impl Prefs {
         self.graphics_ssao_quality = quality.min(MAX_GRAPHICS_QUALITY);
     }
 
+    pub fn set_window_mode(&mut self, mode: WindowMode) {
+        self.window_mode = mode;
+    }
+
+    pub fn set_window_resolution(&mut self, width: u32, height: u32) {
+        self.window_resolution = (width, height);
+    }
+
     // --- Builder methods (for construction in tests) ---
 
     pub fn with_key_w(mut self, b: Binding) -> Self {
@@ -178,6 +230,16 @@ impl Prefs {
     }
     pub fn with_input_filtering_enabled(mut self, v: bool) -> Self {
         self.input_filtering_enabled = v;
+        self
+    }
+
+    pub fn with_window_mode(mut self, mode: WindowMode) -> Self {
+        self.window_mode = mode;
+        self
+    }
+
+    pub fn with_window_resolution(mut self, width: u32, height: u32) -> Self {
+        self.window_resolution = (width, height);
         self
     }
 }
@@ -202,6 +264,9 @@ impl Default for Prefs {
             // Default graphics settings (High)
             graphics_shadow_quality: 3,
             graphics_ssao_quality: 3,
+            // Default video settings
+            window_mode: WindowMode::Windowed,
+            window_resolution: (1920, 1080),
         }
     }
 }
@@ -307,6 +372,27 @@ impl Prefs {
             prefs.graphics_ssao_quality = get_u32("ssao_quality", prefs.graphics_ssao_quality);
         }
 
+        // Load video settings from [video] section if present
+        if let Ok(map) = ini::macro_safe_read(&content)
+            && let Some(video_section) = map.get("video")
+        {
+            let get_str = |k: &str| video_section.get(k).and_then(|o| o.clone());
+            let get_u32 = |k: &str, def: u32| {
+                video_section
+                    .get(k)
+                    .and_then(|o| o.clone())
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(def)
+            };
+
+            if let Some(s) = get_str("window_mode") {
+                prefs.window_mode = WindowMode::from_str(&s);
+            }
+            let w = get_u32("window_width", prefs.window_resolution.0);
+            let h = get_u32("window_height", prefs.window_resolution.1);
+            prefs.window_resolution = (w, h);
+        }
+
         prefs
     }
 
@@ -373,6 +459,12 @@ impl Prefs {
         ));
         out.push_str(&format!("ssao_quality={}\n", self.graphics_ssao_quality));
 
+        // Video section
+        out.push_str("\n[video]\n");
+        out.push_str(&format!("window_mode={}\n", self.window_mode.as_str()));
+        out.push_str(&format!("window_width={}\n", self.window_resolution.0));
+        out.push_str(&format!("window_height={}\n", self.window_resolution.1));
+
         fs::write(path, out)?;
         Ok(())
     }
@@ -408,5 +500,75 @@ mod tests {
     fn test_config_path() {
         let path = Prefs::config_path();
         assert_eq!(path.to_str().unwrap(), "config/prefs.ini");
+    }
+
+    #[test]
+    fn test_default_video_settings() {
+        let prefs = Prefs::default();
+        assert_eq!(prefs.window_mode(), WindowMode::Windowed);
+        assert_eq!(prefs.window_resolution(), (1920, 1080));
+    }
+
+    #[test]
+    fn test_video_round_trip_windowed() {
+        use std::io::Write;
+
+        // Build a prefs with custom video settings
+        let prefs = Prefs::default()
+            .with_window_mode(WindowMode::Windowed)
+            .with_window_resolution(2560, 1440);
+
+        // Serialize to INI string directly (without touching disk)
+        let mut out = String::new();
+        out.push_str("[video]\n");
+        out.push_str(&format!("window_mode={}\n", prefs.window_mode().as_str()));
+        out.push_str(&format!("window_width={}\n", prefs.window_resolution().0));
+        out.push_str(&format!("window_height={}\n", prefs.window_resolution().1));
+
+        // Parse back
+        if let Ok(map) = ini::macro_safe_read(&out)
+            && let Some(section) = map.get("video")
+        {
+            let mode_str = section.get("window_mode").and_then(|o| o.clone()).unwrap_or_default();
+            let w: u32 = section.get("window_width").and_then(|o| o.clone())
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            let h: u32 = section.get("window_height").and_then(|o| o.clone())
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+
+            assert_eq!(WindowMode::from_str(&mode_str), WindowMode::Windowed);
+            assert_eq!((w, h), (2560, 1440));
+        } else {
+            panic!("Failed to parse video section");
+        }
+    }
+
+    #[test]
+    fn test_video_round_trip_fullscreen() {
+        let prefs = Prefs::default()
+            .with_window_mode(WindowMode::Fullscreen)
+            .with_window_resolution(1920, 1080);
+
+        let mut out = String::new();
+        out.push_str("[video]\n");
+        out.push_str(&format!("window_mode={}\n", prefs.window_mode().as_str()));
+        out.push_str(&format!("window_width={}\n", prefs.window_resolution().0));
+        out.push_str(&format!("window_height={}\n", prefs.window_resolution().1));
+
+        if let Ok(map) = ini::macro_safe_read(&out)
+            && let Some(section) = map.get("video")
+        {
+            let mode_str = section.get("window_mode").and_then(|o| o.clone()).unwrap_or_default();
+            assert_eq!(WindowMode::from_str(&mode_str), WindowMode::Fullscreen);
+        } else {
+            panic!("Failed to parse video section");
+        }
+    }
+
+    #[test]
+    fn test_window_mode_from_str() {
+        assert_eq!(WindowMode::from_str("Windowed"), WindowMode::Windowed);
+        assert_eq!(WindowMode::from_str("Fullscreen"), WindowMode::Fullscreen);
+        assert_eq!(WindowMode::from_str("Borderless"), WindowMode::Borderless);
+        assert_eq!(WindowMode::from_str("unknown"), WindowMode::Windowed); // default
     }
 }

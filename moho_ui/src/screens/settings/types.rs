@@ -4,13 +4,14 @@ pub enum SettingsTab {
     #[default]
     Controls,
     Audio,
+    Video,
 }
 
 impl SettingsTab {
     /// Convert a tab index to a SettingsTab variant.
     ///
     /// # Arguments
-    /// * `index` - Zero-based tab index (0 = Controls, 1 = Audio)
+    /// * `index` - Zero-based tab index (0 = Controls, 1 = Audio, 2 = Video)
     ///
     /// # Returns
     /// The corresponding SettingsTab, defaulting to Controls if index is out of range
@@ -18,6 +19,7 @@ impl SettingsTab {
         match index {
             0 => SettingsTab::Controls,
             1 => SettingsTab::Audio,
+            2 => SettingsTab::Video,
             _ => SettingsTab::Controls, // Default fallback
         }
     }
@@ -30,12 +32,13 @@ impl SettingsTab {
         match self {
             SettingsTab::Controls => 0,
             SettingsTab::Audio => 1,
+            SettingsTab::Video => 2,
         }
     }
 
     /// Get all available tabs in display order.
     pub fn all_tabs() -> &'static [&'static str] {
-        &["Controls", "Audio"]
+        &["Controls", "Audio", "Video"]
     }
 }
 

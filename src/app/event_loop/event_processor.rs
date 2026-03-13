@@ -101,6 +101,24 @@ impl EventProcessor {
                 // Settings are already saved by the UI adapter
                 // Here we could reload/apply them if needed
             }
+            UiEvent::WindowSettingsChanged { mode, width, height } => {
+                log::info!("Window settings changed: {:?} {}x{}", mode, width, height);
+                if let Some(ref wr) = app.window_renderer {
+                    use moho_core::events::WindowMode;
+                    use winit::dpi::PhysicalSize;
+                    use winit::window::Fullscreen;
+
+                    match mode {
+                        WindowMode::Fullscreen | WindowMode::Borderless => {
+                            wr.window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                        }
+                        WindowMode::Windowed => {
+                            wr.window.set_fullscreen(None);
+                            let _ = wr.window.request_inner_size(PhysicalSize::new(width, height));
+                        }
+                    }
+                }
+            }
         }
     }
 

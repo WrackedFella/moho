@@ -28,6 +28,15 @@ pub struct HudData {
 
     /// Material ID under the crosshair, if a raycast hit.
     pub material_under_crosshair: Option<u8>,
+
+    /// Camera yaw in radians. `0.0` = North (+Z), increases clockwise.
+    pub camera_yaw: f32,
+
+    /// Player health fraction (`0.0`–`1.0`).
+    pub player_health: f32,
+
+    /// Player stamina fraction (`0.0`–`1.0`).
+    pub player_stamina: f32,
 }
 
 impl Default for HudData {
@@ -40,6 +49,9 @@ impl Default for HudData {
             frame_time_secs: 1.0 / 60.0,
             time_of_day: 12.0,
             material_under_crosshair: None,
+            camera_yaw: 0.0,
+            player_health: 1.0,
+            player_stamina: 1.0,
         }
     }
 }

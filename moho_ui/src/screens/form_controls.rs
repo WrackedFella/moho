@@ -15,6 +15,31 @@
 pub struct FormControls;
 
 impl FormControls {
+    /// Renders a styled main-menu button with hover highlight.
+    ///
+    /// # Arguments
+    /// * `ui` - The egui UI context
+    /// * `label` - Button label text
+    /// * `enabled` - Whether the button is interactive
+    ///
+    /// # Returns
+    /// The egui Response for the button widget
+    pub fn menu_button(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
+        let btn = egui::Button::new(
+            egui::RichText::new(label).size(15.0),
+        )
+        .min_size(egui::vec2(160.0, 36.0));
+
+        let resp = ui.add_enabled(enabled, btn);
+
+        if resp.hovered() {
+            let hover_color = egui::Color32::from_rgba_premultiplied(150, 150, 150, 100);
+            ui.painter().rect_filled(resp.rect, 4.0, hover_color);
+        }
+
+        resp
+    }
+
     /// Renders a keybind control with a label, current binding display, and listen button.
     ///
     /// # Arguments
@@ -332,5 +357,32 @@ impl FormControls {
         });
 
         selected
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn menu_button_smoke_enabled() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let resp = FormControls::menu_button(ui, "Play", true);
+                assert!(resp.rect.width() >= 160.0);
+            });
+        });
+    }
+
+    #[test]
+    fn menu_button_smoke_disabled() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let resp = FormControls::menu_button(ui, "Continue", false);
+                assert!(!resp.clicked());
+            });
+        });
     }
 }

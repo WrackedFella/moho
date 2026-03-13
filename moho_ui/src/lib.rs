@@ -64,7 +64,10 @@ pub use screens::{
     StartMenu, UiComponent,
 };
 
-pub use overlays::{Console, ConsoleAction, DebugHud, FpsHud, HudData, Overlay, OverlayManager, RtsHud};
+pub use overlays::{
+    Console, ConsoleAction, DebugHud, FpsHud, GameplayHud, HudData, Overlay, OverlayManager,
+    RtsHud,
+};
 
 pub use modal::{Modal, ModalManager, ModalResult};
 

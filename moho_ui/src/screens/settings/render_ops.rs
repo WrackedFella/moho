@@ -81,6 +81,7 @@ pub fn render_bottom_panel(ctx: &egui::Context, menu: &mut SettingsMenu) -> Vec<
                         rect: Some(save.rect),
                         enabled: true,
                         clicked: save_clicked,
+                        hovered: false,
                     });
                     ui.add_space(8.0);
 
@@ -98,6 +99,7 @@ pub fn render_bottom_panel(ctx: &egui::Context, menu: &mut SettingsMenu) -> Vec<
                             rect: Some(cancel.rect),
                             enabled: true,
                             clicked: cancel_clicked,
+                            hovered: false,
                         });
                     } else {
                         let back =
@@ -108,6 +110,7 @@ pub fn render_bottom_panel(ctx: &egui::Context, menu: &mut SettingsMenu) -> Vec<
                             rect: Some(back.rect),
                             enabled: true,
                             clicked: back_clicked,
+                            hovered: false,
                         });
                     }
 
@@ -142,6 +145,7 @@ pub fn render_content_area(ctx: &egui::Context, menu: &mut SettingsMenu) {
                             match menu.active_tab {
                                 SettingsTab::Controls => super::controls_tab::render(menu, ui),
                                 SettingsTab::Audio => super::audio_tab::render(menu, ui),
+                                SettingsTab::Video => super::video_tab::render(menu, ui),
                             }
                         },
                     );

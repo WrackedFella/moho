@@ -221,6 +221,8 @@ impl FrameProcessor {
         let mode = app.simulation.camera_mode();
         let is_fps = mode == moho_core::controller::CameraMode::FirstPerson;
 
+        let (yaw, _pitch) = app.simulation.yaw_pitch();
+
         let data = moho_ui::overlays::HudData {
             player_position: [pos.x, pos.y, pos.z],
             chunk_position: chunk_pos,
@@ -229,6 +231,9 @@ impl FrameProcessor {
             frame_time_secs: app.frame_duration.as_secs_f32(),
             time_of_day: app.simulation.time_of_day(),
             material_under_crosshair: None,
+            camera_yaw: yaw,
+            player_health: 1.0,
+            player_stamina: 1.0,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
