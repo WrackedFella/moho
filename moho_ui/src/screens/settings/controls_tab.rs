@@ -123,6 +123,38 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
             }
         }
 
+        // Sprint
+        {
+            let is_dirty = menu.state.is_binding_modified(SettingsField::KeySprint);
+            let binding = menu.state.get_staged_binding(SettingsField::KeySprint);
+            let clicked = FormControls::keybind_control(
+                ui,
+                "Sprint:",
+                &binding_label(&binding),
+                is_dirty,
+                menu.is_listening_for(6),
+                label_width,
+            );
+            if clicked {
+                menu.start_listening(6);
+            }
+        }
+        // Sprint
+        {
+            let is_dirty = menu.state.is_binding_modified(SettingsField::KeySprint);
+            let binding = menu.state.get_staged_binding(SettingsField::KeySprint);
+            let clicked = FormControls::keybind_control(
+                ui,
+                "Sprint:",
+                &binding_label(&binding),
+                is_dirty,
+                menu.is_listening_for(6),
+                label_width,
+            );
+            if clicked {
+                menu.start_listening(6);
+            }
+        }
         ui.add_space(8.0);
 
         // Mouse Sensitivity

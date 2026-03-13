@@ -51,6 +51,7 @@ pub enum BindingId {
     KeyD = 3,
     KeyUp = 4,
     KeyDown = 5,
+    KeySprint = 6,
 }
 
 impl BindingId {
@@ -77,6 +78,7 @@ impl BindingId {
             3 => Some(BindingId::KeyD),
             4 => Some(BindingId::KeyUp),
             5 => Some(BindingId::KeyDown),
+            6 => Some(BindingId::KeySprint),
             _ => None,
         }
     }
@@ -93,6 +95,7 @@ impl BindingId {
             BindingId::KeyD => "Move Right",
             BindingId::KeyUp => "Move Up",
             BindingId::KeyDown => "Move Down",
+            BindingId::KeySprint => "Sprint",
         }
     }
 
@@ -101,7 +104,7 @@ impl BindingId {
     /// # Returns
     /// Array of all BindingId variants in numeric order.
     #[allow(dead_code)] // Will be used in future refactoring increments
-    pub fn all() -> [BindingId; 6] {
+    pub fn all() -> [BindingId; 7] {
         [
             BindingId::KeyW,
             BindingId::KeyA,
@@ -109,6 +112,7 @@ impl BindingId {
             BindingId::KeyD,
             BindingId::KeyUp,
             BindingId::KeyDown,
+            BindingId::KeySprint,
         ]
     }
 
@@ -139,6 +143,7 @@ impl BindingId {
             BindingId::KeyD => SettingsField::KeyD,
             BindingId::KeyUp => SettingsField::KeyUp,
             BindingId::KeyDown => SettingsField::KeyDown,
+            BindingId::KeySprint => SettingsField::KeySprint,
         }
     }
 }

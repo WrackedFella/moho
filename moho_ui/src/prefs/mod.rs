@@ -345,6 +345,10 @@ impl Prefs {
             "key_down={}\n",
             parser::binding_to_string(&self.key_down)
         ));
+        out.push_str(&format!(
+            "key_sprint={}\n",
+            parser::binding_to_string(&self.key_sprint)
+        ));
         out.push_str(&format!("mouse_sensitivity={}\n", self.mouse_sensitivity));
         out.push_str(&format!(
             "input_filtering_enabled={}\n",

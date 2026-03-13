@@ -24,6 +24,7 @@ pub(super) enum SettingsField {
     KeyD,
     KeyUp,
     KeyDown,
+    KeySprint,
     MouseSensitivity,
     InputFiltering,
     AudioSoundEffect,
@@ -71,8 +72,7 @@ impl SettingsMenu {
     /// let menu = SettingsMenu::with_prefs(Prefs::default());
     ///
     /// // Or create with custom prefs for specific test scenarios
-    /// let mut custom_prefs = Prefs::default();
-    /// custom_prefs.mouse_sensitivity = 2.5;
+    /// let custom_prefs = Prefs::default().with_mouse_sensitivity(2.5);
     /// let menu = SettingsMenu::with_prefs(custom_prefs);
     /// ```
     ///
@@ -188,6 +188,7 @@ impl SettingsMenu {
             3 => SettingsField::KeyD,
             4 => SettingsField::KeyUp,
             5 => SettingsField::KeyDown,
+            6 => SettingsField::KeySprint,
             _ => return Binding::new(0, 0),
         };
         self.state.get_staged_binding(field)
@@ -305,7 +306,12 @@ mod tests {
 
     #[test]
     fn modifier_only_capture_applies() {
-        let mut menu = SettingsMenu::new();
+        // Use isolated prefs so the test is not affected by key_down=Ctrl on disk.
+        // key_down defaults to Ctrl (0x205) which would conflict with the Ctrl
+        // binding we're trying to capture for KeyW.
+        let mut prefs = crate::prefs::Prefs::default();
+        prefs.set_key_down(Binding::new('Z' as u32, 0));
+        let mut menu = SettingsMenu::with_prefs(prefs);
         menu.keybind_capture.start_listening(0);
 
         let staged_prefs = menu.state.staged().clone();
@@ -388,7 +394,11 @@ mod tests {
     #[test]
     fn egui_integration_modifier_capture() {
         let ctx = egui::Context::default();
-        let mut menu = SettingsMenu::new();
+        // Use isolated prefs so key_down=Ctrl (the default) does not conflict
+        // with the Ctrl modifier binding we are capturing for KeyW.
+        let mut prefs = crate::prefs::Prefs::default();
+        prefs.set_key_down(Binding::new('Z' as u32, 0));
+        let mut menu = SettingsMenu::with_prefs(prefs);
         menu.keybind_capture.start_listening(0);
 
         let mut raw = egui::RawInput::default();

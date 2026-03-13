@@ -475,7 +475,7 @@ mod tests {
             result
                 .messages
                 .iter()
-                .any(|m| m.contains("Spawning entity"))
+                .any(|m| m.contains("Spawning 123"))
         );
         assert_eq!(result.action, ConsoleAction::Spawn("123".to_string(), None));
     }

@@ -16,7 +16,7 @@ use crate::prefs::{Binding, Prefs};
 #[derive(Clone, Debug)]
 #[allow(dead_code)] // Methods will be used in subsequent refactoring increments
 pub struct BindingRegistry {
-    bindings: [(BindingId, Binding); 6],
+    bindings: [(BindingId, Binding); 7],
 }
 
 #[allow(dead_code)] // Methods will be used in subsequent refactoring increments
@@ -37,6 +37,7 @@ impl BindingRegistry {
                 (BindingId::KeyD, prefs.key_d()),
                 (BindingId::KeyUp, prefs.key_up()),
                 (BindingId::KeyDown, prefs.key_down()),
+                (BindingId::KeySprint, prefs.key_sprint()),
             ],
         }
     }
@@ -54,6 +55,7 @@ impl BindingRegistry {
                 BindingId::KeyD => prefs.set_key_d(*binding),
                 BindingId::KeyUp => prefs.set_key_up(*binding),
                 BindingId::KeyDown => prefs.set_key_down(*binding),
+                BindingId::KeySprint => prefs.set_key_sprint(*binding),
             }
         }
     }
@@ -224,7 +226,7 @@ mod tests {
         let registry = BindingRegistry::from_prefs(&prefs);
 
         let bindings: Vec<_> = registry.iter().collect();
-        assert_eq!(bindings.len(), 6);
+        assert_eq!(bindings.len(), 7);
 
         assert_eq!(bindings[0].0, BindingId::KeyW);
         assert_eq!(bindings[1].0, BindingId::KeyA);
@@ -232,5 +234,6 @@ mod tests {
         assert_eq!(bindings[3].0, BindingId::KeyD);
         assert_eq!(bindings[4].0, BindingId::KeyUp);
         assert_eq!(bindings[5].0, BindingId::KeyDown);
+        assert_eq!(bindings[6].0, BindingId::KeySprint);
     }
 }

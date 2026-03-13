@@ -140,6 +140,7 @@ impl SettingsState {
             SettingsField::KeyD => self.staged.key_d(),
             SettingsField::KeyUp => self.staged.key_up(),
             SettingsField::KeyDown => self.staged.key_down(),
+            SettingsField::KeySprint => self.staged.key_sprint(),
             _ => Binding::new(0, 0), // Non-binding fields return unbound
         }
     }
@@ -157,6 +158,7 @@ impl SettingsState {
             SettingsField::KeyD => self.staged.set_key_d(binding),
             SettingsField::KeyUp => self.staged.set_key_up(binding),
             SettingsField::KeyDown => self.staged.set_key_down(binding),
+            SettingsField::KeySprint => self.staged.set_key_sprint(binding),
             _ => {} // Non-binding fields are no-op
         }
         self.mark_dirty(field);
@@ -178,6 +180,7 @@ impl SettingsState {
             SettingsField::KeyD => self.prefs.key_d(),
             SettingsField::KeyUp => self.prefs.key_up(),
             SettingsField::KeyDown => self.prefs.key_down(),
+            SettingsField::KeySprint => self.prefs.key_sprint(),
             _ => Binding::new(0, 0),
         };
         staged != saved
