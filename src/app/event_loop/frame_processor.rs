@@ -51,12 +51,93 @@ impl FrameProcessor {
             ci.pitch_delta = pitch_delta;
         }
 
-        // Apply input via simulation wrapper and update camera from returned tuple
-        let (view, proj, eye) = app.simulation.apply_input(dt);
-        app.camera = (view, proj, eye);
+        // --- Physics KCC path ---
+        let use_physics = app
+            .physics_world
+            .as_ref()
+            .is_some_and(|pw| !pw.noclip && pw.character_body.is_some());
+
+        if use_physics {
+            self.update_game_state_physics(app, dt);
+        } else {
+            // Flying camera / noclip
+            let (view, proj, eye) = app.simulation.apply_input(dt);
+            app.camera = (view, proj, eye);
+        }
 
         // Clear zoom delta after use
         app.simulation.controller_input.zoom_delta = 0.0;
+    }
+
+    fn update_game_state_physics(&self, app: &mut App, dt: f32) {
+        const MOVE_SPEED: f32 = 4.0;
+        const SPRINT_SPEED: f32 = 6.0;
+        const JUMP_VELOCITY: f32 = 8.0;
+
+        // Capture movement intent before zeroing it
+        let forward_input = app.simulation.controller_input.forward;
+        let right_input = app.simulation.controller_input.right;
+        let sprint = app.simulation.controller_input.sprint;
+
+        // Zero translational input so apply_input only updates yaw/pitch and clock
+        {
+            let ci = app.simulation.controller_input_mut();
+            ci.forward = 0.0;
+            ci.right = 0.0;
+            ci.up = 0.0;
+        }
+        // apply_input updates yaw/pitch from deltas, advances the game clock, returns camera
+        app.simulation.apply_input(dt);
+
+        // Read the now-updated yaw/pitch for horizontal movement calculation
+        let (yaw, pitch) = app.simulation.yaw_pitch();
+
+        let speed = if sprint { SPRINT_SPEED } else { MOVE_SPEED };
+
+        // Build horizontal movement in world space from yaw + input
+        let sy = yaw.sin();
+        let cy = yaw.cos();
+        let fwd_world = glam::Vec3::new(sy, 0.0, cy);
+        let right_world = glam::Vec3::new(cy, 0.0, -sy);
+
+        let horizontal =
+            (fwd_world * forward_input + right_world * right_input).normalize_or_zero()
+                * speed
+                * dt;
+
+        // Physics character movement + jump
+        {
+            let pw = app.physics_world.as_mut().unwrap();
+            if app.jump_pressed && pw.is_grounded {
+                pw.vertical_velocity = JUMP_VELOCITY;
+            }
+            let new_pos = pw.move_character(horizontal, dt);
+            // Override simulation position with physics result
+            app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
+        }
+
+        // Rebuild camera from the updated simulation state
+        app.camera =
+            moho_core::controller::controller_to_camera(&app.simulation.player_controller);
+
+        // Step dynamic rigid bodies (test spheres, etc.)
+        let pw = app.physics_world.as_mut().unwrap();
+        pw.step(dt);
+
+        // Sync test sphere ECS transforms from physics
+        let body_positions: Vec<(legion::Entity, glam::Vec3)> = app
+            .test_physics_bodies
+            .iter()
+            .filter_map(|(handle, entity)| pw.body_position(*handle).map(|p| (*entity, p)))
+            .collect();
+
+        for (entity, pos) in body_positions {
+            if let Some(mut entry) = app.world.entry(entity) {
+                if let Ok(sphere) = entry.get_component_mut::<moho_core::actors::Sphere>() {
+                    sphere.center = pos;
+                }
+            }
+        }
     }
 
     /// Update light propagation system for the current frame

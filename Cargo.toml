@@ -9,7 +9,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["moho_core", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_sim", "moho_types"]
+members = ["moho_core", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_sim", "moho_types", "moho_physics"]
 
 [workspace.dependencies]
 bincode = "2.0"
@@ -30,6 +30,8 @@ serde_json = "1.0"
 thiserror = "1.0"
 wgpu = "27"
 winit = "0.30"
+moho_physics = { path = "moho_physics" }
+rapier3d = { version = "0.22", features = ["simd-stable"] }
 
 [dependencies]
 crossbeam-channel = { workspace = true }
@@ -68,6 +70,9 @@ path = "moho_sim"
 
 [dependencies.moho_types]
 path = "moho_types"
+
+[dependencies.moho_physics]
+workspace = true
 
 [dependencies.moho_ui]
 path = "moho_ui"

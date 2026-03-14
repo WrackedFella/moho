@@ -257,8 +257,16 @@ impl EventProcessor {
                 };
 
                 if let Some(chunk) = new_chunk {
+                    // Remove old collider for this chunk and re-add updated one
+                    if let Some(ref mut pw) = app.physics_world {
+                        if let Some(old_handle) = app.chunk_colliders.remove(&chunk_pos) {
+                            pw.remove_collider(old_handle);
+                        }
+                        let handle = pw.add_terrain_trimesh(chunk.vertices(), chunk.indices());
+                        app.chunk_colliders.insert(chunk_pos, handle);
+                    }
+
                     // Update or insert into ECS world
-                    // We need to find the entity with this chunk_pos
                     let mut query = <(legion::Entity, &VoxelChunk)>::query();
                     let entity = query
                         .iter(&app.world)
@@ -276,6 +284,29 @@ impl EventProcessor {
                         log::trace!("Created new mesh for chunk {:?}", chunk_pos);
                     }
                 }
+            }
+        }
+    }
+
+    /// Register colliders for all ECS chunks that don't yet have one.
+    pub fn sync_chunk_colliders(app: &mut App) {
+        if app.physics_world.is_none() {
+            return;
+        }
+
+        let mut query = <&VoxelChunk>::query();
+        // Collect chunk data first to avoid borrow conflicts
+        let chunks: Vec<(glam::IVec3, Vec<[f32; 3]>, Vec<u32>)> = query
+            .iter(&app.world)
+            .filter(|c| !app.chunk_colliders.contains_key(&c.chunk_pos()))
+            .map(|c| (c.chunk_pos(), c.vertices().to_vec(), c.indices().to_vec()))
+            .collect();
+
+        for (pos, vertices, indices) in chunks {
+            if let Some(ref mut pw) = app.physics_world {
+                let handle = pw.add_terrain_trimesh(&vertices, &indices);
+                app.chunk_colliders.insert(pos, handle);
+                log::debug!("Registered terrain collider for chunk {:?}", pos);
             }
         }
     }
@@ -455,7 +486,11 @@ impl EventProcessor {
             }
             DebugEvent::ToggleCollision { enabled } => {
                 log::info!("Collision toggled: {}", enabled);
-                // TODO: Implement collision toggle logic
+                // enabled=false means noclip ON (collision disabled)
+                if let Some(ref mut pw) = app.physics_world {
+                    pw.noclip = !enabled;
+                    log::info!("Noclip {}", if pw.noclip { "enabled" } else { "disabled" });
+                }
             }
             DebugEvent::SetShadowQuality { quality } => {
                 log::info!("Setting shadow quality to: {}", quality);

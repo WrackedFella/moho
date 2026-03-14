@@ -133,6 +133,12 @@ struct App {
 
     // Tracks gizmo spheres spawned alongside debug point lights (light_id -> entity)
     light_gizmos: std::collections::HashMap<u32, legion::Entity>,
+
+    // Physics
+    physics_world: Option<moho_physics::PhysicsWorld>,
+    chunk_colliders: std::collections::HashMap<glam::IVec3, moho_physics::ColliderHandle>,
+    test_physics_bodies: Vec<(moho_physics::RigidBodyHandle, legion::Entity)>,
+    jump_pressed: bool,
 }
 
 impl App {
@@ -203,6 +209,11 @@ impl App {
             last_frame: initialized.last_frame,
 
             light_gizmos: std::collections::HashMap::new(),
+
+            physics_world: Some(moho_physics::PhysicsWorld::new()),
+            chunk_colliders: std::collections::HashMap::new(),
+            test_physics_bodies: Vec::new(),
+            jump_pressed: false,
         }
     }
 
@@ -609,6 +620,10 @@ impl App {
             }
         }
 
+        // Initialize physics for loaded world (use a default spec for spawn height)
+        let loaded_spec = self.last_world_spec.clone().unwrap_or_default();
+        self.setup_physics_for_loaded_world(&loaded_spec);
+
         // Request a redraw to show the loaded scene
         if let Some(ref wr) = self.window_renderer {
             wr.window.request_redraw();
@@ -620,6 +635,41 @@ impl App {
 
         log::info!("Scene loading complete - switched to game mode");
         Ok(())
+    }
+
+    /// Initialize physics world after a scene is loaded.
+    fn setup_physics_for_loaded_world(&mut self, spec: &moho_core::scene_builders::WorldSpec) {
+        self.physics_world = Some(moho_physics::PhysicsWorld::new());
+        self.chunk_colliders.clear();
+        self.test_physics_bodies.clear();
+
+        crate::app::event_loop::EventProcessor::sync_chunk_colliders(self);
+
+        let center_x = (spec.size_xz / 2) as i32;
+        let center_z = (spec.size_xz / 2) as i32;
+        let terrain_y = self
+            .light_system
+            .as_ref()
+            .and_then(|ls| ls.grid().get_height(center_x, center_z))
+            .unwrap_or(10) as f32;
+
+        // Spawn character slightly above terrain
+        let spawn_pos = glam::Vec3::new(center_x as f32, terrain_y + 3.0, center_z as f32);
+        if let Some(ref mut pw) = self.physics_world {
+            pw.add_character(spawn_pos);
+        }
+
+        // Keep camera at saved position but align vertical for physics
+        let pos = self.simulation.position();
+        let (yaw, pitch) = self.simulation.yaw_pitch();
+        // Use saved XZ but snap Y to physics spawn to avoid clipping into terrain
+        let adjusted = glam::Vec3::new(pos.x, terrain_y + 3.0, pos.z);
+        self.simulation.set_position_yaw_pitch(adjusted, yaw, pitch);
+
+        log::info!(
+            "Physics initialized for loaded world: {} chunk colliders",
+            self.chunk_colliders.len()
+        );
     }
 
     /// Update controller input from keyboard state
@@ -676,6 +726,9 @@ impl App {
         self.simulation.controller_input.sprint = sprint;
         // Zoom is handled separately via mouse wheel input
         self.simulation.controller_input.zoom_delta = 0.0;
+
+        // Track jump key for physics KCC
+        self.jump_pressed = is_active(&self.prefs.key_jump());
     }
 
     /// Handle keyboard input for camera controls
