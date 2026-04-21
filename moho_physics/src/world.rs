@@ -50,14 +50,15 @@ impl PhysicsWorld {
         let ccd_solver = CCDSolver::new();
         let query_pipeline = QueryPipeline::new();
 
-        let mut character_controller = KinematicCharacterController::default();
-        // Step up small obstacles automatically
-        character_controller.autostep = Some(CharacterAutostep {
-            max_height: CharacterLength::Absolute(0.5),
-            min_width: CharacterLength::Absolute(0.2),
-            include_dynamic_bodies: false,
-        });
-        character_controller.snap_to_ground = Some(CharacterLength::Absolute(0.1));
+        let character_controller = KinematicCharacterController {
+            autostep: Some(CharacterAutostep {
+                max_height: CharacterLength::Absolute(0.5),
+                min_width: CharacterLength::Absolute(0.2),
+                include_dynamic_bodies: false,
+            }),
+            snap_to_ground: Some(CharacterLength::Absolute(0.1)),
+            ..Default::default()
+        };
 
         Self {
             gravity,
@@ -102,11 +103,12 @@ impl PhysicsWorld {
     }
 
     /// Build a static terrain trimesh collider from world-space vertices/indices.
-    pub fn add_terrain_trimesh(&mut self, vertices: &[[f32; 3]], indices: &[u32]) -> ColliderHandle {
-        let points: Vec<Point<Real>> = vertices
-            .iter()
-            .map(|v| point![v[0], v[1], v[2]])
-            .collect();
+    pub fn add_terrain_trimesh(
+        &mut self,
+        vertices: &[[f32; 3]],
+        indices: &[u32],
+    ) -> ColliderHandle {
+        let points: Vec<Point<Real>> = vertices.iter().map(|v| point![v[0], v[1], v[2]]).collect();
 
         let tris: Vec<[u32; 3]> = indices
             .chunks(3)
@@ -126,9 +128,7 @@ impl PhysicsWorld {
             return self.collider_set.insert(dummy);
         }
 
-        let collider = ColliderBuilder::trimesh(points, tris)
-            .friction(0.6)
-            .build();
+        let collider = ColliderBuilder::trimesh(points, tris).friction(0.6).build();
 
         self.collider_set.insert(collider)
     }
@@ -154,11 +154,9 @@ impl PhysicsWorld {
         let collider = ColliderBuilder::capsule_y(0.85, 0.3)
             .friction(0.0) // No friction on character capsule itself
             .build();
-        let collider_handle = self.collider_set.insert_with_parent(
-            collider,
-            body_handle,
-            &mut self.rigid_body_set,
-        );
+        let collider_handle =
+            self.collider_set
+                .insert_with_parent(collider, body_handle, &mut self.rigid_body_set);
 
         self.character_body = Some(body_handle);
         self.character_collider = Some(collider_handle);
@@ -235,11 +233,7 @@ impl PhysicsWorld {
     }
 
     /// Spawn a dynamic sphere rigid body. Returns the body handle.
-    pub fn add_dynamic_sphere(
-        &mut self,
-        position: Vec3,
-        radius: f32,
-    ) -> RigidBodyHandle {
+    pub fn add_dynamic_sphere(&mut self, position: Vec3, radius: f32) -> RigidBodyHandle {
         let body = RigidBodyBuilder::dynamic()
             .translation(vector![position.x, position.y, position.z])
             .build();
@@ -331,11 +325,7 @@ mod tests {
 
         let pos = world.body_position(sphere).unwrap();
         // Should rest near y=0.5 (radius)
-        assert!(
-            pos.y < 2.0,
-            "Sphere should rest on floor, y={}",
-            pos.y
-        );
+        assert!(pos.y < 2.0, "Sphere should rest on floor, y={}", pos.y);
     }
 
     #[test]

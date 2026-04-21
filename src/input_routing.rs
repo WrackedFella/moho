@@ -19,6 +19,7 @@ use winit::event::WindowEvent;
 ///
 /// Layers are ordered by priority - higher priority layers receive input first.
 /// Each layer represents a different input handling context (menus, console, game, etc.).
+#[allow(dead_code)] // TD-04: InputRouter not yet wired in; Modal unused until then
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum InputLayer {
@@ -42,6 +43,7 @@ impl InputLayer {
     /// Get the priority value for this layer.
     ///
     /// Higher numbers = higher priority = receives input first.
+    #[allow(dead_code)] // TD-04
     pub fn priority(self) -> u8 {
         self as u8
     }

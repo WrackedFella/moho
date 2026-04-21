@@ -499,17 +499,17 @@ impl App {
                 .as_ref()
                 .map_or_else(Vec::new, |wr| wr.renderer.all_lights_as_descs()),
         )?;
-        let mut spec = self
-            .last_world_spec
-            .clone()
-            .unwrap_or(moho_core::scene_builders::WorldSpec {
-                name: "autosave".to_string(),
-                seed: None,
-                size_xz: 64,
-                day_length_seconds: 600.0,
-                night_length_seconds: 420.0,
-                initial_time_of_day: 6.0,
-            });
+        let mut spec =
+            self.last_world_spec
+                .clone()
+                .unwrap_or(moho_core::scene_builders::WorldSpec {
+                    name: "autosave".to_string(),
+                    seed: None,
+                    size_xz: 64,
+                    day_length_seconds: 600.0,
+                    night_length_seconds: 420.0,
+                    initial_time_of_day: 6.0,
+                });
         // Persist the current time of day so Continue resumes at the right time.
         spec.initial_time_of_day = self.simulation.time_of_day();
         save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
@@ -545,8 +545,13 @@ impl App {
             log::info!("Loaded WorldSpec from save: {:?}", spec);
             // Restore time of day from the persisted WorldSpec.
             self.simulation.set_time_of_day(spec.initial_time_of_day);
-            let (camera_data, lights) = self.scene.load_from_bytes(&scene_bytes, &mut self.world)?;
-            log::info!("Scene loaded successfully from {:?}, {} lights", path.as_ref(), lights.len());
+            let (camera_data, lights) =
+                self.scene.load_from_bytes(&scene_bytes, &mut self.world)?;
+            log::info!(
+                "Scene loaded successfully from {:?}, {} lights",
+                path.as_ref(),
+                lights.len()
+            );
 
             // Re-add persisted lights to the renderer
             if let Some(ref mut wr) = self.window_renderer {
@@ -666,7 +671,8 @@ impl App {
 
         // Align the simulation Y to match physics spawn (avoids terrain clipping).
         let (yaw, pitch) = self.simulation.yaw_pitch();
-        self.simulation.set_position_yaw_pitch(spawn_pos, yaw, pitch);
+        self.simulation
+            .set_position_yaw_pitch(spawn_pos, yaw, pitch);
 
         log::info!(
             "Physics initialized for loaded world: {} chunk colliders",
@@ -754,12 +760,11 @@ impl App {
                 }
                 KeyCode::F3 => {
                     // F3 toggles the debug HUD overlay
-                    if pressed {
-                        if let Some(ui_adapter) = &self.ui_adapter {
-                            if let Ok(mut adapter) = ui_adapter.lock() {
-                                adapter.toggle_debug_hud();
-                            }
-                        }
+                    if pressed
+                        && let Some(ui_adapter) = &self.ui_adapter
+                        && let Ok(mut adapter) = ui_adapter.lock()
+                    {
+                        adapter.toggle_debug_hud();
                     }
                     return;
                 }
@@ -1018,9 +1023,9 @@ impl ApplicationHandler for App {
                 },
             ..
         } = &event
+            && self.game_state == crate::game_state::GameState::Playing
         {
-            if self.game_state == crate::game_state::GameState::Playing {
-                match self.simulation.camera_mode() {
+            match self.simulation.camera_mode() {
                     moho_core::controller::CameraMode::FirstPerson => {
                         // Switch to RTS first so look_at runs in Isometric mode,
                         // setting rts_look_target without touching FPS yaw/pitch.
@@ -1033,12 +1038,11 @@ impl ApplicationHandler for App {
                             .set_camera_mode(moho_core::controller::CameraMode::FirstPerson);
                     }
                 }
-                log::info!(
-                    "Switched to camera mode: {:?}",
-                    self.simulation.camera_mode()
-                );
-                return; // Don't dispatch Tab further
-            }
+            log::info!(
+                "Switched to camera mode: {:?}",
+                self.simulation.camera_mode()
+            );
+            return; // Don't dispatch Tab further
         }
 
         // Dispatch the event to registered subscribers (UI first). If consumed,

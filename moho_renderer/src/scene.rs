@@ -320,11 +320,19 @@ impl Scene {
 
         // Try decoding as v3 (includes lights). For v1/v2 saves this will fail
         // because the lights field doesn't exist in the binary data.
-        if let Ok((desc, _)) = bincode::decode_from_slice::<SceneDesc, _>(bytes, cfg) {
-            if desc.version >= 1 && desc.version <= SCENE_FILE_VERSION {
-                return Self::populate_world(desc.version, desc.spheres, desc.cubes,
-                    desc.voxel_chunks, desc.camera, desc.lights, world);
-            }
+        if let Ok((desc, _)) = bincode::decode_from_slice::<SceneDesc, _>(bytes, cfg)
+            && desc.version >= 1
+            && desc.version <= SCENE_FILE_VERSION
+        {
+            return Self::populate_world(
+                desc.version,
+                desc.spheres,
+                desc.cubes,
+                desc.voxel_chunks,
+                desc.camera,
+                desc.lights,
+                world,
+            );
         }
 
         // Fallback: try decoding as legacy v1/v2 (without lights field).
@@ -343,8 +351,15 @@ impl Scene {
             "Loaded legacy scene format (v{}) — spawned lights will not be restored",
             legacy.version
         );
-        Self::populate_world(legacy.version, legacy.spheres, legacy.cubes,
-            legacy.voxel_chunks, legacy.camera, vec![], world)
+        Self::populate_world(
+            legacy.version,
+            legacy.spheres,
+            legacy.cubes,
+            legacy.voxel_chunks,
+            legacy.camera,
+            vec![],
+            world,
+        )
     }
 
     /// Shared world-population logic used by both v3 and legacy load paths.
@@ -392,8 +407,8 @@ impl Scene {
             world.push((chunk,));
         }
 
-        let camera_data = camera
-            .map(|cam| (glam::Vec3::from_array(cam.position), cam.yaw, cam.pitch));
+        let camera_data =
+            camera.map(|cam| (glam::Vec3::from_array(cam.position), cam.yaw, cam.pitch));
 
         Ok((camera_data, lights))
     }
@@ -465,11 +480,24 @@ struct CameraDesc {
 
 #[derive(Encode, Decode, Serialize, Deserialize)]
 enum MaterialDesc {
-    Lambertian { albedo: [f32; 3] },
-    Metal { albedo: [f32; 3], fuzz: f32 },
-    Dielectric { ref_indx: f32 },
-    Emissive { color: [f32; 3], intensity: f32 },
-    VoxelTerrain { top_albedo: [f32; 3], side_albedo: [f32; 3] },
+    Lambertian {
+        albedo: [f32; 3],
+    },
+    Metal {
+        albedo: [f32; 3],
+        fuzz: f32,
+    },
+    Dielectric {
+        ref_indx: f32,
+    },
+    Emissive {
+        color: [f32; 3],
+        intensity: f32,
+    },
+    VoxelTerrain {
+        top_albedo: [f32; 3],
+        side_albedo: [f32; 3],
+    },
 }
 
 impl MaterialDesc {
@@ -487,16 +515,19 @@ impl MaterialDesc {
                     ref_indx: *ref_indx,
                 }
             }
-            moho_core::materials::MaterialType::Emissive { color, intensity } => MaterialDesc::Emissive {
-                color: [color.x, color.y, color.z],
-                intensity: *intensity,
-            },
-            moho_core::materials::MaterialType::VoxelTerrain { top_albedo, side_albedo } => {
-                MaterialDesc::VoxelTerrain {
-                    top_albedo: [top_albedo.x, top_albedo.y, top_albedo.z],
-                    side_albedo: [side_albedo.x, side_albedo.y, side_albedo.z],
+            moho_core::materials::MaterialType::Emissive { color, intensity } => {
+                MaterialDesc::Emissive {
+                    color: [color.x, color.y, color.z],
+                    intensity: *intensity,
                 }
             }
+            moho_core::materials::MaterialType::VoxelTerrain {
+                top_albedo,
+                side_albedo,
+            } => MaterialDesc::VoxelTerrain {
+                top_albedo: [top_albedo.x, top_albedo.y, top_albedo.z],
+                side_albedo: [side_albedo.x, side_albedo.y, side_albedo.z],
+            },
         }
     }
 
@@ -512,16 +543,19 @@ impl MaterialDesc {
             MaterialDesc::Dielectric { ref_indx } => {
                 moho_core::materials::MaterialType::Dielectric { ref_indx }
             }
-            MaterialDesc::Emissive { color, intensity } => moho_core::materials::MaterialType::Emissive {
-                color: glam::Vec3::new(color[0], color[1], color[2]),
-                intensity,
-            },
-            MaterialDesc::VoxelTerrain { top_albedo, side_albedo } => {
-                moho_core::materials::MaterialType::VoxelTerrain {
-                    top_albedo: glam::Vec3::new(top_albedo[0], top_albedo[1], top_albedo[2]),
-                    side_albedo: glam::Vec3::new(side_albedo[0], side_albedo[1], side_albedo[2]),
+            MaterialDesc::Emissive { color, intensity } => {
+                moho_core::materials::MaterialType::Emissive {
+                    color: glam::Vec3::new(color[0], color[1], color[2]),
+                    intensity,
                 }
             }
+            MaterialDesc::VoxelTerrain {
+                top_albedo,
+                side_albedo,
+            } => moho_core::materials::MaterialType::VoxelTerrain {
+                top_albedo: glam::Vec3::new(top_albedo[0], top_albedo[1], top_albedo[2]),
+                side_albedo: glam::Vec3::new(side_albedo[0], side_albedo[1], side_albedo[2]),
+            },
         }
     }
 }

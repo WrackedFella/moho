@@ -135,11 +135,7 @@ impl GenerationProcessor {
     }
 
     /// Set up physics world after a world is loaded or generated.
-    fn setup_physics_for_world(
-        &self,
-        app: &mut App,
-        spec: &moho_core::scene_builders::WorldSpec,
-    ) {
+    fn setup_physics_for_world(&self, app: &mut App, spec: &moho_core::scene_builders::WorldSpec) {
         // Reset physics world and collider tracking
         app.physics_world = Some(moho_physics::PhysicsWorld::new());
         app.chunk_colliders.clear();
@@ -177,11 +173,10 @@ impl GenerationProcessor {
                 center_z as f32 + (i * 2) as f32,
             );
 
-            let body_handle = if let Some(ref mut pw) = app.physics_world {
-                Some(pw.add_dynamic_sphere(sphere_pos, 0.5))
-            } else {
-                None
-            };
+            let body_handle = app
+                .physics_world
+                .as_mut()
+                .map(|pw| pw.add_dynamic_sphere(sphere_pos, 0.5));
 
             if let Some(handle) = body_handle {
                 use moho_core::actors::Sphere;

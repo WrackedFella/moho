@@ -222,6 +222,19 @@ pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig
     grid
 }
 
+/// Deterministic positional hash for use during terrain generation.
+/// Produces a value in [0.0, 1.0) that depends only on position and seed —
+/// no entropy-seeded RNG, so generation is a pure function of its inputs.
+fn pos_hash(x: i32, y: i32, z: i32, seed: u32) -> f32 {
+    let mut h = seed as u64;
+    h ^= (x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    h ^= (y as u64).wrapping_mul(0x6c62_272e_07bb_0142);
+    h ^= (z as u64).wrapping_mul(0x5177_2d3d_ec2c_0b05);
+    h = h.wrapping_mul(0x94d0_49bb_1331_11eb);
+    h ^= h >> 31;
+    (h & 0x00ff_ffff) as f32 / 0x0100_0000 as f32
+}
+
 /// Generate terrain blocks based on noise
 fn generate_terrain(grid: &mut VoxelGrid, config: &TerrainConfig) {
     let noise = Perlin::new(config.seed);
@@ -239,7 +252,7 @@ fn generate_terrain(grid: &mut VoxelGrid, config: &TerrainConfig) {
             for y in 0..=height {
                 let pos = BlockPos::new(x, y, z);
                 let material_id = determine_material_id(height, y);
-                let resource_id = determine_resource_id(height, y);
+                let resource_id = determine_resource_id(height, y, x, z, config.seed);
 
                 let mut block = VoxelBlock::new(pos, material_id);
                 block.resource_id = resource_id;
@@ -296,16 +309,10 @@ fn determine_material_id(column_height: i32, y: i32) -> u32 {
 }
 
 /// Determine resource ID based on depth (optional resources)
-fn determine_resource_id(column_height: i32, y: i32) -> Option<u32> {
-    // Distribute resources based on depth
-    // 10% chance of iron ore in mid-levels
-    if y > 5 && y < column_height - 3 {
-        let mut rng_local = rng();
-        if rng_local.random::<f32>() < 0.1 {
-            Some(1) // Iron ore resource ID
-        } else {
-            None
-        }
+fn determine_resource_id(column_height: i32, y: i32, x: i32, z: i32, seed: u32) -> Option<u32> {
+    // 10% chance of iron ore in mid-levels, determined by positional hash
+    if y > 5 && y < column_height - 3 && pos_hash(x, y, z, seed) < 0.1 {
+        Some(1) // Iron ore resource ID
     } else {
         None
     }
@@ -343,4 +350,46 @@ fn grid_to_chunks(grid: &VoxelGrid) -> Vec<VoxelChunk> {
 
     log::info!("Generated {} non-empty chunks", chunks.len());
     chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn generate_grid(seed: u32) -> VoxelGrid {
+        let config = TerrainConfig {
+            seed,
+            world_size: 32, // small enough to run quickly
+            ..TerrainConfig::default()
+        };
+        let mut grid = VoxelGrid::new(16);
+        generate_terrain(&mut grid, &config);
+        grid
+    }
+
+    fn collect_blocks(grid: &VoxelGrid) -> Vec<(BlockPos, u32, Option<u32>)> {
+        let mut blocks: Vec<_> = grid
+            .block_positions()
+            .map(|p| {
+                let b = grid.get_block(p).unwrap();
+                (*p, b.material_id, b.resource_id)
+            })
+            .collect();
+        blocks.sort_by_key(|(p, _, _)| (p.x, p.y, p.z));
+        blocks
+    }
+
+    #[test]
+    fn same_seed_produces_same_grid() {
+        let a = collect_blocks(&generate_grid(42));
+        let b = collect_blocks(&generate_grid(42));
+        assert_eq!(a, b, "same seed must produce identical terrain");
+    }
+
+    #[test]
+    fn different_seeds_produce_different_grids() {
+        let a = collect_blocks(&generate_grid(42));
+        let b = collect_blocks(&generate_grid(43));
+        assert_ne!(a, b, "different seeds must produce different terrain");
+    }
 }
