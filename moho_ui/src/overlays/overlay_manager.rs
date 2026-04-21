@@ -93,11 +93,7 @@ impl std::fmt::Debug for OverlayManager {
             .field("overlay_count", &self.overlays.len())
             .field(
                 "overlay_names",
-                &self
-                    .overlays
-                    .iter()
-                    .map(|o| o.name())
-                    .collect::<Vec<_>>(),
+                &self.overlays.iter().map(|o| o.name()).collect::<Vec<_>>(),
             )
             .finish()
     }

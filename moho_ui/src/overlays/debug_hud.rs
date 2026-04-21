@@ -91,9 +91,7 @@ impl Overlay for DebugHud {
                     ui.label(
                         egui::RichText::new(format!(
                             "Chunk: ({}, {}, {})",
-                            data.chunk_position[0],
-                            data.chunk_position[1],
-                            data.chunk_position[2],
+                            data.chunk_position[0], data.chunk_position[1], data.chunk_position[2],
                         ))
                         .font(mono.clone())
                         .color(color),

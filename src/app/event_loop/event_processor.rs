@@ -101,7 +101,11 @@ impl EventProcessor {
                 // Settings are already saved by the UI adapter
                 // Here we could reload/apply them if needed
             }
-            UiEvent::WindowSettingsChanged { mode, width, height } => {
+            UiEvent::WindowSettingsChanged {
+                mode,
+                width,
+                height,
+            } => {
                 log::info!("Window settings changed: {:?} {}x{}", mode, width, height);
                 if let Some(ref wr) = app.window_renderer {
                     use moho_core::events::WindowMode;
@@ -114,7 +118,9 @@ impl EventProcessor {
                         }
                         WindowMode::Windowed => {
                             wr.window.set_fullscreen(None);
-                            let _ = wr.window.request_inner_size(PhysicalSize::new(width, height));
+                            let _ = wr
+                                .window
+                                .request_inner_size(PhysicalSize::new(width, height));
                         }
                     }
                 }

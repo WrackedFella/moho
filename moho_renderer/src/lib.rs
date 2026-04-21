@@ -22,7 +22,7 @@ pub type Material = MaterialGpu;
 mod materials;
 pub use materials::MaterialTable;
 mod scene;
-pub use scene::{Scene, LightDesc};
+pub use scene::{LightDesc, Scene};
 mod gpu_types;
 pub use gpu_types::{
     CameraGpu, CascadedShadowMatrixGpu, LightingGpu, MAX_SHADOW_LIGHTS, MaterialGpu,

@@ -65,8 +65,7 @@ pub use screens::{
 };
 
 pub use overlays::{
-    Console, ConsoleAction, DebugHud, FpsHud, GameplayHud, HudData, Overlay, OverlayManager,
-    RtsHud,
+    Console, ConsoleAction, DebugHud, FpsHud, GameplayHud, HudData, Overlay, OverlayManager, RtsHud,
 };
 
 pub use modal::{Modal, ModalManager, ModalResult};

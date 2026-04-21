@@ -25,10 +25,8 @@ impl FormControls {
     /// # Returns
     /// The egui Response for the button widget
     pub fn menu_button(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
-        let btn = egui::Button::new(
-            egui::RichText::new(label).size(15.0),
-        )
-        .min_size(egui::vec2(160.0, 36.0));
+        let btn = egui::Button::new(egui::RichText::new(label).size(15.0))
+            .min_size(egui::vec2(160.0, 36.0));
 
         let resp = ui.add_enabled(enabled, btn);
 

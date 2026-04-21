@@ -108,10 +108,10 @@ impl FrameProcessor {
         let fwd_world = glam::Vec3::new(sy, 0.0, cy);
         let right_world = glam::Vec3::new(-cy, 0.0, sy);
 
-        let horizontal =
-            (fwd_world * forward_input + right_world * right_input).normalize_or_zero()
-                * speed
-                * dt;
+        let horizontal = (fwd_world * forward_input + right_world * right_input)
+            .normalize_or_zero()
+            * speed
+            * dt;
 
         // Physics character movement + jump
         {
@@ -125,8 +125,7 @@ impl FrameProcessor {
         }
 
         // Rebuild camera from the updated simulation state
-        app.camera =
-            moho_core::controller::controller_to_camera(&app.simulation.player_controller);
+        app.camera = moho_core::controller::controller_to_camera(&app.simulation.player_controller);
 
         // Step dynamic rigid bodies and sync ECS transforms
         self.step_physics_bodies(app, dt);

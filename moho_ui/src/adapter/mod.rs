@@ -298,8 +298,7 @@ impl FrameCallback for EguiAdapter {
         UI_OVERLAY_VISIBLE.store(self.ui_state.visible, Ordering::SeqCst);
 
         // Render when menus are visible OR during any gameplay state (for overlays)
-        let needs_render = self.ui_state.visible
-            || self.current_game_state != GameState::Menu;
+        let needs_render = self.ui_state.visible || self.current_game_state != GameState::Menu;
         if !needs_render {
             return;
         }

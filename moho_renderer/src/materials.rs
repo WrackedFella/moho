@@ -48,12 +48,23 @@ impl MaterialKey {
                 ref_idx_bits: 0,
                 extra_bits: [0; 3],
             },
-            moho_core::materials::MaterialType::VoxelTerrain { top_albedo, side_albedo } => MaterialKey {
+            moho_core::materials::MaterialType::VoxelTerrain {
+                top_albedo,
+                side_albedo,
+            } => MaterialKey {
                 variant: 4,
-                albedo_bits: [top_albedo.x.to_bits(), top_albedo.y.to_bits(), top_albedo.z.to_bits()],
+                albedo_bits: [
+                    top_albedo.x.to_bits(),
+                    top_albedo.y.to_bits(),
+                    top_albedo.z.to_bits(),
+                ],
                 fuzz_bits: 0,
                 ref_idx_bits: 0,
-                extra_bits: [side_albedo.x.to_bits(), side_albedo.y.to_bits(), side_albedo.z.to_bits()],
+                extra_bits: [
+                    side_albedo.x.to_bits(),
+                    side_albedo.y.to_bits(),
+                    side_albedo.z.to_bits(),
+                ],
             },
         }
     }
@@ -118,7 +129,10 @@ impl MaterialTable {
                 albedo: [color.x, color.y, color.z, 0.0],
                 params: [0.0, 0.0, 0.0, *intensity],
             },
-            moho_core::materials::MaterialType::VoxelTerrain { top_albedo, side_albedo } => MaterialGpu {
+            moho_core::materials::MaterialType::VoxelTerrain {
+                top_albedo,
+                side_albedo,
+            } => MaterialGpu {
                 // For terrain (object_type == 0) the fragment shader selects
                 // albedo.xyz (top) or params.xyz (side) based on face normal.
                 albedo: [top_albedo.x, top_albedo.y, top_albedo.z, 0.0],
