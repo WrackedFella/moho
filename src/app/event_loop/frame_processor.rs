@@ -51,25 +51,32 @@ impl FrameProcessor {
             ci.pitch_delta = pitch_delta;
         }
 
-        // --- Physics KCC path ---
-        let use_physics = app
-            .physics_world
-            .as_ref()
-            .is_some_and(|pw| !pw.noclip && pw.character_body.is_some());
+        // --- Physics KCC path (FPS only) ---
+        let is_fps = app.simulation.camera_mode() == moho_core::controller::CameraMode::FirstPerson;
+        let use_kcc = is_fps
+            && app
+                .physics_world
+                .as_ref()
+                .is_some_and(|pw| !pw.noclip && pw.character_body.is_some());
 
-        if use_physics {
-            self.update_game_state_physics(app, dt);
+        if use_kcc {
+            self.update_game_state_fps_kcc(app, dt);
         } else {
-            // Flying camera / noclip
+            // Flying camera / noclip / RTS
             let (view, proj, eye) = app.simulation.apply_input(dt);
             app.camera = (view, proj, eye);
+        }
+
+        // Step rigid bodies in both KCC and non-KCC paths (test spheres, etc.)
+        if !use_kcc {
+            self.step_physics_bodies(app, dt);
         }
 
         // Clear zoom delta after use
         app.simulation.controller_input.zoom_delta = 0.0;
     }
 
-    fn update_game_state_physics(&self, app: &mut App, dt: f32) {
+    fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
         const MOVE_SPEED: f32 = 4.0;
         const SPRINT_SPEED: f32 = 6.0;
         const JUMP_VELOCITY: f32 = 8.0;
@@ -94,11 +101,12 @@ impl FrameProcessor {
 
         let speed = if sprint { SPRINT_SPEED } else { MOVE_SPEED };
 
-        // Build horizontal movement in world space from yaw + input
+        // Build horizontal movement in world space from yaw + input.
+        // Right vector matches controller.rs convention: (-cos(yaw), 0, sin(yaw))
         let sy = yaw.sin();
         let cy = yaw.cos();
         let fwd_world = glam::Vec3::new(sy, 0.0, cy);
-        let right_world = glam::Vec3::new(cy, 0.0, -sy);
+        let right_world = glam::Vec3::new(-cy, 0.0, sy);
 
         let horizontal =
             (fwd_world * forward_input + right_world * right_input).normalize_or_zero()
@@ -120,8 +128,17 @@ impl FrameProcessor {
         app.camera =
             moho_core::controller::controller_to_camera(&app.simulation.player_controller);
 
-        // Step dynamic rigid bodies (test spheres, etc.)
-        let pw = app.physics_world.as_mut().unwrap();
+        // Step dynamic rigid bodies and sync ECS transforms
+        self.step_physics_bodies(app, dt);
+    }
+
+    /// Step dynamic rigid bodies and sync their positions into ECS components.
+    /// Called from both the KCC path and the non-KCC path so test spheres move in all modes.
+    fn step_physics_bodies(&self, app: &mut App, dt: f32) {
+        let pw = match app.physics_world.as_mut() {
+            Some(pw) => pw,
+            None => return,
+        };
         pw.step(dt);
 
         // Sync test sphere ECS transforms from physics
@@ -135,6 +152,8 @@ impl FrameProcessor {
             if let Some(mut entry) = app.world.entry(entity) {
                 if let Ok(sphere) = entry.get_component_mut::<moho_core::actors::Sphere>() {
                     sphere.center = pos;
+                } else if let Ok(cube) = entry.get_component_mut::<moho_core::actors::Cube>() {
+                    cube.center = pos;
                 }
             }
         }

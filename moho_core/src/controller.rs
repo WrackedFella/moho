@@ -38,12 +38,16 @@ pub struct ControllerInput {
 /// A minimal first-person player controller stored as a component.
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerController {
+    /// FPS pawn world position. Frozen while in Isometric mode.
     pub position: Vec3,
     pub yaw: f32,
     pub pitch: f32,
     pub speed: f32,
     pub camera_mode: CameraMode,
     pub rts_height: f32,
+    /// RTS camera look-at target. Panned independently from `position`.
+    /// Re-centered on `position` each time the player enters Isometric mode.
+    pub rts_look_target: Vec3,
 }
 
 impl PlayerController {
@@ -55,6 +59,28 @@ impl PlayerController {
             speed: DEFAULT_MOVE_SPEED,
             camera_mode: CameraMode::FirstPerson,
             rts_height: RTS_DEFAULT_HEIGHT,
+            rts_look_target: position,
+        }
+    }
+
+    /// Point the camera toward `target`.
+    /// - FirstPerson: recomputes yaw and pitch to face target from current position.
+    /// - Isometric: sets rts_look_target so the RTS camera centers on target.
+    pub fn look_at(&mut self, target: Vec3) {
+        match self.camera_mode {
+            CameraMode::FirstPerson => {
+                let delta = target - self.position;
+                self.yaw = delta.x.atan2(delta.z);
+                let len = delta.length();
+                self.pitch = if len > f32::EPSILON {
+                    (delta.y / len).asin().clamp(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD)
+                } else {
+                    0.0
+                };
+            }
+            CameraMode::Isometric => {
+                self.rts_look_target = target;
+            }
         }
     }
 
@@ -104,8 +130,7 @@ impl PlayerController {
                 self.rts_height = (self.rts_height - input.zoom_delta * 2.0)
                     .clamp(RTS_MIN_HEIGHT, RTS_MAX_HEIGHT);
 
-                // Movement is relative to camera view
-                // Camera is at offset relative to position, looking down
+                // Movement pans rts_look_target (FPS pawn position stays frozen)
                 let camera_offset = ISOMETRIC_CAMERA_OFFSET;
                 let to_camera = camera_offset.normalize_or_zero();
 
@@ -121,7 +146,7 @@ impl PlayerController {
                 // No up/down movement in isometric mode
 
                 if dir.length_squared() > 0.0 {
-                    self.position += dir.normalize_or_zero() * self.speed * dt;
+                    self.rts_look_target += dir.normalize_or_zero() * self.speed * dt;
                 }
             }
         }
@@ -157,8 +182,8 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
             // Camera distance scales with height for consistent zoom feel
             let height_ratio = pc.rts_height / RTS_DEFAULT_HEIGHT;
             let camera_offset = ISOMETRIC_CAMERA_OFFSET * height_ratio;
-            let eye = pc.position + camera_offset;
-            let center = pc.position;
+            let eye = pc.rts_look_target + camera_offset;
+            let center = pc.rts_look_target;
             let up = Vec3::Y;
             let view = Mat4::look_at_rh(eye, center, up);
             let proj = Mat4::perspective_rh(

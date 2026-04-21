@@ -255,6 +255,29 @@ impl PhysicsWorld {
         body_handle
     }
 
+    /// Add a dynamic box rigid body at `position` with given half-extents.
+    pub fn add_dynamic_cuboid(
+        &mut self,
+        position: Vec3,
+        half_x: f32,
+        half_y: f32,
+        half_z: f32,
+    ) -> RigidBodyHandle {
+        let body = RigidBodyBuilder::dynamic()
+            .translation(vector![position.x, position.y, position.z])
+            .build();
+        let body_handle = self.rigid_body_set.insert(body);
+
+        let collider = ColliderBuilder::cuboid(half_x, half_y, half_z)
+            .restitution(0.3)
+            .friction(0.7)
+            .build();
+        self.collider_set
+            .insert_with_parent(collider, body_handle, &mut self.rigid_body_set);
+
+        body_handle
+    }
+
     /// Get a dynamic rigid body's current translation.
     pub fn body_position(&self, handle: RigidBodyHandle) -> Option<Vec3> {
         let body = self.rigid_body_set.get(handle)?;

@@ -455,7 +455,12 @@ impl EventProcessor {
                                     albedo: glam::Vec3::new(0.8, 0.2, 0.2),
                                 },
                             );
-                            app.world.push((cube,));
+                            let entity = app.world.push((cube,));
+                            // Register with physics (half-extents = 0.5 for a 1×1×1 cube)
+                            if let Some(pw) = app.physics_world.as_mut() {
+                                let handle = pw.add_dynamic_cuboid(spawn_pos, 0.5, 0.5, 0.5);
+                                app.test_physics_bodies.push((handle, entity));
+                            }
                             log::info!("Spawned cube at {:?}", spawn_pos);
                         }
                         "sphere" => {
@@ -471,7 +476,12 @@ impl EventProcessor {
                                     fuzz: 0.1,
                                 },
                             );
-                            app.world.push((sphere,));
+                            let entity = app.world.push((sphere,));
+                            // Register with physics
+                            if let Some(pw) = app.physics_world.as_mut() {
+                                let handle = pw.add_dynamic_sphere(spawn_pos, 0.5);
+                                app.test_physics_bodies.push((handle, entity));
+                            }
                             log::info!("Spawned sphere at {:?}", spawn_pos);
                         }
                         _ => {

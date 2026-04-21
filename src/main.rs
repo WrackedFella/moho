@@ -1018,15 +1018,19 @@ impl ApplicationHandler for App {
         } = &event
         {
             if self.game_state == crate::game_state::GameState::Playing {
-                let new_mode = match self.simulation.camera_mode() {
+                match self.simulation.camera_mode() {
                     moho_core::controller::CameraMode::FirstPerson => {
-                        moho_core::controller::CameraMode::Isometric
+                        // Switch to RTS first so look_at runs in Isometric mode,
+                        // setting rts_look_target without touching FPS yaw/pitch.
+                        self.simulation
+                            .set_camera_mode(moho_core::controller::CameraMode::Isometric);
+                        self.simulation.look_at(self.simulation.position());
                     }
                     moho_core::controller::CameraMode::Isometric => {
-                        moho_core::controller::CameraMode::FirstPerson
+                        self.simulation
+                            .set_camera_mode(moho_core::controller::CameraMode::FirstPerson);
                     }
-                };
-                self.simulation.set_camera_mode(new_mode);
+                }
                 log::info!(
                     "Switched to camera mode: {:?}",
                     self.simulation.camera_mode()

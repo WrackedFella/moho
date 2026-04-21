@@ -6,7 +6,7 @@ use moho_core::game_clock::GameClock;
 use serde::{Deserialize, Serialize};
 
 const SNAP_MAGIC: &[u8; 4] = b"MOHO";
-const SNAP_VERSION: u16 = 1;
+const SNAP_VERSION: u16 = 2;
 
 #[derive(Serialize, Deserialize, Encode, Decode)]
 struct SimulationSnapshot {
@@ -23,6 +23,8 @@ struct SimulationSnapshot {
     pitch_delta: f32,
     // game clock state
     game_clock: GameClock,
+    // RTS camera look-at target (panned independently from FPS pawn position)
+    rts_target: (f32, f32, f32),
 }
 
 impl From<&SimulationController> for SimulationSnapshot {
@@ -32,6 +34,7 @@ impl From<&SimulationController> for SimulationSnapshot {
             CameraMode::FirstPerson => 0u8,
             CameraMode::Isometric => 1u8,
         };
+        let rts = s.player_controller.rts_look_target;
         SimulationSnapshot {
             pos: (p.x, p.y, p.z),
             yaw: s.player_controller.yaw,
@@ -43,6 +46,7 @@ impl From<&SimulationController> for SimulationSnapshot {
             yaw_delta: s.controller_input.yaw_delta,
             pitch_delta: s.controller_input.pitch_delta,
             game_clock: s.game_clock.clone(),
+            rts_target: (rts.x, rts.y, rts.z),
         }
     }
 }
@@ -54,6 +58,7 @@ impl TryFrom<SimulationSnapshot> for SimulationController {
         let mut pc = PlayerController::new(pos);
         pc.yaw = ss.yaw;
         pc.pitch = ss.pitch;
+        pc.rts_look_target = Vec3::new(ss.rts_target.0, ss.rts_target.1, ss.rts_target.2);
         pc.camera_mode = match ss.camera_mode {
             0 => CameraMode::FirstPerson,
             1 => CameraMode::Isometric,
@@ -232,5 +237,12 @@ impl SimulationController {
     /// Set time of day directly (for debugging/testing)
     pub fn set_time_of_day(&mut self, time: f32) {
         self.game_clock.set_time(time);
+    }
+
+    /// Point the camera toward `target`.
+    /// - FPS mode: recomputes yaw/pitch to face target from current position
+    /// - Isometric mode: sets rts_look_target so the RTS camera centers on target
+    pub fn look_at(&mut self, target: Vec3) {
+        self.player_controller.look_at(target);
     }
 }
