@@ -91,7 +91,12 @@ pub struct ProgressState {
     pub canceled: bool,
 }
 
-// EguiAdapter needs to be Send + Sync for use with Arc<Mutex<>> across threads
+// SAFETY: EguiAdapter is always accessed under Arc<Mutex<EguiAdapter>>, so
+// only one thread holds &mut EguiAdapter at a time. The non-Send/Sync field is
+// `dyn Modal` (inside UiStateManager), which is heap-allocated screen state that
+// is created, used, and dropped on the main thread. No EguiAdapter field is ever
+// accessed concurrently — the Mutex provides the needed exclusion.
+// This impl is required because `dyn Modal` lacks a `Send` bound.
 unsafe impl Send for EguiAdapter {}
 unsafe impl Sync for EguiAdapter {}
 

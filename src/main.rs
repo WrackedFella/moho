@@ -221,8 +221,12 @@ impl App {
         &mut self,
         window: Arc<Window>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Create renderer - leak the Arc to get a 'static reference
-        // This is acceptable for a main application window that lives for the program duration
+        // SAFETY: The renderer requires a &'static Window because Box<dyn RendererBackend>
+        // is implicitly 'static. We clone the Arc<Window> before leaking it, so the Arc
+        // refcount keeps the Window alive independently of `window`. This is a deliberate
+        // one-time leak for the main window, which lives for the entire program lifetime.
+        // If winit ever allows window recreation (e.g. fullscreen toggle) this should be
+        // replaced by giving RendererBackend a lifetime parameter (TD-09 / TD-06).
         let window_ref: &'static Window = Box::leak(Box::new(window.clone()));
         let mut renderer = moho_renderer::create_renderer(Some(window_ref))?;
 

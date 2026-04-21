@@ -60,7 +60,11 @@ pub fn execute_render_pass(
         occlusion_query_set: None,
     });
 
-    // Use unsafe transmute to satisfy egui_wgpu lifetime requirements
+    // SAFETY: `egui_wgpu::Renderer::render` takes `&mut RenderPass<'static>` even though
+    // it never stores the reference beyond the call. The render pass borrows `encoder` and
+    // `view` which both outlive this function call. The transmute only erases the borrow
+    // lifetime on the stack-local `render_pass`; the actual wgpu objects it points to
+    // remain valid for the duration of `renderer.render(...)`.
     let render_pass_static: &mut wgpu::RenderPass<'static> =
         unsafe { std::mem::transmute(&mut render_pass) };
     renderer.render(render_pass_static, clipped_primitives, screen_descriptor);
