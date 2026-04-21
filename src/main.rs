@@ -446,9 +446,14 @@ impl App {
                         return;
                     }
                     let save_path = saves_dir.join("scene.bin");
-                    if let Err(e) =
-                        save::write_scene_with_metadata(&save_path, &scene_bytes, &spec_for_thread)
-                    {
+                    let block_records: Vec<save::BlockRecord> =
+                        grid.iter_blocks().map(save::BlockRecord::from_block).collect();
+                    if let Err(e) = save::write_scene_with_metadata(
+                        &save_path,
+                        &scene_bytes,
+                        &spec_for_thread,
+                        &block_records,
+                    ) {
                         let _ = sender.send(GenerationMsg::Failed(format!("write failed: {}", e)));
                         return;
                     }
@@ -512,11 +517,17 @@ impl App {
                 });
         // Persist the current time of day so Continue resumes at the right time.
         spec.initial_time_of_day = self.simulation.time_of_day();
-        save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
+        let block_records: Vec<save::BlockRecord> = self
+            .light_system
+            .as_ref()
+            .map(|ls| ls.grid().iter_blocks().map(save::BlockRecord::from_block).collect())
+            .unwrap_or_default();
+        save::write_scene_with_metadata(&save_path, &scene_bytes, &spec, &block_records)?;
         log::info!(
-            "Auto-saved scene (envelope) to {:?} (spec={:?})",
+            "Auto-saved scene (envelope) to {:?} (spec={:?}, {} blocks)",
             save_path,
-            spec.name
+            spec.name,
+            block_records.len()
         );
 
         Ok(())
@@ -538,7 +549,7 @@ impl App {
 
         // Load the scene from file with metadata support
         {
-            let (spec, scene_bytes) = save::read_scene_and_metadata(&path)?;
+            let (spec, scene_bytes, block_records) = save::read_scene_and_metadata(&path)?;
             // Remember the WorldSpec from the loaded file so autosaves and
             // subsequent writes preserve the original metadata.
             self.last_world_spec = Some(spec.clone());
@@ -567,45 +578,28 @@ impl App {
                 }
             }
 
-            // Reconstruct VoxelGrid from loaded chunks for the LightSystem
-            // Note: This assumes the loaded scene contains VoxelChunk components
-            // We create a new grid and populate it from the chunks
-            // Use the world size from the spec, or default to 128 if not available
-            let _grid_size = spec.size_xz / 16; // Convert blocks to chunks (assuming 16 chunk size)
-            let grid = moho_core::voxel::VoxelGrid::new(16); // Default chunk size 16
-
-            // Iterate over all chunks in the world and populate the grid
-            // We need to query for VoxelChunk components
-            use legion::IntoQuery;
-            let mut query = <&moho_core::voxel::VoxelChunk>::query();
-
-            log::info!("Reconstructing VoxelGrid from loaded chunks...");
-            let mut chunk_count = 0;
-            for _chunk in query.iter(&self.world) {
-                // We need to clone the chunk data into the grid
-                // VoxelGrid stores VoxelBlock data, but VoxelChunk stores mesh data
-                // This is a problem: VoxelChunk doesn't store the raw block data in a way
-                // that's easy to put back into VoxelGrid without the original VoxelBlock data.
-                //
-                // Wait, VoxelChunk is for rendering. It contains vertices/indices.
-                // It does NOT contain the raw VoxelBlock data needed for logic/physics/light propagation.
-                //
-                // CRITICAL ISSUE: The save system currently only saves the renderable scene (VoxelChunk),
-                // not the logical voxel grid (VoxelGrid).
-                //
-                // For now, we can't reconstruct the grid from VoxelChunks because they are meshes.
-                // We need to change the save system to save the VoxelGrid data.
-                //
-                // Temporary workaround: Create a new empty grid so the LightSystem doesn't crash,
-                // but light propagation won't work correctly on loaded saves until we fix the save format.
-                chunk_count += 1;
+            // Reconstruct VoxelGrid from persisted block records, then initialize LightSystem.
+            let mut grid = moho_core::voxel::VoxelGrid::new(16);
+            if block_records.is_empty() {
+                // KNOWN LIMITATION: v1 saves do not contain block data. Light propagation
+                // will be inactive until the world is regenerated and saved in v2 format.
+                log::warn!(
+                    "Save file contains no block data (v1 format). \
+                     Light propagation disabled for this session. \
+                     Regenerate the world to fix permanently."
+                );
+            } else {
+                for record in &block_records {
+                    let pos = moho_core::voxel::BlockPos::new(record.x, record.y, record.z);
+                    let mut block = moho_core::voxel::VoxelBlock::new(pos, record.material_id);
+                    block.resource_id = record.resource_id;
+                    grid.set_block(pos, block);
+                }
+                log::info!(
+                    "Reconstructed VoxelGrid with {} blocks for LightSystem",
+                    block_records.len()
+                );
             }
-            log::info!(
-                "Found {} chunks, but cannot reconstruct VoxelGrid from meshes. Light propagation will be limited.",
-                chunk_count
-            );
-
-            // Initialize LightSystem with the (unfortunately empty) grid
             self.light_system = Some(moho_core::voxel::LightSystem::with_default_budget(
                 grid,
                 self.event_bus.clone(),
