@@ -73,85 +73,100 @@ impl Console {
         // Clear the just_opened flag after first frame
         self.just_opened = false;
 
-        // Create a custom frame with semi-transparent background
-        // Note: This transparency pattern can be reused for other overlays
+        // Render the console as a Foreground-order Area so it always paints on top
+        // of HUD elements (which use the default Middle order).
+        const CONSOLE_HEIGHT: f32 = 300.0;
+        const CONSOLE_MARGIN: f32 = 8.0;
+        let screen_rect = ctx.input(|i| i.viewport_rect());
+        let y_pos = screen_rect.max.y - CONSOLE_HEIGHT;
+
         let frame = egui::Frame::new()
             .fill(egui::Color32::from_rgba_premultiplied(20, 20, 30, 180))
-            .inner_margin(egui::Margin::same(8));
+            .inner_margin(egui::Margin::same(CONSOLE_MARGIN as _));
 
-        // Console panel at bottom of screen
-        egui::TopBottomPanel::bottom("console_panel")
-            .resizable(false)
-            .exact_height(300.0)
-            .frame(frame)
+        egui::Area::new("console_panel".into())
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::pos2(screen_rect.min.x, y_pos))
             .show(ctx, |ui| {
-                // Use vertical layout with bottom-to-top ordering
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                    // Bottom padding to prevent input from being cut off
-                    ui.add_space(4.0);
+                frame.show(ui, |ui| {
+                    let inner_height = CONSOLE_HEIGHT - CONSOLE_MARGIN * 2.0;
+                    ui.set_min_width(screen_rect.width() - CONSOLE_MARGIN * 2.0);
+                    ui.set_height(inner_height);
 
-                    // Input field (rendered first, appears at bottom)
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(">")
-                                .family(egui::FontFamily::Monospace)
-                                .strong(),
-                        );
+                    // Use vertical layout with bottom-to-top ordering
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                        // Bottom padding to prevent input from being cut off
+                        ui.add_space(4.0);
 
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut self.input_buffer)
-                                .font(egui::FontId::monospace(14.0))
-                                .desired_width(f32::INFINITY),
-                        );
+                        // Input field (rendered first, appears at bottom)
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(">")
+                                    .family(egui::FontFamily::Monospace)
+                                    .strong(),
+                            );
 
-                        // Auto-focus input on first frame
-                        if self.focus_input {
-                            response.request_focus();
-                            self.focus_input = false;
-                        }
+                            let response = ui.add(
+                                egui::TextEdit::singleline(&mut self.input_buffer)
+                                    .font(egui::FontId::monospace(14.0))
+                                    .desired_width(f32::INFINITY),
+                            );
 
-                        // Handle enter key
-                        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            action = self.execute_command();
-                            self.focus_input = true; // Re-focus for next command
-                        }
-
-                        // Handle history navigation
-                        if response.has_focus() {
-                            if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-                                if let Some(cmd) = self.output.navigate_up() {
-                                    self.input_buffer = cmd;
-                                }
-                            } else if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-                                match self.output.navigate_down() {
-                                    Some(cmd) => self.input_buffer = cmd,
-                                    None => self.input_buffer.clear(),
-                                }
+                            // Auto-focus input on first frame
+                            if self.focus_input {
+                                response.request_focus();
+                                self.focus_input = false;
                             }
-                        }
-                    });
 
-                    ui.add_space(4.0);
-                    ui.separator();
-                    ui.add_space(8.0);
+                            // Handle enter key
+                            if response.lost_focus()
+                                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            {
+                                action = self.execute_command();
+                                self.focus_input = true; // Re-focus for next command
+                            }
 
-                    // Output area (scrollable) - rendered last, appears at top
-                    egui::ScrollArea::vertical()
-                        .stick_to_bottom(true)
-                        .max_height(250.0)
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 2.0);
-
-                            // Use full available width for output
-                            ui.set_width(ui.available_width());
-
-                            for line in self.output.lines() {
-                                ui.label(
-                                    egui::RichText::new(line).family(egui::FontFamily::Monospace),
-                                );
+                            // Handle history navigation
+                            if response.has_focus() {
+                                if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                                    if let Some(cmd) = self.output.navigate_up() {
+                                        self.input_buffer = cmd;
+                                    }
+                                } else if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                                    match self.output.navigate_down() {
+                                        Some(cmd) => self.input_buffer = cmd,
+                                        None => self.input_buffer.clear(),
+                                    }
+                                }
                             }
                         });
+
+                        ui.add_space(4.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+
+                        // Output area (scrollable) - rendered last, appears at top
+                        egui::ScrollArea::vertical()
+                            .stick_to_bottom(true)
+                            .max_height(inner_height - 50.0)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                // Force top-down layout for the log lines so newest are at the bottom
+                                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                                    ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 2.0);
+
+                                    // Use full available width for output
+                                    ui.set_width(ui.available_width());
+
+                                    for line in self.output.lines() {
+                                        ui.label(
+                                            egui::RichText::new(line)
+                                                .family(egui::FontFamily::Monospace),
+                                        );
+                                    }
+                                });
+                            });
+                    });
                 });
             });
 

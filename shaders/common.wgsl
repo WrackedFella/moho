@@ -105,8 +105,10 @@ struct InstanceIn {
 }
 
 struct Material {
-    albedo: vec4<f32>, // .xyz = albedo, .w unused
-    params: vec4<f32>, // params.x = fuzz, params.y = ref_idx
+    albedo: vec4<f32>, // .xyz = albedo or top-face color, .w unused
+    // .xyz = side-face color (VoxelTerrain only), else [fuzz, ref_idx, is_transparent]
+    // .w   = emissive intensity (> 0 → bypass lighting)
+    params: vec4<f32>,
 }
 
 struct VsOut {
@@ -118,4 +120,5 @@ struct VsOut {
     @location(4) ao: f32,
     @location(5) @interpolate(flat) geometry_type: u32,
     @location(6) light_level: f32,
+    @location(7) @interpolate(flat) object_type: u32,
 }

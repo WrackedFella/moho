@@ -45,24 +45,28 @@ fn hit_test_helper_press_release_and_release_only() {
         rect: Some(rect_from_min_max(8.0, 8.0, 128.0, 40.0)),
         enabled: true,
         clicked: false,
+        hovered: false,
     };
     let neww = MenuItem {
         action: MenuAction::NewWorld,
         rect: Some(rect_from_min_max(8.0, 48.0, 128.0, 80.0)),
         enabled: true,
         clicked: false,
+        hovered: false,
     };
     let set = MenuItem {
         action: MenuAction::ShowMenu("settings".to_string()),
         rect: Some(rect_from_min_max(8.0, 88.0, 128.0, 120.0)),
         enabled: true,
         clicked: false,
+        hovered: false,
     };
     let exit = MenuItem {
         action: MenuAction::Exit,
         rect: Some(rect_from_min_max(8.0, 128.0, 128.0, 160.0)),
         enabled: true,
         clicked: false,
+        hovered: false,
     };
     let items = vec![cont, neww, set, exit];
 

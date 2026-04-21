@@ -4,12 +4,12 @@ use glam::{Mat4, Vec3, Vec4};
 
 use crate::gpu_types::{DynamicLightsGpu, MAX_DYNAMIC_LIGHTS, PointLightGpu};
 
-/// Light type enumeration
+/// Dynamic light shape (point vs directional spot)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LightType {
+pub enum LightShape {
     /// Omnidirectional point light
     Point,
-    /// Directional spotlight (future - not yet implemented)
+    /// Directional spotlight (future — not yet implemented)
     Spot,
 }
 
@@ -18,8 +18,8 @@ pub enum LightType {
 pub struct Light {
     /// Unique identifier for this light
     pub id: u32,
-    /// Light type (point or spot)
-    pub light_type: LightType,
+    /// Light shape (point or spot)
+    pub light_shape: LightShape,
     /// World position
     pub position: Vec3,
     /// Light color (RGB)
@@ -48,7 +48,7 @@ impl Light {
 
         Self {
             id,
-            light_type: LightType::Point,
+            light_shape: LightShape::Point,
             position,
             color,
             intensity,
@@ -73,35 +73,27 @@ impl Light {
         }
     }
 
-    /// Check if light is within camera frustum (simple sphere test)
-    /// Returns true if the light's bounding sphere intersects the frustum
+    /// Check if the light's bounding sphere intersects the camera frustum.
+    ///
+    /// Uses Gribb-Hartmann frustum plane extraction: if the sphere is
+    /// entirely behind any of the 6 frustum planes, the light is culled.
     pub fn is_in_frustum(&self, view_proj: &Mat4) -> bool {
-        // Transform light position to clip space
-        let clip_pos =
-            *view_proj * Vec4::new(self.position.x, self.position.y, self.position.z, 1.0);
+        let planes = extract_frustum_planes(view_proj);
+        let pos = Vec4::new(self.position.x, self.position.y, self.position.z, 1.0);
 
-        // Perspective divide
-        let w = clip_pos.w;
-        if w.abs() < 0.001 {
-            return false; // Behind camera
+        for plane in &planes {
+            // Signed distance from light center to plane
+            let dist = plane.dot(pos);
+            if dist < -self.range {
+                return false; // Entirely outside this half-space
+            }
         }
-        let ndc = Vec3::new(clip_pos.x / w, clip_pos.y / w, clip_pos.z / w);
-
-        // Check if light sphere intersects NDC cube [-1, 1]³
-        // Simplified test: if light center is within extended bounds (accounting for range)
-        // A proper frustum test would check all 6 planes, but this is sufficient for now
-        let margin = self.range * 0.1; // Convert range to NDC-space margin (approximate)
-
-        ndc.x >= -1.0 - margin
-            && ndc.x <= 1.0 + margin
-            && ndc.y >= -1.0 - margin
-            && ndc.y <= 1.0 + margin
-            && ndc.z >= 0.0 - margin
-            && ndc.z <= 1.0 + margin
+        true
     }
 }
 
 /// Light manager handles collections of dynamic lights
+#[derive(Debug)]
 pub struct LightManager {
     /// All registered lights
     lights: Vec<Light>,
@@ -226,7 +218,10 @@ impl LightManager {
     pub fn total_light_count(&self) -> usize {
         self.lights.len()
     }
-
+    /// Get all registered lights (regardless of culling state).
+    pub fn all_lights(&self) -> &[Light] {
+        &self.lights
+    }
     /// Mark as dirty (forces GPU update next frame)
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
@@ -237,4 +232,37 @@ impl Default for LightManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Extract the 6 frustum planes from a view-projection matrix (Gribb-Hartmann method).
+///
+/// Each returned `Vec4` encodes a plane `(A, B, C, D)` such that
+/// `Ax + By + Cz + D >= 0` for points inside the frustum.
+/// The planes are normalized so that `(A,B,C).length() == 1`,
+/// making `plane.dot(point)` the signed distance from the plane.
+fn extract_frustum_planes(vp: &Mat4) -> [Vec4; 6] {
+    let row = |i: usize| Vec4::new(vp.col(0)[i], vp.col(1)[i], vp.col(2)[i], vp.col(3)[i]);
+
+    let r0 = row(0);
+    let r1 = row(1);
+    let r2 = row(2);
+    let r3 = row(3);
+
+    let mut planes = [
+        r3 + r0, // Left
+        r3 - r0, // Right
+        r3 + r1, // Bottom
+        r3 - r1, // Top
+        r3 + r2, // Near  (wgpu uses depth [0,1] but adding works for both)
+        r3 - r2, // Far
+    ];
+
+    for p in &mut planes {
+        let len = Vec3::new(p.x, p.y, p.z).length();
+        if len > 1e-8 {
+            *p /= len;
+        }
+    }
+
+    planes
 }

@@ -123,6 +123,22 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
             }
         }
 
+        // Sprint
+        {
+            let is_dirty = menu.state.is_binding_modified(SettingsField::KeySprint);
+            let binding = menu.state.get_staged_binding(SettingsField::KeySprint);
+            let clicked = FormControls::keybind_control(
+                ui,
+                "Sprint:",
+                &binding_label(&binding),
+                is_dirty,
+                menu.is_listening_for(6),
+                label_width,
+            );
+            if clicked {
+                menu.start_listening(6);
+            }
+        }
         ui.add_space(8.0);
 
         // Mouse Sensitivity
@@ -135,9 +151,9 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 },
             );
 
-            let saved_sensitivity = menu.state.prefs().mouse_sensitivity;
+            let saved_sensitivity = menu.state.prefs().mouse_sensitivity();
             let is_dirty =
-                (menu.state.staged().mouse_sensitivity - saved_sensitivity).abs() > f32::EPSILON;
+                (menu.state.staged().mouse_sensitivity() - saved_sensitivity).abs() > f32::EPSILON;
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Slider matching keybind button width (120px)
@@ -148,7 +164,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                         ui.spacing_mut().slider_width = 120.0;
                         let slider = ui.add(
                             egui::Slider::new(
-                                &mut menu.state.staged_mut().mouse_sensitivity,
+                                menu.state.staged_mut().mouse_sensitivity_mut(),
                                 0.01..=10.0,
                             )
                             .show_value(false)
@@ -161,7 +177,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 ui.add_space(8.0);
                 // Drag value input
                 let drag = ui.add(
-                    egui::DragValue::new(&mut menu.state.staged_mut().mouse_sensitivity)
+                    egui::DragValue::new(menu.state.staged_mut().mouse_sensitivity_mut())
                         .range(0.01..=10.0)
                         .speed(0.1)
                         .min_decimals(2)
@@ -179,8 +195,8 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
 
         // Input Filtering
         {
-            let saved_filtering = menu.state.prefs().input_filtering_enabled;
-            let is_dirty = menu.state.staged().input_filtering_enabled != saved_filtering;
+            let saved_filtering = menu.state.prefs().input_filtering_enabled();
+            let is_dirty = menu.state.staged().input_filtering_enabled() != saved_filtering;
 
             ui.horizontal(|ui| {
                 ui.allocate_ui_with_layout(
@@ -192,7 +208,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let checkbox = ui.checkbox(
-                        &mut menu.state.staged_mut().input_filtering_enabled,
+                        menu.state.staged_mut().input_filtering_enabled_mut(),
                         "Enable",
                     );
                     SettingsMenu::paint_dirty_decor(ui, &checkbox, is_dirty);

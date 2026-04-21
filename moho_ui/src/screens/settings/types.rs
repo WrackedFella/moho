@@ -4,13 +4,14 @@ pub enum SettingsTab {
     #[default]
     Controls,
     Audio,
+    Video,
 }
 
 impl SettingsTab {
     /// Convert a tab index to a SettingsTab variant.
     ///
     /// # Arguments
-    /// * `index` - Zero-based tab index (0 = Controls, 1 = Audio)
+    /// * `index` - Zero-based tab index (0 = Controls, 1 = Audio, 2 = Video)
     ///
     /// # Returns
     /// The corresponding SettingsTab, defaulting to Controls if index is out of range
@@ -18,6 +19,7 @@ impl SettingsTab {
         match index {
             0 => SettingsTab::Controls,
             1 => SettingsTab::Audio,
+            2 => SettingsTab::Video,
             _ => SettingsTab::Controls, // Default fallback
         }
     }
@@ -30,12 +32,13 @@ impl SettingsTab {
         match self {
             SettingsTab::Controls => 0,
             SettingsTab::Audio => 1,
+            SettingsTab::Video => 2,
         }
     }
 
     /// Get all available tabs in display order.
     pub fn all_tabs() -> &'static [&'static str] {
-        &["Controls", "Audio"]
+        &["Controls", "Audio", "Video"]
     }
 }
 
@@ -51,6 +54,7 @@ pub enum BindingId {
     KeyD = 3,
     KeyUp = 4,
     KeyDown = 5,
+    KeySprint = 6,
 }
 
 impl BindingId {
@@ -77,6 +81,7 @@ impl BindingId {
             3 => Some(BindingId::KeyD),
             4 => Some(BindingId::KeyUp),
             5 => Some(BindingId::KeyDown),
+            6 => Some(BindingId::KeySprint),
             _ => None,
         }
     }
@@ -93,6 +98,7 @@ impl BindingId {
             BindingId::KeyD => "Move Right",
             BindingId::KeyUp => "Move Up",
             BindingId::KeyDown => "Move Down",
+            BindingId::KeySprint => "Sprint",
         }
     }
 
@@ -101,7 +107,7 @@ impl BindingId {
     /// # Returns
     /// Array of all BindingId variants in numeric order.
     #[allow(dead_code)] // Will be used in future refactoring increments
-    pub fn all() -> [BindingId; 6] {
+    pub fn all() -> [BindingId; 7] {
         [
             BindingId::KeyW,
             BindingId::KeyA,
@@ -109,6 +115,7 @@ impl BindingId {
             BindingId::KeyD,
             BindingId::KeyUp,
             BindingId::KeyDown,
+            BindingId::KeySprint,
         ]
     }
 
@@ -139,6 +146,7 @@ impl BindingId {
             BindingId::KeyD => SettingsField::KeyD,
             BindingId::KeyUp => SettingsField::KeyUp,
             BindingId::KeyDown => SettingsField::KeyDown,
+            BindingId::KeySprint => SettingsField::KeySprint,
         }
     }
 }

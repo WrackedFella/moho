@@ -1,0 +1,10 @@
+[package]
+name = "moho_physics"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+moho_core = { path = "../moho_core" }
+rapier3d = { workspace = true }
+glam = { workspace = true }
+log = { workspace = true }

@@ -134,12 +134,13 @@ impl SettingsState {
     /// The current staged binding for the specified field
     pub fn get_staged_binding(&self, field: SettingsField) -> Binding {
         match field {
-            SettingsField::KeyW => self.staged.key_w,
-            SettingsField::KeyA => self.staged.key_a,
-            SettingsField::KeyS => self.staged.key_s,
-            SettingsField::KeyD => self.staged.key_d,
-            SettingsField::KeyUp => self.staged.key_up,
-            SettingsField::KeyDown => self.staged.key_down,
+            SettingsField::KeyW => self.staged.key_w(),
+            SettingsField::KeyA => self.staged.key_a(),
+            SettingsField::KeyS => self.staged.key_s(),
+            SettingsField::KeyD => self.staged.key_d(),
+            SettingsField::KeyUp => self.staged.key_up(),
+            SettingsField::KeyDown => self.staged.key_down(),
+            SettingsField::KeySprint => self.staged.key_sprint(),
             _ => Binding::new(0, 0), // Non-binding fields return unbound
         }
     }
@@ -151,12 +152,13 @@ impl SettingsState {
     /// * `binding` - The new binding value
     pub fn set_staged_binding(&mut self, field: SettingsField, binding: Binding) {
         match field {
-            SettingsField::KeyW => self.staged.key_w = binding,
-            SettingsField::KeyA => self.staged.key_a = binding,
-            SettingsField::KeyS => self.staged.key_s = binding,
-            SettingsField::KeyD => self.staged.key_d = binding,
-            SettingsField::KeyUp => self.staged.key_up = binding,
-            SettingsField::KeyDown => self.staged.key_down = binding,
+            SettingsField::KeyW => self.staged.set_key_w(binding),
+            SettingsField::KeyA => self.staged.set_key_a(binding),
+            SettingsField::KeyS => self.staged.set_key_s(binding),
+            SettingsField::KeyD => self.staged.set_key_d(binding),
+            SettingsField::KeyUp => self.staged.set_key_up(binding),
+            SettingsField::KeyDown => self.staged.set_key_down(binding),
+            SettingsField::KeySprint => self.staged.set_key_sprint(binding),
             _ => {} // Non-binding fields are no-op
         }
         self.mark_dirty(field);
@@ -172,12 +174,13 @@ impl SettingsState {
     pub fn is_binding_modified(&self, field: SettingsField) -> bool {
         let staged = self.get_staged_binding(field);
         let saved = match field {
-            SettingsField::KeyW => self.prefs.key_w,
-            SettingsField::KeyA => self.prefs.key_a,
-            SettingsField::KeyS => self.prefs.key_s,
-            SettingsField::KeyD => self.prefs.key_d,
-            SettingsField::KeyUp => self.prefs.key_up,
-            SettingsField::KeyDown => self.prefs.key_down,
+            SettingsField::KeyW => self.prefs.key_w(),
+            SettingsField::KeyA => self.prefs.key_a(),
+            SettingsField::KeyS => self.prefs.key_s(),
+            SettingsField::KeyD => self.prefs.key_d(),
+            SettingsField::KeyUp => self.prefs.key_up(),
+            SettingsField::KeyDown => self.prefs.key_down(),
+            SettingsField::KeySprint => self.prefs.key_sprint(),
             _ => Binding::new(0, 0),
         };
         staged != saved
@@ -216,7 +219,7 @@ mod tests {
         let mut state = SettingsState::new();
 
         // Modify staged prefs
-        state.staged_mut().key_w = Binding::new('Q' as u32, 0);
+        state.staged_mut().set_key_w(Binding::new('Q' as u32, 0));
         state.mark_dirty(SettingsField::KeyW);
 
         assert!(state.is_dirty());
@@ -225,7 +228,7 @@ mod tests {
         state.revert_changes();
 
         assert!(!state.is_dirty());
-        assert_eq!(state.staged().key_w, state.prefs().key_w);
+        assert_eq!(state.staged().key_w(), state.prefs().key_w());
     }
 
     #[test]
@@ -233,7 +236,7 @@ mod tests {
         let mut state = SettingsState::new();
 
         // Modify staged prefs
-        state.staged_mut().key_w = Binding::new('Q' as u32, 0);
+        state.staged_mut().set_key_w(Binding::new('Q' as u32, 0));
         state.mark_dirty(SettingsField::KeyW);
 
         assert!(state.is_dirty());
@@ -243,7 +246,7 @@ mod tests {
         assert!(result.is_ok());
 
         assert!(!state.is_dirty());
-        assert_eq!(state.prefs().key_w, state.staged().key_w);
+        assert_eq!(state.prefs().key_w(), state.staged().key_w());
     }
 
     #[test]
@@ -255,7 +258,7 @@ mod tests {
 
         assert!(state.is_dirty());
         assert!(state.is_field_dirty(SettingsField::KeyW));
-        assert_eq!(state.staged().key_w, new_binding);
+        assert_eq!(state.staged().key_w(), new_binding);
     }
 
     #[test]
@@ -286,16 +289,13 @@ mod tests {
 
     #[test]
     fn from_prefs_creates_clean_state() {
-        let prefs = Prefs {
-            key_w: Binding::new('Q' as u32, 0),
-            ..Default::default()
-        };
+        let prefs = Prefs::default().with_key_w(Binding::new('Q' as u32, 0));
 
         let state = SettingsState::from_prefs(prefs.clone());
 
         assert!(!state.is_dirty());
-        assert_eq!(state.prefs().key_w, prefs.key_w);
-        assert_eq!(state.staged().key_w, prefs.key_w);
+        assert_eq!(state.prefs().key_w(), prefs.key_w());
+        assert_eq!(state.staged().key_w(), prefs.key_w());
     }
 
     #[test]

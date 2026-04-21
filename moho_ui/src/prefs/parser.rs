@@ -1,7 +1,10 @@
 //! INI parsing and binding serialization for preferences.
 //!
-//! This module handles parsing human-readable binding strings (e.g., "Ctrl+W", "ArrowUp")
+//! This module handles parsing human-readable binding strings (e.g., "Ctrl", "ArrowUp")
 //! into Binding structs and serializing them back to strings for INI files.
+//!
+//! Modifier keys (Ctrl, Shift, Alt) are treated as regular key bindings — they
+//! produce a key code like any other key, not a modifier bitfield.
 //!
 //! Uses PHF (perfect hash functions) for O(1) key name lookups during parsing.
 
@@ -11,9 +14,9 @@ use super::key_names::parse_key_name;
 /// Parse a human-readable binding string into a Binding struct.
 ///
 /// Supports formats like:
-/// - "Ctrl+W" - Key with modifiers
 /// - "ArrowUp" - Special keys
-/// - "Shift" - Modifier-only bindings
+/// - "Ctrl" - Modifier keys (treated as regular key codes)
+/// - "Shift" - Modifier keys (treated as regular key codes)
 /// - "Unbound" - No binding (0, 0)
 /// - "W" - Single character keys
 ///
@@ -26,9 +29,9 @@ use super::key_names::parse_key_name;
 ///
 /// # Examples
 /// ```ignore
-/// let binding = parse_binding("Ctrl+W", Binding::default());
-/// assert_eq!(binding.code, 'W' as u32);
-/// assert_eq!(binding.mods, 1); // Ctrl bit
+/// let binding = parse_binding("Ctrl", Binding::default());
+/// assert_eq!(binding.code, 0x205);
+/// assert_eq!(binding.mods, 0);
 /// ```
 pub fn parse_binding(s: &str, fallback: Binding) -> Binding {
     let s = s.trim();
@@ -39,41 +42,12 @@ pub fn parse_binding(s: &str, fallback: Binding) -> Binding {
         return Binding::new(0, 0);
     }
 
-    let mut mods: u8 = 0;
-    let parts: Vec<&str> = s.split('+').map(|p| p.trim()).collect();
-    let mut key_part = "";
-
-    for p in &parts {
-        let up = p.to_ascii_uppercase();
-        match up.as_str() {
-            "CTRL" | "CONTROL" => {
-                mods |= 1;
-                continue;
-            }
-            "SHIFT" => {
-                mods |= 2;
-                continue;
-            }
-            "ALT" => {
-                mods |= 4;
-                continue;
-            }
-            _ => {
-                key_part = p.trim();
-            }
-        }
+    let code = parse_key_name(s, 0);
+    if code != 0 {
+        return Binding::new(code, 0);
     }
 
-    // If only modifiers (no key part), return modifier-only binding
-    if key_part.is_empty() {
-        if mods != 0 {
-            return Binding::new(0, mods);
-        }
-        return fallback;
-    }
-
-    let code = parse_key_name(key_part, fallback.code);
-    Binding::new(code, mods)
+    fallback
 }
 
 /// Convert a Binding to a human-readable string for INI serialization.
@@ -82,81 +56,45 @@ pub fn parse_binding(s: &str, fallback: Binding) -> Binding {
 /// * `binding` - The binding to convert
 ///
 /// # Returns
-/// A human-readable string like "Ctrl+W" or "ArrowUp"
+/// A human-readable string like "Ctrl" or "ArrowUp"
 ///
 /// # Examples
 /// ```ignore
-/// let binding = Binding::new('W' as u32, 1); // Ctrl+W
-/// assert_eq!(binding_to_string(&binding), "Ctrl+W");
+/// let binding = Binding::new(0x205, 0); // Ctrl
+/// assert_eq!(binding_to_string(&binding), "Ctrl");
 /// ```
 pub fn binding_to_string(binding: &Binding) -> String {
     if binding.code == 0 && binding.mods == 0 {
         return "Unbound".to_string();
     }
 
-    let mut s = String::new();
-
-    // If only modifiers are set (no key code), show just the modifier
-    if binding.code == 0 {
-        if binding.mods & 1 != 0 {
-            s.push_str("Ctrl");
-        }
-        if binding.mods & 2 != 0 {
-            if !s.is_empty() {
-                s.push('+');
-            }
-            s.push_str("Shift");
-        }
-        if binding.mods & 4 != 0 {
-            if !s.is_empty() {
-                s.push('+');
-            }
-            s.push_str("Alt");
-        }
-        return s;
-    }
-
-    // Add modifiers prefix
-    if binding.mods & 1 != 0 {
-        s.push_str("Ctrl+");
-    }
-    if binding.mods & 2 != 0 {
-        s.push_str("Shift+");
-    }
-    if binding.mods & 4 != 0 {
-        s.push_str("Alt+");
-    }
-
     // Handle Space specially
     if binding.code == ' ' as u32 {
-        s.push_str("Spacebar");
-        return s;
+        return "Spacebar".to_string();
     }
 
     // Handle regular ASCII characters
     if let Some(ch) = std::char::from_u32(binding.code)
         && ch.is_ascii_graphic()
     {
-        s.push(ch.to_ascii_uppercase());
-        return s;
+        return ch.to_ascii_uppercase().to_string();
     }
 
-    // Handle special keys
+    // Handle special keys (including modifier keys as key codes)
     match binding.code {
-        0x100 => s.push_str("ArrowUp"),
-        0x101 => s.push_str("ArrowDown"),
-        0x102 => s.push_str("ArrowLeft"),
-        0x103 => s.push_str("ArrowRight"),
-        0x200 => s.push_str("Escape"),
-        0x201 => s.push_str("Tab"),
-        0x202 => s.push_str("Backspace"),
-        0x203 => s.push_str("Enter"),
-        0x204 => s.push_str("Shift"),
-        0x205 => s.push_str("Ctrl"),
-        0x206 => s.push_str("Alt"),
-        _ => s.push_str("Unknown"),
+        0x100 => "ArrowUp".to_string(),
+        0x101 => "ArrowDown".to_string(),
+        0x102 => "ArrowLeft".to_string(),
+        0x103 => "ArrowRight".to_string(),
+        0x200 => "Escape".to_string(),
+        0x201 => "Tab".to_string(),
+        0x202 => "Backspace".to_string(),
+        0x203 => "Enter".to_string(),
+        0x204 => "Shift".to_string(),
+        0x205 => "Ctrl".to_string(),
+        0x206 => "Alt".to_string(),
+        _ => "Unknown".to_string(),
     }
-    s
 }
 
 #[cfg(test)]
@@ -172,35 +110,20 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_ctrl_key() {
+    fn test_parse_modifier_as_key() {
         let fallback = Binding::default();
-        let binding = parse_binding("Ctrl+W", fallback);
-        assert_eq!(binding.code, 'W' as u32);
-        assert_eq!(binding.mods, 1);
-    }
 
-    #[test]
-    fn test_parse_shift_key() {
-        let fallback = Binding::default();
-        let binding = parse_binding("Shift+A", fallback);
-        assert_eq!(binding.code, 'A' as u32);
-        assert_eq!(binding.mods, 2);
-    }
+        let ctrl = parse_binding("Ctrl", fallback);
+        assert_eq!(ctrl.code, 0x205);
+        assert_eq!(ctrl.mods, 0);
 
-    #[test]
-    fn test_parse_alt_key() {
-        let fallback = Binding::default();
-        let binding = parse_binding("Alt+D", fallback);
-        assert_eq!(binding.code, 'D' as u32);
-        assert_eq!(binding.mods, 4);
-    }
+        let shift = parse_binding("Shift", fallback);
+        assert_eq!(shift.code, 0x204);
+        assert_eq!(shift.mods, 0);
 
-    #[test]
-    fn test_parse_multiple_modifiers() {
-        let fallback = Binding::default();
-        let binding = parse_binding("Ctrl+Shift+W", fallback);
-        assert_eq!(binding.code, 'W' as u32);
-        assert_eq!(binding.mods, 3); // Ctrl (1) + Shift (2)
+        let alt = parse_binding("Alt", fallback);
+        assert_eq!(alt.code, 0x206);
+        assert_eq!(alt.mods, 0);
     }
 
     #[test]
@@ -221,14 +144,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_modifier_only() {
-        let fallback = Binding::default();
-        let binding = parse_binding("Shift", fallback);
-        assert_eq!(binding.code, 0);
-        assert_eq!(binding.mods, 2);
-    }
-
-    #[test]
     fn test_parse_unbound() {
         let fallback = Binding::new('W' as u32, 0);
         let binding = parse_binding("Unbound", fallback);
@@ -238,23 +153,23 @@ mod tests {
 
     #[test]
     fn test_parse_empty_returns_fallback() {
-        let fallback = Binding::new('X' as u32, 1);
+        let fallback = Binding::new('X' as u32, 0);
         let binding = parse_binding("", fallback);
         assert_eq!(binding.code, 'X' as u32);
-        assert_eq!(binding.mods, 1);
     }
 
     #[test]
     fn test_parse_case_insensitive() {
         let fallback = Binding::default();
 
-        let ctrl = parse_binding("ctrl+w", fallback);
-        assert_eq!(ctrl.code, 'W' as u32);
-        assert_eq!(ctrl.mods, 1);
+        let lower = parse_binding("w", fallback);
+        assert_eq!(lower.code, 'W' as u32);
 
-        let alt = parse_binding("ALT+D", fallback);
-        assert_eq!(alt.code, 'D' as u32);
-        assert_eq!(alt.mods, 4);
+        let ctrl = parse_binding("ctrl", fallback);
+        assert_eq!(ctrl.code, 0x205);
+
+        let ctrl_upper = parse_binding("CTRL", fallback);
+        assert_eq!(ctrl_upper.code, 0x205);
     }
 
     #[test]
@@ -264,27 +179,15 @@ mod tests {
     }
 
     #[test]
-    fn test_binding_to_string_ctrl() {
-        let binding = Binding::new('W' as u32, 1);
-        assert_eq!(binding_to_string(&binding), "Ctrl+W");
-    }
+    fn test_binding_to_string_modifier_keys() {
+        let ctrl = Binding::new(0x205, 0);
+        assert_eq!(binding_to_string(&ctrl), "Ctrl");
 
-    #[test]
-    fn test_binding_to_string_shift() {
-        let binding = Binding::new('A' as u32, 2);
-        assert_eq!(binding_to_string(&binding), "Shift+A");
-    }
+        let shift = Binding::new(0x204, 0);
+        assert_eq!(binding_to_string(&shift), "Shift");
 
-    #[test]
-    fn test_binding_to_string_alt() {
-        let binding = Binding::new('D' as u32, 4);
-        assert_eq!(binding_to_string(&binding), "Alt+D");
-    }
-
-    #[test]
-    fn test_binding_to_string_multiple_mods() {
-        let binding = Binding::new('W' as u32, 3); // Ctrl+Shift
-        assert_eq!(binding_to_string(&binding), "Ctrl+Shift+W");
+        let alt = Binding::new(0x206, 0);
+        assert_eq!(binding_to_string(&alt), "Alt");
     }
 
     #[test]
@@ -300,15 +203,6 @@ mod tests {
     }
 
     #[test]
-    fn test_binding_to_string_modifier_only() {
-        let shift = Binding::new(0, 2);
-        assert_eq!(binding_to_string(&shift), "Shift");
-
-        let ctrl_alt = Binding::new(0, 5); // Ctrl (1) + Alt (4)
-        assert_eq!(binding_to_string(&ctrl_alt), "Ctrl+Alt");
-    }
-
-    #[test]
     fn test_binding_to_string_unbound() {
         let binding = Binding::new(0, 0);
         assert_eq!(binding_to_string(&binding), "Unbound");
@@ -316,17 +210,19 @@ mod tests {
 
     #[test]
     fn test_roundtrip_parsing() {
-        let original = Binding::new('W' as u32, 1);
-        let string = binding_to_string(&original);
-        let parsed = parse_binding(&string, Binding::default());
-        assert_eq!(parsed, original);
-    }
-
-    #[test]
-    fn test_roundtrip_special_keys() {
-        let original = Binding::new(0x100, 3); // Ctrl+Shift+ArrowUp
-        let string = binding_to_string(&original);
-        let parsed = parse_binding(&string, Binding::default());
-        assert_eq!(parsed, original);
+        let keys = [
+            Binding::new('W' as u32, 0),
+            Binding::new(0x205, 0),
+            Binding::new(0x204, 0),
+            Binding::new(0x206, 0),
+            Binding::new(0x100, 0),
+            Binding::new(' ' as u32, 0),
+            Binding::new(0x200, 0),
+        ];
+        for original in &keys {
+            let string = binding_to_string(original);
+            let parsed = parse_binding(&string, Binding::default());
+            assert_eq!(parsed, *original, "Roundtrip failed for {string}");
+        }
     }
 }

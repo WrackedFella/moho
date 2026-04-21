@@ -6,7 +6,7 @@ use moho_core::game_clock::GameClock;
 use serde::{Deserialize, Serialize};
 
 const SNAP_MAGIC: &[u8; 4] = b"MOHO";
-const SNAP_VERSION: u16 = 1;
+const SNAP_VERSION: u16 = 2;
 
 #[derive(Serialize, Deserialize, Encode, Decode)]
 struct SimulationSnapshot {
@@ -21,6 +21,10 @@ struct SimulationSnapshot {
     up: f32,
     yaw_delta: f32,
     pitch_delta: f32,
+    // game clock state
+    game_clock: GameClock,
+    // RTS camera look-at target (panned independently from FPS pawn position)
+    rts_target: (f32, f32, f32),
 }
 
 impl From<&SimulationController> for SimulationSnapshot {
@@ -30,6 +34,7 @@ impl From<&SimulationController> for SimulationSnapshot {
             CameraMode::FirstPerson => 0u8,
             CameraMode::Isometric => 1u8,
         };
+        let rts = s.player_controller.rts_look_target;
         SimulationSnapshot {
             pos: (p.x, p.y, p.z),
             yaw: s.player_controller.yaw,
@@ -40,6 +45,8 @@ impl From<&SimulationController> for SimulationSnapshot {
             up: s.controller_input.up,
             yaw_delta: s.controller_input.yaw_delta,
             pitch_delta: s.controller_input.pitch_delta,
+            game_clock: s.game_clock.clone(),
+            rts_target: (rts.x, rts.y, rts.z),
         }
     }
 }
@@ -51,6 +58,7 @@ impl TryFrom<SimulationSnapshot> for SimulationController {
         let mut pc = PlayerController::new(pos);
         pc.yaw = ss.yaw;
         pc.pitch = ss.pitch;
+        pc.rts_look_target = Vec3::new(ss.rts_target.0, ss.rts_target.1, ss.rts_target.2);
         pc.camera_mode = match ss.camera_mode {
             0 => CameraMode::FirstPerson,
             1 => CameraMode::Isometric,
@@ -62,22 +70,26 @@ impl TryFrom<SimulationSnapshot> for SimulationController {
             up: ss.up,
             yaw_delta: ss.yaw_delta,
             pitch_delta: ss.pitch_delta,
+            sprint: false,
+            zoom_delta: 0.0,
         };
         Ok(SimulationController {
             player_controller: pc,
             controller_input: ci,
-            game_clock: GameClock::default(),
+            game_clock: ss.game_clock,
         })
     }
 }
 
 /// Snapshot layout: [MAGIC(4)][VERSION(u16 LE)][PAYLOAD_LEN(u32 LE)][CHECKSUM(u32 LE)][PAYLOAD...]
 impl SimulationController {
-    /// Create a validated snapshot (header + bincode payload)
-    pub fn snapshot_bytes(&self) -> Vec<u8> {
+    /// Create a validated snapshot (header + bincode payload).
+    ///
+    /// Returns an error if serialization fails.
+    pub fn snapshot_bytes(&self) -> Result<Vec<u8>, String> {
         let snap: SimulationSnapshot = self.into();
-        let payload =
-            bincode::encode_to_vec(&snap, bincode::config::standard()).expect("serialize snapshot");
+        let payload = bincode::encode_to_vec(&snap, bincode::config::standard())
+            .map_err(|e| format!("snapshot serialization failed: {e}"))?;
 
         let mut hasher = Hasher::new();
         hasher.update(&payload);
@@ -89,7 +101,7 @@ impl SimulationController {
         out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
         out.extend_from_slice(&checksum.to_le_bytes());
         out.extend_from_slice(&payload);
-        out
+        Ok(out)
     }
 
     /// Restore from snapshot bytes produced by `snapshot_bytes`.
@@ -225,5 +237,12 @@ impl SimulationController {
     /// Set time of day directly (for debugging/testing)
     pub fn set_time_of_day(&mut self, time: f32) {
         self.game_clock.set_time(time);
+    }
+
+    /// Point the camera toward `target`.
+    /// - FPS mode: recomputes yaw/pitch to face target from current position
+    /// - Isometric mode: sets rts_look_target so the RTS camera centers on target
+    pub fn look_at(&mut self, target: Vec3) {
+        self.player_controller.look_at(target);
     }
 }

@@ -76,9 +76,31 @@ impl WindowManager {
         if app.window_renderer.is_none() {
             let window = self.create_window(event_loop)?;
             self.setup_renderer_and_ui(app, window)?;
+            self.apply_video_settings(app);
             self.initial_render(app);
         }
         Ok(())
+    }
+
+    /// Apply saved video settings (window mode and resolution) from prefs to the window.
+    fn apply_video_settings(&self, app: &mut App) {
+        use moho_ui::prefs::WindowMode;
+        use winit::dpi::PhysicalSize;
+        use winit::window::Fullscreen;
+
+        let Some(ref wr) = app.window_renderer else {
+            return;
+        };
+
+        match app.prefs.window_mode() {
+            WindowMode::Fullscreen | WindowMode::Borderless => {
+                wr.window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+            }
+            WindowMode::Windowed => {
+                let (w, h) = app.prefs.window_resolution();
+                let _ = wr.window.request_inner_size(PhysicalSize::new(w, h));
+            }
+        }
     }
 }
 

@@ -22,36 +22,37 @@ use crate::types::GpuInstance;
 ///
 /// This struct holds buffers, textures, and bind groups created during initialization.
 /// Resources can be recreated or resized as needed during the renderer's lifetime.
+#[derive(Debug)]
 pub struct ResourcePool {
     /// Camera uniform buffer (view + projection matrices)
-    pub camera_buffer: wgpu::Buffer,
+    pub(crate) camera_buffer: wgpu::Buffer,
 
     /// Lighting uniform buffer (sun/moon/ambient lighting)
-    pub lighting_buffer: wgpu::Buffer,
+    pub(crate) lighting_buffer: wgpu::Buffer,
 
     /// Material storage buffer (array of materials)
-    pub material_buffer: wgpu::Buffer,
+    pub(crate) material_buffer: wgpu::Buffer,
 
     /// Camera bind group (combines camera, materials, and lighting)
-    pub camera_bind_group: wgpu::BindGroup,
+    pub(crate) camera_bind_group: wgpu::BindGroup,
 
     /// Depth texture for depth testing
-    pub depth_texture: wgpu::Texture,
+    pub(crate) depth_texture: wgpu::Texture,
 
     /// Depth texture view for rendering
-    pub depth_texture_view: wgpu::TextureView,
+    pub(crate) depth_texture_view: wgpu::TextureView,
 
     /// Instance buffer (per-instance data)
-    pub instance_buffer: wgpu::Buffer,
+    pub(crate) instance_buffer: wgpu::Buffer,
 
     /// Current capacity of instance buffer
-    pub instance_capacity: usize,
+    pub(crate) instance_capacity: usize,
 
     /// Skybox vertex buffer (fullscreen quad)
-    pub skybox_vertex_buffer: wgpu::Buffer,
+    pub(crate) skybox_vertex_buffer: wgpu::Buffer,
 
     /// Number of vertices in skybox
-    pub skybox_vertex_count: u32,
+    pub(crate) skybox_vertex_count: u32,
 }
 
 impl ResourcePool {
@@ -227,6 +228,7 @@ impl ResourcePool {
     /// - Binding 2: Lighting uniform buffer
     /// - Binding 3: SSAO texture (placeholder initially)
     /// - Binding 4: SSAO sampler (placeholder initially)
+    #[allow(clippy::too_many_arguments)]
     fn create_camera_bind_group(
         device: &wgpu::Device,
         camera_bgl: &wgpu::BindGroupLayout,

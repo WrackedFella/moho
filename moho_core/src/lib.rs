@@ -1,5 +1,17 @@
-extern crate glam;
-extern crate rand;
+//! Core systems and primitives for the Moho game engine.
+//!
+//! Provides the foundational building blocks shared across the engine:
+//!
+//! - **[`events`]** — Pub/sub event bus for inter-system communication
+//! - **[`voxel`]** — Voxel grid, chunk management, and mesh generation
+//! - **[`controller`]** — First-person / isometric player controller
+//! - **[`camera`]** — Ray-tracing camera (legacy)
+//! - **[`game_clock`]** — Day/night cycle with celestial body tracking
+//! - **[`actors`]** — Primitive scene objects (sphere, cube, custom mesh)
+//! - **[`materials`]** — Ray-tracing shading models (Lambertian, Metal, Dielectric)
+//! - **[`raycast`]** — Voxel grid raycasting utility
+//! - **[`input`]** — Low-level input collection
+
 use crate::materials::MaterialType;
 use glam::Vec3;
 use rand::{Rng, rng};
@@ -18,15 +30,16 @@ pub mod voxel;
 // Re-export commonly used event types
 pub use events::{Event, EventBus};
 
-// Reflection function
+/// Schlick approximation for Fresnel reflectance.
 pub fn schlick(cosine: f32, ref_idx: f32) -> f32 {
     let mut r0 = (1f32 - ref_idx) / (1f32 + ref_idx);
     r0 = r0 * r0;
     r0 + (1f32 - r0) * (1f32 - cosine).powf(5f32)
 }
 
+/// Compute refracted ray via Snell's law, returns `None` for total internal reflection.
 pub fn refract(v: Vec3, n: Vec3, ni_over_nt: f32) -> Option<Vec3> {
-    let uv = unit_vector(v);
+    let uv = v.normalize();
     let dt = uv.dot(n);
     let discriminant = 1.0f32 - ni_over_nt * ni_over_nt * (1f32 - dt * dt);
     if discriminant > 0f32 {
@@ -36,40 +49,28 @@ pub fn refract(v: Vec3, n: Vec3, ni_over_nt: f32) -> Option<Vec3> {
     }
 }
 
+/// Reflect a vector about a normal.
 pub fn reflect(v: Vec3, n: Vec3) -> Vec3 {
     v - 2f32 * v.dot(n) * n
 }
 
-pub fn multiply_vectors(v1: Vec3, v2: Vec3) -> Vec3 {
-    Vec3::new(v1.x * v2.x, v1.y * v2.y, v1.z * v2.z)
-}
-
-pub fn unit_vector(v: Vec3) -> Vec3 {
-    v / vector_length(v)
-}
-
-pub fn vector_length_squared(v: Vec3) -> f32 {
-    v.x * v.x + v.y * v.y + v.z * v.z
-}
-
-pub fn vector_length(v: Vec3) -> f32 {
-    vector_length_squared(v).sqrt()
-}
-
+/// Generate a random point inside the unit sphere (rejection sampling).
 pub fn random_in_unit_sphere() -> Vec3 {
     let mut rng = rng();
-    let mut p = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
-    while vector_length_squared(p) >= 1.0 {
-        p =
+    loop {
+        let p =
             2f32 * Vec3::new(
                 rng.random::<f32>(),
                 rng.random::<f32>(),
                 rng.random::<f32>(),
-            ) - Vec3::new(1f32, 1f32, 1f32);
+            ) - Vec3::ONE;
+        if p.length_squared() < 1.0 {
+            return p;
+        }
     }
-    p
 }
 
+/// Generate a random point inside the unit disk (rejection sampling).
 pub fn random_in_unit_disk() -> Vec3 {
     let mut rng = rng();
     loop {
@@ -89,25 +90,19 @@ pub trait Scatterable {
     fn scatter(&self, r_in: Ray, rec: HittableRecord) -> Option<ScatterRecord>;
 }
 
-#[derive(Copy, Clone)]
-pub struct RefractRecord {
-    pub attenuation: Vec3,
-    pub scattered: Ray,
-}
-
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct ScatterRecord {
     pub attenuation: Vec3,
     pub scattered: Ray,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Ray {
     a: Vec3,
     b: Vec3,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct HittableRecord {
     pub t: f32,
     pub p: Vec3,

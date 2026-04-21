@@ -4,6 +4,7 @@
 //! like planks, bricks, etc.). Each vertex has ambient occlusion computed based on
 //! the occupancy of its 4 neighboring corner blocks.
 
+use crate::voxel::face::FaceDirection;
 use crate::voxel::grid::{BlockPos, VoxelGrid, VoxelMesh};
 use glam::IVec3;
 
@@ -99,17 +100,7 @@ impl BlockyMeshGenerator {
     }
 }
 
-/// Face direction with associated geometry and AO computation logic
-#[derive(Debug, Clone, Copy)]
-enum FaceDirection {
-    PosX, // Right
-    NegX, // Left
-    PosY, // Top
-    NegY, // Bottom
-    PosZ, // Front
-    NegZ, // Back
-}
-
+/// Blocky-mesh geometry and AO methods for `FaceDirection`.
 impl FaceDirection {
     /// Get the 4 vertices and normal for this face
     fn vertices_and_normal(&self) -> ([[f32; 3]; 4], [f32; 3]) {

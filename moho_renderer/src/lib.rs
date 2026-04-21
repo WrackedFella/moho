@@ -1,34 +1,32 @@
+//! GPU rendering backend for the Moho game engine.
+//!
+//! Built on [`wgpu`], this crate handles:
+//!
+//! - **[`Renderer`]** — Central render orchestrator (device, pipelines, frame submit)
+//! - **[`Scene`]** — Per-frame scene state (meshes, lights, camera)
+//! - **[`ShadowSystem`]** — Cascaded shadow maps with optional PCSS soft shadows
+//! - **[`SsaoSystem`]** — Screen-space ambient occlusion (GTAO)
+//! - **[`LightManager`]** — Dynamic point/spot light management
+//! - **[`MaterialTable`]** — GPU-side material storage buffer
+//! - **[`pipeline`]** — Render pipeline construction helpers
+
 pub mod prelude {
     pub use crate::Renderer;
 }
 
 pub type TextureFormatRepr = wgpu::TextureFormat;
 
-/// GPU material layout (32-byte stride for WGSL vec4 alignment)
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct MaterialGpu {
-    pub albedo: [f32; 4],
-    pub params: [f32; 4], // fuzz, ref_idx
-}
-
-/// Type alias for Material (same as MaterialGpu)
+/// Type alias for backward compatibility.
 pub type Material = MaterialGpu;
-
-impl MaterialGpu {
-    pub fn is_transparent(&self) -> bool {
-        self.params[2] > 0.0
-    }
-}
 
 mod materials;
 pub use materials::MaterialTable;
 mod scene;
-pub use scene::Scene;
+pub use scene::{Scene, LightDesc};
 mod gpu_types;
 pub use gpu_types::{
-    CameraGpu, CascadedShadowMatrixGpu, LightingGpu, MAX_SHADOW_LIGHTS, MultiLightShadowGpu,
-    ShadowMatrixGpu,
+    CameraGpu, CascadedShadowMatrixGpu, LightingGpu, MAX_SHADOW_LIGHTS, MaterialGpu,
+    MultiLightShadowGpu, ShadowMatrixGpu,
 };
 mod buffer_manager;
 pub use buffer_manager::BufferManager;
@@ -251,195 +249,25 @@ pub mod gfx {
                 self.light_manager.get_light(id)
             }
 
+            /// Get all lights as serializable descriptors (for save/load).
+            pub fn all_lights_as_descs(&self) -> Vec<crate::scene::LightDesc> {
+                self.light_manager
+                    .all_lights()
+                    .iter()
+                    .map(|l| crate::scene::LightDesc {
+                        position: l.position.to_array(),
+                        color: l.color.to_array(),
+                        intensity: l.intensity,
+                        range: l.range,
+                        enabled: l.enabled,
+                    })
+                    .collect()
+            }
+
             /// Get the number of visible lights after frustum culling
             pub fn visible_light_count(&self) -> usize {
                 self.light_manager.visible_light_count()
             }
-
-            // Shadow calculation methods moved to shadow module
-            /*
-            fn calculate_shadow_matrix(&self, sun_dir: glam::Vec3, cam_pos: glam::Vec3) -> glam::Mat4 {
-                // Normalize sun direction
-                let light_dir = sun_dir.normalize();
-
-                // Center shadow frustum on camera position (follow the view)
-                // For isometric/high angle view, need to cover much larger area
-                let scene_center = cam_pos;
-                let light_distance = 300.0; // Far back to see large area
-                let light_pos = scene_center - light_dir * light_distance;
-
-                // Create light view matrix (looking from light toward camera/scene center)
-                let light_view = glam::Mat4::look_at_rh(
-                    light_pos,
-                    scene_center,
-                    glam::Vec3::Y, // Up vector
-                );
-
-                // Create orthographic projection for directional light
-                // Optimized for 128x128 terrain (4 chunks of 64 units each)
-                // Tighter frustum = better shadow map resolution
-                let ortho_size = 100.0; // 200x200 unit coverage - fits terrain with margin
-                let near = 1.0;
-                let far = 400.0; // Deep enough to capture terrain depth
-
-                let light_proj = glam::Mat4::orthographic_rh(
-                    -ortho_size,
-                    ortho_size,
-                    -ortho_size,
-                    ortho_size,
-                    near,
-                    far,
-                );
-
-                // Return light view-projection matrix
-                light_proj * light_view
-            }
-
-            /// CSM: Calculate cascade frustum bounds in view space.
-            /// Returns an array of (near, far) distances for each cascade split.
-            fn calculate_cascade_splits(&self) -> [(f32, f32); NUM_SHADOW_CASCADES as usize] {
-                let mut splits = [(0.0f32, 0.0f32); NUM_SHADOW_CASCADES as usize];
-
-                // First cascade starts at near plane (very close to camera)
-                splits[0] = (0.1, CASCADE_SPLIT_DISTANCES[0]);
-
-                // Remaining cascades use configured split distances
-                for i in 1..NUM_SHADOW_CASCADES as usize {
-                    splits[i] = (
-                        CASCADE_SPLIT_DISTANCES[i - 1],
-                        CASCADE_SPLIT_DISTANCES[i],
-                    );
-                }
-
-                // Log splits only once (on first call)
-                if !self.csm_logged_once.get() {
-                    log::info!("CSM cascade splits:");
-                    for (i, (near, far)) in splits.iter().enumerate() {
-                        log::info!("  Cascade {}: {:.1} -> {:.1} units", i, near, far);
-                    }
-                }
-
-                splits
-            }
-
-            /// CSM: Calculate tight orthographic projection for a specific cascade.
-            /// This computes a tight-fitting frustum around the visible geometry in the cascade slice.
-            fn calculate_cascade_matrix(
-                &self,
-                cascade_idx: u32,
-                light_dir: glam::Vec3,
-                cam_pos: glam::Vec3,
-                _near: f32,
-                far: f32,
-            ) -> glam::Mat4 {
-                // For now, use a simple approach: expand ortho size based on cascade distance
-                // More sophisticated approach would project view frustum corners into light space
-
-                // Center the cascade frustum on camera position
-                let cascade_center = cam_pos;
-
-                // Position light far enough back to see the entire cascade range
-                let light_distance = far * 2.0;
-                let light_pos = cascade_center - light_dir * light_distance;
-
-                // Create light view matrix
-                let light_view = glam::Mat4::look_at_rh(
-                    light_pos,
-                    cascade_center,
-                    glam::Vec3::Y,
-                );
-
-                // Calculate orthographic size based on cascade distance
-                // Closer cascades need smaller frustums (higher resolution)
-                // Further cascades need larger frustums (lower resolution)
-                let cascade_radius = far * 1.5; // Generous coverage with margin
-
-                // Create orthographic projection for this cascade
-                let light_proj = glam::Mat4::orthographic_rh(
-                    -cascade_radius,
-                    cascade_radius,
-                    -cascade_radius,
-                    cascade_radius,
-                    1.0, // Near plane in light space
-                    light_distance + far, // Far plane to capture full depth
-                );
-
-                // Log matrix details only once (on first call)
-                if !self.csm_logged_once.get() {
-                    log::info!(
-                        "  Cascade {} matrix: center={:?}, radius={:.1}, light_dist={:.1}",
-                        cascade_idx,
-                        cascade_center,
-                        cascade_radius,
-                        light_distance
-                    );
-                }
-
-                light_proj * light_view
-            }
-
-            /// CSM: Calculate all cascade matrices based on sun direction and camera position.
-            /// Returns an array of 2 matrices and the CascadedShadowMatrixGpu structure.
-            fn calculate_cascade_matrices(
-                &self,
-                sun_dir: glam::Vec3,
-                cam_pos: glam::Vec3,
-            ) -> ([glam::Mat4; NUM_SHADOW_CASCADES as usize], crate::gpu_types::CascadedShadowMatrixGpu) {
-                let light_dir = sun_dir.normalize();
-                let splits = self.calculate_cascade_splits();
-
-                // Log calculation details only once (on first call)
-                if !self.csm_logged_once.get() {
-                    log::info!("Calculating CSM cascade matrices for sun_dir={:?}, cam_pos={:?}", light_dir, cam_pos);
-                }
-
-                let mut matrices = [glam::Mat4::IDENTITY; NUM_SHADOW_CASCADES as usize];
-
-                for i in 0..NUM_SHADOW_CASCADES as usize {
-                    let (near, far) = splits[i];
-                    matrices[i] = self.calculate_cascade_matrix(i as u32, light_dir, cam_pos, near, far);
-                }
-
-                // Convert to GPU structure (2 cascades)
-                let cols0 = matrices[0].to_cols_array_2d();
-                let cols1 = matrices[1].to_cols_array_2d();
-
-                let gpu_data = crate::gpu_types::CascadedShadowMatrixGpu {
-                    cascade0_m0: cols0[0],
-                    cascade0_m1: cols0[1],
-                    cascade0_m2: cols0[2],
-                    cascade0_m3: cols0[3],
-
-                    cascade1_m0: cols1[0],
-                    cascade1_m1: cols1[1],
-                    cascade1_m2: cols1[2],
-                    cascade1_m3: cols1[3],
-
-                    split_distances: [
-                        CASCADE_SPLIT_DISTANCES[0],
-                        CASCADE_SPLIT_DISTANCES[1],
-                        0.0, // unused
-                        0.0, // unused
-                    ],
-                };
-
-                // Mark that we've logged once and set the flag
-                if !self.csm_logged_once.get() {
-                    log::info!("CSM cascade matrices calculated successfully");
-                    self.csm_logged_once.set(true);
-                }
-
-                (matrices, gpu_data)
-            }
-            */
-            // END shadow calculation methods moved to shadow module
-
-            // Note: The old render() method has been removed. Use render_mesh() instead.
-            // Note: window-related helpers (request_redraw, cursor control)
-            // are intentionally not exposed from the renderer. The
-            // application owns the Window and should call those methods
-            // directly to avoid renderer needing to keep a reference with
-            // 'static lifetime or leaking the Window.
 
             /// Update the material table on the GPU. This replaces the storage
             /// buffer bound at @group(0) binding 1 and recreates the camera
@@ -1038,6 +866,12 @@ pub trait RendererBackend {
     /// Enable or disable a light
     fn set_light_enabled(&mut self, id: u32, enabled: bool);
 
+    /// Get all registered lights as serializable descriptors (for save/load).
+    /// Default returns empty; only the real renderer overrides this.
+    fn all_lights_as_descs(&self) -> Vec<crate::scene::LightDesc> {
+        Vec::new()
+    }
+
     /// Set shadow quality level
     fn set_shadow_quality(&mut self, quality: u8);
 
@@ -1148,6 +982,9 @@ impl<'a> RendererBackend for gfx::wgpu_impl::Renderer<'a> {
     }
     fn set_light_enabled(&mut self, id: u32, enabled: bool) {
         gfx::wgpu_impl::Renderer::set_light_enabled(self, id, enabled);
+    }
+    fn all_lights_as_descs(&self) -> Vec<crate::scene::LightDesc> {
+        gfx::wgpu_impl::Renderer::all_lights_as_descs(self)
     }
     fn set_shadow_quality(&mut self, quality: u8) {
         gfx::wgpu_impl::Renderer::set_shadow_quality(self, quality);

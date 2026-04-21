@@ -9,19 +9,19 @@ use std::path::Path;
 #[derive(Debug, Clone)]
 pub struct AudioSource {
     /// File path to the audio asset
-    pub path: String,
+    path: String,
 
     /// Volume multiplier for this source (0.0 to 1.0)
-    pub volume: f32,
+    volume: f32,
 
     /// Whether this sound should loop when played
-    pub looped: bool,
+    looped: bool,
 
     /// Optional 3D position for spatial audio (future feature)
-    pub position: Option<glam::Vec3>,
+    position: Option<[f32; 3]>,
 
     /// Category this audio source belongs to
-    pub category: AudioCategory,
+    category: AudioCategory,
 }
 
 /// Audio categories for volume and control grouping
@@ -43,6 +43,24 @@ impl AudioSource {
             position: None,
             category: AudioCategory::SoundEffect,
         }
+    }
+
+    // ── Accessors ───────────────────────────────────────────────────
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+    pub fn volume(&self) -> f32 {
+        self.volume
+    }
+    pub fn looped(&self) -> bool {
+        self.looped
+    }
+    pub fn position(&self) -> Option<[f32; 3]> {
+        self.position
+    }
+    pub fn category(&self) -> &AudioCategory {
+        &self.category
     }
 
     /// Create a UI sound effect source
@@ -80,7 +98,7 @@ impl AudioSource {
     }
 
     /// Set 3D position for spatial audio (future feature)
-    pub fn with_position(mut self, position: glam::Vec3) -> Self {
+    pub fn with_position(mut self, position: [f32; 3]) -> Self {
         self.position = Some(position);
         self
     }

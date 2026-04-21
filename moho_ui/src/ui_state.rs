@@ -5,6 +5,7 @@
 
 use crate::modal::ModalManager;
 use crate::overlays::Console;
+use crate::overlays::{DebugHud, FpsHud, GameplayHud, OverlayManager, RtsHud};
 use crate::screens::Menu;
 use std::collections::HashMap;
 
@@ -22,7 +23,10 @@ pub struct UiStateManager {
     /// Debug console overlay (separate from screens)
     pub console: Console,
 
-    /// Whether UI is currently visible
+    /// Overlay layer manager (FPS HUD, RTS HUD, Debug HUD, etc.)
+    pub overlay_manager: OverlayManager,
+
+    /// Whether UI menus are currently visible
     pub visible: bool,
 }
 
@@ -38,11 +42,19 @@ impl UiStateManager {
         screens.insert("settings".to_string(), Box::new(SettingsMenu::new()));
         screens.insert("new_world".to_string(), Box::new(NewWorldMenu::new()));
 
+        // Register default overlay layers
+        let mut overlay_manager = OverlayManager::new();
+        overlay_manager.register(Box::new(FpsHud::new()));
+        overlay_manager.register(Box::new(RtsHud::new()));
+        overlay_manager.register(Box::new(DebugHud::new()));
+        overlay_manager.register(Box::new(GameplayHud::new()));
+
         Self {
             screens,
             active_screen: Some("start".to_string()),
             modal_manager: ModalManager::new(),
             console: Console::new(),
+            overlay_manager,
             visible: true,
         }
     }

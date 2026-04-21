@@ -98,6 +98,7 @@ impl UiComponent for NewWorldMenu {
                                 rect: Some(cont.rect),
                                 enabled: true,
                                 clicked: true,
+                                hovered: false,
                             });
                         }
 
@@ -107,6 +108,7 @@ impl UiComponent for NewWorldMenu {
                                 rect: Some(cancel.rect),
                                 enabled: true,
                                 clicked: true,
+                                hovered: false,
                             });
                         }
                     },

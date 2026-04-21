@@ -17,11 +17,29 @@ pub use preparation::ScenePreparation;
 pub type CameraData = (glam::Vec3, f32, f32);
 
 /// Scene file version. Bump when the on-disk layout changes.
-const SCENE_FILE_VERSION: u32 = 2;
+const SCENE_FILE_VERSION: u32 = 3;
+
+/// Serializable descriptor for a dynamic point light.
+///
+/// Used to persist lights alongside ECS scene data.
+#[derive(Encode, Decode, Serialize, Deserialize, Clone, Debug)]
+pub struct LightDesc {
+    pub position: [f32; 3],
+    pub color: [f32; 3],
+    pub intensity: f32,
+    pub range: f32,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
 
 /// Scene manager that owns the `MaterialTable` and provides a simple
 /// `render` API to submit an ECS world for drawing. This centralizes
 /// material deduplication, instance collection, and transparent sorting.
+#[derive(Debug)]
 pub struct Scene {
     pub material_table: MaterialTable,
     buffer_manager: BufferManager,
@@ -139,6 +157,7 @@ impl Scene {
         path: P,
         world: &World,
         camera_position: Option<CameraData>, // (position, yaw, pitch)
+        lights: &[LightDesc],
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Collect serializable descriptors from the ECS world.
         let mut spheres: Vec<SphereDesc> = Vec::new();
@@ -167,11 +186,15 @@ impl Scene {
         let mut qv = <&moho_core::voxel::VoxelChunk>::query();
         for chunk in qv.iter(world) {
             voxel_chunks.push(VoxelChunkDesc {
-                chunk_pos: [chunk.chunk_pos.x, chunk.chunk_pos.y, chunk.chunk_pos.z],
-                vertices: chunk.vertices.clone(),
-                normals: chunk.normals.clone(),
-                indices: chunk.indices.clone(),
-                material_id: chunk.material_id,
+                chunk_pos: [
+                    chunk.chunk_pos().x,
+                    chunk.chunk_pos().y,
+                    chunk.chunk_pos().z,
+                ],
+                vertices: chunk.vertices().to_vec(),
+                normals: chunk.normals().to_vec(),
+                indices: chunk.indices().to_vec(),
+                material_id: chunk.material_id(),
             });
         }
 
@@ -187,6 +210,7 @@ impl Scene {
             cubes,
             voxel_chunks,
             camera,
+            lights: lights.to_vec(),
         };
 
         let encoded = bincode::encode_to_vec(&desc, bincode::config::standard())?;
@@ -201,6 +225,7 @@ impl Scene {
         &self,
         world: &World,
         camera_position: Option<CameraData>,
+        lights: &[LightDesc],
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         // Collect serializable descriptors from the ECS world.
         let mut spheres: Vec<SphereDesc> = Vec::new();
@@ -229,11 +254,15 @@ impl Scene {
         let mut qv = <&moho_core::voxel::VoxelChunk>::query();
         for chunk in qv.iter(world) {
             voxel_chunks.push(VoxelChunkDesc {
-                chunk_pos: [chunk.chunk_pos.x, chunk.chunk_pos.y, chunk.chunk_pos.z],
-                vertices: chunk.vertices.clone(),
-                normals: chunk.normals.clone(),
-                indices: chunk.indices.clone(),
-                material_id: chunk.material_id,
+                chunk_pos: [
+                    chunk.chunk_pos().x,
+                    chunk.chunk_pos().y,
+                    chunk.chunk_pos().z,
+                ],
+                vertices: chunk.vertices().to_vec(),
+                normals: chunk.normals().to_vec(),
+                indices: chunk.indices().to_vec(),
+                material_id: chunk.material_id(),
             });
         }
 
@@ -249,6 +278,7 @@ impl Scene {
             cubes,
             voxel_chunks,
             camera,
+            lights: lights.to_vec(),
         };
 
         let encoded = bincode::encode_to_vec(&desc, bincode::config::standard())?;
@@ -258,12 +288,12 @@ impl Scene {
     /// Load a SceneDesc from a file and populate the provided `world` with
     /// entities. Existing world contents are left untouched; caller may
     /// clear the world beforehand if desired.
-    /// Returns camera position and orientation if present in the scene file.
+    /// Returns camera data and any persisted lights.
     pub fn load_from_file<P: AsRef<Path>>(
         &mut self,
         path: P,
         world: &mut World,
-    ) -> Result<Option<CameraData>, Box<dyn std::error::Error>> {
+    ) -> Result<(Option<CameraData>, Vec<LightDesc>), Box<dyn std::error::Error>> {
         let mut f = File::open(path)?;
         let mut buf = Vec::new();
         f.read_to_end(&mut buf)?;
@@ -271,13 +301,13 @@ impl Scene {
         Self::decode_and_populate(&buf, world)
     }
 
-    /// Decode a scene saved as bincode bytes and populate `world`. Returns
-    /// optional camera data if present.
+    /// Decode a scene saved as bincode bytes and populate `world`.
+    /// Returns camera data and any persisted lights.
     pub fn load_from_bytes(
         &mut self,
         bytes: &[u8],
         world: &mut World,
-    ) -> Result<Option<CameraData>, Box<dyn std::error::Error>> {
+    ) -> Result<(Option<CameraData>, Vec<LightDesc>), Box<dyn std::error::Error>> {
         Self::decode_and_populate(bytes, world)
     }
 
@@ -285,23 +315,54 @@ impl Scene {
     fn decode_and_populate(
         bytes: &[u8],
         world: &mut World,
-    ) -> Result<Option<CameraData>, Box<dyn std::error::Error>> {
-        let desc: SceneDesc = bincode::decode_from_slice(bytes, bincode::config::standard())?.0;
-        if desc.version < 1 || desc.version > SCENE_FILE_VERSION {
+    ) -> Result<(Option<CameraData>, Vec<LightDesc>), Box<dyn std::error::Error>> {
+        let cfg = bincode::config::standard();
+
+        // Try decoding as v3 (includes lights). For v1/v2 saves this will fail
+        // because the lights field doesn't exist in the binary data.
+        if let Ok((desc, _)) = bincode::decode_from_slice::<SceneDesc, _>(bytes, cfg) {
+            if desc.version >= 1 && desc.version <= SCENE_FILE_VERSION {
+                return Self::populate_world(desc.version, desc.spheres, desc.cubes,
+                    desc.voxel_chunks, desc.camera, desc.lights, world);
+            }
+        }
+
+        // Fallback: try decoding as legacy v1/v2 (without lights field).
+        let (legacy, _) = bincode::decode_from_slice::<SceneDescLegacy, _>(bytes, cfg)
+            .map_err(|e| format!("failed to decode scene: {e}"))?;
+
+        if legacy.version < 1 || legacy.version > 2 {
             return Err(format!(
                 "unsupported scene file version: {} (expected 1-{})",
-                desc.version, SCENE_FILE_VERSION
+                legacy.version, SCENE_FILE_VERSION
             )
             .into());
         }
 
-        // Recreate materials and push entities into the world.
-        for s in desc.spheres {
+        log::info!(
+            "Loaded legacy scene format (v{}) — spawned lights will not be restored",
+            legacy.version
+        );
+        Self::populate_world(legacy.version, legacy.spheres, legacy.cubes,
+            legacy.voxel_chunks, legacy.camera, vec![], world)
+    }
+
+    /// Shared world-population logic used by both v3 and legacy load paths.
+    fn populate_world(
+        _version: u32,
+        spheres: Vec<SphereDesc>,
+        cubes: Vec<CubeDesc>,
+        voxel_chunks: Vec<VoxelChunkDesc>,
+        camera: Option<CameraDesc>,
+        lights: Vec<LightDesc>,
+        world: &mut World,
+    ) -> Result<(Option<CameraData>, Vec<LightDesc>), Box<dyn std::error::Error>> {
+        for s in spheres {
             let mat = s.material.into_material_type();
             let sphere = Sphere::new(glam::Vec3::from_array(s.center), s.radius, mat);
             world.push((sphere,));
         }
-        for c in desc.cubes {
+        for c in cubes {
             let mat = c.material.into_material_type();
             let cube = Cube::new(
                 glam::Vec3::from_array(c.center),
@@ -312,34 +373,29 @@ impl Scene {
             );
             world.push((cube,));
         }
-
-        // Load VoxelChunks
-        for chunk_desc in desc.voxel_chunks {
+        for chunk_desc in voxel_chunks {
             let vertex_count = chunk_desc.vertices.len();
-            let chunk = moho_core::voxel::VoxelChunk {
-                chunk_pos: glam::IVec3::new(
+            let chunk = moho_core::voxel::VoxelChunk::new(
+                glam::IVec3::new(
                     chunk_desc.chunk_pos[0],
                     chunk_desc.chunk_pos[1],
                     chunk_desc.chunk_pos[2],
                 ),
-                vertices: chunk_desc.vertices,
-                normals: chunk_desc.normals,
-                ambient_occlusion: vec![1.0; vertex_count], // Default full brightness for loaded chunks
-                geometry_type: vec![1; vertex_count],       // Default to blocky for loaded chunks
-                light_level: vec![1.0; vertex_count], // Default to full light for loaded chunks
-                indices: chunk_desc.indices,
-                material_id: chunk_desc.material_id,
-                mesh_handle: None, // Will be uploaded on next render
-            };
+                chunk_desc.vertices,
+                chunk_desc.normals,
+                vec![1.0; vertex_count],
+                vec![1; vertex_count],
+                vec![1.0; vertex_count],
+                chunk_desc.indices,
+                chunk_desc.material_id,
+            );
             world.push((chunk,));
         }
 
-        // Return camera position and orientation if present
-        let camera_data = desc
-            .camera
+        let camera_data = camera
             .map(|cam| (glam::Vec3::from_array(cam.position), cam.yaw, cam.pitch));
 
-        Ok(camera_data)
+        Ok((camera_data, lights))
     }
 }
 
@@ -359,6 +415,19 @@ struct SceneDesc {
     #[serde(default)]
     voxel_chunks: Vec<VoxelChunkDesc>,
     #[serde(default)]
+    camera: Option<CameraDesc>,
+    #[serde(default)]
+    lights: Vec<LightDesc>,
+}
+
+/// Legacy scene descriptor for v1/v2 saves (no lights field).
+/// Used as a fallback when the current SceneDesc fails to decode.
+#[derive(Encode, Decode)]
+struct SceneDescLegacy {
+    version: u32,
+    spheres: Vec<SphereDesc>,
+    cubes: Vec<CubeDesc>,
+    voxel_chunks: Vec<VoxelChunkDesc>,
     camera: Option<CameraDesc>,
 }
 
@@ -399,6 +468,8 @@ enum MaterialDesc {
     Lambertian { albedo: [f32; 3] },
     Metal { albedo: [f32; 3], fuzz: f32 },
     Dielectric { ref_indx: f32 },
+    Emissive { color: [f32; 3], intensity: f32 },
+    VoxelTerrain { top_albedo: [f32; 3], side_albedo: [f32; 3] },
 }
 
 impl MaterialDesc {
@@ -416,6 +487,16 @@ impl MaterialDesc {
                     ref_indx: *ref_indx,
                 }
             }
+            moho_core::materials::MaterialType::Emissive { color, intensity } => MaterialDesc::Emissive {
+                color: [color.x, color.y, color.z],
+                intensity: *intensity,
+            },
+            moho_core::materials::MaterialType::VoxelTerrain { top_albedo, side_albedo } => {
+                MaterialDesc::VoxelTerrain {
+                    top_albedo: [top_albedo.x, top_albedo.y, top_albedo.z],
+                    side_albedo: [side_albedo.x, side_albedo.y, side_albedo.z],
+                }
+            }
         }
     }
 
@@ -430,6 +511,16 @@ impl MaterialDesc {
             },
             MaterialDesc::Dielectric { ref_indx } => {
                 moho_core::materials::MaterialType::Dielectric { ref_indx }
+            }
+            MaterialDesc::Emissive { color, intensity } => moho_core::materials::MaterialType::Emissive {
+                color: glam::Vec3::new(color[0], color[1], color[2]),
+                intensity,
+            },
+            MaterialDesc::VoxelTerrain { top_albedo, side_albedo } => {
+                moho_core::materials::MaterialType::VoxelTerrain {
+                    top_albedo: glam::Vec3::new(top_albedo[0], top_albedo[1], top_albedo[2]),
+                    side_albedo: glam::Vec3::new(side_albedo[0], side_albedo[1], side_albedo[2]),
+                }
             }
         }
     }

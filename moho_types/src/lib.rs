@@ -7,5 +7,5 @@
 pub mod app_state;
 pub mod state_coordinator;
 
-pub use app_state::{AppState, GameState};
+pub use app_state::GameState;
 pub use state_coordinator::{StateTransitionActions, StateTransitionCoordinator};

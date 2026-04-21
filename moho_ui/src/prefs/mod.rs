@@ -1,7 +1,7 @@
 //! Preferences management for the game.
 //!
 //! This module handles loading, saving, and managing user preferences including
-//! key bindings, mouse sensitivity, input filtering, and audio volumes.
+//! key bindings, mouse sensitivity, input filtering, audio volumes, and video settings.
 
 mod key_names;
 mod parser;
@@ -11,6 +11,41 @@ use std::path::PathBuf;
 
 pub use key_names::parse_key_name;
 pub use parser::{binding_to_string, parse_binding};
+
+/// Window display mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum WindowMode {
+    #[default]
+    Windowed,
+    Fullscreen,
+    Borderless,
+}
+
+impl WindowMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            WindowMode::Windowed => "Windowed",
+            WindowMode::Fullscreen => "Fullscreen",
+            WindowMode::Borderless => "Borderless",
+        }
+    }
+
+    fn from_str(s: &str) -> Self {
+        match s {
+            "Fullscreen" => WindowMode::Fullscreen,
+            "Borderless" => WindowMode::Borderless,
+            _ => WindowMode::Windowed,
+        }
+    }
+}
+
+/// Standard resolution presets.
+pub const RESOLUTION_PRESETS: &[(&str, (u32, u32))] = &[
+    ("1280×720 (HD)", (1280, 720)),
+    ("1920×1080 (FHD)", (1920, 1080)),
+    ("2560×1440 (QHD)", (2560, 1440)),
+    ("3840×2160 (4K)", (3840, 2160)),
+];
 
 /// A numeric key binding: key code and modifier bits.
 /// mods bitflags: bit0 = ctrl, bit1 = shift, bit2 = alt
@@ -34,22 +69,188 @@ impl Default for Binding {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Prefs {
-    pub key_w: Binding,
-    pub key_a: Binding,
-    pub key_s: Binding,
-    pub key_d: Binding,
-    pub key_up: Binding,
-    pub key_down: Binding,
-    pub mouse_sensitivity: f32,
-    pub input_filtering_enabled: bool,
+    key_w: Binding,
+    key_a: Binding,
+    key_s: Binding,
+    key_d: Binding,
+    key_up: Binding,
+    key_down: Binding,
+    key_sprint: Binding,
+    key_jump: Binding,
+    mouse_sensitivity: f32,
+    input_filtering_enabled: bool,
     // Audio settings (values 1.0 to 10.0)
-    pub audio_sound_effect_volume: f32,
-    pub audio_music_volume: f32,
-    pub audio_ui_volume: f32,
-    pub audio_voice_volume: f32,
+    audio_sound_effect_volume: f32,
+    audio_music_volume: f32,
+    audio_ui_volume: f32,
+    audio_voice_volume: f32,
     // Graphics settings
-    pub graphics_shadow_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
-    pub graphics_ssao_quality: u32,   // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    graphics_shadow_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    graphics_ssao_quality: u32,   // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    // Video settings
+    window_mode: WindowMode,
+    window_resolution: (u32, u32),
+}
+
+const MAX_GRAPHICS_QUALITY: u32 = 4;
+
+impl Prefs {
+    // --- Binding accessors ---
+
+    pub fn key_w(&self) -> Binding {
+        self.key_w
+    }
+    pub fn key_a(&self) -> Binding {
+        self.key_a
+    }
+    pub fn key_s(&self) -> Binding {
+        self.key_s
+    }
+    pub fn key_d(&self) -> Binding {
+        self.key_d
+    }
+    pub fn key_up(&self) -> Binding {
+        self.key_up
+    }
+    pub fn key_down(&self) -> Binding {
+        self.key_down
+    }
+
+    pub fn key_sprint(&self) -> Binding {
+        self.key_sprint
+    }
+
+    pub fn key_jump(&self) -> Binding {
+        self.key_jump
+    }
+
+    pub fn set_key_w(&mut self, b: Binding) {
+        self.key_w = b;
+    }
+    pub fn set_key_a(&mut self, b: Binding) {
+        self.key_a = b;
+    }
+    pub fn set_key_s(&mut self, b: Binding) {
+        self.key_s = b;
+    }
+    pub fn set_key_d(&mut self, b: Binding) {
+        self.key_d = b;
+    }
+    pub fn set_key_up(&mut self, b: Binding) {
+        self.key_up = b;
+    }
+    pub fn set_key_down(&mut self, b: Binding) {
+        self.key_down = b;
+    }
+
+    pub fn set_key_sprint(&mut self, b: Binding) {
+        self.key_sprint = b;
+    }
+
+    pub fn set_key_jump(&mut self, b: Binding) {
+        self.key_jump = b;
+    }
+
+    // --- Scalar getters ---
+
+    pub fn mouse_sensitivity(&self) -> f32 {
+        self.mouse_sensitivity
+    }
+    pub fn input_filtering_enabled(&self) -> bool {
+        self.input_filtering_enabled
+    }
+    pub fn sound_effect_volume(&self) -> f32 {
+        self.audio_sound_effect_volume
+    }
+    pub fn music_volume(&self) -> f32 {
+        self.audio_music_volume
+    }
+    pub fn ui_volume(&self) -> f32 {
+        self.audio_ui_volume
+    }
+    pub fn voice_volume(&self) -> f32 {
+        self.audio_voice_volume
+    }
+    pub fn shadow_quality(&self) -> u32 {
+        self.graphics_shadow_quality
+    }
+    pub fn ssao_quality(&self) -> u32 {
+        self.graphics_ssao_quality
+    }
+    pub fn window_mode(&self) -> WindowMode {
+        self.window_mode
+    }
+    pub fn window_resolution(&self) -> (u32, u32) {
+        self.window_resolution
+    }
+
+    // --- Mutable accessors (for egui widget binding) ---
+
+    pub fn mouse_sensitivity_mut(&mut self) -> &mut f32 {
+        &mut self.mouse_sensitivity
+    }
+    pub fn input_filtering_enabled_mut(&mut self) -> &mut bool {
+        &mut self.input_filtering_enabled
+    }
+    pub fn sound_effect_volume_mut(&mut self) -> &mut f32 {
+        &mut self.audio_sound_effect_volume
+    }
+    pub fn music_volume_mut(&mut self) -> &mut f32 {
+        &mut self.audio_music_volume
+    }
+    pub fn ui_volume_mut(&mut self) -> &mut f32 {
+        &mut self.audio_ui_volume
+    }
+    pub fn voice_volume_mut(&mut self) -> &mut f32 {
+        &mut self.audio_voice_volume
+    }
+
+    // --- Validated setters ---
+
+    pub fn set_shadow_quality(&mut self, quality: u32) {
+        self.graphics_shadow_quality = quality.min(MAX_GRAPHICS_QUALITY);
+    }
+
+    pub fn set_ssao_quality(&mut self, quality: u32) {
+        self.graphics_ssao_quality = quality.min(MAX_GRAPHICS_QUALITY);
+    }
+
+    pub fn set_window_mode(&mut self, mode: WindowMode) {
+        self.window_mode = mode;
+    }
+
+    pub fn set_window_resolution(&mut self, width: u32, height: u32) {
+        self.window_resolution = (width, height);
+    }
+
+    // --- Builder methods (for construction in tests) ---
+
+    pub fn with_key_w(mut self, b: Binding) -> Self {
+        self.key_w = b;
+        self
+    }
+    pub fn with_key_a(mut self, b: Binding) -> Self {
+        self.key_a = b;
+        self
+    }
+    pub fn with_mouse_sensitivity(mut self, v: f32) -> Self {
+        self.mouse_sensitivity = v;
+        self
+    }
+    pub fn with_input_filtering_enabled(mut self, v: bool) -> Self {
+        self.input_filtering_enabled = v;
+        self
+    }
+
+    pub fn with_window_mode(mut self, mode: WindowMode) -> Self {
+        self.window_mode = mode;
+        self
+    }
+
+    pub fn with_window_resolution(mut self, width: u32, height: u32) -> Self {
+        self.window_resolution = (width, height);
+        self
+    }
 }
 
 impl Default for Prefs {
@@ -60,7 +261,9 @@ impl Default for Prefs {
             key_s: Binding::new('S' as u32, 0),
             key_d: Binding::new('D' as u32, 0),
             key_up: Binding::new(' ' as u32, 0), // Space
-            key_down: Binding::new(0x204, 0),    // Shift
+            key_down: Binding::new(0x205, 0),    // Ctrl
+            key_sprint: Binding::new(0x204, 0),  // Shift
+            key_jump: Binding::new(' ' as u32, 0), // Space
             mouse_sensitivity: 1.0,
             input_filtering_enabled: true,
             // Default audio volumes (mid-range)
@@ -71,6 +274,9 @@ impl Default for Prefs {
             // Default graphics settings (High)
             graphics_shadow_quality: 3,
             graphics_ssao_quality: 3,
+            // Default video settings
+            window_mode: WindowMode::Windowed,
+            window_resolution: (1920, 1080),
         }
     }
 }
@@ -130,6 +336,12 @@ impl Prefs {
             if let Some(s) = get_str("key_down") {
                 prefs.key_down = parser::parse_binding(&s, prefs.key_down);
             }
+            if let Some(s) = get_str("key_sprint") {
+                prefs.key_sprint = parser::parse_binding(&s, prefs.key_sprint);
+            }
+            if let Some(s) = get_str("key_jump") {
+                prefs.key_jump = parser::parse_binding(&s, prefs.key_jump);
+            }
             prefs.mouse_sensitivity = get_f32("mouse_sensitivity", prefs.mouse_sensitivity);
 
             if let Some(s) = get_str("input_filtering_enabled") {
@@ -173,6 +385,27 @@ impl Prefs {
             prefs.graphics_ssao_quality = get_u32("ssao_quality", prefs.graphics_ssao_quality);
         }
 
+        // Load video settings from [video] section if present
+        if let Ok(map) = ini::macro_safe_read(&content)
+            && let Some(video_section) = map.get("video")
+        {
+            let get_str = |k: &str| video_section.get(k).and_then(|o| o.clone());
+            let get_u32 = |k: &str, def: u32| {
+                video_section
+                    .get(k)
+                    .and_then(|o| o.clone())
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(def)
+            };
+
+            if let Some(s) = get_str("window_mode") {
+                prefs.window_mode = WindowMode::from_str(&s);
+            }
+            let w = get_u32("window_width", prefs.window_resolution.0);
+            let h = get_u32("window_height", prefs.window_resolution.1);
+            prefs.window_resolution = (w, h);
+        }
+
         prefs
     }
 
@@ -211,6 +444,14 @@ impl Prefs {
             "key_down={}\n",
             parser::binding_to_string(&self.key_down)
         ));
+        out.push_str(&format!(
+            "key_sprint={}\n",
+            parser::binding_to_string(&self.key_sprint)
+        ));
+        out.push_str(&format!(
+            "key_jump={}\n",
+            parser::binding_to_string(&self.key_jump)
+        ));
         out.push_str(&format!("mouse_sensitivity={}\n", self.mouse_sensitivity));
         out.push_str(&format!(
             "input_filtering_enabled={}\n",
@@ -235,6 +476,12 @@ impl Prefs {
         ));
         out.push_str(&format!("ssao_quality={}\n", self.graphics_ssao_quality));
 
+        // Video section
+        out.push_str("\n[video]\n");
+        out.push_str(&format!("window_mode={}\n", self.window_mode.as_str()));
+        out.push_str(&format!("window_width={}\n", self.window_resolution.0));
+        out.push_str(&format!("window_height={}\n", self.window_resolution.1));
+
         fs::write(path, out)?;
         Ok(())
     }
@@ -247,9 +494,9 @@ mod tests {
     #[test]
     fn test_default_prefs() {
         let prefs = Prefs::default();
-        assert_eq!(prefs.key_w.code, 'W' as u32);
-        assert_eq!(prefs.mouse_sensitivity, 1.0);
-        assert!(prefs.input_filtering_enabled);
+        assert_eq!(prefs.key_w().code, 'W' as u32);
+        assert_eq!(prefs.mouse_sensitivity(), 1.0);
+        assert!(prefs.input_filtering_enabled());
     }
 
     #[test]
@@ -270,5 +517,75 @@ mod tests {
     fn test_config_path() {
         let path = Prefs::config_path();
         assert_eq!(path.to_str().unwrap(), "config/prefs.ini");
+    }
+
+    #[test]
+    fn test_default_video_settings() {
+        let prefs = Prefs::default();
+        assert_eq!(prefs.window_mode(), WindowMode::Windowed);
+        assert_eq!(prefs.window_resolution(), (1920, 1080));
+    }
+
+    #[test]
+    fn test_video_round_trip_windowed() {
+        use std::io::Write;
+
+        // Build a prefs with custom video settings
+        let prefs = Prefs::default()
+            .with_window_mode(WindowMode::Windowed)
+            .with_window_resolution(2560, 1440);
+
+        // Serialize to INI string directly (without touching disk)
+        let mut out = String::new();
+        out.push_str("[video]\n");
+        out.push_str(&format!("window_mode={}\n", prefs.window_mode().as_str()));
+        out.push_str(&format!("window_width={}\n", prefs.window_resolution().0));
+        out.push_str(&format!("window_height={}\n", prefs.window_resolution().1));
+
+        // Parse back
+        if let Ok(map) = ini::macro_safe_read(&out)
+            && let Some(section) = map.get("video")
+        {
+            let mode_str = section.get("window_mode").and_then(|o| o.clone()).unwrap_or_default();
+            let w: u32 = section.get("window_width").and_then(|o| o.clone())
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            let h: u32 = section.get("window_height").and_then(|o| o.clone())
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+
+            assert_eq!(WindowMode::from_str(&mode_str), WindowMode::Windowed);
+            assert_eq!((w, h), (2560, 1440));
+        } else {
+            panic!("Failed to parse video section");
+        }
+    }
+
+    #[test]
+    fn test_video_round_trip_fullscreen() {
+        let prefs = Prefs::default()
+            .with_window_mode(WindowMode::Fullscreen)
+            .with_window_resolution(1920, 1080);
+
+        let mut out = String::new();
+        out.push_str("[video]\n");
+        out.push_str(&format!("window_mode={}\n", prefs.window_mode().as_str()));
+        out.push_str(&format!("window_width={}\n", prefs.window_resolution().0));
+        out.push_str(&format!("window_height={}\n", prefs.window_resolution().1));
+
+        if let Ok(map) = ini::macro_safe_read(&out)
+            && let Some(section) = map.get("video")
+        {
+            let mode_str = section.get("window_mode").and_then(|o| o.clone()).unwrap_or_default();
+            assert_eq!(WindowMode::from_str(&mode_str), WindowMode::Fullscreen);
+        } else {
+            panic!("Failed to parse video section");
+        }
+    }
+
+    #[test]
+    fn test_window_mode_from_str() {
+        assert_eq!(WindowMode::from_str("Windowed"), WindowMode::Windowed);
+        assert_eq!(WindowMode::from_str("Fullscreen"), WindowMode::Fullscreen);
+        assert_eq!(WindowMode::from_str("Borderless"), WindowMode::Borderless);
+        assert_eq!(WindowMode::from_str("unknown"), WindowMode::Windowed); // default
     }
 }

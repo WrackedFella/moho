@@ -1,15 +1,15 @@
 //! Input routing system for the Moho engine.
 //!
-//! This module provides a priority-based input routing system that dispatches
-//! input events to different layers based on the current game state. Higher
-//! priority layers receive input first and can consume events to prevent
-//! lower priority layers from receiving them.
+//! Provides a priority-based input routing system that dispatches
+//! input events to different layers based on the current game state.
+//! Higher-priority layers receive input first and can consume events
+//! to prevent lower-priority layers from receiving them.
 //!
-//! # Status: Implemented but not fully integrated
+//! # Status
 //!
-//! Currently used to track active layers based on GameState, but actual event
-//! dispatch is handled by the `InputDispatcher` system. See `TODO.md` Task 10
-//! for architectural discussion of full integration vs current hybrid approach.
+//! Layer tracking via [`InputRouter::update_for_state`] is integrated.
+//! Full event dispatch through [`InputRouter::dispatch`] is not yet
+//! wired in — input currently flows through `InputDispatcher`.
 
 use crate::game_state::GameState;
 use std::collections::HashMap;
@@ -21,7 +21,6 @@ use winit::event::WindowEvent;
 /// Each layer represents a different input handling context (menus, console, game, etc.).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
-#[allow(dead_code)]
 pub enum InputLayer {
     /// Modal dialogs (highest priority - blocks all other input)
     Modal = 100,
@@ -43,7 +42,6 @@ impl InputLayer {
     /// Get the priority value for this layer.
     ///
     /// Higher numbers = higher priority = receives input first.
-    #[allow(dead_code)]
     pub fn priority(self) -> u8 {
         self as u8
     }
@@ -54,36 +52,13 @@ impl InputLayer {
 /// Handler functions receive a WindowEvent and return true if they consumed
 /// the event (preventing further propagation) or false if the event should
 /// continue to lower priority layers.
+#[allow(dead_code)] // TODO: integrate with InputDispatcher
 pub type InputHandler = Box<dyn Fn(&WindowEvent) -> bool + Send + Sync>;
 
 /// Priority-based input router that dispatches events to registered layers.
 ///
-/// The router maintains:
-/// - A set of currently active layers (based on GameState)
-/// - Handler functions for each layer
-/// - Priority ordering for event dispatch
-///
-/// # Example
-///
-/// ```no_run
-/// use moho::input_routing::{InputRouter, InputLayer};
-/// use moho::game_state::GameState;
-///
-/// let mut router = InputRouter::new();
-///
-/// // Register handlers
-/// router.register_handler(InputLayer::Console, |event| {
-///     // Handle console input
-///     false // Not consumed
-/// });
-///
-/// // Update active layers based on state
-/// router.update_for_state(GameState::ConsoleOpen);
-///
-/// // Dispatch events
-/// // let consumed = router.dispatch(&window_event);
-/// ```
-#[allow(dead_code)]
+/// The router tracks which input layers are active based on the current
+/// [`GameState`]. Full event dispatch is not yet integrated — see module docs.
 pub struct InputRouter {
     /// Currently active input layers (determined by GameState)
     active_layers: Vec<InputLayer>,
@@ -92,7 +67,6 @@ pub struct InputRouter {
     handlers: HashMap<InputLayer, InputHandler>,
 }
 
-#[allow(dead_code)]
 impl InputRouter {
     /// Create a new input router with no active layers or handlers.
     pub fn new() -> Self {
@@ -105,11 +79,7 @@ impl InputRouter {
     /// Register an input handler for a specific layer.
     ///
     /// If a handler already exists for this layer, it will be replaced.
-    ///
-    /// # Arguments
-    ///
-    /// * `layer` - The input layer to register the handler for
-    /// * `handler` - Function that processes WindowEvents and returns true if consumed
+    #[allow(dead_code)] // TODO: integrate with InputDispatcher
     pub fn register_handler<F>(&mut self, layer: InputLayer, handler: F)
     where
         F: Fn(&WindowEvent) -> bool + Send + Sync + 'static,
@@ -154,17 +124,8 @@ impl InputRouter {
 
     /// Dispatch a window event to active input layers in priority order.
     ///
-    /// Events are dispatched to layers from highest to lowest priority.
-    /// If a layer's handler returns true (event consumed), dispatch stops
-    /// and no lower priority layers receive the event.
-    ///
-    /// # Arguments
-    ///
-    /// * `event` - The WindowEvent to dispatch
-    ///
-    /// # Returns
-    ///
-    /// `true` if the event was consumed by any layer, `false` otherwise
+    /// If a handler returns `true` (consumed), dispatch stops.
+    #[allow(dead_code)] // TODO: integrate with InputDispatcher
     pub fn dispatch(&self, event: &WindowEvent) -> bool {
         for layer in &self.active_layers {
             if let Some(handler) = self.handlers.get(layer)
@@ -179,26 +140,26 @@ impl InputRouter {
         false
     }
 
-    /// Get the currently active input layers.
-    ///
-    /// Returns layers in priority order (highest first).
+    /// Get the currently active input layers (highest priority first).
+    #[allow(dead_code)] // TODO: integrate with InputDispatcher
     pub fn active_layers(&self) -> &[InputLayer] {
         &self.active_layers
     }
 
     /// Check if a specific layer is currently active.
+    #[allow(dead_code)] // TODO: integrate with InputDispatcher
     pub fn is_layer_active(&self, layer: InputLayer) -> bool {
         self.active_layers.contains(&layer)
     }
 
     /// Clear all registered handlers.
-    ///
-    /// Useful for cleanup or re-initialization.
+    #[allow(dead_code)] // TODO: integrate with InputDispatcher
     pub fn clear_handlers(&mut self) {
         self.handlers.clear();
     }
 
     /// Get the number of active layers.
+    #[allow(dead_code)] // TODO: integrate with InputDispatcher
     pub fn active_layer_count(&self) -> usize {
         self.active_layers.len()
     }

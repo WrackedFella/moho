@@ -5,54 +5,73 @@
 //! - Console overlay rendering
 //! - Progress overlay rendering
 //! - Pause overlay rendering
-use crate::adapter::GameState;
 use crate::adapter::ProgressState;
 use crate::screens::MenuAction;
 use crate::ui_state::UiStateManager;
 use moho_core::EventBus;
+use moho_types::GameState;
+
+/// Result of rendering the menu for a single frame.
+pub struct MenuRenderResult {
+    /// Actions triggered by clicking menu items
+    pub actions: Vec<MenuAction>,
+    /// Debug string of the currently-hovered item action (None if nothing hovered)
+    pub hovered_key: Option<String>,
+}
 
 /// Render the UI based on current game state
 ///
-/// Returns menu actions that were clicked during rendering
+/// Returns menu actions that were clicked during rendering, plus hover state.
 pub fn render_game_state(
     ctx: &egui::Context,
     ui_state: &mut UiStateManager,
     game_state: GameState,
     event_bus: &EventBus,
-) -> Vec<MenuAction> {
+) -> MenuRenderResult {
     match game_state {
         GameState::Menu => render_menu(ctx, ui_state),
         GameState::ConsoleOpen => {
+            render_overlays(ctx, ui_state);
             render_console(ctx, ui_state, event_bus);
-            Vec::new()
+            MenuRenderResult { actions: Vec::new(), hovered_key: None }
         }
         GameState::Paused => {
+            render_overlays(ctx, ui_state);
             render_pause_overlay(ctx);
-            Vec::new()
+            MenuRenderResult { actions: Vec::new(), hovered_key: None }
         }
         GameState::Playing => {
-            // No UI rendering when playing
-            Vec::new()
+            render_overlays(ctx, ui_state);
+            MenuRenderResult { actions: Vec::new(), hovered_key: None }
         }
     }
 }
 
-/// Render active menu screen and collect clicked actions
-fn render_menu(ctx: &egui::Context, ui_state: &mut UiStateManager) -> Vec<MenuAction> {
-    let mut menu_actions = Vec::new();
+/// Render all active overlay layers (HUDs, debug info)
+fn render_overlays(ctx: &egui::Context, ui_state: &mut UiStateManager) {
+    ui_state.overlay_manager.render_all(ctx);
+}
+
+/// Render active menu screen and collect clicked actions and hover state
+fn render_menu(ctx: &egui::Context, ui_state: &mut UiStateManager) -> MenuRenderResult {
+    let mut actions = Vec::new();
+    let mut hovered_key: Option<String> = None;
 
     if let Some(screen) = ui_state.active_screen_mut() {
         let items = screen.render(ctx);
 
-        // Collect clicked actions for processing outside the closure
         for item in items {
+            if item.hovered && item.enabled {
+                // Use the action's debug string as a stable per-item key
+                hovered_key = Some(format!("{:?}", item.action));
+            }
             if item.clicked && item.enabled {
-                menu_actions.push(item.action);
+                actions.push(item.action);
             }
         }
     }
 
-    menu_actions
+    MenuRenderResult { actions, hovered_key }
 }
 
 /// Render console overlay and process console actions
@@ -148,11 +167,11 @@ mod tests {
         let mut ui_state = UiStateManager::new();
         let event_bus = Arc::new(EventBus::new());
 
-        let mut actions = Vec::new();
+        let mut result = MenuRenderResult { actions: Vec::new(), hovered_key: None };
         let _ = ctx.run(Default::default(), |ctx| {
-            actions = render_game_state(ctx, &mut ui_state, GameState::Playing, &event_bus);
+            result = render_game_state(ctx, &mut ui_state, GameState::Playing, &event_bus);
         });
-        assert!(actions.is_empty());
+        assert!(result.actions.is_empty());
     }
 
     #[test]
@@ -161,10 +180,10 @@ mod tests {
         let mut ui_state = UiStateManager::new();
         let event_bus = Arc::new(EventBus::new());
 
-        let mut actions = Vec::new();
+        let mut result = MenuRenderResult { actions: Vec::new(), hovered_key: None };
         let _ = ctx.run(Default::default(), |ctx| {
-            actions = render_game_state(ctx, &mut ui_state, GameState::Paused, &event_bus);
+            result = render_game_state(ctx, &mut ui_state, GameState::Paused, &event_bus);
         });
-        assert!(actions.is_empty());
+        assert!(result.actions.is_empty());
     }
 }

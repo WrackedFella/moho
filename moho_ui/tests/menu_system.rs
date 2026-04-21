@@ -61,6 +61,7 @@ fn menu_item_creation() {
         rect: Some(rect),
         enabled: true,
         clicked: false,
+        hovered: false,
     };
 
     assert_eq!(item.action, MenuAction::Exit);

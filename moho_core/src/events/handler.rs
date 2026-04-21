@@ -1,5 +1,6 @@
 use super::Event;
 use std::any::Any;
+use std::fmt;
 use std::sync::Arc;
 
 /// Type alias for event handlers
@@ -9,6 +10,14 @@ pub type HandlerFn<E> = Arc<dyn Fn(&E) + Send + Sync>;
 pub struct Handler {
     handler: Arc<dyn Any + Send + Sync>,
     priority: i32,
+}
+
+impl fmt::Debug for Handler {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Handler")
+            .field("priority", &self.priority)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Handler {
@@ -32,6 +41,15 @@ impl Handler {
 pub struct HandlerList {
     handlers: Vec<Handler>,
     sorted: bool,
+}
+
+impl fmt::Debug for HandlerList {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HandlerList")
+            .field("handler_count", &self.handlers.len())
+            .field("sorted", &self.sorted)
+            .finish()
+    }
 }
 
 impl HandlerList {

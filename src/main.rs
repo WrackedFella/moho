@@ -1,3 +1,9 @@
+//! Moho — a voxel game engine and application binary.
+//!
+//! This is the main executable that wires together the engine crates
+//! ([`moho_core`], [`moho_renderer`], [`moho_audio`], [`moho_ui`],
+//! [`moho_sim`]) into a runnable application via [`winit`]'s event loop.
+
 use crossbeam_channel::{Receiver, unbounded};
 use legion::World;
 use moho_ui::prefs::Prefs;
@@ -124,6 +130,15 @@ struct App {
     // Frame timing
     frame_duration: Duration,
     last_frame: Instant,
+
+    // Tracks gizmo spheres spawned alongside debug point lights (light_id -> entity)
+    light_gizmos: std::collections::HashMap<u32, legion::Entity>,
+
+    // Physics
+    physics_world: Option<moho_physics::PhysicsWorld>,
+    chunk_colliders: std::collections::HashMap<glam::IVec3, moho_physics::ColliderHandle>,
+    test_physics_bodies: Vec<(moho_physics::RigidBodyHandle, legion::Entity)>,
+    jump_pressed: bool,
 }
 
 impl App {
@@ -192,6 +207,13 @@ impl App {
 
             frame_duration: initialized.frame_duration,
             last_frame: initialized.last_frame,
+
+            light_gizmos: std::collections::HashMap::new(),
+
+            physics_world: Some(moho_physics::PhysicsWorld::new()),
+            chunk_colliders: std::collections::HashMap::new(),
+            test_physics_bodies: Vec::new(),
+            jump_pressed: false,
         }
     }
 
@@ -205,8 +227,8 @@ impl App {
         let mut renderer = moho_renderer::create_renderer(Some(window_ref))?;
 
         // Apply initial quality settings
-        renderer.set_shadow_quality(self.prefs.graphics_shadow_quality as u8);
-        renderer.set_ssao_quality(self.prefs.graphics_ssao_quality as u8);
+        renderer.set_shadow_quality(self.prefs.shadow_quality() as u8);
+        renderer.set_ssao_quality(self.prefs.ssao_quality() as u8);
 
         // Create sphere mesh data using the proper sphere geometry
         let (vertices, normals, indices) = moho_core::actors::Sphere::unit_sphere_indexed(16, 16);
@@ -265,11 +287,17 @@ impl App {
                 false
             });
 
-            // Register UI adapter as a normal UI subscriber
+            // Register UI adapter as a normal UI subscriber.
+            // Only forward events to egui when menus/console are visible;
+            // during gameplay the overlays are passive and don't need input.
             let ui_adapter_clone = ui_adapter.clone();
             self.dispatcher.register(100, move |event: &WindowEvent| {
                 if let Ok(mut a) = ui_adapter_clone.lock() {
-                    a.handle_winit_event(event)
+                    if a.is_visible() {
+                        a.handle_winit_event(event)
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 }
@@ -397,6 +425,7 @@ impl App {
                     let scene_bytes = match local_scene.encode_to_bytes(
                         &local_world,
                         Some((camera_position, camera_yaw, camera_pitch)),
+                        &[], // fresh world — no spawned lights
                     ) {
                         Ok(b) => b,
                         Err(e) => {
@@ -462,8 +491,15 @@ impl App {
         // Encode scene bytes and write envelope. Prefer the last known
         // WorldSpec (e.g. from a loaded or generated scene) so autosaves
         // preserve original metadata; fall back to a minimal spec.
-        let scene_bytes = self.scene.encode_to_bytes(&self.world, camera_data)?;
-        let spec = self
+        let scene_bytes = self.scene.encode_to_bytes(
+            &self.world,
+            camera_data,
+            &self
+                .window_renderer
+                .as_ref()
+                .map_or_else(Vec::new, |wr| wr.renderer.all_lights_as_descs()),
+        )?;
+        let mut spec = self
             .last_world_spec
             .clone()
             .unwrap_or(moho_core::scene_builders::WorldSpec {
@@ -474,6 +510,8 @@ impl App {
                 night_length_seconds: 420.0,
                 initial_time_of_day: 6.0,
             });
+        // Persist the current time of day so Continue resumes at the right time.
+        spec.initial_time_of_day = self.simulation.time_of_day();
         save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
         log::info!(
             "Auto-saved scene (envelope) to {:?} (spec={:?})",
@@ -505,8 +543,24 @@ impl App {
             // subsequent writes preserve the original metadata.
             self.last_world_spec = Some(spec.clone());
             log::info!("Loaded WorldSpec from save: {:?}", spec);
-            let camera_data = self.scene.load_from_bytes(&scene_bytes, &mut self.world)?;
-            log::info!("Scene loaded successfully from {:?}", path.as_ref());
+            // Restore time of day from the persisted WorldSpec.
+            self.simulation.set_time_of_day(spec.initial_time_of_day);
+            let (camera_data, lights) = self.scene.load_from_bytes(&scene_bytes, &mut self.world)?;
+            log::info!("Scene loaded successfully from {:?}, {} lights", path.as_ref(), lights.len());
+
+            // Re-add persisted lights to the renderer
+            if let Some(ref mut wr) = self.window_renderer {
+                for desc in &lights {
+                    if desc.enabled {
+                        wr.renderer.add_point_light(
+                            glam::Vec3::from_array(desc.position),
+                            glam::Vec3::from_array(desc.color),
+                            desc.intensity,
+                            desc.range,
+                        );
+                    }
+                }
+            }
 
             // Reconstruct VoxelGrid from loaded chunks for the LightSystem
             // Note: This assumes the loaded scene contains VoxelChunk components
@@ -570,6 +624,9 @@ impl App {
             }
         }
 
+        // Initialize physics for loaded world.
+        self.setup_physics_for_loaded_world();
+
         // Request a redraw to show the loaded scene
         if let Some(ref wr) = self.window_renderer {
             wr.window.request_redraw();
@@ -583,6 +640,40 @@ impl App {
         Ok(())
     }
 
+    /// Initialize physics world after a scene is loaded.
+    fn setup_physics_for_loaded_world(&mut self) {
+        self.physics_world = Some(moho_physics::PhysicsWorld::new());
+        self.chunk_colliders.clear();
+        self.test_physics_bodies.clear();
+
+        crate::app::event_loop::EventProcessor::sync_chunk_colliders(self);
+
+        // Spawn the physics character at the saved player position so the KCC
+        // doesn't immediately override the restored camera on the first frame.
+        let saved_pos = self.simulation.position();
+        let saved_x = saved_pos.x as i32;
+        let saved_z = saved_pos.z as i32;
+        let terrain_y = self
+            .light_system
+            .as_ref()
+            .and_then(|ls| ls.grid().get_height(saved_x, saved_z))
+            .unwrap_or(10) as f32;
+
+        let spawn_pos = glam::Vec3::new(saved_pos.x, terrain_y + 3.0, saved_pos.z);
+        if let Some(ref mut pw) = self.physics_world {
+            pw.add_character(spawn_pos);
+        }
+
+        // Align the simulation Y to match physics spawn (avoids terrain clipping).
+        let (yaw, pitch) = self.simulation.yaw_pitch();
+        self.simulation.set_position_yaw_pitch(spawn_pos, yaw, pitch);
+
+        log::info!(
+            "Physics initialized for loaded world: {} chunk colliders",
+            self.chunk_colliders.len()
+        );
+    }
+
     /// Update controller input from keyboard state
     fn update_controller_input(&mut self) {
         // Helper to check if a binding is currently active
@@ -591,22 +682,22 @@ impl App {
         };
 
         // Calculate forward/backward
-        let forward = if is_active(&self.prefs.key_w) {
+        let forward = if is_active(&self.prefs.key_w()) {
             1.0
         } else {
             0.0
-        } - if is_active(&self.prefs.key_s) {
+        } - if is_active(&self.prefs.key_s()) {
             1.0
         } else {
             0.0
         };
 
         // Calculate left/right (A is left, so negative)
-        let right = if is_active(&self.prefs.key_d) {
+        let right = if is_active(&self.prefs.key_d()) {
             1.0
         } else {
             0.0
-        } - if is_active(&self.prefs.key_a) {
+        } - if is_active(&self.prefs.key_a()) {
             1.0
         } else {
             0.0
@@ -615,11 +706,11 @@ impl App {
         // Calculate up/down - only in first person mode
         let up = if self.simulation.camera_mode() == moho_core::controller::CameraMode::FirstPerson
         {
-            (if is_active(&self.prefs.key_up) {
+            (if is_active(&self.prefs.key_up()) {
                 1.0
             } else {
                 0.0
-            }) - (if is_active(&self.prefs.key_down) {
+            }) - (if is_active(&self.prefs.key_down()) {
                 1.0
             } else {
                 0.0
@@ -628,9 +719,18 @@ impl App {
             0.0 // No up/down in isometric mode
         };
 
+        // Check if sprint is active (Shift)
+        let sprint = is_active(&self.prefs.key_sprint());
+
         self.simulation.controller_input.forward = forward;
         self.simulation.controller_input.right = right;
         self.simulation.controller_input.up = up;
+        self.simulation.controller_input.sprint = sprint;
+        // Zoom is handled separately via mouse wheel input
+        self.simulation.controller_input.zoom_delta = 0.0;
+
+        // Track jump key for physics KCC
+        self.jump_pressed = is_active(&self.prefs.key_jump());
     }
 
     /// Handle keyboard input for camera controls
@@ -651,6 +751,17 @@ impl App {
                         }
                     }
                     return; // Don't process further
+                }
+                KeyCode::F3 => {
+                    // F3 toggles the debug HUD overlay
+                    if pressed {
+                        if let Some(ui_adapter) = &self.ui_adapter {
+                            if let Ok(mut adapter) = ui_adapter.lock() {
+                                adapter.toggle_debug_hud();
+                            }
+                        }
+                    }
+                    return;
                 }
                 KeyCode::Escape => {
                     // Escape closes console if open, otherwise opens menu
@@ -699,24 +810,6 @@ impl App {
                 } else {
                     self.active_keys.remove(&key_binding);
                 }
-            }
-
-            // Handle special keys (only in Playing state at this point)
-            if keycode == KeyCode::Tab && pressed {
-                // Toggle camera mode
-                let new_mode = match self.simulation.camera_mode() {
-                    moho_core::controller::CameraMode::FirstPerson => {
-                        moho_core::controller::CameraMode::Isometric
-                    }
-                    moho_core::controller::CameraMode::Isometric => {
-                        moho_core::controller::CameraMode::FirstPerson
-                    }
-                };
-                self.simulation.set_camera_mode(new_mode);
-                log::info!(
-                    "Switched to camera mode: {:?}",
-                    self.simulation.camera_mode()
-                );
             }
         }
     }
@@ -915,6 +1008,39 @@ impl ApplicationHandler for App {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Handle Tab key BEFORE dispatcher to prevent UI from consuming it
+        if let WindowEvent::KeyboardInput {
+            event:
+                KeyEvent {
+                    physical_key: PhysicalKey::Code(KeyCode::Tab),
+                    state: ElementState::Pressed,
+                    ..
+                },
+            ..
+        } = &event
+        {
+            if self.game_state == crate::game_state::GameState::Playing {
+                match self.simulation.camera_mode() {
+                    moho_core::controller::CameraMode::FirstPerson => {
+                        // Switch to RTS first so look_at runs in Isometric mode,
+                        // setting rts_look_target without touching FPS yaw/pitch.
+                        self.simulation
+                            .set_camera_mode(moho_core::controller::CameraMode::Isometric);
+                        self.simulation.look_at(self.simulation.position());
+                    }
+                    moho_core::controller::CameraMode::Isometric => {
+                        self.simulation
+                            .set_camera_mode(moho_core::controller::CameraMode::FirstPerson);
+                    }
+                }
+                log::info!(
+                    "Switched to camera mode: {:?}",
+                    self.simulation.camera_mode()
+                );
+                return; // Don't dispatch Tab further
+            }
+        }
+
         // Dispatch the event to registered subscribers (UI first). If consumed,
         // skip further application-level handling.
         if self.dispatcher.dispatch(&event) {
@@ -933,6 +1059,25 @@ impl ApplicationHandler for App {
     ) {
         let window_event_handler = app::event_loop::WindowEventHandler::new();
         window_event_handler.handle_device_event(self, event);
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        log::info!("Shutting down application...");
+
+        // Signal cancellation to any running background generation
+        if let Some(cancel) = &self.generation_cancel {
+            cancel.store(true, Ordering::SeqCst);
+        }
+
+        // Wait for generation thread to finish
+        if let Some(handle) = self.generation_handle.take() {
+            log::info!("Waiting for background generation to finish...");
+            if handle.join().is_err() {
+                log::error!("Failed to join generation thread");
+            }
+        }
     }
 }
 

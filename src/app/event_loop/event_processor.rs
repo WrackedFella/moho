@@ -13,6 +13,16 @@ use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent, WorldEvent};
 use moho_core::voxel::VoxelChunk;
 use winit::event_loop::ActiveEventLoop;
 
+// ── Spawn / interaction constants ──────────────────────────────────────
+const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
+const SPAWN_RAYCAST_MAX_DISTANCE: f32 = 100.0;
+const SPAWN_NORMAL_OFFSET: f32 = 0.5;
+const SPAWN_FALLBACK_DISTANCE: f32 = 5.0;
+/// Placeholder material ID for torch blocks.
+const TORCH_MATERIAL_ID: u32 = 3; // TODO: look up from MaterialRegistry
+const DEFAULT_POINT_LIGHT_INTENSITY: f32 = 5.0;
+const DEFAULT_POINT_LIGHT_RANGE: f32 = 20.0;
+
 /// Handles processing of all event types
 pub struct EventProcessor;
 
@@ -91,20 +101,41 @@ impl EventProcessor {
                 // Settings are already saved by the UI adapter
                 // Here we could reload/apply them if needed
             }
+            UiEvent::WindowSettingsChanged { mode, width, height } => {
+                log::info!("Window settings changed: {:?} {}x{}", mode, width, height);
+                if let Some(ref wr) = app.window_renderer {
+                    use moho_core::events::WindowMode;
+                    use winit::dpi::PhysicalSize;
+                    use winit::window::Fullscreen;
+
+                    match mode {
+                        WindowMode::Fullscreen | WindowMode::Borderless => {
+                            wr.window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                        }
+                        WindowMode::Windowed => {
+                            wr.window.set_fullscreen(None);
+                            let _ = wr.window.request_inner_size(PhysicalSize::new(width, height));
+                        }
+                    }
+                }
+            }
         }
     }
 
     /// Process all pending audio events from the event bus
     pub fn process_audio_events(&self, app: &mut App) {
         while let Ok(event) = app.audio_event_rx.try_recv() {
-            let audio_event = self.map_audio_event(event);
-            app.handle_audio_event(audio_event);
+            if let Some(audio_event) = self.map_audio_event(event) {
+                app.handle_audio_event(audio_event);
+            }
         }
     }
 
-    /// Map core AudioEvent to moho_audio AudioEvent
-    fn map_audio_event(&self, event: AudioEvent) -> moho_audio::AudioEvent {
-        match event {
+    /// Map core AudioEvent to moho_audio AudioEvent.
+    ///
+    /// Returns `None` for events that have no moho_audio equivalent yet.
+    fn map_audio_event(&self, event: AudioEvent) -> Option<moho_audio::AudioEvent> {
+        Some(match event {
             AudioEvent::ButtonClick => moho_audio::AudioEvent::ButtonClick,
             AudioEvent::MenuNavigate => moho_audio::AudioEvent::MenuNavigate,
             AudioEvent::Confirm => moho_audio::AudioEvent::Confirm,
@@ -122,14 +153,15 @@ impl EventProcessor {
                 volume,
                 looped,
             },
-            AudioEvent::MusicStop => moho_audio::AudioEvent::Stop(moho_audio::AudioCategory::Music),
-            AudioEvent::MusicVolumeChanged { volume: _ } => {
-                // Skip - not implemented in current audio system
-                // Return a no-op that won't crash but also won't do anything
-                moho_audio::AudioEvent::Stop(moho_audio::AudioCategory::Music)
+            AudioEvent::MusicStop => {
+                moho_audio::AudioEvent::Stop(Some(moho_audio::AudioCategory::Music))
             }
-            AudioEvent::StopAll => moho_audio::AudioEvent::Stop(moho_audio::AudioCategory::All),
-        }
+            AudioEvent::MusicVolumeChanged { volume: _ } => {
+                // TODO: implement runtime volume adjustment in AudioSystem
+                return None;
+            }
+            AudioEvent::StopAll => moho_audio::AudioEvent::Stop(None),
+        })
     }
 
     /// Process all pending graphics events from the event bus
@@ -177,16 +209,24 @@ impl EventProcessor {
             InputEvent::MouseWheel { delta_y } => {
                 // Only act on wheel events in game mode
                 if app.game_state == crate::game_state::GameState::Playing {
-                    // Simple zoom: move player forward/back along look direction
-                    let dz = delta_y * 0.5; // tuning factor
-                    let (yaw, pitch) = app.simulation.yaw_pitch();
-                    let sy = yaw.sin();
-                    let cy = yaw.cos();
-                    let cp = pitch.cos();
-                    let sp = pitch.sin();
-                    let forward = glam::Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
-                    let new_pos = app.simulation.position() + forward * dz;
-                    app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
+                    match app.simulation.camera_mode() {
+                        moho_core::controller::CameraMode::FirstPerson => {
+                            // First-person: scroll moves forward/back along look direction
+                            let dz = delta_y * MOUSE_WHEEL_ZOOM_FACTOR;
+                            let (yaw, pitch) = app.simulation.yaw_pitch();
+                            let sy = yaw.sin();
+                            let cy = yaw.cos();
+                            let cp = pitch.cos();
+                            let sp = pitch.sin();
+                            let forward = glam::Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
+                            let new_pos = app.simulation.position() + forward * dz;
+                            app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
+                        }
+                        moho_core::controller::CameraMode::Isometric => {
+                            // RTS camera: scroll adjusts camera height (zoom)
+                            app.simulation.controller_input.zoom_delta = delta_y;
+                        }
+                    }
                 }
             }
         }
@@ -217,12 +257,20 @@ impl EventProcessor {
                 };
 
                 if let Some(chunk) = new_chunk {
+                    // Remove old collider for this chunk and re-add updated one
+                    if let Some(ref mut pw) = app.physics_world {
+                        if let Some(old_handle) = app.chunk_colliders.remove(&chunk_pos) {
+                            pw.remove_collider(old_handle);
+                        }
+                        let handle = pw.add_terrain_trimesh(chunk.vertices(), chunk.indices());
+                        app.chunk_colliders.insert(chunk_pos, handle);
+                    }
+
                     // Update or insert into ECS world
-                    // We need to find the entity with this chunk_pos
                     let mut query = <(legion::Entity, &VoxelChunk)>::query();
                     let entity = query
                         .iter(&app.world)
-                        .find(|(_, c)| c.chunk_pos == chunk_pos)
+                        .find(|(_, c)| c.chunk_pos() == chunk_pos)
                         .map(|(e, _)| *e);
 
                     if let Some(e) = entity {
@@ -236,6 +284,29 @@ impl EventProcessor {
                         log::trace!("Created new mesh for chunk {:?}", chunk_pos);
                     }
                 }
+            }
+        }
+    }
+
+    /// Register colliders for all ECS chunks that don't yet have one.
+    pub fn sync_chunk_colliders(app: &mut App) {
+        if app.physics_world.is_none() {
+            return;
+        }
+
+        let mut query = <&VoxelChunk>::query();
+        // Collect chunk data first to avoid borrow conflicts
+        let chunks: Vec<(glam::IVec3, Vec<[f32; 3]>, Vec<u32>)> = query
+            .iter(&app.world)
+            .filter(|c| !app.chunk_colliders.contains_key(&c.chunk_pos()))
+            .map(|c| (c.chunk_pos(), c.vertices().to_vec(), c.indices().to_vec()))
+            .collect();
+
+        for (pos, vertices, indices) in chunks {
+            if let Some(ref mut pw) = app.physics_world {
+                let handle = pw.add_terrain_trimesh(&vertices, &indices);
+                app.chunk_colliders.insert(pos, handle);
+                log::debug!("Registered terrain collider for chunk {:?}", pos);
             }
         }
     }
@@ -273,7 +344,12 @@ impl EventProcessor {
                 if let Some(grid) = grid_opt {
                     // Use raycast utility
                     // Max distance 100 units
-                    let hit = moho_core::raycast::raycast(grid, camera_pos, forward, 100.0);
+                    let hit = moho_core::raycast::raycast(
+                        grid,
+                        camera_pos,
+                        forward,
+                        SPAWN_RAYCAST_MAX_DISTANCE,
+                    );
 
                     let spawn_pos = if let Some(hit) = hit {
                         // Spawn at hit position + normal * offset
@@ -282,10 +358,10 @@ impl EventProcessor {
                                 hit.normal.x as f32,
                                 hit.normal.y as f32,
                                 hit.normal.z as f32,
-                            ) * 0.5
+                            ) * SPAWN_NORMAL_OFFSET
                     } else {
                         // Spawn in front of camera if no hit
-                        camera_pos + forward * 5.0
+                        camera_pos + forward * SPAWN_FALLBACK_DISTANCE
                     };
 
                     log::info!("Spawning {} at {:?}", entity_type, spawn_pos);
@@ -297,7 +373,7 @@ impl EventProcessor {
                             // For now, let's use a hardcoded ID or look it up if possible
                             // MaterialRegistry is in VoxelGrid but not easily accessible by name here
                             // Let's assume 3 for now as a placeholder
-                            let torch_id = 3;
+                            let torch_id = TORCH_MATERIAL_ID;
                             let block_pos = glam::IVec3::new(
                                 spawn_pos.x.floor() as i32,
                                 spawn_pos.y.floor() as i32,
@@ -342,11 +418,27 @@ impl EventProcessor {
                                     glam::Vec3::ONE // White default
                                 };
 
-                                wr.renderer.add_point_light(
-                                    spawn_pos, color, 5.0,  // Intensity
-                                    20.0, // Range
+                                let light_id = wr.renderer.add_point_light(
+                                    spawn_pos,
+                                    color,
+                                    DEFAULT_POINT_LIGHT_INTENSITY,
+                                    DEFAULT_POINT_LIGHT_RANGE,
                                 );
                                 log::info!("Added point light at {:?}", spawn_pos);
+
+                                // Spawn a small gizmo sphere so the light origin is
+                                // visible in world space. Emissive material bypasses
+                                // lighting so the gizmo glows at the light's own colour.
+                                let gizmo = moho_core::actors::Sphere::new(
+                                    spawn_pos,
+                                    0.15,
+                                    moho_core::materials::MaterialType::Emissive {
+                                        color,
+                                        intensity: 1.5,
+                                    },
+                                );
+                                let entity = app.world.push((gizmo,));
+                                app.light_gizmos.insert(light_id, entity);
                             }
                         }
                         "cube" => {
@@ -363,7 +455,12 @@ impl EventProcessor {
                                     albedo: glam::Vec3::new(0.8, 0.2, 0.2),
                                 },
                             );
-                            app.world.push((cube,));
+                            let entity = app.world.push((cube,));
+                            // Register with physics (half-extents = 0.5 for a 1×1×1 cube)
+                            if let Some(pw) = app.physics_world.as_mut() {
+                                let handle = pw.add_dynamic_cuboid(spawn_pos, 0.5, 0.5, 0.5);
+                                app.test_physics_bodies.push((handle, entity));
+                            }
                             log::info!("Spawned cube at {:?}", spawn_pos);
                         }
                         "sphere" => {
@@ -379,7 +476,12 @@ impl EventProcessor {
                                     fuzz: 0.1,
                                 },
                             );
-                            app.world.push((sphere,));
+                            let entity = app.world.push((sphere,));
+                            // Register with physics
+                            if let Some(pw) = app.physics_world.as_mut() {
+                                let handle = pw.add_dynamic_sphere(spawn_pos, 0.5);
+                                app.test_physics_bodies.push((handle, entity));
+                            }
                             log::info!("Spawned sphere at {:?}", spawn_pos);
                         }
                         _ => {
@@ -394,7 +496,11 @@ impl EventProcessor {
             }
             DebugEvent::ToggleCollision { enabled } => {
                 log::info!("Collision toggled: {}", enabled);
-                // TODO: Implement collision toggle logic
+                // enabled=false means noclip ON (collision disabled)
+                if let Some(ref mut pw) = app.physics_world {
+                    pw.noclip = !enabled;
+                    log::info!("Noclip {}", if pw.noclip { "enabled" } else { "disabled" });
+                }
             }
             DebugEvent::SetShadowQuality { quality } => {
                 log::info!("Setting shadow quality to: {}", quality);
@@ -402,7 +508,7 @@ impl EventProcessor {
                     wr.renderer.set_shadow_quality(quality as u8);
 
                     // Update prefs
-                    app.prefs.graphics_shadow_quality = quality;
+                    app.prefs.set_shadow_quality(quality);
                     let _ = app.prefs.save();
                 }
             }
@@ -412,7 +518,7 @@ impl EventProcessor {
                     wr.renderer.set_ssao_quality(quality as u8);
 
                     // Update prefs
-                    app.prefs.graphics_ssao_quality = quality;
+                    app.prefs.set_ssao_quality(quality);
                     let _ = app.prefs.save();
                 }
             }
@@ -449,13 +555,13 @@ mod tests {
 
         // Test basic event mappings
         let mapped = processor.map_audio_event(AudioEvent::ButtonClick);
-        assert!(matches!(mapped, moho_audio::AudioEvent::ButtonClick));
+        assert!(matches!(mapped, Some(moho_audio::AudioEvent::ButtonClick)));
 
         let mapped = processor.map_audio_event(AudioEvent::Confirm);
-        assert!(matches!(mapped, moho_audio::AudioEvent::Confirm));
+        assert!(matches!(mapped, Some(moho_audio::AudioEvent::Confirm)));
 
         let mapped = processor.map_audio_event(AudioEvent::Cancel);
-        assert!(matches!(mapped, moho_audio::AudioEvent::Cancel));
+        assert!(matches!(mapped, Some(moho_audio::AudioEvent::Cancel)));
     }
 
     #[test]
@@ -468,7 +574,7 @@ mod tests {
         });
 
         match mapped {
-            moho_audio::AudioEvent::CustomSound { path, volume } => {
+            Some(moho_audio::AudioEvent::CustomSound { path, volume }) => {
                 assert_eq!(path, "test.wav");
                 assert!((volume - 0.5).abs() < 0.001);
             }
@@ -487,11 +593,11 @@ mod tests {
         });
 
         match mapped {
-            moho_audio::AudioEvent::BackgroundMusic {
+            Some(moho_audio::AudioEvent::BackgroundMusic {
                 path,
                 volume,
                 looped,
-            } => {
+            }) => {
                 assert_eq!(path, "music.ogg");
                 assert!((volume - 0.8).abs() < 0.001);
                 assert!(looped);

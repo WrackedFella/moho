@@ -69,7 +69,10 @@ pub fn raycast(
     while distance <= max_distance {
         // Check if current voxel is solid
         let pos = IVec3::new(x, y, z);
-        if grid.get_block(&pos).is_some_and(|block| block.material_id != 0) {
+        if grid
+            .get_block(&pos)
+            .is_some_and(|block| block.material_id != 0)
+        {
             // Assuming 0 is air/empty
             return Some(RaycastResult {
                 block_pos: pos,

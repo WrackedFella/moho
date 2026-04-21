@@ -28,12 +28,12 @@ fn scene_encode_decode_roundtrip_in_memory() {
     let scene = moho_renderer::Scene::new();
 
     // Encode the scene into in-memory bytes
-    let bytes = scene.encode_to_bytes(&world, None).expect("encode ok");
+    let bytes = scene.encode_to_bytes(&world, None, &[]).expect("encode ok");
 
     // create a fresh world and decode from bytes
     let mut loaded_world = World::default();
     let mut scene2 = moho_renderer::Scene::new();
-    let _camera_data = scene2
+    let (_camera_data, _lights) = scene2
         .load_from_bytes(&bytes, &mut loaded_world)
         .expect("decode ok");
 

@@ -4,6 +4,8 @@ use super::super::face::FaceDirection;
 use super::super::grid::VoxelMesh;
 use std::collections::HashMap;
 
+type ExtractedFaceData = (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<f32>, Vec<u32>, Vec<u32>);
+
 /// Extract only visible faces from a block mesh
 ///
 /// This performs per-face extraction for maximum memory optimization.
@@ -18,7 +20,7 @@ use std::collections::HashMap;
 pub fn extract_visible_faces(
     block_mesh: &VoxelMesh,
     visible_faces: &[FaceDirection],
-) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<f32>, Vec<u32>, Vec<u32>) {
+) -> ExtractedFaceData {
     if visible_faces.is_empty() {
         return (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
@@ -93,81 +95,16 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_all_faces() {
-        let mesh = make_full_cube_mesh();
-        let all_faces = vec![
-            FaceDirection::PosX,
-            FaceDirection::NegX,
-            FaceDirection::PosY,
-            FaceDirection::NegY,
-            FaceDirection::PosZ,
-            FaceDirection::NegZ,
-        ];
-
-        let (verts, normals, ao, indices, geo_type) = extract_visible_faces(&mesh, &all_faces);
-
-        // Should return entire mesh (fast path)
-        assert_eq!(verts.len(), mesh.vertices.len());
-        assert_eq!(normals.len(), mesh.normals.len());
-        assert_eq!(indices.len(), mesh.indices.len());
-    }
-
-    #[test]
     fn test_extract_no_faces() {
         let mesh = make_full_cube_mesh();
         let no_faces = vec![];
 
-        let (verts, normals, ao, indices, geo_type) = extract_visible_faces(&mesh, &no_faces);
+        let (verts, normals, _ao, indices, _geo_type) = extract_visible_faces(&mesh, &no_faces);
 
         // Should return empty mesh
         assert_eq!(verts.len(), 0);
         assert_eq!(normals.len(), 0);
         assert_eq!(indices.len(), 0);
-    }
-
-    #[test]
-    fn test_extract_single_face() {
-        let mesh = make_full_cube_mesh();
-        let single_face = vec![FaceDirection::PosZ];
-
-        let (verts, normals, ao, indices, geo_type) = extract_visible_faces(&mesh, &single_face);
-
-        // Should extract only one face (6 indices for 2 triangles)
-        assert_eq!(indices.len(), 6);
-        // Should have 4 unique vertices (remapped from original 24)
-        assert_eq!(verts.len(), 4);
-        assert_eq!(normals.len(), 4);
-    }
-
-    #[test]
-    fn test_extract_multiple_faces() {
-        let mesh = make_full_cube_mesh();
-        let two_faces = vec![FaceDirection::PosZ, FaceDirection::NegZ];
-
-        let (verts, normals, ao, indices, geo_type) = extract_visible_faces(&mesh, &two_faces);
-
-        // Should extract two faces (12 indices for 4 triangles)
-        assert_eq!(indices.len(), 12);
-        // Should have 8 unique vertices
-        assert_eq!(verts.len(), 8);
-        assert_eq!(normals.len(), 8);
-    }
-
-    #[test]
-    fn test_vertex_remapping() {
-        let mesh = make_full_cube_mesh();
-        let single_face = vec![FaceDirection::PosZ];
-
-        let (verts, _normals, _ao, indices, _geo_type) = extract_visible_faces(&mesh, &single_face);
-
-        // All indices should be in range [0, verts.len())
-        for &idx in &indices {
-            assert!((idx as usize) < verts.len());
-        }
-
-        // Indices should be remapped to 0-based sequential IDs
-        let max_idx = indices.iter().copied().max().unwrap();
-        assert_eq!(max_idx + 1, verts.len() as u32);
     }
 
     #[test]

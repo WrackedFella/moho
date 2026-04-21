@@ -57,14 +57,14 @@ impl Simulation {
         self.tick(&inputs);
     }
 
-    /// Snapshot the simulation into bytes using bincode
-    pub fn snapshot(&self) -> Vec<u8> {
-        serde_json::to_vec(self).expect("serialize succeeds")
+    /// Snapshot the simulation state as JSON bytes.
+    pub fn snapshot(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(self)
     }
 
-    /// Restore a simulation from bytes saved by `snapshot`.
-    pub fn restore(bytes: &[u8]) -> Self {
-        serde_json::from_slice(bytes).expect("deserialize succeeds")
+    /// Restore a simulation from JSON bytes produced by [`snapshot`](Self::snapshot).
+    pub fn restore(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        serde_json::from_slice(bytes)
     }
 }
 

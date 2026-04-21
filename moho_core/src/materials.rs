@@ -2,11 +2,17 @@ use crate::*;
 use glam::Vec3;
 use rand::{Rng, rng};
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MaterialType {
     Lambertian { albedo: Vec3 },
     Metal { albedo: Vec3, fuzz: f32 },
     Dielectric { ref_indx: f32 },
+    /// Bypasses all lighting — outputs `color * intensity` regardless of scene lights.
+    /// Used for editor gizmos, UI geometry, and self-illuminating objects.
+    Emissive { color: Vec3, intensity: f32 },
+    /// Terrain material where `top_albedo` is used for near-vertical normals (grass)
+    /// and `side_albedo` for horizontal normals (dirt/rock sides).
+    VoxelTerrain { top_albedo: Vec3, side_albedo: Vec3 },
 }
 
 impl Scatterable for MaterialType {
@@ -20,7 +26,7 @@ impl Scatterable for MaterialType {
                 })
             }
             MaterialType::Metal { albedo, fuzz } => {
-                let reflected: Vec3 = reflect(unit_vector(r_in.direction()), rec.normal);
+                let reflected: Vec3 = reflect(r_in.direction().normalize(), rec.normal);
                 let s = Ray::new(rec.p, reflected + *fuzz * random_in_unit_sphere());
                 let x = s.direction().dot(rec.normal);
                 if x > 0f32 {
@@ -40,11 +46,11 @@ impl Scatterable for MaterialType {
                 if normal_vector > 0f32 {
                     outward_normal = -rec.normal;
                     ni_over_nt = *ref_indx;
-                    cosine = *ref_indx * normal_vector / vector_length(r_in.direction());
+                    cosine = *ref_indx * normal_vector / r_in.direction().length();
                 } else {
                     outward_normal = rec.normal;
                     ni_over_nt = 1f32 / *ref_indx;
-                    cosine = -normal_vector / vector_length(r_in.direction());
+                    cosine = -normal_vector / r_in.direction().length();
                 }
 
                 let refraction_test = refract(r_in.direction(), outward_normal, ni_over_nt);
@@ -72,6 +78,10 @@ impl Scatterable for MaterialType {
                     scattered: scatter,
                 })
             }
+            // Emissive and VoxelTerrain are handled entirely in the GPU shader;
+            // they don't participate in CPU-side raycast scatter logic.
+            MaterialType::Emissive { .. } => None,
+            MaterialType::VoxelTerrain { .. } => None,
         }
     }
 }

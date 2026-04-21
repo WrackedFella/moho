@@ -1,5 +1,5 @@
 use crate::audio_cache::AudioCache;
-use crate::audio_events::{AudioCategory as EventCategory, AudioEvent};
+use crate::audio_events::AudioEvent;
 use crate::audio_settings::AudioSettings;
 use crate::audio_source::{AudioCategory, AudioSource};
 use crate::error::{AudioError, AudioResult};
@@ -64,26 +64,26 @@ impl AudioSystem {
 
     /// Play a sound from an AudioSource with optimized loading
     pub fn play_audio_source(&mut self, source: &AudioSource) -> AudioResult<()> {
-        let effective_volume = self.settings.effective_volume(&source.category) * source.volume;
+        let effective_volume = self.settings.effective_volume(source.category()) * source.volume();
 
         if effective_volume <= 0.0 {
             debug!(
                 "Skipping audio playback due to zero volume: {}",
-                source.path
+                source.path()
             );
             return Ok(());
         }
 
         // Use pre-loaded data for UI sounds, or load on-demand for others
-        let audio_data = if source.category == AudioCategory::UserInterface {
-            self.audio_cache.get_ui_sound(&source.path)?
+        let audio_data = if *source.category() == AudioCategory::UserInterface {
+            self.audio_cache.get_ui_sound(source.path())?
         } else {
-            self.audio_cache.get_audio(&source.path)?
+            self.audio_cache.get_audio(source.path())?
         };
 
         let cursor = std::io::Cursor::new(audio_data);
         let source_decoder = rodio::Decoder::new(cursor).map_err(|e| {
-            AudioError::LoadFailed(format!("Failed to decode {}: {}", source.path, e))
+            AudioError::LoadFailed(format!("Failed to decode {}: {}", source.path(), e))
         })?;
 
         let sink = rodio::Sink::try_new(&self.stream_handle)
@@ -91,14 +91,14 @@ impl AudioSystem {
 
         sink.set_volume(effective_volume);
 
-        if source.looped {
+        if source.looped() {
             sink.append(source_decoder.repeat_infinite());
         } else {
             sink.append(source_decoder);
         }
 
         // For background music, store the sink for volume control
-        if source.category == AudioCategory::Music && source.looped {
+        if *source.category() == AudioCategory::Music && source.looped() {
             if let Some(old_sink) = self.music_sink.take() {
                 old_sink.stop();
             }
@@ -111,7 +111,8 @@ impl AudioSystem {
 
         debug!(
             "Playing audio: {} at volume {:.2}",
-            source.path, effective_volume
+            source.path(),
+            effective_volume
         );
         Ok(())
     }
@@ -191,21 +192,22 @@ impl AudioSystem {
     }
 
     /// Stop audio based on category
-    pub fn stop_audio(&mut self, category: EventCategory) {
+    pub fn stop_audio(&mut self, category: Option<AudioCategory>) {
         match category {
-            EventCategory::All => {
+            None => {
                 if let Some(sink) = self.music_sink.take() {
                     sink.stop();
                 }
                 // Note: Individual sound effects can't be stopped once detached
-                // This is a limitation we can address later if needed
             }
-            EventCategory::Music => {
+            Some(AudioCategory::Music) => {
                 if let Some(sink) = self.music_sink.take() {
                     sink.stop();
                 }
             }
-            EventCategory::SoundEffects | EventCategory::UserInterface => {
+            Some(
+                AudioCategory::SoundEffect | AudioCategory::UserInterface | AudioCategory::Voice,
+            ) => {
                 // Individual sound effects auto-cleanup when finished
                 warn!("Cannot stop individual sound effects once started");
             }

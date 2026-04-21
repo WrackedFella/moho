@@ -10,6 +10,7 @@ use crate::prefs::Prefs;
 use crate::screens::{Menu, MenuAction};
 use crate::ui_state::UiStateManager;
 use moho_renderer::FrameCallback;
+pub use moho_types::GameState;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -72,18 +73,16 @@ pub struct EguiAdapter {
 
     // Rendering
     surface_config: Option<wgpu::SurfaceConfiguration>,
+
+    // Hover SFX tracking: stores the action key of the last-hovered menu item
+    // so we only fire MenuNavigate once per new hover, not every frame.
+    last_hovered_key: Option<String>,
+
+    // Whether menu music is currently playing (to avoid redundant start/stop)
+    menu_music_playing: bool,
 }
 
-/// Game state enum (re-exported from main crate for UI use)
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GameState {
-    Menu,
-    Playing,
-    ConsoleOpen,
-    Paused,
-}
-
-/// Lightweight progress state used by the adapter to render an overlay.
+/// Re-export from moho_types \u2014 single source of truth for game states.\npub use moho_types::GameState;\n\n/// Lightweight progress state used by the adapter to render an overlay.
 #[derive(Debug, Clone)]
 pub struct ProgressState {
     pub title: String,
@@ -124,6 +123,8 @@ impl EguiAdapter {
             current_game_state: GameState::Menu,
             surface_config: None,
             progress: None,
+            last_hovered_key: None,
+            menu_music_playing: false,
         }
     }
 
@@ -271,6 +272,16 @@ impl EguiAdapter {
         // This is called by the main application after rendering
         // No-op for now, but could be used for cleanup
     }
+
+    /// Update overlay HUD data for the current frame.
+    pub fn update_hud_data(&mut self, data: crate::overlays::HudData) {
+        self.ui_state.overlay_manager.update_data(data);
+    }
+
+    /// Toggle the debug HUD overlay (F3).
+    pub fn toggle_debug_hud(&mut self) {
+        self.ui_state.overlay_manager.toggle("debug");
+    }
 }
 
 impl FrameCallback for EguiAdapter {
@@ -283,13 +294,15 @@ impl FrameCallback for EguiAdapter {
         surface_width: u32,
         surface_height: u32,
     ) {
-        // Skip rendering if UI is not visible
-        if !self.ui_state.visible {
+        // Update global visibility flag (tracks menu visibility for input routing)
+        UI_OVERLAY_VISIBLE.store(self.ui_state.visible, Ordering::SeqCst);
+
+        // Render when menus are visible OR during any gameplay state (for overlays)
+        let needs_render = self.ui_state.visible
+            || self.current_game_state != GameState::Menu;
+        if !needs_render {
             return;
         }
-
-        // Update global visibility flag
-        UI_OVERLAY_VISIBLE.store(self.ui_state.visible, Ordering::SeqCst);
 
         // Initialize renderer if needed
         let format = self
@@ -304,17 +317,19 @@ impl FrameCallback for EguiAdapter {
 
         // Run egui and collect menu actions + modal result
         let mut menu_actions = Vec::new();
+        let mut new_hovered_key: Option<String> = None;
         let mut modal_result = crate::modal::ModalResult::None;
 
         let full_output = self.context.run(raw_input, |ctx| {
             // Render based on current game state (delegates to rendering module)
-            let actions = rendering::render_game_state(
+            let result = rendering::render_game_state(
                 ctx,
                 &mut self.ui_state,
                 self.current_game_state,
                 &self.event_bus,
             );
-            menu_actions.extend(actions);
+            menu_actions.extend(result.actions);
+            new_hovered_key = result.hovered_key;
 
             // Check if any screen wants to show a modal
             if let Some(screen) = self.ui_state.active_screen_mut()
@@ -350,6 +365,12 @@ impl FrameCallback for EguiAdapter {
             ModalResult::None => {}
         }
 
+        // Hover SFX: emit MenuNavigate exactly once when hover changes to a new item
+        if new_hovered_key != self.last_hovered_key && new_hovered_key.is_some() {
+            event_routing::emit_audio_event(&self.event_bus, UiAudioEvent::MenuNavigate);
+        }
+        self.last_hovered_key = new_hovered_key;
+
         // Process menu actions (delegates to event_routing module)
         for action in &menu_actions {
             event_routing::process_menu_action(action, &self.event_bus);
@@ -362,6 +383,13 @@ impl FrameCallback for EguiAdapter {
                 break;
             }
         }
+
+        // Background music: start when entering start menu, stop when leaving
+        event_routing::update_menu_music(
+            &menu_actions,
+            &self.event_bus,
+            &mut self.menu_music_playing,
+        );
 
         // Handle platform output
         self.handle_platform_output(full_output.platform_output);

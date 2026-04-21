@@ -6,6 +6,7 @@
 use moho_renderer::FrameCallback;
 
 /// Stub UI implementation for when no UI features are enabled
+#[derive(Debug)]
 pub struct StubUi;
 
 impl StubUi {
@@ -63,7 +64,10 @@ pub use screens::{
     StartMenu, UiComponent,
 };
 
-pub use overlays::{Console, ConsoleAction};
+pub use overlays::{
+    Console, ConsoleAction, DebugHud, FpsHud, GameplayHud, HudData, Overlay, OverlayManager,
+    RtsHud,
+};
 
 pub use modal::{Modal, ModalManager, ModalResult};
 

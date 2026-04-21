@@ -1,5 +1,21 @@
 use glam::{Mat4, Vec3};
 
+// ── Camera / movement defaults ─────────────────────────────────────────
+const DEFAULT_MOVE_SPEED: f32 = 4.0;
+const SPRINT_SPEED_MULTIPLIER: f32 = 1.5;
+/// Nearly ±π/2 (≈ ±88.3°), prevents gimbal lock at the poles.
+const PITCH_LIMIT_RAD: f32 = 1.54;
+const ISOMETRIC_CAMERA_OFFSET: Vec3 = Vec3::new(10.0, 10.0, 10.0);
+const RTS_MIN_HEIGHT: f32 = 5.0;
+const RTS_MAX_HEIGHT: f32 = 50.0;
+const RTS_DEFAULT_HEIGHT: f32 = 20.0;
+
+const DEFAULT_FOV_DEG: f32 = 45.0;
+const DEFAULT_ASPECT_RATIO: f32 = 16.0 / 9.0;
+const NEAR_CLIP: f32 = 0.1;
+/// Extended to keep the skybox visible.
+const FAR_CLIP: f32 = 1500.0;
+
 /// Camera mode for different viewing styles
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CameraMode {
@@ -15,16 +31,23 @@ pub struct ControllerInput {
     pub up: f32,
     pub yaw_delta: f32,
     pub pitch_delta: f32,
+    pub sprint: bool,
+    pub zoom_delta: f32,
 }
 
 /// A minimal first-person player controller stored as a component.
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerController {
+    /// FPS pawn world position. Frozen while in Isometric mode.
     pub position: Vec3,
     pub yaw: f32,
     pub pitch: f32,
     pub speed: f32,
     pub camera_mode: CameraMode,
+    pub rts_height: f32,
+    /// RTS camera look-at target. Panned independently from `position`.
+    /// Re-centered on `position` each time the player enters Isometric mode.
+    pub rts_look_target: Vec3,
 }
 
 impl PlayerController {
@@ -33,8 +56,31 @@ impl PlayerController {
             position,
             yaw: 0.0,
             pitch: 0.0,
-            speed: 4.0,
+            speed: DEFAULT_MOVE_SPEED,
             camera_mode: CameraMode::FirstPerson,
+            rts_height: RTS_DEFAULT_HEIGHT,
+            rts_look_target: position,
+        }
+    }
+
+    /// Point the camera toward `target`.
+    /// - FirstPerson: recomputes yaw and pitch to face target from current position.
+    /// - Isometric: sets rts_look_target so the RTS camera centers on target.
+    pub fn look_at(&mut self, target: Vec3) {
+        match self.camera_mode {
+            CameraMode::FirstPerson => {
+                let delta = target - self.position;
+                self.yaw = delta.x.atan2(delta.z);
+                let len = delta.length();
+                self.pitch = if len > f32::EPSILON {
+                    (delta.y / len).asin().clamp(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD)
+                } else {
+                    0.0
+                };
+            }
+            CameraMode::Isometric => {
+                self.rts_look_target = target;
+            }
         }
     }
 
@@ -43,11 +89,25 @@ impl PlayerController {
             CameraMode::FirstPerson => {
                 // Apply look deltas
                 self.yaw += input.yaw_delta;
-                self.pitch = (self.pitch + input.pitch_delta).clamp(-1.54, 1.54);
+                self.pitch =
+                    (self.pitch + input.pitch_delta).clamp(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD);
 
-                // Build forward/right vectors from yaw (assume Y up)
-                let forward = Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos()).normalize_or_zero();
-                let right = Vec3::new(-forward.z, 0.0, forward.x);
+                // Build horizontal forward direction (for right vector and pitch-less reference)
+                let forward_horizontal =
+                    Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos()).normalize_or_zero();
+
+                // Right vector stays perpendicular to forward in horizontal plane (for strafe)
+                let right = Vec3::new(-forward_horizontal.z, 0.0, forward_horizontal.x);
+
+                // Forward vector includes both yaw and pitch - so forward/back follows camera look angle
+                let pitch_cos = self.pitch.cos();
+                let pitch_sin = self.pitch.sin();
+                let forward = Vec3::new(
+                    self.yaw.sin() * pitch_cos,
+                    pitch_sin,
+                    self.yaw.cos() * pitch_cos,
+                )
+                .normalize_or_zero();
 
                 let mut dir = Vec3::ZERO;
                 dir += forward * input.forward;
@@ -55,14 +115,23 @@ impl PlayerController {
                 dir += Vec3::Y * input.up;
 
                 if dir.length_squared() > 0.0 {
-                    self.position += dir.normalize_or_zero() * self.speed * dt;
+                    // Apply sprint multiplier if active
+                    let speed = if input.sprint {
+                        self.speed * SPRINT_SPEED_MULTIPLIER
+                    } else {
+                        self.speed
+                    };
+                    self.position += dir.normalize_or_zero() * speed * dt;
                 }
             }
             CameraMode::Isometric => {
-                // In isometric mode, movement is relative to camera view
-                // Camera is at offset (10, 10, 10), looking down at the position
-                // Calculate camera-relative directions (projected onto ground plane)
-                let camera_offset = Vec3::new(10.0, 10.0, 10.0);
+                // RTS camera: birds-eye view with scroll-wheel zoom
+                // Adjust height based on zoom input
+                self.rts_height = (self.rts_height - input.zoom_delta * 2.0)
+                    .clamp(RTS_MIN_HEIGHT, RTS_MAX_HEIGHT);
+
+                // Movement pans rts_look_target (FPS pawn position stays frozen)
+                let camera_offset = ISOMETRIC_CAMERA_OFFSET;
                 let to_camera = camera_offset.normalize_or_zero();
 
                 // Forward in camera space (away from camera, projected to ground)
@@ -77,7 +146,7 @@ impl PlayerController {
                 // No up/down movement in isometric mode
 
                 if dir.length_squared() > 0.0 {
-                    self.position += dir.normalize_or_zero() * self.speed * dt;
+                    self.rts_look_target += dir.normalize_or_zero() * self.speed * dt;
                 }
             }
         }
@@ -100,16 +169,29 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
             let center = eye + forward;
             let up = Vec3::Y;
             let view = Mat4::look_at_rh(eye, center, up);
-            let proj = Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 1500.0f32); // Increased for skybox visibility
+            let proj = Mat4::perspective_rh(
+                DEFAULT_FOV_DEG.to_radians(),
+                DEFAULT_ASPECT_RATIO,
+                NEAR_CLIP,
+                FAR_CLIP,
+            );
             (view, proj, eye)
         }
         CameraMode::Isometric => {
-            // Isometric camera: fixed angle looking down at 45 degrees
-            let eye = pc.position + Vec3::new(10.0, 10.0, 10.0); // Offset above and to the side
-            let center = pc.position; // Look at the controller position
+            // RTS camera: birds-eye view with zoomable height
+            // Camera distance scales with height for consistent zoom feel
+            let height_ratio = pc.rts_height / RTS_DEFAULT_HEIGHT;
+            let camera_offset = ISOMETRIC_CAMERA_OFFSET * height_ratio;
+            let eye = pc.rts_look_target + camera_offset;
+            let center = pc.rts_look_target;
             let up = Vec3::Y;
             let view = Mat4::look_at_rh(eye, center, up);
-            let proj = Mat4::perspective_rh(45f32.to_radians(), 16.0 / 9.0, 0.1f32, 1500.0f32); // Increased for skybox visibility
+            let proj = Mat4::perspective_rh(
+                DEFAULT_FOV_DEG.to_radians(),
+                DEFAULT_ASPECT_RATIO,
+                NEAR_CLIP,
+                FAR_CLIP,
+            );
             (view, proj, eye)
         }
     }

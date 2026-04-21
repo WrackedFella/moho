@@ -33,6 +33,9 @@ pub struct MenuItem {
     /// interacts with the widget so the adapter can dispatch the
     /// action immediately (without relying solely on fallback hit-tests).
     pub clicked: bool,
+    /// Whether this item is currently hovered. Used by the adapter to
+    /// emit hover SFX exactly once per new hover.
+    pub hovered: bool,
 }
 
 impl PartialEq for MenuItem {
@@ -41,6 +44,7 @@ impl PartialEq for MenuItem {
         format!("{:?}", self.action) == format!("{:?}", other.action)
             && self.enabled == other.enabled
             && self.clicked == other.clicked
+            && self.hovered == other.hovered
             // Compare rects approximately by their Debug string
             && format!("{:?}", self.rect) == format!("{:?}", other.rect)
     }

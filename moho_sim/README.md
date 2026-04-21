@@ -76,10 +76,10 @@ let mut sim = Simulation::new(12345);
 sim.tick(&[PlayerInput::Move { dx: 5, dy: 3 }]);
 
 // Save state
-let snapshot = sim.snapshot(); // Vec<u8>
+let snapshot = sim.snapshot()?; // Vec<u8>
 
 // Restore state
-let restored = Simulation::restore(&snapshot);
+let restored = Simulation::restore(&snapshot)?;
 assert_eq!(restored.x, sim.x);
 assert_eq!(restored.y, sim.y);
 ```

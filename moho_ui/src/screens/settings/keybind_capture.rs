@@ -1,9 +1,8 @@
 //! Keybind capture handler for configuring input bindings.
 //!
 //! This module contains all keybind configuration logic including:
-//! - Key press capture with modifier detection
-//! - Conflict detection and modal triggering  
-//! - Modifier-only binding support (e.g., Shift, Ctrl, Alt alone)
+//! - Key press capture (modifier keys are treated as regular key codes)
+//! - Conflict detection and modal triggering
 //! - Input state tracking
 //!
 //! This module will be used by the future dedicated "Keybinds" screen/tab
@@ -603,10 +602,7 @@ mod tests {
         let mut handler = KeybindCaptureHandler::new();
 
         // Create prefs where KeyW is already bound to 'W'
-        let prefs = crate::prefs::Prefs {
-            key_w: Binding::new('W' as u32, 0),
-            ..Default::default()
-        };
+        let prefs = crate::prefs::Prefs::default().with_key_w(Binding::new('W' as u32, 0));
 
         let mut bindings_changed = vec![];
 
@@ -629,10 +625,7 @@ mod tests {
         let mut handler = KeybindCaptureHandler::new();
 
         // Create prefs where KeyW is already bound to 'W'
-        let prefs = crate::prefs::Prefs {
-            key_w: Binding::new('W' as u32, 0),
-            ..Default::default()
-        };
+        let prefs = crate::prefs::Prefs::default().with_key_w(Binding::new('W' as u32, 0));
 
         // Try to bind KeyA to 'W' (conflict)
         handler.start_listening(1); // KeyA

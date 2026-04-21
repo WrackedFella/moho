@@ -1,4 +1,4 @@
-use super::{MenuAction, Screen, ScreenSpec, UiComponent};
+use super::{FormControls, MenuAction, Screen, ScreenSpec, UiComponent};
 use std::path::PathBuf;
 
 pub struct StartMenu {
@@ -38,63 +38,50 @@ impl UiComponent for StartMenu {
                 ui.heading("Moho");
                 ui.add_space(12.0);
 
-                // Helper to paint hover/focus styling around a rect
-                let paint_decor = |ui: &mut egui::Ui, resp: &egui::Response| {
-                    if resp.hovered() {
-                        let r = resp.rect;
-                        let hover_color =
-                            egui::Color32::from_rgba_premultiplied(150, 150, 150, 100); // Light grey highlight
-                        ui.painter().rect_filled(r, 4.0, hover_color);
-                    }
-                };
-
                 // Continue button (disabled when no save exists)
-                let cont = ui.add_enabled(
-                    save_exists,
-                    egui::Button::new("Continue").min_size(egui::vec2(160.0, 28.0)),
-                );
-                paint_decor(ui, &cont);
+                let cont = FormControls::menu_button(ui, "Continue", save_exists);
                 let cont_clicked = cont.clicked() && save_exists;
                 items.push(super::MenuItem {
                     action: MenuAction::LoadScene(save_path.clone()),
                     rect: Some(cont.rect),
                     enabled: save_exists,
                     clicked: cont_clicked,
+                    hovered: cont.hovered(),
                 });
                 ui.add_space(6.0);
 
                 // New World button - always enabled
-                let nw = ui.add(egui::Button::new("New World").min_size(egui::vec2(160.0, 28.0)));
-                paint_decor(ui, &nw);
+                let nw = FormControls::menu_button(ui, "New World", true);
                 let nw_clicked = nw.clicked();
                 items.push(super::MenuItem {
                     action: MenuAction::NewWorld,
                     rect: Some(nw.rect),
                     enabled: true,
                     clicked: nw_clicked,
+                    hovered: nw.hovered(),
                 });
                 ui.add_space(6.0);
 
                 // Settings button
-                let st = ui.add(egui::Button::new("Settings").min_size(egui::vec2(160.0, 28.0)));
-                paint_decor(ui, &st);
+                let st = FormControls::menu_button(ui, "Settings", true);
                 let st_clicked = st.clicked();
                 items.push(super::MenuItem {
                     action: MenuAction::ShowMenu("settings".to_string()),
                     rect: Some(st.rect),
                     enabled: true,
                     clicked: st_clicked,
+                    hovered: st.hovered(),
                 });
                 ui.add_space(6.0);
 
-                let ex = ui.add(egui::Button::new("Exit").min_size(egui::vec2(160.0, 28.0)));
-                paint_decor(ui, &ex);
+                let ex = FormControls::menu_button(ui, "Exit", true);
                 let ex_clicked = ex.clicked();
                 items.push(super::MenuItem {
                     action: MenuAction::Exit,
                     rect: Some(ex.rect),
                     enabled: true,
                     clicked: ex_clicked,
+                    hovered: ex.hovered(),
                 });
             });
         });

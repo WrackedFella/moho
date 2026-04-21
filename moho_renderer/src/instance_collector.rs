@@ -12,6 +12,7 @@ use moho_core::voxel::VoxelChunk;
 ///
 /// This struct handles the per-frame collection of renderable objects
 /// from the ECS world, including material deduplication and mesh registration.
+#[derive(Debug)]
 pub struct InstanceCollector {
     sphere_instances: Vec<InstanceGpu>,
     cube_instances: Vec<InstanceGpu>,
@@ -65,15 +66,22 @@ impl InstanceCollector {
         }
 
         // Register VoxelChunk meshes and collect instances
+        // Pre-register the default VoxelTerrain material so all terrain chunks
+        // share a single GPU material entry sourcing colours from the material buffer
+        // rather than hardcoding them in the shader.
+        let terrain_mat = moho_core::materials::MaterialType::VoxelTerrain {
+            top_albedo: glam::Vec3::new(0.3, 0.6, 0.3),   // grass green
+            side_albedo: glam::Vec3::new(0.6, 0.5, 0.4),  // dirt brown
+        };
+        let terrain_mat_idx = material_table.find_or_push(&terrain_mat);
         let mut q_chunks_mut = <&mut VoxelChunk>::query();
         for chunk in q_chunks_mut.iter_mut(world) {
             if let Some(handle) = buffer_manager.ensure_chunk_registered(chunk, renderer) {
                 // VoxelChunk uses identity transform (mesh in world space)
-                // Material index 0 (Lambertian default)
                 let inst = InstanceGpu {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    material: 0,
-                    object_type: 2, // VoxelChunk type
+                    material: terrain_mat_idx,
+                    object_type: 0, // terrain — fragment shader applies normal-based colour
                     padding: [0, 0],
                 };
                 self.chunk_renders.push((handle, inst));
@@ -222,7 +230,7 @@ mod tests {
         let mat = MaterialType::Lambertian {
             albedo: glam::Vec3::new(1.0, 0.0, 0.0),
         };
-        world.push((Sphere::new(glam::Vec3::ZERO, 1.0, mat.clone()),));
+        world.push((Sphere::new(glam::Vec3::ZERO, 1.0, mat),));
         world.push((Sphere::new(glam::Vec3::new(5.0, 0.0, 0.0), 2.0, mat),));
 
         collector.collect_from_world(
@@ -251,7 +259,7 @@ mod tests {
             albedo: glam::Vec3::new(0.8, 0.8, 0.8),
             fuzz: 0.1,
         };
-        world.push((Cube::new(glam::Vec3::ZERO, 1.0, 1.0, 1.0, mat.clone()),));
+        world.push((Cube::new(glam::Vec3::ZERO, 1.0, 1.0, 1.0, mat),));
         world.push((Cube::new(
             glam::Vec3::new(3.0, 0.0, 0.0),
             2.0,
@@ -282,17 +290,16 @@ mod tests {
         let mut renderer = MockRenderer::new();
 
         // Add a voxel chunk with geometry
-        let chunk = VoxelChunk {
-            chunk_pos: glam::IVec3::new(0, 0, 0),
-            vertices: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            normals: vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
-            ambient_occlusion: vec![1.0; 3],
-            geometry_type: vec![0; 3],
-            light_level: vec![1.0; 3],
-            indices: vec![0, 1, 2],
-            material_id: 0,
-            mesh_handle: None,
-        };
+        let chunk = VoxelChunk::new(
+            glam::IVec3::new(0, 0, 0),
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+            vec![1.0; 3],
+            vec![0; 3],
+            vec![1.0; 3],
+            vec![0, 1, 2],
+            0,
+        );
         world.push((chunk,));
 
         collector.collect_from_world(
@@ -329,7 +336,7 @@ mod tests {
             fuzz: 0.1,
         };
 
-        world.push((Sphere::new(glam::Vec3::ZERO, 1.0, mat1.clone()),));
+        world.push((Sphere::new(glam::Vec3::ZERO, 1.0, mat1),));
         world.push((Cube::new(
             glam::Vec3::new(3.0, 0.0, 0.0),
             1.0,
@@ -338,17 +345,16 @@ mod tests {
             mat2,
         ),));
 
-        let chunk = VoxelChunk {
-            chunk_pos: glam::IVec3::new(0, 0, 0),
-            vertices: vec![[0.0, 0.0, 0.0]],
-            normals: vec![[0.0, 0.0, 1.0]],
-            ambient_occlusion: vec![1.0],
-            geometry_type: vec![0],
-            light_level: vec![1.0],
-            indices: vec![0],
-            material_id: 0,
-            mesh_handle: None,
-        };
+        let chunk = VoxelChunk::new(
+            glam::IVec3::new(0, 0, 0),
+            vec![[0.0, 0.0, 0.0]],
+            vec![[0.0, 0.0, 1.0]],
+            vec![1.0],
+            vec![0],
+            vec![1.0],
+            vec![0],
+            0,
+        );
         world.push((chunk,));
 
         collector.collect_from_world(

@@ -21,11 +21,11 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
 
         // Sound Effect Volume
         {
-            let saved_value = menu.state.prefs().audio_sound_effect_volume;
+            let saved_value = menu.state.prefs().sound_effect_volume();
             let dirty = FormControls::volume_slider(
                 ui,
                 "Sound Effects:",
-                &mut menu.state.staged_mut().audio_sound_effect_volume,
+                menu.state.staged_mut().sound_effect_volume_mut(),
                 saved_value,
                 label_width,
             );
@@ -36,11 +36,11 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
 
         // Music Volume
         {
-            let saved_value = menu.state.prefs().audio_music_volume;
+            let saved_value = menu.state.prefs().music_volume();
             let dirty = FormControls::volume_slider(
                 ui,
                 "Music:",
-                &mut menu.state.staged_mut().audio_music_volume,
+                menu.state.staged_mut().music_volume_mut(),
                 saved_value,
                 label_width,
             );
@@ -51,11 +51,11 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
 
         // UI Volume
         {
-            let saved_value = menu.state.prefs().audio_ui_volume;
+            let saved_value = menu.state.prefs().ui_volume();
             let dirty = FormControls::volume_slider(
                 ui,
                 "User Interface:",
-                &mut menu.state.staged_mut().audio_ui_volume,
+                menu.state.staged_mut().ui_volume_mut(),
                 saved_value,
                 label_width,
             );
@@ -66,11 +66,11 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
 
         // Voice Volume
         {
-            let saved_value = menu.state.prefs().audio_voice_volume;
+            let saved_value = menu.state.prefs().voice_volume();
             let dirty = FormControls::volume_slider(
                 ui,
                 "Voice:",
-                &mut menu.state.staged_mut().audio_voice_volume,
+                menu.state.staged_mut().voice_volume_mut(),
                 saved_value,
                 label_width,
             );

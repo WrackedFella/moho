@@ -7,6 +7,7 @@ mod keybind_capture;
 mod render_ops;
 mod state;
 mod types;
+mod video_tab;
 
 use conflict_modal::ConflictModalState;
 use keybind_capture::KeybindCaptureHandler;
@@ -24,12 +25,15 @@ pub(super) enum SettingsField {
     KeyD,
     KeyUp,
     KeyDown,
+    KeySprint,
     MouseSensitivity,
     InputFiltering,
     AudioSoundEffect,
     AudioMusic,
     AudioUI,
     AudioVoice,
+    WindowMode,
+    WindowResolution,
 }
 
 pub struct SettingsMenu {
@@ -71,8 +75,7 @@ impl SettingsMenu {
     /// let menu = SettingsMenu::with_prefs(Prefs::default());
     ///
     /// // Or create with custom prefs for specific test scenarios
-    /// let mut custom_prefs = Prefs::default();
-    /// custom_prefs.mouse_sensitivity = 2.5;
+    /// let custom_prefs = Prefs::default().with_mouse_sensitivity(2.5);
     /// let menu = SettingsMenu::with_prefs(custom_prefs);
     /// ```
     ///
@@ -188,6 +191,7 @@ impl SettingsMenu {
             3 => SettingsField::KeyD,
             4 => SettingsField::KeyUp,
             5 => SettingsField::KeyDown,
+            6 => SettingsField::KeySprint,
             _ => return Binding::new(0, 0),
         };
         self.state.get_staged_binding(field)
@@ -305,7 +309,12 @@ mod tests {
 
     #[test]
     fn modifier_only_capture_applies() {
-        let mut menu = SettingsMenu::new();
+        // Use isolated prefs so the test is not affected by key_down=Ctrl on disk.
+        // key_down defaults to Ctrl (0x205) which would conflict with the Ctrl
+        // binding we're trying to capture for KeyW.
+        let mut prefs = crate::prefs::Prefs::default();
+        prefs.set_key_down(Binding::new('Z' as u32, 0));
+        let mut menu = SettingsMenu::with_prefs(prefs);
         menu.keybind_capture.start_listening(0);
 
         let staged_prefs = menu.state.staged().clone();
@@ -388,7 +397,11 @@ mod tests {
     #[test]
     fn egui_integration_modifier_capture() {
         let ctx = egui::Context::default();
-        let mut menu = SettingsMenu::new();
+        // Use isolated prefs so key_down=Ctrl (the default) does not conflict
+        // with the Ctrl modifier binding we are capturing for KeyW.
+        let mut prefs = crate::prefs::Prefs::default();
+        prefs.set_key_down(Binding::new('Z' as u32, 0));
+        let mut menu = SettingsMenu::with_prefs(prefs);
         menu.keybind_capture.start_listening(0);
 
         let mut raw = egui::RawInput::default();
@@ -406,4 +419,44 @@ mod tests {
     // depends on the egui version's RawInput/Event API. We keep focused
     // integration coverage on modifiers here; other cases are covered by
     // unit tests and adapter-level behavior.
+
+    #[test]
+    fn window_mode_dirty_tracking() {
+        use crate::prefs::WindowMode;
+        let prefs = crate::prefs::Prefs::default(); // Windowed
+        let mut menu = SettingsMenu::with_prefs(prefs);
+
+        // Initially clean
+        assert!(!menu.has_unsaved_changes());
+
+        // Change window mode
+        menu.state.staged_mut().set_window_mode(WindowMode::Fullscreen);
+        menu.state.mark_dirty(SettingsField::WindowMode);
+
+        assert!(menu.has_unsaved_changes());
+        assert!(menu.state.is_field_dirty(SettingsField::WindowMode));
+
+        // Revert
+        menu.state.revert_changes();
+        assert!(!menu.has_unsaved_changes());
+        assert_eq!(menu.state.staged().window_mode(), WindowMode::Windowed);
+    }
+
+    #[test]
+    fn window_resolution_dirty_tracking() {
+        let prefs = crate::prefs::Prefs::default(); // (1920, 1080)
+        let mut menu = SettingsMenu::with_prefs(prefs);
+
+        assert!(!menu.has_unsaved_changes());
+
+        menu.state.staged_mut().set_window_resolution(2560, 1440);
+        menu.state.mark_dirty(SettingsField::WindowResolution);
+
+        assert!(menu.has_unsaved_changes());
+        assert!(menu.state.is_field_dirty(SettingsField::WindowResolution));
+
+        // Revert restores saved value
+        menu.state.revert_changes();
+        assert_eq!(menu.state.staged().window_resolution(), (1920, 1080));
+    }
 }

@@ -16,7 +16,7 @@ use crate::prefs::{Binding, Prefs};
 #[derive(Clone, Debug)]
 #[allow(dead_code)] // Methods will be used in subsequent refactoring increments
 pub struct BindingRegistry {
-    bindings: [(BindingId, Binding); 6],
+    bindings: [(BindingId, Binding); 7],
 }
 
 #[allow(dead_code)] // Methods will be used in subsequent refactoring increments
@@ -31,12 +31,13 @@ impl BindingRegistry {
     pub fn from_prefs(prefs: &Prefs) -> Self {
         Self {
             bindings: [
-                (BindingId::KeyW, prefs.key_w),
-                (BindingId::KeyA, prefs.key_a),
-                (BindingId::KeyS, prefs.key_s),
-                (BindingId::KeyD, prefs.key_d),
-                (BindingId::KeyUp, prefs.key_up),
-                (BindingId::KeyDown, prefs.key_down),
+                (BindingId::KeyW, prefs.key_w()),
+                (BindingId::KeyA, prefs.key_a()),
+                (BindingId::KeyS, prefs.key_s()),
+                (BindingId::KeyD, prefs.key_d()),
+                (BindingId::KeyUp, prefs.key_up()),
+                (BindingId::KeyDown, prefs.key_down()),
+                (BindingId::KeySprint, prefs.key_sprint()),
             ],
         }
     }
@@ -48,12 +49,13 @@ impl BindingRegistry {
     pub fn write_to_prefs(&self, prefs: &mut Prefs) {
         for (id, binding) in &self.bindings {
             match id {
-                BindingId::KeyW => prefs.key_w = *binding,
-                BindingId::KeyA => prefs.key_a = *binding,
-                BindingId::KeyS => prefs.key_s = *binding,
-                BindingId::KeyD => prefs.key_d = *binding,
-                BindingId::KeyUp => prefs.key_up = *binding,
-                BindingId::KeyDown => prefs.key_down = *binding,
+                BindingId::KeyW => prefs.set_key_w(*binding),
+                BindingId::KeyA => prefs.set_key_a(*binding),
+                BindingId::KeyS => prefs.set_key_s(*binding),
+                BindingId::KeyD => prefs.set_key_d(*binding),
+                BindingId::KeyUp => prefs.set_key_up(*binding),
+                BindingId::KeyDown => prefs.set_key_down(*binding),
+                BindingId::KeySprint => prefs.set_key_sprint(*binding),
             }
         }
     }
@@ -135,12 +137,12 @@ mod tests {
         let prefs = Prefs::default();
         let registry = BindingRegistry::from_prefs(&prefs);
 
-        assert_eq!(registry.get_binding(BindingId::KeyW), prefs.key_w);
-        assert_eq!(registry.get_binding(BindingId::KeyA), prefs.key_a);
-        assert_eq!(registry.get_binding(BindingId::KeyS), prefs.key_s);
-        assert_eq!(registry.get_binding(BindingId::KeyD), prefs.key_d);
-        assert_eq!(registry.get_binding(BindingId::KeyUp), prefs.key_up);
-        assert_eq!(registry.get_binding(BindingId::KeyDown), prefs.key_down);
+        assert_eq!(registry.get_binding(BindingId::KeyW), prefs.key_w());
+        assert_eq!(registry.get_binding(BindingId::KeyA), prefs.key_a());
+        assert_eq!(registry.get_binding(BindingId::KeyS), prefs.key_s());
+        assert_eq!(registry.get_binding(BindingId::KeyD), prefs.key_d());
+        assert_eq!(registry.get_binding(BindingId::KeyUp), prefs.key_up());
+        assert_eq!(registry.get_binding(BindingId::KeyDown), prefs.key_down());
     }
 
     #[test]
@@ -155,17 +157,15 @@ mod tests {
         // Write back to prefs
         registry.write_to_prefs(&mut prefs);
 
-        assert_eq!(prefs.key_w, Binding::new('Q' as u32, 0));
-        assert_eq!(prefs.key_a, Binding::new('E' as u32, 0));
+        assert_eq!(prefs.key_w(), Binding::new('Q' as u32, 0));
+        assert_eq!(prefs.key_a(), Binding::new('E' as u32, 0));
     }
 
     #[test]
     fn find_conflict_detects_duplicate_bindings() {
-        let prefs = Prefs {
-            key_w: Binding::new('W' as u32, 0),
-            key_a: Binding::new('A' as u32, 0),
-            ..Default::default()
-        };
+        let prefs = Prefs::default()
+            .with_key_w(Binding::new('W' as u32, 0))
+            .with_key_a(Binding::new('A' as u32, 0));
 
         let registry = BindingRegistry::from_prefs(&prefs);
 
@@ -180,10 +180,7 @@ mod tests {
 
     #[test]
     fn find_conflict_ignores_exclude_id() {
-        let prefs = Prefs {
-            key_w: Binding::new('W' as u32, 0),
-            ..Default::default()
-        };
+        let prefs = Prefs::default().with_key_w(Binding::new('W' as u32, 0));
 
         let registry = BindingRegistry::from_prefs(&prefs);
 
@@ -229,7 +226,7 @@ mod tests {
         let registry = BindingRegistry::from_prefs(&prefs);
 
         let bindings: Vec<_> = registry.iter().collect();
-        assert_eq!(bindings.len(), 6);
+        assert_eq!(bindings.len(), 7);
 
         assert_eq!(bindings[0].0, BindingId::KeyW);
         assert_eq!(bindings[1].0, BindingId::KeyA);
@@ -237,5 +234,6 @@ mod tests {
         assert_eq!(bindings[3].0, BindingId::KeyD);
         assert_eq!(bindings[4].0, BindingId::KeyUp);
         assert_eq!(bindings[5].0, BindingId::KeyDown);
+        assert_eq!(bindings[6].0, BindingId::KeySprint);
     }
 }

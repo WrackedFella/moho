@@ -44,12 +44,12 @@ impl Error for DeviceInitError {}
 
 /// Complete device setup including instance, surface, adapter, device, queue, and config
 pub struct DeviceSetup<'a> {
-    pub _instance: wgpu::Instance,
-    pub surface: wgpu::Surface<'a>,
-    pub _adapter: wgpu::Adapter,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub config: wgpu::SurfaceConfiguration,
+    pub(crate) _instance: wgpu::Instance,
+    pub(crate) surface: wgpu::Surface<'a>,
+    pub(crate) _adapter: wgpu::Adapter,
+    pub(crate) device: wgpu::Device,
+    pub(crate) queue: wgpu::Queue,
+    pub(crate) config: wgpu::SurfaceConfiguration,
 }
 
 impl<'a> DeviceSetup<'a> {

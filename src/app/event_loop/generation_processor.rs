@@ -94,7 +94,8 @@ impl GenerationProcessor {
         // Load produced scene bytes into the main world
         app.world.clear();
         match app.scene.load_from_bytes(&scene_bytes, &mut app.world) {
-            Ok(camera_data) => {
+            Ok((camera_data, _lights)) => {
+                // Generated worlds have no pre-spawned lights; nothing to restore.
                 if let Some((position, yaw, pitch)) = camera_data {
                     app.simulation.set_position_yaw_pitch(position, yaw, pitch);
                     app.input_system.clear_pending_input();
@@ -110,6 +111,9 @@ impl GenerationProcessor {
             let _ = h.join();
         }
         app.generation_cancel = None;
+
+        // Initialize physics for new world
+        self.setup_physics_for_world(app, &spec);
 
         // Switch to game mode and hide menu
         app.game_state = crate::game_state::GameState::Playing;
@@ -128,6 +132,80 @@ impl GenerationProcessor {
         }
         app.generation_cancel = None;
         log::info!("Generation canceled by user");
+    }
+
+    /// Set up physics world after a world is loaded or generated.
+    fn setup_physics_for_world(
+        &self,
+        app: &mut App,
+        spec: &moho_core::scene_builders::WorldSpec,
+    ) {
+        // Reset physics world and collider tracking
+        app.physics_world = Some(moho_physics::PhysicsWorld::new());
+        app.chunk_colliders.clear();
+        app.test_physics_bodies.clear();
+
+        // Register terrain colliders from all ECS chunks
+        crate::app::event_loop::EventProcessor::sync_chunk_colliders(app);
+
+        // Determine spawn position: center of world at terrain height + offset
+        let center_x = (spec.size_xz / 2) as i32;
+        let center_z = (spec.size_xz / 2) as i32;
+        let terrain_y = app
+            .light_system
+            .as_ref()
+            .and_then(|ls| ls.grid().get_height(center_x, center_z))
+            .unwrap_or(10) as f32;
+
+        let spawn_pos = glam::Vec3::new(center_x as f32, terrain_y + 3.0, center_z as f32);
+
+        // Spawn character controller
+        if let Some(ref mut pw) = app.physics_world {
+            pw.add_character(spawn_pos);
+        }
+
+        // Sync simulation camera to spawn position
+        let (yaw, pitch) = app.simulation.yaw_pitch();
+        app.simulation.set_position_yaw_pitch(spawn_pos, yaw, pitch);
+
+        // Spawn 3 test spheres above the center
+        let mut test_bodies = Vec::new();
+        for i in 0..3 {
+            let sphere_pos = glam::Vec3::new(
+                center_x as f32,
+                terrain_y + 20.0,
+                center_z as f32 + (i * 2) as f32,
+            );
+
+            let body_handle = if let Some(ref mut pw) = app.physics_world {
+                Some(pw.add_dynamic_sphere(sphere_pos, 0.5))
+            } else {
+                None
+            };
+
+            if let Some(handle) = body_handle {
+                use moho_core::actors::Sphere;
+                use moho_core::materials::MaterialType;
+                let sphere = Sphere::new(
+                    sphere_pos,
+                    0.5,
+                    MaterialType::Metal {
+                        albedo: glam::Vec3::new(0.8, 0.5, 0.2),
+                        fuzz: 0.05,
+                    },
+                );
+                let entity = app.world.push((sphere,));
+                test_bodies.push((handle, entity));
+            }
+        }
+        app.test_physics_bodies = test_bodies;
+
+        log::info!(
+            "Physics world ready: {} chunk colliders, {} test spheres, character at {:?}",
+            app.chunk_colliders.len(),
+            app.test_physics_bodies.len(),
+            spawn_pos
+        );
     }
 
     /// Handle generation failure

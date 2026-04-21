@@ -51,9 +51,112 @@ impl FrameProcessor {
             ci.pitch_delta = pitch_delta;
         }
 
-        // Apply input via simulation wrapper and update camera from returned tuple
-        let (view, proj, eye) = app.simulation.apply_input(dt);
-        app.camera = (view, proj, eye);
+        // --- Physics KCC path (FPS only) ---
+        let is_fps = app.simulation.camera_mode() == moho_core::controller::CameraMode::FirstPerson;
+        let use_kcc = is_fps
+            && app
+                .physics_world
+                .as_ref()
+                .is_some_and(|pw| !pw.noclip && pw.character_body.is_some());
+
+        if use_kcc {
+            self.update_game_state_fps_kcc(app, dt);
+        } else {
+            // Flying camera / noclip / RTS
+            let (view, proj, eye) = app.simulation.apply_input(dt);
+            app.camera = (view, proj, eye);
+        }
+
+        // Step rigid bodies in both KCC and non-KCC paths (test spheres, etc.)
+        if !use_kcc {
+            self.step_physics_bodies(app, dt);
+        }
+
+        // Clear zoom delta after use
+        app.simulation.controller_input.zoom_delta = 0.0;
+    }
+
+    fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
+        const MOVE_SPEED: f32 = 4.0;
+        const SPRINT_SPEED: f32 = 6.0;
+        const JUMP_VELOCITY: f32 = 8.0;
+
+        // Capture movement intent before zeroing it
+        let forward_input = app.simulation.controller_input.forward;
+        let right_input = app.simulation.controller_input.right;
+        let sprint = app.simulation.controller_input.sprint;
+
+        // Zero translational input so apply_input only updates yaw/pitch and clock
+        {
+            let ci = app.simulation.controller_input_mut();
+            ci.forward = 0.0;
+            ci.right = 0.0;
+            ci.up = 0.0;
+        }
+        // apply_input updates yaw/pitch from deltas, advances the game clock, returns camera
+        app.simulation.apply_input(dt);
+
+        // Read the now-updated yaw/pitch for horizontal movement calculation
+        let (yaw, pitch) = app.simulation.yaw_pitch();
+
+        let speed = if sprint { SPRINT_SPEED } else { MOVE_SPEED };
+
+        // Build horizontal movement in world space from yaw + input.
+        // Right vector matches controller.rs convention: (-cos(yaw), 0, sin(yaw))
+        let sy = yaw.sin();
+        let cy = yaw.cos();
+        let fwd_world = glam::Vec3::new(sy, 0.0, cy);
+        let right_world = glam::Vec3::new(-cy, 0.0, sy);
+
+        let horizontal =
+            (fwd_world * forward_input + right_world * right_input).normalize_or_zero()
+                * speed
+                * dt;
+
+        // Physics character movement + jump
+        {
+            let pw = app.physics_world.as_mut().unwrap();
+            if app.jump_pressed && pw.is_grounded {
+                pw.vertical_velocity = JUMP_VELOCITY;
+            }
+            let new_pos = pw.move_character(horizontal, dt);
+            // Override simulation position with physics result
+            app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
+        }
+
+        // Rebuild camera from the updated simulation state
+        app.camera =
+            moho_core::controller::controller_to_camera(&app.simulation.player_controller);
+
+        // Step dynamic rigid bodies and sync ECS transforms
+        self.step_physics_bodies(app, dt);
+    }
+
+    /// Step dynamic rigid bodies and sync their positions into ECS components.
+    /// Called from both the KCC path and the non-KCC path so test spheres move in all modes.
+    fn step_physics_bodies(&self, app: &mut App, dt: f32) {
+        let pw = match app.physics_world.as_mut() {
+            Some(pw) => pw,
+            None => return,
+        };
+        pw.step(dt);
+
+        // Sync test sphere ECS transforms from physics
+        let body_positions: Vec<(legion::Entity, glam::Vec3)> = app
+            .test_physics_bodies
+            .iter()
+            .filter_map(|(handle, entity)| pw.body_position(*handle).map(|p| (*entity, p)))
+            .collect();
+
+        for (entity, pos) in body_positions {
+            if let Some(mut entry) = app.world.entry(entity) {
+                if let Ok(sphere) = entry.get_component_mut::<moho_core::actors::Sphere>() {
+                    sphere.center = pos;
+                } else if let Ok(cube) = entry.get_component_mut::<moho_core::actors::Cube>() {
+                    cube.center = pos;
+                }
+            }
+        }
     }
 
     /// Update light propagation system for the current frame
@@ -194,9 +297,48 @@ impl FrameProcessor {
         self.update_game_state(app, dt);
         self.update_light_system(app); // Process light propagation after game state
         self.update_lighting(app);
+        self.update_hud_data(app);
         self.request_redraw(app);
         self.publish_frame_end(app, frame_number);
         self.update_control_flow(app, event_loop);
+    }
+
+    /// Push current world state into the overlay HUD data.
+    fn update_hud_data(&self, app: &mut App) {
+        let ui_adapter = match &app.ui_adapter {
+            Some(a) => a,
+            None => return,
+        };
+
+        let pos = app.simulation.position();
+        let chunk_size = 16i32;
+        let chunk_pos = [
+            (pos.x.floor() as i32).div_euclid(chunk_size),
+            (pos.y.floor() as i32).div_euclid(chunk_size),
+            (pos.z.floor() as i32).div_euclid(chunk_size),
+        ];
+
+        let mode = app.simulation.camera_mode();
+        let is_fps = mode == moho_core::controller::CameraMode::FirstPerson;
+
+        let (yaw, _pitch) = app.simulation.yaw_pitch();
+
+        let data = moho_ui::overlays::HudData {
+            player_position: [pos.x, pos.y, pos.z],
+            chunk_position: chunk_pos,
+            camera_mode: format!("{mode:?}"),
+            is_fps_mode: is_fps,
+            frame_time_secs: app.frame_duration.as_secs_f32(),
+            time_of_day: app.simulation.time_of_day(),
+            material_under_crosshair: None,
+            camera_yaw: yaw,
+            player_health: 1.0,
+            player_stamina: 1.0,
+        };
+
+        if let Ok(mut adapter) = ui_adapter.lock() {
+            adapter.update_hud_data(data);
+        }
     }
 }
 

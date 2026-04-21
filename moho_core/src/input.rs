@@ -164,6 +164,7 @@ pub enum FilterPreset {
 }
 
 /// Event-frequency collection with frame-frequency processing to eliminate input loss
+#[derive(Debug)]
 pub struct InputSystem {
     mouse_state: MouseState,
     current_frame: InputFrame,

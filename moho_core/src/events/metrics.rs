@@ -73,6 +73,7 @@ impl Default for EventMetrics {
 }
 
 /// Thread-safe metrics tracker
+#[derive(Debug)]
 pub struct MetricsTracker {
     total_published: AtomicU64,
     total_processed: AtomicU64,

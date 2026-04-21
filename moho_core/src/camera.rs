@@ -1,8 +1,7 @@
-extern crate glam;
 use crate::*;
 use glam::Vec3;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Camera {
     pub origin: Vec3,
     pub lower_left_corner: Vec3,
@@ -27,8 +26,8 @@ impl Camera {
         let theta = vfov * std::f32::consts::PI / 180f32;
         let half_height = (theta / 2f32).tan();
         let half_width = aspect * half_height;
-        let temp_w: Vec3 = unit_vector(look_from - look_at);
-        let temp_u: Vec3 = unit_vector(v_up.cross(temp_w));
+        let temp_w: Vec3 = (look_from - look_at).normalize();
+        let temp_u: Vec3 = v_up.cross(temp_w).normalize();
         let temp_v: Vec3 = temp_w.cross(temp_u);
 
         Camera {

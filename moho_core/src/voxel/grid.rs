@@ -54,6 +54,7 @@ pub struct ResourceData {
 }
 
 /// Material registry - maps material IDs to actual material data
+#[derive(Debug)]
 pub struct MaterialRegistry {
     materials: Vec<MaterialType>,
 }
@@ -101,6 +102,7 @@ impl Default for MaterialRegistry {
 }
 
 /// Resource registry - maps resource IDs to resource data
+#[derive(Debug)]
 pub struct ResourceRegistry {
     resources: Vec<ResourceData>,
 }
@@ -276,6 +278,7 @@ impl VoxelBlock {
 ///
 /// assert!(grid.get_block(&pos).is_some());
 /// ```
+#[derive(Debug)]
 pub struct VoxelGrid {
     blocks: HashMap<BlockPos, VoxelBlock>,
     chunk_size: i32,
