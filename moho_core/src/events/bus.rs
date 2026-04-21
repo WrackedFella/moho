@@ -115,10 +115,13 @@ impl EventBus {
         self.subscribe_with_priority(handler, 0)
     }
 
-    /// Subscribe with custom priority (lower = higher priority)
+    /// Subscribe with custom priority (lower = higher priority).
     ///
     /// When multiple handlers subscribe to the same event type,
     /// they are executed in priority order (lowest number first).
+    ///
+    /// Note: this is the **opposite** convention from `InputDispatcher`, which uses
+    /// higher numbers for higher priority. The two systems are independent.
     ///
     /// # Example
     ///

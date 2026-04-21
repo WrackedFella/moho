@@ -20,9 +20,8 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
-// Core game state and input routing modules
+// Core game state module
 mod game_state;
-mod input_routing;
 
 // Application initialization modules
 mod app;
@@ -79,7 +78,6 @@ struct App {
 
     // Game state management (replaces old AppMode)
     game_state: crate::game_state::GameState,
-    input_router: crate::input_routing::InputRouter,
 
     // Runtime state (initialized after window creation)
     window_renderer: Option<WindowRenderer>,
@@ -171,7 +169,6 @@ impl App {
             light_system: Some(light_system),
 
             game_state: crate::game_state::GameState::Menu, // Start in menu
-            input_router: crate::input_routing::InputRouter::new(),
             window_renderer: None,
             event_bus: initialized.event_bus,
 
@@ -902,7 +899,6 @@ impl App {
     ///
     /// This method centralizes all the boilerplate for state transitions:
     /// - Update game_state
-    /// - Update input_router
     /// - Update UI visibility and state
     /// - Handle cursor grab/release
     /// - Show specific menu if requested
@@ -915,7 +911,6 @@ impl App {
 
         // Update core state
         self.game_state = actions.new_state;
-        self.input_router.update_for_state(actions.new_state);
 
         // Update UI visibility and state
         if let Some(ui_adapter) = &self.ui_adapter

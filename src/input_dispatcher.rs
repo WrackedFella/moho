@@ -4,6 +4,11 @@ type InputHandler = Box<dyn Fn(&WindowEvent) -> bool + Send + Sync>;
 
 /// Simple prioritized input dispatcher for WindowEvent.
 /// Subscribers are called in descending priority order until one consumes the event.
+///
+/// # Priority convention
+/// Higher numbers = higher priority = called first. This is the opposite of
+/// `EventBus::subscribe_with_priority`, which uses lower numbers for higher priority.
+/// Typical values used in this codebase: 200 (keybind capture), 100 (UI), 0 (game).
 pub struct InputDispatcher {
     subscribers: Vec<(i32, InputHandler)>,
 }
