@@ -16,9 +16,8 @@
     - Support storing Entity/Actor positions.
     - Support storing modified `MicroChunks` (from Phase 5).
     - Versioning support for save files.
-    - Persist Time of Day
-    - FPS position is not persisted/reloaded
-        - Pressing 'continue' causes the FPS pawn to reset position to the corner of the map
+    - ✅ Persist Time of Day — `auto_save_on_shutdown` now writes current `time_of_day()` into the WorldSpec; `load_scene` restores it via `set_time_of_day`.
+    - ✅ FPS position restored on Continue — physics character now spawns at saved player XZ (not map center), fixing the corner-of-map reset.
 
 ### 2. RTS Command Logic
 - **Selection:**

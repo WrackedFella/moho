@@ -499,7 +499,7 @@ impl App {
                 .as_ref()
                 .map_or_else(Vec::new, |wr| wr.renderer.all_lights_as_descs()),
         )?;
-        let spec = self
+        let mut spec = self
             .last_world_spec
             .clone()
             .unwrap_or(moho_core::scene_builders::WorldSpec {
@@ -510,6 +510,8 @@ impl App {
                 night_length_seconds: 420.0,
                 initial_time_of_day: 6.0,
             });
+        // Persist the current time of day so Continue resumes at the right time.
+        spec.initial_time_of_day = self.simulation.time_of_day();
         save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
         log::info!(
             "Auto-saved scene (envelope) to {:?} (spec={:?})",
@@ -541,6 +543,8 @@ impl App {
             // subsequent writes preserve the original metadata.
             self.last_world_spec = Some(spec.clone());
             log::info!("Loaded WorldSpec from save: {:?}", spec);
+            // Restore time of day from the persisted WorldSpec.
+            self.simulation.set_time_of_day(spec.initial_time_of_day);
             let (camera_data, lights) = self.scene.load_from_bytes(&scene_bytes, &mut self.world)?;
             log::info!("Scene loaded successfully from {:?}, {} lights", path.as_ref(), lights.len());
 
@@ -620,9 +624,8 @@ impl App {
             }
         }
 
-        // Initialize physics for loaded world (use a default spec for spawn height)
-        let loaded_spec = self.last_world_spec.clone().unwrap_or_default();
-        self.setup_physics_for_loaded_world(&loaded_spec);
+        // Initialize physics for loaded world.
+        self.setup_physics_for_loaded_world();
 
         // Request a redraw to show the loaded scene
         if let Some(ref wr) = self.window_renderer {
@@ -638,33 +641,32 @@ impl App {
     }
 
     /// Initialize physics world after a scene is loaded.
-    fn setup_physics_for_loaded_world(&mut self, spec: &moho_core::scene_builders::WorldSpec) {
+    fn setup_physics_for_loaded_world(&mut self) {
         self.physics_world = Some(moho_physics::PhysicsWorld::new());
         self.chunk_colliders.clear();
         self.test_physics_bodies.clear();
 
         crate::app::event_loop::EventProcessor::sync_chunk_colliders(self);
 
-        let center_x = (spec.size_xz / 2) as i32;
-        let center_z = (spec.size_xz / 2) as i32;
+        // Spawn the physics character at the saved player position so the KCC
+        // doesn't immediately override the restored camera on the first frame.
+        let saved_pos = self.simulation.position();
+        let saved_x = saved_pos.x as i32;
+        let saved_z = saved_pos.z as i32;
         let terrain_y = self
             .light_system
             .as_ref()
-            .and_then(|ls| ls.grid().get_height(center_x, center_z))
+            .and_then(|ls| ls.grid().get_height(saved_x, saved_z))
             .unwrap_or(10) as f32;
 
-        // Spawn character slightly above terrain
-        let spawn_pos = glam::Vec3::new(center_x as f32, terrain_y + 3.0, center_z as f32);
+        let spawn_pos = glam::Vec3::new(saved_pos.x, terrain_y + 3.0, saved_pos.z);
         if let Some(ref mut pw) = self.physics_world {
             pw.add_character(spawn_pos);
         }
 
-        // Keep camera at saved position but align vertical for physics
-        let pos = self.simulation.position();
+        // Align the simulation Y to match physics spawn (avoids terrain clipping).
         let (yaw, pitch) = self.simulation.yaw_pitch();
-        // Use saved XZ but snap Y to physics spawn to avoid clipping into terrain
-        let adjusted = glam::Vec3::new(pos.x, terrain_y + 3.0, pos.z);
-        self.simulation.set_position_yaw_pitch(adjusted, yaw, pitch);
+        self.simulation.set_position_yaw_pitch(spawn_pos, yaw, pitch);
 
         log::info!(
             "Physics initialized for loaded world: {} chunk colliders",

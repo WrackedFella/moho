@@ -13,11 +13,11 @@ This document outlines the high-level phases for upcoming development. Detailed 
 
 ## Phase 3: UI & Settings (Isolated Systems)
 *Focus: Polish that doesn't touch the simulation core.*
-- **[Details](./03-ui-polish.md)**
+- **[Details](./03-ui-polish.md)** ✅ COMPLETE
 
 ## Phase 4: Physics Integration (Rapier3D)
 *Focus: The heavy lifting for simulation.*
-- **[Details](./04-physics.md)**
+- **[Details](./04-physics.md)** ✅ COMPLETE
 
 ## Phase 5: Terrain Overhaul (Research Spike)
 *Focus: Researching high-fidelity voxel terrain architectures.*
