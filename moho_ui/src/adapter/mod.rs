@@ -82,7 +82,7 @@ pub struct EguiAdapter {
     menu_music_playing: bool,
 }
 
-/// Re-export from moho_types \u2014 single source of truth for game states.\npub use moho_types::GameState;\n\n/// Lightweight progress state used by the adapter to render an overlay.
+/// Lightweight progress state used by the adapter to render an overlay.
 #[derive(Debug, Clone)]
 pub struct ProgressState {
     pub title: String,

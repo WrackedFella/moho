@@ -72,8 +72,7 @@ struct App {
     scene: moho_renderer::Scene,
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
 
-    // Voxel grid and light propagation system
-    voxel_grid: Option<moho_core::voxel::VoxelGrid>,
+    // Light propagation system (owns the voxel grid internally)
     light_system: Option<moho_core::voxel::LightSystem>,
 
     // Game state management (replaces old AppMode)
@@ -115,8 +114,6 @@ struct App {
 
     // Camera control (moved into simulation)
     simulation: moho_sim::SimulationController,
-    #[allow(dead_code)]
-    mouse_sensitivity: f32,
     input_system: moho_core::input::InputSystem,
 
     // Keybinds
@@ -163,9 +160,6 @@ impl App {
             scene: initialized.scene,
             camera: initialized.camera,
 
-            // Voxel grid and light system (minimal for testing)
-            // Note: Grid is moved into LightSystem, so we don't store it separately
-            voxel_grid: None,
             light_system: Some(light_system),
 
             game_state: crate::game_state::GameState::Menu, // Start in menu
@@ -194,7 +188,6 @@ impl App {
 
             // Camera control (moved into simulation)
             simulation: initialized.simulation,
-            mouse_sensitivity: initialized.mouse_sensitivity,
             input_system: initialized.input_system,
 
             // Store prefs and keyboard state

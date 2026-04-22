@@ -341,11 +341,7 @@ impl EventProcessor {
                 let forward = -view_matrix.inverse().col(2).truncate().normalize();
 
                 // Raycast
-                let grid_opt = if let Some(grid) = &mut app.voxel_grid {
-                    Some(grid)
-                } else {
-                    app.light_system.as_mut().map(|ls| ls.grid_mut())
-                };
+                let grid_opt = app.light_system.as_mut().map(|ls| ls.grid_mut());
 
                 if let Some(grid) = grid_opt {
                     // Use raycast utility

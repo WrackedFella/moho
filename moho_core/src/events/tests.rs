@@ -280,15 +280,8 @@ mod event_bus_tests {
         std::thread::sleep(std::time::Duration::from_millis(10));
         assert_eq!(counter.load(Ordering::Relaxed), 0);
 
-        // Process deferred events
-        // Note: Current implementation logs but doesn't execute handlers
-        // This is a known limitation - deferred processing will be improved
         bus.process_deferred();
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
-        // For now, deferred events are queued but not fully processed
-        // TODO: Implement full type-safe deferred event execution
-        assert_eq!(counter.load(Ordering::Relaxed), 0);
+        assert_eq!(counter.load(Ordering::Relaxed), 3);
     }
 
     #[test]

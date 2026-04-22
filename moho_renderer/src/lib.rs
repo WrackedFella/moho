@@ -69,8 +69,6 @@ pub mod gfx {
             device: wgpu::Device,
             queue: wgpu::Queue,
             config: wgpu::SurfaceConfiguration,
-            #[allow(dead_code)]
-            vertex_buffer: Option<wgpu::Buffer>,
             pipeline: wgpu::RenderPipeline,
             camera_buffer: wgpu::Buffer,
             camera_bind_group: wgpu::BindGroup,
@@ -82,8 +80,6 @@ pub mod gfx {
             depth_format: wgpu::TextureFormat,
             instance_buffer: Option<wgpu::Buffer>,
             instance_capacity: usize,
-            #[allow(dead_code)]
-            vertex_count: u32,
             mesh_table: Vec<Option<MeshEntry>>,
             pending_frame: Option<wgpu::SurfaceTexture>,
             pending_draws: Vec<(u32, Vec<GpuInstance>)>,
@@ -152,7 +148,6 @@ pub mod gfx {
                     device: device_setup.device,
                     queue: device_setup.queue,
                     config: device_setup.config,
-                    vertex_buffer: None,
                     pipeline: pipeline_setup.main_pipeline().clone(),
                     camera_buffer: resources.camera_buffer,
                     camera_bind_group: resources.camera_bind_group,
@@ -164,7 +159,6 @@ pub mod gfx {
                     depth_format: pipeline_setup.depth_format(),
                     instance_buffer: Some(resources.instance_buffer),
                     instance_capacity: resources.instance_capacity,
-                    vertex_count: 0,
                     mesh_table: Vec::new(),
                     pending_frame: None,
                     pending_draws: Vec::new(),

@@ -40,7 +40,7 @@ legion = { workspace = true }
 workspace = true
 
 [dependencies.bytemuck]
-version = "1.9.1"
+workspace = true
 features = ["derive"]
 
 [dependencies.env_logger]

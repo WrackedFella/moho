@@ -1,4 +1,4 @@
-use moho_sim::PlayerInputType as PlayerInput;
+use moho_sim::PlayerInput;
 
 #[test]
 fn player_input_bincode_roundtrip() {
