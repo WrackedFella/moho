@@ -37,17 +37,15 @@ impl Handler {
     }
 }
 
-/// Container for handlers of a specific event type
+/// Container for handlers of a specific event type, kept in priority order.
 pub struct HandlerList {
     handlers: Vec<Handler>,
-    sorted: bool,
 }
 
 impl fmt::Debug for HandlerList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HandlerList")
             .field("handler_count", &self.handlers.len())
-            .field("sorted", &self.sorted)
             .finish()
     }
 }
@@ -56,20 +54,15 @@ impl HandlerList {
     pub fn new() -> Self {
         Self {
             handlers: Vec::new(),
-            sorted: true,
         }
     }
 
+    /// Insert the handler in priority order so dispatch never needs to sort.
     pub fn add(&mut self, handler: Handler) {
-        self.handlers.push(handler);
-        self.sorted = false;
-    }
-
-    pub fn sort_by_priority(&mut self) {
-        if !self.sorted {
-            self.handlers.sort_by_key(|h| h.priority());
-            self.sorted = true;
-        }
+        let pos = self
+            .handlers
+            .partition_point(|h| h.priority() <= handler.priority());
+        self.handlers.insert(pos, handler);
     }
 
     pub fn handlers(&self) -> &[Handler] {
