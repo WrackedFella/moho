@@ -114,15 +114,32 @@ impl FrameProcessor {
             * dt;
 
         // Physics character movement + jump
-        {
+        let mut new_pos = {
             let pw = app.physics_world.as_mut().unwrap();
             if app.jump_pressed && pw.is_grounded {
                 pw.vertical_velocity = JUMP_VELOCITY;
             }
-            let new_pos = pw.move_character(horizontal, dt);
-            // Override simulation position with physics result
-            app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
+            pw.move_character(horizontal, dt)
+        };
+
+        // Kill plane: anything below this Y is considered "off the map"
+        const KILL_PLANE_Y: f32 = -30.0;
+        if new_pos.y < KILL_PLANE_Y {
+            let respawn_y = app
+                .light_system
+                .as_ref()
+                .and_then(|ls| ls.grid().get_height(0, 0))
+                .unwrap_or(10) as f32
+                + 3.0;
+            new_pos = glam::Vec3::new(0.0, respawn_y, 0.0);
+            if let Some(pw) = app.physics_world.as_mut() {
+                pw.set_character_position(new_pos);
+            }
+            log::info!("Player fell off map — respawning at {:?}", new_pos);
         }
+
+        // Override simulation position with physics result (or respawn position)
+        app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
 
         // Rebuild camera from the updated simulation state
         app.camera = moho_core::controller::controller_to_camera(&app.simulation.player_controller);

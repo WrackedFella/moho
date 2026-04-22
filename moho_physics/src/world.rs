@@ -225,6 +225,20 @@ impl PhysicsWorld {
         Vec3::new(new_translation.x, new_translation.y, new_translation.z)
     }
 
+    /// Teleport the character to `position` and zero out vertical velocity.
+    pub fn set_character_position(&mut self, position: Vec3) {
+        if let Some(handle) = self.character_body {
+            let current = *self.rigid_body_set[handle].position();
+            let new_iso = Isometry::new(
+                vector![position.x, position.y, position.z],
+                current.rotation.scaled_axis(),
+            );
+            self.rigid_body_set[handle].set_next_kinematic_position(new_iso);
+            self.rigid_body_set[handle].set_position(new_iso, false);
+            self.vertical_velocity = 0.0;
+        }
+    }
+
     /// Get the character's current world position.
     pub fn character_position(&self) -> Option<Vec3> {
         let handle = self.character_body?;

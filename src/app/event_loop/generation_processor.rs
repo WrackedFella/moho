@@ -113,7 +113,7 @@ impl GenerationProcessor {
         app.generation_cancel = None;
 
         // Initialize physics for new world
-        self.setup_physics_for_world(app, &spec);
+        self.setup_physics_for_world(app);
 
         // Switch to game mode and hide menu
         app.game_state = crate::game_state::GameState::Playing;
@@ -135,7 +135,7 @@ impl GenerationProcessor {
     }
 
     /// Set up physics world after a world is loaded or generated.
-    fn setup_physics_for_world(&self, app: &mut App, spec: &moho_core::scene_builders::WorldSpec) {
+    fn setup_physics_for_world(&self, app: &mut App) {
         // Reset physics world and collider tracking
         app.physics_world = Some(moho_physics::PhysicsWorld::new());
         app.chunk_colliders.clear();
@@ -144,9 +144,9 @@ impl GenerationProcessor {
         // Register terrain colliders from all ECS chunks
         crate::app::event_loop::EventProcessor::sync_chunk_colliders(app);
 
-        // Determine spawn position: center of world at terrain height + offset
-        let center_x = (spec.size_xz / 2) as i32;
-        let center_z = (spec.size_xz / 2) as i32;
+        // Terrain is generated in symmetric coords (-size/2 .. size/2), so origin is center.
+        let center_x = 0i32;
+        let center_z = 0i32;
         let terrain_y = app
             .light_system
             .as_ref()

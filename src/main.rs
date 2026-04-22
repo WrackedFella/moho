@@ -447,8 +447,10 @@ impl App {
                         return;
                     }
                     let save_path = saves_dir.join("scene.bin");
-                    let block_records: Vec<save::BlockRecord> =
-                        grid.iter_blocks().map(save::BlockRecord::from_block).collect();
+                    let block_records: Vec<save::BlockRecord> = grid
+                        .iter_blocks()
+                        .map(save::BlockRecord::from_block)
+                        .collect();
                     if let Err(e) = save::write_scene_with_metadata(
                         &save_path,
                         &scene_bytes,
@@ -521,7 +523,12 @@ impl App {
         let block_records: Vec<save::BlockRecord> = self
             .light_system
             .as_ref()
-            .map(|ls| ls.grid().iter_blocks().map(save::BlockRecord::from_block).collect())
+            .map(|ls| {
+                ls.grid()
+                    .iter_blocks()
+                    .map(save::BlockRecord::from_block)
+                    .collect()
+            })
             .unwrap_or_default();
         save::write_scene_with_metadata(&save_path, &scene_bytes, &spec, &block_records)?;
         log::info!(
@@ -1019,18 +1026,18 @@ impl ApplicationHandler for App {
             && self.game_state == crate::game_state::GameState::Playing
         {
             match self.simulation.camera_mode() {
-                    moho_core::controller::CameraMode::FirstPerson => {
-                        // Switch to RTS first so look_at runs in Isometric mode,
-                        // setting rts_look_target without touching FPS yaw/pitch.
-                        self.simulation
-                            .set_camera_mode(moho_core::controller::CameraMode::Isometric);
-                        self.simulation.look_at(self.simulation.position());
-                    }
-                    moho_core::controller::CameraMode::Isometric => {
-                        self.simulation
-                            .set_camera_mode(moho_core::controller::CameraMode::FirstPerson);
-                    }
+                moho_core::controller::CameraMode::FirstPerson => {
+                    // Switch to RTS first so look_at runs in Isometric mode,
+                    // setting rts_look_target without touching FPS yaw/pitch.
+                    self.simulation
+                        .set_camera_mode(moho_core::controller::CameraMode::Isometric);
+                    self.simulation.look_at(self.simulation.position());
                 }
+                moho_core::controller::CameraMode::Isometric => {
+                    self.simulation
+                        .set_camera_mode(moho_core::controller::CameraMode::FirstPerson);
+                }
+            }
             log::info!(
                 "Switched to camera mode: {:?}",
                 self.simulation.camera_mode()

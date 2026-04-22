@@ -80,14 +80,16 @@ pub fn write_scene_with_metadata<P: AsRef<Path>>(
 }
 
 /// Payload returned by [`read_scene_and_metadata`].
-pub type SavePayload = (moho_core::scene_builders::WorldSpec, Vec<u8>, Vec<BlockRecord>);
+pub type SavePayload = (
+    moho_core::scene_builders::WorldSpec,
+    Vec<u8>,
+    Vec<BlockRecord>,
+);
 
 /// Read our envelope format. Returns the WorldSpec, raw scene bytes, and
 /// block records. For v1 saves the block records vec will be empty; callers
 /// should treat an empty vec as "block data not available" and log accordingly.
-pub fn read_scene_and_metadata<P: AsRef<Path>>(
-    path: P,
-) -> Result<SavePayload, Box<dyn Error>> {
+pub fn read_scene_and_metadata<P: AsRef<Path>>(path: P) -> Result<SavePayload, Box<dyn Error>> {
     let mut f = File::open(path.as_ref())?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf)?;
@@ -132,8 +134,10 @@ pub fn read_scene_and_metadata<P: AsRef<Path>>(
         if buf.len() < offset + blocks_len {
             return Err("invalid envelope: blocks length out of range".into());
         }
-        let (records, _): (Vec<BlockRecord>, usize) =
-            bincode::decode_from_slice(&buf[offset..offset + blocks_len], bincode::config::standard())?;
+        let (records, _): (Vec<BlockRecord>, usize) = bincode::decode_from_slice(
+            &buf[offset..offset + blocks_len],
+            bincode::config::standard(),
+        )?;
         records
     } else {
         Vec::new()
@@ -171,13 +175,24 @@ mod tests {
             initial_time_of_day: 6.0,
         };
         let blocks = vec![
-            BlockRecord { x: 0, y: 0, z: 0, material_id: 2, resource_id: None },
-            BlockRecord { x: 1, y: 0, z: 0, material_id: 1, resource_id: Some(1) },
+            BlockRecord {
+                x: 0,
+                y: 0,
+                z: 0,
+                material_id: 2,
+                resource_id: None,
+            },
+            BlockRecord {
+                x: 1,
+                y: 0,
+                z: 0,
+                material_id: 1,
+                resource_id: Some(1),
+            },
         ];
 
         write_scene_with_metadata(&path, &scene_bytes, &spec, &blocks).expect("write ok");
-        let (read_spec, read_bytes, read_blocks) =
-            read_scene_and_metadata(&path).expect("read ok");
+        let (read_spec, read_bytes, read_blocks) = read_scene_and_metadata(&path).expect("read ok");
 
         assert_eq!(spec.name, read_spec.name);
         assert_eq!(spec.seed, read_spec.seed);
@@ -205,8 +220,7 @@ mod tests {
         };
 
         write_scene_with_metadata(&path, &[], &spec, &[]).expect("write ok");
-        let (read_spec, read_bytes, read_blocks) =
-            read_scene_and_metadata(&path).expect("read ok");
+        let (read_spec, read_bytes, read_blocks) = read_scene_and_metadata(&path).expect("read ok");
 
         assert_eq!(read_spec.name, "empty-world");
         assert!(read_bytes.is_empty());
