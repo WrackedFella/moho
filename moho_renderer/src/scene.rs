@@ -3,7 +3,6 @@ use bincode::{Decode, Encode};
 use legion::World;
 use legion::query::IntoQuery;
 use moho_core::actors::{Cube, InstanceGpu, Sphere};
-use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -22,18 +21,13 @@ const SCENE_FILE_VERSION: u32 = 3;
 /// Serializable descriptor for a dynamic point light.
 ///
 /// Used to persist lights alongside ECS scene data.
-#[derive(Encode, Decode, Serialize, Deserialize, Clone, Debug)]
+#[derive(Encode, Decode, Clone, Debug)]
 pub struct LightDesc {
     pub position: [f32; 3],
     pub color: [f32; 3],
     pub intensity: f32,
     pub range: f32,
-    #[serde(default = "default_true")]
     pub enabled: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 /// Scene manager that owns the `MaterialTable` and provides a simple
@@ -421,17 +415,13 @@ impl Default for Scene {
 }
 
 /// Serializable scene descriptor used for bincode snapshotting.
-#[derive(Encode, Decode, Serialize, Deserialize)]
+#[derive(Encode, Decode)]
 struct SceneDesc {
-    /// on-disk format version. Bump when making breaking changes.
     version: u32,
     spheres: Vec<SphereDesc>,
     cubes: Vec<CubeDesc>,
-    #[serde(default)]
     voxel_chunks: Vec<VoxelChunkDesc>,
-    #[serde(default)]
     camera: Option<CameraDesc>,
-    #[serde(default)]
     lights: Vec<LightDesc>,
 }
 
@@ -446,7 +436,7 @@ struct SceneDescLegacy {
     camera: Option<CameraDesc>,
 }
 
-#[derive(Encode, Decode, Serialize, Deserialize)]
+#[derive(Encode, Decode)]
 struct VoxelChunkDesc {
     chunk_pos: [i32; 3],
     vertices: Vec<[f32; 3]>,
@@ -455,14 +445,14 @@ struct VoxelChunkDesc {
     material_id: u32,
 }
 
-#[derive(Encode, Decode, Serialize, Deserialize)]
+#[derive(Encode, Decode)]
 struct SphereDesc {
     center: [f32; 3],
     radius: f32,
     material: MaterialDesc,
 }
 
-#[derive(Encode, Decode, Serialize, Deserialize)]
+#[derive(Encode, Decode)]
 struct CubeDesc {
     center: [f32; 3],
     length: f32,
@@ -471,14 +461,14 @@ struct CubeDesc {
     material: MaterialDesc,
 }
 
-#[derive(Encode, Decode, Serialize, Deserialize)]
+#[derive(Encode, Decode)]
 struct CameraDesc {
     position: [f32; 3],
     yaw: f32,
     pitch: f32,
 }
 
-#[derive(Encode, Decode, Serialize, Deserialize)]
+#[derive(Encode, Decode)]
 enum MaterialDesc {
     Lambertian {
         albedo: [f32; 3],

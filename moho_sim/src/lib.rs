@@ -4,10 +4,10 @@
 //! to run deterministic ticks. It is intentionally small so tests can be written
 //! and run before the full extraction of the application's simulation.
 
-use serde::{Deserialize, Serialize};
+use bincode::{Decode, Encode};
 
 /// A compact discrete player input used for tests and initial wiring.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum PlayerInput {
     /// Move by integer delta in grid space
     Move { dx: i32, dy: i32 },
@@ -16,7 +16,7 @@ pub enum PlayerInput {
 }
 
 /// Very small headless simulation: keeps a single actor position and applies inputs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct Simulation {
     pub x: i32,
     pub y: i32,
@@ -48,23 +48,21 @@ impl Simulation {
         self.y = self.y.wrapping_add(((self.seed >> 16) & 0xffff) as i32);
     }
 
-    /// Apply a slice of time-stamped inputs. The `tick` field is kept so callers
-    /// can attach timing info; the simulation currently ignores the tick value
-    /// itself for processing and applies inputs in order. This provides a
-    /// backward-compatible way to accept timed inputs for networking tests.
+    /// Apply a slice of time-stamped inputs.
     pub fn tick_timed(&mut self, timed: &[TimedInput]) {
         let inputs: Vec<PlayerInput> = timed.iter().map(|t| t.input.clone()).collect();
         self.tick(&inputs);
     }
 
-    /// Snapshot the simulation state as JSON bytes.
-    pub fn snapshot(&self) -> Result<Vec<u8>, serde_json::Error> {
-        serde_json::to_vec(self)
+    /// Snapshot the simulation state as bincode bytes.
+    pub fn snapshot(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+        bincode::encode_to_vec(self, bincode::config::standard())
     }
 
-    /// Restore a simulation from JSON bytes produced by [`snapshot`](Self::snapshot).
-    pub fn restore(bytes: &[u8]) -> Result<Self, serde_json::Error> {
-        serde_json::from_slice(bytes)
+    /// Restore a simulation from bincode bytes produced by [`snapshot`](Self::snapshot).
+    pub fn restore(bytes: &[u8]) -> Result<Self, bincode::error::DecodeError> {
+        let (sim, _) = bincode::decode_from_slice(bytes, bincode::config::standard())?;
+        Ok(sim)
     }
 }
 

@@ -1866,7 +1866,6 @@ dependencies = [
  "moho_core",
  "naga",
  "pollster",
- "serde",
  "tempfile",
  "thiserror 1.0.69",
  "wgpu",
@@ -1881,8 +1880,6 @@ dependencies = [
  "crc32fast",
  "glam",
  "moho_core",
- "serde",
- "serde_json",
 ]
 
 [[package]]
