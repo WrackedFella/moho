@@ -549,3 +549,71 @@ impl MaterialDesc {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use legion::World;
+
+    #[test]
+    fn camera_and_lights_round_trip_through_encode_decode() {
+        let scene = Scene::new();
+        let world = World::default();
+
+        let cam_pos = glam::Vec3::new(1.5, 2.5, 3.5);
+        let yaw = 0.123_f32;
+        let pitch = -0.456_f32;
+        let lights = vec![
+            LightDesc {
+                position: [10.0, 20.0, 30.0],
+                color: [1.0, 0.5, 0.0],
+                intensity: 2.5,
+                range: 50.0,
+                enabled: true,
+            },
+            LightDesc {
+                position: [-5.0, 0.0, 5.0],
+                color: [0.0, 1.0, 1.0],
+                intensity: 1.0,
+                range: 25.0,
+                enabled: false,
+            },
+        ];
+
+        let bytes = scene
+            .encode_to_bytes(&world, Some((cam_pos, yaw, pitch)), &lights)
+            .expect("encode");
+
+        let mut scene2 = Scene::new();
+        let mut world2 = World::default();
+        let (cam_out, lights_out) = scene2.load_from_bytes(&bytes, &mut world2).expect("decode");
+
+        let (pos_out, yaw_out, pitch_out) = cam_out.expect("camera present");
+        assert!((pos_out.x - cam_pos.x).abs() < 1e-6);
+        assert!((pos_out.y - cam_pos.y).abs() < 1e-6);
+        assert!((pos_out.z - cam_pos.z).abs() < 1e-6);
+        assert!((yaw_out - yaw).abs() < 1e-6);
+        assert!((pitch_out - pitch).abs() < 1e-6);
+
+        assert_eq!(lights_out.len(), 2);
+        assert!((lights_out[0].intensity - 2.5).abs() < 1e-6);
+        assert_eq!(lights_out[0].enabled, true);
+        assert_eq!(lights_out[1].enabled, false);
+        assert!((lights_out[1].range - 25.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn encode_without_camera_round_trips() {
+        let scene = Scene::new();
+        let world = World::default();
+
+        let bytes = scene.encode_to_bytes(&world, None, &[]).expect("encode");
+
+        let mut scene2 = Scene::new();
+        let mut world2 = World::default();
+        let (cam_out, lights_out) = scene2.load_from_bytes(&bytes, &mut world2).expect("decode");
+
+        assert!(cam_out.is_none());
+        assert!(lights_out.is_empty());
+    }
+}
