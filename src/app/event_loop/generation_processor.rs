@@ -17,7 +17,7 @@ impl GenerationProcessor {
     /// Poll the async generation channel and process messages
     pub fn poll_generation(&self, app: &mut App) {
         // Take the receiver so we can mutate `self` while processing messages
-        if let Some(rx) = app.generation_receiver.take() {
+        if let Some(rx) = app.generation.receiver.take() {
             let mut still_running = true;
 
             while let Ok(msg) = rx.try_recv() {
@@ -45,11 +45,9 @@ impl GenerationProcessor {
             }
 
             if still_running {
-                // Put the receiver back for future polling
-                app.generation_receiver = Some(rx);
+                app.generation.receiver = Some(rx);
             } else {
-                // Drop the receiver and clear state
-                app.generation_receiver = None;
+                app.generation.receiver = None;
             }
         }
     }
@@ -73,8 +71,7 @@ impl GenerationProcessor {
     ) {
         log::info!("Generation completed for spec={:?}", spec.name);
 
-        // Remember the last WorldSpec
-        app.last_world_spec = Some(spec.clone());
+        app.generation.last_spec = Some(spec.clone());
 
         // Initialize LightSystem with the generated grid
         log::info!("Initializing LightSystem with generated grid");
@@ -98,7 +95,7 @@ impl GenerationProcessor {
                 // Generated worlds have no pre-spawned lights; nothing to restore.
                 if let Some((position, yaw, pitch)) = camera_data {
                     app.simulation.set_position_yaw_pitch(position, yaw, pitch);
-                    app.input_system.clear_pending_input();
+                    app.input.system.clear_pending_input();
                 }
             }
             Err(e) => {
@@ -107,10 +104,10 @@ impl GenerationProcessor {
         }
 
         // Clean up generation state
-        if let Some(h) = app.generation_handle.take() {
+        if let Some(h) = app.generation.handle.take() {
             let _ = h.join();
         }
-        app.generation_cancel = None;
+        app.generation.cancel = None;
 
         // Initialize physics for new world
         self.setup_physics_for_world(app);
@@ -127,36 +124,31 @@ impl GenerationProcessor {
         {
             a.finish_progress();
         }
-        if let Some(h) = app.generation_handle.take() {
+        if let Some(h) = app.generation.handle.take() {
             let _ = h.join();
         }
-        app.generation_cancel = None;
+        app.generation.cancel = None;
         log::info!("Generation canceled by user");
     }
 
     /// Set up physics world after a world is loaded or generated.
     fn setup_physics_for_world(&self, app: &mut App) {
-        // Reset physics world and collider tracking
-        app.physics_world = Some(moho_physics::PhysicsWorld::new());
-        app.chunk_colliders.clear();
-        app.test_physics_bodies.clear();
+        app.physics.reset();
 
         // Register terrain colliders from all ECS chunks
-        crate::app::event_loop::EventProcessor::sync_chunk_colliders(app);
+        app.physics.sync_colliders_from_ecs(&app.world);
 
         // Terrain is generated in symmetric coords (-size/2 .. size/2), so origin is center.
-        let center_x = 0i32;
-        let center_z = 0i32;
         let terrain_y = app
             .light_system
             .as_ref()
-            .and_then(|ls| ls.grid().get_height(center_x, center_z))
+            .and_then(|ls| ls.grid().get_height(0, 0))
             .unwrap_or(10) as f32;
 
-        let spawn_pos = glam::Vec3::new(center_x as f32, terrain_y + 3.0, center_z as f32);
+        let spawn_pos = glam::Vec3::new(0.0, terrain_y + 3.0, 0.0);
 
         // Spawn character controller
-        if let Some(ref mut pw) = app.physics_world {
+        if let Some(ref mut pw) = app.physics.world {
             pw.add_character(spawn_pos);
         }
 
@@ -165,16 +157,12 @@ impl GenerationProcessor {
         app.simulation.set_position_yaw_pitch(spawn_pos, yaw, pitch);
 
         // Spawn 3 test spheres above the center
-        let mut test_bodies = Vec::new();
         for i in 0..3 {
-            let sphere_pos = glam::Vec3::new(
-                center_x as f32,
-                terrain_y + 20.0,
-                center_z as f32 + (i * 2) as f32,
-            );
+            let sphere_pos = glam::Vec3::new(0.0, terrain_y + 20.0, (i * 2) as f32);
 
             let body_handle = app
-                .physics_world
+                .physics
+                .world
                 .as_mut()
                 .map(|pw| pw.add_dynamic_sphere(sphere_pos, 0.5));
 
@@ -190,15 +178,14 @@ impl GenerationProcessor {
                     },
                 );
                 let entity = app.world.push((sphere,));
-                test_bodies.push((handle, entity));
+                app.physics.test_bodies.push((handle, entity));
             }
         }
-        app.test_physics_bodies = test_bodies;
 
         log::info!(
             "Physics world ready: {} chunk colliders, {} test spheres, character at {:?}",
-            app.chunk_colliders.len(),
-            app.test_physics_bodies.len(),
+            app.physics.chunk_colliders.len(),
+            app.physics.test_bodies.len(),
             spawn_pos
         );
     }
@@ -211,10 +198,10 @@ impl GenerationProcessor {
         {
             a.finish_progress();
         }
-        if let Some(h) = app.generation_handle.take() {
+        if let Some(h) = app.generation.handle.take() {
             let _ = h.join();
         }
-        app.generation_cancel = None;
+        app.generation.cancel = None;
     }
 }
 

@@ -44,7 +44,7 @@ impl FrameProcessor {
         // Update controller input from keyboard state
         app.update_controller_input();
 
-        let (yaw_delta, pitch_delta) = app.input_system.sample_frame_input();
+        let (yaw_delta, pitch_delta) = app.input.system.sample_frame_input();
         {
             let ci = app.simulation.controller_input_mut();
             ci.yaw_delta = yaw_delta;
@@ -53,11 +53,7 @@ impl FrameProcessor {
 
         // --- Physics KCC path (FPS only) ---
         let is_fps = app.simulation.camera_mode() == moho_core::controller::CameraMode::FirstPerson;
-        let use_kcc = is_fps
-            && app
-                .physics_world
-                .as_ref()
-                .is_some_and(|pw| !pw.noclip && pw.character_body.is_some());
+        let use_kcc = is_fps && app.physics.is_kcc_active();
 
         if use_kcc {
             self.update_game_state_fps_kcc(app, dt);
@@ -79,7 +75,6 @@ impl FrameProcessor {
     fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
         const MOVE_SPEED: f32 = 4.0;
         const SPRINT_SPEED: f32 = 6.0;
-        const JUMP_VELOCITY: f32 = 8.0;
 
         // Capture movement intent before zeroing it
         let forward_input = app.simulation.controller_input.forward;
@@ -113,14 +108,11 @@ impl FrameProcessor {
             * speed
             * dt;
 
-        // Physics character movement + jump
-        let mut new_pos = {
-            let pw = app.physics_world.as_mut().unwrap();
-            if app.jump_pressed && pw.is_grounded {
-                pw.vertical_velocity = JUMP_VELOCITY;
-            }
-            pw.move_character(horizontal, dt)
-        };
+        // Physics character movement + jump (JUMP_VELOCITY lives in PhysicsController)
+        let mut new_pos = app
+            .physics
+            .move_character(horizontal, dt)
+            .expect("KCC active but move_character returned None");
 
         // Kill plane: anything below this Y is considered "off the map"
         const KILL_PLANE_Y: f32 = -30.0;
@@ -132,9 +124,7 @@ impl FrameProcessor {
                 .unwrap_or(10) as f32
                 + 3.0;
             new_pos = glam::Vec3::new(0.0, respawn_y, 0.0);
-            if let Some(pw) = app.physics_world.as_mut() {
-                pw.set_character_position(new_pos);
-            }
+            app.physics.teleport_character(new_pos);
             log::info!("Player fell off map — respawning at {:?}", new_pos);
         }
 
@@ -151,20 +141,8 @@ impl FrameProcessor {
     /// Step dynamic rigid bodies and sync their positions into ECS components.
     /// Called from both the KCC path and the non-KCC path so test spheres move in all modes.
     fn step_physics_bodies(&self, app: &mut App, dt: f32) {
-        let pw = match app.physics_world.as_mut() {
-            Some(pw) => pw,
-            None => return,
-        };
-        pw.step(dt);
-
-        // Sync test sphere ECS transforms from physics
-        let body_positions: Vec<(legion::Entity, glam::Vec3)> = app
-            .test_physics_bodies
-            .iter()
-            .filter_map(|(handle, entity)| pw.body_position(*handle).map(|p| (*entity, p)))
-            .collect();
-
-        for (entity, pos) in body_positions {
+        let updates = app.physics.step(dt);
+        for (entity, pos) in updates {
             if let Some(mut entry) = app.world.entry(entity) {
                 if let Ok(sphere) = entry.get_component_mut::<moho_core::actors::Sphere>() {
                     sphere.center = pos;

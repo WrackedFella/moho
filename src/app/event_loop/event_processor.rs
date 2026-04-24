@@ -197,7 +197,7 @@ impl EventProcessor {
     /// Process all pending input events (mouse wheel, etc.)
     pub fn process_input_events(&self, app: &mut App) {
         // Collect all events first to avoid borrow checker issues
-        let events: Vec<InputEvent> = if let Some(rx) = &app.unconsumed_input_rx {
+        let events: Vec<InputEvent> = if let Some(rx) = &app.input.unconsumed_rx {
             rx.try_iter().collect()
         } else {
             Vec::new()
@@ -243,7 +243,7 @@ impl EventProcessor {
         if let Some(ui_adapter) = &app.ui_adapter
             && let Ok(mut a) = ui_adapter.lock()
             && a.take_progress_canceled()
-            && let Some(cancel_flag) = &app.generation_cancel
+            && let Some(cancel_flag) = &app.generation.cancel
         {
             cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -264,13 +264,8 @@ impl EventProcessor {
 
                 if let Some(chunk) = new_chunk {
                     // Remove old collider for this chunk and re-add updated one
-                    if let Some(ref mut pw) = app.physics_world {
-                        if let Some(old_handle) = app.chunk_colliders.remove(&chunk_pos) {
-                            pw.remove_collider(old_handle);
-                        }
-                        let handle = pw.add_terrain_trimesh(chunk.vertices(), chunk.indices());
-                        app.chunk_colliders.insert(chunk_pos, handle);
-                    }
+                    app.physics
+                        .update_chunk_collider(chunk_pos, chunk.vertices(), chunk.indices());
 
                     // Update or insert into ECS world
                     let mut query = <(legion::Entity, &VoxelChunk)>::query();
@@ -290,29 +285,6 @@ impl EventProcessor {
                         log::trace!("Created new mesh for chunk {:?}", chunk_pos);
                     }
                 }
-            }
-        }
-    }
-
-    /// Register colliders for all ECS chunks that don't yet have one.
-    pub fn sync_chunk_colliders(app: &mut App) {
-        if app.physics_world.is_none() {
-            return;
-        }
-
-        let mut query = <&VoxelChunk>::query();
-        // Collect chunk data first to avoid borrow conflicts
-        let chunks: Vec<(glam::IVec3, Vec<[f32; 3]>, Vec<u32>)> = query
-            .iter(&app.world)
-            .filter(|c| !app.chunk_colliders.contains_key(&c.chunk_pos()))
-            .map(|c| (c.chunk_pos(), c.vertices().to_vec(), c.indices().to_vec()))
-            .collect();
-
-        for (pos, vertices, indices) in chunks {
-            if let Some(ref mut pw) = app.physics_world {
-                let handle = pw.add_terrain_trimesh(&vertices, &indices);
-                app.chunk_colliders.insert(pos, handle);
-                log::debug!("Registered terrain collider for chunk {:?}", pos);
             }
         }
     }
@@ -458,10 +430,9 @@ impl EventProcessor {
                                 },
                             );
                             let entity = app.world.push((cube,));
-                            // Register with physics (half-extents = 0.5 for a 1×1×1 cube)
-                            if let Some(pw) = app.physics_world.as_mut() {
+                            if let Some(pw) = app.physics.world.as_mut() {
                                 let handle = pw.add_dynamic_cuboid(spawn_pos, 0.5, 0.5, 0.5);
-                                app.test_physics_bodies.push((handle, entity));
+                                app.physics.test_bodies.push((handle, entity));
                             }
                             log::info!("Spawned cube at {:?}", spawn_pos);
                         }
@@ -479,10 +450,9 @@ impl EventProcessor {
                                 },
                             );
                             let entity = app.world.push((sphere,));
-                            // Register with physics
-                            if let Some(pw) = app.physics_world.as_mut() {
+                            if let Some(pw) = app.physics.world.as_mut() {
                                 let handle = pw.add_dynamic_sphere(spawn_pos, 0.5);
-                                app.test_physics_bodies.push((handle, entity));
+                                app.physics.test_bodies.push((handle, entity));
                             }
                             log::info!("Spawned sphere at {:?}", spawn_pos);
                         }
@@ -499,7 +469,7 @@ impl EventProcessor {
             DebugEvent::ToggleCollision { enabled } => {
                 log::info!("Collision toggled: {}", enabled);
                 // enabled=false means noclip ON (collision disabled)
-                if let Some(ref mut pw) = app.physics_world {
+                if let Some(ref mut pw) = app.physics.world {
                     pw.noclip = !enabled;
                     log::info!("Noclip {}", if pw.noclip { "enabled" } else { "disabled" });
                 }
