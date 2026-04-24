@@ -131,25 +131,36 @@ fn pos_hash(x: i32, y: i32, z: i32, seed: u32) -> f32 {
     (h & 0x00ff_ffff) as f32 / 0x0100_0000 as f32
 }
 
-/// Generate terrain blocks based on noise
+/// Max block height for the terrain column (clamp for the legacy 32-tall range).
+const MAX_TERRAIN_HEIGHT: i32 = 32;
+
+/// Generate terrain blocks using a 3D density field.
+///
+/// For each column, we pick a biome, sample a continuous surface height,
+/// then iterate blocks up to the column's solid top, emitting any block
+/// whose `density(x, y, z) > 0.0`. This keeps today's heightmap-shaped
+/// result while giving cave carving a natural hook (just subtract cave
+/// noise from density) and keeping the ore scan mechanic pure.
 fn generate_terrain(grid: &mut VoxelGrid, config: &TerrainConfig) {
     let noise = Perlin::new(config.seed);
     let biome_map = BiomeMap::new(config.seed);
-    // Compute half-size for the -size..size looping used by the original impl.
     // `config.world_size` is the full width in blocks (e.g., 128 -> loop -64..64)
     let size = (config.world_size / 2) as i32;
 
-    // Pass 1: Generate vertical columns of blocks based on per-column biome.
     for x in -size..size {
         for z in -size..size {
             let biome = biome_map.biome_at(x, z, &config.enabled_biomes);
             let params = biome.params();
-            let height = sample_height(&noise, x, z, &biome, &params);
+            let surface_h = sample_surface_height(&noise, x, z, &biome, &params);
+            let column_height = (surface_h as i32).clamp(0, MAX_TERRAIN_HEIGHT);
 
-            for y in 0..=height {
+            for y in 0..=column_height {
+                if !is_solid(&noise, x, y, z, &biome, &params) {
+                    continue;
+                }
                 let pos = BlockPos::new(x, y, z);
-                let material_id = determine_material_id(height, y, &params);
-                let resource_id = determine_resource_id(height, y, x, z, config.seed);
+                let material_id = determine_material_id(column_height, y, &params);
+                let resource_id = determine_resource_id(column_height, y, x, z, config.seed);
 
                 let mut block = VoxelBlock::new(pos, material_id);
                 block.resource_id = resource_id;
@@ -160,8 +171,16 @@ fn generate_terrain(grid: &mut VoxelGrid, config: &TerrainConfig) {
     }
 }
 
-/// Sample Perlin noise to determine height at a position.
-fn sample_height(noise: &Perlin, x: i32, z: i32, biome: &BiomeType, params: &BiomeParams) -> i32 {
+/// Continuous surface height at `(x, z)`. Multi-octave Perlin noise scaled
+/// by the biome's amplitude/frequency/octaves, shaped by `BiomeType::shape`,
+/// clamped to non-negative.
+fn sample_surface_height(
+    noise: &Perlin,
+    x: i32,
+    z: i32,
+    biome: &BiomeType,
+    params: &BiomeParams,
+) -> f32 {
     let mut value = 0.0;
     let mut amplitude = params.surface_amplitude;
     let mut frequency = params.surface_frequency;
@@ -172,8 +191,32 @@ fn sample_height(noise: &Perlin, x: i32, z: i32, biome: &BiomeType, params: &Bio
         frequency *= 2.0;
     }
 
-    let shaped = biome.shape(value);
-    (shaped.max(0.0) as i32).clamp(0, 32) // Height range [0, 32]
+    biome.shape(value).max(0.0) as f32
+}
+
+/// Density at `(x, y, z)`. Positive means solid rock, negative means air.
+///
+/// Today this is just `surface_height(x, z) - y` (a pure heightmap). Cave
+/// carving will subtract a 3D noise term scaled by `params.cave_density`.
+fn density(noise: &Perlin, x: i32, y: i32, z: i32, biome: &BiomeType, params: &BiomeParams) -> f32 {
+    let surface_h = sample_surface_height(noise, x, z, biome, params);
+    let base = surface_h - y as f32;
+    // Cave carver hook (disabled until caves are enabled):
+    // base - cave_noise(noise, x, y, z) * params.cave_density
+    let _ = params.cave_density;
+    base
+}
+
+/// Whether the block centered at `(x, y, z)` should be filled.
+fn is_solid(
+    noise: &Perlin,
+    x: i32,
+    y: i32,
+    z: i32,
+    biome: &BiomeType,
+    params: &BiomeParams,
+) -> bool {
+    density(noise, x, y, z, biome, params) > 0.0
 }
 
 /// Determine material ID based on depth within the column, using the biome's materials.
