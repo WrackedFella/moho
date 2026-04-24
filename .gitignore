@@ -29,6 +29,7 @@ target
 /assets/
 recipe.json
 /_rca/
+/todo/
 
 # Code metrics output
 /metrics-output/

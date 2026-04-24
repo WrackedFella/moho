@@ -260,9 +260,9 @@ impl Default for Prefs {
             key_a: Binding::new('A' as u32, 0),
             key_s: Binding::new('S' as u32, 0),
             key_d: Binding::new('D' as u32, 0),
-            key_up: Binding::new(' ' as u32, 0), // Space
-            key_down: Binding::new(0x205, 0),    // Ctrl
-            key_sprint: Binding::new(0x204, 0),  // Shift
+            key_up: Binding::new(' ' as u32, 0),   // Space
+            key_down: Binding::new(0x205, 0),      // Ctrl
+            key_sprint: Binding::new(0x204, 0),    // Shift
             key_jump: Binding::new(' ' as u32, 0), // Space
             mouse_sensitivity: 1.0,
             input_filtering_enabled: true,
@@ -546,11 +546,20 @@ mod tests {
         if let Ok(map) = ini::macro_safe_read(&out)
             && let Some(section) = map.get("video")
         {
-            let mode_str = section.get("window_mode").and_then(|o| o.clone()).unwrap_or_default();
-            let w: u32 = section.get("window_width").and_then(|o| o.clone())
-                .and_then(|s| s.parse().ok()).unwrap_or(0);
-            let h: u32 = section.get("window_height").and_then(|o| o.clone())
-                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            let mode_str = section
+                .get("window_mode")
+                .and_then(|o| o.clone())
+                .unwrap_or_default();
+            let w: u32 = section
+                .get("window_width")
+                .and_then(|o| o.clone())
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let h: u32 = section
+                .get("window_height")
+                .and_then(|o| o.clone())
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
 
             assert_eq!(WindowMode::from_str(&mode_str), WindowMode::Windowed);
             assert_eq!((w, h), (2560, 1440));
@@ -574,7 +583,10 @@ mod tests {
         if let Ok(map) = ini::macro_safe_read(&out)
             && let Some(section) = map.get("video")
         {
-            let mode_str = section.get("window_mode").and_then(|o| o.clone()).unwrap_or_default();
+            let mode_str = section
+                .get("window_mode")
+                .and_then(|o| o.clone())
+                .unwrap_or_default();
             assert_eq!(WindowMode::from_str(&mode_str), WindowMode::Fullscreen);
         } else {
             panic!("Failed to parse video section");

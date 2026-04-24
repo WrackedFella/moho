@@ -133,13 +133,15 @@ fn render_status_bars(ctx: &egui::Context, health: f32, stamina: f32) {
 
 fn paint_bar(ui: &mut egui::Ui, label: &str, fraction: f32, fill_color: egui::Color32) {
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(label).size(11.0).color(egui::Color32::WHITE));
+        ui.label(
+            egui::RichText::new(label)
+                .size(11.0)
+                .color(egui::Color32::WHITE),
+        );
         ui.add_space(4.0);
 
-        let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(BAR_WIDTH, BAR_HEIGHT),
-            egui::Sense::hover(),
-        );
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(BAR_WIDTH, BAR_HEIGHT), egui::Sense::hover());
 
         let painter = ui.painter();
 
@@ -182,10 +184,8 @@ fn render_hotbar(ctx: &egui::Context) {
     egui::Area::new("gameplay_hud_hotbar".into())
         .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -12.0))
         .show(ctx, |ui| {
-            let (rect, _) = ui.allocate_exact_size(
-                egui::vec2(total_width, SLOT_SIZE),
-                egui::Sense::hover(),
-            );
+            let (rect, _) =
+                ui.allocate_exact_size(egui::vec2(total_width, SLOT_SIZE), egui::Sense::hover());
 
             let painter = ui.painter();
 
@@ -236,7 +236,10 @@ mod tests {
         let (label, angle) = COMPASS_LABELS[0]; // ("N", 0.0)
         let diff = angle - yaw;
         assert_eq!(label, "N");
-        assert!(diff.abs() < std::f32::consts::FRAC_PI_8, "N should be centered at yaw=0");
+        assert!(
+            diff.abs() < std::f32::consts::FRAC_PI_8,
+            "N should be centered at yaw=0"
+        );
     }
 
     #[test]
@@ -245,7 +248,10 @@ mod tests {
         // E is at angle π/2, diff = π/2 - π/2 = 0
         let east = COMPASS_LABELS.iter().find(|(l, _)| *l == "E").unwrap();
         let diff = east.1 - yaw;
-        assert!(diff.abs() < std::f32::consts::FRAC_PI_8, "E should be centered at yaw=π/2");
+        assert!(
+            diff.abs() < std::f32::consts::FRAC_PI_8,
+            "E should be centered at yaw=π/2"
+        );
     }
 
     #[test]
@@ -253,9 +259,16 @@ mod tests {
         let yaw = std::f32::consts::PI;
         let south = COMPASS_LABELS.iter().find(|(l, _)| *l == "S").unwrap();
         let mut diff = south.1 - yaw;
-        while diff > std::f32::consts::PI { diff -= std::f32::consts::TAU; }
-        while diff < -std::f32::consts::PI { diff += std::f32::consts::TAU; }
-        assert!(diff.abs() < std::f32::consts::FRAC_PI_8, "S should be centered at yaw=π");
+        while diff > std::f32::consts::PI {
+            diff -= std::f32::consts::TAU;
+        }
+        while diff < -std::f32::consts::PI {
+            diff += std::f32::consts::TAU;
+        }
+        assert!(
+            diff.abs() < std::f32::consts::FRAC_PI_8,
+            "S should be centered at yaw=π"
+        );
     }
 
     #[test]

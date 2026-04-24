@@ -430,7 +430,9 @@ mod tests {
         assert!(!menu.has_unsaved_changes());
 
         // Change window mode
-        menu.state.staged_mut().set_window_mode(WindowMode::Fullscreen);
+        menu.state
+            .staged_mut()
+            .set_window_mode(WindowMode::Fullscreen);
         menu.state.mark_dirty(SettingsField::WindowMode);
 
         assert!(menu.has_unsaved_changes());

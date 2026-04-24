@@ -70,8 +70,8 @@ impl InstanceCollector {
         // share a single GPU material entry sourcing colours from the material buffer
         // rather than hardcoding them in the shader.
         let terrain_mat = moho_core::materials::MaterialType::VoxelTerrain {
-            top_albedo: glam::Vec3::new(0.3, 0.6, 0.3),   // grass green
-            side_albedo: glam::Vec3::new(0.6, 0.5, 0.4),  // dirt brown
+            top_albedo: glam::Vec3::new(0.3, 0.6, 0.3),  // grass green
+            side_albedo: glam::Vec3::new(0.6, 0.5, 0.4), // dirt brown
         };
         let terrain_mat_idx = material_table.find_or_push(&terrain_mat);
         let mut q_chunks_mut = <&mut VoxelChunk>::query();
@@ -191,12 +191,7 @@ mod tests {
 
         fn set_materials(&mut self, _materials: &[crate::Material]) {}
 
-        fn request_redraw(&self) {}
         fn resize(&mut self, _width: u32, _height: u32) {}
-        fn set_cursor_visible(&self, _visible: bool) {}
-        fn set_cursor_grab(&self, _locked: bool) -> Result<(), Box<dyn std::error::Error>> {
-            Ok(())
-        }
         fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
             0
         }

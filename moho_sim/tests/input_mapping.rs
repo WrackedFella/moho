@@ -1,6 +1,4 @@
-use moho_sim::{
-    ContinuousState, PlayerInputType as PlayerInput, Simulation, map_to_player_inputs, stamp_inputs,
-};
+use moho_sim::{ContinuousState, PlayerInput, Simulation, map_to_player_inputs, stamp_inputs};
 
 #[test]
 fn map_single_direction_key_to_move() {

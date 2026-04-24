@@ -1,5 +1,4 @@
 use crate::PlayerInput;
-use serde::{Deserialize, Serialize};
 
 /// Small struct representing a sampled continuous input state for a single frame/tick.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,7 +16,7 @@ pub struct ContinuousState {
 
 /// A small wrapper for a time-stamped input. We keep this serializable so
 /// tests and simple network packets can reuse it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimedInput {
     pub tick: u64,
     pub input: PlayerInput,

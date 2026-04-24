@@ -923,4 +923,20 @@ mod tests {
             "All vertices should be smooth terrain"
         );
     }
+
+    #[test]
+    fn all_indices_in_range() {
+        // Regression guard: out-of-range indices cause silent GPU crashes on some hardware.
+        let blocks = [[[true; 16]; 16]; 16];
+        let field = MarchingCubes::create_density_field(&blocks);
+        let mesh = MarchingCubes::generate_mesh(&field, 16);
+
+        let vertex_count = mesh.vertices.len() as u32;
+        for &idx in &mesh.indices {
+            assert!(
+                idx < vertex_count,
+                "index {idx} out of range ({vertex_count} vertices)"
+            );
+        }
+    }
 }

@@ -62,17 +62,15 @@ pub struct EventBus {
 }
 
 impl EventBus {
-    /// Create a new event bus with default settings
-    ///
-    /// Default configuration:
-    /// - Event history enabled
-    /// - Maximum 1000 events in history
+    /// Create a new event bus. History is disabled by default to avoid per-event
+    /// allocations in the game loop. Enable via [`with_history`](Self::with_history)
+    /// when debugging.
     pub fn new() -> Self {
         Self {
             sync_handlers: Arc::new(RwLock::new(HashMap::new())),
             deferred_queue: Arc::new(Mutex::new(VecDeque::new())),
             history: Arc::new(Mutex::new(VecDeque::new())),
-            history_enabled: true,
+            history_enabled: false,
             max_history: 1000,
             metrics_tracker: Arc::new(MetricsTracker::new()),
         }
@@ -115,10 +113,13 @@ impl EventBus {
         self.subscribe_with_priority(handler, 0)
     }
 
-    /// Subscribe with custom priority (lower = higher priority)
+    /// Subscribe with custom priority (lower = higher priority).
     ///
     /// When multiple handlers subscribe to the same event type,
     /// they are executed in priority order (lowest number first).
+    ///
+    /// Note: this is the **opposite** convention from `InputDispatcher`, which uses
+    /// higher numbers for higher priority. The two systems are independent.
     ///
     /// # Example
     ///
@@ -195,30 +196,16 @@ impl EventBus {
 
     /// Dispatch an event to all registered synchronous handlers.
     ///
-    /// Shared by both `publish` (immediate) and `process_deferred` (end-of-frame).
+    /// Handlers are already in priority order (sorted on subscribe), so this
+    /// requires only a single read-lock acquisition.
     fn dispatch_to_handlers<E: Event>(&self, event: &E) {
         let type_id = TypeId::of::<E>();
-
         let handlers = self.sync_handlers.read().unwrap();
-        if let Some(handler_list) = handlers.get(&type_id)
-            && !handler_list.is_empty()
-        {
-            // Ensure handlers are sorted by priority
-            drop(handlers);
-            let mut handlers = self.sync_handlers.write().unwrap();
-            if let Some(handler_list) = handlers.get_mut(&type_id) {
-                handler_list.sort_by_priority();
-            }
-            drop(handlers);
-
-            // Re-acquire read lock and execute
-            let handlers = self.sync_handlers.read().unwrap();
-            if let Some(handler_list) = handlers.get(&type_id) {
-                for handler in handler_list.handlers() {
-                    if let Some(handler_fn) = handler.downcast::<E>() {
-                        handler_fn(event);
-                        self.metrics_tracker.increment_processed();
-                    }
+        if let Some(handler_list) = handlers.get(&type_id) {
+            for handler in handler_list.handlers() {
+                if let Some(handler_fn) = handler.downcast::<E>() {
+                    handler_fn(event);
+                    self.metrics_tracker.increment_processed();
                 }
             }
         }
@@ -302,8 +289,6 @@ impl EventBus {
         EventMetrics {
             total_published: self.metrics_tracker.get_published(),
             total_processed: self.metrics_tracker.get_processed(),
-            by_type: HashMap::new(), // TODO: Track per-type stats
-            avg_processing_time: HashMap::new(),
             peak_queue_size: queue_size,
             current_queue_size: queue_size,
         }

@@ -37,19 +37,18 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut current = staged_mode;
-                    let combo =
-                        egui::ComboBox::from_id_salt("window_mode_combo")
-                            .selected_text(mode_label(current))
-                            .width(120.0)
-                            .show_ui(ui, |ui| {
-                                for &mode in &[
-                                    WindowMode::Windowed,
-                                    WindowMode::Fullscreen,
-                                    WindowMode::Borderless,
-                                ] {
-                                    ui.selectable_value(&mut current, mode, mode_label(mode));
-                                }
-                            });
+                    let combo = egui::ComboBox::from_id_salt("window_mode_combo")
+                        .selected_text(mode_label(current))
+                        .width(120.0)
+                        .show_ui(ui, |ui| {
+                            for &mode in &[
+                                WindowMode::Windowed,
+                                WindowMode::Fullscreen,
+                                WindowMode::Borderless,
+                            ] {
+                                ui.selectable_value(&mut current, mode, mode_label(mode));
+                            }
+                        });
 
                     if current != staged_mode {
                         menu.state.staged_mut().set_window_mode(current);
@@ -82,10 +81,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                     egui::vec2(label_width, 28.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                        ui.add_enabled(
-                            resolution_enabled,
-                            egui::Label::new("Resolution:"),
-                        );
+                        ui.add_enabled(resolution_enabled, egui::Label::new("Resolution:"));
                     },
                 );
 
@@ -109,7 +105,9 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                         });
 
                     if resolution_enabled && current_res != staged_res {
-                        menu.state.staged_mut().set_window_resolution(current_res.0, current_res.1);
+                        menu.state
+                            .staged_mut()
+                            .set_window_resolution(current_res.0, current_res.1);
                         menu.state.mark_dirty(SettingsField::WindowResolution);
                     }
 

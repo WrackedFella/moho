@@ -1,10 +1,12 @@
-use moho_sim::PlayerInputType as PlayerInput;
+use moho_sim::PlayerInput;
 
 #[test]
 fn player_input_bincode_roundtrip() {
     let inputs = vec![PlayerInput::Move { dx: 1, dy: -1 }, PlayerInput::Action(7)];
 
-    let bytes = serde_json::to_vec(&inputs).expect("serialize inputs");
-    let decoded: Vec<PlayerInput> = serde_json::from_slice(&bytes).expect("deserialize inputs");
+    let bytes =
+        bincode::encode_to_vec(&inputs, bincode::config::standard()).expect("encode inputs");
+    let (decoded, _): (Vec<PlayerInput>, _) =
+        bincode::decode_from_slice(&bytes, bincode::config::standard()).expect("decode inputs");
     assert_eq!(inputs, decoded);
 }

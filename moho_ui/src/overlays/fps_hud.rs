@@ -55,7 +55,10 @@ fn render_crosshair(ctx: &egui::Context) {
     ));
 
     let size = 10.0;
-    let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgba_premultiplied(220, 220, 220, 180));
+    let stroke = egui::Stroke::new(
+        2.0,
+        egui::Color32::from_rgba_premultiplied(220, 220, 220, 180),
+    );
 
     // Horizontal
     painter.line_segment(

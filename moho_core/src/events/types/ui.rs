@@ -39,7 +39,11 @@ pub enum UiEvent {
     ExitRequested,
 
     /// Window/display settings changed (emitted after saving video prefs)
-    WindowSettingsChanged { mode: WindowMode, width: u32, height: u32 },
+    WindowSettingsChanged {
+        mode: WindowMode,
+        width: u32,
+        height: u32,
+    },
 }
 
 impl Event for UiEvent {

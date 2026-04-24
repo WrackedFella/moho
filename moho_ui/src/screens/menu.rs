@@ -142,11 +142,8 @@ pub trait Screen: UiComponent {
     fn on_modal_cancel(&mut self) {}
 }
 
-/// Backward compatibility alias for existing code.
-///
-/// TODO: Remove this alias in a future refactor once all code uses Screen directly.
-/// This allows gradual migration from Menu to Screen without breaking existing code.
+/// Backward compatibility alias — `UiStateManager` and `UiAdapter` still hold
+/// `Box<dyn Menu>`. Migrate those callers to `Box<dyn Screen>` to remove this alias.
 pub trait Menu: Screen {}
 
-// Blanket implementation: any Screen is automatically a Menu for backward compatibility
 impl<T: Screen> Menu for T {}

@@ -19,12 +19,7 @@ impl MockRenderer {
 
 impl RendererBackend for MockRenderer {
     fn update_lighting(&mut self, _lighting: moho_renderer::LightingGpu) {}
-    fn request_redraw(&self) {}
     fn resize(&mut self, _width: u32, _height: u32) {}
-    fn set_cursor_visible(&self, _visible: bool) {}
-    fn set_cursor_grab(&self, _locked: bool) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
     fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
         0
     }

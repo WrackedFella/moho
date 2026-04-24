@@ -1,7 +1,6 @@
 # Moho Documentation Index
 
-**Last Updated**: November 17, 2025  
-**Status**: Production Ready - Event Bus, Day/Night Cycle, Shadows, Phase 4 Complete
+**Status**: Active development — rendering, physics, and terrain overhaul in progress
 
 ---
 
@@ -140,12 +139,12 @@ cargo bench --bench event_bus_bench
 - Time control for day/night testing
 - Settings management
 
-### 🎯 Next Steps
+### 🎯 Current Focus
 
-**Multiplayer Foundation**
-- Network event serialization
-- Snapshot synchronization
-- Input replay system
+**Terrain & Physics**
+- Terrain overhaul (marching cubes, multi-biome generation)
+- Physics integration (Rapier3d KCC, rigid bodies)
+- Light propagation system
 
 ---
 
@@ -169,7 +168,7 @@ cargo bench --bench event_bus_bench
 2. **AudioSystem threading**: Not Send/Sync (stays on main thread)
 3. **History overhead**: 4.9× cost when enabled (disabled by default)
 
-See [EVENT_BUS_TESTING_NOTES.md](engine_core/EVENT_BUS_TESTING_NOTES.md) for detailed findings.
+See [EVENT_BUS_BEST_PRACTICES.md](engine_core/EVENT_BUS_BEST_PRACTICES.md) for detailed findings.
 
 ---
 
@@ -215,26 +214,6 @@ start target/criterion/report/index.html
 
 These changes improve input predictability and make keybind capture robust across UI and game layers.
 
-
-## 📊 Key Metrics
-
-### Current Implementation
-- **Code Size**: ~644 lines in voxel.rs + ~140 lines in scene_builders.rs
-- **Chunks Generated**: 16 non-empty chunks
-- **Terrain Size**: 64×64 XZ plane (4,096 block positions)
-- **Height Range**: 0-32 blocks
-- **Face Culling**: ~87% triangle reduction
-- **Build Status**: ✅ Clean compilation
-- **Runtime Status**: ✅ No errors, ❌ No rendering
-
-### After Custom Mesh Rendering (Expected)
-- **Draw Calls**: 16 (one per chunk)
-- **Triangles**: ~6,390 (with face culling) vs. ~49,152 (without)
-- **GPU Memory**: ~125 KB total for all chunks
-- **Performance Target**: >30 FPS with full terrain
-- **Visual Quality**: Face-culled optimized mesh with proper lighting
-
----
 
 ---
 

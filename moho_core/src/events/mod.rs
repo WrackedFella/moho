@@ -69,9 +69,7 @@ pub use types::{
     // Audio events
     AudioEvent,
     // World events
-    BiomeType,
     BlockChangeReason,
-    BlockMaterial,
     // Debug events
     ConsoleLevel,
     DebugEvent,
@@ -81,11 +79,6 @@ pub use types::{
     GraphicsSetting,
     // Input events
     InputEvent,
-    // Network events
-    NetworkEvent,
-    OreType,
-    // Physics events
-    PhysicsEvent,
     RenderMode,
     ShadowQuality,
     // System events

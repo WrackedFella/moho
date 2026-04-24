@@ -4,7 +4,7 @@
 //! ([`moho_core`], [`moho_renderer`], [`moho_audio`], [`moho_ui`],
 //! [`moho_sim`]) into a runnable application via [`winit`]'s event loop.
 
-use crossbeam_channel::{Receiver, unbounded};
+use crossbeam_channel::unbounded;
 use legion::World;
 use moho_ui::prefs::Prefs;
 use std::sync::Arc;
@@ -20,9 +20,8 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
-// Core game state and input routing modules
+// Core game state module
 mod game_state;
-mod input_routing;
 
 // Application initialization modules
 mod app;
@@ -73,13 +72,11 @@ struct App {
     scene: moho_renderer::Scene,
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
 
-    // Voxel grid and light propagation system
-    voxel_grid: Option<moho_core::voxel::VoxelGrid>,
+    // Light propagation system (owns the voxel grid internally)
     light_system: Option<moho_core::voxel::LightSystem>,
 
-    // Game state management (replaces old AppMode)
+    // Game state management
     game_state: crate::game_state::GameState,
-    input_router: crate::input_routing::InputRouter,
 
     // Runtime state (initialized after window creation)
     window_renderer: Option<WindowRenderer>,
@@ -97,13 +94,8 @@ struct App {
     // Audio system (not thread-safe, stays on main thread)
     audio_system: Option<moho_audio::AudioSystem>,
 
-    // UI components
+    // UI adapter
     ui_adapter: Option<Arc<Mutex<moho_ui::EguiAdapter>>>,
-    last_world_spec: Option<moho_core::scene_builders::WorldSpec>,
-    // Async generation plumbing (only used when UI is present)
-    generation_receiver: Option<Receiver<GenerationMsg>>,
-    generation_handle: Option<std::thread::JoinHandle<()>>,
-    generation_cancel: Option<Arc<AtomicBool>>,
 
     // Debug state
     debug_mode: u32,
@@ -111,21 +103,11 @@ struct App {
     // Input dispatcher (routes events to prioritized subscribers)
     dispatcher: InputDispatcher,
 
-    // Channel for simplified input events forwarded to the game when UI doesn't consume them
-    unconsumed_input_tx: Option<crossbeam_channel::Sender<crate::input_event::InputEvent>>,
-    unconsumed_input_rx: Option<crossbeam_channel::Receiver<crate::input_event::InputEvent>>,
-
-    // Camera control (moved into simulation)
+    // Camera control
     simulation: moho_sim::SimulationController,
-    #[allow(dead_code)]
-    mouse_sensitivity: f32,
-    input_system: moho_core::input::InputSystem,
 
-    // Keybinds
+    // Keybinds and preferences
     prefs: Prefs,
-
-    // Keyboard state tracking (stores active key codes with modifiers)
-    active_keys: std::collections::HashSet<(u32, u8)>,
 
     // Frame timing
     frame_duration: Duration,
@@ -134,11 +116,10 @@ struct App {
     // Tracks gizmo spheres spawned alongside debug point lights (light_id -> entity)
     light_gizmos: std::collections::HashMap<u32, legion::Entity>,
 
-    // Physics
-    physics_world: Option<moho_physics::PhysicsWorld>,
-    chunk_colliders: std::collections::HashMap<glam::IVec3, moho_physics::ColliderHandle>,
-    test_physics_bodies: Vec<(moho_physics::RigidBodyHandle, legion::Entity)>,
-    jump_pressed: bool,
+    // Grouped sub-systems
+    physics: app::physics_controller::PhysicsController,
+    generation: app::generation_job::WorldGenerationJob,
+    input: app::input_state::InputState,
 }
 
 impl App {
@@ -165,13 +146,9 @@ impl App {
             scene: initialized.scene,
             camera: initialized.camera,
 
-            // Voxel grid and light system (minimal for testing)
-            // Note: Grid is moved into LightSystem, so we don't store it separately
-            voxel_grid: None,
             light_system: Some(light_system),
 
             game_state: crate::game_state::GameState::Menu, // Start in menu
-            input_router: crate::input_routing::InputRouter::new(),
             window_renderer: None,
             event_bus: initialized.event_bus,
 
@@ -184,36 +161,23 @@ impl App {
             audio_system: initialized.audio_system,
 
             ui_adapter: None,
-            generation_receiver: None,
-            generation_handle: None,
-            generation_cancel: None,
 
             debug_mode: 0,
 
             dispatcher: InputDispatcher::new(),
 
-            unconsumed_input_tx: None,
-            unconsumed_input_rx: None,
-
-            // Camera control (moved into simulation)
             simulation: initialized.simulation,
-            mouse_sensitivity: initialized.mouse_sensitivity,
-            input_system: initialized.input_system,
 
-            // Store prefs and keyboard state
             prefs: initialized.prefs,
-            last_world_spec: None,
-            active_keys: std::collections::HashSet::new(),
 
             frame_duration: initialized.frame_duration,
             last_frame: initialized.last_frame,
 
             light_gizmos: std::collections::HashMap::new(),
 
-            physics_world: Some(moho_physics::PhysicsWorld::new()),
-            chunk_colliders: std::collections::HashMap::new(),
-            test_physics_bodies: Vec::new(),
-            jump_pressed: false,
+            physics: app::physics_controller::PhysicsController::new(),
+            generation: app::generation_job::WorldGenerationJob::new(),
+            input: app::input_state::InputState::new(initialized.input_system),
         }
     }
 
@@ -221,8 +185,12 @@ impl App {
         &mut self,
         window: Arc<Window>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Create renderer - leak the Arc to get a 'static reference
-        // This is acceptable for a main application window that lives for the program duration
+        // SAFETY: The renderer requires a &'static Window because Box<dyn RendererBackend>
+        // is implicitly 'static. We clone the Arc<Window> before leaking it, so the Arc
+        // refcount keeps the Window alive independently of `window`. This is a deliberate
+        // one-time leak for the main window, which lives for the entire program lifetime.
+        // If winit ever allows window recreation (e.g. fullscreen toggle) this should be
+        // replaced by giving RendererBackend a lifetime parameter (TD-09 / TD-06).
         let window_ref: &'static Window = Box::leak(Box::new(window.clone()));
         let mut renderer = moho_renderer::create_renderer(Some(window_ref))?;
 
@@ -306,8 +274,8 @@ impl App {
             // Create channel for simplified input events (e.g., mouse wheel) that
             // the game will process if the UI doesn't consume them.
             let (tx, rx) = crossbeam_channel::unbounded::<crate::input_event::InputEvent>();
-            self.unconsumed_input_tx = Some(tx.clone());
-            self.unconsumed_input_rx = Some(rx);
+            self.input.unconsumed_tx = Some(tx.clone());
+            self.input.unconsumed_rx = Some(rx);
 
             // Prepare a ui_adapter clone to check visibility before forwarding wheel
             let ui_adapter_for_forward = ui_adapter.clone();
@@ -446,9 +414,16 @@ impl App {
                         return;
                     }
                     let save_path = saves_dir.join("scene.bin");
-                    if let Err(e) =
-                        save::write_scene_with_metadata(&save_path, &scene_bytes, &spec_for_thread)
-                    {
+                    let block_records: Vec<save::BlockRecord> = grid
+                        .iter_blocks()
+                        .map(save::BlockRecord::from_block)
+                        .collect();
+                    if let Err(e) = save::write_scene_with_metadata(
+                        &save_path,
+                        &scene_bytes,
+                        &spec_for_thread,
+                        &block_records,
+                    ) {
                         let _ = sender.send(GenerationMsg::Failed(format!("write failed: {}", e)));
                         return;
                     }
@@ -462,9 +437,9 @@ impl App {
                 })?;
 
             // Store receiver, handle and cancel flag so the main loop can poll it
-            self.generation_receiver = Some(rx);
-            self.generation_handle = Some(handle);
-            self.generation_cancel = Some(cancel_flag);
+            self.generation.receiver = Some(rx);
+            self.generation.handle = Some(handle);
+            self.generation.cancel = Some(cancel_flag);
 
             Ok(())
         }
@@ -499,24 +474,36 @@ impl App {
                 .as_ref()
                 .map_or_else(Vec::new, |wr| wr.renderer.all_lights_as_descs()),
         )?;
-        let mut spec = self
-            .last_world_spec
-            .clone()
-            .unwrap_or(moho_core::scene_builders::WorldSpec {
-                name: "autosave".to_string(),
-                seed: None,
-                size_xz: 64,
-                day_length_seconds: 600.0,
-                night_length_seconds: 420.0,
-                initial_time_of_day: 6.0,
-            });
+        let mut spec =
+            self.generation
+                .last_spec
+                .clone()
+                .unwrap_or(moho_core::scene_builders::WorldSpec {
+                    name: "autosave".to_string(),
+                    seed: None,
+                    size_xz: 64,
+                    day_length_seconds: 600.0,
+                    night_length_seconds: 420.0,
+                    initial_time_of_day: 6.0,
+                });
         // Persist the current time of day so Continue resumes at the right time.
         spec.initial_time_of_day = self.simulation.time_of_day();
-        save::write_scene_with_metadata(&save_path, &scene_bytes, &spec)?;
+        let block_records: Vec<save::BlockRecord> = self
+            .light_system
+            .as_ref()
+            .map(|ls| {
+                ls.grid()
+                    .iter_blocks()
+                    .map(save::BlockRecord::from_block)
+                    .collect()
+            })
+            .unwrap_or_default();
+        save::write_scene_with_metadata(&save_path, &scene_bytes, &spec, &block_records)?;
         log::info!(
-            "Auto-saved scene (envelope) to {:?} (spec={:?})",
+            "Auto-saved scene (envelope) to {:?} (spec={:?}, {} blocks)",
             save_path,
-            spec.name
+            spec.name,
+            block_records.len()
         );
 
         Ok(())
@@ -538,15 +525,20 @@ impl App {
 
         // Load the scene from file with metadata support
         {
-            let (spec, scene_bytes) = save::read_scene_and_metadata(&path)?;
+            let (spec, scene_bytes, block_records) = save::read_scene_and_metadata(&path)?;
             // Remember the WorldSpec from the loaded file so autosaves and
             // subsequent writes preserve the original metadata.
-            self.last_world_spec = Some(spec.clone());
+            self.generation.last_spec = Some(spec.clone());
             log::info!("Loaded WorldSpec from save: {:?}", spec);
             // Restore time of day from the persisted WorldSpec.
             self.simulation.set_time_of_day(spec.initial_time_of_day);
-            let (camera_data, lights) = self.scene.load_from_bytes(&scene_bytes, &mut self.world)?;
-            log::info!("Scene loaded successfully from {:?}, {} lights", path.as_ref(), lights.len());
+            let (camera_data, lights) =
+                self.scene.load_from_bytes(&scene_bytes, &mut self.world)?;
+            log::info!(
+                "Scene loaded successfully from {:?}, {} lights",
+                path.as_ref(),
+                lights.len()
+            );
 
             // Re-add persisted lights to the renderer
             if let Some(ref mut wr) = self.window_renderer {
@@ -562,45 +554,28 @@ impl App {
                 }
             }
 
-            // Reconstruct VoxelGrid from loaded chunks for the LightSystem
-            // Note: This assumes the loaded scene contains VoxelChunk components
-            // We create a new grid and populate it from the chunks
-            // Use the world size from the spec, or default to 128 if not available
-            let _grid_size = spec.size_xz / 16; // Convert blocks to chunks (assuming 16 chunk size)
-            let grid = moho_core::voxel::VoxelGrid::new(16); // Default chunk size 16
-
-            // Iterate over all chunks in the world and populate the grid
-            // We need to query for VoxelChunk components
-            use legion::IntoQuery;
-            let mut query = <&moho_core::voxel::VoxelChunk>::query();
-
-            log::info!("Reconstructing VoxelGrid from loaded chunks...");
-            let mut chunk_count = 0;
-            for _chunk in query.iter(&self.world) {
-                // We need to clone the chunk data into the grid
-                // VoxelGrid stores VoxelBlock data, but VoxelChunk stores mesh data
-                // This is a problem: VoxelChunk doesn't store the raw block data in a way
-                // that's easy to put back into VoxelGrid without the original VoxelBlock data.
-                //
-                // Wait, VoxelChunk is for rendering. It contains vertices/indices.
-                // It does NOT contain the raw VoxelBlock data needed for logic/physics/light propagation.
-                //
-                // CRITICAL ISSUE: The save system currently only saves the renderable scene (VoxelChunk),
-                // not the logical voxel grid (VoxelGrid).
-                //
-                // For now, we can't reconstruct the grid from VoxelChunks because they are meshes.
-                // We need to change the save system to save the VoxelGrid data.
-                //
-                // Temporary workaround: Create a new empty grid so the LightSystem doesn't crash,
-                // but light propagation won't work correctly on loaded saves until we fix the save format.
-                chunk_count += 1;
+            // Reconstruct VoxelGrid from persisted block records, then initialize LightSystem.
+            let mut grid = moho_core::voxel::VoxelGrid::new(16);
+            if block_records.is_empty() {
+                // KNOWN LIMITATION: v1 saves do not contain block data. Light propagation
+                // will be inactive until the world is regenerated and saved in v2 format.
+                log::warn!(
+                    "Save file contains no block data (v1 format). \
+                     Light propagation disabled for this session. \
+                     Regenerate the world to fix permanently."
+                );
+            } else {
+                for record in &block_records {
+                    let pos = moho_core::voxel::BlockPos::new(record.x, record.y, record.z);
+                    let mut block = moho_core::voxel::VoxelBlock::new(pos, record.material_id);
+                    block.resource_id = record.resource_id;
+                    grid.set_block(pos, block);
+                }
+                log::info!(
+                    "Reconstructed VoxelGrid with {} blocks for LightSystem",
+                    block_records.len()
+                );
             }
-            log::info!(
-                "Found {} chunks, but cannot reconstruct VoxelGrid from meshes. Light propagation will be limited.",
-                chunk_count
-            );
-
-            // Initialize LightSystem with the (unfortunately empty) grid
             self.light_system = Some(moho_core::voxel::LightSystem::with_default_budget(
                 grid,
                 self.event_bus.clone(),
@@ -612,7 +587,7 @@ impl App {
                 // Clear any pending input so the restored camera
                 // orientation isn't immediately overridden by
                 // accumulated mouse deltas or smoothing state.
-                self.input_system.clear_pending_input();
+                self.input.system.clear_pending_input();
                 log::info!(
                     "Restored camera position: {:?}, yaw: {:.2}, pitch: {:.2}",
                     position,
@@ -642,11 +617,8 @@ impl App {
 
     /// Initialize physics world after a scene is loaded.
     fn setup_physics_for_loaded_world(&mut self) {
-        self.physics_world = Some(moho_physics::PhysicsWorld::new());
-        self.chunk_colliders.clear();
-        self.test_physics_bodies.clear();
-
-        crate::app::event_loop::EventProcessor::sync_chunk_colliders(self);
+        self.physics.reset();
+        self.physics.sync_colliders_from_ecs(&self.world);
 
         // Spawn the physics character at the saved player position so the KCC
         // doesn't immediately override the restored camera on the first frame.
@@ -660,17 +632,18 @@ impl App {
             .unwrap_or(10) as f32;
 
         let spawn_pos = glam::Vec3::new(saved_pos.x, terrain_y + 3.0, saved_pos.z);
-        if let Some(ref mut pw) = self.physics_world {
+        if let Some(ref mut pw) = self.physics.world {
             pw.add_character(spawn_pos);
         }
 
         // Align the simulation Y to match physics spawn (avoids terrain clipping).
         let (yaw, pitch) = self.simulation.yaw_pitch();
-        self.simulation.set_position_yaw_pitch(spawn_pos, yaw, pitch);
+        self.simulation
+            .set_position_yaw_pitch(spawn_pos, yaw, pitch);
 
         log::info!(
             "Physics initialized for loaded world: {} chunk colliders",
-            self.chunk_colliders.len()
+            self.physics.chunk_colliders.len()
         );
     }
 
@@ -678,7 +651,9 @@ impl App {
     fn update_controller_input(&mut self) {
         // Helper to check if a binding is currently active
         let is_active = |binding: &moho_ui::prefs::Binding| -> bool {
-            self.active_keys.contains(&(binding.code, binding.mods))
+            self.input
+                .active_keys
+                .contains(&(binding.code, binding.mods))
         };
 
         // Calculate forward/backward
@@ -730,7 +705,7 @@ impl App {
         self.simulation.controller_input.zoom_delta = 0.0;
 
         // Track jump key for physics KCC
-        self.jump_pressed = is_active(&self.prefs.key_jump());
+        self.physics.jump_pressed = is_active(&self.prefs.key_jump());
     }
 
     /// Handle keyboard input for camera controls
@@ -754,12 +729,11 @@ impl App {
                 }
                 KeyCode::F3 => {
                     // F3 toggles the debug HUD overlay
-                    if pressed {
-                        if let Some(ui_adapter) = &self.ui_adapter {
-                            if let Ok(mut adapter) = ui_adapter.lock() {
-                                adapter.toggle_debug_hud();
-                            }
-                        }
+                    if pressed
+                        && let Some(ui_adapter) = &self.ui_adapter
+                        && let Ok(mut adapter) = ui_adapter.lock()
+                    {
+                        adapter.toggle_debug_hud();
                     }
                     return;
                 }
@@ -806,9 +780,9 @@ impl App {
             if code != 0 || mods != 0 {
                 let key_binding = (code, mods);
                 if pressed {
-                    self.active_keys.insert(key_binding);
+                    self.input.active_keys.insert(key_binding);
                 } else {
-                    self.active_keys.remove(&key_binding);
+                    self.input.active_keys.remove(&key_binding);
                 }
             }
         }
@@ -822,7 +796,7 @@ impl App {
         {
             return;
         }
-        self.input_system.collect_mouse_delta((-delta.0, -delta.1));
+        self.input.system.collect_mouse_delta((-delta.0, -delta.1));
     }
 
     /// Grab and hide the cursor for game mode
@@ -899,7 +873,6 @@ impl App {
     ///
     /// This method centralizes all the boilerplate for state transitions:
     /// - Update game_state
-    /// - Update input_router
     /// - Update UI visibility and state
     /// - Handle cursor grab/release
     /// - Show specific menu if requested
@@ -912,7 +885,6 @@ impl App {
 
         // Update core state
         self.game_state = actions.new_state;
-        self.input_router.update_for_state(actions.new_state);
 
         // Update UI visibility and state
         if let Some(ui_adapter) = &self.ui_adapter
@@ -1018,27 +990,26 @@ impl ApplicationHandler for App {
                 },
             ..
         } = &event
+            && self.game_state == crate::game_state::GameState::Playing
         {
-            if self.game_state == crate::game_state::GameState::Playing {
-                match self.simulation.camera_mode() {
-                    moho_core::controller::CameraMode::FirstPerson => {
-                        // Switch to RTS first so look_at runs in Isometric mode,
-                        // setting rts_look_target without touching FPS yaw/pitch.
-                        self.simulation
-                            .set_camera_mode(moho_core::controller::CameraMode::Isometric);
-                        self.simulation.look_at(self.simulation.position());
-                    }
-                    moho_core::controller::CameraMode::Isometric => {
-                        self.simulation
-                            .set_camera_mode(moho_core::controller::CameraMode::FirstPerson);
-                    }
+            match self.simulation.camera_mode() {
+                moho_core::controller::CameraMode::FirstPerson => {
+                    // Switch to RTS first so look_at runs in Isometric mode,
+                    // setting rts_look_target without touching FPS yaw/pitch.
+                    self.simulation
+                        .set_camera_mode(moho_core::controller::CameraMode::Isometric);
+                    self.simulation.look_at(self.simulation.position());
                 }
-                log::info!(
-                    "Switched to camera mode: {:?}",
-                    self.simulation.camera_mode()
-                );
-                return; // Don't dispatch Tab further
+                moho_core::controller::CameraMode::Isometric => {
+                    self.simulation
+                        .set_camera_mode(moho_core::controller::CameraMode::FirstPerson);
+                }
             }
+            log::info!(
+                "Switched to camera mode: {:?}",
+                self.simulation.camera_mode()
+            );
+            return; // Don't dispatch Tab further
         }
 
         // Dispatch the event to registered subscribers (UI first). If consumed,
@@ -1065,19 +1036,7 @@ impl ApplicationHandler for App {
 impl Drop for App {
     fn drop(&mut self) {
         log::info!("Shutting down application...");
-
-        // Signal cancellation to any running background generation
-        if let Some(cancel) = &self.generation_cancel {
-            cancel.store(true, Ordering::SeqCst);
-        }
-
-        // Wait for generation thread to finish
-        if let Some(handle) = self.generation_handle.take() {
-            log::info!("Waiting for background generation to finish...");
-            if handle.join().is_err() {
-                log::error!("Failed to join generation thread");
-            }
-        }
+        // WorldGenerationJob::drop handles cancel + join automatically.
     }
 }
 

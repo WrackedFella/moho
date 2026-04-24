@@ -33,16 +33,25 @@ pub fn render_game_state(
         GameState::ConsoleOpen => {
             render_overlays(ctx, ui_state);
             render_console(ctx, ui_state, event_bus);
-            MenuRenderResult { actions: Vec::new(), hovered_key: None }
+            MenuRenderResult {
+                actions: Vec::new(),
+                hovered_key: None,
+            }
         }
         GameState::Paused => {
             render_overlays(ctx, ui_state);
             render_pause_overlay(ctx);
-            MenuRenderResult { actions: Vec::new(), hovered_key: None }
+            MenuRenderResult {
+                actions: Vec::new(),
+                hovered_key: None,
+            }
         }
         GameState::Playing => {
             render_overlays(ctx, ui_state);
-            MenuRenderResult { actions: Vec::new(), hovered_key: None }
+            MenuRenderResult {
+                actions: Vec::new(),
+                hovered_key: None,
+            }
         }
     }
 }
@@ -71,7 +80,10 @@ fn render_menu(ctx: &egui::Context, ui_state: &mut UiStateManager) -> MenuRender
         }
     }
 
-    MenuRenderResult { actions, hovered_key }
+    MenuRenderResult {
+        actions,
+        hovered_key,
+    }
 }
 
 /// Render console overlay and process console actions
@@ -167,7 +179,10 @@ mod tests {
         let mut ui_state = UiStateManager::new();
         let event_bus = Arc::new(EventBus::new());
 
-        let mut result = MenuRenderResult { actions: Vec::new(), hovered_key: None };
+        let mut result = MenuRenderResult {
+            actions: Vec::new(),
+            hovered_key: None,
+        };
         let _ = ctx.run(Default::default(), |ctx| {
             result = render_game_state(ctx, &mut ui_state, GameState::Playing, &event_bus);
         });
@@ -180,7 +195,10 @@ mod tests {
         let mut ui_state = UiStateManager::new();
         let event_bus = Arc::new(EventBus::new());
 
-        let mut result = MenuRenderResult { actions: Vec::new(), hovered_key: None };
+        let mut result = MenuRenderResult {
+            actions: Vec::new(),
+            hovered_key: None,
+        };
         let _ = ctx.run(Default::default(), |ctx| {
             result = render_game_state(ctx, &mut ui_state, GameState::Paused, &event_bus);
         });

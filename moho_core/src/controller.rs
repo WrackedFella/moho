@@ -73,7 +73,9 @@ impl PlayerController {
                 self.yaw = delta.x.atan2(delta.z);
                 let len = delta.length();
                 self.pitch = if len > f32::EPSILON {
-                    (delta.y / len).asin().clamp(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD)
+                    (delta.y / len)
+                        .asin()
+                        .clamp(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD)
                 } else {
                     0.0
                 };

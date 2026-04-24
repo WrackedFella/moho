@@ -71,7 +71,6 @@ pub struct InitializedApp {
 
     pub audio_system: Option<moho_audio::AudioSystem>,
     pub simulation: SimulationController,
-    pub mouse_sensitivity: f32,
     pub input_system: InputSystem,
 
     pub prefs: Prefs,
@@ -202,7 +201,6 @@ impl AppInitializer {
 
             audio_system,
             simulation,
-            mouse_sensitivity: self.config.mouse_sensitivity,
             input_system,
 
             prefs: self.config.prefs,
@@ -244,11 +242,6 @@ mod tests {
 
         let initialized = result.unwrap();
 
-        // Verify all systems were created (event bus exists as Arc)
-        assert_eq!(
-            initialized.mouse_sensitivity,
-            AppConfig::default().mouse_sensitivity
-        );
         assert_eq!(
             initialized.frame_duration,
             Duration::from_secs_f64(1.0 / 60.0)
@@ -265,8 +258,7 @@ mod tests {
         let result = AppInitializer::new(config).build();
         assert!(result.is_ok());
 
-        let initialized = result.unwrap();
-        assert_eq!(initialized.mouse_sensitivity, 0.5);
+        assert!(result.is_ok());
     }
 
     #[test]

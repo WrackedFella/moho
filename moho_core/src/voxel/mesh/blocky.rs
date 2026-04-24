@@ -494,4 +494,21 @@ mod tests {
         // 6 faces * 2 triangles * 3 indices = 36 indices
         assert_eq!(mesh.indices.len(), 36, "Should have 36 indices");
     }
+
+    #[test]
+    fn all_indices_in_range() {
+        // Regression guard: out-of-range indices cause silent GPU crashes on some hardware.
+        let mut grid = VoxelGrid::new(32);
+        let pos = IVec3::new(16, 16, 16);
+        grid.set_block(pos, VoxelBlock::new(pos, 100));
+
+        let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
+        let vertex_count = mesh.vertices.len() as u32;
+        for &idx in &mesh.indices {
+            assert!(
+                idx < vertex_count,
+                "index {idx} out of range ({vertex_count} vertices)"
+            );
+        }
+    }
 }

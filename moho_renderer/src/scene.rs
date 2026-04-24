@@ -3,7 +3,6 @@ use bincode::{Decode, Encode};
 use legion::World;
 use legion::query::IntoQuery;
 use moho_core::actors::{Cube, InstanceGpu, Sphere};
-use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -22,18 +21,13 @@ const SCENE_FILE_VERSION: u32 = 3;
 /// Serializable descriptor for a dynamic point light.
 ///
 /// Used to persist lights alongside ECS scene data.
-#[derive(Encode, Decode, Serialize, Deserialize, Clone, Debug)]
+#[derive(Encode, Decode, Clone, Debug)]
 pub struct LightDesc {
     pub position: [f32; 3],
     pub color: [f32; 3],
     pub intensity: f32,
     pub range: f32,
-    #[serde(default = "default_true")]
     pub enabled: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 /// Scene manager that owns the `MaterialTable` and provides a simple
@@ -320,11 +314,19 @@ impl Scene {
 
         // Try decoding as v3 (includes lights). For v1/v2 saves this will fail
         // because the lights field doesn't exist in the binary data.
-        if let Ok((desc, _)) = bincode::decode_from_slice::<SceneDesc, _>(bytes, cfg) {
-            if desc.version >= 1 && desc.version <= SCENE_FILE_VERSION {
-                return Self::populate_world(desc.version, desc.spheres, desc.cubes,
-                    desc.voxel_chunks, desc.camera, desc.lights, world);
-            }
+        if let Ok((desc, _)) = bincode::decode_from_slice::<SceneDesc, _>(bytes, cfg)
+            && desc.version >= 1
+            && desc.version <= SCENE_FILE_VERSION
+        {
+            return Self::populate_world(
+                desc.version,
+                desc.spheres,
+                desc.cubes,
+                desc.voxel_chunks,
+                desc.camera,
+                desc.lights,
+                world,
+            );
         }
 
         // Fallback: try decoding as legacy v1/v2 (without lights field).
@@ -343,8 +345,15 @@ impl Scene {
             "Loaded legacy scene format (v{}) — spawned lights will not be restored",
             legacy.version
         );
-        Self::populate_world(legacy.version, legacy.spheres, legacy.cubes,
-            legacy.voxel_chunks, legacy.camera, vec![], world)
+        Self::populate_world(
+            legacy.version,
+            legacy.spheres,
+            legacy.cubes,
+            legacy.voxel_chunks,
+            legacy.camera,
+            vec![],
+            world,
+        )
     }
 
     /// Shared world-population logic used by both v3 and legacy load paths.
@@ -392,8 +401,8 @@ impl Scene {
             world.push((chunk,));
         }
 
-        let camera_data = camera
-            .map(|cam| (glam::Vec3::from_array(cam.position), cam.yaw, cam.pitch));
+        let camera_data =
+            camera.map(|cam| (glam::Vec3::from_array(cam.position), cam.yaw, cam.pitch));
 
         Ok((camera_data, lights))
     }
@@ -406,17 +415,13 @@ impl Default for Scene {
 }
 
 /// Serializable scene descriptor used for bincode snapshotting.
-#[derive(Encode, Decode, Serialize, Deserialize)]
+#[derive(Encode, Decode)]
 struct SceneDesc {
-    /// on-disk format version. Bump when making breaking changes.
     version: u32,
     spheres: Vec<SphereDesc>,
     cubes: Vec<CubeDesc>,
-    #[serde(default)]
     voxel_chunks: Vec<VoxelChunkDesc>,
-    #[serde(default)]
     camera: Option<CameraDesc>,
-    #[serde(default)]
     lights: Vec<LightDesc>,
 }
 
@@ -431,7 +436,7 @@ struct SceneDescLegacy {
     camera: Option<CameraDesc>,
 }
 
-#[derive(Encode, Decode, Serialize, Deserialize)]
+#[derive(Encode, Decode)]
 struct VoxelChunkDesc {
     chunk_pos: [i32; 3],
     vertices: Vec<[f32; 3]>,
@@ -440,14 +445,14 @@ struct VoxelChunkDesc {
     material_id: u32,
 }
 
-#[derive(Encode, Decode, Serialize, Deserialize)]
+#[derive(Encode, Decode)]
 struct SphereDesc {
     center: [f32; 3],
     radius: f32,
     material: MaterialDesc,
 }
 
-#[derive(Encode, Decode, Serialize, Deserialize)]
+#[derive(Encode, Decode)]
 struct CubeDesc {
     center: [f32; 3],
     length: f32,
@@ -456,20 +461,33 @@ struct CubeDesc {
     material: MaterialDesc,
 }
 
-#[derive(Encode, Decode, Serialize, Deserialize)]
+#[derive(Encode, Decode)]
 struct CameraDesc {
     position: [f32; 3],
     yaw: f32,
     pitch: f32,
 }
 
-#[derive(Encode, Decode, Serialize, Deserialize)]
+#[derive(Encode, Decode)]
 enum MaterialDesc {
-    Lambertian { albedo: [f32; 3] },
-    Metal { albedo: [f32; 3], fuzz: f32 },
-    Dielectric { ref_indx: f32 },
-    Emissive { color: [f32; 3], intensity: f32 },
-    VoxelTerrain { top_albedo: [f32; 3], side_albedo: [f32; 3] },
+    Lambertian {
+        albedo: [f32; 3],
+    },
+    Metal {
+        albedo: [f32; 3],
+        fuzz: f32,
+    },
+    Dielectric {
+        ref_indx: f32,
+    },
+    Emissive {
+        color: [f32; 3],
+        intensity: f32,
+    },
+    VoxelTerrain {
+        top_albedo: [f32; 3],
+        side_albedo: [f32; 3],
+    },
 }
 
 impl MaterialDesc {
@@ -487,16 +505,19 @@ impl MaterialDesc {
                     ref_indx: *ref_indx,
                 }
             }
-            moho_core::materials::MaterialType::Emissive { color, intensity } => MaterialDesc::Emissive {
-                color: [color.x, color.y, color.z],
-                intensity: *intensity,
-            },
-            moho_core::materials::MaterialType::VoxelTerrain { top_albedo, side_albedo } => {
-                MaterialDesc::VoxelTerrain {
-                    top_albedo: [top_albedo.x, top_albedo.y, top_albedo.z],
-                    side_albedo: [side_albedo.x, side_albedo.y, side_albedo.z],
+            moho_core::materials::MaterialType::Emissive { color, intensity } => {
+                MaterialDesc::Emissive {
+                    color: [color.x, color.y, color.z],
+                    intensity: *intensity,
                 }
             }
+            moho_core::materials::MaterialType::VoxelTerrain {
+                top_albedo,
+                side_albedo,
+            } => MaterialDesc::VoxelTerrain {
+                top_albedo: [top_albedo.x, top_albedo.y, top_albedo.z],
+                side_albedo: [side_albedo.x, side_albedo.y, side_albedo.z],
+            },
         }
     }
 
@@ -512,16 +533,87 @@ impl MaterialDesc {
             MaterialDesc::Dielectric { ref_indx } => {
                 moho_core::materials::MaterialType::Dielectric { ref_indx }
             }
-            MaterialDesc::Emissive { color, intensity } => moho_core::materials::MaterialType::Emissive {
-                color: glam::Vec3::new(color[0], color[1], color[2]),
-                intensity,
-            },
-            MaterialDesc::VoxelTerrain { top_albedo, side_albedo } => {
-                moho_core::materials::MaterialType::VoxelTerrain {
-                    top_albedo: glam::Vec3::new(top_albedo[0], top_albedo[1], top_albedo[2]),
-                    side_albedo: glam::Vec3::new(side_albedo[0], side_albedo[1], side_albedo[2]),
+            MaterialDesc::Emissive { color, intensity } => {
+                moho_core::materials::MaterialType::Emissive {
+                    color: glam::Vec3::new(color[0], color[1], color[2]),
+                    intensity,
                 }
             }
+            MaterialDesc::VoxelTerrain {
+                top_albedo,
+                side_albedo,
+            } => moho_core::materials::MaterialType::VoxelTerrain {
+                top_albedo: glam::Vec3::new(top_albedo[0], top_albedo[1], top_albedo[2]),
+                side_albedo: glam::Vec3::new(side_albedo[0], side_albedo[1], side_albedo[2]),
+            },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use legion::World;
+
+    #[test]
+    fn camera_and_lights_round_trip_through_encode_decode() {
+        let scene = Scene::new();
+        let world = World::default();
+
+        let cam_pos = glam::Vec3::new(1.5, 2.5, 3.5);
+        let yaw = 0.123_f32;
+        let pitch = -0.456_f32;
+        let lights = vec![
+            LightDesc {
+                position: [10.0, 20.0, 30.0],
+                color: [1.0, 0.5, 0.0],
+                intensity: 2.5,
+                range: 50.0,
+                enabled: true,
+            },
+            LightDesc {
+                position: [-5.0, 0.0, 5.0],
+                color: [0.0, 1.0, 1.0],
+                intensity: 1.0,
+                range: 25.0,
+                enabled: false,
+            },
+        ];
+
+        let bytes = scene
+            .encode_to_bytes(&world, Some((cam_pos, yaw, pitch)), &lights)
+            .expect("encode");
+
+        let mut scene2 = Scene::new();
+        let mut world2 = World::default();
+        let (cam_out, lights_out) = scene2.load_from_bytes(&bytes, &mut world2).expect("decode");
+
+        let (pos_out, yaw_out, pitch_out) = cam_out.expect("camera present");
+        assert!((pos_out.x - cam_pos.x).abs() < 1e-6);
+        assert!((pos_out.y - cam_pos.y).abs() < 1e-6);
+        assert!((pos_out.z - cam_pos.z).abs() < 1e-6);
+        assert!((yaw_out - yaw).abs() < 1e-6);
+        assert!((pitch_out - pitch).abs() < 1e-6);
+
+        assert_eq!(lights_out.len(), 2);
+        assert!((lights_out[0].intensity - 2.5).abs() < 1e-6);
+        assert_eq!(lights_out[0].enabled, true);
+        assert_eq!(lights_out[1].enabled, false);
+        assert!((lights_out[1].range - 25.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn encode_without_camera_round_trips() {
+        let scene = Scene::new();
+        let world = World::default();
+
+        let bytes = scene.encode_to_bytes(&world, None, &[]).expect("encode");
+
+        let mut scene2 = Scene::new();
+        let mut world2 = World::default();
+        let (cam_out, lights_out) = scene2.load_from_bytes(&bytes, &mut world2).expect("decode");
+
+        assert!(cam_out.is_none());
+        assert!(lights_out.is_empty());
     }
 }

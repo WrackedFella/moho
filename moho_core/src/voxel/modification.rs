@@ -635,4 +635,25 @@ mod tests {
         assert_eq!(state_5.priority, 5);
         assert_eq!(state_222.priority, 6);
     }
+
+    #[test]
+    fn remove_absent_block_returns_none() {
+        // Regression guard: remove_block on an empty position must not panic.
+        let mut modifier = test_modifier();
+        let pos = BlockPos::new(3, 3, 3);
+        let result = modifier.remove_block(&pos);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn set_then_remove_restores_empty_grid() {
+        let mut modifier = test_modifier();
+        let pos = BlockPos::new(4, 4, 4);
+
+        assert!(modifier.grid().get_block(&pos).is_none());
+        modifier.set_block(pos, VoxelBlock::new(pos, 7));
+        assert!(modifier.grid().get_block(&pos).is_some());
+        modifier.remove_block(&pos);
+        assert!(modifier.grid().get_block(&pos).is_none());
+    }
 }

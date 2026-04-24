@@ -34,7 +34,7 @@ The project emphasizes **separation of concerns** between simulation and renderi
 ### Running the Game
 
 ```sh
-cargo run --features "backend-wgpu,ui-egui"
+cargo run
 ```
 
 ### Testing
@@ -85,7 +85,6 @@ Each workspace crate has comprehensive documentation in its README:
 - **[Event Bus Best Practices](docs/engine_core/EVENT_BUS_BEST_PRACTICES.md)** - Usage patterns and common pitfalls
 - **[Event Bus Performance](docs/engine_core/EVENT_BUS_PERFORMANCE.md)** - Benchmark results (11M events/sec)
 - **[Console Architecture](docs/CONSOLE_ARCHITECTURE.md)** - Debug console system design
-- **[Game State Architecture](docs/GAME_STATE_ARCHITECTURE.md)** - State machine documentation
 - **[Adding Console Commands](docs/ADDING_CONSOLE_COMMANDS.md)** - Extending the console
 
 ### Technical Reference
@@ -182,12 +181,12 @@ See [EVENT_BUS_BEST_PRACTICES.md](docs/engine_core/EVENT_BUS_BEST_PRACTICES.md) 
 
 ### Development Build
 ```sh
-cargo build --features "backend-wgpu,ui-egui"
+cargo build
 ```
 
 ### Release Build
 ```sh
-cargo build --release --features "backend-wgpu,ui-egui"
+cargo build --release
 ```
 
 ## Docker / CI

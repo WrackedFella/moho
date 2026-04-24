@@ -3,12 +3,10 @@ use crc32fast::Hasher;
 use glam::{Mat4, Vec3};
 use moho_core::controller::{CameraMode, ControllerInput, PlayerController, controller_to_camera};
 use moho_core::game_clock::GameClock;
-use serde::{Deserialize, Serialize};
-
 const SNAP_MAGIC: &[u8; 4] = b"MOHO";
 const SNAP_VERSION: u16 = 2;
 
-#[derive(Serialize, Deserialize, Encode, Decode)]
+#[derive(Encode, Decode)]
 struct SimulationSnapshot {
     // position as tuple to avoid needing glam serde support
     pos: (f32, f32, f32),

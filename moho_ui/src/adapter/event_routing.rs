@@ -56,7 +56,11 @@ pub fn process_menu_action(action: &MenuAction, event_bus: &EventBus) {
                 crate::prefs::WindowMode::Borderless => moho_core::events::WindowMode::Borderless,
             };
             let (width, height) = prefs.window_resolution();
-            event_bus.publish(CoreUiEvent::WindowSettingsChanged { mode, width, height });
+            event_bus.publish(CoreUiEvent::WindowSettingsChanged {
+                mode,
+                width,
+                height,
+            });
         }
         MenuAction::None => {
             // No action
@@ -83,11 +87,7 @@ pub fn emit_audio_event(event_bus: &EventBus, audio_event: UiAudioEvent) {
 ///
 /// Starts music when the player navigates to the start menu, stops it when
 /// they leave. Silently no-ops if the music file does not exist on disk.
-pub fn update_menu_music(
-    actions: &[MenuAction],
-    event_bus: &EventBus,
-    music_playing: &mut bool,
-) {
+pub fn update_menu_music(actions: &[MenuAction], event_bus: &EventBus, music_playing: &mut bool) {
     use moho_core::events::AudioEvent;
     use std::path::Path;
 
@@ -107,9 +107,7 @@ pub fn update_menu_music(
                 }
             }
             // Leaving the menu (loading, new world, exit, or switching to non-start screen)
-            MenuAction::LoadScene(_)
-            | MenuAction::GenerateWorld(_)
-            | MenuAction::Exit => {
+            MenuAction::LoadScene(_) | MenuAction::GenerateWorld(_) | MenuAction::Exit => {
                 if *music_playing {
                     event_bus.publish(AudioEvent::MusicStop);
                     *music_playing = false;
@@ -287,7 +285,9 @@ mod tests {
     fn menu_music_stops_on_load_scene() {
         let bus = Arc::new(EventBus::new());
         let mut playing = true; // simulate music is already playing
-        let actions = vec![MenuAction::LoadScene(std::path::PathBuf::from("saves/scene.bin"))];
+        let actions = vec![MenuAction::LoadScene(std::path::PathBuf::from(
+            "saves/scene.bin",
+        ))];
 
         update_menu_music(&actions, &bus, &mut playing);
         assert!(!playing, "music should stop when loading a scene");
@@ -300,7 +300,10 @@ mod tests {
         let actions = vec![MenuAction::ShowMenu("settings".to_string())];
 
         update_menu_music(&actions, &bus, &mut playing);
-        assert!(!playing, "music should stop when navigating away from start");
+        assert!(
+            !playing,
+            "music should stop when navigating away from start"
+        );
     }
 
     #[test]

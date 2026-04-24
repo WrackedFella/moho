@@ -82,7 +82,7 @@ pub struct EguiAdapter {
     menu_music_playing: bool,
 }
 
-/// Re-export from moho_types \u2014 single source of truth for game states.\npub use moho_types::GameState;\n\n/// Lightweight progress state used by the adapter to render an overlay.
+/// Lightweight progress state used by the adapter to render an overlay.
 #[derive(Debug, Clone)]
 pub struct ProgressState {
     pub title: String,
@@ -91,7 +91,12 @@ pub struct ProgressState {
     pub canceled: bool,
 }
 
-// EguiAdapter needs to be Send + Sync for use with Arc<Mutex<>> across threads
+// SAFETY: EguiAdapter is always accessed under Arc<Mutex<EguiAdapter>>, so
+// only one thread holds &mut EguiAdapter at a time. The non-Send/Sync field is
+// `dyn Modal` (inside UiStateManager), which is heap-allocated screen state that
+// is created, used, and dropped on the main thread. No EguiAdapter field is ever
+// accessed concurrently — the Mutex provides the needed exclusion.
+// This impl is required because `dyn Modal` lacks a `Send` bound.
 unsafe impl Send for EguiAdapter {}
 unsafe impl Sync for EguiAdapter {}
 
@@ -298,8 +303,7 @@ impl FrameCallback for EguiAdapter {
         UI_OVERLAY_VISIBLE.store(self.ui_state.visible, Ordering::SeqCst);
 
         // Render when menus are visible OR during any gameplay state (for overlays)
-        let needs_render = self.ui_state.visible
-            || self.current_game_state != GameState::Menu;
+        let needs_render = self.ui_state.visible || self.current_game_state != GameState::Menu;
         if !needs_render {
             return;
         }

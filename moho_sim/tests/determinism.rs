@@ -1,4 +1,4 @@
-use moho_sim::{PlayerInputType as PlayerInput, Simulation};
+use moho_sim::{PlayerInput, Simulation};
 
 #[test]
 fn simulation_is_deterministic_given_seed_and_inputs() {
