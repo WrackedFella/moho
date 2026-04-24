@@ -191,12 +191,7 @@ mod tests {
 
         fn set_materials(&mut self, _materials: &[crate::Material]) {}
 
-        fn request_redraw(&self) {}
         fn resize(&mut self, _width: u32, _height: u32) {}
-        fn set_cursor_visible(&self, _visible: bool) {}
-        fn set_cursor_grab(&self, _locked: bool) -> Result<(), Box<dyn std::error::Error>> {
-            Ok(())
-        }
         fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
             0
         }
