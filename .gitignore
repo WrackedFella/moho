@@ -30,7 +30,6 @@ target
 recipe.json
 /_rca/
 /todo/
-/docs/
 
 # Code metrics output
 /metrics-output/
