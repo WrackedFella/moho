@@ -33,6 +33,7 @@
 //! modifier.set_block(pos, VoxelBlock::new(pos, 0));
 //! ```
 
+mod biome;
 mod chunk;
 mod face;
 mod grid;
@@ -45,6 +46,7 @@ mod modification;
 mod state;
 
 // Re-export core types from submodules
+pub use biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
 pub use chunk::{TerrainSmoother, VoxelChunk};
 pub use face::{FaceDirection, get_visible_faces};
 pub use grid::{
