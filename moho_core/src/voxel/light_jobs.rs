@@ -451,16 +451,14 @@ impl LightJobQueue {
             total_jobs_processed: self.total_jobs_processed,
             total_blocks_processed: self.total_blocks_processed,
             total_time_us: self.total_time_us,
-            average_time_per_job_us: if self.total_jobs_processed > 0 {
-                self.total_time_us / self.total_jobs_processed
-            } else {
-                0
-            },
-            average_blocks_per_job: if self.total_jobs_processed > 0 {
-                self.total_blocks_processed / self.total_jobs_processed
-            } else {
-                0
-            },
+            average_time_per_job_us: self
+                .total_time_us
+                .checked_div(self.total_jobs_processed)
+                .unwrap_or(0),
+            average_blocks_per_job: self
+                .total_blocks_processed
+                .checked_div(self.total_jobs_processed)
+                .unwrap_or(0),
         }
     }
 }
