@@ -49,12 +49,10 @@ impl HybridMeshGenerator {
             for y in 0..chunk_size {
                 for z in 0..chunk_size {
                     let pos = base_pos + IVec3::new(x, y, z);
-                    if let Some(block) = grid.get_block(&pos) {
-                        if block.is_smooth() {
-                            smooth_count += 1;
-                        } else {
-                            blocky_count += 1;
-                        }
+                    match grid.is_smooth_at(pos) {
+                        Some(true) => smooth_count += 1,
+                        Some(false) => blocky_count += 1,
+                        None => {}
                     }
                 }
             }
@@ -126,7 +124,7 @@ impl HybridMeshGenerator {
             for y in 0..chunk_size {
                 for z in 0..chunk_size {
                     let pos = base_pos + IVec3::new(x, y, z);
-                    if grid.has_block_at(&pos) {
+                    if grid.is_solid_at(pos) {
                         let block_mesh = BlockyMeshGenerator::generate_mesh(grid, pos);
                         Self::append_mesh(&mut mesh, &block_mesh, pos);
                     }
@@ -173,7 +171,7 @@ impl HybridMeshGenerator {
             for y in 0..chunk_size {
                 for z in 0..chunk_size {
                     let pos = base_pos + IVec3::new(x, y, z);
-                    if grid.get_block(&pos).is_some_and(|block| !block.is_smooth()) {
+                    if grid.is_smooth_at(pos) == Some(false) {
                         let block_mesh = BlockyMeshGenerator::generate_mesh(grid, pos);
                         Self::append_mesh_with_offset(
                             &mut final_mesh,
@@ -217,10 +215,9 @@ impl HybridMeshGenerator {
                 for (z, col) in row.iter_mut().enumerate() {
                     let world_pos = base_pos + IVec3::new(x as i32 - 1, y as i32 - 1, z as i32 - 1);
 
-                    let is_solid = if let Some(block) = grid.get_block(&world_pos) {
-                        if only_smooth { block.is_smooth() } else { true }
-                    } else {
-                        false
+                    let is_solid = match grid.is_smooth_at(world_pos) {
+                        Some(smooth) => !only_smooth || smooth,
+                        None => false,
                     };
 
                     *col = if is_solid { 1.0 } else { 0.0 };
@@ -298,7 +295,6 @@ impl HybridMeshGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel::grid::VoxelBlock;
 
     #[test]
     fn test_analyze_empty_chunk() {
@@ -319,7 +315,7 @@ mod tests {
             for y in 0..4 {
                 for z in 0..4 {
                     let pos = IVec3::new(x, y, z);
-                    grid.set_block(pos, VoxelBlock::new(pos, 0)); // Material 0 is smooth
+                    grid.place_block(pos, 0, None); // Material 0 is smooth
                 }
             }
         }
@@ -340,7 +336,7 @@ mod tests {
             for y in 0..4 {
                 for z in 0..4 {
                     let pos = IVec3::new(x, y, z);
-                    grid.set_block(pos, VoxelBlock::new(pos, 100)); // Material 100 is blocky
+                    grid.place_block(pos, 100, None); // Material 100 is blocky
                 }
             }
         }
@@ -361,7 +357,7 @@ mod tests {
             for y in 0..2 {
                 for z in 0..2 {
                     let pos = IVec3::new(x, y, z);
-                    grid.set_block(pos, VoxelBlock::new(pos, 0)); // Smooth
+                    grid.place_block(pos, 0, None); // Smooth
                 }
             }
         }
@@ -370,7 +366,7 @@ mod tests {
             for y in 2..4 {
                 for z in 2..4 {
                     let pos = IVec3::new(x, y, z);
-                    grid.set_block(pos, VoxelBlock::new(pos, 100)); // Blocky
+                    grid.place_block(pos, 100, None); // Blocky
                 }
             }
         }

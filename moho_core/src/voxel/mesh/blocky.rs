@@ -80,8 +80,8 @@ impl BlockyMeshGenerator {
         }
 
         // Get block's light level (max of sky and block light, normalized to 0-1)
-        let light = if let Some(block) = grid.get_block(&position) {
-            block.light_level() as f32 / 15.0
+        let light = if grid.is_solid_at(position) {
+            grid.light_level_at(position) as f32 / 15.0
         } else {
             1.0 // Default to full light if block not found
         };
@@ -412,9 +412,9 @@ impl FaceDirection {
         diagonal: IVec3,
     ) -> f32 {
         // Check if each neighbor position is occupied
-        let s1 = grid.is_block_occupied(pos + side1) as u8;
-        let s2 = grid.is_block_occupied(pos + side2) as u8;
-        let d = grid.is_block_occupied(pos + diagonal) as u8;
+        let s1 = grid.is_solid_at(pos + side1) as u8;
+        let s2 = grid.is_solid_at(pos + side2) as u8;
+        let d = grid.is_solid_at(pos + diagonal) as u8;
 
         // AO formula: darken based on number of occupied neighbors
         // If both sides are occupied, diagonal doesn't matter (maximum occlusion)
@@ -433,13 +433,12 @@ impl FaceDirection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel::grid::VoxelBlock;
 
     #[test]
     fn test_isolated_block_has_no_occlusion() {
         let mut grid = VoxelGrid::new(32);
         let pos = IVec3::new(16, 16, 16);
-        grid.set_block(pos, VoxelBlock::new(pos, 100)); // Blocky material ID
+        grid.place_block(pos, 100, None); // Blocky material ID
 
         let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
 
@@ -453,21 +452,12 @@ mod tests {
     fn test_corner_block_has_occlusion() {
         let mut grid = VoxelGrid::new(32);
         let pos = IVec3::new(16, 16, 16);
-        grid.set_block(pos, VoxelBlock::new(pos, 100));
+        grid.place_block(pos, 100, None);
 
         // Add neighbors to create occlusion (forms a corner)
-        grid.set_block(
-            pos + IVec3::new(1, 0, 0),
-            VoxelBlock::new(pos + IVec3::new(1, 0, 0), 100),
-        );
-        grid.set_block(
-            pos + IVec3::new(0, 1, 0),
-            VoxelBlock::new(pos + IVec3::new(0, 1, 0), 100),
-        );
-        grid.set_block(
-            pos + IVec3::new(1, 1, 0),
-            VoxelBlock::new(pos + IVec3::new(1, 1, 0), 100),
-        );
+        grid.place_block(pos + IVec3::new(1, 0, 0), 100, None);
+        grid.place_block(pos + IVec3::new(0, 1, 0), 100, None);
+        grid.place_block(pos + IVec3::new(1, 1, 0), 100, None);
 
         let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
 
@@ -483,7 +473,7 @@ mod tests {
     fn test_mesh_structure() {
         let mut grid = VoxelGrid::new(32);
         let pos = IVec3::new(16, 16, 16);
-        grid.set_block(pos, VoxelBlock::new(pos, 100));
+        grid.place_block(pos, 100, None);
 
         let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
 
@@ -501,7 +491,7 @@ mod tests {
         // Regression guard: out-of-range indices cause silent GPU crashes on some hardware.
         let mut grid = VoxelGrid::new(32);
         let pos = IVec3::new(16, 16, 16);
-        grid.set_block(pos, VoxelBlock::new(pos, 100));
+        grid.place_block(pos, 100, None);
 
         let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
         let vertex_count = mesh.vertices.len() as u32;

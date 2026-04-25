@@ -10,7 +10,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use moho_core::voxel::{VoxelGrid, BlockModifier, BlockPos, VoxelBlock};
+//! use moho_core::voxel::{VoxelGrid, BlockModifier, BlockPos};
 //! use moho_core::events::EventBus;
 //!
 //! let grid = VoxelGrid::new(16);
@@ -19,14 +19,14 @@
 //!
 //! // Single block modification
 //! let pos = BlockPos::new(5, 10, 5);
-//! modifier.set_block(pos, VoxelBlock::new(pos, 1));
+//! modifier.set_block(pos, 1, None);
 //!
 //! // Batch modification (e.g., explosion)
 //! let positions = vec![BlockPos::new(0, 0, 0), BlockPos::new(1, 0, 0)];
-//! modifier.remove_blocks_batch(&positions);
+//! modifier.remove_blocks_batch(&positions, BlockChangeReason::Unknown);
 //! ```
 
-use super::grid::{BlockPos, VoxelBlock, VoxelGrid};
+use super::grid::{BlockData, BlockPos, VoxelGrid};
 use super::state::{ChunkState, JobId};
 use crate::events::{BlockChangeReason, EventBus, WorldEvent};
 use glam::IVec3;
@@ -140,22 +140,27 @@ impl BlockModifier {
     /// 2. Mark the containing chunk as dirty
     /// 3. Mark neighbor chunks dirty if this is an edge block
     /// 4. Publish a `BlockPlaced` event
-    pub fn set_block(&mut self, pos: BlockPos, block: VoxelBlock) -> ModificationResult {
-        self.set_block_with_reason(pos, block, BlockChangeReason::Unknown)
+    pub fn set_block(
+        &mut self,
+        pos: BlockPos,
+        material_id: u32,
+        resource_id: Option<u32>,
+    ) -> ModificationResult {
+        self.set_block_with_reason(pos, material_id, resource_id, BlockChangeReason::Unknown)
     }
 
     /// Set a block with a specific change reason.
     pub fn set_block_with_reason(
         &mut self,
         pos: BlockPos,
-        block: VoxelBlock,
+        material_id: u32,
+        resource_id: Option<u32>,
         reason: BlockChangeReason,
     ) -> ModificationResult {
-        let material_id = block.material_id;
         let chunk_pos = VoxelGrid::get_chunk_pos(pos, self.chunk_size);
 
         // Update the grid
-        self.grid.set_block(pos, block);
+        self.grid.place_block(pos, material_id, resource_id);
 
         // Mark chunk dirty
         let state = self.get_or_create_chunk_state(chunk_pos);
@@ -184,34 +189,37 @@ impl BlockModifier {
 
     /// Remove a block at the given position.
     ///
-    /// Returns the removed block if one existed.
-    pub fn remove_block(&mut self, pos: &BlockPos) -> Option<VoxelBlock> {
+    /// Returns a snapshot of the removed block if one existed.
+    pub fn remove_block(&mut self, pos: BlockPos) -> Option<BlockData> {
         self.remove_block_with_reason(pos, BlockChangeReason::Unknown)
     }
 
     /// Remove a block with a specific change reason.
     pub fn remove_block_with_reason(
         &mut self,
-        pos: &BlockPos,
+        pos: BlockPos,
         reason: BlockChangeReason,
-    ) -> Option<VoxelBlock> {
-        let chunk_pos = VoxelGrid::get_chunk_pos(*pos, self.chunk_size);
+    ) -> Option<BlockData> {
+        let chunk_pos = VoxelGrid::get_chunk_pos(pos, self.chunk_size);
 
-        // Remove from grid
-        let removed = self.grid.remove_block(pos);
+        // Snapshot before removing
+        let removed = self.grid.block_data_at(pos);
+        if removed.is_some() {
+            self.grid.clear_block(pos);
+        }
 
-        if let Some(ref block) = removed {
+        if let Some(block) = removed {
             // Mark chunk dirty
             let state = self.get_or_create_chunk_state(chunk_pos);
             state.dirty_all();
 
             // Check and dirty neighbor chunks
-            self.dirty_neighbors_if_edge(*pos, chunk_pos);
+            self.dirty_neighbors_if_edge(pos, chunk_pos);
 
             // Publish event
             if self.events_enabled {
                 self.event_bus.publish(WorldEvent::BlockRemoved {
-                    position: *pos,
+                    position: pos,
                     old_material_id: block.material_id,
                     reason,
                 });
@@ -234,7 +242,7 @@ impl BlockModifier {
     /// - Publishes a single batch event
     pub fn set_blocks_batch(
         &mut self,
-        blocks: Vec<(BlockPos, VoxelBlock)>,
+        blocks: Vec<(BlockPos, u32, Option<u32>)>,
         reason: BlockChangeReason,
     ) -> ModificationResult {
         if blocks.is_empty() {
@@ -249,12 +257,12 @@ impl BlockModifier {
         let mut all_positions: Vec<IVec3> = Vec::with_capacity(blocks.len());
         let mut neighbors_affected = false;
 
-        for (pos, block) in blocks {
+        for (pos, material_id, resource_id) in blocks {
             let chunk_pos = VoxelGrid::get_chunk_pos(pos, self.chunk_size);
             dirty_chunks.insert(chunk_pos);
             all_positions.push(pos);
 
-            self.grid.set_block(pos, block);
+            self.grid.place_block(pos, material_id, resource_id);
 
             if self.is_edge_block(pos, chunk_pos) {
                 neighbors_affected = true;
@@ -317,7 +325,7 @@ impl BlockModifier {
         for &pos in positions {
             let chunk_pos = VoxelGrid::get_chunk_pos(pos, self.chunk_size);
 
-            if self.grid.remove_block(&pos).is_some() {
+            if self.grid.clear_block(pos) {
                 dirty_chunks.insert(chunk_pos);
                 removed_positions.push(pos);
 
@@ -522,7 +530,7 @@ mod tests {
         let mut modifier = test_modifier();
         let pos = BlockPos::new(5, 5, 5);
 
-        modifier.set_block(pos, VoxelBlock::new(pos, 1));
+        modifier.set_block(pos, 1, None);
 
         let chunk_pos = IVec3::ZERO;
         assert!(modifier.get_chunk_state(chunk_pos).is_some());
@@ -562,13 +570,13 @@ mod tests {
         let mut modifier = test_modifier();
         let pos = BlockPos::new(5, 5, 5);
 
-        modifier.set_block(pos, VoxelBlock::new(pos, 2));
-        assert!(modifier.grid().get_block(&pos).is_some());
+        modifier.set_block(pos, 2, None);
+        assert!(modifier.grid().is_solid_at(pos));
 
-        let removed = modifier.remove_block(&pos);
+        let removed = modifier.remove_block(pos);
         assert!(removed.is_some());
         assert_eq!(removed.unwrap().material_id, 2);
-        assert!(modifier.grid().get_block(&pos).is_none());
+        assert!(!modifier.grid().is_solid_at(pos));
     }
 
     #[test]
@@ -576,10 +584,7 @@ mod tests {
         let mut modifier = test_modifier();
 
         let blocks: Vec<_> = (0..5)
-            .map(|i| {
-                let pos = BlockPos::new(i, 0, 0);
-                (pos, VoxelBlock::new(pos, 1))
-            })
+            .map(|i| (BlockPos::new(i, 0, 0), 1u32, None))
             .collect();
 
         let result = modifier.set_blocks_batch(blocks, BlockChangeReason::Player);
@@ -606,7 +611,7 @@ mod tests {
 
         // Place block at edge (0,5,5) which borders chunk (-1,0,0)
         let edge_pos = BlockPos::new(0, 5, 5);
-        let result = modifier.set_block(edge_pos, VoxelBlock::new(edge_pos, 1));
+        let result = modifier.set_block(edge_pos, 1, None);
 
         assert!(result.neighbors_affected);
 
@@ -641,7 +646,7 @@ mod tests {
         // Regression guard: remove_block on an empty position must not panic.
         let mut modifier = test_modifier();
         let pos = BlockPos::new(3, 3, 3);
-        let result = modifier.remove_block(&pos);
+        let result = modifier.remove_block(pos);
         assert!(result.is_none());
     }
 
@@ -650,10 +655,10 @@ mod tests {
         let mut modifier = test_modifier();
         let pos = BlockPos::new(4, 4, 4);
 
-        assert!(modifier.grid().get_block(&pos).is_none());
-        modifier.set_block(pos, VoxelBlock::new(pos, 7));
-        assert!(modifier.grid().get_block(&pos).is_some());
-        modifier.remove_block(&pos);
-        assert!(modifier.grid().get_block(&pos).is_none());
+        assert!(!modifier.grid().is_solid_at(pos));
+        modifier.set_block(pos, 7, None);
+        assert!(modifier.grid().is_solid_at(pos));
+        modifier.remove_block(pos);
+        assert!(!modifier.grid().is_solid_at(pos));
     }
 }

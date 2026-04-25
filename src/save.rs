@@ -23,7 +23,7 @@ pub struct BlockRecord {
 }
 
 impl BlockRecord {
-    pub fn from_block(block: &moho_core::voxel::VoxelBlock) -> Self {
+    pub fn from_block_data(block: moho_core::voxel::BlockData) -> Self {
         Self {
             x: block.position.x,
             y: block.position.y,

@@ -123,14 +123,14 @@ impl FaceDirection {
     ///
     /// let mut grid = VoxelGrid::new(16);
     /// let pos = BlockPos::new(0, 0, 0);
-    /// grid.set_block(pos, VoxelBlock::new(pos, 0));
+    /// grid.place_block(pos, 0, None);
     ///
     /// // No neighbor to the east (+X), so face should render
     /// assert!(FaceDirection::PosX.should_render_face(&grid, pos));
     ///
     /// // Add a neighbor
     /// let neighbor_pos = BlockPos::new(1, 0, 0);
-    /// grid.set_block(neighbor_pos, VoxelBlock::new(neighbor_pos, 0));
+    /// grid.place_block(neighbor_pos, 0, None);
     ///
     /// // Now the face is hidden by the neighbor
     /// assert!(!FaceDirection::PosX.should_render_face(&grid, pos));
@@ -141,7 +141,7 @@ impl FaceDirection {
 
         // If neighbor exists (solid block), don't render this face (it's hidden)
         // If no neighbor (air or out of bounds), render the face
-        !grid.has_block_at(&neighbor_pos)
+        !grid.is_solid_at(neighbor_pos)
     }
 }
 
@@ -167,7 +167,7 @@ pub fn get_visible_faces(grid: &VoxelGrid, pos: BlockPos) -> Vec<FaceDirection> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel::grid::{VoxelBlock, VoxelGrid};
+    use crate::voxel::grid::VoxelGrid;
 
     #[test]
     fn test_face_offsets() {
@@ -211,7 +211,7 @@ mod tests {
     fn test_should_render_face_no_neighbor() {
         let mut grid = VoxelGrid::new(16);
         let pos = BlockPos::new(0, 0, 0);
-        grid.set_block(pos, VoxelBlock::new(pos, 0));
+        grid.place_block(pos, 0, None);
 
         // All faces should be visible (no neighbors)
         assert!(FaceDirection::PosX.should_render_face(&grid, pos));
@@ -226,11 +226,11 @@ mod tests {
     fn test_should_render_face_with_neighbor() {
         let mut grid = VoxelGrid::new(16);
         let pos = BlockPos::new(0, 0, 0);
-        grid.set_block(pos, VoxelBlock::new(pos, 0));
+        grid.place_block(pos, 0, None);
 
         // Add neighbor to the east (+X)
         let neighbor_pos = BlockPos::new(1, 0, 0);
-        grid.set_block(neighbor_pos, VoxelBlock::new(neighbor_pos, 0));
+        grid.place_block(neighbor_pos, 0, None);
 
         // PosX face should be hidden
         assert!(!FaceDirection::PosX.should_render_face(&grid, pos));
@@ -247,33 +247,15 @@ mod tests {
     fn test_should_render_face_surrounded() {
         let mut grid = VoxelGrid::new(16);
         let pos = BlockPos::new(5, 5, 5);
-        grid.set_block(pos, VoxelBlock::new(pos, 0));
+        grid.place_block(pos, 0, None);
 
         // Add neighbors on all sides
-        grid.set_block(
-            BlockPos::new(6, 5, 5),
-            VoxelBlock::new(BlockPos::new(6, 5, 5), 0),
-        ); // +X
-        grid.set_block(
-            BlockPos::new(4, 5, 5),
-            VoxelBlock::new(BlockPos::new(4, 5, 5), 0),
-        ); // -X
-        grid.set_block(
-            BlockPos::new(5, 6, 5),
-            VoxelBlock::new(BlockPos::new(5, 6, 5), 0),
-        ); // +Y
-        grid.set_block(
-            BlockPos::new(5, 4, 5),
-            VoxelBlock::new(BlockPos::new(5, 4, 5), 0),
-        ); // -Y
-        grid.set_block(
-            BlockPos::new(5, 5, 6),
-            VoxelBlock::new(BlockPos::new(5, 5, 6), 0),
-        ); // +Z
-        grid.set_block(
-            BlockPos::new(5, 5, 4),
-            VoxelBlock::new(BlockPos::new(5, 5, 4), 0),
-        ); // -Z
+        grid.place_block(BlockPos::new(6, 5, 5), 0, None); // +X
+        grid.place_block(BlockPos::new(4, 5, 5), 0, None); // -X
+        grid.place_block(BlockPos::new(5, 6, 5), 0, None); // +Y
+        grid.place_block(BlockPos::new(5, 4, 5), 0, None); // -Y
+        grid.place_block(BlockPos::new(5, 5, 6), 0, None); // +Z
+        grid.place_block(BlockPos::new(5, 5, 4), 0, None); // -Z
 
         // All faces should be hidden
         assert!(!FaceDirection::PosX.should_render_face(&grid, pos));
@@ -288,7 +270,7 @@ mod tests {
     fn test_get_visible_faces_isolated_block() {
         let mut grid = VoxelGrid::new(16);
         let pos = BlockPos::new(10, 10, 10);
-        grid.set_block(pos, VoxelBlock::new(pos, 0));
+        grid.place_block(pos, 0, None);
 
         let visible = get_visible_faces(&grid, pos);
         assert_eq!(visible.len(), 6); // All faces visible
@@ -298,17 +280,11 @@ mod tests {
     fn test_get_visible_faces_with_neighbors() {
         let mut grid = VoxelGrid::new(16);
         let pos = BlockPos::new(10, 10, 10);
-        grid.set_block(pos, VoxelBlock::new(pos, 0));
+        grid.place_block(pos, 0, None);
 
         // Add two neighbors
-        grid.set_block(
-            BlockPos::new(11, 10, 10),
-            VoxelBlock::new(BlockPos::new(11, 10, 10), 0),
-        );
-        grid.set_block(
-            BlockPos::new(10, 11, 10),
-            VoxelBlock::new(BlockPos::new(10, 11, 10), 0),
-        );
+        grid.place_block(BlockPos::new(11, 10, 10), 0, None);
+        grid.place_block(BlockPos::new(10, 11, 10), 0, None);
 
         let visible = get_visible_faces(&grid, pos);
         assert_eq!(visible.len(), 4); // 4 faces visible (2 hidden)
@@ -328,12 +304,12 @@ mod tests {
     fn test_get_visible_faces_fully_surrounded() {
         let mut grid = VoxelGrid::new(16);
         let pos = BlockPos::new(5, 5, 5);
-        grid.set_block(pos, VoxelBlock::new(pos, 0));
+        grid.place_block(pos, 0, None);
 
         // Surround completely
         for dir in FaceDirection::all() {
             let neighbor_pos = pos + dir.offset();
-            grid.set_block(neighbor_pos, VoxelBlock::new(neighbor_pos, 0));
+            grid.place_block(neighbor_pos, 0, None);
         }
 
         let visible = get_visible_faces(&grid, pos);

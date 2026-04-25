@@ -358,6 +358,152 @@ impl VoxelGrid {
     pub fn block_count(&self) -> usize {
         self.blocks.len()
     }
+
+    // ---------------------------------------------------------------------
+    // Accessor API (Stage 4B)
+    //
+    // These methods return primitive values rather than `&VoxelBlock`, so
+    // callers do not depend on `VoxelBlock` being the storage type. Stage 4D
+    // can swap the underlying storage to a paletted layout without API churn.
+    // ---------------------------------------------------------------------
+
+    /// Material id at `pos`, or `None` for air.
+    #[inline]
+    pub fn material_at(&self, pos: BlockPos) -> Option<u32> {
+        self.blocks.get(&pos).map(|b| b.material_id)
+    }
+
+    /// Resource id at `pos`, or `None` if the block has no resource (or is air).
+    #[inline]
+    pub fn resource_at(&self, pos: BlockPos) -> Option<u32> {
+        self.blocks.get(&pos).and_then(|b| b.resource_id)
+    }
+
+    /// Sky-light level at `pos`. Returns 0 for air (lighting init is separate).
+    #[inline]
+    pub fn sky_light_at(&self, pos: BlockPos) -> u8 {
+        self.blocks.get(&pos).map_or(0, |b| b.sky_light)
+    }
+
+    /// Block-light level at `pos`. Returns 0 for air.
+    #[inline]
+    pub fn block_light_at(&self, pos: BlockPos) -> u8 {
+        self.blocks.get(&pos).map_or(0, |b| b.block_light)
+    }
+
+    /// Combined light level at `pos` — `max(sky, block)`. Returns 0 for air.
+    #[inline]
+    pub fn light_level_at(&self, pos: BlockPos) -> u8 {
+        self.blocks
+            .get(&pos)
+            .map_or(0, |b| b.sky_light.max(b.block_light))
+    }
+
+    /// Whether `pos` contains a solid (stored) block.
+    #[inline]
+    pub fn is_solid_at(&self, pos: BlockPos) -> bool {
+        self.blocks.contains_key(&pos)
+    }
+
+    /// Geometry category at `pos`, or `None` for air.
+    #[inline]
+    pub fn is_smooth_at(&self, pos: BlockPos) -> Option<bool> {
+        self.blocks.get(&pos).map(|b| b.is_smooth())
+    }
+
+    /// Snapshot of all block state at `pos`, or `None` for air.
+    #[inline]
+    pub fn block_data_at(&self, pos: BlockPos) -> Option<BlockData> {
+        self.blocks.get(&pos).map(BlockData::from_block)
+    }
+
+    /// Place a block at `pos`, replacing any existing block. Light levels are
+    /// initialized to 0; lighting is computed separately.
+    #[inline]
+    pub fn place_block(&mut self, pos: BlockPos, material_id: u32, resource_id: Option<u32>) {
+        self.blocks.insert(
+            pos,
+            VoxelBlock {
+                position: pos,
+                material_id,
+                resource_id,
+                sky_light: 0,
+                block_light: 0,
+            },
+        );
+    }
+
+    /// Remove the block at `pos`. Returns `true` if a block was removed.
+    #[inline]
+    pub fn clear_block(&mut self, pos: BlockPos) -> bool {
+        self.blocks.remove(&pos).is_some()
+    }
+
+    /// Set sky-light level at `pos`. No-op if the position is air.
+    #[inline]
+    pub fn set_sky_light(&mut self, pos: BlockPos, level: u8) {
+        if let Some(b) = self.blocks.get_mut(&pos) {
+            b.sky_light = level.min(15);
+        }
+    }
+
+    /// Set block-light level at `pos`. No-op if the position is air.
+    #[inline]
+    pub fn set_block_light(&mut self, pos: BlockPos, level: u8) {
+        if let Some(b) = self.blocks.get_mut(&pos) {
+            b.block_light = level.min(15);
+        }
+    }
+
+    /// Iterate over snapshots of every stored block.
+    pub fn iter_block_data(&self) -> impl Iterator<Item = BlockData> + '_ {
+        self.blocks.values().map(BlockData::from_block)
+    }
+
+    /// Snapshots of every stored block within a chunk.
+    pub fn chunk_block_data(&self, chunk_pos: IVec3) -> Vec<BlockData> {
+        chunks::get_chunk_blocks(&self.blocks, chunk_pos, self.chunk_size)
+            .into_iter()
+            .map(BlockData::from_block)
+            .collect()
+    }
+}
+
+/// Compact, copyable snapshot of a block's stored state.
+///
+/// Returned by `VoxelGrid` accessors. Decouples callers from the underlying
+/// storage type so paletted storage (Stage 4D) can drop in without API churn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockData {
+    pub position: BlockPos,
+    pub material_id: u32,
+    pub resource_id: Option<u32>,
+    pub sky_light: u8,
+    pub block_light: u8,
+}
+
+impl BlockData {
+    fn from_block(block: &VoxelBlock) -> Self {
+        Self {
+            position: block.position,
+            material_id: block.material_id,
+            resource_id: block.resource_id,
+            sky_light: block.sky_light,
+            block_light: block.block_light,
+        }
+    }
+
+    /// Geometry category — same threshold as `VoxelBlock::is_smooth`.
+    #[inline]
+    pub fn is_smooth(&self) -> bool {
+        self.material_id < 100
+    }
+
+    /// Combined light level — `max(sky, block)`.
+    #[inline]
+    pub fn light_level(&self) -> u8 {
+        self.sky_light.max(self.block_light)
+    }
 }
 
 #[cfg(test)]

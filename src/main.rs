@@ -415,8 +415,8 @@ impl App {
                     }
                     let save_path = saves_dir.join("scene.bin");
                     let block_records: Vec<save::BlockRecord> = grid
-                        .iter_blocks()
-                        .map(save::BlockRecord::from_block)
+                        .iter_block_data()
+                        .map(save::BlockRecord::from_block_data)
                         .collect();
                     if let Err(e) = save::write_scene_with_metadata(
                         &save_path,
@@ -493,8 +493,8 @@ impl App {
             .as_ref()
             .map(|ls| {
                 ls.grid()
-                    .iter_blocks()
-                    .map(save::BlockRecord::from_block)
+                    .iter_block_data()
+                    .map(save::BlockRecord::from_block_data)
                     .collect()
             })
             .unwrap_or_default();
@@ -567,9 +567,7 @@ impl App {
             } else {
                 for record in &block_records {
                     let pos = moho_core::voxel::BlockPos::new(record.x, record.y, record.z);
-                    let mut block = moho_core::voxel::VoxelBlock::new(pos, record.material_id);
-                    block.resource_id = record.resource_id;
-                    grid.set_block(pos, block);
+                    grid.place_block(pos, record.material_id, record.resource_id);
                 }
                 log::info!(
                     "Reconstructed VoxelGrid with {} blocks for LightSystem",

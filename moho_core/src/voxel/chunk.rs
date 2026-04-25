@@ -120,7 +120,7 @@ impl VoxelChunk {
         let mesh = HybridMeshGenerator::generate_chunk_mesh(grid, chunk_pos, chunk_size);
 
         // Determine primary material from blocks in chunk
-        let blocks = grid.get_chunk_blocks(chunk_pos);
+        let blocks = grid.chunk_block_data(chunk_pos);
         let mut material_counts: HashMap<u32, usize> = HashMap::new();
 
         for block in &blocks {

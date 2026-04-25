@@ -2,7 +2,7 @@ use legion::World;
 
 use crate::voxel::{
     BiomeMap, BiomeParams, BiomeType, BlockPos, LightChannel, LightPropagator, OreLayout,
-    VoxelBlock, VoxelChunk, VoxelGrid,
+    VoxelChunk, VoxelGrid,
 };
 use bincode::{Decode, Encode};
 use noise::{NoiseFn, Perlin};
@@ -157,10 +157,7 @@ fn generate_terrain(grid: &mut VoxelGrid, config: &TerrainConfig) {
                 let material_id = determine_material_id(column_height, y, &params);
                 let resource_id = determine_resource_id(column_height, y, x, z, config.seed);
 
-                let mut block = VoxelBlock::new(pos, material_id);
-                block.resource_id = resource_id;
-
-                grid.set_block(pos, block);
+                grid.place_block(pos, material_id, resource_id);
             }
         }
     }
@@ -286,11 +283,8 @@ mod tests {
 
     fn collect_blocks(grid: &VoxelGrid) -> Vec<(BlockPos, u32, Option<u32>)> {
         let mut blocks: Vec<_> = grid
-            .block_positions()
-            .map(|p| {
-                let b = grid.get_block(p).unwrap();
-                (*p, b.material_id, b.resource_id)
-            })
+            .iter_block_data()
+            .map(|b| (b.position, b.material_id, b.resource_id))
             .collect();
         blocks.sort_by_key(|(p, _, _)| (p.x, p.y, p.z));
         blocks

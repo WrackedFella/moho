@@ -21,7 +21,7 @@
 //!
 //! # Examples
 //! ```ignore
-//! use moho_core::voxel::{VoxelGrid, VoxelBlock, BlockPos, BlockModifier};
+//! use moho_core::voxel::{VoxelGrid, BlockPos, BlockModifier};
 //! use moho_core::events::EventBus;
 //! use std::sync::Arc;
 //!
@@ -30,7 +30,7 @@
 //! let mut modifier = BlockModifier::new(grid, event_bus);
 //!
 //! let pos = BlockPos::new(0, 0, 0);
-//! modifier.set_block(pos, VoxelBlock::new(pos, 0));
+//! modifier.set_block(pos, 0, None);
 //! ```
 
 mod biome;
@@ -50,8 +50,8 @@ pub use biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
 pub use chunk::VoxelChunk;
 pub use face::{FaceDirection, get_visible_faces};
 pub use grid::{
-    BlockCategory, BlockPos, MaterialRegistry, ResourceData, ResourceRegistry, VoxelBlock,
-    VoxelGrid,
+    BlockCategory, BlockData, BlockPos, MaterialRegistry, ResourceData, ResourceRegistry,
+    VoxelBlock, VoxelGrid,
 };
 pub use jobs::{
     CancellationToken, MeshGeneratorFn, MeshJob, MeshJobQueue, MeshJobQueueBuilder, MeshJobResult,
