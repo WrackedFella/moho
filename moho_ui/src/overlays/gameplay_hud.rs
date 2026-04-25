@@ -282,8 +282,10 @@ mod tests {
     fn gameplay_hud_hidden_when_not_fps() {
         let ctx = egui::Context::default();
         let mut hud = GameplayHud::new();
-        let mut data = HudData::default();
-        data.is_fps_mode = false;
+        let data = HudData {
+            is_fps_mode: false,
+            ..Default::default()
+        };
 
         // Should not panic and should render nothing (no egui output is hard to assert
         // without an egui render harness, but verifying no panic is the minimum).

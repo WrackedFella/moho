@@ -96,29 +96,29 @@ pub fn update_menu_music(actions: &[MenuAction], event_bus: &EventBus, music_pla
     for action in actions {
         match action {
             // Entering the start menu — start music
-            MenuAction::ShowMenu(name) if name == "start" => {
-                if !*music_playing && Path::new(MENU_MUSIC_PATH).exists() {
-                    event_bus.publish(AudioEvent::MusicStart {
-                        path: MENU_MUSIC_PATH.to_string(),
-                        volume: 1.0,
-                        looped: true,
-                    });
-                    *music_playing = true;
-                }
+            MenuAction::ShowMenu(name)
+                if name == "start"
+                    && !*music_playing
+                    && Path::new(MENU_MUSIC_PATH).exists() =>
+            {
+                event_bus.publish(AudioEvent::MusicStart {
+                    path: MENU_MUSIC_PATH.to_string(),
+                    volume: 1.0,
+                    looped: true,
+                });
+                *music_playing = true;
             }
             // Leaving the menu (loading, new world, exit, or switching to non-start screen)
-            MenuAction::LoadScene(_) | MenuAction::GenerateWorld(_) | MenuAction::Exit => {
-                if *music_playing {
-                    event_bus.publish(AudioEvent::MusicStop);
-                    *music_playing = false;
-                }
+            MenuAction::LoadScene(_) | MenuAction::GenerateWorld(_) | MenuAction::Exit
+                if *music_playing =>
+            {
+                event_bus.publish(AudioEvent::MusicStop);
+                *music_playing = false;
             }
             // Navigating to any screen other than start also stops music
-            MenuAction::ShowMenu(_) => {
-                if *music_playing {
-                    event_bus.publish(AudioEvent::MusicStop);
-                    *music_playing = false;
-                }
+            MenuAction::ShowMenu(_) if *music_playing => {
+                event_bus.publish(AudioEvent::MusicStop);
+                *music_playing = false;
             }
             _ => {}
         }

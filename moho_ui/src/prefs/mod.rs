@@ -528,8 +528,6 @@ mod tests {
 
     #[test]
     fn test_video_round_trip_windowed() {
-        use std::io::Write;
-
         // Build a prefs with custom video settings
         let prefs = Prefs::default()
             .with_window_mode(WindowMode::Windowed)

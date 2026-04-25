@@ -91,8 +91,10 @@ mod tests {
     fn renders_in_rts_mode() {
         let mut hud = RtsHud::new();
         let ctx = egui::Context::default();
-        let mut data = HudData::default();
-        data.is_fps_mode = false;
+        let data = HudData {
+            is_fps_mode: false,
+            ..Default::default()
+        };
         let _ = ctx.run(Default::default(), |ctx| {
             hud.render(ctx, &data);
         });
