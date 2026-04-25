@@ -7,7 +7,7 @@
 //! - Height queries
 //! - Neighbor lookups
 //!
-//! The grid uses a HashMap for sparse storage, only allocating memory for non-air blocks.
+//! The grid uses a HashMap for sparse storage, only allocating memory for solid blocks.
 
 mod chunks;
 mod queries;
@@ -18,33 +18,6 @@ use std::collections::HashMap;
 
 /// Integer vector for grid coordinates
 pub type BlockPos = IVec3;
-
-/// Mesh data for a single voxel block
-#[derive(Debug, Clone)]
-pub struct VoxelMesh {
-    pub vertices: Vec<[f32; 3]>,
-    pub normals: Vec<[f32; 3]>,
-    pub indices: Vec<u32>,
-    /// Ambient occlusion values per vertex (0.0 = fully occluded, 1.0 = no occlusion)
-    pub ambient_occlusion: Vec<f32>,
-    /// Geometry type per vertex (0 = smooth terrain, 1 = blocky structure)
-    pub geometry_type: Vec<u32>,
-    /// Light level per vertex (0.0 = dark, 1.0 = full brightness)
-    pub light_level: Vec<f32>,
-}
-
-impl VoxelMesh {
-    pub fn empty() -> Self {
-        VoxelMesh {
-            vertices: Vec::new(),
-            normals: Vec::new(),
-            indices: Vec::new(),
-            ambient_occlusion: Vec::new(),
-            geometry_type: Vec::new(),
-            light_level: Vec::new(),
-        }
-    }
-}
 
 /// Resource data for mining/gathering
 #[derive(Debug, Clone)]
@@ -147,16 +120,12 @@ impl Default for ResourceRegistry {
 }
 
 /// Individual voxel block in the world
-/// All blocks are treated uniformly - material/resource data stored separately
 #[derive(Debug, Clone)]
 pub struct VoxelBlock {
     pub position: BlockPos,
-    pub mesh_data: VoxelMesh,
-    pub material_id: u32,         // Index into MaterialRegistry
-    pub resource_id: Option<u32>, // Index into ResourceRegistry
-    /// Sky light level (0-15, from sun/moon penetrating downward)
+    pub material_id: u32,
+    pub resource_id: Option<u32>,
     pub sky_light: u8,
-    /// Block light level (0-15, from torches and emissive blocks)
     pub block_light: u8,
 }
 
@@ -173,7 +142,6 @@ impl VoxelBlock {
     pub fn new(position: BlockPos, material_id: u32) -> Self {
         VoxelBlock {
             position,
-            mesh_data: VoxelMesh::empty(),
             material_id,
             resource_id: None,
             sky_light: 0,
@@ -251,12 +219,10 @@ impl VoxelBlock {
         0
     }
 
-    /// Check if light can pass through this block
+    /// Check if light can pass through this block.
+    /// All stored blocks are currently opaque; transparency will be a material property.
     #[inline]
     pub fn is_transparent(&self) -> bool {
-        // Air blocks are represented by absence in the HashMap
-        // All stored blocks are currently opaque
-        // TODO: Add transparency property to materials (glass, water, etc.)
         false
     }
 }

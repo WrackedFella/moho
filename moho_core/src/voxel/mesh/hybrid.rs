@@ -3,7 +3,8 @@
 //! This module detects mixed chunks and generates appropriate meshes for each
 //! geometry type, then concatenates them into a unified mesh for rendering.
 
-use super::super::grid::{BlockPos, VoxelGrid, VoxelMesh};
+use super::super::grid::{BlockPos, VoxelGrid};
+use super::VoxelMesh;
 use super::blocky::BlockyMeshGenerator;
 use super::marching_cubes::MarchingCubes;
 use glam::IVec3;

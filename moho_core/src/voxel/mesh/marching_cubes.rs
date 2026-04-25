@@ -3,7 +3,7 @@
 //! This module implements the Marching Cubes algorithm for extracting isosurfaces
 //! from voxel density fields, creating smooth terrain geometry.
 
-use super::super::grid::VoxelMesh;
+use super::VoxelMesh;
 
 /// Marching Cubes mesh generator for smooth terrain
 pub struct MarchingCubes;

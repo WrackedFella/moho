@@ -257,7 +257,7 @@ impl EventProcessor {
                 // We need to scope the borrow of light_system so we can access world later
                 let new_chunk = if let Some(light_system) = &app.light_system {
                     let grid = light_system.grid();
-                    Some(VoxelChunk::from_grid(grid, chunk_pos))
+                    Some(VoxelChunk::from_grid_hybrid(grid, chunk_pos))
                 } else {
                     None
                 };

@@ -4,8 +4,9 @@
 //! like planks, bricks, etc.). Each vertex has ambient occlusion computed based on
 //! the occupancy of its 4 neighboring corner blocks.
 
+use super::VoxelMesh;
 use crate::voxel::face::FaceDirection;
-use crate::voxel::grid::{BlockPos, VoxelGrid, VoxelMesh};
+use crate::voxel::grid::{BlockPos, VoxelGrid};
 use glam::IVec3;
 
 /// Generates cube meshes with per-vertex ambient occlusion for blocky materials

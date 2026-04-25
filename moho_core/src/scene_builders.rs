@@ -1,8 +1,8 @@
 use legion::World;
 
 use crate::voxel::{
-    BiomeMap, BiomeParams, BiomeType, BlockPos, LightChannel, LightPropagator, MeshGenerator,
-    OreLayout, VoxelBlock, VoxelChunk, VoxelGrid,
+    BiomeMap, BiomeParams, BiomeType, BlockPos, LightChannel, LightPropagator, OreLayout,
+    VoxelBlock, VoxelChunk, VoxelGrid,
 };
 use bincode::{Decode, Encode};
 use noise::{NoiseFn, Perlin};
@@ -95,11 +95,6 @@ pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig
 
     // TODO: Consider making grid size configurable via the config struct
     // (e.g., grid_size: u32) so callers can control world extents.
-
-    // Initialize all blocks with cube mesh since smoothing is disabled
-    for block in grid.iter_blocks_mut() {
-        block.mesh_data = MeshGenerator::cube_mesh();
-    }
 
     log::info!("Converting grid to renderable chunks...");
     let chunks = grid_to_chunks(&grid);

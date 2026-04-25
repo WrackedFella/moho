@@ -47,8 +47,6 @@ fn test_voxel_block_basics() {
     assert_eq!(block.position, pos);
     assert_eq!(block.material_id, 1);
     assert!(block.resource_id.is_none());
-    // By default the mesh for a new block is empty (we assign meshes later)
-    assert!(block.mesh_data.vertices.is_empty());
 
     let b2 = VoxelBlock::new(IVec3::new(1, 2, 3), 0);
     let world_pos = b2.world_position();

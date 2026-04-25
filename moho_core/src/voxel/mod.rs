@@ -14,7 +14,7 @@
 //! - `grid` - Core data structures (VoxelGrid, VoxelBlock)
 //! - `face` - Face direction and culling logic
 //! - `mesh` - Mesh generation (MeshGenerator)
-//! - `chunk` - Chunk optimization (VoxelChunk, TerrainSmoother)
+//! - `chunk` - Chunk optimization (VoxelChunk)
 //! - `state` - Chunk state tracking for async operations
 //! - `modification` - High-level block modification API
 //! - `jobs` - Background mesh generation job queue
@@ -47,15 +47,15 @@ mod state;
 
 // Re-export core types from submodules
 pub use biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
-pub use chunk::{TerrainSmoother, VoxelChunk};
+pub use chunk::VoxelChunk;
 pub use face::{FaceDirection, get_visible_faces};
 pub use grid::{
     BlockCategory, BlockPos, MaterialRegistry, ResourceData, ResourceRegistry, VoxelBlock,
-    VoxelGrid, VoxelMesh,
+    VoxelGrid,
 };
 pub use jobs::{
     CancellationToken, MeshGeneratorFn, MeshJob, MeshJobQueue, MeshJobQueueBuilder, MeshJobResult,
-    MeshJobType, create_hybrid_generator, create_legacy_generator,
+    MeshJobType, create_hybrid_generator,
 };
 pub use light_jobs::{
     LightCancellationToken, LightFrameBudget, LightJobQueue, LightJobStats, LightUpdateJob,
@@ -63,8 +63,6 @@ pub use light_jobs::{
 };
 pub use light_propagation::{LightChannel, LightPropagator};
 pub use light_system::{LightSystem, LightSystemStats};
-pub use mesh::{
-    BlockyMeshGenerator, ChunkContent, HybridMeshGenerator, MarchingCubes, MeshGenerator,
-};
+pub use mesh::{BlockyMeshGenerator, ChunkContent, HybridMeshGenerator, MarchingCubes, VoxelMesh};
 pub use modification::{BlockModifier, ModificationResult};
 pub use state::{ChunkState, DirtyFlags, GenerationState, JobId};
