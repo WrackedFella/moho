@@ -171,13 +171,21 @@ impl AppInitializer {
         let debug_event_rx = event_bus_setup.debug_event_rx;
         log::debug!("Event bus initialized with subscribers");
 
-        // Initialize audio system (optional - graceful failure)
-        let audio_system = initialize_audio_system();
-        if audio_system.is_some() {
-            log::info!("Audio system initialized successfully");
+        // Initialize audio system (optional - graceful failure).
+        // Tests can skip this via AppConfig::init_audio = false: concurrent
+        // WASAPI init across parallel tests can crash on Windows.
+        let audio_system = if self.config.init_audio {
+            let audio = initialize_audio_system();
+            if audio.is_some() {
+                log::info!("Audio system initialized successfully");
+            } else {
+                log::warn!("Audio system initialization failed - continuing without audio");
+            }
+            audio
         } else {
-            log::warn!("Audio system initialization failed - continuing without audio");
-        }
+            log::debug!("Audio system initialization skipped (init_audio = false)");
+            None
+        };
 
         // Create input system with config values
         let mut input_system =
@@ -215,6 +223,12 @@ impl AppInitializer {
 mod tests {
     use super::*;
 
+    // Build tests skip audio init: concurrent WASAPI init across parallel
+    // tests crashes on Windows runners.
+    fn test_config() -> AppConfig {
+        AppConfig::builder().init_audio(false).build()
+    }
+
     #[test]
     fn test_initializer_with_default_config() {
         let config = AppConfig::default();
@@ -235,8 +249,7 @@ mod tests {
 
     #[test]
     fn test_build_creates_all_systems() {
-        let config = AppConfig::default();
-        let result = AppInitializer::new(config).build();
+        let result = AppInitializer::new(test_config()).build();
 
         assert!(result.is_ok(), "Initialization should succeed");
 
@@ -253,18 +266,16 @@ mod tests {
         let config = AppConfig::builder()
             .mouse_sensitivity(0.5)
             .input_filtering(false)
+            .init_audio(false)
             .build();
 
         let result = AppInitializer::new(config).build();
-        assert!(result.is_ok());
-
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_build_initializes_camera() {
-        let config = AppConfig::default();
-        let result = AppInitializer::new(config).build();
+        let result = AppInitializer::new(test_config()).build();
 
         assert!(result.is_ok());
         let initialized = result.unwrap();
@@ -290,8 +301,7 @@ mod tests {
 
     #[test]
     fn test_build_creates_simulation() {
-        let config = AppConfig::default();
-        let result = AppInitializer::new(config).build();
+        let result = AppInitializer::new(test_config()).build();
 
         assert!(result.is_ok());
         let initialized = result.unwrap();
@@ -303,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_multiple_builds_with_same_config() {
-        let config = AppConfig::default();
+        let config = test_config();
 
         // Should be able to build multiple times (though in practice you'd only build once)
         let result1 = AppInitializer::new(config.clone()).build();
@@ -317,7 +327,8 @@ mod tests {
     fn test_build_includes_prefs() {
         let prefs = Prefs::default().with_mouse_sensitivity(2.5);
 
-        let config = AppConfig::from_prefs_struct(prefs.clone());
+        let mut config = AppConfig::from_prefs_struct(prefs.clone());
+        config.init_audio = false;
         let result = AppInitializer::new(config).build();
 
         assert!(result.is_ok());

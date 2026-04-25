@@ -29,7 +29,6 @@ phf = { version = "0.13.1", features = ["macros"] }
 
 [features]
 default = []
-ui-egui-debug = []
 # Test-only helpers for the egui adapter. Enable when running integration
 # tests that require internal adapter control (for example to simulate
 # press/release without an actual window). This is intentionally optional

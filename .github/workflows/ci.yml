@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main, dev, shader-work, time-of-day ]
+    branches: [ main, dev ]
   pull_request:
     branches: [ main, dev ]
   workflow_dispatch: {}
@@ -72,11 +72,6 @@ jobs:
       # Run tests
       - name: Run tests
         run: cargo test --workspace --all-features -- --nocapture
-      
-      # Run UI tests separately (only if other tests pass)
-      - name: Run UI tests
-        run: cargo test -p moho_ui --features 'ui-egui ui-egui-test'
-        continue-on-error: true  # UI tests can be flaky
 
   # Optional: Separate benchmark job (only on Linux, only on push to main/dev)
   bench:

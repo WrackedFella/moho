@@ -597,8 +597,8 @@ mod tests {
 
         assert_eq!(lights_out.len(), 2);
         assert!((lights_out[0].intensity - 2.5).abs() < 1e-6);
-        assert_eq!(lights_out[0].enabled, true);
-        assert_eq!(lights_out[1].enabled, false);
+        assert!(lights_out[0].enabled);
+        assert!(!lights_out[1].enabled);
         assert!((lights_out[1].range - 25.0).abs() < 1e-6);
     }
 

@@ -201,8 +201,10 @@ mod tests {
         let mut mgr = OverlayManager::new();
         assert!((mgr.hud_data().time_of_day - 12.0).abs() < f32::EPSILON);
 
-        let mut data = HudData::default();
-        data.time_of_day = 18.5;
+        let data = HudData {
+            time_of_day: 18.5,
+            ..Default::default()
+        };
         mgr.update_data(data);
         assert!((mgr.hud_data().time_of_day - 18.5).abs() < f32::EPSILON);
     }

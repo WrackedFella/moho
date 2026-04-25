@@ -12,7 +12,6 @@ cargo build --release
 # Run
 cargo run
 RUST_LOG=debug cargo run                    # with logging
-cargo run --features ui-egui-debug          # with egui debug panels
 
 # Test
 cargo test --workspace                      # all tests

@@ -737,29 +737,27 @@ impl App {
                     }
                     return;
                 }
-                KeyCode::Escape => {
-                    // Escape closes console if open, otherwise opens menu
-                    if pressed {
-                        use crate::game_state::GameState;
-                        match self.game_state {
-                            GameState::ConsoleOpen => {
-                                self.exit_console();
-                                return;
-                            }
-                            GameState::Playing => {
-                                // ESC to show menu
-                                self.show_menu();
-
-                                // Also explicitly request the adapter show the "start" menu
-                                if let Some(ui_adapter) = &self.ui_adapter
-                                    && let Ok(mut adapter) = ui_adapter.lock()
-                                {
-                                    adapter.show_menu("start");
-                                }
-                                return;
-                            }
-                            _ => {}
+                // Escape closes console if open, otherwise opens menu
+                KeyCode::Escape if pressed => {
+                    use crate::game_state::GameState;
+                    match self.game_state {
+                        GameState::ConsoleOpen => {
+                            self.exit_console();
+                            return;
                         }
+                        GameState::Playing => {
+                            // ESC to show menu
+                            self.show_menu();
+
+                            // Also explicitly request the adapter show the "start" menu
+                            if let Some(ui_adapter) = &self.ui_adapter
+                                && let Ok(mut adapter) = ui_adapter.lock()
+                            {
+                                adapter.show_menu("start");
+                            }
+                            return;
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}
