@@ -86,10 +86,6 @@ cargo run --features "backend-wgpu ui-egui"
 
 
 
-# Run with debug output
-
-cargo run --features "backend-wgpu ui-egui ui-egui-debug"
-
 ```
 
 
@@ -348,9 +344,7 @@ controls.button_row(ui, "Action", "Execute", 200.0, || {
 
 ``````powershell
 
-# run with egui + debug helper logs
-
-### Text Fieldscargo run -p moho --features "backend-wgpu ui-egui ui-egui-debug"
+### Text Fields
 
 ```
 
