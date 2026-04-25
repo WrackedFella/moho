@@ -97,9 +97,7 @@ pub fn update_menu_music(actions: &[MenuAction], event_bus: &EventBus, music_pla
         match action {
             // Entering the start menu — start music
             MenuAction::ShowMenu(name)
-                if name == "start"
-                    && !*music_playing
-                    && Path::new(MENU_MUSIC_PATH).exists() =>
+                if name == "start" && !*music_playing && Path::new(MENU_MUSIC_PATH).exists() =>
             {
                 event_bus.publish(AudioEvent::MusicStart {
                     path: MENU_MUSIC_PATH.to_string(),
