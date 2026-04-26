@@ -21,7 +21,14 @@ pub struct VoxelMesh {
     pub indices: Vec<u32>,
     pub ambient_occlusion: Vec<f32>,
     pub geometry_type: Vec<u32>,
+    /// Single-channel light level (0..=1). Kept for renderer compat while the
+    /// GPU pipeline is being migrated to per-channel RGB. Computed as
+    /// `max(block_light_rgb) / 15` blended with `sky_exposed`.
     pub light_level: Vec<f32>,
+    /// Per-vertex RGB block-light, each channel 0..=1 (raw value / 15).
+    pub block_light_rgb: Vec<[f32; 3]>,
+    /// Per-vertex sky-exposure factor (0.0 = underground, 1.0 = open sky).
+    pub sky_exposed: Vec<f32>,
 }
 
 impl VoxelMesh {
@@ -33,6 +40,8 @@ impl VoxelMesh {
             ambient_occlusion: Vec::new(),
             geometry_type: Vec::new(),
             light_level: Vec::new(),
+            block_light_rgb: Vec::new(),
+            sky_exposed: Vec::new(),
         }
     }
 }

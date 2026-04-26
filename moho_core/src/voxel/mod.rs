@@ -40,6 +40,8 @@ mod grid;
 mod jobs;
 mod light_jobs;
 mod light_propagation;
+mod light_sky;
+mod light_storage;
 mod light_system;
 mod mesh;
 mod modification;
@@ -50,9 +52,11 @@ pub use biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
 pub use chunk::VoxelChunk;
 pub use face::{FaceDirection, get_visible_faces};
 pub use grid::{
-    BlockCategory, BlockData, BlockPos, MaterialRegistry, ResourceData, ResourceRegistry,
-    VoxelBlock, VoxelGrid,
+    BlockCategory, BlockData, BlockPos, MaterialLighting, MaterialRegistry, ResourceData,
+    ResourceRegistry, VoxelBlock, VoxelGrid,
 };
+pub use light_sky::{dirty_chunks_below, ensure_chunk_sky_ready, recompute_sky_exposure};
+pub use light_storage::{CHUNK_SIZE as LIGHT_CHUNK_SIZE, ChunkLight};
 pub use jobs::{
     CancellationToken, MeshGeneratorFn, MeshJob, MeshJobQueue, MeshJobQueueBuilder, MeshJobResult,
     MeshJobType, create_hybrid_generator,

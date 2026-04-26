@@ -159,6 +159,8 @@ impl HybridMeshGenerator {
                 .push(smooth_mesh.ambient_occlusion[i]);
             final_mesh.geometry_type.push(smooth_mesh.geometry_type[i]);
             final_mesh.light_level.push(smooth_mesh.light_level[i]);
+            final_mesh.block_light_rgb.push(smooth_mesh.block_light_rgb[i]);
+            final_mesh.sky_exposed.push(smooth_mesh.sky_exposed[i]);
         }
 
         let smooth_index_offset = smooth_mesh.vertices.len() as u32;
@@ -241,7 +243,7 @@ impl HybridMeshGenerator {
             ]);
         }
 
-        // Copy normals, AO, geometry type, and light level
+        // Copy normals, AO, geometry type, and light data
         target.normals.extend_from_slice(&source.normals);
         target
             .ambient_occlusion
@@ -250,6 +252,8 @@ impl HybridMeshGenerator {
             .geometry_type
             .extend_from_slice(&source.geometry_type);
         target.light_level.extend_from_slice(&source.light_level);
+        target.block_light_rgb.extend_from_slice(&source.block_light_rgb);
+        target.sky_exposed.extend_from_slice(&source.sky_exposed);
 
         // Add indices with offset
         for &index in &source.indices {
@@ -275,7 +279,7 @@ impl HybridMeshGenerator {
             ]);
         }
 
-        // Copy normals, AO, geometry type, and light level
+        // Copy normals, AO, geometry type, and light data
         target.normals.extend_from_slice(&source.normals);
         target
             .ambient_occlusion
@@ -284,6 +288,8 @@ impl HybridMeshGenerator {
             .geometry_type
             .extend_from_slice(&source.geometry_type);
         target.light_level.extend_from_slice(&source.light_level);
+        target.block_light_rgb.extend_from_slice(&source.block_light_rgb);
+        target.sky_exposed.extend_from_slice(&source.sky_exposed);
 
         // Add indices with combined offset
         for &index in &source.indices {

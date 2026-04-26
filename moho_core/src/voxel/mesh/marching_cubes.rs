@@ -56,8 +56,11 @@ impl MarchingCubes {
             }
         }
 
-        // For now, smooth terrain gets full light (TODO: implement proper trilinear sampling)
-        let light_level = vec![1.0; vertices.len()];
+        // Smooth terrain: default to fully sky-exposed until trilinear light sampling lands.
+        let n = vertices.len();
+        let light_level = vec![1.0f32; n];
+        let block_light_rgb = vec![[0.0f32; 3]; n];
+        let sky_exposed = vec![1.0f32; n];
 
         VoxelMesh {
             vertices,
@@ -66,6 +69,8 @@ impl MarchingCubes {
             ambient_occlusion,
             geometry_type,
             light_level,
+            block_light_rgb,
+            sky_exposed,
         }
     }
 

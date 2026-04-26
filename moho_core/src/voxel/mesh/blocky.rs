@@ -79,16 +79,22 @@ impl BlockyMeshGenerator {
             mesh.geometry_type.push(1);
         }
 
-        // Get block's light level (max of sky and block light, normalized to 0-1)
-        let light = if grid.is_solid_at(position) {
-            grid.light_level_at(position) as f32 / 15.0
-        } else {
-            1.0 // Default to full light if block not found
-        };
+        // Read per-voxel lighting from the new ChunkLight store.
+        let rgb_raw = grid.block_light_rgb_at(position);
+        let rgb_f = [
+            rgb_raw[0] as f32 / 15.0,
+            rgb_raw[1] as f32 / 15.0,
+            rgb_raw[2] as f32 / 15.0,
+        ];
+        let sky = if grid.sky_exposed_at(position) { 1.0f32 } else { 0.0 };
+        // Compat: single-channel max for the legacy pipeline.
+        let max_ch = rgb_f[0].max(rgb_f[1]).max(rgb_f[2]);
+        let light = (max_ch + sky * 0.1).min(1.0);
 
-        // Apply same light level to all 4 vertices of this face
         for _ in 0..4 {
             mesh.light_level.push(light);
+            mesh.block_light_rgb.push(rgb_f);
+            mesh.sky_exposed.push(sky);
         }
 
         // Add indices (2 triangles per face)

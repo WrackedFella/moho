@@ -12,6 +12,7 @@
 mod chunks;
 mod queries;
 
+use super::light_storage::{self, CHUNK_SIZE as LIGHT_CHUNK_SIZE, ChunkLight};
 use crate::materials::MaterialType;
 use glam::{IVec3, Vec3};
 use std::collections::HashMap;
@@ -26,31 +27,64 @@ pub struct ResourceData {
     pub quantity: u32,
 }
 
+/// Per-material lighting properties.
+///
+/// `emission` is the per-channel emission level `0..=15`. Each channel propagates
+/// independently through the BFS with decay 1 per step, so a warm torch
+/// `[15, 8, 2]` lights its R channel out to ~15 blocks, G to ~8, B to ~2 — color
+/// decay falls out of the propagation for free.
+///
+/// `opacity_cost` is the additional decay cost when light traverses *into* this
+/// material. `0` = transparent (no extra cost; air-like), `>=15` = opaque
+/// (light dies at the boundary). Stage 4C only ships air-vs-opaque; finite
+/// translucent costs are deferred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaterialLighting {
+    pub emission: [u8; 3],
+    pub opacity_cost: u8,
+}
+
+impl MaterialLighting {
+    pub const NON_EMISSIVE_OPAQUE: Self = Self {
+        emission: [0, 0, 0],
+        opacity_cost: 15,
+    };
+
+    #[inline]
+    pub fn is_emissive(&self) -> bool {
+        self.emission != [0, 0, 0]
+    }
+}
+
 /// Material registry - maps material IDs to actual material data
 #[derive(Debug)]
 pub struct MaterialRegistry {
     materials: Vec<MaterialType>,
+    /// Per-material lighting properties, indexed by material ID. Parallel to
+    /// `materials`. New entries default to `MaterialLighting::NON_EMISSIVE_OPAQUE`.
+    lighting: Vec<MaterialLighting>,
 }
 
 impl MaterialRegistry {
     pub fn new() -> Self {
         let mut registry = MaterialRegistry {
             materials: Vec::new(),
+            lighting: Vec::new(),
         };
 
-        // Register default materials
+        // Register default materials (all non-emissive opaque).
         // ID 0: Grass (green)
-        registry.materials.push(MaterialType::Lambertian {
+        registry.register(MaterialType::Lambertian {
             albedo: Vec3::new(0.3, 0.6, 0.3),
         });
 
         // ID 1: Dirt (brown)
-        registry.materials.push(MaterialType::Lambertian {
+        registry.register(MaterialType::Lambertian {
             albedo: Vec3::new(0.5, 0.4, 0.3),
         });
 
         // ID 2: Stone (gray)
-        registry.materials.push(MaterialType::Lambertian {
+        registry.register(MaterialType::Lambertian {
             albedo: Vec3::new(0.5, 0.5, 0.5),
         });
 
@@ -64,7 +98,38 @@ impl MaterialRegistry {
     pub fn register(&mut self, material: MaterialType) -> u32 {
         let id = self.materials.len() as u32;
         self.materials.push(material);
+        self.lighting.push(MaterialLighting::NON_EMISSIVE_OPAQUE);
         id
+    }
+
+    /// Lighting properties for a material. Falls back to opaque non-emissive
+    /// for unknown ids — keeps callers branch-free at the cost of darkening
+    /// stray materials, which is the safer default.
+    #[inline]
+    pub fn lighting(&self, id: u32) -> MaterialLighting {
+        self.lighting
+            .get(id as usize)
+            .copied()
+            .unwrap_or(MaterialLighting::NON_EMISSIVE_OPAQUE)
+    }
+
+    /// Per-channel emission level for a material id.
+    #[inline]
+    pub fn emission(&self, id: u32) -> [u8; 3] {
+        self.lighting(id).emission
+    }
+
+    /// Opacity cost for light entering this material.
+    #[inline]
+    pub fn opacity_cost(&self, id: u32) -> u8 {
+        self.lighting(id).opacity_cost
+    }
+
+    /// Override the lighting properties of an existing material id.
+    pub fn set_lighting(&mut self, id: u32, lighting: MaterialLighting) {
+        if let Some(slot) = self.lighting.get_mut(id as usize) {
+            *slot = lighting;
+        }
     }
 }
 
@@ -250,6 +315,9 @@ pub struct VoxelGrid {
     chunk_size: i32,
     pub material_registry: MaterialRegistry,
     pub resource_registry: ResourceRegistry,
+    /// Per-chunk lighting state. Only populated for `chunk_size == 16` grids; the
+    /// light system is hardcoded around 16³ chunks.
+    chunk_lights: HashMap<IVec3, ChunkLight>,
 }
 
 impl VoxelGrid {
@@ -263,7 +331,14 @@ impl VoxelGrid {
             chunk_size,
             material_registry: MaterialRegistry::new(),
             resource_registry: ResourceRegistry::new(),
+            chunk_lights: HashMap::new(),
         }
+    }
+
+    /// Whether this grid uses the lighting system's required 16³ chunk layout.
+    #[inline]
+    pub fn supports_lighting(&self) -> bool {
+        self.chunk_size == LIGHT_CHUNK_SIZE
     }
 
     /// Get the chunk size
@@ -418,8 +493,7 @@ impl VoxelGrid {
     }
 
     /// Place a block at `pos`, replacing any existing block. Light levels are
-    /// initialized to 0; lighting is computed separately.
-    #[inline]
+    /// initialized to 0; lighting is computed separately by `LightSystem`.
     pub fn place_block(&mut self, pos: BlockPos, material_id: u32, resource_id: Option<u32>) {
         self.blocks.insert(
             pos,
@@ -431,12 +505,62 @@ impl VoxelGrid {
                 block_light: 0,
             },
         );
+        self.note_block_change(pos, true);
     }
 
     /// Remove the block at `pos`. Returns `true` if a block was removed.
-    #[inline]
     pub fn clear_block(&mut self, pos: BlockPos) -> bool {
-        self.blocks.remove(&pos).is_some()
+        let removed = self.blocks.remove(&pos).is_some();
+        if removed {
+            self.note_block_change(pos, false);
+        }
+        removed
+    }
+
+    /// Mark lighting state dirty in the chunk(s) containing `pos`. Called from
+    /// `place_block`/`clear_block`. The 4C light system consumes these flags to
+    /// schedule recomputes.
+    fn note_block_change(&mut self, pos: BlockPos, placed: bool) {
+        if !self.supports_lighting() {
+            return;
+        }
+        let (chunk_pos, _idx, local) = light_storage::world_to_chunk_local(pos);
+        let sky_became_dirty = {
+            let cl = self
+                .chunk_lights
+                .entry(chunk_pos)
+                .or_insert_with(ChunkLight::new);
+            let before = cl.sky_dirty;
+            if placed {
+                // Conservative: any opaque placement could raise the column. Material
+                // opacity is consulted by the rebuild pass; for the dirty trigger we
+                // only need an upper bound.
+                cl.note_opaque_placed(local.x, local.y, local.z);
+            } else {
+                // A removal at the column max requires a full column rescan, which the
+                // sky-exposure pass owns. Just flag dirty here.
+                let cur = cl.column_max_y(local.x, local.z);
+                if (local.y as i8) >= cur {
+                    cl.sky_dirty = true;
+                }
+            }
+            cl.light_dirty = true;
+            cl.sky_dirty && !before
+        };
+
+        // A column-height change in this chunk invalidates sky exposure for every
+        // loaded chunk below it in the same (cx, cz) stack.
+        if sky_became_dirty {
+            let lower: Vec<IVec3> = self
+                .chunk_lights
+                .keys()
+                .filter(|cp| cp.x == chunk_pos.x && cp.z == chunk_pos.z && cp.y < chunk_pos.y)
+                .copied()
+                .collect();
+            for cp in lower {
+                self.chunk_lights.get_mut(&cp).unwrap().sky_dirty = true;
+            }
+        }
     }
 
     /// Set sky-light level at `pos`. No-op if the position is air.
@@ -466,6 +590,85 @@ impl VoxelGrid {
             .into_iter()
             .map(BlockData::from_block)
             .collect()
+    }
+
+    // ---------------------------------------------------------------------
+    // Stage 4C: per-chunk lighting accessors.
+    //
+    // `sky_exposed_at` reports whether a voxel can see the sky (binary;
+    // direct-sun shadow is CSM's job). `block_light_rgb_at` returns RGB
+    // block-light, with each channel `0..=15`. Air outside any allocated
+    // chunk reports as sky-exposed = true and block-light = [0, 0, 0].
+    // ---------------------------------------------------------------------
+
+    /// Whether `pos` is exposed to sky (no opaque voxels at or above in its column).
+    pub fn sky_exposed_at(&self, pos: BlockPos) -> bool {
+        if !self.supports_lighting() {
+            return true;
+        }
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
+        match self.chunk_lights.get(&chunk_pos) {
+            Some(cl) => cl.sky_exposed_at(idx),
+            None => true, // unallocated chunk → treat as open air
+        }
+    }
+
+    /// RGB block-light at `pos`. Each channel `0..=15`. Defaults to `[0, 0, 0]`.
+    pub fn block_light_rgb_at(&self, pos: BlockPos) -> [u8; 3] {
+        if !self.supports_lighting() {
+            return [0, 0, 0];
+        }
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
+        match self.chunk_lights.get(&chunk_pos) {
+            Some(cl) => cl.block_light_rgb(idx),
+            None => [0, 0, 0],
+        }
+    }
+
+    /// Set the RGB block-light at `pos`. Used by the propagator. Allocates a
+    /// chunk-light entry if needed.
+    pub fn set_block_light_rgb(&mut self, pos: BlockPos, rgb: [u8; 3]) {
+        if !self.supports_lighting() {
+            return;
+        }
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
+        let cl = self
+            .chunk_lights
+            .entry(chunk_pos)
+            .or_insert_with(ChunkLight::new);
+        cl.set_block_light_rgb(idx, rgb);
+    }
+
+    /// Set the sky-exposed bit at `pos`. Used by the sky-exposure pass.
+    pub fn set_sky_exposed(&mut self, pos: BlockPos, value: bool) {
+        if !self.supports_lighting() {
+            return;
+        }
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
+        let cl = self
+            .chunk_lights
+            .entry(chunk_pos)
+            .or_insert_with(ChunkLight::new);
+        cl.set_sky_exposed(idx, value);
+    }
+
+    /// Borrow a chunk's lighting state, if any. Returns `None` if the chunk has
+    /// never been touched by lighting writes.
+    pub fn chunk_light(&self, chunk_pos: IVec3) -> Option<&ChunkLight> {
+        self.chunk_lights.get(&chunk_pos)
+    }
+
+    /// Mutable borrow of a chunk's lighting state, allocating an empty entry if
+    /// needed.
+    pub fn chunk_light_mut(&mut self, chunk_pos: IVec3) -> &mut ChunkLight {
+        self.chunk_lights
+            .entry(chunk_pos)
+            .or_insert_with(ChunkLight::new)
+    }
+
+    /// Iterate all chunk positions with allocated light state.
+    pub fn lit_chunk_positions(&self) -> impl Iterator<Item = IVec3> + '_ {
+        self.chunk_lights.keys().copied()
     }
 }
 
