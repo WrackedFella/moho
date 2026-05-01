@@ -190,8 +190,6 @@ pub struct VoxelBlock {
     pub position: BlockPos,
     pub material_id: u32,
     pub resource_id: Option<u32>,
-    pub sky_light: u8,
-    pub block_light: u8,
 }
 
 /// Block geometry category for mesh generation
@@ -205,13 +203,7 @@ pub enum BlockCategory {
 
 impl VoxelBlock {
     pub fn new(position: BlockPos, material_id: u32) -> Self {
-        VoxelBlock {
-            position,
-            material_id,
-            resource_id: None,
-            sky_light: 0,
-            block_light: 0,
-        }
+        VoxelBlock { position, material_id, resource_id: None }
     }
 
     /// Determine if this block should use smooth (Marching Cubes) mesh generation.
@@ -250,46 +242,6 @@ impl VoxelBlock {
         )
     }
 
-    /// Get the combined light level (max of sky and block light)
-    #[inline]
-    pub fn light_level(&self) -> u8 {
-        self.sky_light.max(self.block_light)
-    }
-
-    /// Set sky light level (0-15)
-    #[inline]
-    pub fn set_sky_light(&mut self, level: u8) {
-        self.sky_light = level.min(15);
-    }
-
-    /// Set block light level (0-15)
-    #[inline]
-    pub fn set_block_light(&mut self, level: u8) {
-        self.block_light = level.min(15);
-    }
-
-    /// Check if this block emits light (future: based on material properties)
-    #[inline]
-    pub fn is_light_source(&self) -> bool {
-        // TODO: Check material properties for emissive blocks
-        // For now, no blocks emit light by default
-        false
-    }
-
-    /// Get the light emission level (0-15) for this block
-    #[inline]
-    pub fn emission_level(&self) -> u8 {
-        // TODO: Return based on material properties
-        // For now, torches/emissives not yet implemented
-        0
-    }
-
-    /// Check if light can pass through this block.
-    /// All stored blocks are currently opaque; transparency will be a material property.
-    #[inline]
-    pub fn is_transparent(&self) -> bool {
-        false
-    }
 }
 
 /// 3D grid storing voxel blocks
@@ -454,26 +406,6 @@ impl VoxelGrid {
         self.blocks.get(&pos).and_then(|b| b.resource_id)
     }
 
-    /// Sky-light level at `pos`. Returns 0 for air (lighting init is separate).
-    #[inline]
-    pub fn sky_light_at(&self, pos: BlockPos) -> u8 {
-        self.blocks.get(&pos).map_or(0, |b| b.sky_light)
-    }
-
-    /// Block-light level at `pos`. Returns 0 for air.
-    #[inline]
-    pub fn block_light_at(&self, pos: BlockPos) -> u8 {
-        self.blocks.get(&pos).map_or(0, |b| b.block_light)
-    }
-
-    /// Combined light level at `pos` — `max(sky, block)`. Returns 0 for air.
-    #[inline]
-    pub fn light_level_at(&self, pos: BlockPos) -> u8 {
-        self.blocks
-            .get(&pos)
-            .map_or(0, |b| b.sky_light.max(b.block_light))
-    }
-
     /// Whether `pos` contains a solid (stored) block.
     #[inline]
     pub fn is_solid_at(&self, pos: BlockPos) -> bool {
@@ -495,16 +427,8 @@ impl VoxelGrid {
     /// Place a block at `pos`, replacing any existing block. Light levels are
     /// initialized to 0; lighting is computed separately by `LightSystem`.
     pub fn place_block(&mut self, pos: BlockPos, material_id: u32, resource_id: Option<u32>) {
-        self.blocks.insert(
-            pos,
-            VoxelBlock {
-                position: pos,
-                material_id,
-                resource_id,
-                sky_light: 0,
-                block_light: 0,
-            },
-        );
+        self.blocks
+            .insert(pos, VoxelBlock { position: pos, material_id, resource_id });
         self.note_block_change(pos, true);
     }
 
@@ -560,22 +484,6 @@ impl VoxelGrid {
             for cp in lower {
                 self.chunk_lights.get_mut(&cp).unwrap().sky_dirty = true;
             }
-        }
-    }
-
-    /// Set sky-light level at `pos`. No-op if the position is air.
-    #[inline]
-    pub fn set_sky_light(&mut self, pos: BlockPos, level: u8) {
-        if let Some(b) = self.blocks.get_mut(&pos) {
-            b.sky_light = level.min(15);
-        }
-    }
-
-    /// Set block-light level at `pos`. No-op if the position is air.
-    #[inline]
-    pub fn set_block_light(&mut self, pos: BlockPos, level: u8) {
-        if let Some(b) = self.blocks.get_mut(&pos) {
-            b.block_light = level.min(15);
         }
     }
 
@@ -681,8 +589,6 @@ pub struct BlockData {
     pub position: BlockPos,
     pub material_id: u32,
     pub resource_id: Option<u32>,
-    pub sky_light: u8,
-    pub block_light: u8,
 }
 
 impl BlockData {
@@ -691,8 +597,6 @@ impl BlockData {
             position: block.position,
             material_id: block.material_id,
             resource_id: block.resource_id,
-            sky_light: block.sky_light,
-            block_light: block.block_light,
         }
     }
 
@@ -700,12 +604,6 @@ impl BlockData {
     #[inline]
     pub fn is_smooth(&self) -> bool {
         self.material_id < 100
-    }
-
-    /// Combined light level — `max(sky, block)`.
-    #[inline]
-    pub fn light_level(&self) -> u8 {
-        self.sky_light.max(self.block_light)
     }
 }
 
