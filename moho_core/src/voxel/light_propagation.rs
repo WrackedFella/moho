@@ -102,13 +102,9 @@ impl LightPropagator {
         let seeds: Vec<(IVec3, [u8; 3])> = grid
             .block_positions()
             .filter_map(|pos| {
-                let mat_id = grid.get_block(pos)?.material_id;
+                let mat_id = grid.material_at(pos)?;
                 let emission = grid.material_registry.emission(mat_id);
-                if emission != [0, 0, 0] {
-                    Some((*pos, emission))
-                } else {
-                    None
-                }
+                if emission != [0, 0, 0] { Some((pos, emission)) } else { None }
             })
             .collect();
 
@@ -193,8 +189,8 @@ impl LightPropagator {
                 let nb_world = world + off;
                 // Fully opaque blocks absorb — no propagation through them.
                 if grid
-                    .get_block(&nb_world)
-                    .map(|b| grid.material_registry.opacity_cost(b.material_id) >= 15)
+                    .material_at(nb_world)
+                    .map(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
                     .unwrap_or(false)
                 {
                     continue;
@@ -229,8 +225,8 @@ impl LightPropagator {
             for &off in &OFFSETS {
                 let nb_world = world + off;
                 if grid
-                    .get_block(&nb_world)
-                    .map(|b| grid.material_registry.opacity_cost(b.material_id) >= 15)
+                    .material_at(nb_world)
+                    .map(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
                     .unwrap_or(false)
                 {
                     continue;
@@ -259,8 +255,8 @@ impl LightPropagator {
             for &off in &OFFSETS {
                 let nb_world = world + off;
                 if grid
-                    .get_block(&nb_world)
-                    .map(|b| grid.material_registry.opacity_cost(b.material_id) >= 15)
+                    .material_at(nb_world)
+                    .map(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
                     .unwrap_or(false)
                 {
                     continue;
@@ -304,17 +300,14 @@ impl LightPropagator {
             }
             if stored != node.level {
                 // A brighter surviving source already owns this voxel — re-seed from it.
-                if stored > 0 {
-                    if !relight
-                        .iter()
-                        .any(|r| r.chunk_pos == node.chunk_pos && r.idx == node.idx)
-                    {
-                        relight.push(PropNode {
-                            chunk_pos: node.chunk_pos,
-                            idx: node.idx,
-                            level: stored,
-                        });
-                    }
+                if stored > 0
+                    && !relight.iter().any(|r| r.chunk_pos == node.chunk_pos && r.idx == node.idx)
+                {
+                    relight.push(PropNode {
+                        chunk_pos: node.chunk_pos,
+                        idx: node.idx,
+                        level: stored,
+                    });
                 }
                 continue;
             }
@@ -375,14 +368,6 @@ fn idx_to_local(idx: usize) -> IVec3 {
 mod tests {
     use super::*;
     use crate::voxel::grid::{MaterialLighting, VoxelGrid};
-
-    fn grid_with_emissive_at(pos: IVec3, rgb: [u8; 3]) -> VoxelGrid {
-        let mut grid = VoxelGrid::new(16);
-        grid.material_registry
-            .set_lighting(1, MaterialLighting { emission: rgb, opacity_cost: 0 });
-        grid.place_block(pos, 1, None);
-        grid
-    }
 
     fn opaque_grid() -> VoxelGrid {
         VoxelGrid::new(16)

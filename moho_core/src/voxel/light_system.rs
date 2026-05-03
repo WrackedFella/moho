@@ -161,8 +161,7 @@ impl LightSystem {
 
         // For now, simple approach: submit individual jobs for each position
         for &position in positions {
-            if let Some(block) = self.grid.get_block(&position) {
-                let mat_id = block.material_id;
+            if let Some(mat_id) = self.grid.material_at(position) {
                 let emission = self.grid.material_registry.emission(mat_id);
                 let job = if emission != [0u8, 0, 0] {
                     LightUpdateJob::add_light(position, emission, 0)

@@ -236,7 +236,7 @@ fn grid_to_chunks(grid: &VoxelGrid) -> Vec<VoxelChunk> {
     // Find all unique chunk positions from the blocks
     let mut chunk_positions = HashSet::new();
     for block_pos in grid.block_positions() {
-        let chunk_pos = VoxelGrid::get_chunk_pos(*block_pos, grid.chunk_size());
+        let chunk_pos = VoxelGrid::get_chunk_pos(block_pos, grid.chunk_size());
         chunk_positions.insert(chunk_pos);
     }
 

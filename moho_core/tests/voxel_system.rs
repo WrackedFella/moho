@@ -1,6 +1,6 @@
 // Clean, focused unit tests for voxel utilities and grid behavior.
 use glam::{IVec3, Vec3};
-use moho_core::voxel::*;
+use moho_core::voxel::{FaceDirection, VoxelBlock, VoxelGrid, get_visible_faces};
 
 // FaceDirection helpers
 #[test]
@@ -56,8 +56,8 @@ fn test_voxel_block_basics() {
 
 #[test]
 fn test_voxel_grid_basic_ops() {
-    let mut grid = VoxelGrid::new(64);
-    assert_eq!(grid.chunk_size(), 64);
+    let mut grid = VoxelGrid::new(16);
+    assert_eq!(grid.chunk_size(), 16);
     assert_eq!(grid.block_positions().count(), 0);
 
     let pos = IVec3::new(1, 2, 3);
@@ -72,23 +72,11 @@ fn test_voxel_grid_basic_ops() {
     assert!(grid.clear_block(pos));
     assert!(!grid.is_solid_at(pos));
 
-    // Chunk position calculation
-    assert_eq!(
-        VoxelGrid::get_chunk_pos(IVec3::new(0, 0, 0), 64),
-        IVec3::new(0, 0, 0)
-    );
-    assert_eq!(
-        VoxelGrid::get_chunk_pos(IVec3::new(63, 63, 63), 64),
-        IVec3::new(0, 0, 0)
-    );
-    assert_eq!(
-        VoxelGrid::get_chunk_pos(IVec3::new(64, 64, 64), 64),
-        IVec3::new(1, 1, 1)
-    );
-    assert_eq!(
-        VoxelGrid::get_chunk_pos(IVec3::new(-1, -1, -1), 64),
-        IVec3::new(-1, -1, -1)
-    );
+    // Chunk position calculation (get_chunk_pos is a pure static utility).
+    assert_eq!(VoxelGrid::get_chunk_pos(IVec3::new(0, 0, 0), 16), IVec3::new(0, 0, 0));
+    assert_eq!(VoxelGrid::get_chunk_pos(IVec3::new(15, 15, 15), 16), IVec3::new(0, 0, 0));
+    assert_eq!(VoxelGrid::get_chunk_pos(IVec3::new(16, 16, 16), 16), IVec3::new(1, 1, 1));
+    assert_eq!(VoxelGrid::get_chunk_pos(IVec3::new(-1, -1, -1), 16), IVec3::new(-1, -1, -1));
 }
 
 #[test]

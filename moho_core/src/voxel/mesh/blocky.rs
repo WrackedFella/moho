@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn test_isolated_block_has_no_occlusion() {
-        let mut grid = VoxelGrid::new(32);
+        let mut grid = VoxelGrid::new(16);
         let pos = IVec3::new(16, 16, 16);
         grid.place_block(pos, 100, None); // Blocky material ID
 
@@ -456,7 +456,7 @@ mod tests {
 
     #[test]
     fn test_corner_block_has_occlusion() {
-        let mut grid = VoxelGrid::new(32);
+        let mut grid = VoxelGrid::new(16);
         let pos = IVec3::new(16, 16, 16);
         grid.place_block(pos, 100, None);
 
@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_mesh_structure() {
-        let mut grid = VoxelGrid::new(32);
+        let mut grid = VoxelGrid::new(16);
         let pos = IVec3::new(16, 16, 16);
         grid.place_block(pos, 100, None);
 
@@ -495,7 +495,7 @@ mod tests {
     #[test]
     fn all_indices_in_range() {
         // Regression guard: out-of-range indices cause silent GPU crashes on some hardware.
-        let mut grid = VoxelGrid::new(32);
+        let mut grid = VoxelGrid::new(16);
         let pos = IVec3::new(16, 16, 16);
         grid.place_block(pos, 100, None);
 

@@ -41,9 +41,9 @@ pub fn recompute_sky_exposure(grid: &mut VoxelGrid, chunk_pos: IVec3) {
     let new_columns = build_column_max_y(grid, chunk_pos);
     {
         let cl = grid.chunk_light_mut(chunk_pos);
-        for x in 0..CHUNK_USIZE {
-            for z in 0..CHUNK_USIZE {
-                cl.set_column_max_y(x as i32, z as i32, new_columns[x][z]);
+        for (x, column) in new_columns.iter().enumerate() {
+            for (z, &max_y) in column.iter().enumerate() {
+                cl.set_column_max_y(x as i32, z as i32, max_y);
             }
         }
     }

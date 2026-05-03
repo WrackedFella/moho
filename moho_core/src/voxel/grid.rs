@@ -1,24 +1,23 @@
 //! Voxel grid data structure and query methods.
 //!
-//! This module provides the core `VoxelGrid` data structure for storing voxel blocks
-//! in a 3D grid. It handles:
-//! - Block storage and retrieval
-//! - Chunk-based organization
-//! - Height queries
-//! - Neighbor lookups
-//!
-//! The grid uses a HashMap for sparse storage, only allocating memory for solid blocks.
+//! The grid uses a `HashMap<ChunkPos, PalettedChunk>` for sparse storage.
+//! Air chunks are absent from the map (zero memory cost). Block accessors
+//! return primitive values rather than `&VoxelBlock` references so the storage
+//! type is an internal detail callers do not depend on.
 
-mod chunks;
-mod queries;
+mod paletted;
 
-use super::light_storage::{self, CHUNK_SIZE as LIGHT_CHUNK_SIZE, ChunkLight};
+use self::paletted::PalettedChunk;
+use super::light_storage::{self, CHUNK_SIZE as LIGHT_CHUNK_SIZE, CHUNK_USIZE, ChunkLight};
 use crate::materials::MaterialType;
 use glam::{IVec3, Vec3};
 use std::collections::HashMap;
 
 /// Integer vector for grid coordinates
 pub type BlockPos = IVec3;
+
+/// Chunk size constant used throughout this module.
+const CHUNK_SIZE_I32: i32 = LIGHT_CHUNK_SIZE;
 
 /// Resource data for mining/gathering
 #[derive(Debug, Clone)]
@@ -184,7 +183,9 @@ impl Default for ResourceRegistry {
     }
 }
 
-/// Individual voxel block in the world
+/// Individual voxel block — kept as a standalone value type for callers that
+/// construct block descriptors outside the grid. The grid itself stores
+/// paletted chunks rather than `VoxelBlock` instances.
 #[derive(Debug, Clone)]
 pub struct VoxelBlock {
     pub position: BlockPos,
@@ -206,26 +207,17 @@ impl VoxelBlock {
         VoxelBlock { position, material_id, resource_id: None }
     }
 
-    /// Determine if this block should use smooth (Marching Cubes) mesh generation.
+    /// Whether this block uses smooth (Marching Cubes) mesh generation.
     ///
-    /// Natural materials like grass, dirt, and stone produce smooth terrain.
-    /// Crafted materials like planks and bricks produce blocky structures.
-    ///
-    /// # Material ID Ranges
-    /// - 0-99: Natural/terrain materials (smooth)
-    /// - 100+: Crafted/structure materials (blocky)
+    /// Material IDs 0–99 = natural/terrain (smooth).
+    /// Material IDs 100+ = crafted/structure (blocky).
     #[inline]
     pub fn is_smooth(&self) -> bool {
         self.category() == BlockCategory::Smooth
     }
 
-    /// Get the geometry category for this block.
-    ///
-    /// Used to determine mesh generation strategy and AO computation method.
     #[inline]
     pub fn category(&self) -> BlockCategory {
-        // Natural materials: IDs 0-99
-        // Crafted materials: IDs 100+
         if self.material_id < 100 {
             BlockCategory::Smooth
         } else {
@@ -233,7 +225,6 @@ impl VoxelBlock {
         }
     }
 
-    /// Convert grid position to world position (center of block)
     pub fn world_position(&self) -> Vec3 {
         Vec3::new(
             self.position.x as f32,
@@ -241,45 +232,45 @@ impl VoxelBlock {
             self.position.z as f32,
         )
     }
-
 }
 
-/// 3D grid storing voxel blocks
+/// 3D grid storing voxel blocks using paletted chunk storage.
 ///
-/// The grid uses a HashMap for sparse storage - only solid blocks are stored.
-/// This is memory-efficient for worlds with lots of air/empty space.
+/// Blocks are organized into 16³ chunks. Air chunks are absent from the map
+/// (zero memory overhead). The public accessor API is stable; internal storage
+/// is an implementation detail.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// use moho_core::voxel::{VoxelGrid, VoxelBlock, BlockPos};
+/// use moho_core::voxel::{VoxelGrid, BlockPos};
 ///
-/// let mut grid = VoxelGrid::new(16); // 16x16x16 chunks
+/// let mut grid = VoxelGrid::new(16);
 /// let pos = BlockPos::new(0, 0, 0);
-/// let block = VoxelBlock::new(pos, 0); // material_id = 0 (grass)
-/// grid.set_block(pos, block);
+/// grid.place_block(pos, 0, None); // material_id = 0 (grass)
 ///
-/// assert!(grid.get_block(&pos).is_some());
+/// assert!(grid.is_solid_at(pos));
 /// ```
 #[derive(Debug)]
 pub struct VoxelGrid {
-    blocks: HashMap<BlockPos, VoxelBlock>,
+    /// Paletted block storage, keyed by chunk coordinate.
+    chunks: HashMap<IVec3, PalettedChunk>,
     chunk_size: i32,
     pub material_registry: MaterialRegistry,
     pub resource_registry: ResourceRegistry,
-    /// Per-chunk lighting state. Only populated for `chunk_size == 16` grids; the
-    /// light system is hardcoded around 16³ chunks.
+    /// Per-chunk lighting state (Stage 4C). Only populated for chunk_size == 16.
     chunk_lights: HashMap<IVec3, ChunkLight>,
 }
 
 impl VoxelGrid {
-    /// Create a new empty voxel grid
+    /// Create a new empty voxel grid.
     ///
-    /// # Arguments
-    /// * `chunk_size` - Number of blocks per chunk dimension (typically 16 or 32)
+    /// `chunk_size` must be 16; the paletted storage and lighting system are
+    /// both hardcoded to 16³ chunks.
     pub fn new(chunk_size: i32) -> Self {
+        debug_assert_eq!(chunk_size, CHUNK_SIZE_I32, "VoxelGrid requires chunk_size == 16");
         VoxelGrid {
-            blocks: HashMap::new(),
+            chunks: HashMap::new(),
             chunk_size,
             material_registry: MaterialRegistry::new(),
             resource_registry: ResourceRegistry::new(),
@@ -293,157 +284,187 @@ impl VoxelGrid {
         self.chunk_size == LIGHT_CHUNK_SIZE
     }
 
-    /// Get the chunk size
+    /// Get the chunk size (always 16 after Stage 4D).
     pub fn chunk_size(&self) -> i32 {
         self.chunk_size
     }
 
-    /// Get iterator over all block positions
-    pub fn block_positions(&self) -> impl Iterator<Item = &BlockPos> {
-        self.blocks.keys()
-    }
-
-    /// Set a block at the specified position
-    pub fn set_block(&mut self, pos: BlockPos, block: VoxelBlock) {
-        self.blocks.insert(pos, block);
-    }
-
-    /// Get an immutable reference to a block
-    pub fn get_block(&self, pos: &BlockPos) -> Option<&VoxelBlock> {
-        self.blocks.get(pos)
-    }
-
-    /// Get a mutable reference to a block
-    pub fn get_block_mut(&mut self, pos: &BlockPos) -> Option<&mut VoxelBlock> {
-        self.blocks.get_mut(pos)
-    }
-
-    /// Remove a block from the grid
-    pub fn remove_block(&mut self, pos: &BlockPos) -> Option<VoxelBlock> {
-        self.blocks.remove(pos)
-    }
-
-    /// Iterate over all blocks (immutable)
-    pub fn iter_blocks(&self) -> impl Iterator<Item = &VoxelBlock> {
-        self.blocks.values()
-    }
-
-    /// Iterate over all blocks (mutable)
-    pub fn iter_blocks_mut(&mut self) -> impl Iterator<Item = &mut VoxelBlock> {
-        self.blocks.values_mut()
-    }
-
-    /// Get chunk coordinate from block position (static helper)
-    ///
-    /// Uses `div_euclid` for correct negative coordinate handling.
+    /// Static helper: chunk coordinate from a block position and an arbitrary chunk size.
     pub fn get_chunk_pos(pos: BlockPos, chunk_size: i32) -> IVec3 {
-        chunks::get_chunk_pos(pos, chunk_size)
+        IVec3::new(
+            pos.x.div_euclid(chunk_size),
+            pos.y.div_euclid(chunk_size),
+            pos.z.div_euclid(chunk_size),
+        )
     }
 
-    /// Get chunk coordinate from block position (instance method)
+    /// Chunk coordinate containing `pos`.
     pub fn chunk_pos_of(&self, pos: BlockPos) -> IVec3 {
-        chunks::get_chunk_pos(pos, self.chunk_size)
+        Self::get_chunk_pos(pos, self.chunk_size)
     }
 
-    /// Get all blocks in a chunk
-    ///
-    /// Returns references to all blocks within the specified chunk boundaries.
-    pub fn get_chunk_blocks(&self, chunk_pos: IVec3) -> Vec<&VoxelBlock> {
-        chunks::get_chunk_blocks(&self.blocks, chunk_pos, self.chunk_size)
-    }
-
-    /// Get height at a position (highest Y with a block)
-    ///
-    /// Scans all blocks at the given (x, z) coordinates and returns the highest Y value.
-    pub fn get_height(&self, x: i32, z: i32) -> Option<i32> {
-        queries::get_height(&self.blocks, x, z)
-    }
-
-    /// Get neighbor heights for smoothing algorithm
-    ///
-    /// Returns heights in cardinal directions: [North, South, East, West]
-    /// Used for terrain smoothing to create ramps.
-    pub fn get_neighbor_heights(&self, pos: BlockPos) -> [Option<i32>; 4] {
-        queries::get_neighbor_heights(&self.blocks, pos)
-    }
-
-    /// Check if a block exists at the given position
-    ///
-    /// Returns true if there's a solid block, false if air/empty.
-    pub fn has_block_at(&self, pos: &BlockPos) -> bool {
-        self.blocks.contains_key(pos)
-    }
-
-    /// Check if a block position is occupied (has a block)
-    ///
-    /// Convenience method for ambient occlusion calculations.
-    pub fn is_block_occupied(&self, pos: BlockPos) -> bool {
-        self.blocks.contains_key(&pos)
-    }
-
-    /// Get the number of blocks in the grid
-    pub fn block_count(&self) -> usize {
-        self.blocks.len()
-    }
-
-    // ---------------------------------------------------------------------
-    // Accessor API (Stage 4B)
-    //
-    // These methods return primitive values rather than `&VoxelBlock`, so
-    // callers do not depend on `VoxelBlock` being the storage type. Stage 4D
-    // can swap the underlying storage to a paletted layout without API churn.
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Accessor API (Stage 4B / 4D)
+    // -------------------------------------------------------------------------
 
     /// Material id at `pos`, or `None` for air.
     #[inline]
     pub fn material_at(&self, pos: BlockPos) -> Option<u32> {
-        self.blocks.get(&pos).map(|b| b.material_id)
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
+        self.chunks.get(&chunk_pos)?.material_at(idx)
     }
 
     /// Resource id at `pos`, or `None` if the block has no resource (or is air).
     #[inline]
     pub fn resource_at(&self, pos: BlockPos) -> Option<u32> {
-        self.blocks.get(&pos).and_then(|b| b.resource_id)
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
+        self.chunks.get(&chunk_pos)?.resource_at(idx)
     }
 
-    /// Whether `pos` contains a solid (stored) block.
+    /// Whether `pos` contains a solid (non-air) block.
     #[inline]
     pub fn is_solid_at(&self, pos: BlockPos) -> bool {
-        self.blocks.contains_key(&pos)
+        self.material_at(pos).is_some()
     }
 
-    /// Geometry category at `pos`, or `None` for air.
+    /// Geometry category at `pos`: `Some(true)` = smooth terrain,
+    /// `Some(false)` = blocky structure, `None` = air.
     #[inline]
     pub fn is_smooth_at(&self, pos: BlockPos) -> Option<bool> {
-        self.blocks.get(&pos).map(|b| b.is_smooth())
+        self.material_at(pos).map(|m| m < 100)
     }
 
     /// Snapshot of all block state at `pos`, or `None` for air.
     #[inline]
     pub fn block_data_at(&self, pos: BlockPos) -> Option<BlockData> {
-        self.blocks.get(&pos).map(BlockData::from_block)
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
+        let chunk = self.chunks.get(&chunk_pos)?;
+        let material_id = chunk.material_at(idx)?;
+        Some(BlockData { position: pos, material_id, resource_id: chunk.resource_at(idx) })
     }
 
-    /// Place a block at `pos`, replacing any existing block. Light levels are
-    /// initialized to 0; lighting is computed separately by `LightSystem`.
+    /// Place a block at `pos`, replacing any existing block.
     pub fn place_block(&mut self, pos: BlockPos, material_id: u32, resource_id: Option<u32>) {
-        self.blocks
-            .insert(pos, VoxelBlock { position: pos, material_id, resource_id });
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
+        let chunk = self.chunks.entry(chunk_pos).or_default();
+        chunk.set_block(idx, material_id, resource_id);
+        chunk.mesh_dirty = true;
+        chunk.light_dirty = true;
         self.note_block_change(pos, true);
     }
 
     /// Remove the block at `pos`. Returns `true` if a block was removed.
     pub fn clear_block(&mut self, pos: BlockPos) -> bool {
-        let removed = self.blocks.remove(&pos).is_some();
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
+        let removed = if let Some(chunk) = self.chunks.get_mut(&chunk_pos) {
+            let r = chunk.clear_block(idx);
+            if r {
+                chunk.mesh_dirty = true;
+                chunk.light_dirty = true;
+            }
+            r
+        } else {
+            false
+        };
         if removed {
             self.note_block_change(pos, false);
         }
         removed
     }
 
-    /// Mark lighting state dirty in the chunk(s) containing `pos`. Called from
-    /// `place_block`/`clear_block`. The 4C light system consumes these flags to
-    /// schedule recomputes.
+    /// Whether a block exists at `pos`.
+    #[inline]
+    pub fn has_block_at(&self, pos: &BlockPos) -> bool {
+        self.is_solid_at(*pos)
+    }
+
+    /// Whether a block position is occupied (alias for `is_solid_at`).
+    #[inline]
+    pub fn is_block_occupied(&self, pos: BlockPos) -> bool {
+        self.is_solid_at(pos)
+    }
+
+    /// Total number of non-air blocks across all chunks.
+    pub fn block_count(&self) -> usize {
+        self.chunks.values().map(|c| c.block_count()).sum()
+    }
+
+    /// Iterator over world positions of all non-air blocks.
+    pub fn block_positions(&self) -> impl Iterator<Item = IVec3> + '_ {
+        self.chunks.iter().flat_map(|(&chunk_pos, chunk)| {
+            let base = chunk_pos * CHUNK_SIZE_I32;
+            chunk.iter_blocks().map(move |(idx, _mat, _res)| base + idx_to_local(idx))
+        })
+    }
+
+    /// Iterate over snapshots of every stored block.
+    pub fn iter_block_data(&self) -> impl Iterator<Item = BlockData> + '_ {
+        self.chunks.iter().flat_map(|(&chunk_pos, chunk)| {
+            let base = chunk_pos * CHUNK_SIZE_I32;
+            chunk.iter_blocks().map(move |(idx, material_id, resource_id)| BlockData {
+                position: base + idx_to_local(idx),
+                material_id,
+                resource_id,
+            })
+        })
+    }
+
+    /// Snapshots of every stored block within a chunk.
+    pub fn chunk_block_data(&self, chunk_pos: IVec3) -> Vec<BlockData> {
+        let Some(chunk) = self.chunks.get(&chunk_pos) else {
+            return vec![];
+        };
+        let base = chunk_pos * CHUNK_SIZE_I32;
+        chunk
+            .iter_blocks()
+            .map(|(idx, material_id, resource_id)| BlockData {
+                position: base + idx_to_local(idx),
+                material_id,
+                resource_id,
+            })
+            .collect()
+    }
+
+    /// Highest Y containing a solid block at column `(x, z)`, or `None`.
+    pub fn get_height(&self, x: i32, z: i32) -> Option<i32> {
+        let cx = x.div_euclid(CHUNK_SIZE_I32);
+        let cz = z.div_euclid(CHUNK_SIZE_I32);
+        let lx = x.rem_euclid(CHUNK_SIZE_I32);
+        let lz = z.rem_euclid(CHUNK_SIZE_I32);
+
+        let mut max_y: Option<i32> = None;
+        for (&chunk_pos, chunk) in &self.chunks {
+            if chunk_pos.x != cx || chunk_pos.z != cz {
+                continue;
+            }
+            let base_y = chunk_pos.y * CHUNK_SIZE_I32;
+            // Scan the column top-to-bottom within this chunk.
+            for ly in (0..CHUNK_SIZE_I32).rev() {
+                let idx = light_storage::local_index(lx, ly, lz);
+                if chunk.material_at(idx).is_some() {
+                    let wy = base_y + ly;
+                    max_y = Some(max_y.map_or(wy, |m: i32| m.max(wy)));
+                    break;
+                }
+            }
+        }
+        max_y
+    }
+
+    /// Heights of the four cardinal neighbors of `pos`: [North(+Z), South(-Z), East(+X), West(-X)].
+    pub fn get_neighbor_heights(&self, pos: BlockPos) -> [Option<i32>; 4] {
+        [
+            self.get_height(pos.x, pos.z + 1),
+            self.get_height(pos.x, pos.z - 1),
+            self.get_height(pos.x + 1, pos.z),
+            self.get_height(pos.x - 1, pos.z),
+        ]
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal dirty-flag bookkeeping (called by place_block / clear_block).
+    // -------------------------------------------------------------------------
+
     fn note_block_change(&mut self, pos: BlockPos, placed: bool) {
         if !self.supports_lighting() {
             return;
@@ -453,16 +474,11 @@ impl VoxelGrid {
             let cl = self
                 .chunk_lights
                 .entry(chunk_pos)
-                .or_insert_with(ChunkLight::new);
+                .or_default();
             let before = cl.sky_dirty;
             if placed {
-                // Conservative: any opaque placement could raise the column. Material
-                // opacity is consulted by the rebuild pass; for the dirty trigger we
-                // only need an upper bound.
                 cl.note_opaque_placed(local.x, local.y, local.z);
             } else {
-                // A removal at the column max requires a full column rescan, which the
-                // sky-exposure pass owns. Just flag dirty here.
                 let cur = cl.column_max_y(local.x, local.z);
                 if (local.y as i8) >= cur {
                     cl.sky_dirty = true;
@@ -472,8 +488,6 @@ impl VoxelGrid {
             cl.sky_dirty && !before
         };
 
-        // A column-height change in this chunk invalidates sky exposure for every
-        // loaded chunk below it in the same (cx, cz) stack.
         if sky_became_dirty {
             let lower: Vec<IVec3> = self
                 .chunk_lights
@@ -487,29 +501,11 @@ impl VoxelGrid {
         }
     }
 
-    /// Iterate over snapshots of every stored block.
-    pub fn iter_block_data(&self) -> impl Iterator<Item = BlockData> + '_ {
-        self.blocks.values().map(BlockData::from_block)
-    }
-
-    /// Snapshots of every stored block within a chunk.
-    pub fn chunk_block_data(&self, chunk_pos: IVec3) -> Vec<BlockData> {
-        chunks::get_chunk_blocks(&self.blocks, chunk_pos, self.chunk_size)
-            .into_iter()
-            .map(BlockData::from_block)
-            .collect()
-    }
-
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
     // Stage 4C: per-chunk lighting accessors.
-    //
-    // `sky_exposed_at` reports whether a voxel can see the sky (binary;
-    // direct-sun shadow is CSM's job). `block_light_rgb_at` returns RGB
-    // block-light, with each channel `0..=15`. Air outside any allocated
-    // chunk reports as sky-exposed = true and block-light = [0, 0, 0].
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
 
-    /// Whether `pos` is exposed to sky (no opaque voxels at or above in its column).
+    /// Whether `pos` is exposed to sky.
     pub fn sky_exposed_at(&self, pos: BlockPos) -> bool {
         if !self.supports_lighting() {
             return true;
@@ -517,7 +513,7 @@ impl VoxelGrid {
         let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
         match self.chunk_lights.get(&chunk_pos) {
             Some(cl) => cl.sky_exposed_at(idx),
-            None => true, // unallocated chunk → treat as open air
+            None => true,
         }
     }
 
@@ -533,8 +529,7 @@ impl VoxelGrid {
         }
     }
 
-    /// Set the RGB block-light at `pos`. Used by the propagator. Allocates a
-    /// chunk-light entry if needed.
+    /// Set the RGB block-light at `pos`. Allocates a chunk-light entry if needed.
     pub fn set_block_light_rgb(&mut self, pos: BlockPos, rgb: [u8; 3]) {
         if !self.supports_lighting() {
             return;
@@ -543,11 +538,11 @@ impl VoxelGrid {
         let cl = self
             .chunk_lights
             .entry(chunk_pos)
-            .or_insert_with(ChunkLight::new);
+            .or_default();
         cl.set_block_light_rgb(idx, rgb);
     }
 
-    /// Set the sky-exposed bit at `pos`. Used by the sky-exposure pass.
+    /// Set the sky-exposed bit at `pos`.
     pub fn set_sky_exposed(&mut self, pos: BlockPos, value: bool) {
         if !self.supports_lighting() {
             return;
@@ -556,22 +551,20 @@ impl VoxelGrid {
         let cl = self
             .chunk_lights
             .entry(chunk_pos)
-            .or_insert_with(ChunkLight::new);
+            .or_default();
         cl.set_sky_exposed(idx, value);
     }
 
-    /// Borrow a chunk's lighting state, if any. Returns `None` if the chunk has
-    /// never been touched by lighting writes.
+    /// Borrow a chunk's lighting state, if any.
     pub fn chunk_light(&self, chunk_pos: IVec3) -> Option<&ChunkLight> {
         self.chunk_lights.get(&chunk_pos)
     }
 
-    /// Mutable borrow of a chunk's lighting state, allocating an empty entry if
-    /// needed.
+    /// Mutable borrow of a chunk's lighting state, allocating if needed.
     pub fn chunk_light_mut(&mut self, chunk_pos: IVec3) -> &mut ChunkLight {
         self.chunk_lights
             .entry(chunk_pos)
-            .or_insert_with(ChunkLight::new)
+            .or_default()
     }
 
     /// Iterate all chunk positions with allocated light state.
@@ -580,10 +573,25 @@ impl VoxelGrid {
     }
 }
 
+// -------------------------------------------------------------------------
+// Private helpers
+// -------------------------------------------------------------------------
+
+/// Reconstruct chunk-local (x, y, z) from a dense linear index.
+/// Index layout: `idx = x + y*16 + z*256`.
+#[inline]
+fn idx_to_local(idx: usize) -> IVec3 {
+    IVec3::new(
+        (idx % CHUNK_USIZE) as i32,
+        ((idx / CHUNK_USIZE) % CHUNK_USIZE) as i32,
+        (idx / (CHUNK_USIZE * CHUNK_USIZE)) as i32,
+    )
+}
+
 /// Compact, copyable snapshot of a block's stored state.
 ///
-/// Returned by `VoxelGrid` accessors. Decouples callers from the underlying
-/// storage type so paletted storage (Stage 4D) can drop in without API churn.
+/// Returned by `VoxelGrid` accessors. Decouples callers from internal storage
+/// so paletted storage swaps do not cause API churn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockData {
     pub position: BlockPos,
@@ -592,15 +600,7 @@ pub struct BlockData {
 }
 
 impl BlockData {
-    fn from_block(block: &VoxelBlock) -> Self {
-        Self {
-            position: block.position,
-            material_id: block.material_id,
-            resource_id: block.resource_id,
-        }
-    }
-
-    /// Geometry category — same threshold as `VoxelBlock::is_smooth`.
+    /// Geometry category — smooth iff `material_id < 100`.
     #[inline]
     pub fn is_smooth(&self) -> bool {
         self.material_id < 100
@@ -619,30 +619,27 @@ mod tests {
     }
 
     #[test]
-    fn test_set_and_get_block() {
+    fn test_place_and_query() {
         let mut grid = VoxelGrid::new(16);
         let pos = BlockPos::new(0, 0, 0);
-        let block = VoxelBlock::new(pos, 0);
 
-        grid.set_block(pos, block);
+        grid.place_block(pos, 0, None);
 
-        assert!(grid.get_block(&pos).is_some());
-        assert_eq!(grid.get_block(&pos).unwrap().material_id, 0);
+        assert!(grid.is_solid_at(pos));
+        assert_eq!(grid.material_at(pos), Some(0));
         assert_eq!(grid.block_count(), 1);
     }
 
     #[test]
-    fn test_remove_block() {
+    fn test_clear_block() {
         let mut grid = VoxelGrid::new(16);
         let pos = BlockPos::new(1, 2, 3);
-        let block = VoxelBlock::new(pos, 1);
 
-        grid.set_block(pos, block);
+        grid.place_block(pos, 1, None);
         assert_eq!(grid.block_count(), 1);
 
-        let removed = grid.remove_block(&pos);
-        assert!(removed.is_some());
-        assert_eq!(removed.unwrap().material_id, 1);
+        assert!(grid.clear_block(pos));
+        assert_eq!(grid.material_at(pos), None);
         assert_eq!(grid.block_count(), 0);
     }
 
@@ -652,30 +649,18 @@ mod tests {
         let pos = BlockPos::new(5, 5, 5);
 
         assert!(!grid.has_block_at(&pos));
-
-        grid.set_block(pos, VoxelBlock::new(pos, 0));
-
+        grid.place_block(pos, 0, None);
         assert!(grid.has_block_at(&pos));
-    }
-
-    #[test]
-    fn test_block_world_position() {
-        let block = VoxelBlock::new(BlockPos::new(5, 10, 15), 0);
-        let world_pos = block.world_position();
-
-        assert_eq!(world_pos, Vec3::new(5.0, 10.0, 15.0));
     }
 
     #[test]
     fn test_material_registry() {
         let mut registry = MaterialRegistry::new();
 
-        // Default materials should exist
         assert!(registry.get(0).is_some()); // Grass
         assert!(registry.get(1).is_some()); // Dirt
         assert!(registry.get(2).is_some()); // Stone
 
-        // Register new material
         let new_id = registry.register(MaterialType::Lambertian {
             albedo: Vec3::new(1.0, 0.0, 0.0),
         });
@@ -687,11 +672,9 @@ mod tests {
     fn test_resource_registry() {
         let mut registry = ResourceRegistry::new();
 
-        // Default resources should exist
         assert!(registry.get(0).is_some()); // Stone
         assert!(registry.get(1).is_some()); // Iron ore
 
-        // Register new resource
         let new_id = registry.register(ResourceData {
             resource_type: "gold_ore".to_string(),
             quantity: 3,
@@ -701,52 +684,86 @@ mod tests {
     }
 
     #[test]
-    fn test_block_category_natural_materials() {
-        // Natural materials (IDs 0-99) should be smooth
-        let grass_block = VoxelBlock::new(BlockPos::new(0, 0, 0), 0);
-        assert!(grass_block.is_smooth());
-        assert_eq!(grass_block.category(), BlockCategory::Smooth);
+    fn test_block_category_smooth() {
+        let b = VoxelBlock::new(BlockPos::new(0, 0, 0), 0);
+        assert!(b.is_smooth());
+        assert_eq!(b.category(), BlockCategory::Smooth);
 
-        let dirt_block = VoxelBlock::new(BlockPos::new(0, 0, 0), 1);
-        assert!(dirt_block.is_smooth());
-        assert_eq!(dirt_block.category(), BlockCategory::Smooth);
-
-        let stone_block = VoxelBlock::new(BlockPos::new(0, 0, 0), 2);
-        assert!(stone_block.is_smooth());
-        assert_eq!(stone_block.category(), BlockCategory::Smooth);
-
-        // Edge of natural range
-        let block_99 = VoxelBlock::new(BlockPos::new(0, 0, 0), 99);
-        assert!(block_99.is_smooth());
-        assert_eq!(block_99.category(), BlockCategory::Smooth);
+        let b99 = VoxelBlock::new(BlockPos::new(0, 0, 0), 99);
+        assert!(b99.is_smooth());
     }
 
     #[test]
-    fn test_block_category_crafted_materials() {
-        // Crafted materials (IDs 100+) should be blocky
-        let planks_block = VoxelBlock::new(BlockPos::new(0, 0, 0), 100);
-        assert!(!planks_block.is_smooth());
-        assert_eq!(planks_block.category(), BlockCategory::Blocky);
-
-        let bricks_block = VoxelBlock::new(BlockPos::new(0, 0, 0), 101);
-        assert!(!bricks_block.is_smooth());
-        assert_eq!(bricks_block.category(), BlockCategory::Blocky);
-
-        // High ID crafted material
-        let metal_block = VoxelBlock::new(BlockPos::new(0, 0, 0), 500);
-        assert!(!metal_block.is_smooth());
-        assert_eq!(metal_block.category(), BlockCategory::Blocky);
+    fn test_block_category_blocky() {
+        let b = VoxelBlock::new(BlockPos::new(0, 0, 0), 100);
+        assert!(!b.is_smooth());
+        assert_eq!(b.category(), BlockCategory::Blocky);
     }
 
     #[test]
-    fn test_block_category_boundary() {
-        // Test the boundary between smooth and blocky (99 vs 100)
-        let last_smooth = VoxelBlock::new(BlockPos::new(0, 0, 0), 99);
-        let first_blocky = VoxelBlock::new(BlockPos::new(0, 0, 0), 100);
+    fn test_is_smooth_at() {
+        let mut grid = VoxelGrid::new(16);
+        let pos = BlockPos::new(0, 0, 0);
 
-        assert!(last_smooth.is_smooth());
-        assert!(!first_blocky.is_smooth());
-        assert_eq!(last_smooth.category(), BlockCategory::Smooth);
-        assert_eq!(first_blocky.category(), BlockCategory::Blocky);
+        assert_eq!(grid.is_smooth_at(pos), None);
+        grid.place_block(pos, 0, None); // smooth
+        assert_eq!(grid.is_smooth_at(pos), Some(true));
+        grid.place_block(pos, 100, None); // blocky
+        assert_eq!(grid.is_smooth_at(pos), Some(false));
+    }
+
+    #[test]
+    fn test_block_positions_count() {
+        let mut grid = VoxelGrid::new(16);
+        assert_eq!(grid.block_positions().count(), 0);
+
+        grid.place_block(IVec3::new(0, 0, 0), 0, None);
+        grid.place_block(IVec3::new(1, 0, 0), 0, None);
+        assert_eq!(grid.block_positions().count(), 2);
+    }
+
+    #[test]
+    fn test_block_data_at() {
+        let mut grid = VoxelGrid::new(16);
+        let pos = BlockPos::new(3, 4, 5);
+        assert!(grid.block_data_at(pos).is_none());
+
+        grid.place_block(pos, 2, Some(1));
+        let bd = grid.block_data_at(pos).unwrap();
+        assert_eq!(bd.position, pos);
+        assert_eq!(bd.material_id, 2);
+        assert_eq!(bd.resource_id, Some(1));
+    }
+
+    #[test]
+    fn test_get_height() {
+        let mut grid = VoxelGrid::new(16);
+        assert_eq!(grid.get_height(0, 0), None);
+
+        grid.place_block(IVec3::new(0, 2, 0), 0, None);
+        grid.place_block(IVec3::new(0, 5, 0), 0, None);
+        assert_eq!(grid.get_height(0, 0), Some(5));
+        assert_eq!(grid.get_height(1, 0), None);
+    }
+
+    #[test]
+    fn test_iter_block_data() {
+        let mut grid = VoxelGrid::new(16);
+        grid.place_block(IVec3::new(0, 0, 0), 1, None);
+        grid.place_block(IVec3::new(1, 0, 0), 2, None);
+
+        let data: Vec<_> = grid.iter_block_data().collect();
+        assert_eq!(data.len(), 2);
+    }
+
+    #[test]
+    fn test_chunk_block_data() {
+        let mut grid = VoxelGrid::new(16);
+        grid.place_block(IVec3::new(0, 0, 0), 1, None);
+        grid.place_block(IVec3::new(20, 0, 0), 2, None); // different chunk
+
+        let in_chunk = grid.chunk_block_data(IVec3::ZERO);
+        assert_eq!(in_chunk.len(), 1);
+        assert_eq!(in_chunk[0].material_id, 1);
     }
 }

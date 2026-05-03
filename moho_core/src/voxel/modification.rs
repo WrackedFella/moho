@@ -497,7 +497,7 @@ impl BlockModifier {
         let chunk_positions: HashSet<IVec3> = self
             .grid
             .block_positions()
-            .map(|pos| VoxelGrid::get_chunk_pos(*pos, chunk_size))
+            .map(|pos| VoxelGrid::get_chunk_pos(pos, chunk_size))
             .collect();
 
         // Create state for each chunk
