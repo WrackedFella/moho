@@ -35,3 +35,5 @@ recipe.json
 /metrics-output/
 /metrics-summary/
 /tmp_rust_code_analysis/
+.gitnexus
+.claude
