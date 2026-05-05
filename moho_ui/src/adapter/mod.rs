@@ -287,6 +287,11 @@ impl EguiAdapter {
     pub fn toggle_debug_hud(&mut self) {
         self.ui_state.overlay_manager.toggle("debug");
     }
+
+    /// Toggle any overlay by name.
+    pub fn toggle_overlay(&mut self, name: &str) {
+        self.ui_state.overlay_manager.toggle(name);
+    }
 }
 
 impl FrameCallback for EguiAdapter {

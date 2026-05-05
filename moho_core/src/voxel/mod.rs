@@ -35,6 +35,7 @@
 
 mod biome;
 mod chunk;
+pub mod streaming;
 mod face;
 mod grid;
 mod jobs;
@@ -69,4 +70,5 @@ pub use light_propagation::{LightChannel, LightPropagator};
 pub use light_system::{LightSystem, LightSystemStats};
 pub use mesh::{BlockyMeshGenerator, ChunkContent, HybridMeshGenerator, MarchingCubes, VoxelMesh};
 pub use modification::{BlockModifier, ModificationResult};
+pub use streaming::StreamingConfig;
 pub use state::{ChunkState, DirtyFlags, GenerationState, JobId};

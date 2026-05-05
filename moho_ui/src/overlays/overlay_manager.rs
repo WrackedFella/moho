@@ -37,6 +37,9 @@ pub struct HudData {
 
     /// Player stamina fraction (`0.0`–`1.0`).
     pub player_stamina: f32,
+
+    /// XZ coordinates of every currently-loaded chunk, for the chunk debug minimap.
+    pub loaded_chunk_xz: Vec<[i32; 2]>,
 }
 
 impl Default for HudData {
@@ -52,6 +55,7 @@ impl Default for HudData {
             camera_yaw: 0.0,
             player_health: 1.0,
             player_stamina: 1.0,
+            loaded_chunk_xz: Vec::new(),
         }
     }
 }

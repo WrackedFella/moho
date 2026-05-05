@@ -2,6 +2,16 @@ use std::collections::HashMap;
 
 pub const CHUNK_VOL: usize = 4096; // 16³
 
+/// Serializable snapshot of a chunk's block data (no runtime-only flags).
+#[derive(bincode::Encode, bincode::Decode)]
+struct ChunkSnapshot {
+    palette: Vec<u32>,
+    /// Flattened indices (CHUNK_VOL entries).
+    indices: Vec<u16>,
+    /// Sparse resource entries as (local_idx, resource_id).
+    resources: Vec<(u16, u32)>,
+}
+
 /// Storage for one 16³ chunk using palette compression.
 ///
 /// `indices[i] == 0` always means air, regardless of `palette[0]` (which is a
@@ -18,6 +28,10 @@ pub struct PalettedChunk {
     resources: HashMap<u16, u32>,
     pub mesh_dirty: bool,
     pub light_dirty: bool,
+    /// Set when any block in this chunk was placed or removed since the last
+    /// save. Used by the streaming system to decide whether to write to disk
+    /// on eviction.
+    modified: bool,
 }
 
 impl Default for PalettedChunk {
@@ -34,6 +48,7 @@ impl PalettedChunk {
             resources: HashMap::new(),
             mesh_dirty: false,
             light_dirty: false,
+            modified: false,
         }
     }
 
@@ -68,6 +83,7 @@ impl PalettedChunk {
                 self.resources.remove(&(idx as u16));
             }
         }
+        self.modified = true;
     }
 
     /// Returns `true` if a block was present and removed.
@@ -77,7 +93,53 @@ impl PalettedChunk {
         }
         self.indices[idx] = 0;
         self.resources.remove(&(idx as u16));
+        self.modified = true;
         true
+    }
+
+    /// Whether any block in this chunk was placed or removed since the last
+    /// `clear_modified()` call.
+    pub fn is_modified(&self) -> bool {
+        self.modified
+    }
+
+    /// Reset the modified flag (called after saving the chunk to disk).
+    pub fn clear_modified(&mut self) {
+        self.modified = false;
+    }
+
+    /// Serialize block data (palette + indices + resources) to bytes.
+    /// Runtime-only flags (`mesh_dirty`, `light_dirty`, `modified`) are not
+    /// included; they are re-derived when the chunk is loaded back.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let snap = ChunkSnapshot {
+            palette: self.palette.clone(),
+            indices: self.indices.to_vec(),
+            resources: self.resources.iter().map(|(&k, &v)| (k, v)).collect(),
+        };
+        bincode::encode_to_vec(&snap, bincode::config::standard())
+            .expect("PalettedChunk serialization must not fail")
+    }
+
+    /// Deserialize a chunk from bytes produced by `to_bytes`.
+    /// Returns `None` if the data is malformed or the index count is wrong.
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        let (snap, _): (ChunkSnapshot, _) =
+            bincode::decode_from_slice(data, bincode::config::standard()).ok()?;
+        if snap.indices.len() != CHUNK_VOL {
+            return None;
+        }
+        let mut indices = [0u16; CHUNK_VOL];
+        indices.copy_from_slice(&snap.indices);
+        let resources = snap.resources.into_iter().collect();
+        Some(Self {
+            palette: snap.palette,
+            indices,
+            resources,
+            mesh_dirty: true,  // needs re-mesh after load
+            light_dirty: true, // needs re-light after load
+            modified: false,
+        })
     }
 
     #[allow(dead_code)] // used by chunk streaming (Phase 5) for eviction

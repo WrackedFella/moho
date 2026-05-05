@@ -1,7 +1,8 @@
 use bincode::{Decode, Encode};
+use glam::IVec3;
 use std::error::Error;
-use std::fs::{File, remove_file, rename};
-use std::io::{Read, Write};
+use std::fs::{self, File, remove_file, rename};
+use std::io::{self, Read, Write};
 use std::path::Path;
 
 const SAVE_MAGIC: &[u8; 4] = b"MOHO";
@@ -144,6 +145,54 @@ pub fn read_scene_and_metadata<P: AsRef<Path>>(path: P) -> Result<SavePayload, B
     };
 
     Ok((spec, scene_bytes, block_records))
+}
+
+/// Persist a serialized chunk to `saves/<world_name>/chunks/<cx>_<cy>_<cz>.bin`.
+///
+/// Called by the streaming system when a modified chunk is evicted.
+/// Uses an atomic rename so a crash mid-write never leaves a corrupt file.
+pub fn write_chunk_file(world_name: &str, pos: IVec3, data: &[u8]) -> io::Result<()> {
+    let dir = chunk_dir(world_name);
+    fs::create_dir_all(&dir)?;
+    let path = chunk_path(world_name, pos);
+    let tmp = path.with_extension("tmp");
+    let mut f = File::create(&tmp)?;
+    f.write_all(data)?;
+    f.flush()?;
+    f.sync_all()?;
+    if path.exists() {
+        remove_file(&path)?;
+    }
+    rename(&tmp, &path)?;
+    Ok(())
+}
+
+/// Load a serialized chunk from `saves/<world_name>/chunks/<cx>_<cy>_<cz>.bin`.
+///
+/// Returns `None` if the file does not exist (chunk was never modified, so
+/// the caller should fall back to generating it from the terrain function).
+pub fn read_chunk_file(world_name: &str, pos: IVec3) -> Option<Vec<u8>> {
+    let path = chunk_path(world_name, pos);
+    fs::read(path).ok()
+}
+
+fn chunk_dir(world_name: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from("saves").join(world_name).join("chunks")
+}
+
+/// Remove all saved chunk files for `world_name`. Called when generating a new
+/// world so stale chunk data from a previous session cannot override fresh terrain.
+pub fn clear_chunk_files(world_name: &str) -> io::Result<()> {
+    let dir = chunk_dir(world_name);
+    if dir.exists() {
+        fs::remove_dir_all(&dir)?;
+        log::info!("Cleared chunk save files for world '{}'", world_name);
+    }
+    Ok(())
+}
+
+fn chunk_path(world_name: &str, pos: IVec3) -> std::path::PathBuf {
+    chunk_dir(world_name).join(format!("{}_{}_{}.bin", pos.x, pos.y, pos.z))
 }
 
 #[cfg(test)]

@@ -425,6 +425,72 @@ impl VoxelGrid {
             .collect()
     }
 
+    /// Remove a chunk and its associated lighting state from the grid.
+    ///
+    /// Called by the streaming system when a chunk moves beyond the unload radius.
+    pub fn remove_chunk(&mut self, pos: IVec3) {
+        self.chunks.remove(&pos);
+        self.chunk_lights.remove(&pos);
+    }
+
+    /// Iterate over the positions of all currently-loaded chunks.
+    ///
+    /// Includes any chunk that has at least one block; all-air chunks are never
+    /// stored (absent key == all air).
+    pub fn chunk_positions(&self) -> impl Iterator<Item = IVec3> + '_ {
+        self.chunks.keys().copied()
+    }
+
+    /// Returns `true` if a non-empty chunk exists at `pos`.
+    pub fn has_chunk(&self, pos: IVec3) -> bool {
+        self.chunks.contains_key(&pos)
+    }
+
+    /// Serialize the chunk at `pos` to bytes (palette + indices + resources).
+    /// Returns `None` if the chunk is absent (all-air) or unmodified.
+    ///
+    /// Used by the streaming system to persist modified chunks on eviction.
+    pub fn serialize_chunk(&self, pos: IVec3) -> Option<Vec<u8>> {
+        let chunk = self.chunks.get(&pos)?;
+        if !chunk.is_modified() {
+            return None;
+        }
+        Some(chunk.to_bytes())
+    }
+
+    /// Deserialize a chunk from `data` (produced by `serialize_chunk`) and insert
+    /// it at `pos`, replacing any existing chunk. Sets `mesh_dirty` and
+    /// `light_dirty` so the lighting/meshing pipeline picks it up on the next frame.
+    ///
+    /// Returns `false` if `data` is malformed.
+    pub fn deserialize_chunk_into(&mut self, pos: IVec3, data: &[u8]) -> bool {
+        match PalettedChunk::from_bytes(data) {
+            Some(chunk) => {
+                self.chunks.insert(pos, chunk);
+                // Ensure a ChunkLight entry exists for the lighting pipeline.
+                self.chunk_lights.entry(pos).or_default().light_dirty = true;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Whether the chunk at `pos` has been modified since the last save.
+    pub fn chunk_is_modified(&self, pos: IVec3) -> bool {
+        self.chunks.get(&pos).map_or(false, |c| c.is_modified())
+    }
+
+    /// Clear the modified flag on the chunk at `pos`.
+    ///
+    /// Called after the streaming system generates a chunk from seed (freshly
+    /// generated chunks must not be re-saved on eviction — only player edits need
+    /// to be persisted).
+    pub fn clear_chunk_modified(&mut self, pos: IVec3) {
+        if let Some(chunk) = self.chunks.get_mut(&pos) {
+            chunk.clear_modified();
+        }
+    }
+
     /// Highest Y containing a solid block at column `(x, z)`, or `None`.
     pub fn get_height(&self, x: i32, z: i32) -> Option<i32> {
         let cx = x.div_euclid(CHUNK_SIZE_I32);

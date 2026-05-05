@@ -90,6 +90,10 @@ pub struct Prefs {
     // Video settings
     window_mode: WindowMode,
     window_resolution: (u32, u32),
+    // World / streaming settings
+    world_load_radius: u32,
+    world_unload_radius: u32,
+    world_chunks_per_frame: u32,
 }
 
 const MAX_GRAPHICS_QUALITY: u32 = 4;
@@ -176,6 +180,24 @@ impl Prefs {
     }
     pub fn ssao_quality(&self) -> u32 {
         self.graphics_ssao_quality
+    }
+    pub fn world_load_radius(&self) -> u32 {
+        self.world_load_radius
+    }
+    pub fn world_unload_radius(&self) -> u32 {
+        self.world_unload_radius
+    }
+    pub fn world_chunks_per_frame(&self) -> u32 {
+        self.world_chunks_per_frame
+    }
+    pub fn set_world_load_radius(&mut self, v: u32) {
+        self.world_load_radius = v;
+    }
+    pub fn set_world_unload_radius(&mut self, v: u32) {
+        self.world_unload_radius = v;
+    }
+    pub fn set_world_chunks_per_frame(&mut self, v: u32) {
+        self.world_chunks_per_frame = v.max(1);
     }
     pub fn window_mode(&self) -> WindowMode {
         self.window_mode
@@ -277,6 +299,10 @@ impl Default for Prefs {
             // Default video settings
             window_mode: WindowMode::Windowed,
             window_resolution: (1920, 1080),
+            // Default streaming settings
+            world_load_radius: 8,
+            world_unload_radius: 12,
+            world_chunks_per_frame: 4,
         }
     }
 }
@@ -406,6 +432,23 @@ impl Prefs {
             prefs.window_resolution = (w, h);
         }
 
+        // Load world / streaming settings from [world] section if present
+        if let Ok(map) = ini::macro_safe_read(&content)
+            && let Some(world_section) = map.get("world")
+        {
+            let get_u32 = |k: &str, def: u32| {
+                world_section
+                    .get(k)
+                    .and_then(|o| o.clone())
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(def)
+            };
+            prefs.world_load_radius = get_u32("load_radius", prefs.world_load_radius);
+            prefs.world_unload_radius = get_u32("unload_radius", prefs.world_unload_radius);
+            prefs.world_chunks_per_frame =
+                get_u32("chunks_per_frame", prefs.world_chunks_per_frame).max(1);
+        }
+
         prefs
     }
 
@@ -481,6 +524,12 @@ impl Prefs {
         out.push_str(&format!("window_mode={}\n", self.window_mode.as_str()));
         out.push_str(&format!("window_width={}\n", self.window_resolution.0));
         out.push_str(&format!("window_height={}\n", self.window_resolution.1));
+
+        // World / streaming section
+        out.push_str("\n[world]\n");
+        out.push_str(&format!("load_radius={}\n", self.world_load_radius));
+        out.push_str(&format!("unload_radius={}\n", self.world_unload_radius));
+        out.push_str(&format!("chunks_per_frame={}\n", self.world_chunks_per_frame));
 
         fs::write(path, out)?;
         Ok(())

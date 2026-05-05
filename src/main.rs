@@ -33,7 +33,8 @@ enum GenerationMsg {
     Completed {
         scene_bytes: Vec<u8>,
         spec: moho_core::scene_builders::WorldSpec,
-        // Pass the generated grid back to the main thread
+        terrain_config: moho_core::scene_builders::TerrainConfig,
+        // Empty grid — streaming populates it on demand.
         grid: moho_core::voxel::VoxelGrid,
     },
     Canceled,
@@ -120,6 +121,7 @@ struct App {
     physics: app::physics_controller::PhysicsController,
     generation: app::generation_job::WorldGenerationJob,
     input: app::input_state::InputState,
+    chunk_streamer: Option<app::chunk_streamer::ChunkStreamer>,
 }
 
 impl App {
@@ -178,6 +180,7 @@ impl App {
             physics: app::physics_controller::PhysicsController::new(),
             generation: app::generation_job::WorldGenerationJob::new(),
             input: app::input_state::InputState::new(initialized.input_system),
+            chunk_streamer: None,
         }
     }
 
@@ -355,24 +358,22 @@ impl App {
                     let _ = sender.send(GenerationMsg::Progress(0.02));
 
                     // Local world and scene used for generation
-                    let mut local_world = World::default();
+                    let local_world = World::default();
                     // Step 1: clear/build
                     if cancel_clone.load(Ordering::Relaxed) {
                         let _ = sender.send(GenerationMsg::Canceled);
                         return;
                     }
-                    // Use the supplied WorldSpec seed (if any) when generating
-                    // terrain so different seeds produce different worlds.
+                    // Build TerrainConfig from the WorldSpec.
                     let mut terrain_config = moho_core::scene_builders::TerrainConfig::default();
                     if let Some(s) = spec_for_thread.seed {
-                        terrain_config.seed = s as u32; // truncate to u32
+                        terrain_config.seed = s as u32;
                     }
-                    // Map UI's size_xz (full width in blocks) into the terrain config.
                     terrain_config.world_size = spec_for_thread.size_xz;
-                    let grid = moho_core::scene_builders::voxel_terrain_scene_with_config(
-                        &mut local_world,
-                        &terrain_config,
-                    );
+
+                    // With streaming, we no longer pre-generate the full world here.
+                    // An empty grid is returned; ChunkStreamer fills it on demand.
+                    let grid = moho_core::voxel::VoxelGrid::new(16);
                     let _ = sender.send(GenerationMsg::Progress(0.6));
 
                     if cancel_clone.load(Ordering::Relaxed) {
@@ -432,6 +433,7 @@ impl App {
                     let _ = sender.send(GenerationMsg::Completed {
                         scene_bytes,
                         spec: spec_for_thread,
+                        terrain_config,
                         grid,
                     });
                 })?;
@@ -577,6 +579,23 @@ impl App {
             self.light_system = Some(moho_core::voxel::LightSystem::with_default_budget(
                 grid,
                 self.event_bus.clone(),
+            ));
+
+            // Initialize ChunkStreamer so the loaded world can stream additional chunks
+            let mut terrain_config = moho_core::scene_builders::TerrainConfig::default();
+            if let Some(s) = spec.seed {
+                terrain_config.seed = s as u32;
+            }
+            terrain_config.world_size = spec.size_xz;
+            let streaming = moho_core::voxel::StreamingConfig {
+                load_radius_chunks: self.prefs.world_load_radius(),
+                unload_radius_chunks: self.prefs.world_unload_radius(),
+                chunks_per_frame: self.prefs.world_chunks_per_frame(),
+            };
+            self.chunk_streamer = Some(app::chunk_streamer::ChunkStreamer::new(
+                terrain_config,
+                streaming,
+                spec.name.clone(),
             ));
 
             // Restore camera handled below using camera_data
@@ -732,6 +751,16 @@ impl App {
                         && let Ok(mut adapter) = ui_adapter.lock()
                     {
                         adapter.toggle_debug_hud();
+                    }
+                    return;
+                }
+                KeyCode::F4 => {
+                    // F4 toggles the chunk-boundary debug minimap
+                    if pressed
+                        && let Some(ui_adapter) = &self.ui_adapter
+                        && let Ok(mut adapter) = ui_adapter.lock()
+                    {
+                        adapter.toggle_overlay("chunk_debug");
                     }
                     return;
                 }

@@ -3,6 +3,7 @@
 //! Handles frame timing, game state updates, and lighting calculations.
 
 use crate::App;
+use legion::IntoQuery;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
@@ -153,6 +154,61 @@ impl FrameProcessor {
         }
     }
 
+    /// Update chunk streaming: evict distant chunks, load nearby ones.
+    pub fn update_chunk_streaming(&self, app: &mut App) {
+        if app.game_state != crate::game_state::GameState::Playing {
+            return;
+        }
+        let player_pos = app.simulation.position();
+        if let (Some(streamer), Some(ls)) =
+            (&mut app.chunk_streamer, &mut app.light_system)
+        {
+            let (loaded, evicted) = streamer.update(ls.grid_mut(), player_pos);
+
+            for pos in &evicted {
+                remove_chunk_entity(&mut app.world, *pos);
+                app.physics.remove_chunk_collider(*pos);
+            }
+
+            // Directly publish ChunkMeshDirty for every loaded chunk. The light
+            // system's emit_dirty_events only covers chunks that went through a
+            // light-processing job, so freshly placed terrain blocks would never
+            // reach the event processor otherwise.
+            //
+            // Also re-mesh each new chunk's 6 face neighbors: when neighbor N
+            // was previously meshed without this chunk present, it generated an
+            // exposed edge face. Now that this chunk exists, N must re-sample
+            // the density field to close the seam.
+            const FACE_DIRS: [glam::IVec3; 6] = [
+                glam::IVec3::X,
+                glam::IVec3::NEG_X,
+                glam::IVec3::Y,
+                glam::IVec3::NEG_Y,
+                glam::IVec3::Z,
+                glam::IVec3::NEG_Z,
+            ];
+            for pos in loaded {
+                app.event_bus
+                    .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                        chunk_pos: pos,
+                        terrain_dirty: true,
+                        structure_dirty: false,
+                    });
+                for dir in FACE_DIRS {
+                    let neighbor = pos + dir;
+                    if ls.grid().has_chunk(neighbor) {
+                        app.event_bus
+                            .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                                chunk_pos: neighbor,
+                                terrain_dirty: true,
+                                structure_dirty: false,
+                            });
+                    }
+                }
+            }
+        }
+    }
+
     /// Update light propagation system for the current frame
     pub fn update_light_system(&self, app: &mut App) {
         if app.game_state != crate::game_state::GameState::Playing {
@@ -289,6 +345,7 @@ impl FrameProcessor {
         // Frame lifecycle
         let frame_number = self.publish_frame_start(app, dt);
         self.update_game_state(app, dt);
+        self.update_chunk_streaming(app);
         self.update_light_system(app); // Process light propagation after game state
         self.update_lighting(app);
         self.update_hud_data(app);
@@ -317,6 +374,20 @@ impl FrameProcessor {
 
         let (yaw, _pitch) = app.simulation.yaw_pitch();
 
+        // Collect unique XZ chunk positions for the debug minimap.
+        let loaded_chunk_xz = app
+            .light_system
+            .as_ref()
+            .map(|ls| {
+                let mut seen = std::collections::HashSet::new();
+                ls.grid()
+                    .chunk_positions()
+                    .filter(|p| seen.insert((p.x, p.z)))
+                    .map(|p| [p.x, p.z])
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let data = moho_ui::overlays::HudData {
             player_position: [pos.x, pos.y, pos.z],
             chunk_position: chunk_pos,
@@ -328,11 +399,25 @@ impl FrameProcessor {
             camera_yaw: yaw,
             player_health: 1.0,
             player_stamina: 1.0,
+            loaded_chunk_xz,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
             adapter.update_hud_data(data);
         }
+    }
+}
+
+/// Remove the ECS entity for a chunk that has been evicted from the grid.
+fn remove_chunk_entity(world: &mut legion::World, pos: glam::IVec3) {
+    use moho_core::voxel::VoxelChunk;
+    let mut query = <(legion::Entity, &VoxelChunk)>::query();
+    let entity = query
+        .iter(world)
+        .find(|(_, c)| c.chunk_pos() == pos)
+        .map(|(e, _)| *e);
+    if let Some(e) = entity {
+        world.remove(e);
     }
 }
 
