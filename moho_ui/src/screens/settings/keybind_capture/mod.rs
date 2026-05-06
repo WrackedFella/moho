@@ -8,10 +8,11 @@
 //! This module will be used by the future dedicated "Keybinds" screen/tab
 //! (accessed via "Edit Keybinds" button).
 
+mod modifier_encoding;
+mod binding_logic;
+
 use super::SettingsField;
-use super::binding_registry::BindingRegistry;
-use super::conflict_modal::{ConflictModalState, PendingBinding};
-use super::key_mapping::{binding_label, key_to_code};
+use super::conflict_modal::ConflictModalState;
 use super::types::BindingId;
 use crate::prefs::Binding;
 
@@ -24,13 +25,13 @@ use crate::prefs::Binding;
 /// - Input state tracking
 pub struct KeybindCaptureHandler {
     /// Index of the binding currently being listened for (None if not listening)
-    listening: Option<usize>,
+    pub(super) listening: Option<usize>,
 
     /// Last known modifier state (for modifier-only bindings)
-    last_mods: u8,
+    pub(super) last_mods: u8,
 
     /// Conflict modal state (for showing conflict dialog)
-    conflict_modal: ConflictModalState,
+    pub(super) conflict_modal: ConflictModalState,
 }
 
 impl KeybindCaptureHandler {
@@ -122,116 +123,6 @@ impl KeybindCaptureHandler {
         false
     }
 
-    /// Testable helper: apply a resolved key code while the menu is listening.
-    ///
-    /// This function contains the core logic for applying a binding or queuing a
-    /// conflict modal when `listening` is active. It's public so unit tests
-    /// can exercise the behavior without depending on winit event construction.
-    ///
-    /// For testing purposes: allows direct simulation of key input during binding listen mode.
-    ///
-    /// # Arguments
-    /// * `code` - The resolved key code
-    /// * `mods_bits` - Modifier bitfield (Ctrl=1, Shift=2, Alt=4)
-    /// * `staged_prefs` - The staged preferences to check for conflicts
-    /// * `on_binding_changed` - Callback to update staged binding
-    pub fn apply_key_code_while_listening<F>(
-        &mut self,
-        code: u32,
-        mods_bits: u8,
-        staged_prefs: &crate::prefs::Prefs,
-        mut on_binding_changed: F,
-    ) -> bool
-    where
-        F: FnMut(SettingsField, Binding),
-    {
-        // If not listening, ignore
-        let listen_id = match self.listening {
-            Some(id) => id,
-            None => return false,
-        };
-
-        // Escape is reserved: cancel listening
-        if code == 0x200 {
-            self.cancel_pending_binding();
-            self.listening = None;
-            return true;
-        }
-
-        // If the pressed key is a pure modifier key (mapped to special codes), and
-        // there are no other modifiers active, treat it as a modifier-only binding.
-        let is_pure_modifier = code == 0x204 || code == 0x205 || code == 0x206;
-        let binding = if is_pure_modifier && mods_bits == 0 {
-            Binding::new(code, 0)
-        } else {
-            Binding::new(code, mods_bits)
-        };
-
-        // Check for duplicate bindings using registry
-        let registry = BindingRegistry::from_prefs(staged_prefs);
-        let exclude_id = BindingId::from_usize(listen_id).expect("Invalid binding ID");
-        let conflicting_id = registry.find_conflict(&binding, exclude_id);
-
-        if let Some(conflict_bid) = conflicting_id {
-            let conflict_id = conflict_bid.to_usize();
-            let pending = PendingBinding {
-                target_id: listen_id,
-                binding,
-                conflicting_id: Some(conflict_id),
-            };
-            let conflict_key_name = Self::get_key_name(conflict_id).to_string();
-            let conflict_binding_desc = binding_label(&binding);
-            self.conflict_modal
-                .show(pending, conflict_key_name, conflict_binding_desc);
-            self.listening = None;
-            true
-        } else {
-            // Apply binding using callback
-            let binding_id = match BindingId::from_listen_id(listen_id) {
-                Some(id) => id,
-                None => {
-                    self.listening = None;
-                    return true;
-                }
-            };
-            let field = binding_id.to_settings_field();
-            on_binding_changed(field, binding);
-            self.listening = None;
-            true
-        }
-    }
-
-    /// Handle key capture when listening for a binding.
-    /// Processes keyboard input from egui context to update bindings.
-    ///
-    /// # Arguments
-    /// * `ctx` - The egui context to read input from
-    /// * `staged_prefs` - The staged preferences to check for conflicts
-    /// * `on_binding_changed` - Callback to update staged binding
-    pub fn handle_key_capture<F>(
-        &mut self,
-        ctx: &egui::Context,
-        staged_prefs: &crate::prefs::Prefs,
-        mut on_binding_changed: F,
-    ) where
-        F: FnMut(SettingsField, Binding),
-    {
-        if self.listening.is_none() {
-            return;
-        }
-
-        ctx.input(|input| {
-            // Try to capture modifier-only bindings first
-            let cur_mods = Self::detect_active_modifiers(input);
-            if self.capture_modifier_if_listening(cur_mods, staged_prefs, &mut on_binding_changed) {
-                return;
-            }
-
-            // Process normal key events
-            self.process_key_events(input, staged_prefs, on_binding_changed);
-        });
-    }
-
     /// Check if there's a pending binding to apply (after modal confirmation)
     // Note: has_pending_binding is provided for API completeness but currently unused.
     // The conflict modal visibility is checked directly in most cases.
@@ -292,228 +183,17 @@ impl KeybindCaptureHandler {
         }
     }
 
-    // ========== Private Helper Methods ==========
-
-    fn get_key_name(id: usize) -> &'static str {
+    pub(super) fn get_key_name(id: usize) -> &'static str {
         BindingId::from_usize(id)
             .map(|bid| bid.display_name())
             .unwrap_or("Unknown")
-    }
-
-    /// Detect active modifier keys and return as bitfield.
-    /// Bit 0: Ctrl, Bit 1: Shift, Bit 2: Alt
-    fn detect_active_modifiers(input: &egui::InputState) -> u8 {
-        let mut mods: u8 = 0;
-        if input.modifiers.ctrl {
-            mods |= 1;
-        }
-        if input.modifiers.shift {
-            mods |= 2;
-        }
-        if input.modifiers.alt {
-            mods |= 4;
-        }
-        mods
-    }
-
-    /// Convert egui modifiers to binding modifier bitfield.
-    fn modifiers_to_bits(modifiers: &egui::Modifiers) -> u8 {
-        let mut mods: u8 = 0;
-        if modifiers.ctrl {
-            mods |= 1;
-        }
-        if modifiers.shift {
-            mods |= 2;
-        }
-        if modifiers.alt {
-            mods |= 4;
-        }
-        mods
-    }
-
-    /// Create a binding from an egui key and modifiers.
-    /// Handles pure modifier keys (Ctrl, Shift, Alt) specially.
-    fn create_binding_from_key(key: &egui::Key, modifiers: &egui::Modifiers) -> Binding {
-        let mut code: u32 = key_to_code(key);
-        let mut mods = Self::modifiers_to_bits(modifiers);
-
-        // Handle pure modifier keys (Ctrl, Shift, Alt)
-        if code == 0 {
-            if mods == 1 {
-                code = 0x205; // Ctrl
-                mods = 0;
-            } else if mods == 2 {
-                code = 0x204; // Shift
-                mods = 0;
-            } else if mods == 4 {
-                code = 0x206; // Alt
-                mods = 0;
-            }
-        }
-
-        Binding::new(code, mods)
-    }
-
-    /// Apply a binding or show conflict modal.
-    /// Returns true if binding was handled (applied or conflict shown).
-    fn apply_binding_or_show_conflict<F>(
-        &mut self,
-        binding: Binding,
-        listen_id: usize,
-        staged_prefs: &crate::prefs::Prefs,
-        mut on_binding_changed: F,
-    ) -> bool
-    where
-        F: FnMut(SettingsField, Binding),
-    {
-        // Check for conflicts using registry
-        let registry = BindingRegistry::from_prefs(staged_prefs);
-        let exclude_id = match BindingId::from_usize(listen_id) {
-            Some(id) => id,
-            None => return false, // Invalid listen_id
-        };
-        let conflicting_id = registry.find_conflict(&binding, exclude_id);
-
-        if let Some(conflict_bid) = conflicting_id {
-            // Conflict detected - show modal
-            let conflict_id = conflict_bid.to_usize();
-            let pending = PendingBinding {
-                target_id: listen_id,
-                binding,
-                conflicting_id: Some(conflict_id),
-            };
-            let conflict_key_name = Self::get_key_name(conflict_id).to_string();
-            let conflict_binding_desc = binding_label(&binding);
-            self.conflict_modal
-                .show(pending, conflict_key_name, conflict_binding_desc);
-            true
-        } else {
-            // No conflict - apply binding directly
-            let binding_id = match BindingId::from_listen_id(listen_id) {
-                Some(id) => id,
-                None => return false, // Invalid listen_id
-            };
-            let field = binding_id.to_settings_field();
-            on_binding_changed(field, binding);
-            true
-        }
-    }
-
-    /// Process a single key event during binding capture.
-    /// Returns true if the key was handled (stops listening).
-    fn process_single_key<F>(
-        &mut self,
-        key: &egui::Key,
-        modifiers: &egui::Modifiers,
-        staged_prefs: &crate::prefs::Prefs,
-        on_binding_changed: F,
-    ) -> bool
-    where
-        F: FnMut(SettingsField, Binding),
-    {
-        // Escape cancels listening mode
-        if *key == egui::Key::Escape {
-            return true; // Stop listening
-        }
-
-        let listen_id = match self.listening {
-            Some(id) => id,
-            None => return false,
-        };
-
-        let binding = Self::create_binding_from_key(key, modifiers);
-        self.apply_binding_or_show_conflict(binding, listen_id, staged_prefs, on_binding_changed)
-    }
-
-    /// Process all key events from egui input.
-    fn process_key_events<F>(
-        &mut self,
-        input: &egui::InputState,
-        staged_prefs: &crate::prefs::Prefs,
-        mut on_binding_changed: F,
-    ) where
-        F: FnMut(SettingsField, Binding),
-    {
-        for ev in &input.events {
-            if let egui::Event::Key {
-                key,
-                pressed: true,
-                modifiers,
-                ..
-            } = ev
-                && self.process_single_key(key, modifiers, staged_prefs, &mut on_binding_changed)
-            {
-                self.listening = None;
-                return;
-            }
-        }
-    }
-
-    /// Returns true if a binding was applied or a conflict modal was queued.
-    pub(crate) fn capture_modifier_if_listening<F>(
-        &mut self,
-        cur_mods: u8,
-        staged_prefs: &crate::prefs::Prefs,
-        mut on_binding_changed: F,
-    ) -> bool
-    where
-        F: FnMut(SettingsField, Binding),
-    {
-        if let Some(listen_id) = self.listening
-            && cur_mods != self.last_mods
-        {
-            if self.last_mods == 0 && (cur_mods == 1 || cur_mods == 2 || cur_mods == 4) {
-                let code = match cur_mods {
-                    1 => 0x205,
-                    2 => 0x204,
-                    4 => 0x206,
-                    _ => 0,
-                };
-                let binding = Binding::new(code, 0);
-
-                // Check for duplicate bindings using registry
-                let registry = BindingRegistry::from_prefs(staged_prefs);
-                let exclude_id = BindingId::from_usize(listen_id).expect("Invalid binding ID");
-                let conflicting_id = registry.find_conflict(&binding, exclude_id);
-
-                if let Some(conflict_bid) = conflicting_id {
-                    let conflict_id = conflict_bid.to_usize();
-                    let pending = PendingBinding {
-                        target_id: listen_id,
-                        binding,
-                        conflicting_id: Some(conflict_id),
-                    };
-                    let conflict_key_name = Self::get_key_name(conflict_id).to_string();
-                    let conflict_binding_desc = binding_label(&binding);
-                    self.conflict_modal
-                        .show(pending, conflict_key_name, conflict_binding_desc);
-                    self.last_mods = cur_mods;
-                    return true;
-                } else {
-                    let binding_id = match BindingId::from_listen_id(listen_id) {
-                        Some(id) => id,
-                        None => {
-                            self.last_mods = cur_mods;
-                            return false;
-                        }
-                    };
-                    let field = binding_id.to_settings_field();
-                    on_binding_changed(field, binding);
-                    self.listening = None;
-                    self.last_mods = cur_mods;
-                    return true;
-                }
-            }
-            self.last_mods = cur_mods;
-        }
-
-        false
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::key_mapping::binding_label;
 
     #[test]
     fn test_start_stop_listening() {
