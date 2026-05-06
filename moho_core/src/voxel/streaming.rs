@@ -152,7 +152,7 @@ mod tests {
         let cfg = small_config(42);
 
         // Full terrain generator
-        let mut full_grid = VoxelGrid::new(16);
+        let full_grid = VoxelGrid::new(16);
         let mut full_world = legion::World::default();
         crate::scene_builders::voxel_terrain_scene_with_config(&mut full_world, &cfg);
         // We need the grid; use scene_builders internal for comparison

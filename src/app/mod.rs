@@ -13,3 +13,5 @@ pub mod initializer;
 pub mod input_state;
 pub mod chunk_streamer;
 pub mod physics_controller;
+pub mod renderer_setup;
+pub mod scene_loader;

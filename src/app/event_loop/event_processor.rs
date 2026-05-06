@@ -255,9 +255,11 @@ impl EventProcessor {
             if let WorldEvent::ChunkMeshDirty { chunk_pos, .. } = event {
                 // Regenerate chunk mesh
                 // We need to scope the borrow of light_system so we can access world later
+                let player_chunk = lod_player_chunk(app.simulation.position());
+                let lod = lod_for_chunk(chunk_pos, player_chunk);
                 let new_chunk = if let Some(light_system) = &app.light_system {
                     let grid = light_system.grid();
-                    Some(VoxelChunk::from_grid_hybrid(grid, chunk_pos))
+                    Some(VoxelChunk::from_grid_lod(grid, chunk_pos, lod))
                 } else {
                     None
                 };
@@ -497,6 +499,30 @@ impl EventProcessor {
             _ => {}
         }
     }
+}
+
+/// Compute chunk coordinates from a world-space position.
+pub(crate) fn lod_player_chunk(pos: glam::Vec3) -> glam::IVec3 {
+    const CHUNK_SIZE: i32 = 16;
+    glam::IVec3::new(
+        (pos.x.floor() as i32).div_euclid(CHUNK_SIZE),
+        (pos.y.floor() as i32).div_euclid(CHUNK_SIZE),
+        (pos.z.floor() as i32).div_euclid(CHUNK_SIZE),
+    )
+}
+
+/// Determine the LOD tier for a chunk given the player's chunk position.
+///
+/// Uses Chebyshev XZ distance (max of |dx|, |dz|) so all chunks in a square ring
+/// at the same XZ distance share a tier, regardless of vertical offset.
+///
+/// - LOD 0 (< 4 chunks): full 16³ hybrid mesh
+/// - LOD 1 (4–16 chunks): coarse 8³ blocky mesh
+pub(crate) fn lod_for_chunk(chunk_pos: glam::IVec3, player_chunk: glam::IVec3) -> u8 {
+    let dx = (chunk_pos.x - player_chunk.x).abs();
+    let dz = (chunk_pos.z - player_chunk.z).abs();
+    let dist = dx.max(dz);
+    if dist < 4 { 0 } else { 1 }
 }
 
 impl Default for EventProcessor {

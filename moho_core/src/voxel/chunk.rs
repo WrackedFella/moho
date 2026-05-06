@@ -30,6 +30,8 @@ pub struct VoxelChunk {
     indices: Vec<u32>,
     material_id: u32,
     mesh_handle: Option<u32>,
+    /// LOD tier: 0 = full 16³ hybrid, 1 = coarse 8³ blocky
+    lod: u8,
 }
 
 impl VoxelChunk {
@@ -55,6 +57,7 @@ impl VoxelChunk {
             indices,
             material_id,
             mesh_handle: None,
+            lod: 0,
         }
     }
 
@@ -72,10 +75,53 @@ impl VoxelChunk {
         )
     }
 
+    /// Generate chunk mesh at the given LOD tier.
+    ///
+    /// - `lod == 0`: full 16³ hybrid mesh (Marching Cubes + blocky), same as `from_grid_hybrid`
+    /// - `lod == 1`: coarse 8³ blocky mesh (1 sample per 2-block cell), lower quality, cheaper
+    pub fn from_grid_lod(grid: &VoxelGrid, chunk_pos: IVec3, lod: u8) -> Self {
+        if lod == 0 {
+            return Self::from_grid_hybrid(grid, chunk_pos);
+        }
+
+        use super::mesh::HybridMeshGenerator;
+
+        let chunk_size = grid.chunk_size();
+        let mesh = HybridMeshGenerator::generate_coarse_mesh(grid, chunk_pos, chunk_size);
+
+        let blocks = grid.chunk_block_data(chunk_pos);
+        let mut material_counts: std::collections::HashMap<u32, usize> =
+            std::collections::HashMap::new();
+        for block in &blocks {
+            *material_counts.entry(block.material_id).or_insert(0) += 1;
+        }
+        let material_id = material_counts
+            .into_iter()
+            .max_by_key(|&(_, count)| count)
+            .map(|(id, _)| id)
+            .unwrap_or(0);
+
+        VoxelChunk {
+            chunk_pos,
+            vertices: mesh.vertices,
+            normals: mesh.normals,
+            ambient_occlusion: mesh.ambient_occlusion,
+            geometry_type: mesh.geometry_type,
+            light_level: mesh.light_level,
+            indices: mesh.indices,
+            material_id,
+            mesh_handle: None,
+            lod,
+        }
+    }
+
     // --- Getters ---
 
     pub fn chunk_pos(&self) -> IVec3 {
         self.chunk_pos
+    }
+    pub fn lod(&self) -> u8 {
+        self.lod
     }
     pub fn vertices(&self) -> &[[f32; 3]] {
         &self.vertices
@@ -143,6 +189,7 @@ impl VoxelChunk {
             indices: mesh.indices,
             material_id,
             mesh_handle: None,
+            lod: 0,
         }
     }
 

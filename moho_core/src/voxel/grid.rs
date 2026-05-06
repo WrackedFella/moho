@@ -343,7 +343,34 @@ impl VoxelGrid {
         Some(BlockData { position: pos, material_id, resource_id: chunk.resource_at(idx) })
     }
 
-    /// Place a block at `pos`, replacing any existing block.
+    /// Place a block at world position `pos`, replacing any existing block.
+    ///
+    /// Creates the containing 16³ chunk on first use (absent key == all-air). The
+    /// block is written directly into the paletted storage; no validation or bounds
+    /// check is performed — all integer coordinates are valid.
+    ///
+    /// # Side effects
+    ///
+    /// - Sets `chunk.mesh_dirty = true` on the chunk that contains `pos`.
+    /// - Sets `chunk.light_dirty = true` on that same chunk.
+    /// - Calls `note_block_change(pos, true)`, which updates `ChunkLight` sky-column
+    ///   tracking and may propagate `sky_dirty = true` downward to chunks below.
+    ///
+    /// The dirty flags are consumed asynchronously:
+    /// - `mesh_dirty` is read by the meshing pipeline during chunk mesh generation.
+    /// - `light_dirty` / `sky_dirty` are read by `LightSystem::emit_dirty_events()`,
+    ///   which publishes `WorldEvent::LightChunkDirty` events for `EventProcessor`.
+    ///
+    /// # What this does NOT do
+    ///
+    /// - No physics, collision, or gameplay validation.
+    /// - No event publishing — callers that need `BlockPlaced` events must use
+    ///   [`BlockModifier::set_block`] (or the forthcoming [`VoxelMutator`]).
+    /// - No neighbor-chunk invalidation for edge blocks — `BlockModifier` handles that.
+    ///
+    /// This is the **lowest-level** mutation primitive. Prefer [`BlockModifier`] for
+    /// gameplay code, and [`VoxelMutator`] (via [`VoxelGrid::mutator`]) for bulk
+    /// terrain generation where direct grid access is intentional.
     pub fn place_block(&mut self, pos: BlockPos, material_id: u32, resource_id: Option<u32>) {
         let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
         let chunk = self.chunks.entry(chunk_pos).or_default();
@@ -477,7 +504,7 @@ impl VoxelGrid {
 
     /// Whether the chunk at `pos` has been modified since the last save.
     pub fn chunk_is_modified(&self, pos: IVec3) -> bool {
-        self.chunks.get(&pos).map_or(false, |c| c.is_modified())
+        self.chunks.get(&pos).is_some_and(|c| c.is_modified())
     }
 
     /// Clear the modified flag on the chunk at `pos`.
@@ -525,6 +552,15 @@ impl VoxelGrid {
             self.get_height(pos.x + 1, pos.z),
             self.get_height(pos.x - 1, pos.z),
         ]
+    }
+
+    /// Obtain a [`VoxelMutator`] for semantically-named block operations.
+    ///
+    /// Prefer this over calling `place_block` / `clear_block` directly when the
+    /// intent should be expressed in domain terms (`place`, `remove`, `fill_region`)
+    /// rather than raw grid plumbing.
+    pub fn mutator(&mut self) -> super::modification::VoxelMutator<'_> {
+        super::modification::VoxelMutator::new(self)
     }
 
     // -------------------------------------------------------------------------

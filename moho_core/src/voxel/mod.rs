@@ -69,6 +69,6 @@ pub use light_jobs::{
 pub use light_propagation::{LightChannel, LightPropagator};
 pub use light_system::{LightSystem, LightSystemStats};
 pub use mesh::{BlockyMeshGenerator, ChunkContent, HybridMeshGenerator, MarchingCubes, VoxelMesh};
-pub use modification::{BlockModifier, ModificationResult};
+pub use modification::{BlockModifier, ModificationResult, VoxelMutator};
 pub use streaming::StreamingConfig;
 pub use state::{ChunkState, DirtyFlags, GenerationState, JobId};

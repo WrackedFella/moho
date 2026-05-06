@@ -19,6 +19,12 @@ impl ChunkDebugOverlay {
     }
 }
 
+impl Default for ChunkDebugOverlay {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Overlay for ChunkDebugOverlay {
     fn name(&self) -> &str {
         "chunk_debug"

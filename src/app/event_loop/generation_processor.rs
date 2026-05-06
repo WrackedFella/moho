@@ -31,7 +31,7 @@ impl GenerationProcessor {
                         terrain_config,
                         grid,
                     } => {
-                        self.handle_completed(app, scene_bytes, spec, terrain_config, grid);
+                        self.handle_completed(app, scene_bytes, spec, terrain_config, *grid);
                         still_running = false;
                     }
                     GenerationMsg::Canceled => {

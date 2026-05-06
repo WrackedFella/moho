@@ -4,7 +4,7 @@
 //! providing a single source of truth for settings that determine how the application
 //! is set up and configured at runtime.
 
-use moho_ui::prefs::Prefs;
+use moho_core::prefs::Prefs;
 
 /// Central configuration for application initialization.
 ///

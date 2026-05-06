@@ -8,6 +8,7 @@
 //! - **[`game_clock`]** — Day/night cycle with celestial body tracking
 //! - **[`actors`]** — Primitive scene objects (sphere, cube, custom mesh)
 //! - **[`materials`]** — Material types for voxel blocks and actors
+//! - **[`prefs`]** — User preferences: key bindings, audio/graphics/video settings
 //! - **[`raycast`]** — Voxel grid raycasting utility
 //! - **[`input`]** — Low-level input collection
 
@@ -17,6 +18,7 @@ pub mod events;
 pub mod game_clock;
 pub mod input;
 pub mod materials;
+pub mod prefs;
 pub mod raycast;
 pub mod scene_builders;
 pub mod voxel;

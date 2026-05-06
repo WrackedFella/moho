@@ -189,7 +189,48 @@ impl ShadowSystem {
         _camera_bind_group_layout: &wgpu::BindGroupLayout,
         shadow_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        // Legacy single shadow map
+        let (shadow_map_view, csm_cascade_views, csm_array_view) =
+            Self::create_shadow_textures(device);
+        let (shadow_matrix_buffer, csm_matrix_buffer) = Self::create_uniform_buffers(device);
+        let shadow_sampler = Self::create_depth_sampler(device);
+        let (shadow_pass_bgl, csm_pass_bgl) = Self::create_bind_group_layouts(device);
+        let (shadow_pass_bind_group, csm_pass_bind_group, csm_shadow_bind_group) =
+            Self::create_bind_groups(
+                device,
+                &shadow_pass_bgl,
+                &csm_pass_bgl,
+                shadow_bind_group_layout,
+                &shadow_matrix_buffer,
+                &csm_matrix_buffer,
+                &csm_array_view,
+                &shadow_sampler,
+            );
+        let shadow_pipeline =
+            Self::create_render_pipeline(device, &csm_pass_bgl)?;
+
+        Ok(Self {
+            shadow_pipeline,
+            shadow_matrix_buffer,
+            shadow_map_view,
+            shadow_pass_bind_group,
+            csm_matrix_buffer,
+            csm_cascade_views,
+            csm_pass_bind_group,
+            csm_shadow_bind_group,
+            current_lighting: crate::gpu_types::LightingGpu::default(),
+            active_lights: Vec::new(),
+            pcss_settings: PcssSettings::default(),
+            csm_logged_once: std::cell::Cell::new(false),
+        })
+    }
+
+    /// Stage 1: Allocate the legacy single-cascade texture and the multi-light shadow array.
+    /// Returns the legacy view, per-light views (for rendering into each layer), and the
+    /// array view (for sampling all layers in the fragment shader).
+    fn create_shadow_textures(
+        device: &wgpu::Device,
+    ) -> (wgpu::TextureView, Vec<wgpu::TextureView>, wgpu::TextureView) {
+        // Legacy single shadow map — kept for API compatibility
         let shadow_map_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("shadow-map-texture"),
             size: wgpu::Extent3d {
@@ -204,7 +245,6 @@ impl ShadowSystem {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-
         let shadow_map_view =
             shadow_map_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -233,7 +273,7 @@ impl ShadowSystem {
             );
         }
 
-        // Create individual views for each light layer
+        // One D2 view per layer so each light can be rendered into its own slice
         let csm_cascade_views: Vec<wgpu::TextureView> = (0..MAX_SHADOW_LIGHTS as u32)
             .map(|i| {
                 csm_texture.create_view(&wgpu::TextureViewDescriptor {
@@ -260,6 +300,7 @@ impl ShadowSystem {
             );
         }
 
+        // Full-array view consumed by the fragment shader sampler
         let csm_array_view = csm_texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some("multi-light-shadow-array-view"),
             format: Some(wgpu::TextureFormat::Depth32Float),
@@ -279,19 +320,22 @@ impl ShadowSystem {
             );
         }
 
-        use crate::gpu_types::ShadowMatrixGpu;
-        let initial_shadow_matrix = ShadowMatrixGpu::default();
+        (shadow_map_view, csm_cascade_views, csm_array_view)
+    }
+
+    /// Stage 2: Allocate and zero-initialize the shadow matrix uniform buffers.
+    fn create_uniform_buffers(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer) {
+        use crate::gpu_types::{MultiLightShadowGpu, ShadowMatrixGpu};
+
         let shadow_matrix_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("shadow-matrix-buffer"),
-            contents: bytemuck::bytes_of(&initial_shadow_matrix),
+            contents: bytemuck::bytes_of(&ShadowMatrixGpu::default()),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        use crate::gpu_types::MultiLightShadowGpu;
-        let initial_csm_matrix = MultiLightShadowGpu::default();
         let csm_matrix_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("multi-light-shadow-buffer"),
-            contents: bytemuck::bytes_of(&initial_csm_matrix),
+            contents: bytemuck::bytes_of(&MultiLightShadowGpu::default()),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -302,7 +346,12 @@ impl ShadowSystem {
             );
         }
 
-        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        (shadow_matrix_buffer, csm_matrix_buffer)
+    }
+
+    /// Stage 3: Create the comparison sampler used for PCF shadow lookups.
+    fn create_depth_sampler(device: &wgpu::Device) -> wgpu::Sampler {
+        device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -312,12 +361,17 @@ impl ShadowSystem {
             mipmap_filter: wgpu::FilterMode::Nearest,
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
-        });
+        })
+    }
 
-        // Bind group layouts
-        let shadow_pass_bind_group_layout =
+    /// Stage 4: Define the bind group layouts for the shadow render pass and CSM pass.
+    /// Both layouts expose a single vertex-visible uniform buffer at binding 0.
+    fn create_bind_group_layouts(
+        device: &wgpu::Device,
+    ) -> (wgpu::BindGroupLayout, wgpu::BindGroupLayout) {
+        let single_uniform_entry = |label| {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("shadow-pass-bgl"),
+                label: Some(label),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX,
@@ -328,26 +382,30 @@ impl ShadowSystem {
                     },
                     count: None,
                 }],
-            });
+            })
+        };
 
-        let csm_pass_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("csm-pass-bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+        let shadow_pass_bgl = single_uniform_entry("shadow-pass-bgl");
+        let csm_pass_bgl = single_uniform_entry("csm-pass-bgl");
+        (shadow_pass_bgl, csm_pass_bgl)
+    }
 
+    /// Stage 5: Instantiate all three bind groups using the layouts and resources from
+    /// the previous stages.
+    #[allow(clippy::too_many_arguments)]
+    fn create_bind_groups(
+        device: &wgpu::Device,
+        shadow_pass_bgl: &wgpu::BindGroupLayout,
+        csm_pass_bgl: &wgpu::BindGroupLayout,
+        shadow_bind_group_layout: &wgpu::BindGroupLayout,
+        shadow_matrix_buffer: &wgpu::Buffer,
+        csm_matrix_buffer: &wgpu::Buffer,
+        csm_array_view: &wgpu::TextureView,
+        shadow_sampler: &wgpu::Sampler,
+    ) -> (wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup) {
         let shadow_pass_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("shadow-pass-bind-group"),
-            layout: &shadow_pass_bind_group_layout,
+            layout: shadow_pass_bgl,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: shadow_matrix_buffer.as_entire_binding(),
@@ -356,13 +414,14 @@ impl ShadowSystem {
 
         let csm_pass_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("csm-pass-bind-group"),
-            layout: &csm_pass_bind_group_layout,
+            layout: csm_pass_bgl,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: csm_matrix_buffer.as_entire_binding(),
             }],
         });
 
+        // Sampling bind group used by the main fragment shader to read shadow maps
         let csm_shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("csm-shadow-bind-group"),
             layout: shadow_bind_group_layout,
@@ -373,11 +432,11 @@ impl ShadowSystem {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&csm_array_view),
+                    resource: wgpu::BindingResource::TextureView(csm_array_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                    resource: wgpu::BindingResource::Sampler(shadow_sampler),
                 },
             ],
         });
@@ -386,6 +445,14 @@ impl ShadowSystem {
             log::info!("Created CSM bind groups: pass (rendering) + shadow (sampling cascade 0)");
         }
 
+        (shadow_pass_bind_group, csm_pass_bind_group, csm_shadow_bind_group)
+    }
+
+    /// Stage 6: Compile the shadow vertex shader and assemble the depth-only render pipeline.
+    fn create_render_pipeline(
+        device: &wgpu::Device,
+        csm_pass_bgl: &wgpu::BindGroupLayout,
+    ) -> Result<wgpu::RenderPipeline, Box<dyn std::error::Error>> {
         let shadow_shader_source = std::fs::read_to_string("shaders/shadow.wgsl")
             .map_err(|e| format!("Failed to read shadow shader: {}", e))?;
         let shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -396,14 +463,14 @@ impl ShadowSystem {
         let shadow_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("shadow-pipeline-layout"),
-                bind_group_layouts: &[&csm_pass_bind_group_layout],
+                bind_group_layouts: &[csm_pass_bgl],
                 push_constant_ranges: &[wgpu::PushConstantRange {
                     stages: wgpu::ShaderStages::VERTEX,
                     range: 0..4,
                 }],
             });
 
-        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("shadow-pipeline"),
             layout: Some(&shadow_pipeline_layout),
             vertex: wgpu::VertexState {
@@ -460,20 +527,7 @@ impl ShadowSystem {
             cache: None,
         });
 
-        Ok(Self {
-            shadow_pipeline,
-            shadow_matrix_buffer,
-            shadow_map_view,
-            shadow_pass_bind_group,
-            csm_matrix_buffer,
-            csm_cascade_views,
-            csm_pass_bind_group,
-            csm_shadow_bind_group,
-            current_lighting: crate::gpu_types::LightingGpu::default(),
-            active_lights: Vec::new(),
-            pcss_settings: PcssSettings::default(),
-            csm_logged_once: std::cell::Cell::new(false),
-        })
+        Ok(pipeline)
     }
 
     /// Calculate shadow matrix for legacy single-cascade shadow mapping

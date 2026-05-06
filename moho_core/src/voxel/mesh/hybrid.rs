@@ -261,6 +261,190 @@ impl HybridMeshGenerator {
         }
     }
 
+    /// Generate a coarse (LOD 1) blocky mesh by sampling every 2 blocks.
+    ///
+    /// Each 2×2×2 block region is treated as a single coarse voxel. If any block in
+    /// the region is solid the cell is solid, giving an 8³ effective resolution for a
+    /// 16³ chunk. Face culling works against adjacent coarse cells (including cells in
+    /// neighbouring chunks). Skirt quads are appended along the four vertical chunk
+    /// edges to prevent seam cracks at LOD boundaries.
+    pub fn generate_coarse_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
+        const STRIDE: i32 = 2;
+        let coarse_size = chunk_size / STRIDE; // 8 for chunk_size == 16
+        let base = chunk_pos * chunk_size;
+        let mut mesh = VoxelMesh::empty();
+
+        // Returns true if any block in the STRIDE³ region rooted at the given coarse
+        // cell coordinates is solid. Intentionally samples into adjacent chunks via
+        // `grid.is_solid_at` so inter-chunk face culling works correctly.
+        let cell_solid = |cx: i32, cy: i32, cz: i32| -> bool {
+            let wx = base.x + cx * STRIDE;
+            let wy = base.y + cy * STRIDE;
+            let wz = base.z + cz * STRIDE;
+            for dx in 0..STRIDE {
+                for dy in 0..STRIDE {
+                    for dz in 0..STRIDE {
+                        if grid.is_solid_at(IVec3::new(wx + dx, wy + dy, wz + dz)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        };
+
+        for cx in 0..coarse_size {
+            for cy in 0..coarse_size {
+                for cz in 0..coarse_size {
+                    if !cell_solid(cx, cy, cz) {
+                        continue;
+                    }
+
+                    let wx = base.x + cx * STRIDE;
+                    let wy = base.y + cy * STRIDE;
+                    let wz = base.z + cz * STRIDE;
+                    let s = STRIDE;
+
+                    // +X
+                    if !cell_solid(cx + 1, cy, cz) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx + s, wy,     wz    ],
+                            [wx + s, wy + s, wz    ],
+                            [wx + s, wy + s, wz + s],
+                            [wx + s, wy,     wz + s],
+                            [1.0, 0.0, 0.0],
+                        );
+                        if cx == coarse_size - 1 {
+                            Self::emit_coarse_quad(
+                                &mut mesh,
+                                [wx + s, wy - s, wz    ],
+                                [wx + s, wy,     wz    ],
+                                [wx + s, wy,     wz + s],
+                                [wx + s, wy - s, wz + s],
+                                [1.0, 0.0, 0.0],
+                            );
+                        }
+                    }
+                    // -X
+                    if !cell_solid(cx - 1, cy, cz) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx, wy,     wz + s],
+                            [wx, wy + s, wz + s],
+                            [wx, wy + s, wz    ],
+                            [wx, wy,     wz    ],
+                            [-1.0, 0.0, 0.0],
+                        );
+                        if cx == 0 {
+                            Self::emit_coarse_quad(
+                                &mut mesh,
+                                [wx, wy - s, wz + s],
+                                [wx, wy,     wz + s],
+                                [wx, wy,     wz    ],
+                                [wx, wy - s, wz    ],
+                                [-1.0, 0.0, 0.0],
+                            );
+                        }
+                    }
+                    // +Y
+                    if !cell_solid(cx, cy + 1, cz) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx,     wy + s, wz    ],
+                            [wx,     wy + s, wz + s],
+                            [wx + s, wy + s, wz + s],
+                            [wx + s, wy + s, wz    ],
+                            [0.0, 1.0, 0.0],
+                        );
+                    }
+                    // -Y
+                    if !cell_solid(cx, cy - 1, cz) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx,     wy, wz + s],
+                            [wx + s, wy, wz + s],
+                            [wx + s, wy, wz    ],
+                            [wx,     wy, wz    ],
+                            [0.0, -1.0, 0.0],
+                        );
+                    }
+                    // +Z
+                    if !cell_solid(cx, cy, cz + 1) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx,     wy,     wz + s],
+                            [wx + s, wy,     wz + s],
+                            [wx + s, wy + s, wz + s],
+                            [wx,     wy + s, wz + s],
+                            [0.0, 0.0, 1.0],
+                        );
+                        if cz == coarse_size - 1 {
+                            Self::emit_coarse_quad(
+                                &mut mesh,
+                                [wx,     wy - s, wz + s],
+                                [wx + s, wy - s, wz + s],
+                                [wx + s, wy,     wz + s],
+                                [wx,     wy,     wz + s],
+                                [0.0, 0.0, 1.0],
+                            );
+                        }
+                    }
+                    // -Z
+                    if !cell_solid(cx, cy, cz - 1) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx + s, wy,     wz],
+                            [wx,     wy,     wz],
+                            [wx,     wy + s, wz],
+                            [wx + s, wy + s, wz],
+                            [0.0, 0.0, -1.0],
+                        );
+                        if cz == 0 {
+                            Self::emit_coarse_quad(
+                                &mut mesh,
+                                [wx + s, wy - s, wz],
+                                [wx,     wy - s, wz],
+                                [wx,     wy,     wz],
+                                [wx + s, wy,     wz],
+                                [0.0, 0.0, -1.0],
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        mesh
+    }
+
+    /// Emit a single quad (2 triangles) into a VoxelMesh with no AO and full brightness.
+    fn emit_coarse_quad(
+        mesh: &mut VoxelMesh,
+        v0: [i32; 3],
+        v1: [i32; 3],
+        v2: [i32; 3],
+        v3: [i32; 3],
+        normal: [f32; 3],
+    ) {
+        let base = mesh.vertices.len() as u32;
+        for v in [v0, v1, v2, v3] {
+            mesh.vertices.push([v[0] as f32, v[1] as f32, v[2] as f32]);
+            mesh.normals.push(normal);
+            mesh.ambient_occlusion.push(1.0);
+            mesh.geometry_type.push(1); // blocky
+            mesh.light_level.push(1.0);
+            mesh.block_light_rgb.push([0.0, 0.0, 0.0]);
+            mesh.sky_exposed.push(1.0);
+        }
+        mesh.indices.push(base);
+        mesh.indices.push(base + 1);
+        mesh.indices.push(base + 2);
+        mesh.indices.push(base);
+        mesh.indices.push(base + 2);
+        mesh.indices.push(base + 3);
+    }
+
     /// Append mesh with additional index offset (for mixed meshes)
     fn append_mesh_with_offset(
         target: &mut VoxelMesh,

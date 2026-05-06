@@ -84,7 +84,7 @@ impl WindowManager {
 
     /// Apply saved video settings (window mode and resolution) from prefs to the window.
     fn apply_video_settings(&self, app: &mut App) {
-        use moho_ui::prefs::WindowMode;
+        use moho_core::prefs::WindowMode;
         use winit::dpi::PhysicalSize;
         use winit::window::Fullscreen;
 

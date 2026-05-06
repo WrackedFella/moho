@@ -148,30 +148,71 @@ impl SsaoSystem {
         height: u32,
         settings: SsaoSettings,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        // Create AO textures
+        let (ao_texture, ao_texture_view, blurred_ao_texture, blurred_ao_texture_view) =
+            Self::create_textures(device, width, height);
+        let (settings_buffer, camera_buffer) =
+            Self::create_uniform_buffers(device, &settings);
+        let ao_sampler = Self::create_sampler(device);
+        let (gtao_bind_group_layout, gtao_pipeline) = Self::create_gtao_pipeline(device)?;
+        let (blur_bind_group_layout, blur_pipeline) = Self::create_blur_pipeline(device)?;
+
+        Ok(Self {
+            ao_texture,
+            ao_texture_view,
+            blurred_ao_texture,
+            blurred_ao_texture_view,
+            settings_buffer,
+            camera_buffer,
+            settings,
+            gtao_pipeline,
+            gtao_bind_group_layout,
+            blur_pipeline,
+            blur_bind_group_layout,
+            ao_sampler,
+            width,
+            height,
+        })
+    }
+
+    /// Stage 1: Allocate the raw AO texture and the blurred AO texture.
+    fn create_textures(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+    ) -> (wgpu::Texture, wgpu::TextureView, wgpu::Texture, wgpu::TextureView) {
         let (ao_texture, ao_texture_view) =
             Self::create_ao_texture(device, width, height, "ao-texture");
         let (blurred_ao_texture, blurred_ao_texture_view) =
             Self::create_ao_texture(device, width, height, "blurred-ao-texture");
+        (ao_texture, ao_texture_view, blurred_ao_texture, blurred_ao_texture_view)
+    }
 
-        // Create settings buffer
+    /// Stage 2: Allocate the settings uniform buffer (pre-filled) and the per-frame
+    /// camera buffer (inv_proj, written each frame by `update_camera`).
+    fn create_uniform_buffers(
+        device: &wgpu::Device,
+        settings: &SsaoSettings,
+    ) -> (wgpu::Buffer, wgpu::Buffer) {
         let settings_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("ssao-settings-buffer"),
-            contents: bytemuck::cast_slice(&[settings]),
+            contents: bytemuck::cast_slice(&[*settings]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        // Create camera uniform buffer (just inv_proj matrix = 64 bytes)
-        // Will be updated each frame with camera data
+        // 64 bytes = one mat4x4; written each frame with the inverse projection matrix
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ssao-camera-buffer"),
-            size: 64, // 1 mat4x4
+            size: 64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        // Create sampler for AO texture
-        let ao_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        (settings_buffer, camera_buffer)
+    }
+
+    /// Stage 3: Create the linear sampler used for AO texture reads in the blur pass.
+    fn create_sampler(device: &wgpu::Device) -> wgpu::Sampler {
+        device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("ao slovenije"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -180,9 +221,13 @@ impl SsaoSystem {
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
-        });
+        })
+    }
 
-        // Load and create GTAO compute shader
+    /// Stage 4: Load the GTAO compute shader and build its bind group layout + pipeline.
+    fn create_gtao_pipeline(
+        device: &wgpu::Device,
+    ) -> Result<(wgpu::BindGroupLayout, wgpu::ComputePipeline), Box<dyn std::error::Error>> {
         let gtao_shader_source = std::fs::read_to_string("shaders/gtao.wgsl")
             .map_err(|e| format!("Failed to read GTAO shader: {}", e))?;
         let gtao_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -190,7 +235,6 @@ impl SsaoSystem {
             source: wgpu::ShaderSource::Wgsl(gtao_shader_source.into()),
         });
 
-        // Create GTAO bind group layout
         let gtao_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("gtao-bind-group-layout"),
@@ -249,12 +293,12 @@ impl SsaoSystem {
                 ],
             });
 
-        // Create GTAO pipeline
-        let gtao_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("gtao-pipeline-layout"),
-            bind_group_layouts: &[&gtao_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let gtao_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("gtao-pipeline-layout"),
+                bind_group_layouts: &[&gtao_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let gtao_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("gtao-pipeline"),
@@ -265,7 +309,13 @@ impl SsaoSystem {
             cache: None,
         });
 
-        // Load and create blur compute shader
+        Ok((gtao_bind_group_layout, gtao_pipeline))
+    }
+
+    /// Stage 5: Load the bilateral blur compute shader and build its bind group layout + pipeline.
+    fn create_blur_pipeline(
+        device: &wgpu::Device,
+    ) -> Result<(wgpu::BindGroupLayout, wgpu::ComputePipeline), Box<dyn std::error::Error>> {
         let blur_shader_source = std::fs::read_to_string("shaders/ssao_blur.wgsl")
             .map_err(|e| format!("Failed to read blur shader: {}", e))?;
         let blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -273,7 +323,6 @@ impl SsaoSystem {
             source: wgpu::ShaderSource::Wgsl(blur_shader_source.into()),
         });
 
-        // Create blur bind group layout
         let blur_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("blur-bind-group-layout"),
@@ -328,12 +377,12 @@ impl SsaoSystem {
                 ],
             });
 
-        // Create blur pipeline
-        let blur_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("blur-pipeline-layout"),
-            bind_group_layouts: &[&blur_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let blur_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("blur-pipeline-layout"),
+                bind_group_layouts: &[&blur_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let blur_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("ssao-blur-pipeline"),
@@ -344,22 +393,7 @@ impl SsaoSystem {
             cache: None,
         });
 
-        Ok(Self {
-            ao_texture,
-            ao_texture_view,
-            blurred_ao_texture,
-            blurred_ao_texture_view,
-            settings_buffer,
-            camera_buffer,
-            settings,
-            gtao_pipeline,
-            gtao_bind_group_layout,
-            blur_pipeline,
-            blur_bind_group_layout,
-            ao_sampler,
-            width,
-            height,
-        })
+        Ok((blur_bind_group_layout, blur_pipeline))
     }
 
     /// Create an AO texture (Rgba8Unorm format - AO in red channel)

@@ -3,7 +3,9 @@
 //! Handles frame timing, game state updates, and lighting calculations.
 
 use crate::App;
+use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk};
 use legion::IntoQuery;
+use moho_core::voxel::VoxelChunk;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
@@ -206,6 +208,40 @@ impl FrameProcessor {
                     }
                 }
             }
+        }
+
+        // Detect LOD tier changes: any loaded chunk whose stored LOD no longer matches
+        // the expected tier for the current player position gets re-meshed.
+        self.update_lod_transitions(app, player_pos);
+    }
+
+    /// Emit `ChunkMeshDirty` for any ECS chunk whose LOD tier has become stale.
+    ///
+    /// Called every frame. Because `process_world_events` stamps the new LOD onto the
+    /// freshly generated `VoxelChunk`, the comparison naturally goes idle once all
+    /// transitions have been processed — no per-frame re-emit on stable chunks.
+    fn update_lod_transitions(&self, app: &mut App, player_pos: glam::Vec3) {
+        let player_chunk = lod_player_chunk(player_pos);
+
+        // Collect positions needing a LOD change before mutating the bus.
+        let mut dirty = Vec::new();
+        {
+            let mut query = <&VoxelChunk>::query();
+            for chunk in query.iter(&app.world) {
+                let expected = lod_for_chunk(chunk.chunk_pos(), player_chunk);
+                if chunk.lod() != expected {
+                    dirty.push(chunk.chunk_pos());
+                }
+            }
+        }
+
+        for pos in dirty {
+            app.event_bus
+                .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                    chunk_pos: pos,
+                    terrain_dirty: true,
+                    structure_dirty: false,
+                });
         }
     }
 

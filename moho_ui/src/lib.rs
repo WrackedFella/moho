@@ -42,8 +42,6 @@ pub mod screens;
 
 pub mod overlays;
 
-pub mod prefs;
-
 pub mod modal;
 
 pub mod modals;
@@ -71,3 +69,5 @@ pub use overlays::{
 pub use modal::{Modal, ModalManager, ModalResult};
 
 pub use modals::KeybindConflictModal;
+
+pub use moho_core::prefs;

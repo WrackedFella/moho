@@ -14,3 +14,5 @@ log = { workspace = true }
 noise = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 bincode = { workspace = true }
+ini = "1.3.0"
+phf = { version = "0.13.1", features = ["macros"] }
