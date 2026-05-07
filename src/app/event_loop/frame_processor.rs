@@ -17,7 +17,6 @@ static FRAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub struct FrameProcessor;
 
 impl FrameProcessor {
-    /// Create a new frame processor
     pub fn new() -> Self {
         Self
     }
@@ -210,26 +209,28 @@ impl FrameProcessor {
             }
         }
 
-        // Detect LOD tier changes: any loaded chunk whose stored LOD no longer matches
-        // the expected tier for the current player position gets re-meshed.
-        self.update_lod_transitions(app, player_pos);
+        // Re-scan for LOD tier changes only when the player crosses a chunk boundary.
+        let player_chunk = lod_player_chunk(player_pos);
+        if player_chunk.x != app.lod_player_chunk_cache.x
+            || player_chunk.z != app.lod_player_chunk_cache.z
+        {
+            app.lod_player_chunk_cache = player_chunk;
+            self.update_lod_transitions(app, player_chunk);
+        }
     }
 
     /// Emit `ChunkMeshDirty` for any ECS chunk whose LOD tier has become stale.
     ///
-    /// Called every frame. Because `process_world_events` stamps the new LOD onto the
-    /// freshly generated `VoxelChunk`, the comparison naturally goes idle once all
-    /// transitions have been processed — no per-frame re-emit on stable chunks.
-    fn update_lod_transitions(&self, app: &mut App, player_pos: glam::Vec3) {
-        let player_chunk = lod_player_chunk(player_pos);
+    /// Runs only when the player crosses an XZ chunk boundary. `process_world_events`
+    /// stamps the new LOD onto the freshly generated chunk, so the comparison goes
+    /// idle after all transitions in the new position are processed.
+    fn update_lod_transitions(&self, app: &mut App, player_chunk: glam::IVec3) {
 
-        // Collect positions needing a LOD change before mutating the bus.
-        let mut dirty = Vec::new();
+        let mut dirty: Vec<glam::IVec3> = Vec::new();
         {
             let mut query = <&VoxelChunk>::query();
             for chunk in query.iter(&app.world) {
-                let expected = lod_for_chunk(chunk.chunk_pos(), player_chunk);
-                if chunk.lod() != expected {
+                if chunk.lod() != lod_for_chunk(chunk.chunk_pos(), player_chunk) {
                     dirty.push(chunk.chunk_pos());
                 }
             }
@@ -398,12 +399,8 @@ impl FrameProcessor {
         };
 
         let pos = app.simulation.position();
-        let chunk_size = 16i32;
-        let chunk_pos = [
-            (pos.x.floor() as i32).div_euclid(chunk_size),
-            (pos.y.floor() as i32).div_euclid(chunk_size),
-            (pos.z.floor() as i32).div_euclid(chunk_size),
-        ];
+        let cp = lod_player_chunk(pos);
+        let chunk_pos = [cp.x, cp.y, cp.z];
 
         let mode = app.simulation.camera_mode();
         let is_fps = mode == moho_core::controller::CameraMode::FirstPerson;
@@ -470,13 +467,12 @@ mod tests {
     #[test]
     fn test_frame_processor_creation() {
         let processor = FrameProcessor::new();
-        assert_eq!(std::mem::size_of_val(&processor), 0); // Zero-sized type
+        assert_eq!(std::mem::size_of_val(&processor), 0);
     }
 
     #[test]
     fn test_frame_processor_default() {
         let _processor = FrameProcessor;
-        // Just verify it compiles and constructs
     }
 
     #[test]

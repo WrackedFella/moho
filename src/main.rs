@@ -123,6 +123,8 @@ struct App {
     generation: app::generation_job::WorldGenerationJob,
     input: app::input_state::InputState,
     chunk_streamer: Option<app::chunk_streamer::ChunkStreamer>,
+    /// Cached player chunk position used to gate per-frame LOD transition scans.
+    lod_player_chunk_cache: glam::IVec3,
 }
 
 impl App {
@@ -182,6 +184,7 @@ impl App {
             generation: app::generation_job::WorldGenerationJob::new(),
             input: app::input_state::InputState::new(initialized.input_system),
             chunk_streamer: None,
+            lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
         }
     }
 

@@ -303,25 +303,24 @@ impl HybridMeshGenerator {
                     let wx = base.x + cx * STRIDE;
                     let wy = base.y + cy * STRIDE;
                     let wz = base.z + cz * STRIDE;
-                    let s = STRIDE;
 
                     // +X
                     if !cell_solid(cx + 1, cy, cz) {
                         Self::emit_coarse_quad(
                             &mut mesh,
-                            [wx + s, wy,     wz    ],
-                            [wx + s, wy + s, wz    ],
-                            [wx + s, wy + s, wz + s],
-                            [wx + s, wy,     wz + s],
+                            [wx + STRIDE, wy,          wz          ],
+                            [wx + STRIDE, wy + STRIDE, wz          ],
+                            [wx + STRIDE, wy + STRIDE, wz + STRIDE ],
+                            [wx + STRIDE, wy,          wz + STRIDE ],
                             [1.0, 0.0, 0.0],
                         );
                         if cx == coarse_size - 1 {
                             Self::emit_coarse_quad(
                                 &mut mesh,
-                                [wx + s, wy - s, wz    ],
-                                [wx + s, wy,     wz    ],
-                                [wx + s, wy,     wz + s],
-                                [wx + s, wy - s, wz + s],
+                                [wx + STRIDE, wy - STRIDE, wz          ],
+                                [wx + STRIDE, wy,          wz          ],
+                                [wx + STRIDE, wy,          wz + STRIDE ],
+                                [wx + STRIDE, wy - STRIDE, wz + STRIDE ],
                                 [1.0, 0.0, 0.0],
                             );
                         }
@@ -330,19 +329,19 @@ impl HybridMeshGenerator {
                     if !cell_solid(cx - 1, cy, cz) {
                         Self::emit_coarse_quad(
                             &mut mesh,
-                            [wx, wy,     wz + s],
-                            [wx, wy + s, wz + s],
-                            [wx, wy + s, wz    ],
-                            [wx, wy,     wz    ],
+                            [wx, wy,          wz + STRIDE ],
+                            [wx, wy + STRIDE, wz + STRIDE ],
+                            [wx, wy + STRIDE, wz          ],
+                            [wx, wy,          wz          ],
                             [-1.0, 0.0, 0.0],
                         );
                         if cx == 0 {
                             Self::emit_coarse_quad(
                                 &mut mesh,
-                                [wx, wy - s, wz + s],
-                                [wx, wy,     wz + s],
-                                [wx, wy,     wz    ],
-                                [wx, wy - s, wz    ],
+                                [wx, wy - STRIDE, wz + STRIDE ],
+                                [wx, wy,          wz + STRIDE ],
+                                [wx, wy,          wz          ],
+                                [wx, wy - STRIDE, wz          ],
                                 [-1.0, 0.0, 0.0],
                             );
                         }
@@ -351,10 +350,10 @@ impl HybridMeshGenerator {
                     if !cell_solid(cx, cy + 1, cz) {
                         Self::emit_coarse_quad(
                             &mut mesh,
-                            [wx,     wy + s, wz    ],
-                            [wx,     wy + s, wz + s],
-                            [wx + s, wy + s, wz + s],
-                            [wx + s, wy + s, wz    ],
+                            [wx,          wy + STRIDE, wz          ],
+                            [wx,          wy + STRIDE, wz + STRIDE ],
+                            [wx + STRIDE, wy + STRIDE, wz + STRIDE ],
+                            [wx + STRIDE, wy + STRIDE, wz          ],
                             [0.0, 1.0, 0.0],
                         );
                     }
@@ -362,10 +361,10 @@ impl HybridMeshGenerator {
                     if !cell_solid(cx, cy - 1, cz) {
                         Self::emit_coarse_quad(
                             &mut mesh,
-                            [wx,     wy, wz + s],
-                            [wx + s, wy, wz + s],
-                            [wx + s, wy, wz    ],
-                            [wx,     wy, wz    ],
+                            [wx,          wy, wz + STRIDE ],
+                            [wx + STRIDE, wy, wz + STRIDE ],
+                            [wx + STRIDE, wy, wz          ],
+                            [wx,          wy, wz          ],
                             [0.0, -1.0, 0.0],
                         );
                     }
@@ -373,19 +372,19 @@ impl HybridMeshGenerator {
                     if !cell_solid(cx, cy, cz + 1) {
                         Self::emit_coarse_quad(
                             &mut mesh,
-                            [wx,     wy,     wz + s],
-                            [wx + s, wy,     wz + s],
-                            [wx + s, wy + s, wz + s],
-                            [wx,     wy + s, wz + s],
+                            [wx,          wy,          wz + STRIDE ],
+                            [wx + STRIDE, wy,          wz + STRIDE ],
+                            [wx + STRIDE, wy + STRIDE, wz + STRIDE ],
+                            [wx,          wy + STRIDE, wz + STRIDE ],
                             [0.0, 0.0, 1.0],
                         );
                         if cz == coarse_size - 1 {
                             Self::emit_coarse_quad(
                                 &mut mesh,
-                                [wx,     wy - s, wz + s],
-                                [wx + s, wy - s, wz + s],
-                                [wx + s, wy,     wz + s],
-                                [wx,     wy,     wz + s],
+                                [wx,          wy - STRIDE, wz + STRIDE ],
+                                [wx + STRIDE, wy - STRIDE, wz + STRIDE ],
+                                [wx + STRIDE, wy,          wz + STRIDE ],
+                                [wx,          wy,          wz + STRIDE ],
                                 [0.0, 0.0, 1.0],
                             );
                         }
@@ -394,19 +393,19 @@ impl HybridMeshGenerator {
                     if !cell_solid(cx, cy, cz - 1) {
                         Self::emit_coarse_quad(
                             &mut mesh,
-                            [wx + s, wy,     wz],
-                            [wx,     wy,     wz],
-                            [wx,     wy + s, wz],
-                            [wx + s, wy + s, wz],
+                            [wx + STRIDE, wy,          wz],
+                            [wx,          wy,          wz],
+                            [wx,          wy + STRIDE, wz],
+                            [wx + STRIDE, wy + STRIDE, wz],
                             [0.0, 0.0, -1.0],
                         );
                         if cz == 0 {
                             Self::emit_coarse_quad(
                                 &mut mesh,
-                                [wx + s, wy - s, wz],
-                                [wx,     wy - s, wz],
-                                [wx,     wy,     wz],
-                                [wx + s, wy,     wz],
+                                [wx + STRIDE, wy - STRIDE, wz],
+                                [wx,          wy - STRIDE, wz],
+                                [wx,          wy,          wz],
+                                [wx + STRIDE, wy,          wz],
                                 [0.0, 0.0, -1.0],
                             );
                         }
@@ -432,7 +431,7 @@ impl HybridMeshGenerator {
             mesh.vertices.push([v[0] as f32, v[1] as f32, v[2] as f32]);
             mesh.normals.push(normal);
             mesh.ambient_occlusion.push(1.0);
-            mesh.geometry_type.push(1); // blocky
+            mesh.geometry_type.push(1);
             mesh.light_level.push(1.0);
             mesh.block_light_rgb.push([0.0, 0.0, 0.0]);
             mesh.sky_exposed.push(1.0);

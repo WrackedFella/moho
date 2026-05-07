@@ -3,7 +3,7 @@
 //! Provides `VoxelChunk`: a merged, face-culled mesh for a 16³ region of the world,
 //! generated via `from_grid_hybrid` using the hybrid Marching-Cubes + blocky pipeline.
 
-use super::grid::VoxelGrid;
+use super::grid::{BlockData, VoxelGrid};
 use glam::IVec3;
 use std::collections::HashMap;
 
@@ -88,18 +88,8 @@ impl VoxelChunk {
 
         let chunk_size = grid.chunk_size();
         let mesh = HybridMeshGenerator::generate_coarse_mesh(grid, chunk_pos, chunk_size);
-
         let blocks = grid.chunk_block_data(chunk_pos);
-        let mut material_counts: std::collections::HashMap<u32, usize> =
-            std::collections::HashMap::new();
-        for block in &blocks {
-            *material_counts.entry(block.material_id).or_insert(0) += 1;
-        }
-        let material_id = material_counts
-            .into_iter()
-            .max_by_key(|&(_, count)| count)
-            .map(|(id, _)| id)
-            .unwrap_or(0);
+        let material_id = primary_material_id(&blocks);
 
         VoxelChunk {
             chunk_pos,
@@ -165,19 +155,8 @@ impl VoxelChunk {
         let chunk_size = grid.chunk_size();
         let mesh = HybridMeshGenerator::generate_chunk_mesh(grid, chunk_pos, chunk_size);
 
-        // Determine primary material from blocks in chunk
         let blocks = grid.chunk_block_data(chunk_pos);
-        let mut material_counts: HashMap<u32, usize> = HashMap::new();
-
-        for block in &blocks {
-            *material_counts.entry(block.material_id).or_insert(0) += 1;
-        }
-
-        let material_id = material_counts
-            .into_iter()
-            .max_by_key(|&(_, count)| count)
-            .map(|(id, _)| id)
-            .unwrap_or(0);
+        let material_id = primary_material_id(&blocks);
 
         VoxelChunk {
             chunk_pos,
@@ -272,6 +251,14 @@ impl crate::actors::CustomMesh for VoxelChunk {
     fn material_index(&self) -> u32 {
         0 // Default to Lambertian material
     }
+}
+
+fn primary_material_id(blocks: &[BlockData]) -> u32 {
+    let mut counts: HashMap<u32, usize> = HashMap::new();
+    for block in blocks {
+        *counts.entry(block.material_id).or_insert(0) += 1;
+    }
+    counts.into_iter().max_by_key(|&(_, c)| c).map(|(id, _)| id).unwrap_or(0)
 }
 
 #[cfg(test)]
