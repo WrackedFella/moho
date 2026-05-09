@@ -4,6 +4,7 @@
 //! making the main App::new() function more modular and testable.
 
 pub mod audio_init;
+pub mod autosave;
 pub mod camera;
 pub mod chunk_streamer;
 pub mod config;
@@ -15,3 +16,4 @@ pub mod input_state;
 pub mod physics_controller;
 pub mod renderer_setup;
 pub mod scene_loader;
+pub mod world_generator;

@@ -4,12 +4,10 @@
 //! ([`moho_core`], [`moho_renderer`], [`moho_audio`], [`moho_ui`],
 //! [`moho_sim`]) into a runnable application via [`winit`]'s event loop.
 
-use crossbeam_channel::unbounded;
 use legion::World;
 use moho_core::prefs::Prefs;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, StartCause, WindowEvent};
@@ -199,187 +197,11 @@ impl App {
         &mut self,
         spec: moho_core::scene_builders::WorldSpec,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        log::info!("Starting async generation for spec={:?}", spec);
-
-        {
-            use std::path::PathBuf;
-
-            // Prepare communication channel and cancellation flag
-            let (tx, rx) = unbounded::<GenerationMsg>();
-            let cancel_flag = Arc::new(AtomicBool::new(false));
-
-            // Start UI progress overlay immediately
-            if let Some(ui_adapter) = &self.ui_adapter
-                && let Ok(mut a) = ui_adapter.lock()
-            {
-                a.start_progress(format!("Generating {}", spec.name), true);
-                a.set_progress(0.01);
-            }
-
-            // Save shared state into local variables for the thread.
-            let spec_for_thread = spec;
-            let cancel_clone = cancel_flag.clone();
-            let sender = tx.clone();
-
-            // Spawn the generation thread
-            let handle = std::thread::Builder::new()
-                .name("world-generator".to_string())
-                .spawn(move || {
-                    // Report initial progress
-                    let _ = sender.send(GenerationMsg::Progress(0.02));
-
-                    // Local world and scene used for generation
-                    let local_world = World::default();
-                    // Step 1: clear/build
-                    if cancel_clone.load(Ordering::Relaxed) {
-                        let _ = sender.send(GenerationMsg::Canceled);
-                        return;
-                    }
-                    // Build TerrainConfig from the WorldSpec.
-                    let mut terrain_config = moho_core::scene_builders::TerrainConfig::default();
-                    if let Some(s) = spec_for_thread.seed {
-                        terrain_config.seed = s as u32;
-                    }
-                    terrain_config.world_size = spec_for_thread.size_xz;
-
-                    // With streaming, we no longer pre-generate the full world here.
-                    // An empty grid is returned; ChunkStreamer fills it on demand.
-                    let grid = moho_core::voxel::VoxelGrid::new(16);
-                    let _ = sender.send(GenerationMsg::Progress(0.6));
-
-                    if cancel_clone.load(Ordering::Relaxed) {
-                        let _ = sender.send(GenerationMsg::Canceled);
-                        return;
-                    }
-
-                    // Encode scene bytes. Provide a sensible default camera for
-                    // newly generated worlds so the app has a starting
-                    // viewpoint instead of relying on previous controller state.
-                    let local_scene = moho_renderer::Scene::new();
-                    // Place camera above world center looking slightly down
-                    let camera_height = 24.0f32;
-                    let camera_position = glam::Vec3::new(0.0, camera_height, 0.0);
-                    // yaw = 0.0 (look along +Z), pitch negative to look downward
-                    let camera_yaw = 0.0f32;
-                    let camera_pitch = -0.4f32;
-                    let scene_bytes = match local_scene.encode_to_bytes(
-                        &local_world,
-                        Some((camera_position, camera_yaw, camera_pitch)),
-                        &[], // fresh world — no spawned lights
-                    ) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            let _ =
-                                sender.send(GenerationMsg::Failed(format!("encode failed: {}", e)));
-                            return;
-                        }
-                    };
-
-                    let _ = sender.send(GenerationMsg::Progress(0.9));
-
-                    // Ensure saves directory exists and persist the envelope
-                    let saves_dir = PathBuf::from("saves");
-                    if !saves_dir.exists()
-                        && let Err(e) = std::fs::create_dir_all(&saves_dir)
-                    {
-                        let _ = sender.send(GenerationMsg::Failed(format!("mkdir failed: {}", e)));
-                        return;
-                    }
-                    let save_path = saves_dir.join("scene.bin");
-                    let block_records: Vec<save::BlockRecord> = grid
-                        .iter_block_data()
-                        .map(save::BlockRecord::from_block_data)
-                        .collect();
-                    if let Err(e) = save::write_scene_with_metadata(
-                        &save_path,
-                        &scene_bytes,
-                        &spec_for_thread,
-                        &block_records,
-                    ) {
-                        let _ = sender.send(GenerationMsg::Failed(format!("write failed: {}", e)));
-                        return;
-                    }
-
-                    let _ = sender.send(GenerationMsg::Progress(1.0));
-                    let _ = sender.send(GenerationMsg::Completed {
-                        scene_bytes,
-                        spec: spec_for_thread,
-                        terrain_config,
-                        grid: Box::new(grid),
-                    });
-                })?;
-
-            // Store receiver, handle and cancel flag so the main loop can poll it
-            self.generation.receiver = Some(rx);
-            self.generation.handle = Some(handle);
-            self.generation.cancel = Some(cancel_flag);
-
-            Ok(())
-        }
+        crate::app::world_generator::generate_new_world(self, spec)
     }
 
     fn auto_save_on_shutdown(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        log::info!("Auto-saving on shutdown...");
-
-        // Ensure saves directory exists
-        let saves_dir = std::path::Path::new("saves");
-        if !saves_dir.exists() {
-            std::fs::create_dir_all(saves_dir)?;
-        }
-
-        // Save the current scene with camera data. When the UI is enabled
-        // we prefer to write the envelope format (magic + metadata + scene)
-        // so Continue/Load operations can read the WorldSpec metadata. Use
-        // a minimal "autosave" WorldSpec when no explicit metadata is
-        // available.
-        let save_path = saves_dir.join("scene.bin");
-        let (yaw, pitch) = self.simulation.yaw_pitch();
-        let camera_data = Some((self.simulation.position(), yaw, pitch));
-
-        // Encode scene bytes and write envelope. Prefer the last known
-        // WorldSpec (e.g. from a loaded or generated scene) so autosaves
-        // preserve original metadata; fall back to a minimal spec.
-        let scene_bytes = self.scene.encode_to_bytes(
-            &self.world,
-            camera_data,
-            &self
-                .window_renderer
-                .as_ref()
-                .map_or_else(Vec::new, |wr| wr.renderer.all_lights_as_descs()),
-        )?;
-        let mut spec =
-            self.generation
-                .last_spec
-                .clone()
-                .unwrap_or(moho_core::scene_builders::WorldSpec {
-                    name: "autosave".to_string(),
-                    seed: None,
-                    size_xz: 64,
-                    day_length_seconds: 600.0,
-                    night_length_seconds: 420.0,
-                    initial_time_of_day: 6.0,
-                });
-        // Persist the current time of day so Continue resumes at the right time.
-        spec.initial_time_of_day = self.simulation.time_of_day();
-        let block_records: Vec<save::BlockRecord> = self
-            .light_system
-            .as_ref()
-            .map(|ls| {
-                ls.grid()
-                    .iter_block_data()
-                    .map(save::BlockRecord::from_block_data)
-                    .collect()
-            })
-            .unwrap_or_default();
-        save::write_scene_with_metadata(&save_path, &scene_bytes, &spec, &block_records)?;
-        log::info!(
-            "Auto-saved scene (envelope) to {:?} (spec={:?}, {} blocks)",
-            save_path,
-            spec.name,
-            block_records.len()
-        );
-
-        Ok(())
+        crate::app::autosave::auto_save_on_shutdown(self)
     }
 
     fn load_scene<P: AsRef<std::path::Path>>(

@@ -87,8 +87,10 @@ pub fn generate_new_world(
             ) {
                 Ok(b) => b,
                 Err(e) => {
-                    let _ = sender
-                        .send(crate::GenerationMsg::Failed(format!("encode failed: {}", e)));
+                    let _ = sender.send(crate::GenerationMsg::Failed(format!(
+                        "encode failed: {}",
+                        e
+                    )));
                     return;
                 }
             };
@@ -100,8 +102,7 @@ pub fn generate_new_world(
             if !saves_dir.exists()
                 && let Err(e) = std::fs::create_dir_all(&saves_dir)
             {
-                let _ =
-                    sender.send(crate::GenerationMsg::Failed(format!("mkdir failed: {}", e)));
+                let _ = sender.send(crate::GenerationMsg::Failed(format!("mkdir failed: {}", e)));
                 return;
             }
             let save_path = saves_dir.join("scene.bin");
@@ -115,8 +116,7 @@ pub fn generate_new_world(
                 &spec_for_thread,
                 &block_records,
             ) {
-                let _ =
-                    sender.send(crate::GenerationMsg::Failed(format!("write failed: {}", e)));
+                let _ = sender.send(crate::GenerationMsg::Failed(format!("write failed: {}", e)));
                 return;
             }
 
