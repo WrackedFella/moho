@@ -566,28 +566,6 @@ pub fn create_hybrid_generator() -> MeshGeneratorFn {
     )
 }
 
-/// Create a legacy mesh generator function (Phase 0 style).
-///
-/// Uses the original block-by-block face culling approach. Provided for
-/// compatibility and comparison purposes.
-pub fn create_legacy_generator() -> MeshGeneratorFn {
-    Box::new(
-        |grid: &VoxelGrid, chunk_pos: IVec3, _job_type: MeshJobType, token: &CancellationToken| {
-            if token.is_cancelled() {
-                return None;
-            }
-
-            let chunk = VoxelChunk::from_grid(grid, chunk_pos);
-
-            if token.is_cancelled() {
-                return None;
-            }
-
-            if chunk.is_empty() { None } else { Some(chunk) }
-        },
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

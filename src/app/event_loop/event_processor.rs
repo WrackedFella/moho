@@ -255,9 +255,11 @@ impl EventProcessor {
             if let WorldEvent::ChunkMeshDirty { chunk_pos, .. } = event {
                 // Regenerate chunk mesh
                 // We need to scope the borrow of light_system so we can access world later
+                let player_chunk = lod_player_chunk(app.simulation.position());
+                let lod = lod_for_chunk(chunk_pos, player_chunk);
                 let new_chunk = if let Some(light_system) = &app.light_system {
                     let grid = light_system.grid();
-                    Some(VoxelChunk::from_grid(grid, chunk_pos))
+                    Some(VoxelChunk::from_grid_lod(grid, chunk_pos, lod))
                 } else {
                     None
                 };
@@ -499,6 +501,30 @@ impl EventProcessor {
     }
 }
 
+/// Compute chunk coordinates from a world-space position.
+pub(crate) fn lod_player_chunk(pos: glam::Vec3) -> glam::IVec3 {
+    const CHUNK_SIZE: i32 = 16;
+    glam::IVec3::new(
+        (pos.x.floor() as i32).div_euclid(CHUNK_SIZE),
+        (pos.y.floor() as i32).div_euclid(CHUNK_SIZE),
+        (pos.z.floor() as i32).div_euclid(CHUNK_SIZE),
+    )
+}
+
+/// Determine the LOD tier for a chunk given the player's chunk position.
+///
+/// Uses Chebyshev XZ distance (max of |dx|, |dz|) so all chunks in a square ring
+/// at the same XZ distance share a tier, regardless of vertical offset.
+///
+/// - LOD 0 (< 4 chunks): full 16³ hybrid mesh
+/// - LOD 1 (4–16 chunks): coarse 8³ blocky mesh
+pub(crate) fn lod_for_chunk(chunk_pos: glam::IVec3, player_chunk: glam::IVec3) -> u8 {
+    let dx = (chunk_pos.x - player_chunk.x).abs();
+    let dz = (chunk_pos.z - player_chunk.z).abs();
+    let dist = dx.max(dz);
+    if dist < 4 { 0 } else { 1 }
+}
+
 impl Default for EventProcessor {
     fn default() -> Self {
         Self::new()
@@ -576,5 +602,65 @@ mod tests {
             }
             _ => panic!("Expected BackgroundMusic variant"),
         }
+    }
+
+    #[test]
+    fn test_lod_player_chunk_origin() {
+        let chunk = lod_player_chunk(glam::Vec3::ZERO);
+        assert_eq!(chunk, glam::IVec3::ZERO);
+    }
+
+    #[test]
+    fn test_lod_player_chunk_positive() {
+        // Block 16 in world space → chunk 1
+        let chunk = lod_player_chunk(glam::Vec3::new(16.0, 0.0, 16.0));
+        assert_eq!(chunk.x, 1);
+        assert_eq!(chunk.z, 1);
+    }
+
+    #[test]
+    fn test_lod_player_chunk_negative() {
+        // Negative coords use div_euclid so -1 → chunk -1, not 0
+        let chunk = lod_player_chunk(glam::Vec3::new(-1.0, 0.0, -1.0));
+        assert_eq!(chunk.x, -1);
+        assert_eq!(chunk.z, -1);
+    }
+
+    #[test]
+    fn test_lod_for_chunk_same_position() {
+        let player = glam::IVec3::ZERO;
+        assert_eq!(lod_for_chunk(glam::IVec3::ZERO, player), 0);
+    }
+
+    #[test]
+    fn test_lod_for_chunk_within_lod0() {
+        let player = glam::IVec3::ZERO;
+        // 3 chunks away in X → still LOD 0
+        assert_eq!(lod_for_chunk(glam::IVec3::new(3, 0, 0), player), 0);
+        assert_eq!(lod_for_chunk(glam::IVec3::new(-3, 0, 0), player), 0);
+        assert_eq!(lod_for_chunk(glam::IVec3::new(3, 0, 3), player), 0);
+    }
+
+    #[test]
+    fn test_lod_for_chunk_boundary() {
+        let player = glam::IVec3::ZERO;
+        // Exactly 4 chunks away → LOD 1
+        assert_eq!(lod_for_chunk(glam::IVec3::new(4, 0, 0), player), 1);
+        assert_eq!(lod_for_chunk(glam::IVec3::new(0, 0, 4), player), 1);
+        // Diagonal: Chebyshev distance is max(3, 4) = 4 → LOD 1
+        assert_eq!(lod_for_chunk(glam::IVec3::new(3, 0, 4), player), 1);
+    }
+
+    #[test]
+    fn test_lod_for_chunk_far() {
+        let player = glam::IVec3::ZERO;
+        assert_eq!(lod_for_chunk(glam::IVec3::new(16, 0, 0), player), 1);
+    }
+
+    #[test]
+    fn test_lod_for_chunk_ignores_y() {
+        let player = glam::IVec3::ZERO;
+        // A chunk directly above (only Y differs) counts as distance 0 in XZ
+        assert_eq!(lod_for_chunk(glam::IVec3::new(0, 10, 0), player), 0);
     }
 }

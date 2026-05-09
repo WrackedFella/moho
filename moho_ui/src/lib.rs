@@ -42,8 +42,6 @@ pub mod screens;
 
 pub mod overlays;
 
-pub mod prefs;
-
 pub mod modal;
 
 pub mod modals;
@@ -65,9 +63,12 @@ pub use screens::{
 };
 
 pub use overlays::{
-    Console, ConsoleAction, DebugHud, FpsHud, GameplayHud, HudData, Overlay, OverlayManager, RtsHud,
+    ChunkDebugOverlay, Console, ConsoleAction, DebugHud, FpsHud, GameplayHud, HudData, Overlay,
+    OverlayManager, RtsHud,
 };
 
 pub use modal::{Modal, ModalManager, ModalResult};
 
 pub use modals::KeybindConflictModal;
+
+pub use moho_core::prefs;

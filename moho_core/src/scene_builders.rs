@@ -1,8 +1,7 @@
 use legion::World;
 
 use crate::voxel::{
-    BiomeMap, BiomeParams, BiomeType, BlockPos, LightChannel, LightPropagator, MeshGenerator,
-    OreLayout, VoxelBlock, VoxelChunk, VoxelGrid,
+    BiomeMap, BiomeParams, BiomeType, BlockPos, LightPropagator, OreLayout, VoxelChunk, VoxelGrid,
 };
 use bincode::{Decode, Encode};
 use noise::{NoiseFn, Perlin};
@@ -85,21 +84,14 @@ pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig
     log::info!("Generating voxel terrain (seed={})...", config.seed);
     generate_terrain(&mut grid, config);
 
-    // Initialize light propagation system
+    // Initialize block light propagation from all emissive blocks.
     log::info!("Initializing light propagation...");
     let mut light_propagator = LightPropagator::new(grid.chunk_size());
-
-    // Flood-fill sky light from the top down
-    light_propagator.flood_fill(&mut grid, LightChannel::Sky);
-    log::info!("Sky light propagation complete");
+    light_propagator.flood_fill_block_lights(&mut grid);
+    log::info!("Block light propagation complete");
 
     // TODO: Consider making grid size configurable via the config struct
     // (e.g., grid_size: u32) so callers can control world extents.
-
-    // Initialize all blocks with cube mesh since smoothing is disabled
-    for block in grid.iter_blocks_mut() {
-        block.mesh_data = MeshGenerator::cube_mesh();
-    }
 
     log::info!("Converting grid to renderable chunks...");
     let chunks = grid_to_chunks(&grid);
@@ -121,7 +113,7 @@ pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig
 /// Deterministic positional hash for use during terrain generation.
 /// Produces a value in [0.0, 1.0) that depends only on position and seed —
 /// no entropy-seeded RNG, so generation is a pure function of its inputs.
-fn pos_hash(x: i32, y: i32, z: i32, seed: u32) -> f32 {
+pub(crate) fn pos_hash(x: i32, y: i32, z: i32, seed: u32) -> f32 {
     let mut h = seed as u64;
     h ^= (x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
     h ^= (y as u64).wrapping_mul(0x6c62_272e_07bb_0142);
@@ -132,7 +124,8 @@ fn pos_hash(x: i32, y: i32, z: i32, seed: u32) -> f32 {
 }
 
 /// Max block height for the terrain column (clamp for the legacy 32-tall range).
-const MAX_TERRAIN_HEIGHT: i32 = 32;
+pub(crate) const MAX_TERRAIN_HEIGHT: i32 = 128;
+pub(crate) const BASE_ELEVATION: f32 = 64.0;
 
 /// Generate terrain blocks using a 3D density field.
 ///
@@ -151,7 +144,7 @@ fn generate_terrain(grid: &mut VoxelGrid, config: &TerrainConfig) {
         for z in -size..size {
             let biome = biome_map.biome_at(x, z, &config.enabled_biomes);
             let params = biome.params();
-            let surface_h = sample_surface_height(&noise, x, z, &biome, &params);
+            let surface_h = BASE_ELEVATION + sample_surface_height(&noise, x, z, &biome, &params);
             let column_height = (surface_h as i32).clamp(0, MAX_TERRAIN_HEIGHT);
 
             for y in 0..=column_height {
@@ -162,10 +155,7 @@ fn generate_terrain(grid: &mut VoxelGrid, config: &TerrainConfig) {
                 let material_id = determine_material_id(column_height, y, &params);
                 let resource_id = determine_resource_id(column_height, y, x, z, config.seed);
 
-                let mut block = VoxelBlock::new(pos, material_id);
-                block.resource_id = resource_id;
-
-                grid.set_block(pos, block);
+                grid.place_block(pos, material_id, resource_id);
             }
         }
     }
@@ -174,7 +164,7 @@ fn generate_terrain(grid: &mut VoxelGrid, config: &TerrainConfig) {
 /// Continuous surface height at `(x, z)`. Multi-octave Perlin noise scaled
 /// by the biome's amplitude/frequency/octaves, shaped by `BiomeType::shape`,
 /// clamped to non-negative.
-fn sample_surface_height(
+pub(crate) fn sample_surface_height(
     noise: &Perlin,
     x: i32,
     z: i32,
@@ -196,10 +186,18 @@ fn sample_surface_height(
 
 /// Density at `(x, y, z)`. Positive means solid rock, negative means air.
 ///
-/// Today this is just `surface_height(x, z) - y` (a pure heightmap). Cave
-/// carving will subtract a 3D noise term scaled by `params.cave_density`.
-fn density(noise: &Perlin, x: i32, y: i32, z: i32, biome: &BiomeType, params: &BiomeParams) -> f32 {
-    let surface_h = sample_surface_height(noise, x, z, biome, params);
+/// Compares world-space y against the full surface height (BASE_ELEVATION +
+/// noise offset). Without BASE_ELEVATION here, `is_solid` would disagree with
+/// the column_height used in the terrain loops and reject every block above y≈8.
+pub(crate) fn density(
+    noise: &Perlin,
+    x: i32,
+    y: i32,
+    z: i32,
+    biome: &BiomeType,
+    params: &BiomeParams,
+) -> f32 {
+    let surface_h = BASE_ELEVATION + sample_surface_height(noise, x, z, biome, params);
     let base = surface_h - y as f32;
     // Cave carver hook (disabled until caves are enabled):
     // base - cave_noise(noise, x, y, z) * params.cave_density
@@ -208,7 +206,7 @@ fn density(noise: &Perlin, x: i32, y: i32, z: i32, biome: &BiomeType, params: &B
 }
 
 /// Whether the block centered at `(x, y, z)` should be filled.
-fn is_solid(
+pub(crate) fn is_solid(
     noise: &Perlin,
     x: i32,
     y: i32,
@@ -220,10 +218,14 @@ fn is_solid(
 }
 
 /// Determine material ID based on depth within the column, using the biome's materials.
-fn determine_material_id(column_height: i32, y: i32, params: &BiomeParams) -> u32 {
-    if y == column_height {
+///
+/// The top solid block is at `column_height` when surface_h has a fractional
+/// part, or at `column_height - 1` when it is exactly integer (Perlin = 0 at
+/// origin). Checking `>= column_height - 1` covers both cases.
+pub(crate) fn determine_material_id(column_height: i32, y: i32, params: &BiomeParams) -> u32 {
+    if y >= column_height - 1 {
         params.surface_material
-    } else if y > column_height - 3 {
+    } else if y > column_height - 4 {
         params.subsurface_material
     } else {
         params.base_material
@@ -231,7 +233,13 @@ fn determine_material_id(column_height: i32, y: i32, params: &BiomeParams) -> u3
 }
 
 /// Determine resource ID based on depth (optional resources)
-fn determine_resource_id(column_height: i32, y: i32, x: i32, z: i32, seed: u32) -> Option<u32> {
+pub(crate) fn determine_resource_id(
+    column_height: i32,
+    y: i32,
+    x: i32,
+    z: i32,
+    seed: u32,
+) -> Option<u32> {
     // 10% chance of iron ore in mid-levels, determined by positional hash
     if y > 5 && y < column_height - 3 && pos_hash(x, y, z, seed) < 0.1 {
         Some(1) // Iron ore resource ID
@@ -247,7 +255,7 @@ fn grid_to_chunks(grid: &VoxelGrid) -> Vec<VoxelChunk> {
     // Find all unique chunk positions from the blocks
     let mut chunk_positions = HashSet::new();
     for block_pos in grid.block_positions() {
-        let chunk_pos = VoxelGrid::get_chunk_pos(*block_pos, grid.chunk_size());
+        let chunk_pos = VoxelGrid::get_chunk_pos(block_pos, grid.chunk_size());
         chunk_positions.insert(chunk_pos);
     }
 
@@ -291,11 +299,8 @@ mod tests {
 
     fn collect_blocks(grid: &VoxelGrid) -> Vec<(BlockPos, u32, Option<u32>)> {
         let mut blocks: Vec<_> = grid
-            .block_positions()
-            .map(|p| {
-                let b = grid.get_block(p).unwrap();
-                (*p, b.material_id, b.resource_id)
-            })
+            .iter_block_data()
+            .map(|b| (b.position, b.material_id, b.resource_id))
             .collect();
         blocks.sort_by_key(|(p, _, _)| (p.x, p.y, p.z));
         blocks

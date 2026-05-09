@@ -1,44 +1,53 @@
-//! Light propagation algorithms for voxel lighting.
+//! RGB block-light propagation.
 //!
-//! This module implements Minecraft-style light spreading with:
-//! - Initial flood-fill for world generation
-//! - Incremental addition when light sources are placed
-//! - Two-phase removal when light sources are removed
-//! - Chunk boundary handling
+//! Implements per-channel BFS flood-fill for three independent R/G/B block-light
+//! channels. Each channel decays by 1 per step and is blocked by fully-opaque
+//! voxels (opacity_cost == 15). Air (no block present) is transparent.
 //!
-//! Light levels range from 0 (dark) to 15 (full brightness).
-//! Light decreases by 1 per block traveled.
+//! Sky exposure is NOT handled here; that is the binary `sky_exposed` bit
+//! computed by the `light_sky` pass.
+//!
+//! # Algorithms
+//! - **add_light_rgb**: standard BFS; only updates voxels where new level > stored.
+//! - **remove_light**: two-queue removal — dark wave clears source-lit voxels,
+//!   then re-seeds from any adjacent voxels still lit by surviving sources.
 
-use crate::voxel::grid::{BlockPos, VoxelGrid};
+use super::grid::VoxelGrid;
+use super::light_storage::{self, CHUNK_SIZE};
 use glam::IVec3;
 use std::collections::VecDeque;
 
-/// Light channel type
+/// One of the three block-light color channels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LightChannel {
-    /// Sky light from sun/moon (penetrates downward)
-    Sky,
-    /// Block light from torches and emissives
-    Block,
+    R = 0,
+    G = 1,
+    B = 2,
 }
 
-/// Light propagation node for BFS
-#[derive(Debug, Clone)]
-struct LightNode {
-    position: BlockPos,
-    light_level: u8,
+#[derive(Debug, Clone, Copy)]
+struct PropNode {
+    chunk_pos: IVec3,
+    idx: usize,
+    level: u8,
 }
 
-/// Light propagation system
+const OFFSETS: [IVec3; 6] = [
+    IVec3::new(1, 0, 0),
+    IVec3::new(-1, 0, 0),
+    IVec3::new(0, 1, 0),
+    IVec3::new(0, -1, 0),
+    IVec3::new(0, 0, 1),
+    IVec3::new(0, 0, -1),
+];
+
+/// Propagates RGB block-light through the voxel grid via per-channel BFS.
 pub struct LightPropagator {
-    /// Work queue for BFS
-    queue: VecDeque<LightNode>,
-    /// Chunk size for boundary detection
+    queue: VecDeque<PropNode>,
     chunk_size: i32,
 }
 
 impl LightPropagator {
-    /// Create a new light propagator
     pub fn new(chunk_size: i32) -> Self {
         Self {
             queue: VecDeque::with_capacity(1024),
@@ -46,417 +55,73 @@ impl LightPropagator {
         }
     }
 
-    /// Perform initial flood-fill from all light sources.
-    ///
-    /// This is used for:
-    /// - Initial world generation
-    /// - Large regenerations after terrain modification
-    /// - Sky light calculation
-    ///
-    /// # Arguments
-    /// * `grid` - The voxel grid to propagate light through
-    /// * `channel` - Which light channel to propagate (sky or block)
-    ///
-    /// # Performance
-    /// This is an expensive operation (O(N) where N = lit blocks).
-    /// Should be run async for large areas.
-    pub fn flood_fill(&mut self, grid: &mut VoxelGrid, channel: LightChannel) {
-        self.queue.clear();
-
-        // Find all light sources and enqueue them
-        match channel {
-            LightChannel::Sky => {
-                // Sky light: start from top layer of blocks
-                self.enqueue_sky_sources(grid);
-            }
-            LightChannel::Block => {
-                // Block light: start from emissive blocks
-                self.enqueue_block_sources(grid);
+    /// Propagate RGB block-light outward from `pos` with emission `rgb`.
+    /// Runs three independent BFS passes (R → G → B).
+    /// Returns the set of chunk positions that were modified.
+    pub fn add_light_rgb(&mut self, grid: &mut VoxelGrid, pos: IVec3, rgb: [u8; 3]) -> Vec<IVec3> {
+        if !grid.supports_lighting() {
+            return vec![];
+        }
+        let mut affected = std::collections::HashSet::new();
+        for (ch, &level) in [LightChannel::R, LightChannel::G, LightChannel::B]
+            .iter()
+            .zip(rgb.iter())
+        {
+            if level > 0 {
+                self.bfs_add(grid, pos, level, *ch, &mut affected);
             }
         }
-
-        // BFS propagation from all sources
-        self.propagate_light(grid, channel);
+        affected.into_iter().collect()
     }
 
-    /// Add light incrementally from a single source position.
-    ///
-    /// This is much faster than flood_fill for local changes like placing a torch.
-    /// Only propagates where the new light would be brighter than existing light.
-    ///
-    /// # Arguments
-    /// * `grid` - The voxel grid to propagate light through
-    /// * `source_pos` - Position of the new light source
-    /// * `light_level` - Initial light level at source (typically 15 for torch)
-    /// * `channel` - Which light channel to propagate (sky or block)
-    ///
-    /// # Returns
-    /// List of chunk coordinates that were affected (for dirty marking)
-    ///
-    /// # Performance
-    /// Typical torch placement: <2ms for ~500-1000 affected blocks
-    pub fn add_light(
-        &mut self,
-        grid: &mut VoxelGrid,
-        source_pos: BlockPos,
-        light_level: u8,
-        channel: LightChannel,
-    ) -> Vec<IVec3> {
-        self.queue.clear();
-        let mut affected_chunks = std::collections::HashSet::new();
-
-        // Start from the source position
-        self.queue.push_back(LightNode {
-            position: source_pos,
-            light_level,
-        });
-
-        // Track which chunks are affected
-        affected_chunks.insert(self.get_chunk_coord(&source_pos));
-
-        // BFS propagation (same as flood_fill but starting from single point)
-        while let Some(node) = self.queue.pop_front() {
-            // Set light level at current position
-            if let Some(block) = grid.get_block_mut(&node.position) {
-                let current_light = match channel {
-                    LightChannel::Sky => block.sky_light,
-                    LightChannel::Block => block.block_light,
-                };
-
-                // Only update if new light is brighter
-                if node.light_level <= current_light {
-                    continue;
-                }
-
-                match channel {
-                    LightChannel::Sky => block.set_sky_light(node.light_level),
-                    LightChannel::Block => block.set_block_light(node.light_level),
-                }
-
-                // Track this chunk as affected (we actually modified a block here)
-                affected_chunks.insert(self.get_chunk_coord(&node.position));
-            }
-
-            // Calculate light level for neighbors (decay by 1)
-            let neighbor_light = node.light_level.saturating_sub(1);
-            if neighbor_light == 0 {
-                continue; // No more light to propagate
-            }
-
-            // Propagate to 6 neighbors (±X, ±Y, ±Z)
-            let neighbors = [
-                node.position + IVec3::new(1, 0, 0),
-                node.position + IVec3::new(-1, 0, 0),
-                node.position + IVec3::new(0, 1, 0),
-                node.position + IVec3::new(0, -1, 0),
-                node.position + IVec3::new(0, 0, 1),
-                node.position + IVec3::new(0, 0, -1),
-            ];
-
-            for neighbor_pos in neighbors {
-                // Check if neighbor can receive light
-                if self.can_receive_light(grid, &neighbor_pos, channel) {
-                    let current_neighbor_light = grid
-                        .get_block(&neighbor_pos)
-                        .map(|b| match channel {
-                            LightChannel::Sky => b.sky_light,
-                            LightChannel::Block => b.block_light,
-                        })
-                        .unwrap_or(0);
-
-                    // Only enqueue if new light would be brighter
-                    if neighbor_light > current_neighbor_light {
-                        self.queue.push_back(LightNode {
-                            position: neighbor_pos,
-                            light_level: neighbor_light,
-                        });
-                    }
-                }
-            }
+    /// Remove the block-light contributed by the source at `pos` using two-queue
+    /// removal. Each channel is processed independently.
+    /// Returns the set of chunk positions that were modified.
+    pub fn remove_light(&mut self, grid: &mut VoxelGrid, pos: IVec3) -> Vec<IVec3> {
+        if !grid.supports_lighting() {
+            return vec![];
         }
-
-        affected_chunks.into_iter().collect()
+        let mut affected = std::collections::HashSet::new();
+        for ch in [LightChannel::R, LightChannel::G, LightChannel::B] {
+            self.two_queue_remove(grid, pos, ch, &mut affected);
+        }
+        affected.into_iter().collect()
     }
 
-    /// Remove light from a source position using two-phase BFS.
-    ///
-    /// This is more complex than addition because removing a light source requires:
-    /// 1. Finding all blocks that were lit by the removed source
-    /// 2. Clearing those light values
-    /// 3. Re-flooding from any adjacent light sources to restore correct lighting
-    ///
-    /// # Arguments
-    /// * `grid` - The voxel grid to remove light from
-    /// * `source_pos` - Position of the removed light source
-    /// * `channel` - Which light channel to modify (sky or block)
-    ///
-    /// # Returns
-    /// List of chunk coordinates that were affected (for dirty marking)
-    ///
-    /// # Performance
-    /// Typical torch removal: <5ms for ~500-1000 affected blocks
-    pub fn remove_light(
-        &mut self,
-        grid: &mut VoxelGrid,
-        source_pos: BlockPos,
-        channel: LightChannel,
-    ) -> Vec<IVec3> {
-        self.queue.clear();
-        let mut affected_chunks = std::collections::HashSet::new();
-        let mut removal_queue: VecDeque<BlockPos> = VecDeque::with_capacity(512);
-        let mut border_lights: Vec<LightNode> = Vec::with_capacity(128);
-
-        // Track which blocks have been visited to avoid re-processing
-        let mut visited: std::collections::HashSet<BlockPos> = std::collections::HashSet::new();
-
-        // Phase 1: BFS to find all blocks that need to be cleared
-        // We clear any block that has weaker light than its neighbors would provide
-
-        removal_queue.push_back(source_pos);
-        visited.insert(source_pos);
-
-        while let Some(pos) = removal_queue.pop_front() {
-            affected_chunks.insert(self.get_chunk_coord(&pos));
-
-            let current_light = grid
-                .get_block(&pos)
-                .map(|b| match channel {
-                    LightChannel::Sky => b.sky_light,
-                    LightChannel::Block => b.block_light,
-                })
-                .unwrap_or(0);
-
-            // Check all 6 neighbors
-            let neighbors = [
-                pos + IVec3::new(1, 0, 0),
-                pos + IVec3::new(-1, 0, 0),
-                pos + IVec3::new(0, 1, 0),
-                pos + IVec3::new(0, -1, 0),
-                pos + IVec3::new(0, 0, 1),
-                pos + IVec3::new(0, 0, -1),
-            ];
-
-            for neighbor_pos in neighbors {
-                if visited.contains(&neighbor_pos) {
-                    continue;
+    /// Scan all blocks for non-zero emission and flood-fill their RGB light.
+    /// Used for initial world-load or full-grid recompute.
+    pub fn flood_fill_block_lights(&mut self, grid: &mut VoxelGrid) -> Vec<IVec3> {
+        if !grid.supports_lighting() {
+            return vec![];
+        }
+        let seeds: Vec<(IVec3, [u8; 3])> = grid
+            .block_positions()
+            .filter_map(|pos| {
+                let mat_id = grid.material_at(pos)?;
+                let emission = grid.material_registry.emission(mat_id);
+                if emission != [0, 0, 0] {
+                    Some((pos, emission))
+                } else {
+                    None
                 }
+            })
+            .collect();
 
-                if let Some(neighbor_block) = grid.get_block(&neighbor_pos) {
-                    let neighbor_light = match channel {
-                        LightChannel::Sky => neighbor_block.sky_light,
-                        LightChannel::Block => neighbor_block.block_light,
-                    };
-
-                    if neighbor_light == 0 {
-                        continue; // Already dark
-                    }
-
-                    // If neighbor has less light than current, it was lit by this source
-                    // If neighbor has equal or more light, it's a border light from another source
-                    if neighbor_light < current_light {
-                        // This neighbor was lit by the removed source chain
-                        visited.insert(neighbor_pos);
-                        removal_queue.push_back(neighbor_pos);
-                    } else if neighbor_light >= current_light {
-                        // This is a potential border light from another source
-                        // Only add if it could actually provide light (not already added)
-                        if !border_lights.iter().any(|n| n.position == neighbor_pos) {
-                            border_lights.push(LightNode {
-                                position: neighbor_pos,
-                                light_level: neighbor_light,
-                            });
-                        }
-                    }
+        let mut affected = std::collections::HashSet::new();
+        for ch in [LightChannel::R, LightChannel::G, LightChannel::B] {
+            let ci = ch as usize;
+            for &(pos, rgb) in &seeds {
+                if rgb[ci] > 0 {
+                    self.bfs_add(grid, pos, rgb[ci], ch, &mut affected);
                 }
             }
         }
-
-        // Phase 2: Clear light values for all visited blocks
-        for pos in &visited {
-            if let Some(block) = grid.get_block_mut(pos) {
-                match channel {
-                    LightChannel::Sky => block.set_sky_light(0),
-                    LightChannel::Block => block.set_block_light(0),
-                }
-            }
-        }
-
-        // Phase 3: Re-flood from border lights
-        // These are blocks adjacent to the cleared area that still have light
-        for light_node in border_lights {
-            // Re-propagate light from this border node
-            self.queue.push_back(light_node);
-        }
-
-        // Use the standard propagation logic to re-light the area
-        while let Some(node) = self.queue.pop_front() {
-            // Calculate light level for neighbors (decay by 1)
-            let neighbor_light = node.light_level.saturating_sub(1);
-            if neighbor_light == 0 {
-                continue;
-            }
-
-            let neighbors = [
-                node.position + IVec3::new(1, 0, 0),
-                node.position + IVec3::new(-1, 0, 0),
-                node.position + IVec3::new(0, 1, 0),
-                node.position + IVec3::new(0, -1, 0),
-                node.position + IVec3::new(0, 0, 1),
-                node.position + IVec3::new(0, 0, -1),
-            ];
-
-            for neighbor_pos in neighbors {
-                affected_chunks.insert(self.get_chunk_coord(&neighbor_pos));
-
-                if self.can_receive_light(grid, &neighbor_pos, channel) {
-                    let current_neighbor_light = grid
-                        .get_block(&neighbor_pos)
-                        .map(|b| match channel {
-                            LightChannel::Sky => b.sky_light,
-                            LightChannel::Block => b.block_light,
-                        })
-                        .unwrap_or(0);
-
-                    // Only update if new light would be brighter
-                    if neighbor_light > current_neighbor_light {
-                        if let Some(block) = grid.get_block_mut(&neighbor_pos) {
-                            match channel {
-                                LightChannel::Sky => block.set_sky_light(neighbor_light),
-                                LightChannel::Block => block.set_block_light(neighbor_light),
-                            }
-                        }
-
-                        self.queue.push_back(LightNode {
-                            position: neighbor_pos,
-                            light_level: neighbor_light,
-                        });
-                    }
-                }
-            }
-        }
-
-        affected_chunks.into_iter().collect()
+        affected.into_iter().collect()
     }
 
-    /// Enqueue sky light sources (top layer of blocks exposed to sky)
-    fn enqueue_sky_sources(&mut self, grid: &VoxelGrid) {
-        // Get all block positions and find the highest Y for each X,Z column
-        let mut columns: std::collections::HashMap<(i32, i32), i32> =
-            std::collections::HashMap::new();
-
-        for pos in grid.block_positions() {
-            let column = (pos.x, pos.z);
-            let entry = columns.entry(column).or_insert(pos.y);
-            *entry = (*entry).max(pos.y);
-        }
-
-        // Enqueue top blocks with full sky light
-        for ((x, z), max_y) in columns {
-            let pos = IVec3::new(x, max_y, z);
-            if grid.get_block(&pos).is_some() {
-                self.queue.push_back(LightNode {
-                    position: pos,
-                    light_level: 15, // Full sky light at top
-                });
-            }
-        }
-    }
-
-    /// Enqueue block light sources (emissive blocks like torches)
-    fn enqueue_block_sources(&mut self, grid: &VoxelGrid) {
-        for pos in grid.block_positions() {
-            if let Some(block) = grid.get_block(pos) {
-                let emission = block.emission_level();
-                if emission > 0 {
-                    self.queue.push_back(LightNode {
-                        position: *pos,
-                        light_level: emission,
-                    });
-                }
-            }
-        }
-    }
-
-    /// Propagate light through the grid using BFS
-    fn propagate_light(&mut self, grid: &mut VoxelGrid, channel: LightChannel) {
-        while let Some(node) = self.queue.pop_front() {
-            // Set light level at current position
-            if let Some(block) = grid.get_block_mut(&node.position) {
-                let current_light = match channel {
-                    LightChannel::Sky => block.sky_light,
-                    LightChannel::Block => block.block_light,
-                };
-
-                // Only update if new light is brighter
-                if node.light_level <= current_light {
-                    continue;
-                }
-
-                match channel {
-                    LightChannel::Sky => block.set_sky_light(node.light_level),
-                    LightChannel::Block => block.set_block_light(node.light_level),
-                }
-            }
-
-            // Calculate light level for neighbors (decay by 1)
-            let neighbor_light = node.light_level.saturating_sub(1);
-            if neighbor_light == 0 {
-                continue; // No more light to propagate
-            }
-
-            // Propagate to 6 neighbors (±X, ±Y, ±Z)
-            let neighbors = [
-                node.position + IVec3::new(1, 0, 0),
-                node.position + IVec3::new(-1, 0, 0),
-                node.position + IVec3::new(0, 1, 0),
-                node.position + IVec3::new(0, -1, 0),
-                node.position + IVec3::new(0, 0, 1),
-                node.position + IVec3::new(0, 0, -1),
-            ];
-
-            for neighbor_pos in neighbors {
-                // Check if neighbor can receive light
-                if self.can_receive_light(grid, &neighbor_pos, channel) {
-                    let current_neighbor_light = grid
-                        .get_block(&neighbor_pos)
-                        .map(|b| match channel {
-                            LightChannel::Sky => b.sky_light,
-                            LightChannel::Block => b.block_light,
-                        })
-                        .unwrap_or(0);
-
-                    // Only enqueue if new light would be brighter
-                    if neighbor_light > current_neighbor_light {
-                        self.queue.push_back(LightNode {
-                            position: neighbor_pos,
-                            light_level: neighbor_light,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    /// Check if a position can receive light
-    fn can_receive_light(&self, grid: &VoxelGrid, pos: &BlockPos, channel: LightChannel) -> bool {
-        // Check if there's a block at this position
-        let has_block = grid.get_block(pos).is_some();
-
-        match channel {
-            LightChannel::Sky => {
-                // Sky light propagates to blocks only (not infinite air)
-                has_block
-            }
-            LightChannel::Block => {
-                // Block light also only affects existing blocks
-                has_block
-            }
-        }
-    }
-
-    /// Get the chunk coordinate for a block position
+    /// Returns the chunk coordinate for a world position.
     #[inline]
-    pub fn get_chunk_coord(&self, pos: &BlockPos) -> IVec3 {
+    pub fn get_chunk_coord(&self, pos: &IVec3) -> IVec3 {
         IVec3::new(
             pos.x.div_euclid(self.chunk_size),
             pos.y.div_euclid(self.chunk_size),
@@ -464,325 +129,503 @@ impl LightPropagator {
         )
     }
 
-    /// Check if a block position is at a chunk boundary
+    // --- Internal BFS helpers ---
+
     #[inline]
-    #[allow(dead_code)]
-    fn is_at_chunk_boundary(&self, pos: &BlockPos) -> bool {
-        pos.x % self.chunk_size == 0
-            || pos.x % self.chunk_size == self.chunk_size - 1
-            || pos.y % self.chunk_size == 0
-            || pos.y % self.chunk_size == self.chunk_size - 1
-            || pos.z % self.chunk_size == 0
-            || pos.z % self.chunk_size == self.chunk_size - 1
+    fn read_ch(grid: &VoxelGrid, chunk_pos: IVec3, idx: usize, ch: LightChannel) -> u8 {
+        match grid.chunk_light(chunk_pos) {
+            Some(cl) => match ch {
+                LightChannel::R => cl.block_light_r[idx],
+                LightChannel::G => cl.block_light_g[idx],
+                LightChannel::B => cl.block_light_b[idx],
+            },
+            None => 0,
+        }
     }
+
+    #[inline]
+    fn write_ch(grid: &mut VoxelGrid, chunk_pos: IVec3, idx: usize, ch: LightChannel, v: u8) {
+        let cl = grid.chunk_light_mut(chunk_pos);
+        match ch {
+            LightChannel::R => cl.block_light_r[idx] = v,
+            LightChannel::G => cl.block_light_g[idx] = v,
+            LightChannel::B => cl.block_light_b[idx] = v,
+        }
+    }
+
+    /// Standard "only-if-brighter" BFS addition for a single channel.
+    fn bfs_add(
+        &mut self,
+        grid: &mut VoxelGrid,
+        pos: IVec3,
+        level: u8,
+        ch: LightChannel,
+        affected: &mut std::collections::HashSet<IVec3>,
+    ) {
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
+        self.queue.clear();
+        self.queue.push_back(PropNode {
+            chunk_pos,
+            idx,
+            level,
+        });
+        affected.insert(chunk_pos);
+
+        while let Some(node) = self.queue.pop_front() {
+            let stored = Self::read_ch(grid, node.chunk_pos, node.idx, ch);
+            if node.level <= stored {
+                continue;
+            }
+            Self::write_ch(grid, node.chunk_pos, node.idx, ch, node.level);
+            affected.insert(node.chunk_pos);
+
+            let next = node.level.saturating_sub(1);
+            if next == 0 {
+                continue;
+            }
+            let world = node.chunk_pos * CHUNK_SIZE + idx_to_local(node.idx);
+            for &off in &OFFSETS {
+                let nb_world = world + off;
+                // Fully opaque blocks absorb — no propagation through them.
+                if grid
+                    .material_at(nb_world)
+                    .map(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
+                if next > Self::read_ch(grid, nb_chunk, nb_idx, ch) {
+                    self.queue.push_back(PropNode {
+                        chunk_pos: nb_chunk,
+                        idx: nb_idx,
+                        level: next,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Re-seed BFS from a set of nodes whose values are already written in the grid.
+    /// Unlike `bfs_add`, we do not try to re-write seed positions — we start by
+    /// immediately propagating each seed's stored value into its neighbors.
+    fn bfs_add_nodes(
+        &mut self,
+        grid: &mut VoxelGrid,
+        seeds: &[PropNode],
+        ch: LightChannel,
+        affected: &mut std::collections::HashSet<IVec3>,
+    ) {
+        self.queue.clear();
+        // Emit from each seed directly to neighbors.
+        for &seed in seeds {
+            let next = seed.level.saturating_sub(1);
+            if next == 0 {
+                continue;
+            }
+            let world = seed.chunk_pos * CHUNK_SIZE + idx_to_local(seed.idx);
+            for &off in &OFFSETS {
+                let nb_world = world + off;
+                if grid
+                    .material_at(nb_world)
+                    .map(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
+                if next > Self::read_ch(grid, nb_chunk, nb_idx, ch) {
+                    self.queue.push_back(PropNode {
+                        chunk_pos: nb_chunk,
+                        idx: nb_idx,
+                        level: next,
+                    });
+                }
+            }
+        }
+        // Standard "only-if-brighter" BFS from the enqueued neighbor entries.
+        while let Some(node) = self.queue.pop_front() {
+            let stored = Self::read_ch(grid, node.chunk_pos, node.idx, ch);
+            if node.level <= stored {
+                continue;
+            }
+            Self::write_ch(grid, node.chunk_pos, node.idx, ch, node.level);
+            affected.insert(node.chunk_pos);
+
+            let next = node.level.saturating_sub(1);
+            if next == 0 {
+                continue;
+            }
+            let world = node.chunk_pos * CHUNK_SIZE + idx_to_local(node.idx);
+            for &off in &OFFSETS {
+                let nb_world = world + off;
+                if grid
+                    .material_at(nb_world)
+                    .map(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
+                if next > Self::read_ch(grid, nb_chunk, nb_idx, ch) {
+                    self.queue.push_back(PropNode {
+                        chunk_pos: nb_chunk,
+                        idx: nb_idx,
+                        level: next,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Two-queue removal for a single channel.
+    fn two_queue_remove(
+        &mut self,
+        grid: &mut VoxelGrid,
+        pos: IVec3,
+        ch: LightChannel,
+        affected: &mut std::collections::HashSet<IVec3>,
+    ) {
+        let (start_chunk, start_idx, _) = light_storage::world_to_chunk_local(pos);
+        let start_level = Self::read_ch(grid, start_chunk, start_idx, ch);
+        if start_level == 0 {
+            return;
+        }
+
+        let mut dark: VecDeque<PropNode> = VecDeque::with_capacity(512);
+        let mut relight: Vec<PropNode> = Vec::new();
+
+        dark.push_back(PropNode {
+            chunk_pos: start_chunk,
+            idx: start_idx,
+            level: start_level,
+        });
+
+        while let Some(node) = dark.pop_front() {
+            let stored = Self::read_ch(grid, node.chunk_pos, node.idx, ch);
+            if stored == 0 {
+                continue;
+            }
+            if stored != node.level {
+                // A brighter surviving source already owns this voxel — re-seed from it.
+                if stored > 0
+                    && !relight
+                        .iter()
+                        .any(|r| r.chunk_pos == node.chunk_pos && r.idx == node.idx)
+                {
+                    relight.push(PropNode {
+                        chunk_pos: node.chunk_pos,
+                        idx: node.idx,
+                        level: stored,
+                    });
+                }
+                continue;
+            }
+            // Clear this voxel.
+            Self::write_ch(grid, node.chunk_pos, node.idx, ch, 0);
+            affected.insert(node.chunk_pos);
+
+            let world = node.chunk_pos * CHUNK_SIZE + idx_to_local(node.idx);
+            for &off in &OFFSETS {
+                let nb_world = world + off;
+                let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
+                let nb_stored = Self::read_ch(grid, nb_chunk, nb_idx, ch);
+                if nb_stored == 0 {
+                    continue;
+                }
+                if nb_stored < node.level {
+                    // Was lit by the chain we're removing.
+                    dark.push_back(PropNode {
+                        chunk_pos: nb_chunk,
+                        idx: nb_idx,
+                        level: nb_stored,
+                    });
+                } else {
+                    // Lit by another surviving source — re-seed.
+                    if !relight
+                        .iter()
+                        .any(|r| r.chunk_pos == nb_chunk && r.idx == nb_idx)
+                    {
+                        relight.push(PropNode {
+                            chunk_pos: nb_chunk,
+                            idx: nb_idx,
+                            level: nb_stored,
+                        });
+                    }
+                }
+            }
+        }
+
+        if !relight.is_empty() {
+            self.bfs_add_nodes(grid, &relight, ch, affected);
+        }
+    }
+}
+
+/// Reconstruct chunk-local (x, y, z) from a dense linear index.
+/// Index layout: idx = x + y*16 + z*256.
+#[inline]
+fn idx_to_local(idx: usize) -> IVec3 {
+    let cs = CHUNK_SIZE as usize;
+    IVec3::new(
+        (idx % cs) as i32,
+        ((idx / cs) % cs) as i32,
+        (idx / (cs * cs)) as i32,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel::grid::VoxelBlock;
+    use crate::voxel::grid::{MaterialLighting, VoxelGrid};
+
+    fn opaque_grid() -> VoxelGrid {
+        VoxelGrid::new(16)
+    }
 
     #[test]
     fn test_light_propagation_basic() {
-        let mut grid = VoxelGrid::new(16);
+        let mut grid = opaque_grid();
         let mut propagator = LightPropagator::new(16);
 
-        // Create a simple 3x3x3 cube of blocks
-        for x in 0..3 {
-            for y in 0..3 {
-                for z in 0..3 {
-                    let pos = IVec3::new(x, y, z);
-                    let block = VoxelBlock::new(pos, 0);
-                    grid.set_block(pos, block);
+        // 3×3×3 solid cube of transparent material (material 0, opacity=0 default?).
+        // Material 0 defaults to NON_EMISSIVE_OPAQUE (opacity_cost=15), so we need
+        // a transparent material. Use material 1 registered above.
+        grid.material_registry.set_lighting(
+            1,
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
+        );
+        for x in 0..3i32 {
+            for y in 0..3i32 {
+                for z in 0..3i32 {
+                    grid.place_block(IVec3::new(x, y, z), 1, None);
                 }
             }
         }
 
-        // Run sky light flood fill
-        propagator.flood_fill(&mut grid, LightChannel::Sky);
+        // Light source at (1, 2, 1) — top-center.
+        let source = IVec3::new(1, 2, 1);
+        propagator.add_light_rgb(&mut grid, source, [15, 0, 0]);
 
-        // Check that top layer has full light
-        for x in 0..3 {
-            for z in 0..3 {
-                let top_pos = IVec3::new(x, 2, z);
-                if let Some(block) = grid.get_block(&top_pos) {
-                    assert_eq!(block.sky_light, 15, "Top block should have full sky light");
-                }
-            }
-        }
+        let (sc, si, _) = light_storage::world_to_chunk_local(source);
+        let cl = grid.chunk_light(sc).unwrap();
+        assert_eq!(cl.block_light_r[si], 15, "source should have level 15");
 
-        // Check that lower layers have reduced light
-        for x in 0..3 {
-            for z in 0..3 {
-                let mid_pos = IVec3::new(x, 1, z);
-                if let Some(block) = grid.get_block(&mid_pos) {
-                    assert!(
-                        block.sky_light > 0 && block.sky_light <= 15,
-                        "Mid block should have some sky light"
-                    );
-                }
-            }
-        }
+        // Neighbor one step away should have 14.
+        let nb = IVec3::new(1, 1, 1);
+        let (nc, ni, _) = light_storage::world_to_chunk_local(nb);
+        let cl = grid.chunk_light(nc).unwrap();
+        assert_eq!(cl.block_light_r[ni], 14, "one step from source → level 14");
     }
 
     #[test]
     fn test_chunk_boundary_detection() {
-        let propagator = LightPropagator::new(16);
-
-        // Test corner of chunk
-        assert!(propagator.is_at_chunk_boundary(&IVec3::new(0, 0, 0)));
-        assert!(propagator.is_at_chunk_boundary(&IVec3::new(15, 15, 15)));
-
-        // Test middle of chunk
-        assert!(!propagator.is_at_chunk_boundary(&IVec3::new(8, 8, 8)));
+        let p = LightPropagator::new(16);
+        assert_eq!(p.get_chunk_coord(&IVec3::new(0, 0, 0)), IVec3::ZERO);
+        assert_eq!(p.get_chunk_coord(&IVec3::new(15, 15, 15)), IVec3::ZERO);
+        assert_eq!(
+            p.get_chunk_coord(&IVec3::new(16, 0, 0)),
+            IVec3::new(1, 0, 0)
+        );
+        assert_eq!(
+            p.get_chunk_coord(&IVec3::new(-1, 0, 0)),
+            IVec3::new(-1, 0, 0)
+        );
     }
 
     #[test]
     fn test_incremental_light_addition() {
         let mut grid = VoxelGrid::new(16);
+        grid.material_registry.set_lighting(
+            1,
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
+        );
         let mut propagator = LightPropagator::new(16);
 
-        // Create a 5x5x5 cube of blocks
-        for x in 0..5 {
-            for y in 0..5 {
-                for z in 0..5 {
-                    let pos = IVec3::new(x, y, z);
-                    let mut block = VoxelBlock::new(pos, 0);
-                    // Start with no light
-                    block.set_block_light(0);
-                    grid.set_block(pos, block);
+        for x in 0..5i32 {
+            for y in 0..5i32 {
+                for z in 0..5i32 {
+                    grid.place_block(IVec3::new(x, y, z), 1, None);
                 }
             }
         }
 
-        // Add a light source in the center at level 15
         let light_pos = IVec3::new(2, 2, 2);
-        let affected_chunks = propagator.add_light(&mut grid, light_pos, 15, LightChannel::Block);
+        let affected = propagator.add_light_rgb(&mut grid, light_pos, [15, 8, 2]);
+        assert!(!affected.is_empty(), "should track affected chunks");
 
-        // Check that the source has full light
-        if let Some(block) = grid.get_block(&light_pos) {
-            assert_eq!(block.block_light, 15, "Source should have full light");
-        }
+        let (sc, si, _) = light_storage::world_to_chunk_local(light_pos);
+        let cl = grid.chunk_light(sc).unwrap();
+        assert_eq!(cl.block_light_r[si], 15);
+        assert_eq!(cl.block_light_g[si], 8);
+        assert_eq!(cl.block_light_b[si], 2);
 
-        // Check neighbors have decayed light
-        let neighbor = IVec3::new(3, 2, 2);
-        if let Some(block) = grid.get_block(&neighbor) {
-            assert_eq!(block.block_light, 14, "Neighbor should have light - 1");
-        }
-
-        // Check that affected chunks were tracked
-        assert!(!affected_chunks.is_empty(), "Should track affected chunks");
+        let nb = IVec3::new(3, 2, 2);
+        let (nc, ni, _) = light_storage::world_to_chunk_local(nb);
+        let cl = grid.chunk_light(nc).unwrap();
+        assert_eq!(cl.block_light_r[ni], 14, "neighbor should have R level 14");
     }
 
     #[test]
     fn test_incremental_light_stops_at_brighter() {
         let mut grid = VoxelGrid::new(16);
+        grid.material_registry.set_lighting(
+            1,
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
+        );
         let mut propagator = LightPropagator::new(16);
 
-        // Create a line of 5 blocks
-        for x in 0..5 {
+        // Pre-fill a line with R=10.
+        for x in 0..5i32 {
+            grid.place_block(IVec3::new(x, 0, 0), 1, None);
+        }
+        // Manually set R=10 in chunk light.
+        for x in 0..5i32 {
             let pos = IVec3::new(x, 0, 0);
-            let mut block = VoxelBlock::new(pos, 0);
-            // Pre-fill with existing light
-            block.set_block_light(10);
-            grid.set_block(pos, block);
+            let (cp, idx, _) = light_storage::world_to_chunk_local(pos);
+            grid.chunk_light_mut(cp).block_light_r[idx] = 10;
         }
 
-        // Try to add a weaker light source at one end
-        let weak_light_pos = IVec3::new(0, 0, 0);
-        propagator.add_light(&mut grid, weak_light_pos, 8, LightChannel::Block);
+        // Adding a weaker source (R=8) should not overwrite R=10.
+        propagator.add_light_rgb(&mut grid, IVec3::new(0, 0, 0), [8, 0, 0]);
 
-        // Check that existing brighter light was not overwritten
-        let far_pos = IVec3::new(4, 0, 0);
-        if let Some(block) = grid.get_block(&far_pos) {
-            assert_eq!(
-                block.block_light, 10,
-                "Existing brighter light should not be reduced"
-            );
-        }
+        let far = IVec3::new(4, 0, 0);
+        let (cp, idx, _) = light_storage::world_to_chunk_local(far);
+        assert_eq!(
+            grid.chunk_light(cp).unwrap().block_light_r[idx],
+            10,
+            "existing brighter light must not be reduced"
+        );
     }
 
     #[test]
     fn test_light_removal_basic() {
         let mut grid = VoxelGrid::new(16);
+        grid.material_registry.set_lighting(
+            1,
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
+        );
         let mut propagator = LightPropagator::new(16);
 
-        // Create a 5x5x5 cube of blocks
-        for x in 0..5 {
-            for y in 0..5 {
-                for z in 0..5 {
-                    let pos = IVec3::new(x, y, z);
-                    let mut block = VoxelBlock::new(pos, 0);
-                    block.set_block_light(0);
-                    grid.set_block(pos, block);
+        for x in 0..5i32 {
+            for y in 0..5i32 {
+                for z in 0..5i32 {
+                    grid.place_block(IVec3::new(x, y, z), 1, None);
                 }
             }
         }
 
-        // Add a light source in the center
         let light_pos = IVec3::new(2, 2, 2);
-        propagator.add_light(&mut grid, light_pos, 15, LightChannel::Block);
+        propagator.add_light_rgb(&mut grid, light_pos, [15, 0, 0]);
 
-        // Verify light was added
-        if let Some(block) = grid.get_block(&light_pos) {
-            assert_eq!(block.block_light, 15, "Source should have full light");
-        }
+        // Source should be lit.
+        let (sc, si, _) = light_storage::world_to_chunk_local(light_pos);
+        assert_eq!(grid.chunk_light(sc).unwrap().block_light_r[si], 15);
 
-        // Verify neighbors have light
-        let neighbor = IVec3::new(3, 2, 2);
-        if let Some(block) = grid.get_block(&neighbor) {
-            assert!(block.block_light > 0, "Neighbor should have some light");
-        }
+        // Remove it.
+        let affected = propagator.remove_light(&mut grid, light_pos);
+        assert!(!affected.is_empty());
 
-        // Now remove the light source
-        let affected_chunks = propagator.remove_light(&mut grid, light_pos, LightChannel::Block);
-
-        // Check that the source is now dark
-        if let Some(block) = grid.get_block(&light_pos) {
-            assert_eq!(block.block_light, 0, "Source should be dark after removal");
-        }
-
-        // Check that neighbors are also dark
-        if let Some(block) = grid.get_block(&neighbor) {
-            assert_eq!(
-                block.block_light, 0,
-                "Neighbor should be dark after removal"
-            );
-        }
-
-        // Check that affected chunks were tracked
-        assert!(!affected_chunks.is_empty(), "Should track affected chunks");
+        // Source and neighbor should now be dark.
+        assert_eq!(grid.chunk_light(sc).unwrap().block_light_r[si], 0);
+        let nb = IVec3::new(3, 2, 2);
+        let (nc, ni, _) = light_storage::world_to_chunk_local(nb);
+        assert_eq!(grid.chunk_light(nc).unwrap().block_light_r[ni], 0);
     }
 
     #[test]
     fn test_light_removal_with_multiple_sources() {
         let mut grid = VoxelGrid::new(16);
+        grid.material_registry.set_lighting(
+            1,
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
+        );
         let mut propagator = LightPropagator::new(16);
 
-        // Create a line of 11 blocks
-        for x in 0..11 {
-            let pos = IVec3::new(x, 0, 0);
-            let mut block = VoxelBlock::new(pos, 0);
-            block.set_block_light(0);
-            grid.set_block(pos, block);
+        for x in 0..11i32 {
+            grid.place_block(IVec3::new(x, 0, 0), 1, None);
         }
 
-        // Add two light sources at opposite ends
-        let light1_pos = IVec3::new(0, 0, 0);
-        let light2_pos = IVec3::new(10, 0, 0);
-        propagator.add_light(&mut grid, light1_pos, 15, LightChannel::Block);
-        propagator.add_light(&mut grid, light2_pos, 15, LightChannel::Block);
+        let light1 = IVec3::new(0, 0, 0);
+        let light2 = IVec3::new(10, 0, 0);
+        propagator.add_light_rgb(&mut grid, light1, [15, 0, 0]);
+        propagator.add_light_rgb(&mut grid, light2, [15, 0, 0]);
 
-        // Middle block should have light from both sources
-        let middle_pos = IVec3::new(5, 0, 0);
-        if let Some(block) = grid.get_block(&middle_pos) {
-            assert!(
-                block.block_light > 0,
-                "Middle should have light from both sources"
-            );
-        }
+        // Remove first source.
+        propagator.remove_light(&mut grid, light1);
 
-        // Remove the first light source
-        propagator.remove_light(&mut grid, light1_pos, LightChannel::Block);
+        // Light2 still illuminates light1's old position (distance 10 → level 5).
+        let (c, i, _) = light_storage::world_to_chunk_local(light1);
+        assert_eq!(
+            grid.chunk_light(c).unwrap().block_light_r[i],
+            5,
+            "light1 position should now have level 5 from light2"
+        );
 
-        // First light position should now have light from the second source only
-        // Distance from light2 is 10, so light level = 15 - 10 = 5
-        if let Some(block) = grid.get_block(&light1_pos) {
-            assert_eq!(
-                block.block_light, 5,
-                "First light position should now have light from second source (15 - 10 distance)"
-            );
-        }
-
-        // Second light should still be bright
-        if let Some(block) = grid.get_block(&light2_pos) {
-            assert_eq!(block.block_light, 15, "Second light should still be bright");
-        }
-
-        // Middle block should still have some light from second source
-        if let Some(block) = grid.get_block(&middle_pos) {
-            assert!(
-                block.block_light > 0,
-                "Middle should still have light from second source"
-            );
-            // Should have light level 10 (15 - 5 distance from light2)
-            assert_eq!(
-                block.block_light, 10,
-                "Middle should have correct light level from second source"
-            );
-        }
-
-        // Block very close to first light should only have light from second source
-        // Distance from light2 to position (1,0,0) is 9, so light = 15 - 9 = 6
-        let near_first = IVec3::new(1, 0, 0);
-        if let Some(block) = grid.get_block(&near_first) {
-            assert_eq!(
-                block.block_light, 6,
-                "Block near first light should have light from second source"
-            );
-        }
+        // Light2 unchanged.
+        let (c2, i2, _) = light_storage::world_to_chunk_local(light2);
+        assert_eq!(grid.chunk_light(c2).unwrap().block_light_r[i2], 15);
     }
 
     #[test]
     fn test_light_removal_corner_case() {
         let mut grid = VoxelGrid::new(16);
+        grid.material_registry.set_lighting(
+            1,
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
+        );
         let mut propagator = LightPropagator::new(16);
 
-        // Create a T-shape: one light at center, blocks extending in 3 directions
         let center = IVec3::new(5, 5, 5);
-        let mut center_block = VoxelBlock::new(center, 0);
-        center_block.set_block_light(0);
-        grid.set_block(center, center_block);
-
-        // Extend in +X, +Y, +Z directions
-        for i in 1..5 {
+        grid.place_block(center, 1, None);
+        for i in 1..5i32 {
             for &dir in &[
                 IVec3::new(i, 0, 0),
                 IVec3::new(0, i, 0),
                 IVec3::new(0, 0, i),
             ] {
-                let pos = center + dir;
-                let mut block = VoxelBlock::new(pos, 0);
-                block.set_block_light(0);
-                grid.set_block(pos, block);
+                grid.place_block(center + dir, 1, None);
             }
         }
 
-        // Add light at center
-        propagator.add_light(&mut grid, center, 15, LightChannel::Block);
+        propagator.add_light_rgb(&mut grid, center, [15, 0, 0]);
+        propagator.remove_light(&mut grid, center);
 
-        // Check that all arms have light
-        for i in 1..5 {
+        let (cc, ci, _) = light_storage::world_to_chunk_local(center);
+        assert_eq!(grid.chunk_light(cc).unwrap().block_light_r[ci], 0);
+
+        for i in 1..5i32 {
             for &dir in &[
                 IVec3::new(i, 0, 0),
                 IVec3::new(0, i, 0),
                 IVec3::new(0, 0, i),
             ] {
-                let pos = center + dir;
-                if let Some(block) = grid.get_block(&pos) {
-                    assert!(block.block_light > 0, "Arm block should have light");
-                }
-            }
-        }
-
-        // Remove the light
-        propagator.remove_light(&mut grid, center, LightChannel::Block);
-
-        // Check that all blocks are now dark
-        if let Some(block) = grid.get_block(&center) {
-            assert_eq!(block.block_light, 0, "Center should be dark");
-        }
-
-        for i in 1..5 {
-            for &dir in &[
-                IVec3::new(i, 0, 0),
-                IVec3::new(0, i, 0),
-                IVec3::new(0, 0, i),
-            ] {
-                let pos = center + dir;
-                if let Some(block) = grid.get_block(&pos) {
-                    assert_eq!(block.block_light, 0, "Arm block should be dark");
-                }
+                let p = center + dir;
+                let (pc, pi, _) = light_storage::world_to_chunk_local(p);
+                assert_eq!(
+                    grid.chunk_light(pc).unwrap().block_light_r[pi],
+                    0,
+                    "arm block at {:?} should be dark",
+                    p
+                );
             }
         }
     }
@@ -790,104 +633,67 @@ mod tests {
     #[test]
     fn test_cross_chunk_propagation() {
         let mut grid = VoxelGrid::new(16);
+        grid.material_registry.set_lighting(
+            1,
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
+        );
         let mut propagator = LightPropagator::new(16);
 
-        // Place a light source at the edge of chunk (0,0,0)
-        // at position (15, 8, 8) - this is the last X block in the chunk
-        let light_pos = IVec3::new(15, 8, 8);
-
-        // Create blocks in two adjacent chunks
-        // Chunk (0,0,0): blocks at x=14, x=15
-        // Chunk (1,0,0): blocks at x=16, x=17, x=18
-        for x in 14..=18 {
-            let pos = IVec3::new(x, 8, 8);
-            let mut block = VoxelBlock::new(pos, 0);
-            block.set_block_light(0); // Start with no light
-            grid.set_block(pos, block);
+        for x in 14..=18i32 {
+            grid.place_block(IVec3::new(x, 8, 8), 1, None);
         }
 
-        // Propagate light from the source (don't pre-set the source block light)
-        let affected_chunks = propagator.add_light(&mut grid, light_pos, 15, LightChannel::Block);
+        let light_pos = IVec3::new(15, 8, 8);
+        let affected = propagator.add_light_rgb(&mut grid, light_pos, [15, 0, 0]);
 
-        // Verify that both chunks are marked as affected
         let chunk_0 = IVec3::new(0, 0, 0);
         let chunk_1 = IVec3::new(1, 0, 0);
-        assert!(
-            affected_chunks.contains(&chunk_0),
-            "Chunk 0 should be affected (contains light source)"
-        );
-        assert!(
-            affected_chunks.contains(&chunk_1),
-            "Chunk 1 should be affected (light propagates into it)"
-        );
+        assert!(affected.contains(&chunk_0), "chunk 0 should be affected");
+        assert!(affected.contains(&chunk_1), "chunk 1 should be affected");
 
-        // Verify light levels decay correctly across the boundary
-        // x=15: 15 (source)
-        // x=16: 14 (in chunk 1)
-        // x=17: 13 (in chunk 1)
-        // x=18: 12 (in chunk 1)
-        let expected_levels = [(15, 15), (16, 14), (17, 13), (18, 12)];
-
-        for (x, expected_light) in expected_levels {
-            let pos = IVec3::new(x, 8, 8);
-            if let Some(block) = grid.get_block(&pos) {
-                assert_eq!(
-                    block.block_light, expected_light,
-                    "Block at x={} should have light level {}",
-                    x, expected_light
-                );
-            }
+        for (x, expected) in [(15, 15u8), (16, 14), (17, 13), (18, 12)] {
+            let (cp, idx, _) = light_storage::world_to_chunk_local(IVec3::new(x, 8, 8));
+            assert_eq!(
+                grid.chunk_light(cp).unwrap().block_light_r[idx],
+                expected,
+                "x={x} expected R={expected}"
+            );
         }
     }
 
     #[test]
     fn test_cross_chunk_removal() {
         let mut grid = VoxelGrid::new(16);
+        grid.material_registry.set_lighting(
+            1,
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
+        );
         let mut propagator = LightPropagator::new(16);
 
-        // Create a line of blocks spanning two chunks
-        // Chunk (0,0,0): x=12..=15
-        // Chunk (1,0,0): x=16..=20
-        for x in 12..=20 {
-            let pos = IVec3::new(x, 8, 8);
-            let mut block = VoxelBlock::new(pos, 0);
-            block.set_block_light(0);
-            grid.set_block(pos, block);
+        for x in 12..=20i32 {
+            grid.place_block(IVec3::new(x, 8, 8), 1, None);
         }
 
-        // Place light at x=15 (edge of chunk 0)
         let light_pos = IVec3::new(15, 8, 8);
-        propagator.add_light(&mut grid, light_pos, 15, LightChannel::Block);
+        propagator.add_light_rgb(&mut grid, light_pos, [15, 0, 0]);
+        let affected = propagator.remove_light(&mut grid, light_pos);
 
-        // Verify light propagated into both chunks
-        assert!(grid.get_block(&IVec3::new(14, 8, 8)).unwrap().block_light > 0);
-        assert!(grid.get_block(&IVec3::new(16, 8, 8)).unwrap().block_light > 0);
+        assert!(affected.contains(&IVec3::new(0, 0, 0)));
+        assert!(affected.contains(&IVec3::new(1, 0, 0)));
 
-        // Remove the light
-        let affected_chunks = propagator.remove_light(&mut grid, light_pos, LightChannel::Block);
-
-        // Verify both chunks are marked as affected
-        let chunk_0 = IVec3::new(0, 0, 0);
-        let chunk_1 = IVec3::new(1, 0, 0);
-        assert!(
-            affected_chunks.contains(&chunk_0),
-            "Chunk 0 should be affected by light removal"
-        );
-        assert!(
-            affected_chunks.contains(&chunk_1),
-            "Chunk 1 should be affected by light removal"
-        );
-
-        // Verify all blocks are now dark
-        for x in 12..=20 {
-            let pos = IVec3::new(x, 8, 8);
-            if let Some(block) = grid.get_block(&pos) {
-                assert_eq!(
-                    block.block_light, 0,
-                    "Block at x={} should be dark after light removal",
-                    x
-                );
-            }
+        for x in 12..=20i32 {
+            let (cp, idx, _) = light_storage::world_to_chunk_local(IVec3::new(x, 8, 8));
+            assert_eq!(
+                grid.chunk_light(cp).unwrap().block_light_r[idx],
+                0,
+                "x={x} should be dark after removal"
+            );
         }
     }
 }

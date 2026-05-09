@@ -3,7 +3,8 @@
 //! This module detects mixed chunks and generates appropriate meshes for each
 //! geometry type, then concatenates them into a unified mesh for rendering.
 
-use super::super::grid::{BlockPos, VoxelGrid, VoxelMesh};
+use super::super::grid::{BlockPos, VoxelGrid};
+use super::VoxelMesh;
 use super::blocky::BlockyMeshGenerator;
 use super::marching_cubes::MarchingCubes;
 use glam::IVec3;
@@ -48,12 +49,10 @@ impl HybridMeshGenerator {
             for y in 0..chunk_size {
                 for z in 0..chunk_size {
                     let pos = base_pos + IVec3::new(x, y, z);
-                    if let Some(block) = grid.get_block(&pos) {
-                        if block.is_smooth() {
-                            smooth_count += 1;
-                        } else {
-                            blocky_count += 1;
-                        }
+                    match grid.is_smooth_at(pos) {
+                        Some(true) => smooth_count += 1,
+                        Some(false) => blocky_count += 1,
+                        None => {}
                     }
                 }
             }
@@ -125,7 +124,7 @@ impl HybridMeshGenerator {
             for y in 0..chunk_size {
                 for z in 0..chunk_size {
                     let pos = base_pos + IVec3::new(x, y, z);
-                    if grid.has_block_at(&pos) {
+                    if grid.is_solid_at(pos) {
                         let block_mesh = BlockyMeshGenerator::generate_mesh(grid, pos);
                         Self::append_mesh(&mut mesh, &block_mesh, pos);
                     }
@@ -160,6 +159,10 @@ impl HybridMeshGenerator {
                 .push(smooth_mesh.ambient_occlusion[i]);
             final_mesh.geometry_type.push(smooth_mesh.geometry_type[i]);
             final_mesh.light_level.push(smooth_mesh.light_level[i]);
+            final_mesh
+                .block_light_rgb
+                .push(smooth_mesh.block_light_rgb[i]);
+            final_mesh.sky_exposed.push(smooth_mesh.sky_exposed[i]);
         }
 
         let smooth_index_offset = smooth_mesh.vertices.len() as u32;
@@ -172,7 +175,7 @@ impl HybridMeshGenerator {
             for y in 0..chunk_size {
                 for z in 0..chunk_size {
                     let pos = base_pos + IVec3::new(x, y, z);
-                    if grid.get_block(&pos).is_some_and(|block| !block.is_smooth()) {
+                    if grid.is_smooth_at(pos) == Some(false) {
                         let block_mesh = BlockyMeshGenerator::generate_mesh(grid, pos);
                         Self::append_mesh_with_offset(
                             &mut final_mesh,
@@ -216,10 +219,9 @@ impl HybridMeshGenerator {
                 for (z, col) in row.iter_mut().enumerate() {
                     let world_pos = base_pos + IVec3::new(x as i32 - 1, y as i32 - 1, z as i32 - 1);
 
-                    let is_solid = if let Some(block) = grid.get_block(&world_pos) {
-                        if only_smooth { block.is_smooth() } else { true }
-                    } else {
-                        false
+                    let is_solid = match grid.is_smooth_at(world_pos) {
+                        Some(smooth) => !only_smooth || smooth,
+                        None => false,
                     };
 
                     *col = if is_solid { 1.0 } else { 0.0 };
@@ -243,7 +245,7 @@ impl HybridMeshGenerator {
             ]);
         }
 
-        // Copy normals, AO, geometry type, and light level
+        // Copy normals, AO, geometry type, and light data
         target.normals.extend_from_slice(&source.normals);
         target
             .ambient_occlusion
@@ -252,11 +254,198 @@ impl HybridMeshGenerator {
             .geometry_type
             .extend_from_slice(&source.geometry_type);
         target.light_level.extend_from_slice(&source.light_level);
+        target
+            .block_light_rgb
+            .extend_from_slice(&source.block_light_rgb);
+        target.sky_exposed.extend_from_slice(&source.sky_exposed);
 
         // Add indices with offset
         for &index in &source.indices {
             target.indices.push(base_index + index);
         }
+    }
+
+    /// Generate a coarse (LOD 1) blocky mesh by sampling every 2 blocks.
+    ///
+    /// Each 2×2×2 block region is treated as a single coarse voxel. If any block in
+    /// the region is solid the cell is solid, giving an 8³ effective resolution for a
+    /// 16³ chunk. Face culling works against adjacent coarse cells (including cells in
+    /// neighbouring chunks). Skirt quads are appended along the four vertical chunk
+    /// edges to prevent seam cracks at LOD boundaries.
+    pub fn generate_coarse_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
+        const STRIDE: i32 = 2;
+        let coarse_size = chunk_size / STRIDE; // 8 for chunk_size == 16
+        let base = chunk_pos * chunk_size;
+        let mut mesh = VoxelMesh::empty();
+
+        // Returns true if any block in the STRIDE³ region rooted at the given coarse
+        // cell coordinates is solid. Intentionally samples into adjacent chunks via
+        // `grid.is_solid_at` so inter-chunk face culling works correctly.
+        let cell_solid = |cx: i32, cy: i32, cz: i32| -> bool {
+            let wx = base.x + cx * STRIDE;
+            let wy = base.y + cy * STRIDE;
+            let wz = base.z + cz * STRIDE;
+            for dx in 0..STRIDE {
+                for dy in 0..STRIDE {
+                    for dz in 0..STRIDE {
+                        if grid.is_solid_at(IVec3::new(wx + dx, wy + dy, wz + dz)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        };
+
+        for cx in 0..coarse_size {
+            for cy in 0..coarse_size {
+                for cz in 0..coarse_size {
+                    if !cell_solid(cx, cy, cz) {
+                        continue;
+                    }
+
+                    let wx = base.x + cx * STRIDE;
+                    let wy = base.y + cy * STRIDE;
+                    let wz = base.z + cz * STRIDE;
+
+                    // +X
+                    if !cell_solid(cx + 1, cy, cz) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx + STRIDE, wy, wz],
+                            [wx + STRIDE, wy + STRIDE, wz],
+                            [wx + STRIDE, wy + STRIDE, wz + STRIDE],
+                            [wx + STRIDE, wy, wz + STRIDE],
+                            [1.0, 0.0, 0.0],
+                        );
+                        if cx == coarse_size - 1 {
+                            Self::emit_coarse_quad(
+                                &mut mesh,
+                                [wx + STRIDE, wy - STRIDE, wz],
+                                [wx + STRIDE, wy, wz],
+                                [wx + STRIDE, wy, wz + STRIDE],
+                                [wx + STRIDE, wy - STRIDE, wz + STRIDE],
+                                [1.0, 0.0, 0.0],
+                            );
+                        }
+                    }
+                    // -X
+                    if !cell_solid(cx - 1, cy, cz) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx, wy, wz + STRIDE],
+                            [wx, wy + STRIDE, wz + STRIDE],
+                            [wx, wy + STRIDE, wz],
+                            [wx, wy, wz],
+                            [-1.0, 0.0, 0.0],
+                        );
+                        if cx == 0 {
+                            Self::emit_coarse_quad(
+                                &mut mesh,
+                                [wx, wy - STRIDE, wz + STRIDE],
+                                [wx, wy, wz + STRIDE],
+                                [wx, wy, wz],
+                                [wx, wy - STRIDE, wz],
+                                [-1.0, 0.0, 0.0],
+                            );
+                        }
+                    }
+                    // +Y
+                    if !cell_solid(cx, cy + 1, cz) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx, wy + STRIDE, wz],
+                            [wx, wy + STRIDE, wz + STRIDE],
+                            [wx + STRIDE, wy + STRIDE, wz + STRIDE],
+                            [wx + STRIDE, wy + STRIDE, wz],
+                            [0.0, 1.0, 0.0],
+                        );
+                    }
+                    // -Y
+                    if !cell_solid(cx, cy - 1, cz) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx, wy, wz + STRIDE],
+                            [wx + STRIDE, wy, wz + STRIDE],
+                            [wx + STRIDE, wy, wz],
+                            [wx, wy, wz],
+                            [0.0, -1.0, 0.0],
+                        );
+                    }
+                    // +Z
+                    if !cell_solid(cx, cy, cz + 1) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx, wy, wz + STRIDE],
+                            [wx + STRIDE, wy, wz + STRIDE],
+                            [wx + STRIDE, wy + STRIDE, wz + STRIDE],
+                            [wx, wy + STRIDE, wz + STRIDE],
+                            [0.0, 0.0, 1.0],
+                        );
+                        if cz == coarse_size - 1 {
+                            Self::emit_coarse_quad(
+                                &mut mesh,
+                                [wx, wy - STRIDE, wz + STRIDE],
+                                [wx + STRIDE, wy - STRIDE, wz + STRIDE],
+                                [wx + STRIDE, wy, wz + STRIDE],
+                                [wx, wy, wz + STRIDE],
+                                [0.0, 0.0, 1.0],
+                            );
+                        }
+                    }
+                    // -Z
+                    if !cell_solid(cx, cy, cz - 1) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx + STRIDE, wy, wz],
+                            [wx, wy, wz],
+                            [wx, wy + STRIDE, wz],
+                            [wx + STRIDE, wy + STRIDE, wz],
+                            [0.0, 0.0, -1.0],
+                        );
+                        if cz == 0 {
+                            Self::emit_coarse_quad(
+                                &mut mesh,
+                                [wx + STRIDE, wy - STRIDE, wz],
+                                [wx, wy - STRIDE, wz],
+                                [wx, wy, wz],
+                                [wx + STRIDE, wy, wz],
+                                [0.0, 0.0, -1.0],
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        mesh
+    }
+
+    /// Emit a single quad (2 triangles) into a VoxelMesh with no AO and full brightness.
+    fn emit_coarse_quad(
+        mesh: &mut VoxelMesh,
+        v0: [i32; 3],
+        v1: [i32; 3],
+        v2: [i32; 3],
+        v3: [i32; 3],
+        normal: [f32; 3],
+    ) {
+        let base = mesh.vertices.len() as u32;
+        for v in [v0, v1, v2, v3] {
+            mesh.vertices.push([v[0] as f32, v[1] as f32, v[2] as f32]);
+            mesh.normals.push(normal);
+            mesh.ambient_occlusion.push(1.0);
+            mesh.geometry_type.push(1);
+            mesh.light_level.push(1.0);
+            mesh.block_light_rgb.push([0.0, 0.0, 0.0]);
+            mesh.sky_exposed.push(1.0);
+        }
+        mesh.indices.push(base);
+        mesh.indices.push(base + 1);
+        mesh.indices.push(base + 2);
+        mesh.indices.push(base);
+        mesh.indices.push(base + 2);
+        mesh.indices.push(base + 3);
     }
 
     /// Append mesh with additional index offset (for mixed meshes)
@@ -277,7 +466,7 @@ impl HybridMeshGenerator {
             ]);
         }
 
-        // Copy normals, AO, geometry type, and light level
+        // Copy normals, AO, geometry type, and light data
         target.normals.extend_from_slice(&source.normals);
         target
             .ambient_occlusion
@@ -286,6 +475,10 @@ impl HybridMeshGenerator {
             .geometry_type
             .extend_from_slice(&source.geometry_type);
         target.light_level.extend_from_slice(&source.light_level);
+        target
+            .block_light_rgb
+            .extend_from_slice(&source.block_light_rgb);
+        target.sky_exposed.extend_from_slice(&source.sky_exposed);
 
         // Add indices with combined offset
         for &index in &source.indices {
@@ -297,7 +490,6 @@ impl HybridMeshGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel::grid::VoxelBlock;
 
     #[test]
     fn test_analyze_empty_chunk() {
@@ -318,7 +510,7 @@ mod tests {
             for y in 0..4 {
                 for z in 0..4 {
                     let pos = IVec3::new(x, y, z);
-                    grid.set_block(pos, VoxelBlock::new(pos, 0)); // Material 0 is smooth
+                    grid.place_block(pos, 0, None); // Material 0 is smooth
                 }
             }
         }
@@ -339,7 +531,7 @@ mod tests {
             for y in 0..4 {
                 for z in 0..4 {
                     let pos = IVec3::new(x, y, z);
-                    grid.set_block(pos, VoxelBlock::new(pos, 100)); // Material 100 is blocky
+                    grid.place_block(pos, 100, None); // Material 100 is blocky
                 }
             }
         }
@@ -360,7 +552,7 @@ mod tests {
             for y in 0..2 {
                 for z in 0..2 {
                     let pos = IVec3::new(x, y, z);
-                    grid.set_block(pos, VoxelBlock::new(pos, 0)); // Smooth
+                    grid.place_block(pos, 0, None); // Smooth
                 }
             }
         }
@@ -369,7 +561,7 @@ mod tests {
             for y in 2..4 {
                 for z in 2..4 {
                     let pos = IVec3::new(x, y, z);
-                    grid.set_block(pos, VoxelBlock::new(pos, 100)); // Blocky
+                    grid.place_block(pos, 100, None); // Blocky
                 }
             }
         }
@@ -388,5 +580,55 @@ mod tests {
 
         assert_eq!(mesh.vertices.len(), 0);
         assert_eq!(mesh.indices.len(), 0);
+    }
+
+    #[test]
+    fn test_generate_coarse_mesh_empty_grid() {
+        let grid = VoxelGrid::new(16);
+        let mesh = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
+        assert_eq!(mesh.vertices.len(), 0);
+        assert_eq!(mesh.indices.len(), 0);
+    }
+
+    #[test]
+    fn test_generate_coarse_mesh_solid_chunk_has_geometry() {
+        let mut grid = VoxelGrid::new(16);
+        for x in 0..16 {
+            for y in 0..16 {
+                for z in 0..16 {
+                    grid.place_block(IVec3::new(x, y, z), 0, None);
+                }
+            }
+        }
+        let mesh = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
+        // A fully solid chunk has only exterior faces; it must have geometry.
+        assert!(!mesh.vertices.is_empty());
+        assert!(!mesh.indices.is_empty());
+        // Every triangle must be a valid index
+        for &idx in &mesh.indices {
+            assert!((idx as usize) < mesh.vertices.len());
+        }
+    }
+
+    #[test]
+    fn test_generate_coarse_mesh_uses_stride2() {
+        // A single block at (0,0,0) should produce the same coarse geometry as a
+        // 2×2×2 region, because STRIDE=2 unions the region into one coarse cell.
+        let mut grid_single = VoxelGrid::new(16);
+        grid_single.place_block(IVec3::new(0, 0, 0), 0, None);
+
+        let mut grid_full_cell = VoxelGrid::new(16);
+        for dx in 0..2 {
+            for dy in 0..2 {
+                for dz in 0..2 {
+                    grid_full_cell.place_block(IVec3::new(dx, dy, dz), 0, None);
+                }
+            }
+        }
+
+        let m1 = HybridMeshGenerator::generate_coarse_mesh(&grid_single, IVec3::ZERO, 16);
+        let m2 = HybridMeshGenerator::generate_coarse_mesh(&grid_full_cell, IVec3::ZERO, 16);
+        assert_eq!(m1.vertices.len(), m2.vertices.len());
+        assert_eq!(m1.indices.len(), m2.indices.len());
     }
 }

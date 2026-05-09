@@ -21,7 +21,7 @@ use moho_sim::SimulationController;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use moho_ui::prefs::Prefs;
+use moho_core::prefs::Prefs;
 
 use super::audio_init::initialize_audio_system;
 use super::camera::create_default_camera;

@@ -12,6 +12,7 @@
 //! The [`OverlayManager`] holds all registered [`Overlay`] layers and
 //! renders them each frame with shared [`HudData`].
 
+pub mod chunk_debug;
 pub mod console;
 pub mod debug_hud;
 pub mod fps_hud;
@@ -19,6 +20,7 @@ pub mod gameplay_hud;
 pub mod overlay_manager;
 pub mod rts_hud;
 
+pub use chunk_debug::ChunkDebugOverlay;
 pub use console::{Console, ConsoleAction};
 pub use debug_hud::DebugHud;
 pub use fps_hud::FpsHud;

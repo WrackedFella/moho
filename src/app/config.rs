@@ -4,7 +4,7 @@
 //! providing a single source of truth for settings that determine how the application
 //! is set up and configured at runtime.
 
-use moho_ui::prefs::Prefs;
+use moho_core::prefs::Prefs;
 
 /// Central configuration for application initialization.
 ///
@@ -45,18 +45,27 @@ pub struct AppConfig {
     /// needing audio should set this to `false` — concurrent WASAPI init across
     /// parallel tests can crash on Windows runners.
     pub init_audio: bool,
+
+    /// Chunk streaming radii and per-frame budget, sourced from `[world]` in prefs.ini.
+    pub streaming: moho_core::voxel::StreamingConfig,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         let prefs = Prefs::default();
 
+        let streaming = moho_core::voxel::StreamingConfig {
+            load_radius_chunks: prefs.world_load_radius(),
+            unload_radius_chunks: prefs.world_unload_radius(),
+            chunks_per_frame: prefs.world_chunks_per_frame(),
+        };
         Self {
             mouse_sensitivity: prefs.mouse_sensitivity() * 0.002,
             input_filtering_enabled: prefs.input_filtering_enabled(),
             filter_preset: moho_core::input::FilterPreset::Default,
             prefs,
             init_audio: true,
+            streaming,
         }
     }
 }
@@ -86,12 +95,18 @@ impl AppConfig {
         let mouse_sensitivity = prefs.mouse_sensitivity() * 0.002;
         let input_filtering_enabled = prefs.input_filtering_enabled();
 
+        let streaming = moho_core::voxel::StreamingConfig {
+            load_radius_chunks: prefs.world_load_radius(),
+            unload_radius_chunks: prefs.world_unload_radius(),
+            chunks_per_frame: prefs.world_chunks_per_frame(),
+        };
         Self {
             mouse_sensitivity,
             input_filtering_enabled,
             filter_preset: moho_core::input::FilterPreset::Default,
             prefs,
             init_audio: true,
+            streaming,
         }
     }
 
@@ -178,6 +193,7 @@ impl AppConfigBuilder {
             filter_preset: self.filter_preset.unwrap_or(defaults.filter_preset),
             prefs,
             init_audio: self.init_audio.unwrap_or(defaults.init_audio),
+            streaming: defaults.streaming,
         }
     }
 }

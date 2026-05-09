@@ -33,7 +33,6 @@ use super::grid::VoxelGrid;
 use super::light_jobs::{
     LightFrameBudget, LightJobQueue, LightJobStats, LightUpdateJob, LightUpdateResult,
 };
-use super::light_propagation::LightChannel;
 use crate::events::{BlockChangeReason, EventBus, WorldEvent};
 use glam::{IVec3, Vec3};
 use std::collections::{HashSet, VecDeque};
@@ -112,84 +111,38 @@ impl LightSystem {
         self.job_queue.budget()
     }
 
-    /// Handle a block placed event
-    ///
-    /// Enqueues a light update job if the block is a light source or blocks existing light
-    pub fn on_block_placed(&mut self, position: IVec3, _material_id: u32) {
-        // Check if block is a light source (emissive)
-        if let Some(block) = self.grid.get_block(&position) {
-            if block.is_light_source() {
-                // Block emits light - add light job
-                let light_level = block.emission_level();
-                let job = LightUpdateJob::add_light(
-                    position,
-                    light_level,
-                    LightChannel::Block,
-                    0, // Will be set by priority calculation
-                )
+    /// Handle a block placed event.
+    pub fn on_block_placed(&mut self, position: IVec3, material_id: u32) {
+        let emission = self.grid.material_registry.emission(material_id);
+        if emission != [0u8, 0, 0] {
+            let job = LightUpdateJob::add_light(position, emission, 0)
                 .with_player_distance(self.player_pos);
-
+            self.job_queue.submit(job);
+            self.total_jobs_submitted += 1;
+        } else {
+            // Opaque block placed — any existing light at this position must be removed.
+            let opacity = self.grid.material_registry.opacity_cost(material_id);
+            if opacity >= 15 {
+                let job =
+                    LightUpdateJob::remove_light(position, 0).with_player_distance(self.player_pos);
                 self.job_queue.submit(job);
                 self.total_jobs_submitted += 1;
-
-                log::debug!(
-                    "Block placed at {:?} is light source (level {}), enqueued add light job",
-                    position,
-                    light_level
-                );
-            } else if !block.is_transparent() {
-                // Solid block placed - may block existing light, trigger removal
-                // Get current light at position before we placed the block
-                let current_light = block.light_level();
-                if current_light > 0 {
-                    // There was light here, need to recalculate
-                    let job = LightUpdateJob::remove_light(position, LightChannel::Sky, 0)
-                        .with_player_distance(self.player_pos);
-                    self.job_queue.submit(job);
-
-                    let job = LightUpdateJob::remove_light(position, LightChannel::Block, 0)
-                        .with_player_distance(self.player_pos);
-                    self.job_queue.submit(job);
-
-                    self.total_jobs_submitted += 2;
-
-                    log::debug!(
-                        "Solid block placed at {:?} blocks light (was {}), enqueued removal jobs",
-                        position,
-                        current_light
-                    );
-                }
             }
         }
     }
 
-    /// Handle a block removed event
-    ///
-    /// Enqueues light removal and re-propagation jobs
+    /// Handle a block removed event.
     pub fn on_block_removed(&mut self, position: IVec3, old_material_id: u32) {
-        // Check if removed block was a light source
-        // Note: We need to check the OLD block state, which we don't have here
-        // For now, assume any block removal might affect light
-
-        // Remove light at this position (both channels)
-        let job_sky = LightUpdateJob::remove_light(position, LightChannel::Sky, 0)
-            .with_player_distance(self.player_pos);
-        self.job_queue.submit(job_sky);
-
-        let job_block = LightUpdateJob::remove_light(position, LightChannel::Block, 0)
-            .with_player_distance(self.player_pos);
-        self.job_queue.submit(job_block);
-
-        self.total_jobs_submitted += 2;
+        // Remove any block-light the removed block was contributing or blocking.
+        let job = LightUpdateJob::remove_light(position, 0).with_player_distance(self.player_pos);
+        self.job_queue.submit(job);
+        self.total_jobs_submitted += 1;
 
         log::debug!(
-            "Block removed at {:?} (material {}), enqueued light removal jobs",
+            "Block removed at {:?} (material {}), enqueued light removal job",
             position,
             old_material_id
         );
-
-        // After removal, light from neighbors should propagate into this now-empty space
-        // This happens automatically in the remove_light re-flood phase
     }
 
     /// Handle a batch block modification event
@@ -208,21 +161,16 @@ impl LightSystem {
 
         // For now, simple approach: submit individual jobs for each position
         for &position in positions {
-            if let Some(block) = self.grid.get_block(&position) {
-                if block.is_light_source() {
-                    let light_level = block.emission_level();
-                    let job =
-                        LightUpdateJob::add_light(position, light_level, LightChannel::Block, 0)
-                            .with_player_distance(self.player_pos);
-                    self.job_queue.submit(job);
-                    self.total_jobs_submitted += 1;
+            if let Some(mat_id) = self.grid.material_at(position) {
+                let emission = self.grid.material_registry.emission(mat_id);
+                let job = if emission != [0u8, 0, 0] {
+                    LightUpdateJob::add_light(position, emission, 0)
                 } else {
-                    // Assume removal/blocking
-                    let job_sky = LightUpdateJob::remove_light(position, LightChannel::Sky, 0)
-                        .with_player_distance(self.player_pos);
-                    self.job_queue.submit(job_sky);
-                    self.total_jobs_submitted += 1;
-                }
+                    LightUpdateJob::remove_light(position, 0)
+                };
+                self.job_queue
+                    .submit(job.with_player_distance(self.player_pos));
+                self.total_jobs_submitted += 1;
             }
         }
     }
@@ -402,7 +350,6 @@ impl LightSystemStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel::VoxelBlock;
 
     #[test]
     fn test_light_system_creation() {
@@ -428,29 +375,23 @@ mod tests {
 
     #[test]
     fn test_block_placed_light_source() {
+        use crate::voxel::grid::MaterialLighting;
         let mut grid = VoxelGrid::new(16);
-
-        // Create a simple grid with some blocks
-        for x in 0..5 {
-            for y in 0..5 {
-                for z in 0..5 {
-                    let pos = IVec3::new(x, y, z);
-                    grid.set_block(pos, VoxelBlock::new(pos, 1));
-                }
-            }
-        }
+        // Material 1: warm torch emission.
+        grid.material_registry.set_lighting(
+            1,
+            MaterialLighting {
+                emission: [15, 8, 2],
+                opacity_cost: 0,
+            },
+        );
 
         let event_bus = Arc::new(EventBus::new());
         let mut light_system = LightSystem::with_default_budget(grid, event_bus);
 
-        // Place a light source (would need to be marked as emissive)
-        let light_pos = IVec3::new(2, 2, 2);
-
-        // Simulate event
-        light_system.on_block_placed(light_pos, 1);
-
-        // Should have enqueued a job if block is marked as light source
-        // (Currently blocks need to return true from is_light_source())
+        // Placing an emissive block should enqueue an add-light job.
+        light_system.on_block_placed(IVec3::new(2, 2, 2), 1);
+        assert_eq!(light_system.pending_jobs(), 1);
     }
 
     #[test]

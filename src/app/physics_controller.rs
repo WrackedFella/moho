@@ -89,6 +89,15 @@ impl PhysicsController {
         self.chunk_colliders.insert(chunk_pos, handle);
     }
 
+    /// Remove the collider for `chunk_pos` (called when a chunk is evicted by streaming).
+    pub fn remove_chunk_collider(&mut self, chunk_pos: glam::IVec3) {
+        if let (Some(pw), Some(handle)) =
+            (self.world.as_mut(), self.chunk_colliders.remove(&chunk_pos))
+        {
+            pw.remove_collider(handle);
+        }
+    }
+
     /// Register colliders for all ECS chunks that don't yet have one.
     pub fn sync_colliders_from_ecs(&mut self, ecs_world: &legion::World) {
         use legion::IntoQuery;

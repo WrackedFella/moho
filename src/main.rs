@@ -6,7 +6,7 @@
 
 use crossbeam_channel::unbounded;
 use legion::World;
-use moho_ui::prefs::Prefs;
+use moho_core::prefs::Prefs;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,8 +33,10 @@ enum GenerationMsg {
     Completed {
         scene_bytes: Vec<u8>,
         spec: moho_core::scene_builders::WorldSpec,
-        // Pass the generated grid back to the main thread
-        grid: moho_core::voxel::VoxelGrid,
+        terrain_config: moho_core::scene_builders::TerrainConfig,
+        // Empty grid — streaming populates it on demand. Boxed to reduce enum
+        // variant size (VoxelGrid is large; the other variants are cheap).
+        grid: Box<moho_core::voxel::VoxelGrid>,
     },
     Canceled,
     Failed(String),
@@ -120,6 +122,9 @@ struct App {
     physics: app::physics_controller::PhysicsController,
     generation: app::generation_job::WorldGenerationJob,
     input: app::input_state::InputState,
+    chunk_streamer: Option<app::chunk_streamer::ChunkStreamer>,
+    /// Cached player chunk position used to gate per-frame LOD transition scans.
+    lod_player_chunk_cache: glam::IVec3,
 }
 
 impl App {
@@ -178,6 +183,8 @@ impl App {
             physics: app::physics_controller::PhysicsController::new(),
             generation: app::generation_job::WorldGenerationJob::new(),
             input: app::input_state::InputState::new(initialized.input_system),
+            chunk_streamer: None,
+            lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
         }
     }
 
@@ -185,140 +192,7 @@ impl App {
         &mut self,
         window: Arc<Window>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // SAFETY: The renderer requires a &'static Window because Box<dyn RendererBackend>
-        // is implicitly 'static. We clone the Arc<Window> before leaking it, so the Arc
-        // refcount keeps the Window alive independently of `window`. This is a deliberate
-        // one-time leak for the main window, which lives for the entire program lifetime.
-        // If winit ever allows window recreation (e.g. fullscreen toggle) this should be
-        // replaced by giving RendererBackend a lifetime parameter (TD-09 / TD-06).
-        let window_ref: &'static Window = Box::leak(Box::new(window.clone()));
-        let mut renderer = moho_renderer::create_renderer(Some(window_ref))?;
-
-        // Apply initial quality settings
-        renderer.set_shadow_quality(self.prefs.shadow_quality() as u8);
-        renderer.set_ssao_quality(self.prefs.ssao_quality() as u8);
-
-        // Create sphere mesh data using the proper sphere geometry
-        let (vertices, normals, indices) = moho_core::actors::Sphere::unit_sphere_indexed(16, 16);
-        let ao_data = vec![1.0; vertices.len()]; // Full brightness for non-voxel geometry
-        let geo_type = vec![1; vertices.len()]; // Type 1 (blocky/non-voxel)
-        let light_level = vec![1.0; vertices.len()]; // Full light for non-voxel geometry
-        let mesh_handle = renderer.register_indexed_mesh(
-            &vertices,
-            &normals,
-            &ao_data,
-            &geo_type,
-            &light_level,
-            &indices,
-        );
-
-        let (cube_vertices, cube_normals, cube_indices) =
-            moho_core::actors::Cube::unit_cube_indexed();
-        let cube_ao = vec![1.0; cube_vertices.len()];
-        let cube_geo_type = vec![1; cube_vertices.len()];
-        let cube_light_level = vec![1.0; cube_vertices.len()];
-        let cube_mesh_handle = renderer.register_indexed_mesh(
-            &cube_vertices,
-            &cube_normals,
-            &cube_ao,
-            &cube_geo_type,
-            &cube_light_level,
-            &cube_indices,
-        );
-
-        // UI setup
-        {
-            let adapter = moho_ui::build_adapter(Some(window.clone()), self.event_bus.clone());
-            let ui_adapter = Arc::new(Mutex::new(adapter));
-
-            if let Ok(mut a) = ui_adapter.lock() {
-                a.set_surface_format(wgpu::TextureFormat::Bgra8UnormSrgb);
-            }
-
-            renderer.set_frame_callback_arc(Some(
-                ui_adapter.clone() as Arc<Mutex<dyn moho_renderer::FrameCallback>>
-            ));
-
-            // Store adapter
-            self.ui_adapter = Some(ui_adapter.clone());
-
-            // Register KeybindCapture subscriber at higher priority so it can intercept
-            // events while the active screen is actively listening for raw input.
-            let kb_adapter = ui_adapter.clone();
-            self.dispatcher.register(200, move |event: &WindowEvent| {
-                if let Ok(mut a) = kb_adapter.lock() {
-                    // Quick check then forward to screen input handler
-                    if a.active_screen_captures_input() {
-                        return a.try_handle_screen_input(event);
-                    }
-                }
-                false
-            });
-
-            // Register UI adapter as a normal UI subscriber.
-            // Only forward events to egui when menus/console are visible;
-            // during gameplay the overlays are passive and don't need input.
-            let ui_adapter_clone = ui_adapter.clone();
-            self.dispatcher.register(100, move |event: &WindowEvent| {
-                if let Ok(mut a) = ui_adapter_clone.lock() {
-                    if a.is_visible() {
-                        a.handle_winit_event(event)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            });
-
-            // Create channel for simplified input events (e.g., mouse wheel) that
-            // the game will process if the UI doesn't consume them.
-            let (tx, rx) = crossbeam_channel::unbounded::<crate::input_event::InputEvent>();
-            self.input.unconsumed_tx = Some(tx.clone());
-            self.input.unconsumed_rx = Some(rx);
-
-            // Prepare a ui_adapter clone to check visibility before forwarding wheel
-            let ui_adapter_for_forward = ui_adapter.clone();
-
-            // Register a low-priority subscriber that forwards mouse wheel events into
-            // the channel so the game can act on them later (e.g., scroll-to-zoom).
-            // We only forward when the UI overlay is not visible. Note: the
-            // dispatcher already ensures this subscriber is only called when higher
-            // priority handlers did not consume the event (i.e., egui didn't want it).
-            self.dispatcher.register(0, move |event: &WindowEvent| {
-                use winit::event::WindowEvent as WEvent;
-                if let WEvent::MouseWheel { delta, .. } = event {
-                    // Use the conservative try_lock approach: if we cannot acquire the
-                    // lock for any reason, treat as UI-visible and do not forward.
-                    match ui_adapter_for_forward.try_lock() {
-                        Ok(a) if a.is_visible() => return false,
-                        Err(_) => return false,
-                        _ => {}
-                    }
-
-                    // Convert delta to a simple numeric pair and forward via helper
-                    let delta_y = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_x, y) => *y,
-                        winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32,
-                    };
-
-                    if crate::forward_wheel_if_allowed(&ui_adapter_for_forward, &tx, delta_y) {
-                        return true;
-                    }
-                }
-                false
-            });
-        }
-
-        // Store everything together in the WindowRenderer
-        self.window_renderer = Some(WindowRenderer {
-            window,
-            renderer,
-            mesh_handle,
-            cube_mesh_handle,
-        });
-
-        Ok(())
+        crate::app::renderer_setup::setup_renderer_and_ui(self, window)
     }
 
     fn generate_new_world(
@@ -355,24 +229,22 @@ impl App {
                     let _ = sender.send(GenerationMsg::Progress(0.02));
 
                     // Local world and scene used for generation
-                    let mut local_world = World::default();
+                    let local_world = World::default();
                     // Step 1: clear/build
                     if cancel_clone.load(Ordering::Relaxed) {
                         let _ = sender.send(GenerationMsg::Canceled);
                         return;
                     }
-                    // Use the supplied WorldSpec seed (if any) when generating
-                    // terrain so different seeds produce different worlds.
+                    // Build TerrainConfig from the WorldSpec.
                     let mut terrain_config = moho_core::scene_builders::TerrainConfig::default();
                     if let Some(s) = spec_for_thread.seed {
-                        terrain_config.seed = s as u32; // truncate to u32
+                        terrain_config.seed = s as u32;
                     }
-                    // Map UI's size_xz (full width in blocks) into the terrain config.
                     terrain_config.world_size = spec_for_thread.size_xz;
-                    let grid = moho_core::scene_builders::voxel_terrain_scene_with_config(
-                        &mut local_world,
-                        &terrain_config,
-                    );
+
+                    // With streaming, we no longer pre-generate the full world here.
+                    // An empty grid is returned; ChunkStreamer fills it on demand.
+                    let grid = moho_core::voxel::VoxelGrid::new(16);
                     let _ = sender.send(GenerationMsg::Progress(0.6));
 
                     if cancel_clone.load(Ordering::Relaxed) {
@@ -415,8 +287,8 @@ impl App {
                     }
                     let save_path = saves_dir.join("scene.bin");
                     let block_records: Vec<save::BlockRecord> = grid
-                        .iter_blocks()
-                        .map(save::BlockRecord::from_block)
+                        .iter_block_data()
+                        .map(save::BlockRecord::from_block_data)
                         .collect();
                     if let Err(e) = save::write_scene_with_metadata(
                         &save_path,
@@ -432,7 +304,8 @@ impl App {
                     let _ = sender.send(GenerationMsg::Completed {
                         scene_bytes,
                         spec: spec_for_thread,
-                        grid,
+                        terrain_config,
+                        grid: Box::new(grid),
                     });
                 })?;
 
@@ -493,8 +366,8 @@ impl App {
             .as_ref()
             .map(|ls| {
                 ls.grid()
-                    .iter_blocks()
-                    .map(save::BlockRecord::from_block)
+                    .iter_block_data()
+                    .map(save::BlockRecord::from_block_data)
                     .collect()
             })
             .unwrap_or_default();
@@ -513,106 +386,7 @@ impl App {
         &mut self,
         path: P,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        log::info!("Loading scene from: {:?}", path.as_ref());
-
-        // Check if the file exists
-        if !path.as_ref().exists() {
-            return Err(format!("Scene file does not exist: {:?}", path.as_ref()).into());
-        }
-
-        // Clear the existing world
-        self.world.clear();
-
-        // Load the scene from file with metadata support
-        {
-            let (spec, scene_bytes, block_records) = save::read_scene_and_metadata(&path)?;
-            // Remember the WorldSpec from the loaded file so autosaves and
-            // subsequent writes preserve the original metadata.
-            self.generation.last_spec = Some(spec.clone());
-            log::info!("Loaded WorldSpec from save: {:?}", spec);
-            // Restore time of day from the persisted WorldSpec.
-            self.simulation.set_time_of_day(spec.initial_time_of_day);
-            let (camera_data, lights) =
-                self.scene.load_from_bytes(&scene_bytes, &mut self.world)?;
-            log::info!(
-                "Scene loaded successfully from {:?}, {} lights",
-                path.as_ref(),
-                lights.len()
-            );
-
-            // Re-add persisted lights to the renderer
-            if let Some(ref mut wr) = self.window_renderer {
-                for desc in &lights {
-                    if desc.enabled {
-                        wr.renderer.add_point_light(
-                            glam::Vec3::from_array(desc.position),
-                            glam::Vec3::from_array(desc.color),
-                            desc.intensity,
-                            desc.range,
-                        );
-                    }
-                }
-            }
-
-            // Reconstruct VoxelGrid from persisted block records, then initialize LightSystem.
-            let mut grid = moho_core::voxel::VoxelGrid::new(16);
-            if block_records.is_empty() {
-                // KNOWN LIMITATION: v1 saves do not contain block data. Light propagation
-                // will be inactive until the world is regenerated and saved in v2 format.
-                log::warn!(
-                    "Save file contains no block data (v1 format). \
-                     Light propagation disabled for this session. \
-                     Regenerate the world to fix permanently."
-                );
-            } else {
-                for record in &block_records {
-                    let pos = moho_core::voxel::BlockPos::new(record.x, record.y, record.z);
-                    let mut block = moho_core::voxel::VoxelBlock::new(pos, record.material_id);
-                    block.resource_id = record.resource_id;
-                    grid.set_block(pos, block);
-                }
-                log::info!(
-                    "Reconstructed VoxelGrid with {} blocks for LightSystem",
-                    block_records.len()
-                );
-            }
-            self.light_system = Some(moho_core::voxel::LightSystem::with_default_budget(
-                grid,
-                self.event_bus.clone(),
-            ));
-
-            // Restore camera handled below using camera_data
-            if let Some((position, yaw, pitch)) = camera_data {
-                self.simulation.set_position_yaw_pitch(position, yaw, pitch);
-                // Clear any pending input so the restored camera
-                // orientation isn't immediately overridden by
-                // accumulated mouse deltas or smoothing state.
-                self.input.system.clear_pending_input();
-                log::info!(
-                    "Restored camera position: {:?}, yaw: {:.2}, pitch: {:.2}",
-                    position,
-                    yaw,
-                    pitch
-                );
-            } else {
-                log::info!("No camera data found in scene file, keeping current position");
-            }
-        }
-
-        // Initialize physics for loaded world.
-        self.setup_physics_for_loaded_world();
-
-        // Request a redraw to show the loaded scene
-        if let Some(ref wr) = self.window_renderer {
-            wr.window.request_redraw();
-        }
-
-        // Switch to game mode and hide menu
-        self.game_state = crate::game_state::GameState::Playing;
-        self.hide_menu();
-
-        log::info!("Scene loading complete - switched to game mode");
-        Ok(())
+        crate::app::scene_loader::load_scene(self, path.as_ref())
     }
 
     /// Initialize physics world after a scene is loaded.
@@ -650,7 +424,7 @@ impl App {
     /// Update controller input from keyboard state
     fn update_controller_input(&mut self) {
         // Helper to check if a binding is currently active
-        let is_active = |binding: &moho_ui::prefs::Binding| -> bool {
+        let is_active = |binding: &moho_core::prefs::Binding| -> bool {
             self.input
                 .active_keys
                 .contains(&(binding.code, binding.mods))
@@ -734,6 +508,16 @@ impl App {
                         && let Ok(mut adapter) = ui_adapter.lock()
                     {
                         adapter.toggle_debug_hud();
+                    }
+                    return;
+                }
+                KeyCode::F4 => {
+                    // F4 toggles the chunk-boundary debug minimap
+                    if pressed
+                        && let Some(ui_adapter) = &self.ui_adapter
+                        && let Ok(mut adapter) = ui_adapter.lock()
+                    {
+                        adapter.toggle_overlay("chunk_debug");
                     }
                     return;
                 }

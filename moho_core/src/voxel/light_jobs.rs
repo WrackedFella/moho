@@ -23,7 +23,7 @@
 //! - Large edit (explosion): Split over multiple frames, max 100 blocks/frame
 
 use super::grid::{BlockPos, VoxelGrid};
-use super::light_propagation::{LightChannel, LightPropagator};
+use super::light_propagation::LightPropagator;
 use super::state::JobId;
 use glam::{IVec3, Vec3};
 use std::collections::{BinaryHeap, HashMap, VecDeque};
@@ -53,11 +53,8 @@ pub struct LightUpdateJob {
     /// Source position for Add/Remove operations (ignored for FloodFill)
     pub source_pos: BlockPos,
 
-    /// Initial light level for Add operations (typically 15 for torch)
-    pub light_level: u8,
-
-    /// Which light channel to update (sky or block)
-    pub channel: LightChannel,
+    /// RGB emission for Add operations. [0,0,0] for Remove/FloodFill.
+    pub rgb: [u8; 3],
 
     /// Priority (lower = higher priority, typically distance to player)
     pub priority: i32,
@@ -67,45 +64,37 @@ pub struct LightUpdateJob {
 }
 
 impl LightUpdateJob {
-    /// Create a new light update job for adding light
-    pub fn add_light(
-        source_pos: BlockPos,
-        light_level: u8,
-        channel: LightChannel,
-        priority: i32,
-    ) -> Self {
+    /// Create a new light update job for adding RGB block-light.
+    pub fn add_light(source_pos: BlockPos, rgb: [u8; 3], priority: i32) -> Self {
         Self {
             id: JobId::new(),
             op: LightUpdateOp::Add,
             source_pos,
-            light_level,
-            channel,
+            rgb,
             priority,
             affected_chunks: None,
         }
     }
 
-    /// Create a new light update job for removing light
-    pub fn remove_light(source_pos: BlockPos, channel: LightChannel, priority: i32) -> Self {
+    /// Create a new light update job for removing block-light at `source_pos`.
+    pub fn remove_light(source_pos: BlockPos, priority: i32) -> Self {
         Self {
             id: JobId::new(),
             op: LightUpdateOp::Remove,
             source_pos,
-            light_level: 0, // Not used for removal
-            channel,
+            rgb: [0, 0, 0],
             priority,
             affected_chunks: None,
         }
     }
 
-    /// Create a new light update job for flood-fill
-    pub fn flood_fill(channel: LightChannel, priority: i32) -> Self {
+    /// Create a new light update job for full flood-fill (e.g. initial world load).
+    pub fn flood_fill(priority: i32) -> Self {
         Self {
             id: JobId::new(),
             op: LightUpdateOp::FloodFill,
-            source_pos: IVec3::ZERO, // Not used for flood-fill
-            light_level: 0,          // Not used for flood-fill
-            channel,
+            source_pos: IVec3::ZERO,
+            rgb: [0, 0, 0],
             priority,
             affected_chunks: None,
         }
@@ -394,24 +383,19 @@ impl LightJobQueue {
 
         let (affected_chunks, blocks_processed) = match job.op {
             LightUpdateOp::Add => {
-                let chunks =
-                    self.propagator
-                        .add_light(grid, job.source_pos, job.light_level, job.channel);
+                let chunks = self.propagator.add_light_rgb(grid, job.source_pos, job.rgb);
                 let blocks = self.estimate_blocks_affected(&chunks);
                 (chunks, blocks)
             }
             LightUpdateOp::Remove => {
-                let chunks = self
-                    .propagator
-                    .remove_light(grid, job.source_pos, job.channel);
+                let chunks = self.propagator.remove_light(grid, job.source_pos);
                 let blocks = self.estimate_blocks_affected(&chunks);
                 (chunks, blocks)
             }
             LightUpdateOp::FloodFill => {
-                self.propagator.flood_fill(grid, job.channel);
-                // For flood-fill, we don't track affected chunks (it's everything)
-                // Return empty list and estimate based on grid size
-                (Vec::new(), 1000) // Rough estimate
+                let chunks = self.propagator.flood_fill_block_lights(grid);
+                let blocks = self.estimate_blocks_affected(&chunks);
+                (chunks, blocks)
             }
         };
 
@@ -488,15 +472,28 @@ impl LightJobStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel::VoxelBlock;
+    use crate::voxel::grid::MaterialLighting;
+    use crate::voxel::light_storage;
+
+    fn transparent_grid() -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        grid.material_registry.set_lighting(
+            1,
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
+        );
+        grid
+    }
 
     #[test]
     fn test_job_priority_ordering() {
         let mut queue = BinaryHeap::new();
 
-        let job1 = LightUpdateJob::add_light(IVec3::new(0, 0, 0), 15, LightChannel::Block, 100);
-        let job2 = LightUpdateJob::add_light(IVec3::new(10, 0, 0), 15, LightChannel::Block, 50);
-        let job3 = LightUpdateJob::add_light(IVec3::new(20, 0, 0), 15, LightChannel::Block, 25);
+        let job1 = LightUpdateJob::add_light(IVec3::new(0, 0, 0), [15, 0, 0], 100);
+        let job2 = LightUpdateJob::add_light(IVec3::new(10, 0, 0), [15, 0, 0], 50);
+        let job3 = LightUpdateJob::add_light(IVec3::new(20, 0, 0), [15, 0, 0], 25);
 
         queue.push(job1);
         queue.push(job2);
@@ -511,7 +508,7 @@ mod tests {
     #[test]
     fn test_job_cancellation() {
         let mut queue = LightJobQueue::with_default_budget(16);
-        let job = LightUpdateJob::add_light(IVec3::new(0, 0, 0), 15, LightChannel::Block, 10);
+        let job = LightUpdateJob::add_light(IVec3::new(0, 0, 0), [15, 0, 0], 10);
         let job_id = queue.submit(job);
 
         // First cancel should succeed
@@ -523,36 +520,32 @@ mod tests {
 
     #[test]
     fn test_add_light_job() {
-        let mut grid = VoxelGrid::new(16);
+        let mut grid = transparent_grid();
         let mut queue = LightJobQueue::with_default_budget(16);
 
-        // Add some blocks
-        for x in 0..5 {
-            for y in 0..5 {
-                for z in 0..5 {
-                    let pos = IVec3::new(x, y, z);
-                    grid.set_block(pos, VoxelBlock::new(pos, 1));
+        for x in 0..5i32 {
+            for y in 0..5i32 {
+                for z in 0..5i32 {
+                    grid.place_block(IVec3::new(x, y, z), 1, None);
                 }
             }
         }
 
-        // Submit a light addition job
-        let job = LightUpdateJob::add_light(IVec3::new(2, 2, 2), 15, LightChannel::Block, 10);
+        let light_pos = IVec3::new(2, 2, 2);
+        let job = LightUpdateJob::add_light(light_pos, [15, 0, 0], 10);
         queue.submit(job);
 
-        // Process the frame
         let completed = queue.process_frame(&mut grid);
         assert_eq!(completed, 1);
 
-        // Verify light was added
-        let center_block = grid.get_block(&IVec3::new(2, 2, 2)).unwrap();
-        assert_eq!(center_block.block_light, 15);
+        // Verify R channel at source and neighbor.
+        let (sc, si, _) = light_storage::world_to_chunk_local(light_pos);
+        assert_eq!(grid.chunk_light(sc).unwrap().block_light_r[si], 15);
 
-        // Verify light propagated to neighbors
-        let neighbor = grid.get_block(&IVec3::new(3, 2, 2)).unwrap();
-        assert!(neighbor.block_light > 0);
+        let nb = IVec3::new(3, 2, 2);
+        let (nc, ni, _) = light_storage::world_to_chunk_local(nb);
+        assert!(grid.chunk_light(nc).unwrap().block_light_r[ni] > 0);
 
-        // Collect results
         let results = queue.collect_results();
         assert_eq!(results.len(), 1);
         assert!(!results[0].cancelled);
@@ -561,74 +554,59 @@ mod tests {
 
     #[test]
     fn test_remove_light_job() {
-        let mut grid = VoxelGrid::new(16);
+        let mut grid = transparent_grid();
         let mut queue = LightJobQueue::with_default_budget(16);
 
-        // Add some blocks
-        for x in 0..5 {
-            for y in 0..5 {
-                for z in 0..5 {
-                    let pos = IVec3::new(x, y, z);
-                    grid.set_block(pos, VoxelBlock::new(pos, 1));
+        for x in 0..5i32 {
+            for y in 0..5i32 {
+                for z in 0..5i32 {
+                    grid.place_block(IVec3::new(x, y, z), 1, None);
                 }
             }
         }
 
-        // First add light
+        // Add light via propagator directly.
+        let light_pos = IVec3::new(2, 2, 2);
         let mut propagator = LightPropagator::new(16);
-        propagator.add_light(&mut grid, IVec3::new(2, 2, 2), 15, LightChannel::Block);
+        propagator.add_light_rgb(&mut grid, light_pos, [15, 0, 0]);
 
-        // Verify light exists
-        assert_eq!(
-            grid.get_block(&IVec3::new(2, 2, 2)).unwrap().block_light,
-            15
-        );
+        let (sc, si, _) = light_storage::world_to_chunk_local(light_pos);
+        assert_eq!(grid.chunk_light(sc).unwrap().block_light_r[si], 15);
 
-        // Submit a light removal job
-        let job = LightUpdateJob::remove_light(IVec3::new(2, 2, 2), LightChannel::Block, 10);
+        let job = LightUpdateJob::remove_light(light_pos, 10);
         queue.submit(job);
 
-        // Process the frame
         let completed = queue.process_frame(&mut grid);
         assert_eq!(completed, 1);
 
-        // Verify light was removed
-        let center_block = grid.get_block(&IVec3::new(2, 2, 2)).unwrap();
-        assert_eq!(center_block.block_light, 0);
+        assert_eq!(grid.chunk_light(sc).unwrap().block_light_r[si], 0);
     }
 
     #[test]
     fn test_frame_budget() {
-        let mut grid = VoxelGrid::new(16);
+        let mut grid = transparent_grid();
 
-        // Create a conservative budget
         let budget = LightFrameBudget::conservative();
         let mut queue = LightJobQueue::new(16, budget);
 
-        // Add blocks
-        for x in 0..10 {
-            for y in 0..10 {
-                for z in 0..10 {
-                    let pos = IVec3::new(x, y, z);
-                    grid.set_block(pos, VoxelBlock::new(pos, 1));
+        for x in 0..10i32 {
+            for y in 0..10i32 {
+                for z in 0..10i32 {
+                    grid.place_block(IVec3::new(x, y, z), 1, None);
                 }
             }
         }
 
-        // Submit multiple light jobs
-        for i in 0..5 {
-            let job =
-                LightUpdateJob::add_light(IVec3::new(i * 2, 5, 5), 15, LightChannel::Block, i);
+        for i in 0..5i32 {
+            let job = LightUpdateJob::add_light(IVec3::new(i * 2, 5, 5), [15, 0, 0], i);
             queue.submit(job);
         }
 
         assert_eq!(queue.pending_jobs(), 5);
 
-        // Process one frame - may not complete all jobs due to budget
         let completed = queue.process_frame(&mut grid);
-        assert!(completed <= 5); // Some or all jobs completed
+        assert!(completed <= 5);
 
-        // If not all completed, process another frame
         if queue.pending_jobs() > 0 {
             let completed2 = queue.process_frame(&mut grid);
             assert!(completed2 > 0);
@@ -639,39 +617,30 @@ mod tests {
     fn test_player_distance_priority() {
         let player_pos = Vec3::new(0.0, 0.0, 0.0);
 
-        let job_close = LightUpdateJob::add_light(
-            IVec3::new(5, 0, 0),
-            15,
-            LightChannel::Block,
-            100, // Initial priority (will be overridden)
-        )
-        .with_player_distance(player_pos);
-
-        let job_far = LightUpdateJob::add_light(IVec3::new(50, 0, 0), 15, LightChannel::Block, 100)
+        let job_close = LightUpdateJob::add_light(IVec3::new(5, 0, 0), [15, 0, 0], 100)
             .with_player_distance(player_pos);
 
-        // Closer job should have lower priority value (higher priority)
+        let job_far = LightUpdateJob::add_light(IVec3::new(50, 0, 0), [15, 0, 0], 100)
+            .with_player_distance(player_pos);
+
         assert!(job_close.priority < job_far.priority);
     }
 
     #[test]
     fn test_stats_tracking() {
-        let mut grid = VoxelGrid::new(16);
+        let mut grid = transparent_grid();
         let mut queue = LightJobQueue::with_default_budget(16);
 
-        // Add blocks
-        for x in 0..5 {
-            for y in 0..5 {
-                for z in 0..5 {
-                    let pos = IVec3::new(x, y, z);
-                    grid.set_block(pos, VoxelBlock::new(pos, 1));
+        for x in 0..5i32 {
+            for y in 0..5i32 {
+                for z in 0..5i32 {
+                    grid.place_block(IVec3::new(x, y, z), 1, None);
                 }
             }
         }
 
-        // Process a few jobs
-        for i in 0..3 {
-            let job = LightUpdateJob::add_light(IVec3::new(i, 2, 2), 15, LightChannel::Block, 10);
+        for i in 0..3i32 {
+            let job = LightUpdateJob::add_light(IVec3::new(i, 2, 2), [15, 0, 0], 10);
             queue.submit(job);
         }
 
@@ -679,9 +648,7 @@ mod tests {
 
         let stats = queue.stats();
         assert!(stats.total_jobs_processed > 0);
-        assert!(stats.total_blocks_processed > 0);
         assert!(stats.total_time_us > 0);
-        assert!(stats.average_blocks_per_job > 0);
     }
 
     #[test]

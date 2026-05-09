@@ -5,6 +5,7 @@
 
 pub mod audio_init;
 pub mod camera;
+pub mod chunk_streamer;
 pub mod config;
 pub mod event_loop;
 pub mod event_setup;
@@ -12,3 +13,5 @@ pub mod generation_job;
 pub mod initializer;
 pub mod input_state;
 pub mod physics_controller;
+pub mod renderer_setup;
+pub mod scene_loader;
