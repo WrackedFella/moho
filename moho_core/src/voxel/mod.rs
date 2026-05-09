@@ -35,7 +35,6 @@
 
 mod biome;
 mod chunk;
-pub mod streaming;
 mod face;
 mod grid;
 mod jobs;
@@ -47,6 +46,7 @@ mod light_system;
 mod mesh;
 mod modification;
 mod state;
+pub mod streaming;
 
 // Re-export core types from submodules
 pub use biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
@@ -56,8 +56,6 @@ pub use grid::{
     BlockCategory, BlockData, BlockPos, MaterialLighting, MaterialRegistry, ResourceData,
     ResourceRegistry, VoxelBlock, VoxelGrid,
 };
-pub use light_sky::{dirty_chunks_below, ensure_chunk_sky_ready, recompute_sky_exposure};
-pub use light_storage::{CHUNK_SIZE as LIGHT_CHUNK_SIZE, ChunkLight};
 pub use jobs::{
     CancellationToken, MeshGeneratorFn, MeshJob, MeshJobQueue, MeshJobQueueBuilder, MeshJobResult,
     MeshJobType, create_hybrid_generator,
@@ -67,8 +65,10 @@ pub use light_jobs::{
     LightUpdateOp, LightUpdateResult,
 };
 pub use light_propagation::{LightChannel, LightPropagator};
+pub use light_sky::{dirty_chunks_below, ensure_chunk_sky_ready, recompute_sky_exposure};
+pub use light_storage::{CHUNK_SIZE as LIGHT_CHUNK_SIZE, ChunkLight};
 pub use light_system::{LightSystem, LightSystemStats};
 pub use mesh::{BlockyMeshGenerator, ChunkContent, HybridMeshGenerator, MarchingCubes, VoxelMesh};
 pub use modification::{BlockModifier, ModificationResult, VoxelMutator};
-pub use streaming::StreamingConfig;
 pub use state::{ChunkState, DirtyFlags, GenerationState, JobId};
+pub use streaming::StreamingConfig;

@@ -38,7 +38,11 @@ pub fn load_scene(
         // Restore time of day from the persisted WorldSpec.
         app.simulation.set_time_of_day(spec.initial_time_of_day);
         let (camera_data, lights) = app.scene.load_from_bytes(&scene_bytes, &mut app.world)?;
-        log::info!("Scene loaded successfully from {:?}, {} lights", path, lights.len());
+        log::info!(
+            "Scene loaded successfully from {:?}, {} lights",
+            path,
+            lights.len()
+        );
 
         // Re-add persisted lights to the renderer
         if let Some(ref mut wr) = app.window_renderer {

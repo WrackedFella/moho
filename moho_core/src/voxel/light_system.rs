@@ -123,8 +123,8 @@ impl LightSystem {
             // Opaque block placed — any existing light at this position must be removed.
             let opacity = self.grid.material_registry.opacity_cost(material_id);
             if opacity >= 15 {
-                let job = LightUpdateJob::remove_light(position, 0)
-                    .with_player_distance(self.player_pos);
+                let job =
+                    LightUpdateJob::remove_light(position, 0).with_player_distance(self.player_pos);
                 self.job_queue.submit(job);
                 self.total_jobs_submitted += 1;
             }
@@ -168,7 +168,8 @@ impl LightSystem {
                 } else {
                     LightUpdateJob::remove_light(position, 0)
                 };
-                self.job_queue.submit(job.with_player_distance(self.player_pos));
+                self.job_queue
+                    .submit(job.with_player_distance(self.player_pos));
                 self.total_jobs_submitted += 1;
             }
         }
@@ -379,7 +380,10 @@ mod tests {
         // Material 1: warm torch emission.
         grid.material_registry.set_lighting(
             1,
-            MaterialLighting { emission: [15, 8, 2], opacity_cost: 0 },
+            MaterialLighting {
+                emission: [15, 8, 2],
+                opacity_cost: 0,
+            },
         );
 
         let event_bus = Arc::new(EventBus::new());

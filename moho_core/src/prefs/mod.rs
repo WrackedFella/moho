@@ -529,7 +529,10 @@ impl Prefs {
         out.push_str("\n[world]\n");
         out.push_str(&format!("load_radius={}\n", self.world_load_radius));
         out.push_str(&format!("unload_radius={}\n", self.world_unload_radius));
-        out.push_str(&format!("chunks_per_frame={}\n", self.world_chunks_per_frame));
+        out.push_str(&format!(
+            "chunks_per_frame={}\n",
+            self.world_chunks_per_frame
+        ));
 
         fs::write(path, out)?;
         Ok(())

@@ -77,31 +77,33 @@ pub fn setup_renderer_and_ui(
         // Register KeybindCapture subscriber at higher priority so it can intercept
         // events while the active screen is actively listening for raw input.
         let kb_adapter = ui_adapter.clone();
-        app.dispatcher.register(200, move |event: &winit::event::WindowEvent| {
-            if let Ok(mut a) = kb_adapter.lock() {
-                // Quick check then forward to screen input handler
-                if a.active_screen_captures_input() {
-                    return a.try_handle_screen_input(event);
+        app.dispatcher
+            .register(200, move |event: &winit::event::WindowEvent| {
+                if let Ok(mut a) = kb_adapter.lock() {
+                    // Quick check then forward to screen input handler
+                    if a.active_screen_captures_input() {
+                        return a.try_handle_screen_input(event);
+                    }
                 }
-            }
-            false
-        });
+                false
+            });
 
         // Register UI adapter as a normal UI subscriber.
         // Only forward events to egui when menus/console are visible;
         // during gameplay the overlays are passive and don't need input.
         let ui_adapter_clone = ui_adapter.clone();
-        app.dispatcher.register(100, move |event: &winit::event::WindowEvent| {
-            if let Ok(mut a) = ui_adapter_clone.lock() {
-                if a.is_visible() {
-                    a.handle_winit_event(event)
+        app.dispatcher
+            .register(100, move |event: &winit::event::WindowEvent| {
+                if let Ok(mut a) = ui_adapter_clone.lock() {
+                    if a.is_visible() {
+                        a.handle_winit_event(event)
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 }
-            } else {
-                false
-            }
-        });
+            });
 
         // Create channel for simplified input events (e.g., mouse wheel) that
         // the game will process if the UI doesn't consume them.
@@ -117,29 +119,30 @@ pub fn setup_renderer_and_ui(
         // We only forward when the UI overlay is not visible. Note: the
         // dispatcher already ensures this subscriber is only called when higher
         // priority handlers did not consume the event (i.e., egui didn't want it).
-        app.dispatcher.register(0, move |event: &winit::event::WindowEvent| {
-            use winit::event::WindowEvent as WEvent;
-            if let WEvent::MouseWheel { delta, .. } = event {
-                // Use the conservative try_lock approach: if we cannot acquire the
-                // lock for any reason, treat as UI-visible and do not forward.
-                match ui_adapter_for_forward.try_lock() {
-                    Ok(a) if a.is_visible() => return false,
-                    Err(_) => return false,
-                    _ => {}
-                }
+        app.dispatcher
+            .register(0, move |event: &winit::event::WindowEvent| {
+                use winit::event::WindowEvent as WEvent;
+                if let WEvent::MouseWheel { delta, .. } = event {
+                    // Use the conservative try_lock approach: if we cannot acquire the
+                    // lock for any reason, treat as UI-visible and do not forward.
+                    match ui_adapter_for_forward.try_lock() {
+                        Ok(a) if a.is_visible() => return false,
+                        Err(_) => return false,
+                        _ => {}
+                    }
 
-                // Convert delta to a simple numeric pair and forward via helper
-                let delta_y = match delta {
-                    winit::event::MouseScrollDelta::LineDelta(_x, y) => *y,
-                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32,
-                };
+                    // Convert delta to a simple numeric pair and forward via helper
+                    let delta_y = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_x, y) => *y,
+                        winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                    };
 
-                if crate::forward_wheel_if_allowed(&ui_adapter_for_forward, &tx, delta_y) {
-                    return true;
+                    if crate::forward_wheel_if_allowed(&ui_adapter_for_forward, &tx, delta_y) {
+                        return true;
+                    }
                 }
-            }
-            false
-        });
+                false
+            });
     }
 
     // Store everything together in the WindowRenderer

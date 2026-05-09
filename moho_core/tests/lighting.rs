@@ -5,8 +5,8 @@
 
 use glam::IVec3;
 use moho_core::voxel::{
-    dirty_chunks_below, ensure_chunk_sky_ready, recompute_sky_exposure, LightPropagator, VoxelGrid,
-    MaterialLighting,
+    LightPropagator, MaterialLighting, VoxelGrid, dirty_chunks_below, ensure_chunk_sky_ready,
+    recompute_sky_exposure,
 };
 
 // ---------------------------------------------------------------------------
@@ -19,14 +19,24 @@ fn grid_16() -> VoxelGrid {
 
 /// Material 1: transparent, no emission.
 fn make_transparent(grid: &mut VoxelGrid) {
-    grid.material_registry
-        .set_lighting(1, MaterialLighting { emission: [0, 0, 0], opacity_cost: 0 });
+    grid.material_registry.set_lighting(
+        1,
+        MaterialLighting {
+            emission: [0, 0, 0],
+            opacity_cost: 0,
+        },
+    );
 }
 
 /// Material 2: warm torch (R=15, G=8, B=2), transparent body.
 fn make_torch(grid: &mut VoxelGrid) {
-    grid.material_registry
-        .set_lighting(2, MaterialLighting { emission: [15, 8, 2], opacity_cost: 0 });
+    grid.material_registry.set_lighting(
+        2,
+        MaterialLighting {
+            emission: [15, 8, 2],
+            opacity_cost: 0,
+        },
+    );
 }
 
 fn rgb(grid: &VoxelGrid, pos: IVec3) -> [u8; 3] {
@@ -51,7 +61,10 @@ fn sky_open_air_is_fully_exposed() {
 
     let cl = grid.chunk_light(cp).unwrap();
     for idx in 0..4096usize {
-        assert!(cl.sky_exposed_at(idx), "voxel {idx} in empty chunk should be sky-exposed");
+        assert!(
+            cl.sky_exposed_at(idx),
+            "voxel {idx} in empty chunk should be sky-exposed"
+        );
     }
 }
 
@@ -62,9 +75,18 @@ fn sky_occlusion_same_chunk() {
     grid.place_block(IVec3::new(3, 8, 3), 0, None);
     recompute_sky_exposure(&mut grid, IVec3::ZERO);
 
-    assert!(!sky(&grid, IVec3::new(3, 7, 3)), "below the opaque block must not be exposed");
-    assert!(sky(&grid, IVec3::new(3, 9, 3)), "above the opaque block must be exposed");
-    assert!(sky(&grid, IVec3::new(4, 7, 3)), "adjacent column must be exposed");
+    assert!(
+        !sky(&grid, IVec3::new(3, 7, 3)),
+        "below the opaque block must not be exposed"
+    );
+    assert!(
+        sky(&grid, IVec3::new(3, 9, 3)),
+        "above the opaque block must be exposed"
+    );
+    assert!(
+        sky(&grid, IVec3::new(4, 7, 3)),
+        "adjacent column must be exposed"
+    );
 }
 
 /// A block in chunk y=1 occludes voxels in chunk y=0 in the same (x,z) column.
@@ -76,7 +98,10 @@ fn sky_cross_chunk_occlusion() {
     recompute_sky_exposure(&mut grid, IVec3::new(0, 1, 0));
     recompute_sky_exposure(&mut grid, IVec3::ZERO);
 
-    assert!(!sky(&grid, IVec3::new(5, 15, 5)), "directly below cross-chunk block: not exposed");
+    assert!(
+        !sky(&grid, IVec3::new(5, 15, 5)),
+        "directly below cross-chunk block: not exposed"
+    );
     assert!(sky(&grid, IVec3::new(6, 15, 5)), "adjacent column: exposed");
 }
 
@@ -231,7 +256,11 @@ fn removal_single_source_clears_all() {
     prop.remove_light(&mut grid, src);
 
     for x in 0..6i32 {
-        assert_eq!(rgb(&grid, IVec3::new(x, 0, 0))[0], 0, "x={x} should be dark");
+        assert_eq!(
+            rgb(&grid, IVec3::new(x, 0, 0))[0],
+            0,
+            "x={x} should be dark"
+        );
     }
 }
 
@@ -250,7 +279,11 @@ fn removal_preserves_surviving_source() {
     prop.remove_light(&mut grid, IVec3::new(0, 0, 0));
 
     // x=0 is 10 steps from light2 → R = 15 - 10 = 5.
-    assert_eq!(rgb(&grid, IVec3::new(0, 0, 0))[0], 5, "old source pos should have R=5 from light2");
+    assert_eq!(
+        rgb(&grid, IVec3::new(0, 0, 0))[0],
+        5,
+        "old source pos should have R=5 from light2"
+    );
     // light2 itself unchanged.
     assert_eq!(rgb(&grid, IVec3::new(10, 0, 0))[0], 15);
 }
@@ -282,8 +315,14 @@ fn cross_chunk_propagation_correct() {
     }
     let affected = prop.add_light_rgb(&mut grid, IVec3::new(15, 0, 0), [15, 0, 0]);
 
-    assert!(affected.contains(&IVec3::new(0, 0, 0)), "chunk 0 must be in affected set");
-    assert!(affected.contains(&IVec3::new(1, 0, 0)), "chunk 1 must be in affected set");
+    assert!(
+        affected.contains(&IVec3::new(0, 0, 0)),
+        "chunk 0 must be in affected set"
+    );
+    assert!(
+        affected.contains(&IVec3::new(1, 0, 0)),
+        "chunk 1 must be in affected set"
+    );
 
     for (x, expected) in [(15i32, 15u8), (16, 14), (17, 13), (18, 12)] {
         assert_eq!(rgb(&grid, IVec3::new(x, 0, 0))[0], expected, "x={x}");
@@ -308,7 +347,11 @@ fn cross_chunk_removal_clears_both() {
     assert!(affected.contains(&IVec3::new(1, 0, 0)));
 
     for x in 12..=20i32 {
-        assert_eq!(rgb(&grid, IVec3::new(x, 0, 0))[0], 0, "x={x} should be dark");
+        assert_eq!(
+            rgb(&grid, IVec3::new(x, 0, 0))[0],
+            0,
+            "x={x} should be dark"
+        );
     }
 }
 
@@ -393,7 +436,10 @@ fn flood_fill_propagates_all_emitters() {
 
     assert_eq!(rgb(&grid, IVec3::new(0, 0, 0))[0], 15, "torch 1: R=15");
     assert_eq!(rgb(&grid, IVec3::new(4, 0, 0))[0], 15, "torch 2: R=15");
-    assert!(rgb(&grid, IVec3::new(2, 0, 0))[0] > 0, "midpoint should be lit");
+    assert!(
+        rgb(&grid, IVec3::new(2, 0, 0))[0] > 0,
+        "midpoint should be lit"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -411,8 +457,16 @@ fn accessor_round_trip() {
     grid.place_block(pos, 1, None);
     prop.add_light_rgb(&mut grid, pos, [10, 5, 2]);
 
-    assert_eq!(rgb(&grid, pos), [10, 5, 2], "accessor must return stored RGB");
-    assert_eq!(rgb(&grid, IVec3::new(7, 7, 7)), [0, 0, 0], "unlit position returns zero");
+    assert_eq!(
+        rgb(&grid, pos),
+        [10, 5, 2],
+        "accessor must return stored RGB"
+    );
+    assert_eq!(
+        rgb(&grid, IVec3::new(7, 7, 7)),
+        [0, 0, 0],
+        "unlit position returns zero"
+    );
 
     // Sky: no blocks above → exposed.
     recompute_sky_exposure(&mut grid, IVec3::ZERO);

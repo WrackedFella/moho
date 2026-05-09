@@ -159,7 +159,9 @@ impl HybridMeshGenerator {
                 .push(smooth_mesh.ambient_occlusion[i]);
             final_mesh.geometry_type.push(smooth_mesh.geometry_type[i]);
             final_mesh.light_level.push(smooth_mesh.light_level[i]);
-            final_mesh.block_light_rgb.push(smooth_mesh.block_light_rgb[i]);
+            final_mesh
+                .block_light_rgb
+                .push(smooth_mesh.block_light_rgb[i]);
             final_mesh.sky_exposed.push(smooth_mesh.sky_exposed[i]);
         }
 
@@ -252,7 +254,9 @@ impl HybridMeshGenerator {
             .geometry_type
             .extend_from_slice(&source.geometry_type);
         target.light_level.extend_from_slice(&source.light_level);
-        target.block_light_rgb.extend_from_slice(&source.block_light_rgb);
+        target
+            .block_light_rgb
+            .extend_from_slice(&source.block_light_rgb);
         target.sky_exposed.extend_from_slice(&source.sky_exposed);
 
         // Add indices with offset
@@ -308,19 +312,19 @@ impl HybridMeshGenerator {
                     if !cell_solid(cx + 1, cy, cz) {
                         Self::emit_coarse_quad(
                             &mut mesh,
-                            [wx + STRIDE, wy,          wz          ],
-                            [wx + STRIDE, wy + STRIDE, wz          ],
-                            [wx + STRIDE, wy + STRIDE, wz + STRIDE ],
-                            [wx + STRIDE, wy,          wz + STRIDE ],
+                            [wx + STRIDE, wy, wz],
+                            [wx + STRIDE, wy + STRIDE, wz],
+                            [wx + STRIDE, wy + STRIDE, wz + STRIDE],
+                            [wx + STRIDE, wy, wz + STRIDE],
                             [1.0, 0.0, 0.0],
                         );
                         if cx == coarse_size - 1 {
                             Self::emit_coarse_quad(
                                 &mut mesh,
-                                [wx + STRIDE, wy - STRIDE, wz          ],
-                                [wx + STRIDE, wy,          wz          ],
-                                [wx + STRIDE, wy,          wz + STRIDE ],
-                                [wx + STRIDE, wy - STRIDE, wz + STRIDE ],
+                                [wx + STRIDE, wy - STRIDE, wz],
+                                [wx + STRIDE, wy, wz],
+                                [wx + STRIDE, wy, wz + STRIDE],
+                                [wx + STRIDE, wy - STRIDE, wz + STRIDE],
                                 [1.0, 0.0, 0.0],
                             );
                         }
@@ -329,19 +333,19 @@ impl HybridMeshGenerator {
                     if !cell_solid(cx - 1, cy, cz) {
                         Self::emit_coarse_quad(
                             &mut mesh,
-                            [wx, wy,          wz + STRIDE ],
-                            [wx, wy + STRIDE, wz + STRIDE ],
-                            [wx, wy + STRIDE, wz          ],
-                            [wx, wy,          wz          ],
+                            [wx, wy, wz + STRIDE],
+                            [wx, wy + STRIDE, wz + STRIDE],
+                            [wx, wy + STRIDE, wz],
+                            [wx, wy, wz],
                             [-1.0, 0.0, 0.0],
                         );
                         if cx == 0 {
                             Self::emit_coarse_quad(
                                 &mut mesh,
-                                [wx, wy - STRIDE, wz + STRIDE ],
-                                [wx, wy,          wz + STRIDE ],
-                                [wx, wy,          wz          ],
-                                [wx, wy - STRIDE, wz          ],
+                                [wx, wy - STRIDE, wz + STRIDE],
+                                [wx, wy, wz + STRIDE],
+                                [wx, wy, wz],
+                                [wx, wy - STRIDE, wz],
                                 [-1.0, 0.0, 0.0],
                             );
                         }
@@ -350,10 +354,10 @@ impl HybridMeshGenerator {
                     if !cell_solid(cx, cy + 1, cz) {
                         Self::emit_coarse_quad(
                             &mut mesh,
-                            [wx,          wy + STRIDE, wz          ],
-                            [wx,          wy + STRIDE, wz + STRIDE ],
-                            [wx + STRIDE, wy + STRIDE, wz + STRIDE ],
-                            [wx + STRIDE, wy + STRIDE, wz          ],
+                            [wx, wy + STRIDE, wz],
+                            [wx, wy + STRIDE, wz + STRIDE],
+                            [wx + STRIDE, wy + STRIDE, wz + STRIDE],
+                            [wx + STRIDE, wy + STRIDE, wz],
                             [0.0, 1.0, 0.0],
                         );
                     }
@@ -361,10 +365,10 @@ impl HybridMeshGenerator {
                     if !cell_solid(cx, cy - 1, cz) {
                         Self::emit_coarse_quad(
                             &mut mesh,
-                            [wx,          wy, wz + STRIDE ],
-                            [wx + STRIDE, wy, wz + STRIDE ],
-                            [wx + STRIDE, wy, wz          ],
-                            [wx,          wy, wz          ],
+                            [wx, wy, wz + STRIDE],
+                            [wx + STRIDE, wy, wz + STRIDE],
+                            [wx + STRIDE, wy, wz],
+                            [wx, wy, wz],
                             [0.0, -1.0, 0.0],
                         );
                     }
@@ -372,19 +376,19 @@ impl HybridMeshGenerator {
                     if !cell_solid(cx, cy, cz + 1) {
                         Self::emit_coarse_quad(
                             &mut mesh,
-                            [wx,          wy,          wz + STRIDE ],
-                            [wx + STRIDE, wy,          wz + STRIDE ],
-                            [wx + STRIDE, wy + STRIDE, wz + STRIDE ],
-                            [wx,          wy + STRIDE, wz + STRIDE ],
+                            [wx, wy, wz + STRIDE],
+                            [wx + STRIDE, wy, wz + STRIDE],
+                            [wx + STRIDE, wy + STRIDE, wz + STRIDE],
+                            [wx, wy + STRIDE, wz + STRIDE],
                             [0.0, 0.0, 1.0],
                         );
                         if cz == coarse_size - 1 {
                             Self::emit_coarse_quad(
                                 &mut mesh,
-                                [wx,          wy - STRIDE, wz + STRIDE ],
-                                [wx + STRIDE, wy - STRIDE, wz + STRIDE ],
-                                [wx + STRIDE, wy,          wz + STRIDE ],
-                                [wx,          wy,          wz + STRIDE ],
+                                [wx, wy - STRIDE, wz + STRIDE],
+                                [wx + STRIDE, wy - STRIDE, wz + STRIDE],
+                                [wx + STRIDE, wy, wz + STRIDE],
+                                [wx, wy, wz + STRIDE],
                                 [0.0, 0.0, 1.0],
                             );
                         }
@@ -393,9 +397,9 @@ impl HybridMeshGenerator {
                     if !cell_solid(cx, cy, cz - 1) {
                         Self::emit_coarse_quad(
                             &mut mesh,
-                            [wx + STRIDE, wy,          wz],
-                            [wx,          wy,          wz],
-                            [wx,          wy + STRIDE, wz],
+                            [wx + STRIDE, wy, wz],
+                            [wx, wy, wz],
+                            [wx, wy + STRIDE, wz],
                             [wx + STRIDE, wy + STRIDE, wz],
                             [0.0, 0.0, -1.0],
                         );
@@ -403,9 +407,9 @@ impl HybridMeshGenerator {
                             Self::emit_coarse_quad(
                                 &mut mesh,
                                 [wx + STRIDE, wy - STRIDE, wz],
-                                [wx,          wy - STRIDE, wz],
-                                [wx,          wy,          wz],
-                                [wx + STRIDE, wy,          wz],
+                                [wx, wy - STRIDE, wz],
+                                [wx, wy, wz],
+                                [wx + STRIDE, wy, wz],
                                 [0.0, 0.0, -1.0],
                             );
                         }
@@ -471,7 +475,9 @@ impl HybridMeshGenerator {
             .geometry_type
             .extend_from_slice(&source.geometry_type);
         target.light_level.extend_from_slice(&source.light_level);
-        target.block_light_rgb.extend_from_slice(&source.block_light_rgb);
+        target
+            .block_light_rgb
+            .extend_from_slice(&source.block_light_rgb);
         target.sky_exposed.extend_from_slice(&source.sky_exposed);
 
         // Add indices with combined offset

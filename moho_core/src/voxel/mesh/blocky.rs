@@ -86,7 +86,11 @@ impl BlockyMeshGenerator {
             rgb_raw[1] as f32 / 15.0,
             rgb_raw[2] as f32 / 15.0,
         ];
-        let sky = if grid.sky_exposed_at(position) { 1.0f32 } else { 0.0 };
+        let sky = if grid.sky_exposed_at(position) {
+            1.0f32
+        } else {
+            0.0
+        };
         // Compat: single-channel max for the legacy pipeline.
         let max_ch = rgb_f[0].max(rgb_f[1]).max(rgb_f[2]);
         let light = (max_ch + sky * 0.1).min(1.0);

@@ -5,7 +5,7 @@
 
 use super::overlay_manager::{HudData, Overlay};
 
-const CELL_PX: f32 = 6.0;   // pixels per chunk cell
+const CELL_PX: f32 = 6.0; // pixels per chunk cell
 const VIEW_RADIUS: i32 = 14; // chunks visible in each direction
 
 #[derive(Debug)]
@@ -55,11 +55,8 @@ impl Overlay for ChunkDebugOverlay {
                 // Background
                 painter.rect_filled(rect, 2.0, egui::Color32::from_black_alpha(160));
 
-                let loaded: std::collections::HashSet<(i32, i32)> = data
-                    .loaded_chunk_xz
-                    .iter()
-                    .map(|&[x, z]| (x, z))
-                    .collect();
+                let loaded: std::collections::HashSet<(i32, i32)> =
+                    data.loaded_chunk_xz.iter().map(|&[x, z]| (x, z)).collect();
 
                 for dz in -VIEW_RADIUS..=VIEW_RADIUS {
                     for dx in -VIEW_RADIUS..=VIEW_RADIUS {

@@ -177,7 +177,9 @@ pub fn read_chunk_file(world_name: &str, pos: IVec3) -> Option<Vec<u8>> {
 }
 
 fn chunk_dir(world_name: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from("saves").join(world_name).join("chunks")
+    std::path::PathBuf::from("saves")
+        .join(world_name)
+        .join("chunks")
 }
 
 /// Remove all saved chunk files for `world_name`. Called when generating a new

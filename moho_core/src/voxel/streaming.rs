@@ -6,8 +6,8 @@
 //! so an evicted-then-regenerated unmodified chunk is byte-for-byte identical.
 
 use crate::scene_builders::{
-    TerrainConfig, BASE_ELEVATION, MAX_TERRAIN_HEIGHT, determine_material_id, determine_resource_id,
-    is_solid, sample_surface_height,
+    BASE_ELEVATION, MAX_TERRAIN_HEIGHT, TerrainConfig, determine_material_id,
+    determine_resource_id, is_solid, sample_surface_height,
 };
 use crate::voxel::{BiomeMap, BlockPos};
 use glam::IVec3;
@@ -57,9 +57,7 @@ pub fn generate_chunk(
     let chunk_max = chunk_min + IVec3::splat(CHUNK_SIZE);
 
     // Fast-reject: if this chunk has no overlap with [-half, half) in both X and Z → empty.
-    if chunk_max.x <= -half || chunk_min.x >= half
-        || chunk_max.z <= -half || chunk_min.z >= half
-    {
+    if chunk_max.x <= -half || chunk_min.x >= half || chunk_max.z <= -half || chunk_min.z >= half {
         return vec![];
     }
 
@@ -136,11 +134,16 @@ mod tests {
         let chunk_max = chunk_min + IVec3::splat(16);
         for (pos, _, _) in generate_chunk(&cfg, cp) {
             assert!(
-                pos.x >= chunk_min.x && pos.x < chunk_max.x
-                    && pos.y >= chunk_min.y && pos.y < chunk_max.y
-                    && pos.z >= chunk_min.z && pos.z < chunk_max.z,
+                pos.x >= chunk_min.x
+                    && pos.x < chunk_max.x
+                    && pos.y >= chunk_min.y
+                    && pos.y < chunk_max.y
+                    && pos.z >= chunk_min.z
+                    && pos.z < chunk_max.z,
                 "block {:?} outside chunk bounds {:?}..{:?}",
-                pos, chunk_min, chunk_max
+                pos,
+                chunk_min,
+                chunk_max
             );
         }
     }
@@ -159,19 +162,25 @@ mod tests {
         // (easier: run generate_chunk for all chunks and compare)
 
         // Collect blocks from generate_chunk for chunk (0,0,0)
-        let chunk_blocks: std::collections::HashSet<(i32,i32,i32)> = generate_chunk(&cfg, IVec3::ZERO)
-            .into_iter()
-            .map(|(p, _, _)| (p.x, p.y, p.z))
-            .collect();
+        let chunk_blocks: std::collections::HashSet<(i32, i32, i32)> =
+            generate_chunk(&cfg, IVec3::ZERO)
+                .into_iter()
+                .map(|(p, _, _)| (p.x, p.y, p.z))
+                .collect();
 
         // Generate via full terrain, filter to chunk (0,0,0)
         let mut world2 = legion::World::default();
         let grid2 = crate::scene_builders::voxel_terrain_scene_with_config(&mut world2, &cfg);
-        let full_blocks: std::collections::HashSet<(i32,i32,i32)> = grid2
+        let full_blocks: std::collections::HashSet<(i32, i32, i32)> = grid2
             .iter_block_data()
-            .filter(|b| b.position.x >= 0 && b.position.x < 16
-                && b.position.y >= 0 && b.position.y < 16
-                && b.position.z >= 0 && b.position.z < 16)
+            .filter(|b| {
+                b.position.x >= 0
+                    && b.position.x < 16
+                    && b.position.y >= 0
+                    && b.position.y < 16
+                    && b.position.z >= 0
+                    && b.position.z < 16
+            })
             .map(|b| (b.position.x, b.position.y, b.position.z))
             .collect();
 

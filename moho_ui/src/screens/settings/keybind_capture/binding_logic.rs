@@ -1,4 +1,3 @@
-use crate::prefs::Binding;
 use super::super::SettingsField;
 use super::super::binding_registry::BindingRegistry;
 use super::super::conflict_modal::PendingBinding;
@@ -6,6 +5,7 @@ use super::super::key_mapping::binding_label;
 use super::super::types::BindingId;
 use super::KeybindCaptureHandler;
 use super::modifier_encoding::{create_binding_from_key, detect_active_modifiers};
+use crate::prefs::Binding;
 
 impl KeybindCaptureHandler {
     /// Testable helper: apply a resolved key code while the menu is listening.
@@ -142,8 +142,7 @@ impl KeybindCaptureHandler {
 
                 // Check for duplicate bindings using registry
                 let registry = BindingRegistry::from_prefs(staged_prefs);
-                let exclude_id =
-                    BindingId::from_usize(listen_id).expect("Invalid binding ID");
+                let exclude_id = BindingId::from_usize(listen_id).expect("Invalid binding ID");
                 let conflicting_id = registry.find_conflict(&binding, exclude_id);
 
                 if let Some(conflict_bid) = conflicting_id {

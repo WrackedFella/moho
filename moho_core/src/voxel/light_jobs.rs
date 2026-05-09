@@ -477,8 +477,13 @@ mod tests {
 
     fn transparent_grid() -> VoxelGrid {
         let mut grid = VoxelGrid::new(16);
-        grid.material_registry
-            .set_lighting(1, MaterialLighting { emission: [0, 0, 0], opacity_cost: 0 });
+        grid.material_registry.set_lighting(
+            1,
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
+        );
         grid
     }
 
@@ -612,13 +617,11 @@ mod tests {
     fn test_player_distance_priority() {
         let player_pos = Vec3::new(0.0, 0.0, 0.0);
 
-        let job_close =
-            LightUpdateJob::add_light(IVec3::new(5, 0, 0), [15, 0, 0], 100)
-                .with_player_distance(player_pos);
+        let job_close = LightUpdateJob::add_light(IVec3::new(5, 0, 0), [15, 0, 0], 100)
+            .with_player_distance(player_pos);
 
-        let job_far =
-            LightUpdateJob::add_light(IVec3::new(50, 0, 0), [15, 0, 0], 100)
-                .with_player_distance(player_pos);
+        let job_far = LightUpdateJob::add_light(IVec3::new(50, 0, 0), [15, 0, 0], 100)
+            .with_player_distance(player_pos);
 
         assert!(job_close.priority < job_far.priority);
     }

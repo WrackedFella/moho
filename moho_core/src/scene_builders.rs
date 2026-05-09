@@ -189,7 +189,14 @@ pub(crate) fn sample_surface_height(
 /// Compares world-space y against the full surface height (BASE_ELEVATION +
 /// noise offset). Without BASE_ELEVATION here, `is_solid` would disagree with
 /// the column_height used in the terrain loops and reject every block above y≈8.
-pub(crate) fn density(noise: &Perlin, x: i32, y: i32, z: i32, biome: &BiomeType, params: &BiomeParams) -> f32 {
+pub(crate) fn density(
+    noise: &Perlin,
+    x: i32,
+    y: i32,
+    z: i32,
+    biome: &BiomeType,
+    params: &BiomeParams,
+) -> f32 {
     let surface_h = BASE_ELEVATION + sample_surface_height(noise, x, z, biome, params);
     let base = surface_h - y as f32;
     // Cave carver hook (disabled until caves are enabled):
@@ -226,7 +233,13 @@ pub(crate) fn determine_material_id(column_height: i32, y: i32, params: &BiomePa
 }
 
 /// Determine resource ID based on depth (optional resources)
-pub(crate) fn determine_resource_id(column_height: i32, y: i32, x: i32, z: i32, seed: u32) -> Option<u32> {
+pub(crate) fn determine_resource_id(
+    column_height: i32,
+    y: i32,
+    x: i32,
+    z: i32,
+    seed: u32,
+) -> Option<u32> {
     // 10% chance of iron ore in mid-levels, determined by positional hash
     if y > 5 && y < column_height - 3 && pos_hash(x, y, z, seed) < 0.1 {
         Some(1) // Iron ore resource ID

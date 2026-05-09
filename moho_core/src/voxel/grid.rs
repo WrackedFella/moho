@@ -204,7 +204,11 @@ pub enum BlockCategory {
 
 impl VoxelBlock {
     pub fn new(position: BlockPos, material_id: u32) -> Self {
-        VoxelBlock { position, material_id, resource_id: None }
+        VoxelBlock {
+            position,
+            material_id,
+            resource_id: None,
+        }
     }
 
     /// Whether this block uses smooth (Marching Cubes) mesh generation.
@@ -268,7 +272,10 @@ impl VoxelGrid {
     /// `chunk_size` must be 16; the paletted storage and lighting system are
     /// both hardcoded to 16³ chunks.
     pub fn new(chunk_size: i32) -> Self {
-        debug_assert_eq!(chunk_size, CHUNK_SIZE_I32, "VoxelGrid requires chunk_size == 16");
+        debug_assert_eq!(
+            chunk_size, CHUNK_SIZE_I32,
+            "VoxelGrid requires chunk_size == 16"
+        );
         VoxelGrid {
             chunks: HashMap::new(),
             chunk_size,
@@ -340,7 +347,11 @@ impl VoxelGrid {
         let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
         let chunk = self.chunks.get(&chunk_pos)?;
         let material_id = chunk.material_at(idx)?;
-        Some(BlockData { position: pos, material_id, resource_id: chunk.resource_at(idx) })
+        Some(BlockData {
+            position: pos,
+            material_id,
+            resource_id: chunk.resource_at(idx),
+        })
     }
 
     /// Place a block at world position `pos`, replacing any existing block.
@@ -420,7 +431,9 @@ impl VoxelGrid {
     pub fn block_positions(&self) -> impl Iterator<Item = IVec3> + '_ {
         self.chunks.iter().flat_map(|(&chunk_pos, chunk)| {
             let base = chunk_pos * CHUNK_SIZE_I32;
-            chunk.iter_blocks().map(move |(idx, _mat, _res)| base + idx_to_local(idx))
+            chunk
+                .iter_blocks()
+                .map(move |(idx, _mat, _res)| base + idx_to_local(idx))
         })
     }
 
@@ -428,11 +441,13 @@ impl VoxelGrid {
     pub fn iter_block_data(&self) -> impl Iterator<Item = BlockData> + '_ {
         self.chunks.iter().flat_map(|(&chunk_pos, chunk)| {
             let base = chunk_pos * CHUNK_SIZE_I32;
-            chunk.iter_blocks().map(move |(idx, material_id, resource_id)| BlockData {
-                position: base + idx_to_local(idx),
-                material_id,
-                resource_id,
-            })
+            chunk
+                .iter_blocks()
+                .map(move |(idx, material_id, resource_id)| BlockData {
+                    position: base + idx_to_local(idx),
+                    material_id,
+                    resource_id,
+                })
         })
     }
 
@@ -573,10 +588,7 @@ impl VoxelGrid {
         }
         let (chunk_pos, _idx, local) = light_storage::world_to_chunk_local(pos);
         let sky_became_dirty = {
-            let cl = self
-                .chunk_lights
-                .entry(chunk_pos)
-                .or_default();
+            let cl = self.chunk_lights.entry(chunk_pos).or_default();
             let before = cl.sky_dirty;
             if placed {
                 cl.note_opaque_placed(local.x, local.y, local.z);
@@ -637,10 +649,7 @@ impl VoxelGrid {
             return;
         }
         let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
-        let cl = self
-            .chunk_lights
-            .entry(chunk_pos)
-            .or_default();
+        let cl = self.chunk_lights.entry(chunk_pos).or_default();
         cl.set_block_light_rgb(idx, rgb);
     }
 
@@ -650,10 +659,7 @@ impl VoxelGrid {
             return;
         }
         let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
-        let cl = self
-            .chunk_lights
-            .entry(chunk_pos)
-            .or_default();
+        let cl = self.chunk_lights.entry(chunk_pos).or_default();
         cl.set_sky_exposed(idx, value);
     }
 
@@ -664,9 +670,7 @@ impl VoxelGrid {
 
     /// Mutable borrow of a chunk's lighting state, allocating if needed.
     pub fn chunk_light_mut(&mut self, chunk_pos: IVec3) -> &mut ChunkLight {
-        self.chunk_lights
-            .entry(chunk_pos)
-            .or_default()
+        self.chunk_lights.entry(chunk_pos).or_default()
     }
 
     /// Iterate all chunk positions with allocated light state.

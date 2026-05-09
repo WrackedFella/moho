@@ -258,7 +258,11 @@ fn primary_material_id(blocks: &[BlockData]) -> u32 {
     for block in blocks {
         *counts.entry(block.material_id).or_insert(0) += 1;
     }
-    counts.into_iter().max_by_key(|&(_, c)| c).map(|(id, _)| id).unwrap_or(0)
+    counts
+        .into_iter()
+        .max_by_key(|&(_, c)| c)
+        .map(|(id, _)| id)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

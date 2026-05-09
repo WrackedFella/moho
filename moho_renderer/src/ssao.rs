@@ -150,8 +150,7 @@ impl SsaoSystem {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let (ao_texture, ao_texture_view, blurred_ao_texture, blurred_ao_texture_view) =
             Self::create_textures(device, width, height);
-        let (settings_buffer, camera_buffer) =
-            Self::create_uniform_buffers(device, &settings);
+        let (settings_buffer, camera_buffer) = Self::create_uniform_buffers(device, &settings);
         let ao_sampler = Self::create_sampler(device);
         let (gtao_bind_group_layout, gtao_pipeline) = Self::create_gtao_pipeline(device)?;
         let (blur_bind_group_layout, blur_pipeline) = Self::create_blur_pipeline(device)?;
@@ -179,12 +178,22 @@ impl SsaoSystem {
         device: &wgpu::Device,
         width: u32,
         height: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView, wgpu::Texture, wgpu::TextureView) {
+    ) -> (
+        wgpu::Texture,
+        wgpu::TextureView,
+        wgpu::Texture,
+        wgpu::TextureView,
+    ) {
         let (ao_texture, ao_texture_view) =
             Self::create_ao_texture(device, width, height, "ao-texture");
         let (blurred_ao_texture, blurred_ao_texture_view) =
             Self::create_ao_texture(device, width, height, "blurred-ao-texture");
-        (ao_texture, ao_texture_view, blurred_ao_texture, blurred_ao_texture_view)
+        (
+            ao_texture,
+            ao_texture_view,
+            blurred_ao_texture,
+            blurred_ao_texture_view,
+        )
     }
 
     /// Stage 2: Allocate the settings uniform buffer (pre-filled) and the per-frame
@@ -293,12 +302,11 @@ impl SsaoSystem {
                 ],
             });
 
-        let gtao_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("gtao-pipeline-layout"),
-                bind_group_layouts: &[&gtao_bind_group_layout],
-                push_constant_ranges: &[],
-            });
+        let gtao_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("gtao-pipeline-layout"),
+            bind_group_layouts: &[&gtao_bind_group_layout],
+            push_constant_ranges: &[],
+        });
 
         let gtao_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("gtao-pipeline"),
@@ -377,12 +385,11 @@ impl SsaoSystem {
                 ],
             });
 
-        let blur_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("blur-pipeline-layout"),
-                bind_group_layouts: &[&blur_bind_group_layout],
-                push_constant_ranges: &[],
-            });
+        let blur_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("blur-pipeline-layout"),
+            bind_group_layouts: &[&blur_bind_group_layout],
+            push_constant_ranges: &[],
+        });
 
         let blur_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("ssao-blur-pipeline"),

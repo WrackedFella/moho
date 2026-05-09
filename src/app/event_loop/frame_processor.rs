@@ -161,9 +161,7 @@ impl FrameProcessor {
             return;
         }
         let player_pos = app.simulation.position();
-        if let (Some(streamer), Some(ls)) =
-            (&mut app.chunk_streamer, &mut app.light_system)
-        {
+        if let (Some(streamer), Some(ls)) = (&mut app.chunk_streamer, &mut app.light_system) {
             let (loaded, evicted) = streamer.update(ls.grid_mut(), player_pos);
 
             for pos in &evicted {
@@ -225,7 +223,6 @@ impl FrameProcessor {
     /// stamps the new LOD onto the freshly generated chunk, so the comparison goes
     /// idle after all transitions in the new position are processed.
     fn update_lod_transitions(&self, app: &mut App, player_chunk: glam::IVec3) {
-
         let mut dirty: Vec<glam::IVec3> = Vec::new();
         {
             let mut query = <&VoxelChunk>::query();

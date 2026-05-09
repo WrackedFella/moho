@@ -73,10 +73,22 @@ fn test_voxel_grid_basic_ops() {
     assert!(!grid.is_solid_at(pos));
 
     // Chunk position calculation (get_chunk_pos is a pure static utility).
-    assert_eq!(VoxelGrid::get_chunk_pos(IVec3::new(0, 0, 0), 16), IVec3::new(0, 0, 0));
-    assert_eq!(VoxelGrid::get_chunk_pos(IVec3::new(15, 15, 15), 16), IVec3::new(0, 0, 0));
-    assert_eq!(VoxelGrid::get_chunk_pos(IVec3::new(16, 16, 16), 16), IVec3::new(1, 1, 1));
-    assert_eq!(VoxelGrid::get_chunk_pos(IVec3::new(-1, -1, -1), 16), IVec3::new(-1, -1, -1));
+    assert_eq!(
+        VoxelGrid::get_chunk_pos(IVec3::new(0, 0, 0), 16),
+        IVec3::new(0, 0, 0)
+    );
+    assert_eq!(
+        VoxelGrid::get_chunk_pos(IVec3::new(15, 15, 15), 16),
+        IVec3::new(0, 0, 0)
+    );
+    assert_eq!(
+        VoxelGrid::get_chunk_pos(IVec3::new(16, 16, 16), 16),
+        IVec3::new(1, 1, 1)
+    );
+    assert_eq!(
+        VoxelGrid::get_chunk_pos(IVec3::new(-1, -1, -1), 16),
+        IVec3::new(-1, -1, -1)
+    );
 }
 
 #[test]

@@ -8,8 +8,8 @@
 //! This module will be used by the future dedicated "Keybinds" screen/tab
 //! (accessed via "Edit Keybinds" button).
 
-mod modifier_encoding;
 mod binding_logic;
+mod modifier_encoding;
 
 use super::SettingsField;
 use super::conflict_modal::ConflictModalState;
@@ -192,8 +192,8 @@ impl KeybindCaptureHandler {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::key_mapping::binding_label;
+    use super::*;
 
     #[test]
     fn test_start_stop_listening() {

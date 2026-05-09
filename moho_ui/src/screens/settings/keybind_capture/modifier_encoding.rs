@@ -1,5 +1,5 @@
-use crate::prefs::Binding;
 use super::super::key_mapping::key_to_code;
+use crate::prefs::Binding;
 
 /// Detect active modifier keys from egui input state and return as a bitfield.
 /// Bit 0: Ctrl, Bit 1: Shift, Bit 2: Alt

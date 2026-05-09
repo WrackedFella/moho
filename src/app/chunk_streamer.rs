@@ -11,11 +11,11 @@
 //! - Eviction saves happen synchronously in the calling frame, budgeted by
 //!   `streaming_config.chunks_per_frame`.
 
+use crate::save;
 use glam::{IVec3, Vec3};
 use moho_core::scene_builders::TerrainConfig;
-use moho_core::voxel::{StreamingConfig, VoxelGrid};
 use moho_core::voxel::streaming::generate_chunk;
-use crate::save;
+use moho_core::voxel::{StreamingConfig, VoxelGrid};
 
 /// Inclusive Y-chunk range to generate per XZ column.
 ///
@@ -52,11 +52,7 @@ impl ChunkStreamer {
     ///
     /// Returns `(loaded_positions, evicted_positions)` so the caller can
     /// remove ECS entities for evicted chunks.
-    pub fn update(
-        &mut self,
-        grid: &mut VoxelGrid,
-        player_pos: Vec3,
-    ) -> (Vec<IVec3>, Vec<IVec3>) {
+    pub fn update(&mut self, grid: &mut VoxelGrid, player_pos: Vec3) -> (Vec<IVec3>, Vec<IVec3>) {
         let cx = player_pos.x.floor() as i32 / 16;
         let cz = player_pos.z.floor() as i32 / 16;
         let player_chunk_xz = (cx, cz);
@@ -102,17 +98,10 @@ impl ChunkStreamer {
         to_evict
     }
 
-    fn load_nearby(
-        &self,
-        grid: &mut VoxelGrid,
-        (pcx, pcz): (i32, i32),
-        load_r: i32,
-    ) -> Vec<IVec3> {
+    fn load_nearby(&self, grid: &mut VoxelGrid, (pcx, pcz): (i32, i32), load_r: i32) -> Vec<IVec3> {
         // Collect XZ columns that need loading (none of their Y-chunks are in the grid yet).
-        let loaded_set: std::collections::HashSet<(i32, i32)> = grid
-            .chunk_positions()
-            .map(|p| (p.x, p.z))
-            .collect();
+        let loaded_set: std::collections::HashSet<(i32, i32)> =
+            grid.chunk_positions().map(|p| (p.x, p.z)).collect();
 
         let budget = self.streaming_config.chunks_per_frame as usize;
         let mut candidates: Vec<(i32, i32, i32)> = Vec::new(); // (dist, cx, cz)

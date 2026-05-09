@@ -77,7 +77,8 @@ impl<'a> VoxelMutator<'a> {
         for x in min.x..=max.x {
             for y in min.y..=max.y {
                 for z in min.z..=max.z {
-                    self.grid.place_block(BlockPos::new(x, y, z), material_id, None);
+                    self.grid
+                        .place_block(BlockPos::new(x, y, z), material_id, None);
                 }
             }
         }

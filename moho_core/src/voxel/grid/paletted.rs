@@ -55,7 +55,11 @@ impl PalettedChunk {
     #[inline]
     pub fn material_at(&self, idx: usize) -> Option<u32> {
         let pi = self.indices[idx] as usize;
-        if pi == 0 { None } else { Some(self.palette[pi]) }
+        if pi == 0 {
+            None
+        } else {
+            Some(self.palette[pi])
+        }
     }
 
     #[inline]
@@ -157,7 +161,11 @@ impl PalettedChunk {
             if pi == 0 {
                 return None;
             }
-            Some((idx, self.palette[pi as usize], self.resources.get(&(idx as u16)).copied()))
+            Some((
+                idx,
+                self.palette[pi as usize],
+                self.resources.get(&(idx as u16)).copied(),
+            ))
         })
     }
 }
@@ -220,6 +228,10 @@ mod tests {
         let blocks: Vec<_> = c.iter_blocks().collect();
         assert_eq!(blocks.len(), 2);
         assert!(blocks.iter().any(|&(idx, m, _)| idx == 5 && m == 2));
-        assert!(blocks.iter().any(|&(idx, m, r)| idx == 100 && m == 9 && r == Some(1)));
+        assert!(
+            blocks
+                .iter()
+                .any(|&(idx, m, r)| idx == 100 && m == 9 && r == Some(1))
+        );
     }
 }

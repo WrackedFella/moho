@@ -205,8 +205,7 @@ impl ShadowSystem {
                 &csm_array_view,
                 &shadow_sampler,
             );
-        let shadow_pipeline =
-            Self::create_render_pipeline(device, &csm_pass_bgl)?;
+        let shadow_pipeline = Self::create_render_pipeline(device, &csm_pass_bgl)?;
 
         Ok(Self {
             shadow_pipeline,
@@ -445,7 +444,11 @@ impl ShadowSystem {
             log::info!("Created CSM bind groups: pass (rendering) + shadow (sampling cascade 0)");
         }
 
-        (shadow_pass_bind_group, csm_pass_bind_group, csm_shadow_bind_group)
+        (
+            shadow_pass_bind_group,
+            csm_pass_bind_group,
+            csm_shadow_bind_group,
+        )
     }
 
     /// Stage 6: Compile the shadow vertex shader and assemble the depth-only render pipeline.

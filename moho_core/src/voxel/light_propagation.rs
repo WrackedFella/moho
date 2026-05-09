@@ -58,12 +58,7 @@ impl LightPropagator {
     /// Propagate RGB block-light outward from `pos` with emission `rgb`.
     /// Runs three independent BFS passes (R → G → B).
     /// Returns the set of chunk positions that were modified.
-    pub fn add_light_rgb(
-        &mut self,
-        grid: &mut VoxelGrid,
-        pos: IVec3,
-        rgb: [u8; 3],
-    ) -> Vec<IVec3> {
+    pub fn add_light_rgb(&mut self, grid: &mut VoxelGrid, pos: IVec3, rgb: [u8; 3]) -> Vec<IVec3> {
         if !grid.supports_lighting() {
             return vec![];
         }
@@ -104,7 +99,11 @@ impl LightPropagator {
             .filter_map(|pos| {
                 let mat_id = grid.material_at(pos)?;
                 let emission = grid.material_registry.emission(mat_id);
-                if emission != [0, 0, 0] { Some((pos, emission)) } else { None }
+                if emission != [0, 0, 0] {
+                    Some((pos, emission))
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -197,8 +196,11 @@ impl LightPropagator {
                 }
                 let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
                 if next > Self::read_ch(grid, nb_chunk, nb_idx, ch) {
-                    self.queue
-                        .push_back(PropNode { chunk_pos: nb_chunk, idx: nb_idx, level: next });
+                    self.queue.push_back(PropNode {
+                        chunk_pos: nb_chunk,
+                        idx: nb_idx,
+                        level: next,
+                    });
                 }
             }
         }
@@ -233,8 +235,11 @@ impl LightPropagator {
                 }
                 let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
                 if next > Self::read_ch(grid, nb_chunk, nb_idx, ch) {
-                    self.queue
-                        .push_back(PropNode { chunk_pos: nb_chunk, idx: nb_idx, level: next });
+                    self.queue.push_back(PropNode {
+                        chunk_pos: nb_chunk,
+                        idx: nb_idx,
+                        level: next,
+                    });
                 }
             }
         }
@@ -263,8 +268,11 @@ impl LightPropagator {
                 }
                 let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
                 if next > Self::read_ch(grid, nb_chunk, nb_idx, ch) {
-                    self.queue
-                        .push_back(PropNode { chunk_pos: nb_chunk, idx: nb_idx, level: next });
+                    self.queue.push_back(PropNode {
+                        chunk_pos: nb_chunk,
+                        idx: nb_idx,
+                        level: next,
+                    });
                 }
             }
         }
@@ -301,7 +309,9 @@ impl LightPropagator {
             if stored != node.level {
                 // A brighter surviving source already owns this voxel — re-seed from it.
                 if stored > 0
-                    && !relight.iter().any(|r| r.chunk_pos == node.chunk_pos && r.idx == node.idx)
+                    && !relight
+                        .iter()
+                        .any(|r| r.chunk_pos == node.chunk_pos && r.idx == node.idx)
                 {
                     relight.push(PropNode {
                         chunk_pos: node.chunk_pos,
@@ -383,7 +393,10 @@ mod tests {
         // a transparent material. Use material 1 registered above.
         grid.material_registry.set_lighting(
             1,
-            MaterialLighting { emission: [0, 0, 0], opacity_cost: 0 },
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
         );
         for x in 0..3i32 {
             for y in 0..3i32 {
@@ -413,8 +426,14 @@ mod tests {
         let p = LightPropagator::new(16);
         assert_eq!(p.get_chunk_coord(&IVec3::new(0, 0, 0)), IVec3::ZERO);
         assert_eq!(p.get_chunk_coord(&IVec3::new(15, 15, 15)), IVec3::ZERO);
-        assert_eq!(p.get_chunk_coord(&IVec3::new(16, 0, 0)), IVec3::new(1, 0, 0));
-        assert_eq!(p.get_chunk_coord(&IVec3::new(-1, 0, 0)), IVec3::new(-1, 0, 0));
+        assert_eq!(
+            p.get_chunk_coord(&IVec3::new(16, 0, 0)),
+            IVec3::new(1, 0, 0)
+        );
+        assert_eq!(
+            p.get_chunk_coord(&IVec3::new(-1, 0, 0)),
+            IVec3::new(-1, 0, 0)
+        );
     }
 
     #[test]
@@ -422,7 +441,10 @@ mod tests {
         let mut grid = VoxelGrid::new(16);
         grid.material_registry.set_lighting(
             1,
-            MaterialLighting { emission: [0, 0, 0], opacity_cost: 0 },
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
         );
         let mut propagator = LightPropagator::new(16);
 
@@ -455,7 +477,10 @@ mod tests {
         let mut grid = VoxelGrid::new(16);
         grid.material_registry.set_lighting(
             1,
-            MaterialLighting { emission: [0, 0, 0], opacity_cost: 0 },
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
         );
         let mut propagator = LightPropagator::new(16);
 
@@ -487,7 +512,10 @@ mod tests {
         let mut grid = VoxelGrid::new(16);
         grid.material_registry.set_lighting(
             1,
-            MaterialLighting { emission: [0, 0, 0], opacity_cost: 0 },
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
         );
         let mut propagator = LightPropagator::new(16);
 
@@ -522,7 +550,10 @@ mod tests {
         let mut grid = VoxelGrid::new(16);
         grid.material_registry.set_lighting(
             1,
-            MaterialLighting { emission: [0, 0, 0], opacity_cost: 0 },
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
         );
         let mut propagator = LightPropagator::new(16);
 
@@ -556,14 +587,21 @@ mod tests {
         let mut grid = VoxelGrid::new(16);
         grid.material_registry.set_lighting(
             1,
-            MaterialLighting { emission: [0, 0, 0], opacity_cost: 0 },
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
         );
         let mut propagator = LightPropagator::new(16);
 
         let center = IVec3::new(5, 5, 5);
         grid.place_block(center, 1, None);
         for i in 1..5i32 {
-            for &dir in &[IVec3::new(i, 0, 0), IVec3::new(0, i, 0), IVec3::new(0, 0, i)] {
+            for &dir in &[
+                IVec3::new(i, 0, 0),
+                IVec3::new(0, i, 0),
+                IVec3::new(0, 0, i),
+            ] {
                 grid.place_block(center + dir, 1, None);
             }
         }
@@ -575,7 +613,11 @@ mod tests {
         assert_eq!(grid.chunk_light(cc).unwrap().block_light_r[ci], 0);
 
         for i in 1..5i32 {
-            for &dir in &[IVec3::new(i, 0, 0), IVec3::new(0, i, 0), IVec3::new(0, 0, i)] {
+            for &dir in &[
+                IVec3::new(i, 0, 0),
+                IVec3::new(0, i, 0),
+                IVec3::new(0, 0, i),
+            ] {
                 let p = center + dir;
                 let (pc, pi, _) = light_storage::world_to_chunk_local(p);
                 assert_eq!(
@@ -593,7 +635,10 @@ mod tests {
         let mut grid = VoxelGrid::new(16);
         grid.material_registry.set_lighting(
             1,
-            MaterialLighting { emission: [0, 0, 0], opacity_cost: 0 },
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
         );
         let mut propagator = LightPropagator::new(16);
 
@@ -624,7 +669,10 @@ mod tests {
         let mut grid = VoxelGrid::new(16);
         grid.material_registry.set_lighting(
             1,
-            MaterialLighting { emission: [0, 0, 0], opacity_cost: 0 },
+            MaterialLighting {
+                emission: [0, 0, 0],
+                opacity_cost: 0,
+            },
         );
         let mut propagator = LightPropagator::new(16);
 
