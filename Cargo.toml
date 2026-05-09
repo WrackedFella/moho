@@ -30,7 +30,7 @@ thiserror = "2.0"
 wgpu = "27"
 winit = "0.30"
 moho_physics = { path = "moho_physics" }
-rapier3d = { version = "0.22", features = ["simd-stable"] }
+rapier3d = { version = "0.32", features = ["simd-stable"] }
 
 [dependencies]
 crossbeam-channel = { workspace = true }

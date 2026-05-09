@@ -5,18 +5,17 @@ use rapier3d::prelude::*;
 const GRAVITY: f32 = -18.0;
 
 pub struct PhysicsWorld {
-    gravity: Vector<Real>,
+    gravity: Vector,
     integration_parameters: IntegrationParameters,
     physics_pipeline: PhysicsPipeline,
     island_manager: IslandManager,
-    broad_phase: DefaultBroadPhase,
+    broad_phase: BroadPhaseBvh,
     narrow_phase: NarrowPhase,
     pub rigid_body_set: RigidBodySet,
     pub collider_set: ColliderSet,
     impulse_joint_set: ImpulseJointSet,
     multibody_joint_set: MultibodyJointSet,
     ccd_solver: CCDSolver,
-    pub query_pipeline: QueryPipeline,
     character_controller: KinematicCharacterController,
     pub character_body: Option<RigidBodyHandle>,
     pub character_collider: Option<ColliderHandle>,
@@ -37,18 +36,17 @@ impl std::fmt::Debug for PhysicsWorld {
 
 impl PhysicsWorld {
     pub fn new() -> Self {
-        let gravity = vector![0.0, GRAVITY, 0.0];
+        let gravity = Vec3::new(0.0, GRAVITY, 0.0);
         let integration_parameters = IntegrationParameters::default();
         let physics_pipeline = PhysicsPipeline::new();
         let island_manager = IslandManager::new();
-        let broad_phase = DefaultBroadPhase::new();
+        let broad_phase = BroadPhaseBvh::new();
         let narrow_phase = NarrowPhase::new();
         let rigid_body_set = RigidBodySet::new();
         let collider_set = ColliderSet::new();
         let impulse_joint_set = ImpulseJointSet::new();
         let multibody_joint_set = MultibodyJointSet::new();
         let ccd_solver = CCDSolver::new();
-        let query_pipeline = QueryPipeline::new();
 
         let character_controller = KinematicCharacterController {
             autostep: Some(CharacterAutostep {
@@ -72,7 +70,6 @@ impl PhysicsWorld {
             impulse_joint_set,
             multibody_joint_set,
             ccd_solver,
-            query_pipeline,
             character_controller,
             character_body: None,
             character_collider: None,
@@ -86,7 +83,7 @@ impl PhysicsWorld {
     pub fn step(&mut self, dt: f32) {
         self.integration_parameters.dt = dt;
         self.physics_pipeline.step(
-            &self.gravity,
+            self.gravity,
             &self.integration_parameters,
             &mut self.island_manager,
             &mut self.broad_phase,
@@ -96,7 +93,6 @@ impl PhysicsWorld {
             &mut self.impulse_joint_set,
             &mut self.multibody_joint_set,
             &mut self.ccd_solver,
-            Some(&mut self.query_pipeline),
             &(),
             &(),
         );
@@ -108,7 +104,10 @@ impl PhysicsWorld {
         vertices: &[[f32; 3]],
         indices: &[u32],
     ) -> ColliderHandle {
-        let points: Vec<Point<Real>> = vertices.iter().map(|v| point![v[0], v[1], v[2]]).collect();
+        let points: Vec<Vector> = vertices
+            .iter()
+            .map(|v| Vec3::new(v[0], v[1], v[2]))
+            .collect();
 
         let tris: Vec<[u32; 3]> = indices
             .chunks(3)
@@ -128,7 +127,16 @@ impl PhysicsWorld {
             return self.collider_set.insert(dummy);
         }
 
-        let collider = ColliderBuilder::trimesh(points, tris).friction(0.6).build();
+        let collider = match ColliderBuilder::trimesh(points, tris) {
+            Ok(b) => b.friction(0.6).build(),
+            Err(e) => {
+                log::warn!(
+                    "add_terrain_trimesh: trimesh build failed ({:?}), inserting dummy",
+                    e
+                );
+                ColliderBuilder::ball(0.001).build()
+            }
+        };
 
         self.collider_set.insert(collider)
     }
@@ -146,7 +154,7 @@ impl PhysicsWorld {
     /// Add the kinematic character (capsule) to the world.
     pub fn add_character(&mut self, position: Vec3) -> (RigidBodyHandle, ColliderHandle) {
         let body = RigidBodyBuilder::kinematic_position_based()
-            .translation(vector![position.x, position.y, position.z])
+            .translation(position)
             .build();
         let body_handle = self.rigid_body_set.insert(body);
 
@@ -176,35 +184,35 @@ impl PhysicsWorld {
             _ => return Vec3::ZERO,
         };
 
-        // Ensure the query pipeline reflects current collider state before querying
-        self.query_pipeline.update(&self.collider_set);
-
         // Integrate gravity into vertical velocity
         if !self.is_grounded {
             self.vertical_velocity += GRAVITY * dt;
         }
 
-        let desired = vector![
+        let desired = Vec3::new(
             desired_horizontal.x,
             self.vertical_velocity * dt,
-            desired_horizontal.z
-        ];
+            desired_horizontal.z,
+        );
 
         let shape = self.collider_set[collider_handle].shape();
         let current_pos = *self.rigid_body_set[body_handle].position();
 
-        // Build filter that excludes the character collider itself
+        // Build a transient QueryPipeline view filtered to exclude the character itself.
         let filter = QueryFilter::default().exclude_collider(collider_handle);
+        let queries = self.broad_phase.as_query_pipeline(
+            self.narrow_phase.query_dispatcher(),
+            &self.rigid_body_set,
+            &self.collider_set,
+            filter,
+        );
 
         let movement = self.character_controller.move_shape(
             dt,
-            &self.rigid_body_set,
-            &self.collider_set,
-            &self.query_pipeline,
+            &queries,
             shape,
             &current_pos,
             desired,
-            filter,
             |_| {},
         );
 
@@ -214,27 +222,22 @@ impl PhysicsWorld {
         }
 
         // Apply effective movement directly so character_position() reflects it immediately.
-        // We use set_next_kinematic_position so rapier also tracks it for the next step().
-        let new_translation = current_pos.translation.vector + movement.translation;
-        let new_isometry = Isometry::new(new_translation, current_pos.rotation.scaled_axis());
+        let new_translation = current_pos.translation + movement.translation;
+        let new_pose = Pose::from_parts(new_translation, current_pos.rotation);
         // Set both the "next" and "current" position so the value is available immediately.
-        self.rigid_body_set[body_handle].set_next_kinematic_position(new_isometry);
-        // Force-update the current position so character_position() is consistent without step().
-        self.rigid_body_set[body_handle].set_position(new_isometry, false);
+        self.rigid_body_set[body_handle].set_next_kinematic_position(new_pose);
+        self.rigid_body_set[body_handle].set_position(new_pose, false);
 
-        Vec3::new(new_translation.x, new_translation.y, new_translation.z)
+        new_translation
     }
 
     /// Teleport the character to `position` and zero out vertical velocity.
     pub fn set_character_position(&mut self, position: Vec3) {
         if let Some(handle) = self.character_body {
             let current = *self.rigid_body_set[handle].position();
-            let new_iso = Isometry::new(
-                vector![position.x, position.y, position.z],
-                current.rotation.scaled_axis(),
-            );
-            self.rigid_body_set[handle].set_next_kinematic_position(new_iso);
-            self.rigid_body_set[handle].set_position(new_iso, false);
+            let new_pose = Pose::from_parts(position, current.rotation);
+            self.rigid_body_set[handle].set_next_kinematic_position(new_pose);
+            self.rigid_body_set[handle].set_position(new_pose, false);
             self.vertical_velocity = 0.0;
         }
     }
@@ -242,15 +245,12 @@ impl PhysicsWorld {
     /// Get the character's current world position.
     pub fn character_position(&self) -> Option<Vec3> {
         let handle = self.character_body?;
-        let t = self.rigid_body_set[handle].position().translation;
-        Some(Vec3::new(t.x, t.y, t.z))
+        Some(self.rigid_body_set[handle].position().translation)
     }
 
     /// Spawn a dynamic sphere rigid body. Returns the body handle.
     pub fn add_dynamic_sphere(&mut self, position: Vec3, radius: f32) -> RigidBodyHandle {
-        let body = RigidBodyBuilder::dynamic()
-            .translation(vector![position.x, position.y, position.z])
-            .build();
+        let body = RigidBodyBuilder::dynamic().translation(position).build();
         let body_handle = self.rigid_body_set.insert(body);
 
         let collider = ColliderBuilder::ball(radius)
@@ -271,9 +271,7 @@ impl PhysicsWorld {
         half_y: f32,
         half_z: f32,
     ) -> RigidBodyHandle {
-        let body = RigidBodyBuilder::dynamic()
-            .translation(vector![position.x, position.y, position.z])
-            .build();
+        let body = RigidBodyBuilder::dynamic().translation(position).build();
         let body_handle = self.rigid_body_set.insert(body);
 
         let collider = ColliderBuilder::cuboid(half_x, half_y, half_z)
@@ -289,8 +287,7 @@ impl PhysicsWorld {
     /// Get a dynamic rigid body's current translation.
     pub fn body_position(&self, handle: RigidBodyHandle) -> Option<Vec3> {
         let body = self.rigid_body_set.get(handle)?;
-        let t = body.position().translation;
-        Some(Vec3::new(t.x, t.y, t.z))
+        Some(body.position().translation)
     }
 }
 
