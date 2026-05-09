@@ -313,6 +313,16 @@ mod tests {
     }
 
     #[test]
+    fn test_from_grid_lod_stamps_lod_field() {
+        use super::super::grid::VoxelGrid;
+        let grid = VoxelGrid::new(16);
+        let chunk0 = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 0);
+        assert_eq!(chunk0.lod(), 0);
+        let chunk1 = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 1);
+        assert_eq!(chunk1.lod(), 1);
+    }
+
+    #[test]
     fn test_chunk_memory_size() {
         let chunk = VoxelChunk::new(
             IVec3::ZERO,

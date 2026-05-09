@@ -575,4 +575,54 @@ mod tests {
         assert_eq!(mesh.vertices.len(), 0);
         assert_eq!(mesh.indices.len(), 0);
     }
+
+    #[test]
+    fn test_generate_coarse_mesh_empty_grid() {
+        let grid = VoxelGrid::new(16);
+        let mesh = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
+        assert_eq!(mesh.vertices.len(), 0);
+        assert_eq!(mesh.indices.len(), 0);
+    }
+
+    #[test]
+    fn test_generate_coarse_mesh_solid_chunk_has_geometry() {
+        let mut grid = VoxelGrid::new(16);
+        for x in 0..16 {
+            for y in 0..16 {
+                for z in 0..16 {
+                    grid.place_block(IVec3::new(x, y, z), 0, None);
+                }
+            }
+        }
+        let mesh = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
+        // A fully solid chunk has only exterior faces; it must have geometry.
+        assert!(!mesh.vertices.is_empty());
+        assert!(!mesh.indices.is_empty());
+        // Every triangle must be a valid index
+        for &idx in &mesh.indices {
+            assert!((idx as usize) < mesh.vertices.len());
+        }
+    }
+
+    #[test]
+    fn test_generate_coarse_mesh_uses_stride2() {
+        // A single block at (0,0,0) should produce the same coarse geometry as a
+        // 2×2×2 region, because STRIDE=2 unions the region into one coarse cell.
+        let mut grid_single = VoxelGrid::new(16);
+        grid_single.place_block(IVec3::new(0, 0, 0), 0, None);
+
+        let mut grid_full_cell = VoxelGrid::new(16);
+        for dx in 0..2 {
+            for dy in 0..2 {
+                for dz in 0..2 {
+                    grid_full_cell.place_block(IVec3::new(dx, dy, dz), 0, None);
+                }
+            }
+        }
+
+        let m1 = HybridMeshGenerator::generate_coarse_mesh(&grid_single, IVec3::ZERO, 16);
+        let m2 = HybridMeshGenerator::generate_coarse_mesh(&grid_full_cell, IVec3::ZERO, 16);
+        assert_eq!(m1.vertices.len(), m2.vertices.len());
+        assert_eq!(m1.indices.len(), m2.indices.len());
+    }
 }

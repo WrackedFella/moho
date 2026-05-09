@@ -37,3 +37,4 @@ recipe.json
 /tmp_rust_code_analysis/
 .gitnexus
 .claude
+/node_modules/
