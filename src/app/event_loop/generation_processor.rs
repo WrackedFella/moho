@@ -179,7 +179,7 @@ impl GenerationProcessor {
                         continue;
                     }
                     for (world_pos, material_id, resource_id) in blocks {
-                        grid.place_block(world_pos, material_id, resource_id);
+                        grid.mutator().place(world_pos, material_id, resource_id);
                     }
                     grid.clear_chunk_modified(pos);
                     loaded.push(pos);

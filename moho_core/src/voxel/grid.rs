@@ -376,13 +376,12 @@ impl VoxelGrid {
     ///
     /// - No physics, collision, or gameplay validation.
     /// - No event publishing — callers that need `BlockPlaced` events must use
-    ///   [`BlockModifier::set_block`] (or the forthcoming [`VoxelMutator`]).
+    ///   [`BlockModifier::set_block`].
     /// - No neighbor-chunk invalidation for edge blocks — `BlockModifier` handles that.
     ///
-    /// This is the **lowest-level** mutation primitive. Prefer [`BlockModifier`] for
-    /// gameplay code, and [`VoxelMutator`] (via [`VoxelGrid::mutator`]) for bulk
-    /// terrain generation where direct grid access is intentional.
-    pub fn place_block(&mut self, pos: BlockPos, material_id: u32, resource_id: Option<u32>) {
+    /// This is the **lowest-level** mutation primitive. External callers must go through
+    /// [`BlockModifier`] (gameplay) or [`VoxelGrid::mutator`] (bulk terrain writes).
+    pub(crate) fn place_block(&mut self, pos: BlockPos, material_id: u32, resource_id: Option<u32>) {
         let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
         let chunk = self.chunks.entry(chunk_pos).or_default();
         chunk.set_block(idx, material_id, resource_id);

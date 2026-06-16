@@ -71,7 +71,7 @@ pub fn load_scene(
         } else {
             for record in &block_records {
                 let pos = moho_core::voxel::BlockPos::new(record.x, record.y, record.z);
-                grid.place_block(pos, record.material_id, record.resource_id);
+                grid.mutator().place(pos, record.material_id, record.resource_id);
             }
             log::info!(
                 "Reconstructed VoxelGrid with {} blocks for LightSystem",

@@ -157,7 +157,7 @@ impl ChunkStreamer {
             return false;
         }
         for (world_pos, material_id, resource_id) in blocks {
-            grid.place_block(world_pos, material_id, resource_id);
+            grid.mutator().place(world_pos, material_id, resource_id);
         }
         // Freshly generated chunks are not player-edited — clear the modified flag
         // so they are not needlessly written to disk on eviction.

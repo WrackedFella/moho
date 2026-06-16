@@ -155,7 +155,7 @@ fn generate_terrain(grid: &mut VoxelGrid, config: &TerrainConfig) {
                 let material_id = determine_material_id(column_height, y, &params);
                 let resource_id = determine_resource_id(column_height, y, x, z, config.seed);
 
-                grid.place_block(pos, material_id, resource_id);
+                grid.mutator().place(pos, material_id, resource_id);
             }
         }
     }
