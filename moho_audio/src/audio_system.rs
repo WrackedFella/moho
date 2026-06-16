@@ -12,11 +12,8 @@ use std::path::Path;
 /// AudioSystem manages audio playback, asset loading, and provides
 /// a clean interface for the rest of the engine to play sounds.
 pub struct AudioSystem {
-    /// Rodio output stream for audio playback
-    _stream: rodio::OutputStream,
-
-    /// Handle to control the audio stream
-    stream_handle: rodio::OutputStreamHandle,
+    /// Rodio device sink (keeps the audio stream alive)
+    _device: rodio::MixerDeviceSink,
 
     /// Current audio settings
     settings: AudioSettings,
@@ -24,25 +21,23 @@ pub struct AudioSystem {
     /// Audio cache manager (handles loading and caching)
     audio_cache: AudioCache,
 
-    /// Currently playing background music sink (for control)
-    music_sink: Option<rodio::Sink>,
+    /// Currently playing background music player (for volume control)
+    music_player: Option<rodio::Player>,
 }
 
 impl AudioSystem {
     /// Create a new audio system with optimized settings for low latency
     pub fn new() -> AudioResult<Self> {
-        // Initialize rodio output stream
-        let (stream, stream_handle) = rodio::OutputStream::try_default()
+        let device = rodio::DeviceSinkBuilder::open_default_sink()
             .map_err(|e| AudioError::InitializationFailed(e.to_string()))?;
 
         debug!("Audio system initialized successfully");
 
         Ok(Self {
-            _stream: stream,
-            stream_handle,
+            _device: device,
             settings: AudioSettings::default(),
             audio_cache: AudioCache::new()?,
-            music_sink: None,
+            music_player: None,
         })
     }
 
@@ -56,9 +51,9 @@ impl AudioSystem {
         self.settings = settings;
 
         // Update music volume if currently playing
-        if let Some(sink) = &self.music_sink {
+        if let Some(player) = &self.music_player {
             let music_volume = self.settings.effective_volume(&AudioCategory::Music);
-            sink.set_volume(music_volume);
+            player.set_volume(music_volume);
         }
     }
 
@@ -86,27 +81,25 @@ impl AudioSystem {
             AudioError::LoadFailed(format!("Failed to decode {}: {}", source.path(), e))
         })?;
 
-        let sink = rodio::Sink::try_new(&self.stream_handle)
-            .map_err(|e| AudioError::PlaybackFailed(e.to_string()))?;
-
-        sink.set_volume(effective_volume);
+        let player = rodio::Player::connect_new(self._device.mixer());
+        player.set_volume(effective_volume);
 
         if source.looped() {
-            sink.append(source_decoder.repeat_infinite());
+            player.append(source_decoder.repeat_infinite());
         } else {
-            sink.append(source_decoder);
+            player.append(source_decoder);
         }
 
-        // For background music, store the sink for volume control
+        // For background music, store the player for volume control
         if *source.category() == AudioCategory::Music && source.looped() {
-            if let Some(old_sink) = self.music_sink.take() {
-                old_sink.stop();
+            if let Some(old_player) = self.music_player.take() {
+                old_player.stop();
             }
-            sink.play();
-            self.music_sink = Some(sink);
+            player.play();
+            self.music_player = Some(player);
         } else {
-            sink.play();
-            sink.detach(); // Let it play and clean up automatically
+            player.play();
+            player.detach(); // Let it play and clean up automatically
         }
 
         debug!(
@@ -174,15 +167,13 @@ impl AudioSystem {
         let source_decoder = rodio::Decoder::new(cursor)
             .map_err(|e| AudioError::LoadFailed(format!("Failed to decode {}: {}", path_str, e)))?;
 
-        // For UI sounds, create a new sink each time for immediate playback
-        // This avoids queueing delays that would occur with a shared sink
-        let sink = rodio::Sink::try_new(&self.stream_handle)
-            .map_err(|e| AudioError::PlaybackFailed(e.to_string()))?;
-
-        sink.set_volume(effective_volume);
-        sink.append(source_decoder);
-        sink.play();
-        sink.detach(); // Let it play and clean up automatically
+        // For UI sounds, create a new player each time for immediate playback
+        // This avoids queueing delays that would occur with a shared player
+        let player = rodio::Player::connect_new(self._device.mixer());
+        player.set_volume(effective_volume);
+        player.append(source_decoder);
+        player.play();
+        player.detach(); // Let it play and clean up automatically
 
         debug!(
             "Playing UI audio: {} at volume {:.2}",
@@ -195,14 +186,14 @@ impl AudioSystem {
     pub fn stop_audio(&mut self, category: Option<AudioCategory>) {
         match category {
             None => {
-                if let Some(sink) = self.music_sink.take() {
-                    sink.stop();
+                if let Some(player) = self.music_player.take() {
+                    player.stop();
                 }
                 // Note: Individual sound effects can't be stopped once detached
             }
             Some(AudioCategory::Music) => {
-                if let Some(sink) = self.music_sink.take() {
-                    sink.stop();
+                if let Some(player) = self.music_player.take() {
+                    player.stop();
                 }
             }
             Some(
@@ -227,8 +218,8 @@ impl AudioSystem {
 
 impl Drop for AudioSystem {
     fn drop(&mut self) {
-        if let Some(sink) = self.music_sink.take() {
-            sink.stop();
+        if let Some(player) = self.music_player.take() {
+            player.stop();
         }
         debug!("Audio system shutdown");
     }

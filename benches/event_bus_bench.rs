@@ -1,5 +1,6 @@
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use moho_core::events::{AudioEvent, EventBus, InputEvent, SystemEvent, UiEvent};
+use std::hint::black_box;
 use std::sync::{
     Arc,
     atomic::{AtomicU32, Ordering},
