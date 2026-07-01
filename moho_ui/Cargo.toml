@@ -21,6 +21,7 @@ log = { workspace = true }
 ini = "1.3.0"
 moho_input = { path = "../moho_input" }
 moho_core = { path = "../moho_core" }
+moho_game = { path = "../moho_game" }
 moho_types = { path = "../moho_types" }
 serde = { workspace = true, features = ["derive"] }
 bincode = { workspace = true }

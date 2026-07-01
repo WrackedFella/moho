@@ -22,7 +22,7 @@ use winit::window::Window;
 pub enum UiEvent {
     LoadScene(PathBuf),
     /// Start generation of a new world with provided parameters
-    NewWorld(moho_core::scene_builders::WorldSpec),
+    NewWorld(moho_game::scene_builders::WorldSpec),
     ShowMenu(String),
     Exit,
     OverlayToggled(bool),

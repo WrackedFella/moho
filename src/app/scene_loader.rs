@@ -84,7 +84,7 @@ pub fn load_scene(
         ));
 
         // Initialize ChunkStreamer so the loaded world can stream additional chunks
-        let mut terrain_config = moho_core::scene_builders::TerrainConfig::default();
+        let mut terrain_config = moho_game::scene_builders::TerrainConfig::default();
         if let Some(s) = spec.seed {
             terrain_config.seed = s as u32;
         }

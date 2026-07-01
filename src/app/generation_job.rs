@@ -9,7 +9,7 @@ pub struct WorldGenerationJob {
     pub receiver: Option<Receiver<crate::GenerationMsg>>,
     pub handle: Option<std::thread::JoinHandle<()>>,
     pub cancel: Option<Arc<AtomicBool>>,
-    pub last_spec: Option<moho_core::scene_builders::WorldSpec>,
+    pub last_spec: Option<moho_game::scene_builders::WorldSpec>,
 }
 
 impl WorldGenerationJob {

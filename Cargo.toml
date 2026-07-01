@@ -9,7 +9,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["moho_core", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_sim", "moho_types", "moho_physics"]
+members = ["moho_core", "moho_game", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_sim", "moho_types", "moho_physics"]
 
 [workspace.dependencies]
 bincode = "2.0"
@@ -57,6 +57,9 @@ path = "moho_audio"
 
 [dependencies.moho_core]
 path = "moho_core"
+
+[dependencies.moho_game]
+path = "moho_game"
 
 [dependencies.moho_input]
 path = "moho_input"

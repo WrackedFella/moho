@@ -30,8 +30,8 @@ enum GenerationMsg {
     Progress(f32),
     Completed {
         scene_bytes: Vec<u8>,
-        spec: moho_core::scene_builders::WorldSpec,
-        terrain_config: moho_core::scene_builders::TerrainConfig,
+        spec: moho_game::scene_builders::WorldSpec,
+        terrain_config: moho_game::scene_builders::TerrainConfig,
         // Empty grid — streaming populates it on demand. Boxed to reduce enum
         // variant size (VoxelGrid is large; the other variants are cheap).
         grid: Box<moho_core::voxel::VoxelGrid>,
@@ -195,7 +195,7 @@ impl App {
 
     fn generate_new_world(
         &mut self,
-        spec: moho_core::scene_builders::WorldSpec,
+        spec: moho_game::scene_builders::WorldSpec,
     ) -> Result<(), Box<dyn std::error::Error>> {
         crate::app::world_generator::generate_new_world(self, spec)
     }
@@ -275,7 +275,7 @@ impl App {
         };
 
         // Calculate up/down - only in first person mode
-        let up = if self.simulation.camera_mode() == moho_core::controller::CameraMode::FirstPerson
+        let up = if self.simulation.camera_mode() == moho_game::controller::CameraMode::FirstPerson
         {
             (if is_active(&self.prefs.key_up()) {
                 1.0
@@ -396,7 +396,7 @@ impl App {
     fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
         // Only process input in game mode and first person camera mode
         if self.game_state != crate::game_state::GameState::Playing
-            || self.simulation.camera_mode() != moho_core::controller::CameraMode::FirstPerson
+            || self.simulation.camera_mode() != moho_game::controller::CameraMode::FirstPerson
         {
             return;
         }
@@ -597,16 +597,16 @@ impl ApplicationHandler for App {
             && self.game_state == crate::game_state::GameState::Playing
         {
             match self.simulation.camera_mode() {
-                moho_core::controller::CameraMode::FirstPerson => {
+                moho_game::controller::CameraMode::FirstPerson => {
                     // Switch to RTS first so look_at runs in Isometric mode,
                     // setting rts_look_target without touching FPS yaw/pitch.
                     self.simulation
-                        .set_camera_mode(moho_core::controller::CameraMode::Isometric);
+                        .set_camera_mode(moho_game::controller::CameraMode::Isometric);
                     self.simulation.look_at(self.simulation.position());
                 }
-                moho_core::controller::CameraMode::Isometric => {
+                moho_game::controller::CameraMode::Isometric => {
                     self.simulation
-                        .set_camera_mode(moho_core::controller::CameraMode::FirstPerson);
+                        .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
                 }
             }
             log::info!(

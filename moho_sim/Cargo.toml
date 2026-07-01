@@ -9,6 +9,7 @@ path = "src/lib.rs"
 
 [dependencies]
 moho_core = { path = "../moho_core" }
+moho_game = { path = "../moho_game" }
 glam = { workspace = true }
 bincode = { workspace = true }
 crc32fast = { workspace = true }

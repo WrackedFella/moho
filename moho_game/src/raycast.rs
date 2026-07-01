@@ -1,4 +1,4 @@
-use crate::voxel::{BlockPos, VoxelGrid};
+use moho_core::voxel::{BlockPos, VoxelGrid};
 use glam::{IVec3, Vec3};
 
 /// Result of a raycast operation

@@ -73,8 +73,6 @@ pub use types::{
     // Debug events
     ConsoleLevel,
     DebugEvent,
-    // Game events
-    GameEvent,
     GraphicsEvent,
     GraphicsSetting,
     // Input events

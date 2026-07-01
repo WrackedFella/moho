@@ -21,7 +21,7 @@ pub fn auto_save_on_shutdown(app: &mut crate::App) -> Result<(), Box<dyn std::er
         app.generation
             .last_spec
             .clone()
-            .unwrap_or(moho_core::scene_builders::WorldSpec {
+            .unwrap_or(moho_game::scene_builders::WorldSpec {
                 name: "autosave".to_string(),
                 seed: None,
                 size_xz: 64,

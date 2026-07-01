@@ -38,7 +38,7 @@ impl GameClock {
     ///
     /// # Example
     /// ```
-    /// use moho_core::game_clock::GameClock;
+    /// use moho_game::game_clock::GameClock;
     ///
     /// // 10 minute days, 7 minute nights, starting at dawn
     /// let clock = GameClock::new(6.0, 600.0, 420.0);

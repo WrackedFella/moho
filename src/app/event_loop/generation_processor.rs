@@ -67,8 +67,8 @@ impl GenerationProcessor {
         &self,
         app: &mut App,
         scene_bytes: Vec<u8>,
-        spec: moho_core::scene_builders::WorldSpec,
-        terrain_config: moho_core::scene_builders::TerrainConfig,
+        spec: moho_game::scene_builders::WorldSpec,
+        terrain_config: moho_game::scene_builders::TerrainConfig,
         grid: moho_core::voxel::VoxelGrid,
     ) {
         log::info!("Generation completed for spec={:?}", spec.name);
@@ -156,10 +156,10 @@ impl GenerationProcessor {
     /// height before `setup_physics_for_world` places the character controller.
     fn preload_spawn_area(
         &self,
-        terrain_config: &moho_core::scene_builders::TerrainConfig,
+        terrain_config: &moho_game::scene_builders::TerrainConfig,
         app: &mut App,
     ) -> Vec<glam::IVec3> {
-        use moho_core::voxel::streaming::generate_chunk;
+        use moho_game::scene_builders::generate_chunk;
         const PRELOAD_RADIUS: i32 = 2; // 2-chunk radius (5×5 columns) around origin
         const MIN_Y: i32 = 0;
         const MAX_Y: i32 = 8; // matches chunk_streamer::MAX_CHUNK_Y

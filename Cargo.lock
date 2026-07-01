@@ -2072,6 +2072,7 @@ dependencies = [
  "log",
  "moho_audio",
  "moho_core",
+ "moho_game",
  "moho_input",
  "moho_physics",
  "moho_renderer",
@@ -2108,6 +2109,19 @@ dependencies = [
  "phf",
  "serde",
  "winit",
+]
+
+[[package]]
+name = "moho_game"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "glam 0.30.10",
+ "legion",
+ "log",
+ "moho_core",
+ "noise",
+ "serde",
 ]
 
 [[package]]
@@ -2153,6 +2167,7 @@ dependencies = [
  "crc32fast",
  "glam 0.30.10",
  "moho_core",
+ "moho_game",
 ]
 
 [[package]]
@@ -2172,6 +2187,7 @@ dependencies = [
  "ini",
  "log",
  "moho_core",
+ "moho_game",
  "moho_input",
  "moho_renderer",
  "moho_types",

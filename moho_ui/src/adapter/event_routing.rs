@@ -195,7 +195,7 @@ pub fn process_console_action(action: crate::overlays::ConsoleAction, event_bus:
 mod tests {
     use super::*;
     use moho_core::events::EventBus;
-    use moho_core::scene_builders::WorldSpec;
+    use moho_game::scene_builders::WorldSpec;
     use std::sync::Arc;
 
     #[test]

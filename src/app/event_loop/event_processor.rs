@@ -55,7 +55,7 @@ impl EventProcessor {
                     seed,
                     size
                 );
-                let spec = moho_core::scene_builders::WorldSpec {
+                let spec = moho_game::scene_builders::WorldSpec {
                     name,
                     seed,
                     size_xz: size,
@@ -216,7 +216,7 @@ impl EventProcessor {
                 // Only act on wheel events in game mode
                 if app.game_state == crate::game_state::GameState::Playing {
                     match app.simulation.camera_mode() {
-                        moho_core::controller::CameraMode::FirstPerson => {
+                        moho_game::controller::CameraMode::FirstPerson => {
                             // First-person: scroll moves forward/back along look direction
                             let dz = delta_y * MOUSE_WHEEL_ZOOM_FACTOR;
                             let (yaw, pitch) = app.simulation.yaw_pitch();
@@ -228,7 +228,7 @@ impl EventProcessor {
                             let new_pos = app.simulation.position() + forward * dz;
                             app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
                         }
-                        moho_core::controller::CameraMode::Isometric => {
+                        moho_game::controller::CameraMode::Isometric => {
                             // RTS camera: scroll adjusts camera height (zoom)
                             app.simulation.controller_input.zoom_delta = delta_y;
                         }
@@ -320,7 +320,7 @@ impl EventProcessor {
                 if let Some(grid) = grid_opt {
                     // Use raycast utility
                     // Max distance 100 units
-                    let hit = moho_core::raycast::raycast(
+                    let hit = moho_game::raycast::raycast(
                         grid,
                         camera_pos,
                         forward,

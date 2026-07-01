@@ -1,4 +1,4 @@
-use crate::events::Event;
+use moho_core::events::Event;
 use std::any::Any;
 use std::path::PathBuf;
 

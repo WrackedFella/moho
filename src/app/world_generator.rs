@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// on `app.generation`, and immediately shows the progress overlay in the UI.
 pub fn generate_new_world(
     app: &mut crate::App,
-    spec: moho_core::scene_builders::WorldSpec,
+    spec: moho_game::scene_builders::WorldSpec,
 ) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Starting async generation for spec={:?}", spec);
 
@@ -54,7 +54,7 @@ pub fn generate_new_world(
                 return;
             }
             // Build TerrainConfig from the WorldSpec.
-            let mut terrain_config = moho_core::scene_builders::TerrainConfig::default();
+            let mut terrain_config = moho_game::scene_builders::TerrainConfig::default();
             if let Some(s) = spec_for_thread.seed {
                 terrain_config.seed = s as u32;
             }

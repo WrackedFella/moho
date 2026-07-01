@@ -1,8 +1,8 @@
 use bincode::{Decode, Encode};
 use crc32fast::Hasher;
 use glam::{Mat4, Vec3};
-use moho_core::controller::{CameraMode, ControllerInput, PlayerController, controller_to_camera};
-use moho_core::game_clock::GameClock;
+use moho_game::controller::{CameraMode, ControllerInput, PlayerController, controller_to_camera};
+use moho_game::game_clock::GameClock;
 const SNAP_MAGIC: &[u8; 4] = b"MOHO";
 const SNAP_VERSION: u16 = 2;
 

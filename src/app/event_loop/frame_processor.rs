@@ -54,7 +54,7 @@ impl FrameProcessor {
         }
 
         // --- Physics KCC path (FPS only) ---
-        let is_fps = app.simulation.camera_mode() == moho_core::controller::CameraMode::FirstPerson;
+        let is_fps = app.simulation.camera_mode() == moho_game::controller::CameraMode::FirstPerson;
         let use_kcc = is_fps && app.physics.is_kcc_active();
 
         if use_kcc {
@@ -134,7 +134,7 @@ impl FrameProcessor {
         app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
 
         // Rebuild camera from the updated simulation state
-        app.camera = moho_core::controller::controller_to_camera(&app.simulation.player_controller);
+        app.camera = moho_game::controller::controller_to_camera(&app.simulation.player_controller);
 
         // Step dynamic rigid bodies and sync ECS transforms
         self.step_physics_bodies(app, dt);
@@ -400,7 +400,7 @@ impl FrameProcessor {
         let chunk_pos = [cp.x, cp.y, cp.z];
 
         let mode = app.simulation.camera_mode();
-        let is_fps = mode == moho_core::controller::CameraMode::FirstPerson;
+        let is_fps = mode == moho_game::controller::CameraMode::FirstPerson;
 
         let (yaw, _pitch) = app.simulation.yaw_pitch();
 

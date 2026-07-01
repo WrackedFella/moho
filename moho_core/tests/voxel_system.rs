@@ -61,7 +61,7 @@ fn test_voxel_grid_basic_ops() {
     assert_eq!(grid.block_positions().count(), 0);
 
     let pos = IVec3::new(1, 2, 3);
-    grid.place_block(pos, 1, None);
+    grid.mutator().place(pos, 1, None);
     assert_eq!(grid.block_positions().count(), 1);
 
     assert_eq!(grid.material_at(pos), Some(1));
@@ -94,16 +94,16 @@ fn test_voxel_grid_basic_ops() {
 #[test]
 fn test_voxel_grid_heights_and_neighbors() {
     let mut grid = VoxelGrid::new(16);
-    grid.place_block(IVec3::new(0, 0, 0), 0, None);
-    grid.place_block(IVec3::new(0, 1, 0), 0, None);
-    grid.place_block(IVec3::new(0, 3, 0), 0, None);
+    grid.mutator().place(IVec3::new(0, 0, 0), 0, None);
+    grid.mutator().place(IVec3::new(0, 1, 0), 0, None);
+    grid.mutator().place(IVec3::new(0, 3, 0), 0, None);
     assert_eq!(grid.get_height(0, 0), Some(3));
     assert_eq!(grid.get_height(1, 0), None);
 
     // Neighbor heights for position (0,1,0): [North(+Z), South(-Z), East(+X), West(-X)]
     // Setup East and North neighbors at y=0
-    grid.place_block(IVec3::new(1, 0, 0), 0, None);
-    grid.place_block(IVec3::new(0, 0, 1), 0, None);
+    grid.mutator().place(IVec3::new(1, 0, 0), 0, None);
+    grid.mutator().place(IVec3::new(0, 0, 1), 0, None);
     let neighbors = grid.get_neighbor_heights(IVec3::new(0, 1, 0));
     assert_eq!(neighbors, [Some(0), None, Some(0), None]);
 }
@@ -119,7 +119,7 @@ fn test_face_culling_and_visible_faces() {
     }
 
     // Add neighbor to the east (+X)
-    grid.place_block(IVec3::new(1, 0, 0), 0, None);
+    grid.mutator().place(IVec3::new(1, 0, 0), 0, None);
     assert!(!FaceDirection::PosX.should_render_face(&grid, pos));
     // Other faces remain visible
     assert!(FaceDirection::NegX.should_render_face(&grid, pos));
