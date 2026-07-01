@@ -37,3 +37,9 @@ recipe.json
 /metrics-summary/
 /tmp_rust_code_analysis/
 /node_modules/
+
+# Claude Code user-specific files
+.claude/worktrees/
+.claude/settings.local.json
+.claude/keybindings.json
+.claude/projects/
