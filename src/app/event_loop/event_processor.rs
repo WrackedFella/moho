@@ -9,7 +9,7 @@
 use crate::App;
 use crate::input_event::InputEvent;
 use legion::IntoQuery;
-use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent, WorldEvent};
+use moho_core::events::{GraphicsEvent, UiEvent, WorldEvent};
 use moho_core::voxel::VoxelChunk;
 use winit::event_loop::ActiveEventLoop;
 
@@ -131,43 +131,8 @@ impl EventProcessor {
     /// Process all pending audio events from the event bus
     pub fn process_audio_events(&self, app: &mut App) {
         while let Ok(event) = app.audio_event_rx.try_recv() {
-            if let Some(audio_event) = self.map_audio_event(event) {
-                app.handle_audio_event(audio_event);
-            }
+            app.handle_audio_event(event);
         }
-    }
-
-    /// Map core AudioEvent to moho_audio AudioEvent.
-    ///
-    /// Returns `None` for events that have no moho_audio equivalent yet.
-    fn map_audio_event(&self, event: AudioEvent) -> Option<moho_audio::AudioEvent> {
-        Some(match event {
-            AudioEvent::ButtonClick => moho_audio::AudioEvent::ButtonClick,
-            AudioEvent::MenuNavigate => moho_audio::AudioEvent::MenuNavigate,
-            AudioEvent::Confirm => moho_audio::AudioEvent::Confirm,
-            AudioEvent::Cancel => moho_audio::AudioEvent::Cancel,
-            AudioEvent::Error => moho_audio::AudioEvent::Error,
-            AudioEvent::PlaySound { path, volume } => {
-                moho_audio::AudioEvent::CustomSound { path, volume }
-            }
-            AudioEvent::MusicStart {
-                path,
-                volume,
-                looped,
-            } => moho_audio::AudioEvent::BackgroundMusic {
-                path,
-                volume,
-                looped,
-            },
-            AudioEvent::MusicStop => {
-                moho_audio::AudioEvent::Stop(Some(moho_audio::AudioCategory::Music))
-            }
-            AudioEvent::MusicVolumeChanged { volume: _ } => {
-                // TODO: implement runtime volume adjustment in AudioSystem
-                return None;
-            }
-            AudioEvent::StopAll => moho_audio::AudioEvent::Stop(None),
-        })
     }
 
     /// Process all pending graphics events from the event bus
@@ -405,7 +370,7 @@ impl EventProcessor {
                                 // Spawn a small gizmo sphere so the light origin is
                                 // visible in world space. Emissive material bypasses
                                 // lighting so the gizmo glows at the light's own colour.
-                                let gizmo = moho_core::actors::Sphere::new(
+                                let gizmo = moho_game::actors::Sphere::new(
                                     spawn_pos,
                                     0.15,
                                     moho_core::materials::MaterialType::Emissive {
@@ -419,8 +384,8 @@ impl EventProcessor {
                         }
                         "cube" => {
                             // Spawn cube actor
-                            use moho_core::actors::Cube;
                             use moho_core::materials::MaterialType;
+                            use moho_game::actors::Cube;
 
                             let cube = Cube::new(
                                 spawn_pos,
@@ -440,8 +405,8 @@ impl EventProcessor {
                         }
                         "sphere" => {
                             // Spawn sphere actor
-                            use moho_core::actors::Sphere;
                             use moho_core::materials::MaterialType;
+                            use moho_game::actors::Sphere;
 
                             let sphere = Sphere::new(
                                 spawn_pos,
@@ -545,63 +510,6 @@ mod tests {
     fn test_event_processor_default() {
         let _processor = EventProcessor;
         // Just verify it compiles and constructs
-    }
-
-    #[test]
-    fn test_audio_event_mapping() {
-        let processor = EventProcessor::new();
-
-        // Test basic event mappings
-        let mapped = processor.map_audio_event(AudioEvent::ButtonClick);
-        assert!(matches!(mapped, Some(moho_audio::AudioEvent::ButtonClick)));
-
-        let mapped = processor.map_audio_event(AudioEvent::Confirm);
-        assert!(matches!(mapped, Some(moho_audio::AudioEvent::Confirm)));
-
-        let mapped = processor.map_audio_event(AudioEvent::Cancel);
-        assert!(matches!(mapped, Some(moho_audio::AudioEvent::Cancel)));
-    }
-
-    #[test]
-    fn test_audio_event_play_sound_mapping() {
-        let processor = EventProcessor::new();
-
-        let mapped = processor.map_audio_event(AudioEvent::PlaySound {
-            path: "test.wav".into(),
-            volume: 0.5,
-        });
-
-        match mapped {
-            Some(moho_audio::AudioEvent::CustomSound { path, volume }) => {
-                assert_eq!(path, "test.wav");
-                assert!((volume - 0.5).abs() < 0.001);
-            }
-            _ => panic!("Expected CustomSound variant"),
-        }
-    }
-
-    #[test]
-    fn test_audio_event_music_mapping() {
-        let processor = EventProcessor::new();
-
-        let mapped = processor.map_audio_event(AudioEvent::MusicStart {
-            path: "music.ogg".into(),
-            volume: 0.8,
-            looped: true,
-        });
-
-        match mapped {
-            Some(moho_audio::AudioEvent::BackgroundMusic {
-                path,
-                volume,
-                looped,
-            }) => {
-                assert_eq!(path, "music.ogg");
-                assert!((volume - 0.8).abs() < 0.001);
-                assert!(looped);
-            }
-            _ => panic!("Expected BackgroundMusic variant"),
-        }
     }
 
     #[test]

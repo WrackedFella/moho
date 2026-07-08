@@ -2091,6 +2091,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "log",
+ "moho_core",
  "rodio",
  "thiserror 2.0.18",
 ]
@@ -2105,6 +2106,7 @@ dependencies = [
  "ini",
  "legion",
  "log",
+ "moho_render_api",
  "noise",
  "phf",
  "serde",
@@ -2120,6 +2122,7 @@ dependencies = [
  "legion",
  "log",
  "moho_core",
+ "moho_render_api",
  "noise",
  "serde",
 ]
@@ -2142,6 +2145,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "moho_render_api"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "bytemuck",
+ "glam 0.30.10",
+]
+
+[[package]]
 name = "moho_renderer"
 version = "0.1.0"
 dependencies = [
@@ -2151,6 +2163,8 @@ dependencies = [
  "legion",
  "log",
  "moho_core",
+ "moho_game",
+ "moho_render_api",
  "naga",
  "pollster",
  "tempfile",

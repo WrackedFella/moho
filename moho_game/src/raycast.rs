@@ -1,5 +1,5 @@
-use moho_core::voxel::{BlockPos, VoxelGrid};
 use glam::{IVec3, Vec3};
+use moho_core::voxel::{BlockPos, VoxelGrid};
 
 /// Result of a raycast operation
 #[derive(Debug, Clone, Copy)]

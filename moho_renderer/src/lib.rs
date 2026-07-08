@@ -18,12 +18,14 @@ pub type Material = MaterialGpu;
 mod materials;
 pub use materials::MaterialTable;
 mod scene;
-pub use scene::{LightDesc, Scene};
+pub use moho_render_api::LightDesc;
+pub use scene::Scene;
 mod gpu_types;
 pub use gpu_types::{
-    CameraGpu, CascadedShadowMatrixGpu, LightingGpu, MAX_SHADOW_LIGHTS, MaterialGpu,
-    MultiLightShadowGpu, ShadowMatrixGpu,
+    CameraGpu, CascadedShadowMatrixGpu, LightingGpu, MAX_SHADOW_LIGHTS, MultiLightShadowGpu,
+    ShadowMatrixGpu,
 };
+pub use moho_render_api::{InstanceGpu, MaterialGpu};
 mod buffer_manager;
 pub use buffer_manager::BufferManager;
 mod instance_collector;
@@ -78,7 +80,7 @@ pub trait RendererBackend {
     fn render_mesh(
         &mut self,
         mesh: u32,
-        instances: &[moho_core::actors::InstanceGpu],
+        instances: &[moho_render_api::InstanceGpu],
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
         finalize: bool,
     );
@@ -107,7 +109,7 @@ pub trait RendererBackend {
 
     /// Get all registered lights as serializable descriptors (for save/load).
     /// Default returns empty; only the real renderer overrides this.
-    fn all_lights_as_descs(&self) -> Vec<crate::scene::LightDesc> {
+    fn all_lights_as_descs(&self) -> Vec<moho_render_api::LightDesc> {
         Vec::new()
     }
 
@@ -158,7 +160,7 @@ impl<'a> RendererBackend for Renderer<'a> {
     fn render_mesh(
         &mut self,
         mesh: u32,
-        instances: &[moho_core::actors::InstanceGpu],
+        instances: &[moho_render_api::InstanceGpu],
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
         finalize: bool,
     ) {
@@ -200,7 +202,7 @@ impl<'a> RendererBackend for Renderer<'a> {
     fn set_light_enabled(&mut self, id: u32, enabled: bool) {
         self.set_light_enabled(id, enabled);
     }
-    fn all_lights_as_descs(&self) -> Vec<crate::scene::LightDesc> {
+    fn all_lights_as_descs(&self) -> Vec<moho_render_api::LightDesc> {
         self.all_lights_as_descs()
     }
     fn set_shadow_quality(&mut self, quality: u8) {

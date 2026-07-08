@@ -73,14 +73,13 @@ pub fn generate_new_world(
             // Encode scene bytes. Provide a sensible default camera for
             // newly generated worlds so the app has a starting
             // viewpoint instead of relying on previous controller state.
-            let local_scene = moho_renderer::Scene::new();
             // Place camera above world center looking slightly down
             let camera_height = 24.0f32;
             let camera_position = glam::Vec3::new(0.0, camera_height, 0.0);
             // yaw = 0.0 (look along +Z), pitch negative to look downward
             let camera_yaw = 0.0f32;
             let camera_pitch = -0.4f32;
-            let scene_bytes = match local_scene.encode_to_bytes(
+            let scene_bytes = match moho_game::scene_persistence::encode_to_bytes(
                 &local_world,
                 Some((camera_position, camera_yaw, camera_pitch)),
                 &[], // fresh world — no spawned lights

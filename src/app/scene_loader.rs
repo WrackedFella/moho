@@ -37,7 +37,8 @@ pub fn load_scene(
         log::info!("Loaded WorldSpec from save: {:?}", spec);
         // Restore time of day from the persisted WorldSpec.
         app.simulation.set_time_of_day(spec.initial_time_of_day);
-        let (camera_data, lights) = app.scene.load_from_bytes(&scene_bytes, &mut app.world)?;
+        let (camera_data, lights) =
+            moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.world)?;
         log::info!(
             "Scene loaded successfully from {:?}, {} lights",
             path,
@@ -71,7 +72,8 @@ pub fn load_scene(
         } else {
             for record in &block_records {
                 let pos = moho_core::voxel::BlockPos::new(record.x, record.y, record.z);
-                grid.mutator().place(pos, record.material_id, record.resource_id);
+                grid.mutator()
+                    .place(pos, record.material_id, record.resource_id);
             }
             log::info!(
                 "Reconstructed VoxelGrid with {} blocks for LightSystem",

@@ -381,7 +381,12 @@ impl VoxelGrid {
     ///
     /// This is the **lowest-level** mutation primitive. External callers must go through
     /// [`BlockModifier`] (gameplay) or [`VoxelGrid::mutator`] (bulk terrain writes).
-    pub(crate) fn place_block(&mut self, pos: BlockPos, material_id: u32, resource_id: Option<u32>) {
+    pub(crate) fn place_block(
+        &mut self,
+        pos: BlockPos,
+        material_id: u32,
+        resource_id: Option<u32>,
+    ) {
         let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
         let chunk = self.chunks.entry(chunk_pos).or_default();
         chunk.set_block(idx, material_id, resource_id);

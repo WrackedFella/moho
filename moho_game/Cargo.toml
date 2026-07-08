@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 moho_core = { path = "../moho_core" }
+moho_render_api = { path = "../moho_render_api" }
 bincode = { workspace = true }
 glam = { workspace = true }
 legion = { workspace = true }

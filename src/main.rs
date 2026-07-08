@@ -64,6 +64,7 @@ struct WindowRenderer {
     renderer: Box<dyn moho_renderer::RendererBackend>,
     mesh_handle: u32,
     cube_mesh_handle: u32,
+    terrain_material_idx: u32,
 }
 
 // Application state structure that implements ApplicationHandler

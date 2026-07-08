@@ -32,7 +32,7 @@ pub fn setup_renderer_and_ui(
     renderer.set_ssao_quality(app.prefs.ssao_quality() as u8);
 
     // Create sphere mesh data using the proper sphere geometry
-    let (vertices, normals, indices) = moho_core::actors::Sphere::unit_sphere_indexed(16, 16);
+    let (vertices, normals, indices) = moho_game::actors::Sphere::unit_sphere_indexed(16, 16);
     let ao_data = vec![1.0; vertices.len()]; // Full brightness for non-voxel geometry
     let geo_type = vec![1; vertices.len()]; // Type 1 (blocky/non-voxel)
     let light_level = vec![1.0; vertices.len()]; // Full light for non-voxel geometry
@@ -45,7 +45,7 @@ pub fn setup_renderer_and_ui(
         &indices,
     );
 
-    let (cube_vertices, cube_normals, cube_indices) = moho_core::actors::Cube::unit_cube_indexed();
+    let (cube_vertices, cube_normals, cube_indices) = moho_game::actors::Cube::unit_cube_indexed();
     let cube_ao = vec![1.0; cube_vertices.len()];
     let cube_geo_type = vec![1; cube_vertices.len()];
     let cube_light_level = vec![1.0; cube_vertices.len()];
@@ -57,6 +57,15 @@ pub fn setup_renderer_and_ui(
         &cube_light_level,
         &cube_indices,
     );
+
+    // Pre-register the default VoxelTerrain material so all terrain chunks
+    // share a single GPU material entry sourcing colours from the material
+    // buffer rather than hardcoding them in the shader.
+    let terrain_mat = moho_core::materials::MaterialType::VoxelTerrain {
+        top_albedo: glam::Vec3::new(0.3, 0.6, 0.3),  // grass green
+        side_albedo: glam::Vec3::new(0.6, 0.5, 0.4), // dirt brown
+    };
+    let terrain_material_idx = app.scene.material_table.find_or_push(&terrain_mat);
 
     // UI setup
     {
@@ -151,6 +160,7 @@ pub fn setup_renderer_and_ui(
         renderer,
         mesh_handle,
         cube_mesh_handle,
+        terrain_material_idx,
     });
 
     Ok(())

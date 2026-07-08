@@ -9,7 +9,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["moho_core", "moho_game", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_sim", "moho_types", "moho_physics"]
+members = ["moho_core", "moho_game", "moho_render_api", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_sim", "moho_types", "moho_physics"]
 
 [workspace.dependencies]
 bincode = "2.0"

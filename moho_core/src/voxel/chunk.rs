@@ -208,51 +208,6 @@ impl VoxelChunk {
     }
 }
 
-/// Implement Renderable trait for VoxelChunk to integrate with renderer
-impl crate::actors::Renderable for VoxelChunk {
-    fn to_instance_with_material(&self, material_index: u32) -> crate::actors::InstanceGpu {
-        // Chunk mesh is already in world space, so use identity transform
-        let model = glam::Mat4::IDENTITY;
-        let cols = model.to_cols_array();
-        let mut mat = [[0f32; 4]; 4];
-        mat[0] = [cols[0], cols[1], cols[2], cols[3]];
-        mat[1] = [cols[4], cols[5], cols[6], cols[7]];
-        mat[2] = [cols[8], cols[9], cols[10], cols[11]];
-        mat[3] = [cols[12], cols[13], cols[14], cols[15]];
-
-        crate::actors::InstanceGpu {
-            model: mat,
-            material: material_index,
-            object_type: 3u32, // Object type for voxel chunks
-            padding: [0u32; 2],
-        }
-    }
-}
-
-/// Implement CustomMesh trait to provide direct access to mesh geometry
-impl crate::actors::CustomMesh for VoxelChunk {
-    fn vertices(&self) -> &[[f32; 3]] {
-        &self.vertices
-    }
-
-    fn normals(&self) -> &[[f32; 3]] {
-        &self.normals
-    }
-
-    fn indices(&self) -> &[u32] {
-        &self.indices
-    }
-
-    fn transform(&self) -> glam::Mat4 {
-        // Chunk mesh vertices are already in world space
-        glam::Mat4::IDENTITY
-    }
-
-    fn material_index(&self) -> u32 {
-        0 // Default to Lambertian material
-    }
-}
-
 fn primary_material_id(blocks: &[BlockData]) -> u32 {
     let mut counts: HashMap<u32, usize> = HashMap::new();
     for block in blocks {

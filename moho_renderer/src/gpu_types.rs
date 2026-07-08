@@ -2,23 +2,6 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::shadow::CASCADE_SPLIT_DISTANCES;
 
-/// GPU-visible material layout: two vec4-sized fields to satisfy WGSL
-/// storage-buffer alignment and make the CPU representation match WGSL.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct MaterialGpu {
-    pub albedo: [f32; 4],
-    pub params: [f32; 4],
-}
-
-impl MaterialGpu {
-    /// Return true if this material was marked as potentially
-    /// transparent by the application (params[2] > 0.0).
-    pub fn is_transparent(&self) -> bool {
-        self.params[2] > 0.0
-    }
-}
-
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct CameraGpu {
@@ -258,7 +241,6 @@ mod tests {
     use super::*;
     #[test]
     fn sizes_are_expected() {
-        assert_eq!(std::mem::size_of::<MaterialGpu>(), 32);
         assert_eq!(std::mem::size_of::<CameraGpu>(), 80);
         assert_eq!(std::mem::size_of::<LightingGpu>(), 96); // 6 vec4s: sun_dir, sun_col, moon_dir, moon_col, ambient, time_of_day
         assert_eq!(std::mem::size_of::<ShadowMatrixGpu>(), 64);

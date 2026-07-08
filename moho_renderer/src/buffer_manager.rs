@@ -449,7 +449,7 @@ mod tests {
         fn render_mesh(
             &mut self,
             _mesh: u32,
-            _instances: &[moho_core::actors::InstanceGpu],
+            _instances: &[moho_render_api::InstanceGpu],
             _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
             _finalize: bool,
         ) {

@@ -1,6 +1,5 @@
-//! Core engine primitives: event bus, voxel grid, materials, actors, input, preferences.
+//! Core engine primitives: event bus, voxel grid, materials, input, preferences.
 
-pub mod actors;
 pub mod events;
 pub mod input;
 pub mod materials;

@@ -1,0 +1,9 @@
+[package]
+name = "moho_render_api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bincode = { workspace = true }
+bytemuck = { workspace = true, features = ["derive"] }
+glam = { workspace = true }

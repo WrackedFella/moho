@@ -146,9 +146,9 @@ impl FrameProcessor {
         let updates = app.physics.step(dt);
         for (entity, pos) in updates {
             if let Some(mut entry) = app.world.entry(entity) {
-                if let Ok(sphere) = entry.get_component_mut::<moho_core::actors::Sphere>() {
+                if let Ok(sphere) = entry.get_component_mut::<moho_game::actors::Sphere>() {
                     sphere.center = pos;
-                } else if let Ok(cube) = entry.get_component_mut::<moho_core::actors::Cube>() {
+                } else if let Ok(cube) = entry.get_component_mut::<moho_game::actors::Cube>() {
                     cube.center = pos;
                 }
             }

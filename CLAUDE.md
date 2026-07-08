@@ -30,12 +30,21 @@ cargo bench --bench event_bus_bench
 
 ## Architecture
 
-Moho is a Rust workspace split into 7 crates plus a main binary. The crates have a strict layering: the main binary depends on all crates; the UI and renderer depend on core; crates don't form circular dependencies.
+Moho is a Rust workspace being split into engine (`moho_core`, `moho_renderer`,
+`moho_audio`, `moho_render_api`) and game-domain (`moho_game`) layers — see
+`_todo/planning.md` Phase B for the in-progress boundary work. Dependencies point
+one way: the main binary depends on all crates; `moho_game` depends on `moho_core`
+and `moho_render_api`; engine crates (`moho_renderer`, `moho_audio`) must not
+depend on `moho_game`; crates don't form circular dependencies.
 
 ```
 src/main.rs          — winit event loop, ApplicationHandler, wires everything together
-moho_core/           — EventBus, GameClock (day/night), voxel grid, materials, camera, input accumulation
-moho_renderer/       — wgpu backend: mesh rendering, CSM shadows (4 cascades), skybox, scene serialization
+moho_core/           — EventBus, voxel grid, materials (MaterialType), input, prefs
+moho_game/           — game-domain: actors (Sphere/Cube), controller, GameClock, scene
+                        generation/persistence, raycast (depends on moho_core, moho_render_api)
+moho_render_api/     — shared engine/game contract: Renderable + RenderMaterial traits,
+                        InstanceGpu/MaterialGpu/MaterialKey/LightDesc/CameraDesc (no wgpu, no legion)
+moho_renderer/       — wgpu backend: mesh rendering, CSM shadows (4 cascades), skybox
 moho_ui/             — egui integration: menus, settings, debug console, HUD overlays, preferences (config/prefs.ini)
 moho_audio/          — rodio audio: music/SFX/UI/voice categories, event-driven triggering
 moho_sim/            — deterministic headless simulation, snapshot/restore with CRC, replay foundations

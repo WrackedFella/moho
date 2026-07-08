@@ -1,6 +1,6 @@
 use glam::Vec3;
 use legion::World;
-use moho_core::actors::{Cube, Sphere};
+use moho_game::actors::{Cube, Sphere};
 use moho_renderer::FrameCallback;
 use moho_renderer::{MaterialGpu, RendererBackend};
 
@@ -54,7 +54,7 @@ impl RendererBackend for MockRenderer {
     fn render_mesh(
         &mut self,
         _mesh: u32,
-        _instances: &[moho_core::actors::InstanceGpu],
+        _instances: &[moho_renderer::InstanceGpu],
         _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
         _finalize: bool,
     ) {
@@ -110,7 +110,14 @@ fn scene_render_invokes_renderer_backend_calls() {
     );
 
     // Call render — it should call into the mock's render_mesh several times.
-    scene.render(&mut mock, &mut world, mesh_handle, cube_mesh_handle, camera);
+    scene.render::<Sphere, Cube>(
+        &mut mock,
+        &mut world,
+        mesh_handle,
+        cube_mesh_handle,
+        0,
+        camera,
+    );
 
     let calls = mock.renders.borrow();
     assert!(

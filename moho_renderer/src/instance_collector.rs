@@ -5,8 +5,9 @@
 use crate::{BufferManager, MaterialTable, RendererBackend};
 use legion::World;
 use legion::query::IntoQuery;
-use moho_core::actors::{Cube, InstanceGpu, Sphere};
+use legion::storage::Component;
 use moho_core::voxel::VoxelChunk;
+use moho_render_api::{InstanceGpu, Renderable};
 
 /// Collects instances from the ECS world for rendering.
 ///
@@ -31,56 +32,59 @@ impl InstanceCollector {
 
     /// Collect all instances from the world.
     ///
-    /// This method queries the ECS world for Spheres, Cubes, and VoxelChunks,
-    /// deduplicates materials, registers chunk meshes, and prepares instance
-    /// data for rendering.
+    /// This method queries the ECS world for `S` (spheres), `C` (cubes), and
+    /// `VoxelChunk`s, deduplicates materials, registers chunk meshes, and
+    /// prepares instance data for rendering. `S`/`C` are generic so this crate
+    /// doesn't need to name the concrete game-domain actor types — the caller
+    /// supplies them.
     ///
     /// # Arguments
     /// * `world` - The ECS world to query
     /// * `material_table` - Material table for deduplication
     /// * `buffer_manager` - Buffer manager for chunk mesh registration
     /// * `renderer` - Backend renderer for mesh registration
-    pub fn collect_from_world(
+    /// * `terrain_material_idx` - Material table index for terrain chunks,
+    ///   registered once by the caller at startup (mirrors the
+    ///   `mesh_handle`/`cube_mesh_handle` pattern already used for meshes)
+    pub fn collect_from_world<S, C>(
         &mut self,
         world: &mut World,
         material_table: &mut MaterialTable,
         buffer_manager: &mut BufferManager,
         renderer: &mut dyn RendererBackend,
-    ) {
+        terrain_material_idx: u32,
+    ) where
+        S: Renderable + Component,
+        C: Renderable + Component,
+    {
         // Clear previous frame data
         self.clear();
 
-        // Collect sphere instances and deduplicate materials
-        let mut q_s = <&Sphere>::query();
+        // Collect sphere-like instances and deduplicate materials
+        let mut q_s = <&S>::query();
         for s in q_s.iter(world) {
-            let midx = material_table.find_or_push(&s.mat_ptr);
+            let midx = material_table.find_or_push(s.material());
             self.sphere_instances
                 .push(s.to_instance_with_material(midx));
         }
 
-        // Collect cube instances and deduplicate materials
-        let mut q_c = <&Cube>::query();
+        // Collect cube-like instances and deduplicate materials
+        let mut q_c = <&C>::query();
         for c in q_c.iter(world) {
-            let midx = material_table.find_or_push(&c.mat_ptr);
+            let midx = material_table.find_or_push(c.material());
             self.cube_instances.push(c.to_instance_with_material(midx));
         }
 
-        // Register VoxelChunk meshes and collect instances
-        // Pre-register the default VoxelTerrain material so all terrain chunks
-        // share a single GPU material entry sourcing colours from the material buffer
-        // rather than hardcoding them in the shader.
-        let terrain_mat = moho_core::materials::MaterialType::VoxelTerrain {
-            top_albedo: glam::Vec3::new(0.3, 0.6, 0.3),  // grass green
-            side_albedo: glam::Vec3::new(0.6, 0.5, 0.4), // dirt brown
-        };
-        let terrain_mat_idx = material_table.find_or_push(&terrain_mat);
+        // Register VoxelChunk meshes and collect instances. All terrain chunks
+        // share a single pre-registered GPU material entry sourcing colours
+        // from the material buffer rather than hardcoding them in the shader.
         let mut q_chunks_mut = <&mut VoxelChunk>::query();
         for chunk in q_chunks_mut.iter_mut(world) {
             if let Some(handle) = buffer_manager.ensure_chunk_registered(chunk, renderer) {
                 // VoxelChunk uses identity transform (mesh in world space)
                 let inst = InstanceGpu {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    material: terrain_mat_idx,
+                    material: terrain_material_idx,
                     object_type: 0, // terrain — fragment shader applies normal-based colour
                     padding: [0, 0],
                 };
@@ -135,6 +139,74 @@ mod tests {
     use super::*;
     use moho_core::materials::MaterialType;
 
+    /// Minimal sphere-like `Renderable` test fixture. `moho_renderer` must not
+    /// depend on `moho_game`, so tests use local stand-ins instead of the real
+    /// `Sphere`/`Cube` actor types.
+    #[derive(Copy, Clone, Debug)]
+    struct TestSphere {
+        center: glam::Vec3,
+        material: MaterialType,
+    }
+
+    impl TestSphere {
+        fn new(center: glam::Vec3, _radius: f32, material: MaterialType) -> Self {
+            Self { center, material }
+        }
+    }
+
+    impl Renderable for TestSphere {
+        type Material = MaterialType;
+
+        fn material(&self) -> &MaterialType {
+            &self.material
+        }
+
+        fn to_instance_with_material(&self, material_index: u32) -> InstanceGpu {
+            InstanceGpu {
+                model: glam::Mat4::from_translation(self.center).to_cols_array_2d(),
+                material: material_index,
+                object_type: 2,
+                padding: [0, 0],
+            }
+        }
+    }
+
+    /// Minimal cube-like `Renderable` test fixture (see `TestSphere`).
+    #[derive(Copy, Clone, Debug)]
+    struct TestCube {
+        center: glam::Vec3,
+        material: MaterialType,
+    }
+
+    impl TestCube {
+        fn new(
+            center: glam::Vec3,
+            _length: f32,
+            _width: f32,
+            _height: f32,
+            material: MaterialType,
+        ) -> Self {
+            Self { center, material }
+        }
+    }
+
+    impl Renderable for TestCube {
+        type Material = MaterialType;
+
+        fn material(&self) -> &MaterialType {
+            &self.material
+        }
+
+        fn to_instance_with_material(&self, material_index: u32) -> InstanceGpu {
+            InstanceGpu {
+                model: glam::Mat4::from_translation(self.center).to_cols_array_2d(),
+                material: material_index,
+                object_type: 1,
+                padding: [0, 0],
+            }
+        }
+    }
+
     /// Mock renderer for testing instance collection
     struct MockRenderer {
         next_handle: u32,
@@ -183,7 +255,7 @@ mod tests {
         fn render_mesh(
             &mut self,
             _mesh: u32,
-            _instances: &[moho_core::actors::InstanceGpu],
+            _instances: &[moho_render_api::InstanceGpu],
             _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
             _finalize: bool,
         ) {
@@ -225,14 +297,15 @@ mod tests {
         let mat = MaterialType::Lambertian {
             albedo: glam::Vec3::new(1.0, 0.0, 0.0),
         };
-        world.push((Sphere::new(glam::Vec3::ZERO, 1.0, mat),));
-        world.push((Sphere::new(glam::Vec3::new(5.0, 0.0, 0.0), 2.0, mat),));
+        world.push((TestSphere::new(glam::Vec3::ZERO, 1.0, mat),));
+        world.push((TestSphere::new(glam::Vec3::new(5.0, 0.0, 0.0), 2.0, mat),));
 
-        collector.collect_from_world(
+        collector.collect_from_world::<TestSphere, TestCube>(
             &mut world,
             &mut material_table,
             &mut buffer_manager,
             &mut renderer,
+            0,
         );
 
         assert_eq!(collector.sphere_instances().len(), 2);
@@ -254,8 +327,8 @@ mod tests {
             albedo: glam::Vec3::new(0.8, 0.8, 0.8),
             fuzz: 0.1,
         };
-        world.push((Cube::new(glam::Vec3::ZERO, 1.0, 1.0, 1.0, mat),));
-        world.push((Cube::new(
+        world.push((TestCube::new(glam::Vec3::ZERO, 1.0, 1.0, 1.0, mat),));
+        world.push((TestCube::new(
             glam::Vec3::new(3.0, 0.0, 0.0),
             2.0,
             2.0,
@@ -263,11 +336,12 @@ mod tests {
             mat,
         ),));
 
-        collector.collect_from_world(
+        collector.collect_from_world::<TestSphere, TestCube>(
             &mut world,
             &mut material_table,
             &mut buffer_manager,
             &mut renderer,
+            0,
         );
 
         assert_eq!(collector.sphere_instances().len(), 0);
@@ -297,11 +371,12 @@ mod tests {
         );
         world.push((chunk,));
 
-        collector.collect_from_world(
+        collector.collect_from_world::<TestSphere, TestCube>(
             &mut world,
             &mut material_table,
             &mut buffer_manager,
             &mut renderer,
+            0,
         );
 
         assert_eq!(collector.sphere_instances().len(), 0);
@@ -331,8 +406,8 @@ mod tests {
             fuzz: 0.1,
         };
 
-        world.push((Sphere::new(glam::Vec3::ZERO, 1.0, mat1),));
-        world.push((Cube::new(
+        world.push((TestSphere::new(glam::Vec3::ZERO, 1.0, mat1),));
+        world.push((TestCube::new(
             glam::Vec3::new(3.0, 0.0, 0.0),
             1.0,
             1.0,
@@ -352,11 +427,12 @@ mod tests {
         );
         world.push((chunk,));
 
-        collector.collect_from_world(
+        collector.collect_from_world::<TestSphere, TestCube>(
             &mut world,
             &mut material_table,
             &mut buffer_manager,
             &mut renderer,
+            0,
         );
 
         assert_eq!(collector.sphere_instances().len(), 1);
@@ -377,13 +453,14 @@ mod tests {
         let mat = MaterialType::Lambertian {
             albedo: glam::Vec3::ONE,
         };
-        world.push((Sphere::new(glam::Vec3::ZERO, 1.0, mat),));
+        world.push((TestSphere::new(glam::Vec3::ZERO, 1.0, mat),));
 
-        collector.collect_from_world(
+        collector.collect_from_world::<TestSphere, TestCube>(
             &mut world,
             &mut material_table,
             &mut buffer_manager,
             &mut renderer,
+            0,
         );
         assert_eq!(collector.total_instances(), 1);
 

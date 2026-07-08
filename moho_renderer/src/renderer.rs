@@ -182,11 +182,11 @@ impl<'a> Renderer<'a> {
     }
 
     /// Get all lights as serializable descriptors (for save/load).
-    pub fn all_lights_as_descs(&self) -> Vec<crate::scene::LightDesc> {
+    pub fn all_lights_as_descs(&self) -> Vec<moho_render_api::LightDesc> {
         self.light_manager
             .all_lights()
             .iter()
-            .map(|l| crate::scene::LightDesc {
+            .map(|l| moho_render_api::LightDesc {
                 position: l.position.to_array(),
                 color: l.color.to_array(),
                 intensity: l.intensity,
@@ -487,7 +487,7 @@ impl<'a> Renderer<'a> {
     pub fn render_mesh(
         &mut self,
         mesh: u32,
-        instances: &[moho_core::actors::InstanceGpu],
+        instances: &[moho_render_api::InstanceGpu],
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
         finalize: bool,
     ) {

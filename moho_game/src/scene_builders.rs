@@ -1,9 +1,9 @@
 use legion::World;
 
+use bincode::{Decode, Encode};
 use moho_core::voxel::{
     BiomeMap, BiomeParams, BiomeType, BlockPos, LightPropagator, OreLayout, VoxelChunk, VoxelGrid,
 };
-use bincode::{Decode, Encode};
 use noise::{NoiseFn, Perlin};
 use serde::{Deserialize, Serialize};
 
