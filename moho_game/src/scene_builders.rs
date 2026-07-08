@@ -1,9 +1,8 @@
 use legion::World;
 
+use crate::biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
 use bincode::{Decode, Encode};
-use moho_core::voxel::{
-    BiomeMap, BiomeParams, BiomeType, BlockPos, LightPropagator, OreLayout, VoxelChunk, VoxelGrid,
-};
+use moho_core::voxel::{BlockPos, LightPropagator, VoxelChunk, VoxelGrid};
 use noise::{NoiseFn, Perlin};
 use serde::{Deserialize, Serialize};
 

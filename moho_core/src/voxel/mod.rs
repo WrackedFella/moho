@@ -33,7 +33,6 @@
 //! modifier.set_block(pos, 0, None);
 //! ```
 
-mod biome;
 mod chunk;
 mod face;
 mod grid;
@@ -49,7 +48,6 @@ mod state;
 pub mod streaming;
 
 // Re-export core types from submodules
-pub use biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
 pub use chunk::VoxelChunk;
 pub use face::{FaceDirection, get_visible_faces};
 pub use grid::{
