@@ -781,12 +781,16 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Color gradient = inside bounds (shows UV coords)
     // return vec4<f32>(debug_shadow_coords(in.light_space_pos), 1.0);
     
-    // Apply light level from light propagation system (0.0 = dark, 1.0 = full light)
-    // Currently all blocks receive full sky light (15) after flood-fill propagation
+    // Apply per-channel block light (colored, from torches/emissive blocks) blended
+    // with sky exposure (white ambient from open sky). Take the max of the two so a
+    // brightly lit block underground isn't dimmed by low sky exposure, and open-sky
+    // surfaces with no nearby light source still get full ambient brightness.
+    // Ensure minimum brightness so geometry isn't completely black if both are 0.
     // TODO: Implement proper light occlusion - blocks should prevent light from
     // reaching surfaces in crevices/caves (requires transparency checks in propagation)
-    // Ensure minimum brightness so geometry isn't completely black if light level is 0
-    color = color * max(in.light_level, 0.1);
+    let sky_ambient = vec3<f32>(in.sky_exposed);
+    let total_light = max(in.block_light_rgb, sky_ambient);
+    color = color * max(total_light, vec3<f32>(0.1));
     
     // For dielectrics we computed `alpha` above; otherwise alpha is opaque.
     var out_alpha: f32 = 1.0;

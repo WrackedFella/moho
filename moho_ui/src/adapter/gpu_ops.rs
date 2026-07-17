@@ -58,6 +58,7 @@ pub fn execute_render_pass(
         depth_stencil_attachment: None,
         timestamp_writes: None,
         occlusion_query_set: None,
+        multiview_mask: None,
     });
 
     // SAFETY: `egui_wgpu::Renderer::render` takes `&mut RenderPass<'static>` even though

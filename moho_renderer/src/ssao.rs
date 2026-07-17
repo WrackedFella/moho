@@ -228,7 +228,7 @@ impl SsaoSystem {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         })
     }
@@ -304,8 +304,8 @@ impl SsaoSystem {
 
         let gtao_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("gtao-pipeline-layout"),
-            bind_group_layouts: &[&gtao_bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&gtao_bind_group_layout)],
+            immediate_size: 0,
         });
 
         let gtao_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -387,8 +387,8 @@ impl SsaoSystem {
 
         let blur_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("blur-pipeline-layout"),
-            bind_group_layouts: &[&blur_bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&blur_bind_group_layout)],
+            immediate_size: 0,
         });
 
         let blur_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

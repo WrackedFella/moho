@@ -33,12 +33,13 @@ struct MultiLightShadowMatrix {
 @group(0) @binding(0)
 var<uniform> shadow_matrices: MultiLightShadowMatrix;
 
-// Push constant for light index (replaces cascade_index)
+// Immediate data for light index (replaces cascade_index; wgpu 29 renamed
+// push constants to "immediates")
 struct PushConstants {
     light_index: u32,
 }
 
-var<push_constant> pc: PushConstants;
+var<immediate> pc: PushConstants;
 
 // Helper function to get matrix columns for a specific light
 fn get_light_matrix(index: u32) -> array<vec4<f32>, 4> {

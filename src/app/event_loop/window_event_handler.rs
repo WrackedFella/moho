@@ -65,8 +65,9 @@ impl WindowEventHandler {
     /// Handle redraw request
     fn handle_redraw_requested(&self, app: &mut App) {
         log::debug!("RedrawRequested - rendering frame");
-        if let Some(ref mut wr) = app.window_renderer {
-            app.scene
+        if let Some(ref mut wr) = app.window_renderer
+            && let Err(e) = app
+                .scene
                 .render::<moho_game::actors::Sphere, moho_game::actors::Cube>(
                     &mut *wr.renderer,
                     &mut app.world,
@@ -74,7 +75,9 @@ impl WindowEventHandler {
                     wr.cube_mesh_handle,
                     wr.terrain_material_idx,
                     app.camera,
-                );
+                )
+        {
+            log::warn!("Skipped frame: {}", e);
         }
 
         // Recall staging belt after render

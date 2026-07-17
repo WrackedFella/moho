@@ -203,7 +203,10 @@ impl PipelineSetup {
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
                 buffers: &[
-                    // Vertex positions + normals + AO + geometry type + padding + light level
+                    // Vertex positions + normals + AO + geometry type + light level +
+                    // block light RGB + sky exposure. Attribute order below must match
+                    // `types::Vertex`'s field order exactly — `vertex_attr_array!`
+                    // computes each offset by summing the preceding attributes' sizes.
                     wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Vertex,
@@ -212,7 +215,9 @@ impl PipelineSetup {
                             1 => Float32x3,  // normal
                             2 => Float32,    // ao
                             3 => Uint32,     // geometry_type
-                            10 => Float32,   // light_level (at location 10)
+                            10 => Float32,   // light_level (10+ to avoid the instance buffer's 4-9)
+                            11 => Float32x3, // block_light_rgb
+                            12 => Float32,   // sky_exposed
                         ],
                     },
                     // Per-instance data: model matrix (4x vec4) + material(u32) + object_type(u32)
@@ -262,13 +267,13 @@ impl PipelineSetup {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         })
     }
@@ -321,13 +326,13 @@ impl PipelineSetup {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
-                depth_write_enabled: false, // Don't write depth for skybox
-                depth_compare: wgpu::CompareFunction::LessEqual, // Render at far plane
+                depth_write_enabled: Some(false), // Don't write depth for skybox
+                depth_compare: Some(wgpu::CompareFunction::LessEqual), // Render at far plane
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         })
     }

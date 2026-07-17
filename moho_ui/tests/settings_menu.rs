@@ -20,6 +20,10 @@
 //! This pattern ensures tests are deterministic, parallelizable, and won't fail
 //! due to leftover state from previous test runs or other tests in the suite.
 
+// See moho_ui/src/lib.rs's crate-level `#![allow(deprecated)]` for why
+// `Context::run` (egui 0.34 deprecation) is still used here.
+#![allow(deprecated)]
+
 use moho_ui::UiComponent;
 use moho_ui::prefs::{Binding, Prefs};
 use moho_ui::screens::SettingsMenu;

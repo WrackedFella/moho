@@ -134,6 +134,8 @@ impl BufferManager {
             chunk.ambient_occlusion(),
             chunk.geometry_type(),
             chunk.light_level(),
+            chunk.block_light_rgb(),
+            chunk.sky_exposed(),
             chunk.indices(),
         );
 
@@ -184,6 +186,8 @@ impl BufferManager {
         ao: &[f32],
         geometry_type: &[u32],
         light_level: &[f32],
+        block_light_rgb: &[[f32; 3]],
+        sky_exposed: &[f32],
         indices: &[u32],
         renderer: &mut dyn RendererBackend,
     ) -> Option<u32> {
@@ -201,6 +205,8 @@ impl BufferManager {
                     ao,
                     geometry_type,
                     light_level,
+                    block_light_rgb,
+                    sky_exposed,
                     indices,
                 )
             });
@@ -417,6 +423,8 @@ mod tests {
             _ao: &[f32],
             _geometry_type: &[u32],
             _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
             _indices: &[u32],
         ) -> u32 {
             let handle = self.next_handle;
@@ -446,14 +454,14 @@ mod tests {
             self.registered_meshes.retain(|&h| h != handle);
         }
 
-        fn render_mesh(
+        fn begin_frame(
             &mut self,
-            _mesh: u32,
-            _instances: &[moho_render_api::InstanceGpu],
             _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-            _finalize: bool,
-        ) {
+        ) -> Result<(), crate::FrameError> {
+            Ok(())
         }
+        fn enqueue_draw(&mut self, _mesh: u32, _instances: &[moho_render_api::InstanceGpu]) {}
+        fn submit_frame(&mut self) {}
 
         fn set_materials(&mut self, _materials: &[crate::Material]) {}
 
@@ -487,6 +495,8 @@ mod tests {
             vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
             vec![1.0; 3],
             vec![0; 3],
+            vec![1.0; 3],
+            vec![[1.0, 1.0, 1.0]; 3],
             vec![1.0; 3],
             vec![0, 1, 2],
             0,
@@ -527,6 +537,8 @@ mod tests {
             vec![1.0],
             vec![0],
             vec![1.0],
+            vec![[1.0, 1.0, 1.0]],
+            vec![1.0],
             vec![0],
             0,
         );
@@ -552,6 +564,8 @@ mod tests {
                 vec![[0.0, 0.0, 1.0]],
                 vec![1.0],
                 vec![0],
+                vec![1.0],
+                vec![[1.0, 1.0, 1.0]],
                 vec![1.0],
                 vec![0],
                 0,

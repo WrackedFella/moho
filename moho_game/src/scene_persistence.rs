@@ -212,6 +212,8 @@ fn populate_world(
             vec![1.0; vertex_count],
             vec![1; vertex_count],
             vec![1.0; vertex_count],
+            vec![[1.0, 1.0, 1.0]; vertex_count],
+            vec![1.0; vertex_count],
             chunk_desc.indices,
             chunk_desc.material_id,
         );

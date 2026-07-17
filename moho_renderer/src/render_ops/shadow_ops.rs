@@ -99,17 +99,15 @@ pub fn render_shadow_passes(
             }),
             occlusion_query_set: None,
             timestamp_writes: None,
+            multiview_mask: None,
         });
 
         shadow_pass.set_pipeline(&shadow_system.shadow_pipeline);
         shadow_pass.set_bind_group(0, &shadow_system.csm_pass_bind_group, &[]);
 
-        // Set light index via push constant (same as cascade_idx was used before)
-        shadow_pass.set_push_constants(
-            wgpu::ShaderStages::VERTEX,
-            0,
-            bytemuck::bytes_of(&light_idx),
-        );
+        // Set light index via immediate data (same as cascade_idx was used before,
+        // formerly a push constant — wgpu 29 renamed push constants to "immediates")
+        shadow_pass.set_immediates(0, bytemuck::bytes_of(&light_idx));
 
         // Draw all pending meshes from light's perspective
         for (i, (mesh_handle, insts)) in pending_draws.iter().enumerate() {

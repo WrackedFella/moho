@@ -59,7 +59,7 @@ impl<'a> Renderer<'a> {
                 address_mode_w: wgpu::AddressMode::ClampToEdge,
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
                 ..Default::default()
             });
 
@@ -329,6 +329,7 @@ impl<'a> Renderer<'a> {
         handle
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn register_indexed_mesh(
         &mut self,
         vertices: &[[f32; 3]],
@@ -336,39 +337,32 @@ impl<'a> Renderer<'a> {
         ao: &[f32],
         geometry_type: &[u32],
         light_level: &[f32],
+        block_light_rgb: &[[f32; 3]],
+        sky_exposed: &[f32],
         indices: &[u32],
     ) -> u32 {
-        #[repr(C)]
-        #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-        struct InterleavedVertex {
-            pos: [f32; 3],
-            nor: [f32; 3],
-            ao: f32,
-            geometry_type: u32,
-            _padding: [u32; 6], // Padding to reach @location(10)
-            light_level: f32,
-        }
-        let mut iv: Vec<InterleavedVertex> = Vec::with_capacity(vertices.len());
+        let mut iv: Vec<crate::types::Vertex> = Vec::with_capacity(vertices.len());
         for i in 0..vertices.len() {
-            iv.push(InterleavedVertex {
-                pos: vertices[i],
-                nor: normals[i],
+            iv.push(crate::types::Vertex {
+                position: vertices[i],
+                normal: normals[i],
                 ao: ao.get(i).copied().unwrap_or(1.0),
                 geometry_type: geometry_type.get(i).copied().unwrap_or(0),
-                _padding: [0; 6],
                 light_level: light_level.get(i).copied().unwrap_or(1.0),
+                block_light_rgb: block_light_rgb.get(i).copied().unwrap_or([0.0; 3]),
+                sky_exposed: sky_exposed.get(i).copied().unwrap_or(1.0),
             });
         }
         for (i, v) in iv.iter().enumerate().take(6) {
             log::trace!(
                 "[register_indexed_mesh] v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})",
                 i,
-                v.pos[0],
-                v.pos[1],
-                v.pos[2],
-                v.nor[0],
-                v.nor[1],
-                v.nor[2]
+                v.position[0],
+                v.position[1],
+                v.position[2],
+                v.normal[0],
+                v.normal[1],
+                v.normal[2]
             );
         }
         if iv.len() > 50 {
@@ -384,12 +378,12 @@ impl<'a> Renderer<'a> {
                 log::debug!(
                     "[register_indexed_mesh] sample v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})",
                     idx,
-                    v.pos[0],
-                    v.pos[1],
-                    v.pos[2],
-                    v.nor[0],
-                    v.nor[1],
-                    v.nor[2]
+                    v.position[0],
+                    v.position[1],
+                    v.position[2],
+                    v.normal[0],
+                    v.normal[1],
+                    v.normal[2]
                 );
             }
         }
@@ -434,7 +428,8 @@ impl<'a> Renderer<'a> {
         }
 
         match self.surface.get_current_texture() {
-            Ok(f) => {
+            wgpu::CurrentSurfaceTexture::Success(f)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(f) => {
                 let view = f
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
@@ -442,7 +437,7 @@ impl<'a> Renderer<'a> {
                 self.pending_frame_view = Some(view);
                 true
             }
-            Err(_) => {
+            _ => {
                 self.surface.configure(&self.device, &self.config);
                 false
             }
@@ -484,17 +479,12 @@ impl<'a> Renderer<'a> {
         Some(ibuf)
     }
 
-    pub fn render_mesh(
+    /// Begin a new frame: uploads the camera, culls/updates dynamic lights,
+    /// updates shadow matrices, and acquires the swapchain surface texture.
+    pub fn begin_frame(
         &mut self,
-        mesh: u32,
-        instances: &[moho_render_api::InstanceGpu],
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-        finalize: bool,
-    ) {
-        if !MeshRenderer::validate_mesh(mesh, &self.mesh_table) {
-            return;
-        }
-
+    ) -> Result<(), crate::FrameError> {
         let (view_mat, proj_mat, cam_pos) = camera;
         crate::render_ops::camera_ops::update_camera_uniforms(
             &self.queue,
@@ -525,6 +515,19 @@ impl<'a> Renderer<'a> {
             cam_pos,
         );
 
+        if !self.acquire_render_target() {
+            return Err(crate::FrameError::SurfaceUnavailable);
+        }
+
+        Ok(())
+    }
+
+    /// Queue a previously-registered mesh for drawing this frame.
+    pub fn enqueue_draw(&mut self, mesh: u32, instances: &[moho_render_api::InstanceGpu]) {
+        if !MeshRenderer::validate_mesh(mesh, &self.mesh_table) {
+            return;
+        }
+
         let instances_gpu = MeshRenderer::prepare_instances(instances);
 
         if self.prepare_instance_buffer(&instances_gpu).is_none() {
@@ -533,14 +536,6 @@ impl<'a> Renderer<'a> {
         }
 
         self.pending_draws.push((mesh, instances_gpu));
-
-        if !self.acquire_render_target() {
-            return;
-        }
-
-        if finalize {
-            self.finalize_frame();
-        }
     }
 
     pub fn set_shadow_quality(&mut self, quality: u8) {
@@ -570,7 +565,10 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    fn finalize_frame(&mut self) {
+    /// Flush all queued draws (shadow passes, main pass, SSAO) and present
+    /// the frame. No-op if `begin_frame` wasn't called or didn't acquire a
+    /// surface texture.
+    pub fn submit_frame(&mut self) {
         if self.pending_frame_view.is_none() {
             return;
         }

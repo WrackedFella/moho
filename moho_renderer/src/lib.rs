@@ -61,10 +61,11 @@ pub use renderer::Renderer;
 pub trait RendererBackend {
     fn resize(&mut self, width: u32, height: u32);
     /// Register a mesh represented by an array of positions. Returns a handle
-    /// that can be used with `render_mesh` to render that mesh without
+    /// that can be used with `enqueue_draw` to render that mesh without
     /// re-supplying the vertex data every frame.
     fn register_mesh(&mut self, vertices: &[[f32; 3]]) -> u32;
     /// Register a mesh with an index buffer. `indices` are 32-bit indices.
+    #[allow(clippy::too_many_arguments)]
     fn register_indexed_mesh(
         &mut self,
         vertices: &[[f32; 3]],
@@ -72,18 +73,27 @@ pub trait RendererBackend {
         ao: &[f32],
         geometry_type: &[u32],
         light_level: &[f32],
+        block_light_rgb: &[[f32; 3]],
+        sky_exposed: &[f32],
         indices: &[u32],
     ) -> u32;
     /// Unregister a previously-registered mesh handle and free GPU resources.
     fn unregister_mesh(&mut self, mesh: u32);
-    /// Render a previously-registered mesh by handle using the provided instances and camera.
-    fn render_mesh(
+    /// Begin a new frame: uploads the camera, culls/updates dynamic lights,
+    /// updates shadow matrices, and acquires the swapchain surface texture.
+    /// Must be called once before any `enqueue_draw` calls for the frame.
+    fn begin_frame(
         &mut self,
-        mesh: u32,
-        instances: &[moho_render_api::InstanceGpu],
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-        finalize: bool,
-    );
+    ) -> Result<(), FrameError>;
+    /// Queue a previously-registered mesh for drawing this frame with the
+    /// given instances. Must be called after `begin_frame` and before
+    /// `submit_frame`.
+    fn enqueue_draw(&mut self, mesh: u32, instances: &[moho_render_api::InstanceGpu]);
+    /// Flush all queued draws (shadow passes, main pass, SSAO) and present
+    /// the frame. No-op if `begin_frame` wasn't called or didn't acquire a
+    /// surface texture.
+    fn submit_frame(&mut self);
     /// Replace the material table on the GPU.
     fn set_materials(&mut self, materials: &[crate::MaterialGpu]);
     /// Update lighting parameters (sun, moon, ambient) and write to GPU buffer.
@@ -150,21 +160,35 @@ impl<'a> RendererBackend for Renderer<'a> {
         ao: &[f32],
         geometry_type: &[u32],
         light_level: &[f32],
+        block_light_rgb: &[[f32; 3]],
+        sky_exposed: &[f32],
         indices: &[u32],
     ) -> u32 {
-        self.register_indexed_mesh(vertices, normals, ao, geometry_type, light_level, indices)
+        self.register_indexed_mesh(
+            vertices,
+            normals,
+            ao,
+            geometry_type,
+            light_level,
+            block_light_rgb,
+            sky_exposed,
+            indices,
+        )
     }
     fn unregister_mesh(&mut self, mesh: u32) {
         self.unregister_mesh(mesh)
     }
-    fn render_mesh(
+    fn begin_frame(
         &mut self,
-        mesh: u32,
-        instances: &[moho_render_api::InstanceGpu],
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-        finalize: bool,
-    ) {
-        self.render_mesh(mesh, instances, camera, finalize)
+    ) -> Result<(), FrameError> {
+        self.begin_frame(camera)
+    }
+    fn enqueue_draw(&mut self, mesh: u32, instances: &[moho_render_api::InstanceGpu]) {
+        self.enqueue_draw(mesh, instances)
+    }
+    fn submit_frame(&mut self) {
+        self.submit_frame()
     }
     fn set_materials(&mut self, materials: &[crate::MaterialGpu]) {
         self.set_material_table(materials)
@@ -259,4 +283,14 @@ pub enum RendererInitError {
     MissingWindow,
     #[error("wgpu backend error: {0}")]
     WgpuInit(String),
+}
+
+/// Errors that can occur while beginning a frame.
+#[derive(thiserror::Error, Debug)]
+pub enum FrameError {
+    /// The swapchain surface texture could not be acquired this frame (e.g.
+    /// surface lost/outdated). The surface has already been reconfigured;
+    /// callers should skip this frame and try again on the next one.
+    #[error("surface texture unavailable this frame")]
+    SurfaceUnavailable,
 }

@@ -64,6 +64,7 @@ pub fn render_main_pass(
         }),
         occlusion_query_set: None,
         timestamp_writes: None,
+        multiview_mask: None,
     });
 
     // Render skybox first (at maximum depth, behind everything)

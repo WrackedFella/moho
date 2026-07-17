@@ -37,6 +37,10 @@ impl Scene {
     /// startup. `S`/`C` are the concrete sphere-like/cube-like component
     /// types to query for (supplied by the caller so this crate doesn't need
     /// to name game-domain types).
+    ///
+    /// Returns `Err` if the frame's surface texture couldn't be acquired
+    /// (e.g. surface lost/outdated); the surface has already been
+    /// reconfigured in that case, so callers should just skip the frame.
     #[allow(clippy::too_many_arguments)]
     pub fn render<S, C>(
         &mut self,
@@ -46,7 +50,8 @@ impl Scene {
         cube_mesh_handle: u32,
         terrain_material_idx: u32,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-    ) where
+    ) -> Result<(), crate::FrameError>
+    where
         S: Renderable + Component,
         C: Renderable + Component,
     {
@@ -62,45 +67,33 @@ impl Scene {
             terrain_material_idx,
         );
 
-        // Render opaque geometry first (no finalize)
-        renderer.render_mesh(cube_mesh_handle, &prepared.cube_opaque, camera, false);
-        renderer.render_mesh(mesh_handle, &prepared.sphere_opaque, camera, false);
+        renderer.begin_frame(camera)?;
+
+        // Render opaque geometry first
+        renderer.enqueue_draw(cube_mesh_handle, &prepared.cube_opaque);
+        renderer.enqueue_draw(mesh_handle, &prepared.sphere_opaque);
 
         // Render VoxelChunks (opaque, each chunk as separate draw)
         for (chunk_handle, chunk_inst) in self.instance_collector.chunk_renders() {
-            renderer.render_mesh(*chunk_handle, &[*chunk_inst], camera, false);
+            renderer.enqueue_draw(*chunk_handle, &[*chunk_inst]);
         }
 
         // Render transparent instances (back-to-front sorted)
-        self.render_transparent(
-            renderer,
-            prepared.transparent_entries,
-            camera,
-            mesh_handle,
-            self.instance_collector.chunk_renders(),
-        );
+        Self::enqueue_transparent(renderer, prepared.transparent_entries, camera.2);
+
+        renderer.submit_frame();
+        Ok(())
     }
 
-    /// Render transparent instances sorted back-to-front.
-    fn render_transparent(
-        &self,
+    /// Queue transparent instances sorted back-to-front for drawing.
+    fn enqueue_transparent(
         renderer: &mut dyn RendererBackend,
         transparent_entries: Vec<(u32, InstanceGpu)>,
-        camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-        mesh_handle: u32,
-        chunk_renders: &[(u32, InstanceGpu)],
+        cam_eye: glam::Vec3,
     ) {
-        // If no transparent draws, finalize with empty draw
         if transparent_entries.is_empty() {
-            let finalize_handle = chunk_renders
-                .first()
-                .map(|(h, _)| *h)
-                .unwrap_or(mesh_handle);
-            renderer.render_mesh(finalize_handle, &Vec::new(), camera, true);
             return;
         }
-
-        let cam_eye = camera.2;
 
         // Sort transparent entries by depth (back-to-front)
         let mut by_depth: Vec<(f32, u32, InstanceGpu)> =
@@ -125,10 +118,8 @@ impl Scene {
             groups.push((mesh_h, vec![inst]));
         }
 
-        // Render each group, marking the last call for finalization
-        for (i, (mesh_h, insts)) in groups.iter().enumerate() {
-            let final_call = i + 1 == groups.len();
-            renderer.render_mesh(*mesh_h, insts, camera, final_call);
+        for (mesh_h, insts) in &groups {
+            renderer.enqueue_draw(*mesh_h, insts);
         }
     }
 }

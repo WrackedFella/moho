@@ -46,6 +46,8 @@ fn vs_main(v: VertexIn, i: InstanceIn) -> VsOut {
     out.ao = v.ao;
     out.geometry_type = v.geometry_type;
     out.light_level = v.light_level;
+    out.block_light_rgb = v.block_light_rgb;
+    out.sky_exposed = v.sky_exposed;
     out.object_type = i.object_type;
     
     return out;

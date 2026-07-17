@@ -93,6 +93,8 @@ struct VertexIn {
     @location(2) ao: f32,
     @location(3) geometry_type: u32,
     @location(10) light_level: f32,
+    @location(11) block_light_rgb: vec3<f32>,
+    @location(12) sky_exposed: f32,
 }
 
 struct InstanceIn {
@@ -121,4 +123,6 @@ struct VsOut {
     @location(5) @interpolate(flat) geometry_type: u32,
     @location(6) light_level: f32,
     @location(7) @interpolate(flat) object_type: u32,
+    @location(8) block_light_rgb: vec3<f32>,
+    @location(9) sky_exposed: f32,
 }

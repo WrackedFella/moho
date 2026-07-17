@@ -30,6 +30,8 @@ impl RendererBackend for MockRenderer {
         _ao: &[f32],
         _geometry_type: &[u32],
         _light_level: &[f32],
+        _block_light_rgb: &[[f32; 3]],
+        _sky_exposed: &[f32],
         _indices: &[u32],
     ) -> u32 {
         0
@@ -51,17 +53,18 @@ impl RendererBackend for MockRenderer {
     fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
     fn set_shadow_quality(&mut self, _quality: u8) {}
     fn set_ssao_quality(&mut self, _quality: u8) {}
-    fn render_mesh(
+    fn begin_frame(
         &mut self,
-        _mesh: u32,
-        _instances: &[moho_renderer::InstanceGpu],
         _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-        _finalize: bool,
-    ) {
+    ) -> Result<(), moho_renderer::FrameError> {
+        Ok(())
+    }
+    fn enqueue_draw(&mut self, _mesh: u32, _instances: &[moho_renderer::InstanceGpu]) {
         self.renders
             .borrow_mut()
             .push("render_mesh_called".to_string());
     }
+    fn submit_frame(&mut self) {}
     fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
     fn set_frame_callback_raw(&mut self, _ptr: Option<*mut dyn FrameCallback>) {}
     fn set_frame_callback_arc(
@@ -109,15 +112,17 @@ fn scene_render_invokes_renderer_backend_calls() {
         Vec3::new(0.0, 0.0, 5.0),
     );
 
-    // Call render — it should call into the mock's render_mesh several times.
-    scene.render::<Sphere, Cube>(
-        &mut mock,
-        &mut world,
-        mesh_handle,
-        cube_mesh_handle,
-        0,
-        camera,
-    );
+    // Call render — it should call into the mock's enqueue_draw several times.
+    scene
+        .render::<Sphere, Cube>(
+            &mut mock,
+            &mut world,
+            mesh_handle,
+            cube_mesh_handle,
+            0,
+            camera,
+        )
+        .expect("mock renderer's begin_frame always succeeds");
 
     let calls = mock.renders.borrow();
     assert!(

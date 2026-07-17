@@ -36,12 +36,16 @@ pub fn setup_renderer_and_ui(
     let ao_data = vec![1.0; vertices.len()]; // Full brightness for non-voxel geometry
     let geo_type = vec![1; vertices.len()]; // Type 1 (blocky/non-voxel)
     let light_level = vec![1.0; vertices.len()]; // Full light for non-voxel geometry
+    let block_light_rgb = vec![[1.0, 1.0, 1.0]; vertices.len()]; // Full white, non-voxel
+    let sky_exposed = vec![1.0; vertices.len()]; // Fully sky-exposed, non-voxel
     let mesh_handle = renderer.register_indexed_mesh(
         &vertices,
         &normals,
         &ao_data,
         &geo_type,
         &light_level,
+        &block_light_rgb,
+        &sky_exposed,
         &indices,
     );
 
@@ -49,12 +53,16 @@ pub fn setup_renderer_and_ui(
     let cube_ao = vec![1.0; cube_vertices.len()];
     let cube_geo_type = vec![1; cube_vertices.len()];
     let cube_light_level = vec![1.0; cube_vertices.len()];
+    let cube_block_light_rgb = vec![[1.0, 1.0, 1.0]; cube_vertices.len()];
+    let cube_sky_exposed = vec![1.0; cube_vertices.len()];
     let cube_mesh_handle = renderer.register_indexed_mesh(
         &cube_vertices,
         &cube_normals,
         &cube_ao,
         &cube_geo_type,
         &cube_light_level,
+        &cube_block_light_rgb,
+        &cube_sky_exposed,
         &cube_indices,
     );
 

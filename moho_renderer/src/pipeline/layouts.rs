@@ -249,8 +249,8 @@ pub fn create_main_pipeline_layout(
 ) -> wgpu::PipelineLayout {
     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("pipeline-layout"),
-        bind_group_layouts: &[camera_bgl, shadow_bgl],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(camera_bgl), Some(shadow_bgl)],
+        immediate_size: 0,
     })
 }
 
@@ -264,8 +264,8 @@ pub fn create_skybox_pipeline_layout(
 ) -> wgpu::PipelineLayout {
     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("skybox-pipeline-layout"),
-        bind_group_layouts: &[camera_bgl],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(camera_bgl)],
+        immediate_size: 0,
     })
 }
 

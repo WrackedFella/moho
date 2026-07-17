@@ -27,6 +27,10 @@ pub struct VoxelChunk {
     ambient_occlusion: Vec<f32>,
     geometry_type: Vec<u32>,
     light_level: Vec<f32>,
+    /// Per-vertex RGB block-light, each channel 0..=1 (raw value / 15).
+    block_light_rgb: Vec<[f32; 3]>,
+    /// Per-vertex sky-exposure factor (0.0 = underground, 1.0 = open sky).
+    sky_exposed: Vec<f32>,
     indices: Vec<u32>,
     material_id: u32,
     mesh_handle: Option<u32>,
@@ -44,6 +48,8 @@ impl VoxelChunk {
         ambient_occlusion: Vec<f32>,
         geometry_type: Vec<u32>,
         light_level: Vec<f32>,
+        block_light_rgb: Vec<[f32; 3]>,
+        sky_exposed: Vec<f32>,
         indices: Vec<u32>,
         material_id: u32,
     ) -> Self {
@@ -54,6 +60,8 @@ impl VoxelChunk {
             ambient_occlusion,
             geometry_type,
             light_level,
+            block_light_rgb,
+            sky_exposed,
             indices,
             material_id,
             mesh_handle: None,
@@ -65,6 +73,8 @@ impl VoxelChunk {
     pub fn empty(chunk_pos: IVec3) -> Self {
         Self::new(
             chunk_pos,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -98,6 +108,8 @@ impl VoxelChunk {
             ambient_occlusion: mesh.ambient_occlusion,
             geometry_type: mesh.geometry_type,
             light_level: mesh.light_level,
+            block_light_rgb: mesh.block_light_rgb,
+            sky_exposed: mesh.sky_exposed,
             indices: mesh.indices,
             material_id,
             mesh_handle: None,
@@ -127,6 +139,12 @@ impl VoxelChunk {
     }
     pub fn light_level(&self) -> &[f32] {
         &self.light_level
+    }
+    pub fn block_light_rgb(&self) -> &[[f32; 3]] {
+        &self.block_light_rgb
+    }
+    pub fn sky_exposed(&self) -> &[f32] {
+        &self.sky_exposed
     }
     pub fn indices(&self) -> &[u32] {
         &self.indices
@@ -165,6 +183,8 @@ impl VoxelChunk {
             ambient_occlusion: mesh.ambient_occlusion,
             geometry_type: mesh.geometry_type,
             light_level: mesh.light_level,
+            block_light_rgb: mesh.block_light_rgb,
+            sky_exposed: mesh.sky_exposed,
             indices: mesh.indices,
             material_id,
             mesh_handle: None,
@@ -184,6 +204,8 @@ impl VoxelChunk {
             + self.ambient_occlusion.len() * std::mem::size_of::<f32>()
             + self.geometry_type.len() * std::mem::size_of::<u32>()
             + self.light_level.len() * std::mem::size_of::<f32>()
+            + self.block_light_rgb.len() * std::mem::size_of::<[f32; 3]>()
+            + self.sky_exposed.len() * std::mem::size_of::<f32>()
             + self.indices.len() * std::mem::size_of::<u32>()
     }
 
@@ -242,6 +264,8 @@ mod tests {
             vec![1.0, 1.0, 1.0],
             vec![1, 1, 1],
             vec![1.0, 1.0, 1.0],
+            vec![[1.0, 1.0, 1.0]; 3],
+            vec![1.0, 1.0, 1.0],
             vec![0, 1, 2],
             0,
         );
@@ -259,6 +283,8 @@ mod tests {
             vec![[0.0, 1.0, 0.0]],
             vec![1.0],
             vec![1],
+            vec![1.0],
+            vec![[1.0, 1.0, 1.0]],
             vec![1.0],
             vec![0],
             0,
@@ -290,11 +316,14 @@ mod tests {
             vec![1.0; 100],
             vec![1; 100],
             vec![1.0; 100],
+            vec![[1.0, 1.0, 1.0]; 100],
+            vec![1.0; 100],
             vec![0; 150],
             0,
         );
 
-        let expected = 100 * 12 + 100 * 12 + 100 * 4 + 100 * 4 + 100 * 4 + 150 * 4; // verts + normals + ao + geo_type + light + indices
+        let expected =
+            100 * 12 + 100 * 12 + 100 * 4 + 100 * 4 + 100 * 4 + 100 * 12 + 100 * 4 + 150 * 4; // verts + normals + ao + geo_type + light + block_light_rgb + sky_exposed + indices
         assert_eq!(chunk.memory_size(), expected);
     }
 }

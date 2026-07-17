@@ -226,6 +226,8 @@ mod tests {
             _ao: &[f32],
             _geometry_type: &[u32],
             _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
             _indices: &[u32],
         ) -> u32 {
             let handle = self.next_handle;
@@ -252,14 +254,14 @@ mod tests {
 
         fn unregister_mesh(&mut self, _handle: u32) {}
 
-        fn render_mesh(
+        fn begin_frame(
             &mut self,
-            _mesh: u32,
-            _instances: &[moho_render_api::InstanceGpu],
             _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
-            _finalize: bool,
-        ) {
+        ) -> Result<(), crate::FrameError> {
+            Ok(())
         }
+        fn enqueue_draw(&mut self, _mesh: u32, _instances: &[moho_render_api::InstanceGpu]) {}
+        fn submit_frame(&mut self) {}
 
         fn set_materials(&mut self, _materials: &[crate::Material]) {}
 
@@ -366,6 +368,8 @@ mod tests {
             vec![1.0; 3],
             vec![0; 3],
             vec![1.0; 3],
+            vec![[1.0, 1.0, 1.0]; 3],
+            vec![1.0; 3],
             vec![0, 1, 2],
             0,
         );
@@ -421,6 +425,8 @@ mod tests {
             vec![[0.0, 0.0, 1.0]],
             vec![1.0],
             vec![0],
+            vec![1.0],
+            vec![[1.0, 1.0, 1.0]],
             vec![1.0],
             vec![0],
             0,
