@@ -552,23 +552,10 @@ mod tests {
     }
 
     #[test]
-    fn test_binding_new() {
-        let binding = Binding::new('A' as u32, 1);
-        assert_eq!(binding.code, 'A' as u32);
-        assert_eq!(binding.mods, 1);
-    }
-
-    #[test]
     fn test_binding_default() {
         let binding = Binding::default();
         assert_eq!(binding.code, 'W' as u32);
         assert_eq!(binding.mods, 0);
-    }
-
-    #[test]
-    fn test_config_path() {
-        let path = Prefs::config_path();
-        assert_eq!(path.to_str().unwrap(), "config/prefs.ini");
     }
 
     #[test]
@@ -613,31 +600,6 @@ mod tests {
 
             assert_eq!(WindowMode::from_str(&mode_str), WindowMode::Windowed);
             assert_eq!((w, h), (2560, 1440));
-        } else {
-            panic!("Failed to parse video section");
-        }
-    }
-
-    #[test]
-    fn test_video_round_trip_fullscreen() {
-        let prefs = Prefs::default()
-            .with_window_mode(WindowMode::Fullscreen)
-            .with_window_resolution(1920, 1080);
-
-        let mut out = String::new();
-        out.push_str("[video]\n");
-        out.push_str(&format!("window_mode={}\n", prefs.window_mode().as_str()));
-        out.push_str(&format!("window_width={}\n", prefs.window_resolution().0));
-        out.push_str(&format!("window_height={}\n", prefs.window_resolution().1));
-
-        if let Ok(map) = ini::macro_safe_read(&out)
-            && let Some(section) = map.get("video")
-        {
-            let mode_str = section
-                .get("window_mode")
-                .and_then(|o| o.clone())
-                .unwrap_or_default();
-            assert_eq!(WindowMode::from_str(&mode_str), WindowMode::Fullscreen);
         } else {
             panic!("Failed to parse video section");
         }

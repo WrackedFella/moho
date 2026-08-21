@@ -109,33 +109,3 @@ pub fn render_main_pass(
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_clear_color_black() {
-        // Verify clear color is black
-        let clear_color = wgpu::Color::BLACK;
-        assert_eq!(clear_color.r, 0.0);
-        assert_eq!(clear_color.g, 0.0);
-        assert_eq!(clear_color.b, 0.0);
-        assert_eq!(clear_color.a, 1.0);
-    }
-
-    #[test]
-    fn test_instance_buffer_slicing() {
-        // Test instance buffer offset calculation
-        let offset_instances = 5;
-        let actual_instance_count = 3;
-        let instance_size = std::mem::size_of::<GpuInstance>();
-
-        let offset_bytes = (offset_instances * instance_size) as wgpu::BufferAddress;
-        let end_bytes =
-            ((offset_instances + actual_instance_count) * instance_size) as wgpu::BufferAddress;
-
-        assert_eq!(offset_bytes, (5 * instance_size) as u64);
-        assert_eq!(end_bytes, (8 * instance_size) as u64);
-    }
-}

@@ -379,13 +379,6 @@ mod tests {
     }
 
     #[test]
-    fn test_camera_buffer_size() {
-        // Camera buffer should be 80 bytes (20 floats * 4 bytes/float)
-        let expected_size = std::mem::size_of::<[f32; 20]>() as u64;
-        assert_eq!(expected_size, 80);
-    }
-
-    #[test]
     fn test_initial_material() {
         let material = MaterialGpu {
             albedo: [1.0, 1.0, 1.0, 0.0],

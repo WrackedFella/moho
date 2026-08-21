@@ -588,18 +588,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_event_processor_creation() {
-        let processor = EventProcessor::new();
-        assert_eq!(std::mem::size_of_val(&processor), 0); // Zero-sized type
-    }
-
-    #[test]
-    fn test_event_processor_default() {
-        let _processor = EventProcessor;
-        // Just verify it compiles and constructs
-    }
-
-    #[test]
     fn test_lod_player_chunk_origin() {
         let chunk = lod_player_chunk(glam::Vec3::ZERO);
         assert_eq!(chunk, glam::IVec3::ZERO);

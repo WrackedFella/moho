@@ -30,17 +30,3 @@ fn adapter_lifecycle_smoke() {
     adapter.recall_staging_belt();
     adapter.recall_staging_belt();
 }
-
-#[test]
-fn menu_action_processing() {
-    let event_bus = Arc::new(moho_core::EventBus::new());
-    let mut adapter = build_adapter(None, event_bus.clone());
-
-    // Test that menu switching works without panicking
-    adapter.show_menu("settings");
-    adapter.show_menu("start");
-    adapter.hide_menus();
-
-    // Should be able to call multiple times safely
-    adapter.recall_staging_belt();
-}

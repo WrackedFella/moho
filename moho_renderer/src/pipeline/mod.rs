@@ -390,9 +390,4 @@ mod tests {
         assert_eq!(format!("{}", err), "CSM matrix size error: csm error");
     }
 
-    #[test]
-    fn test_pipeline_init_error_is_error() {
-        let err = PipelineInitError::SkyboxShaderLoad("test".to_string());
-        let _: &dyn std::error::Error = &err;
-    }
 }

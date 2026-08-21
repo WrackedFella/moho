@@ -199,58 +199,55 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn test_process_load_scene_action() {
-        let bus = Arc::new(EventBus::new());
-        let action = MenuAction::LoadScene(std::path::PathBuf::from("test.bin"));
+    fn test_process_menu_action_publishes_matching_ui_event() {
+        use moho_core::events::UiEvent as CoreUiEvent;
 
-        process_menu_action(&action, &bus);
+        type ExpectedEvent = fn(&CoreUiEvent) -> bool;
 
-        // Event bus doesn't provide a way to read published events in tests,
-        // but we verify no panic occurs
-    }
+        let cases: Vec<(MenuAction, ExpectedEvent)> = vec![
+            (
+                MenuAction::LoadScene(std::path::PathBuf::from("test.bin")),
+                |e| matches!(e, CoreUiEvent::LoadSceneRequested { path } if path == std::path::Path::new("test.bin")),
+            ),
+            (MenuAction::NewWorld, |e| {
+                matches!(e, CoreUiEvent::MenuShown { name } if name == "new_world")
+            }),
+            (
+                MenuAction::GenerateWorld(WorldSpec {
+                    name: "Test World".to_string(),
+                    seed: Some(12345),
+                    size_xz: 16,
+                    day_length_seconds: 1200.0,
+                    night_length_seconds: 600.0,
+                    initial_time_of_day: 6.0,
+                }),
+                |e| matches!(e, CoreUiEvent::NewWorldRequested { seed: Some(12345), size: 16, .. }),
+            ),
+            (MenuAction::Exit, |e| {
+                matches!(e, CoreUiEvent::ExitRequested)
+            }),
+            (MenuAction::ShowMenu("settings".to_string()), |e| {
+                matches!(e, CoreUiEvent::MenuShown { name } if name == "settings")
+            }),
+        ];
 
-    #[test]
-    fn test_process_new_world_action() {
-        let bus = Arc::new(EventBus::new());
-        let action = MenuAction::NewWorld;
+        for (action, matches_expected) in cases {
+            let bus = Arc::new(EventBus::new());
+            let (tx, rx) = crossbeam_channel::unbounded();
+            bus.subscribe(move |event: &CoreUiEvent| {
+                let _ = tx.send(event.clone());
+            });
 
-        process_menu_action(&action, &bus);
-        // Verify no panic
-    }
+            process_menu_action(&action, &bus);
 
-    #[test]
-    fn test_process_generate_world_action() {
-        let bus = Arc::new(EventBus::new());
-        let spec = WorldSpec {
-            name: "Test World".to_string(),
-            seed: Some(12345),
-            size_xz: 16,
-            day_length_seconds: 1200.0,
-            night_length_seconds: 600.0,
-            initial_time_of_day: 6.0,
-        };
-        let action = MenuAction::GenerateWorld(spec);
-
-        process_menu_action(&action, &bus);
-        // Verify no panic
-    }
-
-    #[test]
-    fn test_process_exit_action() {
-        let bus = Arc::new(EventBus::new());
-        let action = MenuAction::Exit;
-
-        process_menu_action(&action, &bus);
-        // Verify no panic
-    }
-
-    #[test]
-    fn test_process_show_menu_action() {
-        let bus = Arc::new(EventBus::new());
-        let action = MenuAction::ShowMenu("settings".to_string());
-
-        process_menu_action(&action, &bus);
-        // Verify no panic
+            let published = rx
+                .recv_timeout(std::time::Duration::from_millis(100))
+                .expect("expected a UiEvent to be published");
+            assert!(
+                matches_expected(&published),
+                "unexpected event {published:?} for action {action:?}"
+            );
+        }
     }
 
     #[test]

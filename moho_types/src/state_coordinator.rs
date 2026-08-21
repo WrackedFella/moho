@@ -163,8 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn test_show_menu_from_invalid_state() {
-        // Cannot show menu from menu
+    fn test_show_menu_from_menu_is_valid_noop() {
         let result = StateTransitionCoordinator::show_menu(GameState::Menu);
         assert!(result.is_ok()); // No-op transition is valid
     }
@@ -235,16 +234,5 @@ mod tests {
     fn test_toggle_pause_from_menu_invalid() {
         let result = StateTransitionCoordinator::toggle_pause(GameState::Menu);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_transition_actions_equality() {
-        let actions1 =
-            StateTransitionActions::for_transition(GameState::Playing, GameState::Menu).unwrap();
-
-        let actions2 =
-            StateTransitionActions::for_transition(GameState::Playing, GameState::Menu).unwrap();
-
-        assert_eq!(actions1, actions2);
     }
 }

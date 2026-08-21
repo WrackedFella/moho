@@ -230,24 +230,6 @@ mod tests {
     }
 
     #[test]
-    fn test_initializer_with_default_config() {
-        let config = AppConfig::default();
-        let _initializer = AppInitializer::new(config);
-        // Should be able to create initializer without panicking
-    }
-
-    #[test]
-    fn test_initializer_with_custom_config() {
-        let config = AppConfig::builder()
-            .mouse_sensitivity(0.75)
-            .input_filtering(false)
-            .build();
-
-        let _initializer = AppInitializer::new(config);
-        // Should be able to create initializer without panicking
-    }
-
-    #[test]
     fn test_build_creates_all_systems() {
         let result = AppInitializer::new(test_config()).build();
 
@@ -262,7 +244,9 @@ mod tests {
     }
 
     #[test]
-    fn test_build_respects_config_values() {
+    fn test_build_succeeds_with_non_default_config() {
+        // InputSystem exposes no sensitivity/filter-enabled getters, so this can only
+        // confirm build() doesn't reject non-default values, not that they took effect.
         let config = AppConfig::builder()
             .mouse_sensitivity(0.5)
             .input_filtering(false)
@@ -297,18 +281,6 @@ mod tests {
             glam::Vec3::ZERO,
             "Camera position should not be at origin"
         );
-    }
-
-    #[test]
-    fn test_build_creates_simulation() {
-        let result = AppInitializer::new(test_config()).build();
-
-        assert!(result.is_ok());
-        let initialized = result.unwrap();
-
-        // Simulation should be created (can't test much without exposing internals)
-        // Just verify it was constructed
-        let _ = initialized.simulation;
     }
 
     #[test]

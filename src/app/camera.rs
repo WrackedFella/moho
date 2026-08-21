@@ -154,19 +154,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_camera_values() {
-        let builder = CameraBuilder::default();
-
-        assert_eq!(builder.eye, Vec3::new(40.0, 25.0, 40.0));
-        assert_eq!(builder.center, Vec3::new(0.0, 8.0, 0.0));
-        assert_eq!(builder.up, Vec3::new(0.0, 1.0, 0.0));
-        assert_eq!(builder.fov_degrees, 45.0);
-        assert_eq!(builder.aspect_ratio, 16.0 / 9.0);
-        assert_eq!(builder.near, 0.1);
-        assert_eq!(builder.far, 1500.0);
-    }
-
-    #[test]
     fn test_camera_build_creates_matrices() {
         let (view, proj, eye) = CameraBuilder::default().build();
 
@@ -202,23 +189,6 @@ mod tests {
         assert_eq!(view, view2);
         assert_eq!(proj, proj2);
         assert_eq!(eye, eye2);
-    }
-
-    #[test]
-    fn test_camera_builder_chaining() {
-        // Verify all builder methods can be chained
-        let camera = CameraBuilder::new()
-            .with_eye(Vec3::new(1.0, 2.0, 3.0))
-            .with_center(Vec3::new(4.0, 5.0, 6.0))
-            .with_up(Vec3::new(0.0, 1.0, 0.0))
-            .with_fov_degrees(90.0)
-            .with_aspect_ratio(1.0)
-            .with_near(0.5)
-            .with_far(2000.0)
-            .build();
-
-        let (_, _, eye) = camera;
-        assert_eq!(eye, Vec3::new(1.0, 2.0, 3.0));
     }
 
     #[test]

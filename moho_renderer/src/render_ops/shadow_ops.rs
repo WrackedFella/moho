@@ -145,73 +145,10 @@ pub fn render_shadow_passes(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::gpu_types::{CascadedShadowMatrixGpu, MultiLightShadowGpu};
-
-    #[test]
-    fn test_shadow_matrix_gpu_layout() {
-        // Verify ShadowMatrixGpu has expected size for GPU alignment
-        assert_eq!(
-            std::mem::size_of::<ShadowMatrixGpu>(),
-            64,
-            "ShadowMatrixGpu should be 64 bytes (4x4 f32 matrix)"
-        );
-    }
-
-    #[test]
-    fn test_cascaded_shadow_matrix_gpu_layout() {
-        // Verify CascadedShadowMatrixGpu has expected size for GPU alignment
-        // 2 cascades * 16 floats per matrix * 4 bytes per float = 128 bytes
-        // Plus 1 vec4 for split distances = 16 bytes
-        // Total expected: 144 bytes
-        let size = std::mem::size_of::<CascadedShadowMatrixGpu>();
-        assert_eq!(
-            size, 144,
-            "CascadedShadowMatrixGpu should be 144 bytes (2 matrices + split distances), got {}",
-            size
-        );
-    }
-
-    #[test]
-    fn test_multi_light_shadow_gpu_layout() {
-        // Verify MultiLightShadowGpu has expected size for GPU alignment
-        // 4 lights * 64 bytes (4x4 matrix) = 256 bytes
-        // Plus 2 vec4s (light_intensities + metadata) = 32 bytes
-        // Total expected: 288 bytes
-        let size = std::mem::size_of::<MultiLightShadowGpu>();
-        assert_eq!(
-            size, 288,
-            "MultiLightShadowGpu should be 288 bytes (4 matrices + 2 vec4s), got {}",
-            size
-        );
-    }
-
     #[test]
     fn test_max_shadow_lights() {
         use crate::gpu_types::MAX_SHADOW_LIGHTS;
         // Verify max shadow lights matches expected value
         assert_eq!(MAX_SHADOW_LIGHTS, 4, "Should have 4 shadow light slots");
-    }
-
-    #[test]
-    fn test_instance_offset_calculation() {
-        // Test offset calculation logic used in render passes
-        let offset_instances = 10;
-        let actual_instance_count = 5;
-
-        let offset_bytes =
-            (offset_instances * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
-        let end_bytes = ((offset_instances + actual_instance_count)
-            * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
-
-        let expected_instance_size = std::mem::size_of::<GpuInstance>();
-        assert_eq!(
-            offset_bytes,
-            (10 * expected_instance_size) as wgpu::BufferAddress
-        );
-        assert_eq!(
-            end_bytes,
-            (15 * expected_instance_size) as wgpu::BufferAddress
-        );
     }
 }

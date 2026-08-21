@@ -78,28 +78,3 @@ pub fn free_textures(renderer: &mut egui_wgpu::Renderer, texture_ids: &[egui::Te
     }
 }
 
-#[cfg(test)]
-mod tests {
-    // Note: GPU operation tests require actual wgpu device/queue
-    // These are integration test stubs that verify the module compiles
-    // Full testing would require mock GPU context or integration tests
-
-    #[test]
-    fn test_free_textures_empty() {
-        // Verify empty texture list doesn't panic
-        // Would need mock renderer for actual test
-        let empty_ids: Vec<egui::TextureId> = vec![];
-        assert_eq!(empty_ids.len(), 0);
-    }
-
-    #[test]
-    fn test_screen_descriptor_size() {
-        let descriptor = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [1920, 1080],
-            pixels_per_point: 1.0,
-        };
-
-        assert_eq!(descriptor.size_in_pixels[0], 1920);
-        assert_eq!(descriptor.size_in_pixels[1], 1080);
-    }
-}

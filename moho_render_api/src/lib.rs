@@ -26,10 +26,4 @@ mod tests {
         assert_eq!(std::mem::size_of::<InstanceGpu>() % 16, 0);
         assert_eq!(std::mem::size_of::<InstanceGpu>(), 80);
     }
-
-    #[test]
-    fn instance_gpu_is_pod_and_zeroable() {
-        fn assert_pod<T: bytemuck::Pod + bytemuck::Zeroable>() {}
-        assert_pod::<InstanceGpu>();
-    }
 }

@@ -372,15 +372,4 @@ mod tests {
             });
         });
     }
-
-    #[test]
-    fn menu_button_smoke_disabled() {
-        let ctx = egui::Context::default();
-        let _ = ctx.run(Default::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                let resp = FormControls::menu_button(ui, "Continue", false);
-                assert!(!resp.clicked());
-            });
-        });
-    }
 }

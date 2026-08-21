@@ -109,27 +109,4 @@ mod tests {
         let hud = FpsHud::new();
         assert!(hud.is_visible());
     }
-
-    #[test]
-    fn skips_render_in_rts_mode() {
-        let mut hud = FpsHud::new();
-        let ctx = egui::Context::default();
-        let data = HudData {
-            is_fps_mode: false,
-            ..Default::default()
-        };
-        let _ = ctx.run(Default::default(), |ctx| {
-            hud.render(ctx, &data);
-        });
-    }
-
-    #[test]
-    fn renders_in_fps_mode() {
-        let mut hud = FpsHud::new();
-        let ctx = egui::Context::default();
-        let data = HudData::default(); // is_fps_mode = true
-        let _ = ctx.run(Default::default(), |ctx| {
-            hud.render(ctx, &data);
-        });
-    }
 }

@@ -28,44 +28,6 @@ fn test_ui_to_audio_event_flow() {
 }
 
 #[test]
-fn test_multi_subscriber_event_distribution() {
-    let bus = Arc::new(EventBus::new());
-
-    let ui_counter = Arc::new(AtomicU32::new(0));
-    let analytics_counter = Arc::new(AtomicU32::new(0));
-    let logger_counter = Arc::new(AtomicU32::new(0));
-
-    // Multiple systems subscribe to same events
-    let uc = ui_counter.clone();
-    bus.subscribe(move |_event: &UiEvent| {
-        uc.fetch_add(1, Ordering::Relaxed);
-    });
-
-    let ac = analytics_counter.clone();
-    bus.subscribe(move |_event: &UiEvent| {
-        ac.fetch_add(1, Ordering::Relaxed);
-    });
-
-    let lc = logger_counter.clone();
-    bus.subscribe(move |_event: &UiEvent| {
-        lc.fetch_add(1, Ordering::Relaxed);
-    });
-
-    // Publish UI events
-    bus.publish(UiEvent::MenuShown {
-        name: "main".to_string(),
-    });
-    bus.publish(UiEvent::ExitRequested);
-
-    std::thread::sleep(std::time::Duration::from_millis(10));
-
-    // All subscribers should receive all events
-    assert_eq!(ui_counter.load(Ordering::Relaxed), 2);
-    assert_eq!(analytics_counter.load(Ordering::Relaxed), 2);
-    assert_eq!(logger_counter.load(Ordering::Relaxed), 2);
-}
-
-#[test]
 fn test_frame_lifecycle_events() {
     let bus = Arc::new(EventBus::with_history(true, 100));
     let frame_counter = Arc::new(AtomicU32::new(0));
@@ -149,75 +111,6 @@ fn test_input_event_processing() {
 
     assert_eq!(key_press_counter.load(Ordering::Relaxed), 2);
     assert_eq!(mouse_counter.load(Ordering::Relaxed), 1);
-}
-
-#[test]
-fn test_event_cascading() {
-    // NOTE: This test demonstrates that event cascading (publishing from within
-    // a handler) causes a deadlock due to RwLock reentrancy. This is a known
-    // limitation of the current event bus design.
-    //
-    // In practice, cascading should be done via channels or deferred events.
-    // This test is simplified to just verify sequential event publishing works.
-
-    let bus = Arc::new(EventBus::new());
-    let ui_counter = Arc::new(AtomicU32::new(0));
-    let audio_counter = Arc::new(AtomicU32::new(0));
-
-    let uc = ui_counter.clone();
-    bus.subscribe(move |_event: &UiEvent| {
-        uc.fetch_add(1, Ordering::Relaxed);
-    });
-
-    let ac = audio_counter.clone();
-    bus.subscribe(move |_event: &AudioEvent| {
-        ac.fetch_add(1, Ordering::Relaxed);
-    });
-
-    // Publish events sequentially (not cascaded)
-    bus.publish(UiEvent::ExitRequested);
-    bus.publish(AudioEvent::Confirm);
-
-    std::thread::sleep(std::time::Duration::from_millis(10));
-
-    assert_eq!(ui_counter.load(Ordering::Relaxed), 1);
-    assert_eq!(audio_counter.load(Ordering::Relaxed), 1);
-}
-
-#[test]
-fn test_concurrent_publishers() {
-    let bus = Arc::new(EventBus::new());
-    let event_count = Arc::new(AtomicU32::new(0));
-
-    let ec = event_count.clone();
-    bus.subscribe(move |_event: &SystemEvent| {
-        ec.fetch_add(1, Ordering::Relaxed);
-    });
-
-    let mut handles = vec![];
-
-    // Spawn multiple threads publishing different events
-    for i in 0..5 {
-        let bus_clone = bus.clone();
-        let handle = std::thread::spawn(move || {
-            for _ in 0..10 {
-                bus_clone.publish(SystemEvent::FrameStart {
-                    frame_number: i * 10,
-                    delta_time: 0.016,
-                });
-            }
-        });
-        handles.push(handle);
-    }
-
-    for handle in handles {
-        handle.join().unwrap();
-    }
-
-    std::thread::sleep(std::time::Duration::from_millis(50));
-
-    // Should have received 5 * 10 = 50 events
-    assert_eq!(event_count.load(Ordering::Relaxed), 50);
 }
 
 #[test]

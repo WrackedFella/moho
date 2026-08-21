@@ -193,13 +193,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_clock_creation() {
-        let clock = GameClock::new(12.0, 600.0, 300.0);
-        assert_eq!(clock.time_of_day(), 12.0);
-        assert!(clock.is_daytime());
-    }
-
-    #[test]
     fn test_time_wrapping() {
         let mut clock = GameClock::new(23.5, 600.0, 300.0);
         assert_eq!(clock.time_of_day(), 23.5);

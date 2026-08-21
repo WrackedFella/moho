@@ -271,39 +271,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn status_bar_clamp_overdraw() {
-        // Values outside [0,1] should be clamped — just verify clamp math here
-        assert_eq!(1.5_f32.clamp(0.0, 1.0), 1.0);
-        assert_eq!((-0.1_f32).clamp(0.0, 1.0), 0.0);
-    }
-
-    #[test]
-    fn gameplay_hud_hidden_when_not_fps() {
-        let ctx = egui::Context::default();
-        let mut hud = GameplayHud::new();
-        let data = HudData {
-            is_fps_mode: false,
-            ..Default::default()
-        };
-
-        // Should not panic and should render nothing (no egui output is hard to assert
-        // without an egui render harness, but verifying no panic is the minimum).
-        let _ = ctx.run(Default::default(), |ctx| {
-            hud.render(ctx, &data);
-        });
-        // Still visible by flag, just filtered by is_fps_mode
-        assert!(hud.is_visible());
-    }
-
-    #[test]
-    fn gameplay_hud_renders_in_fps_mode() {
-        let ctx = egui::Context::default();
-        let mut hud = GameplayHud::new();
-        let data = HudData::default(); // is_fps_mode = true
-
-        let _ = ctx.run(Default::default(), |ctx| {
-            hud.render(ctx, &data);
-        });
-    }
 }

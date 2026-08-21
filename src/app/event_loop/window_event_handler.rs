@@ -102,20 +102,3 @@ impl Default for WindowEventHandler {
         Self::new()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_window_event_handler_creation() {
-        let handler = WindowEventHandler::new();
-        assert_eq!(std::mem::size_of_val(&handler), 0); // Zero-sized type
-    }
-
-    #[test]
-    fn test_window_event_handler_default() {
-        let _handler = WindowEventHandler;
-        // Just verify it compiles and constructs
-    }
-}

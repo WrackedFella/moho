@@ -322,20 +322,3 @@ impl Default for GenerationProcessor {
         Self::new()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_generation_processor_creation() {
-        let processor = GenerationProcessor::new();
-        assert_eq!(std::mem::size_of_val(&processor), 0); // Zero-sized type
-    }
-
-    #[test]
-    fn test_generation_processor_default() {
-        let _processor = GenerationProcessor;
-        // Just verify it compiles and constructs
-    }
-}

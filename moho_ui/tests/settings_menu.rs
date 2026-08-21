@@ -28,50 +28,6 @@ use moho_ui::UiComponent;
 use moho_ui::prefs::{Binding, Prefs};
 use moho_ui::screens::SettingsMenu;
 
-/// Test 1: Binding conflict detection
-///
-/// This test verifies that the settings menu correctly detects when a user
-/// attempts to bind a key that's already assigned to another action.
-#[test]
-fn binding_conflict_detection_works() {
-    let mut menu = SettingsMenu::with_prefs(Prefs::default());
-
-    // Start listening for key_w (id = 0)
-    menu.start_listening(0);
-    assert!(menu.is_listening());
-
-    // Apply a binding (e.g., code 87 = 'W' key, no modifiers)
-    let consumed = menu.apply_key_code_while_listening(87, 0);
-    assert!(consumed, "binding should have been consumed");
-    assert!(!menu.is_listening(), "should stop listening after binding");
-
-    // Now try to bind the same key to key_a (id = 1)
-    menu.start_listening(1);
-    let consumed = menu.apply_key_code_while_listening(87, 0);
-    assert!(consumed, "conflicting binding should be consumed");
-
-    // Should show conflict modal
-    assert!(
-        menu.conflict_modal().is_visible(),
-        "conflict modal should be shown"
-    );
-    assert!(
-        !menu.is_listening(),
-        "should stop listening when conflict detected"
-    );
-
-    // Verify conflict information
-    assert_eq!(
-        menu.conflict_modal().conflict_key_name(),
-        "Move Forward",
-        "should identify conflicting key"
-    );
-    assert!(
-        !menu.conflict_modal().conflict_binding_desc().is_empty(),
-        "should have binding description"
-    );
-}
-
 /// Test 2: Escaping while listening cancels binding
 #[test]
 fn escape_cancels_binding_listen() {

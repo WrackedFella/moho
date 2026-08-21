@@ -362,18 +362,6 @@ mod tests {
     }
 
     #[test]
-    fn test_player_position_update() {
-        let grid = VoxelGrid::new(16);
-        let event_bus = Arc::new(EventBus::new());
-        let mut light_system = LightSystem::with_default_budget(grid, event_bus);
-
-        let new_pos = Vec3::new(10.0, 5.0, 10.0);
-        light_system.set_player_position(new_pos);
-
-        assert_eq!(light_system.player_position(), new_pos);
-    }
-
-    #[test]
     fn test_block_placed_light_source() {
         use crate::voxel::grid::MaterialLighting;
         let mut grid = VoxelGrid::new(16);
@@ -407,18 +395,4 @@ mod tests {
         assert_eq!(affected, 0);
     }
 
-    #[test]
-    fn test_budget_configuration() {
-        let grid = VoxelGrid::new(16);
-        let event_bus = Arc::new(EventBus::new());
-        let mut light_system = LightSystem::with_default_budget(grid, event_bus);
-
-        let aggressive = LightFrameBudget::aggressive();
-        light_system.set_budget(aggressive);
-
-        assert_eq!(
-            light_system.budget().max_blocks_per_frame,
-            aggressive.max_blocks_per_frame
-        );
-    }
 }

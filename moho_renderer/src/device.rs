@@ -202,11 +202,5 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_device_init_error_is_error() {
-        let err = DeviceInitError::SurfaceCreation("test".to_string());
-        let _: &dyn Error = &err; // Verify it implements Error trait
-    }
-
-    // Note: Actual device creation tests require GPU hardware and are in renderer_init.rs
+    // Note: Actual device creation tests require GPU hardware.
 }

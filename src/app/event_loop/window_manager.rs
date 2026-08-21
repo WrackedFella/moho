@@ -121,18 +121,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_window_manager_creation() {
-        let manager = WindowManager::new();
-        assert_eq!(std::mem::size_of_val(&manager), 0); // Zero-sized type
-    }
-
-    #[test]
-    fn test_window_manager_default() {
-        let _manager = WindowManager;
-        // Just verify it compiles and constructs
-    }
-
-    #[test]
     fn test_window_error_display() {
         let err = WindowError::CreateFailed("test error".into());
         assert_eq!(err.to_string(), "Failed to create window: test error");

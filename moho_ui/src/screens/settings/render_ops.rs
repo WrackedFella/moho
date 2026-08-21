@@ -160,20 +160,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_render_top_panel_returns_tab() {
-        let ctx = egui::Context::default();
-        let current_tab = SettingsTab::Controls;
-
-        let mut new_tab = current_tab;
-        let _ = ctx.run(Default::default(), |ctx| {
-            new_tab = render_top_panel(ctx, current_tab);
-        });
-
-        // Tab should remain same without user interaction
-        assert_eq!(new_tab, current_tab);
-    }
-
-    #[test]
     fn test_render_bottom_panel_returns_items() {
         let ctx = egui::Context::default();
         let mut menu = SettingsMenu::new();
@@ -185,16 +171,5 @@ mod tests {
 
         // Should return menu items (2: save + back/cancel)
         assert_eq!(items.len(), 2);
-    }
-
-    #[test]
-    fn test_render_content_area_compiles() {
-        let ctx = egui::Context::default();
-        let mut menu = SettingsMenu::new();
-
-        let _ = ctx.run(Default::default(), |ctx| {
-            render_content_area(ctx, &mut menu);
-        });
-        // Just verify it compiles and doesn't panic
     }
 }

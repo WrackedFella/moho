@@ -462,17 +462,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_frame_processor_creation() {
-        let processor = FrameProcessor::new();
-        assert_eq!(std::mem::size_of_val(&processor), 0);
-    }
-
-    #[test]
-    fn test_frame_processor_default() {
-        let _processor = FrameProcessor;
-    }
-
-    #[test]
     fn test_moon_intensity_below_horizon() {
         let processor = FrameProcessor::new();
         let moon_dir = glam::Vec3::new(0.0, -1.0, 0.0); // Below horizon
