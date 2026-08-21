@@ -20,6 +20,10 @@ const SPAWN_NORMAL_OFFSET: f32 = 0.5;
 const SPAWN_FALLBACK_DISTANCE: f32 = 5.0;
 /// Placeholder material ID for torch blocks.
 const TORCH_MATERIAL_ID: u32 = 3; // TODO: look up from MaterialRegistry
+/// Maximum reach for the player's direct mining action — shorter than
+/// `SPAWN_RAYCAST_MAX_DISTANCE`, which is a debug-console placement aid, not
+/// a gameplay reach limit.
+const MINE_MAX_DISTANCE: f32 = 8.0;
 const DEFAULT_POINT_LIGHT_INTENSITY: f32 = 5.0;
 const DEFAULT_POINT_LIGHT_RANGE: f32 = 20.0;
 
@@ -200,6 +204,67 @@ impl EventProcessor {
                     }
                 }
             }
+            InputEvent::MineRequested => {
+                self.handle_mine_requested(app);
+            }
+        }
+    }
+
+    /// Mine whatever voxel the player is aiming at, if anything is in range.
+    /// Only acts while playing in first-person — mining isn't meaningful in
+    /// the isometric/RTS camera today.
+    fn handle_mine_requested(&self, app: &mut App) {
+        if app.game_state != crate::game_state::GameState::Playing
+            || app.simulation.camera_mode() != moho_game::controller::CameraMode::FirstPerson
+        {
+            return;
+        }
+
+        let (view_matrix, _, _) = app.camera;
+        let camera_pos = view_matrix.inverse().col(3).truncate();
+        let forward = -view_matrix.inverse().col(2).truncate().normalize();
+
+        let Some(light_system) = app.light_system.as_mut() else {
+            return;
+        };
+        let grid = light_system.grid_mut();
+
+        let Some(outcome) = app.pawn.mine(grid, camera_pos, forward, MINE_MAX_DISTANCE) else {
+            log::debug!(
+                "Mine attempt found nothing solid within {} units",
+                MINE_MAX_DISTANCE
+            );
+            return;
+        };
+
+        let chunk_pos =
+            moho_core::voxel::VoxelGrid::get_chunk_pos(outcome.block_pos, grid.chunk_size());
+
+        app.event_bus.publish(WorldEvent::BlockRemoved {
+            position: outcome.block_pos,
+            old_material_id: outcome.old_material_id,
+            reason: moho_core::events::BlockChangeReason::Player,
+        });
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos,
+            terrain_dirty: true,
+            structure_dirty: true,
+        });
+
+        // Temporary until 3.1b puts the inventory on screen.
+        match outcome.yield_ {
+            Some(y) => log::info!(
+                "Mined {:?} at {:.1}m → resource {} (inventory: {})",
+                outcome.block_pos,
+                outcome.distance,
+                y.resource_id,
+                app.pawn.inventory.count(y.resource_id)
+            ),
+            None => log::info!(
+                "Mined {:?} at {:.1}m (no resource)",
+                outcome.block_pos,
+                outcome.distance
+            ),
         }
     }
 
@@ -234,7 +299,8 @@ impl EventProcessor {
                     app.physics
                         .update_chunk_collider(chunk_pos, chunk.vertices(), chunk.indices());
 
-                    // Update or insert into ECS world
+                    // Update or insert into ECS world.
+                    debug_assert_chunk_entity_unique(&app.world, chunk_pos);
                     let mut query = <(legion::Entity, &VoxelChunk)>::query();
                     let entity = query
                         .iter(&app.world)
@@ -488,6 +554,27 @@ pub(crate) fn lod_for_chunk(chunk_pos: glam::IVec3, player_chunk: glam::IVec3) -
     let dz = (chunk_pos.z - player_chunk.z).abs();
     let dist = dx.max(dz);
     if dist < 4 { 0 } else { 1 }
+}
+
+/// A `chunk_pos` should map to at most one `VoxelChunk` entity — if streaming
+/// or LOD transitions ever left a duplicate, `process_world_events`'s `find`
+/// would silently update one while a stale mesh keeps rendering alongside it.
+/// Debug-only: `ChunkMeshDirty` fires continuously during streaming, so this
+/// scans the chunk archetype on every call — `debug_assert!`'s condition is
+/// never evaluated in a release build, so this costs nothing there.
+fn debug_assert_chunk_entity_unique(world: &legion::World, chunk_pos: glam::IVec3) {
+    debug_assert!(
+        {
+            let mut query = <&VoxelChunk>::query();
+            query
+                .iter(world)
+                .filter(|c| c.chunk_pos() == chunk_pos)
+                .count()
+                <= 1
+        },
+        "chunk {:?} has more than one VoxelChunk entity — a stale mesh may be rendering alongside the fresh one",
+        chunk_pos
+    );
 }
 
 impl Default for EventProcessor {

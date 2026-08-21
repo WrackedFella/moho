@@ -124,6 +124,11 @@ struct App {
     chunk_streamer: Option<app::chunk_streamer::ChunkStreamer>,
     /// Cached player chunk position used to gate per-frame LOD transition scans.
     lod_player_chunk_cache: glam::IVec3,
+
+    /// The player's gameplay pawn (inventory, mining). Deliberately separate
+    /// from `simulation.player_controller`, which is camera/movement-only —
+    /// see `moho_game::pawn::Pawn`'s doc comment.
+    pawn: moho_game::pawn::Pawn,
 }
 
 impl App {
@@ -184,6 +189,8 @@ impl App {
             input: app::input_state::InputState::new(initialized.input_system),
             chunk_streamer: None,
             lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
+
+            pawn: moho_game::pawn::Pawn::default(),
         }
     }
 

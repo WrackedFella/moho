@@ -7,6 +7,16 @@
 use std::sync::{Arc, Mutex};
 use winit::window::Window;
 
+/// Whether the UI is capturing input right now, checked conservatively: if the
+/// lock can't be acquired for any reason, treat that as "capturing" so game
+/// input is never forwarded underneath a UI panel by mistake.
+fn ui_is_capturing_input(ui_adapter: &Arc<Mutex<moho_ui::EguiAdapter>>) -> bool {
+    match ui_adapter.try_lock() {
+        Ok(a) => a.is_visible(),
+        Err(_) => true,
+    }
+}
+
 /// Initialize the renderer and UI adapter for the given window.
 ///
 /// Creates the wgpu renderer, registers the shared sphere and cube mesh handles,
@@ -128,37 +138,54 @@ pub fn setup_renderer_and_ui(
         app.input.unconsumed_tx = Some(tx.clone());
         app.input.unconsumed_rx = Some(rx);
 
-        // Prepare a ui_adapter clone to check visibility before forwarding wheel
-        let ui_adapter_for_forward = ui_adapter.clone();
-
         // Register a low-priority subscriber that forwards mouse wheel events into
         // the channel so the game can act on them later (e.g., scroll-to-zoom).
         // We only forward when the UI overlay is not visible. Note: the
         // dispatcher already ensures this subscriber is only called when higher
         // priority handlers did not consume the event (i.e., egui didn't want it).
+        let ui_adapter_for_wheel = ui_adapter.clone();
+        let wheel_tx = tx.clone();
         app.dispatcher
             .register(0, move |event: &winit::event::WindowEvent| {
-                use winit::event::WindowEvent as WEvent;
-                if let WEvent::MouseWheel { delta, .. } = event {
-                    // Use the conservative try_lock approach: if we cannot acquire the
-                    // lock for any reason, treat as UI-visible and do not forward.
-                    match ui_adapter_for_forward.try_lock() {
-                        Ok(a) if a.is_visible() => return false,
-                        Err(_) => return false,
-                        _ => {}
-                    }
-
-                    // Convert delta to a simple numeric pair and forward via helper
-                    let delta_y = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_x, y) => *y,
-                        winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32,
-                    };
-
-                    if crate::forward_wheel_if_allowed(&ui_adapter_for_forward, &tx, delta_y) {
-                        return true;
-                    }
+                let winit::event::WindowEvent::MouseWheel { delta, .. } = event else {
+                    return false;
+                };
+                if ui_is_capturing_input(&ui_adapter_for_wheel) {
+                    return false;
                 }
-                false
+
+                let delta_y = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_x, y) => *y,
+                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                };
+                crate::forward_wheel_if_allowed(&ui_adapter_for_wheel, &wheel_tx, delta_y)
+            });
+
+        // Register a separate low-priority subscriber for the mine action: a
+        // left click, not captured by UI, requests a mine attempt via the same
+        // channel. Kept as its own registration rather than folded into the
+        // wheel handler above — each input kind gets its own subscriber so a
+        // future input type is a new `register` call, not another branch on
+        // an existing one.
+        let ui_adapter_for_mine = ui_adapter.clone();
+        let mine_tx = tx.clone();
+        app.dispatcher
+            .register(0, move |event: &winit::event::WindowEvent| {
+                let winit::event::WindowEvent::MouseInput {
+                    state: winit::event::ElementState::Pressed,
+                    button: winit::event::MouseButton::Left,
+                    ..
+                } = event
+                else {
+                    return false;
+                };
+                if ui_is_capturing_input(&ui_adapter_for_mine) {
+                    return false;
+                }
+
+                mine_tx
+                    .send(crate::input_event::InputEvent::MineRequested)
+                    .is_ok()
             });
     }
 
