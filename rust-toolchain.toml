@@ -1,0 +1,6 @@
+# Pinned so local, CI and agent runs lint identically; new stable releases
+# have broken `clippy -D warnings` before. Bump deliberately in its own PR.
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

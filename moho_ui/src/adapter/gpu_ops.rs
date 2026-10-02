@@ -1,0 +1,79 @@
+//! GPU operations for egui rendering
+//!
+//! This module handles:
+//! - Texture updates
+//! - Buffer updates
+//! - Render pass execution
+//! - Texture cleanup
+
+/// Update egui textures on the GPU
+pub fn update_textures(
+    renderer: &mut egui_wgpu::Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    textures_delta: &egui::TexturesDelta,
+) {
+    for (id, image_delta) in &textures_delta.set {
+        renderer.update_texture(device, queue, *id, image_delta);
+    }
+}
+
+/// Update GPU buffers for egui rendering
+pub fn update_buffers(
+    renderer: &mut egui_wgpu::Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    encoder: &mut wgpu::CommandEncoder,
+    clipped_primitives: &[egui::ClippedPrimitive],
+    screen_descriptor: &egui_wgpu::ScreenDescriptor,
+) {
+    renderer.update_buffers(
+        device,
+        queue,
+        encoder,
+        clipped_primitives,
+        screen_descriptor,
+    );
+}
+
+/// Execute the egui render pass
+pub fn execute_render_pass(
+    renderer: &mut egui_wgpu::Renderer,
+    encoder: &mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+    clipped_primitives: &[egui::ClippedPrimitive],
+    screen_descriptor: &egui_wgpu::ScreenDescriptor,
+) {
+    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("egui_render_pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+            depth_slice: None,
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+
+    // SAFETY: `egui_wgpu::Renderer::render` takes `&mut RenderPass<'static>` even though
+    // it never stores the reference beyond the call. The render pass borrows `encoder` and
+    // `view` which both outlive this function call. The transmute only erases the borrow
+    // lifetime on the stack-local `render_pass`; the actual wgpu objects it points to
+    // remain valid for the duration of `renderer.render(...)`.
+    let render_pass_static: &mut wgpu::RenderPass<'static> =
+        unsafe { std::mem::transmute(&mut render_pass) };
+    renderer.render(render_pass_static, clipped_primitives, screen_descriptor);
+}
+
+/// Free egui textures from GPU memory
+pub fn free_textures(renderer: &mut egui_wgpu::Renderer, texture_ids: &[egui::TextureId]) {
+    for id in texture_ids {
+        renderer.free_texture(id);
+    }
+}

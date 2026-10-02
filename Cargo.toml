@@ -1,33 +1,100 @@
+[[bin]]
+path = "src/main.rs"
+name = "moho"
+required-features = []
+
 [package]
 name = "moho"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-engine_core = { path = "engine_core" }
-engine_renderer = { path = "engine_renderer" }
-glam = "0.30.4"
-rand = "0.9.1"
-legion = "0.4.0"
-log = { workspace = true }
-env_logger = { workspace = true }
-
-# Optional frontend/backends
-# Use winit 0.28.x to be compatible with wgpu/raw-window-handle used by wgpu 0.15
-winit = { version = "0.28.6", optional = true }
-# WGPU backend (preferred)
-wgpu = { version = "0.15", optional = true }
-pollster = { version = "0.3", optional = true }
-bytemuck = { version = "1.9.1", features = ["derive"] }
-
-[features]
-# Enable the WGPU renderer implementation (renamed to avoid name collision)
-backend-wgpu = ["wgpu", "winit", "pollster", "engine_renderer/backend-wgpu"]
-
 [workspace]
-members = ["engine_core", "engine_renderer"]
+members = ["moho_core", "moho_game", "moho_render_api", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_sim", "moho_types", "moho_physics"]
 
 [workspace.dependencies]
+bincode = "2.0"
+bytemuck = "1.24"
+crc32fast = "1.5"
+crossbeam-channel = "0.5"
+env_logger = "0.11"
+glam = "0.30.8"
+legion = "0.4.0"
 log = "0.4"
-env_logger = "0.10"
+naga = "29.0.1"
+noise = "0.9"
+pollster = "0.4"
+rand = "0.10"
+rodio = "0.22"
+serde = "1.0"
+thiserror = "2.0"
+wgpu = "29.0.4"
+winit = "0.30"
+moho_physics = { path = "moho_physics" }
+rapier3d = { version = "0.32", features = ["simd-stable"] }
+
+[dependencies]
+crossbeam-channel = { workspace = true }
+legion = { workspace = true }
+
+[dependencies.bincode]
+workspace = true
+
+[dependencies.bytemuck]
+workspace = true
+features = ["derive"]
+
+[dependencies.env_logger]
+workspace = true
+
+[dependencies.glam]
+workspace = true
+
+[dependencies.log]
+workspace = true
+
+[dependencies.moho_audio]
+path = "moho_audio"
+
+[dependencies.moho_core]
+path = "moho_core"
+
+[dependencies.moho_game]
+path = "moho_game"
+
+[dependencies.moho_input]
+path = "moho_input"
+
+[dependencies.moho_renderer]
+path = "moho_renderer"
+
+[dependencies.moho_sim]
+path = "moho_sim"
+
+[dependencies.moho_types]
+path = "moho_types"
+
+[dependencies.moho_physics]
+workspace = true
+
+[dependencies.moho_ui]
+path = "moho_ui"
+
+[dependencies.pollster]
+workspace = true
+
+[dependencies.rand]
+workspace = true
+
+[dependencies.wgpu]
+workspace = true
+
+[dependencies.winit]
+workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[[bench]]
+name = "event_bus_bench"
+harness = false
 

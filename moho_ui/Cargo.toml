@@ -1,0 +1,37 @@
+[package]
+name = "moho_ui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# RAUI is an optional UI integration. Make it optional so the
+# workspace can build without fetching/building raui (its build
+# script expects a monorepo layout). Enable the `ui-raui` feature
+# when you want to compile with RAUI support.
+wgpu = { workspace = true }
+moho_renderer = { path = "../moho_renderer" }
+crossbeam-channel = { workspace = true }
+once_cell = "1.21"
+gilrs = { version = "0.11.0", optional = true }
+winit = { workspace = true }
+egui = "0.34.3"
+egui-winit = "0.34.3"
+egui-wgpu = "0.34.3"
+log = { workspace = true }
+ini = "1.3.0"
+moho_input = { path = "../moho_input" }
+moho_core = { path = "../moho_core" }
+moho_game = { path = "../moho_game" }
+moho_types = { path = "../moho_types" }
+serde = { workspace = true, features = ["derive"] }
+bincode = { workspace = true }
+rand = { workspace = true }
+phf = { version = "0.13.1", features = ["macros"] }
+
+[features]
+default = []
+# Test-only helpers for the egui adapter. Enable when running integration
+# tests that require internal adapter control (for example to simulate
+# press/release without an actual window). This is intentionally optional
+# so library consumers won't accidentally depend on test utilities.
+ui-egui-test = []

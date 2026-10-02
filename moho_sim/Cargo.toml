@@ -1,0 +1,18 @@
+[package]
+name = "moho_sim"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "moho_sim"
+path = "src/lib.rs"
+
+[dependencies]
+moho_core = { path = "../moho_core" }
+moho_game = { path = "../moho_game" }
+glam = { workspace = true }
+bincode = { workspace = true }
+crc32fast = { workspace = true }
+
+[features]
+default = []

@@ -1,0 +1,114 @@
+# Standalone metrics workflow using mozilla/rust-code-analysis CLI
+# Produces per-file JSON metrics and a small aggregated summary, uploads as artifact.
+#
+# Triggers: pull_request only (runs on PRs into any branch)
+name: "Metrics — rust-code-analysis"
+
+on:
+  pull_request:
+    branches:
+      - '**'
+
+permissions:
+  contents: read
+  actions: write
+
+env:
+  METRICS_OUTPUT_DIR: metrics-output
+  METRICS_SUMMARY_DIR: metrics-summary
+  MAX_FUNCTION_CYCLOMATIC: '20'    # adjust threshold as needed
+  MIN_MI_VISUAL_STUDIO: '65'       # adjust threshold as needed
+
+jobs:
+  gather-metrics:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system deps (optional)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libudev-dev libssl-dev clang || true
+          # Ensure pkg-config can find system pc files (fallback)
+          export PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-/usr/lib/x86_64-linux-gnu/pkgconfig}
+
+      - name: Set up Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Build rust-code-analysis-cli
+        run: |
+          set -euo pipefail
+          TMPDIR=$(mktemp -d)
+          echo "Building rust-code-analysis in $TMPDIR"
+          git clone --depth 1 https://github.com/mozilla/rust-code-analysis.git "$TMPDIR"
+          cd "$TMPDIR"
+          cargo build --release -p rust-code-analysis-cli
+          # Find the binary (might be in different locations)
+          CLI_PATH=$(find target/release -name "rust-code-analysis-cli" -type f | head -1)
+          if [ -z "$CLI_PATH" ]; then
+            echo "ERROR: rust-code-analysis-cli binary not found"
+            find target/release -type f -executable
+            exit 1
+          fi
+          echo "Found CLI at: $CLI_PATH"
+          cp "$CLI_PATH" "$GITHUB_WORKSPACE/rust-code-analysis-cli"
+          chmod +x "$GITHUB_WORKSPACE/rust-code-analysis-cli"
+
+      - name: Run metrics (produce JSON per-file)
+        run: |
+          set -euo pipefail
+          rm -rf "$METRICS_OUTPUT_DIR" "$METRICS_SUMMARY_DIR"
+          mkdir -p "$METRICS_OUTPUT_DIR" "$METRICS_SUMMARY_DIR"
+          # Run metrics on all Rust source directories
+          ./rust-code-analysis-cli -m -p src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+          ./rust-code-analysis-cli -m -p moho_core/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+          ./rust-code-analysis-cli -m -p moho_audio/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+          ./rust-code-analysis-cli -m -p moho_input/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+          ./rust-code-analysis-cli -m -p moho_renderer/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+          ./rust-code-analysis-cli -m -p moho_sim/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+          ./rust-code-analysis-cli -m -p moho_ui/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+
+      - name: Install PowerShell (if needed)
+        run: |
+          # PowerShell Core is usually pre-installed on ubuntu-latest
+          which pwsh || (echo "PowerShell not found, installing..." && \
+            sudo apt-get update && \
+            sudo apt-get install -y wget apt-transport-https software-properties-common && \
+            wget -q "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb" && \
+            sudo dpkg -i packages-microsoft-prod.deb && \
+            sudo apt-get update && \
+            sudo apt-get install -y powershell)
+
+      - name: Aggregate metrics with PowerShell script
+        run: |
+          pwsh -File scripts/aggregate-metrics.ps1 \
+            -MetricsDir "$METRICS_OUTPUT_DIR" \
+            -SummaryDir "$METRICS_SUMMARY_DIR" \
+            -CyclomaticThreshold "$MAX_FUNCTION_CYCLOMATIC" \
+            -MaintainabilityThreshold "$MIN_MI_VISUAL_STUDIO"
+
+      - name: Display summary
+        run: |
+          echo "=== High Cyclomatic Complexity Functions ==="
+          if [ -s "$METRICS_SUMMARY_DIR/high_cc_functions.json" ]; then
+            jq -r '.[] | "\(.cyclomatic | floor) - \(.function) (\(.file):\(.start_line))"' "$METRICS_SUMMARY_DIR/high_cc_functions.json" | head -20 || true
+          else
+            echo "No functions above threshold $MAX_FUNCTION_CYCLOMATIC"
+          fi
+          
+          echo ""
+          echo "=== Low Maintainability Index Files ==="
+          jq -r '.[] | select(.mi_visual_studio != null and (.mi_visual_studio | tonumber) < '"$MIN_MI_VISUAL_STUDIO"') | "\(.mi_visual_studio | floor) - \(.file)"' "$METRICS_SUMMARY_DIR/mi_per_file.json" | head -20 || echo "All files above threshold $MIN_MI_VISUAL_STUDIO"
+
+      - name: Upload metrics artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-metrics
+          path: |
+            ${{ env.METRICS_OUTPUT_DIR }}
+            ${{ env.METRICS_SUMMARY_DIR }}
