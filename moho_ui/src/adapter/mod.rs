@@ -91,17 +91,14 @@ pub struct ProgressState {
     pub canceled: bool,
 }
 
-// SAFETY: EguiAdapter is always accessed under Arc<Mutex<EguiAdapter>>, so
-// only one thread holds &mut EguiAdapter at a time. The non-Send/Sync field is
-// `dyn Modal` (inside UiStateManager), which is heap-allocated screen state that
-// is created, used, and dropped on the main thread. No EguiAdapter field is ever
-// accessed concurrently — the Mutex provides the needed exclusion.
-// This impl is required because `dyn Modal` lacks a `Send` bound.
-#[allow(unsafe_code)]
-unsafe impl Send for EguiAdapter {}
-// SAFETY: as above; shared references are only handed out through the Mutex guard.
-#[allow(unsafe_code)]
-unsafe impl Sync for EguiAdapter {}
+// Shared as `Arc<Mutex<EguiAdapter>>`, which is `Send + Sync` iff the adapter is `Send`
+// (`Sync` is unattainable: egui-winit's clipboard holds an `mpsc::Receiver`). Asserting it
+// here makes a future non-`Send` field fail in this crate, not at the binary's
+// `InputDispatcher::register` call site.
+const _: () = {
+    fn assert_send<T: Send>() {}
+    let _ = assert_send::<EguiAdapter>;
+};
 
 impl EguiAdapter {
     /// Create a new adapter with event bus
