@@ -119,7 +119,7 @@ impl AudioSource {
         let path = Path::new(&self.path);
         if let Some(extension) = path.extension() {
             match extension.to_str() {
-                Some("wav") | Some("ogg") | Some("mp3") | Some("flac") => Ok(()),
+                Some("wav" | "ogg" | "mp3" | "flac") => Ok(()),
                 Some(ext) => Err(AudioError::UnsupportedFormat(ext.to_string())),
                 None => Err(AudioError::UnsupportedFormat("unknown".to_string())),
             }

@@ -218,7 +218,7 @@ impl EguiAdapter {
             let renderer =
                 egui_wgpu::Renderer::new(device, format, egui_wgpu::RendererOptions::default());
             self.renderer = Some(renderer);
-            log::info!("Initializing egui_wgpu::Renderer with format {:?}", format);
+            log::info!("Initializing egui_wgpu::Renderer with format {format:?}");
         }
     }
 
@@ -307,6 +307,7 @@ impl FrameCallback for EguiAdapter {
         surface_width: u32,
         surface_height: u32,
     ) {
+        use crate::modal::ModalResult;
         // Update global visibility flag (tracks menu visibility for input routing)
         UI_OVERLAY_VISIBLE.store(self.ui_state.visible, Ordering::SeqCst);
 
@@ -320,8 +321,7 @@ impl FrameCallback for EguiAdapter {
         let format = self
             .surface_config
             .as_ref()
-            .map(|c| c.format)
-            .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
+            .map_or(wgpu::TextureFormat::Bgra8UnormSrgb, |c| c.format);
         self.init_renderer(device, format);
 
         // Take input from winit integration
@@ -362,7 +362,6 @@ impl FrameCallback for EguiAdapter {
         });
 
         // Handle modal result
-        use crate::modal::ModalResult;
         match modal_result {
             ModalResult::Confirm => {
                 if let Some(screen) = self.ui_state.active_screen_mut() {

@@ -87,7 +87,7 @@ pub fn render_shadow_passes(
         }
 
         let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some(&format!("shadow-light-{}-pass", light_idx)),
+            label: Some(&format!("shadow-light-{light_idx}-pass")),
             color_attachments: &[],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &shadow_system.csm_cascade_views[light_idx as usize],

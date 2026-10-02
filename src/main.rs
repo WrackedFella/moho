@@ -437,7 +437,7 @@ impl App {
 
         match StateTransitionCoordinator::hide_menu(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
-            Err(e) => log::warn!("Cannot hide menu: {}", e),
+            Err(e) => log::warn!("Cannot hide menu: {e}"),
         }
     }
 
@@ -446,7 +446,7 @@ impl App {
 
         match StateTransitionCoordinator::show_menu(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
-            Err(e) => log::warn!("Cannot show menu: {}", e),
+            Err(e) => log::warn!("Cannot show menu: {e}"),
         }
     }
 
@@ -456,7 +456,7 @@ impl App {
 
         match StateTransitionCoordinator::enter_console(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
-            Err(e) => log::warn!("{}", e),
+            Err(e) => log::warn!("{e}"),
         }
     }
 
@@ -466,7 +466,7 @@ impl App {
 
         match StateTransitionCoordinator::exit_console(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
-            Err(e) => log::warn!("{}", e),
+            Err(e) => log::warn!("{e}"),
         }
     }
 
@@ -477,7 +477,7 @@ impl App {
 
         match StateTransitionCoordinator::toggle_pause(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
-            Err(e) => log::debug!("{}", e),
+            Err(e) => log::debug!("{e}"),
         }
     }
 
@@ -502,6 +502,7 @@ impl App {
         if let Some(ui_adapter) = &self.ui_adapter
             && let Ok(mut adapter) = ui_adapter.lock()
         {
+            use moho_ui::UI_OVERLAY_VISIBLE;
             adapter.set_visible(actions.ui_visible);
 
             // Convert moho_types::GameState to moho_ui::GameState
@@ -514,7 +515,6 @@ impl App {
             adapter.set_game_state(ui_state);
 
             // Update atomic flag for UI visibility
-            use moho_ui::UI_OVERLAY_VISIBLE;
             UI_OVERLAY_VISIBLE.store(actions.ui_visible, std::sync::atomic::Ordering::SeqCst);
 
             // Show specific menu if requested
@@ -543,7 +543,7 @@ impl App {
             && let Err(e) = audio.handle_event(event)
         {
             // Don't spam errors for missing audio files during development
-            log::debug!("Audio event failed: {}", e);
+            log::debug!("Audio event failed: {e}");
         }
     }
 }
@@ -552,7 +552,7 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_manager = app::event_loop::WindowManager::new();
         if let Err(e) = window_manager.handle_resumed(self, event_loop) {
-            log::error!("{}", e);
+            log::error!("{e}");
             event_loop.exit();
         }
     }

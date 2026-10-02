@@ -130,10 +130,7 @@ impl PhysicsWorld {
         let collider = match ColliderBuilder::trimesh(points, tris) {
             Ok(b) => b.friction(0.6).build(),
             Err(e) => {
-                log::warn!(
-                    "add_terrain_trimesh: trimesh build failed ({:?}), inserting dummy",
-                    e
-                );
+                log::warn!("add_terrain_trimesh: trimesh build failed ({e:?}), inserting dummy");
                 ColliderBuilder::ball(0.001).build()
             }
         };
@@ -171,7 +168,7 @@ impl PhysicsWorld {
         self.vertical_velocity = 0.0;
         self.is_grounded = false;
 
-        log::info!("Character controller spawned at {:?}", position);
+        log::info!("Character controller spawned at {position:?}");
         (body_handle, collider_handle)
     }
 
@@ -179,9 +176,10 @@ impl PhysicsWorld {
     /// Gravity is applied internally via `vertical_velocity`.
     /// Returns the new world position after movement.
     pub fn move_character(&mut self, desired_horizontal: Vec3, dt: f32) -> Vec3 {
-        let (body_handle, collider_handle) = match (self.character_body, self.character_collider) {
-            (Some(b), Some(c)) => (b, c),
-            _ => return Vec3::ZERO,
+        let (Some(body_handle), Some(collider_handle)) =
+            (self.character_body, self.character_collider)
+        else {
+            return Vec3::ZERO;
         };
 
         // Integrate gravity into vertical velocity

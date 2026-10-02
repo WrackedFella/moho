@@ -45,7 +45,7 @@ impl WindowEventHandler {
     fn handle_close_requested(&self, app: &mut App, event_loop: &ActiveEventLoop) {
         // Auto-save before close
         if let Err(e) = app.auto_save_on_shutdown() {
-            log::warn!("Failed to auto-save on close: {}", e);
+            log::warn!("Failed to auto-save on close: {e}");
         }
         event_loop.exit();
     }
@@ -77,7 +77,7 @@ impl WindowEventHandler {
                     app.camera,
                 )
         {
-            log::warn!("Skipped frame: {}", e);
+            log::warn!("Skipped frame: {e}");
         }
 
         // Recall staging belt after render

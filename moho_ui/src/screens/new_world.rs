@@ -27,7 +27,7 @@ impl Default for NewWorldMenu {
 
 // Implement UiComponent (base trait)
 impl UiComponent for NewWorldMenu {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "new_world"
     }
 

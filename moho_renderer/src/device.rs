@@ -33,9 +33,9 @@ pub enum DeviceInitError {
 impl fmt::Display for DeviceInitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DeviceInitError::SurfaceCreation(msg) => write!(f, "Surface creation failed: {}", msg),
-            DeviceInitError::AdapterRequest(msg) => write!(f, "Adapter request failed: {}", msg),
-            DeviceInitError::DeviceCreation(msg) => write!(f, "Device creation failed: {}", msg),
+            DeviceInitError::SurfaceCreation(msg) => write!(f, "Surface creation failed: {msg}"),
+            DeviceInitError::AdapterRequest(msg) => write!(f, "Adapter request failed: {msg}"),
+            DeviceInitError::DeviceCreation(msg) => write!(f, "Device creation failed: {msg}"),
         }
     }
 }
@@ -92,7 +92,7 @@ impl<'a> DeviceSetup<'a> {
         // 2. Create Surface
         let surface = instance
             .create_surface(window)
-            .map_err(|e| DeviceInitError::SurfaceCreation(format!("{:?}", e)))?;
+            .map_err(|e| DeviceInitError::SurfaceCreation(format!("{e:?}")))?;
 
         // 3. Request Adapter
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -100,7 +100,7 @@ impl<'a> DeviceSetup<'a> {
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
         }))
-        .map_err(|e| DeviceInitError::AdapterRequest(format!("{:?}", e)))?;
+        .map_err(|e| DeviceInitError::AdapterRequest(format!("{e:?}")))?;
 
         // 4. Prepare device features and limits
         let experimental = {
@@ -133,11 +133,11 @@ impl<'a> DeviceSetup<'a> {
             label: None,
             required_features,
             required_limits: limits,
-            memory_hints: Default::default(),
-            trace: Default::default(),
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::default(),
             experimental_features: experimental,
         }))
-        .map_err(|e| DeviceInitError::DeviceCreation(format!("{:?}", e)))?;
+        .map_err(|e| DeviceInitError::DeviceCreation(format!("{e:?}")))?;
 
         // 6. Configure Surface
         let supported_formats = surface.get_capabilities(&adapter).formats;

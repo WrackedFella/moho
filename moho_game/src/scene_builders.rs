@@ -113,7 +113,7 @@ pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig
 /// Produces a value in [0.0, 1.0) that depends only on position and seed —
 /// no entropy-seeded RNG, so generation is a pure function of its inputs.
 pub(crate) fn pos_hash(x: i32, y: i32, z: i32, seed: u32) -> f32 {
-    let mut h = seed as u64;
+    let mut h = u64::from(seed);
     h ^= (x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
     h ^= (y as u64).wrapping_mul(0x6c62_272e_07bb_0142);
     h ^= (z as u64).wrapping_mul(0x5177_2d3d_ec2c_0b05);
@@ -175,7 +175,8 @@ pub(crate) fn sample_surface_height(
     let mut frequency = params.surface_frequency;
 
     for _ in 0..params.octaves {
-        value += noise.get([x as f64 * frequency, z as f64 * frequency]) * amplitude as f64;
+        value +=
+            noise.get([f64::from(x) * frequency, f64::from(z) * frequency]) * f64::from(amplitude);
         amplitude *= 0.5;
         frequency *= 2.0;
     }
@@ -415,10 +416,7 @@ mod tests {
                     && pos.y < chunk_max.y
                     && pos.z >= chunk_min.z
                     && pos.z < chunk_max.z,
-                "block {:?} outside chunk bounds {:?}..{:?}",
-                pos,
-                chunk_min,
-                chunk_max
+                "block {pos:?} outside chunk bounds {chunk_min:?}..{chunk_max:?}"
             );
         }
     }

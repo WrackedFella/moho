@@ -16,7 +16,7 @@ impl KeybindConflictModal {
 }
 
 impl Modal for KeybindConflictModal {
-    fn title(&self) -> &str {
+    fn title(&self) -> &'static str {
         "Keybind Conflict"
     }
 

@@ -89,8 +89,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                     let selected_label = RESOLUTION_PRESETS
                         .iter()
                         .find(|(_, res)| *res == staged_res)
-                        .map(|(lbl, _)| *lbl)
-                        .unwrap_or("Custom");
+                        .map_or("Custom", |(lbl, _)| *lbl);
 
                     let mut current_res = staged_res;
                     let combo = egui::ComboBox::from_id_salt("resolution_combo")

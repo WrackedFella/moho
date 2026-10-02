@@ -13,7 +13,7 @@ use std::path::Path;
 /// a clean interface for the rest of the engine to play sounds.
 pub struct AudioSystem {
     /// Rodio device sink (keeps the audio stream alive)
-    _device: rodio::MixerDeviceSink,
+    device: rodio::MixerDeviceSink,
 
     /// Current audio settings
     settings: AudioSettings,
@@ -34,7 +34,7 @@ impl AudioSystem {
         debug!("Audio system initialized successfully");
 
         Ok(Self {
-            _device: device,
+            device,
             settings: AudioSettings::default(),
             audio_cache: AudioCache::new()?,
             music_player: None,
@@ -81,7 +81,7 @@ impl AudioSystem {
             AudioError::LoadFailed(format!("Failed to decode {}: {}", source.path(), e))
         })?;
 
-        let player = rodio::Player::connect_new(self._device.mixer());
+        let player = rodio::Player::connect_new(self.device.mixer());
         player.set_volume(effective_volume);
 
         if source.looped() {
@@ -161,10 +161,7 @@ impl AudioSystem {
             * volume;
 
         if effective_volume <= 0.0 {
-            debug!(
-                "Skipping UI audio playback due to zero volume: {}",
-                path_str
-            );
+            debug!("Skipping UI audio playback due to zero volume: {path_str}");
             return Ok(());
         }
 
@@ -174,20 +171,17 @@ impl AudioSystem {
         // Create a new cursor and decoder for this playback
         let cursor = std::io::Cursor::new(audio_data);
         let source_decoder = rodio::Decoder::new(cursor)
-            .map_err(|e| AudioError::LoadFailed(format!("Failed to decode {}: {}", path_str, e)))?;
+            .map_err(|e| AudioError::LoadFailed(format!("Failed to decode {path_str}: {e}")))?;
 
         // For UI sounds, create a new player each time for immediate playback
         // This avoids queueing delays that would occur with a shared player
-        let player = rodio::Player::connect_new(self._device.mixer());
+        let player = rodio::Player::connect_new(self.device.mixer());
         player.set_volume(effective_volume);
         player.append(source_decoder);
         player.play();
         player.detach(); // Let it play and clean up automatically
 
-        debug!(
-            "Playing UI audio: {} at volume {:.2}",
-            path_str, effective_volume
-        );
+        debug!("Playing UI audio: {path_str} at volume {effective_volume:.2}");
         Ok(())
     }
 

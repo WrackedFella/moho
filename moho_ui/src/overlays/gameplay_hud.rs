@@ -22,7 +22,7 @@ impl Default for GameplayHud {
 }
 
 impl Overlay for GameplayHud {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "gameplay_hud"
     }
 
@@ -334,7 +334,7 @@ mod tests {
             .collect();
         let ctx = egui::Context::default();
 
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             render_hotbar(ctx, Some("Pickaxe"), &hotbar, 0);
         });
     }
@@ -343,7 +343,7 @@ mod tests {
     fn render_hotbar_with_empty_inventory_does_not_panic() {
         let ctx = egui::Context::default();
 
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             render_hotbar(ctx, None, &[], 0);
         });
     }
@@ -355,7 +355,7 @@ mod tests {
         // highlighted," not a panic.
         let ctx = egui::Context::default();
 
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             render_hotbar(ctx, Some("Pickaxe"), &[(1, 2)], 99);
         });
     }

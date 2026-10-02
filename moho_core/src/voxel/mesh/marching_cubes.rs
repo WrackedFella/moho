@@ -22,8 +22,7 @@ impl MarchingCubes {
         // because density_field is hardcoded to [18][18][18] (16+2 padding)
         assert_eq!(
             chunk_size, 16,
-            "MarchingCubes currently only supports chunk_size=16, got {}",
-            chunk_size
+            "MarchingCubes currently only supports chunk_size=16, got {chunk_size}"
         );
 
         let mut vertices = Vec::new();
@@ -237,8 +236,6 @@ impl MarchingCubes {
 
     /// Compute surface normal using central differences on the density field
     fn compute_normal(density_field: &[[[f32; 18]; 18]; 18], x: f32, y: f32, z: f32) -> [f32; 3] {
-        let _h = 0.5; // Step size for gradient (reserved for future refinement)
-
         let xi = x.floor() as usize;
         let yi = y.floor() as usize;
         let zi = z.floor() as usize;

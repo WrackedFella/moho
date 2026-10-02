@@ -72,12 +72,14 @@ impl PalettedChunk {
         let pi = self.palette[1..]
             .iter()
             .position(|&m| m == material_id)
-            .map(|p| p + 1)
-            .unwrap_or_else(|| {
-                let i = self.palette.len();
-                self.palette.push(material_id);
-                i
-            });
+            .map_or_else(
+                || {
+                    let i = self.palette.len();
+                    self.palette.push(material_id);
+                    i
+                },
+                |p| p + 1,
+            );
         self.indices[idx] = pi as u16;
         match resource_id {
             Some(rid) => {

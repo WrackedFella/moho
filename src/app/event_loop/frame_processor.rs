@@ -75,6 +75,8 @@ impl FrameProcessor {
     }
 
     fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
+        // Kill plane: anything below this Y is considered "off the map"
+        const KILL_PLANE_Y: f32 = -30.0;
         const MOVE_SPEED: f32 = 4.0;
         const SPRINT_SPEED: f32 = 6.0;
 
@@ -116,8 +118,6 @@ impl FrameProcessor {
             .move_character(horizontal, dt)
             .expect("KCC active but move_character returned None");
 
-        // Kill plane: anything below this Y is considered "off the map"
-        const KILL_PLANE_Y: f32 = -30.0;
         if new_pos.y < KILL_PLANE_Y {
             let respawn_y = app
                 .light_system
@@ -127,7 +127,7 @@ impl FrameProcessor {
                 + 3.0;
             new_pos = glam::Vec3::new(0.0, respawn_y, 0.0);
             app.physics.teleport_character(new_pos);
-            log::info!("Player fell off map — respawning at {:?}", new_pos);
+            log::info!("Player fell off map — respawning at {new_pos:?}");
         }
 
         // Override simulation position with physics result (or respawn position)
@@ -162,6 +162,14 @@ impl FrameProcessor {
         }
         let player_pos = app.simulation.position();
         if let (Some(streamer), Some(ls)) = (&mut app.chunk_streamer, &mut app.light_system) {
+            const FACE_DIRS: [glam::IVec3; 6] = [
+                glam::IVec3::X,
+                glam::IVec3::NEG_X,
+                glam::IVec3::Y,
+                glam::IVec3::NEG_Y,
+                glam::IVec3::Z,
+                glam::IVec3::NEG_Z,
+            ];
             let (loaded, evicted) = streamer.update(ls.grid_mut(), player_pos);
 
             for pos in &evicted {
@@ -178,14 +186,6 @@ impl FrameProcessor {
             // was previously meshed without this chunk present, it generated an
             // exposed edge face. Now that this chunk exists, N must re-sample
             // the density field to close the seam.
-            const FACE_DIRS: [glam::IVec3; 6] = [
-                glam::IVec3::X,
-                glam::IVec3::NEG_X,
-                glam::IVec3::Y,
-                glam::IVec3::NEG_Y,
-                glam::IVec3::Z,
-                glam::IVec3::NEG_Z,
-            ];
             for pos in loaded {
                 app.event_bus
                     .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
@@ -260,7 +260,7 @@ impl FrameProcessor {
             // Emit mesh dirty events for affected chunks
             let dirty_count = light_system.emit_dirty_events();
             if dirty_count > 0 {
-                log::trace!("Light system emitted {} mesh dirty events", dirty_count);
+                log::trace!("Light system emitted {dirty_count} mesh dirty events");
             }
         }
     }
@@ -390,9 +390,8 @@ impl FrameProcessor {
 
     /// Push current world state into the overlay HUD data.
     fn update_hud_data(&self, app: &mut App) {
-        let ui_adapter = match &app.ui_adapter {
-            Some(a) => a,
-            None => return,
+        let Some(ui_adapter) = &app.ui_adapter else {
+            return;
         };
 
         let pos = app.simulation.position();

@@ -24,7 +24,7 @@ impl Default for RtsHud {
 }
 
 impl Overlay for RtsHud {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "rts_hud"
     }
 

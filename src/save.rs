@@ -106,7 +106,7 @@ pub fn read_scene_and_metadata<P: AsRef<Path>>(path: P) -> Result<SavePayload, B
     let version = u32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap());
     offset += 4;
     if version < 1 {
-        return Err(format!("unsupported save version: {}", version).into());
+        return Err(format!("unsupported save version: {version}").into());
     }
 
     let meta_len = u64::from_le_bytes(buf[offset..offset + 8].try_into().unwrap()) as usize;
@@ -188,7 +188,7 @@ pub fn clear_chunk_files(world_name: &str) -> io::Result<()> {
     let dir = chunk_dir(world_name);
     if dir.exists() {
         fs::remove_dir_all(&dir)?;
-        log::info!("Cleared chunk save files for world '{}'", world_name);
+        log::info!("Cleared chunk save files for world '{world_name}'");
     }
     Ok(())
 }
@@ -208,7 +208,7 @@ mod tests {
             .expect("time ok")
             .as_nanos();
         let mut path = std::env::temp_dir();
-        path.push(format!("moho_test_save_{}_{}.bin", now, suffix));
+        path.push(format!("moho_test_save_{now}_{suffix}.bin"));
         path
     }
 

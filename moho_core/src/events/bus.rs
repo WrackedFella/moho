@@ -110,7 +110,7 @@ impl EventBus {
         E: Event,
         F: Fn(&E) + Send + Sync + 'static,
     {
-        self.subscribe_with_priority(handler, 0)
+        self.subscribe_with_priority(handler, 0);
     }
 
     /// Subscribe with custom priority (lower = higher priority).
@@ -190,7 +190,7 @@ impl EventBus {
         // Add to history if enabled
         if self.history_enabled && event.should_record() {
             let mut history = self.history.lock().unwrap();
-            history.push_back(format!("{:?}", event));
+            history.push_back(format!("{event:?}"));
 
             // Limit history size
             while history.len() > self.max_history {
@@ -253,7 +253,7 @@ impl EventBus {
         // process_deferred() runs.
         if self.history_enabled && event.should_record() {
             let mut history = self.history.lock().unwrap();
-            history.push_back(format!("{:?}", event));
+            history.push_back(format!("{event:?}"));
             while history.len() > self.max_history {
                 history.pop_front();
             }
@@ -334,8 +334,8 @@ impl Default for EventBus {
 
 impl fmt::Debug for EventBus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let handler_count = self.sync_handlers.read().map(|h| h.len()).unwrap_or(0);
-        let queue_size = self.deferred_queue.lock().map(|q| q.len()).unwrap_or(0);
+        let handler_count = self.sync_handlers.read().map_or(0, |h| h.len());
+        let queue_size = self.deferred_queue.lock().map_or(0, |q| q.len());
         f.debug_struct("EventBus")
             .field("handler_types", &handler_count)
             .field("deferred_queue_size", &queue_size)

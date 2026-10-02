@@ -132,7 +132,7 @@ impl GenerationProcessor {
                 }
             }
             Err(e) => {
-                log::error!("Failed to load generated scene bytes: {}", e);
+                log::error!("Failed to load generated scene bytes: {e}");
             }
         }
 
@@ -304,7 +304,7 @@ impl GenerationProcessor {
 
     /// Handle generation failure
     fn handle_failed(&self, app: &mut App, reason: String) {
-        log::error!("Generation failed: {}", reason);
+        log::error!("Generation failed: {reason}");
         if let Some(ui_adapter) = &app.ui_adapter
             && let Ok(mut a) = ui_adapter.lock()
         {

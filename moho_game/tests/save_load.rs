@@ -6,6 +6,7 @@ use moho_game::scene_persistence;
 
 #[test]
 fn scene_encode_decode_roundtrip_in_memory() {
+    use legion::query::IntoQuery;
     let mut world = World::default();
     // create a simple scene with two spheres
     let s1 = Sphere::new(
@@ -35,7 +36,6 @@ fn scene_encode_decode_roundtrip_in_memory() {
         scene_persistence::load_from_bytes(&bytes, &mut loaded_world).expect("decode ok");
 
     // Basic checks: worlds contain Hittable-like components (we pushed Spheres only)
-    use legion::query::IntoQuery;
     let mut q = <&Sphere>::query();
     let orig_count = q.iter(&world).count();
     let loaded_count = q.iter(&loaded_world).count();

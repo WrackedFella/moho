@@ -210,17 +210,14 @@ fn multiple_unique_bindings_work() {
     // Verify all bindings are set correctly
     for (id, &code) in bindings.iter().enumerate() {
         let binding = menu.get_staged_binding(id);
-        assert_eq!(
-            binding.code, code,
-            "binding {} should have correct code",
-            id
-        );
+        assert_eq!(binding.code, code, "binding {id} should have correct code");
     }
 }
 
 /// Test 9: Render doesn't crash with default context
 #[test]
 fn render_doesnt_crash() {
+    use moho_ui::screens::SettingsTab;
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
     let ctx = egui::Context::default();
 
@@ -230,7 +227,6 @@ fn render_doesnt_crash() {
     });
 
     // Switch tab and render again
-    use moho_ui::screens::SettingsTab;
     menu.set_active_tab(SettingsTab::Audio);
 
     let _ = ctx.run(egui::RawInput::default(), |ctx| {

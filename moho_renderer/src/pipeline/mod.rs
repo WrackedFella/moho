@@ -56,11 +56,11 @@ pub enum PipelineInitError {
 impl std::fmt::Display for PipelineInitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SkyboxShaderLoad(msg) => write!(f, "Failed to load skybox shader: {}", msg),
-            Self::CameraBufferSize(msg) => write!(f, "Camera buffer size error: {}", msg),
-            Self::LightingBufferSize(msg) => write!(f, "Lighting buffer size error: {}", msg),
-            Self::ShadowMatrixSize(msg) => write!(f, "Shadow matrix size error: {}", msg),
-            Self::CsmMatrixSize(msg) => write!(f, "CSM matrix size error: {}", msg),
+            Self::SkyboxShaderLoad(msg) => write!(f, "Failed to load skybox shader: {msg}"),
+            Self::CameraBufferSize(msg) => write!(f, "Camera buffer size error: {msg}"),
+            Self::LightingBufferSize(msg) => write!(f, "Lighting buffer size error: {msg}"),
+            Self::ShadowMatrixSize(msg) => write!(f, "Shadow matrix size error: {msg}"),
+            Self::CsmMatrixSize(msg) => write!(f, "CSM matrix size error: {msg}"),
         }
     }
 }
@@ -201,7 +201,7 @@ impl PipelineSetup {
             vertex: wgpu::VertexState {
                 module: shader,
                 entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[
                     // Vertex positions + normals + AO + geometry type + light level +
                     // block light RGB + sky exposure. Attribute order below must match
@@ -238,7 +238,7 @@ impl PipelineSetup {
             fragment: Some(wgpu::FragmentState {
                 module: shader,
                 entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
                     blend: Some(wgpu::BlendState {
@@ -298,7 +298,7 @@ impl PipelineSetup {
             vertex: wgpu::VertexState {
                 module: shader,
                 entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex,
@@ -308,7 +308,7 @@ impl PipelineSetup {
             fragment: Some(wgpu::FragmentState {
                 module: shader,
                 entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
                     blend: None, // No blending for skybox
@@ -373,20 +373,20 @@ mod tests {
     fn test_pipeline_init_error_display() {
         let err = PipelineInitError::SkyboxShaderLoad("file not found".to_string());
         assert_eq!(
-            format!("{}", err),
+            format!("{err}"),
             "Failed to load skybox shader: file not found"
         );
 
         let err = PipelineInitError::CameraBufferSize("zero size".to_string());
-        assert_eq!(format!("{}", err), "Camera buffer size error: zero size");
+        assert_eq!(format!("{err}"), "Camera buffer size error: zero size");
 
         let err = PipelineInitError::LightingBufferSize("invalid".to_string());
-        assert_eq!(format!("{}", err), "Lighting buffer size error: invalid");
+        assert_eq!(format!("{err}"), "Lighting buffer size error: invalid");
 
         let err = PipelineInitError::ShadowMatrixSize("bad size".to_string());
-        assert_eq!(format!("{}", err), "Shadow matrix size error: bad size");
+        assert_eq!(format!("{err}"), "Shadow matrix size error: bad size");
 
         let err = PipelineInitError::CsmMatrixSize("csm error".to_string());
-        assert_eq!(format!("{}", err), "CSM matrix size error: csm error");
+        assert_eq!(format!("{err}"), "CSM matrix size error: csm error");
     }
 }

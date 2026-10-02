@@ -31,7 +31,7 @@ pub fn initialize_audio_system() -> Option<AudioSystem> {
             Some(audio)
         }
         Err(e) => {
-            log::warn!("Failed to initialize audio system: {}", e);
+            log::warn!("Failed to initialize audio system: {e}");
             log::info!("Application will continue without audio");
             None
         }

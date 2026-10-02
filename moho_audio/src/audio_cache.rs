@@ -40,13 +40,10 @@ impl AudioCache {
             if let Ok(audio_data) = std::fs::read(sound_path) {
                 self.ui_sound_cache
                     .insert(sound_path.to_string(), audio_data);
-                debug!("Pre-loaded UI sound: {}", sound_path);
+                debug!("Pre-loaded UI sound: {sound_path}");
             } else {
                 // Don't fail initialization if UI sounds are missing
-                debug!(
-                    "UI sound file not found (will load on-demand): {}",
-                    sound_path
-                );
+                debug!("UI sound file not found (will load on-demand): {sound_path}");
             }
         }
 
@@ -64,14 +61,14 @@ impl AudioCache {
         }
 
         // Fall back to regular loading and cache in UI cache for next time
-        let audio_data = std::fs::read(path)
-            .map_err(|e| AudioError::FileNotFound(format!("{}: {}", path, e)))?;
+        let audio_data =
+            std::fs::read(path).map_err(|e| AudioError::FileNotFound(format!("{path}: {e}")))?;
 
         // Cache in UI cache for future low-latency access
         self.ui_sound_cache
             .insert(path.to_string(), audio_data.clone());
 
-        debug!("Loaded and cached UI sound: {}", path);
+        debug!("Loaded and cached UI sound: {path}");
         Ok(audio_data)
     }
 
@@ -86,14 +83,14 @@ impl AudioCache {
         }
 
         // Load from file
-        let audio_data = std::fs::read(path)
-            .map_err(|e| AudioError::FileNotFound(format!("{}: {}", path, e)))?;
+        let audio_data =
+            std::fs::read(path).map_err(|e| AudioError::FileNotFound(format!("{path}: {e}")))?;
 
         // Cache for future use
         self.audio_cache
             .insert(path.to_string(), audio_data.clone());
 
-        debug!("Loaded and cached audio file: {}", path);
+        debug!("Loaded and cached audio file: {path}");
         Ok(audio_data)
     }
 

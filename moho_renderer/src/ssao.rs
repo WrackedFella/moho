@@ -238,7 +238,7 @@ impl SsaoSystem {
         device: &wgpu::Device,
     ) -> Result<(wgpu::BindGroupLayout, wgpu::ComputePipeline), Box<dyn std::error::Error>> {
         let gtao_shader_source = std::fs::read_to_string("shaders/gtao.wgsl")
-            .map_err(|e| format!("Failed to read GTAO shader: {}", e))?;
+            .map_err(|e| format!("Failed to read GTAO shader: {e}"))?;
         let gtao_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gtao-shader"),
             source: wgpu::ShaderSource::Wgsl(gtao_shader_source.into()),
@@ -313,7 +313,7 @@ impl SsaoSystem {
             layout: Some(&gtao_pipeline_layout),
             module: &gtao_shader,
             entry_point: Some("main"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
 
@@ -325,7 +325,7 @@ impl SsaoSystem {
         device: &wgpu::Device,
     ) -> Result<(wgpu::BindGroupLayout, wgpu::ComputePipeline), Box<dyn std::error::Error>> {
         let blur_shader_source = std::fs::read_to_string("shaders/ssao_blur.wgsl")
-            .map_err(|e| format!("Failed to read blur shader: {}", e))?;
+            .map_err(|e| format!("Failed to read blur shader: {e}"))?;
         let blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ssao-blur-shader"),
             source: wgpu::ShaderSource::Wgsl(blur_shader_source.into()),
@@ -396,7 +396,7 @@ impl SsaoSystem {
             layout: Some(&blur_pipeline_layout),
             module: &blur_shader,
             entry_point: Some("main"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
 

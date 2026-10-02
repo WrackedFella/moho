@@ -264,12 +264,7 @@ impl BufferManager {
 
         self.stats.swaps_performed += 1;
 
-        log::debug!(
-            "Swapped chunk {:?} mesh: {} -> {}",
-            chunk_pos,
-            old_handle,
-            new_handle
-        );
+        log::debug!("Swapped chunk {chunk_pos:?} mesh: {old_handle} -> {new_handle}");
 
         Some(old_handle)
     }

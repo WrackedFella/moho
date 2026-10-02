@@ -297,7 +297,7 @@ impl LightJobQueue {
     pub fn cancel(&mut self, job_id: JobId) -> bool {
         if let Some(token) = self.cancellation_tokens.get(&job_id) {
             token.cancel();
-            log::debug!("Cancelled light job {:?}", job_id);
+            log::debug!("Cancelled light job {job_id:?}");
             true
         } else {
             false
@@ -316,14 +316,11 @@ impl LightJobQueue {
         // Process jobs until we hit the frame budget
         while blocks_processed_this_frame < self.budget.max_blocks_per_frame {
             // Get next job
-            let job = match self.jobs.pop() {
-                Some(job) => job,
-                None => break, // No more jobs
-            };
+            let Some(job) = self.jobs.pop() else { break };
 
             // Check if cancelled
             let token = self.cancellation_tokens.get(&job.id);
-            if token.map(|t| t.is_cancelled()).unwrap_or(false) {
+            if token.is_some_and(LightCancellationToken::is_cancelled) {
                 self.cancellation_tokens.remove(&job.id);
                 self.results.push_back(LightUpdateResult {
                     job,

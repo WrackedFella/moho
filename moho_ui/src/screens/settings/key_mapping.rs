@@ -38,7 +38,11 @@ static CODE_TO_LABEL_MAP: phf::Map<u32, &'static str> = phf::phf_map! {
 /// # Returns
 /// Numeric code for binding storage (0 if key is unmapped)
 pub fn key_to_code(k: &egui::Key) -> u32 {
-    use egui::Key::*;
+    use egui::Key::{
+        A, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, B, Backspace, C, D, E, Enter, Escape, F, G,
+        H, I, J, K, L, M, N, Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9, O, P, Q,
+        R, S, Space, T, Tab, U, V, W, X, Y, Z,
+    };
     match k {
         // Letters (A-Z) - map to ASCII uppercase
         A => 'A' as u32,

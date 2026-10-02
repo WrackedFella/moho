@@ -140,7 +140,7 @@ impl PcssSettings {
                 light_size: PCSS_LIGHT_SIZE_STORM,
                 ..Default::default()
             },
-            _ => Default::default(),
+            _ => Self::default(),
         }
     }
 }
@@ -265,10 +265,7 @@ impl ShadowSystem {
 
         if CSM_VERBOSE_LOGGING {
             log::info!(
-                "Created multi-light shadow array: {}x{} x {} lights",
-                SHADOW_MAP_SIZE,
-                SHADOW_MAP_SIZE,
-                MAX_SHADOW_LIGHTS
+                "Created multi-light shadow array: {SHADOW_MAP_SIZE}x{SHADOW_MAP_SIZE} x {MAX_SHADOW_LIGHTS} lights"
             );
         }
 
@@ -276,7 +273,7 @@ impl ShadowSystem {
         let csm_cascade_views: Vec<wgpu::TextureView> = (0..MAX_SHADOW_LIGHTS as u32)
             .map(|i| {
                 csm_texture.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some(&format!("shadow-light-{}-view", i)),
+                    label: Some(&format!("shadow-light-{i}-view")),
                     format: Some(wgpu::TextureFormat::Depth32Float),
                     dimension: Some(wgpu::TextureViewDimension::D2),
                     aspect: wgpu::TextureAspect::DepthOnly,
@@ -313,10 +310,7 @@ impl ShadowSystem {
         });
 
         if CSM_VERBOSE_LOGGING {
-            log::info!(
-                "Created multi-light shadow array view: {} layers",
-                MAX_SHADOW_LIGHTS
-            );
+            log::info!("Created multi-light shadow array view: {MAX_SHADOW_LIGHTS} layers");
         }
 
         (shadow_map_view, csm_cascade_views, csm_array_view)
@@ -457,7 +451,7 @@ impl ShadowSystem {
         csm_pass_bgl: &wgpu::BindGroupLayout,
     ) -> Result<wgpu::RenderPipeline, Box<dyn std::error::Error>> {
         let shadow_shader_source = std::fs::read_to_string("shaders/shadow.wgsl")
-            .map_err(|e| format!("Failed to read shadow shader: {}", e))?;
+            .map_err(|e| format!("Failed to read shadow shader: {e}"))?;
         let shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shadow-shader"),
             source: wgpu::ShaderSource::Wgsl(shadow_shader_source.into()),
@@ -476,7 +470,7 @@ impl ShadowSystem {
             vertex: wgpu::VertexState {
                 module: &shadow_shader,
                 entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[
                     wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<crate::types::Vertex>()
@@ -568,7 +562,7 @@ impl ShadowSystem {
         if !self.csm_logged_once.get() {
             log::info!("CSM cascade splits:");
             for (i, (near, far)) in splits.iter().enumerate() {
-                log::info!("  Cascade {}: {:.1} -> {:.1} units", i, near, far);
+                log::info!("  Cascade {i}: {near:.1} -> {far:.1} units");
             }
         }
 
@@ -637,11 +631,7 @@ impl ShadowSystem {
 
         if !self.csm_logged_once.get() {
             log::info!(
-                "  Cascade {} matrix: center={:?}, radius={:.1}, texel_size={:.3}m",
-                cascade_idx,
-                cascade_center,
-                cascade_radius,
-                world_units_per_texel
+                "  Cascade {cascade_idx} matrix: center={cascade_center:?}, radius={cascade_radius:.1}, texel_size={world_units_per_texel:.3}m"
             );
         }
 
@@ -662,9 +652,7 @@ impl ShadowSystem {
 
         if !self.csm_logged_once.get() {
             log::info!(
-                "Calculating CSM cascade matrices for sun_dir={:?}, cam_pos={:?}",
-                light_dir,
-                cam_pos
+                "Calculating CSM cascade matrices for sun_dir={light_dir:?}, cam_pos={cam_pos:?}"
             );
         }
 
@@ -737,9 +725,6 @@ impl ShadowSystem {
             glam::Vec4::new(0.0, 0.0, 0.5, 0.0),
             glam::Vec4::new(0.0, 0.0, 0.5, 1.0),
         );
-
-        // Combine: Correction * Proj * View
-        let _view_proj = correction_matrix * light_proj * light_view;
 
         // Snap based on World Origin (Vec3::ZERO) to ensure grid stability
         // 1. Calculate where the World Origin IS in light space (View Space)

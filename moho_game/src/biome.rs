@@ -156,7 +156,7 @@ impl BiomeMap {
         }
         let n = self
             .noise
-            .get([x as f64 * self.frequency, z as f64 * self.frequency]);
+            .get([f64::from(x) * self.frequency, f64::from(z) * self.frequency]);
         // Perlin returns roughly [-1.0, 1.0]; map into [0.0, 1.0).
         let t = ((n + 1.0) * 0.5).clamp(0.0, 0.999_999);
         let idx = (t * enabled.len() as f64) as usize;

@@ -60,7 +60,7 @@ impl GameClock {
     /// # Arguments
     /// * `dt` - Delta time in real-world seconds
     pub fn tick(&mut self, dt: f32) {
-        self.elapsed_seconds += dt as f64;
+        self.elapsed_seconds += f64::from(dt);
 
         // Determine current phase and corresponding speed
         let time_speed = if self.is_daytime() {
@@ -178,7 +178,7 @@ impl GameClock {
     pub fn time_string(&self) -> String {
         let hours = self.time_of_day.floor() as u32;
         let minutes = ((self.time_of_day.fract() * 60.0).floor() as u32).min(59);
-        format!("{:02}:{:02}", hours, minutes)
+        format!("{hours:02}:{minutes:02}")
     }
 }
 

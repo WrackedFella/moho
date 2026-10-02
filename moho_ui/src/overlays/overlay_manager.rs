@@ -188,7 +188,7 @@ mod tests {
     }
 
     impl Overlay for StubOverlay {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "stub"
         }
         fn render(&mut self, _ctx: &egui::Context, _data: &HudData) {}

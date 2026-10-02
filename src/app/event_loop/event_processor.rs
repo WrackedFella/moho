@@ -47,18 +47,13 @@ impl EventProcessor {
     fn handle_ui_event(&self, app: &mut App, event_loop: &ActiveEventLoop, event: UiEvent) {
         match event {
             UiEvent::LoadSceneRequested { path } => {
-                log::info!("UI requested load scene: {:?}", path);
+                log::info!("UI requested load scene: {}", path.display());
                 if let Err(e) = app.load_scene(&path) {
-                    log::error!("Failed to load scene from {:?}: {}", path, e);
+                    log::error!("Failed to load scene from {}: {e}", path.display());
                 }
             }
             UiEvent::NewWorldRequested { name, seed, size } => {
-                log::info!(
-                    "UI requested new world: {} (seed: {:?}, size: {})",
-                    name,
-                    seed,
-                    size
-                );
+                log::info!("UI requested new world: {name} (seed: {seed:?}, size: {size})");
                 let spec = moho_game::scene_builders::WorldSpec {
                     name,
                     seed,
@@ -68,19 +63,19 @@ impl EventProcessor {
                     initial_time_of_day: 6.0,
                 };
                 if let Err(e) = app.generate_new_world(spec) {
-                    log::error!("Failed to generate new world: {}", e);
+                    log::error!("Failed to generate new world: {e}");
                 }
             }
             UiEvent::ExitRequested => {
                 log::info!("UI requested exit");
                 // Auto-save before exit
                 if let Err(e) = app.auto_save_on_shutdown() {
-                    log::warn!("Failed to auto-save on exit: {}", e);
+                    log::warn!("Failed to auto-save on exit: {e}");
                 }
                 event_loop.exit();
             }
             UiEvent::MenuShown { name } => {
-                log::info!("UI requested show menu: {}", name);
+                log::info!("UI requested show menu: {name}");
                 if let Some(ui_adapter) = &app.ui_adapter
                     && let Ok(mut adapter) = ui_adapter.lock()
                 {
@@ -88,14 +83,14 @@ impl EventProcessor {
                 }
             }
             UiEvent::MenuHidden { name } => {
-                log::info!("Menu hidden: {}", name);
+                log::info!("Menu hidden: {name}");
                 // Handle console close event
                 if name == "console" {
                     app.exit_console();
                 }
             }
             UiEvent::OverlayToggled { name, visible } => {
-                log::info!("Overlay {} toggled: {}", name, visible);
+                log::info!("Overlay {name} toggled: {visible}");
                 if visible && let Some(ref wr) = app.window_renderer {
                     wr.window.set_cursor_visible(true);
                 }
@@ -110,7 +105,7 @@ impl EventProcessor {
                 width,
                 height,
             } => {
-                log::info!("Window settings changed: {:?} {}x{}", mode, width, height);
+                log::info!("Window settings changed: {mode:?} {width}x{height}");
                 if let Some(ref wr) = app.window_renderer {
                     use moho_core::events::WindowMode;
                     use winit::dpi::PhysicalSize;
@@ -154,7 +149,7 @@ impl EventProcessor {
                 }
                 GraphicsEvent::DebugViewChanged { mode } => {
                     app.debug_mode = mode;
-                    log::info!("Debug view mode set to {}", mode);
+                    log::info!("Debug view mode set to {mode}");
                 }
                 _ => {
                     // Other graphics events not yet handled
@@ -238,10 +233,7 @@ impl EventProcessor {
         let grid = light_system.grid_mut();
 
         let Some(outcome) = app.pawn.mine(grid, camera_pos, forward, MINE_MAX_DISTANCE) else {
-            log::debug!(
-                "Mine attempt found nothing solid within {} units",
-                MINE_MAX_DISTANCE
-            );
+            log::debug!("Mine attempt found nothing solid within {MINE_MAX_DISTANCE} units");
             return;
         };
 
@@ -316,12 +308,12 @@ impl EventProcessor {
                     if let Some(e) = entity {
                         if let Some(mut entry) = app.world.entry(e) {
                             entry.add_component(chunk);
-                            log::trace!("Updated mesh for chunk {:?}", chunk_pos);
+                            log::trace!("Updated mesh for chunk {chunk_pos:?}");
                         }
                     } else {
                         // New chunk
                         app.world.push((chunk,));
-                        log::trace!("Created new mesh for chunk {:?}", chunk_pos);
+                        log::trace!("Created new mesh for chunk {chunk_pos:?}");
                     }
                 }
             }
@@ -352,7 +344,10 @@ impl EventProcessor {
                 let forward = -view_matrix.inverse().col(2).truncate().normalize();
 
                 // Raycast
-                let grid_opt = app.light_system.as_mut().map(|ls| ls.grid_mut());
+                let grid_opt = app
+                    .light_system
+                    .as_mut()
+                    .map(moho_core::voxel::LightSystem::grid_mut);
 
                 if let Some(grid) = grid_opt {
                     // Use raycast utility
@@ -377,7 +372,7 @@ impl EventProcessor {
                         camera_pos + forward * SPAWN_FALLBACK_DISTANCE
                     };
 
-                    log::info!("Spawning {} at {:?}", entity_type, spawn_pos);
+                    log::info!("Spawning {entity_type} at {spawn_pos:?}");
 
                     match entity_type.to_lowercase().as_str() {
                         "torch" => {
@@ -437,7 +432,7 @@ impl EventProcessor {
                                     DEFAULT_POINT_LIGHT_INTENSITY,
                                     DEFAULT_POINT_LIGHT_RANGE,
                                 );
-                                log::info!("Added point light at {:?}", spawn_pos);
+                                log::info!("Added point light at {spawn_pos:?}");
 
                                 // Spawn a small gizmo sphere so the light origin is
                                 // visible in world space. Emissive material bypasses
@@ -473,7 +468,7 @@ impl EventProcessor {
                                 let handle = pw.add_dynamic_cuboid(spawn_pos, 0.5, 0.5, 0.5);
                                 app.physics.test_bodies.push((handle, entity));
                             }
-                            log::info!("Spawned cube at {:?}", spawn_pos);
+                            log::info!("Spawned cube at {spawn_pos:?}");
                         }
                         "sphere" => {
                             // Spawn sphere actor
@@ -493,20 +488,20 @@ impl EventProcessor {
                                 let handle = pw.add_dynamic_sphere(spawn_pos, 0.5);
                                 app.physics.test_bodies.push((handle, entity));
                             }
-                            log::info!("Spawned sphere at {:?}", spawn_pos);
+                            log::info!("Spawned sphere at {spawn_pos:?}");
                         }
                         _ => {
-                            log::warn!("Unknown entity type: {}", entity_type);
+                            log::warn!("Unknown entity type: {entity_type}");
                         }
                     }
                 }
             }
             DebugEvent::ToggleGodMode { enabled } => {
-                log::info!("God mode toggled: {}", enabled);
+                log::info!("God mode toggled: {enabled}");
                 // TODO: Implement god mode logic
             }
             DebugEvent::ToggleCollision { enabled } => {
-                log::info!("Collision toggled: {}", enabled);
+                log::info!("Collision toggled: {enabled}");
                 // enabled=false means noclip ON (collision disabled)
                 if let Some(ref mut pw) = app.physics.world {
                     pw.noclip = !enabled;
@@ -514,7 +509,7 @@ impl EventProcessor {
                 }
             }
             DebugEvent::SetShadowQuality { quality } => {
-                log::info!("Setting shadow quality to: {}", quality);
+                log::info!("Setting shadow quality to: {quality}");
                 if let Some(wr) = &mut app.window_renderer {
                     wr.renderer.set_shadow_quality(quality as u8);
 
@@ -524,7 +519,7 @@ impl EventProcessor {
                 }
             }
             DebugEvent::SetSsaoQuality { quality } => {
-                log::info!("Setting SSAO quality to: {}", quality);
+                log::info!("Setting SSAO quality to: {quality}");
                 if let Some(wr) = &mut app.window_renderer {
                     wr.renderer.set_ssao_quality(quality as u8);
 
@@ -559,7 +554,7 @@ pub(crate) fn lod_for_chunk(chunk_pos: glam::IVec3, player_chunk: glam::IVec3) -
     let dx = (chunk_pos.x - player_chunk.x).abs();
     let dz = (chunk_pos.z - player_chunk.z).abs();
     let dist = dx.max(dz);
-    if dist < 4 { 0 } else { 1 }
+    u8::from(dist >= 4)
 }
 
 /// A `chunk_pos` should map to at most one `VoxelChunk` entity — if streaming
@@ -578,8 +573,7 @@ fn debug_assert_chunk_entity_unique(world: &legion::World, chunk_pos: glam::IVec
                 .count()
                 <= 1
         },
-        "chunk {:?} has more than one VoxelChunk entity — a stale mesh may be rendering alongside the fresh one",
-        chunk_pos
+        "chunk {chunk_pos:?} has more than one VoxelChunk entity — a stale mesh may be rendering alongside the fresh one"
     );
 }
 

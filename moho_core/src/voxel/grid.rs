@@ -428,7 +428,10 @@ impl VoxelGrid {
 
     /// Total number of non-air blocks across all chunks.
     pub fn block_count(&self) -> usize {
-        self.chunks.values().map(|c| c.block_count()).sum()
+        self.chunks
+            .values()
+            .map(paletted::PalettedChunk::block_count)
+            .sum()
     }
 
     /// Iterator over world positions of all non-air blocks.
@@ -523,7 +526,9 @@ impl VoxelGrid {
 
     /// Whether the chunk at `pos` has been modified since the last save.
     pub fn chunk_is_modified(&self, pos: IVec3) -> bool {
-        self.chunks.get(&pos).is_some_and(|c| c.is_modified())
+        self.chunks
+            .get(&pos)
+            .is_some_and(paletted::PalettedChunk::is_modified)
     }
 
     /// Clear the modified flag on the chunk at `pos`.

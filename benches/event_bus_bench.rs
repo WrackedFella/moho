@@ -42,7 +42,7 @@ fn bench_publish_single_subscriber(c: &mut Criterion) {
 fn bench_publish_multiple_subscribers(c: &mut Criterion) {
     let mut group = c.benchmark_group("publish_multi_subscriber");
 
-    for subscriber_count in [1, 5, 10, 20].iter() {
+    for subscriber_count in &[1, 5, 10, 20] {
         let bus = EventBus::new();
 
         for _ in 0..*subscriber_count {
@@ -93,7 +93,7 @@ fn bench_high_frequency_events(c: &mut Criterion) {
 fn bench_concurrent_publishing(c: &mut Criterion) {
     let mut group = c.benchmark_group("concurrent_publishing");
 
-    for thread_count in [2, 4, 8].iter() {
+    for thread_count in &[2, 4, 8] {
         group.bench_with_input(
             BenchmarkId::from_parameter(thread_count),
             thread_count,

@@ -42,8 +42,8 @@ pub fn auto_save_on_shutdown(app: &mut crate::App) -> Result<(), Box<dyn std::er
         .unwrap_or_default();
     crate::save::write_scene_with_metadata(&save_path, &scene_bytes, &spec, &block_records)?;
     log::info!(
-        "Auto-saved scene (envelope) to {:?} (spec={:?}, {} blocks)",
-        save_path,
+        "Auto-saved scene (envelope) to {} (spec={:?}, {} blocks)",
+        save_path.display(),
         spec.name,
         block_records.len()
     );

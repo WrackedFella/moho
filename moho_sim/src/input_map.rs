@@ -31,8 +31,8 @@ pub fn map_to_player_inputs(prev: &ContinuousState, curr: &ContinuousState) -> V
     // Directional movement: produce a single integer move representing the
     // net direction during this tick. This maps held keys into one Move per
     // tick which is simpler for deterministic simulation.
-    let dx = (curr.right as i32) - (curr.left as i32);
-    let dy = (curr.down as i32) - (curr.up as i32);
+    let dx = i32::from(curr.right) - i32::from(curr.left);
+    let dy = i32::from(curr.down) - i32::from(curr.up);
     if dx != 0 || dy != 0 {
         out.push(PlayerInput::Move { dx, dy });
     }

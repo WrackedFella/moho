@@ -61,6 +61,8 @@ impl Console {
     ///
     /// * `ctx` - The egui context to render into
     pub fn render(&mut self, ctx: &egui::Context) -> ConsoleAction {
+        const CONSOLE_HEIGHT: f32 = 300.0;
+        const CONSOLE_MARGIN: f32 = 8.0;
         let mut action = ConsoleAction::None;
 
         // Check for backtick key press BEFORE egui processes input
@@ -75,9 +77,7 @@ impl Console {
 
         // Render the console as a Foreground-order Area so it always paints on top
         // of HUD elements (which use the default Middle order).
-        const CONSOLE_HEIGHT: f32 = 300.0;
-        const CONSOLE_MARGIN: f32 = 8.0;
-        let screen_rect = ctx.input(|i| i.viewport_rect());
+        let screen_rect = ctx.input(egui::InputState::viewport_rect);
         let y_pos = screen_rect.max.y - CONSOLE_HEIGHT;
 
         let frame = egui::Frame::new()
@@ -182,7 +182,7 @@ impl Console {
         }
 
         // Echo command to output
-        self.output.add_line(format!("> {}", command));
+        self.output.add_line(format!("> {command}"));
 
         // Add to history
         self.output.add_to_history(command.clone());

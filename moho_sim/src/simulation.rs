@@ -112,7 +112,7 @@ impl SimulationController {
         }
         let ver = u16::from_le_bytes([bytes[4], bytes[5]]);
         if ver != SNAP_VERSION {
-            return Err(format!("unsupported snapshot version: {}", ver));
+            return Err(format!("unsupported snapshot version: {ver}"));
         }
         let payload_len = u32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
         let checksum = u32::from_le_bytes([bytes[10], bytes[11], bytes[12], bytes[13]]);
@@ -128,7 +128,7 @@ impl SimulationController {
         }
         let (ss, _len): (SimulationSnapshot, usize) =
             bincode::decode_from_slice(payload, bincode::config::standard())
-                .map_err(|e| format!("deser error: {}", e))?;
+                .map_err(|e| format!("deser error: {e}"))?;
         SimulationController::try_from(ss)
     }
 }

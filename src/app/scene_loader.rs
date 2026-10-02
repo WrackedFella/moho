@@ -18,11 +18,11 @@ pub fn load_scene(
     app: &mut crate::App,
     path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    log::info!("Loading scene from: {:?}", path);
+    log::info!("Loading scene from: {}", path.display());
 
     // Check if the file exists
     if !path.exists() {
-        return Err(format!("Scene file does not exist: {:?}", path).into());
+        return Err(format!("Scene file does not exist: {}", path.display()).into());
     }
 
     // Clear the existing world
@@ -34,14 +34,14 @@ pub fn load_scene(
         // Remember the WorldSpec from the loaded file so autosaves and
         // subsequent writes preserve the original metadata.
         app.generation.last_spec = Some(spec.clone());
-        log::info!("Loaded WorldSpec from save: {:?}", spec);
+        log::info!("Loaded WorldSpec from save: {spec:?}");
         // Restore time of day from the persisted WorldSpec.
         app.simulation.set_time_of_day(spec.initial_time_of_day);
         let (camera_data, lights) =
             moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.world)?;
         log::info!(
-            "Scene loaded successfully from {:?}, {} lights",
-            path,
+            "Scene loaded successfully from {}, {} lights",
+            path.display(),
             lights.len()
         );
 
@@ -109,12 +109,7 @@ pub fn load_scene(
             // orientation isn't immediately overridden by
             // accumulated mouse deltas or smoothing state.
             app.input.system.clear_pending_input();
-            log::info!(
-                "Restored camera position: {:?}, yaw: {:.2}, pitch: {:.2}",
-                position,
-                yaw,
-                pitch
-            );
+            log::info!("Restored camera position: {position:?}, yaw: {yaw:.2}, pitch: {pitch:.2}");
         } else {
             log::info!("No camera data found in scene file, keeping current position");
         }

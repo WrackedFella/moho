@@ -261,12 +261,9 @@ impl<'a> Renderer<'a> {
     }
 
     fn recreate_camera_bind_group(&mut self) {
-        let mat_buffer = match &self.material_buffer {
-            Some(b) => b,
-            None => {
-                log::error!("material buffer missing when creating camera bind group");
-                return;
-            }
+        let Some(mat_buffer) = &self.material_buffer else {
+            log::error!("material buffer missing when creating camera bind group");
+            return;
         };
 
         let (ssao_view, ssao_sampler) = if let Some(ssao) = &self.ssao {
@@ -462,10 +459,7 @@ impl<'a> Renderer<'a> {
         }
 
         let ibuf = self.instance_buffer.as_ref()?;
-        if !instances_gpu.is_empty() {
-            self.queue
-                .write_buffer(ibuf, 0, bytemuck::cast_slice(instances_gpu));
-        } else {
+        if instances_gpu.is_empty() {
             let zero = GpuInstance {
                 model: [[0.0; 4]; 4],
                 material: 0,
@@ -474,6 +468,9 @@ impl<'a> Renderer<'a> {
             };
             self.queue
                 .write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
+        } else {
+            self.queue
+                .write_buffer(ibuf, 0, bytemuck::cast_slice(instances_gpu));
         }
 
         Some(ibuf)

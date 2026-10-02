@@ -524,14 +524,14 @@ impl BlockModifier {
     pub fn queue_terrain_generation(&mut self, chunk_pos: IVec3) -> Option<JobId> {
         self.chunk_states
             .get_mut(&chunk_pos)
-            .and_then(|state| state.queue_terrain())
+            .and_then(super::state::ChunkState::queue_terrain)
     }
 
     /// Queue a chunk for structure mesh generation.
     pub fn queue_structure_generation(&mut self, chunk_pos: IVec3) -> Option<JobId> {
         self.chunk_states
             .get_mut(&chunk_pos)
-            .and_then(|state| state.queue_structure())
+            .and_then(super::state::ChunkState::queue_structure)
     }
 
     /// Consume the VoxelGrid out of this modifier (for when you need ownership back).

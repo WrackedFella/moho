@@ -34,7 +34,7 @@ impl ConsoleOutput {
         let mut output = VecDeque::with_capacity(MAX_OUTPUT_LINES);
         output.push_back("Debug Console".to_string());
         output.push_back("Type 'help' for available commands".to_string());
-        output.push_back("".to_string());
+        output.push_back(String::new());
 
         Self {
             output,
@@ -160,7 +160,7 @@ mod tests {
 
         // Add more than MAX_OUTPUT_LINES
         for i in 0..MAX_OUTPUT_LINES + 10 {
-            output.add_line(format!("Line {}", i));
+            output.add_line(format!("Line {i}"));
         }
 
         assert_eq!(output.lines().len(), MAX_OUTPUT_LINES);
@@ -230,7 +230,7 @@ mod tests {
 
         // Add more than MAX_HISTORY commands
         for i in 0..MAX_HISTORY + 10 {
-            output.add_to_history(format!("cmd{}", i));
+            output.add_to_history(format!("cmd{i}"));
         }
 
         assert_eq!(output.history_len(), MAX_HISTORY);

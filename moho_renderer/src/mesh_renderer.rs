@@ -84,14 +84,11 @@ impl MeshRenderer {
         }
 
         // Upload instance data
-        let buf = match buffer.as_ref() {
-            Some(b) => b,
-            None => return false,
+        let Some(buf) = buffer.as_ref() else {
+            return false;
         };
 
-        if !instances.is_empty() {
-            queue.write_buffer(buf, 0, bytemuck::cast_slice(instances));
-        } else {
+        if instances.is_empty() {
             // Upload zero instance to keep buffer valid
             let zero = GpuInstance {
                 model: [[0.0; 4]; 4],
@@ -100,6 +97,8 @@ impl MeshRenderer {
                 padding: [0, 0],
             };
             queue.write_buffer(buf, 0, bytemuck::cast_slice(&[zero]));
+        } else {
+            queue.write_buffer(buf, 0, bytemuck::cast_slice(instances));
         }
 
         true
