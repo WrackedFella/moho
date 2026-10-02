@@ -97,7 +97,10 @@ pub struct ProgressState {
 // is created, used, and dropped on the main thread. No EguiAdapter field is ever
 // accessed concurrently — the Mutex provides the needed exclusion.
 // This impl is required because `dyn Modal` lacks a `Send` bound.
+#[allow(unsafe_code)]
 unsafe impl Send for EguiAdapter {}
+// SAFETY: as above; shared references are only handed out through the Mutex guard.
+#[allow(unsafe_code)]
 unsafe impl Sync for EguiAdapter {}
 
 impl EguiAdapter {

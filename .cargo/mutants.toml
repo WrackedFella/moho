@@ -1,0 +1,9 @@
+test_tool = "nextest"
+# GPU, windowing and egui-adapter code has no headless tests, so every mutant
+# there would read as missed without telling us anything.
+exclude_globs = [
+    "moho_renderer/**",
+    "moho_ui/src/adapter/**",
+    "src/main.rs",
+    "src/app/renderer_setup.rs",
+]

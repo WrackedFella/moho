@@ -2,6 +2,7 @@
 name = "moho_renderer"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [dependencies]
 moho_core = { path = "../moho_core" }
@@ -23,3 +24,6 @@ tempfile = "3.5"
 
 [features]
 wgpu-experimental = []
+
+[lints]
+workspace = true

@@ -66,6 +66,7 @@ pub fn execute_render_pass(
     // `view` which both outlive this function call. The transmute only erases the borrow
     // lifetime on the stack-local `render_pass`; the actual wgpu objects it points to
     // remain valid for the duration of `renderer.render(...)`.
+    #[allow(unsafe_code)]
     let render_pass_static: &mut wgpu::RenderPass<'static> =
         unsafe { std::mem::transmute(&mut render_pass) };
     renderer.render(render_pass_static, clipped_primitives, screen_descriptor);

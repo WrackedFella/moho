@@ -2,6 +2,7 @@
 name = "moho_sim"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [lib]
 name = "moho_sim"
@@ -16,3 +17,6 @@ crc32fast = { workspace = true }
 
 [features]
 default = []
+
+[lints]
+workspace = true
