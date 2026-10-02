@@ -207,6 +207,9 @@ impl EventProcessor {
             InputEvent::MineRequested => {
                 self.handle_mine_requested(app);
             }
+            InputEvent::SlotSelected { slot } => {
+                app.pawn.select_slot(slot);
+            }
         }
     }
 
@@ -223,6 +226,11 @@ impl EventProcessor {
         let (view_matrix, _, _) = app.camera;
         let camera_pos = view_matrix.inverse().col(3).truncate();
         let forward = -view_matrix.inverse().col(2).truncate().normalize();
+
+        if app.pawn.equipped_tool.is_none() {
+            log::debug!("Mine attempt blocked: no tool equipped");
+            return;
+        }
 
         let Some(light_system) = app.light_system.as_mut() else {
             return;
@@ -251,16 +259,14 @@ impl EventProcessor {
             structure_dirty: true,
         });
 
-        // Temporary until 3.1b puts the inventory on screen.
         match outcome.yield_ {
-            Some(y) => log::info!(
-                "Mined {:?} at {:.1}m → resource {} (inventory: {})",
+            Some(y) => log::debug!(
+                "Mined {:?} at {:.1}m → resource {}",
                 outcome.block_pos,
                 outcome.distance,
-                y.resource_id,
-                app.pawn.inventory.count(y.resource_id)
+                y.resource_id
             ),
-            None => log::info!(
+            None => log::debug!(
                 "Mined {:?} at {:.1}m (no resource)",
                 outcome.block_pos,
                 outcome.distance

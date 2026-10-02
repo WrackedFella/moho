@@ -6,4 +6,8 @@ pub enum InputEvent {
     },
     /// Left mouse button pressed while not captured by UI — a mine attempt.
     MineRequested,
+    /// A hotbar slot (0-based) was selected via number key, not captured by UI.
+    SlotSelected {
+        slot: usize,
+    },
 }

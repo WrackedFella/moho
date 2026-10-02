@@ -389,5 +389,4 @@ mod tests {
         let err = PipelineInitError::CsmMatrixSize("csm error".to_string());
         assert_eq!(format!("{}", err), "CSM matrix size error: csm error");
     }
-
 }

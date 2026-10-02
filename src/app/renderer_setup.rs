@@ -187,6 +187,46 @@ pub fn setup_renderer_and_ui(
                     .send(crate::input_event::InputEvent::MineRequested)
                     .is_ok()
             });
+
+        // Register a low-priority subscriber for hotbar slot selection:
+        // number keys 1-8 (not captured by UI) select the corresponding
+        // 0-based slot. Slot 0 (key "1") is the reserved tool slot.
+        let ui_adapter_for_slots = ui_adapter.clone();
+        let slot_tx = tx.clone();
+        app.dispatcher
+            .register(0, move |event: &winit::event::WindowEvent| {
+                let winit::event::WindowEvent::KeyboardInput {
+                    event:
+                        winit::event::KeyEvent {
+                            physical_key: winit::keyboard::PhysicalKey::Code(keycode),
+                            state: winit::event::ElementState::Pressed,
+                            repeat: false,
+                            ..
+                        },
+                    ..
+                } = event
+                else {
+                    return false;
+                };
+                let slot = match keycode {
+                    winit::keyboard::KeyCode::Digit1 => 0,
+                    winit::keyboard::KeyCode::Digit2 => 1,
+                    winit::keyboard::KeyCode::Digit3 => 2,
+                    winit::keyboard::KeyCode::Digit4 => 3,
+                    winit::keyboard::KeyCode::Digit5 => 4,
+                    winit::keyboard::KeyCode::Digit6 => 5,
+                    winit::keyboard::KeyCode::Digit7 => 6,
+                    winit::keyboard::KeyCode::Digit8 => 7,
+                    _ => return false,
+                };
+                if ui_is_capturing_input(&ui_adapter_for_slots) {
+                    return false;
+                }
+
+                slot_tx
+                    .send(crate::input_event::InputEvent::SlotSelected { slot })
+                    .is_ok()
+            });
     }
 
     // Store everything together in the WindowRenderer

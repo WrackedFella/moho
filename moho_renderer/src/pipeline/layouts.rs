@@ -268,4 +268,3 @@ pub fn create_skybox_pipeline_layout(
         immediate_size: 0,
     })
 }
-

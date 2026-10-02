@@ -40,6 +40,22 @@ pub struct HudData {
 
     /// XZ coordinates of every currently-loaded chunk, for the chunk debug minimap.
     pub loaded_chunk_xz: Vec<[i32; 2]>,
+
+    /// Hotbar contents as `(resource_id, count)` pairs, denormalized from the
+    /// player pawn's inventory. Rendered starting at hotbar slot 1 — slot 0
+    /// is reserved for the equipped tool (`equipped_tool_label`). Deliberately
+    /// primitive — `moho_ui` must not depend on `moho_game`'s
+    /// `Inventory`/`Pawn` types; the binary performs the `Pawn::inventory` →
+    /// this shape mapping at its `HudData` construction site.
+    pub hotbar: Vec<(u32, u32)>,
+
+    /// Label for the tool equipped in hotbar slot 0, if any (e.g. "Pickaxe").
+    /// `None` means no tool is currently equipped — slot 0 renders empty and
+    /// mining is gated off game-side.
+    pub equipped_tool_label: Option<String>,
+
+    /// Which hotbar slot (`0..8`) is currently selected, for the highlight.
+    pub selected_slot: usize,
 }
 
 impl Default for HudData {
@@ -56,6 +72,9 @@ impl Default for HudData {
             player_health: 1.0,
             player_stamina: 1.0,
             loaded_chunk_xz: Vec::new(),
+            hotbar: Vec::new(),
+            equipped_tool_label: Some("Pickaxe".to_string()),
+            selected_slot: 0,
         }
     }
 }

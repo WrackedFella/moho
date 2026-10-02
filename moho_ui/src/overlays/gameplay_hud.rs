@@ -33,7 +33,12 @@ impl Overlay for GameplayHud {
 
         render_compass(ctx, data.camera_yaw);
         render_status_bars(ctx, data.player_health, data.player_stamina);
-        render_hotbar(ctx);
+        render_hotbar(
+            ctx,
+            data.equipped_tool_label.as_deref(),
+            &data.hotbar,
+            data.selected_slot,
+        );
     }
 
     fn is_visible(&self) -> bool {
@@ -165,7 +170,7 @@ fn paint_bar(ui: &mut egui::Ui, label: &str, fraction: f32, fill_color: egui::Co
         painter.rect_stroke(
             rect,
             BAR_ROUNDING,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(160)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(160)),
             egui::StrokeKind::Outside,
         );
     });
@@ -174,11 +179,20 @@ fn paint_bar(ui: &mut egui::Ui, label: &str, fraction: f32, fill_color: egui::Co
 // ── Hotbar ────────────────────────────────────────────────────────────────────
 
 const HOTBAR_SLOTS: usize = 8;
+/// Slot 0 is reserved for the equipped tool — matches `moho_game::pawn::TOOL_SLOT`
+/// (not shared directly; `moho_ui` stays decoupled from `moho_game`, the two
+/// just agree in value).
+const TOOL_SLOT: usize = 0;
 const SLOT_SIZE: f32 = 48.0;
 const SLOT_GAP: f32 = 4.0;
 const SLOT_ROUNDING: f32 = 6.0;
 
-fn render_hotbar(ctx: &egui::Context) {
+fn render_hotbar(
+    ctx: &egui::Context,
+    tool_label: Option<&str>,
+    hotbar: &[(u32, u32)],
+    selected_slot: usize,
+) {
     let total_width = HOTBAR_SLOTS as f32 * SLOT_SIZE + (HOTBAR_SLOTS - 1) as f32 * SLOT_GAP;
 
     egui::Area::new("gameplay_hud_hotbar".into())
@@ -203,11 +217,16 @@ fn render_hotbar(ctx: &egui::Context) {
                     egui::Color32::from_rgba_premultiplied(0, 0, 0, 140),
                 );
 
-                // Slot border
+                // Slot border — highlighted (brighter, thicker) when selected.
+                let (border_width, border_color) = if i == selected_slot {
+                    (3.0_f32, egui::Color32::from_rgb(255, 210, 80))
+                } else {
+                    (2.0_f32, egui::Color32::from_gray(160))
+                };
                 painter.rect_stroke(
                     slot_rect,
                     SLOT_ROUNDING,
-                    egui::Stroke::new(2.0, egui::Color32::from_gray(160)),
+                    egui::Stroke::new(border_width, border_color),
                     egui::StrokeKind::Outside,
                 );
 
@@ -221,6 +240,39 @@ fn render_hotbar(ctx: &egui::Context) {
                     egui::FontId::proportional(10.0),
                     egui::Color32::from_gray(180),
                 );
+
+                if i == TOOL_SLOT {
+                    // Reserved tool slot: shows the equipped tool's label, if any.
+                    if let Some(label) = tool_label {
+                        painter.text(
+                            slot_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            label,
+                            egui::FontId::proportional(10.0),
+                            egui::Color32::WHITE,
+                        );
+                    }
+                    continue;
+                }
+
+                // Resource slots start at hotbar index 1 (slot 0 is the tool).
+                if let Some((resource_id, count)) = hotbar.get(i - 1) {
+                    painter.text(
+                        slot_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        format!("R{resource_id}"),
+                        egui::FontId::proportional(11.0),
+                        egui::Color32::WHITE,
+                    );
+                    let count_pos = egui::pos2(slot_rect.max.x - 3.0, slot_rect.max.y - 13.0);
+                    painter.text(
+                        count_pos,
+                        egui::Align2::RIGHT_TOP,
+                        format!("{count}"),
+                        egui::FontId::proportional(10.0),
+                        egui::Color32::from_gray(220),
+                    );
+                }
             }
         });
 }
@@ -271,4 +323,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn render_hotbar_with_more_entries_than_slots_does_not_panic() {
+        // Regression guard: `render_hotbar` indexes into the 7 resource slots
+        // (HOTBAR_SLOTS - 1, since slot 0 is reserved for the tool) via
+        // `hotbar.get(i - 1)` — a hotbar with more populated resources than
+        // slots must not panic or index out of bounds.
+        let hotbar: Vec<(u32, u32)> = (0..HOTBAR_SLOTS as u32 + 3)
+            .map(|id| (id, id + 1))
+            .collect();
+        let ctx = egui::Context::default();
+
+        let _ = ctx.run(Default::default(), |ctx| {
+            render_hotbar(ctx, Some("Pickaxe"), &hotbar, 0);
+        });
+    }
+
+    #[test]
+    fn render_hotbar_with_empty_inventory_does_not_panic() {
+        let ctx = egui::Context::default();
+
+        let _ = ctx.run(Default::default(), |ctx| {
+            render_hotbar(ctx, None, &[], 0);
+        });
+    }
+
+    #[test]
+    fn render_hotbar_with_out_of_range_selected_slot_does_not_panic() {
+        // selected_slot is only ever compared (`i == selected_slot`), never
+        // indexed with — an out-of-range value should just mean "nothing
+        // highlighted," not a panic.
+        let ctx = egui::Context::default();
+
+        let _ = ctx.run(Default::default(), |ctx| {
+            render_hotbar(ctx, Some("Pickaxe"), &[(1, 2)], 99);
+        });
+    }
 }

@@ -394,5 +394,4 @@ mod tests {
         let affected = light_system.emit_dirty_events();
         assert_eq!(affected, 0);
     }
-
 }

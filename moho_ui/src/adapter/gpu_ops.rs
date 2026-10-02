@@ -77,4 +77,3 @@ pub fn free_textures(renderer: &mut egui_wgpu::Renderer, texture_ids: &[egui::Te
         renderer.free_texture(id);
     }
 }
-

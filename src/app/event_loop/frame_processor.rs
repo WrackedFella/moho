@@ -418,6 +418,13 @@ impl FrameProcessor {
             })
             .unwrap_or_default();
 
+        let mut hotbar: Vec<(u32, u32)> = app.pawn.inventory.iter().collect();
+        hotbar.sort_by_key(|(resource_id, _)| *resource_id);
+
+        // Only one tool exists today (`moho_game::tools::STARTING_TOOL`); the
+        // label is a fixed string until a real tool-name lookup exists.
+        let equipped_tool_label = app.pawn.equipped_tool.map(|_| "Pickaxe".to_string());
+
         let data = moho_ui::overlays::HudData {
             player_position: [pos.x, pos.y, pos.z],
             chunk_position: chunk_pos,
@@ -430,6 +437,9 @@ impl FrameProcessor {
             player_health: 1.0,
             player_stamina: 1.0,
             loaded_chunk_xz,
+            hotbar,
+            equipped_tool_label,
+            selected_slot: app.pawn.selected_slot,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {

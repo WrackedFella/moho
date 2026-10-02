@@ -209,9 +209,10 @@ mod tests {
                 MenuAction::LoadScene(std::path::PathBuf::from("test.bin")),
                 |e| matches!(e, CoreUiEvent::LoadSceneRequested { path } if path == std::path::Path::new("test.bin")),
             ),
-            (MenuAction::NewWorld, |e| {
-                matches!(e, CoreUiEvent::MenuShown { name } if name == "new_world")
-            }),
+            (
+                MenuAction::NewWorld,
+                |e| matches!(e, CoreUiEvent::MenuShown { name } if name == "new_world"),
+            ),
             (
                 MenuAction::GenerateWorld(WorldSpec {
                     name: "Test World".to_string(),
@@ -221,14 +222,24 @@ mod tests {
                     night_length_seconds: 600.0,
                     initial_time_of_day: 6.0,
                 }),
-                |e| matches!(e, CoreUiEvent::NewWorldRequested { seed: Some(12345), size: 16, .. }),
+                |e| {
+                    matches!(
+                        e,
+                        CoreUiEvent::NewWorldRequested {
+                            seed: Some(12345),
+                            size: 16,
+                            ..
+                        }
+                    )
+                },
             ),
             (MenuAction::Exit, |e| {
                 matches!(e, CoreUiEvent::ExitRequested)
             }),
-            (MenuAction::ShowMenu("settings".to_string()), |e| {
-                matches!(e, CoreUiEvent::MenuShown { name } if name == "settings")
-            }),
+            (
+                MenuAction::ShowMenu("settings".to_string()),
+                |e| matches!(e, CoreUiEvent::MenuShown { name } if name == "settings"),
+            ),
         ];
 
         for (action, matches_expected) in cases {
