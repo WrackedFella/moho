@@ -24,6 +24,58 @@ in `engine/`.
 `ENG-F3-01`, `FPS-F1`. IDs are unique across the repo and never reused; use
 them verbatim in issue titles and branch names, never in code comments.
 
+## Features first
+
+Planning produces a feature before any cards. A feature is the unit of
+planning and the gate for progress; cards are how it gets built.
+
+1. Draft `_feature.md` as `proposed`: the outcome and its exit criteria.
+2. The user approves scope and exit criteria; status becomes `approved`.
+3. Only then decompose into cards. A card exists only under an `approved`
+   feature, and only for work inside that feature's scope. Work that falls
+   outside it is a new feature proposal, not a stray card.
+4. The feature is `done` when its exit criteria are verified, not merely when
+   its cards are done. Missing coverage becomes a new card.
+
+Features written before this rule lack exit criteria and scope; add them the
+next time the feature is planned, not in a sweep.
+
+## Feature lifecycle
+
+| Status | Meaning |
+|---|---|
+| `proposed` | Drafted; scope and exit criteria under review |
+| `approved` | Scope agreed; may be decomposed into cards |
+| `in progress` | At least one card started |
+| `done` | Every exit criterion verified |
+| `parked` / `deferred` | As for cards |
+
+## Feature template
+
+```markdown
+# <LINE>-F<n> — <observable outcome>
+
+**Status:** proposed
+**Issue:** #<n>            <!-- parent issue, once approved -->
+
+## Summary
+One paragraph: what the player/caller can do when this ships, and why it matters now.
+
+## Exit criteria
+- Observable, verifiable conditions that close the feature (Gherkin welcome
+  for the headline behaviors). These are the gate.
+
+## Scope
+- In: ...
+- Out: ...   <!-- what a reader might assume is included but isn't -->
+
+## Items
+| Item | Status |
+|---|---|
+
+## Notes                      <!-- cross-item constraints only -->
+```
+
 ## Card lifecycle
 
 | Status | Meaning | Required sections |
@@ -90,8 +142,8 @@ be asserted, so those go under Verification instead.
 
 Terse; a card is not a design doc. Cut narration, draft history, and
 file:line citations (they rot; name types and modules instead). A card over
-~100 lines is two cards. Features (`_feature.md`) hold a summary, an item
-table with status, and notes only for cross-item constraints.
+~100 lines is two cards. A feature stays a gate, not a design doc: summary,
+exit criteria, scope and an item table.
 
 Name features and cards after the behavior delivered ("Hotbar displays mined
 resources"), not the component touched. A feature is a vertical slice:
@@ -99,8 +151,10 @@ something observable when finished.
 
 ## Issues and branches
 
-- Issue title: `[<ID>] <card title>`; body links the card. The card holds the
-  spec; the issue is the queue and discussion thread.
+- Issue title: `[<ID>] <title>`; body links the `_feature.md` or card. Files
+  hold the spec; issues are the queue and discussion thread.
+- An `approved` feature gets a parent issue labeled `feature`; each card's
+  issue is a sub-issue of it, so feature progress is visible on GitHub.
 - Labels: `line:engine` | `line:strategy` | `line:fps`; `agent-ready` once
   the card is `ready`.
 - Branch from `dev`: `<type>/<ID>-<slug>` (e.g. `feat/SG-F1-04-pickup-feedback`);
