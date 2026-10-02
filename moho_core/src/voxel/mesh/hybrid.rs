@@ -97,12 +97,6 @@ impl HybridMeshGenerator {
 
     /// Generate mesh using Marching Cubes for smooth terrain
     fn generate_smooth_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
-        // Create density field from blocks
-        let density_field = Self::create_density_field_for_chunk(grid, chunk_pos, chunk_size);
-
-        // Generate mesh using Marching Cubes
-        let mut mesh = MarchingCubes::generate_mesh(&density_field, chunk_size as usize);
-
         // Transform vertices to world space.
         //
         // Two conventions have to be undone to land on the voxel grid, and
@@ -118,8 +112,14 @@ impl HybridMeshGenerator {
         // Marching cubes emits vertices in field-index space, so both fold into
         // a single `-0.5` alongside the chunk origin.
         const DENSITY_SAMPLE_TO_WORLD: f32 = -0.5;
+        // Create density field from blocks
+        let density_field = Self::create_density_field_for_chunk(grid, chunk_pos, chunk_size);
+
+        // Generate mesh using Marching Cubes
+        let mut mesh = MarchingCubes::generate_mesh(&density_field, chunk_size as usize);
+
         let base_pos = chunk_pos * chunk_size;
-        for vertex in mesh.vertices.iter_mut() {
+        for vertex in &mut mesh.vertices {
             vertex[0] += base_pos.x as f32 + DENSITY_SAMPLE_TO_WORLD;
             vertex[1] += base_pos.y as f32 + DENSITY_SAMPLE_TO_WORLD;
             vertex[2] += base_pos.z as f32 + DENSITY_SAMPLE_TO_WORLD;

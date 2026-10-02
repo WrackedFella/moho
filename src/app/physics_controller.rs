@@ -60,9 +60,8 @@ impl PhysicsController {
     ///
     /// Caller is responsible for updating ECS components from the returned list.
     pub fn step(&mut self, dt: f32) -> Vec<(legion::Entity, glam::Vec3)> {
-        let pw = match self.world.as_mut() {
-            Some(pw) => pw,
-            None => return Vec::new(),
+        let Some(pw) = self.world.as_mut() else {
+            return Vec::new();
         };
         pw.step(dt);
         self.test_bodies
@@ -78,9 +77,8 @@ impl PhysicsController {
         vertices: &[[f32; 3]],
         indices: &[u32],
     ) {
-        let pw = match self.world.as_mut() {
-            Some(pw) => pw,
-            None => return,
+        let Some(pw) = self.world.as_mut() else {
+            return;
         };
         if let Some(old) = self.chunk_colliders.remove(&chunk_pos) {
             pw.remove_collider(old);
@@ -103,9 +101,8 @@ impl PhysicsController {
         use legion::IntoQuery;
         use moho_core::voxel::VoxelChunk;
 
-        let pw = match self.world.as_mut() {
-            Some(pw) => pw,
-            None => return,
+        let Some(pw) = self.world.as_mut() else {
+            return;
         };
 
         let mut query = <&VoxelChunk>::query();
@@ -118,7 +115,7 @@ impl PhysicsController {
         for (pos, vertices, indices) in new_chunks {
             let handle = pw.add_terrain_trimesh(&vertices, &indices);
             self.chunk_colliders.insert(pos, handle);
-            log::debug!("Registered terrain collider for chunk {:?}", pos);
+            log::debug!("Registered terrain collider for chunk {pos:?}");
         }
     }
 }

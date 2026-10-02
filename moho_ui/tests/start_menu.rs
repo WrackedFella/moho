@@ -84,7 +84,7 @@ fn hit_test_helper_press_release_and_release_only() {
     .expect("expected an action");
     match action {
         MenuAction::ShowMenu(name) => assert_eq!(name, "settings"),
-        other => panic!("unexpected action: {:?}", other),
+        other => panic!("unexpected action: {other:?}"),
     }
 
     // Simulate a release-only on Continue
@@ -99,6 +99,6 @@ fn hit_test_helper_press_release_and_release_only() {
     .expect("expected an action");
     match action2 {
         MenuAction::LoadScene(p) => assert_eq!(p, PathBuf::from("saves/scene.bin")),
-        other => panic!("unexpected action: {:?}", other),
+        other => panic!("unexpected action: {other:?}"),
     }
 }

@@ -99,10 +99,10 @@ impl LightPropagator {
             .filter_map(|pos| {
                 let mat_id = grid.material_at(pos)?;
                 let emission = grid.material_registry.emission(mat_id);
-                if emission != [0, 0, 0] {
-                    Some((pos, emission))
-                } else {
+                if emission == [0, 0, 0] {
                     None
+                } else {
+                    Some((pos, emission))
                 }
             })
             .collect();
@@ -189,8 +189,7 @@ impl LightPropagator {
                 // Fully opaque blocks absorb — no propagation through them.
                 if grid
                     .material_at(nb_world)
-                    .map(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
-                    .unwrap_or(false)
+                    .is_some_and(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
                 {
                     continue;
                 }
@@ -228,8 +227,7 @@ impl LightPropagator {
                 let nb_world = world + off;
                 if grid
                     .material_at(nb_world)
-                    .map(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
-                    .unwrap_or(false)
+                    .is_some_and(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
                 {
                     continue;
                 }
@@ -261,8 +259,7 @@ impl LightPropagator {
                 let nb_world = world + off;
                 if grid
                     .material_at(nb_world)
-                    .map(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
-                    .unwrap_or(false)
+                    .is_some_and(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
                 {
                     continue;
                 }
@@ -623,8 +620,7 @@ mod tests {
                 assert_eq!(
                     grid.chunk_light(pc).unwrap().block_light_r[pi],
                     0,
-                    "arm block at {:?} should be dark",
-                    p
+                    "arm block at {p:?} should be dark"
                 );
             }
         }

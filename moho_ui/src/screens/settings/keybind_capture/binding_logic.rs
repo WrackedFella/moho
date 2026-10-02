@@ -32,9 +32,8 @@ impl KeybindCaptureHandler {
         F: FnMut(SettingsField, Binding),
     {
         // If not listening, ignore
-        let listen_id = match self.listening {
-            Some(id) => id,
-            None => return false,
+        let Some(listen_id) = self.listening else {
+            return false;
         };
 
         // Escape is reserved: cancel listening
@@ -73,12 +72,9 @@ impl KeybindCaptureHandler {
             true
         } else {
             // Apply binding using callback
-            let binding_id = match BindingId::from_listen_id(listen_id) {
-                Some(id) => id,
-                None => {
-                    self.listening = None;
-                    return true;
-                }
+            let Some(binding_id) = BindingId::from_listen_id(listen_id) else {
+                self.listening = None;
+                return true;
             };
             let field = binding_id.to_settings_field();
             on_binding_changed(field, binding);
@@ -158,20 +154,16 @@ impl KeybindCaptureHandler {
                         .show(pending, conflict_key_name, conflict_binding_desc);
                     self.last_mods = cur_mods;
                     return true;
-                } else {
-                    let binding_id = match BindingId::from_listen_id(listen_id) {
-                        Some(id) => id,
-                        None => {
-                            self.last_mods = cur_mods;
-                            return false;
-                        }
-                    };
-                    let field = binding_id.to_settings_field();
-                    on_binding_changed(field, binding);
-                    self.listening = None;
-                    self.last_mods = cur_mods;
-                    return true;
                 }
+                let Some(binding_id) = BindingId::from_listen_id(listen_id) else {
+                    self.last_mods = cur_mods;
+                    return false;
+                };
+                let field = binding_id.to_settings_field();
+                on_binding_changed(field, binding);
+                self.listening = None;
+                self.last_mods = cur_mods;
+                return true;
             }
             self.last_mods = cur_mods;
         }
@@ -193,9 +185,8 @@ impl KeybindCaptureHandler {
     {
         // Check for conflicts using registry
         let registry = BindingRegistry::from_prefs(staged_prefs);
-        let exclude_id = match BindingId::from_usize(listen_id) {
-            Some(id) => id,
-            None => return false, // Invalid listen_id
+        let Some(exclude_id) = BindingId::from_usize(listen_id) else {
+            return false;
         };
         let conflicting_id = registry.find_conflict(&binding, exclude_id);
 
@@ -214,9 +205,8 @@ impl KeybindCaptureHandler {
             true
         } else {
             // No conflict - apply binding directly
-            let binding_id = match BindingId::from_listen_id(listen_id) {
-                Some(id) => id,
-                None => return false, // Invalid listen_id
+            let Some(binding_id) = BindingId::from_listen_id(listen_id) else {
+                return false;
             };
             let field = binding_id.to_settings_field();
             on_binding_changed(field, binding);
@@ -241,9 +231,8 @@ impl KeybindCaptureHandler {
             return true; // Stop listening
         }
 
-        let listen_id = match self.listening {
-            Some(id) => id,
-            None => return false,
+        let Some(listen_id) = self.listening else {
+            return false;
         };
 
         let binding = create_binding_from_key(key, modifiers);

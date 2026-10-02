@@ -45,14 +45,14 @@ fn menu_action_types() {
 
     // These should all be different variants
     assert_ne!(
-        format!("{:?}", load_action),
+        format!("{load_action:?}"),
         format!("{:?}", new_world_action)
     );
     assert_ne!(
-        format!("{:?}", exit_action),
+        format!("{exit_action:?}"),
         format!("{:?}", show_menu_action)
     );
-    assert_ne!(format!("{:?}", close_action), format!("{:?}", none_action));
+    assert_ne!(format!("{close_action:?}"), format!("{:?}", none_action));
 }
 
 #[test]

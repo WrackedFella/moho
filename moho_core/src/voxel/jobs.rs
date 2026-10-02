@@ -216,7 +216,7 @@ impl MeshJobQueue {
             let generator_clone = Arc::clone(&generator);
 
             let handle = thread::Builder::new()
-                .name(format!("mesh-worker-{}", i))
+                .name(format!("mesh-worker-{i}"))
                 .spawn(move || {
                     Self::worker_loop(
                         state_clone,
@@ -231,7 +231,7 @@ impl MeshJobQueue {
             workers.push(handle);
         }
 
-        log::info!("MeshJobQueue started with {} workers", num_workers);
+        log::info!("MeshJobQueue started with {num_workers} workers");
 
         Self {
             state,
@@ -252,7 +252,7 @@ impl MeshJobQueue {
 
         // Check queue capacity
         if state.jobs.len() >= self.max_pending {
-            log::warn!("Mesh job queue full, rejecting job for {:?}", chunk_pos);
+            log::warn!("Mesh job queue full, rejecting job for {chunk_pos:?}");
             return None;
         }
 
@@ -269,12 +269,7 @@ impl MeshJobQueue {
         // Notify a worker
         self.condvar.notify_one();
 
-        log::debug!(
-            "Submitted mesh job {:?} for chunk {:?} (priority {})",
-            job_id,
-            chunk_pos,
-            priority
-        );
+        log::debug!("Submitted mesh job {job_id:?} for chunk {chunk_pos:?} (priority {priority})");
 
         Some(job_id)
     }
@@ -292,14 +287,14 @@ impl MeshJobQueue {
             state.jobs = jobs.into_iter().collect();
             state.cancellation_tokens.remove(&job_id);
 
-            log::debug!("Cancelled pending job {:?}", job_id);
+            log::debug!("Cancelled pending job {job_id:?}");
             return true;
         }
 
         // If job is in progress, set cancellation flag
         if let Some(token) = state.cancellation_tokens.get(&job_id) {
             token.cancel();
-            log::debug!("Requested cancellation of in-progress job {:?}", job_id);
+            log::debug!("Requested cancellation of in-progress job {job_id:?}");
             return true;
         }
 
@@ -392,9 +387,8 @@ impl MeshJobQueue {
                 }
 
                 // Pop the highest priority job
-                let job = match state_guard.jobs.pop() {
-                    Some(j) => j,
-                    None => continue,
+                let Some(job) = state_guard.jobs.pop() else {
+                    continue;
                 };
 
                 state_guard.pending_ids.remove(&job.id);
@@ -513,9 +507,7 @@ impl MeshJobQueueBuilder {
     pub fn build(self, grid: Arc<RwLock<VoxelGrid>>, generator: MeshGeneratorFn) -> MeshJobQueue {
         let num_workers = self.num_workers.unwrap_or_else(|| {
             // Default to num_cpus - 1, minimum 1
-            let cpus = std::thread::available_parallelism()
-                .map(|p| p.get())
-                .unwrap_or(4);
+            let cpus = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
             (cpus - 1).max(1)
         });
 

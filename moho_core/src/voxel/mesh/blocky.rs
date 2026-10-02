@@ -61,7 +61,7 @@ impl BlockyMeshGenerator {
         let (verts, normal) = direction.vertices_and_normal();
 
         // Add vertices
-        for vert in verts.iter() {
+        for vert in &verts {
             mesh.vertices.push(*vert);
         }
 
@@ -82,9 +82,9 @@ impl BlockyMeshGenerator {
         // Read per-voxel lighting from the new ChunkLight store.
         let rgb_raw = grid.block_light_rgb_at(position);
         let rgb_f = [
-            rgb_raw[0] as f32 / 15.0,
-            rgb_raw[1] as f32 / 15.0,
-            rgb_raw[2] as f32 / 15.0,
+            f32::from(rgb_raw[0]) / 15.0,
+            f32::from(rgb_raw[1]) / 15.0,
+            f32::from(rgb_raw[2]) / 15.0,
         ];
         let sky = if grid.sky_exposed_at(position) {
             1.0f32
@@ -422,16 +422,16 @@ impl FaceDirection {
         diagonal: IVec3,
     ) -> f32 {
         // Check if each neighbor position is occupied
-        let s1 = grid.is_solid_at(pos + side1) as u8;
-        let s2 = grid.is_solid_at(pos + side2) as u8;
-        let d = grid.is_solid_at(pos + diagonal) as u8;
+        let s1 = u8::from(grid.is_solid_at(pos + side1));
+        let s2 = u8::from(grid.is_solid_at(pos + side2));
+        let d = u8::from(grid.is_solid_at(pos + diagonal));
 
         // AO formula: darken based on number of occupied neighbors
         // If both sides are occupied, diagonal doesn't matter (maximum occlusion)
         let occlusion = if s1 == 1 && s2 == 1 {
             3.0 // Both sides block -> maximum darkening
         } else {
-            (s1 + s2 + d) as f32
+            f32::from(s1 + s2 + d)
         };
 
         // Convert to [0.0, 1.0] range with darkening factor

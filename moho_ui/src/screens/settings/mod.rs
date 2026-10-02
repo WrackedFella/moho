@@ -225,7 +225,7 @@ impl Default for SettingsMenu {
 
 // Implement UiComponent (base trait)
 impl UiComponent for SettingsMenu {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "settings"
     }
 
@@ -411,7 +411,10 @@ mod tests {
             menu.render(ctx);
         });
 
-        assert!(menu.state.get_staged_binding(SettingsField::KeyW) == Binding::new(0x205, 0));
+        assert_eq!(
+            menu.state.get_staged_binding(SettingsField::KeyW),
+            Binding::new(0x205, 0)
+        );
         assert!(!menu.keybind_capture.is_listening());
     }
 

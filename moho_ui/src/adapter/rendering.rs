@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn test_render_pause_overlay() {
         let ctx = egui::Context::default();
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             render_pause_overlay(ctx);
         });
         // Verify no panic
@@ -151,7 +151,7 @@ mod tests {
             actions: Vec::new(),
             hovered_key: None,
         };
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             result = render_game_state(ctx, &mut ui_state, GameState::Playing, &event_bus);
         });
         assert!(result.actions.is_empty());
@@ -167,7 +167,7 @@ mod tests {
             actions: Vec::new(),
             hovered_key: None,
         };
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             result = render_game_state(ctx, &mut ui_state, GameState::Paused, &event_bus);
         });
         assert!(result.actions.is_empty());

@@ -115,8 +115,7 @@ impl BindingRegistry {
         self.bindings
             .iter()
             .find(|(bid, _)| *bid == id)
-            .map(|(_, binding)| *binding)
-            .unwrap_or_else(|| Binding::new(0, 0))
+            .map_or_else(|| Binding::new(0, 0), |(_, binding)| *binding)
     }
 
     /// Iterate over all bindings in order.

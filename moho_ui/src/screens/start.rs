@@ -21,7 +21,7 @@ impl Default for StartMenu {
 
 // Implement UiComponent (base trait)
 impl UiComponent for StartMenu {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "start"
     }
 

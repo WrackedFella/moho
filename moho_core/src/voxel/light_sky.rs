@@ -29,11 +29,7 @@ pub fn recompute_sky_exposure(grid: &mut VoxelGrid, chunk_pos: IVec3) {
     if !grid.supports_lighting() {
         return;
     }
-    if !grid
-        .chunk_light(chunk_pos)
-        .map(|cl| cl.sky_dirty)
-        .unwrap_or(true)
-    {
+    if !grid.chunk_light(chunk_pos).is_none_or(|cl| cl.sky_dirty) {
         return;
     }
 
@@ -117,7 +113,7 @@ fn world_column_height(
         if local_max == i8::MIN {
             continue;
         }
-        let world_y = cp.y * CHUNK_SIZE + local_max as i32;
+        let world_y = cp.y * CHUNK_SIZE + i32::from(local_max);
         highest = Some(match highest {
             Some(h) => h.max(world_y),
             None => world_y,

@@ -165,7 +165,7 @@ mod tests {
         let mut menu = SettingsMenu::new();
 
         let mut items = Vec::new();
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             items = render_bottom_panel(ctx, &mut menu);
         });
 

@@ -90,11 +90,10 @@ impl VoxelChunk {
     /// - `lod == 0`: full 16³ hybrid mesh (Marching Cubes + blocky), same as `from_grid_hybrid`
     /// - `lod == 1`: coarse 8³ blocky mesh (1 sample per 2-block cell), lower quality, cheaper
     pub fn from_grid_lod(grid: &VoxelGrid, chunk_pos: IVec3, lod: u8) -> Self {
+        use super::mesh::HybridMeshGenerator;
         if lod == 0 {
             return Self::from_grid_hybrid(grid, chunk_pos);
         }
-
-        use super::mesh::HybridMeshGenerator;
 
         let chunk_size = grid.chunk_size();
         let mesh = HybridMeshGenerator::generate_coarse_mesh(grid, chunk_pos, chunk_size);
@@ -238,8 +237,7 @@ fn primary_material_id(blocks: &[BlockData]) -> u32 {
     counts
         .into_iter()
         .max_by_key(|&(_, c)| c)
-        .map(|(id, _)| id)
-        .unwrap_or(0)
+        .map_or(0, |(id, _)| id)
 }
 
 #[cfg(test)]

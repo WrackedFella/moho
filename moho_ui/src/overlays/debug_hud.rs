@@ -31,7 +31,7 @@ impl Default for DebugHud {
 }
 
 impl Overlay for DebugHud {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "debug"
     }
 

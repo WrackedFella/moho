@@ -45,9 +45,9 @@ pub enum AppInitError {
 impl std::fmt::Display for AppInitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AppInitError::EventBusSetup(msg) => write!(f, "Event bus setup failed: {}", msg),
-            AppInitError::CameraSetup(msg) => write!(f, "Camera setup failed: {}", msg),
-            AppInitError::InvalidConfig(msg) => write!(f, "Invalid configuration: {}", msg),
+            AppInitError::EventBusSetup(msg) => write!(f, "Event bus setup failed: {msg}"),
+            AppInitError::CameraSetup(msg) => write!(f, "Camera setup failed: {msg}"),
+            AppInitError::InvalidConfig(msg) => write!(f, "Invalid configuration: {msg}"),
         }
     }
 }

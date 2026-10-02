@@ -159,7 +159,7 @@ impl CommandProcessor {
 
         match (parts[1].parse::<f32>(), parts[2].parse::<f32>()) {
             (Ok(yaw), Ok(pitch)) => CommandResult::with_action(
-                format!("Setting sun direction: yaw={}, pitch={}", yaw, pitch),
+                format!("Setting sun direction: yaw={yaw}, pitch={pitch}"),
                 ConsoleAction::SetSunDirection(yaw, pitch),
             ),
             _ => CommandResult::message("Error: yaw and pitch must be numbers".to_string()),
@@ -181,7 +181,7 @@ impl CommandProcessor {
                 let hours = clamped.floor() as u32;
                 let minutes = ((clamped.fract() * 60.0) as u32).min(59);
                 CommandResult::with_action(
-                    format!("Setting time to {:02}:{:02}", hours, minutes),
+                    format!("Setting time to {hours:02}:{minutes:02}"),
                     ConsoleAction::SetTimeOfDay(clamped),
                 )
             }
@@ -209,7 +209,7 @@ impl CommandProcessor {
                     _ => "Unknown",
                 };
                 CommandResult::with_action(
-                    format!("Debug view set to: {} ({})", mode_name, mode),
+                    format!("Debug view set to: {mode_name} ({mode})"),
                     ConsoleAction::SetDebugView(mode),
                 )
             }
@@ -239,7 +239,7 @@ impl CommandProcessor {
                     _ => "Unknown",
                 };
                 CommandResult::with_action(
-                    format!("Shadow quality set to: {} ({})", quality_name, quality),
+                    format!("Shadow quality set to: {quality_name} ({quality})"),
                     ConsoleAction::SetShadowQuality(quality),
                 )
             }
@@ -269,7 +269,7 @@ impl CommandProcessor {
                     _ => "Unknown",
                 };
                 CommandResult::with_action(
-                    format!("SSAO quality set to: {} ({})", quality_name, quality),
+                    format!("SSAO quality set to: {quality_name} ({quality})"),
                     ConsoleAction::SetSsaoQuality(quality),
                 )
             }
@@ -291,7 +291,7 @@ impl CommandProcessor {
         };
 
         CommandResult::with_action(
-            format!("Spawning {}...", entity_type),
+            format!("Spawning {entity_type}..."),
             ConsoleAction::Spawn(entity_type, args),
         )
     }

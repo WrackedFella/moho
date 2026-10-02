@@ -18,9 +18,8 @@ pub fn generate_new_world(
     app: &mut crate::App,
     spec: moho_game::scene_builders::WorldSpec,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    log::info!("Starting async generation for spec={:?}", spec);
-
     use std::path::PathBuf;
+    log::info!("Starting async generation for spec={spec:?}");
 
     // Prepare communication channel and cancellation flag
     let (tx, rx) = unbounded::<crate::GenerationMsg>();
@@ -86,10 +85,8 @@ pub fn generate_new_world(
             ) {
                 Ok(b) => b,
                 Err(e) => {
-                    let _ = sender.send(crate::GenerationMsg::Failed(format!(
-                        "encode failed: {}",
-                        e
-                    )));
+                    let _ =
+                        sender.send(crate::GenerationMsg::Failed(format!("encode failed: {e}")));
                     return;
                 }
             };
@@ -101,7 +98,7 @@ pub fn generate_new_world(
             if !saves_dir.exists()
                 && let Err(e) = std::fs::create_dir_all(&saves_dir)
             {
-                let _ = sender.send(crate::GenerationMsg::Failed(format!("mkdir failed: {}", e)));
+                let _ = sender.send(crate::GenerationMsg::Failed(format!("mkdir failed: {e}")));
                 return;
             }
             let save_path = saves_dir.join("scene.bin");
@@ -115,7 +112,7 @@ pub fn generate_new_world(
                 &spec_for_thread,
                 &block_records,
             ) {
-                let _ = sender.send(crate::GenerationMsg::Failed(format!("write failed: {}", e)));
+                let _ = sender.send(crate::GenerationMsg::Failed(format!("write failed: {e}")));
                 return;
             }
 

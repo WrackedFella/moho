@@ -217,7 +217,7 @@ impl FormControls {
         let mut button_results = (false, false);
 
         // Top panel: title area
-        egui::TopBottomPanel::top(format!("{}_top", panel_id_prefix)).show(ctx, |ui| {
+        egui::TopBottomPanel::top(format!("{panel_id_prefix}_top")).show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(16.0);
                 ui.heading(title);
@@ -226,7 +226,7 @@ impl FormControls {
         });
 
         // Bottom panel: action buttons
-        egui::TopBottomPanel::bottom(format!("{}_bottom", panel_id_prefix)).show(ctx, |ui| {
+        egui::TopBottomPanel::bottom(format!("{panel_id_prefix}_bottom")).show(ctx, |ui| {
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn menu_button_smoke_enabled() {
         let ctx = egui::Context::default();
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 let resp = FormControls::menu_button(ui, "Play", true);
                 assert!(resp.rect.width() >= 160.0);

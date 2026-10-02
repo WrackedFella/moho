@@ -5,6 +5,10 @@
 // and returns a boxed `RendererBackend` with the same lifetime.
 #[test]
 #[allow(clippy::type_complexity)]
+#[allow(
+    clippy::no_effect_underscore_binding,
+    reason = "the typed bindings are the test: they fail to compile if a signature drifts"
+)]
 fn api_compiles() {
     use moho_renderer::RendererBackend;
     use moho_renderer::create_renderer;

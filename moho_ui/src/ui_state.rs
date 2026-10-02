@@ -33,10 +33,9 @@ pub struct UiStateManager {
 impl UiStateManager {
     /// Create a new UI state manager with default screens
     pub fn new() -> Self {
-        let mut screens: HashMap<String, Box<dyn Menu>> = HashMap::new();
-
         // Register default screens
         use crate::screens::{NewWorldMenu, SettingsMenu, StartMenu};
+        let mut screens: HashMap<String, Box<dyn Menu>> = HashMap::new();
 
         screens.insert("start".to_string(), Box::new(StartMenu::new()));
         screens.insert("settings".to_string(), Box::new(SettingsMenu::new()));
@@ -111,7 +110,7 @@ impl UiStateManager {
     /// Get the currently active screen (immutable)
     pub fn active_screen(&self) -> Option<&dyn Menu> {
         if let Some(name) = &self.active_screen {
-            self.screens.get(name).map(|b| b.as_ref())
+            self.screens.get(name).map(std::convert::AsRef::as_ref)
         } else {
             None
         }
@@ -134,7 +133,7 @@ impl UiStateManager {
 
     /// Get a specific screen by name (immutable)
     pub fn get_screen(&self, name: &str) -> Option<&dyn Menu> {
-        self.screens.get(name).map(|b| b.as_ref())
+        self.screens.get(name).map(std::convert::AsRef::as_ref)
     }
 }
 

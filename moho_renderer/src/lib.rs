@@ -146,9 +146,9 @@ pub trait RendererBackend {
     );
 }
 
-impl<'a> RendererBackend for Renderer<'a> {
+impl RendererBackend for Renderer<'_> {
     fn resize(&mut self, width: u32, height: u32) {
-        self.resize(width, height)
+        self.resize(width, height);
     }
     fn register_mesh(&mut self, vertices: &[[f32; 3]]) -> u32 {
         self.register_mesh(vertices)
@@ -176,7 +176,7 @@ impl<'a> RendererBackend for Renderer<'a> {
         )
     }
     fn unregister_mesh(&mut self, mesh: u32) {
-        self.unregister_mesh(mesh)
+        self.unregister_mesh(mesh);
     }
     fn begin_frame(
         &mut self,
@@ -185,16 +185,16 @@ impl<'a> RendererBackend for Renderer<'a> {
         self.begin_frame(camera)
     }
     fn enqueue_draw(&mut self, mesh: u32, instances: &[moho_render_api::InstanceGpu]) {
-        self.enqueue_draw(mesh, instances)
+        self.enqueue_draw(mesh, instances);
     }
     fn submit_frame(&mut self) {
-        self.submit_frame()
+        self.submit_frame();
     }
     fn set_materials(&mut self, materials: &[crate::MaterialGpu]) {
-        self.set_material_table(materials)
+        self.set_material_table(materials);
     }
     fn update_lighting(&mut self, lighting: crate::gpu_types::LightingGpu) {
-        self.update_lighting(lighting)
+        self.update_lighting(lighting);
     }
     fn surface_format(&self) -> Option<TextureFormatRepr> {
         Some(self.surface_format())
@@ -245,7 +245,7 @@ pub fn create_renderer<'a>(
     let win = window
         .ok_or_else(|| Box::new(RendererInitError::MissingWindow) as Box<dyn std::error::Error>)?;
     let r = Renderer::new(win).map_err(|e| {
-        let msg = format!("{}", e);
+        let msg = format!("{e}");
         Box::new(RendererInitError::WgpuInit(msg)) as Box<dyn std::error::Error>
     })?;
     Ok(Box::new(r))

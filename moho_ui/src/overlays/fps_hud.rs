@@ -24,7 +24,7 @@ impl Default for FpsHud {
 }
 
 impl Overlay for FpsHud {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "fps_hud"
     }
 
@@ -48,7 +48,7 @@ impl Overlay for FpsHud {
 
 /// Draw a small crosshair at screen center.
 fn render_crosshair(ctx: &egui::Context) {
-    let center = ctx.input(|i| i.viewport_rect()).center();
+    let center = ctx.input(egui::InputState::viewport_rect).center();
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
         "crosshair".into(),

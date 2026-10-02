@@ -325,20 +325,19 @@ impl Prefs {
             return def;
         }
 
-        let content = match fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(_) => return Prefs::default(),
+        let Ok(content) = fs::read_to_string(&path) else {
+            return Prefs::default();
         };
 
         let mut prefs = Prefs::default();
         if let Ok(map) = ini::macro_safe_read(&content)
             && let Some(section) = map.get("prefs").or_else(|| map.get("default"))
         {
-            let get_str = |k: &str| section.get(k).and_then(|o| o.clone());
+            let get_str = |k: &str| section.get(k).and_then(std::clone::Clone::clone);
             let get_f32 = |k: &str, def: f32| {
                 section
                     .get(k)
-                    .and_then(|o| o.clone())
+                    .and_then(std::clone::Clone::clone)
                     .and_then(|s| s.parse::<f32>().ok())
                     .unwrap_or(def)
             };
@@ -382,7 +381,7 @@ impl Prefs {
             let get_f32 = |k: &str, def: f32| {
                 audio_section
                     .get(k)
-                    .and_then(|o| o.clone())
+                    .and_then(std::clone::Clone::clone)
                     .and_then(|s| s.parse::<f32>().ok())
                     .unwrap_or(def)
             };
@@ -401,7 +400,7 @@ impl Prefs {
             let get_u32 = |k: &str, def: u32| {
                 graphics_section
                     .get(k)
-                    .and_then(|o| o.clone())
+                    .and_then(std::clone::Clone::clone)
                     .and_then(|s| s.parse::<u32>().ok())
                     .unwrap_or(def)
             };
@@ -415,11 +414,11 @@ impl Prefs {
         if let Ok(map) = ini::macro_safe_read(&content)
             && let Some(video_section) = map.get("video")
         {
-            let get_str = |k: &str| video_section.get(k).and_then(|o| o.clone());
+            let get_str = |k: &str| video_section.get(k).and_then(std::clone::Clone::clone);
             let get_u32 = |k: &str, def: u32| {
                 video_section
                     .get(k)
-                    .and_then(|o| o.clone())
+                    .and_then(std::clone::Clone::clone)
                     .and_then(|s| s.parse::<u32>().ok())
                     .unwrap_or(def)
             };
@@ -439,7 +438,7 @@ impl Prefs {
             let get_u32 = |k: &str, def: u32| {
                 world_section
                     .get(k)
-                    .and_then(|o| o.clone())
+                    .and_then(std::clone::Clone::clone)
                     .and_then(|s| s.parse::<u32>().ok())
                     .unwrap_or(def)
             };
@@ -457,82 +456,58 @@ impl Prefs {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
-        let mut out = String::new();
-
-        // Controls section
-        out.push_str("[prefs]\n");
-
-        // Use parser module for binding serialization
-        out.push_str(&format!(
-            "key_w={}\n",
-            parser::binding_to_string(&self.key_w)
-        ));
-        out.push_str(&format!(
-            "key_a={}\n",
-            parser::binding_to_string(&self.key_a)
-        ));
-        out.push_str(&format!(
-            "key_s={}\n",
-            parser::binding_to_string(&self.key_s)
-        ));
-        out.push_str(&format!(
-            "key_d={}\n",
-            parser::binding_to_string(&self.key_d)
-        ));
-        out.push_str(&format!(
-            "key_up={}\n",
-            parser::binding_to_string(&self.key_up)
-        ));
-        out.push_str(&format!(
-            "key_down={}\n",
-            parser::binding_to_string(&self.key_down)
-        ));
-        out.push_str(&format!(
-            "key_sprint={}\n",
-            parser::binding_to_string(&self.key_sprint)
-        ));
-        out.push_str(&format!(
-            "key_jump={}\n",
-            parser::binding_to_string(&self.key_jump)
-        ));
-        out.push_str(&format!("mouse_sensitivity={}\n", self.mouse_sensitivity));
-        out.push_str(&format!(
-            "input_filtering_enabled={}\n",
-            self.input_filtering_enabled
-        ));
-
-        // Audio section
-        out.push_str("\n[audio]\n");
-        out.push_str(&format!(
-            "sound_effect_volume={:.1}\n",
-            self.audio_sound_effect_volume
-        ));
-        out.push_str(&format!("music_volume={:.1}\n", self.audio_music_volume));
-        out.push_str(&format!("ui_volume={:.1}\n", self.audio_ui_volume));
-        out.push_str(&format!("voice_volume={:.1}\n", self.audio_voice_volume));
-
-        // Graphics section
-        out.push_str("\n[graphics]\n");
-        out.push_str(&format!(
-            "shadow_quality={}\n",
-            self.graphics_shadow_quality
-        ));
-        out.push_str(&format!("ssao_quality={}\n", self.graphics_ssao_quality));
-
-        // Video section
-        out.push_str("\n[video]\n");
-        out.push_str(&format!("window_mode={}\n", self.window_mode.as_str()));
-        out.push_str(&format!("window_width={}\n", self.window_resolution.0));
-        out.push_str(&format!("window_height={}\n", self.window_resolution.1));
-
-        // World / streaming section
-        out.push_str("\n[world]\n");
-        out.push_str(&format!("load_radius={}\n", self.world_load_radius));
-        out.push_str(&format!("unload_radius={}\n", self.world_unload_radius));
-        out.push_str(&format!(
-            "chunks_per_frame={}\n",
-            self.world_chunks_per_frame
-        ));
+        let bind = parser::binding_to_string;
+        let out = format!(
+            "[prefs]\n\
+             key_w={key_w}\n\
+             key_a={key_a}\n\
+             key_s={key_s}\n\
+             key_d={key_d}\n\
+             key_up={key_up}\n\
+             key_down={key_down}\n\
+             key_sprint={key_sprint}\n\
+             key_jump={key_jump}\n\
+             mouse_sensitivity={mouse_sensitivity}\n\
+             input_filtering_enabled={input_filtering_enabled}\n\
+             \n[audio]\n\
+             sound_effect_volume={sfx:.1}\n\
+             music_volume={music:.1}\n\
+             ui_volume={ui:.1}\n\
+             voice_volume={voice:.1}\n\
+             \n[graphics]\n\
+             shadow_quality={shadow}\n\
+             ssao_quality={ssao}\n\
+             \n[video]\n\
+             window_mode={window_mode}\n\
+             window_width={width}\n\
+             window_height={height}\n\
+             \n[world]\n\
+             load_radius={load}\n\
+             unload_radius={unload}\n\
+             chunks_per_frame={chunks}\n",
+            key_w = bind(&self.key_w),
+            key_a = bind(&self.key_a),
+            key_s = bind(&self.key_s),
+            key_d = bind(&self.key_d),
+            key_up = bind(&self.key_up),
+            key_down = bind(&self.key_down),
+            key_sprint = bind(&self.key_sprint),
+            key_jump = bind(&self.key_jump),
+            mouse_sensitivity = self.mouse_sensitivity,
+            input_filtering_enabled = self.input_filtering_enabled,
+            sfx = self.audio_sound_effect_volume,
+            music = self.audio_music_volume,
+            ui = self.audio_ui_volume,
+            voice = self.audio_voice_volume,
+            shadow = self.graphics_shadow_quality,
+            ssao = self.graphics_ssao_quality,
+            window_mode = self.window_mode.as_str(),
+            width = self.window_resolution.0,
+            height = self.window_resolution.1,
+            load = self.world_load_radius,
+            unload = self.world_unload_radius,
+            chunks = self.world_chunks_per_frame,
+        );
 
         fs::write(path, out)?;
         Ok(())
@@ -573,11 +548,11 @@ mod tests {
             .with_window_resolution(2560, 1440);
 
         // Serialize to INI string directly (without touching disk)
-        let mut out = String::new();
-        out.push_str("[video]\n");
-        out.push_str(&format!("window_mode={}\n", prefs.window_mode().as_str()));
-        out.push_str(&format!("window_width={}\n", prefs.window_resolution().0));
-        out.push_str(&format!("window_height={}\n", prefs.window_resolution().1));
+        let (width, height) = prefs.window_resolution();
+        let out = format!(
+            "[video]\nwindow_mode={}\nwindow_width={width}\nwindow_height={height}\n",
+            prefs.window_mode().as_str()
+        );
 
         // Parse back
         if let Ok(map) = ini::macro_safe_read(&out)
@@ -585,16 +560,16 @@ mod tests {
         {
             let mode_str = section
                 .get("window_mode")
-                .and_then(|o| o.clone())
+                .and_then(std::clone::Clone::clone)
                 .unwrap_or_default();
             let w: u32 = section
                 .get("window_width")
-                .and_then(|o| o.clone())
+                .and_then(std::clone::Clone::clone)
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
             let h: u32 = section
                 .get("window_height")
-                .and_then(|o| o.clone())
+                .and_then(std::clone::Clone::clone)
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
 

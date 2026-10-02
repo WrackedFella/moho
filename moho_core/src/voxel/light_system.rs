@@ -114,12 +114,7 @@ impl LightSystem {
     /// Handle a block placed event.
     pub fn on_block_placed(&mut self, position: IVec3, material_id: u32) {
         let emission = self.grid.material_registry.emission(material_id);
-        if emission != [0u8, 0, 0] {
-            let job = LightUpdateJob::add_light(position, emission, 0)
-                .with_player_distance(self.player_pos);
-            self.job_queue.submit(job);
-            self.total_jobs_submitted += 1;
-        } else {
+        if emission == [0u8, 0, 0] {
             // Opaque block placed — any existing light at this position must be removed.
             let opacity = self.grid.material_registry.opacity_cost(material_id);
             if opacity >= 15 {
@@ -128,6 +123,11 @@ impl LightSystem {
                 self.job_queue.submit(job);
                 self.total_jobs_submitted += 1;
             }
+        } else {
+            let job = LightUpdateJob::add_light(position, emission, 0)
+                .with_player_distance(self.player_pos);
+            self.job_queue.submit(job);
+            self.total_jobs_submitted += 1;
         }
     }
 
@@ -139,9 +139,7 @@ impl LightSystem {
         self.total_jobs_submitted += 1;
 
         log::debug!(
-            "Block removed at {:?} (material {}), enqueued light removal job",
-            position,
-            old_material_id
+            "Block removed at {position:?} (material {old_material_id}), enqueued light removal job"
         );
     }
 
@@ -163,10 +161,10 @@ impl LightSystem {
         for &position in positions {
             if let Some(mat_id) = self.grid.material_at(position) {
                 let emission = self.grid.material_registry.emission(mat_id);
-                let job = if emission != [0u8, 0, 0] {
-                    LightUpdateJob::add_light(position, emission, 0)
-                } else {
+                let job = if emission == [0u8, 0, 0] {
                     LightUpdateJob::remove_light(position, 0)
+                } else {
+                    LightUpdateJob::add_light(position, emission, 0)
                 };
                 self.job_queue
                     .submit(job.with_player_distance(self.player_pos));
@@ -227,7 +225,7 @@ impl LightSystem {
         self.affected_chunks.clear();
 
         if count > 0 {
-            log::debug!("Emitted {} ChunkMeshDirty events for light updates", count);
+            log::debug!("Emitted {count} ChunkMeshDirty events for light updates");
         }
 
         count
@@ -303,7 +301,7 @@ impl LightSystem {
             } => {
                 self.on_blocks_batch_modified(positions, reason);
             }
-            _ => {
+            WorldEvent::ChunkMeshDirty { .. } => {
                 // Ignore other events
             }
         }

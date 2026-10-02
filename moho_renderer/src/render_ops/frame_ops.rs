@@ -92,7 +92,7 @@ pub fn finish_frame(
 
     // Submit command buffer and present frame
     let finished = encoder.finish();
-    log::debug!("[frame_ops] submitting {} draws", draw_count);
+    log::debug!("[frame_ops] submitting {draw_count} draws");
     if let Some(frame) = pending_frame {
         queue.submit(Some(finished));
         frame.present();
@@ -120,6 +120,6 @@ mod tests {
         // Verify wrapper size is reasonable (should be pointer-sized)
         let size = std::mem::size_of::<FrameCallbackWrapper>();
         // Should be at most 24 bytes (two pointers + discriminant on 64-bit)
-        assert!(size <= 24, "FrameCallbackWrapper size: {} bytes", size);
+        assert!(size <= 24, "FrameCallbackWrapper size: {size} bytes");
     }
 }

@@ -55,7 +55,7 @@ impl GameState {
     /// assert!(!GameState::Menu.can_transition_to(GameState::ConsoleOpen));
     /// ```
     pub fn can_transition_to(self, new_state: GameState) -> bool {
-        use GameState::*;
+        use GameState::{ConsoleOpen, Menu, Paused, Playing};
 
         match (self, new_state) {
             // Same state is always allowed (no-op)
@@ -112,8 +112,7 @@ impl GameState {
             Ok(())
         } else {
             Err(format!(
-                "Invalid state transition: {:?} -> {:?}",
-                self, new_state
+                "Invalid state transition: {self:?} -> {new_state:?}"
             ))
         }
     }

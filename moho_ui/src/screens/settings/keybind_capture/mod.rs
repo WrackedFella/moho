@@ -184,9 +184,7 @@ impl KeybindCaptureHandler {
     }
 
     pub(super) fn get_key_name(id: usize) -> &'static str {
-        BindingId::from_usize(id)
-            .map(|bid| bid.display_name())
-            .unwrap_or("Unknown")
+        BindingId::from_usize(id).map_or("Unknown", super::types::BindingId::display_name)
     }
 }
 
@@ -218,7 +216,7 @@ mod tests {
         // Escape key code is 0x200
         let consumed =
             handler.apply_key_code_while_listening(0x200, 0, &prefs, |field, binding| {
-                bindings_changed.push((field, binding))
+                bindings_changed.push((field, binding));
             });
 
         assert!(consumed);
@@ -238,7 +236,7 @@ mod tests {
         // Note: Default prefs uses Shift (0x204) for key_down, so use Alt to avoid conflict
         let consumed =
             handler.apply_key_code_while_listening(0x206, 0, &prefs, |field, binding| {
-                bindings_changed.push((field, binding))
+                bindings_changed.push((field, binding));
             });
 
         assert!(consumed);
@@ -264,7 +262,7 @@ mod tests {
         let ctrl_mods = 1u8;
         let consumed =
             handler.apply_key_code_while_listening(w_code, ctrl_mods, &prefs, |field, binding| {
-                bindings_changed.push((field, binding))
+                bindings_changed.push((field, binding));
             });
 
         assert!(consumed);
@@ -291,7 +289,7 @@ mod tests {
 
         let consumed =
             handler.apply_key_code_while_listening('W' as u32, 0, &prefs, |field, binding| {
-                bindings_changed.push((field, binding))
+                bindings_changed.push((field, binding));
             });
 
         assert!(consumed);

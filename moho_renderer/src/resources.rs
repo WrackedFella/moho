@@ -97,6 +97,7 @@ impl ResourcePool {
         surface_width: u32,
         surface_height: u32,
     ) -> Self {
+        use crate::gpu_types::DynamicLightsGpu;
         // Create buffers
         let camera_buffer = Self::create_camera_buffer(device);
         let lighting_buffer = Self::create_lighting_buffer(device);
@@ -132,7 +133,6 @@ impl ResourcePool {
         });
 
         // Create placeholder dynamic lights buffer (will be replaced when renderer initializes light manager)
-        use crate::gpu_types::DynamicLightsGpu;
         let placeholder_dynamic_lights = DynamicLightsGpu::default();
         let placeholder_dynamic_lights_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -328,10 +328,7 @@ impl ResourcePool {
     /// Returns: (buffer, vertex_count)
     fn create_skybox_vertex_buffer(device: &wgpu::Device) -> (wgpu::Buffer, u32) {
         let (skybox_vertices, skybox_vertex_count) = Self::generate_skybox_quad();
-        log::info!(
-            "Generated skybox fullscreen quad with {} vertices",
-            skybox_vertex_count
-        );
+        log::info!("Generated skybox fullscreen quad with {skybox_vertex_count} vertices");
         let skybox_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("skybox-vertex-buffer"),
             contents: bytemuck::cast_slice(&skybox_vertices),

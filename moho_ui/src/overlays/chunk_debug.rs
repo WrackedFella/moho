@@ -26,7 +26,7 @@ impl Default for ChunkDebugOverlay {
 }
 
 impl Overlay for ChunkDebugOverlay {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "chunk_debug"
     }
 
@@ -85,7 +85,7 @@ impl Overlay for ChunkDebugOverlay {
                 painter.text(
                     rect.left_bottom() + egui::vec2(2.0, -2.0),
                     egui::Align2::LEFT_BOTTOM,
-                    format!("chunks ({},{})", pcx, pcz),
+                    format!("chunks ({pcx},{pcz})"),
                     egui::FontId::monospace(9.0),
                     egui::Color32::from_gray(180),
                 );

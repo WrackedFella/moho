@@ -22,8 +22,8 @@ pub enum WindowError {
 impl std::fmt::Display for WindowError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            WindowError::CreateFailed(msg) => write!(f, "Failed to create window: {}", msg),
-            WindowError::SetupFailed(msg) => write!(f, "Failed to setup renderer/UI: {}", msg),
+            WindowError::CreateFailed(msg) => write!(f, "Failed to create window: {msg}"),
+            WindowError::SetupFailed(msg) => write!(f, "Failed to setup renderer/UI: {msg}"),
         }
     }
 }
@@ -71,7 +71,7 @@ impl WindowManager {
                     app.camera,
                 )
             {
-                log::warn!("Skipped initial render: {}", e);
+                log::warn!("Skipped initial render: {e}");
             }
             wr.window.request_redraw();
         }

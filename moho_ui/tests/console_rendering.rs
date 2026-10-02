@@ -3,7 +3,7 @@
 // that provide the necessary GPU drivers.
 
 #[test]
-#[ignore]
+#[ignore = "placeholder with no assertions; needs a headless renderer harness"]
 fn console_renders_in_consoleopen_state() {
     // TODO: Implement with headless wgpu mock or renderer test harness
 }

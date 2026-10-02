@@ -143,7 +143,7 @@ impl StateTransitionCoordinator {
         match current {
             GameState::Playing => Self::pause_game(current),
             GameState::Paused => Self::resume_game(current),
-            _ => Err(format!("Cannot toggle pause from state: {}", current)),
+            _ => Err(format!("Cannot toggle pause from state: {current}")),
         }
     }
 }
