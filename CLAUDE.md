@@ -32,7 +32,7 @@ cargo bench --bench event_bus_bench
 
 Moho is a Rust workspace split into engine (`moho_core`, `moho_renderer`,
 `moho_audio`, `moho_render_api`) and game-domain (`moho_game`) layers — see
-`_todo/planning.md` Phase 2 for the boundary work (done). Dependencies point
+`docs/adr/` (0001–0003) for the boundary decisions. Dependencies point
 one way: the main binary depends on all crates; `moho_game` depends on `moho_core`
 and `moho_render_api`; engine crates (`moho_renderer`, `moho_audio`) must not
 depend on `moho_game`; crates don't form circular dependencies.
@@ -75,7 +75,8 @@ crates and minimal `unwrap()`/`expect()` are already covered there; don't
 re-litigate, just follow it.
 
 - **Engine vs game-specific**: Prioritize quality and future-proofing for engine/foundation work. Pragmatic solutions are fine for game-specific mechanics.
-- **Apply standards forward** as files are touched — no standalone retroactive sweep. The workspace test suite is the safety net during active refactor phases; see `_todo/tech-debt/codebase-hygiene.md` for the concrete backlog this produces.
+- **Apply standards forward** as files are touched — no standalone retroactive sweep. The workspace test suite is the safety net during active refactor phases; the backlog this produces lives in `_todo/engine/ENG-F1-engine-hygiene/`.
+- **Work items**: `_todo/` (format in `_todo/_STANDARDS.md`).
 - All public types must implement `Debug`.
 - Use `workspace.dependencies` in Cargo.toml for shared deps; don't duplicate version specs.
 - Lines ≤ 100 characters (`rustfmt.toml` enforces this).
