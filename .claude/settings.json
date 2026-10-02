@@ -6,7 +6,61 @@
       "Bash(git status *)",
       "Bash(git branch *)",
       "mcp__gitnexus__impact",
-      "mcp__gitnexus__detect_changes"
+      "mcp__gitnexus__detect_changes",
+      "Bash(just check)",
+      "Bash(just test *)",
+      "Bash(just lint)",
+      "Bash(just fmt)",
+      "Bash(just mutants *)",
+      "Bash(just mutants)",
+      "Bash(just comment-refs *)",
+      "Bash(just deny)",
+      "Bash(git fetch *)",
+      "Bash(git merge-base *)",
+      "Bash(git rev-parse *)",
+      "Bash(git show *)",
+      "Bash(gh issue view *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr list *)",
+      "Bash(gh pr checks *)",
+      "mcp__gitnexus__context",
+      "mcp__gitnexus__query"
+    ]
+  },
+  "extraKnownMarketplaces": {
+    "claude-skills": {
+      "source": {
+        "source": "github",
+        "repo": "WrackedFella/claude-skills",
+        "ref": "v0.1.0"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "devflow@claude-skills": true
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/format-rust.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/gate.sh",
+            "timeout": 900
+          }
+        ]
+      }
     ]
   }
 }

@@ -8,8 +8,8 @@ default: check
 fmt:
     cargo fmt --all
 
-# Gate: formatting, lints, tests and doctests. Must pass before any commit.
-check: fmt-check lint test test-doc
+# Gate: formatting, lints, tests, doctests and comment refs. Must pass before any commit.
+check: fmt-check lint test test-doc comment-refs
 
 fmt-check:
     cargo fmt --all --check
@@ -24,6 +24,10 @@ test *args:
 # nextest doesn't run doctests.
 test-doc:
     cargo test --doc --workspace --all-features
+
+# Added Rust comments must not reference work items, phases or PRs.
+comment-refs base="origin/dev":
+    scripts/check-comment-refs.sh {{base}}
 
 # Licenses, advisories, banned and duplicate crates, crate sources.
 deny:
