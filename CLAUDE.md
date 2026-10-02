@@ -1,118 +1,70 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Moho: a Rust workspace with a shared engine and two game lines (strategy
+base-builder, FPS). Engineering standards come from the `devflow` plugin
+(`devflow:rust-standards`); this file holds only what is specific to moho.
 
-## Commands
+## Gate and commands
 
-`just check` (fmt, clippy `-D warnings`, nextest, doctests) is the gate: it must
-pass before any commit. Never silence a lint or skip a test to get it green; the
-lint table in the root `Cargo.toml` only shrinks.
+`just check` (fmt, clippy `-D warnings`, nextest, doctests, comment refs) must pass
+before any commit. Never silence a lint, skip a test, or add to the lint allow-list
+to get green; the Ratchet group in the root `Cargo.toml` only shrinks.
 
 ```bash
-just check                       # the gate
-just test -E 'package(moho_core)' # one crate (nextest filterset)
-just test -E 'test(some_fn)'     # single test by name (nextest filter)
-just deny                        # licenses, advisories, sources
-just mutants                     # mutation-test changes since origin/dev; exit 2 = survivor
-just cov                         # coverage -> lcov.info
-cargo run                        # RUST_LOG=debug for logging
-cargo bench --bench event_bus_bench
+just check                         # the gate
+just test -E 'package(moho_core)'  # one crate; -E 'test(name)' for one test
+just mutants                       # mutation-test changes since origin/dev; exit 2 = survivor
+just deny                          # licenses, advisories, sources
+cargo run                          # RUST_LOG=debug for logging
 ```
+
+## Workflow contract (used by devflow skills and agents)
+
+- **Base branch:** `dev`. Branch `<type>/<ID>-<slug>`, PR into `dev`. `main` only
+  receives promotions from `dev`. Never merge; a human does.
+- **Planning:** index `_todo/README.md`, rules `_todo/_STANDARDS.md` (features first,
+  IDs like `SG-F1-04`, card lifecycle). Feature work is paused until the planning
+  review; check the README before picking up work.
+- **Implement a ready item:** `/devflow:orchestrate <issue>`.
+- **Domain-logic paths** (failing tests need human review before implementation):
+  rules in `moho_sim`, `moho_game`, `moho_core`. Adapters, UI wiring and config are glue.
+- **ADRs:** `docs/adr/`. New docs elsewhere need the user's OK first; cards and ADRs
+  that follow the standards don't.
 
 ## Architecture
 
-Moho is a Rust workspace split into engine (`moho_core`, `moho_renderer`,
-`moho_audio`, `moho_render_api`) and game-domain (`moho_game`) layers — see
-`docs/adr/` (0001–0003) for the boundary decisions. Dependencies point
-one way: the main binary depends on all crates; `moho_game` depends on `moho_core`
-and `moho_render_api`; engine crates (`moho_renderer`, `moho_audio`) must not
-depend on `moho_game`; crates don't form circular dependencies.
-
 ```
-src/main.rs          — winit event loop, ApplicationHandler, wires everything together
-moho_core/           — EventBus, voxel grid, materials (MaterialType), input, prefs
-moho_game/           — game-domain: actors (Sphere/Cube), controller, GameClock, scene
-                        generation/persistence, raycast (depends on moho_core, moho_render_api)
-moho_render_api/     — shared engine/game contract: Renderable + RenderMaterial traits,
-                        InstanceGpu/MaterialGpu/MaterialKey/LightDesc/CameraDesc (no wgpu, no legion)
-moho_renderer/       — wgpu backend: mesh rendering, CSM shadows (4 cascades), skybox
-moho_ui/             — egui integration: menus, settings, debug console, HUD overlays, preferences (config/prefs.ini)
-moho_audio/          — rodio audio: music/SFX/UI/voice categories, event-driven triggering
-moho_sim/            — deterministic headless simulation, snapshot/restore with CRC, replay foundations
-moho_input/          — shared key→binding-code mapping (prevents duplication between binary and UI)
-moho_types/          — shared AppState enum and StateCoordinator (avoids circular imports)
+src/            binary: winit event loop, wiring
+moho_core       event bus, voxel grid/meshing/lighting, materials, input, prefs
+moho_game       game domain: pawn, tools, controller, GameClock, scenes, raycast
+moho_render_api engine/game contract: Renderable, RenderMaterial, GPU-layout data
+moho_renderer   wgpu backend: meshes, CSM shadows, SSAO, skybox
+moho_ui         egui: menus, settings, console, HUD
+moho_audio      rodio playback, event-driven
+moho_physics    rapier3d character controller and colliders
+moho_sim        deterministic headless simulation (integer math), snapshots
+moho_input      key → binding-code mapping
+moho_types      AppState, StateCoordinator
 ```
 
-### Key Patterns
+- Engine crates never depend on `moho_game` (ADR-0001). `voxel/` stays in
+  `moho_core` (ADR-0002). Event types live in `moho_core::events` (ADR-0003).
+- Use the event bus for cross-system fan-out; call directly within a system.
+- ECS is `legion` (unmaintained; replacement tracked as ENG-F7).
+- Shared dependency versions go in `[workspace.dependencies]`.
 
-**Event Bus** (`moho_core::events`): The primary communication mechanism between systems. Type-safe pub/sub with 10 event categories (System, UI, Audio, Input, Game, Physics, Graphics, World, Debug, Network). Prefer publishing events over direct coupling.
+## GitNexus (code graph, index name `moho`)
 
-**ECS**: Uses `legion` for entity/component management. World lives in the main binary; systems interact with it via the event bus or direct access passed from `main.rs`.
-
-**Input flow**: `winit` → `InputDispatcher` (UI gets priority) → `InputRouter` → game actions → events. Physical keys map to `u32` binding codes via `moho_input`.
-
-**UI architecture**: `ScreenSpec` trait for full-screen UIs; `Overlay` trait for in-game overlays (HUD, console). `UiStateManager` tracks which screen/overlays are active. Settings persist via `moho_ui::prefs::Prefs` to `config/prefs.ini`.
-
-**Rendering pipeline**: Preparation → opaque mesh rendering → transparency. Cascaded Shadow Maps use 4 cascades at 4096×4096. Sun/moon lighting is driven by `GameClock` time.
-
-**Simulation separation**: `moho_sim` uses integer-only math for determinism. It's kept headless (no wgpu/egui deps) to support future multiplayer lockstep.
-
-### Code Conventions
-
-Canonical Rust engineering standards (SOLID/DIP weighting, DDD, error handling,
-comment hygiene, testing/TDD gate) live in `~/.claude/CLAUDE.md` — this section
-holds only where moho adds to or narrows that standard. No `panic!` in library
-crates and minimal `unwrap()`/`expect()` are already covered there; don't
-re-litigate, just follow it.
-
-- **Engine vs game-specific**: Prioritize quality and future-proofing for engine/foundation work. Pragmatic solutions are fine for game-specific mechanics.
-- **Apply standards forward** as files are touched — no standalone retroactive sweep. The workspace test suite is the safety net during active refactor phases; the backlog this produces lives in `_todo/engine/ENG-F1-engine-hygiene/`.
-- **Work items**: `_todo/` (format in `_todo/_STANDARDS.md`).
-- All public types must implement `Debug`.
-- Use `workspace.dependencies` in Cargo.toml for shared deps; don't duplicate version specs.
-- Lines ≤ 100 characters (`rustfmt.toml` enforces this).
-- Don't create new doc files without asking first.
-
-<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
-
-This project is indexed by GitNexus as **moho** (4405 symbols, 11518 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
-
-> Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
-
-## Always Do
-
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "dev"})`.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
-
-## Never Do
-
-- NEVER edit a function, class, or method without first running `impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
-- NEVER commit changes without running `detect_changes()` to check affected scope.
-
-## Resources
-
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/moho/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/moho/clusters` | All functional areas |
-| `gitnexus://repo/moho/processes` | All execution flows |
-| `gitnexus://repo/moho/process/{name}` | Step-by-step execution trace |
-
-## CLI
-
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
-<!-- gitnexus:end -->
+- **Hand edits that change a symbol's behavior or signature:** run
+  `impact({target, direction: "upstream"})` first; warn the user on HIGH/CRITICAL.
+- **Mechanical edits** (`clippy --fix`, rustfmt, GitNexus `rename`, comment- or
+  attribute-only changes): skip per-symbol `impact`; review `detect_changes` instead.
+- **Before every commit:** `detect_changes()`. A high rating driven only by breadth is
+  reported with that reason; escalate only if signatures, public APIs or behavior
+  changed.
+- **"No callers resolved" is unknown, not safe:** Rust method calls are often missed;
+  confirm with a text search.
+- Renames use GitNexus `rename`, never find-and-replace.
+- Refresh a stale index (>10 commits behind) with
+  `node .gitnexus/run.cjs analyze --skip-agents-md` (the flag keeps it from rewriting
+  this file). Usage guides: `.claude/skills/gitnexus/`.

@@ -3,6 +3,10 @@
 Start with the [project README](../README.md). Planning and work items live in
 [`_todo/`](../_todo/README.md).
 
+## Workflow
+
+- [Agentic workflow](agentic-workflow.md): roles, flow, gates, writing work items.
+
 ## Architecture
 
 - [Architecture Decision Records](adr/README.md): crate boundaries and other

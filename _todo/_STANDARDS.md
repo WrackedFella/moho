@@ -162,9 +162,8 @@ something observable when finished.
 
 ## Definition of Done (shared; don't repeat per card)
 
-- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-  and `cargo test --workspace --all-features` pass.
-- Agent-written tests pass mutation testing on the changed code.
-- Comment audit run on the diff.
+- `just check` passes.
+- Agent-written tests survive mutation testing on the changed code (`just mutants`).
+- `/devflow:comment-audit` run on the diff.
 - Verification steps performed for anything observable.
 - Card status updated in the same PR.
