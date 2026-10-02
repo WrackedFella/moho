@@ -17,3 +17,5 @@ engine repo once the split (ENG-F5) happens.
 | [ENG-F1-03 god-module-splits](ENG-F1-03-god-module-splits.md) | not started |
 | [ENG-F1-04 keybind-test-layering](ENG-F1-04-keybind-test-layering.md) | not started |
 | [ENG-F1-05 material-model-revisit](ENG-F1-05-material-model-revisit.md) | parked |
+| [ENG-F1-06 unsafe-surface](ENG-F1-06-unsafe-surface.md) | not started |
+| [ENG-F1-07 lint-ratchet](ENG-F1-07-lint-ratchet.md) | not started |

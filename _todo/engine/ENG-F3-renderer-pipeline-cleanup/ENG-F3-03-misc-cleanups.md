@@ -10,8 +10,9 @@ time.
 
 ## Deliverables
 
-- Delete the `*mut dyn FrameCallback` path (the `Arc<Mutex<>>` form covers
-  all callers; the raw pointer is unsafe for no benefit).
+- Delete the `*mut dyn FrameCallback` path. It is **unsound**: a safe setter
+  stores a raw pointer that `finish_frame` later dereferences. Nothing calls
+  it; the `Arc<Mutex<>>` form covers all callers.
 - Hoist `InterleavedVertex` (currently redefined inline with hand-tuned
   padding) to a single top-level type.
 - Gate per-vertex sample logging in `register_indexed_mesh` — runs every

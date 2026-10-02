@@ -5,6 +5,9 @@ Three project lines sharing one repo until the split
 lifecycle: [`_STANDARDS.md`](_STANDARDS.md). Architecture decisions:
 [`docs/adr/`](../docs/adr/README.md).
 
+**Feature work is paused** until the agentic workflow's first draft lands; then
+all features get a planning review before any agent picks up work.
+
 | Line | Folder | Focus |
 |---|---|---|
 | Engine | [`engine/`](engine/) | Shared crates; hygiene and debt land opportunistically |
@@ -21,6 +24,7 @@ lifecycle: [`_STANDARDS.md`](_STANDARDS.md). Architecture decisions:
 | [ENG-F4 Terrain rendering debt](engine/ENG-F4-terrain-rendering-debt/_feature.md) | in progress |
 | [ENG-F5 Physical repo split](engine/ENG-F5-physical-repo-split/_feature.md) | parked (v1 gate) |
 | [ENG-F6 Headless, deterministic logic](engine/ENG-F6-headless-deterministic-logic/_feature.md) | proposed |
+| [ENG-F7 Maintained ECS foundation](engine/ENG-F7-maintained-ecs/_feature.md) | proposed |
 
 ## strategy-game/
 
