@@ -2,6 +2,7 @@
 name = "moho_ui"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [dependencies]
 # RAUI is an optional UI integration. Make it optional so the
@@ -35,3 +36,6 @@ default = []
 # press/release without an actual window). This is intentionally optional
 # so library consumers won't accidentally depend on test utilities.
 ui-egui-test = []
+
+[lints]
+workspace = true

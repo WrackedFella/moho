@@ -2,6 +2,7 @@
 name = "moho_audio"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [dependencies]
 moho_core = { path = "../moho_core" }
@@ -11,3 +12,6 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 env_logger = { workspace = true }
+
+[lints]
+workspace = true

@@ -20,6 +20,7 @@ lifecycle: [`_STANDARDS.md`](_STANDARDS.md). Architecture decisions:
 | [ENG-F3 Renderer pipeline cleanup](engine/ENG-F3-renderer-pipeline-cleanup/_feature.md) | not started |
 | [ENG-F4 Terrain rendering debt](engine/ENG-F4-terrain-rendering-debt/_feature.md) | in progress |
 | [ENG-F5 Physical repo split](engine/ENG-F5-physical-repo-split/_feature.md) | parked (v1 gate) |
+| [ENG-F6 Headless, deterministic logic](engine/ENG-F6-headless-deterministic-logic/_feature.md) | proposed |
 
 ## strategy-game/
 

@@ -7,6 +7,7 @@ required-features = []
 name = "moho"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [workspace]
 members = ["moho_core", "moho_game", "moho_render_api", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_sim", "moho_types", "moho_physics"]
@@ -31,6 +32,68 @@ wgpu = "29.0.4"
 winit = "0.30"
 moho_physics = { path = "moho_physics" }
 rapier3d = { version = "0.32", features = ["simd-stable"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+print_stdout = "warn"
+undocumented_unsafe_blocks = "warn"
+
+# Won't fix: noise for game and rendering code.
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+doc_markdown = "allow"
+must_use_candidate = "allow"
+return_self_not_must_use = "allow"
+similar_names = "allow"
+struct_excessive_bools = "allow"
+unused_self = "allow"
+
+# Ratchet: existing violations. Fix, then delete the line; never add to this group.
+bool_to_int_with_if = "allow"
+cast_lossless = "allow"
+default_trait_access = "allow"
+elidable_lifetime_names = "allow"
+enum_glob_use = "allow"
+explicit_iter_loop = "allow"
+float_cmp = "allow"
+format_push_string = "allow"
+if_not_else = "allow"
+ignore_without_reason = "allow"
+items_after_statements = "allow"
+large_stack_arrays = "allow"
+manual_assert_eq = "allow"
+manual_let_else = "allow"
+manual_midpoint = "allow"
+manual_string_new = "allow"
+map_unwrap_or = "allow"
+match_same_arms = "allow"
+match_wildcard_for_single_variants = "allow"
+missing_errors_doc = "allow"
+missing_fields_in_debug = "allow"
+missing_panics_doc = "allow"
+needless_pass_by_value = "allow"
+no_effect_underscore_binding = "allow"
+redundant_closure_for_method_calls = "allow"
+redundant_else = "allow"
+semicolon_if_nothing_returned = "allow"
+single_match_else = "allow"
+too_many_lines = "allow"
+trivially_copy_pass_by_ref = "allow"
+uninlined_format_args = "allow"
+unnecessary_debug_formatting = "allow"
+unnecessary_literal_bound = "allow"
+unnecessary_wraps = "allow"
+unnested_or_patterns = "allow"
+used_underscore_binding = "allow"
 
 [dependencies]
 crossbeam-channel = { workspace = true }
@@ -98,3 +161,5 @@ criterion = { version = "0.8", features = ["html_reports"] }
 name = "event_bus_bench"
 harness = false
 
+[lints]
+workspace = true

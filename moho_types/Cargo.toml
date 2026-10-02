@@ -2,6 +2,10 @@
 name = "moho_types"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
 # No external dependencies — pure shared types
+
+[lints]
+workspace = true

@@ -105,7 +105,11 @@ impl<'a> DeviceSetup<'a> {
         // 4. Prepare device features and limits
         let experimental = {
             #[cfg(feature = "wgpu-experimental")]
+            #[allow(unsafe_code)]
             {
+                // SAFETY: experimental wgpu features may be unsound or unimplemented on
+                // some backends. Building with `wgpu-experimental` is the explicit opt-in
+                // to that risk; default builds take the `disabled()` branch.
                 unsafe { wgpu::ExperimentalFeatures::enabled() }
             }
             #[cfg(not(feature = "wgpu-experimental"))]

@@ -4,27 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+`just check` (fmt, clippy `-D warnings`, nextest, doctests) is the gate: it must
+pass before any commit. Never silence a lint or skip a test to get it green; the
+lint table in the root `Cargo.toml` only shrinks.
+
 ```bash
-# Build
-cargo build
-cargo build --release
-
-# Run
-cargo run
-RUST_LOG=debug cargo run                    # with logging
-
-# Test
-cargo test --workspace                      # all tests
-cargo test --package moho_core              # single crate
-cargo test --test event_bus_integration     # single integration test
-cargo test some_fn_name                     # single test by name
-cargo test -p moho_ui --features ui-egui-test  # UI integration tests
-
-# Lint & format
-cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings
-
-# Benchmarks
+just check                       # the gate
+just test -E 'package(moho_core)' # one crate (nextest filterset)
+just test -E 'test(some_fn)'     # single test by name (nextest filter)
+just deny                        # licenses, advisories, sources
+just mutants                     # mutation-test changes since origin/dev; exit 2 = survivor
+just cov                         # coverage -> lcov.info
+cargo run                        # RUST_LOG=debug for logging
 cargo bench --bench event_bus_bench
 ```
 

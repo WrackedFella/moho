@@ -66,6 +66,10 @@ pub fn finish_frame(
                 }
             }
         }
+        // SAFETY: relies on `set_frame_callback_raw`'s documented contract that the
+        // pointer stays valid until cleared. The setter is safe, so nothing enforces
+        // that contract: this path is unsound by construction. Use the Arc variant.
+        #[allow(unsafe_code)]
         FrameCallbackWrapper::Raw(cb_ptr) => unsafe {
             log::info!("[frame_ops] calling frame_callback_raw");
             if let Some(view) = pending_frame_view {
