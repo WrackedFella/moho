@@ -1,0 +1,53 @@
+name: Work item
+description: A card from _todo/ filed as the implementation queue entry. Title format "[ID] title".
+title: "[ID] "
+labels: []
+body:
+  - type: input
+    id: card
+    attributes:
+      label: Card
+      description: Path to the card in _todo/ (the spec lives there).
+      placeholder: _todo/strategy-game/SG-F1-example/SG-F1-05-example.md
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: One to three sentences on what this does and why.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Gherkin scenarios (or a checklist for refactors and upgrades), copied from the card.
+      render: gherkin
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: What a reader might assume is included but isn't.
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: Manual steps, only for behavior observable in-game.
+  - type: dropdown
+    id: gate-class
+    attributes:
+      label: Gate class
+      description: "domain: failing tests need human review before implementation. glue: tests and code together."
+      options:
+        - domain
+        - glue
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        Add labels `line:engine|strategy|fps`, and `agent-ready` once the card is `ready`.
+        Link this issue as a sub-issue of its feature's parent issue.
