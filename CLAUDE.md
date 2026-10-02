@@ -15,6 +15,7 @@ just check                         # the gate
 just test -E 'package(moho_core)'  # one crate; -E 'test(name)' for one test
 just mutants                       # mutation-test changes since origin/dev; exit 2 = survivor
 just deny                          # licenses, advisories, sources
+gh workflow run CI --ref <branch>  # all three OSes on a branch (PRs into dev run Linux only)
 cargo run                          # RUST_LOG=debug for logging
 ```
 
