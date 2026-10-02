@@ -30,7 +30,7 @@ target
 recipe.json
 /_rca/
 /todo/
-/_todo/
+/_todo/.obsidian/workspace*.json
 
 # Code metrics output
 /metrics-output/
