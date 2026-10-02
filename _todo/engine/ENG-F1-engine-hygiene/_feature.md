@@ -8,6 +8,12 @@ Engine-generic cleanup items — none block gameplay. Land opportunistically
 when already touching the relevant file; no standalone sweep. Portable to the
 engine repo once the split (ENG-F5) happens.
 
+## Exit criteria
+
+- The only `#[allow(unsafe_code)]` site in the workspace is the
+  `wgpu-experimental` opt-in (ENG-F1-06, ENG-F3-03).
+- Remaining criteria to be set when the feature is next planned.
+
 ## Items
 
 | Item | Status |
@@ -17,5 +23,5 @@ engine repo once the split (ENG-F5) happens.
 | [ENG-F1-03 god-module-splits](ENG-F1-03-god-module-splits.md) | not started |
 | [ENG-F1-04 keybind-test-layering](ENG-F1-04-keybind-test-layering.md) | not started |
 | [ENG-F1-05 material-model-revisit](ENG-F1-05-material-model-revisit.md) | parked |
-| [ENG-F1-06 unsafe-surface](ENG-F1-06-unsafe-surface.md) | not started |
+| [ENG-F1-06 unsafe-surface](ENG-F1-06-unsafe-surface.md) | ready |
 | [ENG-F1-07 lint-ratchet](ENG-F1-07-lint-ratchet.md) | not started |
