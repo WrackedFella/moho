@@ -1,6 +1,6 @@
 # UI layer carries no unsafe code
 
-**Status:** ready
+**Status:** done
 **Feature:** ENG-F1
 **Issue:** #57
 
@@ -35,14 +35,17 @@ The workspace denies `unsafe_code`; three of its five scoped allows are in
   wgpu's safe API for exactly this case; the encoder is locked until the pass
   drops at function end, which the current code already satisfies.
 - `modal::Modal`: add a `Send` supertrait (`pub trait Modal: Send`). This was
-  the only non-`Send` field in `EguiAdapter`; with it, `Send` and `Sync` are
+  the only non-`Send` field in `EguiAdapter`; with it, `Send` is
   auto-derived. Delete both `unsafe impl`s and their SAFETY comment.
   Chosen over a justified `unsafe impl Send` because the bound costs nothing
   (the one impl, `KeybindConflictModal`, is already `Send`) and the compiler
   then proves what the comment only asserted.
-- Add a compile-time assertion beside `EguiAdapter` that it is `Send + Sync`,
-  so a future non-`Send` field fails in `moho_ui` rather than at the binary's
-  `InputDispatcher::register` call site.
+- Add a compile-time assertion beside `EguiAdapter` that it is `Send`, so a
+  future non-`Send` field fails in `moho_ui` rather than at the binary's
+  `InputDispatcher::register` call site. Only `Send` is needed: the adapter is
+  shared as `Arc<Mutex<_>>`, which is `Send + Sync` iff the adapter is `Send`.
+  `Sync` is unattainable (egui-winit's clipboard holds an `mpsc::Receiver`), so
+  the removed `unsafe impl Sync` was asserting something false.
 
 **Out of scope:** the renderer's raw frame-callback path (ENG-F3-03); the
 `wgpu-experimental` block in `moho_renderer`; the `Arc<Mutex<EguiAdapter>>`
@@ -54,7 +57,7 @@ sharing model and `InputDispatcher`'s `Send + Sync` handler bound; any other
 | Criterion | Proof |
 |---|---|
 | No `unsafe` in render pass | `just check` (workspace `unsafe_code` deny) + review |
-| No `unsafe impl Sync` / `Send` | `just check`; the `Send + Sync` assertion compiles |
+| No `unsafe impl Sync` / `Send` | `just check`; the `Send` assertion compiles |
 | No `unsafe` in `moho_ui` | grep `unsafe` in `moho_ui`: expect 0 |
 | `unsafe` outside `moho_ui` unchanged | diff touches only `moho_ui` |
 | Gate passes, no new allows | `just check`; `Cargo.toml` lint tables untouched |

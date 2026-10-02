@@ -7,7 +7,7 @@ pub enum ModalResult {
 }
 
 /// Trait for modal dialogs
-pub trait Modal {
+pub trait Modal: Send {
     /// Returns the modal title
     fn title(&self) -> &str;
 
