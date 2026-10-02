@@ -1,104 +1,195 @@
 name: CI
 
+# PRs into dev run the gate on Linux only; main (promotions) runs all three OSes.
 on:
   push:
-    branches: [ main, dev ]
+    branches: [main, dev]
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev]
   workflow_dispatch: {}
 
-# This CI workflow runs independently of the metrics workflow.
-# Both workflows trigger on the same events but execute in parallel.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0  # Disable incremental compilation for CI
+  CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  NEXTEST_PROFILE: ci
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  # Single job that does everything - eliminates job overhead
-  test:
-    name: Test (${{ matrix.os }})
+  # Chooses the OS matrix: Linux for dev, all three for main and manual runs.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      os: ${{ steps.os.outputs.os }}
+    steps:
+      - id: os
+        run: |
+          target="${GITHUB_BASE_REF:-$GITHUB_REF_NAME}"
+          if [[ "$target" == "dev" ]]; then
+            echo 'os=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'os=["ubuntu-latest","macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  # `just check`: fmt, clippy, nextest, doctests, comment refs. The same gate agents run.
+  gate:
+    name: Gate (${{ matrix.os }})
+    needs: plan
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    
+        os: ${{ fromJSON(needs.plan.outputs.os) }}
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      # Full history: comment-refs diffs against the merge-base with origin/dev.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          components: rustfmt, clippy
-      
-      # Install system dependencies
+          fetch-depth: 0
+
       - name: Install system deps (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config \
-            libudev-dev \
-            libasound2-dev \
-            libssl-dev
-          # Ensure pkg-config can find system pc files (fallback)
-          echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-/usr/lib/x86_64-linux-gnu/pkgconfig}" >> $GITHUB_ENV
-      
-      # Use Swatinem's cache action - much faster than manual caching
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ${{ matrix.os }}
-          cache-on-failure: true
-          # Cache all target directories including dependencies
-          cache-targets: true
-          # Save cache even if build fails
-          save-if: true
-      
-      # Check formatting first (fast, fails early)
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      
-      # Run clippy (catches issues before full build)
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-      
-      # Build all targets (leverages cache from clippy)
-      - name: Build
-        run: cargo build --all-targets --all-features
-      
-      # Run tests
-      - name: Run tests
-        run: cargo test --workspace --all-features -- --nocapture
+            pkg-config libudev-dev libasound2-dev libssl-dev
 
-  # Optional: Separate benchmark job (only on Linux, only on push to main/dev)
-  bench:
-    name: Benchmarks
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: just,cargo-nextest
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: gate-${{ matrix.os }}
+          cache-on-failure: true
+
+      - run: just check
+
+  # Licenses, advisories, sources. Separate so a new advisory doesn't mask gate results.
+  deny:
+    name: Deny
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: just,cargo-deny
+
+      - run: just deny
+
+  # Informational: mutation-tests only the code this PR changes. Survivors mean the
+  # new tests don't prove behavior; not a required check.
+  mutants:
+    name: Mutants (diff)
+    if: github.event_name == 'pull_request' && github.base_ref == 'dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
       - name: Install system deps
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config \
-            libudev-dev \
-            libasound2-dev
-          # Ensure pkg-config can find system pc files (fallback)
-          echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-/usr/lib/x86_64-linux-gnu/pkgconfig}" >> $GITHUB_ENV
-      
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
+            pkg-config libudev-dev libasound2-dev libssl-dev
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: just,cargo-nextest,cargo-mutants
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: mutants
+          cache-on-failure: true
+
+      - run: just mutants
+
+      - name: Summarize
+        if: always()
+        run: |
+          if [[ -f mutants.out/outcomes.json ]]; then
+            jq -r '"caught \(.caught)  missed \(.missed)  unviable \(.unviable)  timeout \(.timeout)"' \
+              mutants.out/outcomes.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: mutants-out
+          path: mutants.out
+          if-no-files-found: ignore
+
+  # Informational: LCOV report as an artifact once changes land.
+  coverage:
+    name: Coverage
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libudev-dev libasound2-dev libssl-dev
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install --component llvm-tools-preview
+
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: just,cargo-nextest,cargo-llvm-cov
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: coverage
+          cache-on-failure: true
+
+      - run: just cov
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lcov
+          path: lcov.info
+
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libudev-dev libasound2-dev
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: bench
-      
-      - name: Run benchmarks
-        run: cargo bench --bench event_bus_bench -- --output-format bencher
 
+      - run: cargo bench --bench event_bus_bench -- --output-format bencher
