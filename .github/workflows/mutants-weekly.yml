@@ -1,0 +1,61 @@
+name: Mutants (weekly)
+
+# Full mutation run over the workspace; surfaces test-quality decay that per-PR
+# diff runs can't see. Survivors are reviewed, not gated.
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  NEXTEST_PROFILE: ci
+
+jobs:
+  mutants-full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: dev
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libudev-dev libasound2-dev libssl-dev
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: just,cargo-nextest,cargo-mutants
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: mutants
+          cache-on-failure: true
+
+      - run: just mutants-full
+        continue-on-error: true
+
+      - name: Summarize
+        if: always()
+        run: |
+          if [[ -f mutants.out/outcomes.json ]]; then
+            jq -r '"caught \(.caught)  missed \(.missed)  unviable \(.unviable)  timeout \(.timeout)"' \
+              mutants.out/outcomes.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: mutants-out
+          path: mutants.out
+          if-no-files-found: ignore
