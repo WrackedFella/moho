@@ -16,3 +16,10 @@ this card covers the ones that need judgment.
 - `missing_errors_doc` / `missing_panics_doc` enabled for library crates
   (public error contracts are documented).
 - `too_many_lines` is enabled once ENG-F1-03 lands.
+- Rust lint `missing_debug_implementations` enabled (30 sites at the
+  2026-10 baseline; the project requires `Debug` on public types).
+- Placeholder `#[ignore]` tests with no assertions
+  (`moho_ui/tests/console_rendering.rs`, `tests/console_toggle.rs`) are
+  replaced with real tests or deleted.
+- `prefs` video round-trip test exercises `Prefs::save`/load and fails when
+  parsing fails (it currently asserts inside `if let Ok(..)`).

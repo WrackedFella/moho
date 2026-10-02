@@ -37,4 +37,8 @@ replays and future lockstep multiplayer.
 Survey (2026-10): `moho_core` declares `winit` but no source uses it.
 `GameClock::tick(dt)` already takes `dt`, but the frame loop feeds it variable
 frame time. `Instant::now()` appears in `moho_core` input timestamps and voxel
-job/state code. No unseeded RNG or global mutable state found.
+job/state code. No unseeded RNG. Global mutable state: four atomics —
+`moho_ui::UI_OVERLAY_VISIBLE` (cross-crate flag read by the binary),
+`FRAME_COUNTER` in the frame processor, and process-wide ID counters in
+`moho_core` voxel state and `moho_renderer` lights (IDs depend on process
+history, which breaks replay determinism).
