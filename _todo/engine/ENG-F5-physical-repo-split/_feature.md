@@ -25,7 +25,9 @@ Split only after the Strategy line reaches a stable "v1", not on a timeline:
    gate.
 3. `ENG-F2`'s bincode 2→3 strategy decided (not necessarily executed) — a
    save-format promise is implicit in tagging v1.
-4. Tag `v1.0`; full test/clippy green.
+4. Dependency and asset licenses re-audited against the intended commercial
+   distribution (`just deny` plus a manual pass over non-crate assets).
+5. Tag `v1.0`; full test/clippy green.
 
 Explicitly excluded from the gate: SG-F2-01/ENG-F4-04, ENG-F1/ENG-F3 cleanup items, blocked
 `glam`/`wgpu`-30 upgrades — opportunistic backlog, no pre-split sweep.

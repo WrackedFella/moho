@@ -8,6 +8,13 @@ lifecycle: [`_STANDARDS.md`](_STANDARDS.md). Architecture decisions:
 **Feature work is paused** until the agentic workflow's first draft lands; then
 all features get a planning review before any agent picks up work.
 
+**Planning review checklist item: commercial licensing.** Before the review closes,
+decide how the shipped product will be licensed and sold, then audit the dependency
+tree (`cargo deny list`, plus non-crate assets: fonts, audio, textures, shaders) for
+terms that conflict. `deny.toml` already rejects GPL/LGPL and allows MPL-2.0 (file-level
+copyleft), but it checks only crate licenses, not attribution duties or assets. Repeat
+the audit at the v1 gate ([ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md)).
+
 | Line | Folder | Focus |
 |---|---|---|
 | Engine | [`engine/`](engine/) | Shared crates; hygiene and debt land opportunistically |
