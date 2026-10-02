@@ -15,7 +15,7 @@ impl MeshRenderer {
     /// Convert instances from external format to internal GPU format.
     ///
     /// This transformation prepares instance data for GPU upload by converting
-    /// from the external `moho_core::actors::InstanceGpu` format to the internal
+    /// from the external `moho_render_api::InstanceGpu` format to the internal
     /// `GpuInstance` representation used by rendering.
     ///
     /// # Arguments
@@ -23,7 +23,7 @@ impl MeshRenderer {
     ///
     /// # Returns
     /// Vector of GPU-ready instance data
-    pub fn prepare_instances(instances: &[moho_core::actors::InstanceGpu]) -> Vec<GpuInstance> {
+    pub fn prepare_instances(instances: &[moho_render_api::InstanceGpu]) -> Vec<GpuInstance> {
         instances
             .iter()
             .map(|ic| GpuInstance {
@@ -163,8 +163,8 @@ impl MeshRenderer {
 mod tests {
     use super::*;
 
-    fn test_instance() -> moho_core::actors::InstanceGpu {
-        moho_core::actors::InstanceGpu {
+    fn test_instance() -> moho_render_api::InstanceGpu {
+        moho_render_api::InstanceGpu {
             model: [
                 [1.0, 0.0, 0.0, 0.0],
                 [0.0, 1.0, 0.0, 0.0],

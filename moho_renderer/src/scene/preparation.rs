@@ -6,7 +6,8 @@
 
 use crate::{BufferManager, InstanceCollector, MaterialTable, RendererBackend};
 use legion::World;
-use moho_core::actors::InstanceGpu;
+use legion::storage::Component;
+use moho_render_api::{InstanceGpu, Renderable};
 
 /// Prepared scene data ready for rendering.
 ///
@@ -68,10 +69,12 @@ impl ScenePreparation {
     /// * `renderer` - Backend for GPU operations
     /// * `mesh_handle` - Handle for sphere mesh
     /// * `cube_mesh_handle` - Handle for cube mesh
+    /// * `terrain_material_idx` - Pre-registered material index for terrain chunks
     ///
     /// # Returns
     /// PreparedScene containing separated geometry ready for rendering
-    pub fn prepare(
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare<S, C>(
         world: &mut World,
         material_table: &mut MaterialTable,
         buffer_manager: &mut BufferManager,
@@ -79,9 +82,20 @@ impl ScenePreparation {
         renderer: &mut dyn RendererBackend,
         mesh_handle: u32,
         cube_mesh_handle: u32,
-    ) -> PreparedScene {
+        terrain_material_idx: u32,
+    ) -> PreparedScene
+    where
+        S: Renderable + Component,
+        C: Renderable + Component,
+    {
         // Step 1: Collect instances from world
-        instance_collector.collect_from_world(world, material_table, buffer_manager, renderer);
+        instance_collector.collect_from_world::<S, C>(
+            world,
+            material_table,
+            buffer_manager,
+            renderer,
+            terrain_material_idx,
+        );
 
         // Step 2: Debug logging (optional, can be feature-gated in future)
         Self::log_debug_info(material_table, instance_collector);

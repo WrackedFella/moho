@@ -85,9 +85,9 @@ impl<'a> DeviceSetup<'a> {
         // 1. Create Instance
         let instance_desc = wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         };
-        let instance = wgpu::Instance::new(&instance_desc);
+        let instance = wgpu::Instance::new(instance_desc);
 
         // 2. Create Surface
         let surface = instance
@@ -115,13 +115,13 @@ impl<'a> DeviceSetup<'a> {
         };
 
         // Only request features the adapter actually supports
-        let desired_features = wgpu::Features::PUSH_CONSTANTS;
+        let desired_features = wgpu::Features::IMMEDIATES;
         let required_features = desired_features & adapter.features();
 
-        // Set push constant size limit if feature is supported
+        // Set immediate-data size limit if feature is supported
         let mut limits = wgpu::Limits::default();
-        if required_features.contains(wgpu::Features::PUSH_CONSTANTS) {
-            limits.max_push_constant_size = 128; // Minimum guaranteed by spec
+        if required_features.contains(wgpu::Features::IMMEDIATES) {
+            limits.max_immediate_size = 128; // Minimum guaranteed by spec
         }
 
         // 5. Request Device and Queue
@@ -202,11 +202,5 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_device_init_error_is_error() {
-        let err = DeviceInitError::SurfaceCreation("test".to_string());
-        let _: &dyn Error = &err; // Verify it implements Error trait
-    }
-
-    // Note: Actual device creation tests require GPU hardware and are in renderer_init.rs
+    // Note: Actual device creation tests require GPU hardware.
 }

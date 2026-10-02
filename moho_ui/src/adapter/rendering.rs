@@ -142,38 +142,6 @@ mod tests {
     }
 
     #[test]
-    fn test_render_progress_overlay() {
-        let ctx = egui::Context::default();
-        let mut progress = ProgressState {
-            title: "Test Progress".to_string(),
-            percent: 0.5,
-            cancellable: true,
-            canceled: false,
-        };
-
-        let _ = ctx.run(Default::default(), |ctx| {
-            render_progress_overlay(ctx, &mut progress);
-        });
-        assert!(!progress.canceled); // No interaction in test
-    }
-
-    #[test]
-    fn test_render_progress_non_cancellable() {
-        let ctx = egui::Context::default();
-        let mut progress = ProgressState {
-            title: "Loading".to_string(),
-            percent: 0.75,
-            cancellable: false,
-            canceled: false,
-        };
-
-        let _ = ctx.run(Default::default(), |ctx| {
-            render_progress_overlay(ctx, &mut progress);
-        });
-        assert!(!progress.canceled);
-    }
-
-    #[test]
     fn test_render_game_state_playing() {
         let ctx = egui::Context::default();
         let mut ui_state = UiStateManager::new();

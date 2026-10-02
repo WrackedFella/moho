@@ -9,7 +9,7 @@
 use crate::App;
 use crate::input_event::InputEvent;
 use legion::IntoQuery;
-use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent, WorldEvent};
+use moho_core::events::{GraphicsEvent, UiEvent, WorldEvent};
 use moho_core::voxel::VoxelChunk;
 use winit::event_loop::ActiveEventLoop;
 
@@ -20,6 +20,10 @@ const SPAWN_NORMAL_OFFSET: f32 = 0.5;
 const SPAWN_FALLBACK_DISTANCE: f32 = 5.0;
 /// Placeholder material ID for torch blocks.
 const TORCH_MATERIAL_ID: u32 = 3; // TODO: look up from MaterialRegistry
+/// Maximum reach for the player's direct mining action — shorter than
+/// `SPAWN_RAYCAST_MAX_DISTANCE`, which is a debug-console placement aid, not
+/// a gameplay reach limit.
+const MINE_MAX_DISTANCE: f32 = 8.0;
 const DEFAULT_POINT_LIGHT_INTENSITY: f32 = 5.0;
 const DEFAULT_POINT_LIGHT_RANGE: f32 = 20.0;
 
@@ -55,7 +59,7 @@ impl EventProcessor {
                     seed,
                     size
                 );
-                let spec = moho_core::scene_builders::WorldSpec {
+                let spec = moho_game::scene_builders::WorldSpec {
                     name,
                     seed,
                     size_xz: size,
@@ -131,43 +135,8 @@ impl EventProcessor {
     /// Process all pending audio events from the event bus
     pub fn process_audio_events(&self, app: &mut App) {
         while let Ok(event) = app.audio_event_rx.try_recv() {
-            if let Some(audio_event) = self.map_audio_event(event) {
-                app.handle_audio_event(audio_event);
-            }
+            app.handle_audio_event(event);
         }
-    }
-
-    /// Map core AudioEvent to moho_audio AudioEvent.
-    ///
-    /// Returns `None` for events that have no moho_audio equivalent yet.
-    fn map_audio_event(&self, event: AudioEvent) -> Option<moho_audio::AudioEvent> {
-        Some(match event {
-            AudioEvent::ButtonClick => moho_audio::AudioEvent::ButtonClick,
-            AudioEvent::MenuNavigate => moho_audio::AudioEvent::MenuNavigate,
-            AudioEvent::Confirm => moho_audio::AudioEvent::Confirm,
-            AudioEvent::Cancel => moho_audio::AudioEvent::Cancel,
-            AudioEvent::Error => moho_audio::AudioEvent::Error,
-            AudioEvent::PlaySound { path, volume } => {
-                moho_audio::AudioEvent::CustomSound { path, volume }
-            }
-            AudioEvent::MusicStart {
-                path,
-                volume,
-                looped,
-            } => moho_audio::AudioEvent::BackgroundMusic {
-                path,
-                volume,
-                looped,
-            },
-            AudioEvent::MusicStop => {
-                moho_audio::AudioEvent::Stop(Some(moho_audio::AudioCategory::Music))
-            }
-            AudioEvent::MusicVolumeChanged { volume: _ } => {
-                // TODO: implement runtime volume adjustment in AudioSystem
-                return None;
-            }
-            AudioEvent::StopAll => moho_audio::AudioEvent::Stop(None),
-        })
     }
 
     /// Process all pending graphics events from the event bus
@@ -216,7 +185,7 @@ impl EventProcessor {
                 // Only act on wheel events in game mode
                 if app.game_state == crate::game_state::GameState::Playing {
                     match app.simulation.camera_mode() {
-                        moho_core::controller::CameraMode::FirstPerson => {
+                        moho_game::controller::CameraMode::FirstPerson => {
                             // First-person: scroll moves forward/back along look direction
                             let dz = delta_y * MOUSE_WHEEL_ZOOM_FACTOR;
                             let (yaw, pitch) = app.simulation.yaw_pitch();
@@ -228,13 +197,80 @@ impl EventProcessor {
                             let new_pos = app.simulation.position() + forward * dz;
                             app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
                         }
-                        moho_core::controller::CameraMode::Isometric => {
+                        moho_game::controller::CameraMode::Isometric => {
                             // RTS camera: scroll adjusts camera height (zoom)
                             app.simulation.controller_input.zoom_delta = delta_y;
                         }
                     }
                 }
             }
+            InputEvent::MineRequested => {
+                self.handle_mine_requested(app);
+            }
+            InputEvent::SlotSelected { slot } => {
+                app.pawn.select_slot(slot);
+            }
+        }
+    }
+
+    /// Mine whatever voxel the player is aiming at, if anything is in range.
+    /// Only acts while playing in first-person — mining isn't meaningful in
+    /// the isometric/RTS camera today.
+    fn handle_mine_requested(&self, app: &mut App) {
+        if app.game_state != crate::game_state::GameState::Playing
+            || app.simulation.camera_mode() != moho_game::controller::CameraMode::FirstPerson
+        {
+            return;
+        }
+
+        let (view_matrix, _, _) = app.camera;
+        let camera_pos = view_matrix.inverse().col(3).truncate();
+        let forward = -view_matrix.inverse().col(2).truncate().normalize();
+
+        if app.pawn.equipped_tool.is_none() {
+            log::debug!("Mine attempt blocked: no tool equipped");
+            return;
+        }
+
+        let Some(light_system) = app.light_system.as_mut() else {
+            return;
+        };
+        let grid = light_system.grid_mut();
+
+        let Some(outcome) = app.pawn.mine(grid, camera_pos, forward, MINE_MAX_DISTANCE) else {
+            log::debug!(
+                "Mine attempt found nothing solid within {} units",
+                MINE_MAX_DISTANCE
+            );
+            return;
+        };
+
+        let chunk_pos =
+            moho_core::voxel::VoxelGrid::get_chunk_pos(outcome.block_pos, grid.chunk_size());
+
+        app.event_bus.publish(WorldEvent::BlockRemoved {
+            position: outcome.block_pos,
+            old_material_id: outcome.old_material_id,
+            reason: moho_core::events::BlockChangeReason::Player,
+        });
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos,
+            terrain_dirty: true,
+            structure_dirty: true,
+        });
+
+        match outcome.yield_ {
+            Some(y) => log::debug!(
+                "Mined {:?} at {:.1}m → resource {}",
+                outcome.block_pos,
+                outcome.distance,
+                y.resource_id
+            ),
+            None => log::debug!(
+                "Mined {:?} at {:.1}m (no resource)",
+                outcome.block_pos,
+                outcome.distance
+            ),
         }
     }
 
@@ -269,7 +305,8 @@ impl EventProcessor {
                     app.physics
                         .update_chunk_collider(chunk_pos, chunk.vertices(), chunk.indices());
 
-                    // Update or insert into ECS world
+                    // Update or insert into ECS world.
+                    debug_assert_chunk_entity_unique(&app.world, chunk_pos);
                     let mut query = <(legion::Entity, &VoxelChunk)>::query();
                     let entity = query
                         .iter(&app.world)
@@ -320,7 +357,7 @@ impl EventProcessor {
                 if let Some(grid) = grid_opt {
                     // Use raycast utility
                     // Max distance 100 units
-                    let hit = moho_core::raycast::raycast(
+                    let hit = moho_game::raycast::raycast(
                         grid,
                         camera_pos,
                         forward,
@@ -405,7 +442,7 @@ impl EventProcessor {
                                 // Spawn a small gizmo sphere so the light origin is
                                 // visible in world space. Emissive material bypasses
                                 // lighting so the gizmo glows at the light's own colour.
-                                let gizmo = moho_core::actors::Sphere::new(
+                                let gizmo = moho_game::actors::Sphere::new(
                                     spawn_pos,
                                     0.15,
                                     moho_core::materials::MaterialType::Emissive {
@@ -419,8 +456,8 @@ impl EventProcessor {
                         }
                         "cube" => {
                             // Spawn cube actor
-                            use moho_core::actors::Cube;
                             use moho_core::materials::MaterialType;
+                            use moho_game::actors::Cube;
 
                             let cube = Cube::new(
                                 spawn_pos,
@@ -440,8 +477,8 @@ impl EventProcessor {
                         }
                         "sphere" => {
                             // Spawn sphere actor
-                            use moho_core::actors::Sphere;
                             use moho_core::materials::MaterialType;
+                            use moho_game::actors::Sphere;
 
                             let sphere = Sphere::new(
                                 spawn_pos,
@@ -525,6 +562,27 @@ pub(crate) fn lod_for_chunk(chunk_pos: glam::IVec3, player_chunk: glam::IVec3) -
     if dist < 4 { 0 } else { 1 }
 }
 
+/// A `chunk_pos` should map to at most one `VoxelChunk` entity — if streaming
+/// or LOD transitions ever left a duplicate, `process_world_events`'s `find`
+/// would silently update one while a stale mesh keeps rendering alongside it.
+/// Debug-only: `ChunkMeshDirty` fires continuously during streaming, so this
+/// scans the chunk archetype on every call — `debug_assert!`'s condition is
+/// never evaluated in a release build, so this costs nothing there.
+fn debug_assert_chunk_entity_unique(world: &legion::World, chunk_pos: glam::IVec3) {
+    debug_assert!(
+        {
+            let mut query = <&VoxelChunk>::query();
+            query
+                .iter(world)
+                .filter(|c| c.chunk_pos() == chunk_pos)
+                .count()
+                <= 1
+        },
+        "chunk {:?} has more than one VoxelChunk entity — a stale mesh may be rendering alongside the fresh one",
+        chunk_pos
+    );
+}
+
 impl Default for EventProcessor {
     fn default() -> Self {
         Self::new()
@@ -534,75 +592,6 @@ impl Default for EventProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_event_processor_creation() {
-        let processor = EventProcessor::new();
-        assert_eq!(std::mem::size_of_val(&processor), 0); // Zero-sized type
-    }
-
-    #[test]
-    fn test_event_processor_default() {
-        let _processor = EventProcessor;
-        // Just verify it compiles and constructs
-    }
-
-    #[test]
-    fn test_audio_event_mapping() {
-        let processor = EventProcessor::new();
-
-        // Test basic event mappings
-        let mapped = processor.map_audio_event(AudioEvent::ButtonClick);
-        assert!(matches!(mapped, Some(moho_audio::AudioEvent::ButtonClick)));
-
-        let mapped = processor.map_audio_event(AudioEvent::Confirm);
-        assert!(matches!(mapped, Some(moho_audio::AudioEvent::Confirm)));
-
-        let mapped = processor.map_audio_event(AudioEvent::Cancel);
-        assert!(matches!(mapped, Some(moho_audio::AudioEvent::Cancel)));
-    }
-
-    #[test]
-    fn test_audio_event_play_sound_mapping() {
-        let processor = EventProcessor::new();
-
-        let mapped = processor.map_audio_event(AudioEvent::PlaySound {
-            path: "test.wav".into(),
-            volume: 0.5,
-        });
-
-        match mapped {
-            Some(moho_audio::AudioEvent::CustomSound { path, volume }) => {
-                assert_eq!(path, "test.wav");
-                assert!((volume - 0.5).abs() < 0.001);
-            }
-            _ => panic!("Expected CustomSound variant"),
-        }
-    }
-
-    #[test]
-    fn test_audio_event_music_mapping() {
-        let processor = EventProcessor::new();
-
-        let mapped = processor.map_audio_event(AudioEvent::MusicStart {
-            path: "music.ogg".into(),
-            volume: 0.8,
-            looped: true,
-        });
-
-        match mapped {
-            Some(moho_audio::AudioEvent::BackgroundMusic {
-                path,
-                volume,
-                looped,
-            }) => {
-                assert_eq!(path, "music.ogg");
-                assert!((volume - 0.8).abs() < 0.001);
-                assert!(looped);
-            }
-            _ => panic!("Expected BackgroundMusic variant"),
-        }
-    }
 
     #[test]
     fn test_lod_player_chunk_origin() {

@@ -58,6 +58,7 @@ pub fn execute_render_pass(
         depth_stencil_attachment: None,
         timestamp_writes: None,
         occlusion_query_set: None,
+        multiview_mask: None,
     });
 
     // SAFETY: `egui_wgpu::Renderer::render` takes `&mut RenderPass<'static>` even though
@@ -74,31 +75,5 @@ pub fn execute_render_pass(
 pub fn free_textures(renderer: &mut egui_wgpu::Renderer, texture_ids: &[egui::TextureId]) {
     for id in texture_ids {
         renderer.free_texture(id);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    // Note: GPU operation tests require actual wgpu device/queue
-    // These are integration test stubs that verify the module compiles
-    // Full testing would require mock GPU context or integration tests
-
-    #[test]
-    fn test_free_textures_empty() {
-        // Verify empty texture list doesn't panic
-        // Would need mock renderer for actual test
-        let empty_ids: Vec<egui::TextureId> = vec![];
-        assert_eq!(empty_ids.len(), 0);
-    }
-
-    #[test]
-    fn test_screen_descriptor_size() {
-        let descriptor = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [1920, 1080],
-            pixels_per_point: 1.0,
-        };
-
-        assert_eq!(descriptor.size_in_pixels[0], 1920);
-        assert_eq!(descriptor.size_in_pixels[1], 1080);
     }
 }

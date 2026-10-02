@@ -4,7 +4,6 @@ use std::fmt::Debug;
 // Event type modules
 pub mod audio;
 pub mod debug;
-pub mod game;
 pub mod graphics;
 pub mod input;
 pub mod system;
@@ -14,7 +13,6 @@ pub mod world;
 // Re-export all event types for convenience
 pub use audio::*;
 pub use debug::*;
-pub use game::*;
 pub use graphics::*;
 pub use input::*;
 pub use system::*;

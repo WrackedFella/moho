@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// on `app.generation`, and immediately shows the progress overlay in the UI.
 pub fn generate_new_world(
     app: &mut crate::App,
-    spec: moho_core::scene_builders::WorldSpec,
+    spec: moho_game::scene_builders::WorldSpec,
 ) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Starting async generation for spec={:?}", spec);
 
@@ -54,7 +54,7 @@ pub fn generate_new_world(
                 return;
             }
             // Build TerrainConfig from the WorldSpec.
-            let mut terrain_config = moho_core::scene_builders::TerrainConfig::default();
+            let mut terrain_config = moho_game::scene_builders::TerrainConfig::default();
             if let Some(s) = spec_for_thread.seed {
                 terrain_config.seed = s as u32;
             }
@@ -73,14 +73,13 @@ pub fn generate_new_world(
             // Encode scene bytes. Provide a sensible default camera for
             // newly generated worlds so the app has a starting
             // viewpoint instead of relying on previous controller state.
-            let local_scene = moho_renderer::Scene::new();
             // Place camera above world center looking slightly down
             let camera_height = 24.0f32;
             let camera_position = glam::Vec3::new(0.0, camera_height, 0.0);
             // yaw = 0.0 (look along +Z), pitch negative to look downward
             let camera_yaw = 0.0f32;
             let camera_pitch = -0.4f32;
-            let scene_bytes = match local_scene.encode_to_bytes(
+            let scene_bytes = match moho_game::scene_persistence::encode_to_bytes(
                 &local_world,
                 Some((camera_position, camera_yaw, camera_pitch)),
                 &[], // fresh world — no spawned lights

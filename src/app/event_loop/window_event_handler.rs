@@ -65,14 +65,19 @@ impl WindowEventHandler {
     /// Handle redraw request
     fn handle_redraw_requested(&self, app: &mut App) {
         log::debug!("RedrawRequested - rendering frame");
-        if let Some(ref mut wr) = app.window_renderer {
-            app.scene.render(
-                &mut *wr.renderer,
-                &mut app.world,
-                wr.mesh_handle,
-                wr.cube_mesh_handle,
-                app.camera,
-            );
+        if let Some(ref mut wr) = app.window_renderer
+            && let Err(e) = app
+                .scene
+                .render::<moho_game::actors::Sphere, moho_game::actors::Cube>(
+                    &mut *wr.renderer,
+                    &mut app.world,
+                    wr.mesh_handle,
+                    wr.cube_mesh_handle,
+                    wr.terrain_material_idx,
+                    app.camera,
+                )
+        {
+            log::warn!("Skipped frame: {}", e);
         }
 
         // Recall staging belt after render
@@ -95,22 +100,5 @@ impl WindowEventHandler {
 impl Default for WindowEventHandler {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_window_event_handler_creation() {
-        let handler = WindowEventHandler::new();
-        assert_eq!(std::mem::size_of_val(&handler), 0); // Zero-sized type
-    }
-
-    #[test]
-    fn test_window_event_handler_default() {
-        let _handler = WindowEventHandler;
-        // Just verify it compiles and constructs
     }
 }

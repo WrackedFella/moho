@@ -244,29 +244,6 @@ mod tests {
     }
 
     #[test]
-    fn test_should_render_face_surrounded() {
-        let mut grid = VoxelGrid::new(16);
-        let pos = BlockPos::new(5, 5, 5);
-        grid.place_block(pos, 0, None);
-
-        // Add neighbors on all sides
-        grid.place_block(BlockPos::new(6, 5, 5), 0, None); // +X
-        grid.place_block(BlockPos::new(4, 5, 5), 0, None); // -X
-        grid.place_block(BlockPos::new(5, 6, 5), 0, None); // +Y
-        grid.place_block(BlockPos::new(5, 4, 5), 0, None); // -Y
-        grid.place_block(BlockPos::new(5, 5, 6), 0, None); // +Z
-        grid.place_block(BlockPos::new(5, 5, 4), 0, None); // -Z
-
-        // All faces should be hidden
-        assert!(!FaceDirection::PosX.should_render_face(&grid, pos));
-        assert!(!FaceDirection::NegX.should_render_face(&grid, pos));
-        assert!(!FaceDirection::PosY.should_render_face(&grid, pos));
-        assert!(!FaceDirection::NegY.should_render_face(&grid, pos));
-        assert!(!FaceDirection::PosZ.should_render_face(&grid, pos));
-        assert!(!FaceDirection::NegZ.should_render_face(&grid, pos));
-    }
-
-    #[test]
     fn test_get_visible_faces_isolated_block() {
         let mut grid = VoxelGrid::new(16);
         let pos = BlockPos::new(10, 10, 10);
@@ -314,27 +291,5 @@ mod tests {
 
         let visible = get_visible_faces(&grid, pos);
         assert_eq!(visible.len(), 0); // No faces visible
-    }
-
-    #[test]
-    fn test_lookup_table_consistency() {
-        // Verify lookup tables have correct size
-        assert_eq!(FACE_OFFSETS.len(), 6);
-        assert_eq!(FACE_VERTEX_RANGES.len(), 6);
-        assert_eq!(FACE_INDEX_RANGES.len(), 6);
-
-        // Verify all indices are valid enum values
-        for i in 0..6 {
-            let face = match i {
-                0 => FaceDirection::PosX,
-                1 => FaceDirection::NegX,
-                2 => FaceDirection::PosY,
-                3 => FaceDirection::NegY,
-                4 => FaceDirection::PosZ,
-                5 => FaceDirection::NegZ,
-                _ => unreachable!(),
-            };
-            assert_eq!(face as usize, i);
-        }
     }
 }

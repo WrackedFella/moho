@@ -7,6 +7,16 @@
 use std::sync::{Arc, Mutex};
 use winit::window::Window;
 
+/// Whether the UI is capturing input right now, checked conservatively: if the
+/// lock can't be acquired for any reason, treat that as "capturing" so game
+/// input is never forwarded underneath a UI panel by mistake.
+fn ui_is_capturing_input(ui_adapter: &Arc<Mutex<moho_ui::EguiAdapter>>) -> bool {
+    match ui_adapter.try_lock() {
+        Ok(a) => a.is_visible(),
+        Err(_) => true,
+    }
+}
+
 /// Initialize the renderer and UI adapter for the given window.
 ///
 /// Creates the wgpu renderer, registers the shared sphere and cube mesh handles,
@@ -32,31 +42,48 @@ pub fn setup_renderer_and_ui(
     renderer.set_ssao_quality(app.prefs.ssao_quality() as u8);
 
     // Create sphere mesh data using the proper sphere geometry
-    let (vertices, normals, indices) = moho_core::actors::Sphere::unit_sphere_indexed(16, 16);
+    let (vertices, normals, indices) = moho_game::actors::Sphere::unit_sphere_indexed(16, 16);
     let ao_data = vec![1.0; vertices.len()]; // Full brightness for non-voxel geometry
     let geo_type = vec![1; vertices.len()]; // Type 1 (blocky/non-voxel)
     let light_level = vec![1.0; vertices.len()]; // Full light for non-voxel geometry
+    let block_light_rgb = vec![[1.0, 1.0, 1.0]; vertices.len()]; // Full white, non-voxel
+    let sky_exposed = vec![1.0; vertices.len()]; // Fully sky-exposed, non-voxel
     let mesh_handle = renderer.register_indexed_mesh(
         &vertices,
         &normals,
         &ao_data,
         &geo_type,
         &light_level,
+        &block_light_rgb,
+        &sky_exposed,
         &indices,
     );
 
-    let (cube_vertices, cube_normals, cube_indices) = moho_core::actors::Cube::unit_cube_indexed();
+    let (cube_vertices, cube_normals, cube_indices) = moho_game::actors::Cube::unit_cube_indexed();
     let cube_ao = vec![1.0; cube_vertices.len()];
     let cube_geo_type = vec![1; cube_vertices.len()];
     let cube_light_level = vec![1.0; cube_vertices.len()];
+    let cube_block_light_rgb = vec![[1.0, 1.0, 1.0]; cube_vertices.len()];
+    let cube_sky_exposed = vec![1.0; cube_vertices.len()];
     let cube_mesh_handle = renderer.register_indexed_mesh(
         &cube_vertices,
         &cube_normals,
         &cube_ao,
         &cube_geo_type,
         &cube_light_level,
+        &cube_block_light_rgb,
+        &cube_sky_exposed,
         &cube_indices,
     );
+
+    // Pre-register the default VoxelTerrain material so all terrain chunks
+    // share a single GPU material entry sourcing colours from the material
+    // buffer rather than hardcoding them in the shader.
+    let terrain_mat = moho_core::materials::MaterialType::VoxelTerrain {
+        top_albedo: glam::Vec3::new(0.3, 0.6, 0.3),  // grass green
+        side_albedo: glam::Vec3::new(0.6, 0.5, 0.4), // dirt brown
+    };
+    let terrain_material_idx = app.scene.material_table.find_or_push(&terrain_mat);
 
     // UI setup
     {
@@ -111,37 +138,94 @@ pub fn setup_renderer_and_ui(
         app.input.unconsumed_tx = Some(tx.clone());
         app.input.unconsumed_rx = Some(rx);
 
-        // Prepare a ui_adapter clone to check visibility before forwarding wheel
-        let ui_adapter_for_forward = ui_adapter.clone();
-
         // Register a low-priority subscriber that forwards mouse wheel events into
         // the channel so the game can act on them later (e.g., scroll-to-zoom).
         // We only forward when the UI overlay is not visible. Note: the
         // dispatcher already ensures this subscriber is only called when higher
         // priority handlers did not consume the event (i.e., egui didn't want it).
+        let ui_adapter_for_wheel = ui_adapter.clone();
+        let wheel_tx = tx.clone();
         app.dispatcher
             .register(0, move |event: &winit::event::WindowEvent| {
-                use winit::event::WindowEvent as WEvent;
-                if let WEvent::MouseWheel { delta, .. } = event {
-                    // Use the conservative try_lock approach: if we cannot acquire the
-                    // lock for any reason, treat as UI-visible and do not forward.
-                    match ui_adapter_for_forward.try_lock() {
-                        Ok(a) if a.is_visible() => return false,
-                        Err(_) => return false,
-                        _ => {}
-                    }
-
-                    // Convert delta to a simple numeric pair and forward via helper
-                    let delta_y = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_x, y) => *y,
-                        winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32,
-                    };
-
-                    if crate::forward_wheel_if_allowed(&ui_adapter_for_forward, &tx, delta_y) {
-                        return true;
-                    }
+                let winit::event::WindowEvent::MouseWheel { delta, .. } = event else {
+                    return false;
+                };
+                if ui_is_capturing_input(&ui_adapter_for_wheel) {
+                    return false;
                 }
-                false
+
+                let delta_y = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_x, y) => *y,
+                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                };
+                crate::forward_wheel_if_allowed(&ui_adapter_for_wheel, &wheel_tx, delta_y)
+            });
+
+        // Register a separate low-priority subscriber for the mine action: a
+        // left click, not captured by UI, requests a mine attempt via the same
+        // channel. Kept as its own registration rather than folded into the
+        // wheel handler above — each input kind gets its own subscriber so a
+        // future input type is a new `register` call, not another branch on
+        // an existing one.
+        let ui_adapter_for_mine = ui_adapter.clone();
+        let mine_tx = tx.clone();
+        app.dispatcher
+            .register(0, move |event: &winit::event::WindowEvent| {
+                let winit::event::WindowEvent::MouseInput {
+                    state: winit::event::ElementState::Pressed,
+                    button: winit::event::MouseButton::Left,
+                    ..
+                } = event
+                else {
+                    return false;
+                };
+                if ui_is_capturing_input(&ui_adapter_for_mine) {
+                    return false;
+                }
+
+                mine_tx
+                    .send(crate::input_event::InputEvent::MineRequested)
+                    .is_ok()
+            });
+
+        // Register a low-priority subscriber for hotbar slot selection:
+        // number keys 1-8 (not captured by UI) select the corresponding
+        // 0-based slot. Slot 0 (key "1") is the reserved tool slot.
+        let ui_adapter_for_slots = ui_adapter.clone();
+        let slot_tx = tx.clone();
+        app.dispatcher
+            .register(0, move |event: &winit::event::WindowEvent| {
+                let winit::event::WindowEvent::KeyboardInput {
+                    event:
+                        winit::event::KeyEvent {
+                            physical_key: winit::keyboard::PhysicalKey::Code(keycode),
+                            state: winit::event::ElementState::Pressed,
+                            repeat: false,
+                            ..
+                        },
+                    ..
+                } = event
+                else {
+                    return false;
+                };
+                let slot = match keycode {
+                    winit::keyboard::KeyCode::Digit1 => 0,
+                    winit::keyboard::KeyCode::Digit2 => 1,
+                    winit::keyboard::KeyCode::Digit3 => 2,
+                    winit::keyboard::KeyCode::Digit4 => 3,
+                    winit::keyboard::KeyCode::Digit5 => 4,
+                    winit::keyboard::KeyCode::Digit6 => 5,
+                    winit::keyboard::KeyCode::Digit7 => 6,
+                    winit::keyboard::KeyCode::Digit8 => 7,
+                    _ => return false,
+                };
+                if ui_is_capturing_input(&ui_adapter_for_slots) {
+                    return false;
+                }
+
+                slot_tx
+                    .send(crate::input_event::InputEvent::SlotSelected { slot })
+                    .is_ok()
             });
     }
 
@@ -151,6 +235,7 @@ pub fn setup_renderer_and_ui(
         renderer,
         mesh_handle,
         cube_mesh_handle,
+        terrain_material_idx,
     });
 
     Ok(())

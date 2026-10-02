@@ -1,7 +1,8 @@
 use glam::Vec3;
 use legion::World;
-use moho_core::actors::Sphere;
 use moho_core::materials::MaterialType;
+use moho_game::actors::Sphere;
+use moho_game::scene_persistence;
 
 #[test]
 fn scene_encode_decode_roundtrip_in_memory() {
@@ -25,17 +26,13 @@ fn scene_encode_decode_roundtrip_in_memory() {
     world.push((s1,));
     world.push((s2,));
 
-    let scene = moho_renderer::Scene::new();
-
     // Encode the scene into in-memory bytes
-    let bytes = scene.encode_to_bytes(&world, None, &[]).expect("encode ok");
+    let bytes = scene_persistence::encode_to_bytes(&world, None, &[]).expect("encode ok");
 
     // create a fresh world and decode from bytes
     let mut loaded_world = World::default();
-    let mut scene2 = moho_renderer::Scene::new();
-    let (_camera_data, _lights) = scene2
-        .load_from_bytes(&bytes, &mut loaded_world)
-        .expect("decode ok");
+    let (_camera_data, _lights) =
+        scene_persistence::load_from_bytes(&bytes, &mut loaded_world).expect("decode ok");
 
     // Basic checks: worlds contain Hittable-like components (we pushed Spheres only)
     use legion::query::IntoQuery;

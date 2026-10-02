@@ -3,6 +3,15 @@
 //! This crate provides a flexible, scalable UI system based on egui with support
 //! for multiple menu types and easy extensibility for new UI components.
 
+// egui 0.34 deprecated `Context::run`/`Panel::show`/`CentralPanel::show` in favor
+// of `run_ui`/`show_inside`, which take a `&mut Ui` instead of a `&Context` — every
+// screen and overlay in this crate is built around the Context-driven pattern, so
+// migrating is a UI-architecture change (how screens obtain their root `Ui`), not a
+// mechanical rename. Deferred as a follow-up; tracked in
+// _todo/tech-debt/dependency-upgrades.md rather than fixed as a side effect of the
+// wgpu/egui version bump.
+#![allow(deprecated)]
+
 use moho_renderer::FrameCallback;
 
 /// Stub UI implementation for when no UI features are enabled

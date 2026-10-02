@@ -1,5 +1,9 @@
 //! Tests for the menu system functionality
 
+// See moho_ui/src/lib.rs's crate-level `#![allow(deprecated)]` for why
+// `Context::run` (egui 0.34 deprecation) is still used here.
+#![allow(deprecated)]
+
 use moho_ui::UiComponent;
 use moho_ui::{MenuAction, MenuItem, SettingsMenu};
 use std::path::PathBuf;

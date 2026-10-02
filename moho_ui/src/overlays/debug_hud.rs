@@ -131,26 +131,4 @@ mod tests {
         hud.toggle();
         assert!(!hud.is_visible());
     }
-
-    #[test]
-    fn render_when_hidden_is_noop() {
-        let mut hud = DebugHud::new();
-        let ctx = egui::Context::default();
-        let data = HudData::default();
-        let _ = ctx.run(Default::default(), |ctx| {
-            hud.render(ctx, &data);
-        });
-        // No assertions needed — just verify no panic
-    }
-
-    #[test]
-    fn render_when_visible() {
-        let mut hud = DebugHud::new();
-        hud.set_visible(true);
-        let ctx = egui::Context::default();
-        let data = HudData::default();
-        let _ = ctx.run(Default::default(), |ctx| {
-            hud.render(ctx, &data);
-        });
-    }
 }

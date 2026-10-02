@@ -60,13 +60,19 @@ impl WindowManager {
     pub fn initial_render(&self, app: &mut App) {
         log::info!("Initial render");
         if let Some(ref mut wr) = app.window_renderer {
-            app.scene.render(
-                &mut *wr.renderer,
-                &mut app.world,
-                wr.mesh_handle,
-                wr.cube_mesh_handle,
-                app.camera,
-            );
+            if let Err(e) = app
+                .scene
+                .render::<moho_game::actors::Sphere, moho_game::actors::Cube>(
+                    &mut *wr.renderer,
+                    &mut app.world,
+                    wr.mesh_handle,
+                    wr.cube_mesh_handle,
+                    wr.terrain_material_idx,
+                    app.camera,
+                )
+            {
+                log::warn!("Skipped initial render: {}", e);
+            }
             wr.window.request_redraw();
         }
     }
@@ -113,18 +119,6 @@ impl Default for WindowManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_window_manager_creation() {
-        let manager = WindowManager::new();
-        assert_eq!(std::mem::size_of_val(&manager), 0); // Zero-sized type
-    }
-
-    #[test]
-    fn test_window_manager_default() {
-        let _manager = WindowManager;
-        // Just verify it compiles and constructs
-    }
 
     #[test]
     fn test_window_error_display() {

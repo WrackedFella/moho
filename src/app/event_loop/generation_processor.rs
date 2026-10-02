@@ -67,8 +67,8 @@ impl GenerationProcessor {
         &self,
         app: &mut App,
         scene_bytes: Vec<u8>,
-        spec: moho_core::scene_builders::WorldSpec,
-        terrain_config: moho_core::scene_builders::TerrainConfig,
+        spec: moho_game::scene_builders::WorldSpec,
+        terrain_config: moho_game::scene_builders::TerrainConfig,
         grid: moho_core::voxel::VoxelGrid,
     ) {
         log::info!("Generation completed for spec={:?}", spec.name);
@@ -123,7 +123,7 @@ impl GenerationProcessor {
 
         // Load produced scene bytes into the main world
         app.world.clear();
-        match app.scene.load_from_bytes(&scene_bytes, &mut app.world) {
+        match moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.world) {
             Ok((camera_data, _lights)) => {
                 // Generated worlds have no pre-spawned lights; nothing to restore.
                 if let Some((position, yaw, pitch)) = camera_data {
@@ -156,10 +156,10 @@ impl GenerationProcessor {
     /// height before `setup_physics_for_world` places the character controller.
     fn preload_spawn_area(
         &self,
-        terrain_config: &moho_core::scene_builders::TerrainConfig,
+        terrain_config: &moho_game::scene_builders::TerrainConfig,
         app: &mut App,
     ) -> Vec<glam::IVec3> {
-        use moho_core::voxel::streaming::generate_chunk;
+        use moho_game::scene_builders::generate_chunk;
         const PRELOAD_RADIUS: i32 = 2; // 2-chunk radius (5×5 columns) around origin
         const MIN_Y: i32 = 0;
         const MAX_Y: i32 = 8; // matches chunk_streamer::MAX_CHUNK_Y
@@ -179,7 +179,7 @@ impl GenerationProcessor {
                         continue;
                     }
                     for (world_pos, material_id, resource_id) in blocks {
-                        grid.place_block(world_pos, material_id, resource_id);
+                        grid.mutator().place(world_pos, material_id, resource_id);
                     }
                     grid.clear_chunk_modified(pos);
                     loaded.push(pos);
@@ -279,8 +279,8 @@ impl GenerationProcessor {
                 .map(|pw| pw.add_dynamic_sphere(sphere_pos, 0.5));
 
             if let Some(handle) = body_handle {
-                use moho_core::actors::Sphere;
                 use moho_core::materials::MaterialType;
+                use moho_game::actors::Sphere;
                 let sphere = Sphere::new(
                     sphere_pos,
                     0.5,
@@ -320,22 +320,5 @@ impl GenerationProcessor {
 impl Default for GenerationProcessor {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_generation_processor_creation() {
-        let processor = GenerationProcessor::new();
-        assert_eq!(std::mem::size_of_val(&processor), 0); // Zero-sized type
-    }
-
-    #[test]
-    fn test_generation_processor_default() {
-        let _processor = GenerationProcessor;
-        // Just verify it compiles and constructs
     }
 }

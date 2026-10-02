@@ -2,7 +2,7 @@ use crate::prefs::Prefs;
 use egui::{Align2, Vec2};
 use std::path::PathBuf;
 
-use moho_core::scene_builders::WorldSpec;
+use moho_game::scene_builders::WorldSpec;
 
 /// Actions a Menu may return when interacted with.
 #[derive(Debug, Clone, PartialEq)]

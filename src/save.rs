@@ -44,7 +44,7 @@ impl BlockRecord {
 pub fn write_scene_with_metadata<P: AsRef<Path>>(
     path: P,
     scene_bytes: &[u8],
-    world_spec: &moho_core::scene_builders::WorldSpec,
+    world_spec: &moho_game::scene_builders::WorldSpec,
     block_records: &[BlockRecord],
 ) -> Result<(), Box<dyn Error>> {
     let path = path.as_ref();
@@ -82,7 +82,7 @@ pub fn write_scene_with_metadata<P: AsRef<Path>>(
 
 /// Payload returned by [`read_scene_and_metadata`].
 pub type SavePayload = (
-    moho_core::scene_builders::WorldSpec,
+    moho_game::scene_builders::WorldSpec,
     Vec<u8>,
     Vec<BlockRecord>,
 );
@@ -125,7 +125,7 @@ pub fn read_scene_and_metadata<P: AsRef<Path>>(path: P) -> Result<SavePayload, B
     let scene_bytes = buf[offset..offset + scene_len].to_vec();
     offset += scene_len;
 
-    let (spec, _): (moho_core::scene_builders::WorldSpec, usize) =
+    let (spec, _): (moho_game::scene_builders::WorldSpec, usize) =
         bincode::decode_from_slice(meta_bytes, bincode::config::standard())?;
 
     // v2+ includes a block data section
@@ -217,7 +217,7 @@ mod tests {
         let path = temp_path("v2");
 
         let scene_bytes = vec![9u8, 8, 7, 6];
-        let spec = moho_core::scene_builders::WorldSpec {
+        let spec = moho_game::scene_builders::WorldSpec {
             name: "test-mod".to_string(),
             seed: Some(1234),
             size_xz: 64,
@@ -261,7 +261,7 @@ mod tests {
     fn empty_blocks_roundtrip() {
         let path = temp_path("empty");
 
-        let spec = moho_core::scene_builders::WorldSpec {
+        let spec = moho_game::scene_builders::WorldSpec {
             name: "empty-world".to_string(),
             seed: None,
             size_xz: 32,

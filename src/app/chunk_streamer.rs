@@ -13,9 +13,9 @@
 
 use crate::save;
 use glam::{IVec3, Vec3};
-use moho_core::scene_builders::TerrainConfig;
-use moho_core::voxel::streaming::generate_chunk;
 use moho_core::voxel::{StreamingConfig, VoxelGrid};
+use moho_game::scene_builders::TerrainConfig;
+use moho_game::scene_builders::generate_chunk;
 
 /// Inclusive Y-chunk range to generate per XZ column.
 ///
@@ -157,7 +157,7 @@ impl ChunkStreamer {
             return false;
         }
         for (world_pos, material_id, resource_id) in blocks {
-            grid.place_block(world_pos, material_id, resource_id);
+            grid.mutator().place(world_pos, material_id, resource_id);
         }
         // Freshly generated chunks are not player-edited — clear the modified flag
         // so they are not needlessly written to disk on eviction.

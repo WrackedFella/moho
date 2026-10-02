@@ -54,7 +54,7 @@ impl FrameProcessor {
         }
 
         // --- Physics KCC path (FPS only) ---
-        let is_fps = app.simulation.camera_mode() == moho_core::controller::CameraMode::FirstPerson;
+        let is_fps = app.simulation.camera_mode() == moho_game::controller::CameraMode::FirstPerson;
         let use_kcc = is_fps && app.physics.is_kcc_active();
 
         if use_kcc {
@@ -134,7 +134,7 @@ impl FrameProcessor {
         app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
 
         // Rebuild camera from the updated simulation state
-        app.camera = moho_core::controller::controller_to_camera(&app.simulation.player_controller);
+        app.camera = moho_game::controller::controller_to_camera(&app.simulation.player_controller);
 
         // Step dynamic rigid bodies and sync ECS transforms
         self.step_physics_bodies(app, dt);
@@ -146,9 +146,9 @@ impl FrameProcessor {
         let updates = app.physics.step(dt);
         for (entity, pos) in updates {
             if let Some(mut entry) = app.world.entry(entity) {
-                if let Ok(sphere) = entry.get_component_mut::<moho_core::actors::Sphere>() {
+                if let Ok(sphere) = entry.get_component_mut::<moho_game::actors::Sphere>() {
                     sphere.center = pos;
-                } else if let Ok(cube) = entry.get_component_mut::<moho_core::actors::Cube>() {
+                } else if let Ok(cube) = entry.get_component_mut::<moho_game::actors::Cube>() {
                     cube.center = pos;
                 }
             }
@@ -400,7 +400,7 @@ impl FrameProcessor {
         let chunk_pos = [cp.x, cp.y, cp.z];
 
         let mode = app.simulation.camera_mode();
-        let is_fps = mode == moho_core::controller::CameraMode::FirstPerson;
+        let is_fps = mode == moho_game::controller::CameraMode::FirstPerson;
 
         let (yaw, _pitch) = app.simulation.yaw_pitch();
 
@@ -418,6 +418,13 @@ impl FrameProcessor {
             })
             .unwrap_or_default();
 
+        let mut hotbar: Vec<(u32, u32)> = app.pawn.inventory.iter().collect();
+        hotbar.sort_by_key(|(resource_id, _)| *resource_id);
+
+        // Only one tool exists today (`moho_game::tools::STARTING_TOOL`); the
+        // label is a fixed string until a real tool-name lookup exists.
+        let equipped_tool_label = app.pawn.equipped_tool.map(|_| "Pickaxe".to_string());
+
         let data = moho_ui::overlays::HudData {
             player_position: [pos.x, pos.y, pos.z],
             chunk_position: chunk_pos,
@@ -430,6 +437,9 @@ impl FrameProcessor {
             player_health: 1.0,
             player_stamina: 1.0,
             loaded_chunk_xz,
+            hotbar,
+            equipped_tool_label,
+            selected_slot: app.pawn.selected_slot,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
@@ -460,17 +470,6 @@ impl Default for FrameProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_frame_processor_creation() {
-        let processor = FrameProcessor::new();
-        assert_eq!(std::mem::size_of_val(&processor), 0);
-    }
-
-    #[test]
-    fn test_frame_processor_default() {
-        let _processor = FrameProcessor;
-    }
 
     #[test]
     fn test_moon_intensity_below_horizon() {

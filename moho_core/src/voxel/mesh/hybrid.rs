@@ -103,12 +103,26 @@ impl HybridMeshGenerator {
         // Generate mesh using Marching Cubes
         let mut mesh = MarchingCubes::generate_mesh(&density_field, chunk_size as usize);
 
-        // Transform vertices to world space
+        // Transform vertices to world space.
+        //
+        // Two conventions have to be undone to land on the voxel grid, and
+        // missing them renders smooth terrain half a unit off-centre on every
+        // axis (which misaligns it from the blocky and coarse-LOD paths, and
+        // from the grid that raycasting and block removal use):
+        //
+        // 1. `create_selective_density_field` samples with one cell of padding,
+        //    so field index `i` holds the block at world `base + i - 1`.
+        // 2. A density sample stands for the *whole* block, so it belongs at
+        //    that block's centre — `base + i - 1 + 0.5`.
+        //
+        // Marching cubes emits vertices in field-index space, so both fold into
+        // a single `-0.5` alongside the chunk origin.
+        const DENSITY_SAMPLE_TO_WORLD: f32 = -0.5;
         let base_pos = chunk_pos * chunk_size;
         for vertex in mesh.vertices.iter_mut() {
-            vertex[0] += base_pos.x as f32;
-            vertex[1] += base_pos.y as f32;
-            vertex[2] += base_pos.z as f32;
+            vertex[0] += base_pos.x as f32 + DENSITY_SAMPLE_TO_WORLD;
+            vertex[1] += base_pos.y as f32 + DENSITY_SAMPLE_TO_WORLD;
+            vertex[2] += base_pos.z as f32 + DENSITY_SAMPLE_TO_WORLD;
         }
 
         mesh

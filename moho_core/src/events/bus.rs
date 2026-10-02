@@ -160,6 +160,13 @@ impl EventBus {
     /// All subscribed handlers for this event type are called
     /// immediately in priority order.
     ///
+    /// # Warning: no cascading from within a handler
+    ///
+    /// Calling `publish` again from inside a handler deadlocks — handlers run while holding
+    /// `sync_handlers`'s read lock, and a nested `publish` call re-enters that same lock. Use
+    /// [`EventBus::publish_deferred`] plus [`EventBus::process_deferred`], or a channel, to
+    /// trigger follow-on events from a handler instead.
+    ///
     /// # Example
     ///
     /// ```no_run

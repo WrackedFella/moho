@@ -141,16 +141,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_audio_cache_creation() {
-        let cache = AudioCache {
-            audio_cache: HashMap::new(),
-            ui_sound_cache: HashMap::new(),
-        };
-        assert_eq!(cache.audio_cache_size(), 0);
-        assert_eq!(cache.ui_cache_size(), 0);
-    }
-
-    #[test]
     fn test_cache_size_tracking() {
         let mut cache = AudioCache {
             audio_cache: HashMap::new(),

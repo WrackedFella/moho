@@ -127,8 +127,8 @@ impl AudioSystem {
             AudioEvent::Confirm => self.play_ui_sound("assets/audio/ui/button_click.mp3", 0.8),
             AudioEvent::Cancel => self.play_ui_sound("assets/audio/ui/button_click.mp3", 0.7),
             AudioEvent::Error => self.play_ui_sound("assets/audio/ui/button_click.mp3", 0.9),
-            AudioEvent::CustomSound { path, volume } => self.play_sound(&path, volume),
-            AudioEvent::BackgroundMusic {
+            AudioEvent::PlaySound { path, volume } => self.play_sound(&path, volume),
+            AudioEvent::MusicStart {
                 path,
                 volume,
                 looped,
@@ -136,8 +136,17 @@ impl AudioSystem {
                 let source = AudioSource::background_music(&path, volume).with_looping(looped);
                 self.play_audio_source(&source)
             }
-            AudioEvent::Stop(category) => {
-                self.stop_audio(category);
+            AudioEvent::MusicStop => {
+                self.stop_audio(Some(AudioCategory::Music));
+                Ok(())
+            }
+            AudioEvent::MusicVolumeChanged { volume: _ } => {
+                // TODO: adjust the active music player's volume in place once
+                // AudioSystem exposes a live volume control for music_player.
+                Ok(())
+            }
+            AudioEvent::StopAll => {
+                self.stop_audio(None);
                 Ok(())
             }
         }

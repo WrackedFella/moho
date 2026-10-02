@@ -43,38 +43,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_audio_initialization_returns_option() {
-        // This test verifies the function signature and return type
-        // We can't reliably test success/failure without mocking hardware,
-        // but we can verify the function is callable and returns the right type
-        let result = initialize_audio_system();
-
-        // Result should be Some or None depending on system state
-        // Both are valid - the important part is graceful handling
-        match result {
-            Some(_) => {
-                // Audio initialized successfully - test passes
-            }
-            None => {
-                // Audio initialization failed (expected on some CI systems) - test passes
-            }
-        }
-    }
-
-    #[test]
     fn test_audio_initialization_does_not_panic() {
-        // The most important test - initialization should never panic
-        // This ensures the application can always start even without audio
+        // Audio init must degrade gracefully (no device, driver issues, etc.)
+        // rather than crash app startup — this is the behavior worth guarding.
         let _result = initialize_audio_system();
-        // If we reach here, no panic occurred - test passes
-    }
-
-    #[test]
-    fn test_multiple_initialization_attempts() {
-        // Verify we can call initialization multiple times safely
-        // (Though in practice, App only calls this once)
-        let _first = initialize_audio_system();
-        let _second = initialize_audio_system();
-        // Both should complete without panic - test passes
     }
 }

@@ -30,12 +30,21 @@ cargo bench --bench event_bus_bench
 
 ## Architecture
 
-Moho is a Rust workspace split into 7 crates plus a main binary. The crates have a strict layering: the main binary depends on all crates; the UI and renderer depend on core; crates don't form circular dependencies.
+Moho is a Rust workspace split into engine (`moho_core`, `moho_renderer`,
+`moho_audio`, `moho_render_api`) and game-domain (`moho_game`) layers — see
+`_todo/planning.md` Phase 2 for the boundary work (done). Dependencies point
+one way: the main binary depends on all crates; `moho_game` depends on `moho_core`
+and `moho_render_api`; engine crates (`moho_renderer`, `moho_audio`) must not
+depend on `moho_game`; crates don't form circular dependencies.
 
 ```
 src/main.rs          — winit event loop, ApplicationHandler, wires everything together
-moho_core/           — EventBus, GameClock (day/night), voxel grid, materials, camera, input accumulation
-moho_renderer/       — wgpu backend: mesh rendering, CSM shadows (4 cascades), skybox, scene serialization
+moho_core/           — EventBus, voxel grid, materials (MaterialType), input, prefs
+moho_game/           — game-domain: actors (Sphere/Cube), controller, GameClock, scene
+                        generation/persistence, raycast (depends on moho_core, moho_render_api)
+moho_render_api/     — shared engine/game contract: Renderable + RenderMaterial traits,
+                        InstanceGpu/MaterialGpu/MaterialKey/LightDesc/CameraDesc (no wgpu, no legion)
+moho_renderer/       — wgpu backend: mesh rendering, CSM shadows (4 cascades), skybox
 moho_ui/             — egui integration: menus, settings, debug console, HUD overlays, preferences (config/prefs.ini)
 moho_audio/          — rodio audio: music/SFX/UI/voice categories, event-driven triggering
 moho_sim/            — deterministic headless simulation, snapshot/restore with CRC, replay foundations
@@ -59,20 +68,23 @@ moho_types/          — shared AppState enum and StateCoordinator (avoids circu
 
 ### Code Conventions
 
-- **Domain-Driven Design**: Name types and functions after domain concepts, not implementation details. Keep bounded contexts (rendering, input, audio, physics) with their own vocabularies.
+Canonical Rust engineering standards (SOLID/DIP weighting, DDD, error handling,
+comment hygiene, testing/TDD gate) live in `~/.claude/CLAUDE.md` — this section
+holds only where moho adds to or narrows that standard. No `panic!` in library
+crates and minimal `unwrap()`/`expect()` are already covered there; don't
+re-litigate, just follow it.
+
 - **Engine vs game-specific**: Prioritize quality and future-proofing for engine/foundation work. Pragmatic solutions are fine for game-specific mechanics.
-- Minimize `unwrap()`/`expect()` — use `Result`/`?` propagation. No `panic!` in library crates.
-- Avoid `unsafe` without documentation.
+- **Apply standards forward** as files are touched — no standalone retroactive sweep. The workspace test suite is the safety net during active refactor phases; see `_todo/tech-debt/codebase-hygiene.md` for the concrete backlog this produces.
 - All public types must implement `Debug`.
 - Use `workspace.dependencies` in Cargo.toml for shared deps; don't duplicate version specs.
 - Lines ≤ 100 characters (`rustfmt.toml` enforces this).
-- Comments explain *why*, not *what*. Doc comments (`///`) only for public APIs. Never add comments purely for documentation without permission.
 - Don't create new doc files without asking first.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **moho** (4364 symbols, 11379 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **moho** (4405 symbols, 11518 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

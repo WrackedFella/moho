@@ -10,7 +10,7 @@ pub fn auto_save_on_shutdown(app: &mut crate::App) -> Result<(), Box<dyn std::er
     let (yaw, pitch) = app.simulation.yaw_pitch();
     let camera_data = Some((app.simulation.position(), yaw, pitch));
 
-    let scene_bytes = app.scene.encode_to_bytes(
+    let scene_bytes = moho_game::scene_persistence::encode_to_bytes(
         &app.world,
         camera_data,
         &app.window_renderer
@@ -21,7 +21,7 @@ pub fn auto_save_on_shutdown(app: &mut crate::App) -> Result<(), Box<dyn std::er
         app.generation
             .last_spec
             .clone()
-            .unwrap_or(moho_core::scene_builders::WorldSpec {
+            .unwrap_or(moho_game::scene_builders::WorldSpec {
                 name: "autosave".to_string(),
                 seed: None,
                 size_xz: 64,

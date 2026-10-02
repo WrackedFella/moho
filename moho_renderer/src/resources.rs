@@ -127,7 +127,7 @@ impl ResourcePool {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
 
@@ -376,13 +376,6 @@ mod tests {
         assert_eq!(vertices[0], [-1.0, -1.0, 0.0]); // Bottom-left
         assert_eq!(vertices[2], [1.0, -1.0, 0.0]); // Bottom-right
         assert_eq!(vertices[5], [1.0, 1.0, 0.0]); // Top-right
-    }
-
-    #[test]
-    fn test_camera_buffer_size() {
-        // Camera buffer should be 80 bytes (20 floats * 4 bytes/float)
-        let expected_size = std::mem::size_of::<[f32; 20]>() as u64;
-        assert_eq!(expected_size, 80);
     }
 
     #[test]

@@ -1,8 +1,6 @@
-use crate::materials::MaterialType;
-use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
-use legion::World;
-use legion::query::IntoQuery;
+use moho_core::materials::MaterialType;
+use moho_render_api::{InstanceGpu, Renderable};
 
 #[derive(Copy, Clone, Debug)]
 pub struct Sphere {
@@ -44,96 +42,28 @@ impl Sphere {
     }
 }
 
-/// Trait representing types that can be converted into a GPU instance for rendering.
-pub trait Renderable {
-    fn to_instance_with_material(&self, material_index: u32) -> InstanceGpu;
-}
-
 impl Renderable for Sphere {
+    type Material = MaterialType;
+
+    fn material(&self) -> &MaterialType {
+        &self.mat_ptr
+    }
+
     fn to_instance_with_material(&self, material_index: u32) -> InstanceGpu {
         Sphere::to_instance_with_material(self, material_index)
     }
 }
 
 impl Renderable for Cube {
+    type Material = MaterialType;
+
+    fn material(&self) -> &MaterialType {
+        &self.mat_ptr
+    }
+
     fn to_instance_with_material(&self, material_index: u32) -> InstanceGpu {
         Cube::to_instance_with_material(self, material_index)
     }
-}
-
-/// Trait for entities that provide custom mesh geometry.
-/// Unlike Renderable which uses shared meshes with instancing,
-/// CustomMesh provides unique vertex/index data per entity.
-pub trait CustomMesh {
-    /// Get vertex positions [x, y, z]
-    fn vertices(&self) -> &[[f32; 3]];
-
-    /// Get vertex normals [x, y, z]
-    fn normals(&self) -> &[[f32; 3]];
-
-    /// Get triangle indices (3 per triangle)
-    fn indices(&self) -> &[u32];
-
-    /// Get world-space transform matrix
-    fn transform(&self) -> glam::Mat4;
-
-    /// Get material index for this mesh
-    fn material_index(&self) -> u32;
-}
-
-/// Serializable mesh data for passing to renderer.
-/// Contains owned copies of mesh data to avoid lifetime issues.
-#[derive(Clone, Debug)]
-pub struct CustomMeshData {
-    pub vertices: Vec<[f32; 3]>,
-    pub normals: Vec<[f32; 3]>,
-    pub indices: Vec<u32>,
-    pub transform: glam::Mat4,
-    pub material_index: u32,
-}
-
-/// Collect all entities with custom mesh geometry from the ECS World.
-/// Currently queries for VoxelChunk entities.
-pub fn collect_custom_meshes(world: &World) -> Vec<CustomMeshData> {
-    let mut meshes = Vec::new();
-
-    // Query VoxelChunk entities
-    let mut query = <&crate::voxel::VoxelChunk>::query();
-    for chunk in query.iter(world) {
-        if !chunk.is_empty() {
-            meshes.push(CustomMeshData {
-                vertices: chunk.vertices().to_vec(),
-                normals: chunk.normals().to_vec(),
-                indices: chunk.indices().to_vec(),
-                transform: chunk.transform(),
-                material_index: chunk.material_index(),
-            });
-        }
-    }
-
-    meshes
-}
-
-/// Convenience helper to collect all Renderable instances from the provided ECS `World`.
-/// Currently queries for `Sphere`, `Cube`, and `VoxelChunk` components and returns a Vec of `InstanceGpu`.
-pub fn collect_renderable_instances(world: &mut World) -> Vec<InstanceGpu> {
-    let mut out: Vec<InstanceGpu> = Vec::new();
-    let mut qs = <&Sphere>::query();
-    for s in qs.iter(world) {
-        out.push(s.to_instance_with_material(0));
-    }
-    let mut qc = <&Cube>::query();
-    for c in qc.iter(world) {
-        out.push(c.to_instance_with_material(0));
-    }
-
-    // Add voxel chunk rendering
-    let mut qv = <&crate::voxel::VoxelChunk>::query();
-    for chunk in qv.iter(world) {
-        out.push(chunk.to_instance_with_material(0));
-    }
-
-    out
 }
 
 impl Cube {
@@ -252,15 +182,6 @@ impl Cube {
         ];
         (verts, normals, indices)
     }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct InstanceGpu {
-    pub model: [[f32; 4]; 4], // column-major mat4
-    pub material: u32,
-    pub object_type: u32,
-    pub padding: [u32; 2],
 }
 
 impl Sphere {

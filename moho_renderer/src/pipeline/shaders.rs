@@ -51,19 +51,6 @@ pub fn load_shaders(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn test_main_shader_includes_all_sources() {
-        // Verify that the main shader concatenates all 3 files
-        let common = include_str!("../../../shaders/common.wgsl");
-        let vertex = include_str!("../../../shaders/vertex.wgsl");
-        let fragment = include_str!("../../../shaders/fragment.wgsl");
-
-        // The shader source should contain all three
-        assert!(!common.is_empty(), "common.wgsl should not be empty");
-        assert!(!vertex.is_empty(), "vertex.wgsl should not be empty");
-        assert!(!fragment.is_empty(), "fragment.wgsl should not be empty");
-    }
-
-    #[test]
     fn test_shader_concatenation() {
         // Verify that shader files can be concatenated
         let common = include_str!("../../../shaders/common.wgsl");

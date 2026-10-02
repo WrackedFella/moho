@@ -72,7 +72,7 @@ fn sky_open_air_is_fully_exposed() {
 #[test]
 fn sky_occlusion_same_chunk() {
     let mut grid = grid_16();
-    grid.place_block(IVec3::new(3, 8, 3), 0, None);
+    grid.mutator().place(IVec3::new(3, 8, 3), 0, None);
     recompute_sky_exposure(&mut grid, IVec3::ZERO);
 
     assert!(
@@ -93,7 +93,7 @@ fn sky_occlusion_same_chunk() {
 #[test]
 fn sky_cross_chunk_occlusion() {
     let mut grid = grid_16();
-    grid.place_block(IVec3::new(5, 20, 5), 0, None);
+    grid.mutator().place(IVec3::new(5, 20, 5), 0, None);
 
     recompute_sky_exposure(&mut grid, IVec3::new(0, 1, 0));
     recompute_sky_exposure(&mut grid, IVec3::ZERO);
@@ -109,7 +109,7 @@ fn sky_cross_chunk_occlusion() {
 #[test]
 fn sky_recompute_is_idempotent() {
     let mut grid = grid_16();
-    grid.place_block(IVec3::new(2, 10, 2), 0, None);
+    grid.mutator().place(IVec3::new(2, 10, 2), 0, None);
     let cp = IVec3::ZERO;
 
     recompute_sky_exposure(&mut grid, cp);
@@ -133,7 +133,7 @@ fn sky_dirty_chunks_below_propagates() {
     // place_block allocates chunk_light for the block's chunk and triggers note_block_change,
     // which auto-marks lower chunks. We verify via dirty_chunks_below explicitly.
     grid.chunk_light_mut(IVec3::ZERO).sky_dirty = false; // manually clear
-    grid.place_block(IVec3::new(0, 16, 0), 0, None); // chunk (0,1,0)
+    grid.mutator().place(IVec3::new(0, 16, 0), 0, None); // chunk (0,1,0)
     dirty_chunks_below(&mut grid, IVec3::new(0, 1, 0));
 
     if let Some(cl) = grid.chunk_light(IVec3::ZERO) {
@@ -163,7 +163,7 @@ fn block_light_decay_one_per_step() {
     let mut prop = LightPropagator::new(16);
 
     for x in 0..8i32 {
-        grid.place_block(IVec3::new(x, 0, 0), 1, None);
+        grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
     }
     prop.add_light_rgb(&mut grid, IVec3::new(0, 0, 0), [15, 0, 0]);
 
@@ -181,7 +181,7 @@ fn block_light_does_not_dim_brighter() {
     let mut prop = LightPropagator::new(16);
 
     let pos = IVec3::new(0, 0, 0);
-    grid.place_block(pos, 1, None);
+    grid.mutator().place(pos, 1, None);
 
     // Write R=12 directly into chunk light.
     grid.set_block_light_rgb(pos, [12, 0, 0]);
@@ -208,7 +208,7 @@ fn block_light_channels_are_independent() {
     let mut prop = LightPropagator::new(16);
 
     for x in 0..4i32 {
-        grid.place_block(IVec3::new(x, 0, 0), 1, None);
+        grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
     }
     prop.add_light_rgb(&mut grid, IVec3::new(0, 0, 0), [15, 0, 0]);
 
@@ -227,7 +227,7 @@ fn block_light_colored_propagation() {
     let mut prop = LightPropagator::new(16);
 
     for x in 0..5i32 {
-        grid.place_block(IVec3::new(x, 0, 0), 1, None);
+        grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
     }
     // Place torch: emission [15, 8, 2].
     prop.add_light_rgb(&mut grid, IVec3::new(0, 0, 0), [15, 8, 2]);
@@ -249,7 +249,7 @@ fn removal_single_source_clears_all() {
     let mut prop = LightPropagator::new(16);
 
     for x in 0..6i32 {
-        grid.place_block(IVec3::new(x, 0, 0), 1, None);
+        grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
     }
     let src = IVec3::new(0, 0, 0);
     prop.add_light_rgb(&mut grid, src, [15, 0, 0]);
@@ -272,7 +272,7 @@ fn removal_preserves_surviving_source() {
     let mut prop = LightPropagator::new(16);
 
     for x in 0..11i32 {
-        grid.place_block(IVec3::new(x, 0, 0), 1, None);
+        grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
     }
     prop.add_light_rgb(&mut grid, IVec3::new(0, 0, 0), [15, 0, 0]);
     prop.add_light_rgb(&mut grid, IVec3::new(10, 0, 0), [15, 0, 0]);
@@ -295,7 +295,7 @@ fn removal_of_absent_light_is_noop() {
     make_transparent(&mut grid);
     let mut prop = LightPropagator::new(16);
 
-    grid.place_block(IVec3::new(0, 0, 0), 1, None);
+    grid.mutator().place(IVec3::new(0, 0, 0), 1, None);
     prop.remove_light(&mut grid, IVec3::new(0, 0, 0)); // nothing to remove — must not panic
 }
 
@@ -311,7 +311,7 @@ fn cross_chunk_propagation_correct() {
     let mut prop = LightPropagator::new(16);
 
     for x in 14..=18i32 {
-        grid.place_block(IVec3::new(x, 0, 0), 1, None);
+        grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
     }
     let affected = prop.add_light_rgb(&mut grid, IVec3::new(15, 0, 0), [15, 0, 0]);
 
@@ -337,7 +337,7 @@ fn cross_chunk_removal_clears_both() {
     let mut prop = LightPropagator::new(16);
 
     for x in 12..=20i32 {
-        grid.place_block(IVec3::new(x, 0, 0), 1, None);
+        grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
     }
     let src = IVec3::new(15, 0, 0);
     prop.add_light_rgb(&mut grid, src, [15, 0, 0]);
@@ -368,8 +368,8 @@ fn opaque_block_does_not_receive_light() {
     make_transparent(&mut grid);
     let mut prop = LightPropagator::new(16);
 
-    grid.place_block(IVec3::new(0, 0, 0), 1, None); // transparent source host
-    grid.place_block(IVec3::new(1, 0, 0), 0, None); // opaque block (mat 0, opacity=15)
+    grid.mutator().place(IVec3::new(0, 0, 0), 1, None); // transparent source host
+    grid.mutator().place(IVec3::new(1, 0, 0), 0, None); // opaque block (mat 0, opacity=15)
 
     prop.add_light_rgb(&mut grid, IVec3::new(0, 0, 0), [15, 0, 0]);
 
@@ -390,7 +390,7 @@ fn sealed_cave_stays_dark() {
 
     // Build a transparent room at (5,5,5) completely surrounded by opaque shells.
     let center = IVec3::new(5, 5, 5);
-    grid.place_block(center, 1, None); // interior
+    grid.mutator().place(center, 1, None); // interior
 
     // Seal all 6 faces with opaque blocks (mat 0).
     for &off in &[
@@ -401,12 +401,12 @@ fn sealed_cave_stays_dark() {
         IVec3::new(0, 0, 1),
         IVec3::new(0, 0, -1),
     ] {
-        grid.place_block(center + off, 0, None);
+        grid.mutator().place(center + off, 0, None);
     }
 
     // Light source just outside the shell.
     let src = IVec3::new(7, 5, 5);
-    grid.place_block(src, 1, None);
+    grid.mutator().place(src, 1, None);
     prop.add_light_rgb(&mut grid, src, [15, 0, 0]);
 
     // The interior (center) is sealed behind opaque faces — must stay dark.
@@ -426,11 +426,11 @@ fn flood_fill_propagates_all_emitters() {
     let mut prop = LightPropagator::new(16);
 
     for x in 0..5i32 {
-        grid.place_block(IVec3::new(x, 0, 0), 1, None);
+        grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
     }
     // Override two positions with torch material.
-    grid.place_block(IVec3::new(0, 0, 0), 2, None);
-    grid.place_block(IVec3::new(4, 0, 0), 2, None);
+    grid.mutator().place(IVec3::new(0, 0, 0), 2, None);
+    grid.mutator().place(IVec3::new(4, 0, 0), 2, None);
 
     prop.flood_fill_block_lights(&mut grid);
 
@@ -454,7 +454,7 @@ fn accessor_round_trip() {
     let mut prop = LightPropagator::new(16);
 
     let pos = IVec3::new(0, 0, 0);
-    grid.place_block(pos, 1, None);
+    grid.mutator().place(pos, 1, None);
     prop.add_light_rgb(&mut grid, pos, [10, 5, 2]);
 
     assert_eq!(

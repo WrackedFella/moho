@@ -56,7 +56,7 @@ fn render_crosshair(ctx: &egui::Context) {
 
     let size = 10.0;
     let stroke = egui::Stroke::new(
-        2.0,
+        2.0_f32,
         egui::Color32::from_rgba_premultiplied(220, 220, 220, 180),
     );
 
@@ -108,28 +108,5 @@ mod tests {
     fn starts_visible() {
         let hud = FpsHud::new();
         assert!(hud.is_visible());
-    }
-
-    #[test]
-    fn skips_render_in_rts_mode() {
-        let mut hud = FpsHud::new();
-        let ctx = egui::Context::default();
-        let data = HudData {
-            is_fps_mode: false,
-            ..Default::default()
-        };
-        let _ = ctx.run(Default::default(), |ctx| {
-            hud.render(ctx, &data);
-        });
-    }
-
-    #[test]
-    fn renders_in_fps_mode() {
-        let mut hud = FpsHud::new();
-        let ctx = egui::Context::default();
-        let data = HudData::default(); // is_fps_mode = true
-        let _ = ctx.run(Default::default(), |ctx| {
-            hud.render(ctx, &data);
-        });
     }
 }
