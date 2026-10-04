@@ -59,16 +59,18 @@ layering:
     graph="$(mktemp)"
     trap 'rm -f "$graph"' EXIT
     export MOHO_LAYERING_GRAPH="$graph"
+    # Forward slashes: bash strips the backslashes of an unquoted Windows path.
+    rejects() { "{{replace(just_executable(), '\', '/')}}" _layering-rejects "$@"; }
     scripts/check-layering.sh scripts/layering.txt
-    {{just_executable()}} _layering-rejects layering-violation 'engine-reaches-game: moho_ui → moho_game'
-    {{just_executable()}} _layering-rejects layering-unassigned 'unassigned: moho_types'
-    {{just_executable()}} _layering-rejects layering-platform 'domain-reaches-platform: moho_ui → egui'
-    {{just_executable()}} _layering-rejects layering-platform 'domain-reaches-platform: moho_ui → wgpu'
-    {{just_executable()}} _layering-rejects layering-platform 'domain-reaches-platform: moho_ui → winit'
-    {{just_executable()}} _layering-rejects layering-cross-line 'cross-game-line: moho_ui → moho_game'
-    {{just_executable()}} _layering-rejects layering-duplicate 'duplicate: moho_types'
-    {{just_executable()}} _layering-rejects layering-unknown 'unknown: moho_gmae'
-    {{just_executable()}} _layering-rejects layering-repeated-row 'repeated row: engine'
+    rejects layering-violation 'engine-reaches-game: moho_ui → moho_game'
+    rejects layering-unassigned 'unassigned: moho_types'
+    rejects layering-platform 'domain-reaches-platform: moho_ui → egui'
+    rejects layering-platform 'domain-reaches-platform: moho_ui → wgpu'
+    rejects layering-platform 'domain-reaches-platform: moho_ui → winit'
+    rejects layering-cross-line 'cross-game-line: moho_ui → moho_game'
+    rejects layering-duplicate 'duplicate: moho_types'
+    rejects layering-unknown 'unknown: moho_gmae'
+    rejects layering-repeated-row 'repeated row: engine'
 
 # Fails unless the layering check exits non-zero on the fixture and prints the expected line.
 [private]
