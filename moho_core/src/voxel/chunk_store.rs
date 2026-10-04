@@ -4,10 +4,6 @@ use super::chunk::VoxelChunk;
 use glam::IVec3;
 use std::collections::BTreeMap;
 
-fn key(pos: IVec3) -> [i32; 3] {
-    pos.to_array()
-}
-
 /// Holds at most one [`VoxelChunk`] per chunk position.
 ///
 /// Iteration order is ascending by `(x, y, z)` regardless of insertion order.
@@ -24,22 +20,25 @@ impl ChunkStore {
 
     /// Stores `chunk` at its own `chunk_pos()`, returning the chunk it replaced, if any.
     pub fn insert(&mut self, chunk: VoxelChunk) -> Option<VoxelChunk> {
-        self.chunks.insert(key(chunk.chunk_pos()), chunk)
+        self.chunks.insert(chunk.chunk_pos().to_array(), chunk)
     }
 
     /// Removes and returns the chunk at `pos`, or `None` if there is none.
     pub fn remove(&mut self, pos: IVec3) -> Option<VoxelChunk> {
-        self.chunks.remove(&key(pos))
+        self.chunks.remove(&pos.to_array())
     }
 
     /// Returns the chunk at `pos`, if any.
     pub fn get(&self, pos: IVec3) -> Option<&VoxelChunk> {
-        self.chunks.get(&key(pos))
+        self.chunks.get(&pos.to_array())
     }
 
     /// Returns the chunk at `pos` mutably, if any.
+    ///
+    /// Replacing the chunk through this reference with one at another position
+    /// desynchronises it from its key; use [`ChunkStore::insert`] instead.
     pub fn get_mut(&mut self, pos: IVec3) -> Option<&mut VoxelChunk> {
-        self.chunks.get_mut(&key(pos))
+        self.chunks.get_mut(&pos.to_array())
     }
 
     /// Iterates chunks in strictly ascending `(x, y, z)` position order.
@@ -49,7 +48,8 @@ impl ChunkStore {
 
     /// Iterates chunks mutably in strictly ascending `(x, y, z)` position order.
     ///
-    /// Callers must not change a chunk's position; it is the store key.
+    /// Replacing a chunk through this iterator with one at another position
+    /// desynchronises it from its key; use [`ChunkStore::insert`] instead.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut VoxelChunk> {
         self.chunks.values_mut()
     }

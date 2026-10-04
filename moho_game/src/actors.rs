@@ -80,13 +80,21 @@ impl ActorStore {
     /// Adds a sphere and returns its handle.
     pub fn spawn_sphere(&mut self, sphere: Sphere) -> ActorId {
         self.spheres.push(sphere);
-        self.id(ActorKind::Sphere, self.spheres.len() - 1)
+        ActorId {
+            kind: ActorKind::Sphere,
+            index: self.spheres.len() - 1,
+            generation: self.generation,
+        }
     }
 
     /// Adds a cube and returns its handle.
     pub fn spawn_cube(&mut self, cube: Cube) -> ActorId {
         self.cubes.push(cube);
-        self.id(ActorKind::Cube, self.cubes.len() - 1)
+        ActorId {
+            kind: ActorKind::Cube,
+            index: self.cubes.len() - 1,
+            generation: self.generation,
+        }
     }
 
     /// All spheres in spawn order.
@@ -126,14 +134,6 @@ impl ActorStore {
     /// True when the store holds no actors.
     pub fn is_empty(&self) -> bool {
         self.spheres.is_empty() && self.cubes.is_empty()
-    }
-
-    fn id(&self, kind: ActorKind, index: usize) -> ActorId {
-        ActorId {
-            kind,
-            index,
-            generation: self.generation,
-        }
     }
 }
 
