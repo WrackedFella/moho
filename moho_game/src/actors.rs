@@ -42,6 +42,69 @@ impl Sphere {
     }
 }
 
+/// Handle to an actor in an [`ActorStore`].
+///
+/// Identifies the actor's kind, its index within that kind, and the store
+/// generation it was spawned in. A handle resolves to nothing once the store
+/// has been cleared, even if the same index is later reused.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ActorId;
+
+/// Owns every sphere and cube actor, addressed by [`ActorId`].
+///
+/// Actors iterate in spawn order within their kind. There is no per-actor
+/// despawn; [`ActorStore::clear`] removes all actors and invalidates all handles.
+#[derive(Debug, Default)]
+pub struct ActorStore;
+
+impl ActorStore {
+    /// Creates an empty store.
+    pub fn new() -> Self {
+        panic!("not yet implemented")
+    }
+
+    /// Adds a sphere and returns its handle.
+    pub fn spawn_sphere(&mut self, _sphere: Sphere) -> ActorId {
+        panic!("not yet implemented")
+    }
+
+    /// Adds a cube and returns its handle.
+    pub fn spawn_cube(&mut self, _cube: Cube) -> ActorId {
+        panic!("not yet implemented")
+    }
+
+    /// All spheres in spawn order.
+    pub fn spheres(&self) -> &[Sphere] {
+        panic!("not yet implemented")
+    }
+
+    /// All cubes in spawn order.
+    pub fn cubes(&self) -> &[Cube] {
+        panic!("not yet implemented")
+    }
+
+    /// The centre of the identified actor, or `None` if the handle is stale
+    /// (from before a [`ActorStore::clear`]).
+    pub fn center_mut(&mut self, _id: ActorId) -> Option<&mut Vec3> {
+        panic!("not yet implemented")
+    }
+
+    /// Removes every actor and invalidates all previously issued handles.
+    pub fn clear(&mut self) {
+        panic!("not yet implemented")
+    }
+
+    /// Total number of actors across all kinds.
+    pub fn len(&self) -> usize {
+        panic!("not yet implemented")
+    }
+
+    /// True when the store holds no actors.
+    pub fn is_empty(&self) -> bool {
+        panic!("not yet implemented")
+    }
+}
+
 impl Renderable for Sphere {
     type Material = MaterialType;
 
@@ -298,5 +361,84 @@ impl Sphere {
             normals.push([p[0], p[1], p[2]]);
         }
         (pts, normals, indices)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sphere_at(center: Vec3) -> Sphere {
+        Sphere::new(center, 1.0, MaterialType::Lambertian { albedo: Vec3::ONE })
+    }
+
+    fn cube_at(center: Vec3) -> Cube {
+        Cube::new(
+            center,
+            1.0,
+            1.0,
+            1.0,
+            MaterialType::Lambertian { albedo: Vec3::ONE },
+        )
+    }
+
+    #[test]
+    fn center_mut_moves_only_the_identified_actor() {
+        let mut store = ActorStore::new();
+        let sphere = store.spawn_sphere(sphere_at(Vec3::new(1.0, 2.0, 3.0)));
+        store.spawn_cube(cube_at(Vec3::new(-4.0, 5.0, 6.0)));
+
+        *store.center_mut(sphere).expect("live handle") = Vec3::new(9.0, 9.0, 9.0);
+
+        assert_eq!(store.spheres()[0].center, Vec3::new(9.0, 9.0, 9.0));
+        assert_eq!(store.cubes()[0].center, Vec3::new(-4.0, 5.0, 6.0));
+    }
+
+    #[test]
+    fn sphere_and_cube_handles_with_equal_index_do_not_alias() {
+        let mut store = ActorStore::new();
+        let sphere = store.spawn_sphere(sphere_at(Vec3::ZERO));
+        let cube = store.spawn_cube(cube_at(Vec3::ZERO));
+
+        *store.center_mut(cube).expect("live handle") = Vec3::X;
+
+        assert_eq!(store.spheres()[0].center, Vec3::ZERO);
+        assert_eq!(store.cubes()[0].center, Vec3::X);
+
+        *store.center_mut(sphere).expect("live handle") = Vec3::Y;
+
+        assert_eq!(store.spheres()[0].center, Vec3::Y);
+        assert_eq!(store.cubes()[0].center, Vec3::X);
+        assert_ne!(sphere, cube);
+    }
+
+    #[test]
+    fn spawned_actors_iterate_in_spawn_order() {
+        let mut store = ActorStore::new();
+        store.spawn_sphere(sphere_at(Vec3::new(1.0, 0.0, 0.0)));
+        store.spawn_cube(cube_at(Vec3::new(0.0, 1.0, 0.0)));
+        store.spawn_sphere(sphere_at(Vec3::new(2.0, 0.0, 0.0)));
+        store.spawn_cube(cube_at(Vec3::new(0.0, 2.0, 0.0)));
+
+        let sphere_xs: Vec<f32> = store.spheres().iter().map(|s| s.center.x).collect();
+        let cube_ys: Vec<f32> = store.cubes().iter().map(|c| c.center.y).collect();
+
+        assert_eq!(sphere_xs, vec![1.0, 2.0]);
+        assert_eq!(cube_ys, vec![1.0, 2.0]);
+        assert_eq!(store.len(), 4);
+    }
+
+    #[test]
+    fn handle_from_before_clear_resolves_to_none() {
+        let mut store = ActorStore::new();
+        let old = store.spawn_sphere(sphere_at(Vec3::ZERO));
+
+        store.clear();
+        let new = store.spawn_sphere(sphere_at(Vec3::ONE));
+
+        assert!(store.center_mut(old).is_none());
+        assert_eq!(store.center_mut(new).map(|c| *c), Some(Vec3::ONE));
+        assert_eq!(store.spheres().len(), 1);
+        assert_eq!(store.spheres()[0].center, Vec3::ONE);
     }
 }
