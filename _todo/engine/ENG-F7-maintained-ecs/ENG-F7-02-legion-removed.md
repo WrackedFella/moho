@@ -20,6 +20,8 @@ iterator of chunks instead of a world, which closes [ENG-F7](_feature.md) and [E
 - The physics controller tracks `ActorId`s and syncs colliders from the
   `ChunkStore`.
 - `legion` is removed from every manifest and from `[workspace.dependencies]`.
+- `CLAUDE.md`'s architecture notes say entities live in typed stores
+  ([ADR-0004](../../adr/0004-entity-storage-without-a-general-ecs.md)), not `legion`.
 - `deny.toml` loses the `instant` and `paste` ignores. Each remaining ignore's
   reason names its owning card (bincode → [ENG-F2-01](../ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md), ttf-parser → [ENG-F2-03](../ENG-F2-dependency-upgrades/ENG-F2-03-platform-default-features-and-unused-deps.md)).
 

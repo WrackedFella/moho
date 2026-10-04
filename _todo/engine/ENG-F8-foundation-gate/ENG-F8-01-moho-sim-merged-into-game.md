@@ -21,8 +21,9 @@ deterministic simulation".
   `map_to_player_inputs`, `stamp_inputs`), `apply_controller_tick`, and
   `SimulationController::snapshot_bytes`/`restore_from_bytes` with their
   snapshot struct.
-- `CLAUDE.md` (architecture table, domain-logic paths), the root README and
-  `wiki/README.md` no longer mention `moho_sim`.
+- `CLAUDE.md` (architecture table, domain-logic paths), `_todo/_STANDARDS.md`'s
+  gate-class domain list, the root README and `wiki/README.md` no longer
+  mention `moho_sim`.
 
 ## Acceptance criteria
 

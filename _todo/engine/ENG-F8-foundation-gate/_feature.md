@@ -36,7 +36,7 @@ from the 2026-10 foundation review is post-gate backlog (see Notes).
 - In: [ENG-F7](../ENG-F7-maintained-ecs/_feature.md) (rescoped to remove `legion`); the layering check; merging
   `moho_sim` into `moho_game`; dropping `moho_core`'s unused `winit`
   dependency; [ADR-0004](../../adr/0004-entity-storage-without-a-general-ecs.md), [ADR-0005](../../adr/0005-crate-lines-and-dependency-direction.md), [ADR-0006](../../adr/0006-save-format-contract.md) and [ADR-0007](../../adr/0007-third-party-licence-policy.md); the deny-ignore owner pass.
-- Out: fixed timestep, injected clock, test cull/rework, crate merges other
+- Out: decoupling the fixed tick from rendering ([ENG-F6](../ENG-F6-headless-deterministic-logic/_feature.md), parked; [ADR-0009](../../adr/0009-simulation-time-is-one-fixed-tick.md)), test cull/rework, crate merges other
   than `moho_sim`, dependency upgrades, the physical repo split ([ENG-F5](../ENG-F5-physical-repo-split/_feature.md)).
   Those are post-gate (Notes). Writing the FPS GDD ([FPS-F1](../../fps-game/FPS-F1-game-design-document/_feature.md)) is planning and
   changes no code, so it can run in parallel with the gate.
@@ -56,7 +56,6 @@ from the 2026-10 foundation review is post-gate backlog (see Notes).
 Post-gate tiers, from the 2026-10 foundation review:
 
 - **Early** (soon after the gate, before the named feature that needs it):
-  [ENG-F6](../ENG-F6-headless-deterministic-logic/_feature.md) remainder (fixed timestep and injected clock before [SG-F4](../../strategy-game/SG-F4-worker-pawns/_feature.md) starts);
   [ENG-F9](../ENG-F9-tests-prove-behaviour/_feature.md) test cull/rework; save-format migration (before the first feature
   adds a persisted type); `winit`/`egui-winit` default features off (clears
   `ttf-parser`); unused-dependency removal; `moho_types` and `moho_input`
