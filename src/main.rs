@@ -4,8 +4,8 @@
 //! ([`moho_core`], [`moho_renderer`], [`moho_audio`], [`moho_ui`]) into a
 //! runnable application via [`winit`]'s event loop.
 
-use legion::World;
 use moho_core::prefs::Prefs;
+use moho_game::scene::SceneEntities;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -69,7 +69,7 @@ struct WindowRenderer {
 
 // Application state structure that implements ApplicationHandler
 struct App {
-    world: World,
+    entities: SceneEntities,
     scene: moho_renderer::Scene,
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
 
@@ -114,9 +114,6 @@ struct App {
     frame_duration: Duration,
     last_frame: Instant,
 
-    // Tracks gizmo spheres spawned alongside debug point lights (light_id -> entity)
-    light_gizmos: std::collections::HashMap<u32, legion::Entity>,
-
     // Grouped sub-systems
     physics: app::physics_controller::PhysicsController,
     generation: app::generation_job::WorldGenerationJob,
@@ -151,7 +148,7 @@ impl App {
         log::info!("Created LightSystem for frame loop integration");
 
         Self {
-            world: initialized.world,
+            entities: initialized.entities,
             scene: initialized.scene,
             camera: initialized.camera,
 
@@ -181,8 +178,6 @@ impl App {
 
             frame_duration: initialized.frame_duration,
             last_frame: initialized.last_frame,
-
-            light_gizmos: std::collections::HashMap::new(),
 
             physics: app::physics_controller::PhysicsController::new(),
             generation: app::generation_job::WorldGenerationJob::new(),
@@ -222,7 +217,7 @@ impl App {
     /// Initialize physics world after a scene is loaded.
     fn setup_physics_for_loaded_world(&mut self) {
         self.physics.reset();
-        self.physics.sync_colliders_from_ecs(&self.world);
+        self.physics.sync_colliders(&self.entities.chunks);
 
         // Spawn the physics character at the saved player position so the KCC
         // doesn't immediately override the restored camera on the first frame.

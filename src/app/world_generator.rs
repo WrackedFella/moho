@@ -6,7 +6,6 @@
 //! them each frame.
 
 use crossbeam_channel::unbounded;
-use legion::World;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -45,8 +44,7 @@ pub fn generate_new_world(
             // Report initial progress
             let _ = sender.send(crate::GenerationMsg::Progress(0.02));
 
-            // Local world and scene used for generation
-            let local_world = World::default();
+            let local_entities = moho_game::scene::SceneEntities::default();
             // Step 1: clear/build
             if cancel_clone.load(Ordering::Relaxed) {
                 let _ = sender.send(crate::GenerationMsg::Canceled);
@@ -79,7 +77,7 @@ pub fn generate_new_world(
             let camera_yaw = 0.0f32;
             let camera_pitch = -0.4f32;
             let scene_bytes = match moho_game::scene_persistence::encode_to_bytes(
-                &local_world,
+                &local_entities,
                 Some((camera_position, camera_yaw, camera_pitch)),
                 &[], // fresh world — no spawned lights
             ) {

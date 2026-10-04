@@ -12,7 +12,6 @@ wgpu = { workspace = true }
 winit = { workspace = true }
 pollster = { workspace = true }
 glam = { workspace = true }
-legion = { workspace = true }
 bincode = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }

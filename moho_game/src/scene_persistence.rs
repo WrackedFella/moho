@@ -1,12 +1,11 @@
-//! Scene save/load: serializes game-domain ECS state (spheres, cubes, voxel
+//! Scene save/load: serializes game-domain entity state (spheres, cubes, voxel
 //! chunks, materials) alongside camera pose and lights into a compact binary
 //! format. Extracted from `moho_renderer::scene` so the renderer doesn't need
 //! to name game-domain types — this module owns that coupling instead.
 
 use crate::actors::{Cube, Sphere};
+use crate::scene::SceneEntities;
 use bincode::{Decode, Encode};
-use legion::World;
-use legion::query::IntoQuery;
 use moho_core::materials::MaterialType;
 use moho_render_api::{CameraDesc, LightDesc};
 use std::fs::File;
@@ -21,16 +20,15 @@ const SCENE_FILE_VERSION: u32 = 3;
 
 /// Save a compact binary snapshot of the scene (method 2: bincode).
 /// This writes a serialized SceneDesc containing all Spheres, Cubes, VoxelChunks,
-/// Materials, and camera position/orientation. It does NOT serialize arbitrary
-/// ECS state; it serializes the application-level scene description
-/// and can be reloaded into a fresh `World` via `load_from_file`.
+/// Materials, and camera position/orientation. Reloadable into fresh [`SceneEntities`]
+/// via `load_from_file`.
 pub fn save_to_file<P: AsRef<Path>>(
     path: P,
-    world: &World,
+    entities: &SceneEntities,
     camera_position: Option<CameraData>, // (position, yaw, pitch)
     lights: &[LightDesc],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let encoded = encode_to_bytes(world, camera_position, lights)?;
+    let encoded = encode_to_bytes(entities, camera_position, lights)?;
     let mut f = File::create(path)?;
     f.write_all(&encoded)?;
     Ok(())
@@ -39,14 +37,12 @@ pub fn save_to_file<P: AsRef<Path>>(
 /// Encode the scene descriptor to a Vec<u8> for in-memory handling.
 /// This mirrors the on-disk serialization used by `save_to_file`.
 pub fn encode_to_bytes(
-    world: &World,
+    entities: &SceneEntities,
     camera_position: Option<CameraData>,
     lights: &[LightDesc],
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    // Collect serializable descriptors from the ECS world.
     let mut spheres: Vec<SphereDesc> = Vec::new();
-    let mut qs = <&Sphere>::query();
-    for s in qs.iter(world) {
+    for s in entities.actors.spheres() {
         spheres.push(SphereDesc {
             center: s.center.to_array(),
             radius: s.radius,
@@ -54,8 +50,7 @@ pub fn encode_to_bytes(
         });
     }
     let mut cubes: Vec<CubeDesc> = Vec::new();
-    let mut qc = <&Cube>::query();
-    for c in qc.iter(world) {
+    for c in entities.actors.cubes() {
         cubes.push(CubeDesc {
             center: c.center.to_array(),
             length: c.length,
@@ -67,8 +62,7 @@ pub fn encode_to_bytes(
 
     // Collect VoxelChunks
     let mut voxel_chunks: Vec<VoxelChunkDesc> = Vec::new();
-    let mut qv = <&moho_core::voxel::VoxelChunk>::query();
-    for chunk in qv.iter(world) {
+    for chunk in entities.chunks.iter() {
         voxel_chunks.push(VoxelChunkDesc {
             chunk_pos: [
                 chunk.chunk_pos().x,
@@ -101,34 +95,34 @@ pub fn encode_to_bytes(
     Ok(encoded)
 }
 
-/// Load a SceneDesc from a file and populate the provided `world` with
-/// entities. Existing world contents are left untouched; caller may
-/// clear the world beforehand if desired.
+/// Load a SceneDesc from a file and populate the provided `entities`.
+/// Existing contents are left untouched; caller may clear them beforehand if
+/// desired.
 /// Returns camera data and any persisted lights.
 pub fn load_from_file<P: AsRef<Path>>(
     path: P,
-    world: &mut World,
+    entities: &mut SceneEntities,
 ) -> Result<(Option<CameraData>, Vec<LightDesc>), Box<dyn std::error::Error>> {
     let mut f = File::open(path)?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf)?;
     // Delegate to helper that decodes from bytes so load_from_bytes can reuse it.
-    decode_and_populate(&buf, world)
+    decode_and_populate(&buf, entities)
 }
 
-/// Decode a scene saved as bincode bytes and populate `world`.
+/// Decode a scene saved as bincode bytes and populate `entities`.
 /// Returns camera data and any persisted lights.
 pub fn load_from_bytes(
     bytes: &[u8],
-    world: &mut World,
+    entities: &mut SceneEntities,
 ) -> Result<(Option<CameraData>, Vec<LightDesc>), Box<dyn std::error::Error>> {
-    decode_and_populate(bytes, world)
+    decode_and_populate(bytes, entities)
 }
 
-/// Internal helper to decode SceneDesc from bytes and populate a world.
+/// Internal helper to decode SceneDesc from bytes and populate entities.
 fn decode_and_populate(
     bytes: &[u8],
-    world: &mut World,
+    entities: &mut SceneEntities,
 ) -> Result<(Option<CameraData>, Vec<LightDesc>), Box<dyn std::error::Error>> {
     let cfg = bincode::config::standard();
 
@@ -138,13 +132,13 @@ fn decode_and_populate(
         && desc.version >= 1
         && desc.version <= SCENE_FILE_VERSION
     {
-        return populate_world(
+        return populate_entities(
             desc.spheres,
             desc.cubes,
             desc.voxel_chunks,
             desc.camera,
             desc.lights,
-            world,
+            entities,
         );
     }
 
@@ -164,29 +158,29 @@ fn decode_and_populate(
         "Loaded legacy scene format (v{}) — spawned lights will not be restored",
         legacy.version
     );
-    populate_world(
+    populate_entities(
         legacy.spheres,
         legacy.cubes,
         legacy.voxel_chunks,
         legacy.camera,
         vec![],
-        world,
+        entities,
     )
 }
 
-/// Shared world-population logic used by both v3 and legacy load paths.
-fn populate_world(
+/// Shared population logic used by both v3 and legacy load paths.
+fn populate_entities(
     spheres: Vec<SphereDesc>,
     cubes: Vec<CubeDesc>,
     voxel_chunks: Vec<VoxelChunkDesc>,
     camera: Option<CameraDesc>,
     lights: Vec<LightDesc>,
-    world: &mut World,
+    entities: &mut SceneEntities,
 ) -> Result<(Option<CameraData>, Vec<LightDesc>), Box<dyn std::error::Error>> {
     for s in spheres {
         let mat = s.material.into_material_type();
         let sphere = Sphere::new(glam::Vec3::from_array(s.center), s.radius, mat);
-        world.push((sphere,));
+        entities.actors.spawn_sphere(sphere);
     }
     for c in cubes {
         let mat = c.material.into_material_type();
@@ -197,7 +191,7 @@ fn populate_world(
             c.height,
             mat,
         );
-        world.push((cube,));
+        entities.actors.spawn_cube(cube);
     }
     for chunk_desc in voxel_chunks {
         let vertex_count = chunk_desc.vertices.len();
@@ -217,7 +211,7 @@ fn populate_world(
             chunk_desc.indices,
             chunk_desc.material_id,
         );
-        world.push((chunk,));
+        entities.chunks.insert(chunk);
     }
 
     let camera_data = camera.map(|cam| (glam::Vec3::from_array(cam.position), cam.yaw, cam.pitch));

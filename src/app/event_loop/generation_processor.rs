@@ -122,8 +122,9 @@ impl GenerationProcessor {
         }
 
         // Load produced scene bytes into the main world
-        app.world.clear();
-        match moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.world) {
+        app.entities.actors.clear();
+        app.entities.chunks.clear();
+        match moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.entities) {
             Ok((camera_data, _lights)) => {
                 // Generated worlds have no pre-spawned lights; nothing to restore.
                 if let Some((position, yaw, pitch)) = camera_data {
@@ -218,8 +219,8 @@ impl GenerationProcessor {
     fn setup_physics_for_world(&self, app: &mut App, preloaded_chunks: &[glam::IVec3]) {
         app.physics.reset();
 
-        // Register terrain colliders from all ECS chunks (handles the load-scene path).
-        app.physics.sync_colliders_from_ecs(&app.world);
+        // Covers the load-scene path, where chunks exist before any generation event.
+        app.physics.sync_colliders(&app.entities.chunks);
 
         // Build meshes and colliders for preloaded spawn-area chunks immediately so
         // the character doesn't fall through before async event processing kicks in.
@@ -229,7 +230,7 @@ impl GenerationProcessor {
                 let chunk = moho_core::voxel::VoxelChunk::from_grid_hybrid(grid, pos);
                 app.physics
                     .update_chunk_collider(pos, chunk.vertices(), chunk.indices());
-                app.world.push((chunk,));
+                app.entities.chunks.insert(chunk);
             }
         }
 
@@ -289,8 +290,8 @@ impl GenerationProcessor {
                         fuzz: 0.05,
                     },
                 );
-                let entity = app.world.push((sphere,));
-                app.physics.test_bodies.push((handle, entity));
+                let actor = app.entities.actors.spawn_sphere(sphere);
+                app.physics.test_bodies.push((handle, actor));
             }
         }
 

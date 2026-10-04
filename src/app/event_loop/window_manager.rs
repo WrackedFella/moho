@@ -64,7 +64,9 @@ impl WindowManager {
                 .scene
                 .render::<moho_game::actors::Sphere, moho_game::actors::Cube>(
                     &mut *wr.renderer,
-                    &mut app.world,
+                    app.entities.actors.spheres(),
+                    app.entities.actors.cubes(),
+                    app.entities.chunks.iter_mut(),
                     wr.mesh_handle,
                     wr.cube_mesh_handle,
                     wr.terrain_material_idx,

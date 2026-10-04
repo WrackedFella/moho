@@ -1,13 +1,13 @@
 //! Scene loading — deserializes a saved scene file and reconstructs world state.
 //!
 //! This module contains the logic that was previously inlined in `App::load_scene`,
-//! including ECS reconstruction, light system initialization, chunk streamer setup,
+//! including entity reconstruction, light system initialization, chunk streamer setup,
 //! camera restoration, and physics initialization.
 
 /// Load a saved scene from `path` and fully reconstruct world state.
 ///
 /// On success:
-/// - `app.world` is cleared and rebuilt from the scene bytes
+/// - `app.entities` is cleared and rebuilt from the scene bytes
 /// - `app.light_system` is replaced with a fresh `LightSystem` from persisted blocks
 /// - `app.chunk_streamer` is initialized for the loaded world's terrain config
 /// - Camera position, yaw, and pitch are restored from the save file
@@ -26,7 +26,8 @@ pub fn load_scene(
     }
 
     // Clear the existing world
-    app.world.clear();
+    app.entities.actors.clear();
+    app.entities.chunks.clear();
 
     // Load the scene from file with metadata support
     {
@@ -38,7 +39,7 @@ pub fn load_scene(
         // Restore time of day from the persisted WorldSpec.
         app.simulation.set_time_of_day(spec.initial_time_of_day);
         let (camera_data, lights) =
-            moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.world)?;
+            moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.entities)?;
         log::info!(
             "Scene loaded successfully from {}, {} lights",
             path.display(),

@@ -1,18 +1,15 @@
-/// Instance collection from ECS world for scene rendering.
+/// Instance collection for scene rendering.
 ///
-/// This module handles collecting instances from the ECS world and
-/// managing material deduplication through the material table.
+/// This module handles collecting instances from actor slices and chunk
+/// iterators and managing material deduplication through the material table.
 use crate::{BufferManager, MaterialTable, RendererBackend};
-use legion::World;
-use legion::query::IntoQuery;
-use legion::storage::Component;
 use moho_core::voxel::VoxelChunk;
 use moho_render_api::{InstanceGpu, Renderable};
 
-/// Collects instances from the ECS world for rendering.
+/// Collects instances for rendering.
 ///
-/// This struct handles the per-frame collection of renderable objects
-/// from the ECS world, including material deduplication and mesh registration.
+/// This struct handles the per-frame collection of renderable objects,
+/// including material deduplication and mesh registration.
 #[derive(Debug)]
 pub struct InstanceCollector {
     sphere_instances: Vec<InstanceGpu>,
@@ -30,56 +27,50 @@ impl InstanceCollector {
         }
     }
 
-    /// Collect all instances from the world.
+    /// Append sphere and cube instances, deduplicating their materials in
+    /// `material_table`.
     ///
-    /// This method queries the ECS world for `S` (spheres), `C` (cubes), and
-    /// `VoxelChunk`s, deduplicates materials, registers chunk meshes, and
-    /// prepares instance data for rendering. `S`/`C` are generic so this crate
-    /// doesn't need to name the concrete game-domain actor types — the caller
-    /// supplies them.
-    ///
-    /// # Arguments
-    /// * `world` - The ECS world to query
-    /// * `material_table` - Material table for deduplication
-    /// * `buffer_manager` - Buffer manager for chunk mesh registration
-    /// * `renderer` - Backend renderer for mesh registration
-    /// * `terrain_material_idx` - Material table index for terrain chunks,
-    ///   registered once by the caller at startup (mirrors the
-    ///   `mesh_handle`/`cube_mesh_handle` pattern already used for meshes)
-    pub fn collect<S, C>(
+    /// Appends only; the caller clears per frame via [`InstanceCollector::clear`].
+    /// `S`/`C` are generic so this crate doesn't need to name the concrete
+    /// game-domain actor types — the caller supplies them.
+    pub fn collect_actors<S, C>(
         &mut self,
-        world: &mut World,
+        spheres: &[S],
+        cubes: &[C],
         material_table: &mut MaterialTable,
-        buffer_manager: &mut BufferManager,
-        renderer: &mut dyn RendererBackend,
-        terrain_material_idx: u32,
     ) where
-        S: Renderable + Component,
-        C: Renderable + Component,
+        S: Renderable,
+        C: Renderable,
     {
-        // Clear previous frame data
-        self.clear();
-
-        // Collect sphere-like instances and deduplicate materials
-        let mut q_s = <&S>::query();
-        for s in q_s.iter(world) {
+        for s in spheres {
             let midx = material_table.find_or_push(s.material());
             self.sphere_instances
                 .push(s.to_instance_with_material(midx));
         }
 
-        // Collect cube-like instances and deduplicate materials
-        let mut q_c = <&C>::query();
-        for c in q_c.iter(world) {
+        for c in cubes {
             let midx = material_table.find_or_push(c.material());
             self.cube_instances.push(c.to_instance_with_material(midx));
         }
+    }
 
-        // Register VoxelChunk meshes and collect instances. All terrain chunks
-        // share a single pre-registered GPU material entry sourcing colours
-        // from the material buffer rather than hardcoding them in the shader.
-        let mut q_chunks_mut = <&mut VoxelChunk>::query();
-        for chunk in q_chunks_mut.iter_mut(world) {
+    /// Register chunk meshes with the backend and append one render entry per
+    /// registered chunk.
+    ///
+    /// Appends only; the caller clears per frame via [`InstanceCollector::clear`].
+    /// `terrain_material_idx` is the material table index for terrain chunks,
+    /// registered once by the caller at startup (mirrors the
+    /// `mesh_handle`/`cube_mesh_handle` pattern already used for meshes). All
+    /// terrain chunks share that single GPU material entry, sourcing colours
+    /// from the material buffer rather than hardcoding them in the shader.
+    pub fn collect_chunks<'a>(
+        &mut self,
+        chunks: impl IntoIterator<Item = &'a mut VoxelChunk>,
+        buffer_manager: &mut BufferManager,
+        renderer: &mut dyn RendererBackend,
+        terrain_material_idx: u32,
+    ) {
+        for chunk in chunks {
             if let Some(handle) = buffer_manager.ensure_chunk_registered(chunk, renderer) {
                 // VoxelChunk uses identity transform (mesh in world space)
                 let inst = InstanceGpu {
@@ -91,13 +82,6 @@ impl InstanceCollector {
                 self.chunk_renders.push((handle, inst));
             }
         }
-
-        log::debug!(
-            "[InstanceCollector] Collected {} spheres, {} cubes, {} chunks",
-            self.sphere_instances.len(),
-            self.cube_instances.len(),
-            self.chunk_renders.len()
-        );
     }
 
     /// Clear all collected instances.
@@ -292,10 +276,7 @@ mod tests {
     fn test_collect_spheres() {
         let mut collector = InstanceCollector::new();
         let mut material_table = MaterialTable::new();
-        let mut buffer_manager = BufferManager::new();
-        let mut renderer = MockRenderer::new();
 
-        // Add some spheres
         let mat = MaterialType::Lambertian {
             albedo: glam::Vec3::new(1.0, 0.0, 0.0),
         };
@@ -304,17 +285,8 @@ mod tests {
             TestSphere::new(glam::Vec3::new(5.0, 0.0, 0.0), 2.0, mat),
         ];
         let cubes: Vec<TestCube> = Vec::new();
-        let chunks = std::iter::empty::<&mut VoxelChunk>();
 
-        collector.collect(
-            &spheres,
-            &cubes,
-            chunks,
-            &mut material_table,
-            &mut buffer_manager,
-            &mut renderer,
-            0,
-        );
+        collector.collect_actors(&spheres, &cubes, &mut material_table);
 
         assert_eq!(collector.sphere_instances().len(), 2);
         assert_eq!(collector.cube_instances().len(), 0);
@@ -326,10 +298,7 @@ mod tests {
     fn test_collect_cubes() {
         let mut collector = InstanceCollector::new();
         let mut material_table = MaterialTable::new();
-        let mut buffer_manager = BufferManager::new();
-        let mut renderer = MockRenderer::new();
 
-        // Add some cubes
         let mat = MaterialType::Metal {
             albedo: glam::Vec3::new(0.8, 0.8, 0.8),
             fuzz: 0.1,
@@ -339,17 +308,8 @@ mod tests {
             TestCube::new(glam::Vec3::new(3.0, 0.0, 0.0), 2.0, 2.0, 2.0, mat),
         ];
         let spheres: Vec<TestSphere> = Vec::new();
-        let chunks = std::iter::empty::<&mut VoxelChunk>();
 
-        collector.collect(
-            &spheres,
-            &cubes,
-            chunks,
-            &mut material_table,
-            &mut buffer_manager,
-            &mut renderer,
-            0,
-        );
+        collector.collect_actors(&spheres, &cubes, &mut material_table);
 
         assert_eq!(collector.sphere_instances().len(), 0);
         assert_eq!(collector.cube_instances().len(), 2);
@@ -360,7 +320,6 @@ mod tests {
     #[test]
     fn test_collect_chunks() {
         let mut collector = InstanceCollector::new();
-        let mut material_table = MaterialTable::new();
         let mut buffer_manager = BufferManager::new();
         let mut renderer = MockRenderer::new();
 
@@ -379,18 +338,8 @@ mod tests {
         );
         let mut store = ChunkStore::new();
         store.insert(chunk);
-        let spheres: Vec<TestSphere> = Vec::new();
-        let cubes: Vec<TestCube> = Vec::new();
 
-        collector.collect(
-            &spheres,
-            &cubes,
-            store.iter_mut(),
-            &mut material_table,
-            &mut buffer_manager,
-            &mut renderer,
-            0,
-        );
+        collector.collect_chunks(store.iter_mut(), &mut buffer_manager, &mut renderer, 0);
 
         assert_eq!(collector.sphere_instances().len(), 0);
         assert_eq!(collector.cube_instances().len(), 0);
@@ -442,15 +391,8 @@ mod tests {
         let mut store = ChunkStore::new();
         store.insert(chunk);
 
-        collector.collect(
-            &spheres,
-            &cubes,
-            store.iter_mut(),
-            &mut material_table,
-            &mut buffer_manager,
-            &mut renderer,
-            0,
-        );
+        collector.collect_actors(&spheres, &cubes, &mut material_table);
+        collector.collect_chunks(store.iter_mut(), &mut buffer_manager, &mut renderer, 0);
 
         assert_eq!(collector.sphere_instances().len(), 1);
         assert_eq!(collector.cube_instances().len(), 1);
@@ -462,8 +404,6 @@ mod tests {
     fn test_clear() {
         let mut collector = InstanceCollector::new();
         let mut material_table = MaterialTable::new();
-        let mut buffer_manager = BufferManager::new();
-        let mut renderer = MockRenderer::new();
 
         // Add some objects
         let mat = MaterialType::Lambertian {
@@ -471,21 +411,33 @@ mod tests {
         };
         let spheres = vec![TestSphere::new(glam::Vec3::ZERO, 1.0, mat)];
         let cubes: Vec<TestCube> = Vec::new();
-        let chunks = std::iter::empty::<&mut VoxelChunk>();
 
-        collector.collect(
-            &spheres,
-            &cubes,
-            chunks,
-            &mut material_table,
-            &mut buffer_manager,
-            &mut renderer,
-            0,
-        );
+        collector.collect_actors(&spheres, &cubes, &mut material_table);
         assert_eq!(collector.total_instances(), 1);
 
         collector.clear();
         assert_eq!(collector.total_instances(), 0);
+        assert_eq!(collector.sphere_instances().len(), 0);
+    }
+
+    #[test]
+    fn collect_actors_appends_without_clearing() {
+        let mut collector = InstanceCollector::new();
+        let mut material_table = MaterialTable::new();
+        let mat = MaterialType::Lambertian {
+            albedo: glam::Vec3::ONE,
+        };
+        let first = vec![TestSphere::new(glam::Vec3::ZERO, 1.0, mat)];
+        let second = vec![TestSphere::new(glam::Vec3::new(2.0, 0.0, 0.0), 1.0, mat)];
+        let no_cubes: Vec<TestCube> = Vec::new();
+
+        collector.collect_actors(&first, &no_cubes, &mut material_table);
+        collector.collect_actors(&second, &no_cubes, &mut material_table);
+
+        assert_eq!(collector.sphere_instances().len(), 2);
+
+        collector.clear();
+
         assert_eq!(collector.sphere_instances().len(), 0);
     }
 }

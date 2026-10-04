@@ -3,12 +3,14 @@
 //! Centralises `PhysicsWorld`, chunk colliders, test bodies, and jump input
 //! so callers don't need to touch `App` fields individually.
 
+use moho_core::voxel::ChunkStore;
+use moho_game::actors::ActorId;
 use std::collections::HashMap;
 
 pub struct PhysicsController {
     pub world: Option<moho_physics::PhysicsWorld>,
     pub chunk_colliders: HashMap<glam::IVec3, moho_physics::ColliderHandle>,
-    pub test_bodies: Vec<(moho_physics::RigidBodyHandle, legion::Entity)>,
+    pub test_bodies: Vec<(moho_physics::RigidBodyHandle, ActorId)>,
     pub jump_pressed: bool,
 }
 
@@ -56,17 +58,17 @@ impl PhysicsController {
         }
     }
 
-    /// Step dynamic rigid bodies and return (entity, new_position) pairs.
+    /// Step dynamic rigid bodies and return (actor, new_position) pairs.
     ///
-    /// Caller is responsible for updating ECS components from the returned list.
-    pub fn step(&mut self, dt: f32) -> Vec<(legion::Entity, glam::Vec3)> {
+    /// Caller is responsible for updating actor positions from the returned list.
+    pub fn step(&mut self, dt: f32) -> Vec<(ActorId, glam::Vec3)> {
         let Some(pw) = self.world.as_mut() else {
             return Vec::new();
         };
         pw.step(dt);
         self.test_bodies
             .iter()
-            .filter_map(|(handle, entity)| pw.body_position(*handle).map(|p| (*entity, p)))
+            .filter_map(|(handle, actor)| pw.body_position(*handle).map(|p| (*actor, p)))
             .collect()
     }
 
@@ -96,18 +98,14 @@ impl PhysicsController {
         }
     }
 
-    /// Register colliders for all ECS chunks that don't yet have one.
-    pub fn sync_colliders_from_ecs(&mut self, ecs_world: &legion::World) {
-        use legion::IntoQuery;
-        use moho_core::voxel::VoxelChunk;
-
+    /// Register colliders for all stored chunks that don't yet have one.
+    pub fn sync_colliders(&mut self, chunks: &ChunkStore) {
         let Some(pw) = self.world.as_mut() else {
             return;
         };
 
-        let mut query = <&VoxelChunk>::query();
-        let new_chunks: Vec<(glam::IVec3, Vec<[f32; 3]>, Vec<u32>)> = query
-            .iter(ecs_world)
+        let new_chunks: Vec<(glam::IVec3, Vec<[f32; 3]>, Vec<u32>)> = chunks
+            .iter()
             .filter(|c| !self.chunk_colliders.contains_key(&c.chunk_pos()))
             .map(|c| (c.chunk_pos(), c.vertices().to_vec(), c.indices().to_vec()))
             .collect();

@@ -4,8 +4,6 @@
 
 use crate::App;
 use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk};
-use legion::IntoQuery;
-use moho_core::voxel::VoxelChunk;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
@@ -136,21 +134,24 @@ impl FrameProcessor {
         // Rebuild camera from the updated simulation state
         app.camera = moho_game::controller::controller_to_camera(&app.simulation.player_controller);
 
-        // Step dynamic rigid bodies and sync ECS transforms
         self.step_physics_bodies(app, dt);
     }
 
-    /// Step dynamic rigid bodies and sync their positions into ECS components.
+    /// Step dynamic rigid bodies and sync their positions into actors.
     /// Called from both the KCC path and the non-KCC path so test spheres move in all modes.
     fn step_physics_bodies(&self, app: &mut App, dt: f32) {
         let updates = app.physics.step(dt);
-        for (entity, pos) in updates {
-            if let Some(mut entry) = app.world.entry(entity) {
-                if let Ok(sphere) = entry.get_component_mut::<moho_game::actors::Sphere>() {
-                    sphere.center = pos;
-                } else if let Ok(cube) = entry.get_component_mut::<moho_game::actors::Cube>() {
-                    cube.center = pos;
-                }
+        for (actor, pos) in updates {
+            if let Some(center) = app.entities.actors.center_mut(actor) {
+                *center = pos;
+            } else {
+                let body = app
+                    .physics
+                    .test_bodies
+                    .iter()
+                    .find(|(_, id)| *id == actor)
+                    .map(|(handle, _)| *handle);
+                log::warn!("Physics body update for missing actor: body={body:?}, actor={actor:?}");
             }
         }
     }
@@ -173,7 +174,7 @@ impl FrameProcessor {
             let (loaded, evicted) = streamer.update(ls.grid_mut(), player_pos);
 
             for pos in &evicted {
-                remove_chunk_entity(&mut app.world, *pos);
+                app.entities.chunks.remove(*pos);
                 app.physics.remove_chunk_collider(*pos);
             }
 
@@ -217,19 +218,16 @@ impl FrameProcessor {
         }
     }
 
-    /// Emit `ChunkMeshDirty` for any ECS chunk whose LOD tier has become stale.
+    /// Emit `ChunkMeshDirty` for any stored chunk whose LOD tier has become stale.
     ///
     /// Runs only when the player crosses an XZ chunk boundary. `process_world_events`
     /// stamps the new LOD onto the freshly generated chunk, so the comparison goes
     /// idle after all transitions in the new position are processed.
     fn update_lod_transitions(&self, app: &mut App, player_chunk: glam::IVec3) {
         let mut dirty: Vec<glam::IVec3> = Vec::new();
-        {
-            let mut query = <&VoxelChunk>::query();
-            for chunk in query.iter(&app.world) {
-                if chunk.lod() != lod_for_chunk(chunk.chunk_pos(), player_chunk) {
-                    dirty.push(chunk.chunk_pos());
-                }
+        for chunk in app.entities.chunks.iter() {
+            if chunk.lod() != lod_for_chunk(chunk.chunk_pos(), player_chunk) {
+                dirty.push(chunk.chunk_pos());
             }
         }
 
@@ -444,19 +442,6 @@ impl FrameProcessor {
         if let Ok(mut adapter) = ui_adapter.lock() {
             adapter.update_hud_data(data);
         }
-    }
-}
-
-/// Remove the ECS entity for a chunk that has been evicted from the grid.
-fn remove_chunk_entity(world: &mut legion::World, pos: glam::IVec3) {
-    use moho_core::voxel::VoxelChunk;
-    let mut query = <(legion::Entity, &VoxelChunk)>::query();
-    let entity = query
-        .iter(world)
-        .find(|(_, c)| c.chunk_pos() == pos)
-        .map(|(e, _)| *e);
-    if let Some(e) = entity {
-        world.remove(e);
     }
 }
 

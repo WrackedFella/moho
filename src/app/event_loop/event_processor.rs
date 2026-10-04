@@ -8,7 +8,6 @@
 
 use crate::App;
 use crate::input_event::InputEvent;
-use legion::IntoQuery;
 use moho_core::events::{GraphicsEvent, UiEvent, WorldEvent};
 use moho_core::voxel::VoxelChunk;
 use winit::event_loop::ActiveEventLoop;
@@ -297,22 +296,9 @@ impl EventProcessor {
                     app.physics
                         .update_chunk_collider(chunk_pos, chunk.vertices(), chunk.indices());
 
-                    // Update or insert into ECS world.
-                    debug_assert_chunk_entity_unique(&app.world, chunk_pos);
-                    let mut query = <(legion::Entity, &VoxelChunk)>::query();
-                    let entity = query
-                        .iter(&app.world)
-                        .find(|(_, c)| c.chunk_pos() == chunk_pos)
-                        .map(|(e, _)| *e);
-
-                    if let Some(e) = entity {
-                        if let Some(mut entry) = app.world.entry(e) {
-                            entry.add_component(chunk);
-                            log::trace!("Updated mesh for chunk {chunk_pos:?}");
-                        }
+                    if app.entities.chunks.insert(chunk).is_some() {
+                        log::trace!("Updated mesh for chunk {chunk_pos:?}");
                     } else {
-                        // New chunk
-                        app.world.push((chunk,));
                         log::trace!("Created new mesh for chunk {chunk_pos:?}");
                     }
                 }
@@ -426,7 +412,7 @@ impl EventProcessor {
                                     glam::Vec3::ONE // White default
                                 };
 
-                                let light_id = wr.renderer.add_point_light(
+                                wr.renderer.add_point_light(
                                     spawn_pos,
                                     color,
                                     DEFAULT_POINT_LIGHT_INTENSITY,
@@ -445,8 +431,7 @@ impl EventProcessor {
                                         intensity: 1.5,
                                     },
                                 );
-                                let entity = app.world.push((gizmo,));
-                                app.light_gizmos.insert(light_id, entity);
+                                app.entities.actors.spawn_sphere(gizmo);
                             }
                         }
                         "cube" => {
@@ -463,7 +448,7 @@ impl EventProcessor {
                                     albedo: glam::Vec3::new(0.8, 0.2, 0.2),
                                 },
                             );
-                            let entity = app.world.push((cube,));
+                            let entity = app.entities.actors.spawn_cube(cube);
                             if let Some(pw) = app.physics.world.as_mut() {
                                 let handle = pw.add_dynamic_cuboid(spawn_pos, 0.5, 0.5, 0.5);
                                 app.physics.test_bodies.push((handle, entity));
@@ -483,7 +468,7 @@ impl EventProcessor {
                                     fuzz: 0.1,
                                 },
                             );
-                            let entity = app.world.push((sphere,));
+                            let entity = app.entities.actors.spawn_sphere(sphere);
                             if let Some(pw) = app.physics.world.as_mut() {
                                 let handle = pw.add_dynamic_sphere(spawn_pos, 0.5);
                                 app.physics.test_bodies.push((handle, entity));
@@ -555,26 +540,6 @@ pub(crate) fn lod_for_chunk(chunk_pos: glam::IVec3, player_chunk: glam::IVec3) -
     let dz = (chunk_pos.z - player_chunk.z).abs();
     let dist = dx.max(dz);
     u8::from(dist >= 4)
-}
-
-/// A `chunk_pos` should map to at most one `VoxelChunk` entity — if streaming
-/// or LOD transitions ever left a duplicate, `process_world_events`'s `find`
-/// would silently update one while a stale mesh keeps rendering alongside it.
-/// Debug-only: `ChunkMeshDirty` fires continuously during streaming, so this
-/// scans the chunk archetype on every call — `debug_assert!`'s condition is
-/// never evaluated in a release build, so this costs nothing there.
-fn debug_assert_chunk_entity_unique(world: &legion::World, chunk_pos: glam::IVec3) {
-    debug_assert!(
-        {
-            let mut query = <&VoxelChunk>::query();
-            query
-                .iter(world)
-                .filter(|c| c.chunk_pos() == chunk_pos)
-                .count()
-                <= 1
-        },
-        "chunk {chunk_pos:?} has more than one VoxelChunk entity — a stale mesh may be rendering alongside the fresh one"
-    );
 }
 
 impl Default for EventProcessor {
