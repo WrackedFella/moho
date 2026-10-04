@@ -1,6 +1,6 @@
 # Chunks and actors have typed stores with guaranteed lookup rules
 
-**Status:** in progress
+**Status:** done
 **Feature:** [ENG-F7](_feature.md)
 **Issue:** #65
 
@@ -91,5 +91,9 @@ Apache-2.0).
 
 **Gate class:** domain. The failing tests pause for review before
 implementation.
+
+**Deviations.** `ActorStore::is_empty` was added beside `len` (clippy's
+`len_without_is_empty`). `proptest` is built with `default-features = false,
+features = ["std"]` to avoid pulling in `rusty-fork` and `wait-timeout`.
 
 **Risks.** None at runtime: nothing uses the stores until [ENG-F7-02](ENG-F7-02-legion-removed.md).
