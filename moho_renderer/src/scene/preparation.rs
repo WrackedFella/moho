@@ -89,7 +89,7 @@ impl ScenePreparation {
         C: Renderable + Component,
     {
         // Step 1: Collect instances from world
-        instance_collector.collect_from_world::<S, C>(
+        instance_collector.collect::<S, C>(
             world,
             material_table,
             buffer_manager,

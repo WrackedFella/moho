@@ -46,7 +46,7 @@ impl InstanceCollector {
     /// * `terrain_material_idx` - Material table index for terrain chunks,
     ///   registered once by the caller at startup (mirrors the
     ///   `mesh_handle`/`cube_mesh_handle` pattern already used for meshes)
-    pub fn collect_from_world<S, C>(
+    pub fn collect<S, C>(
         &mut self,
         world: &mut World,
         material_table: &mut MaterialTable,
@@ -302,7 +302,7 @@ mod tests {
         world.push((TestSphere::new(glam::Vec3::ZERO, 1.0, mat),));
         world.push((TestSphere::new(glam::Vec3::new(5.0, 0.0, 0.0), 2.0, mat),));
 
-        collector.collect_from_world::<TestSphere, TestCube>(
+        collector.collect::<TestSphere, TestCube>(
             &mut world,
             &mut material_table,
             &mut buffer_manager,
@@ -338,7 +338,7 @@ mod tests {
             mat,
         ),));
 
-        collector.collect_from_world::<TestSphere, TestCube>(
+        collector.collect::<TestSphere, TestCube>(
             &mut world,
             &mut material_table,
             &mut buffer_manager,
@@ -375,7 +375,7 @@ mod tests {
         );
         world.push((chunk,));
 
-        collector.collect_from_world::<TestSphere, TestCube>(
+        collector.collect::<TestSphere, TestCube>(
             &mut world,
             &mut material_table,
             &mut buffer_manager,
@@ -433,7 +433,7 @@ mod tests {
         );
         world.push((chunk,));
 
-        collector.collect_from_world::<TestSphere, TestCube>(
+        collector.collect::<TestSphere, TestCube>(
             &mut world,
             &mut material_table,
             &mut buffer_manager,
@@ -461,7 +461,7 @@ mod tests {
         };
         world.push((TestSphere::new(glam::Vec3::ZERO, 1.0, mat),));
 
-        collector.collect_from_world::<TestSphere, TestCube>(
+        collector.collect::<TestSphere, TestCube>(
             &mut world,
             &mut material_table,
             &mut buffer_manager,
