@@ -1,7 +1,7 @@
 # ENG-F3 — Renderer Pipeline Cleanup
 
 **Status:** not started (earlier pipeline phases shipped with the renderer decoupling — see
-[ADR-0001](../../../docs/adr/0001-render-api-boundary.md))
+[ADR-0001](../../adr/0001-render-api-boundary.md))
 
 ## Summary
 

@@ -8,6 +8,8 @@ How work items are organized and written. Applies to every project line.
 _todo/
   README.md                     <- index: lines, features, status
   _STANDARDS.md                 <- this file
+  ROADMAP.md                    <- order of work: phases, dependencies, decisions
+  adr/NNNN-<slug>.md            <- architecture decision records (index: adr/README.md)
   engine/ENG-F<n>-<slug>/       <- engine crates (anything that ships in moho-engine)
   strategy-game/SG-F<n>-<slug>/ <- strategy/base-builder game
   fps-game/FPS-F<n>-<slug>/     <- FPS prototype

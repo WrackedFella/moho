@@ -1,7 +1,7 @@
 # Hotbar displays the player's mined resources
 
 **Status:** done
-**Feature:** SG-F1
+**Feature:** [SG-F1](_feature.md)
 
 ## Summary
 

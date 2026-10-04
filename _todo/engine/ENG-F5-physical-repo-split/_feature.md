@@ -15,13 +15,13 @@ boundary needs to stop moving to unblock parallel work.
 
 Split only after the Strategy line reaches a stable "v1", not on a timeline:
 
-1. `SG-F1`'s items SG-F1-01 through SG-F1-04 all done (mining, hotbar, tool gating,
+1. `SG-F1`'s items [SG-F1-01](../../strategy-game/SG-F1-core-interaction-loop/SG-F1-01-mine-voxel.md) through [SG-F1-04](../../strategy-game/SG-F1-core-interaction-loop/SG-F1-04-pickup-feedback.md) all done (mining, hotbar, tool gating,
    pickup feedback) — not just the first three. The later items exercise the
    `moho_ui` decoupling, `InputDispatcher` layering, and event-bus boundaries
    the first item alone doesn't.
-2. `SG-F2` bugs `mining-mesh-gaps` (SG-F2-02) and `mining-not-persisted` (SG-F2-03)
+2. `SG-F2` bugs `mining-mesh-gaps` ([SG-F2-02](../../strategy-game/SG-F2-known-bugs/SG-F2-02-mining-mesh-gaps.md)) and `mining-not-persisted` ([SG-F2-03](../../strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md))
    fixed — the latter is data loss, not polish. `spawn-inside-terrain`
-   (SG-F2-01) and `lod1-mesh-holes` (ENG-F4-04) are explicitly NOT required for this
+   ([SG-F2-01](../../strategy-game/SG-F2-known-bugs/SG-F2-01-spawn-inside-terrain.md)) and `lod1-mesh-holes` ([ENG-F4-04](../ENG-F4-terrain-rendering-debt/ENG-F4-04-lod1-mesh-holes.md)) are explicitly NOT required for this
    gate.
 3. `ENG-F2`'s bincode 2→3 strategy decided (not necessarily executed) — a
    save-format promise is implicit in tagging v1.
@@ -29,12 +29,12 @@ Split only after the Strategy line reaches a stable "v1", not on a timeline:
    distribution (`just deny` plus a manual pass over non-crate assets).
 5. Tag `v1.0`; full test/clippy green.
 
-Explicitly excluded from the gate: SG-F2-01/ENG-F4-04, ENG-F1/ENG-F3 cleanup items, blocked
+Explicitly excluded from the gate: [SG-F2-01](../../strategy-game/SG-F2-known-bugs/SG-F2-01-spawn-inside-terrain.md)/[ENG-F4-04](../ENG-F4-terrain-rendering-debt/ENG-F4-04-lod1-mesh-holes.md), [ENG-F1](../ENG-F1-engine-hygiene/_feature.md)/[ENG-F3](../ENG-F3-renderer-pipeline-cleanup/_feature.md) cleanup items, blocked
 `glam`/`wgpu`-30 upgrades — opportunistic backlog, no pre-split sweep.
 
 **Why gate at all if not urgent:** splitting early freezes an API proven
-against too little real use. SG-F1's first item alone already found two real
-cross-boundary bugs by being used for real — the rest of SG-F1 is more of that
+against too little real use. [SG-F1](../../strategy-game/SG-F1-core-interaction-loop/_feature.md)'s first item alone already found two real
+cross-boundary bugs by being used for real — the rest of [SG-F1](../../strategy-game/SG-F1-core-interaction-loop/_feature.md) is more of that
 same signal before the boundary gets harder to change.
 
 ## Target shape

@@ -1,7 +1,7 @@
 # Mining requires an equipped tool
 
 **Status:** done
-**Feature:** SG-F1
+**Feature:** [SG-F1](_feature.md)
 
 ## Summary
 

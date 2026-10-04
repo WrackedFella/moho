@@ -21,7 +21,7 @@ candidates resisted: `MaterialType` is stored directly by `VoxelGrid`'s
 ## Consequences
 
 - `voxel/` is this game's terrain engine, not generic engine code. At the
-  repo split (ENG-F5) decide deliberately whether it goes to the engine or
+  repo split ([ENG-F5](../engine/ENG-F5-physical-repo-split/_feature.md)) decide deliberately whether it goes to the engine or
   the strategy repo; it must not move by default.
 - `MaterialType`'s placement is forced by concrete ownership in
-  `VoxelGrid`; ENG-F1-05 removes that constraint.
+  `VoxelGrid`; [ENG-F1-05](../engine/ENG-F1-engine-hygiene/ENG-F1-05-material-model-revisit.md) removes that constraint.

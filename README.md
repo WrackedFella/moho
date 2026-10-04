@@ -82,15 +82,15 @@ Each workspace crate has comprehensive documentation in its README:
 - **[moho_sim/README.md](moho_sim/README.md)** - Deterministic simulation and snapshots
 
 ### Architecture Documentation
-- **[Event Bus Best Practices](docs/engine_core/EVENT_BUS_BEST_PRACTICES.md)** - Usage patterns and common pitfalls
-- **[Event Bus Performance](docs/engine_core/EVENT_BUS_PERFORMANCE.md)** - Benchmark results (11M events/sec)
-- **[Console Architecture](docs/CONSOLE_ARCHITECTURE.md)** - Debug console system design
-- **[Adding Console Commands](docs/ADDING_CONSOLE_COMMANDS.md)** - Extending the console
+- **[Event Bus Best Practices](wiki/engine_core/EVENT_BUS_BEST_PRACTICES.md)** - Usage patterns and common pitfalls
+- **[Event Bus Performance](wiki/engine_core/EVENT_BUS_PERFORMANCE.md)** - Benchmark results (11M events/sec)
+- **[Console Architecture](wiki/CONSOLE_ARCHITECTURE.md)** - Debug console system design
+- **[Adding Console Commands](wiki/ADDING_CONSOLE_COMMANDS.md)** - Extending the console
 
 ### Technical Reference
-- **[GPU ABI](docs/gpu_abi.md)** - Shader/CPU data layout requirements (Material, Camera, Lighting, CSM)
-- **[Preferences Format](docs/prefs_format.md)** - Configuration file structure
-- **[Documentation Index](docs/README.md)** - Complete documentation overview
+- **[GPU ABI](wiki/gpu_abi.md)** - Shader/CPU data layout requirements (Material, Camera, Lighting, CSM)
+- **[Preferences Format](wiki/prefs_format.md)** - Configuration file structure
+- **[Documentation Index](wiki/README.md)** - Complete documentation overview
 
 ### Day/Night Cycle
 
@@ -135,7 +135,7 @@ bus.subscribe(|evt: &moho_core::events::DebugEvent| {
 });
 ```
 
-See `docs/CONSOLE_ARCHITECTURE.md` and `docs/ADDING_CONSOLE_COMMANDS.md` for architecture and extension guidance.
+See `wiki/CONSOLE_ARCHITECTURE.md` and `wiki/ADDING_CONSOLE_COMMANDS.md` for architecture and extension guidance.
 
 ## Architecture
 
@@ -144,7 +144,7 @@ See `docs/CONSOLE_ARCHITECTURE.md` and `docs/ADDING_CONSOLE_COMMANDS.md` for arc
 ```
 moho/
 ├── benches/              # Performance benchmarks
-├── docs/                 # Documentation
+├── wiki/                 # Project documentation
 ├── src/                  # Main application
 ├── tests/                # Integration tests
 ├── moho_core/            # Core types, events, voxels
@@ -175,7 +175,7 @@ bus.publish(UiEvent::MenuShown { name: "main".to_string() });
 
 **Performance**: <1% frame budget at 60 FPS, 11.4M events/second throughput
 
-See [EVENT_BUS_BEST_PRACTICES.md](docs/engine_core/EVENT_BUS_BEST_PRACTICES.md) for detailed usage patterns.
+See [EVENT_BUS_BEST_PRACTICES.md](wiki/engine_core/EVENT_BUS_BEST_PRACTICES.md) for detailed usage patterns.
 
 ## Build & Release
 
@@ -256,6 +256,6 @@ Notes
 - If you use Windows, prefer absolute paths for docker volume mounts. Use WSL (Windows Subsystem for Linux) for a POSIX-like experience.
 
 Notes & pointers
-- For detailed design notes and development guides, see the `docs/` folder.
+- For detailed design notes and development guides, see the `wiki/` folder.
 - The `moho_sim` crate contains the headless simulation, deterministic tests, and snapshot/restore utilities (bincode + CRC).
 - CI caching and build details: `.github/CICACHE.md` and `.github/workflows/ci.yml`.

@@ -1,7 +1,7 @@
 # egui 0.34 UI-architecture migration
 
 **Status:** not started
-**Feature:** ENG-F2
+**Feature:** [ENG-F2](_feature.md)
 
 ## Summary
 

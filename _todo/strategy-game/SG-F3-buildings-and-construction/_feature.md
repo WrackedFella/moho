@@ -5,7 +5,7 @@
 ## Summary
 
 The player opens a context-sensitive build menu and places simple buildings
-into the world. Follows SG-F1; not decomposed into cards until picked up.
+into the world. Follows [SG-F1](../SG-F1-core-interaction-loop/_feature.md); not decomposed into cards until picked up.
 
 ## Scope sketch
 

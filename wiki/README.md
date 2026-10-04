@@ -9,7 +9,7 @@ Start with the [project README](../README.md). Planning and work items live in
 
 ## Architecture
 
-- [Architecture Decision Records](adr/README.md): crate boundaries and other
+- [Architecture Decision Records](../_todo/adr/README.md): crate boundaries and other
   decisions that constrain future work.
 - Crate overviews: [`moho_core`](../moho_core/README.md),
   [`moho_renderer`](../moho_renderer/README.md),

@@ -1,7 +1,7 @@
 # Mining edits aren't reliably persisted
 
 **Status:** not started
-**Feature:** SG-F2
+**Feature:** [SG-F2](_feature.md)
 
 ## Summary
 
