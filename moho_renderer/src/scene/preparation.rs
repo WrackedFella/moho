@@ -91,7 +91,6 @@ impl ScenePreparation {
         S: Renderable,
         C: Renderable,
     {
-        // Step 1: Collect instances
         instance_collector.clear();
         instance_collector.collect_actors(spheres, cubes, material_table);
         instance_collector.collect_chunks(chunks, buffer_manager, renderer, terrain_material_idx);

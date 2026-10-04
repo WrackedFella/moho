@@ -1,15 +1,8 @@
-/// Instance collection for scene rendering.
-///
-/// This module handles collecting instances from actor slices and chunk
-/// iterators and managing material deduplication through the material table.
 use crate::{BufferManager, MaterialTable, RendererBackend};
 use moho_core::voxel::VoxelChunk;
 use moho_render_api::{InstanceGpu, Renderable};
 
-/// Collects instances for rendering.
-///
-/// This struct handles the per-frame collection of renderable objects,
-/// including material deduplication and mesh registration.
+/// Per-frame collection of renderable instances, deduplicating materials.
 #[derive(Debug)]
 pub struct InstanceCollector {
     sphere_instances: Vec<InstanceGpu>,
@@ -59,10 +52,8 @@ impl InstanceCollector {
     ///
     /// Appends only; the caller clears per frame via [`InstanceCollector::clear`].
     /// `terrain_material_idx` is the material table index for terrain chunks,
-    /// registered once by the caller at startup (mirrors the
-    /// `mesh_handle`/`cube_mesh_handle` pattern already used for meshes). All
-    /// terrain chunks share that single GPU material entry, sourcing colours
-    /// from the material buffer rather than hardcoding them in the shader.
+    /// registered once by the caller at startup. All terrain chunks share that
+    /// entry; colours come from the material buffer, not the shader.
     pub fn collect_chunks<'a>(
         &mut self,
         chunks: impl IntoIterator<Item = &'a mut VoxelChunk>,
