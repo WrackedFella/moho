@@ -19,7 +19,7 @@ and can run alongside 0.2–0.3.
 | 0.1 | Accept [ADR-0005](adr/0005-crate-lines-and-dependency-direction.md) (crate lines) and [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) | G2 | — | done |
 | 0.2 | [ENG-F8-01](engine/ENG-F8-foundation-gate/ENG-F8-01-moho-sim-merged-into-game.md): `moho_sim` merged into `moho_game` | G2 | 0.1 | in progress (#63) |
 | 0.3 | [ENG-F8-02](engine/ENG-F8-foundation-gate/ENG-F8-02-layering-check.md): layering check in `just check`; `moho_core` drops `winit` | G2 | 0.2 | ready (#64) |
-| 0.4 | [ENG-F7-01](engine/ENG-F7-maintained-ecs/ENG-F7-01-typed-entity-stores.md): typed chunk and actor stores (domain: tests reviewed first) | G1 | 0.1 | ready (#65) |
+| 0.4 | [ENG-F7-01](engine/ENG-F7-maintained-ecs/ENG-F7-01-typed-entity-stores.md): typed chunk and actor stores (domain: tests reviewed first) | G1 | 0.1 | done (#65) |
 | 0.5 | [ENG-F7-02](engine/ENG-F7-maintained-ecs/ENG-F7-02-legion-removed.md): legion removed; deny ignores name their owning cards | G1, G3 | 0.4 | ready (#66) |
 | 0.6 | [ENG-F2-01](engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md) rewritten to [ADR-0006](adr/0006-save-format-contract.md) (decision only) | G4 | — | done |
 
