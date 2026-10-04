@@ -63,11 +63,13 @@ layering:
     rejects() { "{{replace(just_executable(), '\', '/')}}" _layering-rejects "$@"; }
     scripts/check-layering.sh scripts/layering.txt
     rejects layering-violation 'engine-reaches-game: moho_ui → moho_game'
+    rejects layering-engine-fps 'engine-reaches-game: moho_renderer → moho_render_api'
     rejects layering-unassigned 'unassigned: moho_types'
     rejects layering-platform 'domain-reaches-platform: moho_ui → egui'
     rejects layering-platform 'domain-reaches-platform: moho_ui → wgpu'
     rejects layering-platform 'domain-reaches-platform: moho_ui → winit'
     rejects layering-cross-line 'cross-game-line: moho_ui → moho_game'
+    rejects layering-cross-line 'cross-game-line: moho → moho_ui'
     rejects layering-duplicate 'duplicate: moho_types'
     rejects layering-unknown 'unknown: moho_gmae'
     rejects layering-repeated-row 'repeated row: engine'
