@@ -145,12 +145,7 @@ impl FrameProcessor {
             if let Some(center) = app.entities.actors.center_mut(actor) {
                 *center = pos;
             } else {
-                let body = app
-                    .physics
-                    .test_bodies
-                    .iter()
-                    .find(|(_, id)| *id == actor)
-                    .map(|(handle, _)| *handle);
+                let body = app.physics.forget_body(actor);
                 log::warn!("Physics body update for missing actor: body={body:?}, actor={actor:?}");
             }
         }

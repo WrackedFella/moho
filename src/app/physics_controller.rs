@@ -72,6 +72,16 @@ impl PhysicsController {
             .collect()
     }
 
+    /// Stop tracking the body belonging to `actor` and return its handle, or
+    /// `None` if the actor isn't tracked.
+    ///
+    /// The rigid body stays in the physics world until [`PhysicsController::reset`],
+    /// because `moho_physics` has no body-removal API.
+    pub fn forget_body(&mut self, actor: ActorId) -> Option<moho_physics::RigidBodyHandle> {
+        let index = self.test_bodies.iter().position(|(_, id)| *id == actor)?;
+        Some(self.test_bodies.remove(index).0)
+    }
+
     /// Remove the old collider for `chunk_pos` (if any) and register a new one.
     pub fn update_chunk_collider(
         &mut self,
