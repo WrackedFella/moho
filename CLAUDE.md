@@ -23,14 +23,22 @@ cargo run                          # RUST_LOG=debug for logging
 
 - **Base branch:** `dev`. Branch `<type>/<ID>-<slug>`, PR into `dev`. `main` only
   receives promotions from `dev`. Never merge; a human does.
+- **Feature integration branches:** a feature whose cards only make sense together
+  gets `feature/<ID>-<slug>` off `dev`; it is the base branch for that feature's
+  cards (branch from it, PR into it, `MOHO_BASE=origin/feature/<ID>-<slug>` for
+  `just check`/`just mutants`). Card PRs don't auto-close issues there; the
+  feature's PR into `dev` lists `Closes #…` for each card. The feature's card table
+  in `_todo/` names its integration branch. Current: `feature/ENG-F8-foundation-gate`
+  (ENG-F8, ENG-F7).
 - **Planning:** index `_todo/README.md`, rules `_todo/_STANDARDS.md` (features first,
   IDs like `SG-F1-04`, card lifecycle). Feature work is paused until the planning
   review; check the README before picking up work.
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
 - **Domain-logic paths** (failing tests need human review before implementation):
   rules in `moho_sim`, `moho_game`, `moho_core`. Adapters, UI wiring and config are glue.
-- **ADRs:** `docs/adr/`. New docs elsewhere need the user's OK first; cards and ADRs
-  that follow the standards don't.
+- **ADRs:** `_todo/adr/`. Project documentation lives in `wiki/`; new docs there or
+  elsewhere need the user's OK first; cards and ADRs that follow the standards don't.
+  Order of work: `_todo/ROADMAP.md`.
 
 ## Architecture
 

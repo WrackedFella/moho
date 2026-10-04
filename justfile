@@ -2,6 +2,10 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
+# Branch that diff-based checks compare against: `dev`, or the feature integration
+# branch a card PR targets (`MOHO_BASE=origin/feature/<ID>-<slug>`).
+base := env("MOHO_BASE", "origin/dev")
+
 default: check
 
 # Format the workspace in place.
@@ -26,7 +30,7 @@ test-doc:
     cargo test --doc --workspace --all-features
 
 # Added Rust comments must not reference work items, phases or PRs.
-comment-refs base="origin/dev":
+comment-refs base=base:
     scripts/check-comment-refs.sh {{base}}
 
 # Licenses, advisories, banned and duplicate crates, crate sources.
@@ -39,7 +43,7 @@ cov:
 
 # Mutation-test code changed since branching from `base`, including uncommitted
 # work. Exit 2 means a mutant survived.
-mutants base="origin/dev":
+mutants base=base:
     mkdir -p target
     git diff "$(git merge-base {{base}} HEAD)" > target/mutants.diff
     cargo mutants --workspace --all-features --in-diff target/mutants.diff
