@@ -80,3 +80,21 @@ the one violation that exists after [ENG-F8-01](ENG-F8-01-moho-sim-merged-into-g
   already does.
 - Depends on [ENG-F8-01](ENG-F8-01-moho-sim-merged-into-game.md). Until `moho_sim` is gone, the engine rule fails on
   `moho_sim → moho_game`.
+
+## Verification
+
+No runtime behavior changes. `just layering` (inside `just check`) is the
+check; full-platform CI on the branch ran it on Linux, macOS and Windows.
+
+## Notes
+
+Beyond the spec, all within scope:
+- Two more table rules: `unknown:` (a row names a non-member, e.g. a typo
+  in `domain:` that would silently skip the platform rule) and
+  `repeated row:`. Each has a fixture.
+- `cargo tree` runs with `--target all`; the host-only default missed
+  target-gated deps (a `cfg(windows)` `winit` in `moho_core` passed on Linux).
+- Ten script runs per `just layering` took 13 s, over the ~10 s budget.
+  `MOHO_LAYERING_GRAPH` lets the recipe resolve the graph once (~2 s).
+- Fixtures can't fake the crate graph, so `--target all`, build edges and a
+  failing `cargo tree` were verified by hand, not by a self-test.
