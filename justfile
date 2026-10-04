@@ -12,8 +12,8 @@ default: check
 fmt:
     cargo fmt --all
 
-# Gate: formatting, lints, tests, doctests and comment refs. Must pass before any commit.
-check: fmt-check lint test test-doc comment-refs
+# Gate: formatting, lints, tests, doctests, comment refs and layering. Must pass before any commit.
+check: fmt-check lint test test-doc comment-refs layering
 
 fmt-check:
     cargo fmt --all --check
@@ -60,6 +60,8 @@ layering:
     {{just_executable()}} _layering-rejects layering-platform 'domain-reaches-platform: moho_ui → egui'
     {{just_executable()}} _layering-rejects layering-cross-line 'cross-game-line: moho_ui → moho_game'
     {{just_executable()}} _layering-rejects layering-duplicate 'duplicate: moho_types'
+    {{just_executable()}} _layering-rejects layering-unknown 'unknown: moho_gmae'
+    {{just_executable()}} _layering-rejects layering-repeated-row 'repeated row: engine'
 
 # Fails unless the layering check exits non-zero on the fixture and prints the expected line.
 [private]

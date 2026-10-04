@@ -27,6 +27,8 @@ Each crate belongs to exactly one line:
 | strategy | `moho_game` (absorbs `moho_sim`), `moho_ui`, the `moho` binary |
 | fps | none yet; an FPS crate joins this line when [FPS-F1](../fps-game/FPS-F1-game-design-document/_feature.md) produces scope |
 
+`scripts/layering.txt` is the machine-readable copy of this table that `just check` enforces.
+
 Rules, checked by `just check` over normal and build edges:
 
 1. Engine crates never depend on a game-line crate. Dev-dependencies are
