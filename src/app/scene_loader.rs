@@ -25,9 +25,10 @@ pub fn load_scene(
         return Err(format!("Scene file does not exist: {}", path.display()).into());
     }
 
-    // Clear the existing world
-    app.entities.actors.clear();
-    app.entities.chunks.clear();
+    // Reset physics with the entities: a load that fails below must not leave
+    // bodies tracking actors that no longer exist.
+    app.entities.clear();
+    app.physics.reset();
 
     // Load the scene from file with metadata support
     {

@@ -548,7 +548,11 @@ mod tests {
             loaded.actors.spheres()[0].center,
             glam::Vec3::new(1.0, 2.0, 3.0)
         );
-        let positions: Vec<glam::IVec3> = loaded.chunks.iter().map(|c| c.chunk_pos()).collect();
+        let positions: Vec<glam::IVec3> = loaded
+            .chunks
+            .iter()
+            .map(moho_core::voxel::VoxelChunk::chunk_pos)
+            .collect();
         assert_eq!(positions, vec![glam::IVec3::new(4, 0, -2)]);
     }
 }

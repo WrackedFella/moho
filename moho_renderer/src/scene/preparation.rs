@@ -91,15 +91,10 @@ impl ScenePreparation {
         S: Renderable,
         C: Renderable,
     {
+        // Step 1: Collect instances
         instance_collector.clear();
         instance_collector.collect_actors(spheres, cubes, material_table);
         instance_collector.collect_chunks(chunks, buffer_manager, renderer, terrain_material_idx);
-        log::debug!(
-            "[InstanceCollector] Collected {} spheres, {} cubes, {} chunks",
-            instance_collector.sphere_instances().len(),
-            instance_collector.cube_instances().len(),
-            instance_collector.chunk_renders().len()
-        );
 
         // Step 2: Debug logging (optional, can be feature-gated in future)
         Self::log_debug_info(material_table, instance_collector);

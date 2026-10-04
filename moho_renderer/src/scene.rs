@@ -57,7 +57,7 @@ impl Scene {
         C: Renderable,
     {
         // Prepare scene: collect instances, process materials, separate by transparency
-        let prepared = ScenePreparation::prepare::<S, C>(
+        let prepared = ScenePreparation::prepare(
             spheres,
             cubes,
             chunks,

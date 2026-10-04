@@ -122,8 +122,7 @@ impl GenerationProcessor {
         }
 
         // Load produced scene bytes into the main world
-        app.entities.actors.clear();
-        app.entities.chunks.clear();
+        app.entities.clear();
         match moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.entities) {
             Ok((camera_data, _lights)) => {
                 // Generated worlds have no pre-spawned lights; nothing to restore.
