@@ -1,6 +1,6 @@
 # The simulation controller lives in moho_game, and moho_sim is gone
 
-**Status:** ready
+**Status:** in progress
 **Feature:** [ENG-F8](_feature.md)
 **Issue:** #63
 
@@ -27,13 +27,13 @@ deterministic simulation".
 
 ## Acceptance criteria
 
-- [ ] `cargo metadata --no-deps` lists no `moho_sim` package.
+- [x] `cargo metadata --no-deps` lists no `moho_sim` package.
 - [ ] The game builds and runs. Movement, mouselook, camera-mode toggle and
       the day/night clock behave as before.
-- [ ] `just check` passes. `just mutants` reports no surviving mutant in the
+- [x] `just check` passes. `just mutants` reports no surviving mutant in the
       diff.
-- [ ] Nothing outside `_todo/` mentions `moho_sim`
-      (`git grep -n moho_sim -- ':!_todo'` is empty).
+- [x] Nothing outside `_todo/` mentions `moho_sim`
+      (`git grep -n moho_sim -- ':(exclude)_todo'` is empty).
 
 ## Tech spec
 
@@ -76,3 +76,17 @@ exclude the mutant.
   line is mutated. The 2026-10 baseline had 25 survivors in this file, so
   keep the edit small, or be ready to add tests.
 - No save format is involved: the snapshot was never written to disk.
+
+## Verification
+
+`cargo run`, then check that movement, mouselook, the camera-mode toggle and
+the day/night clock behave as before.
+
+## Notes
+
+- Dropping the snapshot code leaves `simulation.rs` 41% similar to the
+  original, below git's 50% rename threshold, so `just mutants --in-diff`
+  mutates the whole file. `moho_game::simulation::tests` covers it (no
+  survivors); nothing was excluded.
+- The `':!_todo'` pathspec form fails on some git versions ("Unimplemented
+  pathspec magic"); `':(exclude)_todo'` is equivalent.
