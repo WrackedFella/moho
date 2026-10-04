@@ -58,6 +58,8 @@ layering:
     {{just_executable()}} _layering-rejects layering-violation 'engine-reaches-game: moho_ui → moho_game'
     {{just_executable()}} _layering-rejects layering-unassigned 'unassigned: moho_types'
     {{just_executable()}} _layering-rejects layering-platform 'domain-reaches-platform: moho_ui → egui'
+    {{just_executable()}} _layering-rejects layering-platform 'domain-reaches-platform: moho_ui → wgpu'
+    {{just_executable()}} _layering-rejects layering-platform 'domain-reaches-platform: moho_ui → winit'
     {{just_executable()}} _layering-rejects layering-cross-line 'cross-game-line: moho_ui → moho_game'
     {{just_executable()}} _layering-rejects layering-duplicate 'duplicate: moho_types'
     {{just_executable()}} _layering-rejects layering-unknown 'unknown: moho_gmae'
