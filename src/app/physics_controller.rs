@@ -232,4 +232,43 @@ mod tests {
         assert_eq!(forgotten, None);
         assert_eq!(controller.test_bodies, vec![first, second]);
     }
+
+    fn triangle_chunk(pos: glam::IVec3) -> moho_core::voxel::VoxelChunk {
+        let origin = pos.as_vec3();
+        moho_core::voxel::VoxelChunk::new(
+            pos,
+            vec![
+                origin.to_array(),
+                (origin + glam::Vec3::X).to_array(),
+                (origin + glam::Vec3::Z).to_array(),
+            ],
+            vec![[0.0, 1.0, 0.0]; 3],
+            vec![1.0; 3],
+            vec![1; 3],
+            vec![1.0; 3],
+            vec![[1.0, 1.0, 1.0]; 3],
+            vec![1.0; 3],
+            vec![0, 1, 2],
+            0,
+        )
+    }
+
+    #[test]
+    fn sync_colliders_registers_only_chunks_without_a_collider() {
+        let mut controller = PhysicsController::new();
+        let known = glam::IVec3::new(0, 0, 0);
+        let fresh = glam::IVec3::new(1, 0, 0);
+        let known_chunk = triangle_chunk(known);
+        controller.update_chunk_collider(known, known_chunk.vertices(), known_chunk.indices());
+        let known_handle = controller.chunk_colliders[&known];
+        let mut chunks = moho_core::voxel::ChunkStore::new();
+        chunks.insert(known_chunk);
+        chunks.insert(triangle_chunk(fresh));
+
+        controller.sync_colliders(&chunks);
+
+        assert_eq!(controller.chunk_colliders.len(), 2);
+        assert_eq!(controller.chunk_colliders[&known], known_handle);
+        assert!(controller.chunk_colliders.contains_key(&fresh));
+    }
 }
