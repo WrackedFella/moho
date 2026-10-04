@@ -28,7 +28,7 @@ deterministic simulation".
 ## Acceptance criteria
 
 - [x] `cargo metadata --no-deps` lists no `moho_sim` package.
-- [ ] The game builds and runs. Movement, mouselook, camera-mode toggle and
+- [x] The game builds and runs. Movement, mouselook, camera-mode toggle and
       the day/night clock behave as before.
 - [x] `just check` passes. `just mutants` reports no surviving mutant in the
       diff.
@@ -80,7 +80,7 @@ exclude the mutant.
 ## Verification
 
 `cargo run`, then check that movement, mouselook, the camera-mode toggle and
-the day/night clock behave as before.
+the day/night clock behave as before. Confirmed by the user on 2026-10-04.
 
 ## Notes
 

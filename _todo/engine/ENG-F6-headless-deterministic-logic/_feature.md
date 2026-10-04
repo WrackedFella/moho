@@ -44,6 +44,16 @@ a feature needs rules that read elapsed time from a test-controlled clock,
 or when render and simulation rates must decouple. The design for that is
 [ADR-0009](../../adr/0009-simulation-time-is-one-fixed-tick.md) (accepted).
 
+Clock accessors on `moho_game::simulation::SimulationController` (found while
+moving it, 2026-10-04): `with_clock` and `game_clock_mut` have no production
+caller, only tests. The `game_clock` field is `pub`, so the clock can be reached
+directly as well as through `game_clock()`. `set_time_of_day` is a write path
+outside the tick, used by scene load (`src/app/scene_loader.rs`) and the debug
+console (`src/app/event_loop/event_processor.rs`). When this reopens and
+`GameClock` advances only through the tick, drop the unused accessors, make the
+field private, and decide whether those two writes stay as explicit resets or go
+through the tick. `controller_input` has the same `pub`-field-vs-accessor split.
+
 Original survey (2026-10): `moho_core` declares `winit` but no source uses it.
 `GameClock::tick(dt)` takes `dt`. `Instant::now()` appears in `moho_core` input timestamps and voxel
 job/state code. No unseeded RNG. Global mutable state: four atomics —
