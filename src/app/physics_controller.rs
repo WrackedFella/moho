@@ -128,7 +128,7 @@ impl Default for PhysicsController {
 mod tests {
     use super::*;
     use moho_core::materials::MaterialType;
-    use moho_game::actors::{ActorStore, Sphere};
+    use moho_game::actors::{ActorStore, Cube, Sphere};
 
     #[test]
     fn step_reports_bodies_by_actor_id() {
@@ -161,5 +161,65 @@ mod tests {
         assert!(reported.contains(&(low, low_pos)));
         assert!(reported.contains(&(high, high_pos)));
         assert_ne!(low_pos, high_pos);
+    }
+
+    fn controller_with_two_tracked_spheres() -> (
+        PhysicsController,
+        (moho_physics::RigidBodyHandle, moho_game::actors::ActorId),
+        (moho_physics::RigidBodyHandle, moho_game::actors::ActorId),
+    ) {
+        let mut controller = PhysicsController::new();
+        let mut actors = ActorStore::new();
+        let material = MaterialType::Lambertian {
+            albedo: glam::Vec3::ONE,
+        };
+        let a = actors.spawn_sphere(Sphere::new(glam::Vec3::new(0.0, 10.0, 0.0), 0.5, material));
+        let b = actors.spawn_sphere(Sphere::new(glam::Vec3::new(5.0, 30.0, 0.0), 0.5, material));
+        let pw = controller
+            .world
+            .as_mut()
+            .expect("new controller has a world");
+        let a_handle = pw.add_dynamic_sphere(glam::Vec3::new(0.0, 10.0, 0.0), 0.5);
+        let b_handle = pw.add_dynamic_sphere(glam::Vec3::new(5.0, 30.0, 0.0), 0.5);
+        controller.test_bodies.push((a_handle, a));
+        controller.test_bodies.push((b_handle, b));
+        (controller, (a_handle, a), (b_handle, b))
+    }
+
+    #[test]
+    fn forget_body_stops_step_reporting_that_actor() {
+        let (mut controller, (a_handle, a), (b_handle, b)) = controller_with_two_tracked_spheres();
+
+        let forgotten = controller.forget_body(a);
+
+        let reported = controller.step(1.0 / 60.0);
+        let b_pos = controller
+            .world
+            .as_ref()
+            .expect("world still present")
+            .body_position(b_handle)
+            .expect("kept body exists");
+        assert_eq!(forgotten, Some(a_handle));
+        assert_eq!(reported, vec![(b, b_pos)]);
+        assert_eq!(controller.test_bodies, vec![(b_handle, b)]);
+    }
+
+    #[test]
+    fn forget_body_for_untracked_actor_returns_none() {
+        let (mut controller, first, second) = controller_with_two_tracked_spheres();
+        let untracked = ActorStore::new().spawn_cube(Cube::new(
+            glam::Vec3::ZERO,
+            1.0,
+            1.0,
+            1.0,
+            MaterialType::Lambertian {
+                albedo: glam::Vec3::ONE,
+            },
+        ));
+
+        let forgotten = controller.forget_body(untracked);
+
+        assert_eq!(forgotten, None);
+        assert_eq!(controller.test_bodies, vec![first, second]);
     }
 }
