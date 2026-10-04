@@ -45,7 +45,7 @@ jobs:
             echo 'os=["ubuntu-latest","macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
           fi
 
-  # `just check`: fmt, clippy, nextest, doctests, comment refs. The same gate agents run.
+  # `just check`: fmt, clippy, nextest, doctests, comment refs, layering. The same gate agents run.
   gate:
     name: Gate (${{ matrix.os }})
     needs: plan

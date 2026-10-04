@@ -54,6 +54,11 @@ mutants-full:
 
 # Layering check on the real crate graph, plus self-tests that each rule rejects its fixture.
 layering:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    graph="$(mktemp)"
+    trap 'rm -f "$graph"' EXIT
+    export MOHO_LAYERING_GRAPH="$graph"
     scripts/check-layering.sh scripts/layering.txt
     {{just_executable()}} _layering-rejects layering-violation 'engine-reaches-game: moho_ui → moho_game'
     {{just_executable()}} _layering-rejects layering-unassigned 'unassigned: moho_types'
