@@ -112,3 +112,157 @@ impl SimulationController {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EPS: f32 = 1e-4;
+
+    fn assert_vec3_near(actual: Vec3, expected: Vec3) {
+        assert!(
+            (actual - expected).length() < EPS,
+            "expected {expected:?}, got {actual:?}"
+        );
+    }
+
+    mod input {
+        use super::*;
+
+        #[test]
+        fn controller_input_mut_when_written_updates_controller_input() {
+            let mut sim = SimulationController::new(Vec3::ZERO);
+
+            sim.controller_input_mut().forward = 1.0;
+            sim.controller_input_mut().sprint = true;
+
+            assert_eq!(sim.controller_input.forward, 1.0);
+            assert!(sim.controller_input.sprint);
+        }
+
+        #[test]
+        fn apply_input_when_moving_forward_advances_position_and_returns_matching_camera() {
+            let mut sim = SimulationController::new(Vec3::ZERO);
+            sim.controller_input_mut().forward = 1.0;
+
+            let (view, proj, cam_pos) = sim.apply_input(0.5);
+
+            assert_vec3_near(sim.position(), Vec3::new(0.0, 0.0, 2.0));
+            assert_vec3_near(cam_pos, Vec3::new(0.0, 0.0, 2.0));
+            let (expected_view, expected_proj, expected_pos) =
+                controller_to_camera(&sim.player_controller);
+            assert_eq!(view, expected_view);
+            assert_eq!(proj, expected_proj);
+            assert_eq!(cam_pos, expected_pos);
+            assert_ne!(view, Mat4::default());
+            assert_ne!(proj, Mat4::default());
+        }
+
+        #[test]
+        fn apply_input_when_ticked_advances_game_clock() {
+            let mut sim = SimulationController::with_clock(Vec3::ZERO, 120.0, 120.0, 12.0);
+
+            sim.apply_input(1.0);
+
+            assert!((sim.time_of_day() - 12.1).abs() < EPS);
+            assert_eq!(sim.game_clock().elapsed_seconds(), 1.0);
+        }
+    }
+
+    mod pose {
+        use super::*;
+
+        #[test]
+        fn set_position_yaw_pitch_when_called_is_reflected_by_getters() {
+            let mut sim = SimulationController::new(Vec3::ZERO);
+
+            sim.set_position_yaw_pitch(Vec3::new(3.0, 4.0, 5.0), 0.7, 0.3);
+
+            assert_eq!(sim.position(), Vec3::new(3.0, 4.0, 5.0));
+            assert_eq!(sim.yaw_pitch(), (0.7, 0.3));
+        }
+
+        #[test]
+        fn position_when_constructed_returns_initial_position() {
+            let sim = SimulationController::new(Vec3::new(1.0, 2.0, 3.0));
+
+            assert_eq!(sim.position(), Vec3::new(1.0, 2.0, 3.0));
+        }
+
+        #[test]
+        fn set_camera_mode_when_isometric_changes_reported_mode() {
+            let mut sim = SimulationController::new(Vec3::ZERO);
+            assert_eq!(sim.camera_mode(), CameraMode::FirstPerson);
+
+            sim.set_camera_mode(CameraMode::Isometric);
+
+            assert_eq!(sim.camera_mode(), CameraMode::Isometric);
+        }
+
+        #[test]
+        fn look_at_when_first_person_turns_yaw_and_pitch_toward_target() {
+            let mut sim = SimulationController::new(Vec3::ZERO);
+
+            sim.look_at(Vec3::new(1.0, 1.0, 1.0));
+
+            let (yaw, pitch) = sim.yaw_pitch();
+            assert!((yaw - std::f32::consts::FRAC_PI_4).abs() < EPS);
+            assert!((pitch - (1.0_f32 / 3.0_f32.sqrt()).asin()).abs() < EPS);
+        }
+
+        #[test]
+        fn look_at_when_isometric_sets_rts_look_target() {
+            let mut sim = SimulationController::new(Vec3::ZERO);
+            sim.set_camera_mode(CameraMode::Isometric);
+
+            sim.look_at(Vec3::new(7.0, 0.0, -3.0));
+
+            assert_eq!(
+                sim.player_controller.rts_look_target,
+                Vec3::new(7.0, 0.0, -3.0)
+            );
+            assert_eq!(sim.yaw_pitch(), (0.0, 0.0));
+        }
+    }
+
+    mod clock {
+        use super::*;
+
+        #[test]
+        fn with_clock_when_given_initial_time_starts_at_that_time() {
+            let sim = SimulationController::with_clock(Vec3::ZERO, 100.0, 50.0, 9.25);
+
+            assert_eq!(sim.time_of_day(), 9.25);
+            assert_eq!(sim.game_clock().time_of_day(), 9.25);
+        }
+
+        #[test]
+        fn game_clock_mut_when_time_set_is_observed_through_accessors() {
+            let mut sim = SimulationController::new(Vec3::ZERO);
+
+            sim.game_clock_mut().set_time(15.5);
+
+            assert_eq!(sim.game_clock().time_of_day(), 15.5);
+            assert_eq!(sim.time_of_day(), 15.5);
+        }
+
+        #[test]
+        fn set_time_of_day_when_out_of_range_wraps() {
+            let mut sim = SimulationController::new(Vec3::ZERO);
+
+            sim.set_time_of_day(30.5);
+
+            assert!((sim.time_of_day() - 6.5).abs() < EPS);
+        }
+
+        #[test]
+        fn celestial_directions_when_noon_matches_clock_and_has_high_sun() {
+            let sim = SimulationController::with_clock(Vec3::ZERO, 600.0, 420.0, 12.0);
+
+            let (sun, moon) = sim.celestial_directions();
+
+            assert_eq!((sun, moon), sim.game_clock().celestial_directions());
+            assert!(sun.y > 0.7);
+            assert_eq!(moon, Vec3::NEG_Y);
+        }
+    }
+}
