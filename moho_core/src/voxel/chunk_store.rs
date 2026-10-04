@@ -2,64 +2,71 @@
 
 use super::chunk::VoxelChunk;
 use glam::IVec3;
+use std::collections::BTreeMap;
+
+fn key(pos: IVec3) -> [i32; 3] {
+    pos.to_array()
+}
 
 /// Holds at most one [`VoxelChunk`] per chunk position.
 ///
 /// Iteration order is ascending by `(x, y, z)` regardless of insertion order.
 #[derive(Debug, Default)]
-pub struct ChunkStore;
+pub struct ChunkStore {
+    chunks: BTreeMap<[i32; 3], VoxelChunk>,
+}
 
 impl ChunkStore {
     /// Creates an empty store.
     pub fn new() -> Self {
-        panic!("not yet implemented")
+        Self::default()
     }
 
     /// Stores `chunk` at its own `chunk_pos()`, returning the chunk it replaced, if any.
-    pub fn insert(&mut self, _chunk: VoxelChunk) -> Option<VoxelChunk> {
-        panic!("not yet implemented")
+    pub fn insert(&mut self, chunk: VoxelChunk) -> Option<VoxelChunk> {
+        self.chunks.insert(key(chunk.chunk_pos()), chunk)
     }
 
     /// Removes and returns the chunk at `pos`, or `None` if there is none.
-    pub fn remove(&mut self, _pos: IVec3) -> Option<VoxelChunk> {
-        panic!("not yet implemented")
+    pub fn remove(&mut self, pos: IVec3) -> Option<VoxelChunk> {
+        self.chunks.remove(&key(pos))
     }
 
     /// Returns the chunk at `pos`, if any.
-    pub fn get(&self, _pos: IVec3) -> Option<&VoxelChunk> {
-        panic!("not yet implemented")
+    pub fn get(&self, pos: IVec3) -> Option<&VoxelChunk> {
+        self.chunks.get(&key(pos))
     }
 
     /// Returns the chunk at `pos` mutably, if any.
-    pub fn get_mut(&mut self, _pos: IVec3) -> Option<&mut VoxelChunk> {
-        panic!("not yet implemented")
+    pub fn get_mut(&mut self, pos: IVec3) -> Option<&mut VoxelChunk> {
+        self.chunks.get_mut(&key(pos))
     }
 
     /// Iterates chunks in strictly ascending `(x, y, z)` position order.
     pub fn iter(&self) -> impl Iterator<Item = &VoxelChunk> {
-        std::iter::from_fn(|| panic!("not yet implemented"))
+        self.chunks.values()
     }
 
     /// Iterates chunks mutably in strictly ascending `(x, y, z)` position order.
     ///
     /// Callers must not change a chunk's position; it is the store key.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut VoxelChunk> {
-        std::iter::from_fn(|| panic!("not yet implemented"))
+        self.chunks.values_mut()
     }
 
     /// Number of stored chunks.
     pub fn len(&self) -> usize {
-        panic!("not yet implemented")
+        self.chunks.len()
     }
 
     /// True when no chunks are stored.
     pub fn is_empty(&self) -> bool {
-        panic!("not yet implemented")
+        self.chunks.is_empty()
     }
 
     /// Removes every chunk.
     pub fn clear(&mut self) {
-        panic!("not yet implemented")
+        self.chunks.clear();
     }
 }
 
@@ -113,6 +120,35 @@ mod tests {
     }
 
     #[test]
+    fn get_mut_changes_are_visible_through_get() {
+        let mut store = ChunkStore::new();
+        store.insert(chunk_with_material(IVec3::ZERO, 5));
+        store.insert(chunk_with_material(IVec3::X, 6));
+
+        store
+            .get_mut(IVec3::X)
+            .expect("chunk inserted at X")
+            .set_mesh_handle(42);
+
+        assert_eq!(
+            store.get(IVec3::X).and_then(VoxelChunk::get_mesh_handle),
+            Some(42)
+        );
+        assert_eq!(
+            store.get(IVec3::ZERO).and_then(VoxelChunk::get_mesh_handle),
+            None
+        );
+    }
+
+    #[test]
+    fn get_mut_missing_position_returns_none() {
+        let mut store = ChunkStore::new();
+        store.insert(chunk_with_material(IVec3::ZERO, 5));
+
+        assert!(store.get_mut(IVec3::new(5, 5, 5)).is_none());
+    }
+
+    #[test]
     fn remove_returns_chunk_and_position_becomes_empty() {
         let mut store = ChunkStore::new();
         store.insert(chunk_with_material(IVec3::ZERO, 5));
@@ -135,6 +171,33 @@ mod tests {
 
         assert!(removed.is_none());
         assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn clear_removes_every_chunk() {
+        let mut store = ChunkStore::new();
+        store.insert(chunk_with_material(IVec3::ZERO, 1));
+        store.insert(chunk_with_material(IVec3::X, 2));
+
+        store.clear();
+
+        assert_eq!(store.len(), 0);
+        assert!(store.is_empty());
+        assert!(store.get(IVec3::ZERO).is_none());
+        assert!(store.get(IVec3::X).is_none());
+        assert!(store.iter().next().is_none());
+    }
+
+    #[test]
+    fn is_empty_is_true_only_without_chunks() {
+        let mut store = ChunkStore::new();
+        assert!(store.is_empty());
+
+        store.insert(chunk_with_material(IVec3::ZERO, 1));
+        assert!(!store.is_empty());
+
+        store.remove(IVec3::ZERO);
+        assert!(store.is_empty());
     }
 
     proptest! {
