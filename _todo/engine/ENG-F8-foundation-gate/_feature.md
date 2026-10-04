@@ -16,7 +16,8 @@ from the 2026-10 foundation review is post-gate backlog (see Notes).
 
 1. **Entity storage is maintained** ([ADR-0004](../../adr/0004-entity-storage-without-a-general-ecs.md) accepted).
    `cargo tree --workspace -i legion` reports no match, and `deny.toml` has no
-   `instant`/`paste` advisory ignores.
+   `instant` advisory ignore. (`paste` also arrives via `rapier3d`; its ignore
+   is owned by [ENG-F2-04](../ENG-F2-dependency-upgrades/ENG-F2-04-paste-advisory-cleared.md).)
 2. **Game lines are independent by construction** ([ADR-0005](../../adr/0005-crate-lines-and-dependency-direction.md) accepted).
    `just check` runs a layering check that fails when an engine crate depends
    on a game-line crate, a game line depends on another game line, or a domain

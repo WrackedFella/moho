@@ -17,7 +17,8 @@ on whatever the engine chooses here, so decide before the repo split.
 - [ADR-0004](../../adr/0004-entity-storage-without-a-general-ecs.md) is accepted: no general-purpose ECS for now, and typed,
   domain-owned stores replace `legion`.
 - `cargo tree --workspace -i legion` reports no match.
-- The `instant` and `paste` ignores are removed from `deny.toml`.
+- The `instant` ignore is removed from `deny.toml`. (`paste` also arrives via
+  `rapier3d`; its ignore is owned by [ENG-F2-04](../ENG-F2-dependency-upgrades/ENG-F2-04-paste-advisory-cleared.md).)
 - No engine crate's public API names a world or ECS type.
 - Chunk lookup by position doesn't scan all chunks.
 - No regression in `event_bus_bench`. (There is no chunk-streaming benchmark,
