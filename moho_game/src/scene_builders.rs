@@ -433,8 +433,8 @@ mod tests {
                 .collect();
 
         // Generate via full terrain, filter to chunk (0,0,0)
-        let mut world = legion::World::default();
-        let grid = voxel_terrain_scene_with_config(&mut world, &cfg);
+        let mut chunks = moho_core::voxel::ChunkStore::new();
+        let grid = voxel_terrain_scene_with_config(&mut chunks, &cfg);
         let full_blocks: std::collections::HashSet<(i32, i32, i32)> = grid
             .iter_block_data()
             .filter(|b| {

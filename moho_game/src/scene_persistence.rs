@@ -349,11 +349,14 @@ impl MaterialDesc {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use legion::World;
+    use crate::actors::{Cube, Sphere};
+    use crate::scene::SceneEntities;
+    use moho_core::materials::MaterialType;
+    use moho_core::voxel::VoxelChunk;
 
     #[test]
     fn camera_and_lights_round_trip_through_encode_decode() {
-        let world = World::default();
+        let entities = SceneEntities::default();
 
         let cam_pos = glam::Vec3::new(1.5, 2.5, 3.5);
         let yaw = 0.123_f32;
@@ -375,10 +378,11 @@ mod tests {
             },
         ];
 
-        let bytes = encode_to_bytes(&world, Some((cam_pos, yaw, pitch)), &lights).expect("encode");
+        let bytes =
+            encode_to_bytes(&entities, Some((cam_pos, yaw, pitch)), &lights).expect("encode");
 
-        let mut world2 = World::default();
-        let (cam_out, lights_out) = load_from_bytes(&bytes, &mut world2).expect("decode");
+        let mut loaded = SceneEntities::default();
+        let (cam_out, lights_out) = load_from_bytes(&bytes, &mut loaded).expect("decode");
 
         let (pos_out, yaw_out, pitch_out) = cam_out.expect("camera present");
         assert!((pos_out.x - cam_pos.x).abs() < 1e-6);
@@ -396,14 +400,113 @@ mod tests {
 
     #[test]
     fn encode_without_camera_round_trips() {
-        let world = World::default();
+        let entities = SceneEntities::default();
 
-        let bytes = encode_to_bytes(&world, None, &[]).expect("encode");
+        let bytes = encode_to_bytes(&entities, None, &[]).expect("encode");
 
-        let mut world2 = World::default();
-        let (cam_out, lights_out) = load_from_bytes(&bytes, &mut world2).expect("decode");
+        let mut loaded = SceneEntities::default();
+        let (cam_out, lights_out) = load_from_bytes(&bytes, &mut loaded).expect("decode");
 
         assert!(cam_out.is_none());
         assert!(lights_out.is_empty());
+    }
+
+    fn meshed_chunk(pos: glam::IVec3, seed: f32, material_id: u32) -> VoxelChunk {
+        VoxelChunk::new(
+            pos,
+            vec![[seed, 0.0, 0.0], [seed + 1.0, 0.0, 0.0], [seed, 1.0, 0.0]],
+            vec![[0.0, 0.0, 1.0]; 3],
+            vec![1.0; 3],
+            vec![1; 3],
+            vec![1.0; 3],
+            vec![[1.0, 1.0, 1.0]; 3],
+            vec![1.0; 3],
+            vec![0, 1, 2],
+            material_id,
+        )
+    }
+
+    #[test]
+    fn round_trip_preserves_spheres_cubes_and_chunks() {
+        let mut entities = SceneEntities::default();
+        let sphere_a = Sphere::new(
+            glam::Vec3::new(1.0, 2.0, 3.0),
+            1.5,
+            MaterialType::Lambertian {
+                albedo: glam::Vec3::new(0.1, 0.2, 0.3),
+            },
+        );
+        let sphere_b = Sphere::new(
+            glam::Vec3::new(-4.0, 5.0, 6.0),
+            0.25,
+            MaterialType::Metal {
+                albedo: glam::Vec3::new(0.7, 0.8, 0.9),
+                fuzz: 0.2,
+            },
+        );
+        let cube = Cube::new(
+            glam::Vec3::new(7.0, 8.0, 9.0),
+            1.0,
+            2.0,
+            3.0,
+            MaterialType::Lambertian {
+                albedo: glam::Vec3::new(0.4, 0.5, 0.6),
+            },
+        );
+        entities.actors.spawn_sphere(sphere_a);
+        entities.actors.spawn_sphere(sphere_b);
+        entities.actors.spawn_cube(cube);
+        entities
+            .chunks
+            .insert(meshed_chunk(glam::IVec3::new(2, 0, 0), 20.0, 7));
+        entities
+            .chunks
+            .insert(meshed_chunk(glam::IVec3::new(-1, 0, 3), 30.0, 8));
+        entities
+            .chunks
+            .insert(meshed_chunk(glam::IVec3::new(0, 0, 0), 10.0, 9));
+
+        let bytes = encode_to_bytes(&entities, None, &[]).expect("encode");
+        let mut loaded = SceneEntities::default();
+        load_from_bytes(&bytes, &mut loaded).expect("decode");
+
+        let spheres = loaded.actors.spheres();
+        assert_eq!(spheres.len(), 2);
+        for (got, want) in spheres.iter().zip([sphere_a, sphere_b]) {
+            assert_eq!(got.center, want.center);
+            assert_eq!(got.radius, want.radius);
+            assert_eq!(got.mat_ptr, want.mat_ptr);
+        }
+
+        let cubes = loaded.actors.cubes();
+        assert_eq!(cubes.len(), 1);
+        assert_eq!(cubes[0].center, cube.center);
+        assert_eq!(
+            (cubes[0].length, cubes[0].width, cubes[0].height),
+            (1.0, 2.0, 3.0)
+        );
+        assert_eq!(cubes[0].mat_ptr, cube.mat_ptr);
+
+        let got: Vec<&VoxelChunk> = loaded.chunks.iter().collect();
+        let want: Vec<&VoxelChunk> = entities.chunks.iter().collect();
+        assert_eq!(got.len(), 3);
+        let positions: Vec<glam::IVec3> = got.iter().map(|c| c.chunk_pos()).collect();
+        assert_eq!(
+            positions,
+            vec![
+                glam::IVec3::new(-1, 0, 3),
+                glam::IVec3::new(0, 0, 0),
+                glam::IVec3::new(2, 0, 0),
+            ]
+        );
+        for (g, w) in got.iter().zip(&want) {
+            assert_eq!(g.chunk_pos(), w.chunk_pos());
+            assert_eq!(g.vertices(), w.vertices());
+            assert_eq!(g.normals(), w.normals());
+            assert_eq!(g.indices(), w.indices());
+            assert_eq!(g.material_id(), w.material_id());
+        }
+        let ids: Vec<u32> = got.iter().map(|c| c.material_id()).collect();
+        assert_eq!(ids, vec![8, 9, 7]);
     }
 }

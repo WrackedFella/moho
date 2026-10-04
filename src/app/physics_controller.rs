@@ -125,3 +125,43 @@ impl Default for PhysicsController {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use moho_core::materials::MaterialType;
+    use moho_game::actors::{ActorStore, Sphere};
+
+    #[test]
+    fn step_reports_bodies_by_actor_id() {
+        let mut controller = PhysicsController::new();
+        let mut actors = ActorStore::new();
+        let material = MaterialType::Lambertian {
+            albedo: glam::Vec3::ONE,
+        };
+        let low = actors.spawn_sphere(Sphere::new(glam::Vec3::new(0.0, 10.0, 0.0), 0.5, material));
+        let high = actors.spawn_sphere(Sphere::new(glam::Vec3::new(5.0, 30.0, 0.0), 0.5, material));
+        let (low_handle, high_handle) = {
+            let pw = controller
+                .world
+                .as_mut()
+                .expect("new controller has a world");
+            (
+                pw.add_dynamic_sphere(glam::Vec3::new(0.0, 10.0, 0.0), 0.5),
+                pw.add_dynamic_sphere(glam::Vec3::new(5.0, 30.0, 0.0), 0.5),
+            )
+        };
+        controller.test_bodies.push((low_handle, low));
+        controller.test_bodies.push((high_handle, high));
+
+        let reported = controller.step(1.0 / 60.0);
+
+        let pw = controller.world.as_ref().expect("world still present");
+        let low_pos = pw.body_position(low_handle).expect("low body exists");
+        let high_pos = pw.body_position(high_handle).expect("high body exists");
+        assert_eq!(reported.len(), 2);
+        assert!(reported.contains(&(low, low_pos)));
+        assert!(reported.contains(&(high, high_pos)));
+        assert_ne!(low_pos, high_pos);
+    }
+}

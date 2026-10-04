@@ -138,6 +138,7 @@ impl Default for InstanceCollector {
 mod tests {
     use super::*;
     use moho_core::materials::MaterialType;
+    use moho_core::voxel::ChunkStore;
 
     /// Minimal sphere-like `Renderable` test fixture. `moho_renderer` must not
     /// depend on `moho_game`, so tests use local stand-ins instead of the real
@@ -290,20 +291,25 @@ mod tests {
     #[test]
     fn test_collect_spheres() {
         let mut collector = InstanceCollector::new();
-        let mut world = World::default();
         let mut material_table = MaterialTable::new();
         let mut buffer_manager = BufferManager::new();
         let mut renderer = MockRenderer::new();
 
-        // Add some spheres to the world
+        // Add some spheres
         let mat = MaterialType::Lambertian {
             albedo: glam::Vec3::new(1.0, 0.0, 0.0),
         };
-        world.push((TestSphere::new(glam::Vec3::ZERO, 1.0, mat),));
-        world.push((TestSphere::new(glam::Vec3::new(5.0, 0.0, 0.0), 2.0, mat),));
+        let spheres = vec![
+            TestSphere::new(glam::Vec3::ZERO, 1.0, mat),
+            TestSphere::new(glam::Vec3::new(5.0, 0.0, 0.0), 2.0, mat),
+        ];
+        let cubes: Vec<TestCube> = Vec::new();
+        let chunks = std::iter::empty::<&mut VoxelChunk>();
 
-        collector.collect::<TestSphere, TestCube>(
-            &mut world,
+        collector.collect(
+            &spheres,
+            &cubes,
+            chunks,
             &mut material_table,
             &mut buffer_manager,
             &mut renderer,
@@ -319,27 +325,26 @@ mod tests {
     #[test]
     fn test_collect_cubes() {
         let mut collector = InstanceCollector::new();
-        let mut world = World::default();
         let mut material_table = MaterialTable::new();
         let mut buffer_manager = BufferManager::new();
         let mut renderer = MockRenderer::new();
 
-        // Add some cubes to the world
+        // Add some cubes
         let mat = MaterialType::Metal {
             albedo: glam::Vec3::new(0.8, 0.8, 0.8),
             fuzz: 0.1,
         };
-        world.push((TestCube::new(glam::Vec3::ZERO, 1.0, 1.0, 1.0, mat),));
-        world.push((TestCube::new(
-            glam::Vec3::new(3.0, 0.0, 0.0),
-            2.0,
-            2.0,
-            2.0,
-            mat,
-        ),));
+        let cubes = vec![
+            TestCube::new(glam::Vec3::ZERO, 1.0, 1.0, 1.0, mat),
+            TestCube::new(glam::Vec3::new(3.0, 0.0, 0.0), 2.0, 2.0, 2.0, mat),
+        ];
+        let spheres: Vec<TestSphere> = Vec::new();
+        let chunks = std::iter::empty::<&mut VoxelChunk>();
 
-        collector.collect::<TestSphere, TestCube>(
-            &mut world,
+        collector.collect(
+            &spheres,
+            &cubes,
+            chunks,
             &mut material_table,
             &mut buffer_manager,
             &mut renderer,
@@ -355,7 +360,6 @@ mod tests {
     #[test]
     fn test_collect_chunks() {
         let mut collector = InstanceCollector::new();
-        let mut world = World::default();
         let mut material_table = MaterialTable::new();
         let mut buffer_manager = BufferManager::new();
         let mut renderer = MockRenderer::new();
@@ -373,10 +377,15 @@ mod tests {
             vec![0, 1, 2],
             0,
         );
-        world.push((chunk,));
+        let mut store = ChunkStore::new();
+        store.insert(chunk);
+        let spheres: Vec<TestSphere> = Vec::new();
+        let cubes: Vec<TestCube> = Vec::new();
 
-        collector.collect::<TestSphere, TestCube>(
-            &mut world,
+        collector.collect(
+            &spheres,
+            &cubes,
+            store.iter_mut(),
             &mut material_table,
             &mut buffer_manager,
             &mut renderer,
@@ -396,7 +405,6 @@ mod tests {
     #[test]
     fn test_collect_mixed_objects() {
         let mut collector = InstanceCollector::new();
-        let mut world = World::default();
         let mut material_table = MaterialTable::new();
         let mut buffer_manager = BufferManager::new();
         let mut renderer = MockRenderer::new();
@@ -410,14 +418,14 @@ mod tests {
             fuzz: 0.1,
         };
 
-        world.push((TestSphere::new(glam::Vec3::ZERO, 1.0, mat1),));
-        world.push((TestCube::new(
+        let spheres = vec![TestSphere::new(glam::Vec3::ZERO, 1.0, mat1)];
+        let cubes = vec![TestCube::new(
             glam::Vec3::new(3.0, 0.0, 0.0),
             1.0,
             1.0,
             1.0,
             mat2,
-        ),));
+        )];
 
         let chunk = VoxelChunk::new(
             glam::IVec3::new(0, 0, 0),
@@ -431,10 +439,13 @@ mod tests {
             vec![0],
             0,
         );
-        world.push((chunk,));
+        let mut store = ChunkStore::new();
+        store.insert(chunk);
 
-        collector.collect::<TestSphere, TestCube>(
-            &mut world,
+        collector.collect(
+            &spheres,
+            &cubes,
+            store.iter_mut(),
             &mut material_table,
             &mut buffer_manager,
             &mut renderer,
@@ -450,7 +461,6 @@ mod tests {
     #[test]
     fn test_clear() {
         let mut collector = InstanceCollector::new();
-        let mut world = World::default();
         let mut material_table = MaterialTable::new();
         let mut buffer_manager = BufferManager::new();
         let mut renderer = MockRenderer::new();
@@ -459,10 +469,14 @@ mod tests {
         let mat = MaterialType::Lambertian {
             albedo: glam::Vec3::ONE,
         };
-        world.push((TestSphere::new(glam::Vec3::ZERO, 1.0, mat),));
+        let spheres = vec![TestSphere::new(glam::Vec3::ZERO, 1.0, mat)];
+        let cubes: Vec<TestCube> = Vec::new();
+        let chunks = std::iter::empty::<&mut VoxelChunk>();
 
-        collector.collect::<TestSphere, TestCube>(
-            &mut world,
+        collector.collect(
+            &spheres,
+            &cubes,
+            chunks,
             &mut material_table,
             &mut buffer_manager,
             &mut renderer,
