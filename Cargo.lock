@@ -2096,7 +2096,6 @@ dependencies = [
  "moho_input",
  "moho_physics",
  "moho_renderer",
- "moho_sim",
  "moho_types",
  "moho_ui",
  "pollster",
@@ -2191,17 +2190,6 @@ dependencies = [
  "thiserror 2.0.20",
  "wgpu",
  "winit",
-]
-
-[[package]]
-name = "moho_sim"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "crc32fast",
- "glam 0.30.10",
- "moho_core",
- "moho_game",
 ]
 
 [[package]]

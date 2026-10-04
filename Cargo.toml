@@ -10,12 +10,11 @@ edition = "2024"
 publish = false
 
 [workspace]
-members = ["moho_core", "moho_game", "moho_render_api", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_sim", "moho_types", "moho_physics"]
+members = ["moho_core", "moho_game", "moho_render_api", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_types", "moho_physics"]
 
 [workspace.dependencies]
 bincode = "2.0"
 bytemuck = "1.24"
-crc32fast = "1.5"
 crossbeam-channel = "0.5"
 env_logger = "0.11"
 glam = "0.30.8"
@@ -104,9 +103,6 @@ path = "moho_input"
 
 [dependencies.moho_renderer]
 path = "moho_renderer"
-
-[dependencies.moho_sim]
-path = "moho_sim"
 
 [dependencies.moho_types]
 path = "moho_types"

@@ -35,7 +35,7 @@ cargo run                          # RUST_LOG=debug for logging
   review; check the README before picking up work.
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
 - **Domain-logic paths** (failing tests need human review before implementation):
-  rules in `moho_sim`, `moho_game`, `moho_core`. Adapters, UI wiring and config are glue.
+  rules in `moho_game`, `moho_core`. Adapters, UI wiring and config are glue.
 - **ADRs:** `_todo/adr/`. Project documentation lives in `wiki/`; new docs there or
   elsewhere need the user's OK first; cards and ADRs that follow the standards don't.
   Order of work: `_todo/ROADMAP.md`.
@@ -51,7 +51,6 @@ moho_renderer   wgpu backend: meshes, CSM shadows, SSAO, skybox
 moho_ui         egui: menus, settings, console, HUD
 moho_audio      rodio playback, event-driven
 moho_physics    rapier3d character controller and colliders
-moho_sim        deterministic headless simulation (integer math), snapshots
 moho_input      key → binding-code mapping
 moho_types      AppState, StateCoordinator
 ```

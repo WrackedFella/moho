@@ -1,8 +1,8 @@
 //! Moho — a voxel game engine and application binary.
 //!
 //! This is the main executable that wires together the engine crates
-//! ([`moho_core`], [`moho_renderer`], [`moho_audio`], [`moho_ui`],
-//! [`moho_sim`]) into a runnable application via [`winit`]'s event loop.
+//! ([`moho_core`], [`moho_renderer`], [`moho_audio`], [`moho_ui`]) into a
+//! runnable application via [`winit`]'s event loop.
 
 use legion::World;
 use moho_core::prefs::Prefs;
@@ -105,7 +105,7 @@ struct App {
     dispatcher: InputDispatcher,
 
     // Camera control
-    simulation: moho_sim::SimulationController,
+    simulation: moho_game::simulation::SimulationController,
 
     // Keybinds and preferences
     prefs: Prefs,
