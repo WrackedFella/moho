@@ -11,7 +11,6 @@ Moho is a modular Rust workspace containing engine components designed for voxel
 - **moho_audio** - Audio playback (rodio-based)
 - **moho_ui** - egui integration for menus and overlays
 - **moho_input** - Input mapping and state management
-- **moho_sim** - Deterministic headless simulation for testing and multiplayer
 
 The project emphasizes **separation of concerns** between simulation and rendering, making testing, snapshots, and future multiplayer functionality easier.
 
@@ -79,7 +78,6 @@ Each workspace crate has comprehensive documentation in its README:
 - **[moho_audio/README.md](moho_audio/README.md)** - Audio playback and event handling
 - **[moho_ui/README.md](moho_ui/README.md)** - egui menus, settings, console, overlays
 - **[moho_input/README.md](moho_input/README.md)** - Input mapping and key bindings
-- **[moho_sim/README.md](moho_sim/README.md)** - Deterministic simulation and snapshots
 
 ### Architecture Documentation
 - **[Event Bus Best Practices](wiki/engine_core/EVENT_BUS_BEST_PRACTICES.md)** - Usage patterns and common pitfalls
@@ -151,8 +149,7 @@ moho/
 ├── moho_renderer/        # WGPU rendering
 ├── moho_audio/           # Audio playback
 ├── moho_ui/              # egui UI
-├── moho_input/           # Input handling
-└── moho_sim/             # Deterministic simulation
+└── moho_input/           # Input handling
 ```
 
 ### Event Bus System
@@ -257,5 +254,4 @@ Notes
 
 Notes & pointers
 - For detailed design notes and development guides, see the `wiki/` folder.
-- The `moho_sim` crate contains the headless simulation, deterministic tests, and snapshot/restore utilities (bincode + CRC).
 - CI caching and build details: `.github/CICACHE.md` and `.github/workflows/ci.yml`.

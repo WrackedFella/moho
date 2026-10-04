@@ -70,7 +70,6 @@ jobs:
           ./rust-code-analysis-cli -m -p moho_audio/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
           ./rust-code-analysis-cli -m -p moho_input/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
           ./rust-code-analysis-cli -m -p moho_renderer/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
-          ./rust-code-analysis-cli -m -p moho_sim/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
           ./rust-code-analysis-cli -m -p moho_ui/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
 
       - name: Install PowerShell (if needed)

@@ -135,7 +135,7 @@ be asserted, so those go under Verification instead.
 - Crates/modules and public interfaces touched; anything out of scope.
 - Test map: each scenario → the test that proves it
   (`crate::module::tests::scenario_expected_result`), and its gate class:
-  **domain** (`moho_sim`, `moho_game`, `moho_core` rules: tests reviewed
+  **domain** (`moho_game`, `moho_core` rules: tests reviewed
   before implementation) or **glue** (adapters/wiring: tests and code
   together).
 - ADR link if the item makes or relies on an architectural decision.

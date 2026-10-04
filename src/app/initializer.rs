@@ -17,7 +17,7 @@
 
 use legion::World;
 use moho_core::input::InputSystem;
-use moho_sim::SimulationController;
+use moho_game::simulation::SimulationController;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

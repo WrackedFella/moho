@@ -8,4 +8,5 @@ pub mod pawn;
 pub mod raycast;
 pub mod scene_builders;
 pub mod scene_persistence;
+pub mod simulation;
 pub mod tools;

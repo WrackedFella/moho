@@ -34,7 +34,6 @@ $sourceDirs = @(
     "moho_audio\src",
     "moho_input\src",
     "moho_renderer\src",
-    "moho_sim\src",
     "moho_ui\src"
 )
 

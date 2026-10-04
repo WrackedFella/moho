@@ -45,7 +45,7 @@ from the 2026-10 foundation review is post-gate backlog (see Notes).
 
 | Item | Criterion | Status |
 |---|---|---|
-| [ENG-F8-01 moho-sim-merged-into-game](ENG-F8-01-moho-sim-merged-into-game.md) | G2 | ready |
+| [ENG-F8-01 moho-sim-merged-into-game](ENG-F8-01-moho-sim-merged-into-game.md) | G2 | in progress |
 | [ENG-F8-02 layering-check](ENG-F8-02-layering-check.md) | G2 | ready |
 | [ENG-F7-01](../ENG-F7-maintained-ecs/ENG-F7-01-typed-entity-stores.md) typed-entity-stores | G1 | ready |
 | [ENG-F7-02](../ENG-F7-maintained-ecs/ENG-F7-02-legion-removed.md) legion-removed (also clears G3's ignore owners) | G1, G3 | ready |
