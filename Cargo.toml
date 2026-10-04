@@ -24,7 +24,7 @@ log = "0.4"
 naga = "29.0.1"
 noise = "0.9"
 pollster = "0.4"
-proptest = "1.11"
+proptest = { version = "1.11", default-features = false, features = ["std"] }
 rand = "0.10"
 rodio = "0.22"
 serde = "1.0"
