@@ -4,11 +4,10 @@ The order in which features are tackled, and why. [`README.md`](README.md)
 indexes what exists; this file sequences it. Update it when a phase's
 status changes, an item moves between phases, or a decision is made.
 
-**Now:** Phase 0, the Foundation gate ([ENG-F8](engine/ENG-F8-foundation-gate/_feature.md), issue #61), on integration
-branch `feature/ENG-F8-foundation-gate`.
-No feature work on either game line until its four criteria hold.
+**Now:** Phase 0 is done: the Foundation gate ([ENG-F8](engine/ENG-F8-foundation-gate/_feature.md)) holds, so feature work
+is open. Next: Phase 2's first strategy items and the cheap Phase 1 items.
 
-## Phase 0 — Foundation gate
+## Phase 0 — Foundation gate (done 2026-10-05)
 
 Exit: all four [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) criteria verified. Order matters: the crate table comes
 first, so later moves land in the right crates. [ENG-F7-01](engine/ENG-F7-maintained-ecs/ENG-F7-01-typed-entity-stores.md) has no dependency
@@ -18,7 +17,7 @@ and can run alongside 0.2–0.3.
 |---|---|---|---|---|
 | 0.1 | Accept [ADR-0005](adr/0005-crate-lines-and-dependency-direction.md) (crate lines) and [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) | G2 | — | done |
 | 0.2 | [ENG-F8-01](engine/ENG-F8-foundation-gate/ENG-F8-01-moho-sim-merged-into-game.md): `moho_sim` merged into `moho_game` | G2 | 0.1 | done (#63) |
-| 0.3 | [ENG-F8-02](engine/ENG-F8-foundation-gate/ENG-F8-02-layering-check.md): layering check in `just check`; `moho_core` drops `winit` | G2 | 0.2 | ready (#64) |
+| 0.3 | [ENG-F8-02](engine/ENG-F8-foundation-gate/ENG-F8-02-layering-check.md): layering check in `just check`; `moho_core` drops `winit` | G2 | 0.2 | done (#64) |
 | 0.4 | [ENG-F7-01](engine/ENG-F7-maintained-ecs/ENG-F7-01-typed-entity-stores.md): typed chunk and actor stores (domain: tests reviewed first) | G1 | 0.1 | done (#65) |
 | 0.5 | [ENG-F7-02](engine/ENG-F7-maintained-ecs/ENG-F7-02-legion-removed.md): legion removed; deny ignores name their owning cards | G1, G3 | 0.4 | done (#66) |
 | 0.6 | [ENG-F2-01](engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md) rewritten to [ADR-0006](adr/0006-save-format-contract.md) (decision only) | G4 | — | done |
@@ -75,3 +74,4 @@ tables, `noise`'s duplicate `rand`, `crossbeam-channel` → `std::sync::mpsc`,
 | 2026-10-04 | [ENG-F6](engine/ENG-F6-headless-deterministic-logic/_feature.md) parked: simulation already steps at a fixed 1/60 s; no determinism defect found | [ENG-F6](engine/ENG-F6-headless-deterministic-logic/_feature.md) Notes |
 | 2026-10-04 | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) is reproduce-first and no longer waits on the save-format migration | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) |
 | 2026-10-04 | Simulation time comes from one fixed tick; no separate clock | [ADR-0009](adr/0009-simulation-time-is-one-fixed-tick.md) |
+| 2026-10-05 | G1 amended: `paste` also arrives via `rapier3d`, so its ignore moves to ENG-F2-04 (G3 covers it); gate verified and closed | [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) |

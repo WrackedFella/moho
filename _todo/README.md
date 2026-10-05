@@ -5,9 +5,8 @@ Three project lines sharing one repo until the split
 lifecycle: [`_STANDARDS.md`](_STANDARDS.md). Architecture decisions:
 [`adr/`](adr/README.md). Order of work: [`ROADMAP.md`](ROADMAP.md).
 
-**Feature work is paused** until the Foundation gate
-([ENG-F8](engine/ENG-F8-foundation-gate/_feature.md)) holds. Post-gate tiers (early, feature work,
-opportunistic) are in [`ROADMAP.md`](ROADMAP.md).
+The Foundation gate ([ENG-F8](engine/ENG-F8-foundation-gate/_feature.md)) holds; feature work is open. Post-gate
+tiers (early, feature work, opportunistic) are in [`ROADMAP.md`](ROADMAP.md).
 
 **Planning review checklist item: commercial licensing.** Decided 2026-10-02 in
 [ADR-0007](adr/0007-third-party-licence-policy.md); the text below is the original prompt. Before the review closes,
@@ -33,8 +32,8 @@ the audit at the v1 gate ([ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md
 | [ENG-F4 Terrain rendering debt](engine/ENG-F4-terrain-rendering-debt/_feature.md) | in progress |
 | [ENG-F5 Physical repo split](engine/ENG-F5-physical-repo-split/_feature.md) | parked (v1 gate) |
 | [ENG-F6 Headless, deterministic logic](engine/ENG-F6-headless-deterministic-logic/_feature.md) | parked (no current defect) |
-| [ENG-F7 Entity storage is maintained and legion-free](engine/ENG-F7-maintained-ecs/_feature.md) | approved (gate) |
-| [ENG-F8 Foundation gate](engine/ENG-F8-foundation-gate/_feature.md) | approved — **current focus** |
+| [ENG-F7 Entity storage is maintained and legion-free](engine/ENG-F7-maintained-ecs/_feature.md) | done (gate) |
+| [ENG-F8 Foundation gate](engine/ENG-F8-foundation-gate/_feature.md) | done |
 | [ENG-F9 Domain tests catch behaviour changes](engine/ENG-F9-tests-prove-behaviour/_feature.md) | proposed (early) |
 
 ## strategy-game/

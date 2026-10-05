@@ -1,6 +1,6 @@
 # ENG-F7 — Entity storage is maintained and legion-free
 
-**Status:** approved (Foundation gate, [ENG-F8](../ENG-F8-foundation-gate/_feature.md))
+**Status:** done (Foundation gate, [ENG-F8](../ENG-F8-foundation-gate/_feature.md))
 **Issue:** #62
 **Integration branch:** `feature/ENG-F8-foundation-gate`
 
