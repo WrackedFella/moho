@@ -8,8 +8,6 @@ publish = false
 [dependencies]
 moho_render_api = { path = "../moho_render_api" }
 glam = { workspace = true }
-# Use a `winit` version compatible with the chosen GPU backend's window-handle expectations.
-winit = { workspace = true, default-features = true }
 bytemuck = { workspace = true, features = ["derive"] }
 legion = { workspace = true }
 log = { workspace = true }

@@ -1,0 +1,8 @@
+# Crate lines and dependency direction, as decided in
+# _todo/adr/0005-crate-lines-and-dependency-direction.md.
+# Format: <line>: <crate> ...  (lines: engine, strategy, fps; domain = platform-free set)
+
+engine: moho_core moho_renderer moho_audio moho_physics moho_input moho_types
+strategy: moho_game moho_ui moho
+fps: moho_render_api
+domain: moho_core moho_game

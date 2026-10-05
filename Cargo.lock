@@ -2130,7 +2130,6 @@ dependencies = [
  "phf",
  "proptest",
  "serde",
- "winit",
 ]
 
 [[package]]
