@@ -12,7 +12,7 @@ into item cards once the GDD defines real scope.
 
 ## Deliverables
 
-- A GDD covering: core pillars, genre/setting, core loop (movement/combat
+- [`wiki/fps/game-design-document.md`](../../../wiki/fps/game-design-document.md), covering: core pillars, genre/setting, core loop (movement/combat
   shape), scope boundaries (what this is not), and a rough content/level plan.
 
 ## Notes

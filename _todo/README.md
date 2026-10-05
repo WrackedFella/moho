@@ -30,11 +30,12 @@ the audit at the v1 gate ([ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md
 | [ENG-F2 Dependency upgrades](engine/ENG-F2-dependency-upgrades/_feature.md) | in progress |
 | [ENG-F3 Renderer pipeline cleanup](engine/ENG-F3-renderer-pipeline-cleanup/_feature.md) | not started |
 | [ENG-F4 Terrain rendering debt](engine/ENG-F4-terrain-rendering-debt/_feature.md) | in progress |
-| [ENG-F5 Physical repo split](engine/ENG-F5-physical-repo-split/_feature.md) | parked (v1 gate) |
+| [ENG-F5 Engine and games live in separate repos](engine/ENG-F5-physical-repo-split/_feature.md) | parked (Phase 3 gate) |
 | [ENG-F6 Headless, deterministic logic](engine/ENG-F6-headless-deterministic-logic/_feature.md) | parked (no current defect) |
 | [ENG-F7 Entity storage is maintained and legion-free](engine/ENG-F7-maintained-ecs/_feature.md) | done (gate) |
 | [ENG-F8 Foundation gate](engine/ENG-F8-foundation-gate/_feature.md) | done |
 | [ENG-F9 Domain tests catch behaviour changes](engine/ENG-F9-tests-prove-behaviour/_feature.md) | proposed (early) |
+| [ENG-F10 World geometry from any source](engine/ENG-F10-world-geometry-from-any-source/_feature.md) | proposed (early) |
 
 ## strategy-game/
 
