@@ -24,14 +24,18 @@ and can run alongside 0.2–0.3.
 
 ## Phase 1 — Early (post-gate, ahead of the feature that needs it)
 
-| # | Item | Must land before | Status |
+Grouped by trigger: "now" items are cheap and independent; the rest land
+just before the work that needs them, not sooner.
+
+| # | Item | When | Status |
 |---|---|---|---|
-| 1.1 | Save-format migration to [ADR-0006](adr/0006-save-format-contract.md) ([ENG-F2-01](engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md)) | [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) (first new persisted type); an [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) fix only if it changes the save format | not started |
-| 1.2 | [ENG-F2-03](engine/ENG-F2-dependency-upgrades/ENG-F2-03-platform-default-features-and-unused-deps.md): winit/egui-winit default features off; unused deps removed ([ADR-0008](adr/0008-keep-winit-for-windowing-and-input.md)) | — | not started |
-| 1.3 | [ENG-F9](engine/ENG-F9-tests-prove-behaviour/_feature.md): domain tests catch behaviour changes | [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) | proposed |
-| 1.5 | `moho_types`/`moho_input` → `moho_ui`; one key model; cursor grab order ([ADR-0008](adr/0008-keep-winit-for-windowing-and-input.md)) | FPS input work | not carded |
-| 1.6 | [ENG-F3-03](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-03-misc-cleanups.md): delete the unsound `FrameCallback` path | — | not started |
-| 1.7 | Amend [ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md)'s gate (boundary-readiness criteria, FPS consumer trigger) | Phase 3 | not started |
+| 1.6 | [ENG-F3-03](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-03-misc-cleanups.md): delete the unsound `FrameCallback` path | now (soundness) | not started |
+| 1.2 | [ENG-F2-03](engine/ENG-F2-dependency-upgrades/ENG-F2-03-platform-default-features-and-unused-deps.md): winit/egui-winit default features off; unused deps removed ([ADR-0008](adr/0008-keep-winit-for-windowing-and-input.md)) | now | not started |
+| 1.7 | Amend [ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md)'s gate (boundary readiness, FPS as second consumer) | now | done |
+| 1.1 | Save-format migration to [ADR-0006](adr/0006-save-format-contract.md) ([ENG-F2-01](engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md)) | before [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) (first new persisted type); an [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) fix only if it changes the save format | not started |
+| 1.8 | [ENG-F10](engine/ENG-F10-world-geometry-from-any-source/_feature.md): world geometry from any source; voxels move to the strategy line ([ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md)) | before P.2 | proposed |
+| 1.5 | `moho_types`/`moho_input` → `moho_ui`; one key model; cursor grab order ([ADR-0008](adr/0008-keep-winit-for-windowing-and-input.md)) | before FPS input work (P.2) | not carded |
+| 1.3 | [ENG-F9](engine/ENG-F9-tests-prove-behaviour/_feature.md): domain tests catch behaviour changes | before [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) | proposed |
 
 ## Phase 2 — Strategy feature work
 
@@ -47,19 +51,21 @@ and can run alongside 0.2–0.3.
 | # | Feature | Depends on | Status |
 |---|---|---|---|
 | P.1 | [FPS-F1](fps-game/FPS-F1-game-design-document/_feature.md) GDD (writing only; can run during Phase 0) | — | not started |
-| P.2 | FPS prototype crate in the monorepo, held apart by the layering check | Phase 0, P.1 | — |
+| P.2 | FPS prototype crate in the monorepo, held apart by the layering check; loads a non-voxel map | P.1, 1.8, 1.5 | — |
 
 ## Phase 3 — v1 and repo split
 
 [ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md): tag `v1.0` and split
-once its amended gate holds (2.1, 2.2, the third-party notices file,
-boundary readiness, and P.2 as the second consumer).
+once its gate holds: the strategy v1 slice (2.1, 2.2), licences and the
+third-party notices file, [ENG-F10](engine/ENG-F10-world-geometry-from-any-source/_feature.md) done, and P.2 as a second consumer whose
+last two features didn't change the engine's public API.
 
 ## Backlog (opportunistic, when touching the area)
 
 [ENG-F1-01](engine/ENG-F1-engine-hygiene/ENG-F1-01-constructor-size-cleanup.md)/[02](engine/ENG-F1-engine-hygiene/ENG-F1-02-error-handling-backlog.md)/[03](engine/ENG-F1-engine-hygiene/ENG-F1-03-god-module-splits.md)/[05](engine/ENG-F1-engine-hygiene/ENG-F1-05-material-model-revisit.md)/[07](engine/ENG-F1-engine-hygiene/ENG-F1-07-lint-ratchet.md), [ENG-F2-02](engine/ENG-F2-dependency-upgrades/ENG-F2-02-egui-ui-architecture-migration.md), [ENG-F3-01](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-01-bind-group-split.md)/[02](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-02-frustum-culling-sorting.md), [ENG-F4](engine/ENG-F4-terrain-rendering-debt/_feature.md)-*, `ini`/`phf` key
 tables, `noise`'s duplicate `rand`, `crossbeam-channel` → `std::sync::mpsc`,
-`log` → `tracing`.
+`log` → `tracing`, [ENG-F2-04](engine/ENG-F2-dependency-upgrades/ENG-F2-04-paste-advisory-cleared.md) (`paste` advisory via `rapier3d`),
+[ENG-F1-08](engine/ENG-F1-engine-hygiene/ENG-F1-08-headless-app-tests.md) (headless app wiring tests).
 
 ## Decisions
 
@@ -75,3 +81,5 @@ tables, `noise`'s duplicate `rand`, `crossbeam-channel` → `std::sync::mpsc`,
 | 2026-10-04 | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) is reproduce-first and no longer waits on the save-format migration | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) |
 | 2026-10-04 | Simulation time comes from one fixed tick; no separate clock | [ADR-0009](adr/0009-simulation-time-is-one-fixed-tick.md) |
 | 2026-10-05 | G1 amended: `paste` also arrives via `rapier3d`, so its ignore moves to ENG-F2-04 (G3 covers it); gate verified and closed | [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) |
+| 2026-10-05 | The engine sees world geometry as meshes; voxels move to a strategy-line crate | [ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md) (proposed) |
+| 2026-10-05 | Repo-split gate requires an agnostic engine and the FPS as a settled second consumer | [ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md) |

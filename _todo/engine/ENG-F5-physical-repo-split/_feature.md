@@ -1,76 +1,65 @@
-# ENG-F5 — Physical Repo Split
+# ENG-F5 — Engine and games live in separate repos
 
-**Status:** parked — not urgent, do when it makes logical sense, not on a
-timeline
+**Status:** parked (Phase 3; gate agreed 2026-08-21, amended 2026-10-05)
 
 ## Summary
 
-Split the monorepo into an engine repo and per-game repos, joined via a
-superproject (git submodules) so both can be developed together without
-losing independent version control. Don't force it: split when the FPS
-project reaches the point of needing the engine independently, or the engine
-boundary needs to stop moving to unblock parallel work.
+Split the monorepo into an engine repo and one repo per game, joined by a
+superproject (git submodules) so all three can still be developed together.
+The split gives each line its own versions and release cadence. It doesn't
+stop either game from diverging: each game already extends the engine in its
+own crates, and the layering check ([ADR-0005](../../adr/0005-crate-lines-and-dependency-direction.md)) keeps the lines apart.
+Splitting before a second consumer has used the engine would freeze an API
+proven by one game, and every engine change would then cost two PRs and a
+version bump. So the gate asks for evidence that the boundary has settled, not
+a date.
 
-## Gate — agreed 2026-08-21, still applies
+## Exit criteria (the gate)
 
-Split only after the Strategy line reaches a stable "v1", not on a timeline:
+1. **Strategy v1 slice.** [SG-F1-04](../../strategy-game/SG-F1-core-interaction-loop/SG-F1-04-pickup-feedback.md) (pickup feedback) is done, and
+   [SG-F2-03](../../strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) (mining not persisted) and [SG-F2-02](../../strategy-game/SG-F2-known-bugs/SG-F2-02-mining-mesh-gaps.md) (mesh gaps after mining)
+   are fixed.
+2. **Save format decided.** Met: [ADR-0006](../../adr/0006-save-format-contract.md).
+3. **Licences.** `just deny` passes, non-crate assets have been audited, and
+   builds ship the third-party notices file ([ADR-0007](../../adr/0007-third-party-licence-policy.md)).
+4. **Engine is agnostic about world geometry.** [ENG-F10](../ENG-F10-world-geometry-from-any-source/_feature.md) is done: no engine
+   crate names a voxel type.
+5. **A second consumer exists.** The FPS prototype loads a non-voxel map
+   through [ENG-F10](../ENG-F10-world-geometry-from-any-source/_feature.md)'s contract, using only engine-line crates. The layering
+   check enforces that the FPS line can't reach strategy crates, so anything
+   generic it needs has moved to the engine by then.
+6. **Boundary has settled.** The last two FPS features merged without
+   changing an engine crate's public API.
+7. `v1.0` is tagged on a green `just check`, with all-OS CI passing.
 
-1. `SG-F1`'s items [SG-F1-01](../../strategy-game/SG-F1-core-interaction-loop/SG-F1-01-mine-voxel.md) through [SG-F1-04](../../strategy-game/SG-F1-core-interaction-loop/SG-F1-04-pickup-feedback.md) all done (mining, hotbar, tool gating,
-   pickup feedback) — not just the first three. The later items exercise the
-   `moho_ui` decoupling, `InputDispatcher` layering, and event-bus boundaries
-   the first item alone doesn't.
-2. `SG-F2` bugs `mining-mesh-gaps` ([SG-F2-02](../../strategy-game/SG-F2-known-bugs/SG-F2-02-mining-mesh-gaps.md)) and `mining-not-persisted` ([SG-F2-03](../../strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md))
-   fixed — the latter is data loss, not polish. `spawn-inside-terrain`
-   ([SG-F2-01](../../strategy-game/SG-F2-known-bugs/SG-F2-01-spawn-inside-terrain.md)) and `lod1-mesh-holes` ([ENG-F4-04](../ENG-F4-terrain-rendering-debt/ENG-F4-04-lod1-mesh-holes.md)) are explicitly NOT required for this
-   gate.
-3. `ENG-F2`'s bincode 2→3 strategy decided (not necessarily executed) — a
-   save-format promise is implicit in tagging v1.
-4. Dependency and asset licenses re-audited against the intended commercial
-   distribution (`just deny` plus a manual pass over non-crate assets).
-5. Tag `v1.0`; full test/clippy green.
+Not required: [SG-F2-01](../../strategy-game/SG-F2-known-bugs/SG-F2-01-spawn-inside-terrain.md) (spawn inside terrain), [ENG-F4-04](../ENG-F4-terrain-rendering-debt/ENG-F4-04-lod1-mesh-holes.md) (LOD1 mesh holes),
+[ENG-F1](../ENG-F1-engine-hygiene/_feature.md) and [ENG-F3](../ENG-F3-renderer-pipeline-cleanup/_feature.md) cleanup, and the blocked `glam`/`wgpu` upgrades.
 
-Explicitly excluded from the gate: [SG-F2-01](../../strategy-game/SG-F2-known-bugs/SG-F2-01-spawn-inside-terrain.md)/[ENG-F4-04](../ENG-F4-terrain-rendering-debt/ENG-F4-04-lod1-mesh-holes.md), [ENG-F1](../ENG-F1-engine-hygiene/_feature.md)/[ENG-F3](../ENG-F3-renderer-pipeline-cleanup/_feature.md) cleanup items, blocked
-`glam`/`wgpu`-30 upgrades — opportunistic backlog, no pre-split sweep.
+## Scope
 
-**Why gate at all if not urgent:** splitting early freezes an API proven
-against too little real use. [SG-F1](../../strategy-game/SG-F1-core-interaction-loop/_feature.md)'s first item alone already found two real
-cross-boundary bugs by being used for real — the rest of [SG-F1](../../strategy-game/SG-F1-core-interaction-loop/_feature.md) is more of that
-same signal before the boundary gets harder to change.
+- In: the three repos and the superproject, with history preserved; CI and
+  shared config in each repo.
+- Out: engine API changes. Any that are needed land before the split, inside
+  the monorepo.
 
-## Target shape
+## Items
 
-```
-moho-engine/        (repo) — moho_core, moho_renderer, moho_audio,
-                      moho_physics, moho_render_api, moho_input, moho_types,
-                      moho_sim
-moho-strategy/       (repo) — current moho_game/, moho_ui/, src/ binary
-moho-fps/            (repo) — new, once FPS-F1 produces real reqs
-moho/                (superproject repo) — no source, just git submodules
-                      pointing at the three above + a top-level workspace
-                      config for aggregate builds
-```
+| Item | Status |
+|---|---|
 
-## Known prep work (not yet started)
+## Notes
 
-- `moho_game::controller::{PlayerController, controller_to_camera}` is
-  generic FPS-style camera/movement math misplaced under "game" — it was
-  classified there under a voxel-game-only reading of the engine boundary.
-  Move to `moho_core` before or during the split; needed by both games.
-- `moho_core::voxel` (grid, marching-cubes meshing, chunk streaming, LOD,
-  light propagation) is NOT generic — it's this game's terrain engine, not
-  reusable "engine." Don't let it drag into `moho-engine` by default; decide
-  deliberately whether it moves there (reusable-if-FPS-ever-wants-voxels) or
-  stays with `moho-strategy`.
-- `moho_render_api::register_indexed_mesh` already accepts arbitrary static
-  meshes (confirmed 2026-08) — an FPS level-geometry importer needs no
-  renderer API change, just an importer that feeds it real level data instead
-  of voxel-baked lighting channels.
+Target shape: the engine repo holds the engine line of `scripts/layering.txt`
+at split time. The strategy and FPS repos hold their lines. The superproject
+holds no source, only the submodules and a top-level workspace for aggregate
+builds. The table is the `filter-repo` path list.
 
-## Mechanics (well-understood, do when triggered)
+Mechanics, all well understood:
 
-1. `git filter-repo` engine crates into `moho-engine`, preserving history.
-2. Path-dep during active cross-repo development; switch to pinned git dep
-   once the engine API stabilizes.
-3. Duplicate shared infra (`rustfmt.toml`, CI, workspace dep pins) across
-   repos, kept in sync.
-4. Add submodules to the superproject once repos exist.
+1. Use `git filter-repo` to move each line's crates into its repo, keeping
+   history.
+2. Use path dependencies while development spans repos. Switch to pinned git
+   dependencies once the engine API is stable.
+3. Copy shared infrastructure (`rustfmt.toml`, CI, workspace dependency pins,
+   `deny.toml`, the layering check) into each repo and keep the copies in sync.
+4. Add the submodules to the superproject.

@@ -19,3 +19,4 @@ Format: **Status** (Proposed | Accepted | Superseded by NNNN), **Context**,
 | [0007](0007-third-party-licence-policy.md) | Third-party licences stay compatible with closed-source commercial sale | Accepted |
 | [0008](0008-keep-winit-for-windowing-and-input.md) | Keep winit; gamepads via `gilrs` when needed | Accepted |
 | [0009](0009-simulation-time-is-one-fixed-tick.md) | Simulation time comes from one fixed tick; no separate clock | Accepted |
+| [0010](0010-world-geometry-is-a-mesh-contract.md) | The engine sees world geometry as meshes; voxels belong to the strategy line | Proposed |

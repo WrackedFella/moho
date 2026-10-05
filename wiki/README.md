@@ -7,6 +7,11 @@ Start with the [project README](../README.md). Planning and work items live in
 
 - [Agentic workflow](agentic-workflow.md): roles, flow, gates, writing work items.
 
+## Game design
+
+- [Strategy game vision](strategy/vision.md): the loop, design principles and feature arc.
+- [FPS game design document](fps/game-design-document.md): draft, written under FPS-F1.
+
 ## Architecture
 
 - [Architecture Decision Records](../_todo/adr/README.md): crate boundaries and other
