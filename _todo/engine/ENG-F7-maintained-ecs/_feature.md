@@ -36,7 +36,7 @@ on whatever the engine chooses here, so decide before the repo split.
 | Item | Status |
 |---|---|
 | [ENG-F7-01 typed-entity-stores](ENG-F7-01-typed-entity-stores.md) | done |
-| [ENG-F7-02 legion-removed](ENG-F7-02-legion-removed.md) | in progress |
+| [ENG-F7-02 legion-removed](ENG-F7-02-legion-removed.md) | done |
 
 ## Notes
 

@@ -1,6 +1,6 @@
 # The game runs without legion, and the renderer takes plain data
 
-**Status:** in progress
+**Status:** done
 **Feature:** [ENG-F7](_feature.md)
 **Issue:** #66
 
@@ -87,6 +87,21 @@ iterator of chunks instead of a world, which closes [ENG-F7](_feature.md) and [E
 - Borrowing: actors (shared) and chunks (mutable) come from disjoint fields
   of `SceneEntities`, so `render` can take both at once.
 - Old saves still load: the scene layout is unchanged.
+
+**Deviations.**
+- `InstanceCollector::collect` is split into `collect_actors` and
+  `collect_chunks`, so no `too_many_arguments` allow is added; `prepare`
+  clears the collector each frame.
+- `scene_builders::voxel_terrain_scene*` take `&mut ChunkStore`: they only
+  insert chunks.
+- The `paste` ignore stays: `rapier3d` → `simba` also pulls it in. It is owned
+  by [ENG-F2-04](../ENG-F2-dependency-upgrades/ENG-F2-04-paste-advisory-cleared.md).
+- `SceneEntities::clear` replaces paired store clears, and `load_scene` resets
+  physics with it, so a failed load can't leave bodies tracking dead actors.
+  `PhysicsController::forget_body` drops a body whose actor is gone after one
+  warn.
+- Loading a save with two chunks at one position keeps the last and logs a
+  warn.
 
 ## Verification
 
