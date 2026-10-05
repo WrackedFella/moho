@@ -152,7 +152,7 @@ Only the sun casts shadows. Moon does not cast shadows for performance reasons.
 
 ## GPU Data Structures
 
-See `../docs/gpu_abi.md` for detailed structure layouts. Key types:
+See `../wiki/gpu_abi.md` for detailed structure layouts. Key types:
 
 ### MaterialGpu (32 bytes)
 ```rust

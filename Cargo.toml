@@ -10,20 +10,19 @@ edition = "2024"
 publish = false
 
 [workspace]
-members = ["moho_core", "moho_game", "moho_render_api", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_sim", "moho_types", "moho_physics"]
+members = ["moho_core", "moho_game", "moho_render_api", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_types", "moho_physics"]
 
 [workspace.dependencies]
 bincode = "2.0"
 bytemuck = "1.24"
-crc32fast = "1.5"
 crossbeam-channel = "0.5"
 env_logger = "0.11"
 glam = "0.30.8"
-legion = "0.4.0"
 log = "0.4"
 naga = "29.0.1"
 noise = "0.9"
 pollster = "0.4"
+proptest = { version = "1.11", default-features = false, features = ["std"] }
 rand = "0.10"
 rodio = "0.22"
 serde = "1.0"
@@ -32,6 +31,7 @@ wgpu = "29.0.4"
 winit = "0.30"
 moho_physics = { path = "moho_physics" }
 rapier3d = { version = "0.32", features = ["simd-stable"] }
+tempfile = "3.5"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
@@ -72,7 +72,6 @@ unnecessary_wraps = "allow"
 
 [dependencies]
 crossbeam-channel = { workspace = true }
-legion = { workspace = true }
 
 [dependencies.bincode]
 workspace = true
@@ -105,9 +104,6 @@ path = "moho_input"
 [dependencies.moho_renderer]
 path = "moho_renderer"
 
-[dependencies.moho_sim]
-path = "moho_sim"
-
 [dependencies.moho_types]
 path = "moho_types"
 
@@ -131,6 +127,7 @@ workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
+tempfile = { workspace = true }
 
 [[bench]]
 name = "event_bus_bench"

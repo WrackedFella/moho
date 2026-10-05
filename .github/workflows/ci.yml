@@ -1,11 +1,12 @@
 name: CI
 
-# PRs into dev run the gate on Linux only; main (promotions) runs all three OSes.
+# PRs into dev or a feature integration branch run the gate on Linux only; main
+# (promotions) runs all three OSes.
 on:
   push:
     branches: [main, dev]
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, "feature/**"]
   workflow_dispatch: {}
 
 concurrency:
@@ -20,13 +21,15 @@ env:
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
   NEXTEST_PROFILE: ci
+  # Diff-based checks compare against the PR's target branch.
+  MOHO_BASE: ${{ github.base_ref && format('origin/{0}', github.base_ref) || 'origin/dev' }}
 
 defaults:
   run:
     shell: bash
 
 jobs:
-  # Chooses the OS matrix: Linux for dev, all three for main and manual runs.
+  # Chooses the OS matrix: Linux for dev and feature branches, all three for main and manual runs.
   plan:
     name: Plan
     runs-on: ubuntu-latest
@@ -36,13 +39,13 @@ jobs:
       - id: os
         run: |
           target="${GITHUB_BASE_REF:-$GITHUB_REF_NAME}"
-          if [[ "$target" == "dev" ]]; then
+          if [[ "$target" == "dev" || "$target" == feature/* ]]; then
             echo 'os=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
           else
             echo 'os=["ubuntu-latest","macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
           fi
 
-  # `just check`: fmt, clippy, nextest, doctests, comment refs. The same gate agents run.
+  # `just check`: fmt, clippy, nextest, doctests, comment refs, layering. The same gate agents run.
   gate:
     name: Gate (${{ matrix.os }})
     needs: plan
@@ -52,7 +55,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.plan.outputs.os) }}
     steps:
-      # Full history: comment-refs diffs against the merge-base with origin/dev.
+      # Full history: comment-refs diffs against the merge-base with MOHO_BASE.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -95,7 +98,7 @@ jobs:
   # new tests don't prove behavior; not a required check.
   mutants:
     name: Mutants (diff)
-    if: github.event_name == 'pull_request' && github.base_ref == 'dev'
+    if: github.event_name == 'pull_request' && (github.base_ref == 'dev' || startsWith(github.base_ref, 'feature/'))
     runs-on: ubuntu-latest
     timeout-minutes: 90
     continue-on-error: true

@@ -376,7 +376,7 @@ controls.slider(ui, "Volume", &mut volume, 0.0..=1.0);- Add a short unit/integra
 
   logic.
 
-// Slider with custom format- Add the README content to the top-level docs or `docs/` folder instead.
+// Slider with custom format- Add the README content to the top-level docs or `wiki/` folder instead.
 
 ui.add(egui::Slider::new(&mut value, 0..=100).suffix("%"));
 

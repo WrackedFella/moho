@@ -5,8 +5,7 @@
 //! is now distinct from rendering (GPU command submission).
 
 use crate::{BufferManager, InstanceCollector, MaterialTable, RendererBackend};
-use legion::World;
-use legion::storage::Component;
+use moho_core::voxel::VoxelChunk;
 use moho_render_api::{InstanceGpu, Renderable};
 
 /// Prepared scene data ready for rendering.
@@ -48,7 +47,7 @@ impl PreparedScene {
 
 /// Scene preparation coordinator.
 ///
-/// Handles the complex logic of collecting instances from the ECS world,
+/// Handles the complex logic of collecting instances from actors and chunks,
 /// processing materials, and separating geometry into opaque and transparent groups.
 pub struct ScenePreparation;
 
@@ -56,16 +55,18 @@ impl ScenePreparation {
     /// Prepare a scene for rendering by collecting instances and separating by transparency.
     ///
     /// This method:
-    /// 1. Collects all renderable instances from the ECS world
+    /// 1. Collects all renderable instances from the actors and chunks
     /// 2. Logs debug information about materials and instances
     /// 3. Uploads materials to GPU if they've changed
     /// 4. Separates instances into opaque and transparent groups
     ///
     /// # Arguments
-    /// * `world` - ECS world containing renderable entities
+    /// * `spheres` - Sphere-like actors to draw
+    /// * `cubes` - Cube-like actors to draw
+    /// * `chunks` - Terrain chunks to register and draw
     /// * `material_table` - Table of all materials (may be updated)
     /// * `buffer_manager` - Manages GPU buffers for voxel chunks
-    /// * `instance_collector` - Collects instances from world
+    /// * `instance_collector` - Collects instances
     /// * `renderer` - Backend for GPU operations
     /// * `mesh_handle` - Handle for sphere mesh
     /// * `cube_mesh_handle` - Handle for cube mesh
@@ -74,8 +75,10 @@ impl ScenePreparation {
     /// # Returns
     /// PreparedScene containing separated geometry ready for rendering
     #[allow(clippy::too_many_arguments)]
-    pub fn prepare<S, C>(
-        world: &mut World,
+    pub fn prepare<'a, S, C>(
+        spheres: &[S],
+        cubes: &[C],
+        chunks: impl IntoIterator<Item = &'a mut VoxelChunk>,
         material_table: &mut MaterialTable,
         buffer_manager: &mut BufferManager,
         instance_collector: &mut InstanceCollector,
@@ -85,17 +88,12 @@ impl ScenePreparation {
         terrain_material_idx: u32,
     ) -> PreparedScene
     where
-        S: Renderable + Component,
-        C: Renderable + Component,
+        S: Renderable,
+        C: Renderable,
     {
-        // Step 1: Collect instances from world
-        instance_collector.collect_from_world::<S, C>(
-            world,
-            material_table,
-            buffer_manager,
-            renderer,
-            terrain_material_idx,
-        );
+        instance_collector.clear();
+        instance_collector.collect_actors(spheres, cubes, material_table);
+        instance_collector.collect_chunks(chunks, buffer_manager, renderer, terrain_material_idx);
 
         // Step 2: Debug logging (optional, can be feature-gated in future)
         Self::log_debug_info(material_table, instance_collector);

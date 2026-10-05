@@ -1,8 +1,6 @@
-use legion::World;
-
 use crate::biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
 use bincode::{Decode, Encode};
-use moho_core::voxel::{BlockPos, LightPropagator, VoxelChunk, VoxelGrid};
+use moho_core::voxel::{BlockPos, ChunkStore, LightPropagator, VoxelChunk, VoxelGrid};
 use noise::{NoiseFn, Perlin};
 use serde::{Deserialize, Serialize};
 
@@ -65,9 +63,9 @@ impl Default for TerrainConfig {
 
 /// Generate voxel-based terrain using Perlin noise
 /// Two-pass algorithm: 1) Place blocks, 2) Smooth transitions
-pub fn voxel_terrain_scene(world: &mut World) -> VoxelGrid {
+pub fn voxel_terrain_scene(chunks: &mut ChunkStore) -> VoxelGrid {
     let config = TerrainConfig::default();
-    voxel_terrain_scene_with_config(world, &config)
+    voxel_terrain_scene_with_config(chunks, &config)
 }
 
 /// Variant that accepts a custom `TerrainConfig`. This allows callers to
@@ -75,7 +73,10 @@ pub fn voxel_terrain_scene(world: &mut World) -> VoxelGrid {
 /// terrain for new-world generation.
 ///
 /// Returns the VoxelGrid for use with light propagation system.
-pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig) -> VoxelGrid {
+pub fn voxel_terrain_scene_with_config(
+    chunks: &mut ChunkStore,
+    config: &TerrainConfig,
+) -> VoxelGrid {
     // NOTE: Hybrid mesh generation currently requires chunk_size=16
     // due to hardcoded density field size in Marching Cubes
     let mut grid = VoxelGrid::new(16); // 16×16×16 chunks
@@ -93,16 +94,13 @@ pub fn voxel_terrain_scene_with_config(world: &mut World, config: &TerrainConfig
     // (e.g., grid_size: u32) so callers can control world extents.
 
     log::info!("Converting grid to renderable chunks...");
-    let chunks = grid_to_chunks(&grid);
-
-    // Push each chunk as an entity in the world
-    for chunk in chunks {
-        world.push((chunk,));
+    for chunk in grid_to_chunks(&grid) {
+        chunks.insert(chunk);
     }
 
     log::info!(
         "Voxel terrain scene ready with {} chunk entities",
-        world.len()
+        chunks.len()
     );
 
     // Return the grid so it can be stored by the caller for light propagation
@@ -433,8 +431,8 @@ mod tests {
                 .collect();
 
         // Generate via full terrain, filter to chunk (0,0,0)
-        let mut world = legion::World::default();
-        let grid = voxel_terrain_scene_with_config(&mut world, &cfg);
+        let mut chunks = moho_core::voxel::ChunkStore::new();
+        let grid = voxel_terrain_scene_with_config(&mut chunks, &cfg);
         let full_blocks: std::collections::HashSet<(i32, i32, i32)> = grid
             .iter_block_data()
             .filter(|b| {

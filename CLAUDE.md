@@ -23,14 +23,21 @@ cargo run                          # RUST_LOG=debug for logging
 
 - **Base branch:** `dev`. Branch `<type>/<ID>-<slug>`, PR into `dev`. `main` only
   receives promotions from `dev`. Never merge; a human does.
+- **Feature integration branches:** a feature whose cards only make sense together
+  gets `feature/<ID>-<slug>` off `dev`; it is the base branch for that feature's
+  cards (branch from it, PR into it, `MOHO_BASE=origin/feature/<ID>-<slug>` for
+  `just check`/`just mutants`). Card PRs don't auto-close issues there; the
+  feature's PR into `dev` lists `Closes #…` for each card. The feature's card table
+  in `_todo/` names its integration branch. Current: none.
 - **Planning:** index `_todo/README.md`, rules `_todo/_STANDARDS.md` (features first,
-  IDs like `SG-F1-04`, card lifecycle). Feature work is paused until the planning
-  review; check the README before picking up work.
+  IDs like `SG-F1-04`, card lifecycle). Check `_todo/ROADMAP.md` for order before
+  picking up work.
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
 - **Domain-logic paths** (failing tests need human review before implementation):
-  rules in `moho_sim`, `moho_game`, `moho_core`. Adapters, UI wiring and config are glue.
-- **ADRs:** `docs/adr/`. New docs elsewhere need the user's OK first; cards and ADRs
-  that follow the standards don't.
+  rules in `moho_game`, `moho_core`. Adapters, UI wiring and config are glue.
+- **ADRs:** `_todo/adr/`. Project documentation lives in `wiki/`; new docs there or
+  elsewhere need the user's OK first; cards and ADRs that follow the standards don't.
+  Order of work: `_todo/ROADMAP.md`.
 
 ## Architecture
 
@@ -43,7 +50,6 @@ moho_renderer   wgpu backend: meshes, CSM shadows, SSAO, skybox
 moho_ui         egui: menus, settings, console, HUD
 moho_audio      rodio playback, event-driven
 moho_physics    rapier3d character controller and colliders
-moho_sim        deterministic headless simulation (integer math), snapshots
 moho_input      key → binding-code mapping
 moho_types      AppState, StateCoordinator
 ```
@@ -51,7 +57,7 @@ moho_types      AppState, StateCoordinator
 - Engine crates never depend on `moho_game` (ADR-0001). `voxel/` stays in
   `moho_core` (ADR-0002). Event types live in `moho_core::events` (ADR-0003).
 - Use the event bus for cross-system fan-out; call directly within a system.
-- ECS is `legion` (unmaintained; replacement tracked as ENG-F7).
+- Entities live in typed stores (`ActorStore` in `moho_game`, `ChunkStore` in `moho_core`); no general ECS (ADR-0004).
 - Shared dependency versions go in `[workspace.dependencies]`.
 
 ## GitNexus (code graph, index name `moho`)

@@ -1,7 +1,7 @@
 # UI layer carries no unsafe code
 
 **Status:** done
-**Feature:** ENG-F1
+**Feature:** [ENG-F1](_feature.md)
 **Issue:** #57
 
 ## Summary
@@ -47,7 +47,7 @@ The workspace denies `unsafe_code`; three of its five scoped allows are in
   `Sync` is unattainable (egui-winit's clipboard holds an `mpsc::Receiver`), so
   the removed `unsafe impl Sync` was asserting something false.
 
-**Out of scope:** the renderer's raw frame-callback path (ENG-F3-03); the
+**Out of scope:** the renderer's raw frame-callback path ([ENG-F3-03](../ENG-F3-renderer-pipeline-cleanup/ENG-F3-03-misc-cleanups.md)); the
 `wgpu-experimental` block in `moho_renderer`; the `Arc<Mutex<EguiAdapter>>`
 sharing model and `InputDispatcher`'s `Send + Sync` handler bound; any other
 `gpu_ops` or adapter refactor.
@@ -79,5 +79,5 @@ a compile error.
 
 ## Notes
 
-- Out: the raw frame-callback path in the renderer (ENG-F3-03) and the
+- Out: the raw frame-callback path in the renderer ([ENG-F3-03](../ENG-F3-renderer-pipeline-cleanup/ENG-F3-03-misc-cleanups.md)) and the
   `wgpu-experimental` opt-in, which stays.

@@ -34,6 +34,7 @@
 //! ```
 
 mod chunk;
+mod chunk_store;
 mod face;
 mod grid;
 mod jobs;
@@ -49,6 +50,7 @@ pub mod streaming;
 
 // Re-export core types from submodules
 pub use chunk::VoxelChunk;
+pub use chunk_store::ChunkStore;
 pub use face::{FaceDirection, get_visible_faces};
 pub use grid::{
     BlockCategory, BlockData, BlockPos, MaterialLighting, MaterialRegistry, ResourceData,

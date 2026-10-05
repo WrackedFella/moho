@@ -15,9 +15,9 @@
 //!     .expect("Failed to initialize application");
 //! ```
 
-use legion::World;
 use moho_core::input::InputSystem;
-use moho_sim::SimulationController;
+use moho_game::scene::SceneEntities;
+use moho_game::simulation::SimulationController;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -58,7 +58,7 @@ impl std::error::Error for AppInitError {}
 ///
 /// This struct holds all the components needed to construct an App instance.
 pub struct InitializedApp {
-    pub world: World,
+    pub entities: SceneEntities,
     pub scene: moho_renderer::Scene,
     pub camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     pub event_bus: Arc<moho_core::EventBus>,
@@ -149,7 +149,7 @@ impl AppInitializer {
         log::info!("Starting application initialization");
 
         // Create basic world and scene (minimal setup)
-        let world = World::default();
+        let entities = SceneEntities::default();
         let scene = moho_renderer::Scene::new();
         log::debug!("Created world and scene");
 
@@ -196,7 +196,7 @@ impl AppInitializer {
         log::info!("Application initialization complete");
 
         Ok(InitializedApp {
-            world,
+            entities,
             scene,
             camera,
             event_bus,

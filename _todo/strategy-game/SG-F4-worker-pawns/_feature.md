@@ -5,7 +5,7 @@
 ## Summary
 
 Pawns gain basic stats and a simple job loop so they can gather without
-direct control. Depends on SG-F3 (a base to return to). Not decomposed into
+direct control. Depends on [SG-F3](../SG-F3-buildings-and-construction/_feature.md) (a base to return to). Not decomposed into
 cards until picked up.
 
 ## Scope sketch

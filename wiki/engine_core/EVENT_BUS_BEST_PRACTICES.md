@@ -450,8 +450,8 @@ Based on benchmark results:
 
 ## Further Reading
 
-- **Testing Notes**: `docs/engine_core/EVENT_BUS_TESTING_NOTES.md`
-- **Performance Analysis**: `docs/engine_core/EVENT_BUS_PERFORMANCE.md`
+- **Testing Notes**: `wiki/engine_core/EVENT_BUS_TESTING_NOTES.md`
+- **Performance Analysis**: `wiki/engine_core/EVENT_BUS_PERFORMANCE.md`
 - **Implementation Plan**: `todo/EVENT_BUS.md`
 - **API Documentation**: Run `cargo doc --open`
 

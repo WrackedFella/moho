@@ -17,7 +17,7 @@ next touched, or on a dedicated bug-fix pass.
 
 ## Notes
 
-A 2026-08 fix (smooth-terrain mesh offset, see SG-F1) was checked against
+A 2026-08 fix (smooth-terrain mesh offset, see [SG-F1](../SG-F1-core-interaction-loop/_feature.md)) was checked against
 spawn-inside-terrain and mining-mesh-gaps as a possible shared cause — it
 wasn't the fix for either; both still reproduce. Kept as separate bugs, not
 merged, since their root causes are now confirmed distinct.

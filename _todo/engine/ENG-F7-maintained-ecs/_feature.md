@@ -1,6 +1,8 @@
-# ENG-F7 — The ECS foundation is maintained
+# ENG-F7 — Entity storage is maintained and legion-free
 
-**Status:** proposed
+**Status:** done (Foundation gate, [ENG-F8](../ENG-F8-foundation-gate/_feature.md))
+**Issue:** #62
+**Integration branch:** `feature/ENG-F8-foundation-gate`
 
 ## Summary
 
@@ -12,26 +14,32 @@ on whatever the engine chooses here, so decide before the repo split.
 
 ## Exit criteria
 
-- An ADR records the choice: migrate to a maintained ECS (candidates to
-  evaluate include `bevy_ecs` standalone, `hecs`, `flecs` bindings) or adopt a
-  maintained fork of `legion`, with the evaluation criteria used.
-- The chosen ECS is maintained by an upstream or by us, with an owner and
-  update policy.
-- The `instant` / `paste` ignores are removed from `deny.toml`.
-- No regression in the event-bus and chunk-streaming benchmarks.
+- [ADR-0004](../../adr/0004-entity-storage-without-a-general-ecs.md) is accepted: no general-purpose ECS for now, and typed,
+  domain-owned stores replace `legion`.
+- `cargo tree --workspace -i legion` reports no match.
+- The `instant` ignore is removed from `deny.toml`. (`paste` also arrives via
+  `rapier3d`; its ignore is owned by [ENG-F2-04](../ENG-F2-dependency-upgrades/ENG-F2-04-paste-advisory-cleared.md).)
+- No engine crate's public API names a world or ECS type.
+- Chunk lookup by position doesn't scan all chunks.
+- No regression in `event_bus_bench`. (There is no chunk-streaming benchmark,
+  so an earlier criterion naming one was dropped.)
 
 ## Scope
 
-- In: evaluation, ADR, migration or fork, ECS-facing API in engine crates.
-- Out: redesigning game systems beyond what the ECS swap forces.
+- In: removing `legion` from the binary, `moho_game` and `moho_renderer`;
+  typed stores; renderer collection API taking domain data.
+- Out: adopting `hecs` or another ECS (needs a named consumer, per [ADR-0004](../../adr/0004-entity-storage-without-a-general-ecs.md));
+  redesigning game systems beyond what the swap forces.
 
 ## Items
 
 | Item | Status |
 |---|---|
+| [ENG-F7-01 typed-entity-stores](ENG-F7-01-typed-entity-stores.md) | done |
+| [ENG-F7-02 legion-removed](ENG-F7-02-legion-removed.md) | done |
 
 ## Notes
 
 Footprint at proposal time: 11 source files use `legion`; `moho_render_api`
-is deliberately legion-free (ADR-0001). Discuss in the pre-agentic feature
+is deliberately legion-free ([ADR-0001](../../adr/0001-render-api-boundary.md)). Discuss in the pre-agentic feature
 planning review.

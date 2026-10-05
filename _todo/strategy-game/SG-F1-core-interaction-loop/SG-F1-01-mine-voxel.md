@@ -1,7 +1,7 @@
 # Player mines a voxel and receives its resource
 
 **Status:** done
-**Feature:** SG-F1
+**Feature:** [SG-F1](_feature.md)
 
 ## Summary
 
