@@ -1,5 +1,4 @@
 use glam::Vec3;
-use legion::World;
 use moho_game::actors::{Cube, Sphere};
 use moho_renderer::FrameCallback;
 use moho_renderer::{MaterialGpu, RendererBackend};
@@ -76,8 +75,6 @@ impl RendererBackend for MockRenderer {
 
 #[test]
 fn scene_render_invokes_renderer_backend_calls() {
-    // Build a simple world with one sphere and one cube.
-    let mut world = World::default();
     let s = Sphere::new(
         Vec3::new(0.0, 0.0, 0.0),
         1.0,
@@ -95,8 +92,8 @@ fn scene_render_invokes_renderer_backend_calls() {
             fuzz: 0.1,
         },
     );
-    world.push((s,));
-    world.push((c,));
+    let spheres = [s];
+    let cubes = [c];
 
     let mut scene = moho_renderer::Scene::new();
     let mut mock = MockRenderer::new();
@@ -116,7 +113,9 @@ fn scene_render_invokes_renderer_backend_calls() {
     scene
         .render::<Sphere, Cube>(
             &mut mock,
-            &mut world,
+            &spheres,
+            &cubes,
+            std::iter::empty::<&mut moho_core::voxel::VoxelChunk>(),
             mesh_handle,
             cube_mesh_handle,
             0,

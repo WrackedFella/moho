@@ -51,7 +51,7 @@ impl ChunkStreamer {
     /// 2. Loads up to `chunks_per_frame` new XZ columns within `load_radius`.
     ///
     /// Returns `(loaded_positions, evicted_positions)` so the caller can
-    /// remove ECS entities for evicted chunks.
+    /// remove stored chunks for evicted chunks.
     pub fn update(&mut self, grid: &mut VoxelGrid, player_pos: Vec3) -> (Vec<IVec3>, Vec<IVec3>) {
         let cx = player_pos.x.floor() as i32 / 16;
         let cz = player_pos.z.floor() as i32 / 16;

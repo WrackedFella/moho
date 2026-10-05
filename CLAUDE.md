@@ -58,7 +58,7 @@ moho_types      AppState, StateCoordinator
 - Engine crates never depend on `moho_game` (ADR-0001). `voxel/` stays in
   `moho_core` (ADR-0002). Event types live in `moho_core::events` (ADR-0003).
 - Use the event bus for cross-system fan-out; call directly within a system.
-- ECS is `legion` (unmaintained; replacement tracked as ENG-F7).
+- Entities live in typed stores (`ActorStore` in `moho_game`, `ChunkStore` in `moho_core`); no general ECS (ADR-0004).
 - Shared dependency versions go in `[workspace.dependencies]`.
 
 ## GitNexus (code graph, index name `moho`)

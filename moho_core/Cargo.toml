@@ -9,7 +9,6 @@ publish = false
 moho_render_api = { path = "../moho_render_api" }
 glam = { workspace = true }
 bytemuck = { workspace = true, features = ["derive"] }
-legion = { workspace = true }
 log = { workspace = true }
 noise = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

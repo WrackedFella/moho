@@ -1,6 +1,5 @@
 use crate::{BufferManager, InstanceCollector, MaterialTable, RendererBackend};
-use legion::World;
-use legion::storage::Component;
+use moho_core::voxel::VoxelChunk;
 use moho_render_api::{InstanceGpu, Renderable};
 
 mod preparation;
@@ -9,7 +8,7 @@ pub use preparation::PreparedScene;
 pub use preparation::ScenePreparation;
 
 /// Scene manager that owns the `MaterialTable` and provides a simple
-/// `render` API to submit an ECS world for drawing. This centralizes
+/// `render` API to submit actors and terrain chunks for drawing. This centralizes
 /// material deduplication, instance collection, and transparent sorting.
 ///
 /// Scene *persistence* (save/load) lives in `moho_game::scene_persistence` —
@@ -30,34 +29,38 @@ impl Scene {
         }
     }
 
-    /// Render the provided `world` using `renderer`. `mesh_handle` is the
+    /// Render the provided actors and chunks using `renderer`. `mesh_handle` is the
     /// spherical mesh handle, `cube_mesh_handle` is the cube mesh handle, and
     /// `terrain_material_idx` is the material table index for terrain chunks
     /// — all previously registered with the renderer/material table at
-    /// startup. `S`/`C` are the concrete sphere-like/cube-like component
-    /// types to query for (supplied by the caller so this crate doesn't need
+    /// startup. `S`/`C` are the concrete sphere-like/cube-like actor
+    /// types (supplied by the caller so this crate doesn't need
     /// to name game-domain types).
     ///
     /// Returns `Err` if the frame's surface texture couldn't be acquired
     /// (e.g. surface lost/outdated); the surface has already been
     /// reconfigured in that case, so callers should just skip the frame.
     #[allow(clippy::too_many_arguments)]
-    pub fn render<S, C>(
+    pub fn render<'a, S, C>(
         &mut self,
         renderer: &mut dyn RendererBackend,
-        world: &mut World,
+        spheres: &[S],
+        cubes: &[C],
+        chunks: impl IntoIterator<Item = &'a mut VoxelChunk>,
         mesh_handle: u32,
         cube_mesh_handle: u32,
         terrain_material_idx: u32,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) -> Result<(), crate::FrameError>
     where
-        S: Renderable + Component,
-        C: Renderable + Component,
+        S: Renderable,
+        C: Renderable,
     {
         // Prepare scene: collect instances, process materials, separate by transparency
-        let prepared = ScenePreparation::prepare::<S, C>(
-            world,
+        let prepared = ScenePreparation::prepare(
+            spheres,
+            cubes,
+            chunks,
             &mut self.material_table,
             &mut self.buffer_manager,
             &mut self.instance_collector,

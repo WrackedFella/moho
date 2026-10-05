@@ -12,7 +12,8 @@ The binary, `moho_game` (scene build and persistence) and `moho_renderer`
 (`InstanceCollector`, `Scene`) pass `legion::World` around, so an engine crate's
 public API names the ECS type.
 
-legion is the source of two unmaintained-crate advisories (`instant`, `paste`)
+legion brings in two unmaintained-crate advisories (`instant`, `paste`; `paste`
+also arrives through `rapier3d`)
 and about eight duplicate crate versions (`parking_lot` 0.11, `uuid` 0.8,
 `syn` 1, `bit-set` 0.5, `getrandom` 0.2, and others).
 
@@ -46,8 +47,8 @@ Candidates, as of 2026-10:
 
 ## Consequences
 
-- Clears the `instant` and `paste` advisory ignores and the duplicates legion
-  brings in.
+- Clears the `instant` advisory ignore and the duplicates legion brings in.
+  `paste` stays: `rapier3d` → `simba` also depends on it.
 - `InstanceCollector::collect_from_world` and `Scene` lose their legion
   parameters. [ADR-0001](0001-render-api-boundary.md)'s renderer boundary gets tighter, not looser.
 - Chunk lookup by position becomes a map lookup.

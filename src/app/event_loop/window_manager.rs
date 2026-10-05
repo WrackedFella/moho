@@ -60,17 +60,16 @@ impl WindowManager {
     pub fn initial_render(&self, app: &mut App) {
         log::info!("Initial render");
         if let Some(ref mut wr) = app.window_renderer {
-            if let Err(e) = app
-                .scene
-                .render::<moho_game::actors::Sphere, moho_game::actors::Cube>(
-                    &mut *wr.renderer,
-                    &mut app.world,
-                    wr.mesh_handle,
-                    wr.cube_mesh_handle,
-                    wr.terrain_material_idx,
-                    app.camera,
-                )
-            {
+            if let Err(e) = app.scene.render(
+                &mut *wr.renderer,
+                app.entities.actors.spheres(),
+                app.entities.actors.cubes(),
+                app.entities.chunks.iter_mut(),
+                wr.mesh_handle,
+                wr.cube_mesh_handle,
+                wr.terrain_material_idx,
+                app.camera,
+            ) {
                 log::warn!("Skipped initial render: {e}");
             }
             wr.window.request_redraw();

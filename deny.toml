@@ -7,10 +7,9 @@ all-features = true
 # Unmaintained-crate notices only (no known vulnerabilities). Remove each entry
 # when the dependency that pulls it in is replaced or upgraded.
 ignore = [
-    { id = "RUSTSEC-2025-0141", reason = "bincode: direct dep; save-format migration decision pending" },
-    { id = "RUSTSEC-2024-0384", reason = "instant: via legion -> parking_lot 0.11" },
-    { id = "RUSTSEC-2024-0436", reason = "paste: proc-macro via legion" },
-    { id = "RUSTSEC-2026-0192", reason = "ttf-parser: via winit -> ab_glyph (egui)" },
+    { id = "RUSTSEC-2025-0141", reason = "bincode: direct dep; save-format migration decision pending (ENG-F2-01)" },
+    { id = "RUSTSEC-2024-0436", reason = "paste: proc-macro via rapier3d -> simba; owned by ENG-F2-04" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser: via winit -> ab_glyph (egui); owned by ENG-F2-03" },
 ]
 
 [licenses]

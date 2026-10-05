@@ -4,8 +4,8 @@
 //! ([`moho_core`], [`moho_renderer`], [`moho_audio`], [`moho_ui`]) into a
 //! runnable application via [`winit`]'s event loop.
 
-use legion::World;
 use moho_core::prefs::Prefs;
+use moho_game::scene::SceneEntities;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -69,7 +69,7 @@ struct WindowRenderer {
 
 // Application state structure that implements ApplicationHandler
 struct App {
-    world: World,
+    entities: SceneEntities,
     scene: moho_renderer::Scene,
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
 
@@ -114,9 +114,6 @@ struct App {
     frame_duration: Duration,
     last_frame: Instant,
 
-    // Tracks gizmo spheres spawned alongside debug point lights (light_id -> entity)
-    light_gizmos: std::collections::HashMap<u32, legion::Entity>,
-
     // Grouped sub-systems
     physics: app::physics_controller::PhysicsController,
     generation: app::generation_job::WorldGenerationJob,
@@ -132,11 +129,7 @@ struct App {
 }
 
 impl App {
-    fn new() -> Self {
-        // Load application configuration
-        let config = crate::app::config::AppConfig::from_prefs();
-
-        // Initialize all systems using the builder
+    fn from_config(config: crate::app::config::AppConfig) -> Self {
         let initialized = crate::app::initializer::AppInitializer::new(config)
             .build()
             .expect("Failed to initialize application");
@@ -151,7 +144,7 @@ impl App {
         log::info!("Created LightSystem for frame loop integration");
 
         Self {
-            world: initialized.world,
+            entities: initialized.entities,
             scene: initialized.scene,
             camera: initialized.camera,
 
@@ -182,8 +175,6 @@ impl App {
             frame_duration: initialized.frame_duration,
             last_frame: initialized.last_frame,
 
-            light_gizmos: std::collections::HashMap::new(),
-
             physics: app::physics_controller::PhysicsController::new(),
             generation: app::generation_job::WorldGenerationJob::new(),
             input: app::input_state::InputState::new(initialized.input_system),
@@ -192,6 +183,17 @@ impl App {
 
             pawn: moho_game::pawn::Pawn::default(),
         }
+    }
+
+    /// An `App` with no window, renderer, UI or audio, built from default
+    /// prefs so tests never read `config/prefs.ini`.
+    #[cfg(test)]
+    fn headless() -> Self {
+        Self::from_config(
+            crate::app::config::AppConfig::builder()
+                .init_audio(false)
+                .build(),
+        )
     }
 
     fn setup_renderer_and_ui(
@@ -205,11 +207,11 @@ impl App {
         &mut self,
         spec: moho_game::scene_builders::WorldSpec,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        crate::app::world_generator::generate_new_world(self, spec)
+        crate::app::world_generator::generate_new_world(self, spec, std::path::Path::new("saves"))
     }
 
     fn auto_save_on_shutdown(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        crate::app::autosave::auto_save_on_shutdown(self)
+        crate::app::autosave::auto_save_on_shutdown(self, std::path::Path::new("saves"))
     }
 
     fn load_scene<P: AsRef<std::path::Path>>(
@@ -222,7 +224,7 @@ impl App {
     /// Initialize physics world after a scene is loaded.
     fn setup_physics_for_loaded_world(&mut self) {
         self.physics.reset();
-        self.physics.sync_colliders_from_ecs(&self.world);
+        self.physics.sync_colliders(&self.entities.chunks);
 
         // Spawn the physics character at the saved player position so the KCC
         // doesn't immediately override the restored camera on the first frame.
@@ -654,7 +656,7 @@ impl Drop for App {
 
 fn main() {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
-    let mut app = App::new();
+    let mut app = App::from_config(crate::app::config::AppConfig::from_prefs());
 
     // Run the modern event loop with ApplicationHandler
     let _ = event_loop.run_app(&mut app);
