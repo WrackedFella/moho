@@ -31,6 +31,7 @@ wgpu = "29.0.4"
 winit = "0.30"
 moho_physics = { path = "moho_physics" }
 rapier3d = { version = "0.32", features = ["simd-stable"] }
+tempfile = "3.5"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
@@ -126,6 +127,7 @@ workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
+tempfile = { workspace = true }
 
 [[bench]]
 name = "event_bus_bench"

@@ -19,7 +19,7 @@ thiserror = { workspace = true }
 [dev-dependencies]
 moho_game = { path = "../moho_game" }
 naga = { workspace = true, features = ["wgsl-in"] }
-tempfile = "3.5"
+tempfile = { workspace = true }
 
 [features]
 wgpu-experimental = []
