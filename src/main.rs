@@ -129,11 +129,7 @@ struct App {
 }
 
 impl App {
-    fn new() -> Self {
-        // Load application configuration
-        let config = crate::app::config::AppConfig::from_prefs();
-
-        // Initialize all systems using the builder
+    fn from_config(config: crate::app::config::AppConfig) -> Self {
         let initialized = crate::app::initializer::AppInitializer::new(config)
             .build()
             .expect("Failed to initialize application");
@@ -189,6 +185,17 @@ impl App {
         }
     }
 
+    /// An `App` with no window, renderer, UI or audio, built from default
+    /// prefs so tests never read `config/prefs.ini`.
+    #[cfg(test)]
+    fn headless() -> Self {
+        Self::from_config(
+            crate::app::config::AppConfig::builder()
+                .init_audio(false)
+                .build(),
+        )
+    }
+
     fn setup_renderer_and_ui(
         &mut self,
         window: Arc<Window>,
@@ -200,11 +207,11 @@ impl App {
         &mut self,
         spec: moho_game::scene_builders::WorldSpec,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        crate::app::world_generator::generate_new_world(self, spec)
+        crate::app::world_generator::generate_new_world(self, spec, std::path::Path::new("saves"))
     }
 
     fn auto_save_on_shutdown(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        crate::app::autosave::auto_save_on_shutdown(self)
+        crate::app::autosave::auto_save_on_shutdown(self, std::path::Path::new("saves"))
     }
 
     fn load_scene<P: AsRef<std::path::Path>>(
@@ -649,7 +656,7 @@ impl Drop for App {
 
 fn main() {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
-    let mut app = App::new();
+    let mut app = App::from_config(crate::app::config::AppConfig::from_prefs());
 
     // Run the modern event loop with ApplicationHandler
     let _ = event_loop.run_app(&mut app);

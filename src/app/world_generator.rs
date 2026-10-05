@@ -13,11 +13,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 ///
 /// Spawns the "world-generator" thread, stores the receiver/handle/cancel flag
 /// on `app.generation`, and immediately shows the progress overlay in the UI.
+/// The thread writes the new world to `saves_dir/scene.bin`.
 pub fn generate_new_world(
     app: &mut crate::App,
     spec: moho_game::scene_builders::WorldSpec,
+    saves_dir: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::path::PathBuf;
     log::info!("Starting async generation for spec={spec:?}");
 
     // Prepare communication channel and cancellation flag
@@ -36,6 +37,7 @@ pub fn generate_new_world(
     let spec_for_thread = spec;
     let cancel_clone = cancel_flag.clone();
     let sender = tx.clone();
+    let saves_dir = saves_dir.to_path_buf();
 
     // Spawn the generation thread
     let handle = std::thread::Builder::new()
@@ -92,10 +94,7 @@ pub fn generate_new_world(
             let _ = sender.send(crate::GenerationMsg::Progress(0.9));
 
             // Ensure saves directory exists and persist the envelope
-            let saves_dir = PathBuf::from("saves");
-            if !saves_dir.exists()
-                && let Err(e) = std::fs::create_dir_all(&saves_dir)
-            {
+            if let Err(e) = std::fs::create_dir_all(&saves_dir) {
                 let _ = sender.send(crate::GenerationMsg::Failed(format!("mkdir failed: {e}")));
                 return;
             }
@@ -129,4 +128,48 @@ pub fn generate_new_world(
     app.generation.cancel = Some(cancel_flag);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{App, GenerationMsg};
+    use std::time::Duration;
+
+    #[test]
+    fn generate_new_world_starts_job_that_writes_the_scene_and_completes() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let saves = temp.path().join("not").join("yet").join("created");
+        let mut app = App::headless();
+        let spec = moho_game::scene_builders::WorldSpec {
+            name: "headless-test-generate".to_string(),
+            seed: Some(7),
+            size_xz: 64,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+            initial_time_of_day: 6.0,
+        };
+
+        generate_new_world(&mut app, spec, &saves).expect("generation starts");
+        let rx = app
+            .generation
+            .receiver
+            .take()
+            .expect("job receiver is stored");
+        let completed_name = loop {
+            match rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("job reports before timeout")
+            {
+                GenerationMsg::Progress(_) => {}
+                GenerationMsg::Completed { spec, .. } => break spec.name,
+                GenerationMsg::Canceled => panic!("job canceled"),
+                GenerationMsg::Failed(reason) => panic!("job failed: {reason}"),
+            }
+        };
+
+        assert_eq!(completed_name, "headless-test-generate");
+        assert!(app.generation.handle.is_some());
+        assert!(saves.join("scene.bin").is_file());
+    }
 }

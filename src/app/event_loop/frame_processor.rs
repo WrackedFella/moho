@@ -449,6 +449,149 @@ impl Default for FrameProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game_state::GameState;
+    use moho_core::events::WorldEvent;
+    use moho_core::voxel::VoxelChunk;
+
+    const DT: f32 = 1.0 / 60.0;
+
+    fn drain_mesh_dirty(app: &App) -> Vec<glam::IVec3> {
+        app.world_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                WorldEvent::ChunkMeshDirty { chunk_pos, .. } => Some(chunk_pos),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn spawn_sphere_with_body(app: &mut App, center: glam::Vec3) -> moho_game::actors::ActorId {
+        let sphere = moho_game::actors::Sphere::new(
+            center,
+            0.5,
+            moho_core::materials::MaterialType::Lambertian {
+                albedo: glam::Vec3::ONE,
+            },
+        );
+        let actor = app.entities.actors.spawn_sphere(sphere);
+        let handle = app
+            .physics
+            .world
+            .as_mut()
+            .expect("a new PhysicsController has a world")
+            .add_dynamic_sphere(center, 0.5);
+        app.physics.test_bodies.push((handle, actor));
+        actor
+    }
+
+    #[test]
+    fn update_game_state_moves_falling_sphere() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        spawn_sphere_with_body(&mut app, glam::Vec3::new(0.0, 50.0, 0.0));
+
+        for _ in 0..30 {
+            FrameProcessor::new().update_game_state(&mut app, DT);
+        }
+
+        let y = app.entities.actors.spheres()[0].center.y;
+        assert!(y < 49.0, "sphere should fall under gravity, y = {y}");
+    }
+
+    #[test]
+    fn fps_with_active_kcc_moves_player_under_gravity() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
+        app.simulation
+            .set_position_yaw_pitch(glam::Vec3::new(100.0, 100.0, 100.0), 0.0, 0.0);
+        app.physics
+            .world
+            .as_mut()
+            .expect("a new PhysicsController has a world")
+            .add_character(glam::Vec3::new(0.0, 50.0, 0.0));
+        assert!(app.physics.is_kcc_active());
+
+        for _ in 0..30 {
+            FrameProcessor::new().update_game_state(&mut app, DT);
+        }
+
+        let pos = app.simulation.position();
+        assert!(
+            pos.x.abs() < 0.01 && pos.z.abs() < 0.01,
+            "player follows the character body, pos = {pos:?}"
+        );
+        assert!(
+            pos.y < 50.0 && pos.y > 30.0,
+            "player falls from the spawn height, pos = {pos:?}"
+        );
+    }
+
+    #[test]
+    fn chunk_streaming_while_playing_loads_chunks_and_publishes_mesh_dirty() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_position_yaw_pitch(glam::Vec3::new(8.0, 80.0, 8.0), 0.0, 0.0);
+        app.chunk_streamer = Some(crate::app::chunk_streamer::ChunkStreamer::new(
+            moho_game::scene_builders::TerrainConfig::default(),
+            moho_core::voxel::StreamingConfig {
+                load_radius_chunks: 0,
+                unload_radius_chunks: 1,
+                chunks_per_frame: 1,
+            },
+            "headless-test-chunk-streaming",
+        ));
+        let far = glam::IVec3::new(10, 4, 10);
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        grid.mutator()
+            .place(moho_core::voxel::BlockPos::new(165, 70, 165), 1, None);
+        // Unmodified, so eviction doesn't write a chunk file to the working directory.
+        grid.clear_chunk_modified(far);
+        app.entities.chunks.insert(VoxelChunk::empty(far));
+        drain_mesh_dirty(&app);
+
+        FrameProcessor::new().update_chunk_streaming(&mut app);
+
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        let loaded: Vec<glam::IVec3> = grid.chunk_positions().collect();
+        assert!(!loaded.is_empty(), "the player's column is loaded");
+        assert!(loaded.iter().all(|p| p.x == 0 && p.z == 0));
+        let dirty = drain_mesh_dirty(&app);
+        for pos in &loaded {
+            assert!(dirty.contains(pos), "loaded chunk {pos:?} must be remeshed");
+        }
+        assert!(
+            app.entities.chunks.get(far).is_none(),
+            "evicted chunk is dropped from the store"
+        );
+    }
+
+    #[test]
+    fn lod_transition_marks_only_stale_chunks_dirty() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_position_yaw_pitch(glam::Vec3::new(8.0, 80.0, 8.0), 0.0, 0.0);
+        let near_full_detail = glam::IVec3::new(1, 4, 0);
+        let far_full_detail = glam::IVec3::new(6, 4, 0);
+        app.entities
+            .chunks
+            .insert(VoxelChunk::empty(near_full_detail));
+        app.entities
+            .chunks
+            .insert(VoxelChunk::empty(far_full_detail));
+        drain_mesh_dirty(&app);
+
+        FrameProcessor::new().update_chunk_streaming(&mut app);
+
+        assert_eq!(drain_mesh_dirty(&app), vec![far_full_detail]);
+    }
 
     #[test]
     fn test_moon_intensity_below_horizon() {

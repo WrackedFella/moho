@@ -322,3 +322,53 @@ impl Default for GenerationProcessor {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game_state::GameState;
+
+    #[test]
+    fn completed_generation_enters_playing_with_terrain_colliders() {
+        let mut app = App::headless();
+        let spec = moho_game::scene_builders::WorldSpec {
+            name: "headless-test-completed".to_string(),
+            seed: Some(7),
+            size_xz: 64,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+            initial_time_of_day: 6.0,
+        };
+        let scene_bytes = moho_game::scene_persistence::encode_to_bytes(
+            &moho_game::scene::SceneEntities::default(),
+            None,
+            &[],
+        )
+        .expect("encode empty scene");
+
+        GenerationProcessor::new().handle_completed(
+            &mut app,
+            scene_bytes,
+            spec,
+            moho_game::scene_builders::TerrainConfig::default(),
+            moho_core::voxel::VoxelGrid::new(16),
+        );
+
+        assert_eq!(app.game_state, GameState::Playing);
+        assert!(app.chunk_streamer.is_some());
+        assert!(!app.entities.chunks.is_empty(), "spawn area is meshed");
+        assert_eq!(app.physics.chunk_colliders.len(), app.entities.chunks.len());
+        assert!(
+            app.physics.is_kcc_active(),
+            "the character controller is placed"
+        );
+        assert_eq!(app.entities.actors.spheres().len(), 3);
+        assert_eq!(app.physics.test_bodies.len(), 3);
+        let terrain_y = app
+            .light_system
+            .as_ref()
+            .and_then(|ls| ls.grid().get_height(0, 0))
+            .expect("spawn column has terrain");
+        assert!(app.simulation.position().y > terrain_y as f32);
+    }
+}

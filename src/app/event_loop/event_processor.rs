@@ -551,6 +551,74 @@ impl Default for EventProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moho_core::events::DebugEvent;
+
+    fn publish_spawn(app: &App, entity_type: &str) {
+        app.event_bus.publish(DebugEvent::SpawnEntity {
+            entity_type: entity_type.to_string(),
+            args: None,
+            position: None,
+        });
+    }
+
+    /// Where a console spawn lands when the raycast hits nothing.
+    fn fallback_spawn_pos(app: &App) -> glam::Vec3 {
+        let camera_to_world = app.camera.0.inverse();
+        let camera_pos = camera_to_world.col(3).truncate();
+        let forward = -camera_to_world.col(2).truncate().normalize();
+        camera_pos + forward * SPAWN_FALLBACK_DISTANCE
+    }
+
+    #[test]
+    fn spawn_sphere_adds_actor_with_physics_body() {
+        let mut app = App::headless();
+        publish_spawn(&app, "sphere");
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        let spheres = app.entities.actors.spheres();
+        assert_eq!(spheres.len(), 1);
+        assert!(spheres[0].center.distance(fallback_spawn_pos(&app)) < 1e-3);
+        assert!(app.entities.actors.cubes().is_empty());
+        assert_eq!(app.physics.test_bodies.len(), 1);
+    }
+
+    #[test]
+    fn spawn_cube_adds_actor_with_physics_body() {
+        let mut app = App::headless();
+        publish_spawn(&app, "cube");
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        let cubes = app.entities.actors.cubes();
+        assert_eq!(cubes.len(), 1);
+        assert!(cubes[0].center.distance(fallback_spawn_pos(&app)) < 1e-3);
+        assert!(app.entities.actors.spheres().is_empty());
+        assert_eq!(app.physics.test_bodies.len(), 1);
+    }
+
+    #[test]
+    fn chunk_mesh_dirty_event_stores_meshed_chunk_with_collider() {
+        let mut app = App::headless();
+        let chunk_pos = glam::IVec3::new(0, 4, 0);
+        app.light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut()
+            .mutator()
+            .place(moho_core::voxel::BlockPos::new(3, 70, 3), 1, None);
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos,
+            terrain_dirty: true,
+            structure_dirty: false,
+        });
+
+        EventProcessor::new().process_world_events(&mut app);
+
+        let chunk = app.entities.chunks.get(chunk_pos).expect("chunk is stored");
+        assert!(!chunk.vertices().is_empty(), "the placed block is meshed");
+        assert!(app.physics.chunk_colliders.contains_key(&chunk_pos));
+    }
 
     #[test]
     fn test_lod_player_chunk_origin() {

@@ -2005,6 +2005,7 @@ dependencies = [
  "moho_ui",
  "pollster",
  "rand 0.10.2",
+ "tempfile",
  "wgpu",
  "winit",
 ]
