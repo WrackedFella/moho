@@ -96,8 +96,9 @@ pub fn encode_to_bytes(
 }
 
 /// Load a SceneDesc from a file and populate the provided `entities`.
-/// Existing contents are left untouched; caller may clear them beforehand if
-/// desired.
+/// Actors are appended to existing ones, and a loaded chunk replaces any
+/// existing chunk at the same position; clear `entities` beforehand for a
+/// fresh load.
 /// Returns camera data and any persisted lights.
 pub fn load_from_file<P: AsRef<Path>>(
     path: P,
@@ -111,6 +112,8 @@ pub fn load_from_file<P: AsRef<Path>>(
 }
 
 /// Decode a scene saved as bincode bytes and populate `entities`.
+/// Actors are appended and a loaded chunk replaces any chunk at the same
+/// position, as in [`load_from_file`].
 /// Returns camera data and any persisted lights.
 pub fn load_from_bytes(
     bytes: &[u8],
@@ -211,7 +214,12 @@ fn populate_entities(
             chunk_desc.indices,
             chunk_desc.material_id,
         );
-        entities.chunks.insert(chunk);
+        let chunk_pos = chunk.chunk_pos();
+        if entities.chunks.insert(chunk).is_some() {
+            log::warn!(
+                "Scene holds more than one chunk at {chunk_pos:?}; the earlier one was replaced"
+            );
+        }
     }
 
     let camera_data = camera.map(|cam| (glam::Vec3::from_array(cam.position), cam.yaw, cam.pitch));
@@ -554,5 +562,35 @@ mod tests {
             .map(moho_core::voxel::VoxelChunk::chunk_pos)
             .collect();
         assert_eq!(positions, vec![glam::IVec3::new(4, 0, -2)]);
+    }
+
+    #[test]
+    fn load_with_duplicate_chunk_positions_keeps_the_last() {
+        let chunk_desc = |material_id: u32| VoxelChunkDesc {
+            chunk_pos: [3, 0, 1],
+            vertices: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            indices: vec![0, 1, 2],
+            material_id,
+        };
+        let desc = SceneDesc {
+            version: SCENE_FILE_VERSION,
+            spheres: Vec::new(),
+            cubes: Vec::new(),
+            voxel_chunks: vec![chunk_desc(11), chunk_desc(22)],
+            camera: None,
+            lights: Vec::new(),
+        };
+        let bytes = bincode::encode_to_vec(&desc, bincode::config::standard()).expect("encode");
+
+        let mut loaded = SceneEntities::default();
+        load_from_bytes(&bytes, &mut loaded).expect("decode");
+
+        assert_eq!(loaded.chunks.len(), 1);
+        let chunk = loaded
+            .chunks
+            .get(glam::IVec3::new(3, 0, 1))
+            .expect("chunk present");
+        assert_eq!(chunk.material_id(), 22);
     }
 }

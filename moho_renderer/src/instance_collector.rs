@@ -431,4 +431,44 @@ mod tests {
 
         assert_eq!(collector.sphere_instances().len(), 0);
     }
+
+    #[test]
+    fn collect_chunks_renders_every_chunk_in_ascending_position_order() {
+        let mut collector = InstanceCollector::new();
+        let mut buffer_manager = BufferManager::new();
+        let mut renderer = MockRenderer::new();
+        let mut store = ChunkStore::new();
+        for pos in [
+            glam::IVec3::new(2, 0, 0),
+            glam::IVec3::new(-1, 0, 3),
+            glam::IVec3::new(0, 0, 0),
+        ] {
+            store.insert(VoxelChunk::new(
+                pos,
+                vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                vec![[0.0, 0.0, 1.0]; 3],
+                vec![1.0; 3],
+                vec![0; 3],
+                vec![1.0; 3],
+                vec![[1.0, 1.0, 1.0]; 3],
+                vec![1.0; 3],
+                vec![0, 1, 2],
+                0,
+            ));
+        }
+
+        collector.collect_chunks(store.iter_mut(), &mut buffer_manager, &mut renderer, 0);
+
+        let handles: Vec<u32> = collector.chunk_renders().iter().map(|(h, _)| *h).collect();
+        assert_eq!(handles, vec![1, 2, 3]);
+        let ascending = [
+            glam::IVec3::new(-1, 0, 3),
+            glam::IVec3::new(0, 0, 0),
+            glam::IVec3::new(2, 0, 0),
+        ];
+        for (pos, handle) in ascending.iter().zip(&handles) {
+            let chunk = store.get(*pos).expect("chunk present");
+            assert_eq!(chunk.get_mesh_handle(), Some(*handle));
+        }
+    }
 }
