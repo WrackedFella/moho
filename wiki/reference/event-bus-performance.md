@@ -1,5 +1,7 @@
 # Event Bus Performance Analysis
 
+**Source:** `moho_core` benches. Usage rules: [best practices](event-bus-best-practices.md).
+
 ## Benchmark Results Summary
 
 All benchmarks run on release build with optimizations enabled.

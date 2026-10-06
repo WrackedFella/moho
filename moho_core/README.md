@@ -80,7 +80,7 @@ for audio_event in rx.try_iter() {
 }
 ```
 
-See `../wiki/engine_core/EVENT_BUS_BEST_PRACTICES.md` for detailed usage patterns.
+See `../wiki/reference/event-bus-best-practices.md` for detailed usage patterns.
 
 ### GameClock
 
