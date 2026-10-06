@@ -3,7 +3,7 @@
 **Source:** `src/app/chunk_streamer.rs`, `src/app/event_loop/frame_processor.rs`
 (`update_chunk_streaming`, `update_light_system`), `event_processor.rs` (`process_world_events`),
 `moho_core/src/voxel/` (`light_system.rs`, `streaming.rs`, `jobs.rs`, `light_jobs.rs`).
-Voxels belong to `moho_core` per [ADR-0002](../../_todo/adr/0002-voxel-and-materials-stay-in-core.md).
+Voxels sit in `moho_core` today and move to the strategy-line `moho_voxel` per [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md).
 
 ## Chunk lifecycle
 

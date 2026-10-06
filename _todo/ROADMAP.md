@@ -81,5 +81,6 @@ tables, `noise`'s duplicate `rand`, `crossbeam-channel` → `std::sync::mpsc`,
 | 2026-10-04 | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) is reproduce-first and no longer waits on the save-format migration | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) |
 | 2026-10-04 | Simulation time comes from one fixed tick; no separate clock | [ADR-0009](adr/0009-simulation-time-is-one-fixed-tick.md) |
 | 2026-10-05 | G1 amended: `paste` also arrives via `rapier3d`, so its ignore moves to ENG-F2-04 (G3 covers it); gate verified and closed | [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) |
-| 2026-10-05 | The engine sees world geometry as meshes; voxels move to a strategy-line crate | [ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md) (proposed) |
+| 2026-10-05 | The engine sees world geometry as meshes; voxels move to a strategy-line crate | [ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md) |
 | 2026-10-05 | Repo-split gate requires an agnostic engine and the FPS as a settled second consumer | [ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md) |
+| 2026-10-06 | ADR-0010 accepted; ADR-0002 superseded, ADR-0003 narrowed to engine-wide events | [ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md) |

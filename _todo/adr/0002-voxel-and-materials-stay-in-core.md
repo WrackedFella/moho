@@ -1,6 +1,6 @@
 # 0002 — `voxel/` and `MaterialType` stay in `moho_core`
 
-**Status:** Accepted
+**Status:** Superseded by [0010](0010-world-geometry-is-a-mesh-contract.md)
 
 ## Context
 
