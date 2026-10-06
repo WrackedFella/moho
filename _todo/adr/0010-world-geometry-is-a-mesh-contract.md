@@ -1,6 +1,6 @@
 # 0010 — The engine sees world geometry as meshes; voxels belong to the strategy line
 
-**Status:** Proposed (supersedes [0002](0002-voxel-and-materials-stay-in-core.md) and narrows [0003](0003-core-owns-event-types.md) once accepted)
+**Status:** Accepted (2026-10-06; supersedes [0002](0002-voxel-and-materials-stay-in-core.md) and narrows [0003](0003-core-owns-event-types.md))
 
 ## Context
 

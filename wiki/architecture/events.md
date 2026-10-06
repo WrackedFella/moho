@@ -1,7 +1,7 @@
 # Events
 
 **Source:** `moho_core/src/events/` (`bus.rs`, `types/`), `src/app/event_setup.rs`.
-**Related:** [ADR-0003](../../_todo/adr/0003-core-owns-event-types.md) (core owns event types),
+**Related:** [ADR-0003](../../_todo/adr/0003-core-owns-event-types.md) (core owns event types; narrowed by [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md)),
 [best practices](../reference/event-bus-best-practices.md), [benchmarks](../reference/event-bus-performance.md).
 
 Use the bus for fan-out across systems. Inside one system, call directly.
@@ -81,4 +81,5 @@ re-fetch. Prefer `&'static str` or ids over `String` on hot events.
 - Don't publish from a handler. Forward to a channel or use `publish_deferred`.
 - Don't capture non-`Send` state (`AudioSystem`); hand off to the main thread.
 - Leave history off outside debugging.
-- A new event type goes in `moho_core::events`, even if only one crate consumes it (ADR-0003).
+- A new engine-wide event type (audio, input, lifecycle) goes in `moho_core::events`. A
+  line-specific one goes in that line's crate (ADR-0003, narrowed by ADR-0010).

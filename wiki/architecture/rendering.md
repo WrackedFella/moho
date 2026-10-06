@@ -35,8 +35,9 @@ flowchart LR
 ```
 
 `Scene::render` is generic over the actor types, so `moho_renderer` compiles without
-`moho_game`. Voxel chunks (`VoxelChunk`) are the exception: they live in `moho_core`
-([ADR-0002](../../_todo/adr/0002-voxel-and-materials-stay-in-core.md)).
+`moho_game`. Voxel chunks (`VoxelChunk`) are the exception for now: the renderer
+takes them from `moho_core`. [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md)
+replaces this with a mesh contract (add, replace, remove by handle).
 
 ## Submission
 

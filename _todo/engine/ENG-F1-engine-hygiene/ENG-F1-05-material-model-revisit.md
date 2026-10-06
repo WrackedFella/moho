@@ -6,8 +6,9 @@
 ## Summary
 
 `VoxelGrid` owns a concrete `Vec<MaterialType>`, which pins `MaterialType` in
-`moho_core` (see [ADR-0002](../../adr/0002-voxel-and-materials-stay-in-core.md)).
-The closed-enum model descends from ported tutorial code and is due a rethink.
+`moho_core` until ENG-F10 moves both to `moho_voxel` ([ADR-0010](../../adr/0010-world-geometry-is-a-mesh-contract.md)).
+The closed-enum model descends from ported tutorial code and is due a rethink. The
+rethink no longer decides any crate's placement.
 
 ## Deliverables
 

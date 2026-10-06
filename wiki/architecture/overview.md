@@ -3,10 +3,10 @@
 **Source:** crate `Cargo.toml`s, `scripts/layering.txt`, `src/app/`.
 **Decisions:** ADRs
 [0001](../../_todo/adr/0001-render-api-boundary.md),
-[0002](../../_todo/adr/0002-voxel-and-materials-stay-in-core.md),
 [0003](../../_todo/adr/0003-core-owns-event-types.md),
 [0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md),
-[0005](../../_todo/adr/0005-crate-lines-and-dependency-direction.md).
+[0005](../../_todo/adr/0005-crate-lines-and-dependency-direction.md),
+[0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md).
 
 ## Crate graph
 
@@ -50,9 +50,9 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 | A game line never depends on another game line | Strategy and FPS must separate cleanly |
 | Domain crates (`moho_core`, `moho_game`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
 
-Known debt: `voxel/` and `MaterialType` sit in the engine line
-([ADR-0002](../../_todo/adr/0002-voxel-and-materials-stay-in-core.md)). Their final
-placement is decided as part of the repo split.
+Known debt: `voxel/` and `MaterialType` still sit in the engine line.
+[ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md) moves them to the
+strategy-line `moho_voxel`; ENG-F10 delivers the move.
 
 ## Runtime composition
 

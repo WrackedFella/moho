@@ -1,6 +1,6 @@
 # 0003 — `moho_core` owns all event types
 
-**Status:** Accepted
+**Status:** Accepted; narrowed by [0010](0010-world-geometry-is-a-mesh-contract.md): `moho_core` owns engine-wide events, and line-specific events live with their line's crate
 
 ## Context
 

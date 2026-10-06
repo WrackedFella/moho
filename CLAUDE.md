@@ -54,8 +54,11 @@ moho_input      key → binding-code mapping
 moho_types      AppState, StateCoordinator
 ```
 
-- Engine crates never depend on `moho_game` (ADR-0001). `voxel/` stays in
-  `moho_core` (ADR-0002). Event types live in `moho_core::events` (ADR-0003).
+- Engine crates never depend on `moho_game` (ADR-0001). World geometry reaches
+  the engine as meshes; voxels belong to the strategy line (ADR-0010). Until
+  ENG-F10 moves it to `moho_voxel`, `voxel/` still sits in `moho_core`.
+- Engine-wide event types live in `moho_core::events`; line-specific ones live
+  with their line's crate (ADR-0003, narrowed by ADR-0010).
 - Use the event bus for cross-system fan-out; call directly within a system.
 - Entities live in typed stores (`ActorStore` in `moho_game`, `ChunkStore` in `moho_core`); no general ECS (ADR-0004).
 - Shared dependency versions go in `[workspace.dependencies]`.

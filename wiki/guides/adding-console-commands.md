@@ -17,7 +17,9 @@ flowchart LR
    here and return a usage message on bad input; never publish from a bad parse.
 3. **Publish an event.** Add an arm in `process_console_action` (`event_routing.rs`).
    Reuse an existing event family where it fits (`DebugEvent`, `GraphicsEvent`,
-   `UiEvent`); a new event type goes in `moho_core::events` ([ADR-0003](../../_todo/adr/0003-core-owns-event-types.md)).
+   `UiEvent`); a new engine-wide event type goes in `moho_core::events`, and a
+   strategy-only one in the strategy line ([ADR-0003](../../_todo/adr/0003-core-owns-event-types.md), narrowed by
+   [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md)).
 4. **Handle the event** in the matching drain in `event_processor.rs`. This is where
    `App` is mutated ([events](../architecture/events.md#the-channel-hand-off)).
 5. **Document and test.** Add a line to `help_command`, a row to
