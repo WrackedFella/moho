@@ -80,14 +80,14 @@ Each workspace crate has comprehensive documentation in its README:
 - **[moho_input/README.md](moho_input/README.md)** - Input mapping and key bindings
 
 ### Architecture Documentation
-- **[Event Bus Best Practices](wiki/engine_core/EVENT_BUS_BEST_PRACTICES.md)** - Usage patterns and common pitfalls
-- **[Event Bus Performance](wiki/engine_core/EVENT_BUS_PERFORMANCE.md)** - Benchmark results (11M events/sec)
-- **[Console Architecture](wiki/CONSOLE_ARCHITECTURE.md)** - Debug console system design
-- **[Adding Console Commands](wiki/ADDING_CONSOLE_COMMANDS.md)** - Extending the console
+- **[Event Bus Best Practices](wiki/reference/event-bus-best-practices.md)** - Usage patterns and common pitfalls
+- **[Event Bus Performance](wiki/reference/event-bus-performance.md)** - Benchmark results (11M events/sec)
+- **[Console Architecture](wiki/architecture/console.md)** - Debug console system design
+- **[Adding Console Commands](wiki/guides/adding-console-commands.md)** - Extending the console
 
 ### Technical Reference
-- **[GPU ABI](wiki/gpu_abi.md)** - Shader/CPU data layout requirements (Material, Camera, Lighting, CSM)
-- **[Preferences Format](wiki/prefs_format.md)** - Configuration file structure
+- **[GPU ABI](wiki/reference/gpu-abi.md)** - Shader/CPU data layout requirements (Material, Camera, Lighting, CSM)
+- **[Preferences Format](wiki/reference/prefs-format.md)** - Configuration file structure
 - **[Documentation Index](wiki/README.md)** - Complete documentation overview
 
 ### Day/Night Cycle
@@ -133,7 +133,7 @@ bus.subscribe(|evt: &moho_core::events::DebugEvent| {
 });
 ```
 
-See `wiki/CONSOLE_ARCHITECTURE.md` and `wiki/ADDING_CONSOLE_COMMANDS.md` for architecture and extension guidance.
+See `wiki/architecture/console.md` and `wiki/guides/adding-console-commands.md` for architecture and extension guidance.
 
 ## Architecture
 
@@ -172,7 +172,7 @@ bus.publish(UiEvent::MenuShown { name: "main".to_string() });
 
 **Performance**: <1% frame budget at 60 FPS, 11.4M events/second throughput
 
-See [EVENT_BUS_BEST_PRACTICES.md](wiki/engine_core/EVENT_BUS_BEST_PRACTICES.md) for detailed usage patterns.
+See [EVENT_BUS_BEST_PRACTICES.md](wiki/reference/event-bus-best-practices.md) for detailed usage patterns.
 
 ## Build & Release
 

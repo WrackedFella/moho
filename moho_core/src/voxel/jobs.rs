@@ -162,6 +162,7 @@ pub type MeshGeneratorFn = Box<
 >;
 
 /// Mesh generation job queue with thread pool
+// TODO: no caller outside this module; the frame loop meshes inline in `process_world_events`. Wire it in or remove it.
 pub struct MeshJobQueue {
     /// Shared queue state
     state: Arc<Mutex<QueueState>>,

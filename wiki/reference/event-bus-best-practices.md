@@ -1,5 +1,7 @@
 # Event Bus Best Practices
 
+**Source:** `moho_core/src/events/`. Model and diagrams: [architecture/events](../architecture/events.md).
+
 ## Quick Start
 
 ### Basic Usage
@@ -450,10 +452,9 @@ Based on benchmark results:
 
 ## Further Reading
 
-- **Testing Notes**: `wiki/engine_core/EVENT_BUS_TESTING_NOTES.md`
-- **Performance Analysis**: `wiki/engine_core/EVENT_BUS_PERFORMANCE.md`
-- **Implementation Plan**: `todo/EVENT_BUS.md`
-- **API Documentation**: Run `cargo doc --open`
+- [Event bus performance](event-bus-performance.md)
+- [Event bus architecture](../architecture/events.md)
+- API: `cargo doc --open --no-deps -p moho_core`
 
 ---
 

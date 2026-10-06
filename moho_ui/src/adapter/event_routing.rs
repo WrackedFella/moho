@@ -144,6 +144,7 @@ pub fn process_console_action(action: crate::overlays::ConsoleAction, event_bus:
         }
         ConsoleAction::ToggleNoclip => {
             use moho_core::events::DebugEvent;
+            // TODO: publishes a fixed `enabled: false`, so the console can only turn noclip on; carry the current state or toggle in the handler.
             event_bus.publish(DebugEvent::ToggleCollision { enabled: false });
         }
         ConsoleAction::SetSunDirection(yaw, pitch) => {
