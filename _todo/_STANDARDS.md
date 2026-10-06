@@ -31,7 +31,8 @@ them verbatim in issue titles and branch names, never in code comments.
 Planning produces a feature before any cards. A feature is the unit of
 planning and the gate for progress; cards are how it gets built.
 
-1. Draft `_feature.md` as `proposed`: the outcome and its exit criteria.
+1. Draft `_feature.md` as `proposed`: the end state, the outcome, its exit
+   criteria, and deferred scope.
 2. The user approves scope and exit criteria; status becomes `approved`.
 3. Only then decompose into cards. A card exists only under an `approved`
    feature, and only for work inside that feature's scope. Work that falls
@@ -60,8 +61,12 @@ next time the feature is planned, not in a sweep.
 **Status:** proposed
 **Issue:** #<n>            <!-- parent issue, once approved -->
 
+## End state                  <!-- where this is heading; link the vision doc/GDD -->
+Two or three sentences: what the finished system does, and for whom.
+
 ## Summary
 One paragraph: what the player/caller can do when this ships, and why it matters now.
+**Moves toward the end state by:** what this unlocks next.
 
 ## Exit criteria
 - Observable, verifiable conditions that close the feature (Gherkin welcome
@@ -70,6 +75,14 @@ One paragraph: what the player/caller can do when this ships, and why it matters
 ## Scope
 - In: ...
 - Out: ...   <!-- what a reader might assume is included but isn't -->
+
+## Direction-setting decisions  <!-- forks expensive to reverse; open ones the design must not preclude -->
+| Question | Decision | Why / cost of the alternative |
+|---|---|---|
+
+## Deferred                   <!-- ideas cut from this increment; nothing is lost -->
+| Idea | Why it waits | Revisit when |
+|---|---|---|
 
 ## Items
 | Item | Status |
