@@ -5,12 +5,14 @@
 
 mod key_names;
 mod parser;
+mod reader;
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub use key_names::parse_key_name;
 pub use parser::{binding_to_string, parse_binding};
+pub use reader::{PrefsIssue, PrefsWarning};
 
 /// Window display mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -30,12 +32,15 @@ impl WindowMode {
         }
     }
 
-    fn from_str(s: &str) -> Self {
-        match s {
-            "Fullscreen" => WindowMode::Fullscreen,
-            "Borderless" => WindowMode::Borderless,
-            _ => WindowMode::Windowed,
-        }
+    /// Inverse of `as_str`: exact names only.
+    fn parse(s: &str) -> Option<Self> {
+        [
+            WindowMode::Windowed,
+            WindowMode::Fullscreen,
+            WindowMode::Borderless,
+        ]
+        .into_iter()
+        .find(|mode| mode.as_str() == s)
     }
 }
 
@@ -263,16 +268,6 @@ impl Prefs {
         self.input_filtering_enabled = v;
         self
     }
-
-    pub fn with_window_mode(mut self, mode: WindowMode) -> Self {
-        self.window_mode = mode;
-        self
-    }
-
-    pub fn with_window_resolution(mut self, width: u32, height: u32) -> Self {
-        self.window_resolution = (width, height);
-        self
-    }
 }
 
 impl Default for Prefs {
@@ -312,152 +307,18 @@ impl Prefs {
         PathBuf::from("config/prefs.ini")
     }
 
-    /// Load preferences from config/prefs.ini. If the file doesn't exist,
-    /// create it with defaults and return defaults.
+    /// Load preferences from config/prefs.ini, logging a warning for each fallback.
     pub fn load() -> Self {
-        let path = Self::config_path();
-        if !path.exists() {
-            if let Some(dir) = path.parent() {
-                let _ = fs::create_dir_all(dir);
-            }
-            let def = Prefs::default();
-            let _ = def.save();
-            return def;
+        let (prefs, warnings) = Self::load_from(&Self::config_path());
+        for w in warnings {
+            log::warn!("{w}");
         }
-
-        let Ok(content) = fs::read_to_string(&path) else {
-            return Prefs::default();
-        };
-
-        let mut prefs = Prefs::default();
-        if let Ok(map) = ini::macro_safe_read(&content)
-            && let Some(section) = map.get("prefs").or_else(|| map.get("default"))
-        {
-            let get_str = |k: &str| section.get(k).and_then(std::clone::Clone::clone);
-            let get_f32 = |k: &str, def: f32| {
-                section
-                    .get(k)
-                    .and_then(std::clone::Clone::clone)
-                    .and_then(|s| s.parse::<f32>().ok())
-                    .unwrap_or(def)
-            };
-
-            // Use parser module for binding parsing
-            if let Some(s) = get_str("key_w") {
-                prefs.key_w = parser::parse_binding(&s, prefs.key_w);
-            }
-            if let Some(s) = get_str("key_a") {
-                prefs.key_a = parser::parse_binding(&s, prefs.key_a);
-            }
-            if let Some(s) = get_str("key_s") {
-                prefs.key_s = parser::parse_binding(&s, prefs.key_s);
-            }
-            if let Some(s) = get_str("key_d") {
-                prefs.key_d = parser::parse_binding(&s, prefs.key_d);
-            }
-            if let Some(s) = get_str("key_up") {
-                prefs.key_up = parser::parse_binding(&s, prefs.key_up);
-            }
-            if let Some(s) = get_str("key_down") {
-                prefs.key_down = parser::parse_binding(&s, prefs.key_down);
-            }
-            if let Some(s) = get_str("key_sprint") {
-                prefs.key_sprint = parser::parse_binding(&s, prefs.key_sprint);
-            }
-            if let Some(s) = get_str("key_jump") {
-                prefs.key_jump = parser::parse_binding(&s, prefs.key_jump);
-            }
-            prefs.mouse_sensitivity = get_f32("mouse_sensitivity", prefs.mouse_sensitivity);
-
-            if let Some(s) = get_str("input_filtering_enabled") {
-                prefs.input_filtering_enabled = s.to_lowercase() == "true" || s == "1";
-            }
-        }
-
-        // Load audio settings from [audio] section if present
-        if let Ok(map) = ini::macro_safe_read(&content)
-            && let Some(audio_section) = map.get("audio")
-        {
-            let get_f32 = |k: &str, def: f32| {
-                audio_section
-                    .get(k)
-                    .and_then(std::clone::Clone::clone)
-                    .and_then(|s| s.parse::<f32>().ok())
-                    .unwrap_or(def)
-            };
-
-            prefs.audio_sound_effect_volume =
-                get_f32("sound_effect_volume", prefs.audio_sound_effect_volume);
-            prefs.audio_music_volume = get_f32("music_volume", prefs.audio_music_volume);
-            prefs.audio_ui_volume = get_f32("ui_volume", prefs.audio_ui_volume);
-            prefs.audio_voice_volume = get_f32("voice_volume", prefs.audio_voice_volume);
-        }
-
-        // Load graphics settings from [graphics] section if present
-        if let Ok(map) = ini::macro_safe_read(&content)
-            && let Some(graphics_section) = map.get("graphics")
-        {
-            let get_u32 = |k: &str, def: u32| {
-                graphics_section
-                    .get(k)
-                    .and_then(std::clone::Clone::clone)
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .unwrap_or(def)
-            };
-
-            prefs.graphics_shadow_quality =
-                get_u32("shadow_quality", prefs.graphics_shadow_quality);
-            prefs.graphics_ssao_quality = get_u32("ssao_quality", prefs.graphics_ssao_quality);
-        }
-
-        // Load video settings from [video] section if present
-        if let Ok(map) = ini::macro_safe_read(&content)
-            && let Some(video_section) = map.get("video")
-        {
-            let get_str = |k: &str| video_section.get(k).and_then(std::clone::Clone::clone);
-            let get_u32 = |k: &str, def: u32| {
-                video_section
-                    .get(k)
-                    .and_then(std::clone::Clone::clone)
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .unwrap_or(def)
-            };
-
-            if let Some(s) = get_str("window_mode") {
-                prefs.window_mode = WindowMode::from_str(&s);
-            }
-            let w = get_u32("window_width", prefs.window_resolution.0);
-            let h = get_u32("window_height", prefs.window_resolution.1);
-            prefs.window_resolution = (w, h);
-        }
-
-        // Load world / streaming settings from [world] section if present
-        if let Ok(map) = ini::macro_safe_read(&content)
-            && let Some(world_section) = map.get("world")
-        {
-            let get_u32 = |k: &str, def: u32| {
-                world_section
-                    .get(k)
-                    .and_then(std::clone::Clone::clone)
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .unwrap_or(def)
-            };
-            prefs.world_load_radius = get_u32("load_radius", prefs.world_load_radius);
-            prefs.world_unload_radius = get_u32("unload_radius", prefs.world_unload_radius);
-            prefs.world_chunks_per_frame =
-                get_u32("chunks_per_frame", prefs.world_chunks_per_frame).max(1);
-        }
-
         prefs
     }
 
-    pub fn save(&self) -> Result<(), std::io::Error> {
-        let path = Self::config_path();
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
+    pub fn to_ini_string(&self) -> String {
         let bind = parser::binding_to_string;
-        let out = format!(
+        format!(
             "[prefs]\n\
              key_w={key_w}\n\
              key_a={key_a}\n\
@@ -507,10 +368,18 @@ impl Prefs {
             load = self.world_load_radius,
             unload = self.world_unload_radius,
             chunks = self.world_chunks_per_frame,
-        );
+        )
+    }
 
-        fs::write(path, out)?;
-        Ok(())
+    pub fn save(&self) -> Result<(), std::io::Error> {
+        self.save_to(&Self::config_path())
+    }
+
+    fn save_to(&self, path: &Path) -> Result<(), std::io::Error> {
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        fs::write(path, self.to_ini_string())
     }
 }
 
@@ -541,50 +410,19 @@ mod tests {
     }
 
     #[test]
-    fn test_video_round_trip_windowed() {
-        // Build a prefs with custom video settings
-        let prefs = Prefs::default()
-            .with_window_mode(WindowMode::Windowed)
-            .with_window_resolution(2560, 1440);
+    fn window_mode_parse_accepts_only_exact_names() {
+        let cases = [
+            ("Windowed", Some(WindowMode::Windowed)),
+            ("Fullscreen", Some(WindowMode::Fullscreen)),
+            ("Borderless", Some(WindowMode::Borderless)),
+            ("windowed", None),
+            ("fullscreen", None),
+            ("unknown", None),
+            ("", None),
+        ];
 
-        // Serialize to INI string directly (without touching disk)
-        let (width, height) = prefs.window_resolution();
-        let out = format!(
-            "[video]\nwindow_mode={}\nwindow_width={width}\nwindow_height={height}\n",
-            prefs.window_mode().as_str()
-        );
-
-        // Parse back
-        if let Ok(map) = ini::macro_safe_read(&out)
-            && let Some(section) = map.get("video")
-        {
-            let mode_str = section
-                .get("window_mode")
-                .and_then(std::clone::Clone::clone)
-                .unwrap_or_default();
-            let w: u32 = section
-                .get("window_width")
-                .and_then(std::clone::Clone::clone)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            let h: u32 = section
-                .get("window_height")
-                .and_then(std::clone::Clone::clone)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-
-            assert_eq!(WindowMode::from_str(&mode_str), WindowMode::Windowed);
-            assert_eq!((w, h), (2560, 1440));
-        } else {
-            panic!("Failed to parse video section");
+        for (input, expected) in cases {
+            assert_eq!(WindowMode::parse(input), expected, "input {input:?}");
         }
-    }
-
-    #[test]
-    fn test_window_mode_from_str() {
-        assert_eq!(WindowMode::from_str("Windowed"), WindowMode::Windowed);
-        assert_eq!(WindowMode::from_str("Fullscreen"), WindowMode::Fullscreen);
-        assert_eq!(WindowMode::from_str("Borderless"), WindowMode::Borderless);
-        assert_eq!(WindowMode::from_str("unknown"), WindowMode::Windowed); // default
     }
 }

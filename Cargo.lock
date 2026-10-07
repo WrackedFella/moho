@@ -2035,6 +2035,7 @@ dependencies = [
  "phf",
  "proptest",
  "serde",
+ "tempfile",
 ]
 
 [[package]]

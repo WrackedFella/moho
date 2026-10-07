@@ -17,37 +17,31 @@ use super::key_names::parse_key_name;
 /// - "ArrowUp" - Special keys
 /// - "Ctrl" - Modifier keys (treated as regular key codes)
 /// - "Shift" - Modifier keys (treated as regular key codes)
-/// - "Unbound" - No binding (0, 0)
+/// - "Unbound" - No binding (0, 0), any case
 /// - "W" - Single character keys
 ///
-/// # Arguments
-/// * `s` - The binding string to parse
-/// * `fallback` - The binding to return if parsing fails
-///
 /// # Returns
-/// A Binding representing the parsed string, or the fallback on error
+/// `None` when the string is empty or names no known key.
 ///
 /// # Examples
 /// ```ignore
-/// let binding = parse_binding("Ctrl", Binding::default());
+/// let binding = parse_binding("Ctrl").unwrap();
 /// assert_eq!(binding.code, 0x205);
 /// assert_eq!(binding.mods, 0);
 /// ```
-pub fn parse_binding(s: &str, fallback: Binding) -> Binding {
+pub fn parse_binding(s: &str) -> Option<Binding> {
     let s = s.trim();
     if s.is_empty() {
-        return fallback;
+        return None;
     }
     if s.eq_ignore_ascii_case("unbound") {
-        return Binding::new(0, 0);
+        return Some(Binding::new(0, 0));
     }
 
-    let code = parse_key_name(s, 0);
-    if code != 0 {
-        return Binding::new(code, 0);
+    match parse_key_name(s, 0) {
+        0 => None,
+        code => Some(Binding::new(code, 0)),
     }
-
-    fallback
 }
 
 /// Convert a Binding to a human-readable string for INI serialization.
@@ -103,72 +97,62 @@ mod tests {
 
     #[test]
     fn test_parse_simple_key() {
-        let fallback = Binding::default();
-        let binding = parse_binding("W", fallback);
+        let binding = parse_binding("W").unwrap();
         assert_eq!(binding.code, 'W' as u32);
         assert_eq!(binding.mods, 0);
     }
 
     #[test]
     fn test_parse_modifier_as_key() {
-        let fallback = Binding::default();
-
-        let ctrl = parse_binding("Ctrl", fallback);
+        let ctrl = parse_binding("Ctrl").unwrap();
         assert_eq!(ctrl.code, 0x205);
         assert_eq!(ctrl.mods, 0);
 
-        let shift = parse_binding("Shift", fallback);
+        let shift = parse_binding("Shift").unwrap();
         assert_eq!(shift.code, 0x204);
         assert_eq!(shift.mods, 0);
 
-        let alt = parse_binding("Alt", fallback);
+        let alt = parse_binding("Alt").unwrap();
         assert_eq!(alt.code, 0x206);
         assert_eq!(alt.mods, 0);
     }
 
     #[test]
     fn test_parse_special_keys() {
-        let fallback = Binding::default();
-
-        let up = parse_binding("ArrowUp", fallback);
+        let up = parse_binding("ArrowUp").unwrap();
         assert_eq!(up.code, 0x100);
 
-        let down = parse_binding("ArrowDown", fallback);
+        let down = parse_binding("ArrowDown").unwrap();
         assert_eq!(down.code, 0x101);
 
-        let space = parse_binding("Spacebar", fallback);
+        let space = parse_binding("Spacebar").unwrap();
         assert_eq!(space.code, ' ' as u32);
 
-        let esc = parse_binding("Escape", fallback);
+        let esc = parse_binding("Escape").unwrap();
         assert_eq!(esc.code, 0x200);
     }
 
     #[test]
     fn test_parse_unbound() {
-        let fallback = Binding::new('W' as u32, 0);
-        let binding = parse_binding("Unbound", fallback);
+        let binding = parse_binding("Unbound").unwrap();
         assert_eq!(binding.code, 0);
         assert_eq!(binding.mods, 0);
     }
 
     #[test]
-    fn test_parse_empty_returns_fallback() {
-        let fallback = Binding::new('X' as u32, 0);
-        let binding = parse_binding("", fallback);
-        assert_eq!(binding.code, 'X' as u32);
+    fn test_parse_empty_returns_none() {
+        assert_eq!(parse_binding(""), None);
     }
 
     #[test]
     fn test_parse_case_insensitive() {
-        let fallback = Binding::default();
-
-        let lower = parse_binding("w", fallback);
+        let lower = parse_binding("w").unwrap();
         assert_eq!(lower.code, 'W' as u32);
 
-        let ctrl = parse_binding("ctrl", fallback);
+        let ctrl = parse_binding("ctrl").unwrap();
         assert_eq!(ctrl.code, 0x205);
 
-        let ctrl_upper = parse_binding("CTRL", fallback);
+        let ctrl_upper = parse_binding("CTRL").unwrap();
         assert_eq!(ctrl_upper.code, 0x205);
     }
 
@@ -221,8 +205,8 @@ mod tests {
         ];
         for original in &keys {
             let string = binding_to_string(original);
-            let parsed = parse_binding(&string, Binding::default());
-            assert_eq!(parsed, *original, "Roundtrip failed for {string}");
+            let parsed = parse_binding(&string);
+            assert_eq!(parsed, Some(*original), "Roundtrip failed for {string}");
         }
     }
 }
