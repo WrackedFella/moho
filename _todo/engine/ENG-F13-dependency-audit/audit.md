@@ -44,7 +44,7 @@ declarations are follow-ups, not verdicts. Evidence: appendices A–D.
 | Scene format (ENG-F14) | glTF via `gltf` 1.4 | same | Confirms glTF 2.0; 0 unsafe; note: one owner, last release 2024-05, repo active | glTF via `gltf` 1.4 (accepted 2026-10-07) |
 | Image decoding (ENG-F14) | `image` (png) | same | Already in tree; KTX2/Basis deferred, no consumer | `image` (png) (accepted 2026-10-07) |
 | Logging (engine-wide) | `tracing` + `tracing-subscriber` | same | Spans and structured fields; already in tree | `tracing` + `tracing-subscriber` (accepted 2026-10-07) |
-| Positional audio (ENG-F16) | keep `rodio` | `rodio` + own gain/pan (~150–250 lines) | rodio's spatial model is crude; `kira` is the fallback (duplicates glam/cpal/symphonia) | **open: your call** (ENG-F16 can decide) |
+| Positional audio (ENG-F16) | keep `rodio` | `rodio` + own gain/pan (~150–250 lines) | rodio's spatial model is crude; `kira` is the fallback (duplicates glam/cpal/symphonia) | `rodio` + own gain/pan (2026-10-07) |
 | Data/mod format (ENG-F19) | `toml` | same | Override-by-id is a table merge; `ron` if enum-heavy | `toml` (accepted 2026-10-07) |
 
 ## Where each call is carried out
@@ -60,7 +60,7 @@ declarations are follow-ups, not verdicts. Evidence: appendices A–D.
 | rapier3d/glam upgrade, `paste` | [ENG-F2-09](../ENG-F2-dependency-upgrades/ENG-F2-09-physics-stack-current.md), [ENG-F2-04](../ENG-F2-dependency-upgrades/ENG-F2-04-paste-advisory-cleared.md) |
 | `noise` → in-house Perlin | [ENG-F2-10](../ENG-F2-dependency-upgrades/ENG-F2-10-terrain-noise-in-house.md) |
 | `phf` → `match` | [ENG-F12](../ENG-F12-input-actions/_feature.md) (key naming is reworked there) |
-| Planned additions | The consuming features (ENG-F12, F14, F16, F19) adopt them |
+| Planned additions | The consuming features (ENG-F12, F14, F16, F19) adopt them; ENG-F16 owns the gain/pan layer |
 | Upgrade cost of wgpu/egui | [ENG-F20](../ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) (proposed) |
 
 ## Alternatives considered for the largest stacks

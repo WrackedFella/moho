@@ -12,7 +12,10 @@ The player can tell where a sound came from. Consumer: [FPS GDD v0.2](../../../w
 
 ## Scope
 
-- Out: occlusion; reverb.
+- In: an engine-owned gain and pan layer over `rodio` (ENG-F13 call: `rodio`
+  stays; its built-in spatial model is too crude), testable as plain functions.
+- Out: occlusion; reverb. Needing either reopens the audio choice (`kira` is the
+  audited fallback).
 
 ## Items
 

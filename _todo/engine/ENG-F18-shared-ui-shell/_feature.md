@@ -17,8 +17,8 @@ The FPS needs console, settings and menus without depending on the strategy UI. 
 
 ## Notes
 
-- Moves the UI's egui-to-GPU adapter, which names wgpu today. Add no new wgpu use outside the
-  renderer crate; [ENG-F20](../ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) contains it.
+- Lands after [ENG-F20](../ENG-F20-graphics-upgrade-touches-one-crate/_feature.md), which
+  contains wgpu in the renderer first; add no new wgpu use outside it.
 
 ## Items
 
