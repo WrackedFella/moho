@@ -178,12 +178,25 @@ something observable when finished.
 
 ## Issues and branches
 
-- Issue title: `[<ID>] <title>`; body links the `_feature.md` or card. Files
-  hold the spec; issues are the queue and discussion thread.
+- Issue title: `[<ID>] <title>`. The issue is the published, accepted copy of its
+  card or `_feature.md`; the file in `_todo/` is the working copy kept for local
+  reading and drafting. When they disagree, the issue wins.
+- The body is the full spec and stands alone: every section of the card or feature,
+  minus the `**Issue:**`/`**Feature:**` header lines and template comments. Refer to
+  other items as `#N` (with ID and a few words) and to the parent through the
+  sub-issue link, never by `_todo/` path. An item with no issue yet (a proposed
+  feature) is named by ID and a few words until it is filed. Link ADRs and wiki
+  pages by URL on `dev`.
+- A filed spec changes in the issue body and the file together. Before Ready the
+  body is republished without comment; from Ready on, each change also gets an
+  issue comment saying what changed and why. A draft with no issue lives only in
+  the file.
 - An approved feature gets a parent issue labeled `feature` (issue types are not
   available on a user-owned repo); each card's issue is a sub-issue of it, so feature
   progress is visible on GitHub.
-- Labels: `line:engine` | `line:strategy` | `line:fps`; `feature` on feature issues.
+- Labels: `line:engine` | `line:strategy` | `line:fps`; `feature` on feature issues;
+  `engine-request` on engine requests. Templates: *Feature*, *Work item*, *Engine
+  request*.
 - Every issue goes on the board; Status, Priority and Agent-eligible are set there.
 - Branch from `dev`: `<type>/<ID>-<slug>` (e.g. `feat/SG-F1-04-pickup-feedback`);
   PR back into `dev`. `main` receives promotions from `dev` only.

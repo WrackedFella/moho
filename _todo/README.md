@@ -29,7 +29,7 @@ the audit at the v1 gate ([ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md
 | Feature |
 |---|
 | [ENG-F1 Engine hygiene](engine/ENG-F1-engine-hygiene/_feature.md) |
-| [ENG-F2 Dependency upgrades](engine/ENG-F2-dependency-upgrades/_feature.md) |
+| [ENG-F2 The dependency tree is current, clean and carries only chosen crates](engine/ENG-F2-dependency-upgrades/_feature.md) |
 | [ENG-F3 Renderer pipeline cleanup](engine/ENG-F3-renderer-pipeline-cleanup/_feature.md) |
 | [ENG-F4 Terrain rendering debt](engine/ENG-F4-terrain-rendering-debt/_feature.md) |
 | [ENG-F5 Engine and games live in separate repos](engine/ENG-F5-physical-repo-split/_feature.md) |
@@ -47,6 +47,7 @@ the audit at the v1 gate ([ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md
 | [ENG-F17 Agents path over any static level](engine/ENG-F17-navigation/_feature.md) |
 | [ENG-F18 Both games share the UI shell](engine/ENG-F18-shared-ui-shell/_feature.md) |
 | [ENG-F19 Games load definitions and content from layered roots](engine/ENG-F19-data-and-mod-content/_feature.md) |
+| [ENG-F20 A wgpu or egui upgrade touches one crate](engine/ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) (proposed) |
 
 ## strategy-game/
 

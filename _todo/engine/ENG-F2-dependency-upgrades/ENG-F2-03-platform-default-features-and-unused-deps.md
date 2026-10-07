@@ -1,6 +1,7 @@
 # Unused dependencies and default features are trimmed
 
 **Feature:** [ENG-F2](_feature.md)
+**Issue:** #96
 
 ## Summary
 
@@ -16,12 +17,27 @@ removes dependencies that are declared but unused.
   `rwh_06`, `x11`, `wayland` and `wayland-dlopen`. `egui-winit` uses
   `default-features = false` with `clipboard`, `wayland` and `x11`.
 - The `ttf-parser` ignore is removed from `deny.toml`.
-- Unused declared dependencies removed (2026-10 survey; re-verify each):
-  - `moho_core`: `bytemuck`, `noise`, `serde` (`winit` and `legion` go in
-    [ENG-F8-02](../ENG-F8-foundation-gate/ENG-F8-02-layering-check.md) and [ENG-F7-02](../ENG-F7-maintained-ecs/ENG-F7-02-legion-removed.md))
-  - `moho_renderer`: `bincode`
-  - `moho_ui`: `once_cell`, `gilrs`, `serde`, `bincode`
+- Unused declared dependencies removed (survey corrected by the
+  [ENG-F13 audit](../ENG-F13-dependency-audit/audit.md); re-verify each):
+  - `moho_core`: `bytemuck`, `noise` (`moho_core` does use `serde`; keep it)
+  - `moho_renderer`: `bincode`, `tempfile` (dev)
+  - `moho_ui`: `once_cell`, `gilrs`, `serde`, `bincode`, `ini`
+  - `moho_audio`: `env_logger` (dev)
   - `moho_physics`: `moho_core`
   - `moho_render_api`: `glam`
   - root: `bytemuck`, `pollster`, `rand`
 - `moho_ui`'s stale RAUI manifest comment is removed.
+- The yanked `chacha20` 0.10.1 is updated out of the lockfile; `just deny`
+  reports no yanked crates.
+
+## Acceptance criteria
+
+- [ ] Each listed declaration is absent from its manifest, and `just check` passes.
+- [ ] `cargo tree --workspace -i ttf-parser` reports no match; the RUSTSEC-2026-0192 ignore is gone.
+- [ ] `just deny` passes with no yanked-crate warning.
+
+## Verification
+
+- The window opens and resizes on X11 and Wayland; on Wayland it has no
+  client-side title bar (accepted cost, ADR-0008).
+- Clipboard copy and paste work in the console.
