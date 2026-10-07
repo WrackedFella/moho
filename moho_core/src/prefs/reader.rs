@@ -458,7 +458,6 @@ mod tests {
 
     #[test]
     fn malformed_value_warns_and_only_that_key_falls_back() {
-        // (section, key, value), the outline's rows in order.
         let rows = [
             ("prefs", "mouse_sensitivity", "fast"),
             ("prefs", "mouse_sensitivity", "NaN"),
@@ -722,8 +721,7 @@ mod tests {
         assert_eq!(prefs.key_w(), Binding::new('I' as u32, 0));
     }
 
-    /// `save` writes to the fixed, CWD-relative `config_path()`, so it cannot be pointed at a
-    /// temp dir without changing the process-wide CWD. This pins the text `save` writes instead.
+    /// Pins the exact text written for the defaults, so a format change is deliberate.
     #[test]
     fn to_ini_string_of_defaults_is_the_save_format() {
         let expected = "[prefs]\n\

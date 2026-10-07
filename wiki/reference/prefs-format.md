@@ -20,7 +20,8 @@ Anything else that can't be used is logged as a warning and falls back:
 One bad value never stops the other keys from loading. Section and key names are
 case-insensitive; `;` and `#` start a comment anywhere on a line, so they can't appear
 in a value. Keys before any section header are read as `[prefs]` when there is no
-`[prefs]` section.
+`[prefs]` section; when there is one, they are ignored and each is reported as an
+unknown key of section `[default]`.
 
 ```mermaid
 flowchart LR
