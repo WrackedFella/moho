@@ -609,7 +609,7 @@ mod tests {
         assert!(!reason.is_empty());
         // The parser counts lines from 0; "[video" is line index 2.
         assert!(
-            reason.contains('2'),
+            reason.starts_with("line 2:"),
             "reason should carry the line: {reason}"
         );
         assert_eq!(prefs, Prefs::default());
