@@ -42,7 +42,9 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
           plugins: devflow@claude-skills
-          prompt: ${{ github.event.inputs.prompt || (github.event_name == 'pull_request' && 'Smoke test, read-only: (1) list the devflow skills and agents you can see; (2) find the devflow plugin directory with find under ~/.claude/plugins and run its scripts/board next WrackedFella 1, reporting the output or the exact error; (3) report which of ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN authenticated you if you can tell. Change no files and post no comments.') || '' }}
-          claude_args: >-
+          prompt: |
+            ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prompt || '' }}
+            ${{ github.event_name == 'pull_request' && 'Smoke test, read-only. 1) List the devflow skills and agents you can see. 2) Find the devflow plugin directory with find under ~/.claude/plugins and run its scripts/board next WrackedFella 1, reporting the output or the exact error. 3) Say which of ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN authenticated you if you can tell. Change no files and post no comments.' || '' }}
+          claude_args: |
             --max-turns 12
             --allowedTools "Bash(find:*),Bash(ls:*),Bash(*scripts/board next *),Bash(gh auth status)"
