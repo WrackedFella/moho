@@ -1,6 +1,7 @@
 # ENG-F10 — The engine renders and collides with world geometry from any source
 
-**Status:** proposed (early tier; must land before the FPS prototype loads maps)
+**Issue:** #80
+
 
 ## Summary
 
@@ -55,8 +56,8 @@ for the repo split ([ENG-F5](../ENG-F5-physical-repo-split/_feature.md)). Decisi
 
 ## Items
 
-| Item | Status |
-|---|---|
+| Item |
+|---|
 
 ## Notes
 

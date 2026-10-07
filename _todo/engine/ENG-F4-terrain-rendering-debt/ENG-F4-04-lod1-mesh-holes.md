@@ -1,6 +1,5 @@
 # LOD1 mesh has holes and looks too blocky
 
-**Status:** not started
 **Feature:** [ENG-F4](_feature.md)
 
 ## Summary

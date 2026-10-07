@@ -1,6 +1,5 @@
 # Mining can leave gaps in nearby terrain
 
-**Status:** not started
 **Feature:** [SG-F2](_feature.md)
 
 ## Summary

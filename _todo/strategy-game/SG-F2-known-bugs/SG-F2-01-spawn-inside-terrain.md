@@ -1,6 +1,6 @@
 # Player can spawn inside terrain
 
-**Status:** not started (confirm the trigger first)
+**Note:** Confirm the trigger first
 **Feature:** [SG-F2](_feature.md)
 
 ## Summary

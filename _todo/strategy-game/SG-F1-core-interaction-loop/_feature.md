@@ -1,6 +1,5 @@
 # SG-F1 — Core Interaction & Resource Loop
 
-**Status:** in progress (3/4 items done)
 
 ## Summary
 
@@ -9,12 +8,12 @@ requires an equipped tool. The minimum playable resource loop.
 
 ## Items
 
-| Item | Status |
-|---|---|
-| [SG-F1-01 mine-voxel](SG-F1-01-mine-voxel.md) | done |
-| [SG-F1-02 hotbar-display](SG-F1-02-hotbar-display.md) | done |
-| [SG-F1-03 tool-gating](SG-F1-03-tool-gating.md) | done |
-| [SG-F1-04 pickup-feedback](SG-F1-04-pickup-feedback.md) | not started |
+| Item |
+|---|
+| [SG-F1-01 mine-voxel](SG-F1-01-mine-voxel.md) |
+| [SG-F1-02 hotbar-display](SG-F1-02-hotbar-display.md) |
+| [SG-F1-03 tool-gating](SG-F1-03-tool-gating.md) |
+| [SG-F1-04 pickup-feedback](SG-F1-04-pickup-feedback.md) |
 
 ## Notes
 

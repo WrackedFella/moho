@@ -1,6 +1,5 @@
 # ENG-F2 — Dependency Upgrades
 
-**Status:** in progress
 
 ## Summary
 
@@ -8,12 +7,12 @@ Keep workspace dependencies current before drift makes an upgrade a rewrite.
 
 ## Items
 
-| Item | Status |
-|---|---|
-| [ENG-F2-01 bincode-migration](ENG-F2-01-bincode-migration.md) | not started (decided: [ADR-0006](../../adr/0006-save-format-contract.md)) |
-| [ENG-F2-02 egui-ui-architecture-migration](ENG-F2-02-egui-ui-architecture-migration.md) | not started |
-| [ENG-F2-03 platform-default-features-and-unused-deps](ENG-F2-03-platform-default-features-and-unused-deps.md) | not started |
-| [ENG-F2-04 paste-advisory-cleared](ENG-F2-04-paste-advisory-cleared.md) | deferred |
+| Item |
+|---|
+| [ENG-F2-01 bincode-migration](ENG-F2-01-bincode-migration.md) |
+| [ENG-F2-02 egui-ui-architecture-migration](ENG-F2-02-egui-ui-architecture-migration.md) |
+| [ENG-F2-03 platform-default-features-and-unused-deps](ENG-F2-03-platform-default-features-and-unused-deps.md) |
+| [ENG-F2-04 paste-advisory-cleared](ENG-F2-04-paste-advisory-cleared.md) |
 
 ## Watchlist (blocked, no action until unblocked)
 

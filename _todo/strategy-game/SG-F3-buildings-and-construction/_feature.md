@@ -1,6 +1,5 @@
 # SG-F3 — Player places buildings from a build menu
 
-**Status:** parked
 
 ## Summary
 

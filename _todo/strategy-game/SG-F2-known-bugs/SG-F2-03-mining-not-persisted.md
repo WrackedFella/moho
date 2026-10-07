@@ -1,6 +1,6 @@
 # Mined blocks stay mined after quitting and reloading
 
-**Status:** not started (reproduce first)
+**Note:** Reproduce first
 **Feature:** [SG-F2](_feature.md)
 
 ## Summary

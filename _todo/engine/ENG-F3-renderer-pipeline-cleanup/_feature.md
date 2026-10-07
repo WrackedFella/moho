@@ -1,7 +1,7 @@
 # ENG-F3 — Renderer Pipeline Cleanup
 
-**Status:** not started (earlier pipeline phases shipped with the renderer decoupling — see
-[ADR-0001](../../adr/0001-render-api-boundary.md))
+**Note:** Earlier pipeline phases shipped with the renderer decoupling — see
+[ADR-0001](../../adr/0001-render-api-boundary.md)
 
 ## Summary
 
@@ -12,11 +12,11 @@ terrain).
 
 ## Items
 
-| Item | Status |
-|---|---|
-| [ENG-F3-01 bind-group-split](ENG-F3-01-bind-group-split.md) | not started |
-| [ENG-F3-02 frustum-culling-sorting](ENG-F3-02-frustum-culling-sorting.md) | not started |
-| [ENG-F3-03 misc-cleanups](ENG-F3-03-misc-cleanups.md) | not started |
+| Item |
+|---|
+| [ENG-F3-01 bind-group-split](ENG-F3-01-bind-group-split.md) |
+| [ENG-F3-02 frustum-culling-sorting](ENG-F3-02-frustum-culling-sorting.md) |
+| [ENG-F3-03 misc-cleanups](ENG-F3-03-misc-cleanups.md) |
 
 ## Notes
 

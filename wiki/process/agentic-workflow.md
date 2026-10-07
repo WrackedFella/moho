@@ -3,18 +3,19 @@
 Humans decide what to build and merge the results; agents implement against approved
 specs behind deterministic gates. Roles, agents and generic skills come from the
 `devflow` plugin ([claude-skills](https://github.com/WrackedFella/claude-skills)),
-pinned in `.claude/settings.json`.
+pinned in `.claude/settings.json`. Work-item state lives on the
+[Moho project board](https://github.com/users/WrackedFella/projects/1), not in the cards.
 
 ## Flow
 
 | Step | Who | How | Output |
 |---|---|---|---|
-| 1. Shape a feature | You + Business Analyst | `/devflow:business-analyst <topic>` | `_feature.md` with exit criteria, `proposed` → you approve |
+| 1. Shape a feature | You + Business Analyst | `/devflow:business-analyst <topic>` | `_feature.md` with exit criteria, you approve scope; feature issue filed |
 | 2. Write work items | You + Business Analyst | same session | Cards with Gherkin acceptance criteria |
 | 3. Specify | You + Tech Lead | `/devflow:tech-lead <item>` | Tech spec, test map, gate class; ADR if needed |
-| 4. Queue | You | File the issue (`[ID] title`, links card), label `agent-ready`; card → `ready` | |
+| 4. Queue | You | File the issue (`[ID] title`, links card), add to the board; Status → Ready, Agent-eligible → Yes | |
 | 5. Implement | Orchestrator | `/devflow:orchestrate <issue>` | Branch from `dev`, test-first commits, PR into `dev` |
-| 6. Review and merge | You | Review the PR; merge | Card `done` via the PR |
+| 6. Review and merge | You | Review the PR; merge | Board Status → Done |
 
 During step 5 the Orchestrator pauses for your review of failing tests when the item's
 gate class is `domain`. Otherwise it runs through: failing tests → implementation →

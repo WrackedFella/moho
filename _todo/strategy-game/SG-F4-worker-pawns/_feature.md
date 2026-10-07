@@ -1,6 +1,5 @@
 # SG-F4 — Worker pawns gather resources on their own
 
-**Status:** parked
 
 ## Summary
 

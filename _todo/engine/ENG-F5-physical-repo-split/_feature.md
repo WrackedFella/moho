@@ -1,6 +1,6 @@
 # ENG-F5 — Engine and games live in separate repos
 
-**Status:** parked (Phase 3; gate agreed 2026-08-21, amended 2026-10-05)
+**Note:** Phase 3; gate agreed 2026-08-21, amended 2026-10-05
 
 ## Summary
 
@@ -44,8 +44,8 @@ Not required: [SG-F2-01](../../strategy-game/SG-F2-known-bugs/SG-F2-01-spawn-ins
 
 ## Items
 
-| Item | Status |
-|---|---|
+| Item |
+|---|
 
 ## Notes
 

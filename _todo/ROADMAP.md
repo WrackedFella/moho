@@ -1,64 +1,121 @@
 # Moho — Roadmap
 
-The order in which features are tackled, and why. [`README.md`](README.md)
-indexes what exists; this file sequences it. Update it when a phase's
-status changes, an item moves between phases, or a decision is made.
+The order in which features are tackled, and why, as milestones with gates. [`README.md`](README.md)
+indexes what exists; this file sequences it. Item status is not tracked here; it lives on the
+[project board](https://github.com/users/WrackedFella/projects/1). Update this file when a milestone gate closes, an item moves between phases, or a decision is made.
 
-**Now:** Phase 0 is done: the Foundation gate ([ENG-F8](engine/ENG-F8-foundation-gate/_feature.md)) holds, so feature work
-is open. Next: Phase 2's first strategy items and the cheap Phase 1 items.
+**Now:** M0 is done. M1 is open: the only milestone planned to card level
+(rolling wave, [`_STANDARDS.md`](_STANDARDS.md#milestones)).
 
-## Phase 0 — Foundation gate (done 2026-10-05)
+## M0 — Foundation (done 2026-10-05)
+
+**Intent:** Feature work can start safely.
+**Gate:** [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) criteria (verified).
 
 Exit: all four [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) criteria verified. Order matters: the crate table comes
 first, so later moves land in the right crates. [ENG-F7-01](engine/ENG-F7-maintained-ecs/ENG-F7-01-typed-entity-stores.md) has no dependency
 and can run alongside 0.2–0.3.
 
-| # | Item | Criterion | Depends on | Status |
-|---|---|---|---|---|
-| 0.1 | Accept [ADR-0005](adr/0005-crate-lines-and-dependency-direction.md) (crate lines) and [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) | G2 | — | done |
-| 0.2 | [ENG-F8-01](engine/ENG-F8-foundation-gate/ENG-F8-01-moho-sim-merged-into-game.md): `moho_sim` merged into `moho_game` | G2 | 0.1 | done (#63) |
-| 0.3 | [ENG-F8-02](engine/ENG-F8-foundation-gate/ENG-F8-02-layering-check.md): layering check in `just check`; `moho_core` drops `winit` | G2 | 0.2 | done (#64) |
-| 0.4 | [ENG-F7-01](engine/ENG-F7-maintained-ecs/ENG-F7-01-typed-entity-stores.md): typed chunk and actor stores (domain: tests reviewed first) | G1 | 0.1 | done (#65) |
-| 0.5 | [ENG-F7-02](engine/ENG-F7-maintained-ecs/ENG-F7-02-legion-removed.md): legion removed; deny ignores name their owning cards | G1, G3 | 0.4 | done (#66) |
-| 0.6 | [ENG-F2-01](engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md) rewritten to [ADR-0006](adr/0006-save-format-contract.md) (decision only) | G4 | — | done |
+| # | Item | Criterion | Depends on |
+|---|---|---|---|
+| 0.1 | Accept [ADR-0005](adr/0005-crate-lines-and-dependency-direction.md) (crate lines) and [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) | G2 | — |
+| 0.2 | [ENG-F8-01](engine/ENG-F8-foundation-gate/ENG-F8-01-moho-sim-merged-into-game.md): `moho_sim` merged into `moho_game` | G2 | 0.1 |
+| 0.3 | [ENG-F8-02](engine/ENG-F8-foundation-gate/ENG-F8-02-layering-check.md): layering check in `just check`; `moho_core` drops `winit` | G2 | 0.2 |
+| 0.4 | [ENG-F7-01](engine/ENG-F7-maintained-ecs/ENG-F7-01-typed-entity-stores.md): typed chunk and actor stores (domain: tests reviewed first) | G1 | 0.1 |
+| 0.5 | [ENG-F7-02](engine/ENG-F7-maintained-ecs/ENG-F7-02-legion-removed.md): legion removed; deny ignores name their owning cards | G1, G3 | 0.4 |
+| 0.6 | [ENG-F2-01](engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md) rewritten to [ADR-0006](adr/0006-save-format-contract.md) (decision only) | G4 | — |
 
-## Phase 1 — Early (post-gate, ahead of the feature that needs it)
+
+## M1 — Two consumers can start
+
+**Intent:** Both games build on the engine without forking it.
+**Gate (all must hold):**
+- [ENG-F10](engine/ENG-F10-world-geometry-from-any-source/_feature.md), [ENG-F11](engine/ENG-F11-shared-app-loop/_feature.md) and [ENG-F12](engine/ENG-F12-input-actions/_feature.md) done.
+- [ENG-F13](engine/ENG-F13-dependency-audit/_feature.md) verdicts recorded.
+- [ADR-0011](adr/0011-simulation-stays-network-ready.md) (proposed, being written) accepted.
+- 1.2 and 1.6 done.
 
 Grouped by trigger: "now" items are cheap and independent; the rest land
 just before the work that needs them, not sooner.
 
-| # | Item | When | Status |
-|---|---|---|---|
-| 1.6 | [ENG-F3-03](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-03-misc-cleanups.md): delete the unsound `FrameCallback` path | now (soundness) | not started |
-| 1.2 | [ENG-F2-03](engine/ENG-F2-dependency-upgrades/ENG-F2-03-platform-default-features-and-unused-deps.md): winit/egui-winit default features off; unused deps removed ([ADR-0008](adr/0008-keep-winit-for-windowing-and-input.md)) | now | not started |
-| 1.7 | Amend [ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md)'s gate (boundary readiness, FPS as second consumer) | now | done |
-| 1.1 | Save-format migration to [ADR-0006](adr/0006-save-format-contract.md) ([ENG-F2-01](engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md)) | before [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) (first new persisted type); an [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) fix only if it changes the save format | not started |
-| 1.8 | [ENG-F10](engine/ENG-F10-world-geometry-from-any-source/_feature.md): world geometry from any source; voxels move to the strategy line ([ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md)) | before P.2 | proposed |
-| 1.5 | `moho_types`/`moho_input` → `moho_ui`; one key model; cursor grab order ([ADR-0008](adr/0008-keep-winit-for-windowing-and-input.md)) | before FPS input work (P.2) | not carded |
-| 1.3 | [ENG-F9](engine/ENG-F9-tests-prove-behaviour/_feature.md): domain tests catch behaviour changes | before [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) | proposed |
+| # | Item | When |
+|---|---|---|
+| 1.6 | [ENG-F3-03](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-03-misc-cleanups.md): delete the unsound `FrameCallback` path | now (soundness) |
+| 1.2 | [ENG-F2-03](engine/ENG-F2-dependency-upgrades/ENG-F2-03-platform-default-features-and-unused-deps.md): winit/egui-winit default features off; unused deps removed ([ADR-0008](adr/0008-keep-winit-for-windowing-and-input.md)) | now |
+| 1.7 | Amend [ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md)'s gate (boundary readiness, FPS as second consumer) | now |
+| 1.11 | [ENG-F13](engine/ENG-F13-dependency-audit/_feature.md): dependency audit | now, before ENG-F12 or any new dependency |
+| 1.8 | [ENG-F10](engine/ENG-F10-world-geometry-from-any-source/_feature.md): world geometry from any source; voxels move to the strategy line ([ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md)) | before P.2; contract and renderer first |
+| 1.9 | [ENG-F11](engine/ENG-F11-shared-app-loop/_feature.md): shared app loop, headless tick, engine `GameClock` | before P.2 |
+| 1.10 | [ENG-F12](engine/ENG-F12-input-actions/_feature.md): game-defined input actions; replaces the former 1.5 | before P.2; after 1.11 |
+| 1.12 | [ADR-0011](adr/0011-simulation-stays-network-ready.md) (proposed, being written): simulation stays network-ready | now (session B) |
+| 1.1 | Save-format migration to [ADR-0006](adr/0006-save-format-contract.md) ([ENG-F2-01](engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md)), envelope in the engine | before [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) (first new persisted type); an [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) fix only if it changes the save format |
+| 1.3 | [ENG-F9](engine/ENG-F9-tests-prove-behaviour/_feature.md): domain tests catch behaviour changes | before [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) |
 
-## Phase 2 — Strategy feature work
+1.1 and 1.3 are triggered by later work, not gate items.
 
-| # | Feature | Depends on | Status |
-|---|---|---|---|
-| 2.1 | [SG-F1-04](strategy-game/SG-F1-core-interaction-loop/SG-F1-04-pickup-feedback.md) pickup feedback | Phase 0 | not started |
-| 2.2 | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) mining not persisted (reproduce first), then [SG-F2-02](strategy-game/SG-F2-known-bugs/SG-F2-02-mining-mesh-gaps.md) mesh gaps | Phase 0 | not started |
-| 2.3 | [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) buildings and construction | 1.1 | parked |
-| 2.4 | [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) worker pawns (first possible ECS consumer, [ADR-0004](adr/0004-entity-storage-without-a-general-ecs.md)) | 1.3, 2.3 | parked |
+## M2 — Engine MVP
 
-## Parallel — FPS line
+**Intent:** The engine carries both games' current scopes.
+**Gate (all must hold):**
+- FPS GDD Phase 1–2 (pending on `dev`) playable on engine-line crates:
+  ENG-F14–F19 done.
+- Strategy v1 slice done: SG-F1-04, SG-F2-03, SG-F2-02.
+- Save envelope on [ADR-0006](adr/0006-save-format-contract.md) (1.1).
 
-| # | Feature | Depends on | Status |
-|---|---|---|---|
-| P.1 | [FPS-F1](fps-game/FPS-F1-game-design-document/_feature.md) GDD (writing only; can run during Phase 0) | — | not started |
-| P.2 | FPS prototype crate in the monorepo, held apart by the layering check; loads a non-voxel map | P.1, 1.8, 1.5 | — |
+Features named, not carded until M1's gate closes. The strategy slice and
+the FPS rules crate are greenlit now (they don't wait on M1).
 
-## Phase 3 — v1 and repo split
+### Engine (order: F14 → F15 → F16 → F18 → F17; F19 before FPS Phase 2; all after ENG-F13)
 
-[ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md): tag `v1.0` and split
-once its gate holds: the strategy v1 slice (2.1, 2.2), licences and the
-third-party notices file, [ENG-F10](engine/ENG-F10-world-geometry-from-any-source/_feature.md) done, and P.2 as a second consumer whose
-last two features didn't change the engine's public API.
+| # | Feature | Depends on |
+|---|---|---|
+| 2.5 | [ENG-F14](engine/ENG-F14-scene-import/_feature.md) scene import | 1.8, 1.11 |
+| 2.6 | [ENG-F15](engine/ENG-F15-physics-queries-and-bodies/_feature.md) physics queries and bodies | 1.11 |
+| 2.7 | [ENG-F16](engine/ENG-F16-positional-audio/_feature.md) positional audio | 1.11 |
+| 2.8 | [ENG-F18](engine/ENG-F18-shared-ui-shell/_feature.md) shared UI shell | 1.11 |
+| 2.9 | [ENG-F17](engine/ENG-F17-navigation/_feature.md) navigation (Phase 1 AI may use waypoints meanwhile) | 1.8, 1.11 |
+| 2.10 | [ENG-F19](engine/ENG-F19-data-and-mod-content/_feature.md) data and mod content | 1.11; before FPS Phase 2 |
+
+### Strategy
+
+| # | Feature | Depends on |
+|---|---|---|
+| 2.1 | [SG-F1-04](strategy-game/SG-F1-core-interaction-loop/SG-F1-04-pickup-feedback.md) pickup feedback | M0; land before ENG-F10's voxel extraction |
+| 2.2 | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) mining not persisted (reproduce first), then [SG-F2-02](strategy-game/SG-F2-known-bugs/SG-F2-02-mining-mesh-gaps.md) mesh gaps | M0; land before ENG-F10's voxel extraction |
+| 2.3 | [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) buildings and construction (not in the v1 slice) | 1.1 |
+| 2.4 | [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) worker pawns (first possible ECS consumer, [ADR-0004](adr/0004-entity-storage-without-a-general-ecs.md)) | 1.3, 2.3 |
+
+### FPS line
+
+| # | Feature | Depends on |
+|---|---|---|
+| P.1 | [FPS-F1](fps-game/FPS-F1-game-design-document/_feature.md) GDD (v0.2 drafted in the FPS project; lands in `wiki/fps/`) | — |
+| P.3 | FPS rules crate (magazine, body-part damage): platform-free, fps + domain rows in the layering check; needs its own feature first | P.1 |
+| P.2 | FPS prototype crate in the monorepo, held apart by the layering check; loads a non-voxel map | P.1, 1.8, 1.9, 1.10; arena also 2.5–2.9 |
+
+## M3 — v1.0 and split
+
+**Intent:** The engine boundary is settled and versioned.
+**Gate:** the [ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md) gate: licences and the third-party
+notices file; two FPS features that didn't change the engine's public API;
+the `v1.0` tag.
+
+## M4 — Production-ready
+
+**Intent:** A build could ship to players.
+**Gate:** defined when M3 closes. Likely: per-platform perf budgets, crash
+reporting, packaging and installers, a save-compatibility promise, all-OS CI
+on every PR.
+
+## M5+ — Engine depth
+
+**Intent:** Features found in mature engines, each pulled by a named consumer.
+**Gate:** each is its own feature, in no set order: in-engine editor,
+rendering options (forward+/deferred, quality tiers), skeletal animation
+tooling, scripted-mods ADR, netcode ADR.
+
+Guardrail until then: don't close the door. Scenes stay data (an editor
+edits data); ADR-0011's rules cover netcode.
 
 ## Backlog (opportunistic, when touching the area)
 
@@ -84,3 +141,10 @@ tables, `noise`'s duplicate `rand`, `crossbeam-channel` → `std::sync::mpsc`,
 | 2026-10-05 | The engine sees world geometry as meshes; voxels move to a strategy-line crate | [ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md) |
 | 2026-10-05 | Repo-split gate requires an agnostic engine and the FPS as a settled second consumer | [ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md) |
 | 2026-10-06 | ADR-0010 accepted; ADR-0002 superseded, ADR-0003 narrowed to engine-wide events | [ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md) |
+| 2026-10-05 | Multiplayer later or never; no design may close it | [ADR-0011](adr/0011-simulation-stays-network-ready.md) (proposed, being written) |
+| 2026-10-05 | Shared app loop is an engine crate ([ENG-F11](engine/ENG-F11-shared-app-loop/_feature.md)); input is engine actions ([ENG-F12](engine/ENG-F12-input-actions/_feature.md)), replacing 1.5 | [ENG-F11](engine/ENG-F11-shared-app-loop/_feature.md), [ENG-F12](engine/ENG-F12-input-actions/_feature.md) |
+| 2026-10-05 | Mods data-only now (layered roots, override by stable id); scripted mods later, own ADR | [ENG-F19](engine/ENG-F19-data-and-mod-content/_feature.md) |
+| 2026-10-05 | No dependency assumed; audit verdicts keep / replace / fork / homebrew / drop | [ENG-F13](engine/ENG-F13-dependency-audit/_feature.md) |
+| 2026-10-05 | Map format: glTF 2.0 recommended (audit confirms); importer engine, map loader FPS-line | [ENG-F14](engine/ENG-F14-scene-import/_feature.md) |
+| 2026-10-06 | Milestones with gates; only the next milestone is carded | [`_STANDARDS.md`](_STANDARDS.md#milestones) |
+| 2026-10-06 | ENG-F6's tick criterion moves to ENG-F11; ENG-F6 keeps seeded RNG | [ENG-F6](engine/ENG-F6-headless-deterministic-logic/_feature.md) |

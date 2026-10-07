@@ -1,6 +1,6 @@
 # SG-F2 — Known Bugs
 
-**Status:** not started, low priority — none block development
+**Note:** Low priority — none block development
 
 ## Summary
 
@@ -9,11 +9,11 @@ next touched, or on a dedicated bug-fix pass.
 
 ## Items
 
-| Item | Status |
-|---|---|
-| [SG-F2-01 spawn-inside-terrain](SG-F2-01-spawn-inside-terrain.md) | not started |
-| [SG-F2-02 mining-mesh-gaps](SG-F2-02-mining-mesh-gaps.md) | not started |
-| [SG-F2-03 mining-not-persisted](SG-F2-03-mining-not-persisted.md) | not started |
+| Item |
+|---|
+| [SG-F2-01 spawn-inside-terrain](SG-F2-01-spawn-inside-terrain.md) |
+| [SG-F2-02 mining-mesh-gaps](SG-F2-02-mining-mesh-gaps.md) |
+| [SG-F2-03 mining-not-persisted](SG-F2-03-mining-not-persisted.md) |
 
 ## Notes
 

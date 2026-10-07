@@ -1,6 +1,5 @@
 # Smooth-terrain per-vertex lighting is a placeholder
 
-**Status:** not started
 **Feature:** [ENG-F4](_feature.md)
 
 ## Summary

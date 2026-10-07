@@ -1,6 +1,5 @@
 # ENG-F7 — Entity storage is maintained and legion-free
 
-**Status:** done (Foundation gate, [ENG-F8](../ENG-F8-foundation-gate/_feature.md))
 **Issue:** #62
 **Integration branch:** `feature/ENG-F8-foundation-gate`
 
@@ -33,10 +32,10 @@ on whatever the engine chooses here, so decide before the repo split.
 
 ## Items
 
-| Item | Status |
-|---|---|
-| [ENG-F7-01 typed-entity-stores](ENG-F7-01-typed-entity-stores.md) | done |
-| [ENG-F7-02 legion-removed](ENG-F7-02-legion-removed.md) | done |
+| Item |
+|---|
+| [ENG-F7-01 typed-entity-stores](ENG-F7-01-typed-entity-stores.md) |
+| [ENG-F7-02 legion-removed](ENG-F7-02-legion-removed.md) |
 
 ## Notes
 

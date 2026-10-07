@@ -6,9 +6,9 @@ How work items are organized and written. Applies to every project line.
 
 ```
 _todo/
-  README.md                     <- index: lines, features, status
+  README.md                     <- index: lines and features
   _STANDARDS.md                 <- this file
-  ROADMAP.md                    <- order of work: phases, dependencies, decisions
+  ROADMAP.md                    <- order of work: milestones, gates, decisions
   adr/NNNN-<slug>.md            <- architecture decision records (index: adr/README.md)
   engine/ENG-F<n>-<slug>/       <- engine crates (anything that ships in moho-engine)
   strategy-game/SG-F<n>-<slug>/ <- strategy/base-builder game
@@ -26,40 +26,52 @@ in `engine/`.
 `ENG-F3-01`, `FPS-F1`. IDs are unique across the repo and never reused; use
 them verbatim in issue titles and branch names, never in code comments.
 
+## Item state lives on the board
+
+The [project board](https://github.com/users/WrackedFella/projects/1) is the single
+record of work-item state: **Status** (Backlog, Needs spec, Ready, In progress, In
+review, Done), **Priority** (P0-P2), **Gate class** (domain, glue) and
+**Agent-eligible** (Yes, No). Cards, feature files, the README index and the roadmap
+carry no status. Skills change the board only through devflow's `scripts/board`.
+
+If a card and the board disagree, the board wins. Never "fix" the conflict by editing
+the card; report it to the user. Reasons an item is paused or blocked stay in the card
+as prose under a `**Note:**` line, not as a status.
+
 ## Features first
 
 Planning produces a feature before any cards. A feature is the unit of
 planning and the gate for progress; cards are how it gets built.
 
-1. Draft `_feature.md` as `proposed`: the end state, the outcome, its exit
+1. Draft `_feature.md` as a draft: the end state, the outcome, its exit
    criteria, and deferred scope.
-2. The user approves scope and exit criteria; status becomes `approved`.
-3. Only then decompose into cards. A card exists only under an `approved`
+2. The user approves scope and exit criteria; the feature then gets its parent issue
+   (see Issues and branches). A feature with no `feature` issue is a proposal.
+3. Only then decompose into cards. A card exists only under an approved
    feature, and only for work inside that feature's scope. Work that falls
    outside it is a new feature proposal, not a stray card.
-4. The feature is `done` when its exit criteria are verified, not merely when
+4. The feature is Done on the board when its exit criteria are verified, not merely when
    its cards are done. Missing coverage becomes a new card.
 
 Features written before this rule lack exit criteria and scope; add them the
 next time the feature is planned, not in a sweep.
 
-## Feature lifecycle
+## Milestones
 
-| Status | Meaning |
-|---|---|
-| `proposed` | Drafted; scope and exit criteria under review |
-| `approved` | Scope agreed; may be decomposed into cards |
-| `in progress` | At least one card started |
-| `done` | Every exit criterion verified |
-| `parked` / `deferred` | As for cards |
+[`ROADMAP.md`](ROADMAP.md) orders work as milestones (M0, M1, ...). Each has
+an **Intent** line and a **Gate** list; a milestone closes when every gate item
+holds.
+
+Only the next open milestone is carded. Later milestones hold intent and gate
+only (their features may exist as drafts, without cards) and are detailed
+when the previous gate closes.
 
 ## Feature template
 
 ```markdown
 # <LINE>-F<n> — <observable outcome>
 
-**Status:** proposed
-**Issue:** #<n>            <!-- parent issue, once approved -->
+**Issue:** #<n>            <!-- parent issue, filed when scope is approved -->
 
 ## End state                  <!-- where this is heading; link the vision doc/GDD -->
 Two or three sentences: what the finished system does, and for whom.
@@ -85,32 +97,32 @@ One paragraph: what the player/caller can do when this ships, and why it matters
 |---|---|---|
 
 ## Items
-| Item | Status |
-|---|---|
+| Item |
+|---|
 
 ## Notes                      <!-- cross-item constraints only -->
 ```
 
-## Card lifecycle
+## Card readiness
 
-| Status | Meaning | Required sections |
-|---|---|---|
-| `not started` | Backlog | Summary, Deliverables |
-| `ready` | Spec approved; issue filed and labeled `agent-ready` | + Acceptance criteria, Tech spec |
-| `in progress` | On a branch | |
-| `done` | Merged to `dev` | |
-| `parked` | Deliberately paused | |
-| `deferred` | Blocked on an external condition (say what) | |
+A card's readiness is its board Status, not a field in the file. What each state needs
+in the card:
 
-The implementing PR updates the card's status, so the merged card is the
-source of truth.
+| Board Status | Required card sections |
+|---|---|
+| Backlog | Summary, Deliverables |
+| Needs spec | Summary, Deliverables; acceptance criteria or tech spec pending |
+| Ready | + Acceptance criteria, Tech spec; issue filed with Gate class set |
+
+Ready plus Agent-eligible Yes is what makes an item available to the orchestrator; there
+is no `agent-ready` label. Paused or blocked items stay at their Status; say why in a
+`**Note:**` line.
 
 ## Card template
 
 ```markdown
 # <observable outcome, not the component touched>
 
-**Status:** not started
 **Feature:** SG-F1
 **Issue:** #<n>            <!-- once filed -->
 
@@ -168,10 +180,11 @@ something observable when finished.
 
 - Issue title: `[<ID>] <title>`; body links the `_feature.md` or card. Files
   hold the spec; issues are the queue and discussion thread.
-- An `approved` feature gets a parent issue labeled `feature`; each card's
-  issue is a sub-issue of it, so feature progress is visible on GitHub.
-- Labels: `line:engine` | `line:strategy` | `line:fps`; `agent-ready` once
-  the card is `ready`.
+- An approved feature gets a parent issue labeled `feature` (issue types are not
+  available on a user-owned repo); each card's issue is a sub-issue of it, so feature
+  progress is visible on GitHub.
+- Labels: `line:engine` | `line:strategy` | `line:fps`; `feature` on feature issues.
+- Every issue goes on the board; Status, Priority and Agent-eligible are set there.
 - Branch from `dev`: `<type>/<ID>-<slug>` (e.g. `feat/SG-F1-04-pickup-feedback`);
   PR back into `dev`. `main` receives promotions from `dev` only.
 
@@ -181,4 +194,4 @@ something observable when finished.
 - Agent-written tests survive mutation testing on the changed code (`just mutants`).
 - `/devflow:comment-audit` run on the diff.
 - Verification steps performed for anything observable.
-- Card status updated in the same PR.
+- Board Status moved by the workflow; the PR does not edit card status.

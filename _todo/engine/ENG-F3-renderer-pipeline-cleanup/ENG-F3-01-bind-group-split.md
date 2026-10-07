@@ -1,6 +1,5 @@
 # Split @group(0) by update frequency
 
-**Status:** not started
 **Feature:** [ENG-F3](_feature.md)
 
 ## Summary

@@ -1,6 +1,5 @@
 # ENG-F8 — Feature work starts on a verified foundation
 
-**Status:** done
 **Issue:** #61
 **Integration branch:** `feature/ENG-F8-foundation-gate`
 

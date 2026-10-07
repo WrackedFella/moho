@@ -1,6 +1,5 @@
 # Material model no longer forces crate placement
 
-**Status:** parked
 **Feature:** [ENG-F1](_feature.md)
 
 ## Summary

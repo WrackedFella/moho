@@ -1,6 +1,5 @@
 # Renderer polish (independently mergeable)
 
-**Status:** not started
 **Feature:** [ENG-F3](_feature.md)
 
 ## Summary

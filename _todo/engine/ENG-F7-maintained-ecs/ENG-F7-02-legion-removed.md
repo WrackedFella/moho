@@ -1,6 +1,5 @@
 # The game runs without legion, and the renderer takes plain data
 
-**Status:** done
 **Feature:** [ENG-F7](_feature.md)
 **Issue:** #66
 

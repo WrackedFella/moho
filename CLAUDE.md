@@ -29,6 +29,9 @@ cargo run                          # RUST_LOG=debug for logging
   `just check`/`just mutants`). Card PRs don't auto-close issues there; the
   feature's PR into `dev` lists `Closes #…` for each card. The feature's card table
   in `_todo/` names its integration branch. Current: none.
+- **Project board:** WrackedFella, project 1 (https://github.com/users/WrackedFella/projects/1).
+  Its Status field is the only record of item state; cards carry none. Agents change it
+  only through devflow's `scripts/board`.
 - **Planning:** index `_todo/README.md`, rules `_todo/_STANDARDS.md` (features first,
   IDs like `SG-F1-04`, card lifecycle). Check `_todo/ROADMAP.md` for order before
   picking up work.
