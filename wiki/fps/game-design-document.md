@@ -1,6 +1,7 @@
 # FPS-F1 — Game Design Document (v0.2)
 
-**Status:** approved draft; open questions in §9
+**Status:** draft v0.2, approved for Phase 1. Writing this page is
+[FPS-F1](../../_todo/fps-game/FPS-F1-game-design-document/_feature.md)'s deliverable. Open questions are in §9.
 **Working pitch:** a survival-focused looter shooter with realistic gunplay, where your gear is your character and every fight is a line on a ledger.
 **Working target:** single-player first, co-op later, mod support a priority. Pivots (Destiny-like, Arma-like) are open questions, not commitments (§9).
 
@@ -230,7 +231,15 @@ Why this order:
 8. **Difficulty:** your idea of difficulty toggling complexity rather than damage fits pillar 3; sliders per system make modding easier too. Confirm before Phase 5.
 9. **Director name:** placeholder "the Director".
 
-## 10. Engine requests
+## 10. Engine fit and engine requests
+
+Available from the engine: wgpu rendering (cascaded shadows, SSAO, skybox), a rapier3d
+character controller and triangle-mesh colliders, audio, input mapping, the event bus,
+and a fixed 60 Hz tick ([ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md)).
+The engine takes world geometry as meshes keyed by a handle
+([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md)); a map format,
+loader or generator is FPS-line work. The FPS line never depends on strategy crates
+([ADR-0005](../../_todo/adr/0005-crate-lines-and-dependency-direction.md)).
 
 What the game must be able to do (needs, not solutions). Generic needs belong in the engine; FPS-specific ones go in FPS crates.
 
