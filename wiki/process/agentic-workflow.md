@@ -31,6 +31,39 @@ adversarial challenges (as tests) → mutation testing → `/simplify` →
 | `just deny` | CI | CI (Phase C) |
 | Human review | Domain tests; every PR | You |
 
+## Coordinating lanes
+
+Several agents can work at once, one lane per line (engine, strategy, FPS), plus an
+optional lane for cheap work against a written spec. Each kind of information has one
+home, so lanes never need to talk to each other:
+
+| Layer | Holds | Written by |
+|---|---|---|
+| Claude projects (one per line) | Design discussion | You; decisions leave as hand-off blocks |
+| `_todo/` cards, ADRs, `wiki/` | Decisions and specs | Planning sessions |
+| Project board | State and priority | Agents via `scripts/board`; you |
+| Session transcripts | Nothing durable | — |
+
+Rules:
+
+- **One card in progress per lane,** each lane in its own git worktree. Add a lane only
+  while the review queue stays short: human review is the bottleneck, not agents.
+- **Cross-line needs go through an engine request,** not a shared edit. A game lane
+  files the request (issue template *Engine request*), and the engine lane designs the
+  answer. Game lanes never edit engine crates as a side effect; the layering check
+  enforces the dependency half of this.
+- **Shared files belong to planning.** Only planning sessions and `/sync-backlog` edit
+  `_todo/ROADMAP.md`, `_todo/README.md`, `CLAUDE.md`, the root `Cargo.toml` and
+  `scripts/layering.txt`. An implementation PR edits its own card and code.
+- **Broad moves are announced and kept short.** A change that touches many files across
+  lines (such as ENG-F10's voxel extraction) pauses the affected lanes, lands on a
+  short-lived integration branch, and lanes rebase afterwards.
+- **Line context loads by directory.** A line's own crates carry a short `CLAUDE.md`
+  pointing at its design doc and constraints, so an agent working there picks it up
+  without being told.
+- **Sync after each batch of merges:** `/devflow:sitrep project`, then `/sync-backlog`,
+  then re-sync the Claude projects' knowledge files.
+
 ## Writing a good work item
 
 Agents implement exactly what the card says, so vague cards produce vague code.
