@@ -50,7 +50,7 @@ the audit at the v1 gate ([ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md
 
 | Feature | Status |
 |---|---|
-| [FPS-F1 Game design document](fps-game/FPS-F1-game-design-document/_feature.md) | not started |
+| [FPS-F1 Game design document](fps-game/FPS-F1-game-design-document/_feature.md) | in progress |
 
 ## Shipped before this structure
 
