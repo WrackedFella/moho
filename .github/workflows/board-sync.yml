@@ -1,0 +1,57 @@
+name: Board sync
+
+# Keeps the project board Status in step with PR and issue events, so agents running
+# without GraphQL access (cloud sessions) need not write it. Status moves forward only.
+# Ready and Agent-eligible stay human-set.
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, converted_to_draft, closed]
+  issues:
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  sync:
+    name: Sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Move linked issues
+        env:
+          GH_TOKEN: ${{ secrets.BOARD_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          if [[ -z $GH_TOKEN ]]; then
+            echo "BOARD_TOKEN secret is not set; skipping"
+            exit 0
+          fi
+          if [[ $EVENT == issues ]]; then
+            exec .github/scripts/board-sync.sh Done "$ISSUE_NUMBER"
+          fi
+          if [[ $ACTION == closed ]]; then
+            [[ $PR_MERGED == true ]] || { echo "PR closed unmerged; unchanged"; exit 0; }
+            status=Done
+          elif [[ $PR_DRAFT == true ]]; then
+            status="In progress"
+          else
+            status="In review"
+          fi
+          issues=$(gh api graphql -F n="$PR_NUMBER" -f o="${GITHUB_REPOSITORY%/*}" \
+            -f r="${GITHUB_REPOSITORY#*/}" -f query='
+            query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
+              pullRequest(number:$n){ closingIssuesReferences(first:20){ nodes{ number } } } } }' \
+            -q '.data.repository.pullRequest.closingIssuesReferences.nodes[].number')
+          [[ -n $issues ]] || { echo "no linked issues"; exit 0; }
+          # shellcheck disable=SC2086
+          .github/scripts/board-sync.sh "$status" $issues
