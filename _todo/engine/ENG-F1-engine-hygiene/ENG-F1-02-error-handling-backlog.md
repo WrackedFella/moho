@@ -1,6 +1,5 @@
 # Convert panic!/unwrap backlog to Result
 
-**Status:** not started
 **Feature:** [ENG-F1](_feature.md)
 
 ## Summary

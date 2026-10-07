@@ -1,6 +1,6 @@
 # Saves use the ADR-0006 envelope and encoding
 
-**Status:** not started (decided by [ADR-0006](../../adr/0006-save-format-contract.md); must land before [SG-F3](../../strategy-game/SG-F3-buildings-and-construction/_feature.md))
+**Note:** Decided by [ADR-0006](../../adr/0006-save-format-contract.md); must land before [SG-F3](../../strategy-game/SG-F3-buildings-and-construction/_feature.md)
 **Feature:** [ENG-F2](_feature.md)
 
 ## Summary

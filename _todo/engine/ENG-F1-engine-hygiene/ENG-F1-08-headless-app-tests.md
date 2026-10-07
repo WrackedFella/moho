@@ -1,6 +1,5 @@
 # The binary's frame and event wiring is tested without a window
 
-**Status:** done
 **Feature:** [ENG-F1](_feature.md)
 
 ## Summary

@@ -1,6 +1,6 @@
 # ENG-F9 — Domain tests catch behaviour changes
 
-**Status:** proposed (early tier, post-gate; see [ENG-F8](../ENG-F8-foundation-gate/_feature.md))
+**Note:** Early tier, post-gate; see [ENG-F8](../ENG-F8-foundation-gate/_feature.md)
 
 ## Summary
 
@@ -42,8 +42,8 @@ deletes tests that can't fail.
 
 ## Items
 
-| Item | Status |
-|---|---|
+| Item |
+|---|
 
 ## Notes
 

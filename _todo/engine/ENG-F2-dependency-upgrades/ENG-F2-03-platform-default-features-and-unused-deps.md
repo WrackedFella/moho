@@ -1,6 +1,5 @@
 # Unused dependencies and default features are trimmed
 
-**Status:** not started
 **Feature:** [ENG-F2](_feature.md)
 
 ## Summary

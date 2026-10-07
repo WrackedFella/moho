@@ -1,6 +1,6 @@
 # The paste advisory ignore is removed
 
-**Status:** deferred (blocked until `rapier3d`'s math stack no longer depends on `paste`)
+**Note:** Blocked until `rapier3d`'s math stack no longer depends on `paste`
 **Feature:** [ENG-F2](_feature.md)
 
 ## Summary

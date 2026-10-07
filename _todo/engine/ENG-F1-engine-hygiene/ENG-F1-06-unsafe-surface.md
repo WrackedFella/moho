@@ -1,6 +1,5 @@
 # UI layer carries no unsafe code
 
-**Status:** done
 **Feature:** [ENG-F1](_feature.md)
 **Issue:** #57
 

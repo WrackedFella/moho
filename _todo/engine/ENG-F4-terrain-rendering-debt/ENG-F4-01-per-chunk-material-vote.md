@@ -1,6 +1,5 @@
 # Per-chunk material majority vote is wrong
 
-**Status:** not started
 **Feature:** [ENG-F4](_feature.md)
 
 ## Summary

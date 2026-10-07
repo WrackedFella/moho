@@ -1,6 +1,6 @@
 # ENG-F6 — Game logic runs and is tested headless and deterministically
 
-**Status:** parked (no current defect; reopen when a feature's rules need it, see Notes)
+**Note:** No current defect; reopen when a feature's rules need it, see Notes
 
 ## Summary
 
@@ -29,10 +29,13 @@ replays and future lockstep multiplayer.
 
 ## Items
 
-| Item | Status |
-|---|---|
+| Item |
+|---|
 
 ## Notes
+
+2026-10-06: the tick and `GameClock` criterion moves to [ENG-F11](../ENG-F11-shared-app-loop/_feature.md); this
+feature keeps seeded RNG.
 
 Parked 2026-10-04: a check against the code found no current defect. The
 frame loop already advances simulation by a constant 1/60 s step (fixed

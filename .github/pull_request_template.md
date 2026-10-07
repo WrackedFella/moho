@@ -15,7 +15,6 @@ Closes #
 
 ## Quality passes
 - [ ] `/devflow:comment-audit` run on the diff
-- [ ] Card status updated in this PR
 
 ## Risk and manual verification
 <!-- Blast radius, anything a human must check in-game, unresolved items. -->

@@ -1,6 +1,5 @@
 # Chunks and actors have typed stores with guaranteed lookup rules
 
-**Status:** done
 **Feature:** [ENG-F7](_feature.md)
 **Issue:** #65
 

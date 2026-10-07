@@ -1,6 +1,5 @@
 # The gate rejects dependencies that cross game lines or reach platform crates
 
-**Status:** done
 **Feature:** [ENG-F8](_feature.md)
 **Issue:** #64
 

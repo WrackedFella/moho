@@ -48,5 +48,6 @@ body:
   - type: markdown
     attributes:
       value: |
-        Add labels `line:engine|strategy|fps`, and `agent-ready` once the card is `ready`.
-        Link this issue as a sub-issue of its feature's parent issue.
+        Add a `line:engine|strategy|fps` label. Link this issue as a sub-issue of its
+        feature's parent issue, add it to the Moho project board, and set Status there
+        (Ready plus Agent-eligible Yes makes it available to the orchestrator).

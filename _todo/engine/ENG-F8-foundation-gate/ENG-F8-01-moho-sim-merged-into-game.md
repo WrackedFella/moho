@@ -1,6 +1,5 @@
 # The simulation controller lives in moho_game, and moho_sim is gone
 
-**Status:** done
 **Feature:** [ENG-F8](_feature.md)
 **Issue:** #63
 

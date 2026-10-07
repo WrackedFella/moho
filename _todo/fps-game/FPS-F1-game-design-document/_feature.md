@@ -1,6 +1,5 @@
 # FPS-F1 — Game Design Document
 
-**Status:** in progress
 
 ## Summary
 

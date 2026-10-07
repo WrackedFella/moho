@@ -1,6 +1,5 @@
 # Mining shows a pickup feedback popup
 
-**Status:** not started
 **Feature:** [SG-F1](_feature.md)
 
 ## Summary
