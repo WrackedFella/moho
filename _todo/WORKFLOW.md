@@ -45,10 +45,6 @@ Clean-run streak: unknown until the entries above are backfilled.
 
 ## Open questions
 
-- devflow v0.6.0's orchestrate skill reads the `_todo/` card as the spec, while
-  `_STANDARDS.md` makes the issue body the accepted copy. Fixed in devflow 0.7.0
-  (WrackedFella/claude-skills#8); tag it and bump `.claude/settings.json` before the
-  next orchestrated run.
 - Per-line `CLAUDE.md` files ([lane rules](../wiki/process/agentic-workflow.md#coordinating-lanes))
   don't exist yet; they are needed before Stage 2.
 - Stage 3 runtime: local or cloud runs. Affects cost, secrets, and how the domain-test
