@@ -50,6 +50,11 @@ a fork. The engine owns the loop and a game plugs into it. Relies on
 - In: loop extraction, accumulator, headless stepping, `GameClock` move.
 - Out: networking; scene/asset management; a second plug-in interface.
 
+## Notes
+
+- Moves the binary's renderer setup, which names wgpu today. Add no new wgpu use outside the
+  renderer crate; [ENG-F20](../ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) contains it.
+
 ## Items
 
 | Item |

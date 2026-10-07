@@ -1,0 +1,54 @@
+name: Feature
+description: An approved _feature.md published as its accepted spec. Title format "[ID] title".
+title: "[ID] "
+labels: ["feature"]
+body:
+  - type: textarea
+    id: end-state
+    attributes:
+      label: End state
+      description: Two or three sentences on what the finished system does, and for whom. Link the vision doc or GDD by URL on dev.
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What the player or caller can do when this ships, and why now. End with "Moves toward the end state by:".
+    validations:
+      required: true
+  - type: textarea
+    id: exit-criteria
+    attributes:
+      label: Exit criteria
+      description: Observable, verifiable conditions that close the feature (Gherkin welcome for headline behaviors).
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: "In: ... Out: what a reader might assume is included but isn't."
+    validations:
+      required: true
+  - type: textarea
+    id: decisions
+    attributes:
+      label: Direction-setting decisions
+      description: Table of question, decision, and why or cost of the alternative. Open questions the design must keep open.
+  - type: textarea
+    id: deferred
+    attributes:
+      label: Deferred
+      description: Table of idea, why it waits, revisit when.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Cross-item constraints only. Refer to other items as #N, never by _todo/ path.
+  - type: markdown
+    attributes:
+      value: |
+        This issue is the accepted spec; `_feature.md` in _todo/ is a working copy. Add a
+        `line:engine|strategy|fps` label and add the issue to the Moho project board. Cards
+        are filed as sub-issues of this one.

@@ -19,7 +19,10 @@ Sync the planning docs in `_todo/` with reality, following `_todo/_STANDARDS.md`
    if nothing fits, a new card under the right feature. Propose a new feature (no
    parent issue until approved) only when no feature's scope covers it; never create cards under an
    unapproved feature.
-4. **Hygiene.** Keep cards terse; no narration or history. Fix broken links between
+4. **Published copies.** Each issue body is the accepted spec (`_todo/_STANDARDS.md`,
+   Issues and branches). Report any card or feature whose file differs from its issue
+   body, or whose issue body is only a pointer; republish on the user's say-so.
+5. **Hygiene.** Keep cards terse; no narration or history. Fix broken links between
    cards, features, the README and ADRs.
 
 Report a short table: item → board Status → mismatch found (or "new"), plus anything that

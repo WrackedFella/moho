@@ -1,40 +1,42 @@
 name: Work item
-description: A card from _todo/ filed as the implementation queue entry. Title format "[ID] title".
+description: A card from _todo/ published as its accepted spec. Title format "[ID] title".
 title: "[ID] "
 labels: []
 body:
-  - type: input
-    id: card
+  - type: textarea
+    id: summary
     attributes:
-      label: Card
-      description: Path to the card in _todo/ (the spec lives there).
-      placeholder: _todo/strategy-game/SG-F1-example/SG-F1-05-example.md
+      label: Summary
+      description: One to three sentences on what this does and why.
     validations:
       required: true
   - type: textarea
-    id: context
+    id: deliverables
     attributes:
-      label: Context
-      description: One to three sentences on what this does and why.
+      label: Deliverables
+      description: Checkable outcomes, not tasks.
     validations:
       required: true
   - type: textarea
     id: acceptance
     attributes:
       label: Acceptance criteria
-      description: Gherkin scenarios in a ```gherkin fence, or a checklist for refactors and upgrades, copied from the card.
-    validations:
-      required: true
+      description: Gherkin scenarios in a ```gherkin fence, or a checklist for refactors and upgrades.
   - type: textarea
-    id: out-of-scope
+    id: tech-spec
     attributes:
-      label: Out of scope
-      description: What a reader might assume is included but isn't.
+      label: Tech spec
+      description: Crates and interfaces touched, out of scope, test map (scenario → test, gate class), ADR links.
   - type: textarea
     id: verification
     attributes:
       label: Verification
       description: Manual steps, only for behavior observable in-game.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Only a gotcha that would be re-litigated. Refer to other items as #N, never by _todo/ path.
   - type: dropdown
     id: gate-class
     attributes:
@@ -48,6 +50,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Add a `line:engine|strategy|fps` label. Link this issue as a sub-issue of its
-        feature's parent issue, add it to the Moho project board, and set Status there
-        (Ready plus Agent-eligible Yes makes it available to the orchestrator).
+        This issue is the accepted spec; the card in _todo/ is a working copy. Add a
+        `line:engine|strategy|fps` label, link this issue as a sub-issue of its feature's
+        parent issue, add it to the Moho project board, and set Status there (Ready plus
+        Agent-eligible Yes makes it available to the orchestrator).

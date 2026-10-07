@@ -31,7 +31,11 @@ into a strategy crate.
 
 ## Notes
 
-- Gamepad support adds a dependency; ENG-F13 must give it a verdict first.
+- Gamepad: `gilrs`, confirmed by the [ENG-F13 audit](../ENG-F13-dependency-audit/audit.md).
+- ENG-F13 call: `phf` is dropped. The key-name and key-label tables become
+  `match` functions when this feature reworks key naming; no `phf` remains in
+  any manifest when it closes.
+- Prefs stay INI (ENG-F13 call: keep `ini`).
 
 ## Items
 
