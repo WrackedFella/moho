@@ -36,8 +36,13 @@ cargo run                          # RUST_LOG=debug for logging
   IDs like `SG-F1-04`, card lifecycle). Check `_todo/ROADMAP.md` for order before
   picking up work.
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
-- **Domain-logic paths** (failing tests need human review before implementation):
-  rules in `moho_game`, `moho_core`. Adapters, UI wiring and config are glue.
+- **Domain-logic paths** (gate class `domain`): rules in `moho_game`, `moho_core`.
+  Adapters, UI wiring and config are glue.
+- **Human review points:** `Card review: required`, `Domain-test review: required`.
+  Both become `not required` at Stage 3 of `_todo/WORKFLOW.md`.
+- **Local planning files are drafts.** A card or feature in `_todo/` is reviewed there;
+  on approval, agents publish it as an issue on the board, and the issue is canonical
+  from then on. Local files of finished items are deleted (`_todo/_STANDARDS.md`).
 - **ADRs:** `_todo/adr/`. Project documentation lives in `wiki/`; new docs there or
   elsewhere need the user's OK first; cards and ADRs that follow the standards don't.
   Order of work: `_todo/ROADMAP.md`.
