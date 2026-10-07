@@ -36,7 +36,7 @@ The engine row of [ADR-0005](0005-crate-lines-and-dependency-direction.md)'s tab
 | `moho_app` (new) | window, event loop, renderer/physics/audio setup, the [ADR-0009](0009-simulation-time-is-one-fixed-tick.md) accumulator, `GameClock`, the game plug-in interface | no | ENG-F11 |
 | `moho_core` | event bus, engine-wide events, prefs; modules for content roots and the save envelope | yes (domain set) | ENG-F10 leaves this; ENG-F19, ADR-0006 add modules |
 | `moho_input` | action map, gamepad, bindings as data, mouse-delta filtering (absorbs `moho_core::input`) | no | ENG-F12 |
-| `moho_ui_shell` (new, working name) | egui integration, console, settings widgets, modal stack | no | ENG-F18 |
+| `moho_ui_shell` (new) | egui integration, console, settings widgets, modal stack | no | ENG-F18 |
 | `moho_render_api`, `moho_renderer`, `moho_audio`, `moho_physics` | as today | no | |
 | `moho_types` | deleted; `GameState` moves to the strategy line | | ENG-F12 |
 
@@ -78,7 +78,6 @@ engine API change" criterion refers to:
   checked against a fixed list.
 - `moho_physics` declares an unused `moho_core` dependency; it is dropped when
   ENG-F15 next touches the crate.
-- The target crate graph goes into `wiki/architecture/overview.md` once Justin
-  approves the new wiki content.
+- The target crate graph and seam list are in `wiki/architecture/overview.md`.
 - Cost: `moho_input` stops being a small leaf and becomes the engine's input
-  layer, and the UI shell crate name is settled in the ENG-F18 spec.
+  layer.
