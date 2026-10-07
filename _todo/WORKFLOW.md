@@ -10,21 +10,33 @@ file after each orchestrated run, and when a stage changes or a decision is made
 
 ## Stages
 
-| Stage | What changes | Bar to move on |
-|---|---|---|
-| 1. Supervised runs | You start and watch each `/devflow:orchestrate`, intervene as needed, and fix the cause of each deviation (card format, skill or gate), not just the PR | About 5 consecutive runs reach a mergeable PR with no mid-run correction, and review finds only taste-level issues (no spec misreads, missed scope or broken gates). Runs cover domain, glue, bug-fix and mechanical cards |
-| 2. Parallel lanes, started by you | One agent per line, each in its own worktree ([coordination rules](../wiki/process/agentic-workflow.md#coordinating-lanes)). You queue work on the board and start each lane, but don't watch it | Lanes run side by side without conflicts or cross-line edits. The review queue stays short. Engine requests flow without you relaying them |
-| 3. The board starts the work | Moving a card to Ready on the [board](https://github.com/users/WrackedFella/projects/1) triggers a run (GitHub Action or scheduled agent; Phase D) | — (steady state) |
+Every stage runs the same pipeline. The stages differ only in where you take part:
+
+```
+Feature planning → Refinement (feature → work items) → Implementation → PR
+```
+
+| Stage | Feature planning | Refinement | Implementation | Bar to move on |
+|---|---|---|---|---|
+| 1. Supervised runs | You, in a planning session (BA, TL as needed) | You with BA and TL, card by card | You start and watch each `/devflow:orchestrate`, review domain tests, and fix the cause of each deviation (card format, skill or gate), not just the PR | About 5 consecutive runs reach a mergeable PR with no mid-run correction, and review finds only taste-level issues (no spec misreads, missed scope or broken gates). Runs cover domain, glue, bug-fix and mechanical cards |
+| 2. Agents refine, you approve cards | You, in a planning session | BA and TL decompose the feature into cards and specs without you, as local drafts in `_todo/`. **You review every draft**; on approval, agents publish it as an issue on the board (Ready), which is canonical from then on | The line's project runs each approved card in its own thread to a PR. You review domain tests; otherwise you don't watch | Your judgment: you trust refinement enough to stop reviewing cards. Ask the question after the first feature completes Stage 2 |
+| 3. Agents run from the feature | You, in a planning session. **Approving the feature starts the work** | BA and TL refine without you, and escalate questions to you only when the feature leaves them unresolved | Threads run each card to a PR with no domain-test pause | — (steady state) |
+
+Stage 3 is switched on in `CLAUDE.md` by setting both human review points
+(`Card review`, `Domain-test review`) to `not required`; devflow (v0.8.0 and later)
+reads them.
+
+In Stages 2 and 3, each line's Claude Code project is that line's lane
+([coordination rules](../wiki/process/agentic-workflow.md#coordinating-lanes)), and
+each card runs in its own thread (a cloud session on its own branch).
 
 Fixed in every stage:
 
-- Only humans merge.
-- Domain tests pause for your review. In Stage 3 the agent posts them on the PR and
-  waits.
+- Only humans merge. You review every PR.
 - PRs are where you review. Agents answer comments with commits and replies, and never
   resolve threads.
-- Agents run only approved cards. Planning stays with you: Claude projects for design,
-  Business Analyst and Tech Lead sessions for cards.
+- Feature planning stays with you. Agents implement only cards from an approved
+  feature, and in Stages 1–2 only cards you approved.
 
 ## Trial log
 
@@ -47,9 +59,17 @@ Clean-run streak: unknown until the entries above are backfilled.
 
 - Per-line `CLAUDE.md` files ([lane rules](../wiki/process/agentic-workflow.md#coordinating-lanes))
   don't exist yet; they are needed before Stage 2.
-- Stage 3 runtime: local or cloud runs. Affects cost, secrets, and how the domain-test
-  pause works without a terminal.
-- Whether cloud sessions install the project-pinned devflow plugin (unverified).
+- Stage 3 runtime: how approving a feature starts its project (board automation, a
+  GitHub Action, or the project's coordinator), and where BA/TL questions reach you.
+- Agent pre-review before human PR review: put the `devflow:reviewer` verdict in the PR
+  body, and possibly add a second independent pass. To decide once the trial log
+  shows what human review catches that the reviewer missed.
+- Whether cloud sessions install the project-pinned devflow plugin. The docs say a
+  single-repo cloud session reads the committed `.claude/settings.json`; unconfirmed
+  in a real run.
+- Whether a project thread can run the full Stage 2 run: `just check` needs the Rust
+  toolchain in the cloud image, `scripts/board` needs GitHub Projects access, and the
+  domain-test pause needs a way to reach you (the Threads panel or the PR).
 
 ## Decisions
 
@@ -60,3 +80,6 @@ Clean-run streak: unknown until the entries above are backfilled.
 | 2026-10-06 | Board Status is the only record of item state | [`CLAUDE.md`](../CLAUDE.md) |
 | 2026-10-07 | Three-stage rollout with a bar per stage; Phase D is Stage 3 | this file |
 | 2026-10-07 | Parallel lanes: one card in progress per lane, one worktree each; cross-line needs go through engine requests | [coordination rules](../wiki/process/agentic-workflow.md#coordinating-lanes) |
+| 2026-10-07 | Stage 2 runs on Claude Code Projects: one project per line is the lane, and threads replace worktrees. Independent cards run in parallel threads; dependent ones run in sequence or on a `feature/` branch. Human approval sits after Tech Lead, before orchestrate. Supersedes the worktree half of the row above | [coordination rules](../wiki/process/agentic-workflow.md#coordinating-lanes) |
+| 2026-10-07 | Stages are defined by human involvement across one pipeline (feature planning → refinement → implementation → PR). Stage 2: you plan features and review cards. Stage 3: you plan features and answer escalations; approving the feature starts the work, and there is no domain-test pause. The 2→3 move is your judgment, raised after the first Stage 2 feature. Replaces "Phase D is Stage 3": the board trigger is now a runtime detail | this file |
+| 2026-10-07 | Human review points are project settings (`Card review`, `Domain-test review`, default required) read by devflow's BA, Tech Lead and Orchestrator; Stage 3 turns both off. Local `_todo/` files are drafts: you review them, agents publish on approval, the issue is canonical, and finished items' files are deleted | devflow v0.8.0, [`CLAUDE.md`](../CLAUDE.md), [`_STANDARDS.md`](_STANDARDS.md#local-drafts-and-cleanup) |

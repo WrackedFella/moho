@@ -161,8 +161,8 @@ be asserted, so those go under Verification instead.
 - Test map: each scenario → the test that proves it
   (`crate::module::tests::scenario_expected_result`), and its gate class:
   **domain** (`moho_game`, `moho_core` rules: tests reviewed
-  before implementation) or **glue** (adapters/wiring: tests and code
-  together).
+  before implementation while domain-test review is required) or **glue**
+  (adapters/wiring: tests and code together).
 - ADR link if the item makes or relies on an architectural decision.
 
 ## Writing rules
@@ -179,8 +179,8 @@ something observable when finished.
 ## Issues and branches
 
 - Issue title: `[<ID>] <title>`. The issue is the published, accepted copy of its
-  card or `_feature.md`; the file in `_todo/` is the working copy kept for local
-  reading and drafting. When they disagree, the issue wins.
+  card or `_feature.md`. The file in `_todo/` is a draft until approval, and a local
+  working copy after. When they disagree, the issue wins.
 - The body is the full spec and stands alone: every section of the card or feature,
   minus the `**Issue:**`/`**Feature:**` header lines and template comments. Refer to
   other items as `#N` (with ID and a few words) and to the parent through the
@@ -200,6 +200,19 @@ something observable when finished.
 - Every issue goes on the board; Status, Priority and Agent-eligible are set there.
 - Branch from `dev`: `<type>/<ID>-<slug>` (e.g. `feat/SG-F1-04-pickup-feedback`);
   PR back into `dev`. `main` receives promotions from `dev` only.
+
+## Local drafts and cleanup
+
+- A card or feature starts as a local file. While card review is required (see
+  `CLAUDE.md`), the user reviews the card there. On approval, agents publish it as an
+  issue and put it on the board, and the issue becomes canonical. Without card review,
+  the Tech Lead publishes once the card is ready.
+- Drafts are not on the board until published.
+- Delete local files once their work is finished: a card's file when its issue is
+  closed as completed, and a feature's directory when the feature is Done on the board.
+  Git history and the issue keep the record. Replace links to deleted files (README
+  index, roadmap, other cards) with links to the issue. `/sync-backlog` does this
+  after merges.
 
 ## Definition of Done (shared; don't repeat per card)
 
