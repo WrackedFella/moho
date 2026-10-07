@@ -50,8 +50,12 @@ just before the work that needs them, not sooner.
 
 | # | Feature | Depends on | Status |
 |---|---|---|---|
-| P.1 | [FPS-F1](fps-game/FPS-F1-game-design-document/_feature.md) GDD (writing only; can run during Phase 0) | — | not started |
-| P.2 | FPS prototype crate in the monorepo, held apart by the layering check; loads a non-voxel map | P.1, 1.8, 1.5 | — |
+| P.1 | [FPS-F1](fps-game/FPS-F1-game-design-document/_feature.md) [GDD](../wiki/fps/game-design-document.md) (writing only; can run during Phase 0) | — | in progress |
+| P.2 | FPS prototype crate in the monorepo, held apart by the layering check; loads a non-voxel map. Scope: GDD §7 Phase 1 (arena baseline) | P.1, 1.8, 1.5 | — |
+
+FPS phases after P.2 follow GDD §7 (items, weapon wear, wounds, survival, hub
+and jobs, Director). Each becomes a feature only after the previous one is
+approved.
 
 ## Phase 3 — v1 and repo split
 
