@@ -5,12 +5,14 @@
 
 mod key_names;
 mod parser;
+mod reader;
 
 use std::fs;
 use std::path::PathBuf;
 
 pub use key_names::parse_key_name;
 pub use parser::{binding_to_string, parse_binding};
+pub use reader::{PrefsIssue, PrefsWarning};
 
 /// Window display mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -28,6 +30,10 @@ impl WindowMode {
             WindowMode::Fullscreen => "Fullscreen",
             WindowMode::Borderless => "Borderless",
         }
+    }
+
+    fn parse(_s: &str) -> Option<Self> {
+        todo!()
     }
 
     fn from_str(s: &str) -> Self {
@@ -451,6 +457,10 @@ impl Prefs {
         prefs
     }
 
+    pub fn to_ini_string(&self) -> String {
+        todo!()
+    }
+
     pub fn save(&self) -> Result<(), std::io::Error> {
         let path = Self::config_path();
         if let Some(dir) = path.parent() {
@@ -541,50 +551,19 @@ mod tests {
     }
 
     #[test]
-    fn test_video_round_trip_windowed() {
-        // Build a prefs with custom video settings
-        let prefs = Prefs::default()
-            .with_window_mode(WindowMode::Windowed)
-            .with_window_resolution(2560, 1440);
+    fn window_mode_parse_accepts_only_exact_names() {
+        let cases = [
+            ("Windowed", Some(WindowMode::Windowed)),
+            ("Fullscreen", Some(WindowMode::Fullscreen)),
+            ("Borderless", Some(WindowMode::Borderless)),
+            ("windowed", None),
+            ("fullscreen", None),
+            ("unknown", None),
+            ("", None),
+        ];
 
-        // Serialize to INI string directly (without touching disk)
-        let (width, height) = prefs.window_resolution();
-        let out = format!(
-            "[video]\nwindow_mode={}\nwindow_width={width}\nwindow_height={height}\n",
-            prefs.window_mode().as_str()
-        );
-
-        // Parse back
-        if let Ok(map) = ini::macro_safe_read(&out)
-            && let Some(section) = map.get("video")
-        {
-            let mode_str = section
-                .get("window_mode")
-                .and_then(std::clone::Clone::clone)
-                .unwrap_or_default();
-            let w: u32 = section
-                .get("window_width")
-                .and_then(std::clone::Clone::clone)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            let h: u32 = section
-                .get("window_height")
-                .and_then(std::clone::Clone::clone)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-
-            assert_eq!(WindowMode::from_str(&mode_str), WindowMode::Windowed);
-            assert_eq!((w, h), (2560, 1440));
-        } else {
-            panic!("Failed to parse video section");
+        for (input, expected) in cases {
+            assert_eq!(WindowMode::parse(input), expected, "input {input:?}");
         }
-    }
-
-    #[test]
-    fn test_window_mode_from_str() {
-        assert_eq!(WindowMode::from_str("Windowed"), WindowMode::Windowed);
-        assert_eq!(WindowMode::from_str("Fullscreen"), WindowMode::Fullscreen);
-        assert_eq!(WindowMode::from_str("Borderless"), WindowMode::Borderless);
-        assert_eq!(WindowMode::from_str("unknown"), WindowMode::Windowed); // default
     }
 }
