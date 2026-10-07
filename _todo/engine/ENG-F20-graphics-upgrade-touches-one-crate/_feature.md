@@ -1,5 +1,7 @@
 # ENG-F20 — A wgpu or egui upgrade touches one crate
 
+**Issue:** #104
+
 ## End state
 
 The engine tracks fast-moving upstream stacks (wgpu releases a major version
@@ -62,9 +64,9 @@ routine, and giving the split engine a stable surface for its consumers.
 
 ## Notes
 
-- Sequence after [ENG-F11](../ENG-F11-shared-app-loop/_feature.md) and with or
-  after [ENG-F18](../ENG-F18-shared-ui-shell/_feature.md): both move the code
-  that names wgpu today (the binary's renderer setup, the UI adapter). They
-  should not add new wgpu use outside the renderer.
+- Sequence after [ENG-F11](../ENG-F11-shared-app-loop/_feature.md), which moves
+  the binary's renderer setup, and before [ENG-F18](../ENG-F18-shared-ui-shell/_feature.md)
+  and the other M2 engine features, so they build on a contained renderer. ENG-F18
+  then moves an already-contained UI adapter.
 - wgpu alternatives were considered in the [ENG-F13 audit](../ENG-F13-dependency-audit/audit.md#alternatives-considered-for-the-largest-stacks);
   none matches its maturity and reach, so the answer to churn is containment.

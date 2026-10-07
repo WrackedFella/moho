@@ -49,6 +49,7 @@ just before the work that needs them, not sooner.
 | 1.10 | [ENG-F12](engine/ENG-F12-input-actions/_feature.md): game-defined input actions; replaces the former 1.5 | before P.2; after 1.11 |
 | 1.12 | [ADR-0011](adr/0011-simulation-stays-network-ready.md) (proposed, being written): simulation stays network-ready | now (session B) |
 | 1.1 | Save-format migration to [ADR-0006](adr/0006-save-format-contract.md) ([ENG-F2-01](engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md)), envelope in the engine | before [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) (first new persisted type); an [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) fix only if it changes the save format |
+| 1.13 | [ENG-F20](engine/ENG-F20-graphics-upgrade-touches-one-crate/_feature.md): a wgpu or egui upgrade touches one crate | after 1.9; before any M2 engine feature |
 | 1.3 | [ENG-F9](engine/ENG-F9-tests-prove-behaviour/_feature.md): domain tests catch behaviour changes | before [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) |
 
 1.1 and 1.3 are triggered by later work, not gate items.
@@ -65,7 +66,7 @@ just before the work that needs them, not sooner.
 Features named, not carded until M1's gate closes. The strategy slice and
 the FPS rules crate are greenlit now (they don't wait on M1).
 
-### Engine (order: F14 → F15 → F16 → F18 → F17; F19 before FPS Phase 2; all after ENG-F13)
+### Engine (order: F14 → F15 → F16 → F18 → F17; F19 before FPS Phase 2; all after ENG-F13 and ENG-F20)
 
 | # | Feature | Depends on |
 |---|---|---|
@@ -75,7 +76,6 @@ the FPS rules crate are greenlit now (they don't wait on M1).
 | 2.8 | [ENG-F18](engine/ENG-F18-shared-ui-shell/_feature.md) shared UI shell | 1.11 |
 | 2.9 | [ENG-F17](engine/ENG-F17-navigation/_feature.md) navigation (Phase 1 AI may use waypoints meanwhile) | 1.8, 1.11 |
 | 2.10 | [ENG-F19](engine/ENG-F19-data-and-mod-content/_feature.md) data and mod content | 1.11; before FPS Phase 2 |
-| 2.11 | [ENG-F20](engine/ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) a wgpu or egui upgrade touches one crate (proposed) | 1.9, with or after 2.8 |
 
 ### Strategy
 
@@ -152,5 +152,5 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-06 | Milestones with gates; only the next milestone is carded | [`_STANDARDS.md`](_STANDARDS.md#milestones) |
 | 2026-10-06 | ENG-F6's tick criterion moves to ENG-F11; ENG-F6 keeps seeded RNG | [ENG-F6](engine/ENG-F6-headless-deterministic-logic/_feature.md) |
 | 2026-10-07 | Audit gives economical and lean verdicts per crate, user calls each; large well-maintained crates green-lit; follow-ups go under ENG-F2 or the feature reworking that code | [ENG-F13](engine/ENG-F13-dependency-audit/_feature.md) |
-| 2026-10-07 | Dependency calls recorded: `noise`, `crossbeam-channel`, `pollster`, `phf`, `log`/`env_logger` leave; `ini` stays | [audit](engine/ENG-F13-dependency-audit/audit.md) |
-| 2026-10-07 | Fast-moving stacks (wgpu/egui, rapier/glam) upgrade once per milestone close; containment proposed as ENG-F20 | [ENG-F2](engine/ENG-F2-dependency-upgrades/_feature.md) |
+| 2026-10-07 | Dependency calls recorded: `noise`, `crossbeam-channel`, `pollster`, `phf`, `log`/`env_logger` leave; `ini` stays; `rodio` + own gain/pan for ENG-F16 | [audit](engine/ENG-F13-dependency-audit/audit.md) |
+| 2026-10-07 | Fast-moving stacks (wgpu/egui, rapier/glam) upgrade once per milestone close; ENG-F20 (containment) approved and placed in M1, before engine features build on the renderer | [ENG-F2](engine/ENG-F2-dependency-upgrades/_feature.md) |

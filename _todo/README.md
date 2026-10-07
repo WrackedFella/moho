@@ -47,7 +47,7 @@ the audit at the v1 gate ([ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md
 | [ENG-F17 Agents path over any static level](engine/ENG-F17-navigation/_feature.md) |
 | [ENG-F18 Both games share the UI shell](engine/ENG-F18-shared-ui-shell/_feature.md) |
 | [ENG-F19 Games load definitions and content from layered roots](engine/ENG-F19-data-and-mod-content/_feature.md) |
-| [ENG-F20 A wgpu or egui upgrade touches one crate](engine/ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) (proposed) |
+| [ENG-F20 A wgpu or egui upgrade touches one crate](engine/ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) |
 
 ## strategy-game/
 
