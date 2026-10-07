@@ -1,5 +1,6 @@
 //! Reads preferences from INI text and files, reporting every fallback as data.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -160,6 +161,43 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
     }),
 ];
 
+type SectionKeys = HashMap<String, Option<String>>;
+
+fn sorted_entries(keys: &SectionKeys) -> Vec<(&String, &Option<String>)> {
+    let mut entries: Vec<_> = keys.iter().collect();
+    entries.sort_by_key(|(key, _)| key.as_str());
+    entries
+}
+
+/// Applies `keys` to `prefs` using the `table` section of `KNOWN_KEYS`; `section` is the
+/// name reported in issues. Issues come back in sorted key order.
+fn read_section(
+    prefs: &mut Prefs,
+    section: &str,
+    table: &str,
+    keys: &SectionKeys,
+) -> Vec<PrefsIssue> {
+    let mut issues = Vec::new();
+    for (key, value) in sorted_entries(keys) {
+        let Some((_, _, setter)) = KNOWN_KEYS.iter().find(|(s, k, _)| *s == table && *k == key)
+        else {
+            issues.push(PrefsIssue::UnknownKey {
+                section: section.to_string(),
+                key: key.clone(),
+            });
+            continue;
+        };
+        if value.as_deref().and_then(|v| setter(prefs, v)).is_none() {
+            issues.push(PrefsIssue::Malformed {
+                section: section.to_string(),
+                key: key.clone(),
+                value: value.clone(),
+            });
+        }
+    }
+    issues
+}
+
 impl Prefs {
     /// Parses INI text. Every problem is returned alongside the preferences, and the
     /// affected key keeps its default. Keys before any header count as `[prefs]`
@@ -176,51 +214,26 @@ impl Prefs {
         let mut sections: Vec<_> = map.iter().collect();
         sections.sort_by_key(|(name, _)| name.as_str());
         for (name, keys) in sections {
-            let table_name = match name.as_str() {
+            let table = match name.as_str() {
                 "default" if map.contains_key("prefs") => {
-                    let mut stray: Vec<_> = keys.keys().collect();
-                    stray.sort();
-                    issues.extend(stray.into_iter().map(|key| PrefsIssue::UnknownKey {
-                        section: name.clone(),
-                        key: key.clone(),
+                    issues.extend(sorted_entries(keys).into_iter().map(|(key, _)| {
+                        PrefsIssue::UnknownKey {
+                            section: name.clone(),
+                            key: key.clone(),
+                        }
                     }));
                     continue;
                 }
                 "default" => "prefs",
                 other => other,
             };
-            if !KNOWN_KEYS.iter().any(|(s, _, _)| *s == table_name) {
+            if !KNOWN_KEYS.iter().any(|(s, _, _)| *s == table) {
                 issues.push(PrefsIssue::UnknownSection {
                     section: name.clone(),
                 });
                 continue;
             }
-
-            let mut keys: Vec<_> = keys.iter().collect();
-            keys.sort_by_key(|(key, _)| key.as_str());
-            for (key, value) in keys {
-                let Some((_, _, setter)) = KNOWN_KEYS
-                    .iter()
-                    .find(|(s, k, _)| *s == table_name && *k == key)
-                else {
-                    issues.push(PrefsIssue::UnknownKey {
-                        section: name.clone(),
-                        key: key.clone(),
-                    });
-                    continue;
-                };
-                if value
-                    .as_deref()
-                    .and_then(|v| setter(&mut prefs, v))
-                    .is_none()
-                {
-                    issues.push(PrefsIssue::Malformed {
-                        section: name.clone(),
-                        key: key.clone(),
-                        value: value.clone(),
-                    });
-                }
-            }
+            issues.extend(read_section(&mut prefs, name, table, keys));
         }
         (prefs, issues)
     }
