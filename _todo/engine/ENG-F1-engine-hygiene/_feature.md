@@ -26,6 +26,7 @@ engine repo once the split ([ENG-F5](../ENG-F5-physical-repo-split/_feature.md))
 | [ENG-F1-06 unsafe-surface](ENG-F1-06-unsafe-surface.md) |
 | [ENG-F1-07 lint-ratchet](ENG-F1-07-lint-ratchet.md) |
 | [ENG-F1-08 headless-app-tests](ENG-F1-08-headless-app-tests.md) |
+| [ENG-F1-09 malformed-prefs-are-reported](ENG-F1-09-malformed-prefs-are-reported.md) |
 
 ## Notes
 
