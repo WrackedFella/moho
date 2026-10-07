@@ -387,6 +387,34 @@ impl Prefs {
 mod tests {
     use super::*;
 
+    /// Restores the working directory when dropped, even if the test panics.
+    struct CwdGuard(PathBuf);
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.0);
+        }
+    }
+
+    /// `load` and `save` read and write the working-directory-relative `config_path()`.
+    /// No other test depends on the working directory, and nextest runs each test in
+    /// its own process.
+    #[test]
+    fn save_then_load_round_trips_through_config_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let _restore = CwdGuard(std::env::current_dir().unwrap());
+        std::env::set_current_dir(dir.path()).unwrap();
+        let mut prefs = Prefs::default();
+        *prefs.mouse_sensitivity_mut() = 2.5;
+        prefs.set_window_mode(WindowMode::Fullscreen);
+
+        prefs.save().unwrap();
+        let loaded = Prefs::load();
+
+        assert!(dir.path().join("config/prefs.ini").is_file());
+        assert_eq!(loaded, prefs);
+    }
+
     #[test]
     fn test_default_prefs() {
         let prefs = Prefs::default();
