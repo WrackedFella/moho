@@ -84,8 +84,10 @@ to copy, and setting the upgrade rhythm later milestones follow.
 
 ## Notes
 
-- [ENG-F2-02](ENG-F2-02-egui-ui-architecture-migration.md) lands after
-  [ENG-F2-08](ENG-F2-08-graphics-stack-current.md), so the migration targets
-  the egui release it will live on.
+- [ENG-F2-02](ENG-F2-02-egui-ui-architecture-migration.md) lands before
+  [ENG-F2-08](ENG-F2-08-graphics-stack-current.md): egui 0.36 removes the
+  deprecated entry points, and 0.34.3 already has their replacements.
+- [ENG-F2-09](ENG-F2-09-physics-stack-current.md) delivers
+  [ENG-F2-04](ENG-F2-04-paste-advisory-cleared.md): `rapier3d` 0.36 drops `paste`.
 - [ENG-F2-10](ENG-F2-10-terrain-noise-in-house.md) changes strategy-line code;
   it lands after [ENG-F10](../ENG-F10-world-geometry-from-any-source/_feature.md).
