@@ -3,7 +3,8 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use super::Prefs;
+use super::parser::parse_binding;
+use super::{Prefs, WindowMode};
 
 /// One problem found while loading preferences.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,18 +41,221 @@ pub struct PrefsWarning {
 }
 
 impl fmt::Display for PrefsWarning {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let file = self.file.display();
+        match &self.issue {
+            PrefsIssue::Malformed {
+                section,
+                key,
+                value: Some(value),
+            } => write!(f, "{file}: [{section}] {key}: unusable value {value:?}"),
+            PrefsIssue::Malformed {
+                section,
+                key,
+                value: None,
+            } => write!(f, "{file}: [{section}] {key}: no '=' and no value"),
+            PrefsIssue::UnknownKey { section, key } => {
+                write!(f, "{file}: [{section}] has unknown key {key}")
+            }
+            PrefsIssue::UnknownSection { section } => {
+                write!(f, "{file}: unknown section [{section}]")
+            }
+            PrefsIssue::Unparseable { reason } => write!(f, "{file}: cannot parse: {reason}"),
+            PrefsIssue::Unreadable { reason } => write!(f, "{file}: cannot read: {reason}"),
+            PrefsIssue::NotCreated { reason } => {
+                write!(f, "{file}: cannot create default file: {reason}")
+            }
+        }
     }
 }
 
+/// Parses a raw value into the field; `None` leaves the field untouched.
+type Setter = fn(&mut Prefs, &str) -> Option<()>;
+
+fn set<T>(slot: &mut T, value: Option<T>) -> Option<()> {
+    *slot = value?;
+    Some(())
+}
+
+fn parse_f32(s: &str) -> Option<f32> {
+    s.parse::<f32>().ok().filter(|v| v.is_finite())
+}
+
+fn parse_bool(s: &str) -> Option<bool> {
+    if s.eq_ignore_ascii_case("true") || s == "1" {
+        Some(true)
+    } else if s.eq_ignore_ascii_case("false") || s == "0" {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn parse_u32(s: &str) -> Option<u32> {
+    s.parse().ok()
+}
+
+/// Every key `parse` accepts: `(section, key, setter)`.
+const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
+    ("prefs", "key_w", |p, s| set(&mut p.key_w, parse_binding(s))),
+    ("prefs", "key_a", |p, s| set(&mut p.key_a, parse_binding(s))),
+    ("prefs", "key_s", |p, s| set(&mut p.key_s, parse_binding(s))),
+    ("prefs", "key_d", |p, s| set(&mut p.key_d, parse_binding(s))),
+    ("prefs", "key_up", |p, s| {
+        set(&mut p.key_up, parse_binding(s))
+    }),
+    ("prefs", "key_down", |p, s| {
+        set(&mut p.key_down, parse_binding(s))
+    }),
+    ("prefs", "key_sprint", |p, s| {
+        set(&mut p.key_sprint, parse_binding(s))
+    }),
+    ("prefs", "key_jump", |p, s| {
+        set(&mut p.key_jump, parse_binding(s))
+    }),
+    ("prefs", "mouse_sensitivity", |p, s| {
+        set(&mut p.mouse_sensitivity, parse_f32(s))
+    }),
+    ("prefs", "input_filtering_enabled", |p, s| {
+        set(&mut p.input_filtering_enabled, parse_bool(s))
+    }),
+    ("audio", "sound_effect_volume", |p, s| {
+        set(&mut p.audio_sound_effect_volume, parse_f32(s))
+    }),
+    ("audio", "music_volume", |p, s| {
+        set(&mut p.audio_music_volume, parse_f32(s))
+    }),
+    ("audio", "ui_volume", |p, s| {
+        set(&mut p.audio_ui_volume, parse_f32(s))
+    }),
+    ("audio", "voice_volume", |p, s| {
+        set(&mut p.audio_voice_volume, parse_f32(s))
+    }),
+    ("graphics", "shadow_quality", |p, s| {
+        set(&mut p.graphics_shadow_quality, parse_u32(s))
+    }),
+    ("graphics", "ssao_quality", |p, s| {
+        set(&mut p.graphics_ssao_quality, parse_u32(s))
+    }),
+    ("video", "window_mode", |p, s| {
+        set(&mut p.window_mode, WindowMode::parse(s))
+    }),
+    ("video", "window_width", |p, s| {
+        set(&mut p.window_resolution.0, parse_u32(s))
+    }),
+    ("video", "window_height", |p, s| {
+        set(&mut p.window_resolution.1, parse_u32(s))
+    }),
+    ("world", "load_radius", |p, s| {
+        set(&mut p.world_load_radius, parse_u32(s))
+    }),
+    ("world", "unload_radius", |p, s| {
+        set(&mut p.world_unload_radius, parse_u32(s))
+    }),
+    ("world", "chunks_per_frame", |p, s| {
+        set(
+            &mut p.world_chunks_per_frame,
+            parse_u32(s).filter(|&v| v > 0),
+        )
+    }),
+];
+
 impl Prefs {
-    pub fn parse(_content: &str) -> (Self, Vec<PrefsIssue>) {
-        todo!()
+    /// Parses INI text. Every problem is returned alongside the preferences, and the
+    /// affected key keeps its default. Keys before any header count as `[prefs]`
+    /// unless the file has a `[prefs]` section, in which case they are ignored and
+    /// reported as unknown keys of section `default`.
+    pub fn parse(content: &str) -> (Self, Vec<PrefsIssue>) {
+        let mut prefs = Self::default();
+        let mut issues = Vec::new();
+        let map = match ini::macro_safe_read(content) {
+            Ok(map) => map,
+            Err(reason) => return (prefs, vec![PrefsIssue::Unparseable { reason }]),
+        };
+
+        let mut sections: Vec<_> = map.iter().collect();
+        sections.sort_by_key(|(name, _)| name.as_str());
+        for (name, keys) in sections {
+            let table_name = match name.as_str() {
+                "default" if map.contains_key("prefs") => {
+                    let mut stray: Vec<_> = keys.keys().collect();
+                    stray.sort();
+                    issues.extend(stray.into_iter().map(|key| PrefsIssue::UnknownKey {
+                        section: name.clone(),
+                        key: key.clone(),
+                    }));
+                    continue;
+                }
+                "default" => "prefs",
+                other => other,
+            };
+            if !KNOWN_KEYS.iter().any(|(s, _, _)| *s == table_name) {
+                issues.push(PrefsIssue::UnknownSection {
+                    section: name.clone(),
+                });
+                continue;
+            }
+
+            let mut keys: Vec<_> = keys.iter().collect();
+            keys.sort_by_key(|(key, _)| key.as_str());
+            for (key, value) in keys {
+                let Some((_, _, setter)) = KNOWN_KEYS
+                    .iter()
+                    .find(|(s, k, _)| *s == table_name && *k == key)
+                else {
+                    issues.push(PrefsIssue::UnknownKey {
+                        section: name.clone(),
+                        key: key.clone(),
+                    });
+                    continue;
+                };
+                if value
+                    .as_deref()
+                    .and_then(|v| setter(&mut prefs, v))
+                    .is_none()
+                {
+                    issues.push(PrefsIssue::Malformed {
+                        section: name.clone(),
+                        key: key.clone(),
+                        value: value.clone(),
+                    });
+                }
+            }
+        }
+        (prefs, issues)
     }
 
-    pub fn load_from(_path: &Path) -> (Self, Vec<PrefsWarning>) {
-        todo!()
+    /// Loads preferences from `path`, creating the file with defaults when it is missing.
+    /// Any failure yields defaults (for the affected keys, or all of them) plus a warning.
+    pub fn load_from(path: &Path) -> (Self, Vec<PrefsWarning>) {
+        let warn = |issue| PrefsWarning {
+            file: path.to_path_buf(),
+            issue,
+        };
+
+        if !path.exists() {
+            let defaults = Self::default();
+            let warnings = match defaults.save_to(path) {
+                Ok(()) => vec![],
+                Err(e) => vec![warn(PrefsIssue::NotCreated {
+                    reason: e.to_string(),
+                })],
+            };
+            return (defaults, warnings);
+        }
+
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                let (prefs, issues) = Self::parse(&content);
+                (prefs, issues.into_iter().map(warn).collect())
+            }
+            Err(e) => (
+                Self::default(),
+                vec![warn(PrefsIssue::Unreadable {
+                    reason: e.to_string(),
+                })],
+            ),
+        }
     }
 }
 
@@ -485,6 +689,26 @@ mod tests {
         assert_eq!(prefs.key_w(), Binding::new('J' as u32, 0));
     }
 
+    #[test]
+    fn keys_before_header_are_reported_when_prefs_section_exists() {
+        let content = "mouse_sensitivity=2.0\n[prefs]\nkey_w=I\n";
+
+        let (prefs, issues) = Prefs::parse(content);
+
+        assert_eq!(
+            issues,
+            vec![PrefsIssue::UnknownKey {
+                section: "default".into(),
+                key: "mouse_sensitivity".into(),
+            }]
+        );
+        assert_eq!(
+            prefs.mouse_sensitivity(),
+            Prefs::default().mouse_sensitivity()
+        );
+        assert_eq!(prefs.key_w(), Binding::new('I' as u32, 0));
+    }
+
     /// `save` writes to the fixed, CWD-relative `config_path()`, so it cannot be pointed at a
     /// temp dir without changing the process-wide CWD. This pins the text `save` writes instead.
     #[test]
@@ -518,6 +742,20 @@ mod tests {
              chunks_per_frame=4\n";
 
         assert_eq!(Prefs::default().to_ini_string(), expected);
+    }
+
+    #[test]
+    fn save_writes_to_ini_string() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config").join("prefs.ini");
+        let prefs = base_prefs();
+
+        prefs.save_to(&path).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            prefs.to_ini_string()
+        );
     }
 
     fn binding_strategy() -> impl Strategy<Value = Binding> {
