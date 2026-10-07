@@ -36,6 +36,35 @@ removes dependencies that are declared but unused.
 - [ ] `cargo tree --workspace -i ttf-parser` reports no match; the RUSTSEC-2026-0192 ignore is gone.
 - [ ] `just deny` passes with no yanked-crate warning.
 
+## Tech spec
+
+**Design.**
+- Root `[workspace.dependencies]`: `winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }`.
+- `moho_ui`: `egui-winit = { version = "0.34.3", default-features = false, features = ["clipboard", "wayland", "x11"] }`. The version moves in [#101 ENG-F2-08, graphics stack](https://github.com/WrackedFella/moho/issues/101), not here.
+- Delete the 15 declarations listed under Deliverables. Each was re-checked unused on `dev` on 2026-10-07; in `moho_ui`, `ini` appears only in comments. `gilrs` leaves as [ADR-0008](https://github.com/WrackedFella/moho/blob/dev/_todo/adr/0008-keep-winit-for-windowing-and-input.md) says; ENG-F12 adds it back in the crate that consumes it.
+- `deny.toml`: delete the RUSTSEC-2026-0192 entry.
+- Lockfile: `cargo update -p chacha20 --precise 0.10.2`. Don't run a blanket `cargo update`, so the lockfile diff stays reviewable.
+- Delete the stale RAUI comment block in `moho_ui/Cargo.toml`.
+- Checked on 2026-10-07 against a copy of `dev`: with both manifests changed, `cargo check --workspace --all-targets` passes and `cargo tree --workspace --target all -e all -i ttf-parser` finds no match.
+
+**Out of scope.**
+- Declarations that are still used: `bincode` ([#94](https://github.com/WrackedFella/moho/issues/94)), `log`/`env_logger` in the root ([#98](https://github.com/WrackedFella/moho/issues/98)), `crossbeam-channel` ([#99](https://github.com/WrackedFella/moho/issues/99)), `pollster` in `moho_renderer` ([#100](https://github.com/WrackedFella/moho/issues/100)), `noise` in `moho_game` ([#105](https://github.com/WrackedFella/moho/issues/105)).
+- `phf` (ENG-F12), the `ini` 2.0 bump, and `moho_physics`'s `edition = "2021"`.
+- Any other lockfile update, and any egui or wgpu version change.
+
+**Test map.** The change touches manifests only, so there is no behavior to unit-test. Each criterion is a command the PR runs and quotes:
+| Criterion | Proof | Gate class |
+|---|---|---|
+| Declarations absent; `just check` passes | `just check` | glue |
+| `ttf-parser` gone; ignore removed | `cargo tree --workspace --target all -e all -i ttf-parser` reports no match; `deny.toml` diff | glue |
+| No yanked crate | `just deny` output has no `yanked` line | glue |
+
+**Gate class:** glue.
+
+**Risks.**
+- Verification needs a person at a desktop with X11 and Wayland sessions (title bar, clipboard). An agent can't sign off on that step.
+- [#94](https://github.com/WrackedFella/moho/issues/94), [#98](https://github.com/WrackedFella/moho/issues/98), [#99](https://github.com/WrackedFella/moho/issues/99) and [#100](https://github.com/WrackedFella/moho/issues/100) edit the same manifests. Land this card first; the later cards rebase cleanly.
+
 ## Verification
 
 - The window opens and resizes on X11 and Wayland; on Wayland it has no
