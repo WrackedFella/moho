@@ -3,7 +3,7 @@
 
 ## Summary
 
-A level authored in a tool loads as meshes, colliders and named markers; the game decides what a marker means. Consumer: FPS GDD v0.2 §10 (pending on `dev`); strategy is a likely second consumer.
+A level authored in a tool loads as meshes, colliders and named markers; the game decides what a marker means. Consumer: [FPS GDD v0.2](../../../wiki/fps/game-design-document.md) §10; strategy is a likely second consumer.
 
 ## Exit criteria
 

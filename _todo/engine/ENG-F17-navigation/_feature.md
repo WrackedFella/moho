@@ -3,7 +3,7 @@
 
 ## Summary
 
-AI moves through non-voxel levels. Until this lands, FPS Phase 1 AI can use waypoints. Consumer: FPS GDD v0.2 §10 (pending on `dev`); strategy is a likely second consumer.
+AI moves through non-voxel levels. Until this lands, FPS Phase 1 AI can use waypoints. Consumer: [FPS GDD v0.2](../../../wiki/fps/game-design-document.md) §10; strategy is a likely second consumer.
 
 ## Exit criteria
 

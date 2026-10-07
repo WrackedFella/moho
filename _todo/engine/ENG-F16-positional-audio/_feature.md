@@ -3,7 +3,7 @@
 
 ## Summary
 
-The player can tell where a sound came from. Consumer: FPS GDD v0.2 §10 (pending on `dev`); strategy is a likely second consumer.
+The player can tell where a sound came from. Consumer: [FPS GDD v0.2](../../../wiki/fps/game-design-document.md) §10; strategy is a likely second consumer.
 
 ## Exit criteria
 

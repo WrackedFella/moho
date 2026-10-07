@@ -57,7 +57,7 @@ just before the work that needs them, not sooner.
 
 **Intent:** The engine carries both games' current scopes.
 **Gate (all must hold):**
-- FPS GDD Phase 1–2 (pending on `dev`) playable on engine-line crates:
+- [FPS GDD](../wiki/fps/game-design-document.md) §7 Phase 1–2 playable on engine-line crates:
   ENG-F14–F19 done.
 - Strategy v1 slice done: SG-F1-04, SG-F2-03, SG-F2-02.
 - Save envelope on [ADR-0006](adr/0006-save-format-contract.md) (1.1).
@@ -89,9 +89,13 @@ the FPS rules crate are greenlit now (they don't wait on M1).
 
 | # | Feature | Depends on |
 |---|---|---|
-| P.1 | [FPS-F1](fps-game/FPS-F1-game-design-document/_feature.md) GDD (v0.2 drafted in the FPS project; lands in `wiki/fps/`) | — |
+| P.1 | [FPS-F1](fps-game/FPS-F1-game-design-document/_feature.md) [GDD](../wiki/fps/game-design-document.md) v0.2 | — |
 | P.3 | FPS rules crate (magazine, body-part damage): platform-free, fps + domain rows in the layering check; needs its own feature first | P.1 |
-| P.2 | FPS prototype crate in the monorepo, held apart by the layering check; loads a non-voxel map | P.1, 1.8, 1.9, 1.10; arena also 2.5–2.9 |
+| P.2 | FPS prototype crate in the monorepo, held apart by the layering check; loads a non-voxel map. Scope: GDD §7 Phase 1 (arena baseline) | P.1, 1.8, 1.9, 1.10; arena also 2.5–2.9 |
+
+FPS phases after P.2 follow GDD §7 (items, weapon wear, wounds, survival, hub
+and jobs, Director). Each becomes a feature only after the previous one is
+approved.
 
 ## M3 — v1.0 and split
 

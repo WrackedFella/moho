@@ -3,7 +3,7 @@
 
 ## Summary
 
-Items, weapons and similar are data, and data-only mods override them by id. Scripted mods are wanted later (own ADR), so behaviours are referenced by id. Consumer: FPS GDD v0.2 §10 (pending on `dev`); strategy is a likely second consumer.
+Items, weapons and similar are data, and data-only mods override them by id. Scripted mods are wanted later (own ADR), so behaviours are referenced by id. Consumer: [FPS GDD v0.2](../../../wiki/fps/game-design-document.md) §10; strategy is a likely second consumer.
 
 ## Exit criteria
 
