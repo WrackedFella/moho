@@ -1,0 +1,43 @@
+name: Engine request
+description: A game line needs something from the engine. State the need; the engine lane designs the answer.
+title: "[Engine request] "
+labels: ["line:engine", "engine-request"]
+body:
+  - type: dropdown
+    id: from
+    attributes:
+      label: Requesting line
+      options:
+        - strategy
+        - fps
+    validations:
+      required: true
+  - type: textarea
+    id: need
+    attributes:
+      label: Need
+      description: What the game must be able to do, as a capability, not a design ("load a static level and read named markers from it").
+    validations:
+      required: true
+  - type: textarea
+    id: consumer
+    attributes:
+      label: Consumer
+      description: The feature or card that needs it (ID and short description), and the source, such as a GDD section.
+    validations:
+      required: true
+  - type: input
+    id: needed-by
+    attributes:
+      label: Needed by
+      description: The milestone, phase or card it blocks.
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Workaround meanwhile
+      description: What the game can do until this lands, or "none".
+  - type: textarea
+    id: notes
+    attributes:
+      label: Constraints and open questions
+      description: Related ADRs, known limits, and anything the engine lane should decide.
