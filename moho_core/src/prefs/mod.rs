@@ -32,13 +32,15 @@ impl WindowMode {
         }
     }
 
+    /// Inverse of `as_str`: exact names only.
     fn parse(s: &str) -> Option<Self> {
-        match s {
-            "Windowed" => Some(WindowMode::Windowed),
-            "Fullscreen" => Some(WindowMode::Fullscreen),
-            "Borderless" => Some(WindowMode::Borderless),
-            _ => None,
-        }
+        [
+            WindowMode::Windowed,
+            WindowMode::Fullscreen,
+            WindowMode::Borderless,
+        ]
+        .into_iter()
+        .find(|mode| mode.as_str() == s)
     }
 }
 
@@ -264,16 +266,6 @@ impl Prefs {
     }
     pub fn with_input_filtering_enabled(mut self, v: bool) -> Self {
         self.input_filtering_enabled = v;
-        self
-    }
-
-    pub fn with_window_mode(mut self, mode: WindowMode) -> Self {
-        self.window_mode = mode;
-        self
-    }
-
-    pub fn with_window_resolution(mut self, width: u32, height: u32) -> Self {
-        self.window_resolution = (width, height);
         self
     }
 }
