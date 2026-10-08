@@ -186,3 +186,33 @@ fn mesh_is_centered_on_the_voxel_it_represents() {
 
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[test]
+fn mixed_chunk_away_from_origin_is_placed_at_its_world_position() {
+    let smooth = IVec3::new(-11, 21, 5);
+    let blocky = IVec3::new(-4, 28, 12);
+    let grid = grid_with(&[(smooth, SMOOTH_MATERIAL), (blocky, BLOCKY_MATERIAL)]);
+
+    let chunk = VoxelChunk::from_grid_lod(&grid, IVec3::new(-1, 1, 0), 0);
+
+    let (min, max) = bbox_of(&chunk, Some(SMOOTH_GEOMETRY));
+    assert!(min[0].is_finite(), "expected smooth vertices in chunk");
+    for a in 0..3 {
+        let expected = smooth[a] as f32 + 0.5;
+        let center = (min[a] + max[a]) * 0.5;
+        assert!(
+            (center - expected).abs() < TOLERANCE,
+            "axis {a}: smooth part centred at {center}, expected {expected} (bbox {min:?}..{max:?})"
+        );
+    }
+    let (bmin, bmax) = bbox_of(&chunk, Some(BLOCKY_GEOMETRY));
+    assert!(bmin[0].is_finite(), "expected blocky vertices in chunk");
+    for a in 0..3 {
+        let lo = blocky[a] as f32;
+        assert!(
+            (bmin[a] - lo).abs() < TOLERANCE && (bmax[a] - (lo + 1.0)).abs() < TOLERANCE,
+            "axis {a}: blocky part spans {bmin:?}..{bmax:?}, expected {lo}..{}",
+            lo + 1.0
+        );
+    }
+}
