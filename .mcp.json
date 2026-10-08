@@ -1,11 +1,9 @@
 {
   "mcpServers": {
     "gitnexus": {
-      "command": "npx",
+      "command": "bash",
       "args": [
-        "--no-install",
-        "gitnexus",
-        "mcp"
+        "scripts/gitnexus-mcp.sh"
       ]
     }
   }
