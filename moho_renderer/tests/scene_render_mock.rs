@@ -65,7 +65,6 @@ impl RendererBackend for MockRenderer {
     }
     fn submit_frame(&mut self) {}
     fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
-    fn set_frame_callback_raw(&mut self, _ptr: Option<*mut dyn FrameCallback>) {}
     fn set_frame_callback_arc(
         &mut self,
         _cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
