@@ -200,4 +200,22 @@ mod tests {
         assert!(setup.graphics_event_rx.is_empty());
         assert!(setup.ui_event_rx.is_empty());
     }
+
+    #[test]
+    fn try_recv_after_bus_dropped_reports_disconnected() {
+        let EventBusSetup {
+            event_bus,
+            audio_event_rx,
+            ..
+        } = setup_event_bus();
+
+        drop(event_bus);
+
+        // The frame loop drains with `while let Ok(..) = rx.try_recv()`; a dropped
+        // sender must end that loop rather than look like an empty channel forever.
+        assert!(matches!(
+            audio_event_rx.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        ));
+    }
 }
