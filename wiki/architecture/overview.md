@@ -31,7 +31,7 @@ flowchart TD
     game --> core & rapi
     renderer --> rapi
     audio --> core
-    physics --> core
+    physics --> rapi
     core --> rapi
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
@@ -101,7 +101,6 @@ flowchart TD
 Changes from today:
 
 - `moho_core::input` folds into `moho_input`; voxels leave `moho_core` for `moho_voxel` (ENG-F10).
-- `moho_physics` drops its unused `moho_core` dependency and consumes the mesh contract.
 - Scene import (ENG-F14), navigation (ENG-F17) and the character controller and camera
   (ENG-F21) are modules of an engine crate unless their specs name a boundary.
 

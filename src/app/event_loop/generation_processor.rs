@@ -124,6 +124,7 @@ impl GenerationProcessor {
         // Load produced scene bytes into the main world
         crate::app::world_geometry::remove_all_chunk_meshes(app);
         app.entities.clear();
+        app.physics.reset();
         match moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.entities) {
             Ok((camera_data, _lights)) => {
                 crate::app::world_geometry::upsert_all_chunks(app);
@@ -216,23 +217,18 @@ impl GenerationProcessor {
     /// `preload_spawn_area`. Their meshes are built here (before the character
     /// is placed) so real terrain colliders exist at spawn time. Passing an
     /// empty slice is fine for the load-scene path.
+    ///
+    /// Expects physics to be already reset and the loaded chunks registered
+    /// by the loader.
     fn setup_physics_for_world(&self, app: &mut App, preloaded_chunks: &[glam::IVec3]) {
-        app.physics.reset();
-
-        // Covers the load-scene path, where chunks exist before any generation event.
-        app.physics.sync_colliders(&app.entities.chunks);
-
         // Build meshes and colliders for preloaded spawn-area chunks immediately so
         // the character doesn't fall through before async event processing kicks in.
         if let Some(ls) = &app.light_system {
             let grid = ls.grid();
-            let mut chunks = Vec::with_capacity(preloaded_chunks.len());
-            for &pos in preloaded_chunks {
-                let chunk = moho_core::voxel::VoxelChunk::from_grid_hybrid(grid, pos);
-                app.physics
-                    .update_chunk_collider(pos, chunk.vertices(), chunk.indices());
-                chunks.push(chunk);
-            }
+            let chunks: Vec<_> = preloaded_chunks
+                .iter()
+                .map(|&pos| moho_core::voxel::VoxelChunk::from_grid_hybrid(grid, pos))
+                .collect();
             for chunk in chunks {
                 crate::app::world_geometry::insert_chunk(app, chunk);
             }
@@ -300,7 +296,7 @@ impl GenerationProcessor {
         }
 
         tracing::info!(
-            chunk_colliders = app.physics.chunk_colliders.len(),
+            chunks = app.entities.chunks.len(),
             test_spheres = app.physics.test_bodies.len(),
             pos = ?spawn_pos,
             "Physics world ready"
@@ -362,7 +358,16 @@ mod tests {
         assert_eq!(app.game_state, GameState::Playing);
         assert!(app.chunk_streamer.is_some());
         assert!(!app.entities.chunks.is_empty(), "spawn area is meshed");
-        assert_eq!(app.physics.chunk_colliders.len(), app.entities.chunks.len());
+        let pw = app.physics.world.as_ref().expect("physics world");
+        for chunk in app.entities.chunks.iter() {
+            let id = crate::app::world_geometry::chunk_mesh_id(chunk.chunk_pos());
+            assert_eq!(
+                pw.world_mesh_collider(id).is_some(),
+                chunk.has_geometry(),
+                "chunk {} has a collider iff it has geometry",
+                chunk.chunk_pos()
+            );
+        }
         assert!(
             app.physics.is_kcc_active(),
             "the character controller is placed"
@@ -375,6 +380,64 @@ mod tests {
             .and_then(|ls| ls.grid().get_height(0, 0))
             .expect("spawn column has terrain");
         assert!(app.simulation.position().y > terrain_y as f32);
+    }
+
+    #[test]
+    fn second_completed_generation_replaces_the_first_worlds_physics_bodies() {
+        use crate::app::world_geometry::tests::terrain_collider_count;
+        let mut app = App::headless();
+        let complete = |app: &mut App, name: &str| {
+            let spec = moho_game::scene_builders::WorldSpec {
+                name: name.to_string(),
+                seed: Some(7),
+                size_xz: 64,
+                day_length_seconds: 600.0,
+                night_length_seconds: 420.0,
+                initial_time_of_day: 6.0,
+            };
+            let scene_bytes = moho_game::scene_persistence::encode_to_bytes(
+                &moho_game::scene::SceneEntities::default(),
+                None,
+                &[],
+            )
+            .expect("encode empty scene");
+            GenerationProcessor::new().handle_completed(
+                app,
+                scene_bytes,
+                spec,
+                moho_game::scene_builders::TerrainConfig::default(),
+                moho_core::voxel::VoxelGrid::new(16),
+            );
+        };
+        complete(&mut app, "headless-test-twice-first");
+        assert_eq!(app.physics.test_bodies.len(), 3);
+
+        complete(&mut app, "headless-test-twice-second");
+
+        let pw = app.physics.world.as_ref().expect("physics world");
+        let with_geometry = app
+            .entities
+            .chunks
+            .iter()
+            .filter(|c| c.has_geometry())
+            .count();
+        assert_eq!(app.physics.test_bodies.len(), 3, "one world's test bodies");
+        assert_eq!(app.entities.actors.spheres().len(), 3);
+        assert_eq!(
+            terrain_collider_count(&app),
+            with_geometry + 3,
+            "terrain plus the three spheres, character aside"
+        );
+        assert_eq!(
+            pw.collider_set.len(),
+            with_geometry + 1 + 3,
+            "terrain, one character and three spheres"
+        );
+        assert_eq!(
+            pw.rigid_body_set.len(),
+            1 + 3,
+            "one character, three spheres"
+        );
     }
 
     #[test]
