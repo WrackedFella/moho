@@ -3,6 +3,7 @@
 pub mod events;
 pub mod input;
 pub mod materials;
+pub mod persist;
 pub mod prefs;
 pub mod voxel;
 

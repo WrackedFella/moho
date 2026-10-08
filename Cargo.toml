@@ -18,6 +18,8 @@ bytemuck = "1.24"
 glam = "0.33"
 naga = "29.0.1"
 noise = "0.9"
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+crc32fast = "1"
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 rand = "0.10"
 rodio = "0.22"

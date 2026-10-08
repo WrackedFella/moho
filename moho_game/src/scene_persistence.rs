@@ -7,6 +7,7 @@ use crate::actors::{Cube, Sphere};
 use crate::scene::SceneEntities;
 use bincode::{Decode, Encode};
 use moho_core::materials::MaterialType;
+use moho_core::persist::PersistError;
 use moho_render_api::{CameraDesc, LightDesc};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -103,7 +104,7 @@ pub fn encode_to_bytes(
 pub fn load_from_file<P: AsRef<Path>>(
     path: P,
     entities: &mut SceneEntities,
-) -> Result<(Option<CameraData>, Vec<LightDesc>), Box<dyn std::error::Error>> {
+) -> Result<(Option<CameraData>, Vec<LightDesc>), PersistError> {
     let mut f = File::open(path)?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf)?;
@@ -118,12 +119,19 @@ pub fn load_from_file<P: AsRef<Path>>(
 pub fn load_from_bytes(
     bytes: &[u8],
     entities: &mut SceneEntities,
-) -> Result<(Option<CameraData>, Vec<LightDesc>), Box<dyn std::error::Error>> {
+) -> Result<(Option<CameraData>, Vec<LightDesc>), PersistError> {
     decode_and_populate(bytes, entities)
 }
 
 /// Internal helper to decode SceneDesc from bytes and populate entities.
 fn decode_and_populate(
+    bytes: &[u8],
+    entities: &mut SceneEntities,
+) -> Result<(Option<CameraData>, Vec<LightDesc>), PersistError> {
+    decode_and_populate_inner(bytes, entities).map_err(|_| PersistError::Corrupt)
+}
+
+fn decode_and_populate_inner(
     bytes: &[u8],
     entities: &mut SceneEntities,
 ) -> Result<(Option<CameraData>, Vec<LightDesc>), Box<dyn std::error::Error>> {
@@ -563,6 +571,131 @@ mod tests {
             .map(moho_core::voxel::VoxelChunk::chunk_pos)
             .collect();
         assert_eq!(positions, vec![glam::IVec3::new(4, 0, -2)]);
+    }
+
+    fn populated_entities() -> SceneEntities {
+        let mut entities = SceneEntities::default();
+        entities.actors.spawn_sphere(Sphere::new(
+            glam::Vec3::new(1.0, 2.0, 3.0),
+            0.75,
+            MaterialType::Lambertian {
+                albedo: glam::Vec3::new(0.1, 0.2, 0.3),
+            },
+        ));
+        entities
+            .chunks
+            .insert(meshed_chunk(glam::IVec3::new(4, 0, -2), 1.0, 3));
+        entities
+    }
+
+    #[test]
+    fn scene_file_round_trips() {
+        let path = std::env::temp_dir().join(format!(
+            "moho_scene_file_round_trips_{}.scene",
+            std::process::id()
+        ));
+        let entities = populated_entities();
+        let cam_pos = glam::Vec3::new(5.0, 6.0, 7.0);
+        let light = LightDesc {
+            position: [1.0, 2.0, 3.0],
+            color: [0.5, 0.25, 1.0],
+            intensity: 3.0,
+            range: 12.0,
+            enabled: true,
+        };
+
+        let saved = save_to_file(&path, &entities, Some((cam_pos, 0.5, -0.25)), &[light]);
+        let on_disk = std::fs::read(&path);
+        let mut loaded = SceneEntities::default();
+        let result = load_from_file(&path, &mut loaded);
+        let _ = std::fs::remove_file(&path);
+
+        saved.expect("save");
+        assert_eq!(
+            &on_disk.expect("read back")[..7],
+            b"MOHO\x02\x01\x00",
+            "scene envelope: magic, kind Scene, version 1"
+        );
+        let (camera, lights) = result.expect("load");
+        assert_eq!(camera, Some((cam_pos, 0.5, -0.25)));
+        assert_eq!(lights.len(), 1);
+        assert_eq!(lights[0].position, [1.0, 2.0, 3.0]);
+        assert_eq!(loaded.actors.spheres().len(), 1);
+        assert_eq!(
+            loaded.actors.spheres()[0].center,
+            glam::Vec3::new(1.0, 2.0, 3.0)
+        );
+        let positions: Vec<glam::IVec3> = loaded
+            .chunks
+            .iter()
+            .map(moho_core::voxel::VoxelChunk::chunk_pos)
+            .collect();
+        assert_eq!(positions, vec![glam::IVec3::new(4, 0, -2)]);
+    }
+
+    #[test]
+    fn failed_load_leaves_entities_untouched() {
+        let mut bytes = encode_to_bytes(&populated_entities(), None, &[]).expect("encode");
+        assert_eq!(&bytes[..5], b"MOHO\x02", "scene envelope magic and kind");
+        bytes[15] ^= 0xFF; // inside the stored CRC
+        let mut target = SceneEntities::default();
+        target.actors.spawn_sphere(Sphere::new(
+            glam::Vec3::ZERO,
+            1.0,
+            MaterialType::Lambertian {
+                albedo: glam::Vec3::ONE,
+            },
+        ));
+
+        let err = load_from_bytes(&bytes, &mut target).expect_err("must reject");
+
+        assert!(matches!(err, PersistError::Corrupt), "{err:?}");
+        assert_eq!(target.actors.spheres().len(), 1);
+        assert!(target.actors.cubes().is_empty());
+        assert!(target.chunks.is_empty());
+    }
+
+    #[test]
+    fn truncated_scene_is_rejected_without_touching_entities() {
+        let bytes = encode_to_bytes(&populated_entities(), None, &[]).expect("encode");
+        assert_eq!(&bytes[..5], b"MOHO\x02", "scene envelope magic and kind");
+        let mut target = SceneEntities::default();
+
+        let err = load_from_bytes(&bytes[..bytes.len() - 1], &mut target).expect_err("must reject");
+
+        assert!(matches!(err, PersistError::Corrupt), "{err:?}");
+        assert!(target.actors.spheres().is_empty());
+        assert!(target.chunks.is_empty());
+    }
+
+    #[test]
+    fn foreign_scene_bytes_return_not_a_save_file() {
+        let mut target = SceneEntities::default();
+
+        let err =
+            load_from_bytes(b"PNG not a scene file at all", &mut target).expect_err("must reject");
+
+        assert!(matches!(err, PersistError::NotASaveFile), "{err:?}");
+    }
+
+    #[test]
+    fn world_envelope_is_not_accepted_as_a_scene() {
+        let world =
+            moho_core::persist::encode(moho_core::persist::FileKind::World, &0u8).expect("encode");
+        let mut target = SceneEntities::default();
+
+        let err = load_from_bytes(&world, &mut target).expect_err("must reject");
+
+        assert!(
+            matches!(
+                err,
+                PersistError::WrongKind {
+                    expected: moho_core::persist::FileKind::Scene,
+                    found: moho_core::persist::FileKind::World
+                }
+            ),
+            "{err:?}"
+        );
     }
 
     #[test]
