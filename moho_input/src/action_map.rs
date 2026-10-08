@@ -498,4 +498,147 @@ mod tests {
 
         assert_eq!(map.end_tick().look(), (3.0, -1.0));
     }
+
+    #[test]
+    fn unfiltered_horizontal_only_motion_scales_x_and_leaves_y_zero() {
+        let mut map = map(2.0);
+        map.set_filtering(false);
+
+        map.mouse_motion(3.0, 0.0);
+
+        assert_eq!(map.end_tick().look(), (6.0, 0.0));
+    }
+
+    #[test]
+    fn unfiltered_vertical_only_motion_scales_y_and_leaves_x_zero() {
+        let mut map = map(2.0);
+        map.set_filtering(false);
+
+        map.mouse_motion(0.0, 3.0);
+
+        assert_eq!(map.end_tick().look(), (0.0, 6.0));
+    }
+
+    #[test]
+    fn filtered_motion_below_deadzone_reads_zero() {
+        let mut map = map(1.0);
+
+        map.mouse_motion(0.005, 0.0);
+
+        assert_eq!(map.end_tick().look(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn filtered_diagonal_motion_above_deadzone_by_magnitude_is_smoothed_not_zeroed() {
+        let mut map = map(1.0);
+
+        map.mouse_motion(0.009, 0.009);
+        let (x, y) = map.end_tick().look();
+
+        assert!((x - 0.0072).abs() < 1e-6, "x = {x}");
+        assert!((y - 0.0072).abs() < 1e-6, "y = {y}");
+    }
+
+    #[test]
+    fn consecutive_filtered_ticks_blend_with_previous_output_on_both_axes() {
+        let mut map = map(1.0);
+
+        map.mouse_motion(1.0, 1.0);
+        let first = map.end_tick().look();
+        map.mouse_motion(1.0, 1.0);
+        let second = map.end_tick().look();
+
+        assert!((first.0 - 0.8).abs() < 1e-6 && (first.1 - 0.8).abs() < 1e-6);
+        assert!((second.0 - 0.96).abs() < 1e-6, "x = {}", second.0);
+        assert!((second.1 - 0.96).abs() < 1e-6, "y = {}", second.1);
+    }
+
+    #[test]
+    fn idle_tick_clears_smoothing_state() {
+        let mut map = map(1.0);
+        map.mouse_motion(1.0, 1.0);
+        map.end_tick();
+        map.end_tick();
+
+        map.mouse_motion(1.0, 1.0);
+        let (x, y) = map.end_tick().look();
+
+        assert!((x - 0.8).abs() < 1e-6, "x = {x}");
+        assert!((y - 0.8).abs() < 1e-6, "y = {y}");
+    }
+
+    #[test]
+    fn enabling_filtering_while_enabled_keeps_smoothing_state() {
+        let mut map = map(1.0);
+        map.mouse_motion(1.0, 1.0);
+        map.end_tick();
+
+        map.set_filtering(true);
+        map.mouse_motion(1.0, 1.0);
+        let (x, y) = map.end_tick().look();
+
+        assert!((x - 0.96).abs() < 1e-6, "x = {x}");
+        assert!((y - 0.96).abs() < 1e-6, "y = {y}");
+    }
+
+    #[test]
+    fn disabling_filtering_discards_smoothing_state() {
+        let mut map = map(1.0);
+        map.mouse_motion(1.0, 1.0);
+        map.end_tick();
+
+        map.set_filtering(false);
+        map.set_filtering(true);
+        map.mouse_motion(1.0, 1.0);
+        let (x, y) = map.end_tick().look();
+
+        assert!((x - 0.8).abs() < 1e-6, "x = {x}");
+        assert!((y - 0.8).abs() < 1e-6, "y = {y}");
+    }
+
+    #[test]
+    fn filtered_vertical_motion_below_deadzone_reads_zero() {
+        let mut map = map(1.0);
+
+        map.mouse_motion(0.0, 0.005);
+
+        assert_eq!(map.end_tick().look(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn filtered_motion_exactly_at_deadzone_threshold_passes() {
+        let mut map = map(1.0);
+
+        map.mouse_motion(0.01, 0.0);
+        let (x, y) = map.end_tick().look();
+
+        assert!((x - 0.008).abs() < 1e-6, "x = {x}");
+        assert_eq!(y, 0.0);
+    }
+
+    #[test]
+    fn horizontal_motion_of_exactly_epsilon_is_not_idle_and_keeps_smoothing() {
+        let mut map = map(1.0);
+        map.mouse_motion(1.0, 1.0);
+        map.end_tick();
+
+        map.mouse_motion(f64::EPSILON, 0.0);
+        let (x, y) = map.end_tick().look();
+
+        assert!((x - 0.16).abs() < 1e-6, "x = {x}");
+        assert!((y - 0.16).abs() < 1e-6, "y = {y}");
+    }
+
+    #[test]
+    fn vertical_motion_of_exactly_epsilon_is_not_idle_and_keeps_smoothing() {
+        let mut map = map(1.0);
+        map.mouse_motion(1.0, 1.0);
+        map.end_tick();
+
+        map.mouse_motion(0.0, f64::EPSILON);
+        let (x, y) = map.end_tick().look();
+
+        assert!((x - 0.16).abs() < 1e-6, "x = {x}");
+        assert!((y - 0.16).abs() < 1e-6, "y = {y}");
+    }
 }

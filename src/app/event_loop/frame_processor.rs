@@ -652,4 +652,22 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn positive_mouse_motion_turns_first_person_yaw_and_pitch_negative() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
+        app.simulation
+            .set_position_yaw_pitch(glam::Vec3::new(100.0, 100.0, 100.0), 0.0, 0.0);
+        app.input.actions.set_filtering(false);
+        app.input.actions.mouse_motion(5.0, 5.0);
+
+        FrameProcessor::new().update_game_state(&mut app, DT);
+
+        let (yaw, pitch) = app.simulation.yaw_pitch();
+        assert!(yaw < 0.0, "yaw = {yaw}");
+        assert!(pitch < 0.0, "pitch = {pitch}");
+    }
 }
