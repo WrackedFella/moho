@@ -971,8 +971,9 @@ mod tests {
                 (normal_len - 1.0).abs() < 1e-3,
                 "normal {n:?} at vertex {v:?} is not unit length"
             );
+            // These solids are symmetric about `centre`, so the normals are exactly radial.
             assert!(
-                cosine > 0.5,
+                cosine > 0.9999,
                 "normal {n:?} at vertex {v:?} does not point away from {centre:?} (cosine {cosine})"
             );
         }
@@ -1009,6 +1010,28 @@ mod tests {
                 "normal {n:?} at vertex {v:?}, expected {outward:?}"
             );
         }
+    }
+
+    #[test]
+    fn last_layer_gradient_is_one_sided_into_padding() {
+        // 2x2x2 solid on samples 15..=16. At (16.5, 15, 15) the gradient interpolates
+        // sample 16's central difference (-0.5, 0.5, 0.5) with sample 17's one-sided
+        // (-1, 0, 0), giving (-0.75, 0.25, 0.25): outward (3, -1, -1) / sqrt(11).
+        let solid =
+            (15..=16).flat_map(|x| (15..=16).flat_map(move |y| (15..=16).map(move |z| (x, y, z))));
+        let mesh = MarchingCubes::generate_mesh(&solid_samples_field(solid), 16);
+
+        let i = mesh
+            .vertices
+            .iter()
+            .position(|v| *v == [16.5, 15.0, 15.0])
+            .expect("vertex on the edge into padding");
+        let expected = [3.0, -1.0, -1.0].map(|c: f32| c / 11.0f32.sqrt());
+        let n = mesh.normals[i];
+        assert!(
+            n.iter().zip(&expected).all(|(a, b)| (a - b).abs() < 1e-5),
+            "normal {n:?}, expected {expected:?}"
+        );
     }
 
     #[test]
