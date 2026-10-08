@@ -525,7 +525,7 @@ mod tests {
         let mut grid = transparent_grid();
         let mut queue = LightJobQueue::new(unlimited_budget());
 
-        for (x, priority) in [(0, 100), (10, 50), (20, 25)] {
+        for (x, priority) in [(0, 50), (10, 100), (20, 25)] {
             queue.submit(LightUpdateJob::add_light(
                 IVec3::new(x, 0, 0),
                 [15, 0, 0],

@@ -406,11 +406,8 @@ mod tests {
 
         assert!(count > 1, "light must spill into neighbouring chunks");
         assert_eq!(count, expected.len());
-        let mut got = received.lock().unwrap().clone();
+        let got = received.lock().unwrap().clone();
         assert_eq!(got.len(), count, "one event per chunk");
-        got.sort_by_key(|c| (c.x, c.y, c.z));
-        got.dedup();
-        assert_eq!(got.len(), count, "no chunk published twice");
         assert_eq!(got.into_iter().collect::<HashSet<_>>(), expected);
         assert_eq!(light_system.emit_dirty_events(), 0);
         assert_eq!(received.lock().unwrap().len(), count, "no repeat events");

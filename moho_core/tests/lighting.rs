@@ -129,11 +129,12 @@ fn sky_dirty_chunks_below_propagates() {
     let mut grid = grid_16();
     let above = IVec3::new(0, 1, 0);
     let below = IVec3::ZERO;
-    let other_column = IVec3::new(1, 0, 0);
+    let other_columns = [IVec3::new(1, 0, 0), IVec3::new(0, 0, 1)];
     grid.mutator().place(IVec3::new(0, 16, 0), 0, None);
     grid.mutator().place(IVec3::new(0, 0, 0), 0, None);
     grid.mutator().place(IVec3::new(16, 0, 0), 0, None);
-    for cp in [above, below, other_column] {
+    grid.mutator().place(IVec3::new(0, 0, 16), 0, None);
+    for cp in [above, below].into_iter().chain(other_columns) {
         grid.chunk_light_mut(cp).sky_dirty = false;
     }
 
@@ -146,7 +147,9 @@ fn sky_dirty_chunks_below_propagates() {
     };
     assert!(dirty(below), "chunk below should be sky_dirty");
     assert!(!dirty(above), "chunk at chunk_pos must stay clean");
-    assert!(!dirty(other_column), "other column must stay clean");
+    for cp in other_columns {
+        assert!(!dirty(cp), "other column {cp:?} must stay clean");
+    }
 }
 
 /// `ensure_chunk_sky_ready` does not recompute when sky_dirty is false.
@@ -168,16 +171,22 @@ fn sky_ensure_ready_noop_when_clean() {
 /// column.
 #[test]
 fn sky_block_in_other_chunk_column_does_not_occlude() {
-    let mut grid = grid_16();
-    grid.mutator().place(IVec3::new(21, 20, 5), 0, None); // chunk (1,1,0)
+    // Opaque blocks in chunks (1,1,0) and (0,1,1), one x and one z neighbour.
+    for (block, chunk) in [
+        (IVec3::new(21, 20, 5), IVec3::new(1, 1, 0)),
+        (IVec3::new(5, 20, 21), IVec3::new(0, 1, 1)),
+    ] {
+        let mut grid = grid_16();
+        grid.mutator().place(block, 0, None);
 
-    recompute_sky_exposure(&mut grid, IVec3::new(1, 1, 0));
-    recompute_sky_exposure(&mut grid, IVec3::ZERO);
+        recompute_sky_exposure(&mut grid, chunk);
+        recompute_sky_exposure(&mut grid, IVec3::ZERO);
 
-    assert!(
-        sky(&grid, IVec3::new(5, 15, 5)),
-        "block in chunk column (1,*,0) must not occlude column (0,*,0)"
-    );
+        assert!(
+            sky(&grid, IVec3::new(5, 15, 5)),
+            "block in chunk {chunk:?} must not occlude column (0,*,0)"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
