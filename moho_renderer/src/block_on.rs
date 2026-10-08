@@ -94,18 +94,67 @@ mod tests {
         let shared = Arc::new(Mutex::new(Shared::default()));
         let remote = Arc::clone(&shared);
         let handle = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(50));
-            let mut guard = remote.lock().unwrap();
-            guard.value = Some(99);
-            if let Some(waker) = guard.waker.take() {
-                waker.wake();
-            }
+            let waker = loop {
+                let mut guard = remote.lock().unwrap();
+                if let Some(waker) = guard.waker.take() {
+                    guard.value = Some(99);
+                    break waker;
+                }
+                drop(guard);
+                thread::yield_now();
+            };
+            waker.wake();
+            true
         });
 
         let result = block_on(WaitForValue { shared });
 
-        handle.join().unwrap();
+        let woke = handle.join().unwrap();
+        assert!(woke);
         assert_eq!(result, 99);
+    }
+
+    struct PendingUntilFlag {
+        state: Arc<Mutex<(u32, bool, Option<Waker>)>>,
+    }
+
+    impl Future for PendingUntilFlag {
+        type Output = u32;
+
+        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<u32> {
+            let mut state = self.state.lock().unwrap();
+            state.0 += 1;
+            if state.1 {
+                Poll::Ready(state.0)
+            } else {
+                state.2 = Some(cx.waker().clone());
+                Poll::Pending
+            }
+        }
+    }
+
+    #[test]
+    fn pending_future_parks_instead_of_spinning() {
+        let state = Arc::new(Mutex::new((0_u32, false, None::<Waker>)));
+        let remote = Arc::clone(&state);
+        let handle = thread::spawn(move || {
+            let waker = loop {
+                if let Some(waker) = remote.lock().unwrap().2.take() {
+                    break waker;
+                }
+                thread::yield_now();
+            };
+            thread::sleep(Duration::from_millis(50));
+            remote.lock().unwrap().1 = true;
+            waker.wake();
+        });
+
+        let polls = block_on(PendingUntilFlag {
+            state: Arc::clone(&state),
+        });
+
+        handle.join().unwrap();
+        assert_eq!(polls, 2);
     }
 
     struct SelfWakeOnce {
