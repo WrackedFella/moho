@@ -3,10 +3,10 @@
 use crate::App;
 use glam::IVec3;
 use moho_core::materials::MaterialType;
-use moho_core::voxel::VoxelChunk;
 use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshError, WorldMeshId};
 use moho_renderer::Scene;
+use moho_voxel::VoxelChunk;
 
 const AXIS_BITS: u32 = 21;
 /// Half the 21-bit range: shifts a signed axis into `0..1 << AXIS_BITS`.
@@ -391,7 +391,7 @@ pub(crate) mod tests {
         let mut app = App::headless();
         app.game_state = GameState::Playing;
         let chunk = IVec3::new(10, 4, 10);
-        let block = moho_core::voxel::BlockPos::new(165, 70, 165);
+        let block = moho_voxel::BlockPos::new(165, 70, 165);
         app.light_system
             .as_mut()
             .expect("App starts with a light system")
@@ -447,7 +447,7 @@ pub(crate) mod tests {
             .set_position_yaw_pitch(glam::Vec3::new(8.0, 80.0, 8.0), 0.0, 0.0);
         app.chunk_streamer = Some(crate::app::chunk_streamer::ChunkStreamer::new(
             moho_game::scene_builders::TerrainConfig::default(),
-            moho_core::voxel::StreamingConfig {
+            moho_voxel::StreamingConfig {
                 load_radius_chunks: 0,
                 unload_radius_chunks: 1,
                 chunks_per_frame: 1,
@@ -461,7 +461,7 @@ pub(crate) mod tests {
             .expect("App starts with a light system")
             .grid_mut();
         grid.mutator()
-            .place(moho_core::voxel::BlockPos::new(165, 70, 165), 1, None);
+            .place(moho_voxel::BlockPos::new(165, 70, 165), 1, None);
         // Unmodified, so eviction doesn't write a chunk file to the working directory.
         grid.clear_chunk_modified(far);
         let _ = app.world_event_rx.try_iter().count();
@@ -519,7 +519,7 @@ pub(crate) mod tests {
 
     /// Places `block`, then drains stale events and meshes `chunk` from the dirty event.
     /// The chunk's modified flag is cleared so streaming treats it as unmodified.
-    fn remesh_with_block(app: &mut App, block: moho_core::voxel::BlockPos, chunk: IVec3) {
+    fn remesh_with_block(app: &mut App, block: moho_voxel::BlockPos, chunk: IVec3) {
         let grid = app.light_system.as_mut().expect("light system").grid_mut();
         grid.mutator().place(block, 1, None);
         grid.clear_chunk_modified(chunk);
@@ -537,11 +537,7 @@ pub(crate) mod tests {
         let mut app = App::headless();
         app.game_state = GameState::Playing;
         let chunk = IVec3::new(10, 4, 10);
-        remesh_with_block(
-            &mut app,
-            moho_core::voxel::BlockPos::new(165, 70, 165),
-            chunk,
-        );
+        remesh_with_block(&mut app, moho_voxel::BlockPos::new(165, 70, 165), chunk);
         let mut backend = RecordingBackend::default();
         app.scene.world_meshes_mut().flush(&mut backend);
         let first = collider_of(&app, chunk).expect("collider after first mesh");
@@ -555,11 +551,7 @@ pub(crate) mod tests {
             .len()
             / 3;
 
-        remesh_with_block(
-            &mut app,
-            moho_core::voxel::BlockPos::new(166, 70, 165),
-            chunk,
-        );
+        remesh_with_block(&mut app, moho_voxel::BlockPos::new(166, 70, 165), chunk);
         app.scene.world_meshes_mut().flush(&mut backend);
 
         let second = collider_of(&app, chunk).expect("collider after remesh");
@@ -603,7 +595,7 @@ pub(crate) mod tests {
             .set_position_yaw_pitch(glam::Vec3::new(8.0, 80.0, 8.0), 0.0, 0.0);
         app.chunk_streamer = Some(crate::app::chunk_streamer::ChunkStreamer::new(
             moho_game::scene_builders::TerrainConfig::default(),
-            moho_core::voxel::StreamingConfig {
+            moho_voxel::StreamingConfig {
                 load_radius_chunks: 0,
                 unload_radius_chunks: 1,
                 chunks_per_frame: 1,
@@ -611,7 +603,7 @@ pub(crate) mod tests {
             "headless-test-eviction-frees-draw-and-collider",
         ));
         let far = IVec3::new(10, 4, 10);
-        remesh_with_block(&mut app, moho_core::voxel::BlockPos::new(165, 70, 165), far);
+        remesh_with_block(&mut app, moho_voxel::BlockPos::new(165, 70, 165), far);
         let mut backend = RecordingBackend::default();
         app.scene.world_meshes_mut().flush(&mut backend);
         assert!(collider_of(&app, far).is_some(), "collider while loaded");

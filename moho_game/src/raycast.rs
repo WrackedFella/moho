@@ -1,5 +1,5 @@
 use glam::{IVec3, Vec3};
-use moho_core::voxel::{BlockPos, VoxelGrid};
+use moho_voxel::{BlockPos, VoxelGrid};
 
 /// Result of a raycast operation
 #[derive(Debug, Clone, Copy)]
@@ -15,7 +15,7 @@ pub struct RaycastResult {
 }
 
 /// Isosurface threshold. Must match the marching-cubes generator's `iso_level`
-/// (`moho_core::voxel::mesh::marching_cubes`), or aiming and rendering disagree.
+/// (`moho_voxel::mesh::marching_cubes`), or aiming and rendering disagree.
 const ISO_LEVEL: f32 = 0.5;
 
 /// Ray-march increment, in world units. Fine enough that a 1-unit voxel is

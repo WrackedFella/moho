@@ -1,5 +1,5 @@
 use crate::actors::ActorStore;
-use moho_core::voxel::ChunkStore;
+use moho_voxel::ChunkStore;
 
 /// Everything in a scene that is rendered, persisted or simulated per entity:
 /// sphere/cube actors and terrain chunks.
@@ -22,7 +22,7 @@ mod tests {
     use super::*;
     use crate::actors::Sphere;
     use moho_core::materials::MaterialType;
-    use moho_core::voxel::VoxelChunk;
+    use moho_voxel::VoxelChunk;
 
     #[test]
     fn clear_empties_actors_and_chunks() {

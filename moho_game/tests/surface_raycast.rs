@@ -1,6 +1,6 @@
 use glam::{IVec3, Vec3};
-use moho_core::voxel::{VoxelChunk, VoxelGrid};
 use moho_game::raycast;
+use moho_voxel::{VoxelChunk, VoxelGrid};
 
 fn ramp_grid() -> VoxelGrid {
     let mut grid = VoxelGrid::new(16);

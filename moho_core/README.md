@@ -122,26 +122,6 @@ clock.set_time_of_day(12.0); // Set to noon
 clock.set_time_of_day(0.0);  // Set to midnight
 ```
 
-### Voxel System
-
-Chunk-based voxel terrain.
-
-**Architecture:**
-- `VoxelGrid` - Stores block data in 3D grid
-- `VoxelChunk` - Fixed-size 16×16×16 chunk
-- `BlockData` - Snapshot of a stored block's position, material and resource
-
-**Usage:**
-```rust
-use moho_core::voxel::{BlockPos, VoxelGrid};
-
-// Create a grid (chunk size must be 16)
-let mut grid = VoxelGrid::new(16);
-
-// Place a block through the mutator: position, material id, optional resource id
-grid.mutator().place(BlockPos::new(32, 10, 32), 0, None);
-```
-
 ### Camera
 
 Orbital camera with configurable movement and rotation.
@@ -225,27 +205,21 @@ cargo test --package moho_core
 # Event bus only
 cargo test --package moho_core events::tests
 
-# Voxel system only
-cargo test --test voxel_system
-
 # Performance benchmarks
 cargo bench --bench event_bus_bench
 ```
 
 **Test Coverage:**
 - 24 unit tests (event bus, game clock, input)
-- 6 integration tests (voxel system, instance POD)
 - 8 doc tests (event bus examples)
 
 ## Performance Characteristics
 
 - **Event Bus**: <0.01% frame time (60 FPS target)
 - **GameClock**: <0.1ms per frame
-- **Voxel Queries**: O(1) block access
 
 ## Thread Safety
 
 - **EventBus**: `Send + Sync` (Arc<RwLock<_>>)
 - **GameClock**: Not thread-safe (single-threaded update)
-- **VoxelGrid**: Not thread-safe (chunk generation is parallelizable externally)
 - **Camera**: Not thread-safe (owned by main thread)

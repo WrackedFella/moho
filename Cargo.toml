@@ -10,7 +10,7 @@ edition = "2024"
 publish = false
 
 [workspace]
-members = ["moho_app", "moho_core", "moho_game", "moho_render_api", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_physics"]
+members = ["moho_app", "moho_core", "moho_game", "moho_voxel", "moho_render_api", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_physics"]
 
 [workspace.dependencies]
 bytemuck = "1.24"
@@ -83,6 +83,9 @@ path = "moho_audio"
 
 [dependencies.moho_core]
 path = "moho_core"
+
+[dependencies.moho_voxel]
+path = "moho_voxel"
 
 [dependencies.moho_game]
 path = "moho_game"

@@ -147,7 +147,7 @@ flowchart LR
 
 | State | Owner |
 |---|---|
-| Voxel grid, light | `moho_core::voxel::LightSystem` (owns the grid) |
+| Voxel grid, light | `moho_voxel::LightSystem` (owns the grid) |
 | Chunk meshes | `ChunkStore` in `moho_core`; the renderer holds its own copy as `WorldMeshes` ([rendering](rendering.md#world-geometry)) |
 | Actors (spheres, cubes) | `ActorStore` in `moho_game` |
 | Time of day | `moho_game::GameClock`, advanced by the simulation step |

@@ -9,7 +9,7 @@
 use crate::App;
 use crate::input_event::InputEvent;
 use moho_core::events::{GraphicsEvent, UiEvent, WorldEvent};
-use moho_core::voxel::VoxelChunk;
+use moho_voxel::VoxelChunk;
 use winit::event_loop::ActiveEventLoop;
 
 // ── Spawn / interaction constants ──────────────────────────────────────
@@ -239,8 +239,7 @@ impl EventProcessor {
             return;
         };
 
-        let chunk_pos =
-            moho_core::voxel::VoxelGrid::get_chunk_pos(outcome.block_pos, grid.chunk_size());
+        let chunk_pos = moho_voxel::VoxelGrid::get_chunk_pos(outcome.block_pos, grid.chunk_size());
 
         app.event_bus.publish(WorldEvent::BlockRemoved {
             position: outcome.block_pos,
@@ -333,7 +332,7 @@ impl EventProcessor {
                 let grid_opt = app
                     .light_system
                     .as_mut()
-                    .map(moho_core::voxel::LightSystem::grid_mut);
+                    .map(moho_voxel::LightSystem::grid_mut);
 
                 if let Some(grid) = grid_opt {
                     // Use raycast utility
@@ -606,7 +605,7 @@ mod tests {
             .expect("App starts with a light system")
             .grid_mut()
             .mutator()
-            .place(moho_core::voxel::BlockPos::new(3, 70, 3), 1, None);
+            .place(moho_voxel::BlockPos::new(3, 70, 3), 1, None);
         app.event_bus.publish(WorldEvent::ChunkMeshDirty {
             chunk_pos,
             terrain_dirty: true,

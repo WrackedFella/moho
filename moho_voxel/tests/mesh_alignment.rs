@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use glam::IVec3;
-use moho_core::voxel::{VoxelChunk, VoxelGrid};
+use moho_voxel::{VoxelChunk, VoxelGrid};
 
 const TOLERANCE: f32 = 1e-4;
 const SMOOTH_MATERIAL: u32 = 1;
