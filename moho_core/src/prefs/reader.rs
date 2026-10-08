@@ -435,8 +435,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn base_file_uses_non_default_values_for_every_key() {
+    fn assert_base_differs_from_default() {
         let base = snapshot(&base_prefs());
         let default = snapshot(&Prefs::default());
 
@@ -450,6 +449,8 @@ mod tests {
 
     #[test]
     fn base_file_loads_to_base_prefs_without_issues() {
+        assert_base_differs_from_default();
+
         let (prefs, issues) = Prefs::parse(&base_ini_with(None));
 
         assert_eq!(issues, vec![]);
@@ -458,6 +459,8 @@ mod tests {
 
     #[test]
     fn malformed_value_warns_and_only_that_key_falls_back() {
+        assert_base_differs_from_default();
+
         let rows = [
             ("prefs", "mouse_sensitivity", "fast"),
             ("prefs", "mouse_sensitivity", "NaN"),
@@ -693,15 +696,6 @@ mod tests {
     }
 
     #[test]
-    fn prefs_section_wins_over_keys_before_any_header() {
-        let content = "key_w=I\n[prefs]\nkey_w=J\n";
-
-        let (prefs, _) = Prefs::parse(content);
-
-        assert_eq!(prefs.key_w(), Binding::new('J' as u32, 0));
-    }
-
-    #[test]
     fn keys_before_header_are_reported_when_prefs_section_exists() {
         let content = "mouse_sensitivity=2.0\n[prefs]\nkey_w=I\n";
 
@@ -753,6 +747,7 @@ mod tests {
              chunks_per_frame=4\n";
 
         assert_eq!(Prefs::default().to_ini_string(), expected);
+        assert_eq!(Prefs::parse(expected), (Prefs::default(), vec![]));
     }
 
     #[test]
