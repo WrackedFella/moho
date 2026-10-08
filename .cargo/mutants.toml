@@ -36,6 +36,9 @@ exclude_re = [
     'delete match arm WindowEvent::KeyboardInput\{event, \.\.\} in handle_window_event',
     'delete match arm WindowEvent::MouseInput\{state, button, \.\.\} in handle_window_event',
     'replace == with != in handle_window_event',
+    # Needs an `ActiveEventLoop`, which tests cannot build; its key arm also needs a `KeyEvent`.
+    'replace WindowEventHandler::handle_window_event with \(\)',
+    'delete match arm WindowEvent::KeyboardInput\{event:key_event, \.\.\} in WindowEventHandler::handle_window_event',
     # Equivalent: the settings menu's spec is always `ScreenSpec::default()`.
     'replace <impl Screen for SettingsMenu>::spec -> &ScreenSpec with Box::leak',
     # `Default` calls `new`, which calls `from_prefs`: this mutant recurses until the

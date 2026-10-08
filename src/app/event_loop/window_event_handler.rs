@@ -97,3 +97,38 @@ impl Default for WindowEventHandler {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game_state::GameState;
+    use moho_game::controller::CameraMode;
+
+    fn first_person_app(state: GameState) -> App {
+        let mut app = App::headless();
+        app.game_state = state;
+        app.simulation.set_camera_mode(CameraMode::FirstPerson);
+        app.input.actions.set_filtering(false);
+        app
+    }
+
+    #[test]
+    fn mouse_motion_feeds_look_while_playing_first_person() {
+        let mut app = first_person_app(GameState::Playing);
+
+        WindowEventHandler::new()
+            .handle_device_event(&mut app, &DeviceEvent::MouseMotion { delta: (5.0, 0.0) });
+
+        assert_ne!(app.input.actions.end_tick().look(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn mouse_motion_is_ignored_outside_play() {
+        let mut app = first_person_app(GameState::Menu);
+
+        WindowEventHandler::new()
+            .handle_device_event(&mut app, &DeviceEvent::MouseMotion { delta: (5.0, 0.0) });
+
+        assert_eq!(app.input.actions.end_tick().look(), (0.0, 0.0));
+    }
+}

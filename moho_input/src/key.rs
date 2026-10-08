@@ -432,6 +432,22 @@ mod tests {
     }
 
     #[test]
+    fn from_winit_maps_the_three_named_mouse_buttons() {
+        use winit::event::MouseButton as WinitButton;
+        let cases = [
+            (WinitButton::Left, Some(MouseButton::Left)),
+            (WinitButton::Right, Some(MouseButton::Right)),
+            (WinitButton::Middle, Some(MouseButton::Middle)),
+            (WinitButton::Back, None),
+            (WinitButton::Other(7), None),
+        ];
+
+        for (button, expected) in cases {
+            assert_eq!(MouseButton::from_winit(button), expected, "{button:?}");
+        }
+    }
+
+    #[test]
     fn all_lists_every_variant_exactly_once() {
         let ordinals: HashSet<usize> = Key::ALL.iter().map(|&k| ordinal(k)).collect();
 

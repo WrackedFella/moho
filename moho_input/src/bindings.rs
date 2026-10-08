@@ -225,6 +225,12 @@ mod tests {
     }
 
     #[test]
+    fn label_is_the_key_label_or_the_mouse_button_name() {
+        assert_eq!(Binding::Key(Key::Space).label(), "Spacebar");
+        assert_eq!(Binding::Mouse(MouseButton::Left).label(), "Mouse Left");
+    }
+
+    #[test]
     fn mouse_bindings_round_trip_by_name() {
         let cases = [
             (MouseButton::Left, "Mouse Left"),
