@@ -3,7 +3,8 @@
 Humans decide what to build and merge the results; agents implement against approved
 specs behind deterministic gates. Roles, agents and generic skills come from the
 `devflow` plugin ([claude-skills](https://github.com/WrackedFella/claude-skills)),
-pinned in `.claude/settings.json`. Work-item state lives on the
+pinned in `.claude/settings.json` for local sessions (cloud sessions ignore the pin; see
+[Cloud runtime](#cloud-runtime)). Work-item state lives on the
 [Moho project board](https://github.com/users/WrackedFella/projects/1), not in the cards.
 
 ## Flow
@@ -13,15 +14,17 @@ pinned in `.claude/settings.json`. Work-item state lives on the
 | 1. Shape a feature | You + Business Analyst | `/devflow:business-analyst <topic>` | `_feature.md` with exit criteria, you approve scope; feature issue filed |
 | 2. Write work items | You + Business Analyst | same session | Cards with Gherkin acceptance criteria |
 | 3. Specify | You + Tech Lead | `/devflow:tech-lead <item>` | Tech spec, test map, gate class; ADR if needed |
-| 4. Queue | You approve; Tech Lead publishes | You approve the local draft. The Tech Lead files the issue (`[ID] title`, full spec), adds it to the board with Status → Ready and Agent-eligible → Yes | Issue, canonical from here on |
+| 4. Queue | You approve; Tech Lead publishes | You approve the draft (a local file, or a `plan/` branch from a cloud thread). The Tech Lead files the issue (`[ID] title`, full spec). Ready and Agent-eligible are set by you on the board, or by the Tech Lead through `scripts/board` in a local terminal | Issue, canonical from here on |
 | 5. Implement | Orchestrator | `/devflow:orchestrate <issue>` | Branch from `dev`, test-first commits, PR into `dev` |
-| 6. Review and merge | You | Review the PR; merge | Board Status → Done |
+| 6. Review and merge | You | Review the PR; merge | Board Status → Done (set by the Board sync workflow) |
 
 During step 5 the Orchestrator pauses for your review of failing tests when the item's
 gate class is `domain` and `CLAUDE.md` requires domain-test review. Otherwise it runs
-through: failing tests → implementation → adversarial challenges (as tests) → mutation
-testing → `/simplify` → `/devflow:comment-audit` → `/devflow:wiki` → fresh-context
-`devflow:reviewer` → `/devflow:ship`.
+through: failing tests → implementation → adversarial challenges (as tests) → refactor
+under green plus `/simplify` → mutation testing → `/devflow:comment-audit` →
+`/devflow:wiki` → full-platform CI when the change is platform-sensitive →
+fresh-context `devflow:reviewer` → `/devflow:ship`. Each stage commit is pushed, so a
+cloud sandbox that cannot resume loses nothing.
 
 The wiki step updates `wiki/` where the change adds or alters a structure, pattern or
 convention a new developer needs, following the conventions in
@@ -35,6 +38,8 @@ pages are flagged in the PR for your review.
 | `just check`: fmt, clippy `-D warnings`, nextest, doctests, comment refs | Every agent stop with Rust changes; CI | Stop hook, CI |
 | `just mutants` on changed code | Orchestrator step; PR evidence | Orchestrator, CI (Phase C) |
 | `just deny` | CI | CI (Phase C) |
+| Format on edit | Every Rust edit in a single-repo session | PostToolUse hook |
+| CI matrix | Linux on PRs into `dev`; three OSes on `main` and manual runs | CI |
 | Human review | Domain tests; every PR | You |
 
 ## Coordinating lanes
@@ -47,7 +52,7 @@ home, so lanes never need to talk to each other:
 |---|---|---|
 | Claude Code projects (one per line) | The lane: design discussion, planning and implementation threads | You and the project's coordinator; decisions leave as cards, ADRs or hand-off blocks |
 | `_todo/` cards, ADRs, `wiki/` | Decisions and specs | Planning sessions |
-| Project board | State and priority | Agents via `scripts/board`; you |
+| Project board | State and priority | Board sync workflow (Status); you (Ready, Agent-eligible, priority) |
 | Session transcripts | Nothing durable | — |
 
 Rules:
@@ -79,6 +84,31 @@ Rules:
   without being told.
 - **Sync after each batch of merges:** `/devflow:sitrep project`, then `/sync-backlog`,
   then update each project's instructions if a line's rules changed.
+
+## Cloud runtime
+
+Cloud threads and Actions runs start from a fresh clone and differ from a local session:
+
+- **devflow comes from the environment, not the repo pin.** Anthropic's docs say plugins
+  enabled in a repository's `.claude/settings.json` are not loaded in cloud sessions, and
+  name **Project settings > Plugins** as the route for project threads. The setup script
+  is documented for command-line tools and packages, not plugins. This workflow installs
+  devflow at user scope from the environment's setup script anyway, so one account-level
+  environment serves all three line projects and pins a tag. Two consequences: the
+  script's `DEVFLOW_REF` must be bumped by hand with `.claude/settings.json`, and the
+  environment is a filesystem snapshot rebuilt when the script changes or after about
+  seven days, so a new tag reaches threads only after a rebuild.
+  [Anthropic: cloud environments](https://code.claude.com/docs/en/cloud-environments),
+  [projects](https://code.claude.com/docs/en/claude-projects).
+- **The toolchain is on demand.** Threads that build or test run
+  `bash scripts/cloud-tools.sh` first; text-only threads skip it and start faster.
+- **No board access.** Cloud sessions cannot reach GraphQL or Projects v2, so only the
+  Board sync workflow (`BOARD_TOKEN`) moves Status, forward, on PR and issue events.
+  Agents never run `scripts/board` there.
+- **Unattended runs** use `claude-code-action` (`.github/workflows/claude.yml`): a human
+  applies `agent-ready` to a Ready, Agent-eligible issue and the run executes
+  `/devflow:orchestrate <issue>` with the default token. See
+  [`_todo/WORKFLOW.md`](../../_todo/WORKFLOW.md#remote-runs).
 
 ## Writing a good work item
 
