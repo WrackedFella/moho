@@ -96,34 +96,6 @@ impl AudioCache {
         debug!(path = path, "Loaded and cached audio file");
         Ok(audio_data)
     }
-
-    /// Clear all caches to free memory.
-    pub fn clear(&mut self) {
-        self.audio_cache.clear();
-        self.ui_sound_cache.clear();
-        debug!("Audio caches cleared");
-    }
-
-    /// Clear only the general audio cache (keeps UI sounds cached).
-    pub fn clear_audio_cache(&mut self) {
-        self.audio_cache.clear();
-        debug!("Audio cache cleared (UI sounds retained)");
-    }
-
-    /// Get the number of cached audio files (excluding UI sounds).
-    pub fn audio_cache_size(&self) -> usize {
-        self.audio_cache.len()
-    }
-
-    /// Get the number of cached UI sounds.
-    pub fn ui_cache_size(&self) -> usize {
-        self.ui_sound_cache.len()
-    }
-
-    /// Get total number of cached items.
-    pub fn total_cache_size(&self) -> usize {
-        self.audio_cache.len() + self.ui_sound_cache.len()
-    }
 }
 
 impl Default for AudioCache {

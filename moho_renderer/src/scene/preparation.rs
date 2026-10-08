@@ -24,27 +24,6 @@ pub struct PreparedScene {
     pub materials_uploaded: bool,
 }
 
-impl PreparedScene {
-    /// Create an empty prepared scene (useful for testing or when no geometry exists).
-    #[allow(dead_code)] // Used in tests
-    pub fn empty() -> Self {
-        Self {
-            cube_opaque: Vec::new(),
-            sphere_opaque: Vec::new(),
-            transparent_entries: Vec::new(),
-            materials_uploaded: false,
-        }
-    }
-
-    /// Check if this prepared scene has any geometry to render.
-    #[allow(dead_code)] // Used in tests
-    pub fn is_empty(&self) -> bool {
-        self.cube_opaque.is_empty()
-            && self.sphere_opaque.is_empty()
-            && self.transparent_entries.is_empty()
-    }
-}
-
 /// Scene preparation coordinator.
 ///
 /// Handles the complex logic of collecting instances from actors and chunks,

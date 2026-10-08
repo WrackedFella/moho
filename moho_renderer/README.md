@@ -50,14 +50,13 @@ The frame rendering workflow is organized into three phases:
 ### Creating a Renderer
 
 ```rust
-use moho_renderer::create_renderer_from_arc;
-use std::sync::Arc;
+use moho_renderer::create_renderer;
 
-let window = Arc::new(winit::window::WindowBuilder::new().build(&event_loop)?);
-let mut renderer = create_renderer_from_arc(&window)?;
+let window = winit::window::WindowBuilder::new().build(&event_loop)?;
+let mut renderer = create_renderer(Some(&window))?;
 ```
 
-**Lifetime Constraint:** The `wgpu::Surface` borrows the window, so the renderer lifetime is tied to the window. Keep the window `Arc` alive for the renderer's lifetime.
+**Lifetime Constraint:** The `wgpu::Surface` borrows the window, so the renderer lifetime is tied to the window. Keep the window alive for the renderer's lifetime.
 
 ### Registering Meshes
 

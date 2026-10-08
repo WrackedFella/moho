@@ -252,17 +252,6 @@ pub fn create_renderer<'a>(
     Ok(Box::new(r))
 }
 
-/// Convenience helper: create a renderer from an Arc<Window>.
-///
-/// The renderer borrows the provided `Window` for the lifetime of the returned trait object.
-/// Callers typically keep an `Arc<winit::window::Window>` and pass a reference here so the
-/// application retains ownership while the renderer uses a borrow.
-pub fn create_renderer_from_arc<'a>(
-    window: &'a std::sync::Arc<winit::window::Window>,
-) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> {
-    create_renderer(Some(std::sync::Arc::as_ref(window)))
-}
-
 /// Callback trait for UI rendering. Implement this to composite UI elements
 /// into the renderer's command encoder.
 pub trait FrameCallback {
