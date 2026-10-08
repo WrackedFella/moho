@@ -341,19 +341,6 @@ impl VoxelGrid {
         self.material_at(pos).map(|m| m < 100)
     }
 
-    /// Snapshot of all block state at `pos`, or `None` for air.
-    #[inline]
-    pub fn block_data_at(&self, pos: BlockPos) -> Option<BlockData> {
-        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
-        let chunk = self.chunks.get(&chunk_pos)?;
-        let material_id = chunk.material_at(idx)?;
-        Some(BlockData {
-            position: pos,
-            material_id,
-            resource_id: chunk.resource_at(idx),
-        })
-    }
-
     /// Place a block at world position `pos`, replacing any existing block.
     ///
     /// Creates the containing 16³ chunk on first use (absent key == all-air). The
@@ -375,12 +362,11 @@ impl VoxelGrid {
     /// # What this does NOT do
     ///
     /// - No physics, collision, or gameplay validation.
-    /// - No event publishing — callers that need `BlockPlaced` events must use
-    ///   [`BlockModifier::set_block`].
-    /// - No neighbor-chunk invalidation for edge blocks — `BlockModifier` handles that.
+    /// - No event publishing.
+    /// - No neighbor-chunk invalidation for edge blocks.
     ///
     /// This is the **lowest-level** mutation primitive. External callers must go through
-    /// [`BlockModifier`] (gameplay) or [`VoxelGrid::mutator`] (bulk terrain writes).
+    /// [`VoxelGrid::mutator`].
     pub(crate) fn place_block(
         &mut self,
         pos: BlockPos,
@@ -862,19 +848,6 @@ mod tests {
         grid.place_block(IVec3::new(0, 0, 0), 0, None);
         grid.place_block(IVec3::new(1, 0, 0), 0, None);
         assert_eq!(grid.block_positions().count(), 2);
-    }
-
-    #[test]
-    fn test_block_data_at() {
-        let mut grid = VoxelGrid::new(16);
-        let pos = BlockPos::new(3, 4, 5);
-        assert!(grid.block_data_at(pos).is_none());
-
-        grid.place_block(pos, 2, Some(1));
-        let bd = grid.block_data_at(pos).unwrap();
-        assert_eq!(bd.position, pos);
-        assert_eq!(bd.material_id, 2);
-        assert_eq!(bd.resource_id, Some(1));
     }
 
     #[test]

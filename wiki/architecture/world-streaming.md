@@ -55,5 +55,4 @@ Chunks are 16³ voxels; columns span chunk Y 0..=8.
 - New-world generation runs as a background job polled by `GenerationProcessor`
   (`poll_generation`); on completion it publishes `ChunkMeshDirty` for the preloaded
   area and enters `Playing`.
-- `moho_core::voxel` exports a `MeshJobQueue` (priority queue, worker pool) with no caller
-  in the binary; the frame path above meshes on the main thread in `process_world_events`.
+- Chunk meshing runs on the main thread in `process_world_events`; there is no background mesh job queue.

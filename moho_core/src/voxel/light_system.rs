@@ -273,7 +273,7 @@ impl LightSystem {
     pub fn subscribe_to_events(&mut self) {
         // Note: Event subscription would typically use callbacks or channels
         // For now, events should be forwarded to on_block_placed/on_block_removed
-        // by the caller (e.g., main game loop or BlockModifier)
+        // by the caller (e.g., main game loop)
 
         tracing::info!("LightSystem ready to process block modification events");
     }

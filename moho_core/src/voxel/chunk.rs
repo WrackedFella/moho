@@ -1,6 +1,6 @@
 //! Chunk-based voxel organization for rendering optimization.
 //!
-//! Provides `VoxelChunk`: a merged, face-culled mesh for a 16³ region of the world,
+//! Provides `VoxelChunk`: a merged mesh for a 16³ region of the world,
 //! generated via `from_grid_hybrid` using the hybrid Marching-Cubes + blocky pipeline.
 
 use super::grid::{BlockData, VoxelGrid};

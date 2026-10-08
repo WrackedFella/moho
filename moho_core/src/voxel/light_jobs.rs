@@ -24,11 +24,28 @@
 
 use super::grid::{BlockPos, VoxelGrid};
 use super::light_propagation::LightPropagator;
-use super::state::JobId;
 use glam::{IVec3, Vec3};
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+/// Unique identifier for light update jobs
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct JobId(pub u64);
+
+impl JobId {
+    /// Generate a new unique job ID
+    pub fn new() -> Self {
+        static COUNTER: AtomicU64 = AtomicU64::new(1);
+        JobId(COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+impl Default for JobId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Type of light update operation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -471,6 +488,17 @@ mod tests {
     use super::*;
     use crate::voxel::grid::MaterialLighting;
     use crate::voxel::light_storage;
+
+    #[test]
+    fn test_job_id_uniqueness() {
+        let id1 = JobId::new();
+        let id2 = JobId::new();
+        let id3 = JobId::new();
+
+        assert_ne!(id1, id2);
+        assert_ne!(id2, id3);
+        assert_ne!(id1, id3);
+    }
 
     fn transparent_grid() -> VoxelGrid {
         let mut grid = VoxelGrid::new(16);
