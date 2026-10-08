@@ -246,7 +246,6 @@ mod tests {
             0
         }
         fn update_lighting(&mut self, _lighting: crate::gpu_types::LightingGpu) {}
-        fn set_frame_callback_raw(&mut self, _ptr: Option<*mut dyn crate::FrameCallback>) {}
         fn set_frame_callback_arc(
             &mut self,
             _cb: Option<std::sync::Arc<std::sync::Mutex<dyn crate::FrameCallback>>>,
