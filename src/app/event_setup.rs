@@ -221,8 +221,8 @@ mod tests {
 
         drop(event_bus);
 
-        // The frame loop drains with `while let Ok(..) = rx.try_recv()`; a dropped
-        // sender must end that loop rather than look like an empty channel forever.
+        // Dropping the bus drops the forwarding closures and their senders, so the
+        // receiver must report the channel as closed, not merely empty.
         assert!(matches!(
             audio_event_rx.try_recv(),
             Err(TryRecvError::Disconnected)
