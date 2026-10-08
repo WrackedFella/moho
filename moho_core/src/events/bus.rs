@@ -316,14 +316,6 @@ impl EventBus {
         let history = self.history.lock().unwrap();
         history.iter().cloned().collect()
     }
-
-    /// Get last N events from history
-    ///
-    /// Returns up to N most recent events from the history buffer.
-    pub fn recent_history(&self, n: usize) -> Vec<String> {
-        let history = self.history.lock().unwrap();
-        history.iter().rev().take(n).cloned().collect()
-    }
 }
 
 impl Default for EventBus {

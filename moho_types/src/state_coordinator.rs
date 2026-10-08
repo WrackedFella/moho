@@ -169,16 +169,6 @@ mod tests {
     }
 
     #[test]
-    fn test_hide_menu() {
-        let actions = StateTransitionCoordinator::hide_menu(GameState::Menu).unwrap();
-        assert_eq!(actions.new_state, GameState::Playing);
-        assert!(!actions.ui_visible);
-        assert!(actions.cursor_grabbed);
-        assert!(!actions.cursor_visible);
-        assert_eq!(actions.show_menu, None);
-    }
-
-    #[test]
     fn test_enter_console() {
         let actions = StateTransitionCoordinator::enter_console(GameState::Playing).unwrap();
         assert_eq!(actions.new_state, GameState::ConsoleOpen);
@@ -194,11 +184,28 @@ mod tests {
     }
 
     #[test]
-    fn test_exit_console() {
-        let actions = StateTransitionCoordinator::exit_console(GameState::ConsoleOpen).unwrap();
-        assert_eq!(actions.new_state, GameState::Playing);
-        assert!(!actions.ui_visible);
-        assert!(actions.cursor_grabbed);
+    fn transitions_to_playing_grab_and_hide_cursor() {
+        let cases = [
+            (
+                "hide_menu from Menu",
+                StateTransitionCoordinator::hide_menu(GameState::Menu),
+            ),
+            (
+                "exit_console from ConsoleOpen",
+                StateTransitionCoordinator::exit_console(GameState::ConsoleOpen),
+            ),
+        ];
+        let expected = StateTransitionActions {
+            new_state: GameState::Playing,
+            ui_visible: false,
+            cursor_grabbed: true,
+            cursor_visible: false,
+            show_menu: None,
+        };
+
+        for (label, result) in cases {
+            assert_eq!(result.as_ref(), Ok(&expected), "row {label}");
+        }
     }
 
     #[test]
