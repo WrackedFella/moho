@@ -2,7 +2,7 @@
 //!
 //! Coordinates state transitions and their side effects (UI updates, cursor changes, etc.)
 //! This eliminates the repeated boilerplate in App's state transition methods.
-use crate::GameState;
+use super::GameState;
 
 /// Result of a state transition operation.
 pub type TransitionResult = Result<(), String>;
@@ -42,7 +42,7 @@ impl StateTransitionActions {
     ///
     /// # Example
     /// ```
-    /// use moho_types::{GameState, state_coordinator::StateTransitionActions};
+    /// use moho_ui::app_state::{GameState, StateTransitionActions};
     ///
     /// let actions = StateTransitionActions::for_transition(
     ///     GameState::Playing,

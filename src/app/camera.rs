@@ -12,7 +12,7 @@
 //!
 //! The camera is represented as a tuple of (view_matrix, projection_matrix, eye_position)
 //! which matches the existing App structure. This can be refactored later to use a
-//! dedicated Camera type from moho_types if needed.
+//! dedicated Camera type if needed.
 
 use glam::camera::rh::{proj::directx::perspective, view::look_at_mat4};
 use glam::{Mat4, Vec3};

@@ -1,8 +1,8 @@
 # Input and state
 
 **Source:** `src/input_dispatcher.rs`, `src/app/renderer_setup.rs` (registrations),
-`src/main.rs` (`window_event`, `handle_keyboard_input`), `moho_types/src/app_state.rs`,
-`moho_types/src/state_coordinator.rs`.
+`src/main.rs` (`window_event`, `handle_keyboard_input`), `moho_ui/src/app_state/game_state.rs`,
+`moho_ui/src/app_state/state_coordinator.rs`.
 
 ## Input routing
 
@@ -49,7 +49,7 @@ Key → binding-code mapping is in `moho_input`; bindings come from
 
 ## GameState
 
-`moho_types::GameState` decides input routing, rendering, cursor and whether the
+`moho_ui::GameState` decides input routing, rendering, cursor and whether the
 simulation runs. `can_transition_to` is the legality table; `StateTransitionCoordinator`
 returns the side effects (UI visibility, cursor grab) for a legal transition.
 

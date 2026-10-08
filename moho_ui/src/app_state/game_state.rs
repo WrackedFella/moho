@@ -48,7 +48,7 @@ impl GameState {
     /// # Examples
     ///
     /// ```
-    /// use moho_types::GameState;
+    /// use moho_ui::GameState;
     ///
     /// assert!(GameState::Playing.can_transition_to(GameState::ConsoleOpen));
     /// assert!(GameState::Playing.can_transition_to(GameState::Paused));
