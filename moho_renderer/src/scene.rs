@@ -36,9 +36,9 @@ impl Scene {
     /// Render the provided actors and the world meshes using `renderer`.
     /// `mesh_handle` is the spherical mesh handle and `cube_mesh_handle` is the
     /// cube mesh handle, both previously registered with the renderer at
-    /// startup. Queued world-mesh changes are flushed first. `S`/`C` are the concrete sphere-like/cube-like actor
-    /// types (supplied by the caller so this crate doesn't need
-    /// to name game-domain types).
+    /// startup. Queued world-mesh changes are flushed first. `S`/`C` are the
+    /// concrete sphere-like/cube-like actor types (supplied by the caller so
+    /// this crate doesn't need to name game-domain types).
     ///
     /// Returns `Err` if the frame's surface texture couldn't be acquired
     /// (e.g. surface lost/outdated); the surface has already been

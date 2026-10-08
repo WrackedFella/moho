@@ -84,14 +84,10 @@ pub fn upsert_all_chunks(app: &mut App) {
 
 /// Stop drawing every chunk in the store, before it is cleared.
 pub fn remove_all_chunk_meshes(app: &mut App) {
-    let positions: Vec<IVec3> = app
-        .entities
-        .chunks
-        .iter()
-        .map(VoxelChunk::chunk_pos)
-        .collect();
-    for pos in positions {
-        app.scene.world_meshes_mut().remove(chunk_mesh_id(pos));
+    for chunk in app.entities.chunks.iter() {
+        app.scene
+            .world_meshes_mut()
+            .remove(chunk_mesh_id(chunk.chunk_pos()));
     }
 }
 
