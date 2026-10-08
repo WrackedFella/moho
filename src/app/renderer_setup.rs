@@ -134,7 +134,7 @@ pub fn setup_renderer_and_ui(
 
         // Create channel for simplified input events (e.g., mouse wheel) that
         // the game will process if the UI doesn't consume them.
-        let (tx, rx) = crossbeam_channel::unbounded::<crate::input_event::InputEvent>();
+        let (tx, rx) = std::sync::mpsc::channel::<crate::input_event::InputEvent>();
         app.input.unconsumed_tx = Some(tx.clone());
         app.input.unconsumed_rx = Some(rx);
 

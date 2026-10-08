@@ -245,7 +245,7 @@ mod tests {
 
         for (action, matches_expected) in cases {
             let bus = Arc::new(EventBus::new());
-            let (tx, rx) = crossbeam_channel::unbounded();
+            let (tx, rx) = std::sync::mpsc::channel();
             bus.subscribe(move |event: &CoreUiEvent| {
                 let _ = tx.send(event.clone());
             });

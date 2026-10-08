@@ -15,7 +15,6 @@ members = ["moho_core", "moho_game", "moho_render_api", "moho_renderer", "moho_a
 [workspace.dependencies]
 bincode = "2.0"
 bytemuck = "1.24"
-crossbeam-channel = "0.5"
 env_logger = "0.11"
 glam = "0.30.8"
 log = "0.4"
@@ -71,7 +70,6 @@ trivially_copy_pass_by_ref = "allow"
 unnecessary_wraps = "allow"
 
 [dependencies]
-crossbeam-channel = { workspace = true }
 
 [dependencies.bincode]
 workspace = true

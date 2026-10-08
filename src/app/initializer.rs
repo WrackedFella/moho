@@ -63,11 +63,11 @@ pub struct InitializedApp {
     pub camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     pub event_bus: Arc<moho_core::EventBus>,
 
-    pub ui_event_rx: crossbeam_channel::Receiver<moho_core::events::UiEvent>,
-    pub audio_event_rx: crossbeam_channel::Receiver<moho_core::events::AudioEvent>,
-    pub graphics_event_rx: crossbeam_channel::Receiver<moho_core::events::GraphicsEvent>,
-    pub world_event_rx: crossbeam_channel::Receiver<moho_core::events::WorldEvent>,
-    pub debug_event_rx: crossbeam_channel::Receiver<moho_core::events::DebugEvent>,
+    pub ui_event_rx: std::sync::mpsc::Receiver<moho_core::events::UiEvent>,
+    pub audio_event_rx: std::sync::mpsc::Receiver<moho_core::events::AudioEvent>,
+    pub graphics_event_rx: std::sync::mpsc::Receiver<moho_core::events::GraphicsEvent>,
+    pub world_event_rx: std::sync::mpsc::Receiver<moho_core::events::WorldEvent>,
+    pub debug_event_rx: std::sync::mpsc::Receiver<moho_core::events::DebugEvent>,
 
     pub audio_system: Option<moho_audio::AudioSystem>,
     pub simulation: SimulationController,
