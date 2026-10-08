@@ -264,9 +264,12 @@ mod tests {
     fn test_palette_deduplication() {
         let mut c = PalettedChunk::new();
         c.set_block(0, 7, None);
+        let before = c.to_bytes().len();
+
         c.set_block(1, 7, None);
-        // sentinel + one real entry
-        assert_eq!(c.palette.len(), 2);
+        c.set_block(0, 7, None);
+
+        assert_eq!(c.to_bytes().len(), before);
         assert_eq!(c.material_at(0), Some(7));
         assert_eq!(c.material_at(1), Some(7));
     }

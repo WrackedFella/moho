@@ -213,40 +213,55 @@ fn primary_material_id(blocks: &[BlockData]) -> u32 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_chunk_empty() {
-        let chunk = VoxelChunk::empty(IVec3::ZERO);
-
-        assert!(chunk.is_empty());
-        assert!(!chunk.has_geometry());
+    fn chunk_with(vertices: usize, indices: Vec<u32>) -> VoxelChunk {
+        VoxelChunk::new(
+            IVec3::ZERO,
+            vec![[0.0, 0.0, 0.0]; vertices],
+            vec![[0.0, 0.0, 1.0]; vertices],
+            vec![1.0; vertices],
+            vec![1; vertices],
+            vec![1.0; vertices],
+            vec![[1.0, 1.0, 1.0]; vertices],
+            vec![1.0; vertices],
+            indices,
+            0,
+        )
     }
 
     #[test]
     fn test_chunk_with_geometry() {
-        let chunk = VoxelChunk::new(
-            IVec3::ZERO,
-            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
-            vec![1.0, 1.0, 1.0],
-            vec![1, 1, 1],
-            vec![1.0, 1.0, 1.0],
-            vec![[1.0, 1.0, 1.0]; 3],
-            vec![1.0, 1.0, 1.0],
-            vec![0, 1, 2],
-            0,
-        );
+        let no_indices = chunk_with(3, vec![]);
+        let both = chunk_with(3, vec![0, 1, 2]);
+        let neither = VoxelChunk::empty(IVec3::ZERO);
 
-        assert!(!chunk.is_empty());
-        assert!(chunk.has_geometry());
+        assert!(!no_indices.has_geometry());
+        assert!(!no_indices.is_empty());
+        assert!(both.has_geometry());
+        assert!(!both.is_empty());
+        assert!(!neither.has_geometry());
+        assert!(neither.is_empty());
     }
 
     #[test]
     fn test_from_grid_lod_stamps_lod_field() {
-        use super::super::grid::VoxelGrid;
-        let grid = VoxelGrid::new(16);
-        let chunk0 = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 0);
-        assert_eq!(chunk0.lod(), 0);
-        let chunk1 = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 1);
-        assert_eq!(chunk1.lod(), 1);
+        let mut grid = VoxelGrid::new(16);
+        grid.place_block(IVec3::new(1, 1, 1), 0, None);
+
+        let fine = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 0);
+        let coarse = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 1);
+
+        assert_eq!(fine.lod(), 0);
+        assert_eq!(coarse.lod(), 1);
+        assert!(coarse.has_geometry());
+        let is_even_integer = |c: f32| c.fract() == 0.0 && c % 2.0 == 0.0;
+        assert!(
+            coarse
+                .vertices()
+                .iter()
+                .flatten()
+                .copied()
+                .all(is_even_integer)
+        );
+        assert!(fine.vertices().iter().flatten().any(|c| c.fract() != 0.0));
     }
 }
