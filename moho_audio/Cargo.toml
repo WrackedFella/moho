@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 moho_core = { path = "../moho_core" }
 rodio = { workspace = true }
-log = { workspace = true }
+tracing = { workspace = true }
 thiserror = { workspace = true }
 
 [lints]

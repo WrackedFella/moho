@@ -4,7 +4,7 @@ pub fn auto_save_on_shutdown(
     app: &mut crate::App,
     saves_dir: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    log::info!("Auto-saving on shutdown...");
+    tracing::info!("Auto-saving on shutdown...");
 
     std::fs::create_dir_all(saves_dir)?;
 
@@ -43,11 +43,11 @@ pub fn auto_save_on_shutdown(
         })
         .unwrap_or_default();
     crate::save::write_scene_with_metadata(&save_path, &scene_bytes, &spec, &block_records)?;
-    log::info!(
-        "Auto-saved scene (envelope) to {} (spec={:?}, {} blocks)",
-        save_path.display(),
-        spec.name,
-        block_records.len()
+    tracing::info!(
+        path = %save_path.display(),
+        spec = ?spec.name,
+        count = block_records.len(),
+        "Auto-saved scene (envelope)"
     );
 
     Ok(())

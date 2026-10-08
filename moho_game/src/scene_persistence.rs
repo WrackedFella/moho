@@ -157,9 +157,9 @@ fn decode_and_populate(
         .into());
     }
 
-    log::info!(
-        "Loaded legacy scene format (v{}) — spawned lights will not be restored",
-        legacy.version
+    tracing::info!(
+        version = legacy.version,
+        "Loaded legacy scene format — spawned lights will not be restored"
     );
     populate_entities(
         legacy.spheres,
@@ -216,8 +216,9 @@ fn populate_entities(
         );
         let chunk_pos = chunk.chunk_pos();
         if entities.chunks.insert(chunk).is_some() {
-            log::warn!(
-                "Scene holds more than one chunk at {chunk_pos:?}; the earlier one was replaced"
+            tracing::warn!(
+                chunk = ?chunk_pos,
+                "Scene holds more than one chunk at position; the earlier one was replaced"
             );
         }
     }

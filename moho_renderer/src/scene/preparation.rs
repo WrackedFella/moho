@@ -107,9 +107,9 @@ impl ScenePreparation {
             false
         };
 
-        log::debug!(
-            "[ScenePreparation] VoxelChunks to render: {}",
-            instance_collector.chunk_renders().len()
+        tracing::debug!(
+            count = instance_collector.chunk_renders().len(),
+            "[ScenePreparation] VoxelChunks to render"
         );
 
         // Step 4: Separate instances by transparency
@@ -133,19 +133,17 @@ impl ScenePreparation {
     /// This helps with debugging material assignments and instance counts.
     fn log_debug_info(material_table: &MaterialTable, instance_collector: &InstanceCollector) {
         if !material_table.as_slice().is_empty() {
-            log::debug!(
-                "[debug] material_table.len={} ",
-                material_table.as_slice().len()
+            tracing::debug!(
+                count = material_table.as_slice().len(),
+                "[debug] material_table.len"
             );
             for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
-                log::debug!(
-                    "[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}",
-                    i,
-                    m.albedo[0],
-                    m.albedo[1],
-                    m.albedo[2],
-                    m.params[0],
-                    m.params[1]
+                tracing::debug!(
+                    index = i,
+                    albedo = ?[m.albedo[0], m.albedo[1], m.albedo[2]],
+                    fuzz = m.params[0],
+                    reflectance = m.params[1],
+                    "[debug] mat"
                 );
             }
         }
@@ -156,7 +154,11 @@ impl ScenePreparation {
             .enumerate()
             .take(8)
         {
-            log::debug!("[debug] sphere_inst[{}].material={}", i, inst.material);
+            tracing::debug!(
+                index = i,
+                material = inst.material,
+                "[debug] sphere_inst material"
+            );
         }
 
         for (i, inst) in instance_collector
@@ -165,7 +167,11 @@ impl ScenePreparation {
             .enumerate()
             .take(8)
         {
-            log::debug!("[debug] cube_inst[{}].material={}", i, inst.material);
+            tracing::debug!(
+                index = i,
+                material = inst.material,
+                "[debug] cube_inst material"
+            );
         }
     }
 

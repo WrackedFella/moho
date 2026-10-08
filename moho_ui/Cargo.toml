@@ -12,7 +12,7 @@ winit = { workspace = true }
 egui = "0.34.3"
 egui-winit = { version = "0.34.3", default-features = false, features = ["clipboard", "wayland", "x11"] }
 egui-wgpu = "0.34.3"
-log = { workspace = true }
+tracing = { workspace = true }
 moho_input = { path = "../moho_input" }
 moho_core = { path = "../moho_core" }
 moho_game = { path = "../moho_game" }

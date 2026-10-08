@@ -125,7 +125,7 @@ impl FrameProcessor {
                 + 3.0;
             new_pos = glam::Vec3::new(0.0, respawn_y, 0.0);
             app.physics.teleport_character(new_pos);
-            log::info!("Player fell off map — respawning at {new_pos:?}");
+            tracing::info!(pos = ?new_pos, "Player fell off map — respawning");
         }
 
         // Override simulation position with physics result (or respawn position)
@@ -146,7 +146,7 @@ impl FrameProcessor {
                 *center = pos;
             } else {
                 let body = app.physics.forget_body(actor);
-                log::warn!("Physics body update for missing actor: body={body:?}, actor={actor:?}");
+                tracing::warn!(body = ?body, actor = ?actor, "Physics body update for missing actor");
             }
         }
     }
@@ -253,7 +253,10 @@ impl FrameProcessor {
             // Emit mesh dirty events for affected chunks
             let dirty_count = light_system.emit_dirty_events();
             if dirty_count > 0 {
-                log::trace!("Light system emitted {dirty_count} mesh dirty events");
+                tracing::trace!(
+                    count = dirty_count,
+                    "Light system emitted mesh dirty events"
+                );
             }
         }
     }

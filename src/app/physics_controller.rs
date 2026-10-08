@@ -123,7 +123,7 @@ impl PhysicsController {
         for (pos, vertices, indices) in new_chunks {
             let handle = pw.add_terrain_trimesh(&vertices, &indices);
             self.chunk_colliders.insert(pos, handle);
-            log::debug!("Registered terrain collider for chunk {pos:?}");
+            tracing::debug!(chunk = ?pos, "Registered terrain collider for chunk");
         }
     }
 }

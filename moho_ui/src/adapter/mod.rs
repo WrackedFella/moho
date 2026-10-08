@@ -215,7 +215,7 @@ impl EguiAdapter {
             let renderer =
                 egui_wgpu::Renderer::new(device, format, egui_wgpu::RendererOptions::default());
             self.renderer = Some(renderer);
-            log::info!("Initializing egui_wgpu::Renderer with format {format:?}");
+            tracing::info!(format = ?format, "Initializing egui_wgpu::Renderer");
         }
     }
 

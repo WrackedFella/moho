@@ -16,9 +16,7 @@ members = ["moho_core", "moho_game", "moho_render_api", "moho_renderer", "moho_a
 bincode = "2.0"
 bytemuck = "1.24"
 crossbeam-channel = "0.5"
-env_logger = "0.11"
 glam = "0.30.8"
-log = "0.4"
 naga = "29.0.1"
 noise = "0.9"
 proptest = { version = "1.11", default-features = false, features = ["std"] }
@@ -26,6 +24,8 @@ rand = "0.10"
 rodio = "0.22"
 serde = "1.0"
 thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 wgpu = "29.0.4"
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 moho_physics = { path = "moho_physics" }
@@ -75,13 +75,7 @@ crossbeam-channel = { workspace = true }
 [dependencies.bincode]
 workspace = true
 
-[dependencies.env_logger]
-workspace = true
-
 [dependencies.glam]
-workspace = true
-
-[dependencies.log]
 workspace = true
 
 [dependencies.moho_audio]
@@ -107,6 +101,12 @@ workspace = true
 
 [dependencies.moho_ui]
 path = "moho_ui"
+
+[dependencies.tracing]
+workspace = true
+
+[dependencies.tracing-subscriber]
+workspace = true
 
 [dependencies.wgpu]
 workspace = true

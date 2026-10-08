@@ -49,7 +49,7 @@ pub fn finish_frame(
     // Call frame callback if registered (for UI rendering, etc.)
     match frame_callback {
         FrameCallbackWrapper::Arc(cb_arc) => {
-            log::debug!("[frame_ops] calling frame_callback_arc");
+            tracing::debug!("[frame_ops] calling frame_callback_arc");
             if let Some(view) = pending_frame_view {
                 if let Ok(mut guard) = cb_arc.lock() {
                     guard.call(
@@ -60,9 +60,9 @@ pub fn finish_frame(
                         surface_width,
                         surface_height,
                     );
-                    log::debug!("[frame_ops] frame_callback_arc returned");
+                    tracing::debug!("[frame_ops] frame_callback_arc returned");
                 } else {
-                    log::warn!("[frame_ops] failed to lock frame_callback_arc");
+                    tracing::warn!("[frame_ops] failed to lock frame_callback_arc");
                 }
             }
         }
@@ -71,7 +71,7 @@ pub fn finish_frame(
         // that contract: this path is unsound by construction. Use the Arc variant.
         #[allow(unsafe_code)]
         FrameCallbackWrapper::Raw(cb_ptr) => unsafe {
-            log::info!("[frame_ops] calling frame_callback_raw");
+            tracing::info!("[frame_ops] calling frame_callback_raw");
             if let Some(view) = pending_frame_view {
                 let cb: &mut dyn crate::FrameCallback = &mut *cb_ptr;
                 cb.call(
@@ -82,7 +82,7 @@ pub fn finish_frame(
                     surface_width,
                     surface_height,
                 );
-                log::info!("[frame_ops] frame_callback_raw returned");
+                tracing::info!("[frame_ops] frame_callback_raw returned");
             }
         },
         FrameCallbackWrapper::None => {
@@ -92,7 +92,7 @@ pub fn finish_frame(
 
     // Submit command buffer and present frame
     let finished = encoder.finish();
-    log::debug!("[frame_ops] submitting {draw_count} draws");
+    tracing::debug!(count = draw_count, "[frame_ops] submitting draws");
     if let Some(frame) = pending_frame {
         queue.submit(Some(finished));
         frame.present();

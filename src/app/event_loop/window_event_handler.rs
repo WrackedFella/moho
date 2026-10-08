@@ -45,7 +45,7 @@ impl WindowEventHandler {
     fn handle_close_requested(&self, app: &mut App, event_loop: &ActiveEventLoop) {
         // Auto-save before close
         if let Err(e) = app.auto_save_on_shutdown() {
-            log::warn!("Failed to auto-save on close: {e}");
+            tracing::warn!(error = %e, "Failed to auto-save on close");
         }
         event_loop.exit();
     }
@@ -64,7 +64,7 @@ impl WindowEventHandler {
 
     /// Handle redraw request
     fn handle_redraw_requested(&self, app: &mut App) {
-        log::debug!("RedrawRequested - rendering frame");
+        tracing::debug!("RedrawRequested - rendering frame");
         if let Some(ref mut wr) = app.window_renderer
             && let Err(e) = app.scene.render(
                 &mut *wr.renderer,
@@ -77,7 +77,7 @@ impl WindowEventHandler {
                 app.camera,
             )
         {
-            log::warn!("Skipped frame: {e}");
+            tracing::warn!(error = %e, "Skipped frame");
         }
 
         // Recall staging belt after render

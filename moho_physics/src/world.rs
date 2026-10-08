@@ -122,7 +122,7 @@ impl PhysicsWorld {
 
         if tris.is_empty() || points.is_empty() {
             // Empty chunk — insert a dummy zero-size collider so the handle is valid.
-            log::warn!("add_terrain_trimesh: empty mesh, inserting dummy collider");
+            tracing::warn!("add_terrain_trimesh: empty mesh, inserting dummy collider");
             let dummy = ColliderBuilder::ball(0.001).build();
             return self.collider_set.insert(dummy);
         }
@@ -130,7 +130,7 @@ impl PhysicsWorld {
         let collider = match ColliderBuilder::trimesh(points, tris) {
             Ok(b) => b.friction(0.6).build(),
             Err(e) => {
-                log::warn!("add_terrain_trimesh: trimesh build failed ({e:?}), inserting dummy");
+                tracing::warn!(error = ?e, "add_terrain_trimesh: trimesh build failed, inserting dummy");
                 ColliderBuilder::ball(0.001).build()
             }
         };
@@ -168,7 +168,7 @@ impl PhysicsWorld {
         self.vertical_velocity = 0.0;
         self.is_grounded = false;
 
-        log::info!("Character controller spawned at {position:?}");
+        tracing::info!(pos = ?position, "Character controller spawned");
         (body_handle, collider_handle)
     }
 

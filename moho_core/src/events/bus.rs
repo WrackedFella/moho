@@ -281,7 +281,7 @@ impl EventBus {
         };
 
         for deferred in events {
-            log::debug!("Processing deferred event: {}", deferred.type_name);
+            tracing::debug!(event_type = deferred.type_name, "Processing deferred event");
             (deferred.dispatch)(self);
         }
     }

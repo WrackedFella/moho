@@ -29,10 +29,10 @@ pub fn update_camera_uniforms(
     let viewproj = proj_mat * view_mat;
 
     // Debug: log camera values
-    log::trace!(
-        "[camera_ops] update: cam_pos={:?} viewproj0={:?}",
-        cam_pos,
-        viewproj.to_cols_array()[0]
+    tracing::trace!(
+        cam_pos = ?cam_pos,
+        viewproj0 = ?viewproj.to_cols_array()[0],
+        "[camera_ops] update"
     );
 
     // Build camera uniform data: viewproj matrix + camera position

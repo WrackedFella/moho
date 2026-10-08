@@ -138,8 +138,10 @@ impl LightSystem {
         self.job_queue.submit(job);
         self.total_jobs_submitted += 1;
 
-        log::debug!(
-            "Block removed at {position:?} (material {old_material_id}), enqueued light removal job"
+        tracing::debug!(
+            pos = ?position,
+            material_id = old_material_id,
+            "Block removed, enqueued light removal job"
         );
     }
 
@@ -147,11 +149,7 @@ impl LightSystem {
     ///
     /// Enqueues light update jobs for all affected positions
     pub fn on_blocks_batch_modified(&mut self, positions: &[IVec3], reason: &BlockChangeReason) {
-        log::debug!(
-            "Batch modification of {} blocks (reason: {:?})",
-            positions.len(),
-            reason
-        );
+        tracing::debug!(count = positions.len(), reason = ?reason, "Batch modification of blocks");
 
         // For batch operations, we can optimize by:
         // 1. Collecting all affected chunks
@@ -225,7 +223,10 @@ impl LightSystem {
         self.affected_chunks.clear();
 
         if count > 0 {
-            log::debug!("Emitted {count} ChunkMeshDirty events for light updates");
+            tracing::debug!(
+                count = count,
+                "Emitted ChunkMeshDirty events for light updates"
+            );
         }
 
         count
@@ -274,7 +275,7 @@ impl LightSystem {
         // For now, events should be forwarded to on_block_placed/on_block_removed
         // by the caller (e.g., main game loop or BlockModifier)
 
-        log::info!("LightSystem ready to process block modification events");
+        tracing::info!("LightSystem ready to process block modification events");
     }
 
     /// Process a WorldEvent

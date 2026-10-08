@@ -264,8 +264,10 @@ impl ShadowSystem {
         });
 
         if CSM_VERBOSE_LOGGING {
-            log::info!(
-                "Created multi-light shadow array: {SHADOW_MAP_SIZE}x{SHADOW_MAP_SIZE} x {MAX_SHADOW_LIGHTS} lights"
+            tracing::info!(
+                size = SHADOW_MAP_SIZE,
+                lights = MAX_SHADOW_LIGHTS,
+                "Created multi-light shadow array"
             );
         }
 
@@ -290,9 +292,9 @@ impl ShadowSystem {
             .collect();
 
         if CSM_VERBOSE_LOGGING {
-            log::info!(
-                "Created {} light views for shadow rendering",
-                csm_cascade_views.len()
+            tracing::info!(
+                count = csm_cascade_views.len(),
+                "Created light views for shadow rendering"
             );
         }
 
@@ -310,7 +312,10 @@ impl ShadowSystem {
         });
 
         if CSM_VERBOSE_LOGGING {
-            log::info!("Created multi-light shadow array view: {MAX_SHADOW_LIGHTS} layers");
+            tracing::info!(
+                layers = MAX_SHADOW_LIGHTS,
+                "Created multi-light shadow array view"
+            );
         }
 
         (shadow_map_view, csm_cascade_views, csm_array_view)
@@ -333,9 +338,9 @@ impl ShadowSystem {
         });
 
         if CSM_VERBOSE_LOGGING {
-            log::info!(
-                "Created multi-light shadow buffer: {} bytes",
-                std::mem::size_of::<MultiLightShadowGpu>()
+            tracing::info!(
+                bytes = std::mem::size_of::<MultiLightShadowGpu>(),
+                "Created multi-light shadow buffer"
             );
         }
 
@@ -435,7 +440,9 @@ impl ShadowSystem {
         });
 
         if CSM_VERBOSE_LOGGING {
-            log::info!("Created CSM bind groups: pass (rendering) + shadow (sampling cascade 0)");
+            tracing::info!(
+                "Created CSM bind groups: pass (rendering) + shadow (sampling cascade 0)"
+            );
         }
 
         (
@@ -560,9 +567,9 @@ impl ShadowSystem {
         }
 
         if !self.csm_logged_once.get() {
-            log::info!("CSM cascade splits:");
+            tracing::info!("CSM cascade splits:");
             for (i, (near, far)) in splits.iter().enumerate() {
-                log::info!("  Cascade {i}: {near:.1} -> {far:.1} units");
+                tracing::info!(cascade = i, near, far, "  Cascade split");
             }
         }
 
@@ -630,8 +637,12 @@ impl ShadowSystem {
         let correction = glam::Mat4::from_translation(glam::Vec3::new(diff_x, diff_y, 0.0));
 
         if !self.csm_logged_once.get() {
-            log::info!(
-                "  Cascade {cascade_idx} matrix: center={cascade_center:?}, radius={cascade_radius:.1}, texel_size={world_units_per_texel:.3}m"
+            tracing::info!(
+                cascade = cascade_idx,
+                center = ?cascade_center,
+                radius = cascade_radius,
+                texel_size = world_units_per_texel,
+                "  Cascade matrix"
             );
         }
 
@@ -651,8 +662,10 @@ impl ShadowSystem {
         let splits = self.calculate_cascade_splits();
 
         if !self.csm_logged_once.get() {
-            log::info!(
-                "Calculating CSM cascade matrices for sun_dir={light_dir:?}, cam_pos={cam_pos:?}"
+            tracing::info!(
+                sun_dir = ?light_dir,
+                cam_pos = ?cam_pos,
+                "Calculating CSM cascade matrices"
             );
         }
 
@@ -683,7 +696,7 @@ impl ShadowSystem {
         };
 
         if !self.csm_logged_once.get() {
-            log::info!("CSM cascade matrices calculated successfully");
+            tracing::info!("CSM cascade matrices calculated successfully");
             self.csm_logged_once.set(true);
         }
 
@@ -790,11 +803,11 @@ impl ShadowSystem {
         }
 
         if !self.csm_logged_once.get() {
-            log::info!(
-                "Multi-light shadows: sun_intensity={:.2}, moon_intensity={:.2}, active_lights={}",
+            tracing::info!(
                 sun_intensity,
                 moon_intensity,
-                self.active_lights.len()
+                active_lights = self.active_lights.len(),
+                "Multi-light shadows"
             );
         }
 
@@ -835,7 +848,7 @@ impl ShadowSystem {
         };
 
         if !self.csm_logged_once.get() {
-            log::info!("Multi-light shadow matrices calculated successfully");
+            tracing::info!("Multi-light shadow matrices calculated successfully");
             self.csm_logged_once.set(true);
         }
 
@@ -846,10 +859,10 @@ impl ShadowSystem {
     /// Changes take effect on the next frame when shadow matrices are recalculated
     pub fn set_pcss_settings(&mut self, settings: PcssSettings) {
         self.pcss_settings = settings;
-        log::info!(
-            "PCSS settings updated: quality={:?}, light_size={:.3}",
-            settings.quality,
-            settings.light_size
+        tracing::info!(
+            quality = ?settings.quality,
+            light_size = settings.light_size,
+            "PCSS settings updated"
         );
     }
 

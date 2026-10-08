@@ -28,9 +28,9 @@ impl WorldGenerationJob {
             cancel.store(true, Ordering::SeqCst);
         }
         if let Some(handle) = self.handle.take() {
-            log::info!("Waiting for background generation to finish...");
+            tracing::info!("Waiting for background generation to finish...");
             if handle.join().is_err() {
-                log::error!("Failed to join generation thread");
+                tracing::error!("Failed to join generation thread");
             }
         }
         self.cancel = None;

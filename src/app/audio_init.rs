@@ -27,12 +27,12 @@ use moho_audio::AudioSystem;
 pub fn initialize_audio_system() -> Option<AudioSystem> {
     match AudioSystem::new() {
         Ok(audio) => {
-            log::info!("Audio system initialized successfully");
+            tracing::info!("Audio system initialized successfully");
             Some(audio)
         }
         Err(e) => {
-            log::warn!("Failed to initialize audio system: {e}");
-            log::info!("Application will continue without audio");
+            tracing::warn!(error = %e, "Failed to initialize audio system");
+            tracing::info!("Application will continue without audio");
             None
         }
     }

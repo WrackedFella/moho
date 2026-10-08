@@ -11,7 +11,7 @@ bytemuck = { workspace = true, features = ["derive"] }
 wgpu = { workspace = true }
 winit = { workspace = true }
 glam = { workspace = true }
-log = { workspace = true }
+tracing = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

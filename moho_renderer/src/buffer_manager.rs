@@ -152,12 +152,12 @@ impl BufferManager {
 
         self.stats.total_uploads += 1;
 
-        log::info!(
-            "Uploaded VoxelChunk {:?}: {} verts, {} indices -> handle {}",
-            chunk.chunk_pos(),
-            chunk.vertices().len(),
-            chunk.indices().len(),
-            handle
+        tracing::info!(
+            chunk = ?chunk.chunk_pos(),
+            vertices = chunk.vertices().len(),
+            indices = chunk.indices().len(),
+            handle,
+            "Uploaded VoxelChunk"
         );
 
         Some(handle)
@@ -236,11 +236,11 @@ impl BufferManager {
             self.chunk_meshes.insert(chunk_pos, info);
         }
 
-        log::debug!(
-            "Uploaded pending mesh for {:?}: {} verts -> handle {}",
-            chunk_pos,
-            vertices.len(),
-            handle
+        tracing::debug!(
+            chunk = ?chunk_pos,
+            vertices = vertices.len(),
+            handle,
+            "Uploaded pending mesh"
         );
 
         Some(handle)
@@ -264,7 +264,7 @@ impl BufferManager {
 
         self.stats.swaps_performed += 1;
 
-        log::debug!("Swapped chunk {chunk_pos:?} mesh: {old_handle} -> {new_handle}");
+        tracing::debug!(chunk = ?chunk_pos, old_handle, new_handle, "Swapped chunk mesh");
 
         Some(old_handle)
     }
@@ -314,11 +314,11 @@ impl BufferManager {
         let buffer = self.buffer_pool.remove(idx)?;
         self.stats.pool_reuses += 1;
 
-        log::debug!(
-            "Reusing pooled buffer {} (capacity: {} verts, {} indices)",
-            buffer.handle,
-            buffer.vertex_capacity,
-            buffer.index_capacity
+        tracing::debug!(
+            handle = buffer.handle,
+            vertex_capacity = buffer.vertex_capacity,
+            index_capacity = buffer.index_capacity,
+            "Reusing pooled buffer"
         );
 
         Some(buffer.handle)

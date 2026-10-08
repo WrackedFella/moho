@@ -3,8 +3,8 @@
 //! Manages loading and caching of audio files for performance optimization.
 //! Pre-loads UI sounds for low latency and caches other audio on-demand.
 use crate::error::{AudioError, AudioResult};
-use log::debug;
 use std::collections::HashMap;
+use tracing::debug;
 
 /// Audio cache manager for performance-optimized audio loading.
 ///
@@ -40,10 +40,10 @@ impl AudioCache {
             if let Ok(audio_data) = std::fs::read(sound_path) {
                 self.ui_sound_cache
                     .insert(sound_path.to_string(), audio_data);
-                debug!("Pre-loaded UI sound: {sound_path}");
+                debug!(path = %sound_path, "Pre-loaded UI sound");
             } else {
                 // Don't fail initialization if UI sounds are missing
-                debug!("UI sound file not found (will load on-demand): {sound_path}");
+                debug!(path = %sound_path, "UI sound file not found (will load on-demand)");
             }
         }
 
@@ -68,7 +68,7 @@ impl AudioCache {
         self.ui_sound_cache
             .insert(path.to_string(), audio_data.clone());
 
-        debug!("Loaded and cached UI sound: {path}");
+        debug!(path = %path, "Loaded and cached UI sound");
         Ok(audio_data)
     }
 
@@ -90,7 +90,7 @@ impl AudioCache {
         self.audio_cache
             .insert(path.to_string(), audio_data.clone());
 
-        debug!("Loaded and cached audio file: {path}");
+        debug!(path = %path, "Loaded and cached audio file");
         Ok(audio_data)
     }
 

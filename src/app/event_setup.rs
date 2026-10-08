@@ -69,7 +69,7 @@ pub struct EventBusSetup {
 pub fn setup_event_bus() -> EventBusSetup {
     // Create the event bus
     let event_bus = Arc::new(EventBus::new());
-    log::info!("Event bus initialized");
+    tracing::info!("Event bus initialized");
 
     // Create channels for event collection
     let (ui_event_tx, ui_event_rx) = unbounded::<moho_core::events::UiEvent>();

@@ -9,7 +9,7 @@ moho_core = { path = "../moho_core" }
 moho_render_api = { path = "../moho_render_api" }
 bincode = { workspace = true }
 glam = { workspace = true }
-log = { workspace = true }
+tracing = { workspace = true }
 noise = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 
