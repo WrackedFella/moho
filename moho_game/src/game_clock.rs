@@ -272,8 +272,8 @@ mod tests {
     #[test]
     fn test_clock_tick() {
         const TOLERANCE: f32 = 1e-4;
-        // (start hour, expected hour after one second): day passes 12 h in
-        // 120 s, night 12 h in 60 s, and the sum wraps past midnight.
+        // (start hour, hour after 1 s): day runs 12 h per 120 s, night 12 h
+        // per 60 s; 23.95 wraps past midnight.
         let cases = [(12.0, 12.1), (0.0, 0.2), (23.95, 0.15)];
 
         for (start, expected) in cases {
