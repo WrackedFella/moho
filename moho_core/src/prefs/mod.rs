@@ -7,6 +7,7 @@ mod key_names;
 mod parser;
 mod reader;
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -99,6 +100,7 @@ pub struct Prefs {
     world_load_radius: u32,
     world_unload_radius: u32,
     world_chunks_per_frame: u32,
+    bindings: BTreeMap<String, String>,
 }
 
 const MAX_GRAPHICS_QUALITY: u32 = 4;
@@ -159,6 +161,13 @@ impl Prefs {
     pub fn set_key_jump(&mut self, b: Binding) {
         self.key_jump = b;
     }
+
+    /// The raw `[bindings]` section: action name to unparsed value.
+    pub fn bindings(&self) -> &BTreeMap<String, String> {
+        &self.bindings
+    }
+
+    pub fn set_bindings(&mut self, _section: BTreeMap<String, String>) {}
 
     // --- Scalar getters ---
 
@@ -298,6 +307,7 @@ impl Default for Prefs {
             world_load_radius: 8,
             world_unload_radius: 12,
             world_chunks_per_frame: 4,
+            bindings: BTreeMap::new(),
         }
     }
 }
@@ -437,5 +447,25 @@ mod tests {
         for (input, expected) in cases {
             assert_eq!(WindowMode::parse(input), expected, "input {input:?}");
         }
+    }
+
+    #[test]
+    fn bindings_section_round_trips() {
+        let raw: BTreeMap<String, String> = [
+            ("move_forward", "Z"),
+            ("jump", "Unbound"),
+            ("sprint", "Shift, Ctrl"),
+            ("not_an_action", "Banana"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let mut prefs = Prefs::default();
+        prefs.set_bindings(raw.clone());
+
+        let (parsed, issues) = Prefs::parse(&prefs.to_ini_string());
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(parsed.bindings(), &raw);
     }
 }

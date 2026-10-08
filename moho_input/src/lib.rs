@@ -3,6 +3,9 @@
 //! This crate provides a single helper to map winit's PhysicalKey/KeyCode
 //! to the internal binding numeric code used across the project.
 
+pub mod bindings;
+pub mod key;
+
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// Map a winit `PhysicalKey` (or its `Code` variant) to our internal binding code.

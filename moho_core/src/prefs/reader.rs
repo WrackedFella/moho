@@ -569,6 +569,19 @@ mod tests {
     }
 
     #[test]
+    fn old_key_lines_are_unknown_keys() {
+        let (_, issues) = Prefs::parse("[prefs]\nkey_w = Z\n");
+
+        assert_eq!(
+            issues,
+            vec![PrefsIssue::UnknownKey {
+                section: "prefs".to_string(),
+                key: "key_w".to_string(),
+            }]
+        );
+    }
+
+    #[test]
     fn unknown_section_is_reported_and_its_keys_default() {
         let content = base_ini_with(None).replace("[video]", "[vidoe]");
 
