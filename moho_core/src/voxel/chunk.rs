@@ -196,18 +196,6 @@ impl VoxelChunk {
         self.vertices.is_empty()
     }
 
-    /// Get approximate memory usage of this chunk in bytes
-    pub fn memory_size(&self) -> usize {
-        self.vertices.len() * std::mem::size_of::<[f32; 3]>()
-            + self.normals.len() * std::mem::size_of::<[f32; 3]>()
-            + self.ambient_occlusion.len() * std::mem::size_of::<f32>()
-            + self.geometry_type.len() * std::mem::size_of::<u32>()
-            + self.light_level.len() * std::mem::size_of::<f32>()
-            + self.block_light_rgb.len() * std::mem::size_of::<[f32; 3]>()
-            + self.sky_exposed.len() * std::mem::size_of::<f32>()
-            + self.indices.len() * std::mem::size_of::<u32>()
-    }
-
     /// Check if this chunk has geometry to render
     pub fn has_geometry(&self) -> bool {
         !self.vertices.is_empty() && !self.indices.is_empty()

@@ -2,8 +2,8 @@
 //!
 //! The grid uses a `HashMap<ChunkPos, PalettedChunk>` for sparse storage.
 //! Air chunks are absent from the map (zero memory cost). Block accessors
-//! return primitive values rather than `&VoxelBlock` references so the storage
-//! type is an internal detail callers do not depend on.
+//! return primitive values rather than references so the storage type is an
+//! internal detail callers do not depend on.
 
 mod paletted;
 
@@ -90,10 +90,6 @@ impl MaterialRegistry {
         registry
     }
 
-    pub fn get(&self, id: u32) -> Option<&MaterialType> {
-        self.materials.get(id as usize)
-    }
-
     pub fn register(&mut self, material: MaterialType) -> u32 {
         let id = self.materials.len() as u32;
         self.materials.push(material);
@@ -138,106 +134,6 @@ impl Default for MaterialRegistry {
     }
 }
 
-/// Resource registry - maps resource IDs to resource data
-#[derive(Debug)]
-pub struct ResourceRegistry {
-    resources: Vec<ResourceData>,
-}
-
-impl ResourceRegistry {
-    pub fn new() -> Self {
-        let mut registry = ResourceRegistry {
-            resources: Vec::new(),
-        };
-
-        // Register default resources
-        // ID 0: Stone
-        registry.resources.push(ResourceData {
-            resource_type: "stone".to_string(),
-            quantity: 1,
-        });
-
-        // ID 1: Iron ore
-        registry.resources.push(ResourceData {
-            resource_type: "iron_ore".to_string(),
-            quantity: 2,
-        });
-
-        registry
-    }
-
-    pub fn get(&self, id: u32) -> Option<&ResourceData> {
-        self.resources.get(id as usize)
-    }
-
-    pub fn register(&mut self, resource: ResourceData) -> u32 {
-        let id = self.resources.len() as u32;
-        self.resources.push(resource);
-        id
-    }
-}
-
-impl Default for ResourceRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Individual voxel block — kept as a standalone value type for callers that
-/// construct block descriptors outside the grid. The grid itself stores
-/// paletted chunks rather than `VoxelBlock` instances.
-#[derive(Debug, Clone)]
-pub struct VoxelBlock {
-    pub position: BlockPos,
-    pub material_id: u32,
-    pub resource_id: Option<u32>,
-}
-
-/// Block geometry category for mesh generation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BlockCategory {
-    /// Natural terrain - uses Marching Cubes for smooth surfaces
-    Smooth,
-    /// Crafted/structure blocks - uses greedy meshing with sharp edges
-    Blocky,
-}
-
-impl VoxelBlock {
-    pub fn new(position: BlockPos, material_id: u32) -> Self {
-        VoxelBlock {
-            position,
-            material_id,
-            resource_id: None,
-        }
-    }
-
-    /// Whether this block uses smooth (Marching Cubes) mesh generation.
-    ///
-    /// Material IDs 0–99 = natural/terrain (smooth).
-    /// Material IDs 100+ = crafted/structure (blocky).
-    #[inline]
-    pub fn is_smooth(&self) -> bool {
-        self.category() == BlockCategory::Smooth
-    }
-
-    #[inline]
-    pub fn category(&self) -> BlockCategory {
-        if self.material_id < 100 {
-            BlockCategory::Smooth
-        } else {
-            BlockCategory::Blocky
-        }
-    }
-
-    pub fn world_position(&self) -> Vec3 {
-        Vec3::new(
-            self.position.x as f32,
-            self.position.y as f32,
-            self.position.z as f32,
-        )
-    }
-}
-
 /// 3D grid storing voxel blocks using paletted chunk storage.
 ///
 /// Blocks are organized into 16³ chunks. Air chunks are absent from the map
@@ -261,7 +157,6 @@ pub struct VoxelGrid {
     chunks: HashMap<IVec3, PalettedChunk>,
     chunk_size: i32,
     pub material_registry: MaterialRegistry,
-    pub resource_registry: ResourceRegistry,
     /// Per-chunk lighting state (Stage 4C). Only populated for chunk_size == 16.
     chunk_lights: HashMap<IVec3, ChunkLight>,
 }
@@ -280,7 +175,6 @@ impl VoxelGrid {
             chunks: HashMap::new(),
             chunk_size,
             material_registry: MaterialRegistry::new(),
-            resource_registry: ResourceRegistry::new(),
             chunk_lights: HashMap::new(),
         }
     }
@@ -398,18 +292,6 @@ impl VoxelGrid {
             self.note_block_change(pos, false);
         }
         removed
-    }
-
-    /// Whether a block exists at `pos`.
-    #[inline]
-    pub fn has_block_at(&self, pos: &BlockPos) -> bool {
-        self.is_solid_at(*pos)
-    }
-
-    /// Whether a block position is occupied (alias for `is_solid_at`).
-    #[inline]
-    pub fn is_block_occupied(&self, pos: BlockPos) -> bool {
-        self.is_solid_at(pos)
     }
 
     /// Total number of non-air blocks across all chunks.
@@ -552,16 +434,6 @@ impl VoxelGrid {
             }
         }
         max_y
-    }
-
-    /// Heights of the four cardinal neighbors of `pos`: [North(+Z), South(-Z), East(+X), West(-X)].
-    pub fn get_neighbor_heights(&self, pos: BlockPos) -> [Option<i32>; 4] {
-        [
-            self.get_height(pos.x, pos.z + 1),
-            self.get_height(pos.x, pos.z - 1),
-            self.get_height(pos.x + 1, pos.z),
-            self.get_height(pos.x - 1, pos.z),
-        ]
     }
 
     /// Obtain a [`VoxelMutator`] for semantically-named block operations.

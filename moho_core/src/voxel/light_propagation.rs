@@ -44,14 +44,18 @@ const OFFSETS: [IVec3; 6] = [
 /// Propagates RGB block-light through the voxel grid via per-channel BFS.
 pub struct LightPropagator {
     queue: VecDeque<PropNode>,
-    chunk_size: i32,
+}
+
+impl Default for LightPropagator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LightPropagator {
-    pub fn new(chunk_size: i32) -> Self {
+    pub fn new() -> Self {
         Self {
             queue: VecDeque::with_capacity(1024),
-            chunk_size,
         }
     }
 
@@ -117,16 +121,6 @@ impl LightPropagator {
             }
         }
         affected.into_iter().collect()
-    }
-
-    /// Returns the chunk coordinate for a world position.
-    #[inline]
-    pub fn get_chunk_coord(&self, pos: &IVec3) -> IVec3 {
-        IVec3::new(
-            pos.x.div_euclid(self.chunk_size),
-            pos.y.div_euclid(self.chunk_size),
-            pos.z.div_euclid(self.chunk_size),
-        )
     }
 
     // --- Internal BFS helpers ---

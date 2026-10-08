@@ -158,11 +158,6 @@ impl PalettedChunk {
         })
     }
 
-    #[allow(dead_code)] // used by chunk streaming (Phase 5) for eviction
-    pub fn is_all_air(&self) -> bool {
-        self.indices.iter().all(|&i| i == 0)
-    }
-
     pub fn block_count(&self) -> usize {
         self.indices.iter().filter(|&&i| i != 0).count()
     }
