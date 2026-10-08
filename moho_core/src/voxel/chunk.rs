@@ -33,7 +33,6 @@ pub struct VoxelChunk {
     sky_exposed: Vec<f32>,
     indices: Vec<u32>,
     material_id: u32,
-    mesh_handle: Option<u32>,
     /// LOD tier: 0 = full 16³ hybrid, 1 = coarse 8³ blocky
     lod: u8,
 }
@@ -64,7 +63,6 @@ impl VoxelChunk {
             sky_exposed,
             indices,
             material_id,
-            mesh_handle: None,
             lod: 0,
         }
     }
@@ -111,7 +109,6 @@ impl VoxelChunk {
             sky_exposed: mesh.sky_exposed,
             indices: mesh.indices,
             material_id,
-            mesh_handle: None,
             lod,
         }
     }
@@ -186,7 +183,6 @@ impl VoxelChunk {
             sky_exposed: mesh.sky_exposed,
             indices: mesh.indices,
             material_id,
-            mesh_handle: None,
             lod: 0,
         }
     }
@@ -199,21 +195,6 @@ impl VoxelChunk {
     /// Check if this chunk has geometry to render
     pub fn has_geometry(&self) -> bool {
         !self.vertices.is_empty() && !self.indices.is_empty()
-    }
-
-    /// Check if mesh is already uploaded to renderer
-    pub fn is_uploaded(&self) -> bool {
-        self.mesh_handle.is_some()
-    }
-
-    /// Set the renderer mesh handle
-    pub fn set_mesh_handle(&mut self, handle: u32) {
-        self.mesh_handle = Some(handle);
-    }
-
-    /// Get the renderer mesh handle (if uploaded)
-    pub fn get_mesh_handle(&self) -> Option<u32> {
-        self.mesh_handle
     }
 }
 
@@ -238,7 +219,6 @@ mod tests {
 
         assert!(chunk.is_empty());
         assert!(!chunk.has_geometry());
-        assert!(!chunk.is_uploaded());
     }
 
     #[test]
@@ -258,7 +238,6 @@ mod tests {
 
         assert!(!chunk.is_empty());
         assert!(chunk.has_geometry());
-        assert!(!chunk.is_uploaded());
     }
 
     #[test]

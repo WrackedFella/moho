@@ -125,19 +125,10 @@ mod tests {
         store.insert(chunk_with_material(IVec3::ZERO, 5));
         store.insert(chunk_with_material(IVec3::X, 6));
 
-        store
-            .get_mut(IVec3::X)
-            .expect("chunk inserted at X")
-            .set_mesh_handle(42);
+        *store.get_mut(IVec3::X).expect("chunk inserted at X") = chunk_with_material(IVec3::X, 42);
 
-        assert_eq!(
-            store.get(IVec3::X).and_then(VoxelChunk::get_mesh_handle),
-            Some(42)
-        );
-        assert_eq!(
-            store.get(IVec3::ZERO).and_then(VoxelChunk::get_mesh_handle),
-            None
-        );
+        assert_eq!(store.get(IVec3::X).map(VoxelChunk::material_id), Some(42));
+        assert_eq!(store.get(IVec3::ZERO).map(VoxelChunk::material_id), Some(5));
     }
 
     #[test]
@@ -232,23 +223,19 @@ mod tests {
     #[test]
     fn iter_mut_changes_are_visible_through_get() {
         let mut store = ChunkStore::new();
-        store.insert(VoxelChunk::empty(IVec3::new(0, 0, 0)));
-        store.insert(VoxelChunk::empty(IVec3::new(1, 0, 0)));
+        store.insert(chunk_with_material(IVec3::new(0, 0, 0), 0));
+        store.insert(chunk_with_material(IVec3::new(1, 0, 0), 0));
 
-        for (handle, chunk) in (10u32..).zip(store.iter_mut()) {
-            chunk.set_mesh_handle(handle);
+        for (material_id, chunk) in (10u32..).zip(store.iter_mut()) {
+            *chunk = chunk_with_material(chunk.chunk_pos(), material_id);
         }
 
         assert_eq!(
-            store
-                .get(IVec3::new(0, 0, 0))
-                .and_then(VoxelChunk::get_mesh_handle),
+            store.get(IVec3::new(0, 0, 0)).map(VoxelChunk::material_id),
             Some(10)
         );
         assert_eq!(
-            store
-                .get(IVec3::new(1, 0, 0))
-                .and_then(VoxelChunk::get_mesh_handle),
+            store.get(IVec3::new(1, 0, 0)).map(VoxelChunk::material_id),
             Some(11)
         );
     }

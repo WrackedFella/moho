@@ -6,10 +6,12 @@
 mod instance;
 mod material;
 mod persistence;
+mod world_geometry;
 
 pub use instance::{InstanceGpu, Renderable};
 pub use material::{MaterialGpu, MaterialKey, RenderMaterial};
 pub use persistence::{CameraDesc, LightDesc};
+pub use world_geometry::{WorldMesh, WorldMeshError, WorldMeshId};
 
 #[cfg(test)]
 mod tests {

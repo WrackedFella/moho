@@ -17,3 +17,4 @@ pub mod physics_controller;
 pub mod renderer_setup;
 pub mod scene_loader;
 pub mod world_generator;
+pub mod world_geometry;

@@ -27,8 +27,8 @@ pub use gpu_types::{
 };
 pub use moho_render_api::{InstanceGpu, MaterialGpu};
 mod block_on;
-mod buffer_manager;
-pub use buffer_manager::BufferManager;
+mod world_meshes;
+pub use world_meshes::WorldMeshes;
 mod instance_collector;
 pub use instance_collector::InstanceCollector;
 mod mesh_renderer;

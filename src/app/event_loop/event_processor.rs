@@ -300,7 +300,7 @@ impl EventProcessor {
                     app.physics
                         .update_chunk_collider(chunk_pos, chunk.vertices(), chunk.indices());
 
-                    if app.entities.chunks.insert(chunk).is_some() {
+                    if crate::app::world_geometry::insert_chunk(app, chunk).is_some() {
                         tracing::trace!(chunk = ?chunk_pos, "Updated mesh for chunk");
                     } else {
                         tracing::trace!(chunk = ?chunk_pos, "Created new mesh for chunk");

@@ -122,9 +122,11 @@ impl GenerationProcessor {
         }
 
         // Load produced scene bytes into the main world
+        crate::app::world_geometry::remove_all_chunk_meshes(app);
         app.entities.clear();
         match moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.entities) {
             Ok((camera_data, _lights)) => {
+                crate::app::world_geometry::upsert_all_chunks(app);
                 // Generated worlds have no pre-spawned lights; nothing to restore.
                 if let Some((position, yaw, pitch)) = camera_data {
                     app.simulation.set_position_yaw_pitch(position, yaw, pitch);
@@ -224,11 +226,15 @@ impl GenerationProcessor {
         // the character doesn't fall through before async event processing kicks in.
         if let Some(ls) = &app.light_system {
             let grid = ls.grid();
+            let mut chunks = Vec::with_capacity(preloaded_chunks.len());
             for &pos in preloaded_chunks {
                 let chunk = moho_core::voxel::VoxelChunk::from_grid_hybrid(grid, pos);
                 app.physics
                     .update_chunk_collider(pos, chunk.vertices(), chunk.indices());
-                app.entities.chunks.insert(chunk);
+                chunks.push(chunk);
+            }
+            for chunk in chunks {
+                crate::app::world_geometry::insert_chunk(app, chunk);
             }
         }
 
@@ -369,5 +375,63 @@ mod tests {
             .and_then(|ls| ls.grid().get_height(0, 0))
             .expect("spawn column has terrain");
         assert!(app.simulation.position().y > terrain_y as f32);
+    }
+
+    #[test]
+    fn completed_generation_replaces_the_previous_worlds_meshes_with_spawn_chunks() {
+        use crate::app::world_geometry::tests::{RecordingBackend, chunk_at};
+        let mut app = App::headless();
+        let spec = moho_game::scene_builders::WorldSpec {
+            name: "headless-test-completed-meshes".to_string(),
+            seed: Some(7),
+            size_xz: 64,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+            initial_time_of_day: 6.0,
+        };
+        let scene_bytes = moho_game::scene_persistence::encode_to_bytes(
+            &moho_game::scene::SceneEntities::default(),
+            None,
+            &[],
+        )
+        .expect("encode empty scene");
+        crate::app::world_geometry::insert_chunk(&mut app, chunk_at(glam::IVec3::new(90, 0, 90)));
+        let mut backend = RecordingBackend::default();
+        app.scene.world_meshes_mut().flush(&mut backend);
+        let old = backend.registered[0];
+        assert_eq!(app.scene.world_meshes_mut().draws().count(), 1);
+
+        GenerationProcessor::new().handle_completed(
+            &mut app,
+            scene_bytes,
+            spec,
+            moho_game::scene_builders::TerrainConfig::default(),
+            moho_core::voxel::VoxelGrid::new(16),
+        );
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        let with_geometry = app
+            .entities
+            .chunks
+            .iter()
+            .filter(|c| c.has_geometry())
+            .count();
+        let drawn: Vec<u32> = app
+            .scene
+            .world_meshes_mut()
+            .draws()
+            .map(|(h, _)| h)
+            .collect();
+        assert!(with_geometry > 0, "the spawn area has chunks with geometry");
+        assert!(
+            backend.unregistered.contains(&old),
+            "the old mesh was freed"
+        );
+        assert!(!drawn.contains(&old), "the old world is no longer drawn");
+        assert_eq!(
+            drawn.len(),
+            with_geometry,
+            "one draw per chunk with geometry"
+        );
     }
 }

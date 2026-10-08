@@ -4,8 +4,7 @@
 //! separation of concerns. Preparation (collecting instances, separating opaque/transparent)
 //! is now distinct from rendering (GPU command submission).
 
-use crate::{BufferManager, InstanceCollector, MaterialTable, RendererBackend};
-use moho_core::voxel::VoxelChunk;
+use crate::{InstanceCollector, MaterialTable, RendererBackend};
 use moho_render_api::{InstanceGpu, Renderable};
 
 /// Prepared scene data ready for rendering.
@@ -26,7 +25,7 @@ pub struct PreparedScene {
 
 /// Scene preparation coordinator.
 ///
-/// Handles the complex logic of collecting instances from actors and chunks,
+/// Handles the complex logic of collecting instances from actors,
 /// processing materials, and separating geometry into opaque and transparent groups.
 pub struct ScenePreparation;
 
@@ -34,7 +33,7 @@ impl ScenePreparation {
     /// Prepare a scene for rendering by collecting instances and separating by transparency.
     ///
     /// This method:
-    /// 1. Collects all renderable instances from the actors and chunks
+    /// 1. Collects all renderable instances from the actors
     /// 2. Logs debug information about materials and instances
     /// 3. Uploads materials to GPU if they've changed
     /// 4. Separates instances into opaque and transparent groups
@@ -42,29 +41,22 @@ impl ScenePreparation {
     /// # Arguments
     /// * `spheres` - Sphere-like actors to draw
     /// * `cubes` - Cube-like actors to draw
-    /// * `chunks` - Terrain chunks to register and draw
     /// * `material_table` - Table of all materials (may be updated)
-    /// * `buffer_manager` - Manages GPU buffers for voxel chunks
     /// * `instance_collector` - Collects instances
     /// * `renderer` - Backend for GPU operations
     /// * `mesh_handle` - Handle for sphere mesh
     /// * `cube_mesh_handle` - Handle for cube mesh
-    /// * `terrain_material_idx` - Pre-registered material index for terrain chunks
     ///
     /// # Returns
     /// PreparedScene containing separated geometry ready for rendering
-    #[allow(clippy::too_many_arguments)]
-    pub fn prepare<'a, S, C>(
+    pub fn prepare<S, C>(
         spheres: &[S],
         cubes: &[C],
-        chunks: impl IntoIterator<Item = &'a mut VoxelChunk>,
         material_table: &mut MaterialTable,
-        buffer_manager: &mut BufferManager,
         instance_collector: &mut InstanceCollector,
         renderer: &mut dyn RendererBackend,
         mesh_handle: u32,
         cube_mesh_handle: u32,
-        terrain_material_idx: u32,
     ) -> PreparedScene
     where
         S: Renderable,
@@ -72,7 +64,6 @@ impl ScenePreparation {
     {
         instance_collector.clear();
         instance_collector.collect_actors(spheres, cubes, material_table);
-        instance_collector.collect_chunks(chunks, buffer_manager, renderer, terrain_material_idx);
 
         // Step 2: Debug logging (optional, can be feature-gated in future)
         Self::log_debug_info(material_table, instance_collector);
@@ -85,11 +76,6 @@ impl ScenePreparation {
         } else {
             false
         };
-
-        tracing::debug!(
-            count = instance_collector.chunk_renders().len(),
-            "[ScenePreparation] VoxelChunks to render"
-        );
 
         // Step 4: Separate instances by transparency
         let (cube_opaque, sphere_opaque, transparent_entries) = Self::separate_by_transparency(
