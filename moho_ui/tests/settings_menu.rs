@@ -435,7 +435,7 @@ fn non_keyboard_window_events_are_not_consumed() {
 fn only_the_listening_row_shows_the_prompt() {
     let mut idle = SettingsMenu::with_prefs(Prefs::default());
     let mut listening = SettingsMenu::with_prefs(Prefs::default());
-    listening.start_listening(1);
+    listening.start_listening(3);
 
     let idle_text = rendered_text(&render_frame(&mut idle, vec![]));
     let listening_text = rendered_text(&render_frame(&mut listening, vec![]));
@@ -444,8 +444,8 @@ fn only_the_listening_row_shows_the_prompt() {
     assert_eq!(listening_text.matches("Press any key...").count(), 1);
     let lines: Vec<_> = listening_text.lines().collect();
     assert!(lines.contains(&"W") && lines.contains(&"S"));
-    assert!(lines.contains(&"D"), "Move Right's key stays visible");
-    assert!(!lines.contains(&"A"), "Move Left is the listening row");
+    assert!(lines.contains(&"A"), "Move Left's key stays visible");
+    assert!(!lines.contains(&"D"), "Move Right is the listening row");
 }
 
 #[test]

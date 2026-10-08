@@ -24,4 +24,11 @@ exclude_re = [
     'replace \| with \^ in chunk_mesh_id',
     # Equivalent: ctrl, shift and alt occupy disjoint bits, so OR and XOR agree.
     'replace \| with \^ in modifier_bits',
+    # winit 0.30's `KeyEvent` has a crate-private field, so no test can build the key
+    # press these paths need to return true.
+    'replace KeybindCaptureHandler::handle_winit_event -> bool with false',
+    'replace != with == in KeybindCaptureHandler::handle_winit_event',
+    'replace <impl Screen for SettingsMenu>::handle_raw_input -> bool with false',
+    # Equivalent: the settings menu's spec is always `ScreenSpec::default()`.
+    'replace <impl Screen for SettingsMenu>::spec -> &ScreenSpec with Box::leak',
 ]
