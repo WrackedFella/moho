@@ -238,6 +238,16 @@ mod tests {
     }
 
     #[test]
+    fn payload_change_that_still_decodes_returns_corrupt() {
+        let mut bytes = valid(FileKind::Chunk);
+        *bytes.last_mut().expect("payload byte") = b'j';
+
+        let err = decode::<(u32, String)>(FileKind::Chunk, &bytes).expect_err("must reject");
+
+        assert!(matches!(err, PersistError::Corrupt), "{err:?}");
+    }
+
+    #[test]
     fn trailing_bytes_after_declared_length_return_corrupt() {
         let mut bytes = valid(FileKind::World);
         bytes.push(0);
