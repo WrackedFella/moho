@@ -266,7 +266,7 @@ impl MarchingCubes {
             Self::sample_gradient(field, s1),
             t,
         );
-        if gradient.iter().all(|g| g.abs() < 0.0001) {
+        if gradient == [0.0; 3] {
             std::array::from_fn(|axis| (s1[axis] as f32 - s0[axis] as f32) * (d1 - d0))
         } else {
             gradient
