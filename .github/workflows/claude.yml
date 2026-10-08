@@ -36,6 +36,10 @@ jobs:
           bash scripts/cloud-tools.sh --force
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: anthropics/claude-code-action@v1
+        env:
+          # The run ends when the main agent stops, so a background subagent is killed
+          # mid-task. Subagents must run in the foreground.
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -47,4 +51,5 @@ jobs:
           prompt: /devflow:orchestrate ${{ github.event.issue.number || inputs.issue }}
           claude_args: |
             --max-turns 200
+            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running."
             --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Task,Skill"
