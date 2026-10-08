@@ -155,49 +155,87 @@ fn sky_ensure_ready_noop_when_clean() {
 // Block-light propagation invariants
 // ---------------------------------------------------------------------------
 
-/// Light decays by exactly 1 per step along a line of transparent blocks.
+/// Light decays by exactly 1 per step in every direction: the six face
+/// neighbours of the source read 14, and a line of blocks counts down from there.
 #[test]
 fn block_light_decay_one_per_step() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
-    let mut prop = LightPropagator::new(16);
+    let mut prop = LightPropagator::new();
+    let source = IVec3::new(4, 4, 4);
 
-    for x in 0..8i32 {
-        grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
+    for x in 3..=5i32 {
+        for y in 3..=5i32 {
+            for z in 3..=5i32 {
+                grid.mutator().place(IVec3::new(x, y, z), 1, None);
+            }
+        }
     }
-    prop.add_light_rgb(&mut grid, IVec3::new(0, 0, 0), [15, 0, 0]);
+    for x in 6..12i32 {
+        grid.mutator().place(IVec3::new(x, 4, 4), 1, None);
+    }
+    prop.add_light_rgb(&mut grid, source, [15, 0, 0]);
 
-    for x in 0..8i32 {
-        let r = rgb(&grid, IVec3::new(x, 0, 0))[0];
-        assert_eq!(r, (15 - x as u8), "x={x}: expected R={}, got {r}", 15 - x);
+    assert_eq!(rgb(&grid, source)[0], 15, "source keeps its own level");
+    for offset in [
+        IVec3::X,
+        IVec3::NEG_X,
+        IVec3::Y,
+        IVec3::NEG_Y,
+        IVec3::Z,
+        IVec3::NEG_Z,
+    ] {
+        let r = rgb(&grid, source + offset)[0];
+        assert_eq!(r, 14, "neighbour at {offset}: expected R=14, got {r}");
+    }
+    for x in 4..12i32 {
+        let r = rgb(&grid, IVec3::new(x, 4, 4))[0];
+        let expected = 15 - (x - 4) as u8;
+        assert_eq!(r, expected, "x={x}: expected R={expected}, got {r}");
     }
 }
 
-/// A weaker source must not reduce an existing brighter value.
+/// A weaker source must not reduce an existing brighter value, or relight past it.
 #[test]
-fn block_light_does_not_dim_brighter() {
+fn weaker_source_does_not_dim_brighter() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
-    let mut prop = LightPropagator::new(16);
+    let mut prop = LightPropagator::new();
 
-    let pos = IVec3::new(0, 0, 0);
-    grid.mutator().place(pos, 1, None);
+    for x in 0..5i32 {
+        let pos = IVec3::new(x, 0, 0);
+        grid.mutator().place(pos, 1, None);
+        grid.set_block_light_rgb(pos, [10, 0, 0]);
+    }
 
-    // Write R=12 directly into chunk light.
-    grid.set_block_light_rgb(pos, [12, 0, 0]);
+    prop.add_light_rgb(&mut grid, IVec3::new(0, 0, 0), [8, 0, 0]);
 
-    // Add a weaker source (R=8).
-    prop.add_light_rgb(&mut grid, pos, [8, 0, 0]);
-    assert_eq!(rgb(&grid, pos)[0], 12, "existing R=12 must not be reduced");
+    assert_eq!(rgb(&grid, IVec3::new(0, 0, 0))[0], 10, "source cell dimmed");
+    assert_eq!(rgb(&grid, IVec3::new(4, 0, 0))[0], 10, "far cell dimmed");
 }
 
-/// Cave voxels with no sources start at R=G=B=0.
+/// A position that was never lit reads zero, whether or not its chunk has light storage.
 #[test]
-fn block_light_cave_is_pure_black() {
-    let grid = grid_16();
-    // No propagation — default ChunkLight values should all be 0.
-    // Chunk (0,0,0) has no ChunkLight entry yet; block_light_rgb_at returns [0,0,0].
-    assert_eq!(rgb(&grid, IVec3::new(5, 5, 5)), [0, 0, 0]);
+fn unlit_position_reads_zero() {
+    let probe = IVec3::new(7, 7, 7);
+
+    let untouched = grid_16();
+    assert_eq!(
+        rgb(&untouched, IVec3::new(5, 5, 5)),
+        [0, 0, 0],
+        "no ChunkLight"
+    );
+
+    let mut allocated = grid_16();
+    make_transparent(&mut allocated);
+    let mut prop = LightPropagator::new();
+    allocated.mutator().place(IVec3::ZERO, 1, None);
+    prop.add_light_rgb(&mut allocated, IVec3::ZERO, [10, 0, 0]);
+    assert_eq!(
+        rgb(&allocated, probe),
+        [0, 0, 0],
+        "out of range of the source"
+    );
 }
 
 /// R, G, B propagate independently: emitting only R does not affect G or B.
@@ -205,7 +243,7 @@ fn block_light_cave_is_pure_black() {
 fn block_light_channels_are_independent() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
-    let mut prop = LightPropagator::new(16);
+    let mut prop = LightPropagator::new();
 
     for x in 0..4i32 {
         grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
@@ -224,7 +262,7 @@ fn block_light_colored_propagation() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
     make_torch(&mut grid);
-    let mut prop = LightPropagator::new(16);
+    let mut prop = LightPropagator::new();
 
     for x in 0..5i32 {
         grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
@@ -246,7 +284,7 @@ fn block_light_colored_propagation() {
 fn removal_single_source_clears_all() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
-    let mut prop = LightPropagator::new(16);
+    let mut prop = LightPropagator::new();
 
     for x in 0..6i32 {
         grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
@@ -269,7 +307,7 @@ fn removal_single_source_clears_all() {
 fn removal_preserves_surviving_source() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
-    let mut prop = LightPropagator::new(16);
+    let mut prop = LightPropagator::new();
 
     for x in 0..11i32 {
         grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
@@ -293,7 +331,7 @@ fn removal_preserves_surviving_source() {
 fn removal_of_absent_light_is_noop() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
-    let mut prop = LightPropagator::new(16);
+    let mut prop = LightPropagator::new();
 
     grid.mutator().place(IVec3::new(0, 0, 0), 1, None);
     prop.remove_light(&mut grid, IVec3::new(0, 0, 0)); // nothing to remove — must not panic
@@ -308,7 +346,7 @@ fn removal_of_absent_light_is_noop() {
 fn cross_chunk_propagation_correct() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
-    let mut prop = LightPropagator::new(16);
+    let mut prop = LightPropagator::new();
 
     for x in 14..=18i32 {
         grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
@@ -334,7 +372,7 @@ fn cross_chunk_propagation_correct() {
 fn cross_chunk_removal_clears_both() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
-    let mut prop = LightPropagator::new(16);
+    let mut prop = LightPropagator::new();
 
     for x in 12..=20i32 {
         grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
@@ -366,7 +404,7 @@ fn cross_chunk_removal_clears_both() {
 fn opaque_block_does_not_receive_light() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
-    let mut prop = LightPropagator::new(16);
+    let mut prop = LightPropagator::new();
 
     grid.mutator().place(IVec3::new(0, 0, 0), 1, None); // transparent source host
     grid.mutator().place(IVec3::new(1, 0, 0), 0, None); // opaque block (mat 0, opacity=15)
@@ -386,7 +424,7 @@ fn opaque_block_does_not_receive_light() {
 fn sealed_cave_stays_dark() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
-    let mut prop = LightPropagator::new(16);
+    let mut prop = LightPropagator::new();
 
     // Build a transparent room at (5,5,5) completely surrounded by opaque shells.
     let center = IVec3::new(5, 5, 5);
@@ -423,7 +461,7 @@ fn flood_fill_propagates_all_emitters() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
     make_torch(&mut grid);
-    let mut prop = LightPropagator::new(16);
+    let mut prop = LightPropagator::new();
 
     for x in 0..5i32 {
         grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
@@ -451,7 +489,7 @@ fn flood_fill_propagates_all_emitters() {
 fn accessor_round_trip() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
-    let mut prop = LightPropagator::new(16);
+    let mut prop = LightPropagator::new();
 
     let pos = IVec3::new(0, 0, 0);
     grid.mutator().place(pos, 1, None);
@@ -462,13 +500,19 @@ fn accessor_round_trip() {
         [10, 5, 2],
         "accessor must return stored RGB"
     );
-    assert_eq!(
-        rgb(&grid, IVec3::new(7, 7, 7)),
-        [0, 0, 0],
-        "unlit position returns zero"
-    );
+}
 
-    // Sky: no blocks above → exposed.
+/// A transparent block above a voxel leaves it sky-exposed.
+#[test]
+fn transparent_block_does_not_occlude_sky() {
+    let mut grid = grid_16();
+    make_transparent(&mut grid);
+    grid.mutator().place(IVec3::new(0, 5, 0), 1, None);
+
     recompute_sky_exposure(&mut grid, IVec3::ZERO);
-    assert!(sky(&grid, pos), "unoccluded voxel must be sky-exposed");
+
+    assert!(
+        sky(&grid, IVec3::new(0, 4, 0)),
+        "transparent block occluded sky"
+    );
 }

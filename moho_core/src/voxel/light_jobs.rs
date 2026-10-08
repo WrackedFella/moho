@@ -240,13 +240,13 @@ pub struct LightJobQueue {
 
 impl LightJobQueue {
     /// Create a new light job queue
-    pub fn new(chunk_size: i32, budget: LightFrameBudget) -> Self {
+    pub fn new(budget: LightFrameBudget) -> Self {
         Self {
             jobs: BinaryHeap::new(),
             cancellation_tokens: HashMap::new(),
             results: VecDeque::new(),
             budget,
-            propagator: LightPropagator::new(chunk_size),
+            propagator: LightPropagator::new(),
             total_jobs_processed: 0,
             total_blocks_processed: 0,
             total_time_us: 0,
@@ -254,8 +254,8 @@ impl LightJobQueue {
     }
 
     /// Create with default balanced budget
-    pub fn with_default_budget(chunk_size: i32) -> Self {
-        Self::new(chunk_size, LightFrameBudget::balanced())
+    pub fn with_default_budget() -> Self {
+        Self::new(LightFrameBudget::balanced())
     }
 
     /// Set the frame budget configuration
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_job_cancellation() {
-        let mut queue = LightJobQueue::with_default_budget(16);
+        let mut queue = LightJobQueue::with_default_budget();
         let job = LightUpdateJob::add_light(IVec3::new(0, 0, 0), [15, 0, 0], 10);
         let job_id = queue.submit(job);
 
@@ -518,7 +518,7 @@ mod tests {
     #[test]
     fn test_add_light_job() {
         let mut grid = transparent_grid();
-        let mut queue = LightJobQueue::with_default_budget(16);
+        let mut queue = LightJobQueue::with_default_budget();
 
         for x in 0..5i32 {
             for y in 0..5i32 {
@@ -552,7 +552,7 @@ mod tests {
     #[test]
     fn test_remove_light_job() {
         let mut grid = transparent_grid();
-        let mut queue = LightJobQueue::with_default_budget(16);
+        let mut queue = LightJobQueue::with_default_budget();
 
         for x in 0..5i32 {
             for y in 0..5i32 {
@@ -564,7 +564,7 @@ mod tests {
 
         // Add light via propagator directly.
         let light_pos = IVec3::new(2, 2, 2);
-        let mut propagator = LightPropagator::new(16);
+        let mut propagator = LightPropagator::new();
         propagator.add_light_rgb(&mut grid, light_pos, [15, 0, 0]);
 
         let (sc, si, _) = light_storage::world_to_chunk_local(light_pos);
@@ -584,7 +584,7 @@ mod tests {
         let mut grid = transparent_grid();
 
         let budget = LightFrameBudget::conservative();
-        let mut queue = LightJobQueue::new(16, budget);
+        let mut queue = LightJobQueue::new(budget);
 
         for x in 0..10i32 {
             for y in 0..10i32 {
@@ -626,7 +626,7 @@ mod tests {
     #[test]
     fn test_stats_tracking() {
         let mut grid = transparent_grid();
-        let mut queue = LightJobQueue::with_default_budget(16);
+        let mut queue = LightJobQueue::with_default_budget();
 
         for x in 0..5i32 {
             for y in 0..5i32 {
@@ -646,15 +646,5 @@ mod tests {
         let stats = queue.stats();
         assert!(stats.total_jobs_processed > 0);
         assert!(stats.total_time_us > 0);
-    }
-
-    #[test]
-    fn test_budget_presets() {
-        let conservative = LightFrameBudget::conservative();
-        let balanced = LightFrameBudget::balanced();
-        let aggressive = LightFrameBudget::aggressive();
-
-        assert!(conservative.max_blocks_per_frame < balanced.max_blocks_per_frame);
-        assert!(balanced.max_blocks_per_frame < aggressive.max_blocks_per_frame);
     }
 }

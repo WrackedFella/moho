@@ -11,7 +11,7 @@
 //! - Background mesh generation job queue
 //!
 //! # Module Organization
-//! - `grid` - Core data structures (VoxelGrid, VoxelBlock)
+//! - `grid` - Core data structures (VoxelGrid, BlockData)
 //! - `face` - Face direction and culling logic
 //! - `mesh` - Mesh generation (MeshGenerator)
 //! - `chunk` - Chunk optimization (VoxelChunk)
@@ -52,10 +52,7 @@ pub mod streaming;
 pub use chunk::VoxelChunk;
 pub use chunk_store::ChunkStore;
 pub use face::{FaceDirection, get_visible_faces};
-pub use grid::{
-    BlockCategory, BlockData, BlockPos, MaterialLighting, MaterialRegistry, ResourceData,
-    ResourceRegistry, VoxelBlock, VoxelGrid,
-};
+pub use grid::{BlockData, BlockPos, MaterialLighting, MaterialRegistry, VoxelGrid};
 pub use jobs::{
     CancellationToken, MeshGeneratorFn, MeshJob, MeshJobQueue, MeshJobQueueBuilder, MeshJobResult,
     MeshJobType, create_hybrid_generator,

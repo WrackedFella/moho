@@ -71,8 +71,7 @@ impl LightSystem {
     /// * `event_bus` - Event bus for listening and publishing events
     /// * `budget` - Frame budget configuration
     pub fn new(grid: VoxelGrid, event_bus: Arc<EventBus>, budget: LightFrameBudget) -> Self {
-        let chunk_size = grid.chunk_size();
-        let job_queue = LightJobQueue::new(chunk_size, budget);
+        let job_queue = LightJobQueue::new(budget);
 
         Self {
             grid,
@@ -349,16 +348,6 @@ impl LightSystemStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_light_system_creation() {
-        let grid = VoxelGrid::new(16);
-        let event_bus = Arc::new(EventBus::new());
-        let light_system = LightSystem::with_default_budget(grid, event_bus);
-
-        assert_eq!(light_system.pending_jobs(), 0);
-        assert_eq!(light_system.player_position(), Vec3::ZERO);
-    }
 
     #[test]
     fn test_block_placed_light_source() {

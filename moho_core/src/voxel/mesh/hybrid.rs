@@ -516,45 +516,30 @@ mod tests {
     }
 
     #[test]
-    fn test_analyze_all_smooth_chunk() {
-        let mut grid = VoxelGrid::new(16);
-
-        // Add smooth blocks (material ID < 100)
-        for x in 0..4 {
-            for y in 0..4 {
-                for z in 0..4 {
-                    let pos = IVec3::new(x, y, z);
-                    grid.place_block(pos, 0, None); // Material 0 is smooth
+    fn analyze_chunk_classifies_uniform_chunks() {
+        // (material, content, smooth, blocky): ids below 100 are smooth, 100+ blocky.
+        let rows = [
+            (0, ChunkContent::AllSmooth, 64, 0),
+            (99, ChunkContent::AllSmooth, 64, 0),
+            (100, ChunkContent::AllBlocky, 0, 64),
+        ];
+        for (material, expected_content, expected_smooth, expected_blocky) in rows {
+            let mut grid = VoxelGrid::new(16);
+            for x in 0..4 {
+                for y in 0..4 {
+                    for z in 0..4 {
+                        grid.place_block(IVec3::new(x, y, z), material, None);
+                    }
                 }
             }
+
+            let (content, smooth, blocky) =
+                HybridMeshGenerator::analyze_chunk(&grid, IVec3::ZERO, 16);
+
+            assert_eq!(content, expected_content, "material {material}");
+            assert_eq!(smooth, expected_smooth, "material {material}");
+            assert_eq!(blocky, expected_blocky, "material {material}");
         }
-
-        let (content, smooth, blocky) = HybridMeshGenerator::analyze_chunk(&grid, IVec3::ZERO, 16);
-
-        assert_eq!(content, ChunkContent::AllSmooth);
-        assert_eq!(smooth, 64);
-        assert_eq!(blocky, 0);
-    }
-
-    #[test]
-    fn test_analyze_all_blocky_chunk() {
-        let mut grid = VoxelGrid::new(16);
-
-        // Add blocky blocks (material ID >= 100)
-        for x in 0..4 {
-            for y in 0..4 {
-                for z in 0..4 {
-                    let pos = IVec3::new(x, y, z);
-                    grid.place_block(pos, 100, None); // Material 100 is blocky
-                }
-            }
-        }
-
-        let (content, smooth, blocky) = HybridMeshGenerator::analyze_chunk(&grid, IVec3::ZERO, 16);
-
-        assert_eq!(content, ChunkContent::AllBlocky);
-        assert_eq!(smooth, 0);
-        assert_eq!(blocky, 64);
     }
 
     #[test]

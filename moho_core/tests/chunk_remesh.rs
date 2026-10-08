@@ -1,52 +1,10 @@
 use glam::IVec3;
 use moho_core::voxel::{VoxelChunk, VoxelGrid};
 
-/// Guards the mutate → remesh contract the player mining action depends on:
-/// a voxel removed from the grid must produce a different chunk mesh on
-/// regeneration. Added after a 3.1a investigation where mining appeared to do
-/// nothing on screen — the mesh *was* updating, but a single-voxel change to
-/// smooth (marching-cubes) terrain is visually subtle. This test pins the
-/// contract so a future regression is caught here rather than mistaken for a
-/// perception problem again.
-#[test]
-fn removing_surface_voxel_changes_chunk_mesh() {
-    let mut grid = VoxelGrid::new(16);
-
-    // Fill a solid slab in chunk (0,0,0): y in 0..8, full 16x16 footprint.
-    for x in 0..16 {
-        for z in 0..16 {
-            for y in 0..8 {
-                grid.mutator().place(IVec3::new(x, y, z), 1, None);
-            }
-        }
-    }
-
-    let before = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 0);
-    let before_verts = before.vertices().to_vec();
-
-    // Remove one voxel on the top surface.
-    let target = IVec3::new(8, 7, 8);
-    let removed = grid.mutator().remove(target);
-    assert!(removed, "expected the target voxel to be removed");
-    assert!(grid.material_at(target).is_none(), "voxel still solid");
-
-    let after = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 0);
-    let after_verts = after.vertices().to_vec();
-
-    eprintln!("before: {} verts", before_verts.len());
-    eprintln!("after:  {} verts", after_verts.len());
-    eprintln!("identical mesh: {}", before_verts == after_verts);
-
-    assert_ne!(
-        before_verts, after_verts,
-        "removing a surface voxel did not change the regenerated mesh"
-    );
-}
-
-/// The mesh change from removing one voxel must be spatially local to that
-/// voxel — this is what makes "the terrain deforms where I mined" true. Added
-/// during the same 3.1a investigation, where deformation appeared to show up
-/// somewhere other than the aim point.
+/// Removing a voxel must change the regenerated mesh, and the change must be
+/// spatially local to that voxel — this is what makes "the terrain deforms where
+/// I mined" true. A single-voxel change to smooth (marching-cubes) terrain is
+/// visually subtle, so the contract is pinned here.
 #[test]
 fn mesh_change_is_local_to_the_removed_voxel() {
     let mut grid = VoxelGrid::new(16);
@@ -67,7 +25,7 @@ fn mesh_change_is_local_to_the_removed_voxel() {
 
     let target = IVec3::new(3, 6, 3);
     assert!(grid.material_at(target).is_some(), "target must be solid");
-    grid.mutator().remove(target);
+    assert!(grid.mutator().remove(target));
 
     let after: Vec<[f32; 3]> = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 0)
         .vertices()
