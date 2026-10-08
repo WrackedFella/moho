@@ -2,12 +2,14 @@ name: Board sync
 
 # Keeps the project board Status in step with PR and issue events, so agents running
 # without GraphQL access (cloud sessions) need not write it. Status moves forward only.
-# Ready and Agent-eligible stay human-set.
+# Ready and Agent-eligible stay human-set. Labeling a work item `agent-ready` starts a
+# remote run, so it moves to In progress then; the PR it opens would otherwise be the
+# first event and the item would skip from Ready to In review.
 on:
   pull_request:
     types: [opened, reopened, ready_for_review, converted_to_draft, closed]
   issues:
-    types: [closed]
+    types: [closed, labeled]
 
 permissions:
   contents: read
@@ -17,6 +19,11 @@ permissions:
 jobs:
   sync:
     name: Sync
+    if: >-
+      github.event_name == 'pull_request'
+      || github.event.action == 'closed'
+      || (github.event.label.name == 'agent-ready'
+          && !contains(github.event.issue.labels.*.name, 'feature'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +44,11 @@ jobs:
             exit 0
           fi
           if [[ $EVENT == issues ]]; then
-            exec .github/scripts/board-sync.sh Done "$ISSUE_NUMBER"
+            status=Done
+            if [[ $ACTION == labeled ]]; then
+              status="In progress"
+            fi
+            exec .github/scripts/board-sync.sh "$status" "$ISSUE_NUMBER"
           fi
           if [[ $ACTION == closed ]]; then
             [[ $PR_MERGED == true ]] || { echo "PR closed unmerged; unchanged"; exit 0; }
