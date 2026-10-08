@@ -118,55 +118,55 @@ impl FaceDirection {
         match self {
             FaceDirection::PosX => (
                 [
-                    [0.5, -0.5, -0.5], // bottom-back
-                    [0.5, 0.5, -0.5],  // top-back
-                    [0.5, 0.5, 0.5],   // top-front
-                    [0.5, -0.5, 0.5],  // bottom-front
+                    [1.0, 0.0, 0.0], // bottom-back
+                    [1.0, 1.0, 0.0], // top-back
+                    [1.0, 1.0, 1.0], // top-front
+                    [1.0, 0.0, 1.0], // bottom-front
                 ],
                 [1.0, 0.0, 0.0],
             ),
             FaceDirection::NegX => (
                 [
-                    [-0.5, -0.5, 0.5],  // bottom-front
-                    [-0.5, 0.5, 0.5],   // top-front
-                    [-0.5, 0.5, -0.5],  // top-back
-                    [-0.5, -0.5, -0.5], // bottom-back
+                    [0.0, 0.0, 1.0], // bottom-front
+                    [0.0, 1.0, 1.0], // top-front
+                    [0.0, 1.0, 0.0], // top-back
+                    [0.0, 0.0, 0.0], // bottom-back
                 ],
                 [-1.0, 0.0, 0.0],
             ),
             FaceDirection::PosY => (
                 [
-                    [-0.5, 0.5, -0.5], // back-left
-                    [-0.5, 0.5, 0.5],  // front-left
-                    [0.5, 0.5, 0.5],   // front-right
-                    [0.5, 0.5, -0.5],  // back-right
+                    [0.0, 1.0, 0.0], // back-left
+                    [0.0, 1.0, 1.0], // front-left
+                    [1.0, 1.0, 1.0], // front-right
+                    [1.0, 1.0, 0.0], // back-right
                 ],
                 [0.0, 1.0, 0.0],
             ),
             FaceDirection::NegY => (
                 [
-                    [-0.5, -0.5, 0.5],  // front-left
-                    [0.5, -0.5, 0.5],   // front-right
-                    [0.5, -0.5, -0.5],  // back-right
-                    [-0.5, -0.5, -0.5], // back-left
+                    [0.0, 0.0, 1.0], // front-left
+                    [1.0, 0.0, 1.0], // front-right
+                    [1.0, 0.0, 0.0], // back-right
+                    [0.0, 0.0, 0.0], // back-left
                 ],
                 [0.0, -1.0, 0.0],
             ),
             FaceDirection::PosZ => (
                 [
-                    [-0.5, -0.5, 0.5], // bottom-left
-                    [0.5, -0.5, 0.5],  // bottom-right
-                    [0.5, 0.5, 0.5],   // top-right
-                    [-0.5, 0.5, 0.5],  // top-left
+                    [0.0, 0.0, 1.0], // bottom-left
+                    [1.0, 0.0, 1.0], // bottom-right
+                    [1.0, 1.0, 1.0], // top-right
+                    [0.0, 1.0, 1.0], // top-left
                 ],
                 [0.0, 0.0, 1.0],
             ),
             FaceDirection::NegZ => (
                 [
-                    [0.5, -0.5, -0.5],  // bottom-right
-                    [-0.5, -0.5, -0.5], // bottom-left
-                    [-0.5, 0.5, -0.5],  // top-left
-                    [0.5, 0.5, -0.5],   // top-right
+                    [1.0, 0.0, 0.0], // bottom-right
+                    [0.0, 0.0, 0.0], // bottom-left
+                    [0.0, 1.0, 0.0], // top-left
+                    [1.0, 1.0, 0.0], // top-right
                 ],
                 [0.0, 0.0, -1.0],
             ),
@@ -494,6 +494,34 @@ mod tests {
 
         // 6 faces * 2 triangles * 3 indices = 36 indices
         assert_eq!(mesh.indices.len(), 36, "Should have 36 indices");
+    }
+
+    #[test]
+    fn isolated_block_faces_lie_on_the_plane_their_normal_names() {
+        let mut grid = VoxelGrid::new(16);
+        let pos = IVec3::new(16, 16, 16);
+        grid.place_block(pos, 100, None);
+
+        let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
+
+        assert_eq!(mesh.vertices.len(), 24);
+        for (verts, normals) in mesh.vertices.chunks(4).zip(mesh.normals.chunks(4)) {
+            let n = normals[0];
+            assert!(normals.iter().all(|m| *m == n), "face shares one normal");
+            let axis = (0..3)
+                .find(|&a| n[a] != 0.0)
+                .expect("normal has a nonzero axis");
+            let plane = if n[axis] > 0.0 { 1.0 } else { 0.0 };
+            for v in verts {
+                assert_eq!(v[axis], plane, "vertex {v:?} off plane for normal {n:?}");
+            }
+            for other in (0..3).filter(|&a| a != axis) {
+                assert!(
+                    verts.iter().any(|v| v[other] == 0.0) && verts.iter().any(|v| v[other] == 1.0),
+                    "face with normal {n:?} does not span 0..1 on axis {other}"
+                );
+            }
+        }
     }
 
     #[test]
