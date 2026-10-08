@@ -40,21 +40,26 @@ pub(crate) mod test_support {
         }
     }
 
+    /// An 800x600 frame's input carrying `events`.
+    pub(crate) fn input(events: Vec<egui::Event>) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            events,
+            ..Default::default()
+        }
+    }
+
     /// Runs two frames (the first is egui's sizing pass) and returns the
     /// second frame's output.
     pub(crate) fn second_frame(
         ctx: &egui::Context,
         mut add_contents: impl FnMut(&egui::Context),
     ) -> egui::FullOutput {
-        let input = || egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(800.0, 600.0),
-            )),
-            ..Default::default()
-        };
-        let _ = ctx.run(input(), &mut add_contents);
-        ctx.run(input(), &mut add_contents)
+        let _ = ctx.run(input(Vec::new()), &mut add_contents);
+        ctx.run(input(Vec::new()), &mut add_contents)
     }
 
     /// Text of every shape in `output`, in paint order.

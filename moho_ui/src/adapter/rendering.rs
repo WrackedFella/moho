@@ -187,22 +187,7 @@ mod tests {
     }
 
     fn screen_text(output: &egui::FullOutput) -> String {
-        fn collect(shape: &egui::Shape, out: &mut String) {
-            match shape {
-                egui::Shape::Text(text) => {
-                    out.push_str(text.galley.text());
-                    out.push('\n');
-                }
-                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
-                _ => {}
-            }
-        }
-
-        let mut text = String::new();
-        for clipped in &output.shapes {
-            collect(&clipped.shape, &mut text);
-        }
-        text
+        crate::overlays::test_support::texts(output).join("\n")
     }
 
     fn run_frame(
@@ -212,14 +197,7 @@ mod tests {
         events: Vec<egui::Event>,
     ) -> (egui::FullOutput, MenuRenderResult) {
         let bus = EventBus::new();
-        let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(800.0, 600.0),
-            )),
-            events,
-            ..Default::default()
-        };
+        let input = crate::overlays::test_support::input(events);
         let mut result = MenuRenderResult {
             actions: Vec::new(),
             hovered_key: None,
