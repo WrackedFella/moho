@@ -146,7 +146,8 @@ edits data); ADR-0011's rules cover netcode.
 
 [ENG-F1-01](engine/ENG-F1-engine-hygiene/ENG-F1-01-constructor-size-cleanup.md)/[02](engine/ENG-F1-engine-hygiene/ENG-F1-02-error-handling-backlog.md)/[03](engine/ENG-F1-engine-hygiene/ENG-F1-03-god-module-splits.md)/[05](engine/ENG-F1-engine-hygiene/ENG-F1-05-material-model-revisit.md)/[07](engine/ENG-F1-engine-hygiene/ENG-F1-07-lint-ratchet.md), [ENG-F3-01](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-01-bind-group-split.md)/[02](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-02-frustum-culling-sorting.md), [ENG-F4](engine/ENG-F4-terrain-rendering-debt/_feature.md)-*,
 [ENG-F1-08](engine/ENG-F1-engine-hygiene/ENG-F1-08-headless-app-tests.md) (headless app wiring tests),
-[ENG-F1-04](engine/ENG-F1-engine-hygiene/ENG-F1-04-keybind-test-layering.md) (keybind test tiers; drop what ENG-F22's UI test cards already cover).
+[ENG-F1-04](engine/ENG-F1-engine-hygiene/ENG-F1-04-keybind-test-layering.md) (keybind test tiers; drop what ENG-F22's UI test cards already cover),
+[ENG-F1-10](engine/ENG-F1-engine-hygiene/ENG-F1-10-key-capture-disarms-on-conflict.md) (key capture stops listening on a conflict; pair with ENG-F1-04).
 
 ## Decisions
 
