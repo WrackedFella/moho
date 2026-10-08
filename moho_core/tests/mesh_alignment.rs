@@ -130,9 +130,6 @@ struct Case {
 
 /// Every mesh path must occupy the world-space cube that the voxel grid,
 /// raycasting and the other mesh paths assume: block `V` fills `[V, V+1]`.
-///
-/// Regression guard for smooth terrain once rendering half a unit off-centre,
-/// which made mining hit the block behind the visible slope.
 #[test]
 fn mesh_is_centered_on_the_voxel_it_represents() {
     let origin = IVec3::new(4, 4, 4);

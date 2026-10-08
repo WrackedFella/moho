@@ -10,19 +10,10 @@ use super::marching_cubes::MarchingCubes;
 use glam::{IVec3, Vec3};
 
 // Shift from marching-cubes field-index space to world space (excluding the chunk origin).
-//
-// Two conventions have to be undone to land on the voxel grid, and
-// missing them renders smooth terrain half a unit off-centre on every
-// axis (which misaligns it from the blocky and coarse-LOD paths, and
-// from the grid that raycasting and block removal use):
-//
-// 1. `create_selective_density_field` samples with one cell of padding,
-//    so field index `i` holds the block at world `base + i - 1`.
-// 2. A density sample stands for the *whole* block, so it belongs at
-//    that block's centre — `base + i - 1 + 0.5`.
-//
-// Marching cubes emits vertices in field-index space, so both fold into
-// a single `-0.5` alongside the chunk origin.
+// Without it smooth terrain sits half a unit off-centre, misaligned with the blocky
+// path and the grid used by raycasting. Two offsets fold into one `-0.5`:
+// 1. `create_selective_density_field` pads by one cell, so index `i` is block `base + i - 1`.
+// 2. A density sample stands for the whole block, so it belongs at the block centre (`+ 0.5`).
 const DENSITY_SAMPLE_TO_WORLD: f32 = -0.5;
 
 /// Classifies the content of a chunk
