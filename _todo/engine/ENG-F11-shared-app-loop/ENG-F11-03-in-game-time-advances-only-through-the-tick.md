@@ -1,6 +1,7 @@
 # In-game time advances only through the engine's tick
 
 **Feature:** [ENG-F11](_feature.md)
+**Issue:** #145
 
 ## Summary
 

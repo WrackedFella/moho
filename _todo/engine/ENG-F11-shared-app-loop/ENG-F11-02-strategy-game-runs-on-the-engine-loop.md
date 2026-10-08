@@ -1,6 +1,7 @@
 # The strategy game runs on the engine's app loop
 
 **Feature:** [ENG-F11](_feature.md)
+**Issue:** #144
 
 ## Summary
 

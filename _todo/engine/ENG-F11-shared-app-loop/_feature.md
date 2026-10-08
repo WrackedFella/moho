@@ -72,16 +72,16 @@ a fork. The engine owns the loop and a game plugs into it. Relies on
 
 | Item |
 |---|
-| [ENG-F11-01](ENG-F11-01-fixed-tick-whatever-the-frame-rate.md) a game's tick runs at a fixed rate whatever the frame rate |
-| [ENG-F11-02](ENG-F11-02-strategy-game-runs-on-the-engine-loop.md) the strategy game runs on the engine's app loop |
-| [ENG-F11-03](ENG-F11-03-in-game-time-advances-only-through-the-tick.md) in-game time advances only through the engine's tick |
+| [ENG-F11-01](ENG-F11-01-fixed-tick-whatever-the-frame-rate.md) #143 a game's tick runs at a fixed rate whatever the frame rate |
+| [ENG-F11-02](ENG-F11-02-strategy-game-runs-on-the-engine-loop.md) #144 the strategy game runs on the engine's app loop |
+| [ENG-F11-03](ENG-F11-03-in-game-time-advances-only-through-the-tick.md) #145 in-game time advances only through the engine's tick |
 
 ## Notes
 
 - Moves the binary's renderer setup, which names wgpu today. Add no new wgpu use outside the
   renderer crate; [ENG-F20](../ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) contains it.
 - Order: 01 → 02 → 03. 02 rewrites `src/main.rs` and `src/app/event_loop`; run it
-  after, not alongside, any ENG-F10 card touching those files.
+  after ENG-F10's #138 and #139, which touch those files.
 - ENG-F12-01 (moves `GameState` out of `moho_types`) lands before 02, so the loop moves
   with the final path. Whichever of ENG-F12-03 and 02 lands second calls the action map's
   per-tick read from the strategy's `Game::command()`.

@@ -1,6 +1,7 @@
 # A game's tick runs at a fixed rate whatever the frame rate
 
 **Feature:** [ENG-F11](_feature.md)
+**Issue:** #143
 
 ## Summary
 
