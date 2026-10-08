@@ -42,6 +42,16 @@ jobs:
           repository: WrackedFella/claude-skills
           ref: v0.9.0
           path: .devflow-src
+      # Shows whether BOARD_TOKEN can read the board before Claude is involved.
+      - name: Board token check
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.BOARD_TOKEN }}
+        run: |
+          if [[ -z $GH_TOKEN ]]; then echo "BOARD_TOKEN is empty"; exit 1; fi
+          echo "login: $(gh api user -q .login)"
+          gh api -i user | grep -i '^x-oauth-scopes' || echo "no x-oauth-scopes header (not a classic PAT)"
+          bash .devflow-src/plugins/devflow/scripts/board next WrackedFella 1; echo "board exit: $?"
       - uses: anthropics/claude-code-action@v1
         env:
           # scripts/board needs GraphQL and Projects v2, which the default token lacks.
