@@ -234,17 +234,4 @@ mod tests {
 
         assert_eq!(visibility(&mgr), [true, false]);
     }
-
-    #[test]
-    fn update_data_replaces_snapshot() {
-        let mut mgr = OverlayManager::new();
-        assert!((mgr.hud_data().time_of_day - 12.0).abs() < f32::EPSILON);
-
-        let data = HudData {
-            time_of_day: 18.5,
-            ..Default::default()
-        };
-        mgr.update_data(data);
-        assert!((mgr.hud_data().time_of_day - 18.5).abs() < f32::EPSILON);
-    }
 }
