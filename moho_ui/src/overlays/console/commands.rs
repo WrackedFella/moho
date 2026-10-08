@@ -315,6 +315,8 @@ impl Default for CommandProcessor {
 mod tests {
     use super::*;
 
+    type QualityAction = fn(u32) -> ConsoleAction;
+
     #[test]
     fn test_help_command() {
         let processor = CommandProcessor::new();
@@ -396,10 +398,12 @@ mod tests {
     #[test]
     fn test_time_command_clamping() {
         let processor = CommandProcessor::new();
-        let result = processor.execute("time 25");
 
-        // Should clamp to 24.0
-        assert_eq!(result.action, ConsoleAction::SetTimeOfDay(24.0));
+        let above = processor.execute("time 25");
+        let below = processor.execute("time -5");
+
+        assert_eq!(above.action, ConsoleAction::SetTimeOfDay(24.0));
+        assert_eq!(below.action, ConsoleAction::SetTimeOfDay(0.0));
     }
 
     #[test]
@@ -448,12 +452,12 @@ mod tests {
     #[test]
     fn test_spawn_command_valid() {
         let processor = CommandProcessor::new();
-        let result = processor.execute("spawn tree oakwood");
+        let result = processor.execute("spawn tree oak wood");
 
         assert!(!result.messages.is_empty());
         assert_eq!(
             result.action,
-            ConsoleAction::Spawn("tree".to_string(), Some("oakwood".to_string()))
+            ConsoleAction::Spawn("tree".to_string(), Some("oak wood".to_string()))
         );
     }
 
@@ -473,5 +477,46 @@ mod tests {
 
         assert!(result.messages.iter().any(|m| m.contains("Spawning 123")));
         assert_eq!(result.action, ConsoleAction::Spawn("123".to_string(), None));
+    }
+
+    #[test]
+    fn quality_commands() {
+        let processor = CommandProcessor::new();
+        let cases: [(&str, QualityAction); 2] = [
+            ("r_shadow_quality", ConsoleAction::SetShadowQuality),
+            ("r_ssao_quality", ConsoleAction::SetSsaoQuality),
+        ];
+
+        for (command, action) in cases {
+            let accepted = processor.execute(&format!("{command} 4"));
+            assert_eq!(accepted.action, action(4), "{command} 4");
+
+            let rejected = processor.execute(&format!("{command} 5"));
+            assert_eq!(rejected.action, ConsoleAction::None, "{command} 5");
+            assert!(
+                rejected
+                    .messages
+                    .iter()
+                    .any(|m| m.contains("between 0 and 4")),
+                "{command} 5: {:?}",
+                rejected.messages
+            );
+
+            let invalid = processor.execute(&format!("{command} x"));
+            assert_eq!(invalid.action, ConsoleAction::None, "{command} x");
+            assert!(
+                invalid.messages.iter().any(|m| m.contains("Invalid")),
+                "{command} x: {:?}",
+                invalid.messages
+            );
+
+            let missing = processor.execute(command);
+            assert_eq!(missing.action, ConsoleAction::None, "{command}");
+            assert!(
+                missing.messages.iter().any(|m| m.contains("Usage:")),
+                "{command}: {:?}",
+                missing.messages
+            );
+        }
     }
 }

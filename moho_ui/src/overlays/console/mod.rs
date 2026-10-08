@@ -263,22 +263,32 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_help_command() {
+    fn execute_command_echoes_records_and_appends_messages() {
         let mut console = Console::new();
         console.output.clear_output();
-        console.input_buffer = "help".to_string();
+        console.input_buffer = "  help  ".to_string();
 
         let action = console.execute_command();
 
         assert_eq!(action, ConsoleAction::None);
-        assert!(
-            console
-                .output
-                .lines()
-                .iter()
-                .any(|line| line.contains("Available commands"))
-        );
+        let lines: Vec<&str> = console.output.lines().iter().map(String::as_str).collect();
+        assert_eq!(lines[0], "> help");
+        assert!(lines[1..].contains(&"Available commands:"), "{lines:?}");
         assert!(console.input_buffer.is_empty());
+        assert_eq!(console.output.navigate_up(), Some("help".to_string()));
+    }
+
+    #[test]
+    fn blank_input_is_ignored() {
+        let mut console = Console::new();
+        let lines_before = console.output.lines().clone();
+        console.input_buffer = "   ".to_string();
+
+        let action = console.execute_command();
+
+        assert_eq!(action, ConsoleAction::None);
+        assert_eq!(console.output.lines(), &lines_before);
+        assert_eq!(console.output.navigate_up(), None);
     }
 
     #[test]
@@ -323,15 +333,35 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_reset_on_open() {
-        let mut console = Console::new();
-        console.just_opened = false;
-        console.focus_input = false;
+    fn render_frame_with_backtick(console: &mut Console) -> ConsoleAction {
+        let ctx = egui::Context::default();
+        let backtick = egui::Event::Key {
+            key: egui::Key::Backtick,
+            physical_key: Some(egui::Key::Backtick),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let input = egui::RawInput {
+            events: vec![backtick],
+            ..Default::default()
+        };
+        let mut action = ConsoleAction::None;
 
+        let _ = ctx.run(input, |ctx| action = console.render(ctx));
+
+        action
+    }
+
+    #[test]
+    fn backtick_closes_console_except_first_frame() {
+        let mut console = Console::new();
         console.reset_on_open();
 
-        assert!(console.just_opened);
-        assert!(console.focus_input);
+        let first = render_frame_with_backtick(&mut console);
+        let second = render_frame_with_backtick(&mut console);
+
+        assert_eq!(first, ConsoleAction::None);
+        assert_eq!(second, ConsoleAction::Close);
     }
 }
