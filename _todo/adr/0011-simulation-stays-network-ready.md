@@ -1,6 +1,6 @@
 # 0011 — The simulation stays network-ready
 
-**Status:** Proposed
+**Status:** Accepted (2026-10-08)
 
 ## Context
 
