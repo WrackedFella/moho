@@ -21,3 +21,4 @@ Format: **Status** (Proposed | Accepted | Superseded by NNNN), **Context**,
 | [0009](0009-simulation-time-is-one-fixed-tick.md) | Simulation time comes from one fixed tick; no separate clock | Accepted |
 | [0010](0010-world-geometry-is-a-mesh-contract.md) | The engine sees world geometry as meshes; voxels belong to the strategy line | Accepted |
 | [0011](0011-simulation-stays-network-ready.md) | The simulation advances only from per-tick commands over plain data, so replay and later netcode stay possible | Proposed |
+| [0012](0012-engine-crate-map-for-m2.md) | Engine capabilities land as modules first; crate map and seam list for M1–M2 | Proposed |

@@ -6,7 +6,8 @@
 [0003](../../_todo/adr/0003-core-owns-event-types.md),
 [0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md),
 [0005](../../_todo/adr/0005-crate-lines-and-dependency-direction.md),
-[0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md).
+[0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md),
+[0012](../../_todo/adr/0012-engine-crate-map-for-m2.md).
 
 ## Crate graph
 
@@ -53,6 +54,64 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 Known debt: `voxel/` and `MaterialType` still sit in the engine line.
 [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md) moves them to the
 strategy-line `moho_voxel`; ENG-F10 delivers the move.
+
+## Target crate graph (M2)
+
+Where the M1–M2 engine work lands, from [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md)
+(Proposed). Capabilities land as modules of an existing crate first; a new crate needs a
+deployable, reuse or compile-time boundary. Dashed boxes are crates that don't exist yet.
+Edges are the intended direction, not a list each crate must have.
+
+```mermaid
+flowchart TD
+    sbin["moho binary<br/>strategy wiring"]:::strategy
+    ui["moho_ui<br/>strategy HUD, menus"]:::strategy
+    game["moho_game<br/>pawn, tools, scenes"]:::strategy
+    voxel["moho_voxel<br/>voxel terrain, materials"]:::strategyNew
+
+    app["moho_app<br/>window, loop, accumulator,<br/>GameClock, Game interface"]:::engineNew
+    shell["moho_ui_shell<br/>egui, console, settings,<br/>modal stack"]:::engineNew
+    input["moho_input<br/>action map, gamepad,<br/>bindings, mouse filtering"]:::engine
+    renderer["moho_renderer<br/>wgpu backend"]:::engine
+    physics["moho_physics<br/>rapier3d"]:::engine
+    audio["moho_audio<br/>rodio"]:::engine
+    core["moho_core<br/>event bus, engine events, prefs,<br/>content roots, save envelope"]:::engine
+    rapi["moho_render_api<br/>engine/game contract"]:::engine
+
+    sbin --> app & ui & game & voxel
+    ui --> shell & game
+    game --> core & rapi
+    voxel --> core & rapi
+    app --> renderer & physics & audio & input & core
+    shell --> renderer & input & core
+    input --> core
+    renderer --> core & rapi
+    physics --> rapi
+    audio --> core
+    core --> rapi
+
+    classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
+    classDef engineNew fill:#dbeafe,stroke:#2563eb,stroke-dasharray:5 5,color:#111
+    classDef strategy fill:#dcfce7,stroke:#16a34a,color:#111
+    classDef strategyNew fill:#dcfce7,stroke:#16a34a,stroke-dasharray:5 5,color:#111
+```
+
+Changes from today:
+
+- `moho_types` is deleted; `GameState` moves to the strategy line (ENG-F12).
+- `moho_core::input` folds into `moho_input`; voxels leave `moho_core` for `moho_voxel` (ENG-F10).
+- `moho_physics` drops its unused `moho_core` dependency and consumes the mesh contract.
+- Scene import (ENG-F14), navigation (ENG-F17) and the character controller and camera
+  (ENG-F21) are modules of an engine crate unless their specs name a boundary.
+
+An FPS line would sit beside the strategy line and depend only on engine crates.
+
+### Engine seams
+
+The public APIs the [ENG-F5](../../_todo/engine/ENG-F5-physical-repo-split/_feature.md)
+gate holds fixed: game plug-in interface, world-geometry contract, action map, physics
+queries, spatial audio, content roots, save envelope, scene import. Adding or changing
+one is an ADR-level change.
 
 ## Runtime composition
 
