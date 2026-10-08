@@ -155,6 +155,7 @@ impl Key {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use winit::keyboard::KeyCode;
 
     /// Exhaustive on purpose: adding a variant fails to compile here until
     /// `Key::ALL` and this table are updated together.
@@ -260,6 +261,11 @@ mod tests {
             ("Control", Key::Ctrl),
             ("control", Key::Ctrl),
             ("Ctrl", Key::Ctrl),
+            (",", Key::Comma),
+            (".", Key::Period),
+            ("[", Key::LeftBracket),
+            ("comma", Key::Comma),
+            ("LeftBracket", Key::LeftBracket),
             ("w", Key::W),
             ("W", Key::W),
         ];
@@ -267,6 +273,45 @@ mod tests {
         for (input, expected) in cases {
             assert_eq!(Key::parse(input), Some(expected), "input {input:?}");
         }
+    }
+
+    #[test]
+    fn canonical_names_are_pinned() {
+        let cases = [
+            (Key::A, "A"),
+            (Key::Z, "Z"),
+            (Key::Digit0, "0"),
+            (Key::Digit9, "9"),
+            (Key::Space, "Spacebar"),
+            (Key::ArrowUp, "ArrowUp"),
+            (Key::ArrowLeft, "ArrowLeft"),
+            (Key::Escape, "Escape"),
+            (Key::Enter, "Enter"),
+            (Key::Shift, "Shift"),
+            (Key::Ctrl, "Ctrl"),
+            (Key::Alt, "Alt"),
+            (Key::Comma, "Comma"),
+            (Key::Semicolon, "Semicolon"),
+            (Key::Equals, "Equals"),
+            (Key::LeftBracket, "LeftBracket"),
+        ];
+
+        for (key, name) in cases {
+            assert_eq!(key.name(), name);
+        }
+    }
+
+    #[test]
+    fn from_winit_maps_physical_keys() {
+        let code = |kc| Key::from_winit(PhysicalKey::Code(kc));
+
+        assert_eq!(code(KeyCode::KeyA), Some(Key::A));
+        assert_eq!(code(KeyCode::Space), Some(Key::Space));
+        assert_eq!(code(KeyCode::ArrowUp), Some(Key::ArrowUp));
+        assert_eq!(code(KeyCode::Escape), Some(Key::Escape));
+        assert_eq!(code(KeyCode::ShiftLeft), Some(Key::Shift));
+        assert_eq!(code(KeyCode::ShiftRight), Some(Key::Shift));
+        assert_eq!(code(KeyCode::F5), None);
     }
 
     #[test]

@@ -6,6 +6,8 @@
 pub mod bindings;
 pub mod key;
 
+pub use bindings::Action;
+
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// Map a winit `PhysicalKey` (or its `Code` variant) to our internal binding code.

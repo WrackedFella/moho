@@ -570,7 +570,7 @@ mod tests {
 
     #[test]
     fn old_key_lines_are_unknown_keys() {
-        let (_, issues) = Prefs::parse("[prefs]\nkey_w = Z\n");
+        let (prefs, issues) = Prefs::parse("[prefs]\nkey_w = Z\n");
 
         assert_eq!(
             issues,
@@ -579,6 +579,7 @@ mod tests {
                 key: "key_w".to_string(),
             }]
         );
+        assert!(prefs.bindings().is_empty());
     }
 
     #[test]

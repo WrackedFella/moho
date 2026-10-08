@@ -108,28 +108,55 @@ mod tests {
         }
     }
 
+    fn keys(keys: &[Key]) -> Vec<Binding> {
+        keys.iter().map(|&k| Binding::Key(k)).collect()
+    }
+
     #[test]
     fn rebinding_survives_save_and_reload() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("prefs.ini");
+        let cases: [Vec<Key>; 8] = [
+            vec![Key::F],
+            vec![],
+            vec![Key::F, Key::Space],
+            vec![Key::Comma],
+            vec![Key::Semicolon],
+            vec![Key::Equals],
+            vec![Key::LeftBracket],
+            vec![Key::Backslash],
+        ];
+
+        for rebound in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("prefs.ini");
+            let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+            bindings.set(TestAction::Jump, keys(&rebound));
+            let mut prefs = Prefs::default();
+            prefs.set_bindings(bindings.to_section());
+            std::fs::write(&path, prefs.to_ini_string()).unwrap();
+
+            let (reloaded, prefs_warnings) = Prefs::load_from(&path);
+            let (restored, binding_warnings) =
+                ActionBindings::<TestAction>::load(reloaded.bindings());
+
+            assert_eq!(prefs_warnings, vec![], "{rebound:?}");
+            assert_eq!(binding_warnings, vec![], "{rebound:?}");
+            assert_eq!(
+                restored.get(TestAction::Jump),
+                keys(&rebound),
+                "{rebound:?}"
+            );
+            assert_defaults_except(&restored, &[TestAction::Jump]);
+        }
+    }
+
+    #[test]
+    fn to_section_writes_every_action_by_name() {
         let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
-        bindings.set(TestAction::Jump, vec![Binding::Key(Key::F)]);
-        let mut prefs = Prefs::default();
-        prefs.set_bindings(bindings.to_section());
-        std::fs::write(&path, prefs.to_ini_string()).unwrap();
+        bindings.set(TestAction::Jump, keys(&[Key::F]));
 
-        let (reloaded, prefs_warnings) = Prefs::load_from(&path);
-        let (restored, binding_warnings) = ActionBindings::<TestAction>::load(reloaded.bindings());
+        let written = bindings.to_section();
 
-        assert_eq!(prefs_warnings, vec![]);
-        assert_eq!(binding_warnings, vec![]);
-        assert_eq!(restored.get(TestAction::Jump), [Binding::Key(Key::F)]);
-        assert!(
-            !restored
-                .get(TestAction::Jump)
-                .contains(&Binding::Key(Key::Space))
-        );
-        assert_defaults_except(&restored, &[TestAction::Jump]);
+        assert_eq!(written, section(&[("move_forward", "W"), ("jump", "F")]));
     }
 
     #[test]
@@ -154,32 +181,57 @@ mod tests {
     }
 
     #[test]
+    fn multi_key_value_tolerates_whitespace() {
+        let (bindings, warnings) =
+            ActionBindings::<TestAction>::load(&section(&[("jump", "F ,  Space")]));
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(bindings.get(TestAction::Jump), keys(&[Key::F, Key::Space]));
+    }
+
+    type BadLineCase<'a> = (
+        &'a [(&'a str, &'a str)],
+        &'a [&'a str],
+        &'a [Key],
+        &'a [Key],
+    );
+
+    #[test]
     fn bad_line_is_reported_and_default_kept() {
-        let cases: [(&[(&str, &str)], &str); 3] = [
-            (&[("jump", "Banana")], "jump"),
-            (&[("teleport", "T")], "teleport"),
-            (&[("move_forward", "Z"), ("jump", "Banana")], "jump"),
+        // (lines, reported names, move_forward after load, jump after load)
+        let cases: [BadLineCase; 4] = [
+            (&[("jump", "Banana")], &["jump"], &[Key::W], &[Key::Space]),
+            (
+                &[("teleport", "T")],
+                &["teleport"],
+                &[Key::W],
+                &[Key::Space],
+            ),
+            (
+                &[("move_forward", "Z"), ("jump", "Banana")],
+                &["jump"],
+                &[Key::Z],
+                &[Key::Space],
+            ),
+            (
+                &[("jump", "F, Banana")],
+                &["jump"],
+                &[Key::W],
+                &[Key::Space],
+            ),
         ];
 
-        for (lines, reported) in cases {
+        for (lines, reported, forward, jump) in cases {
             let (bindings, warnings) = ActionBindings::<TestAction>::load(&section(lines));
 
             let names: Vec<_> = warnings.iter().map(|w| w.name.as_str()).collect();
-            assert_eq!(names, vec![reported], "{lines:?}");
-            let valid: Vec<_> = lines
-                .iter()
-                .filter(|&&(k, _)| k == "move_forward")
-                .collect();
-            if valid.is_empty() {
-                assert_defaults_except(&bindings, &[]);
-            } else {
-                assert_eq!(
-                    bindings.get(TestAction::MoveForward),
-                    [Binding::Key(Key::Z)],
-                    "{lines:?}"
-                );
-                assert_defaults_except(&bindings, &[TestAction::MoveForward]);
-            }
+            assert_eq!(names, reported, "{lines:?}");
+            assert_eq!(
+                bindings.get(TestAction::MoveForward),
+                keys(forward),
+                "{lines:?}"
+            );
+            assert_eq!(bindings.get(TestAction::Jump), keys(jump), "{lines:?}");
         }
     }
 

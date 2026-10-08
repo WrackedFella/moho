@@ -468,4 +468,16 @@ mod tests {
         assert_eq!(issues, vec![]);
         assert_eq!(parsed.bindings(), &raw);
     }
+
+    #[test]
+    fn hand_written_bindings_section_is_read_verbatim() {
+        let (prefs, issues) = Prefs::parse("[bindings]\njump = F\nsprint = Shift, Ctrl\n");
+
+        let expected: BTreeMap<String, String> = [("jump", "F"), ("sprint", "Shift, Ctrl")]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.bindings(), &expected);
+    }
 }
