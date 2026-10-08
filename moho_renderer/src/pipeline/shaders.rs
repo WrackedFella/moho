@@ -6,6 +6,16 @@
 
 use super::PipelineInitError;
 
+/// The main shader's WGSL: common, vertex and fragment sources concatenated.
+pub fn main_shader_source() -> String {
+    [
+        include_str!("../../../shaders/common.wgsl"),
+        include_str!("../../../shaders/vertex.wgsl"),
+        include_str!("../../../shaders/fragment.wgsl"),
+    ]
+    .join("\n\n")
+}
+
 /// Load and compile all shader modules.
 ///
 /// The main shader is composed of three WGSL files concatenated together:
@@ -25,16 +35,9 @@ use super::PipelineInitError;
 pub fn load_shaders(
     device: &wgpu::Device,
 ) -> Result<(wgpu::ShaderModule, wgpu::ShaderModule), PipelineInitError> {
-    // Main shader: concatenate 3 files
-    let shader_source = [
-        include_str!("../../../shaders/common.wgsl"),
-        include_str!("../../../shaders/vertex.wgsl"),
-        include_str!("../../../shaders/fragment.wgsl"),
-    ]
-    .join("\n\n");
     let main_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("shader"),
-        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+        source: wgpu::ShaderSource::Wgsl(main_shader_source().into()),
     });
 
     // Skybox shader: load from disk
@@ -46,25 +49,4 @@ pub fn load_shaders(
     });
 
     Ok((main_shader, skybox_shader))
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_shader_concatenation() {
-        // Verify that shader files can be concatenated
-        let common = include_str!("../../../shaders/common.wgsl");
-        let vertex = include_str!("../../../shaders/vertex.wgsl");
-        let fragment = include_str!("../../../shaders/fragment.wgsl");
-
-        let concatenated = [common, vertex, fragment].join("\n\n");
-        assert!(
-            !concatenated.is_empty(),
-            "Concatenated shader should not be empty"
-        );
-        assert!(
-            concatenated.contains("struct Camera"),
-            "Should contain shader types from common.wgsl"
-        );
-    }
 }

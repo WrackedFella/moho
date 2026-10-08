@@ -29,6 +29,21 @@ fn validate_file(name: &str, capabilities: Capabilities) {
 }
 
 #[test]
+fn main_shader_source_parses_and_validates() {
+    let source = moho_renderer::pipeline::main_shader_source();
+
+    let module = validate("main shader", &source, Capabilities::empty());
+
+    let entry_points: Vec<&str> = module
+        .entry_points
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert!(entry_points.contains(&"vs_main"), "{entry_points:?}");
+    assert!(entry_points.contains(&"fs_main"), "{entry_points:?}");
+}
+
+#[test]
 fn skybox_shader_parses_and_validates() {
     validate_file("skybox.wgsl", Capabilities::empty());
 }

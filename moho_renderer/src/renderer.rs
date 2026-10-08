@@ -428,11 +428,8 @@ impl<'a> Renderer<'a> {
     }
 
     fn prepare_instance_buffer(&mut self, instances_gpu: &[GpuInstance]) -> Option<&wgpu::Buffer> {
-        if self.instance_capacity < instances_gpu.len().max(1) {
-            let mut new_cap = self.instance_capacity.max(1);
-            while new_cap < instances_gpu.len().max(1) {
-                new_cap = new_cap.saturating_mul(2);
-            }
+        let new_cap = MeshRenderer::next_capacity(self.instance_capacity, instances_gpu.len());
+        if new_cap != self.instance_capacity {
             let size_bytes = (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
             let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("instance-buffer"),

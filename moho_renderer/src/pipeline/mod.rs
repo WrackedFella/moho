@@ -36,6 +36,8 @@
 mod layouts;
 mod shaders;
 
+pub use shaders::main_shader_source;
+
 use crate::types::{GpuInstance, Vertex};
 
 /// Error type for pipeline initialization failures.

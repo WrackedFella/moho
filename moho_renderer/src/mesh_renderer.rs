@@ -62,15 +62,8 @@ impl MeshRenderer {
         capacity: &mut usize,
         instances: &[GpuInstance],
     ) -> bool {
-        let required = instances.len().max(1);
-
-        // Resize buffer if needed (double capacity until sufficient)
-        if *capacity < required {
-            let mut new_cap = (*capacity).max(1);
-            while new_cap < required {
-                new_cap = new_cap.saturating_mul(2);
-            }
-
+        let new_cap = Self::next_capacity(*capacity, instances.len());
+        if new_cap != *capacity {
             let size_bytes = (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
             let new_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("instance-buffer"),
@@ -102,6 +95,17 @@ impl MeshRenderer {
         }
 
         true
+    }
+
+    /// Capacity an instance buffer of `current` slots needs to hold `required`
+    /// instances: `current` doubled until it fits, never shrinking and never 0.
+    pub fn next_capacity(current: usize, required: usize) -> usize {
+        let required = required.max(1);
+        let mut capacity = current.max(1);
+        while capacity < required {
+            capacity = capacity.saturating_mul(2);
+        }
+        capacity
     }
 
     /// Flatten multiple instance lists into a single contiguous buffer.
@@ -245,6 +249,11 @@ mod tests {
         assert!(!MeshRenderer::validate_mesh(1, &mesh_table));
     }
 
-    // Note: We can't test ensure_capacity_and_upload without a real GPU device,
-    // so those tests are integration-level only
+    #[test]
+    fn next_capacity_grows_by_doubling() {
+        assert_eq!(MeshRenderer::next_capacity(0, 0), 1);
+        assert_eq!(MeshRenderer::next_capacity(1, 3), 4);
+        assert_eq!(MeshRenderer::next_capacity(8, 5), 8);
+        assert_eq!(MeshRenderer::next_capacity(4, 5), 8);
+    }
 }
