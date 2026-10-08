@@ -105,50 +105,79 @@ fn sky_cross_chunk_occlusion() {
     assert!(sky(&grid, IVec3::new(6, 15, 5)), "adjacent column: exposed");
 }
 
-/// Recomputing sky-exposure twice produces identical results (idempotency).
+/// Removing the only opaque block in a column re-exposes the voxels below it
+/// once the sky pass reruns.
 #[test]
-fn sky_recompute_is_idempotent() {
+fn sky_recompute_reflects_removed_block() {
     let mut grid = grid_16();
-    grid.mutator().place(IVec3::new(2, 10, 2), 0, None);
-    let cp = IVec3::ZERO;
+    let block = IVec3::new(2, 10, 2);
+    let below = IVec3::new(2, 9, 2);
+    grid.mutator().place(block, 0, None);
+    recompute_sky_exposure(&mut grid, IVec3::ZERO);
+    assert!(!sky(&grid, below), "shadowed while the block stands");
 
-    recompute_sky_exposure(&mut grid, cp);
-    let first: Vec<bool> = (0..4096usize)
-        .map(|i| grid.chunk_light(cp).unwrap().sky_exposed_at(i))
-        .collect();
+    grid.mutator().remove(block);
+    recompute_sky_exposure(&mut grid, IVec3::ZERO);
 
-    grid.chunk_light_mut(cp).sky_dirty = true;
-    recompute_sky_exposure(&mut grid, cp);
-    let second: Vec<bool> = (0..4096usize)
-        .map(|i| grid.chunk_light(cp).unwrap().sky_exposed_at(i))
-        .collect();
-
-    assert_eq!(first, second, "sky exposure must be identical on re-run");
+    assert!(sky(&grid, below), "exposed again after the block is gone");
 }
 
-/// `dirty_chunks_below` marks lower chunks sky_dirty.
+/// `dirty_chunks_below` dirties chunks beneath `chunk_pos` in the same column
+/// only, never `chunk_pos` itself or other columns.
 #[test]
 fn sky_dirty_chunks_below_propagates() {
     let mut grid = grid_16();
-    // place_block allocates chunk_light for the block's chunk and triggers note_block_change,
-    // which auto-marks lower chunks. We verify via dirty_chunks_below explicitly.
-    grid.chunk_light_mut(IVec3::ZERO).sky_dirty = false; // manually clear
-    grid.mutator().place(IVec3::new(0, 16, 0), 0, None); // chunk (0,1,0)
-    dirty_chunks_below(&mut grid, IVec3::new(0, 1, 0));
-
-    if let Some(cl) = grid.chunk_light(IVec3::ZERO) {
-        assert!(cl.sky_dirty, "chunk below should be sky_dirty");
+    let above = IVec3::new(0, 1, 0);
+    let below = IVec3::ZERO;
+    let other_column = IVec3::new(1, 0, 0);
+    grid.mutator().place(IVec3::new(0, 16, 0), 0, None);
+    grid.mutator().place(IVec3::new(0, 0, 0), 0, None);
+    grid.mutator().place(IVec3::new(16, 0, 0), 0, None);
+    for cp in [above, below, other_column] {
+        grid.chunk_light_mut(cp).sky_dirty = false;
     }
+
+    dirty_chunks_below(&mut grid, above);
+
+    let dirty = |cp| {
+        grid.chunk_light(cp)
+            .expect("chunk light allocated by placement")
+            .sky_dirty
+    };
+    assert!(dirty(below), "chunk below should be sky_dirty");
+    assert!(!dirty(above), "chunk at chunk_pos must stay clean");
+    assert!(!dirty(other_column), "other column must stay clean");
 }
 
-/// `ensure_chunk_sky_ready` is a no-op when sky_dirty is false.
+/// `ensure_chunk_sky_ready` does not recompute when sky_dirty is false.
 #[test]
 fn sky_ensure_ready_noop_when_clean() {
     let mut grid = grid_16();
     let cp = IVec3::ZERO;
+    let below = IVec3::new(3, 7, 3);
+    recompute_sky_exposure(&mut grid, cp);
+    grid.mutator().place(IVec3::new(3, 8, 3), 0, None);
     grid.chunk_light_mut(cp).sky_dirty = false;
+
     ensure_chunk_sky_ready(&mut grid, cp);
-    assert!(!grid.chunk_light(cp).unwrap().sky_dirty);
+
+    assert!(sky(&grid, below), "a clean chunk keeps its stale exposure");
+}
+
+/// An opaque block in a neighbouring (x, z) chunk column does not shadow this
+/// column.
+#[test]
+fn sky_block_in_other_chunk_column_does_not_occlude() {
+    let mut grid = grid_16();
+    grid.mutator().place(IVec3::new(21, 20, 5), 0, None); // chunk (1,1,0)
+
+    recompute_sky_exposure(&mut grid, IVec3::new(1, 1, 0));
+    recompute_sky_exposure(&mut grid, IVec3::ZERO);
+
+    assert!(
+        sky(&grid, IVec3::new(5, 15, 5)),
+        "block in chunk column (1,*,0) must not occlude column (0,*,0)"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -255,23 +284,21 @@ fn block_light_channels_are_independent() {
     assert_eq!(nb[2], 0, "B must stay 0");
 }
 
-/// A warm torch produces R > G > B at the immediate neighbor.
+/// Each channel decays one level per step from its own emission level,
+/// clamping at zero.
 #[test]
 fn block_light_colored_propagation() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
-    make_torch(&mut grid);
     let mut prop = LightPropagator::new();
 
     for x in 0..5i32 {
         grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
     }
-    // Place torch: emission [15, 8, 2].
     prop.add_light_rgb(&mut grid, IVec3::new(0, 0, 0), [15, 8, 2]);
 
-    let nb = rgb(&grid, IVec3::new(1, 0, 0));
-    assert!(nb[0] >= nb[1], "R must >= G at neighbor");
-    assert!(nb[1] >= nb[2], "G must >= B at neighbor");
+    assert_eq!(rgb(&grid, IVec3::new(1, 0, 0)), [14, 7, 1]);
+    assert_eq!(rgb(&grid, IVec3::new(2, 0, 0)), [13, 6, 0]);
 }
 
 // ---------------------------------------------------------------------------
@@ -325,15 +352,43 @@ fn removal_preserves_surviving_source() {
     assert_eq!(rgb(&grid, IVec3::new(10, 0, 0))[0], 15);
 }
 
-/// Removing a light at a position with level=0 is a no-op (no panic).
+/// Removing at an unlit position changes nothing and affects no chunk.
 #[test]
 fn removal_of_absent_light_is_noop() {
     let mut grid = grid_16();
     make_transparent(&mut grid);
     let mut prop = LightPropagator::new();
+    for x in 0..3i32 {
+        grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
+    }
+    prop.add_light_rgb(&mut grid, IVec3::new(0, 0, 0), [15, 0, 0]);
 
-    grid.mutator().place(IVec3::new(0, 0, 0), 1, None);
-    prop.remove_light(&mut grid, IVec3::new(0, 0, 0)); // nothing to remove — must not panic
+    let affected = prop.remove_light(&mut grid, IVec3::new(20, 0, 0));
+
+    assert!(affected.is_empty(), "nothing to remove: {affected:?}");
+    for (x, expected) in [(0, 15u8), (1, 14), (2, 13)] {
+        assert_eq!(rgb(&grid, IVec3::new(x, 0, 0))[0], expected, "x={x}");
+    }
+}
+
+/// An adjacent source of equal level is a survivor, not part of the chain
+/// being removed.
+#[test]
+fn removal_with_adjacent_equal_sources_keeps_survivor() {
+    let mut grid = grid_16();
+    make_transparent(&mut grid);
+    let mut prop = LightPropagator::new();
+    for x in 0..3i32 {
+        grid.mutator().place(IVec3::new(x, 0, 0), 1, None);
+    }
+    prop.add_light_rgb(&mut grid, IVec3::new(0, 0, 0), [15, 0, 0]);
+    prop.add_light_rgb(&mut grid, IVec3::new(1, 0, 0), [15, 0, 0]);
+
+    prop.remove_light(&mut grid, IVec3::new(0, 0, 0));
+
+    for (x, expected) in [(0, 14u8), (1, 15), (2, 14)] {
+        assert_eq!(rgb(&grid, IVec3::new(x, 0, 0))[0], expected, "x={x}");
+    }
 }
 
 #[test]
@@ -490,7 +545,7 @@ fn sealed_cave_stays_dark() {
 // Flood-fill
 // ---------------------------------------------------------------------------
 
-/// flood_fill_block_lights propagates light from all emissive blocks.
+/// `flood_fill_block_lights` seeds every channel of every emissive block.
 #[test]
 fn flood_fill_propagates_all_emitters() {
     let mut grid = grid_16();
@@ -507,12 +562,9 @@ fn flood_fill_propagates_all_emitters() {
 
     prop.flood_fill_block_lights(&mut grid);
 
-    assert_eq!(rgb(&grid, IVec3::new(0, 0, 0))[0], 15, "torch 1: R=15");
-    assert_eq!(rgb(&grid, IVec3::new(4, 0, 0))[0], 15, "torch 2: R=15");
-    assert!(
-        rgb(&grid, IVec3::new(2, 0, 0))[0] > 0,
-        "midpoint should be lit"
-    );
+    assert_eq!(rgb(&grid, IVec3::new(0, 0, 0)), [15, 8, 2], "torch 1");
+    assert_eq!(rgb(&grid, IVec3::new(4, 0, 0)), [15, 8, 2], "torch 2");
+    assert_eq!(rgb(&grid, IVec3::new(2, 0, 0)), [13, 6, 0], "midpoint");
 }
 
 // ---------------------------------------------------------------------------

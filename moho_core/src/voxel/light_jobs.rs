@@ -512,35 +512,54 @@ mod tests {
         grid
     }
 
-    #[test]
-    fn test_job_priority_ordering() {
-        let mut queue = BinaryHeap::new();
-
-        let job1 = LightUpdateJob::add_light(IVec3::new(0, 0, 0), [15, 0, 0], 100);
-        let job2 = LightUpdateJob::add_light(IVec3::new(10, 0, 0), [15, 0, 0], 50);
-        let job3 = LightUpdateJob::add_light(IVec3::new(20, 0, 0), [15, 0, 0], 25);
-
-        queue.push(job1);
-        queue.push(job2);
-        queue.push(job3);
-
-        // Should pop in order: job3 (25), job2 (50), job1 (100)
-        assert_eq!(queue.pop().unwrap().priority, 25);
-        assert_eq!(queue.pop().unwrap().priority, 50);
-        assert_eq!(queue.pop().unwrap().priority, 100);
+    fn unlimited_budget() -> LightFrameBudget {
+        LightFrameBudget {
+            max_blocks_per_frame: usize::MAX,
+            max_time_us: u64::MAX,
+        }
     }
 
+    /// Jobs submitted out of order complete lowest priority value first.
+    #[test]
+    fn test_job_priority_ordering() {
+        let mut grid = transparent_grid();
+        let mut queue = LightJobQueue::new(unlimited_budget());
+
+        for (x, priority) in [(0, 100), (10, 50), (20, 25)] {
+            queue.submit(LightUpdateJob::add_light(
+                IVec3::new(x, 0, 0),
+                [15, 0, 0],
+                priority,
+            ));
+        }
+        queue.process_frame(&mut grid);
+
+        let priorities: Vec<i32> = queue
+            .collect_results()
+            .iter()
+            .map(|r| r.job.priority)
+            .collect();
+        assert_eq!(priorities, [25, 50, 100]);
+    }
+
+    /// A cancelled job is reported cancelled and never touches the grid; the
+    /// token is gone once the job has been drained.
     #[test]
     fn test_job_cancellation() {
+        let mut grid = transparent_grid();
         let mut queue = LightJobQueue::with_default_budget();
-        let job = LightUpdateJob::add_light(IVec3::new(0, 0, 0), [15, 0, 0], 10);
-        let job_id = queue.submit(job);
+        let source = IVec3::new(0, 0, 0);
+        grid.place_block(source, 1, None);
+        let job_id = queue.submit(LightUpdateJob::add_light(source, [15, 0, 0], 10));
 
-        // First cancel should succeed
         assert!(queue.cancel(job_id));
+        queue.process_frame(&mut grid);
 
-        // Second cancel of same job should also return true (cancellation token still exists)
-        assert!(queue.cancel(job_id));
+        assert_eq!(grid.block_light_rgb_at(source), [0, 0, 0]);
+        let results = queue.collect_results();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].cancelled);
+        assert!(!queue.cancel(job_id), "token is dropped after processing");
     }
 
     #[test]
@@ -607,35 +626,33 @@ mod tests {
         assert_eq!(grid.chunk_light(sc).unwrap().block_light_r[si], 0);
     }
 
+    /// A one-block budget lets exactly one job run per frame.
     #[test]
     fn test_frame_budget() {
         let mut grid = transparent_grid();
-
-        let budget = LightFrameBudget::conservative();
-        let mut queue = LightJobQueue::new(budget);
-
-        for x in 0..10i32 {
-            for y in 0..10i32 {
-                for z in 0..10i32 {
-                    grid.place_block(IVec3::new(x, y, z), 1, None);
-                }
-            }
+        let mut queue = LightJobQueue::new(LightFrameBudget {
+            max_blocks_per_frame: 1,
+            max_time_us: u64::MAX,
+        });
+        for i in 0..3i32 {
+            grid.place_block(IVec3::new(i, 0, 0), 1, None);
+            queue.submit(LightUpdateJob::add_light(
+                IVec3::new(i, 0, 0),
+                [15, 0, 0],
+                i,
+            ));
         }
 
-        for i in 0..5i32 {
-            let job = LightUpdateJob::add_light(IVec3::new(i * 2, 5, 5), [15, 0, 0], i);
-            queue.submit(job);
-        }
+        let first = queue.process_frame(&mut grid);
+        let pending_after_first = queue.pending_jobs();
+        let second = queue.process_frame(&mut grid);
+        let third = queue.process_frame(&mut grid);
 
-        assert_eq!(queue.pending_jobs(), 5);
-
-        let completed = queue.process_frame(&mut grid);
-        assert!(completed <= 5);
-
-        if queue.pending_jobs() > 0 {
-            let completed2 = queue.process_frame(&mut grid);
-            assert!(completed2 > 0);
-        }
+        assert_eq!(first, 1);
+        assert_eq!(pending_after_first, 2);
+        assert_eq!(second, 1);
+        assert_eq!(third, 1);
+        assert_eq!(queue.pending_jobs(), 0);
     }
 
     #[test]
@@ -651,10 +668,11 @@ mod tests {
         assert!(job_close.priority < job_far.priority);
     }
 
+    /// `total_jobs_processed` counts every completed job, not every frame.
     #[test]
     fn test_stats_tracking() {
         let mut grid = transparent_grid();
-        let mut queue = LightJobQueue::with_default_budget();
+        let mut queue = LightJobQueue::new(unlimited_budget());
 
         for x in 0..5i32 {
             for y in 0..5i32 {
@@ -671,8 +689,6 @@ mod tests {
 
         queue.process_frame(&mut grid);
 
-        let stats = queue.stats();
-        assert!(stats.total_jobs_processed > 0);
-        assert!(stats.total_time_us > 0);
+        assert_eq!(queue.stats().total_jobs_processed, 3);
     }
 }

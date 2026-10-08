@@ -370,16 +370,49 @@ mod tests {
         assert_eq!(light_system.pending_jobs(), 1);
     }
 
+    /// One `ChunkMeshDirty` per affected chunk is published, and the pending
+    /// set is drained.
     #[test]
-    fn test_process_frame_with_no_jobs() {
-        let grid = VoxelGrid::new(16);
+    fn emit_dirty_events_publishes_one_event_per_affected_chunk() {
+        use crate::voxel::grid::MaterialLighting;
+        use std::sync::Mutex;
+
+        let mut grid = VoxelGrid::new(16);
+        grid.material_registry.set_lighting(
+            1,
+            MaterialLighting {
+                emission: [15, 8, 2],
+                opacity_cost: 0,
+            },
+        );
         let event_bus = Arc::new(EventBus::new());
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&received);
+        event_bus.subscribe(move |event: &WorldEvent| {
+            if let WorldEvent::ChunkMeshDirty { chunk_pos, .. } = event {
+                sink.lock().unwrap().push(*chunk_pos);
+            }
+        });
         let mut light_system = LightSystem::with_default_budget(grid, event_bus);
+        light_system.on_block_placed(IVec3::new(15, 2, 2), 1);
+        light_system.process_frame();
+        let expected: HashSet<IVec3> = light_system
+            .recent_results()
+            .iter()
+            .flat_map(|r| r.affected_chunks.iter().copied())
+            .collect();
 
-        let completed = light_system.process_frame();
-        assert_eq!(completed, 0);
+        let count = light_system.emit_dirty_events();
 
-        let affected = light_system.emit_dirty_events();
-        assert_eq!(affected, 0);
+        assert!(count > 1, "light must spill into neighbouring chunks");
+        assert_eq!(count, expected.len());
+        let mut got = received.lock().unwrap().clone();
+        assert_eq!(got.len(), count, "one event per chunk");
+        got.sort_by_key(|c| (c.x, c.y, c.z));
+        got.dedup();
+        assert_eq!(got.len(), count, "no chunk published twice");
+        assert_eq!(got.into_iter().collect::<HashSet<_>>(), expected);
+        assert_eq!(light_system.emit_dirty_events(), 0);
+        assert_eq!(received.lock().unwrap().len(), count, "no repeat events");
     }
 }
