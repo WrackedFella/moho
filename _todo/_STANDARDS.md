@@ -194,7 +194,7 @@ be asserted, so those go under Verification instead.
 - Test map: each scenario → the test that proves it
   (`crate::module::tests::scenario_expected_result`), and its gate class:
   **domain** (the paths `CLAUDE.md` lists under Domain-logic paths: tests reviewed
-  before implementation while domain-test review is required) or **glue**
+  before implementation, by you under `required` or by `devflow:test-critic` under `agent`) or **glue**
   (adapters/wiring: tests and code together).
 - ADR link if the item makes or relies on an architectural decision.
 

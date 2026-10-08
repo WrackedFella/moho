@@ -7,7 +7,7 @@ Closes #
 ## Test evidence
 - [ ] `just check` passes
 - [ ] New or changed tests fail without the change (test-first history for agent work)
-- [ ] Gate class: domain tests were reviewed before implementation / glue
+- [ ] Gate class: domain tests were reviewed before implementation (by you or `devflow:test-critic`, findings below) / glue
 
 ## Mutation testing
 <!-- `just mutants` on the changed code: caught / missed / unviable. Justify any

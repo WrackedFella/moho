@@ -42,8 +42,10 @@ cargo run                          # RUST_LOG=debug for logging
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
 - **Domain-logic paths** (gate class `domain`): rules in `moho_game`, `moho_core`.
   Adapters, UI wiring and config are glue.
-- **Human review points:** `Card review: required`, `Domain-test review: required`.
-  Both become `not required` at Stage 3 of `_todo/WORKFLOW.md`.
+- **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
+  `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing
+  tests before implementation and the PR carries its findings). Card review becomes
+  `not required` at Stage 3 of `_todo/WORKFLOW.md`.
 - **Local planning files are drafts.** A card or feature in `_todo/` is reviewed there;
   on approval, agents publish it as an issue on the board, and the issue is canonical
   from then on. Local files of finished items are deleted (`_todo/_STANDARDS.md`).

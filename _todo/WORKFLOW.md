@@ -24,7 +24,10 @@ Feature planning → Refinement (feature → work items) → Implementation → 
 
 Stage 3 is switched on in `CLAUDE.md` by setting both human review points
 (`Card review`, `Domain-test review`) to `not required`; devflow (v0.8.0 and later)
-reads them.
+reads them. `Domain-test review` also takes `agent` (devflow v0.14.0 and later): no
+pause, and `devflow:test-critic` attacks the failing tests in a fresh context (at most
+2 rounds) before implementation. The tests are pushed first, and the PR lists its
+findings, so you still read them there. `agent` is the setting for cloud runs.
 
 In Stages 2 and 3, each line's Claude Code project is that line's lane
 ([coordination rules](../wiki/process/agentic-workflow.md#coordinating-lanes)), and
@@ -62,9 +65,10 @@ issue, with no thread and no terminal.
   `Card review: not required` it labels the cards itself and the workflow dispatches a run for each, since
   a label set with the default token starts no workflow.
 - **Human gates become PR-level.** The run ends at a PR into `dev` and never merges.
-  The orchestrator's domain-test pause has nobody to answer it in an Actions run, so
-  until Stage 3 sets `Domain-test review: not required`, apply `agent-ready` to `glue`
-  items only and run `domain` items as threads.
+  The orchestrator's `required` domain-test pause has nobody to answer it in an Actions
+  run, so `Domain-test review: agent` replaces it there with the test-critic review.
+  Under `required`, apply `agent-ready` to `glue` items only and run `domain` items as
+  threads.
 - **Runtime:** one run per issue at a time, 60 minutes, 200 turns. The action skips
   PRs that edit workflow files, so changes to `claude.yml` need a human merge.
 
@@ -121,7 +125,7 @@ setup script rather than the repo pin; the toolchain is installed on demand by
 `scripts/cloud-tools.sh`; cloud sessions cannot reach GraphQL or Projects v2, so board
 Status is event-driven.
 
-Expected but unverified: a thread's domain-test pause reaches you as its waiting-on-you
+Expected but unverified (applies only under `Domain-test review: required`): a thread's domain-test pause reaches you as its waiting-on-you
 state, with the tests pushed as the branch's `test(...)` commit so you can read them on
 GitHub. Confirm on the first supervised thread run.
 
@@ -138,6 +142,7 @@ GitHub. Confirm on the first supervised thread run.
 | 2026-10-07 | Stage 2 runs on Claude Code Projects: one project per line is the lane, and threads replace worktrees. Independent cards run in parallel threads; dependent ones run in sequence or on a `feature/` branch. Human approval sits after Tech Lead, before orchestrate. Supersedes the worktree half of the row above | [coordination rules](../wiki/process/agentic-workflow.md#coordinating-lanes) |
 | 2026-10-07 | Stages are defined by human involvement across one pipeline (feature planning → refinement → implementation → PR). Stage 2: you plan features and review cards. Stage 3: you plan features and answer escalations; approving the feature starts the work, and there is no domain-test pause. The 2→3 move is your judgment, raised after the first Stage 2 feature. Replaces "Phase D is Stage 3": the board trigger is now a runtime detail | this file |
 | 2026-10-07 | Human review points are project settings (`Card review`, `Domain-test review`, default required) read by devflow's BA, Tech Lead and Orchestrator; Stage 3 turns both off. Local `_todo/` files are drafts: you review them, agents publish on approval, the issue is canonical, and finished items' files are deleted | devflow v0.8.0, [`CLAUDE.md`](../CLAUDE.md), [`_STANDARDS.md`](_STANDARDS.md#local-drafts-and-cleanup) |
+| 2026-10-08 | `Domain-test review` gains `agent`: the pause is replaced by a fresh-context `devflow:test-critic` review (max 2 rounds) of the pushed failing tests, with findings in the PR, so cloud runs no longer stop and `agent-ready` is no longer limited to `glue` cards. The setting is kept so `required` can return. Moho is set to `agent` | devflow v0.14.0, [`CLAUDE.md`](../CLAUDE.md) |
 | 2026-10-07 | The orchestrator keeps `wiki/` current through `/devflow:wiki`, where a change warrants it: onboarding docs on structures, patterns and conventions. New wiki pages are approved in PR review, replacing "new docs need the user's OK first" for `wiki/` | devflow v0.9.0, [`CLAUDE.md`](../CLAUDE.md) |
 | 2026-10-07 | Board Status is event-driven, not agent-written: the Board sync workflow moves Status forward on PR and issue events (secret `BOARD_TOKEN`); Ready and Agent-eligible stay human-set. Cloud sessions cannot reach GraphQL or Projects v2, so `scripts/board` runs locally only | moho #109, [`_STANDARDS.md`](_STANDARDS.md#item-state-lives-on-the-board) |
 | 2026-10-08 | Cloud environment: devflow is installed by the environment's setup script (user scope), not Project settings or the repo pin; the Rust toolchain and gate tools are on demand through `scripts/cloud-tools.sh`, run by threads that build or test. devflow v0.10.0 removed `disable-model-invocation`, so orchestrate, BA and TL can be invoked by agents | moho #112, #127, #128; devflow v0.10.0 |
