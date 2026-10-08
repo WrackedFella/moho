@@ -230,7 +230,7 @@ impl MarchingCubes {
             5 => [x + 1, y + 1, z],
             6 => [x + 1, y + 1, z + 1],
             7 => [x, y + 1, z + 1],
-            _ => [x, y, z],
+            _ => unreachable!("a cube has 8 corners, got {corner_idx}"),
         }
     }
 
