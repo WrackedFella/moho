@@ -13,6 +13,8 @@ exclude_re = [
     "WindowEventHandler::handle_redraw_requested",
     "WindowManager::initial_render",
     'delete match arm "light" in EventProcessor::handle_debug_event',
+    'delete match arm DebugEvent::SetShadowQuality\{quality\} in EventProcessor::handle_debug_event',
+    'delete match arm DebugEvent::SetSsaoQuality\{quality\} in EventProcessor::handle_debug_event',
     # Equivalent while every file kind is at version 1; drop when one bumps.
     'replace FileKind::current_version -> u16 with 1$',
     # Equivalent: the fallback is a single-axis vector and only its sign survives
@@ -20,4 +22,6 @@ exclude_re = [
     'replace \* with / in MarchingCubes::edge_gradient',
     # Equivalent: the three axis fields occupy disjoint bits, so OR and XOR agree.
     'replace \| with \^ in chunk_mesh_id',
+    # Equivalent: ctrl, shift and alt occupy disjoint bits, so OR and XOR agree.
+    'replace \| with \^ in modifier_bits',
 ]

@@ -288,3 +288,204 @@ fn confirming_conflict_removes_only_the_contested_key_from_a_multi_key_row() {
     assert_eq!(menu.get_staged_binding(0), [Binding::Key(Key::ArrowUp)]);
     assert_eq!(menu.get_staged_binding(1), [Binding::Key(Key::W)]);
 }
+
+fn key_event(key: egui::Key, pressed: bool) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+fn render_frame(menu: &mut SettingsMenu, events: Vec<egui::Event>) -> egui::FullOutput {
+    let ctx = egui::Context::default();
+    let input = egui::RawInput {
+        events,
+        ..Default::default()
+    };
+    ctx.run(input, |ctx| {
+        menu.render(ctx);
+    })
+}
+
+fn collect_text(shape: &egui::epaint::Shape, out: &mut String) {
+    match shape {
+        egui::epaint::Shape::Text(text) => {
+            out.push_str(text.galley.text());
+            out.push('\n');
+        }
+        egui::epaint::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_text(s, out)),
+        _ => {}
+    }
+}
+
+fn rendered_text(output: &egui::FullOutput) -> String {
+    let mut out = String::new();
+    for clipped in &output.shapes {
+        collect_text(&clipped.shape, &mut out);
+    }
+    out
+}
+
+/// A key pressed during a frame binds the row being listened for.
+#[test]
+fn egui_key_press_while_listening_binds_the_row() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(1);
+
+    render_frame(&mut menu, vec![key_event(egui::Key::Q, true)]);
+
+    assert_eq!(menu.get_staged_binding(1), [Binding::Key(Key::Q)]);
+    assert!(!menu.is_listening());
+}
+
+/// A key release is not a capture.
+#[test]
+fn egui_key_release_while_listening_is_ignored() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(1);
+
+    render_frame(&mut menu, vec![key_event(egui::Key::Q, false)]);
+
+    assert_eq!(menu.get_staged_binding(1), [Binding::Key(Key::A)]);
+    assert!(menu.is_listening());
+}
+
+/// Escape during a frame cancels listening and binds nothing.
+#[test]
+fn egui_escape_while_listening_cancels_without_binding() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(1);
+
+    render_frame(&mut menu, vec![key_event(egui::Key::Escape, true)]);
+
+    assert_eq!(menu.get_staged_binding(1), [Binding::Key(Key::A)]);
+    assert!(!menu.is_listening());
+    assert!(!menu.has_unsaved_changes());
+}
+
+/// An egui key the engine does not name keeps listening.
+#[test]
+fn egui_unnamed_key_while_listening_keeps_listening() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(1);
+
+    render_frame(&mut menu, vec![key_event(egui::Key::F5, true)]);
+
+    assert_eq!(menu.get_staged_binding(1), [Binding::Key(Key::A)]);
+    assert!(menu.is_listening());
+}
+
+/// Key events are ignored when no row is listening.
+#[test]
+fn egui_key_press_when_not_listening_changes_nothing() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+
+    render_frame(&mut menu, vec![key_event(egui::Key::Q, true)]);
+
+    assert_eq!(menu.get_staged_binding(1), [Binding::Key(Key::A)]);
+    assert!(!menu.has_unsaved_changes());
+}
+
+/// The Controls tab draws a labelled row per binding plus the input options.
+#[test]
+fn controls_tab_draws_binding_rows_and_input_options() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+
+    let text = rendered_text(&render_frame(&mut menu, vec![]));
+
+    for expected in [
+        "Controls",
+        "Move Forward:",
+        "Move Left:",
+        "Sprint:",
+        "Mouse Sensitivity:",
+        "Input Filtering:",
+    ] {
+        assert!(
+            text.contains(expected),
+            "{expected:?} missing from:\n{text}"
+        );
+    }
+}
+
+/// Non-keyboard window events are not consumed by the keybind capture, listening or not.
+#[test]
+fn non_keyboard_window_events_are_not_consumed() {
+    use moho_ui::screens::Screen;
+    use winit::event::WindowEvent;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    assert!(!Screen::handle_raw_input(
+        &mut menu,
+        &WindowEvent::Focused(true)
+    ));
+    menu.start_listening(1);
+
+    let consumed = Screen::handle_raw_input(&mut menu, &WindowEvent::Focused(true));
+
+    assert!(!consumed);
+    assert!(menu.is_listening());
+}
+
+/// Exactly the listening row swaps its key label for the prompt.
+#[test]
+fn only_the_listening_row_shows_the_prompt() {
+    let mut idle = SettingsMenu::with_prefs(Prefs::default());
+    let mut listening = SettingsMenu::with_prefs(Prefs::default());
+    listening.start_listening(1);
+
+    let idle_text = rendered_text(&render_frame(&mut idle, vec![]));
+    let listening_text = rendered_text(&render_frame(&mut listening, vec![]));
+
+    assert_eq!(idle_text.matches("Press any key...").count(), 0);
+    assert_eq!(listening_text.matches("Press any key...").count(), 1);
+    let lines: Vec<_> = listening_text.lines().collect();
+    assert!(lines.contains(&"W") && lines.contains(&"S"));
+    assert!(lines.contains(&"D"), "Move Right's key stays visible");
+    assert!(!lines.contains(&"A"), "Move Left is the listening row");
+}
+
+#[test]
+fn raw_input_is_captured_only_while_listening() {
+    use moho_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    assert!(!Screen::captures_raw_input(&menu));
+
+    menu.start_listening(0);
+
+    assert!(Screen::captures_raw_input(&menu));
+}
+
+/// Cancelling discards the queued binding, so a later confirm applies nothing.
+#[test]
+fn cancel_then_confirm_applies_nothing() {
+    use moho_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(1);
+    menu.apply_key_while_listening(Key::W);
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+
+    Screen::on_modal_cancel(&mut menu);
+    Screen::on_modal_confirm(&mut menu);
+
+    assert_eq!(menu.get_staged_binding(0), [Binding::Key(Key::W)]);
+    assert_eq!(menu.get_staged_binding(1), [Binding::Key(Key::A)]);
+}
+
+#[test]
+fn confirm_pending_binding_moves_the_key() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(1);
+    menu.apply_key_while_listening(Key::W);
+    assert!(menu.conflict_modal().is_visible());
+
+    menu.confirm_pending_binding();
+
+    assert_eq!(menu.get_staged_binding(1), [Binding::Key(Key::W)]);
+    assert_eq!(menu.get_staged_binding(0), []);
+}

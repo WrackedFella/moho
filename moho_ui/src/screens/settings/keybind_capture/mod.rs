@@ -324,4 +324,9 @@ mod tests {
         assert_eq!(binding_label(&[Binding::Key(Key::ArrowUp)]), "ArrowUp");
         assert_eq!(binding_label(&[Binding::Key(Key::Space)]), "Spacebar");
     }
+
+    #[test]
+    fn new_handler_has_no_pending_binding() {
+        assert!(!KeybindCaptureHandler::new().has_pending_binding());
+    }
 }
