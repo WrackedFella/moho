@@ -18,9 +18,15 @@ pinned in `.claude/settings.json`. Work-item state lives on the
 | 6. Review and merge | You | Review the PR; merge | Board Status → Done |
 
 During step 5 the Orchestrator pauses for your review of failing tests when the item's
-gate class is `domain` and `CLAUDE.md` requires domain-test review. Otherwise it runs through: failing tests → implementation →
-adversarial challenges (as tests) → mutation testing → `/simplify` →
-`/devflow:comment-audit` → fresh-context `devflow:reviewer` → `/devflow:ship`.
+gate class is `domain` and `CLAUDE.md` requires domain-test review. Otherwise it runs
+through: failing tests → implementation → adversarial challenges (as tests) → mutation
+testing → `/simplify` → `/devflow:comment-audit` → `/devflow:wiki` → fresh-context
+`devflow:reviewer` → `/devflow:ship`.
+
+The wiki step updates `wiki/` where the change adds or alters a structure, pattern or
+convention a new developer needs, following the conventions in
+[`wiki/README.md`](../README.md). Otherwise the PR says why no docs were needed. New
+pages are flagged in the PR for your review.
 
 ## Gates
 

@@ -43,9 +43,11 @@ cargo run                          # RUST_LOG=debug for logging
 - **Local planning files are drafts.** A card or feature in `_todo/` is reviewed there;
   on approval, agents publish it as an issue on the board, and the issue is canonical
   from then on. Local files of finished items are deleted (`_todo/_STANDARDS.md`).
-- **ADRs:** `_todo/adr/`. Project documentation lives in `wiki/`; new docs there or
-  elsewhere need the user's OK first; cards and ADRs that follow the standards don't.
-  Order of work: `_todo/ROADMAP.md`.
+- **ADRs:** `_todo/adr/`. Order of work: `_todo/ROADMAP.md`.
+- **Docs directory:** `wiki/`, sections and conventions in `wiki/README.md`. The
+  orchestrator keeps it current through `/devflow:wiki`; new pages are flagged in the
+  PR, and PR review is their approval. Docs outside `wiki/` (other than cards, ADRs
+  and crate READMEs) need the user's OK first.
 
 ## Architecture
 
