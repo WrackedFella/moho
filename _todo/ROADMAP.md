@@ -45,7 +45,7 @@ just before the work that needs them, not sooner.
 | 1.2 | [ENG-F2-03](https://github.com/WrackedFella/moho/issues/96): winit/egui-winit default features off; unused deps removed ([ADR-0008](adr/0008-keep-winit-for-windowing-and-input.md)) | now |
 | 1.7 | Amend [ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md)'s gate (boundary readiness, FPS as second consumer) | now |
 | 1.11 | [ENG-F13](https://github.com/WrackedFella/moho/issues/83): dependency audit | now, before ENG-F12 or any new dependency |
-| 1.8 | [ENG-F10](engine/ENG-F10-world-geometry-from-any-source/_feature.md): world geometry from any source; voxels move to the strategy line ([ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md)) | before P.2; contract and renderer first |
+| 1.8 | [ENG-F10](engine/ENG-F10-world-geometry-from-any-source/_feature.md): world geometry from any source; voxels move to the strategy line ([ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md)) | before P.2; contract and renderer first; voxel move ([ENG-F10-03](https://github.com/WrackedFella/moho/issues/140)) after [ENG-F22-02](https://github.com/WrackedFella/moho/issues/169), then [ENG-F22-06](https://github.com/WrackedFella/moho/issues/173) and [ENG-F22-07](https://github.com/WrackedFella/moho/issues/174) |
 | 1.9 | [ENG-F11](engine/ENG-F11-shared-app-loop/_feature.md): shared app loop, headless tick, engine `GameClock` | before P.2 |
 | 1.10 | [ENG-F12](engine/ENG-F12-input-actions/_feature.md): game-defined input actions; replaces the former 1.5 | before P.2; after 1.11 |
 | 1.12 | [ADR-0011](adr/0011-simulation-stays-network-ready.md): simulation stays network-ready | now (session B) |
@@ -101,8 +101,8 @@ the FPS rules crate are greenlit now (they don't wait on M1).
 
 | # | Feature | Depends on |
 |---|---|---|
-| 2.1 | [SG-F1-04](strategy-game/SG-F1-core-interaction-loop/SG-F1-04-pickup-feedback.md) pickup feedback | M0; land before ENG-F10's voxel extraction |
-| 2.2 | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) mining not persisted (reproduce first), then [SG-F2-02](strategy-game/SG-F2-known-bugs/SG-F2-02-mining-mesh-gaps.md) mesh gaps | M0; land before ENG-F10's voxel extraction |
+| 2.1 | [SG-F1-04](strategy-game/SG-F1-core-interaction-loop/SG-F1-04-pickup-feedback.md) pickup feedback | M0; independent of ENG-F10; if the voxel move ([ENG-F10-03](https://github.com/WrackedFella/moho/issues/140)) lands first, edits `moho_voxel` |
+| 2.2 | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) mining not persisted (reproduce first), then [SG-F2-02](strategy-game/SG-F2-known-bugs/SG-F2-02-mining-mesh-gaps.md) mesh gaps | M0; independent of ENG-F10; if the voxel move ([ENG-F10-03](https://github.com/WrackedFella/moho/issues/140)) lands first, edits `moho_voxel` |
 | 2.3 | [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) buildings and construction (not in the v1 slice) | 1.1 |
 | 2.4 | [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) worker pawns (first possible ECS consumer, [ADR-0004](adr/0004-entity-storage-without-a-general-ecs.md)) | 1.3, 2.3 |
 
@@ -177,3 +177,4 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-07 | Engine crate map decided in an ADR before ENG-F11 (modules first) | [ADR-0012](adr/0012-engine-crate-map-for-m2.md) |
 | 2026-10-07 | Generic controller and camera are an engine feature | [ENG-F21](engine/ENG-F21-character-controller-and-camera/_feature.md) |
 | 2026-10-07 | Fast-moving stacks (wgpu/egui, rapier/glam) upgrade once per milestone close; ENG-F20 (containment) approved and placed in M1, before engine features build on the renderer | [ENG-F2](engine/ENG-F2-dependency-upgrades/_feature.md) |
+| 2026-10-08 | ENG-F10's voxel move no longer waits on SG-F1-04, SG-F2-03 and SG-F2-02 (unfiled, Strategy lane planning-only); it waits on the ENG-F22 voxel cards instead | [ENG-F10](engine/ENG-F10-world-geometry-from-any-source/_feature.md) Notes |
