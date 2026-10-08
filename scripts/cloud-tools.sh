@@ -58,8 +58,11 @@ node_deps() {
   npm ci --no-audit --no-fund || echo "npm ci failed; GitNexus unavailable this session"
 }
 
+# Runs first and alone: every cargo call below would otherwise start its own
+# toolchain download from rust-toolchain.toml and race this one over rustup's files.
+rust_toolchain >"$log/rust.log" 2>&1 || { echo "cloud-tools step 'rust' FAILED:"; cat "$log/rust.log"; exit 1; }
+
 step apt apt_deps
-step rust rust_toolchain
 step tools gate_tools
 step node node_deps
 
