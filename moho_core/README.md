@@ -124,13 +124,12 @@ clock.set_time_of_day(0.0);  // Set to midnight
 
 ### Voxel System
 
-Chunk-based voxel terrain with face culling optimization.
+Chunk-based voxel terrain.
 
 **Architecture:**
 - `VoxelGrid` - Stores block data in 3D grid
 - `VoxelChunk` - Fixed-size chunk (typically 64×64×64)
 - `VoxelBlock` - Individual block with material/resource data
-- Face culling - Only render visible faces (87% triangle reduction)
 
 **Usage:**
 ```rust
@@ -145,19 +144,9 @@ grid.set_block(32, 10, 32, VoxelBlock {
     resource: None,
 });
 
-// Check neighbors for culling
-if grid.should_render_face(x, y, z, FaceDirection::Top) {
-    // Render this face
-}
-
 // Extract visible faces for rendering
 let visible_faces = grid.extract_visible_faces(chunk_x, chunk_y, chunk_z);
 ```
-
-**Face Culling Logic:**
-- Faces adjacent to solid blocks are culled
-- Only exposed faces are rendered
-- Significant performance improvement for dense terrain
 
 ### Camera
 
@@ -257,7 +246,6 @@ cargo bench --bench event_bus_bench
 ## Performance Characteristics
 
 - **Event Bus**: <0.01% frame time (60 FPS target)
-- **Face Culling**: 87% triangle reduction
 - **GameClock**: <0.1ms per frame
 - **Voxel Queries**: O(1) block access
 

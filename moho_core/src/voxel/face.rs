@@ -1,18 +1,14 @@
-//! Face direction and culling logic for voxel rendering.
+//! Face direction lookup tables for voxel rendering.
 //!
 //! This module provides:
 //! - `FaceDirection` enum for cube faces
 //! - Lookup tables for efficient face operations (replaces match statements)
-//! - Face culling logic to hide faces between adjacent solid blocks
 //!
 //! # Performance
 //! Using const lookup tables instead of match statements reduces branching
 //! and improves performance in tight rendering loops.
 
-use super::grid::{BlockPos, VoxelGrid};
-use glam::IVec3;
-
-/// Direction of a cube face for face culling
+/// Direction of a cube face
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaceDirection {
     PosX, // +X (right, east)
@@ -22,17 +18,6 @@ pub enum FaceDirection {
     PosZ, // +Z (front, north)
     NegZ, // -Z (back, south)
 }
-
-/// Lookup table for face offsets (replaces match in offset())
-/// Order: PosX, NegX, PosY, NegY, PosZ, NegZ
-const FACE_OFFSETS: [IVec3; 6] = [
-    IVec3::new(1, 0, 0),  // PosX
-    IVec3::new(-1, 0, 0), // NegX
-    IVec3::new(0, 1, 0),  // PosY
-    IVec3::new(0, -1, 0), // NegY
-    IVec3::new(0, 0, 1),  // PosZ
-    IVec3::new(0, 0, -1), // NegZ
-];
 
 /// Lookup table for vertex ranges (start_index, count)
 /// Standard cube has 24 vertices (4 per face) in order: +X, -X, +Y, -Y, +Z, -Z
@@ -57,37 +42,6 @@ const FACE_INDEX_RANGES: [(usize, usize); 6] = [
 ];
 
 impl FaceDirection {
-    /// Get the offset vector for this face direction
-    ///
-    /// Uses a const lookup table for O(1) performance without branching.
-    ///
-    /// # Examples
-    /// ```ignore
-    /// use moho_core::voxel::FaceDirection;
-    ///
-    /// let offset = FaceDirection::PosX.offset();
-    /// assert_eq!(offset, IVec3::new(1, 0, 0));
-    /// ```
-    #[inline]
-    pub fn offset(&self) -> IVec3 {
-        FACE_OFFSETS[*self as usize]
-    }
-
-    /// Get all six face directions
-    ///
-    /// Returns an array containing all possible face directions.
-    /// Useful for iterating over all faces of a cube.
-    pub fn all() -> [FaceDirection; 6] {
-        [
-            FaceDirection::PosX,
-            FaceDirection::NegX,
-            FaceDirection::PosY,
-            FaceDirection::NegY,
-            FaceDirection::PosZ,
-            FaceDirection::NegZ,
-        ]
-    }
-
     /// Get the vertex range for this face in a standard cube mesh
     ///
     /// Returns (start_index, count) for vertices of this face.
@@ -105,63 +59,6 @@ impl FaceDirection {
     pub fn index_range(&self) -> (usize, usize) {
         FACE_INDEX_RANGES[*self as usize]
     }
-
-    /// Check if a face should be rendered (face culling optimization)
-    ///
-    /// Returns `false` if the neighbor block is solid (face is hidden).
-    /// Returns `true` if no neighbor exists (air or out of bounds) - render the face.
-    ///
-    /// This is the core face culling algorithm that can reduce triangle count by 80-90%.
-    ///
-    /// # Arguments
-    /// * `grid` - The voxel grid to query
-    /// * `pos` - Position of the block whose face we're checking
-    ///
-    /// # Examples
-    /// ```ignore
-    /// use moho_core::voxel::{VoxelGrid, VoxelBlock, BlockPos, FaceDirection};
-    ///
-    /// let mut grid = VoxelGrid::new(16);
-    /// let pos = BlockPos::new(0, 0, 0);
-    /// grid.place_block(pos, 0, None);
-    ///
-    /// // No neighbor to the east (+X), so face should render
-    /// assert!(FaceDirection::PosX.should_render_face(&grid, pos));
-    ///
-    /// // Add a neighbor
-    /// let neighbor_pos = BlockPos::new(1, 0, 0);
-    /// grid.place_block(neighbor_pos, 0, None);
-    ///
-    /// // Now the face is hidden by the neighbor
-    /// assert!(!FaceDirection::PosX.should_render_face(&grid, pos));
-    /// ```
-    #[inline]
-    pub fn should_render_face(&self, grid: &VoxelGrid, pos: BlockPos) -> bool {
-        let neighbor_pos = pos + self.offset();
-
-        // If neighbor exists (solid block), don't render this face (it's hidden)
-        // If no neighbor (air or out of bounds), render the face
-        !grid.is_solid_at(neighbor_pos)
-    }
-}
-
-/// Get list of visible faces for a block (for face culling)
-///
-/// Returns only the faces that should be rendered based on neighbors.
-/// This is a convenience function that checks all six faces.
-///
-/// # Arguments
-/// * `grid` - The voxel grid
-/// * `pos` - Position of the block
-///
-/// # Returns
-/// Vector of face directions that are visible and should be rendered
-pub fn get_visible_faces(grid: &VoxelGrid, pos: BlockPos) -> Vec<FaceDirection> {
-    FaceDirection::all()
-        .iter()
-        .filter(|&&dir| dir.should_render_face(grid, pos))
-        .copied()
-        .collect()
 }
 
 #[cfg(test)]
