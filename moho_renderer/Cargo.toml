@@ -10,7 +10,6 @@ moho_render_api = { path = "../moho_render_api" }
 bytemuck = { workspace = true, features = ["derive"] }
 wgpu = { workspace = true }
 winit = { workspace = true }
-pollster = { workspace = true }
 glam = { workspace = true }
 bincode = { workspace = true }
 log = { workspace = true }

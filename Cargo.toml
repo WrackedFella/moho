@@ -21,7 +21,6 @@ glam = "0.30.8"
 log = "0.4"
 naga = "29.0.1"
 noise = "0.9"
-pollster = "0.4"
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 rand = "0.10"
 rodio = "0.22"
@@ -112,9 +111,6 @@ workspace = true
 
 [dependencies.moho_ui]
 path = "moho_ui"
-
-[dependencies.pollster]
-workspace = true
 
 [dependencies.rand]
 workspace = true

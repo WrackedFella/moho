@@ -95,12 +95,13 @@ impl<'a> DeviceSetup<'a> {
             .map_err(|e| DeviceInitError::SurfaceCreation(format!("{e:?}")))?;
 
         // 3. Request Adapter
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .map_err(|e| DeviceInitError::AdapterRequest(format!("{e:?}")))?;
+        let adapter =
+            crate::block_on::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            }))
+            .map_err(|e| DeviceInitError::AdapterRequest(format!("{e:?}")))?;
 
         // 4. Prepare device features and limits
         let experimental = {
@@ -129,15 +130,16 @@ impl<'a> DeviceSetup<'a> {
         }
 
         // 5. Request Device and Queue
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: None,
-            required_features,
-            required_limits: limits,
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::default(),
-            experimental_features: experimental,
-        }))
-        .map_err(|e| DeviceInitError::DeviceCreation(format!("{e:?}")))?;
+        let (device, queue) =
+            crate::block_on::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                label: None,
+                required_features,
+                required_limits: limits,
+                memory_hints: wgpu::MemoryHints::default(),
+                trace: wgpu::Trace::default(),
+                experimental_features: experimental,
+            }))
+            .map_err(|e| DeviceInitError::DeviceCreation(format!("{e:?}")))?;
 
         // 6. Configure Surface
         let supported_formats = surface.get_capabilities(&adapter).formats;

@@ -1,7 +1,31 @@
-use std::future::Future;
+//! Minimal single-future executor that parks the calling thread while pending.
 
-pub(crate) fn block_on<F: Future>(_future: F) -> F::Output {
-    todo!()
+use std::future::Future;
+use std::sync::Arc;
+use std::task::{Context, Poll, Wake, Waker};
+use std::thread::{self, Thread};
+
+struct ThreadWaker(Thread);
+
+impl Wake for ThreadWaker {
+    fn wake(self: Arc<Self>) {
+        self.0.unpark();
+    }
+}
+
+/// Drives `future` to completion on the current thread, parking between polls.
+///
+/// A wake that arrives before `park` is not lost: `unpark` leaves a token.
+pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
+    let mut future = std::pin::pin!(future);
+    let waker = Waker::from(Arc::new(ThreadWaker(thread::current())));
+    let mut cx = Context::from_waker(&waker);
+    loop {
+        match future.as_mut().poll(&mut cx) {
+            Poll::Ready(value) => return value,
+            Poll::Pending => thread::park(),
+        }
+    }
 }
 
 #[cfg(test)]
