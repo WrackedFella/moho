@@ -343,6 +343,29 @@ mod tests {
     }
 
     #[test]
+    fn test_removed_floor_no_longer_stops_rigid_body() {
+        let mut world = PhysicsWorld::new();
+        let verts = vec![
+            [-10.0f32, 0.0, -10.0],
+            [10.0, 0.0, -10.0],
+            [10.0, 0.0, 10.0],
+            [-10.0, 0.0, 10.0],
+        ];
+        let idxs: Vec<u32> = vec![0, 1, 2, 0, 2, 3];
+        let floor = world.add_terrain_trimesh(&verts, &idxs);
+        world.remove_collider(floor);
+
+        let sphere = world.add_dynamic_sphere(Vec3::new(0.0, 5.0, 0.0), 0.5);
+        for _ in 0..180 {
+            world.step(1.0 / 60.0);
+        }
+
+        assert!(world.collider_set.get(floor).is_none());
+        let pos = world.body_position(sphere).unwrap();
+        assert!(pos.y < -1.0, "Sphere should fall through, y={}", pos.y);
+    }
+
+    #[test]
     fn test_character_controller_falls_to_floor() {
         let mut world = PhysicsWorld::new();
 
