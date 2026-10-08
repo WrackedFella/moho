@@ -118,55 +118,55 @@ impl FaceDirection {
         match self {
             FaceDirection::PosX => (
                 [
-                    [0.5, -0.5, -0.5], // bottom-back
-                    [0.5, 0.5, -0.5],  // top-back
-                    [0.5, 0.5, 0.5],   // top-front
-                    [0.5, -0.5, 0.5],  // bottom-front
+                    [1.0, 0.0, 0.0], // bottom-back
+                    [1.0, 1.0, 0.0], // top-back
+                    [1.0, 1.0, 1.0], // top-front
+                    [1.0, 0.0, 1.0], // bottom-front
                 ],
                 [1.0, 0.0, 0.0],
             ),
             FaceDirection::NegX => (
                 [
-                    [-0.5, -0.5, 0.5],  // bottom-front
-                    [-0.5, 0.5, 0.5],   // top-front
-                    [-0.5, 0.5, -0.5],  // top-back
-                    [-0.5, -0.5, -0.5], // bottom-back
+                    [0.0, 0.0, 1.0], // bottom-front
+                    [0.0, 1.0, 1.0], // top-front
+                    [0.0, 1.0, 0.0], // top-back
+                    [0.0, 0.0, 0.0], // bottom-back
                 ],
                 [-1.0, 0.0, 0.0],
             ),
             FaceDirection::PosY => (
                 [
-                    [-0.5, 0.5, -0.5], // back-left
-                    [-0.5, 0.5, 0.5],  // front-left
-                    [0.5, 0.5, 0.5],   // front-right
-                    [0.5, 0.5, -0.5],  // back-right
+                    [0.0, 1.0, 0.0], // back-left
+                    [0.0, 1.0, 1.0], // front-left
+                    [1.0, 1.0, 1.0], // front-right
+                    [1.0, 1.0, 0.0], // back-right
                 ],
                 [0.0, 1.0, 0.0],
             ),
             FaceDirection::NegY => (
                 [
-                    [-0.5, -0.5, 0.5],  // front-left
-                    [0.5, -0.5, 0.5],   // front-right
-                    [0.5, -0.5, -0.5],  // back-right
-                    [-0.5, -0.5, -0.5], // back-left
+                    [0.0, 0.0, 1.0], // front-left
+                    [1.0, 0.0, 1.0], // front-right
+                    [1.0, 0.0, 0.0], // back-right
+                    [0.0, 0.0, 0.0], // back-left
                 ],
                 [0.0, -1.0, 0.0],
             ),
             FaceDirection::PosZ => (
                 [
-                    [-0.5, -0.5, 0.5], // bottom-left
-                    [0.5, -0.5, 0.5],  // bottom-right
-                    [0.5, 0.5, 0.5],   // top-right
-                    [-0.5, 0.5, 0.5],  // top-left
+                    [0.0, 0.0, 1.0], // bottom-left
+                    [1.0, 0.0, 1.0], // bottom-right
+                    [1.0, 1.0, 1.0], // top-right
+                    [0.0, 1.0, 1.0], // top-left
                 ],
                 [0.0, 0.0, 1.0],
             ),
             FaceDirection::NegZ => (
                 [
-                    [0.5, -0.5, -0.5],  // bottom-right
-                    [-0.5, -0.5, -0.5], // bottom-left
-                    [-0.5, 0.5, -0.5],  // top-left
-                    [0.5, 0.5, -0.5],   // top-right
+                    [1.0, 0.0, 0.0], // bottom-right
+                    [0.0, 0.0, 0.0], // bottom-left
+                    [0.0, 1.0, 0.0], // top-left
+                    [1.0, 1.0, 0.0], // top-right
                 ],
                 [0.0, 0.0, -1.0],
             ),

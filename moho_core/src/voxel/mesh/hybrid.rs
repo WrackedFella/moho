@@ -9,6 +9,22 @@ use super::blocky::BlockyMeshGenerator;
 use super::marching_cubes::MarchingCubes;
 use glam::IVec3;
 
+// Shift from marching-cubes field-index space to world space (excluding the chunk origin).
+//
+// Two conventions have to be undone to land on the voxel grid, and
+// missing them renders smooth terrain half a unit off-centre on every
+// axis (which misaligns it from the blocky and coarse-LOD paths, and
+// from the grid that raycasting and block removal use):
+//
+// 1. `create_selective_density_field` samples with one cell of padding,
+//    so field index `i` holds the block at world `base + i - 1`.
+// 2. A density sample stands for the *whole* block, so it belongs at
+//    that block's centre — `base + i - 1 + 0.5`.
+//
+// Marching cubes emits vertices in field-index space, so both fold into
+// a single `-0.5` alongside the chunk origin.
+const DENSITY_SAMPLE_TO_WORLD: f32 = -0.5;
+
 /// Classifies the content of a chunk
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChunkContent {
@@ -97,21 +113,6 @@ impl HybridMeshGenerator {
 
     /// Generate mesh using Marching Cubes for smooth terrain
     fn generate_smooth_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
-        // Transform vertices to world space.
-        //
-        // Two conventions have to be undone to land on the voxel grid, and
-        // missing them renders smooth terrain half a unit off-centre on every
-        // axis (which misaligns it from the blocky and coarse-LOD paths, and
-        // from the grid that raycasting and block removal use):
-        //
-        // 1. `create_selective_density_field` samples with one cell of padding,
-        //    so field index `i` holds the block at world `base + i - 1`.
-        // 2. A density sample stands for the *whole* block, so it belongs at
-        //    that block's centre — `base + i - 1 + 0.5`.
-        //
-        // Marching cubes emits vertices in field-index space, so both fold into
-        // a single `-0.5` alongside the chunk origin.
-        const DENSITY_SAMPLE_TO_WORLD: f32 = -0.5;
         // Create density field from blocks
         let density_field = Self::create_density_field_for_chunk(grid, chunk_pos, chunk_size);
 
@@ -163,9 +164,9 @@ impl HybridMeshGenerator {
         // Append smooth mesh with world space transform
         for i in 0..smooth_mesh.vertices.len() {
             let mut vertex = smooth_mesh.vertices[i];
-            vertex[0] += base_pos.x as f32;
-            vertex[1] += base_pos.y as f32;
-            vertex[2] += base_pos.z as f32;
+            vertex[0] += base_pos.x as f32 + DENSITY_SAMPLE_TO_WORLD;
+            vertex[1] += base_pos.y as f32 + DENSITY_SAMPLE_TO_WORLD;
+            vertex[2] += base_pos.z as f32 + DENSITY_SAMPLE_TO_WORLD;
             final_mesh.vertices.push(vertex);
             final_mesh.normals.push(smooth_mesh.normals[i]);
             final_mesh
@@ -179,7 +180,6 @@ impl HybridMeshGenerator {
             final_mesh.sky_exposed.push(smooth_mesh.sky_exposed[i]);
         }
 
-        let smooth_index_offset = smooth_mesh.vertices.len() as u32;
         for &index in &smooth_mesh.indices {
             final_mesh.indices.push(index);
         }
@@ -191,12 +191,7 @@ impl HybridMeshGenerator {
                     let pos = base_pos + IVec3::new(x, y, z);
                     if grid.is_smooth_at(pos) == Some(false) {
                         let block_mesh = BlockyMeshGenerator::generate_mesh(grid, pos);
-                        Self::append_mesh_with_offset(
-                            &mut final_mesh,
-                            &block_mesh,
-                            pos,
-                            smooth_index_offset,
-                        );
+                        Self::append_mesh(&mut final_mesh, &block_mesh, pos);
                     }
                 }
             }
@@ -460,44 +455,6 @@ impl HybridMeshGenerator {
         mesh.indices.push(base);
         mesh.indices.push(base + 2);
         mesh.indices.push(base + 3);
-    }
-
-    /// Append mesh with additional index offset (for mixed meshes)
-    fn append_mesh_with_offset(
-        target: &mut VoxelMesh,
-        source: &VoxelMesh,
-        block_pos: BlockPos,
-        index_offset: u32,
-    ) {
-        let base_index = target.vertices.len() as u32;
-
-        // Add vertices with world space offset
-        for &vertex in &source.vertices {
-            target.vertices.push([
-                vertex[0] + block_pos.x as f32,
-                vertex[1] + block_pos.y as f32,
-                vertex[2] + block_pos.z as f32,
-            ]);
-        }
-
-        // Copy normals, AO, geometry type, and light data
-        target.normals.extend_from_slice(&source.normals);
-        target
-            .ambient_occlusion
-            .extend_from_slice(&source.ambient_occlusion);
-        target
-            .geometry_type
-            .extend_from_slice(&source.geometry_type);
-        target.light_level.extend_from_slice(&source.light_level);
-        target
-            .block_light_rgb
-            .extend_from_slice(&source.block_light_rgb);
-        target.sky_exposed.extend_from_slice(&source.sky_exposed);
-
-        // Add indices with combined offset
-        for &index in &source.indices {
-            target.indices.push(index_offset + base_index + index);
-        }
     }
 }
 
