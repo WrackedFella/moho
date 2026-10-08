@@ -142,11 +142,7 @@ impl MarchingCubes {
                     Self::corner_position(x, y, z, v1_idx),
                     t,
                 );
-                edge_gradients[i] = lerp3(
-                    Self::sample_gradient(density_field, s0),
-                    Self::sample_gradient(density_field, s1),
-                    t,
-                );
+                edge_gradients[i] = Self::edge_gradient(density_field, (s0, d0), (s1, d1), t);
             }
         }
 
@@ -255,15 +251,33 @@ impl MarchingCubes {
         ]
     }
 
-    /// Outward unit normal from an interpolated gradient; up if the gradient vanishes.
+    /// Density gradient at a vertex `t` along the edge from `s0` to `s1`, interpolated from
+    /// the endpoint gradients. When both endpoints sit on flat neighbourhoods (a solid one
+    /// sample from another, say) it falls back to the difference along the edge itself,
+    /// which is never zero because the surface crosses it.
+    fn edge_gradient(
+        field: &[[[f32; 18]; 18]; 18],
+        (s0, d0): ([usize; 3], f32),
+        (s1, d1): ([usize; 3], f32),
+        t: f32,
+    ) -> [f32; 3] {
+        let gradient = lerp3(
+            Self::sample_gradient(field, s0),
+            Self::sample_gradient(field, s1),
+            t,
+        );
+        if gradient.iter().all(|g| g.abs() < 0.0001) {
+            std::array::from_fn(|axis| (s1[axis] as f32 - s0[axis] as f32) * (d1 - d0))
+        } else {
+            gradient
+        }
+    }
+
+    /// Outward unit normal from a non-zero density gradient.
     fn outward_normal(gradient: [f32; 3]) -> [f32; 3] {
         let len = gradient.iter().map(|g| g * g).sum::<f32>().sqrt();
-        if len < 0.0001 {
-            [0.0, 1.0, 0.0]
-        } else {
-            // Density rises into the solid, so outward is the negated gradient.
-            [-gradient[0] / len, -gradient[1] / len, -gradient[2] / len]
-        }
+        // Density rises into the solid, so outward is the negated gradient.
+        gradient.map(|g| -g / len)
     }
 
     /// Convert voxel block data to density field
