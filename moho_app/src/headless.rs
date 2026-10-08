@@ -24,7 +24,7 @@ impl<G: Game> HeadlessLoop<G> {
         assert!(config.tick_hz > 0, "tick_hz must be non-zero");
         Self {
             step: FixedStep::new(config),
-            tick_length: Duration::from_secs(1) / config.tick_hz,
+            tick_length: config.tick_length(),
             next_tick: 0,
             game: std::marker::PhantomData,
         }

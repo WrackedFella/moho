@@ -19,6 +19,15 @@ impl LoopConfig {
             max_catch_up_ticks: 5,
         }
     }
+
+    /// Simulated time one tick covers.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `tick_hz` is 0.
+    pub fn tick_length(&self) -> Duration {
+        Duration::from_secs(1) / self.tick_hz
+    }
 }
 
 const UNITS_PER_TICK: u128 = 1_000_000_000;
@@ -51,9 +60,7 @@ impl FixedStep {
         self.accumulator = self.accumulator.saturating_add(added);
         let due = self.accumulator / UNITS_PER_TICK;
         self.accumulator %= UNITS_PER_TICK;
-        u32::try_from(due).map_or(self.config.max_catch_up_ticks, |d| {
-            d.min(self.config.max_catch_up_ticks)
-        })
+        due.min(u128::from(self.config.max_catch_up_ticks)) as u32
     }
 
     /// Fraction of a tick left over after the last `advance`.
