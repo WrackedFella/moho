@@ -1,6 +1,8 @@
 # SG-F2 — Known Bugs
 
 **Note:** Low priority — none block development
+**Status:** Draft
+**Labels:** feature, line:strategy
 
 ## Summary
 

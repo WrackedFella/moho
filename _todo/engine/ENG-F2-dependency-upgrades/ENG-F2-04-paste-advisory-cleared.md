@@ -2,7 +2,10 @@
 
 **Note:** Delivered by [ENG-F2-09](ENG-F2-09-physics-stack-current.md): `rapier3d` 0.36 no longer pulls in `paste` (checked 2026-10-07), so that card removes the ignore and its PR closes this one
 **Feature:** [ENG-F2](_feature.md)
-**Issue:** #97
+**Issue:** [#97](https://github.com/WrackedFella/moho/issues/97)
+**Status:** unknown
+**Gate class:** unset
+**Labels:** line:engine
 
 ## Summary
 

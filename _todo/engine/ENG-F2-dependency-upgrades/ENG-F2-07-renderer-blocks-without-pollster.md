@@ -1,7 +1,10 @@
 # Renderer device setup blocks on async without pollster
 
 **Feature:** [ENG-F2](_feature.md)
-**Issue:** #100
+**Issue:** [#100](https://github.com/WrackedFella/moho/issues/100)
+**Status:** unknown
+**Gate class:** glue
+**Labels:** line:engine
 
 ## Summary
 

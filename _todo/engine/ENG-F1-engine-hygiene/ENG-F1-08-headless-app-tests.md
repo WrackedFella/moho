@@ -1,12 +1,15 @@
 # The binary's frame and event wiring is tested without a window
 
 **Feature:** [ENG-F1](_feature.md)
+**Status:** Draft
+**Gate class:** glue
+**Labels:** line:engine
 
 ## Summary
 
 The binary's event-loop processors, scene loader, autosave and world
 generator have no tests, so `just mutants` reports 18 survivors on any change
-that touches them (first seen on [ENG-F7-02](../ENG-F7-maintained-ecs/ENG-F7-02-legion-removed.md)). `App` already holds its window,
+that touches them (first seen on [ENG-F7-02](https://github.com/WrackedFella/moho/issues/66)). `App` already holds its window,
 renderer, UI and audio as `Option`s. Only its constructor ties it to on-disk
 prefs. Tests can therefore build a headless `App` and drive the processors
 directly.

@@ -1,6 +1,8 @@
 # ENG-F11 — A game runs on the engine without copying the app loop
 
-**Issue:** #81
+**Issue:** [#81](https://github.com/WrackedFella/moho/issues/81)
+**Status:** unknown
+**Labels:** feature, line:engine
 
 
 ## Summary
@@ -13,7 +15,7 @@ a fork. The engine owns the loop and a game plugs into it. Relies on
 ## Exit criteria
 
 - An engine-line crate (engine row in the layering check) owns the window,
-  event loop, renderer/physics/audio setup and the ADR-0009 accumulator with
+  event loop, renderer and audio setup and the ADR-0009 accumulator with
   a catch-up cap.
 - A game plugs in through one interface: init, fixed tick (with input),
   frame (with interpolation alpha), event.
@@ -51,12 +53,37 @@ a fork. The engine owns the loop and a game plugs into it. Relies on
 - In: loop extraction, accumulator, headless stepping, `GameClock` move.
 - Out: networking; scene/asset management; a second plug-in interface.
 
-## Notes
+## Direction-setting decisions
 
-- Moves the binary's renderer setup, which names wgpu today. Add no new wgpu use outside the
-  renderer crate; [ENG-F20](../ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) contains it.
+| Question | Decision | Why / cost of the alternative |
+|---|---|---|
+| Who produces the per-tick command? | The game, through a `command()` hook the loop calls once before each tick | The loop owning an action map would tie `moho_app` to ENG-F12's design; the hook lets ENG-F12 change how the value is built without changing the seam |
+| Raw winit events or an engine event enum at the seam? | Raw winit events | egui-winit needs them; an enum adds a translation layer with no consumer. Cost: a winit major upgrade changes seam 1 |
+| Where does `GameClock` live? | `moho_app` (ADR-0012); `moho_game` stops holding it | `moho_game` is platform-free and can't depend on `moho_app` |
+| Does the loop create and step the physics world? | No; the game does, in its tick, against `moho_physics` (Justin, 2026-10-08) | Today's setup is strategy wiring (chunk colliders, KCC, actor sync); loop-owned stepping needs a post-step hook that belongs with ENG-F15's body API |
+
+## Deferred
+
+| Idea | Why it waits | Revisit when |
+|---|---|---|
+| Rendering faster than the tick, with interpolation | Needs camera interpolation; strategy runs at 60/60 | ENG-F21 (FPS camera) |
+| Engine-owned physics stepping | No engine physics API yet | ENG-F15 |
+| Bus requests become tick commands (ADR-0011 rule 5) | Their owners rework them | ENG-F12 (input), ENG-F18 (UI shell) |
 
 ## Items
 
 | Item |
 |---|
+| [ENG-F11-01](ENG-F11-01-fixed-tick-whatever-the-frame-rate.md) #143 a game's tick runs at a fixed rate whatever the frame rate |
+| [ENG-F11-02](ENG-F11-02-strategy-game-runs-on-the-engine-loop.md) #144 the strategy game runs on the engine's app loop |
+| [ENG-F11-03](ENG-F11-03-in-game-time-advances-only-through-the-tick.md) #145 in-game time advances only through the engine's tick |
+
+## Notes
+
+- Moves the binary's renderer setup, which names wgpu today. Add no new wgpu use outside the
+  renderer crate; [ENG-F20](../ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) contains it.
+- Order: 01 → 02 → 03. 02 rewrites `src/main.rs` and `src/app/event_loop`; run it
+  after ENG-F10's #138 and #139, which touch those files.
+- ENG-F12-01 (moves `GameState` out of `moho_types`) lands before 02, so the loop moves
+  with the final path. Whichever of ENG-F12-03 and 02 lands second calls the action map's
+  per-tick read from the strategy's `Game::command()`.

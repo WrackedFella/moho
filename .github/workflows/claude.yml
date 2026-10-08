@@ -1,7 +1,8 @@
 name: Claude
 
-# Runs the devflow orchestrator on one issue. Labeling an issue `agent-ready` starts a
-# run; a manual dispatch with an issue number does the same for testing. The default
+# Runs devflow on one issue. Labeling a work item `agent-ready` starts the orchestrator;
+# labeling a `feature` issue starts refinement into work items. A manual dispatch with an
+# issue number runs the orchestrator, for testing. The default
 # GitHub token is enough: board Status is moved by the Board sync workflow, not here.
 on:
   issues:
@@ -16,6 +17,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  actions: write
   id-token: write
 
 concurrency:
@@ -23,9 +25,52 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A feature is refined into work items, not implemented. The refine skill publishes the
+  # cards as sub-issues and escalates open questions as a comment. It labels a card
+  # `agent-ready` only when the project's `Card review` is `not required`; labels set with
+  # the default token start no workflow, so this job dispatches a run per new labeled card.
+  refine:
+    name: Refine feature
+    if: github.event.label.name == 'agent-ready' && contains(github.event.issue.labels.*.name, 'feature')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FEATURE: ${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Note existing cards
+        run: gh api "repos/$GITHUB_REPOSITORY/issues/$FEATURE/sub_issues" --paginate --jq '.[].number' > "$RUNNER_TEMP/cards-before"
+      - uses: anthropics/claude-code-action@v1
+        env:
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
+          plugins: devflow@claude-skills
+          display_report: true
+          prompt: /devflow:refine ${{ github.event.issue.number }}
+          claude_args: |
+            --max-turns 100
+            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running."
+            --allowedTools "Bash(gh issue:*),Bash(gh api:*),Bash(git log:*),Bash(git show:*),Edit,Write,Task,Skill"
+      - name: Start runs for new labeled cards
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/issues/$FEATURE/sub_issues" --paginate \
+            --jq '.[] | select(any(.labels[]; .name == "agent-ready")) | .number' |
+          while read -r card; do
+            grep -qx "$card" "$RUNNER_TEMP/cards-before" && continue
+            gh workflow run claude.yml --repo "$GITHUB_REPOSITORY" \
+              --ref "${{ github.event.repository.default_branch }}" -f issue="$card"
+          done
+
   orchestrate:
     name: Orchestrate
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'agent-ready'
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.label.name == 'agent-ready'
+          && !contains(github.event.issue.labels.*.name, 'feature'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -52,4 +97,4 @@ jobs:
           claude_args: |
             --max-turns 200
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running."
-            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Task,Skill"
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Edit,Write,Task,Skill"

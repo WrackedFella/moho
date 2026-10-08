@@ -1,6 +1,6 @@
 # ENG-F13 — Dependency audit
 
-Verdicts per the [rubric](_feature.md#verdict-rubric), 2026-10-07. **Econ** =
+Verdicts per the [rubric](https://github.com/WrackedFella/moho/issues/83), 2026-10-07. **Econ** =
 economical verdict, **Lean** = lean-engine verdict. **Call** is the user's
 decision (ENG-F13-05); blank until made. Upgrades and removals of unused
 declarations are follow-ups, not verdicts. Evidence: appendices A–D.
@@ -52,7 +52,7 @@ declarations are follow-ups, not verdicts. Evidence: appendices A–D.
 | Call | Owner |
 |---|---|
 | `bincode` → postcard | [ENG-F2-01](../ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md) |
-| Unused declarations, `once_cell`, yanked `chacha20` | [ENG-F2-03](../ENG-F2-dependency-upgrades/ENG-F2-03-platform-default-features-and-unused-deps.md) (list corrected) |
+| Unused declarations, `once_cell`, yanked `chacha20` | [ENG-F2-03](https://github.com/WrackedFella/moho/issues/96) (list corrected) |
 | `log`/`env_logger` → `tracing` | [ENG-F2-05](../ENG-F2-dependency-upgrades/ENG-F2-05-structured-logging.md) |
 | `crossbeam-channel` → std | [ENG-F2-06](../ENG-F2-dependency-upgrades/ENG-F2-06-std-channels.md) |
 | `pollster` → own `block_on` | [ENG-F2-07](../ENG-F2-dependency-upgrades/ENG-F2-07-renderer-blocks-without-pollster.md) |
@@ -72,7 +72,7 @@ Recorded for reference; no verdict changes.
 
 ## Findings outside the verdicts
 
-- [ENG-F2-03](../ENG-F2-dependency-upgrades/ENG-F2-03-platform-default-features-and-unused-deps.md)'s unused list is wrong on `serde` in moho_core (used in 3 files) and misses `ini` (moho_ui), `env_logger` (moho_audio dev), `tempfile` (moho_renderer dev).
+- [ENG-F2-03](https://github.com/WrackedFella/moho/issues/96)'s unused list is wrong on `serde` in moho_core (used in 3 files) and misses `ini` (moho_ui), `env_logger` (moho_audio dev), `tempfile` (moho_renderer dev).
 - ENG-F2's watchlist says wgpu 30 waits on egui-wgpu; egui-wgpu 0.36.2 has shipped. Re-verify.
 - Prefs parsing falls back to defaults on every error, against the "never silently drop" standard; routed to a separate planning session.
 

@@ -31,8 +31,9 @@ cargo run                          # RUST_LOG=debug for logging
   feature's PR into `dev` lists `Closes #…` for each card. The feature's card table
   in `_todo/` names its integration branch. Current: none.
 - **Project board:** WrackedFella, project 1 (https://github.com/users/WrackedFella/projects/1).
-  Its Status field is the only record of item state; cards carry none. Agents change it
-  only through devflow's `scripts/board`.
+  The board and issue are authoritative for item state. Cards mirror Status, Gate class
+  and Labels in their header (`_todo/_STANDARDS.md`, Item state), written only by the
+  sync agent after publish. Agents change the board only through devflow's `scripts/board`.
 - **Planning:** index `_todo/README.md`, rules `_todo/_STANDARDS.md` (features first,
   IDs like `SG-F1-04`, card lifecycle). Check `_todo/ROADMAP.md` for order before
   picking up work.

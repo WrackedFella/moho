@@ -26,6 +26,7 @@ pub use gpu_types::{
     ShadowMatrixGpu,
 };
 pub use moho_render_api::{InstanceGpu, MaterialGpu};
+mod block_on;
 mod buffer_manager;
 pub use buffer_manager::BufferManager;
 mod instance_collector;
