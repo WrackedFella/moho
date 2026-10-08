@@ -23,7 +23,7 @@ and can run alongside 0.2–0.3.
 | 0.3 | [ENG-F8-02](https://github.com/WrackedFella/moho/issues/64): layering check in `just check`; `moho_core` drops `winit` | G2 | 0.2 |
 | 0.4 | [ENG-F7-01](https://github.com/WrackedFella/moho/issues/65): typed chunk and actor stores (domain: tests reviewed first) | G1 | 0.1 |
 | 0.5 | [ENG-F7-02](https://github.com/WrackedFella/moho/issues/66): legion removed; deny ignores name their owning cards | G1, G3 | 0.4 |
-| 0.6 | [ENG-F2-01](engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md) rewritten to [ADR-0006](adr/0006-save-format-contract.md) (decision only) | G4 | — |
+| 0.6 | [ENG-F2-01](https://github.com/WrackedFella/moho/issues/94) rewritten to [ADR-0006](adr/0006-save-format-contract.md) (decision only) | G4 | — |
 
 
 ## M1 — Two consumers can start
@@ -49,13 +49,15 @@ just before the work that needs them, not sooner.
 | 1.9 | [ENG-F11](engine/ENG-F11-shared-app-loop/_feature.md): shared app loop, headless tick, engine `GameClock` | before P.2 |
 | 1.10 | [ENG-F12](engine/ENG-F12-input-actions/_feature.md): game-defined input actions; replaces the former 1.5 | before P.2; after 1.11 |
 | 1.12 | [ADR-0011](adr/0011-simulation-stays-network-ready.md): simulation stays network-ready | now (session B) |
-| 1.1 | Save-format migration to [ADR-0006](adr/0006-save-format-contract.md) ([ENG-F2-01](engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md)), envelope in the engine | before [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) (first new persisted type); an [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) fix only if it changes the save format |
+| 1.1 | Save-format migration to [ADR-0006](adr/0006-save-format-contract.md) ([ENG-F2-01](https://github.com/WrackedFella/moho/issues/94)), envelope in the engine | before [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) (first new persisted type); an [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) fix only if it changes the save format |
 | 1.13 | [ENG-F20](engine/ENG-F20-graphics-upgrade-touches-one-crate/_feature.md): a wgpu or egui upgrade touches one crate | after 1.9; before any M2 engine feature |
 | 1.14 | [ADR-0012](adr/0012-engine-crate-map-for-m2.md): engine crate map, modules first; names the seam list | before ENG-F11 is specced |
 | 1.3 | [ENG-F9](engine/ENG-F9-tests-prove-behaviour/_feature.md): domain tests catch behaviour changes | before [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) |
 | 1.15 | [ENG-F22](engine/ENG-F22-every-test-earns-its-place/_feature.md): every test can fail and earns its place (part of 1.3) | now, in the waves below; moho_core voxel and lighting cards before [ENG-F10-03](https://github.com/WrackedFella/moho/issues/140) branches |
+| 1.16 | [ENG-F2-02](https://github.com/WrackedFella/moho/issues/95) then [ENG-F2-08](https://github.com/WrackedFella/moho/issues/101): egui's current entry points, then wgpu and egui upgraded | at M1 close (once-per-milestone upgrade); ENG-F2-08 doesn't compile before ENG-F2-02 |
+| 1.17 | [ENG-F2-10](https://github.com/WrackedFella/moho/issues/105): terrain noise in-house; `noise` leaves | after 1.8 |
 
-1.1 and 1.3 are triggered by later work, not gate items. 1.15 is not a gate item either.
+1.1 and 1.3 are triggered by later work, not gate items. 1.15–1.17 are not gate items either.
 
 ### 1.15 ENG-F22 card order
 
@@ -93,7 +95,7 @@ the FPS rules crate are greenlit now (they don't wait on M1).
 | 2.8 | [ENG-F18](engine/ENG-F18-shared-ui-shell/_feature.md) shared UI shell | 1.11 |
 | 2.9 | [ENG-F17](engine/ENG-F17-navigation/_feature.md) navigation (Phase 1 AI may use waypoints meanwhile) | 1.8, 1.11 |
 | 2.10 | [ENG-F19](engine/ENG-F19-data-and-mod-content/_feature.md) data and mod content | 1.11; before FPS Phase 2 |
-| 2.11 | [ENG-F21](engine/ENG-F21-character-controller-and-camera/_feature.md) character controller and camera (proposed) | 1.9, 1.10, 2.6; before P.2 |
+| 2.11 | [ENG-F21](engine/ENG-F21-character-controller-and-camera/_feature.md) character controller and camera | 1.9, 1.10, 2.6; before P.2 |
 
 ### Strategy
 
@@ -142,9 +144,9 @@ edits data); ADR-0011's rules cover netcode.
 
 ## Backlog (opportunistic, when touching the area)
 
-[ENG-F1-01](engine/ENG-F1-engine-hygiene/ENG-F1-01-constructor-size-cleanup.md)/[02](engine/ENG-F1-engine-hygiene/ENG-F1-02-error-handling-backlog.md)/[03](engine/ENG-F1-engine-hygiene/ENG-F1-03-god-module-splits.md)/[05](engine/ENG-F1-engine-hygiene/ENG-F1-05-material-model-revisit.md)/[07](engine/ENG-F1-engine-hygiene/ENG-F1-07-lint-ratchet.md), [ENG-F2-02](engine/ENG-F2-dependency-upgrades/ENG-F2-02-egui-ui-architecture-migration.md), [ENG-F3-01](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-01-bind-group-split.md)/[02](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-02-frustum-culling-sorting.md), [ENG-F4](engine/ENG-F4-terrain-rendering-debt/_feature.md)-*, ENG-F2-05/06/07 (`tracing`, std channels, own `block_on`), [ENG-F2-04](engine/ENG-F2-dependency-upgrades/ENG-F2-04-paste-advisory-cleared.md) (`paste` advisory via `rapier3d`),
+[ENG-F1-01](engine/ENG-F1-engine-hygiene/ENG-F1-01-constructor-size-cleanup.md)/[02](engine/ENG-F1-engine-hygiene/ENG-F1-02-error-handling-backlog.md)/[03](engine/ENG-F1-engine-hygiene/ENG-F1-03-god-module-splits.md)/[05](engine/ENG-F1-engine-hygiene/ENG-F1-05-material-model-revisit.md)/[07](engine/ENG-F1-engine-hygiene/ENG-F1-07-lint-ratchet.md), [ENG-F3-01](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-01-bind-group-split.md)/[02](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-02-frustum-culling-sorting.md), [ENG-F4](engine/ENG-F4-terrain-rendering-debt/_feature.md)-*,
 [ENG-F1-08](engine/ENG-F1-engine-hygiene/ENG-F1-08-headless-app-tests.md) (headless app wiring tests),
-[ENG-F1-09](https://github.com/WrackedFella/moho/issues/91) (malformed prefs reported; land before 1.10, ENG-F12, reworks bindings in prefs).
+[ENG-F1-04](engine/ENG-F1-engine-hygiene/ENG-F1-04-keybind-test-layering.md) (keybind test tiers; drop what ENG-F22's UI test cards already cover).
 
 ## Decisions
 

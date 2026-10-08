@@ -65,15 +65,15 @@ to copy, and setting the upgrade rhythm later milestones follow.
 
 | Item |
 |---|
-| [ENG-F2-01 Saves use the ADR-0006 envelope and encoding](ENG-F2-01-bincode-migration.md) |
+| [ENG-F2-01 Saves use the ADR-0006 envelope and encoding](https://github.com/WrackedFella/moho/issues/94) |
 | [ENG-F2-02 UI screens use egui's current entry points](ENG-F2-02-egui-ui-architecture-migration.md) |
 | [ENG-F2-03 Unused dependencies and default features are trimmed](https://github.com/WrackedFella/moho/issues/96) |
-| [ENG-F2-04 The paste advisory ignore is removed](ENG-F2-04-paste-advisory-cleared.md) |
-| [ENG-F2-05 Engine and game logs are structured tracing events](ENG-F2-05-structured-logging.md) |
-| [ENG-F2-06 Event and job channels use the standard library](ENG-F2-06-std-channels.md) |
+| [ENG-F2-04 The paste advisory ignore is removed](https://github.com/WrackedFella/moho/issues/97) |
+| [ENG-F2-05 Engine and game logs are structured tracing events](https://github.com/WrackedFella/moho/issues/98) |
+| [ENG-F2-06 Event and job channels use the standard library](https://github.com/WrackedFella/moho/issues/99) |
 | [ENG-F2-07 Renderer device setup blocks on async without pollster](https://github.com/WrackedFella/moho/issues/100) |
 | [ENG-F2-08 The graphics stack is on current wgpu and egui](ENG-F2-08-graphics-stack-current.md) |
-| [ENG-F2-09 The physics stack is on current rapier3d](ENG-F2-09-physics-stack-current.md) |
+| [ENG-F2-09 The physics stack is on current rapier3d](https://github.com/WrackedFella/moho/issues/102) |
 | [ENG-F2-10 Terrain generation uses in-house Perlin noise](ENG-F2-10-terrain-noise-in-house.md) |
 
 ## Watchlist (blocked, no action until unblocked)
@@ -81,14 +81,14 @@ to copy, and setting the upgrade rhythm later milestones follow.
 - `glam` 0.33→0.34 — blocked on `glamx` (`rapier3d` 0.36 pins glam 0.33 via `glamx` 0.3.1); re-check at the next `rapier3d` release.
 - `wgpu`/`naga` 29→30 — recorded as blocked on `egui-wgpu`; `egui-wgpu` 0.36.2 has since shipped, so re-check in [ENG-F2-08](ENG-F2-08-graphics-stack-current.md).
 - `ttf-parser` unmaintained (RUSTSEC-2026-0192) — removed by [ENG-F2-03](https://github.com/WrackedFella/moho/issues/96) (winit default features off).
-- `bincode` unmaintained (RUSTSEC-2025-0141); 3.0.0 is a `compile_error!` tombstone — replaced by [ENG-F2-01](ENG-F2-01-bincode-migration.md) ([ADR-0006](../../adr/0006-save-format-contract.md)).
+- `bincode` unmaintained (RUSTSEC-2025-0141); 3.0.0 is a `compile_error!` tombstone — replaced by [ENG-F2-01](https://github.com/WrackedFella/moho/issues/94) ([ADR-0006](../../adr/0006-save-format-contract.md)).
 
 ## Notes
 
 - [ENG-F2-02](ENG-F2-02-egui-ui-architecture-migration.md) lands before
   [ENG-F2-08](ENG-F2-08-graphics-stack-current.md): egui 0.36 removes the
   deprecated entry points, and 0.34.3 already has their replacements.
-- [ENG-F2-09](ENG-F2-09-physics-stack-current.md) delivers
-  [ENG-F2-04](ENG-F2-04-paste-advisory-cleared.md): `rapier3d` 0.36 drops `paste`.
+- [ENG-F2-09](https://github.com/WrackedFella/moho/issues/102) delivers
+  [ENG-F2-04](https://github.com/WrackedFella/moho/issues/97): `rapier3d` 0.36 drops `paste`.
 - [ENG-F2-10](ENG-F2-10-terrain-noise-in-house.md) changes strategy-line code;
   it lands after [ENG-F10](../ENG-F10-world-geometry-from-any-source/_feature.md).
