@@ -316,7 +316,11 @@ mod tests {
         }
 
         let pos = world.body_position(sphere).unwrap();
-        assert!(pos.y < 10.0, "Sphere should have fallen, y={}", pos.y);
+        assert!(
+            (0.7..1.2).contains(&pos.y),
+            "Sphere should fall about 9m in 1s, y={}",
+            pos.y
+        );
     }
 
     #[test]
@@ -340,8 +344,11 @@ mod tests {
         }
 
         let pos = world.body_position(sphere).unwrap();
-        // Should rest near y=0.5 (radius)
-        assert!(pos.y < 2.0, "Sphere should rest on floor, y={}", pos.y);
+        assert!(
+            pos.y > 0.4 && pos.y < 0.7,
+            "Sphere should rest on floor at its radius, y={}",
+            pos.y
+        );
     }
 
     #[test]
@@ -372,28 +379,37 @@ mod tests {
     #[test]
     fn test_character_controller_falls_to_floor() {
         let mut world = PhysicsWorld::new();
-
-        // Build a flat floor at y=0
-        let verts = vec![
-            [-10.0f32, 0.0, -10.0],
-            [10.0, 0.0, -10.0],
-            [10.0, 0.0, 10.0],
-            [-10.0, 0.0, 10.0],
-        ];
-        let idxs: Vec<u32> = vec![0, 1, 2, 0, 2, 3];
-        world.set_world_mesh(WorldMeshId(0), &quad_mesh(&verts, &idxs));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
         world.add_character(Vec3::new(0.0, 10.0, 0.0));
 
         for _ in 0..120 {
             world.move_character(Vec3::ZERO, 1.0 / 60.0);
+            world.step(1.0 / 60.0);
         }
 
         let pos = world.character_position().unwrap();
         assert!(
-            pos.y < 3.0,
-            "Character should have fallen near floor, y={}",
+            (1.1..1.3).contains(&pos.y),
+            "Capsule centre should rest at half-height plus radius, y={}",
             pos.y
         );
+        assert!(world.is_grounded);
+    }
+
+    #[test]
+    fn set_character_position_teleports_and_stops_falling() {
+        let mut world = PhysicsWorld::new();
+        world.add_character(Vec3::new(0.0, 10.0, 0.0));
+        for _ in 0..10 {
+            world.move_character(Vec3::ZERO, 1.0 / 60.0);
+        }
+        assert!(world.vertical_velocity < 0.0);
+
+        let target = Vec3::new(3.0, 20.0, -4.0);
+        world.set_character_position(target);
+
+        assert_eq!(world.character_position(), Some(target));
+        assert_eq!(world.vertical_velocity, 0.0);
     }
 
     #[test]
