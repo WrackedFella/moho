@@ -269,24 +269,3 @@ impl<'a> ResourceBuilder<'a> {
         ))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_builder_compiles() {
-        // This test verifies that the builder API compiles correctly
-        // Actual rendering tests require a GPU and are in integration tests
-        fn _example_usage(
-            window: &winit::window::Window,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            let _renderer = RendererBuilder::new(window)
-                .init_device()?
-                .create_pipelines()?
-                .allocate_resources()?
-                .build()?;
-            Ok(())
-        }
-    }
-}

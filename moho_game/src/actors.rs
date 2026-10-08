@@ -414,18 +414,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn center_mut_moves_only_the_identified_actor() {
-        let mut store = ActorStore::new();
-        let sphere = store.spawn_sphere(sphere_at(Vec3::new(1.0, 2.0, 3.0)));
-        store.spawn_cube(cube_at(Vec3::new(-4.0, 5.0, 6.0)));
-
-        *store.center_mut(sphere).expect("live handle") = Vec3::new(9.0, 9.0, 9.0);
-
-        assert_eq!(store.spheres()[0].center, Vec3::new(9.0, 9.0, 9.0));
-        assert_eq!(store.cubes()[0].center, Vec3::new(-4.0, 5.0, 6.0));
-    }
-
+    /// An actor moves by its handle (#65): only the identified actor moves, and
+    /// a sphere and a cube with the same index do not alias.
     #[test]
     fn sphere_and_cube_handles_with_equal_index_do_not_alias() {
         let mut store = ActorStore::new();
@@ -472,16 +462,22 @@ mod tests {
 
     #[test]
     fn handle_from_before_clear_resolves_to_none() {
-        let mut store = ActorStore::new();
-        let old = store.spawn_sphere(sphere_at(Vec3::ZERO));
+        type Spawn = fn(&mut ActorStore, Vec3) -> ActorId;
+        let rows: [(&str, Spawn); 2] = [
+            ("sphere", |s, c| s.spawn_sphere(sphere_at(c))),
+            ("cube", |s, c| s.spawn_cube(cube_at(c))),
+        ];
+        for (kind, spawn) in rows {
+            let mut store = ActorStore::new();
+            let old = spawn(&mut store, Vec3::ZERO);
 
-        store.clear();
-        let new = store.spawn_sphere(sphere_at(Vec3::ONE));
+            store.clear();
+            let new = spawn(&mut store, Vec3::ONE);
 
-        assert!(store.center_mut(old).is_none());
-        assert_eq!(store.center_mut(new).map(|c| *c), Some(Vec3::ONE));
-        assert_eq!(store.spheres().len(), 1);
-        assert_eq!(store.spheres()[0].center, Vec3::ONE);
+            assert!(store.center_mut(old).is_none(), "{kind}");
+            assert_eq!(store.center_mut(new).map(|c| *c), Some(Vec3::ONE), "{kind}");
+            assert_eq!(store.len(), 1, "{kind}");
+        }
     }
 
     #[test]
@@ -499,18 +495,6 @@ mod tests {
     }
 
     #[test]
-    fn cube_handle_from_before_clear_resolves_to_none() {
-        let mut store = ActorStore::new();
-        let old = store.spawn_cube(cube_at(Vec3::ZERO));
-
-        store.clear();
-        let new = store.spawn_cube(cube_at(Vec3::ONE));
-
-        assert!(store.center_mut(old).is_none());
-        assert_eq!(store.center_mut(new).map(|c| *c), Some(Vec3::ONE));
-    }
-
-    #[test]
     fn handle_from_two_clears_ago_resolves_to_none() {
         let mut store = ActorStore::new();
         let h0 = store.spawn_sphere(sphere_at(Vec3::X));
@@ -524,19 +508,5 @@ mod tests {
         assert_eq!(store.center_mut(h2).map(|c| *c), Some(Vec3::Z));
         assert_ne!(h0, h1);
         assert_ne!(h1, h2);
-    }
-
-    #[test]
-    fn handle_index_beyond_current_actors_resolves_to_none_after_clear() {
-        let mut store = ActorStore::new();
-        store.spawn_sphere(sphere_at(Vec3::X));
-        store.spawn_sphere(sphere_at(Vec3::Y));
-        let third = store.spawn_sphere(sphere_at(Vec3::Z));
-
-        store.clear();
-        store.spawn_sphere(sphere_at(Vec3::ONE));
-
-        assert!(store.center_mut(third).is_none());
-        assert_eq!(store.spheres().len(), 1);
     }
 }

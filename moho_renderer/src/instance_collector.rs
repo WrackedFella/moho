@@ -286,29 +286,6 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_cubes() {
-        let mut collector = InstanceCollector::new();
-        let mut material_table = MaterialTable::new();
-
-        let mat = MaterialType::Metal {
-            albedo: glam::Vec3::new(0.8, 0.8, 0.8),
-            fuzz: 0.1,
-        };
-        let cubes = vec![
-            TestCube::new(glam::Vec3::ZERO, 1.0, 1.0, 1.0, mat),
-            TestCube::new(glam::Vec3::new(3.0, 0.0, 0.0), 2.0, 2.0, 2.0, mat),
-        ];
-        let spheres: Vec<TestSphere> = Vec::new();
-
-        collector.collect_actors(&spheres, &cubes, &mut material_table);
-
-        assert_eq!(collector.sphere_instances().len(), 0);
-        assert_eq!(collector.cube_instances().len(), 2);
-        assert_eq!(collector.chunk_renders().len(), 0);
-        assert_eq!(collector.total_instances(), 2);
-    }
-
-    #[test]
     fn test_collect_chunks() {
         let mut collector = InstanceCollector::new();
         let mut buffer_manager = BufferManager::new();
@@ -343,7 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_mixed_objects() {
+    fn collect_routes_spheres_cubes_and_chunks_to_their_lists() {
         let mut collector = InstanceCollector::new();
         let mut material_table = MaterialTable::new();
         let mut buffer_manager = BufferManager::new();
@@ -359,13 +336,10 @@ mod tests {
         };
 
         let spheres = vec![TestSphere::new(glam::Vec3::ZERO, 1.0, mat1)];
-        let cubes = vec![TestCube::new(
-            glam::Vec3::new(3.0, 0.0, 0.0),
-            1.0,
-            1.0,
-            1.0,
-            mat2,
-        )];
+        let cubes = vec![
+            TestCube::new(glam::Vec3::new(3.0, 0.0, 0.0), 1.0, 1.0, 1.0, mat2),
+            TestCube::new(glam::Vec3::new(6.0, 0.0, 0.0), 2.0, 2.0, 2.0, mat2),
+        ];
 
         let chunk = VoxelChunk::new(
             glam::IVec3::new(0, 0, 0),
@@ -386,9 +360,14 @@ mod tests {
         collector.collect_chunks(store.iter_mut(), &mut buffer_manager, &mut renderer, 0);
 
         assert_eq!(collector.sphere_instances().len(), 1);
-        assert_eq!(collector.cube_instances().len(), 1);
+        assert_eq!(collector.cube_instances().len(), 2);
         assert_eq!(collector.chunk_renders().len(), 1);
-        assert_eq!(collector.total_instances(), 3);
+        assert_eq!(collector.total_instances(), 4);
+        assert_eq!(
+            material_table.as_slice().len(),
+            2,
+            "cubes share one material"
+        );
     }
 
     #[test]
