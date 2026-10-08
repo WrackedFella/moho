@@ -196,18 +196,6 @@ impl VoxelChunk {
         self.vertices.is_empty()
     }
 
-    /// Get approximate memory usage of this chunk in bytes
-    pub fn memory_size(&self) -> usize {
-        self.vertices.len() * std::mem::size_of::<[f32; 3]>()
-            + self.normals.len() * std::mem::size_of::<[f32; 3]>()
-            + self.ambient_occlusion.len() * std::mem::size_of::<f32>()
-            + self.geometry_type.len() * std::mem::size_of::<u32>()
-            + self.light_level.len() * std::mem::size_of::<f32>()
-            + self.block_light_rgb.len() * std::mem::size_of::<[f32; 3]>()
-            + self.sky_exposed.len() * std::mem::size_of::<f32>()
-            + self.indices.len() * std::mem::size_of::<u32>()
-    }
-
     /// Check if this chunk has geometry to render
     pub fn has_geometry(&self) -> bool {
         !self.vertices.is_empty() && !self.indices.is_empty()
@@ -274,28 +262,6 @@ mod tests {
     }
 
     #[test]
-    fn test_chunk_mesh_handle() {
-        let mut chunk = VoxelChunk::new(
-            IVec3::ZERO,
-            vec![[0.0, 0.0, 0.0]],
-            vec![[0.0, 1.0, 0.0]],
-            vec![1.0],
-            vec![1],
-            vec![1.0],
-            vec![[1.0, 1.0, 1.0]],
-            vec![1.0],
-            vec![0],
-            0,
-        );
-
-        assert_eq!(chunk.get_mesh_handle(), None);
-
-        chunk.set_mesh_handle(42);
-        assert_eq!(chunk.get_mesh_handle(), Some(42));
-        assert!(chunk.is_uploaded());
-    }
-
-    #[test]
     fn test_from_grid_lod_stamps_lod_field() {
         use super::super::grid::VoxelGrid;
         let grid = VoxelGrid::new(16);
@@ -303,25 +269,5 @@ mod tests {
         assert_eq!(chunk0.lod(), 0);
         let chunk1 = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 1);
         assert_eq!(chunk1.lod(), 1);
-    }
-
-    #[test]
-    fn test_chunk_memory_size() {
-        let chunk = VoxelChunk::new(
-            IVec3::ZERO,
-            vec![[0.0, 0.0, 0.0]; 100],
-            vec![[0.0, 1.0, 0.0]; 100],
-            vec![1.0; 100],
-            vec![1; 100],
-            vec![1.0; 100],
-            vec![[1.0, 1.0, 1.0]; 100],
-            vec![1.0; 100],
-            vec![0; 150],
-            0,
-        );
-
-        let expected =
-            100 * 12 + 100 * 12 + 100 * 4 + 100 * 4 + 100 * 4 + 100 * 12 + 100 * 4 + 150 * 4; // verts + normals + ao + geo_type + light + block_light_rgb + sky_exposed + indices
-        assert_eq!(chunk.memory_size(), expected);
     }
 }

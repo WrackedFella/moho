@@ -128,24 +128,18 @@ Chunk-based voxel terrain.
 
 **Architecture:**
 - `VoxelGrid` - Stores block data in 3D grid
-- `VoxelChunk` - Fixed-size chunk (typically 64×64×64)
-- `VoxelBlock` - Individual block with material/resource data
+- `VoxelChunk` - Fixed-size 16×16×16 chunk
+- `BlockData` - Snapshot of a stored block's position, material and resource
 
 **Usage:**
 ```rust
-use moho_core::voxel::{VoxelGrid, VoxelBlock, Material};
+use moho_core::voxel::{BlockPos, VoxelGrid};
 
-// Create a grid
-let mut grid = VoxelGrid::new(64, 64, 64);
+// Create a grid (chunk size must be 16)
+let mut grid = VoxelGrid::new(16);
 
-// Set blocks
-grid.set_block(32, 10, 32, VoxelBlock {
-    material: Material::Grass,
-    resource: None,
-});
-
-// Extract visible faces for rendering
-let visible_faces = grid.extract_visible_faces(chunk_x, chunk_y, chunk_z);
+// Place a block through the mutator: position, material id, optional resource id
+grid.mutator().place(BlockPos::new(32, 10, 32), 0, None);
 ```
 
 ### Camera
