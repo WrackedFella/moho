@@ -7,7 +7,7 @@ use super::super::grid::{BlockPos, VoxelGrid};
 use super::VoxelMesh;
 use super::blocky::BlockyMeshGenerator;
 use super::marching_cubes::MarchingCubes;
-use glam::IVec3;
+use glam::{IVec3, Vec3};
 
 // Shift from marching-cubes field-index space to world space (excluding the chunk origin).
 //
@@ -103,7 +103,9 @@ impl HybridMeshGenerator {
         match content {
             ChunkContent::Empty => VoxelMesh::empty(),
 
-            ChunkContent::AllSmooth => Self::generate_smooth_mesh(grid, chunk_pos, chunk_size),
+            ChunkContent::AllSmooth => {
+                Self::generate_smooth_mesh(grid, chunk_pos, chunk_size, false)
+            }
 
             ChunkContent::AllBlocky => Self::generate_blocky_mesh(grid, chunk_pos, chunk_size),
 
@@ -111,19 +113,23 @@ impl HybridMeshGenerator {
         }
     }
 
-    /// Generate mesh using Marching Cubes for smooth terrain
-    fn generate_smooth_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
-        // Create density field from blocks
-        let density_field = Self::create_density_field_for_chunk(grid, chunk_pos, chunk_size);
-
-        // Generate mesh using Marching Cubes
+    /// Generate mesh using Marching Cubes for smooth terrain, in world space.
+    ///
+    /// With `only_smooth`, blocky blocks are left out of the density field so a
+    /// mixed chunk's terrain doesn't wrap its structures.
+    fn generate_smooth_mesh(
+        grid: &VoxelGrid,
+        chunk_pos: IVec3,
+        chunk_size: i32,
+        only_smooth: bool,
+    ) -> VoxelMesh {
+        let density_field =
+            Self::create_selective_density_field(grid, chunk_pos, chunk_size, only_smooth);
         let mut mesh = MarchingCubes::generate_mesh(&density_field, chunk_size as usize);
 
-        let base_pos = chunk_pos * chunk_size;
+        let offset = (chunk_pos * chunk_size).as_vec3() + Vec3::splat(DENSITY_SAMPLE_TO_WORLD);
         for vertex in &mut mesh.vertices {
-            vertex[0] += base_pos.x as f32 + DENSITY_SAMPLE_TO_WORLD;
-            vertex[1] += base_pos.y as f32 + DENSITY_SAMPLE_TO_WORLD;
-            vertex[2] += base_pos.z as f32 + DENSITY_SAMPLE_TO_WORLD;
+            *vertex = (Vec3::from(*vertex) + offset).to_array();
         }
 
         mesh
@@ -152,37 +158,8 @@ impl HybridMeshGenerator {
 
     /// Generate mesh for mixed chunk (smooth + blocky)
     fn generate_mixed_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
-        let mut final_mesh = VoxelMesh::empty();
+        let mut final_mesh = Self::generate_smooth_mesh(grid, chunk_pos, chunk_size, true);
         let base_pos = chunk_pos * chunk_size;
-
-        // Generate smooth terrain mesh (only for smooth blocks)
-        let smooth_density = Self::create_selective_density_field(
-            grid, chunk_pos, chunk_size, true, // only smooth blocks
-        );
-        let smooth_mesh = MarchingCubes::generate_mesh(&smooth_density, chunk_size as usize);
-
-        // Append smooth mesh with world space transform
-        for i in 0..smooth_mesh.vertices.len() {
-            let mut vertex = smooth_mesh.vertices[i];
-            vertex[0] += base_pos.x as f32 + DENSITY_SAMPLE_TO_WORLD;
-            vertex[1] += base_pos.y as f32 + DENSITY_SAMPLE_TO_WORLD;
-            vertex[2] += base_pos.z as f32 + DENSITY_SAMPLE_TO_WORLD;
-            final_mesh.vertices.push(vertex);
-            final_mesh.normals.push(smooth_mesh.normals[i]);
-            final_mesh
-                .ambient_occlusion
-                .push(smooth_mesh.ambient_occlusion[i]);
-            final_mesh.geometry_type.push(smooth_mesh.geometry_type[i]);
-            final_mesh.light_level.push(smooth_mesh.light_level[i]);
-            final_mesh
-                .block_light_rgb
-                .push(smooth_mesh.block_light_rgb[i]);
-            final_mesh.sky_exposed.push(smooth_mesh.sky_exposed[i]);
-        }
-
-        for &index in &smooth_mesh.indices {
-            final_mesh.indices.push(index);
-        }
 
         // Generate blocky structure meshes (only for blocky blocks)
         for x in 0..chunk_size {
@@ -198,15 +175,6 @@ impl HybridMeshGenerator {
         }
 
         final_mesh
-    }
-
-    /// Create density field for entire chunk (all smooth blocks)
-    fn create_density_field_for_chunk(
-        grid: &VoxelGrid,
-        chunk_pos: IVec3,
-        chunk_size: i32,
-    ) -> [[[f32; 18]; 18]; 18] {
-        Self::create_selective_density_field(grid, chunk_pos, chunk_size, false)
     }
 
     /// Create density field with optional filtering
