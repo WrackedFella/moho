@@ -1,6 +1,9 @@
 # Hotbar displays the player's mined resources
 
 **Feature:** [SG-F1](_feature.md)
+**Status:** Draft
+**Gate class:** unset
+**Labels:** line:strategy
 
 ## Summary
 

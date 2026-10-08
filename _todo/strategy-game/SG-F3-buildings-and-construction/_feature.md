@@ -1,5 +1,7 @@
 # SG-F3 — Player places buildings from a build menu
 
+**Status:** Draft
+**Labels:** feature, line:strategy
 
 ## Summary
 

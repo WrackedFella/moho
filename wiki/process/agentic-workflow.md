@@ -5,7 +5,8 @@ specs behind deterministic gates. Roles, agents and generic skills come from the
 `devflow` plugin ([claude-skills](https://github.com/WrackedFella/claude-skills)),
 pinned in `.claude/settings.json` for local sessions (cloud sessions ignore the pin; see
 [Cloud runtime](#cloud-runtime)). Work-item state lives on the
-[Moho project board](https://github.com/users/WrackedFella/projects/1), not in the cards.
+[Moho project board](https://github.com/users/WrackedFella/projects/1); cards mirror Status,
+Gate class and Labels in their header, kept current by a sync agent with board access.
 
 ## Flow
 
@@ -53,6 +54,7 @@ home, so lanes never need to talk to each other:
 | Claude Code projects (one per line) | The lane: design discussion, planning and implementation threads | You and the project's coordinator; decisions leave as cards, ADRs or hand-off blocks |
 | `_todo/` cards, ADRs, `wiki/` | Decisions and specs | Planning sessions |
 | Project board | State and priority | Board sync workflow (Status); you (Ready, Agent-eligible, priority) |
+| Card header fields | Mirror of board Status, Gate class, labels | Sync agent (copies from GitHub) |
 | Session transcripts | Nothing durable | — |
 
 Rules:

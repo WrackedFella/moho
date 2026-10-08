@@ -1,5 +1,7 @@
 # SG-F1 — Core Interaction & Resource Loop
 
+**Status:** Draft
+**Labels:** feature, line:strategy
 
 ## Summary
 

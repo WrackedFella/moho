@@ -43,7 +43,7 @@ The engine row of [ADR-0005](0005-crate-lines-and-dependency-direction.md)'s tab
 Placement of the rest:
 
 - **Scene import** (ENG-F14) and **navigation** (ENG-F17) are modules of an
-  existing engine crate, unless [ENG-F13](../engine/ENG-F13-dependency-audit/_feature.md)'s verdict on `gltf` or the navmesh
+  existing engine crate, unless [ENG-F13](https://github.com/WrackedFella/moho/issues/83)'s verdict on `gltf` or the navmesh
   crate makes a compile-time boundary worth a crate. Each spec records which.
 - **Character controller and camera** (proposed ENG-F21, generic controller and
   camera): its spec picks the home, within the engine row.

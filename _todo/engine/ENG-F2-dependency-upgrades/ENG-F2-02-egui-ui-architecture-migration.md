@@ -1,7 +1,10 @@
 # UI screens use egui's current entry points
 
 **Feature:** [ENG-F2](_feature.md)
-**Issue:** #95
+**Issue:** [#95](https://github.com/WrackedFella/moho/issues/95)
+**Status:** unknown
+**Gate class:** glue
+**Labels:** line:engine
 
 ## Summary
 

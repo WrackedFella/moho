@@ -1,5 +1,7 @@
 # ENG-F14 — A game loads a static scene from a file
 
+**Status:** Draft
+**Labels:** feature, line:engine
 
 ## Summary
 
