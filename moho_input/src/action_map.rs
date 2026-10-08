@@ -145,13 +145,14 @@ impl<A: Action> ActionMap<A> {
     fn refresh_held(&mut self) {
         let held = A::ALL
             .iter()
-            .filter(|&&action| {
+            .enumerate()
+            .filter(|&(_, &action)| {
                 self.bindings
                     .get(action)
                     .iter()
                     .any(|binding| self.down.contains(binding))
             })
-            .fold(0, |mask, &action| mask | bit(action));
+            .fold(0, |mask, (index, _)| mask | 1 << index);
         self.pressed |= held & !self.held;
         self.released |= self.held & !held;
         self.held = held;

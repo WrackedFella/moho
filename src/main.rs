@@ -7,7 +7,6 @@
 use moho_core::prefs::Prefs;
 use moho_game::scene::SceneEntities;
 use moho_input::action_map::{self, ActionFrame};
-use moho_input::key::Key;
 use moho_ui::actions::StrategyAction;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -324,12 +323,12 @@ impl App {
             frame.held(StrategyAction::Jump) || frame.pressed(StrategyAction::Jump);
     }
 
-    /// Handle keyboard input for camera controls
+    /// Handle global keyboard hotkeys
     fn handle_keyboard_input(&mut self, event: &KeyEvent) {
         let pressed = event.state == ElementState::Pressed;
 
         if let PhysicalKey::Code(keycode) = event.physical_key {
-            // Handle global hotkeys first (work in any state)
+            // Global hotkeys (work in any state)
             match keycode {
                 KeyCode::Backquote => {
                     // Backtick (`) toggles console
@@ -341,7 +340,6 @@ impl App {
                             _ => {}
                         }
                     }
-                    return; // Don't process further
                 }
                 KeyCode::F3 => {
                     // F3 toggles the debug HUD overlay
@@ -351,7 +349,6 @@ impl App {
                     {
                         adapter.toggle_debug_hud();
                     }
-                    return;
                 }
                 KeyCode::F4 => {
                     // F4 toggles the chunk-boundary debug minimap
@@ -361,16 +358,12 @@ impl App {
                     {
                         adapter.toggle_overlay("chunk_debug");
                     }
-                    return;
                 }
                 // Escape closes console if open, otherwise opens menu
                 KeyCode::Escape if pressed => {
                     use crate::game_state::GameState;
                     match self.game_state {
-                        GameState::ConsoleOpen => {
-                            self.exit_console();
-                            return;
-                        }
+                        GameState::ConsoleOpen => self.exit_console(),
                         GameState::Playing => {
                             // ESC to show menu
                             self.show_menu();
@@ -381,34 +374,24 @@ impl App {
                             {
                                 adapter.show_menu("start");
                             }
-                            return;
                         }
                         _ => {}
                     }
                 }
                 _ => {}
             }
-
-            // Only process game input in Playing mode
-            if self.game_state != crate::game_state::GameState::Playing {
-                return;
-            }
-
-            if let Some(key) = Key::from_winit(event.physical_key) {
-                self.input.actions.key(key, pressed);
-            }
         }
     }
 
-    /// Handle mouse motion for camera look
-    fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
+    /// Feed raw device input (mouse look) to the action map
+    fn handle_device_input(&mut self, event: &DeviceEvent) {
         // Only process input in game mode and first person camera mode
         if self.game_state != crate::game_state::GameState::Playing
             || self.simulation.camera_mode() != moho_game::controller::CameraMode::FirstPerson
         {
             return;
         }
-        self.input.actions.mouse_motion(delta.0, delta.1);
+        action_map::handle_device_event(&mut self.input.actions, event);
     }
 
     /// Grab and hide the cursor for game mode
@@ -628,14 +611,13 @@ impl ApplicationHandler for App {
             return;
         }
 
-        if matches!(event, WindowEvent::MouseInput { .. })
-            && self.game_state == crate::game_state::GameState::Playing
-        {
+        // Hotkeys run first; an event that leaves or enters play does not reach the action map.
+        let was_playing = self.game_state == crate::game_state::GameState::Playing;
+        let window_event_handler = app::event_loop::WindowEventHandler::new();
+        window_event_handler.handle_window_event(self, event_loop, &event);
+        if was_playing && self.game_state == crate::game_state::GameState::Playing {
             action_map::handle_window_event(&mut self.input.actions, &event);
         }
-
-        let window_event_handler = app::event_loop::WindowEventHandler::new();
-        window_event_handler.handle_window_event(self, event_loop, event);
     }
 
     fn device_event(
@@ -645,7 +627,7 @@ impl ApplicationHandler for App {
         event: DeviceEvent,
     ) {
         let window_event_handler = app::event_loop::WindowEventHandler::new();
-        window_event_handler.handle_device_event(self, event);
+        window_event_handler.handle_device_event(self, &event);
     }
 }
 

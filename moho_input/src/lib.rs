@@ -1,9 +1,9 @@
-//! Engine input vocabulary shared by the binary and ui crates: platform-free
-//! keys, and action-keyed bindings that persist by name.
+//! Engine input: platform-free keys and mouse buttons, action-keyed bindings that
+//! persist by name, and the action map that turns device input into one frame per tick.
 
 pub mod action_map;
 pub mod bindings;
-pub mod filter;
+mod filter;
 pub mod key;
 
 pub use bindings::Action;

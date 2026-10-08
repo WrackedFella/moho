@@ -13,6 +13,24 @@ pub enum Binding {
     Mouse(MouseButton),
 }
 
+impl Binding {
+    /// Persisted name, e.g. `W` or `Mouse Left`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Binding::Key(key) => key.name(),
+            Binding::Mouse(button) => button.name(),
+        }
+    }
+
+    /// Text shown to the player, e.g. `Spacebar` or `Mouse Left`.
+    pub fn label(self) -> &'static str {
+        match self {
+            Binding::Key(key) => key.label(),
+            Binding::Mouse(button) => button.name(),
+        }
+    }
+}
+
 /// A game's action enum: stable names and default bindings, as data.
 pub trait Action: Copy + Eq + Hash + Debug + 'static {
     const ALL: &'static [Self];
@@ -113,10 +131,7 @@ fn format_list(bindings: &[Binding]) -> String {
     }
     bindings
         .iter()
-        .map(|binding| match binding {
-            Binding::Key(key) => key.name(),
-            Binding::Mouse(button) => button.name(),
-        })
+        .map(|binding| binding.name())
         .collect::<Vec<_>>()
         .join(", ")
 }
