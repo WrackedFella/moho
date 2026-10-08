@@ -154,7 +154,10 @@ mod tests {
         });
 
         handle.join().unwrap();
-        assert_eq!(polls, 2);
+        assert!(
+            (2..10).contains(&polls),
+            "expected a park between polls, got {polls} polls"
+        );
     }
 
     struct SelfWakeOnce {

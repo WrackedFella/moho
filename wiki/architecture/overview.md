@@ -25,14 +25,13 @@ flowchart TD
     audio["moho_audio<br/>rodio"]:::engine
     physics["moho_physics<br/>rapier3d"]:::engine
     input["moho_input<br/>Key, Action, ActionBindings"]:::engine
-    types["moho_types<br/>GameState, coordinator"]:::engine
     app["moho_app<br/>fixed-step loop, Game trait"]:::engine
 
-    ui --> renderer & input & core & game & types
+    ui --> renderer & input & core & game
     game --> core & rapi
     renderer --> rapi
     audio --> core
-    physics --> core
+    physics --> rapi
     core --> rapi
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
@@ -101,9 +100,7 @@ flowchart TD
 
 Changes from today:
 
-- `moho_types` is deleted; `GameState` moves to the strategy line (ENG-F12).
 - `moho_core::input` folds into `moho_input`; voxels leave `moho_core` for `moho_voxel` (ENG-F10).
-- `moho_physics` drops its unused `moho_core` dependency and consumes the mesh contract.
 - Scene import (ENG-F14), navigation (ENG-F17) and the character controller and camera
   (ENG-F21) are modules of an engine crate unless their specs name a boundary.
 
@@ -154,7 +151,7 @@ flowchart LR
 | Chunk meshes | `ChunkStore` in `moho_core`; the renderer holds its own copy as `WorldMeshes` ([rendering](rendering.md#world-geometry)) |
 | Actors (spheres, cubes) | `ActorStore` in `moho_game` |
 | Time of day | `moho_game::GameClock`, advanced by the simulation step |
-| App mode | `moho_types::GameState` ([input-and-state](input-and-state.md#gamestate)) |
+| App mode | `moho_ui::GameState` ([input-and-state](input-and-state.md#gamestate)) |
 | GPU resources | `moho_renderer`; game types reach it only through `moho_render_api` ([rendering](rendering.md)) |
 | Prefs | `moho_core::prefs::Prefs` ([format](../reference/prefs-format.md)) |
 

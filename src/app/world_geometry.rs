@@ -4,7 +4,7 @@ use crate::App;
 use glam::IVec3;
 use moho_core::materials::MaterialType;
 use moho_core::voxel::VoxelChunk;
-use moho_game::scene::SceneEntities;
+use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshError, WorldMeshId};
 use moho_renderer::Scene;
 
@@ -44,51 +44,76 @@ pub fn register_terrain_material(scene: &mut Scene) -> u32 {
     scene.material_table.find_or_push(&terrain)
 }
 
-/// Queue `chunk`'s mesh with the renderer. A refused mesh is logged and the
-/// chunk is not drawn.
-fn upsert_chunk_mesh(scene: &mut Scene, material_idx: u32, chunk: &VoxelChunk) {
+/// Queue `chunk`'s mesh with the renderer and register its collider. A refused
+/// mesh is logged; the chunk is neither drawn nor solid.
+fn upsert_chunk_mesh(
+    scene: &mut Scene,
+    physics: Option<&mut PhysicsWorld>,
+    material_idx: u32,
+    chunk: &VoxelChunk,
+) {
     let id = chunk_mesh_id(chunk.chunk_pos());
     match chunk_world_mesh(chunk) {
         Ok(mesh) => {
+            if let Some(pw) = physics {
+                pw.set_world_mesh(id, &mesh);
+            }
             scene.world_meshes_mut().upsert(id, mesh, material_idx);
         }
         Err(error) => {
             tracing::warn!(chunk = ?chunk.chunk_pos(), %error, "chunk mesh refused, not drawn");
-            scene.world_meshes_mut().remove(id);
+            remove_chunk_mesh(scene, physics, id);
         }
     }
 }
 
-/// Put `chunk` in the store and hand its mesh to the renderer, replacing any
-/// previous chunk at that position.
-pub fn insert_chunk(app: &mut App, chunk: VoxelChunk) -> Option<VoxelChunk> {
-    upsert_chunk_mesh(&mut app.scene, app.terrain_material_idx, &chunk);
-    app.entities.chunks.insert(chunk)
-}
-
-/// Drop the chunk at `pos` from the store and stop drawing it.
-pub fn remove_chunk(
-    scene: &mut Scene,
-    entities: &mut SceneEntities,
-    pos: IVec3,
-) -> Option<VoxelChunk> {
-    scene.world_meshes_mut().remove(chunk_mesh_id(pos));
-    entities.chunks.remove(pos)
-}
-
-/// Hand the mesh of every chunk in the store to the renderer, after a bulk load.
-pub fn upsert_all_chunks(app: &mut App) {
-    for chunk in app.entities.chunks.iter() {
-        upsert_chunk_mesh(&mut app.scene, app.terrain_material_idx, chunk);
+fn remove_chunk_mesh(scene: &mut Scene, physics: Option<&mut PhysicsWorld>, id: WorldMeshId) {
+    scene.world_meshes_mut().remove(id);
+    if let Some(pw) = physics {
+        pw.remove_world_mesh(id);
     }
 }
 
-/// Stop drawing every chunk in the store, before it is cleared.
+/// Put `chunk` in the store and hand its mesh to the renderer and physics,
+/// replacing any previous chunk at that position.
+pub fn insert_chunk(app: &mut App, chunk: VoxelChunk) -> Option<VoxelChunk> {
+    upsert_chunk_mesh(
+        &mut app.scene,
+        app.physics.world.as_mut(),
+        app.terrain_material_idx,
+        &chunk,
+    );
+    app.entities.chunks.insert(chunk)
+}
+
+pub fn remove_chunk(app: &mut App, pos: IVec3) -> Option<VoxelChunk> {
+    remove_chunk_mesh(
+        &mut app.scene,
+        app.physics.world.as_mut(),
+        chunk_mesh_id(pos),
+    );
+    app.entities.chunks.remove(pos)
+}
+
+pub fn upsert_all_chunks(app: &mut App) {
+    for chunk in app.entities.chunks.iter() {
+        upsert_chunk_mesh(
+            &mut app.scene,
+            app.physics.world.as_mut(),
+            app.terrain_material_idx,
+            chunk,
+        );
+    }
+}
+
+/// Call before the store is cleared: mesh ids are derived from its chunks.
 pub fn remove_all_chunk_meshes(app: &mut App) {
     for chunk in app.entities.chunks.iter() {
-        app.scene
-            .world_meshes_mut()
-            .remove(chunk_mesh_id(chunk.chunk_pos()));
+        remove_chunk_mesh(
+            &mut app.scene,
+            app.physics.world.as_mut(),
+            chunk_mesh_id(chunk.chunk_pos()),
+        );
     }
 }
 
@@ -277,6 +302,37 @@ pub(crate) mod tests {
         assert_eq!(stored.params, expected.params);
     }
 
+    fn malformed_chunk_at(pos: IVec3) -> VoxelChunk {
+        VoxelChunk::new(
+            pos,
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            vec![[0.0, 1.0, 0.0]],
+            vec![0.25, 0.3, 0.35],
+            vec![3, 4, 5],
+            vec![0.6, 0.6, 0.6],
+            vec![[0.2, 0.9, 0.5], [0.1, 0.1, 0.1], [0.4, 0.3, 0.2]],
+            vec![0.75, 0.8, 0.85],
+            vec![0, 1, 2],
+            1,
+        )
+    }
+
+    #[test]
+    fn refused_chunk_mesh_drops_its_collider() {
+        let mut app = App::headless();
+        let pos = IVec3::new(2, 0, 2);
+        insert_chunk(&mut app, chunk_at(pos));
+        assert!(collider_of(&app, pos).is_some(), "collider before refusal");
+
+        insert_chunk(&mut app, malformed_chunk_at(pos));
+
+        assert!(
+            collider_of(&app, pos).is_none(),
+            "no collider after refusal"
+        );
+        assert_eq!(terrain_collider_count(&app), 0, "no terrain collider left");
+    }
+
     #[test]
     fn refused_chunk_mesh_stops_drawing_the_previous_one() {
         let mut app = App::headless();
@@ -290,18 +346,7 @@ pub(crate) mod tests {
             vec![old],
             "drawn before the refusal"
         );
-        let malformed = VoxelChunk::new(
-            pos,
-            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
-            vec![[0.0, 1.0, 0.0]],
-            vec![0.25, 0.3, 0.35],
-            vec![3, 4, 5],
-            vec![0.6, 0.6, 0.6],
-            vec![[0.2, 0.9, 0.5], [0.1, 0.1, 0.1], [0.4, 0.3, 0.2]],
-            vec![0.75, 0.8, 0.85],
-            vec![0, 1, 2],
-            1,
-        );
+        let malformed = malformed_chunk_at(pos);
         assert!(
             chunk_world_mesh(&malformed).is_err(),
             "the mesh is malformed"
@@ -457,5 +502,128 @@ pub(crate) mod tests {
             "nothing is drawn for the evicted chunk"
         );
         assert_eq!(backend.unregistered, vec![handle], "its GPU mesh was freed");
+    }
+
+    fn collider_of(app: &App, pos: IVec3) -> Option<moho_physics::ColliderHandle> {
+        app.physics
+            .world
+            .as_ref()
+            .expect("physics world")
+            .world_mesh_collider(chunk_mesh_id(pos))
+    }
+
+    pub(crate) fn terrain_collider_count(app: &App) -> usize {
+        let pw = app.physics.world.as_ref().expect("physics world");
+        pw.collider_set.len() - usize::from(pw.character_collider.is_some())
+    }
+
+    /// Places `block`, then drains stale events and meshes `chunk` from the dirty event.
+    /// The chunk's modified flag is cleared so streaming treats it as unmodified.
+    fn remesh_with_block(app: &mut App, block: moho_core::voxel::BlockPos, chunk: IVec3) {
+        let grid = app.light_system.as_mut().expect("light system").grid_mut();
+        grid.mutator().place(block, 1, None);
+        grid.clear_chunk_modified(chunk);
+        let _ = app.world_event_rx.try_iter().count();
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos: chunk,
+            terrain_dirty: true,
+            structure_dirty: false,
+        });
+        EventProcessor::new().process_world_events(app);
+    }
+
+    #[test]
+    fn remesh_updates_draw_and_collider_together() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        let chunk = IVec3::new(10, 4, 10);
+        remesh_with_block(
+            &mut app,
+            moho_core::voxel::BlockPos::new(165, 70, 165),
+            chunk,
+        );
+        let mut backend = RecordingBackend::default();
+        app.scene.world_meshes_mut().flush(&mut backend);
+        let first = collider_of(&app, chunk).expect("collider after first mesh");
+        assert_eq!(drawn_handles(&mut app), backend.registered);
+        let first_triangles = app
+            .entities
+            .chunks
+            .get(chunk)
+            .expect("chunk")
+            .indices()
+            .len()
+            / 3;
+
+        remesh_with_block(
+            &mut app,
+            moho_core::voxel::BlockPos::new(166, 70, 165),
+            chunk,
+        );
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        let second = collider_of(&app, chunk).expect("collider after remesh");
+        let second_triangles = app
+            .entities
+            .chunks
+            .get(chunk)
+            .expect("chunk")
+            .indices()
+            .len()
+            / 3;
+        let collider_triangles = app
+            .physics
+            .world
+            .as_ref()
+            .expect("physics world")
+            .collider_set[second]
+            .shape()
+            .as_trimesh()
+            .expect("terrain collider is a trimesh")
+            .num_triangles();
+        assert_ne!(first, second, "the collider was replaced");
+        assert_ne!(
+            first_triangles, second_triangles,
+            "the remesh changed the geometry"
+        );
+        assert_eq!(
+            collider_triangles, second_triangles,
+            "the collider matches the new mesh"
+        );
+        assert_eq!(backend.registered.len(), 2);
+        assert_eq!(drawn_handles(&mut app), vec![backend.registered[1]]);
+        assert_eq!(terrain_collider_count(&app), 1, "the old collider is gone");
+    }
+
+    #[test]
+    fn eviction_frees_draw_and_collider() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_position_yaw_pitch(glam::Vec3::new(8.0, 80.0, 8.0), 0.0, 0.0);
+        app.chunk_streamer = Some(crate::app::chunk_streamer::ChunkStreamer::new(
+            moho_game::scene_builders::TerrainConfig::default(),
+            moho_core::voxel::StreamingConfig {
+                load_radius_chunks: 0,
+                unload_radius_chunks: 1,
+                chunks_per_frame: 1,
+            },
+            "headless-test-eviction-frees-draw-and-collider",
+        ));
+        let far = IVec3::new(10, 4, 10);
+        remesh_with_block(&mut app, moho_core::voxel::BlockPos::new(165, 70, 165), far);
+        let mut backend = RecordingBackend::default();
+        app.scene.world_meshes_mut().flush(&mut backend);
+        assert!(collider_of(&app, far).is_some(), "collider while loaded");
+        assert_eq!(terrain_collider_count(&app), 1);
+        assert_eq!(drawn_handles(&mut app), backend.registered);
+
+        FrameProcessor::new().update_chunk_streaming(&mut app);
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        assert!(app.entities.chunks.get(far).is_none(), "chunk was evicted");
+        assert!(drawn_handles(&mut app).is_empty(), "nothing is drawn");
+        assert!(collider_of(&app, far).is_none(), "its collider was freed");
+        assert_eq!(terrain_collider_count(&app), 0);
     }
 }

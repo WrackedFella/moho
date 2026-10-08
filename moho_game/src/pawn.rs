@@ -127,10 +127,10 @@ mod tests {
 
         pawn.deposit(ResourceYield {
             resource_id: 3,
-            amount: 1,
+            amount: 5,
         });
 
-        assert_eq!(pawn.inventory.count(3), 1);
+        assert_eq!(pawn.inventory.count(3), 5);
     }
 
     #[test]
@@ -212,10 +212,14 @@ mod tests {
     #[test]
     fn mine_with_nothing_in_range_returns_none() {
         let mut grid = VoxelGrid::new(16);
+        let pos = BlockPos::new(0, 0, 12);
+        grid.mutator().place(pos, 1, Some(7));
         let mut pawn = Pawn::default();
 
-        let outcome = pawn.mine(&mut grid, Vec3::ZERO, Vec3::Z, 10.0);
+        let outcome = pawn.mine(&mut grid, Vec3::new(0.5, 0.5, 0.0), Vec3::Z, 10.0);
 
         assert!(outcome.is_none());
+        assert!(grid.material_at(pos).is_some());
+        assert!(pawn.inventory.is_empty());
     }
 }

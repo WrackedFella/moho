@@ -1,6 +1,8 @@
 use glam::Vec3;
+use moho_render_api::{WorldMesh, WorldMeshId};
 use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
 use rapier3d::prelude::*;
+use std::collections::HashMap;
 
 const GRAVITY: f32 = -18.0;
 
@@ -17,6 +19,7 @@ pub struct PhysicsWorld {
     multibody_joint_set: MultibodyJointSet,
     soft_body_set: SoftBodySet,
     ccd_solver: CCDSolver,
+    world_mesh_colliders: HashMap<WorldMeshId, ColliderHandle>,
     character_controller: KinematicCharacterController,
     pub character_body: Option<RigidBodyHandle>,
     pub character_collider: Option<ColliderHandle>,
@@ -73,6 +76,7 @@ impl PhysicsWorld {
             multibody_joint_set,
             soft_body_set,
             ccd_solver,
+            world_mesh_colliders: HashMap::new(),
             character_controller,
             character_body: None,
             character_collider: None,
@@ -102,44 +106,41 @@ impl PhysicsWorld {
         );
     }
 
-    /// Build a static terrain trimesh collider from world-space vertices/indices.
-    pub fn add_terrain_trimesh(
-        &mut self,
-        vertices: &[[f32; 3]],
-        indices: &[u32],
-    ) -> ColliderHandle {
-        let points: Vec<Vector> = vertices
+    /// Register `mesh` as the static collider for `id`, replacing any previous one.
+    ///
+    /// An empty mesh, or one rapier rejects (warned), leaves `id` without a collider.
+    pub fn set_world_mesh(&mut self, id: WorldMeshId, mesh: &WorldMesh) {
+        self.remove_world_mesh(id);
+        if mesh.is_empty() {
+            return;
+        }
+        let points: Vec<Vector> = mesh
+            .positions()
             .iter()
             .map(|v| Vec3::new(v[0], v[1], v[2]))
             .collect();
-
-        let tris: Vec<[u32; 3]> = indices
-            .chunks(3)
-            .filter_map(|c| {
-                if c.len() == 3 {
-                    Some([c[0], c[1], c[2]])
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if tris.is_empty() || points.is_empty() {
-            // Empty chunk — insert a dummy zero-size collider so the handle is valid.
-            tracing::warn!("add_terrain_trimesh: empty mesh, inserting dummy collider");
-            let dummy = ColliderBuilder::ball(0.001).build();
-            return self.collider_set.insert(dummy);
-        }
-
-        let collider = match ColliderBuilder::trimesh(points, tris) {
-            Ok(b) => b.friction(0.6).build(),
-            Err(e) => {
-                tracing::warn!(error = ?e, "add_terrain_trimesh: trimesh build failed, inserting dummy");
-                ColliderBuilder::ball(0.001).build()
+        let tris: Vec<[u32; 3]> = mesh.indices().as_chunks::<3>().0.to_vec();
+        match ColliderBuilder::trimesh(points, tris) {
+            Ok(builder) => {
+                let handle = self.collider_set.insert(builder.friction(0.6).build());
+                self.world_mesh_colliders.insert(id, handle);
             }
-        };
+            Err(error) => {
+                tracing::warn!(?id, ?error, "world mesh rejected by physics, no collider");
+            }
+        }
+    }
 
-        self.collider_set.insert(collider)
+    /// Remove the collider registered for `id`, if any.
+    pub fn remove_world_mesh(&mut self, id: WorldMeshId) {
+        if let Some(handle) = self.world_mesh_colliders.remove(&id) {
+            self.remove_collider(handle);
+        }
+    }
+
+    /// The collider registered for `id`; `None` for an unknown, empty or rejected mesh.
+    pub fn world_mesh_collider(&self, id: WorldMeshId) -> Option<ColliderHandle> {
+        self.world_mesh_colliders.get(&id).copied()
     }
 
     /// Remove a collider from the simulation.
@@ -303,6 +304,7 @@ impl Default for PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_gravity_drops_rigid_body() {
@@ -329,7 +331,7 @@ mod tests {
             [-10.0, 0.0, 10.0],
         ];
         let idxs: Vec<u32> = vec![0, 1, 2, 0, 2, 3];
-        world.add_terrain_trimesh(&verts, &idxs);
+        world.set_world_mesh(WorldMeshId(0), &quad_mesh(&verts, &idxs));
 
         let sphere = world.add_dynamic_sphere(Vec3::new(0.0, 5.0, 0.0), 0.5);
 
@@ -352,8 +354,10 @@ mod tests {
             [-10.0, 0.0, 10.0],
         ];
         let idxs: Vec<u32> = vec![0, 1, 2, 0, 2, 3];
-        let floor = world.add_terrain_trimesh(&verts, &idxs);
-        world.remove_collider(floor);
+        let floor_id = WorldMeshId(0);
+        world.set_world_mesh(floor_id, &quad_mesh(&verts, &idxs));
+        let floor = world.world_mesh_collider(floor_id).expect("floor collider");
+        world.remove_world_mesh(floor_id);
 
         let sphere = world.add_dynamic_sphere(Vec3::new(0.0, 5.0, 0.0), 0.5);
         for _ in 0..180 {
@@ -377,7 +381,7 @@ mod tests {
             [-10.0, 0.0, 10.0],
         ];
         let idxs: Vec<u32> = vec![0, 1, 2, 0, 2, 3];
-        world.add_terrain_trimesh(&verts, &idxs);
+        world.set_world_mesh(WorldMeshId(0), &quad_mesh(&verts, &idxs));
         world.add_character(Vec3::new(0.0, 10.0, 0.0));
 
         for _ in 0..120 {
@@ -404,7 +408,7 @@ mod tests {
             [-20.0, 0.0, 20.0],
         ];
         let idxs: Vec<u32> = vec![0, 1, 2, 0, 2, 3];
-        world.add_terrain_trimesh(&verts, &idxs);
+        world.set_world_mesh(WorldMeshId(0), &quad_mesh(&verts, &idxs));
         world.add_character(Vec3::new(0.0, 1.0, 0.0));
 
         // First, settle on the ground
@@ -426,5 +430,174 @@ mod tests {
             start.x,
             end.x
         );
+    }
+
+    fn quad_mesh(verts: &[[f32; 3]], idxs: &[u32]) -> WorldMesh {
+        let n = verts.len();
+        WorldMesh::new(
+            verts.to_vec(),
+            vec![[0.0, 1.0, 0.0]; n],
+            vec![1.0; n],
+            vec![[0.0; 3]; n],
+            vec![1.0; n],
+            vec![0; n],
+            idxs.to_vec(),
+        )
+        .expect("valid quad mesh")
+    }
+
+    fn floor_mesh(y: f32) -> WorldMesh {
+        quad_mesh(
+            &[
+                [-10.0, y, -10.0],
+                [10.0, y, -10.0],
+                [10.0, y, 10.0],
+                [-10.0, y, 10.0],
+            ],
+            &[0, 2, 1, 0, 3, 2],
+        )
+    }
+
+    fn empty_mesh() -> WorldMesh {
+        quad_mesh(&[], &[])
+    }
+
+    fn fall_for_one_second(world: &mut PhysicsWorld, from_y: f32) -> f32 {
+        let ball = world.add_dynamic_sphere(Vec3::new(0.0, from_y, 0.0), 0.5);
+        for _ in 0..60 {
+            world.step(1.0 / 60.0);
+        }
+        world.body_position(ball).unwrap().y
+    }
+
+    #[test]
+    fn body_rests_on_registered_world_mesh() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0));
+
+        let y = fall_for_one_second(&mut world, 3.0);
+
+        assert!((y - 0.5).abs() < 0.2, "should rest on floor at 0.5, y={y}");
+    }
+
+    #[test]
+    fn replacing_world_mesh_moves_the_floor() {
+        let mut world = PhysicsWorld::new();
+        let id = WorldMeshId(1);
+        world.set_world_mesh(id, &floor_mesh(0.0));
+        world.set_world_mesh(id, &floor_mesh(2.0));
+
+        let y = fall_for_one_second(&mut world, 5.0);
+
+        assert!((y - 2.5).abs() < 0.2, "should rest on higher floor, y={y}");
+        assert!(world.world_mesh_collider(id).is_some());
+        assert_eq!(world.collider_set.len(), 1 + 1, "one floor plus the ball");
+    }
+
+    #[test]
+    fn removed_world_mesh_lets_body_fall() {
+        let mut world = PhysicsWorld::new();
+        let id = WorldMeshId(1);
+        world.set_world_mesh(id, &floor_mesh(0.0));
+        world.remove_world_mesh(id);
+
+        let y = fall_for_one_second(&mut world, 3.0);
+
+        assert!(y < -3.0, "should fall past the old floor, y={y}");
+        assert!(world.world_mesh_collider(id).is_none());
+        assert_eq!(world.collider_set.len(), 1, "only the ball remains");
+    }
+
+    #[test]
+    fn empty_world_mesh_holds_no_collider() {
+        let mut world = PhysicsWorld::new();
+        let id = WorldMeshId(1);
+        world.set_world_mesh(id, &floor_mesh(0.0));
+        world.set_world_mesh(id, &empty_mesh());
+
+        assert!(world.world_mesh_collider(id).is_none());
+        assert_eq!(world.collider_set.len(), 0);
+    }
+
+    #[test]
+    fn empty_world_mesh_on_fresh_id_adds_nothing() {
+        let mut world = PhysicsWorld::new();
+
+        world.set_world_mesh(WorldMeshId(9), &empty_mesh());
+
+        assert!(world.world_mesh_collider(WorldMeshId(9)).is_none());
+        assert_eq!(world.collider_set.len(), 0);
+    }
+
+    #[test]
+    fn removing_unknown_world_mesh_is_a_no_op() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0));
+
+        world.remove_world_mesh(WorldMeshId(2));
+
+        assert!(world.world_mesh_collider(WorldMeshId(1)).is_some());
+        assert_eq!(world.collider_set.len(), 1);
+    }
+
+    #[test]
+    fn distinct_ids_hold_distinct_colliders() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(2), &floor_mesh(1.0));
+
+        let a = world.world_mesh_collider(WorldMeshId(1)).unwrap();
+        let b = world.world_mesh_collider(WorldMeshId(2)).unwrap();
+
+        assert_ne!(a, b);
+        assert_eq!(world.collider_set.len(), 2);
+    }
+
+    #[derive(Clone, Debug)]
+    enum Op {
+        Set(u64, bool),
+        Remove(u64),
+    }
+
+    fn op_strategy() -> impl Strategy<Value = Op> {
+        prop_oneof![
+            (0u64..4, any::<bool>()).prop_map(|(id, empty)| Op::Set(id, empty)),
+            (0u64..4).prop_map(Op::Remove),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn colliders_match_live_world_mesh_ids(
+            ops in proptest::collection::vec(op_strategy(), 0..40)
+        ) {
+            let mut world = PhysicsWorld::new();
+            let mut live = std::collections::HashSet::new();
+
+            for op in ops {
+                match op {
+                    Op::Set(id, true) => {
+                        world.set_world_mesh(WorldMeshId(id), &empty_mesh());
+                        live.remove(&id);
+                    }
+                    Op::Set(id, false) => {
+                        world.set_world_mesh(WorldMeshId(id), &floor_mesh(id as f32));
+                        live.insert(id);
+                    }
+                    Op::Remove(id) => {
+                        world.remove_world_mesh(WorldMeshId(id));
+                        live.remove(&id);
+                    }
+                }
+            }
+
+            for id in 0u64..4 {
+                prop_assert_eq!(
+                    world.world_mesh_collider(WorldMeshId(id)).is_some(),
+                    live.contains(&id)
+                );
+            }
+            prop_assert_eq!(world.collider_set.len(), live.len());
+        }
     }
 }

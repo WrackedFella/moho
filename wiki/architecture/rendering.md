@@ -54,8 +54,11 @@ draw per mesh in id order.
 
 The binary adapts voxel chunks in `src/app/world_geometry.rs`: `chunk_mesh_id` packs
 the chunk position at 21 bits per signed axis, `chunk_world_mesh` converts a
-`VoxelChunk`, and `insert_chunk` / `remove_chunk` keep the `ChunkStore` and the
-renderer in step. A refused mesh is logged and the chunk is not drawn.
+`VoxelChunk`, and `insert_chunk` / `remove_chunk` keep the `ChunkStore`, the
+renderer and the physics colliders in step. The same `WorldMesh` and `WorldMeshId` go to
+`PhysicsWorld::set_world_mesh` / `remove_world_mesh` (`moho_physics/src/world.rs`), which
+holds one static trimesh collider per id; an empty mesh holds none. A refused mesh is
+logged and the chunk is neither drawn nor solid.
 
 ## Submission
 

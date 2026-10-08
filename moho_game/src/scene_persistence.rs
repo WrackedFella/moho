@@ -379,34 +379,42 @@ mod tests {
 
     #[test]
     fn round_trip_preserves_spheres_cubes_and_chunks() {
-        let mut entities = SceneEntities::default();
-        let sphere_a = Sphere::new(
-            glam::Vec3::new(1.0, 2.0, 3.0),
-            1.5,
+        let materials = [
             MaterialType::Lambertian {
                 albedo: glam::Vec3::new(0.1, 0.2, 0.3),
             },
-        );
-        let sphere_b = Sphere::new(
-            glam::Vec3::new(-4.0, 5.0, 6.0),
-            0.25,
             MaterialType::Metal {
-                albedo: glam::Vec3::new(0.7, 0.8, 0.9),
-                fuzz: 0.2,
-            },
-        );
-        let cube = Cube::new(
-            glam::Vec3::new(7.0, 8.0, 9.0),
-            1.0,
-            2.0,
-            3.0,
-            MaterialType::Lambertian {
                 albedo: glam::Vec3::new(0.4, 0.5, 0.6),
+                fuzz: 0.7,
             },
-        );
-        entities.actors.spawn_sphere(sphere_a);
-        entities.actors.spawn_sphere(sphere_b);
-        entities.actors.spawn_cube(cube);
+            MaterialType::Dielectric { ref_indx: 1.5 },
+            MaterialType::Emissive {
+                color: glam::Vec3::new(0.8, 0.9, 0.25),
+                intensity: 3.5,
+            },
+            MaterialType::VoxelTerrain {
+                top_albedo: glam::Vec3::new(0.11, 0.12, 0.13),
+                side_albedo: glam::Vec3::new(0.21, 0.22, 0.23),
+            },
+        ];
+        let mut entities = SceneEntities::default();
+        let mut spheres = Vec::new();
+        let mut cubes = Vec::new();
+        for (i, m) in materials.iter().enumerate() {
+            let n = i as f32;
+            let sphere = Sphere::new(glam::Vec3::new(n, 2.0 * n, -3.0 * n), 0.25 + n, *m);
+            let cube = Cube::new(
+                glam::Vec3::new(-n, 4.0 * n, 5.0 * n),
+                1.0 + n,
+                2.0 + n,
+                3.0 + n,
+                *m,
+            );
+            entities.actors.spawn_sphere(sphere);
+            entities.actors.spawn_cube(cube);
+            spheres.push(sphere);
+            cubes.push(cube);
+        }
         entities
             .chunks
             .insert(meshed_chunk(glam::IVec3::new(2, 0, 0), 20.0, 7));
@@ -421,44 +429,70 @@ mod tests {
         let mut loaded = SceneEntities::default();
         load_from_bytes(&bytes, &mut loaded).expect("decode");
 
-        let spheres = loaded.actors.spheres();
-        assert_eq!(spheres.len(), 2);
-        for (got, want) in spheres.iter().zip([sphere_a, sphere_b]) {
+        let got_spheres = loaded.actors.spheres();
+        assert_eq!(got_spheres.len(), spheres.len());
+        for (got, want) in got_spheres.iter().zip(&spheres) {
             assert_eq!(got.center, want.center);
             assert_eq!(got.radius, want.radius);
             assert_eq!(got.mat_ptr, want.mat_ptr);
         }
 
-        let cubes = loaded.actors.cubes();
-        assert_eq!(cubes.len(), 1);
-        assert_eq!(cubes[0].center, cube.center);
-        assert_eq!(
-            (cubes[0].length, cubes[0].width, cubes[0].height),
-            (1.0, 2.0, 3.0)
-        );
-        assert_eq!(cubes[0].mat_ptr, cube.mat_ptr);
-
-        let got: Vec<&VoxelChunk> = loaded.chunks.iter().collect();
-        let want: Vec<&VoxelChunk> = entities.chunks.iter().collect();
-        assert_eq!(got.len(), 3);
-        let positions: Vec<glam::IVec3> = got.iter().map(|c| c.chunk_pos()).collect();
-        assert_eq!(
-            positions,
-            vec![
-                glam::IVec3::new(-1, 0, 3),
-                glam::IVec3::new(0, 0, 0),
-                glam::IVec3::new(2, 0, 0),
-            ]
-        );
-        for (g, w) in got.iter().zip(&want) {
-            assert_eq!(g.chunk_pos(), w.chunk_pos());
-            assert_eq!(g.vertices(), w.vertices());
-            assert_eq!(g.normals(), w.normals());
-            assert_eq!(g.indices(), w.indices());
-            assert_eq!(g.material_id(), w.material_id());
+        let got_cubes = loaded.actors.cubes();
+        assert_eq!(got_cubes.len(), cubes.len());
+        for (got, want) in got_cubes.iter().zip(&cubes) {
+            assert_eq!(got.center, want.center);
+            assert_eq!(
+                (got.length, got.width, got.height),
+                (want.length, want.width, want.height)
+            );
+            assert_eq!(got.mat_ptr, want.mat_ptr);
         }
-        let ids: Vec<u32> = got.iter().map(|c| c.material_id()).collect();
-        assert_eq!(ids, vec![8, 9, 7]);
+
+        assert_eq!(loaded.chunks.len(), entities.chunks.len());
+        for want in entities.chunks.iter() {
+            let got = loaded
+                .chunks
+                .get(want.chunk_pos())
+                .expect("chunk present at its position");
+            assert_eq!(got.vertices(), want.vertices());
+            assert_eq!(got.normals(), want.normals());
+            assert_eq!(got.indices(), want.indices());
+            assert_eq!(got.material_id(), want.material_id());
+        }
+    }
+
+    #[test]
+    fn load_into_populated_entities_appends_actors_and_replaces_chunk_at_same_position() {
+        let sphere_a = Sphere::new(
+            glam::Vec3::new(1.0, 0.0, 0.0),
+            1.0,
+            MaterialType::Lambertian {
+                albedo: glam::Vec3::ONE,
+            },
+        );
+        let sphere_b = Sphere::new(
+            glam::Vec3::new(0.0, 2.0, 0.0),
+            2.0,
+            MaterialType::Dielectric { ref_indx: 1.5 },
+        );
+        let chunk_p = glam::IVec3::new(3, 0, 1);
+        let chunk_q = glam::IVec3::new(-2, 0, 5);
+        let mut saved = SceneEntities::default();
+        saved.actors.spawn_sphere(sphere_b);
+        saved.chunks.insert(meshed_chunk(chunk_p, 1.0, 22));
+        saved.chunks.insert(meshed_chunk(chunk_q, 2.0, 33));
+        let bytes = encode_to_bytes(&saved, None, &[]).expect("encode");
+        let mut target = SceneEntities::default();
+        target.actors.spawn_sphere(sphere_a);
+        target.chunks.insert(meshed_chunk(chunk_p, 9.0, 11));
+
+        load_from_bytes(&bytes, &mut target).expect("decode");
+
+        let centers: Vec<glam::Vec3> = target.actors.spheres().iter().map(|s| s.center).collect();
+        assert_eq!(centers, vec![sphere_a.center, sphere_b.center]);
+        assert_eq!(target.chunks.len(), 2);
+        assert_eq!(target.chunks.get(chunk_p).expect("P").material_id(), 22);
+        assert_eq!(target.chunks.get(chunk_q).expect("Q").material_id(), 33);
     }
 
     fn populated_entities() -> SceneEntities {

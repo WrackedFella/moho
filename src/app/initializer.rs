@@ -232,12 +232,10 @@ mod tests {
     }
 
     #[test]
-    fn test_build_creates_all_systems() {
-        let result = AppInitializer::new(test_config()).build();
-
-        assert!(result.is_ok(), "Initialization should succeed");
-
-        let initialized = result.unwrap();
+    fn build_sets_60hz_frame_duration() {
+        let initialized = AppInitializer::new(test_config())
+            .build()
+            .expect("default config builds");
 
         assert_eq!(
             initialized.frame_duration,
@@ -246,43 +244,19 @@ mod tests {
     }
 
     #[test]
-    fn test_build_succeeds_with_non_default_config() {
-        // InputSystem exposes no sensitivity/filter-enabled getters, so this can only
-        // confirm build() doesn't reject non-default values, not that they took effect.
+    fn build_applies_config_sensitivity_and_filtering() {
         let config = AppConfig::builder()
             .mouse_sensitivity(0.5)
             .input_filtering(false)
             .init_audio(false)
             .build();
+        let mut initialized = AppInitializer::new(config)
+            .build()
+            .expect("non-default config builds");
 
-        let result = AppInitializer::new(config).build();
-        assert!(result.is_ok());
-    }
+        initialized.input_system.collect_mouse_delta((10.0, 0.0));
 
-    #[test]
-    fn test_build_initializes_camera() {
-        let result = AppInitializer::new(test_config()).build();
-
-        assert!(result.is_ok());
-        let initialized = result.unwrap();
-
-        // Camera tuple should contain valid matrices and position
-        let (view, proj, eye) = initialized.camera;
-        assert_ne!(
-            view,
-            glam::Mat4::IDENTITY,
-            "View matrix should not be identity"
-        );
-        assert_ne!(
-            proj,
-            glam::Mat4::IDENTITY,
-            "Projection matrix should not be identity"
-        );
-        assert_ne!(
-            eye,
-            glam::Vec3::ZERO,
-            "Camera position should not be at origin"
-        );
+        assert_eq!(initialized.input_system.sample_frame_input(), (5.0, 0.0));
     }
 
     #[test]

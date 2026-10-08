@@ -65,23 +65,13 @@ mod tests {
 
         let order: Arc<Mutex<Vec<i32>>> = Arc::new(Mutex::new(Vec::new()));
 
-        let o1 = order.clone();
-        disp.register(10, move |_ev: &WindowEvent| {
-            o1.lock().unwrap().push(10);
-            false
-        });
-
-        let o2 = order.clone();
-        disp.register(5, move |_ev: &WindowEvent| {
-            o2.lock().unwrap().push(5);
-            false
-        });
-
-        let o3 = order.clone();
-        disp.register(0, move |_ev: &WindowEvent| {
-            o3.lock().unwrap().push(0);
-            false
-        });
+        for priority in [0, 10, 5] {
+            let o = order.clone();
+            disp.register(priority, move |_ev: &WindowEvent| {
+                o.lock().unwrap().push(priority);
+                false
+            });
+        }
 
         // Dispatch any simple event
         let ev = WindowEvent::Focused(true);
@@ -124,36 +114,49 @@ mod tests {
         assert_eq!(got, vec![5]);
     }
 
+    fn ui_adapter(visible: bool) -> Arc<Mutex<moho_ui::EguiAdapter>> {
+        let event_bus = Arc::new(moho_core::events::EventBus::new());
+        let mut adapter = moho_ui::build_adapter(None, event_bus);
+        adapter.set_visible(visible);
+        Arc::new(Mutex::new(adapter))
+    }
+
     #[test]
-    fn wheel_forwarding_respects_ui_visibility() {
-        use moho_core::events::EventBus;
-        use std::sync::mpsc::channel;
-        use std::sync::{Arc, Mutex};
+    fn wheel_forwarded_when_ui_hidden() {
+        let adapter = ui_adapter(false);
+        let (tx, rx) = std::sync::mpsc::channel();
 
-        let event_bus = Arc::new(EventBus::new());
-        let adapter = moho_ui::build_adapter(None, event_bus);
-        let adapter = Arc::new(Mutex::new(adapter));
-
-        // Case 1: UI hidden -> forward
-        adapter.lock().unwrap().set_visible(false);
-        let (tx, rx) = channel::<crate::input_event::InputEvent>();
         let forwarded = crate::forward_wheel_if_allowed(&adapter, &tx, 1.0);
+
         assert!(forwarded);
-        assert!(rx.try_recv().is_ok());
+        let event = rx.try_recv().expect("wheel event forwarded");
+        assert!(matches!(
+            event,
+            crate::input_event::InputEvent::MouseWheel { delta_y } if delta_y == 1.0
+        ));
+    }
 
-        // Case 2: UI visible -> do not forward
-        adapter.lock().unwrap().set_visible(true);
-        let (tx2, rx2) = channel::<crate::input_event::InputEvent>();
-        let forwarded2 = crate::forward_wheel_if_allowed(&adapter, &tx2, 1.0);
-        assert!(!forwarded2);
-        assert!(rx2.try_recv().is_err());
+    #[test]
+    fn wheel_blocked_when_ui_visible() {
+        let adapter = ui_adapter(true);
+        let (tx, rx) = std::sync::mpsc::channel();
 
-        // Case 3: lock failure (simulate by holding the lock) -> do not forward
+        let forwarded = crate::forward_wheel_if_allowed(&adapter, &tx, 1.0);
+
+        assert!(!forwarded);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn wheel_blocked_when_ui_lock_contended() {
+        let adapter = ui_adapter(false);
+        let (tx, rx) = std::sync::mpsc::channel();
+
         let guard = adapter.lock().unwrap();
-        let (tx3, rx3) = channel::<crate::input_event::InputEvent>();
-        let forwarded3 = crate::forward_wheel_if_allowed(&adapter, &tx3, 1.0);
-        assert!(!forwarded3);
-        assert!(rx3.try_recv().is_err());
+        let forwarded = crate::forward_wheel_if_allowed(&adapter, &tx, 1.0);
         drop(guard);
+
+        assert!(!forwarded);
+        assert!(rx.try_recv().is_err());
     }
 }

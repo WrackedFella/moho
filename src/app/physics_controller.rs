@@ -1,15 +1,12 @@
 //! Physics controller — owns all physics state for the main application.
 //!
-//! Centralises `PhysicsWorld`, chunk colliders, test bodies, and jump input
+//! Centralises `PhysicsWorld`, test bodies, and jump input
 //! so callers don't need to touch `App` fields individually.
 
-use moho_core::voxel::ChunkStore;
 use moho_game::actors::ActorId;
-use std::collections::HashMap;
 
 pub struct PhysicsController {
     pub world: Option<moho_physics::PhysicsWorld>,
-    pub chunk_colliders: HashMap<glam::IVec3, moho_physics::ColliderHandle>,
     pub test_bodies: Vec<(moho_physics::RigidBodyHandle, ActorId)>,
     pub jump_pressed: bool,
 }
@@ -18,7 +15,6 @@ impl PhysicsController {
     pub fn new() -> Self {
         Self {
             world: Some(moho_physics::PhysicsWorld::new()),
-            chunk_colliders: HashMap::new(),
             test_bodies: Vec::new(),
             jump_pressed: false,
         }
@@ -27,7 +23,6 @@ impl PhysicsController {
     /// Clear and recreate the physics world, removing all colliders and bodies.
     pub fn reset(&mut self) {
         self.world = Some(moho_physics::PhysicsWorld::new());
-        self.chunk_colliders.clear();
         self.test_bodies.clear();
     }
 
@@ -80,51 +75,6 @@ impl PhysicsController {
     pub fn forget_body(&mut self, actor: ActorId) -> Option<moho_physics::RigidBodyHandle> {
         let index = self.test_bodies.iter().position(|(_, id)| *id == actor)?;
         Some(self.test_bodies.remove(index).0)
-    }
-
-    /// Remove the old collider for `chunk_pos` (if any) and register a new one.
-    pub fn update_chunk_collider(
-        &mut self,
-        chunk_pos: glam::IVec3,
-        vertices: &[[f32; 3]],
-        indices: &[u32],
-    ) {
-        let Some(pw) = self.world.as_mut() else {
-            return;
-        };
-        if let Some(old) = self.chunk_colliders.remove(&chunk_pos) {
-            pw.remove_collider(old);
-        }
-        let handle = pw.add_terrain_trimesh(vertices, indices);
-        self.chunk_colliders.insert(chunk_pos, handle);
-    }
-
-    /// Remove the collider for `chunk_pos` (called when a chunk is evicted by streaming).
-    pub fn remove_chunk_collider(&mut self, chunk_pos: glam::IVec3) {
-        if let (Some(pw), Some(handle)) =
-            (self.world.as_mut(), self.chunk_colliders.remove(&chunk_pos))
-        {
-            pw.remove_collider(handle);
-        }
-    }
-
-    /// Register colliders for all stored chunks that don't yet have one.
-    pub fn sync_colliders(&mut self, chunks: &ChunkStore) {
-        let Some(pw) = self.world.as_mut() else {
-            return;
-        };
-
-        let new_chunks: Vec<(glam::IVec3, Vec<[f32; 3]>, Vec<u32>)> = chunks
-            .iter()
-            .filter(|c| !self.chunk_colliders.contains_key(&c.chunk_pos()))
-            .map(|c| (c.chunk_pos(), c.vertices().to_vec(), c.indices().to_vec()))
-            .collect();
-
-        for (pos, vertices, indices) in new_chunks {
-            let handle = pw.add_terrain_trimesh(&vertices, &indices);
-            self.chunk_colliders.insert(pos, handle);
-            tracing::debug!(chunk = ?pos, "Registered terrain collider for chunk");
-        }
     }
 }
 
@@ -233,42 +183,81 @@ mod tests {
         assert_eq!(controller.test_bodies, vec![first, second]);
     }
 
-    fn triangle_chunk(pos: glam::IVec3) -> moho_core::voxel::VoxelChunk {
-        let origin = pos.as_vec3();
-        moho_core::voxel::VoxelChunk::new(
-            pos,
-            vec![
-                origin.to_array(),
-                (origin + glam::Vec3::X).to_array(),
-                (origin + glam::Vec3::Z).to_array(),
-            ],
-            vec![[0.0, 1.0, 0.0]; 3],
-            vec![1.0; 3],
-            vec![1; 3],
-            vec![1.0; 3],
-            vec![[1.0, 1.0, 1.0]; 3],
-            vec![1.0; 3],
-            vec![0, 1, 2],
-            0,
-        )
+    #[test]
+    fn reset_then_load_holds_one_collider_per_chunk() {
+        use crate::app::world_geometry::{
+            chunk_mesh_id,
+            tests::{chunk_at, terrain_collider_count},
+        };
+        let positions = [
+            glam::IVec3::new(7, 0, 7),
+            glam::IVec3::new(8, 0, 7),
+            glam::IVec3::new(7, 1, 9),
+        ];
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut saved = crate::App::headless();
+        for pos in positions {
+            saved.entities.chunks.insert(chunk_at(pos));
+        }
+        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path()).expect("autosave");
+        let mut app = crate::App::headless();
+
+        crate::app::scene_loader::load_scene(&mut app, &temp.path().join("scene.bin"))
+            .expect("load");
+
+        let pw = app.physics.world.as_ref().expect("physics world");
+        for pos in positions {
+            assert!(
+                pw.world_mesh_collider(chunk_mesh_id(pos)).is_some(),
+                "chunk {pos} has a collider after load"
+            );
+        }
+        assert_eq!(
+            terrain_collider_count(&app),
+            positions.len(),
+            "one collider per chunk, character aside"
+        );
     }
 
     #[test]
-    fn sync_colliders_registers_only_chunks_without_a_collider() {
-        let mut controller = PhysicsController::new();
-        let known = glam::IVec3::new(0, 0, 0);
-        let fresh = glam::IVec3::new(1, 0, 0);
-        let known_chunk = triangle_chunk(known);
-        controller.update_chunk_collider(known, known_chunk.vertices(), known_chunk.indices());
-        let known_handle = controller.chunk_colliders[&known];
-        let mut chunks = moho_core::voxel::ChunkStore::new();
-        chunks.insert(known_chunk);
-        chunks.insert(triangle_chunk(fresh));
+    fn load_replaces_the_previous_physics_world() {
+        use crate::app::world_geometry::tests::{chunk_at, terrain_collider_count};
+        let positions = [glam::IVec3::new(7, 0, 7), glam::IVec3::new(8, 0, 7)];
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut saved = crate::App::headless();
+        for pos in positions {
+            saved.entities.chunks.insert(chunk_at(pos));
+        }
+        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path()).expect("autosave");
+        let mut app = crate::App::headless();
+        let mut actors = ActorStore::new();
+        let material = MaterialType::Lambertian {
+            albedo: glam::Vec3::ONE,
+        };
+        let stale_actor =
+            actors.spawn_sphere(Sphere::new(glam::Vec3::new(0.0, 9.0, 0.0), 0.5, material));
+        let pw = app.physics.world.as_mut().expect("physics world");
+        let (_, old_character) = pw.add_character(glam::Vec3::new(50.0, 50.0, 50.0));
+        let stale_body = pw.add_dynamic_sphere(glam::Vec3::new(0.0, 9.0, 0.0), 0.5);
+        let unowned = pw.collider_set[old_character].clone();
+        pw.collider_set.insert(unowned);
+        app.physics.test_bodies.push((stale_body, stale_actor));
 
-        controller.sync_colliders(&chunks);
+        crate::app::scene_loader::load_scene(&mut app, &temp.path().join("scene.bin"))
+            .expect("load");
 
-        assert_eq!(controller.chunk_colliders.len(), 2);
-        assert_eq!(controller.chunk_colliders[&known], known_handle);
-        assert!(controller.chunk_colliders.contains_key(&fresh));
+        let pw = app.physics.world.as_ref().expect("physics world");
+        let with_geometry = app
+            .entities
+            .chunks
+            .iter()
+            .filter(|c| c.has_geometry())
+            .count();
+        assert!(with_geometry > 0, "the save holds chunks with geometry");
+        assert!(app.physics.test_bodies.is_empty(), "no stale test bodies");
+        assert!(pw.character_collider.is_some(), "a new character is placed");
+        assert_eq!(terrain_collider_count(&app), with_geometry);
+        assert_eq!(pw.collider_set.len(), with_geometry + 1);
+        assert_eq!(pw.rigid_body_set.len(), 1, "only the character body");
     }
 }

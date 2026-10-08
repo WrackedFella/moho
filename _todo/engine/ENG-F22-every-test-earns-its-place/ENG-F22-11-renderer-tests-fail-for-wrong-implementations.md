@@ -51,3 +51,8 @@ The renderer's instance preparation, material table, skybox and shader tests sto
 **Gate class:** glue (renderer).
 
 **Risks:** #155 (ENG-F20-01) adds a UI shader to `shaders_validation.rs`; whichever lands second adds its row to the other's layout.
+
+**Deviations (implementation):**
+- `main_shader_source` stays in the private `pipeline::shaders` module and is re-exported as `pipeline::main_shader_source`, so the integration test reaches it without making `load_shaders` public.
+- `Renderer::prepare_instance_buffer` repeated the doubling loop and upload; it now calls `MeshRenderer::ensure_capacity_and_upload`, so `next_capacity` covers both growth paths.
+- `test_clear` collects a sphere and a cube only: #138 removed the chunk list.

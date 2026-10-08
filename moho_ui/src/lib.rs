@@ -48,6 +48,8 @@ impl FrameCallback for StubUi {
 pub mod actions;
 pub mod adapter;
 
+pub mod app_state;
+
 pub mod screens;
 
 pub mod overlays;
@@ -62,10 +64,12 @@ pub mod ui_state;
 
 // Re-export the main types for easy access
 pub use adapter::{
-    EguiAdapter, GameState, UI_OVERLAY_VISIBLE, UiAudioEvent, UiEvent, UiReceiver, build_adapter,
+    EguiAdapter, UI_OVERLAY_VISIBLE, UiAudioEvent, UiEvent, UiReceiver, build_adapter,
 };
 
 pub use adapter::EguiAdapter as EguiUi;
+
+pub use app_state::{GameState, StateTransitionActions, StateTransitionCoordinator};
 
 pub use screens::{
     FormControls, Menu, MenuAction, MenuItem, NewWorldMenu, Screen, ScreenSpec, SettingsMenu,

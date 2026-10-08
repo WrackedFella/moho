@@ -196,8 +196,14 @@ mod tests {
         let mut clock = GameClock::new(23.5, 600.0, 300.0);
         assert_eq!(clock.time_of_day(), 23.5);
 
-        clock.set_time(25.0); // Should wrap to 1.0
+        clock.set_time(25.0);
         assert_eq!(clock.time_of_day(), 1.0);
+
+        clock.set_time(-1.0);
+        assert_eq!(clock.time_of_day(), 23.0);
+
+        assert_eq!(GameClock::new(30.0, 600.0, 300.0).time_of_day(), 6.0);
+        assert_eq!(GameClock::new(-1.0, 600.0, 300.0).time_of_day(), 23.0);
     }
 
     #[test]
@@ -209,6 +215,14 @@ mod tests {
         clock.set_time(22.0);
         assert!(!clock.is_daytime());
         assert!(clock.is_nighttime());
+
+        clock.set_time(6.0);
+        assert!(clock.is_daytime(), "6.0 is the first daytime instant");
+        assert!(!clock.is_nighttime());
+
+        clock.set_time(18.0);
+        assert!(clock.is_nighttime(), "18.0 is the first nighttime instant");
+        assert!(!clock.is_daytime());
     }
 
     #[test]
@@ -257,13 +271,23 @@ mod tests {
 
     #[test]
     fn test_clock_tick() {
-        let mut clock = GameClock::new(12.0, 120.0, 120.0); // Fast 2-minute cycles
-        let initial_time = clock.time_of_day();
+        const TOLERANCE: f32 = 1e-4;
+        // (start hour, hour after 1 s): day runs 12 h per 120 s, night 12 h
+        // per 60 s; 23.95 wraps past midnight.
+        let cases = [(12.0, 12.1), (0.0, 0.2), (23.95, 0.15)];
 
-        clock.tick(1.0); // Advance 1 second
+        for (start, expected) in cases {
+            let mut clock = GameClock::new(start, 120.0, 60.0);
 
-        assert!(clock.time_of_day() > initial_time);
-        assert_eq!(clock.elapsed_seconds(), 1.0);
+            clock.tick(1.0);
+
+            assert!(
+                (clock.time_of_day() - expected).abs() < TOLERANCE,
+                "from {start}: got {}, expected {expected}",
+                clock.time_of_day()
+            );
+            assert_eq!(clock.elapsed_seconds(), 1.0);
+        }
     }
 
     #[test]

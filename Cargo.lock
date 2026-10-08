@@ -1542,7 +1542,6 @@ dependencies = [
  "moho_physics",
  "moho_render_api",
  "moho_renderer",
- "moho_types",
  "moho_ui",
  "proptest",
  "serde",
@@ -1612,6 +1611,8 @@ name = "moho_physics"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
+ "moho_render_api",
+ "proptest",
  "rapier3d",
  "tracing",
 ]
@@ -1640,10 +1641,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "moho_types"
-version = "0.1.0"
-
-[[package]]
 name = "moho_ui"
 version = "0.1.0"
 dependencies = [
@@ -1654,7 +1651,6 @@ dependencies = [
  "moho_game",
  "moho_input",
  "moho_renderer",
- "moho_types",
  "rand 0.10.2",
  "tracing",
  "wgpu",

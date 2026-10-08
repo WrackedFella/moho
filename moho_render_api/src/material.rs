@@ -41,3 +41,21 @@ pub trait RenderMaterial {
     fn to_gpu(&self) -> MaterialGpu;
     fn dedup_key(&self) -> MaterialKey;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::MaterialGpu;
+
+    fn with_params2(value: f32) -> MaterialGpu {
+        MaterialGpu {
+            albedo: [1.0; 4],
+            params: [0.0, 0.0, value, 0.0],
+        }
+    }
+
+    #[test]
+    fn is_transparent_only_when_params2_positive() {
+        assert!(!with_params2(0.0).is_transparent());
+        assert!(with_params2(0.5).is_transparent());
+    }
+}

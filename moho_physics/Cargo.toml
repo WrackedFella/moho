@@ -8,6 +8,10 @@ publish = false
 rapier3d = { workspace = true }
 glam = { workspace = true }
 tracing = { workspace = true }
+moho_render_api = { path = "../moho_render_api" }
+
+[dev-dependencies]
+proptest = { workspace = true }
 
 [lints]
 workspace = true

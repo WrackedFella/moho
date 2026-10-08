@@ -1,8 +1,8 @@
 # Input and state
 
 **Source:** `src/input_dispatcher.rs`, `moho_input/src/`, `moho_ui/src/actions.rs`, `src/app/renderer_setup.rs` (registrations),
-`src/main.rs` (`window_event`, `handle_keyboard_input`), `moho_types/src/app_state.rs`,
-`moho_types/src/state_coordinator.rs`.
+`src/main.rs` (`window_event`, `handle_keyboard_input`), `moho_ui/src/app_state/game_state.rs`,
+`moho_ui/src/app_state/state_coordinator.rs`.
 
 ## Input routing
 
@@ -53,7 +53,7 @@ section of [prefs](../reference/prefs-format.md).
 
 ## GameState
 
-`moho_types::GameState` decides input routing, rendering, cursor and whether the
+`moho_ui::GameState` decides input routing, rendering, cursor and whether the
 simulation runs. `can_transition_to` is the legality table; `StateTransitionCoordinator`
 returns the side effects (UI visibility, cursor grab) for a legal transition.
 
@@ -80,4 +80,4 @@ Same-state transitions are allowed (no-op). Everything else is rejected, includi
 | `ConsoleOpen` | console text | world (frozen) + console | free | paused |
 | `Paused` | pause menu | world (frozen) + menu | free | paused |
 
-`src/game_state.rs` re-exports it; the app maps it to `moho_ui::GameState` for the UI adapter. Per-frame gameplay steps check `== Playing` ([frame-loop](frame-loop.md)).
+`src/game_state.rs` re-exports `moho_ui::GameState`; the UI adapter takes the same type. Per-frame gameplay steps check `== Playing` ([frame-loop](frame-loop.md)).

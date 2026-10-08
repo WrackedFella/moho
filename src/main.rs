@@ -235,11 +235,11 @@ impl App {
         crate::app::scene_loader::load_scene(self, path.as_ref())
     }
 
-    /// Initialize physics world after a scene is loaded.
+    /// Place the character after a scene is loaded.
+    ///
+    /// Expects physics to be already reset and the loaded chunks registered
+    /// by the loader.
     fn setup_physics_for_loaded_world(&mut self) {
-        self.physics.reset();
-        self.physics.sync_colliders(&self.entities.chunks);
-
         // Spawn the physics character at the saved player position so the KCC
         // doesn't immediately override the restored camera on the first frame.
         let saved_pos = self.simulation.position();
@@ -262,7 +262,7 @@ impl App {
             .set_position_yaw_pitch(spawn_pos, yaw, pitch);
 
         tracing::info!(
-            count = self.physics.chunk_colliders.len(),
+            count = self.entities.chunks.len(),
             "Physics initialized for loaded world"
         );
     }
@@ -442,7 +442,7 @@ impl App {
     }
 
     fn hide_menu(&mut self) {
-        use moho_types::StateTransitionCoordinator;
+        use moho_ui::StateTransitionCoordinator;
 
         match StateTransitionCoordinator::hide_menu(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
@@ -451,7 +451,7 @@ impl App {
     }
 
     fn show_menu(&mut self) {
-        use moho_types::StateTransitionCoordinator;
+        use moho_ui::StateTransitionCoordinator;
 
         match StateTransitionCoordinator::show_menu(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
@@ -461,7 +461,7 @@ impl App {
 
     /// Enter console mode (opens debug console over game)
     fn enter_console(&mut self) {
-        use moho_types::StateTransitionCoordinator;
+        use moho_ui::StateTransitionCoordinator;
 
         match StateTransitionCoordinator::enter_console(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
@@ -471,7 +471,7 @@ impl App {
 
     /// Exit console mode (return to playing)
     fn exit_console(&mut self) {
-        use moho_types::StateTransitionCoordinator;
+        use moho_ui::StateTransitionCoordinator;
 
         match StateTransitionCoordinator::exit_console(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
@@ -482,7 +482,7 @@ impl App {
     /// Toggle pause state
     #[allow(dead_code)]
     fn toggle_pause(&mut self) {
-        use moho_types::StateTransitionCoordinator;
+        use moho_ui::StateTransitionCoordinator;
 
         match StateTransitionCoordinator::toggle_pause(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
@@ -497,7 +497,7 @@ impl App {
     /// - Update UI visibility and state
     /// - Handle cursor grab/release
     /// - Show specific menu if requested
-    fn apply_transition(&mut self, actions: moho_types::StateTransitionActions) {
+    fn apply_transition(&mut self, actions: moho_ui::StateTransitionActions) {
         tracing::info!(
             from = ?self.game_state,
             to = ?actions.new_state,
@@ -514,14 +514,7 @@ impl App {
             use moho_ui::UI_OVERLAY_VISIBLE;
             adapter.set_visible(actions.ui_visible);
 
-            // Convert moho_types::GameState to moho_ui::GameState
-            let ui_state = match actions.new_state {
-                moho_types::GameState::Menu => moho_ui::GameState::Menu,
-                moho_types::GameState::Playing => moho_ui::GameState::Playing,
-                moho_types::GameState::ConsoleOpen => moho_ui::GameState::ConsoleOpen,
-                moho_types::GameState::Paused => moho_ui::GameState::Paused,
-            };
-            adapter.set_game_state(ui_state);
+            adapter.set_game_state(actions.new_state);
 
             // Update atomic flag for UI visibility
             UI_OVERLAY_VISIBLE.store(actions.ui_visible, std::sync::atomic::Ordering::SeqCst);
@@ -533,7 +526,7 @@ impl App {
 
             tracing::debug!(
                 visible = actions.ui_visible,
-                state = ?ui_state,
+                state = ?actions.new_state,
                 "UI updated"
             );
         }
