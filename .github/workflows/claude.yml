@@ -34,8 +34,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # Claude Code may only touch the workspace, so the board script comes from a
-      # checkout here instead of the plugin cache. Both refs below match the pin in
-      # .claude/settings.json; bump them together.
+      # checkout here instead of the plugin cache. The ref matches the pin in
+      # .claude/settings.json; bump them together. The action rejects a ref suffix on
+      # plugin_marketplaces, so the installed plugin follows the marketplace's default branch.
       - uses: actions/checkout@v4
         with:
           repository: WrackedFella/claude-skills
@@ -48,7 +49,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git#v0.9.0
+          plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
           plugins: devflow@claude-skills
           # Writes the run to the job summary; the agent runs without GitHub comments on dispatch.
           display_report: true
