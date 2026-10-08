@@ -261,7 +261,6 @@ mod tests {
         let bindings = registry(); // Move Forward holds W
         let mut bindings_changed = vec![];
 
-        // Try to bind Move Left to the same key 'W'
         handler.start_listening(1);
 
         let consumed = handler.apply_key_while_listening(Key::W, &bindings, |action, b| {

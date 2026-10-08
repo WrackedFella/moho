@@ -38,7 +38,6 @@ fn escape_cancels_binding_listen() {
     menu.start_listening(0);
     assert!(menu.is_listening());
 
-    // Press escape
     let consumed = menu.apply_key_while_listening(Key::Escape);
     assert!(consumed, "escape should be consumed");
     assert!(!menu.is_listening(), "should stop listening after escape");
@@ -212,7 +211,6 @@ fn canceling_conflict_preserves_original() {
 fn multiple_unique_bindings_work() {
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
 
-    // Bind all six keys to unique keys
     let bindings = [Key::W, Key::A, Key::S, Key::D, Key::ArrowUp, Key::ArrowDown];
 
     for (id, &key) in bindings.iter().enumerate() {
@@ -257,7 +255,7 @@ fn render_doesnt_crash() {
     // Should not panic
 }
 
-/// Test 10: A lone modifier key can be captured as a binding
+/// A lone modifier key can be captured as a binding
 #[test]
 fn modifier_key_can_be_bound() {
     let mut menu = SettingsMenu::with_prefs(Prefs::default());

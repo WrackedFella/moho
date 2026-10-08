@@ -156,7 +156,6 @@ impl KeybindCaptureHandler {
                 key, pressed: true, ..
             } = ev
             {
-                // Escape cancels listening mode
                 if *key == egui::Key::Escape {
                     self.listening = None;
                     return;

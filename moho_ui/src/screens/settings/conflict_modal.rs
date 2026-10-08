@@ -10,11 +10,8 @@ use crate::actions::StrategyAction;
 /// Represents a pending binding that triggered a conflict.
 #[derive(Clone)]
 pub struct PendingBinding {
-    /// The action being configured
     pub target: StrategyAction,
-    /// The new key the user wants to assign
     pub key: Key,
-    /// The action currently holding that key, if any
     pub conflicting: Option<StrategyAction>,
 }
 

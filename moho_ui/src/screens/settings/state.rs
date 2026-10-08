@@ -209,7 +209,6 @@ mod tests {
         state.set_staged_binding(StrategyAction::MoveForward, key(Key::Q));
         assert!(state.is_dirty());
 
-        // Saves to disk
         let result = state.apply_changes();
         assert!(result.is_ok());
 
