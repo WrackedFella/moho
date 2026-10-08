@@ -926,6 +926,58 @@ mod tests {
         );
     }
 
+    fn solid_samples_field(
+        solid: impl IntoIterator<Item = (usize, usize, usize)>,
+    ) -> [[[f32; 18]; 18]; 18] {
+        let mut field = [[[0.0f32; 18]; 18]; 18];
+        for (x, y, z) in solid {
+            field[x][y][z] = 1.0;
+        }
+        field
+    }
+
+    fn assert_normals_point_away_from(mesh: &VoxelMesh, centre: [f32; 3]) {
+        assert!(!mesh.vertices.is_empty(), "solid must produce geometry");
+        assert_eq!(mesh.vertices.len(), mesh.normals.len());
+
+        for (v, n) in mesh.vertices.iter().zip(&mesh.normals) {
+            let radial = [v[0] - centre[0], v[1] - centre[1], v[2] - centre[2]];
+            let radial_len = radial.iter().map(|c| c * c).sum::<f32>().sqrt();
+            let normal_len = n.iter().map(|c| c * c).sum::<f32>().sqrt();
+            let cosine = (radial[0] * n[0] + radial[1] * n[1] + radial[2] * n[2])
+                / (radial_len * normal_len);
+
+            assert!(
+                (normal_len - 1.0).abs() < 1e-3,
+                "normal {n:?} at vertex {v:?} is not unit length"
+            );
+            assert!(
+                cosine > 0.5,
+                "normal {n:?} at vertex {v:?} does not point away from {centre:?} (cosine {cosine})"
+            );
+        }
+    }
+
+    #[test]
+    fn single_voxel_normals_point_outward() {
+        let field = solid_samples_field([(8, 8, 8)]);
+
+        let mesh = MarchingCubes::generate_mesh(&field, 16);
+
+        assert_normals_point_away_from(&mesh, [8.0, 8.0, 8.0]);
+    }
+
+    #[test]
+    fn two_cube_solid_normals_point_outward() {
+        let solid =
+            (6..=7).flat_map(|x| (6..=7).flat_map(move |y| (6..=7).map(move |z| (x, y, z))));
+        let field = solid_samples_field(solid);
+
+        let mesh = MarchingCubes::generate_mesh(&field, 16);
+
+        assert_normals_point_away_from(&mesh, [6.5, 6.5, 6.5]);
+    }
+
     #[test]
     fn all_indices_in_range() {
         // Regression guard: out-of-range indices cause silent GPU crashes on some hardware.
