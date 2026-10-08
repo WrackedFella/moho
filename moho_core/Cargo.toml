@@ -10,7 +10,6 @@ moho_render_api = { path = "../moho_render_api" }
 glam = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-bincode = { workspace = true }
 postcard = { workspace = true }
 crc32fast = { workspace = true }
 thiserror = { workspace = true }

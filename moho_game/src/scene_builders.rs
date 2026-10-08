@@ -1,12 +1,11 @@
 use crate::biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
-use bincode::{Decode, Encode};
 use moho_core::voxel::{BlockPos, ChunkStore, LightPropagator, VoxelChunk, VoxelGrid};
 use noise::{NoiseFn, Perlin};
 use serde::{Deserialize, Serialize};
 
 /// Parameters describing a new world request coming from the UI or other
 /// front-ends. Defined here so the generator and caller share a single type.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorldSpec {
     pub name: String,
     pub seed: Option<u64>,

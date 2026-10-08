@@ -14,9 +14,23 @@ pub enum FileKind {
 impl FileKind {
     /// Newest format version this build writes and reads for the kind.
     pub fn current_version(self) -> u16 {
-        todo!()
+        match self {
+            Self::World | Self::Scene | Self::Chunk => 1,
+        }
+    }
+
+    fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            1 => Some(Self::World),
+            2 => Some(Self::Scene),
+            3 => Some(Self::Chunk),
+            _ => None,
+        }
     }
 }
+
+const MAGIC: &[u8; 4] = b"MOHO";
+const HEADER_LEN: usize = 19;
 
 /// Why an envelope could not be written or read.
 #[derive(Debug, thiserror::Error)]
@@ -38,14 +52,45 @@ pub enum PersistError {
 
 /// Wrap `value` in an envelope of the given kind.
 pub fn encode<T: Serialize>(kind: FileKind, value: &T) -> Result<Vec<u8>, PersistError> {
-    let _ = (kind, value);
-    todo!()
+    let payload = postcard::to_allocvec(value).map_err(|e| PersistError::Encode(e.to_string()))?;
+    let mut out = Vec::with_capacity(HEADER_LEN + payload.len());
+    out.extend_from_slice(MAGIC);
+    out.push(kind as u8);
+    out.extend_from_slice(&kind.current_version().to_le_bytes());
+    out.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+    out.extend_from_slice(&crc32fast::hash(&payload).to_le_bytes());
+    out.extend_from_slice(&payload);
+    Ok(out)
 }
 
 /// Validate the envelope and decode its payload as `expected`.
 pub fn decode<T: DeserializeOwned>(expected: FileKind, bytes: &[u8]) -> Result<T, PersistError> {
-    let _ = (expected, bytes);
-    todo!()
+    if bytes.len() < HEADER_LEN || &bytes[..4] != MAGIC {
+        return Err(PersistError::NotASaveFile);
+    }
+    let kind = FileKind::from_byte(bytes[4]).ok_or(PersistError::NotASaveFile)?;
+    let version = u16::from_le_bytes([bytes[5], bytes[6]]);
+    if version == 0 || version > kind.current_version() {
+        return Err(PersistError::UnsupportedFormat { kind, version });
+    }
+    if kind != expected {
+        return Err(PersistError::WrongKind {
+            expected,
+            found: kind,
+        });
+    }
+    let declared = u64::from_le_bytes(bytes[7..15].try_into().expect("8-byte slice"));
+    let crc = u32::from_le_bytes(bytes[15..19].try_into().expect("4-byte slice"));
+    let payload = &bytes[HEADER_LEN..];
+    if declared != payload.len() as u64 || crc32fast::hash(payload) != crc {
+        return Err(PersistError::Corrupt);
+    }
+    let (value, rest) = postcard::take_from_bytes(payload).map_err(|_| PersistError::Corrupt)?;
+    if rest.is_empty() {
+        Ok(value)
+    } else {
+        Err(PersistError::Corrupt)
+    }
 }
 
 #[cfg(test)]

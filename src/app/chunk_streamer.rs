@@ -143,12 +143,20 @@ impl ChunkStreamer {
     /// Returns `true` if the chunk has any blocks (not all-air).
     fn load_chunk(&self, grid: &mut VoxelGrid, pos: IVec3) -> bool {
         // Try disk first (player-modified chunk saved on a previous eviction).
-        if let Some(data) = save::read_chunk_file(&self.world_name, pos) {
-            if grid.deserialize_chunk_into(pos, &data).is_ok() {
+        let loaded = save::read_chunk_file(&self.world_name, pos).and_then(|data| {
+            data.map_or(Ok(false), |data| {
+                grid.deserialize_chunk_into(pos, &data).map(|()| true)
+            })
+        });
+        match loaded {
+            Ok(true) => {
                 tracing::trace!(chunk = ?pos, "Loaded chunk from disk");
                 return true;
             }
-            tracing::warn!(chunk = ?pos, "Corrupt chunk file; regenerating");
+            Ok(false) => {}
+            Err(error) => {
+                tracing::error!(chunk = ?pos, %error, "Unreadable chunk file; regenerating from seed");
+            }
         }
 
         // Generate from the deterministic terrain function.

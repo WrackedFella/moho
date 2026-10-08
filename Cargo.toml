@@ -13,7 +13,6 @@ publish = false
 members = ["moho_core", "moho_game", "moho_render_api", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_types", "moho_physics"]
 
 [workspace.dependencies]
-bincode = "2.0"
 bytemuck = "1.24"
 glam = "0.33"
 naga = "29.0.1"
@@ -72,8 +71,9 @@ unnecessary_wraps = "allow"
 
 [dependencies]
 
-[dependencies.bincode]
+[dependencies.serde]
 workspace = true
+features = ["derive"]
 
 [dependencies.glam]
 workspace = true

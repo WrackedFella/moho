@@ -3,7 +3,6 @@
 //! This module provides a configurable game clock that tracks time on a 24-hour cycle
 //! and calculates sun and moon positions for realistic day/night transitions.
 
-use bincode::{Decode, Encode};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
@@ -13,7 +12,7 @@ use std::f32::consts::PI;
 /// The clock operates on a 24-hour cycle (0.0 - 24.0) with configurable
 /// day and night lengths. It automatically calculates sun and moon positions
 /// based on the current time.
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameClock {
     /// Current time of day in hours (0.0 = midnight, 12.0 = noon, 24.0 wraps to 0.0)
     time_of_day: f32,

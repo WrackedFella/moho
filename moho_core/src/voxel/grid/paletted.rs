@@ -4,7 +4,7 @@ use std::collections::HashMap;
 pub const CHUNK_VOL: usize = 4096; // 16³
 
 /// Serializable snapshot of a chunk's block data (no runtime-only flags).
-#[derive(bincode::Encode, bincode::Decode)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct ChunkSnapshot {
     palette: Vec<u32>,
     /// Flattened indices (CHUNK_VOL entries).
@@ -119,21 +119,22 @@ impl PalettedChunk {
     /// Runtime-only flags (`mesh_dirty`, `light_dirty`, `modified`) are not
     /// included; they are re-derived when the chunk is loaded back.
     pub fn to_bytes(&self) -> Vec<u8> {
+        // HashMap order is unspecified; sort so equal chunks encode to equal bytes.
+        let mut resources: Vec<(u16, u32)> = self.resources.iter().map(|(&k, &v)| (k, v)).collect();
+        resources.sort_unstable_by_key(|&(idx, _)| idx);
         let snap = ChunkSnapshot {
             palette: self.palette.clone(),
             indices: self.indices.to_vec(),
-            resources: self.resources.iter().map(|(&k, &v)| (k, v)).collect(),
+            resources,
         };
-        bincode::encode_to_vec(&snap, bincode::config::standard())
+        crate::persist::encode(crate::persist::FileKind::Chunk, &snap)
             .expect("PalettedChunk serialization must not fail")
     }
 
     /// Deserialize a chunk from bytes produced by `to_bytes`.
     /// Fails if the data is malformed or the index count is wrong.
     pub fn from_bytes(data: &[u8]) -> Result<Self, PersistError> {
-        let (snap, _): (ChunkSnapshot, _) =
-            bincode::decode_from_slice(data, bincode::config::standard())
-                .map_err(|_| PersistError::Corrupt)?;
+        let snap: ChunkSnapshot = crate::persist::decode(crate::persist::FileKind::Chunk, data)?;
         if snap.indices.len() != CHUNK_VOL {
             return Err(PersistError::Corrupt);
         }

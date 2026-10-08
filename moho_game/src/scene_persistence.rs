@@ -5,10 +5,10 @@
 
 use crate::actors::{Cube, Sphere};
 use crate::scene::SceneEntities;
-use bincode::{Decode, Encode};
 use moho_core::materials::MaterialType;
-use moho_core::persist::PersistError;
+use moho_core::persist::{self, FileKind, PersistError};
 use moho_render_api::{CameraDesc, LightDesc};
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -16,10 +16,7 @@ use std::path::Path;
 /// Type alias for camera data: (position, yaw, pitch)
 pub type CameraData = (glam::Vec3, f32, f32);
 
-/// Scene file version. Bump when the on-disk layout changes.
-const SCENE_FILE_VERSION: u32 = 3;
-
-/// Save a compact binary snapshot of the scene (method 2: bincode).
+/// Save a compact binary snapshot of the scene in a `Scene` envelope.
 /// This writes a serialized SceneDesc containing all Spheres, Cubes, VoxelChunks,
 /// Materials, and camera position/orientation. Reloadable into fresh [`SceneEntities`]
 /// via `load_from_file`.
@@ -28,7 +25,7 @@ pub fn save_to_file<P: AsRef<Path>>(
     entities: &SceneEntities,
     camera_position: Option<CameraData>, // (position, yaw, pitch)
     lights: &[LightDesc],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), PersistError> {
     let encoded = encode_to_bytes(entities, camera_position, lights)?;
     let mut f = File::create(path)?;
     f.write_all(&encoded)?;
@@ -41,7 +38,7 @@ pub fn encode_to_bytes(
     entities: &SceneEntities,
     camera_position: Option<CameraData>,
     lights: &[LightDesc],
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+) -> Result<Vec<u8>, PersistError> {
     let mut spheres: Vec<SphereDesc> = Vec::new();
     for s in entities.actors.spheres() {
         spheres.push(SphereDesc {
@@ -84,7 +81,6 @@ pub fn encode_to_bytes(
     });
 
     let desc = SceneDesc {
-        version: SCENE_FILE_VERSION,
         spheres,
         cubes,
         voxel_chunks,
@@ -92,8 +88,7 @@ pub fn encode_to_bytes(
         lights: lights.to_vec(),
     };
 
-    let encoded = bincode::encode_to_vec(&desc, bincode::config::standard())?;
-    Ok(encoded)
+    persist::encode(FileKind::Scene, &desc)
 }
 
 /// Load a SceneDesc from a file and populate the provided `entities`.
@@ -108,11 +103,11 @@ pub fn load_from_file<P: AsRef<Path>>(
     let mut f = File::open(path)?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf)?;
-    // Delegate to helper that decodes from bytes so load_from_bytes can reuse it.
-    decode_and_populate(&buf, entities)
+    load_from_bytes(&buf, entities)
 }
 
-/// Decode a scene saved as bincode bytes and populate `entities`.
+/// Decode an enveloped scene and populate `entities`. The bytes are decoded
+/// fully before `entities` is touched, so an error applies no partial state.
 /// Actors are appended and a loaded chunk replaces any chunk at the same
 /// position, as in [`load_from_file`].
 /// Returns camera data and any persisted lights.
@@ -120,66 +115,23 @@ pub fn load_from_bytes(
     bytes: &[u8],
     entities: &mut SceneEntities,
 ) -> Result<(Option<CameraData>, Vec<LightDesc>), PersistError> {
-    decode_and_populate(bytes, entities)
-}
-
-/// Internal helper to decode SceneDesc from bytes and populate entities.
-fn decode_and_populate(
-    bytes: &[u8],
-    entities: &mut SceneEntities,
-) -> Result<(Option<CameraData>, Vec<LightDesc>), PersistError> {
-    decode_and_populate_inner(bytes, entities).map_err(|_| PersistError::Corrupt)
-}
-
-fn decode_and_populate_inner(
-    bytes: &[u8],
-    entities: &mut SceneEntities,
-) -> Result<(Option<CameraData>, Vec<LightDesc>), Box<dyn std::error::Error>> {
-    let cfg = bincode::config::standard();
-
-    // Try decoding as v3 (includes lights). For v1/v2 saves this will fail
-    // because the lights field doesn't exist in the binary data.
-    if let Ok((desc, _)) = bincode::decode_from_slice::<SceneDesc, _>(bytes, cfg)
-        && desc.version >= 1
-        && desc.version <= SCENE_FILE_VERSION
-    {
-        return populate_entities(
-            desc.spheres,
-            desc.cubes,
-            desc.voxel_chunks,
-            desc.camera,
-            desc.lights,
-            entities,
-        );
-    }
-
-    // Fallback: try decoding as legacy v1/v2 (without lights field).
-    let (legacy, _) = bincode::decode_from_slice::<SceneDescLegacy, _>(bytes, cfg)
-        .map_err(|e| format!("failed to decode scene: {e}"))?;
-
-    if legacy.version < 1 || legacy.version > 2 {
-        return Err(format!(
-            "unsupported scene file version: {} (expected 1-{})",
-            legacy.version, SCENE_FILE_VERSION
-        )
-        .into());
-    }
-
-    tracing::info!(
-        version = legacy.version,
-        "Loaded legacy scene format — spawned lights will not be restored"
-    );
-    populate_entities(
-        legacy.spheres,
-        legacy.cubes,
-        legacy.voxel_chunks,
-        legacy.camera,
-        vec![],
+    let SceneDesc {
+        spheres,
+        cubes,
+        voxel_chunks,
+        camera,
+        lights,
+    } = persist::decode(FileKind::Scene, bytes)?;
+    Ok(populate_entities(
+        spheres,
+        cubes,
+        voxel_chunks,
+        camera,
+        lights,
         entities,
-    )
+    ))
 }
 
-/// Shared population logic used by both v3 and legacy load paths.
 fn populate_entities(
     spheres: Vec<SphereDesc>,
     cubes: Vec<CubeDesc>,
@@ -187,7 +139,7 @@ fn populate_entities(
     camera: Option<CameraDesc>,
     lights: Vec<LightDesc>,
     entities: &mut SceneEntities,
-) -> Result<(Option<CameraData>, Vec<LightDesc>), Box<dyn std::error::Error>> {
+) -> (Option<CameraData>, Vec<LightDesc>) {
     for s in spheres {
         let mat = s.material.into_material_type();
         let sphere = Sphere::new(glam::Vec3::from_array(s.center), s.radius, mat);
@@ -233,13 +185,12 @@ fn populate_entities(
 
     let camera_data = camera.map(|cam| (glam::Vec3::from_array(cam.position), cam.yaw, cam.pitch));
 
-    Ok((camera_data, lights))
+    (camera_data, lights)
 }
 
-/// Serializable scene descriptor used for bincode snapshotting.
-#[derive(Encode, Decode)]
+/// Serializable scene descriptor; the envelope carries the format version.
+#[derive(Serialize, Deserialize)]
 struct SceneDesc {
-    version: u32,
     spheres: Vec<SphereDesc>,
     cubes: Vec<CubeDesc>,
     voxel_chunks: Vec<VoxelChunkDesc>,
@@ -247,18 +198,7 @@ struct SceneDesc {
     lights: Vec<LightDesc>,
 }
 
-/// Legacy scene descriptor for v1/v2 saves (no lights field).
-/// Used as a fallback when the current SceneDesc fails to decode.
-#[derive(Encode, Decode)]
-struct SceneDescLegacy {
-    version: u32,
-    spheres: Vec<SphereDesc>,
-    cubes: Vec<CubeDesc>,
-    voxel_chunks: Vec<VoxelChunkDesc>,
-    camera: Option<CameraDesc>,
-}
-
-#[derive(Encode, Decode)]
+#[derive(Serialize, Deserialize)]
 struct VoxelChunkDesc {
     chunk_pos: [i32; 3],
     vertices: Vec<[f32; 3]>,
@@ -267,14 +207,14 @@ struct VoxelChunkDesc {
     material_id: u32,
 }
 
-#[derive(Encode, Decode)]
+#[derive(Serialize, Deserialize)]
 struct SphereDesc {
     center: [f32; 3],
     radius: f32,
     material: MaterialDesc,
 }
 
-#[derive(Encode, Decode)]
+#[derive(Serialize, Deserialize)]
 struct CubeDesc {
     center: [f32; 3],
     length: f32,
@@ -283,7 +223,7 @@ struct CubeDesc {
     material: MaterialDesc,
 }
 
-#[derive(Encode, Decode)]
+#[derive(Serialize, Deserialize)]
 enum MaterialDesc {
     Lambertian {
         albedo: [f32; 3],
@@ -708,14 +648,13 @@ mod tests {
             material_id,
         };
         let desc = SceneDesc {
-            version: SCENE_FILE_VERSION,
             spheres: Vec::new(),
             cubes: Vec::new(),
             voxel_chunks: vec![chunk_desc(11), chunk_desc(22)],
             camera: None,
             lights: Vec::new(),
         };
-        let bytes = bincode::encode_to_vec(&desc, bincode::config::standard()).expect("encode");
+        let bytes = persist::encode(FileKind::Scene, &desc).expect("encode");
 
         let mut loaded = SceneEntities::default();
         load_from_bytes(&bytes, &mut loaded).expect("decode");

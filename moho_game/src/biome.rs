@@ -8,13 +8,12 @@
 //! so worlds can contain multiple biomes arranged in regions. Generation is a
 //! pure function of `(x, z, seed, enabled_biomes)`.
 
-use bincode::{Decode, Encode};
 use noise::{NoiseFn, Perlin};
 use serde::{Deserialize, Serialize};
 
 /// Named biome. Each variant has a distinct terrain shape realized by
 /// `BiomeType::shape(raw_noise)` in addition to its numerical `params()`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BiomeType {
     GentleHills,
     Mountains,
@@ -111,7 +110,7 @@ impl BiomeType {
 /// Sub-voxel material strategy when a block is converted to a `MicroChunk`.
 /// `Geological` (the default) samples sub-voxels individually from an ore
 /// noise field; `BlockAligned` makes every sub-voxel inherit the parent block.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OreLayout {
     BlockAligned,
     #[default]
