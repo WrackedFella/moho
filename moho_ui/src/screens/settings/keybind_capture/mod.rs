@@ -141,30 +141,13 @@ impl KeybindCaptureHandler {
     {
         if let Some(pending) = self.conflict_modal.take_pending() {
             // Clear conflicting binding if any
-            if let Some(conflict_id) = pending.conflicting_id {
-                let field = match conflict_id {
-                    0 => SettingsField::KeyW,
-                    1 => SettingsField::KeyA,
-                    2 => SettingsField::KeyS,
-                    3 => SettingsField::KeyD,
-                    4 => SettingsField::KeyUp,
-                    5 => SettingsField::KeyDown,
-                    _ => SettingsField::KeyW, // Fallback (shouldn't happen)
-                };
-                on_binding_changed(field, Binding::new(0, 0));
+            if let Some(id) = pending.conflicting_id.and_then(BindingId::from_usize) {
+                on_binding_changed(id.to_settings_field(), Binding::new(0, 0));
             }
 
-            // Apply new binding
-            let target_field = match pending.target_id {
-                0 => SettingsField::KeyW,
-                1 => SettingsField::KeyA,
-                2 => SettingsField::KeyS,
-                3 => SettingsField::KeyD,
-                4 => SettingsField::KeyUp,
-                5 => SettingsField::KeyDown,
-                _ => SettingsField::KeyW, // Fallback (shouldn't happen)
-            };
-            on_binding_changed(target_field, pending.binding);
+            if let Some(id) = BindingId::from_usize(pending.target_id) {
+                on_binding_changed(id.to_settings_field(), pending.binding);
+            }
         }
         self.conflict_modal.hide();
     }
@@ -174,13 +157,18 @@ impl KeybindCaptureHandler {
         self.conflict_modal.clear();
     }
 
-    /// Get conflict modal state (for checking if modal should be shown)
-    pub fn take_conflict_modal(&mut self) -> Option<ConflictModalState> {
-        if self.conflict_modal.is_visible() {
-            Some(std::mem::take(&mut self.conflict_modal))
-        } else {
-            None
+    /// Take the dialog text (conflict key name, binding description) if the
+    /// modal is visible, hiding it while keeping the pending binding for a
+    /// later `apply_pending`.
+    pub fn take_conflict_modal(&mut self) -> Option<(String, String)> {
+        if !self.conflict_modal.is_visible() {
+            return None;
         }
+        self.conflict_modal.hide();
+        Some((
+            self.conflict_modal.conflict_key_name().to_string(),
+            self.conflict_modal.conflict_binding_desc().to_string(),
+        ))
     }
 
     pub(super) fn get_key_name(id: usize) -> &'static str {

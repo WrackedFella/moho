@@ -284,12 +284,10 @@ impl Screen for SettingsMenu {
     fn take_pending_modal(&mut self) -> Option<Box<dyn crate::modal::Modal>> {
         self.keybind_capture
             .take_conflict_modal()
-            .map(|conflict_modal| {
+            .map(|(key_name, binding_desc)| {
                 use crate::modals::KeybindConflictModal;
-                Box::new(KeybindConflictModal::new(
-                    conflict_modal.conflict_key_name().to_string(),
-                    conflict_modal.conflict_binding_desc().to_string(),
-                )) as Box<dyn crate::modal::Modal>
+                Box::new(KeybindConflictModal::new(key_name, binding_desc))
+                    as Box<dyn crate::modal::Modal>
             })
     }
 
