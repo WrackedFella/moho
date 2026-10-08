@@ -9,6 +9,7 @@ mod state;
 mod types;
 mod video_tab;
 
+use binding_registry::BindingRegistry;
 use conflict_modal::ConflictModalState;
 use keybind_capture::KeybindCaptureHandler;
 use moho_input::bindings::Binding;
@@ -107,11 +108,27 @@ impl SettingsMenu {
     }
 
     pub fn apply_pending_binding(&mut self) {
+        self.capture(|handler, staged, on_change| handler.apply_pending(staged, on_change));
+    }
+
+    /// Runs `run` on the capture handler with a snapshot of the staged bindings, and a
+    /// callback that writes changes back to the staged state.
+    fn capture<R>(
+        &mut self,
+        run: impl FnOnce(
+            &mut KeybindCaptureHandler,
+            &BindingRegistry,
+            &mut dyn FnMut(StrategyAction, Vec<Binding>),
+        ) -> R,
+    ) -> R {
         let staged = self.state.staged_bindings().clone();
-        self.keybind_capture
-            .apply_pending(&staged, |action, bindings| {
+        run(
+            &mut self.keybind_capture,
+            &staged,
+            &mut |action, bindings| {
                 self.state.set_staged_binding(action, bindings);
-            });
+            },
+        )
     }
 
     pub fn cancel_pending_binding(&mut self) {
@@ -150,11 +167,9 @@ impl SettingsMenu {
     ///
     /// For testing purposes: allows direct simulation of key input during binding listen mode.
     pub fn apply_key_while_listening(&mut self, key: Key) -> bool {
-        let bindings = self.state.staged_bindings().clone();
-        self.keybind_capture
-            .apply_key_while_listening(key, &bindings, |action, bindings| {
-                self.state.set_staged_binding(action, bindings);
-            })
+        self.capture(|handler, staged, on_change| {
+            handler.apply_key_while_listening(key, staged, on_change)
+        })
     }
 
     /// Get the currently active tab.
@@ -227,11 +242,9 @@ impl UiComponent for SettingsMenu {
         render_ops::render_content_area(ctx, self);
 
         // Handle key capture when listening for a binding - delegates to keybind_capture
-        let bindings = self.state.staged_bindings().clone();
-        self.keybind_capture
-            .handle_key_capture(ctx, &bindings, |action, bindings| {
-                self.state.set_staged_binding(action, bindings);
-            });
+        self.capture(|handler, staged, on_change| {
+            handler.handle_key_capture(ctx, staged, on_change);
+        });
 
         items
     }
@@ -258,11 +271,9 @@ impl Screen for SettingsMenu {
 
     /// Handle raw input for keybind capture
     fn handle_raw_input(&mut self, event: &winit::event::WindowEvent) -> bool {
-        let bindings = self.state.staged_bindings().clone();
-        self.keybind_capture
-            .handle_winit_event(event, &bindings, |action, bindings| {
-                self.state.set_staged_binding(action, bindings);
-            })
+        self.capture(|handler, staged, on_change| {
+            handler.handle_winit_event(event, staged, on_change)
+        })
     }
 
     /// Check if settings wants to show the keybind conflict modal

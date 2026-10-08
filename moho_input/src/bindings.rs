@@ -1,9 +1,8 @@
 //! Action-keyed bindings: what a game declares, and how they persist.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::marker::PhantomData;
 
 use crate::key::Key;
 
@@ -34,8 +33,8 @@ pub struct BindingWarning {
 /// Every action's current bindings.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActionBindings<A: Action> {
-    map: BTreeMap<&'static str, Vec<Binding>>,
-    _action: PhantomData<A>,
+    /// Holds every action in `A::ALL`; `defaults` fills it and `set` only replaces.
+    map: HashMap<A, Vec<Binding>>,
 }
 
 impl<A: Action> ActionBindings<A> {
@@ -43,9 +42,8 @@ impl<A: Action> ActionBindings<A> {
         Self {
             map: A::ALL
                 .iter()
-                .map(|a| (a.name(), a.default_bindings().to_vec()))
+                .map(|&a| (a, a.default_bindings().to_vec()))
                 .collect(),
-            _action: PhantomData,
         }
     }
 
@@ -55,11 +53,11 @@ impl<A: Action> ActionBindings<A> {
         let mut loaded = Self::defaults();
         let mut warnings = Vec::new();
         for (name, value) in section {
-            let action = A::ALL.iter().find(|a| a.name() == name);
+            let action = A::ALL.iter().copied().find(|a| a.name() == name);
             let parsed = action.and_then(|_| parse_list(value));
             match (action, parsed) {
                 (Some(action), Some(bindings)) => {
-                    loaded.map.insert(action.name(), bindings);
+                    loaded.map.insert(action, bindings);
                 }
                 _ => warnings.push(BindingWarning {
                     name: name.clone(),
@@ -74,16 +72,17 @@ impl<A: Action> ActionBindings<A> {
     pub fn to_section(&self) -> BTreeMap<String, String> {
         self.map
             .iter()
-            .map(|(name, bindings)| ((*name).to_string(), format_list(bindings)))
+            .map(|(action, bindings)| (action.name().to_string(), format_list(bindings)))
             .collect()
     }
 
+    /// An action missing from `A::ALL` reads as unbound.
     pub fn get(&self, action: A) -> &[Binding] {
-        self.map.get(action.name()).map_or(&[], Vec::as_slice)
+        self.map.get(&action).map_or(&[], Vec::as_slice)
     }
 
     pub fn set(&mut self, action: A, bindings: Vec<Binding>) {
-        self.map.insert(action.name(), bindings);
+        self.map.insert(action, bindings);
     }
 }
 
