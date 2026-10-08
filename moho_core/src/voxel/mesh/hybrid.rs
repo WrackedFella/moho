@@ -526,7 +526,7 @@ mod tests {
             .iter()
             .filter(|n| **n == [1.0, 0.0, 0.0])
             .count();
-        assert_eq!(facing_pos_x / 4, 128);
+        assert_eq!(facing_pos_x, 4 * 128, "128 quads facing +X");
     }
 
     #[test]
