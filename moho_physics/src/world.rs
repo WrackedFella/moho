@@ -138,7 +138,7 @@ impl PhysicsWorld {
         }
     }
 
-    /// The collider currently registered for `id`.
+    /// The collider registered for `id`; `None` for an unknown, empty or rejected mesh.
     pub fn world_mesh_collider(&self, id: WorldMeshId) -> Option<ColliderHandle> {
         self.world_mesh_colliders.get(&id).copied()
     }

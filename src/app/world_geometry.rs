@@ -67,7 +67,6 @@ fn upsert_chunk_mesh(
     }
 }
 
-/// Stop drawing the mesh `id` and drop its collider.
 fn remove_chunk_mesh(scene: &mut Scene, physics: Option<&mut PhysicsWorld>, id: WorldMeshId) {
     scene.world_meshes_mut().remove(id);
     if let Some(pw) = physics {
@@ -87,7 +86,6 @@ pub fn insert_chunk(app: &mut App, chunk: VoxelChunk) -> Option<VoxelChunk> {
     app.entities.chunks.insert(chunk)
 }
 
-/// Drop the chunk at `pos` from the store and stop drawing or colliding with it.
 pub fn remove_chunk(app: &mut App, pos: IVec3) -> Option<VoxelChunk> {
     remove_chunk_mesh(
         &mut app.scene,
@@ -97,7 +95,6 @@ pub fn remove_chunk(app: &mut App, pos: IVec3) -> Option<VoxelChunk> {
     app.entities.chunks.remove(pos)
 }
 
-/// Hand the mesh of every chunk in the store to the renderer and physics, after a bulk load.
 pub fn upsert_all_chunks(app: &mut App) {
     for chunk in app.entities.chunks.iter() {
         upsert_chunk_mesh(
@@ -109,7 +106,7 @@ pub fn upsert_all_chunks(app: &mut App) {
     }
 }
 
-/// Stop drawing or colliding with every chunk in the store, before it is cleared.
+/// Call before the store is cleared: mesh ids are derived from its chunks.
 pub fn remove_all_chunk_meshes(app: &mut App) {
     for chunk in app.entities.chunks.iter() {
         remove_chunk_mesh(
