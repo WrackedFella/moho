@@ -82,3 +82,6 @@ a fork. The engine owns the loop and a game plugs into it. Relies on
   renderer crate; [ENG-F20](../ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) contains it.
 - Order: 01 → 02 → 03. 02 rewrites `src/main.rs` and `src/app/event_loop`; run it
   after, not alongside, any ENG-F10 card touching those files.
+- ENG-F12-01 (moves `GameState` out of `moho_types`) lands before 02, so the loop moves
+  with the final path. Whichever of ENG-F12-03 and 02 lands second calls the action map's
+  per-tick read from the strategy's `Game::command()`.
