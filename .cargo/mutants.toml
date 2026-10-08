@@ -18,4 +18,6 @@ exclude_re = [
     # Equivalent: the fallback is a single-axis vector and only its sign survives
     # normalisation, which dividing by the density step keeps.
     'replace \* with / in MarchingCubes::edge_gradient',
+    # Equivalent: the three axis fields occupy disjoint bits, so OR and XOR agree.
+    'replace \| with \^ in chunk_mesh_id',
 ]

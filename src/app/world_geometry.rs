@@ -9,7 +9,8 @@ use moho_render_api::{WorldMesh, WorldMeshError, WorldMeshId};
 use moho_renderer::Scene;
 
 const AXIS_BITS: u32 = 21;
-const AXIS_OFFSET: i32 = 1 << (AXIS_BITS - 1);
+/// Half the 21-bit range: shifts a signed axis into `0..1 << AXIS_BITS`.
+const AXIS_OFFSET: i32 = 1 << 20;
 
 /// Stable renderer key for the chunk at `pos`: 21 bits per signed axis.
 pub fn chunk_mesh_id(pos: IVec3) -> WorldMeshId {
@@ -17,7 +18,7 @@ pub fn chunk_mesh_id(pos: IVec3) -> WorldMeshId {
         pos.cmpge(IVec3::splat(-AXIS_OFFSET)).all() && pos.cmplt(IVec3::splat(AXIS_OFFSET)).all(),
         "chunk position {pos} does not fit 21 bits per axis"
     );
-    let axis = |v: i32| u64::from((v + AXIS_OFFSET).cast_unsigned()) & ((1 << AXIS_BITS) - 1);
+    let axis = |v: i32| u64::from((v + AXIS_OFFSET).cast_unsigned());
     WorldMeshId((axis(pos.x) << (2 * AXIS_BITS)) | (axis(pos.y) << AXIS_BITS) | axis(pos.z))
 }
 
