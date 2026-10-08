@@ -395,6 +395,7 @@ mod tests {
         let mut light_system = LightSystem::with_default_budget(grid, event_bus);
         light_system.on_block_placed(IVec3::new(15, 2, 2), 1);
         light_system.process_frame();
+        assert_eq!(light_system.pending_jobs(), 0, "the frame drains the queue");
         let expected: HashSet<IVec3> = light_system
             .recent_results()
             .iter()
