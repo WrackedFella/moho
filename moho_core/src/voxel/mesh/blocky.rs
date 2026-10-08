@@ -497,6 +497,34 @@ mod tests {
     }
 
     #[test]
+    fn isolated_block_faces_lie_on_the_plane_their_normal_names() {
+        let mut grid = VoxelGrid::new(16);
+        let pos = IVec3::new(16, 16, 16);
+        grid.place_block(pos, 100, None);
+
+        let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
+
+        assert_eq!(mesh.vertices.len(), 24);
+        for (verts, normals) in mesh.vertices.chunks(4).zip(mesh.normals.chunks(4)) {
+            let n = normals[0];
+            assert!(normals.iter().all(|m| *m == n), "face shares one normal");
+            let axis = (0..3)
+                .find(|&a| n[a] != 0.0)
+                .expect("normal has a nonzero axis");
+            let plane = if n[axis] > 0.0 { 1.0 } else { 0.0 };
+            for v in verts {
+                assert_eq!(v[axis], plane, "vertex {v:?} off plane for normal {n:?}");
+            }
+            for other in (0..3).filter(|&a| a != axis) {
+                assert!(
+                    verts.iter().any(|v| v[other] == 0.0) && verts.iter().any(|v| v[other] == 1.0),
+                    "face with normal {n:?} does not span 0..1 on axis {other}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn all_indices_in_range() {
         // Regression guard: out-of-range indices cause silent GPU crashes on some hardware.
         let mut grid = VoxelGrid::new(16);

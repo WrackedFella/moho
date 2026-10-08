@@ -53,7 +53,12 @@ fn mixed_chunk_indices_are_in_range() {
             && chunk.geometry_type().contains(&BLOCKY_GEOMETRY),
         "expected both smooth and blocky vertices in the mixed chunk"
     );
-    let worst = chunk.indices().iter().copied().max().unwrap_or(0);
+    let worst = chunk
+        .indices()
+        .iter()
+        .copied()
+        .max()
+        .expect("mixed chunk indices are non-empty");
     assert!(
         (worst as usize) < count,
         "index {worst} out of range for {count} vertices"
