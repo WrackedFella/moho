@@ -29,7 +29,7 @@ flowchart TD
 
     ui --> renderer & input & core & game & types
     game --> core & rapi
-    renderer --> core & rapi
+    renderer --> rapi
     audio --> core
     physics --> core
     core --> rapi
@@ -85,7 +85,7 @@ flowchart TD
     app --> renderer & physics & audio & input & core
     shell --> renderer & input & core
     input --> core
-    renderer --> core & rapi
+    renderer --> rapi
     physics --> rapi
     audio --> core
     core --> rapi
