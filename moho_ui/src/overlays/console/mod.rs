@@ -356,6 +356,9 @@ mod tests {
     #[test]
     fn backtick_closes_console_except_first_frame() {
         let mut console = Console::new();
+        let _ = egui::Context::default().run(egui::RawInput::default(), |ctx| {
+            let _ = console.render(ctx);
+        });
         console.reset_on_open();
 
         let first = render_frame_with_backtick(&mut console);
