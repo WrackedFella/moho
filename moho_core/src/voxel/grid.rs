@@ -511,17 +511,17 @@ impl VoxelGrid {
     /// it at `pos`, replacing any existing chunk. Sets `mesh_dirty` and
     /// `light_dirty` so the lighting/meshing pipeline picks it up on the next frame.
     ///
-    /// Returns `false` if `data` is malformed.
-    pub fn deserialize_chunk_into(&mut self, pos: IVec3, data: &[u8]) -> bool {
-        match PalettedChunk::from_bytes(data) {
-            Some(chunk) => {
-                self.chunks.insert(pos, chunk);
-                // Ensure a ChunkLight entry exists for the lighting pipeline.
-                self.chunk_lights.entry(pos).or_default().light_dirty = true;
-                true
-            }
-            None => false,
-        }
+    /// Fails if `data` is malformed, leaving the grid untouched.
+    pub fn deserialize_chunk_into(
+        &mut self,
+        pos: IVec3,
+        data: &[u8],
+    ) -> Result<(), crate::persist::PersistError> {
+        let chunk = PalettedChunk::from_bytes(data)?;
+        self.chunks.insert(pos, chunk);
+        // Ensure a ChunkLight entry exists for the lighting pipeline.
+        self.chunk_lights.entry(pos).or_default().light_dirty = true;
+        Ok(())
     }
 
     /// Whether the chunk at `pos` has been modified since the last save.
@@ -725,6 +725,33 @@ impl BlockData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corrupt_chunk_leaves_grid_unchanged() {
+        let mut source = VoxelGrid::new(16);
+        source.place_block(BlockPos::new(1, 1, 1), 2, Some(4));
+        let mut bytes = source
+            .serialize_chunk(IVec3::ZERO)
+            .expect("modified chunk serializes");
+        assert_eq!(&bytes[..5], b"MOHO\x03", "chunk envelope magic and kind");
+        bytes[15] ^= 0xFF; // inside the stored CRC
+        let mut grid = VoxelGrid::new(16);
+        grid.place_block(BlockPos::new(0, 0, 0), 7, None);
+
+        let err = grid
+            .deserialize_chunk_into(IVec3::ZERO, &bytes)
+            .expect_err("must reject");
+        let other = grid.deserialize_chunk_into(IVec3::new(5, 0, 0), &bytes);
+
+        assert!(
+            matches!(err, crate::persist::PersistError::Corrupt),
+            "{err:?}"
+        );
+        assert!(other.is_err());
+        assert_eq!(grid.block_count(), 1);
+        assert_eq!(grid.material_at(BlockPos::new(0, 0, 0)), Some(7));
+        assert!(!grid.has_chunk(IVec3::new(5, 0, 0)));
+    }
 
     #[test]
     fn test_new_grid() {

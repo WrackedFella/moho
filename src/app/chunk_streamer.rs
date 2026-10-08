@@ -144,7 +144,7 @@ impl ChunkStreamer {
     fn load_chunk(&self, grid: &mut VoxelGrid, pos: IVec3) -> bool {
         // Try disk first (player-modified chunk saved on a previous eviction).
         if let Some(data) = save::read_chunk_file(&self.world_name, pos) {
-            if grid.deserialize_chunk_into(pos, &data) {
+            if grid.deserialize_chunk_into(pos, &data).is_ok() {
                 tracing::trace!(chunk = ?pos, "Loaded chunk from disk");
                 return true;
             }

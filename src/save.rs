@@ -1,5 +1,6 @@
 use bincode::{Decode, Encode};
 use glam::IVec3;
+use moho_core::persist::PersistError;
 use std::error::Error;
 use std::fs::{self, File, remove_file, rename};
 use std::io::{self, Read, Write};
@@ -90,7 +91,14 @@ pub type SavePayload = (
 /// Read our envelope format. Returns the WorldSpec, raw scene bytes, and
 /// block records. For v1 saves the block records vec will be empty; callers
 /// should treat an empty vec as "block data not available" and log accordingly.
-pub fn read_scene_and_metadata<P: AsRef<Path>>(path: P) -> Result<SavePayload, Box<dyn Error>> {
+pub fn read_scene_and_metadata<P: AsRef<Path>>(path: P) -> Result<SavePayload, PersistError> {
+    read_scene_and_metadata_inner(path.as_ref()).map_err(|e| match e.downcast::<io::Error>() {
+        Ok(io_err) => PersistError::Io(*io_err),
+        Err(_) => PersistError::Corrupt,
+    })
+}
+
+fn read_scene_and_metadata_inner<P: AsRef<Path>>(path: P) -> Result<SavePayload, Box<dyn Error>> {
     let mut f = File::open(path.as_ref())?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf)?;
@@ -200,6 +208,7 @@ fn chunk_path(world_name: &str, pos: IVec3) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moho_core::persist::FileKind;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_path(suffix: &str) -> std::path::PathBuf {
@@ -212,19 +221,42 @@ mod tests {
         path
     }
 
-    #[test]
-    fn write_and_read_envelope_roundtrip() {
-        let path = temp_path("v2");
-
-        let scene_bytes = vec![9u8, 8, 7, 6];
-        let spec = moho_game::scene_builders::WorldSpec {
-            name: "test-mod".to_string(),
+    fn spec(name: &str) -> moho_game::scene_builders::WorldSpec {
+        moho_game::scene_builders::WorldSpec {
+            name: name.to_string(),
             seed: Some(1234),
             size_xz: 64,
             day_length_seconds: 600.0,
             night_length_seconds: 420.0,
             initial_time_of_day: 6.0,
-        };
+        }
+    }
+
+    fn read_error(bytes: &[u8], suffix: &str) -> PersistError {
+        let path = temp_path(suffix);
+        std::fs::write(&path, bytes).expect("write fixture");
+        let result = read_scene_and_metadata(&path);
+        let _ = std::fs::remove_file(&path);
+        result.expect_err("must reject")
+    }
+
+    /// Header of a pre-migration save: `MOHO` + `u32` version + meta, scene
+    /// and block lengths of zero.
+    fn pre_migration_save(version: u32) -> Vec<u8> {
+        let mut bytes = b"MOHO".to_vec();
+        bytes.extend_from_slice(&version.to_le_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn world_save_round_trips() {
+        let path = temp_path("round_trip");
+        let empty_path = temp_path("round_trip_empty");
+        let scene_bytes = vec![9u8, 8, 7, 6];
+        let world_spec = spec("test-mod");
         let blocks = vec![
             BlockRecord {
                 x: 0,
@@ -234,49 +266,129 @@ mod tests {
                 resource_id: None,
             },
             BlockRecord {
-                x: 1,
-                y: 0,
+                x: -1,
+                y: 5,
                 z: 0,
                 material_id: 1,
                 resource_id: Some(1),
             },
         ];
 
-        write_scene_with_metadata(&path, &scene_bytes, &spec, &blocks).expect("write ok");
+        write_scene_with_metadata(&path, &scene_bytes, &world_spec, &blocks).expect("write ok");
+        write_scene_with_metadata(&empty_path, &[], &spec("empty-world"), &[]).expect("write ok");
+        let on_disk = std::fs::read(&path).expect("read back");
         let (read_spec, read_bytes, read_blocks) = read_scene_and_metadata(&path).expect("read ok");
-
-        assert_eq!(spec.name, read_spec.name);
-        assert_eq!(spec.seed, read_spec.seed);
-        assert_eq!(spec.size_xz, read_spec.size_xz);
-        assert_eq!(scene_bytes, read_bytes);
-        assert_eq!(read_blocks.len(), 2);
-        assert_eq!(read_blocks[0].x, 0);
-        assert_eq!(read_blocks[0].material_id, 2);
-        assert_eq!(read_blocks[1].resource_id, Some(1));
-
+        let (empty_spec, empty_bytes, empty_blocks) =
+            read_scene_and_metadata(&empty_path).expect("read ok");
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&empty_path);
+
+        assert_eq!(
+            &on_disk[..7],
+            b"MOHO\x01\x01\x00",
+            "world envelope: magic, kind World, version 1"
+        );
+        assert_eq!(read_spec, world_spec);
+        assert_eq!(read_bytes, scene_bytes);
+        let fields: Vec<_> = read_blocks
+            .iter()
+            .map(|b| (b.x, b.y, b.z, b.material_id, b.resource_id))
+            .collect();
+        assert_eq!(fields, vec![(0, 0, 0, 2, None), (-1, 5, 0, 1, Some(1))]);
+        assert_eq!(empty_spec.name, "empty-world");
+        assert!(empty_bytes.is_empty());
+        assert!(empty_blocks.is_empty());
     }
 
     #[test]
-    fn empty_blocks_roundtrip() {
-        let path = temp_path("empty");
+    fn foreign_file_returns_not_a_save_file() {
+        for (suffix, bytes) in [
+            (
+                "foreign",
+                b"\x89PNG\r\n\x1a\n and then some more bytes".to_vec(),
+            ),
+            ("tiny", b"MO".to_vec()),
+            ("empty_file", Vec::new()),
+        ] {
+            let err = read_error(&bytes, suffix);
 
-        let spec = moho_game::scene_builders::WorldSpec {
-            name: "empty-world".to_string(),
-            seed: None,
-            size_xz: 32,
-            day_length_seconds: 600.0,
-            night_length_seconds: 420.0,
-            initial_time_of_day: 6.0,
-        };
+            assert!(
+                matches!(err, PersistError::NotASaveFile),
+                "{suffix}: {err:?}"
+            );
+        }
+    }
 
-        write_scene_with_metadata(&path, &[], &spec, &[]).expect("write ok");
-        let (read_spec, read_bytes, read_blocks) = read_scene_and_metadata(&path).expect("read ok");
-
-        assert_eq!(read_spec.name, "empty-world");
-        assert!(read_bytes.is_empty());
-        assert!(read_blocks.is_empty());
-
+    #[test]
+    fn unknown_world_version_returns_unsupported_format() {
+        let path = temp_path("future");
+        write_scene_with_metadata(&path, &[], &spec("w"), &[]).expect("write ok");
+        let mut bytes = std::fs::read(&path).expect("read back");
         let _ = std::fs::remove_file(&path);
+        bytes[5..7].copy_from_slice(&(FileKind::World.current_version() + 1).to_le_bytes());
+
+        let err = read_error(&bytes, "future_bumped");
+
+        assert!(
+            matches!(
+                err,
+                PersistError::UnsupportedFormat {
+                    kind: FileKind::World,
+                    version: 2
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn corrupted_world_save_returns_corrupt() {
+        let path = temp_path("damaged");
+        write_scene_with_metadata(&path, &[1, 2, 3], &spec("w"), &[]).expect("write ok");
+        let mut bytes = std::fs::read(&path).expect("read back");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(&bytes[..7], b"MOHO\x01\x01\x00", "world envelope header");
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0xFF;
+
+        let err = read_error(&bytes, "damaged_flipped");
+
+        assert!(matches!(err, PersistError::Corrupt), "{err:?}");
+    }
+
+    #[test]
+    fn missing_world_save_returns_io_error() {
+        let path = temp_path("missing");
+
+        let err = read_scene_and_metadata(&path).expect_err("must fail");
+
+        assert!(matches!(err, PersistError::Io(_)), "{err:?}");
+    }
+
+    #[test]
+    fn pre_migration_world_save_returns_unsupported_format() {
+        let v1 = read_error(&pre_migration_save(1), "old_v1");
+        let v2 = read_error(&pre_migration_save(2), "old_v2");
+
+        assert!(
+            matches!(
+                v1,
+                PersistError::UnsupportedFormat {
+                    kind: FileKind::World,
+                    version: 0
+                }
+            ),
+            "{v1:?}"
+        );
+        assert!(
+            matches!(
+                v2,
+                PersistError::UnsupportedFormat {
+                    kind: FileKind::Scene,
+                    version: 0
+                }
+            ),
+            "{v2:?}"
+        );
     }
 }
