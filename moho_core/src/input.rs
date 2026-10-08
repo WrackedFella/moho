@@ -321,8 +321,11 @@ mod tests {
         let mut input_system = InputSystem::new(1.0);
 
         input_system.collect_mouse_delta((0.005, 0.0));
+        let mut just_above = InputSystem::new(1.0);
+        just_above.collect_mouse_delta((0.02, 0.0));
 
         assert_eq!(input_system.sample_frame_input(), (0.0, 0.0));
+        assert_close(just_above.sample_frame_input(), (0.016, 0.0));
     }
 
     #[test]
