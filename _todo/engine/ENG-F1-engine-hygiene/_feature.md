@@ -13,7 +13,7 @@ engine repo once the split ([ENG-F5](../ENG-F5-physical-repo-split/_feature.md))
 ## Exit criteria
 
 - The only `#[allow(unsafe_code)]` site in the workspace is the
-  `wgpu-experimental` opt-in ([ENG-F1-06](https://github.com/WrackedFella/moho/issues/57), [ENG-F3-03](../ENG-F3-renderer-pipeline-cleanup/ENG-F3-03-no-unsound-frame-callback.md)).
+  `wgpu-experimental` opt-in ([ENG-F1-06](https://github.com/WrackedFella/moho/issues/57), [ENG-F3-03](https://github.com/WrackedFella/moho/issues/208)).
 - Remaining criteria to be set when the feature is next planned.
 
 ## Items

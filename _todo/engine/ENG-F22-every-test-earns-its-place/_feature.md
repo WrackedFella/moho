@@ -48,9 +48,9 @@ The 2026-10 test-critic audit judged 498 existing tests (252 keep, 110 strengthe
 
 | Item |
 |---|
-| #168 [ENG-F22-01](ENG-F22-01-binary-prefs-events-and-state-tests.md): binary, prefs, events and state tests carry no duplicates or can't-fail tests |
-| #169 [ENG-F22-02](ENG-F22-02-voxel-and-lighting-tests-carry-no-duplicates.md): voxel and lighting tests carry no duplicates or tests of uncalled code |
-| #170 [ENG-F22-03](ENG-F22-03-game-audio-and-renderer-tests.md): game, audio and renderer tests carry no duplicates or tests of uncalled code |
+| #168 [ENG-F22-01](https://github.com/WrackedFella/moho/issues/168): binary, prefs, events and state tests carry no duplicates or can't-fail tests |
+| #169 [ENG-F22-02](https://github.com/WrackedFella/moho/issues/169): voxel and lighting tests carry no duplicates or tests of uncalled code |
+| #170 [ENG-F22-03](https://github.com/WrackedFella/moho/issues/170): game, audio and renderer tests carry no duplicates or tests of uncalled code |
 | #171 [ENG-F22-04](ENG-F22-04-ui-tests-carry-no-duplicates-placeholders.md): UI tests carry no duplicates, placeholders or tests of uncalled code |
 | #172 [ENG-F22-05](ENG-F22-05-binary-input-camera-and-day-night-tests.md): binary input, camera and day-night tests fail for wrong implementations |
 | #173 [ENG-F22-06](ENG-F22-06-voxel-grid-and-meshing-tests.md): voxel grid and meshing tests fail for wrong implementations |
@@ -60,7 +60,7 @@ The 2026-10 test-critic audit judged 498 existing tests (252 keep, 110 strengthe
 | #177 [ENG-F22-10](ENG-F22-10-physics-and-audio-tests.md): physics and audio tests fail for wrong implementations |
 | #178 [ENG-F22-11](ENG-F22-11-renderer-tests-fail-for-wrong-implementations.md): renderer tests fail for wrong implementations and every loaded shader is validated |
 | #179 [ENG-F22-12](ENG-F22-12-settings-tests-stay-off-the-real-prefs-file.md): settings tests stay off the real prefs file and pin every binding |
-| #180 [ENG-F22-13](ENG-F22-13-hud-console-and-ui-routing-tests.md): HUD, console and UI routing tests fail for wrong implementations |
+| #180 [ENG-F22-13](https://github.com/WrackedFella/moho/issues/180): HUD, console and UI routing tests fail for wrong implementations |
 | #181 [ENG-F22-14](https://github.com/WrackedFella/moho/issues/181): confirming a keybind conflict moves the key, Sprint included |
 | #182 [ENG-F22-15](https://github.com/WrackedFella/moho/issues/182): chunk streaming centres on the player's chunk at negative coordinates |
 | #183 [ENG-F22-16](https://github.com/WrackedFella/moho/issues/183): mixed smooth and blocky chunks mesh with valid indices and aligned geometry |

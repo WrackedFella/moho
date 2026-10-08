@@ -53,7 +53,8 @@ Movement speed, day/night speed and frame pacing match `dev`.
   `moho_renderer::create_renderer` (keeping today's one-time window leak and its
   SAFETY note), creates `moho_audio::AudioSystem` when asked, then calls `Game::init`.
 - Timing reproduces today's 60 fps behaviour: on each wake it advances `FixedStep` by
-  the time since the last wake, runs the ticks through ENG-F11-01's `run_tick`,
+  the time since the last wake, runs the ticks through ENG-F11-01's `run_tick` (private to
+  `HeadlessLoop` today: widen it to `pub(crate)` or share it, so both runners tick alike),
   requests a redraw, and sets `ControlFlow::WaitUntil(next tick deadline)`.
   `RedrawRequested` calls `Game::frame(alpha)`.
 - `Resized` resizes the renderer, then is forwarded. `CloseRequested` is forwarded, then
