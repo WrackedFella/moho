@@ -8,7 +8,7 @@
 //!
 //! # Module Organization
 //! - `grid` - Core data structures (VoxelGrid, BlockData)
-//! - `face` - Face direction lookup tables
+//! - `face` - Face directions (FaceDirection)
 //! - `mesh` - Mesh generation (MeshGenerator)
 //! - `chunk` - Chunk optimization (VoxelChunk)
 //! - `modification` - Named block mutations (VoxelMutator)

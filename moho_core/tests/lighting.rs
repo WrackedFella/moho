@@ -358,6 +358,12 @@ fn removal_clears_light_along_every_axis() {
         grid.mutator().place(p, 1, None);
     }
     prop.add_light_rgb(&mut grid, center, [15, 0, 0]);
+    for &p in &arms {
+        assert!(
+            rgb(&grid, p)[0] > 0,
+            "arm block at {p:?} must be lit before removal"
+        );
+    }
     prop.remove_light(&mut grid, center);
 
     assert_eq!(rgb(&grid, center)[0], 0, "source should be dark");
