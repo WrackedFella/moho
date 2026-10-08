@@ -376,4 +376,62 @@ mod tests {
             .expect("spawn column has terrain");
         assert!(app.simulation.position().y > terrain_y as f32);
     }
+
+    #[test]
+    fn completed_generation_replaces_the_previous_worlds_meshes_with_spawn_chunks() {
+        use crate::app::world_geometry::tests::{RecordingBackend, chunk_at};
+        let mut app = App::headless();
+        let spec = moho_game::scene_builders::WorldSpec {
+            name: "headless-test-completed-meshes".to_string(),
+            seed: Some(7),
+            size_xz: 64,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+            initial_time_of_day: 6.0,
+        };
+        let scene_bytes = moho_game::scene_persistence::encode_to_bytes(
+            &moho_game::scene::SceneEntities::default(),
+            None,
+            &[],
+        )
+        .expect("encode empty scene");
+        crate::app::world_geometry::insert_chunk(&mut app, chunk_at(glam::IVec3::new(90, 0, 90)));
+        let mut backend = RecordingBackend::default();
+        app.scene.world_meshes_mut().flush(&mut backend);
+        let old = backend.registered[0];
+        assert_eq!(app.scene.world_meshes_mut().draws().count(), 1);
+
+        GenerationProcessor::new().handle_completed(
+            &mut app,
+            scene_bytes,
+            spec,
+            moho_game::scene_builders::TerrainConfig::default(),
+            moho_core::voxel::VoxelGrid::new(16),
+        );
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        let with_geometry = app
+            .entities
+            .chunks
+            .iter()
+            .filter(|c| c.has_geometry())
+            .count();
+        let drawn: Vec<u32> = app
+            .scene
+            .world_meshes_mut()
+            .draws()
+            .map(|(h, _)| h)
+            .collect();
+        assert!(with_geometry > 0, "the spawn area has chunks with geometry");
+        assert!(
+            backend.unregistered.contains(&old),
+            "the old mesh was freed"
+        );
+        assert!(!drawn.contains(&old), "the old world is no longer drawn");
+        assert_eq!(
+            drawn.len(),
+            with_geometry,
+            "one draw per chunk with geometry"
+        );
+    }
 }

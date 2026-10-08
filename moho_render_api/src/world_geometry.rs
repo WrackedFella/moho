@@ -211,6 +211,57 @@ mod tests {
     }
 
     #[test]
+    fn accessors_return_the_channels_it_was_built_with() {
+        let positions = vec![[0.0, 0.5, 1.0], [2.0, 2.5, 3.0], [4.0, 4.5, 5.0]];
+        let normals = vec![[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let ao = vec![0.25, 0.5, 0.75];
+        let light_rgb = vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]];
+        let sky_exposure = vec![0.125, 0.375, 0.625];
+        let surface = vec![7, 8, 9];
+        let indices = vec![2, 1, 0];
+
+        let mesh = WorldMesh::new(
+            positions.clone(),
+            normals.clone(),
+            ao.clone(),
+            light_rgb.clone(),
+            sky_exposure.clone(),
+            surface.clone(),
+            indices.clone(),
+        )
+        .expect("well-formed triangle");
+
+        assert_eq!(mesh.positions(), positions);
+        assert_eq!(mesh.normals(), normals);
+        assert_eq!(mesh.ao(), ao);
+        assert_eq!(mesh.light_rgb(), light_rgb);
+        assert_eq!(mesh.sky_exposure(), sky_exposure);
+        assert_eq!(mesh.surface(), surface);
+        assert_eq!(mesh.indices(), indices);
+    }
+
+    #[test]
+    fn error_display_names_the_fault() {
+        let mismatch = build(3, 2, vec![0, 1, 2])
+            .expect_err("ao short")
+            .to_string();
+        let range = build(3, 3, vec![0, 1, 7]).expect_err("index 7").to_string();
+        let partial = build(3, 3, vec![0, 1, 2, 0])
+            .expect_err("four indices")
+            .to_string();
+
+        assert!(mismatch.contains("ao"), "got {mismatch}");
+        assert!(
+            mismatch.contains('2') && mismatch.contains('3'),
+            "got {mismatch}"
+        );
+        assert!(range.contains('7'), "got {range}");
+        assert!(range.contains('3'), "got {range}");
+        assert!(partial.contains('4'), "got {partial}");
+        assert!(partial.contains("three"), "got {partial}");
+    }
+
+    #[test]
     fn valid_triangle_is_accepted_and_non_empty() {
         let mesh = build(3, 3, vec![0, 1, 2]).expect("well-formed triangle");
 

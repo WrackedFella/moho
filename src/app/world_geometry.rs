@@ -92,13 +92,14 @@ pub fn remove_all_chunk_meshes(app: &mut App) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::App;
     use crate::app::event_loop::event_processor::EventProcessor;
     use crate::app::event_loop::frame_processor::FrameProcessor;
     use crate::game_state::GameState;
     use moho_core::events::WorldEvent;
+    use moho_render_api::RenderMaterial;
     use moho_renderer::RendererBackend;
     use proptest::prelude::*;
     use std::collections::HashSet;
@@ -140,10 +141,10 @@ mod tests {
 
     /// Records register and unregister calls; handles are never reused.
     #[derive(Default)]
-    struct RecordingBackend {
+    pub(crate) struct RecordingBackend {
         next_handle: u32,
-        registered: Vec<u32>,
-        unregistered: Vec<u32>,
+        pub(crate) registered: Vec<u32>,
+        pub(crate) unregistered: Vec<u32>,
     }
 
     impl RendererBackend for RecordingBackend {
@@ -213,7 +214,7 @@ mod tests {
 
     /// A chunk with a distinct value in every channel, so a swapped pair of
     /// same-typed channels shows up.
-    fn chunk_at(pos: IVec3) -> VoxelChunk {
+    pub(crate) fn chunk_at(pos: IVec3) -> VoxelChunk {
         VoxelChunk::new(
             pos,
             vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
@@ -243,6 +244,75 @@ mod tests {
         assert_eq!(mesh.sky_exposure(), chunk.sky_exposed());
         assert_eq!(mesh.surface(), chunk.geometry_type());
         assert_eq!(mesh.indices(), chunk.indices());
+    }
+
+    #[test]
+    fn register_terrain_material_returns_the_terrain_entry_and_is_idempotent() {
+        let mut scene = Scene::new();
+        scene
+            .material_table
+            .find_or_push(&MaterialType::Lambertian {
+                albedo: glam::Vec3::new(0.9, 0.1, 0.1),
+            });
+        scene.material_table.find_or_push(&MaterialType::Metal {
+            albedo: glam::Vec3::new(0.2, 0.2, 0.9),
+            fuzz: 0.3,
+        });
+
+        let first = register_terrain_material(&mut scene);
+        let len_after_first = scene.material_table.as_slice().len();
+        let second = register_terrain_material(&mut scene);
+
+        assert_eq!(first, 2, "appended after the two existing materials");
+        assert_eq!(second, first);
+        assert_eq!(len_after_first, 3);
+        assert_eq!(scene.material_table.as_slice().len(), 3, "no growth");
+        let expected = MaterialType::VoxelTerrain {
+            top_albedo: glam::Vec3::new(0.3, 0.6, 0.3),
+            side_albedo: glam::Vec3::new(0.6, 0.5, 0.4),
+        }
+        .to_gpu();
+        let stored = scene.material_table.as_slice()[first as usize];
+        assert_eq!(stored.albedo, expected.albedo);
+        assert_eq!(stored.params, expected.params);
+    }
+
+    #[test]
+    fn refused_chunk_mesh_stops_drawing_the_previous_one() {
+        let mut app = App::headless();
+        let pos = IVec3::new(2, 0, 2);
+        insert_chunk(&mut app, chunk_at(pos));
+        let mut backend = RecordingBackend::default();
+        app.scene.world_meshes_mut().flush(&mut backend);
+        let old = backend.registered[0];
+        assert_eq!(
+            drawn_handles(&mut app),
+            vec![old],
+            "drawn before the refusal"
+        );
+        let malformed = VoxelChunk::new(
+            pos,
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            vec![[0.0, 1.0, 0.0]],
+            vec![0.25, 0.3, 0.35],
+            vec![3, 4, 5],
+            vec![0.6, 0.6, 0.6],
+            vec![[0.2, 0.9, 0.5], [0.1, 0.1, 0.1], [0.4, 0.3, 0.2]],
+            vec![0.75, 0.8, 0.85],
+            vec![0, 1, 2],
+            1,
+        );
+        assert!(
+            chunk_world_mesh(&malformed).is_err(),
+            "the mesh is malformed"
+        );
+
+        insert_chunk(&mut app, malformed);
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        assert!(drawn_handles(&mut app).is_empty(), "nothing is drawn");
+        assert_eq!(backend.unregistered, vec![old], "the old mesh was freed");
+        assert_eq!(backend.registered.len(), 1, "no replacement was uploaded");
     }
 
     #[test]
