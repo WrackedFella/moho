@@ -79,9 +79,12 @@ Scenario: Two keys on one action release it only when both are up
   the frame. Until ENG-F11 lands, the binary calls `end_tick` once per update,
   which matches today's per-frame sampling, so feel is unchanged.
   `clear_pending_input` call sites call `reset_look`.
-- ENG-F11 meeting point: the loop calls `end_tick` exactly once per fixed
-  tick; a catch-up tick after the first gets no new edges and zero look.
-  Whichever of this card and ENG-F11 lands second wires it.
+- ENG-F11 meeting point: the game owns its `ActionMap` and feeds it the raw
+  events `moho_app` forwards to `Game::event`. The game's `Game::command()`,
+  which the loop calls once before each tick, calls `end_tick` and converts
+  the frame into the game's command type. A catch-up tick after the first gets
+  no new edges and zero look. Whichever of this card and ENG-F11 lands second
+  wires it.
 
 **Out of scope.** Gamepad (04). Analog axes, action contexts, chords
 (deferred in the feature). Per-frame look for presentation (ENG-F21). Tool
