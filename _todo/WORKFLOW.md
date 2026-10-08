@@ -46,15 +46,21 @@ issue, with no thread and no terminal.
 - **Trigger:** a human applies the `agent-ready` label to the issue of a Ready,
   Agent-eligible item, or dispatches the workflow with an issue number
   (`.github/workflows/claude.yml`). The label starts a run; it is not an item status
-  ([cards](_STANDARDS.md#card-readiness)).
+  ([cards](_STANDARDS.md#card-readiness)). The issue type picks the run: a work item is
+  implemented, and a `feature` issue is refined into work items.
 - **Runner:** `anthropics/claude-code-action` with the prompt
-  `/devflow:orchestrate <issue>`. The workflow installs the toolchain with
+  `/devflow:orchestrate <issue>`, or `/devflow:refine <issue>` for a `feature` issue. The workflow installs the toolchain with
   `scripts/cloud-tools.sh` and devflow from the marketplace (the action cannot pin a
   tag, so the run follows the marketplace's default branch; the repo pin in
   `.claude/settings.json` does not apply).
 - **Access:** the default Claude App token only. There is no PAT and no Projects or
   GraphQL access in the agent, so it never touches the board. The Board sync workflow
   moves Status from PR and issue events, and Ready and Agent-eligible stay human-set.
+- **Refinement:** the refine run publishes cards as sub-issues of the feature and
+  escalates open questions as a comment on it. It applies no label while `Card review`
+  is required, so you approve each card by labeling it `agent-ready`. With
+  `Card review: not required` it labels the cards itself and the workflow dispatches a run for each, since
+  a label set with the default token starts no workflow.
 - **Human gates become PR-level.** The run ends at a PR into `dev` and never merges.
   The orchestrator's domain-test pause has nobody to answer it in an Actions run, so
   until Stage 3 sets `Domain-test review: not required`, apply `agent-ready` to `glue`
@@ -96,9 +102,10 @@ corrected. Stage 1's bar of about 5 consecutive clean runs is unmet.
   Skill-tool calls inside `orchestrate` (`/simplify`, `/devflow:comment-audit`,
   `/devflow:wiki`) succeed there. Settle with the first `claude.yml` dispatch and the
   first supervised thread run; record the result here and in the trial log.
-- Stage 3 trigger: whether approving a feature applies `agent-ready` to its cards
-  automatically (Board sync cannot, since it only moves Status) or a human still labels
-  each card, and where BA/TL questions reach you.
+- Stage 3 chain: first runs of `/devflow:refine` and of the workflow's dispatch of
+  labeled cards are unverified. Check that questions land as a comment on the feature,
+  that a re-run on a feature with existing cards adds no duplicates, and that parallel
+  card runs don't collide on shared manifests.
 - Agent pre-review before human PR review: put the `devflow:reviewer` verdict in the PR
   body, and possibly add a second independent pass. To decide once the trial log
   shows what human review catches that the reviewer missed.
@@ -135,3 +142,4 @@ GitHub. Confirm on the first supervised thread run.
 | 2026-10-07 | Board Status is event-driven, not agent-written: the Board sync workflow moves Status forward on PR and issue events (secret `BOARD_TOKEN`); Ready and Agent-eligible stay human-set. Cloud sessions cannot reach GraphQL or Projects v2, so `scripts/board` runs locally only | moho #109, [`_STANDARDS.md`](_STANDARDS.md#item-state-lives-on-the-board) |
 | 2026-10-08 | Cloud environment: devflow is installed by the environment's setup script (user scope), not Project settings or the repo pin; the Rust toolchain and gate tools are on demand through `scripts/cloud-tools.sh`, run by threads that build or test. devflow v0.10.0 removed `disable-model-invocation`, so orchestrate, BA and TL can be invoked by agents | moho #112, #127, #128; devflow v0.10.0 |
 | 2026-10-08 | Remote runs use `claude-code-action`: a human-applied `agent-ready` label on an issue runs `/devflow:orchestrate <issue>` with the default Claude App token, no PAT and no board access. Rejected: a PAT wrapper, and giving the agent Projects or GraphQL access. Human gates become PR-level | moho #126, [Remote runs](#remote-runs) |
+| 2026-10-08 | Remote refinement: `agent-ready` on a `feature` issue runs `/devflow:refine`, which publishes cards as sub-issues and escalates questions as a comment. One trigger label, routed by issue type. It labels cards itself only when `Card review` is `not required`, and the workflow dispatches their runs. Short term you label each card | devflow v0.12.0, [Remote runs](#remote-runs) |
