@@ -123,7 +123,8 @@ impl KeybindCaptureHandler {
         false
     }
 
-    /// Check if there's a pending binding to apply (after modal confirmation)
+    /// Whether the conflict dialog is currently visible. Taking the dialog hides it
+    /// while the pending binding is kept, so this is `false` once it has been taken.
     // Note: has_pending_binding is provided for API completeness but currently unused.
     // The conflict modal visibility is checked directly in most cases.
     #[allow(dead_code)]
@@ -284,6 +285,20 @@ mod tests {
         assert!(!handler.is_listening());
         assert!(bindings_changed.is_empty()); // No binding applied yet
         assert!(handler.has_pending_binding()); // Conflict modal should be triggered
+    }
+
+    #[test]
+    fn take_conflict_modal_returns_holder_name_then_key_description() {
+        let mut handler = KeybindCaptureHandler::new();
+        let prefs = crate::prefs::Prefs::default();
+
+        handler.start_listening(1); // Move Left
+        handler.apply_key_code_while_listening('W' as u32, 0, &prefs, |_, _| {});
+
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Move Forward".to_string(), "W".to_string()))
+        );
     }
 
     fn resolve_conflict(target_id: usize, code: u32) -> Vec<(SettingsField, Binding)> {
