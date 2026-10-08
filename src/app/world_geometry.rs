@@ -287,6 +287,37 @@ pub(crate) mod tests {
         assert_eq!(stored.params, expected.params);
     }
 
+    fn malformed_chunk_at(pos: IVec3) -> VoxelChunk {
+        VoxelChunk::new(
+            pos,
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            vec![[0.0, 1.0, 0.0]],
+            vec![0.25, 0.3, 0.35],
+            vec![3, 4, 5],
+            vec![0.6, 0.6, 0.6],
+            vec![[0.2, 0.9, 0.5], [0.1, 0.1, 0.1], [0.4, 0.3, 0.2]],
+            vec![0.75, 0.8, 0.85],
+            vec![0, 1, 2],
+            1,
+        )
+    }
+
+    #[test]
+    fn refused_chunk_mesh_drops_its_collider() {
+        let mut app = App::headless();
+        let pos = IVec3::new(2, 0, 2);
+        insert_chunk(&mut app, chunk_at(pos));
+        assert!(collider_of(&app, pos).is_some(), "collider before refusal");
+
+        insert_chunk(&mut app, malformed_chunk_at(pos));
+
+        assert!(
+            collider_of(&app, pos).is_none(),
+            "no collider after refusal"
+        );
+        assert_eq!(terrain_collider_count(&app), 0, "no terrain collider left");
+    }
+
     #[test]
     fn refused_chunk_mesh_stops_drawing_the_previous_one() {
         let mut app = App::headless();
@@ -300,18 +331,7 @@ pub(crate) mod tests {
             vec![old],
             "drawn before the refusal"
         );
-        let malformed = VoxelChunk::new(
-            pos,
-            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
-            vec![[0.0, 1.0, 0.0]],
-            vec![0.25, 0.3, 0.35],
-            vec![3, 4, 5],
-            vec![0.6, 0.6, 0.6],
-            vec![[0.2, 0.9, 0.5], [0.1, 0.1, 0.1], [0.4, 0.3, 0.2]],
-            vec![0.75, 0.8, 0.85],
-            vec![0, 1, 2],
-            1,
-        );
+        let malformed = malformed_chunk_at(pos);
         assert!(
             chunk_world_mesh(&malformed).is_err(),
             "the mesh is malformed"
