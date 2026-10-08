@@ -204,7 +204,7 @@ mod tests {
         };
 
         for (label, result) in cases {
-            assert_eq!(result, Ok(expected.clone()), "row {label}");
+            assert_eq!(result.as_ref(), Ok(&expected), "row {label}");
         }
     }
 
