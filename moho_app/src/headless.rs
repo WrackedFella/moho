@@ -15,7 +15,13 @@ pub struct HeadlessLoop<G> {
 }
 
 impl<G: Game> HeadlessLoop<G> {
+    /// A loop at `config`'s tick rate, starting at tick 0.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `config.tick_hz` is 0, which has no tick length.
     pub fn new(config: LoopConfig) -> Self {
+        assert!(config.tick_hz > 0, "tick_hz must be non-zero");
         Self {
             step: FixedStep::new(config),
             tick_length: Duration::from_secs(1) / config.tick_hz,
@@ -30,15 +36,18 @@ impl<G: Game> HeadlessLoop<G> {
         for _ in 0..n {
             self.run_tick(game);
         }
-        let _ = FrameContext {
+        let mut ctx = FrameContext {
             tick_length: self.tick_length,
         };
+        game.frame(&mut ctx, self.step.alpha());
         n
     }
 
     /// Runs exactly `n` ticks and no frame.
     pub fn step(&mut self, game: &mut G, n: u32) {
-        let _ = (game, n);
+        for _ in 0..n {
+            self.run_tick(game);
+        }
     }
 
     fn run_tick(&mut self, game: &mut G) {
@@ -48,6 +57,7 @@ impl<G: Game> HeadlessLoop<G> {
             tick_length: self.tick_length,
         };
         game.tick(&mut ctx, &command);
+        self.next_tick += 1;
     }
 }
 

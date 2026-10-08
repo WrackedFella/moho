@@ -21,26 +21,44 @@ impl LoopConfig {
     }
 }
 
+const UNITS_PER_TICK: u128 = 1_000_000_000;
+
 /// Converts frame durations into whole ticks without drift.
+///
+/// Time is accumulated as `nanoseconds * tick_hz` in an integer, so a tick is
+/// due every [`UNITS_PER_TICK`] units and no rounding error builds up.
 #[derive(Debug, Clone)]
 pub struct FixedStep {
     config: LoopConfig,
+    accumulator: u128,
 }
 
 impl FixedStep {
+    /// A step with an empty accumulator.
     pub fn new(config: LoopConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            accumulator: 0,
+        }
     }
 
     /// Ticks due for a frame of `frame_dt`.
-    pub fn advance(&mut self, _frame_dt: Duration) -> u32 {
-        let _ = self.config;
-        0
+    ///
+    /// At most `max_catch_up_ticks` are returned; time beyond that is dropped
+    /// so a stall cannot trigger a spiral of ever-longer catch-up frames.
+    pub fn advance(&mut self, frame_dt: Duration) -> u32 {
+        let added = frame_dt.as_nanos() * u128::from(self.config.tick_hz);
+        self.accumulator = self.accumulator.saturating_add(added);
+        let due = self.accumulator / UNITS_PER_TICK;
+        self.accumulator %= UNITS_PER_TICK;
+        u32::try_from(due).map_or(self.config.max_catch_up_ticks, |d| {
+            d.min(self.config.max_catch_up_ticks)
+        })
     }
 
     /// Fraction of a tick left over after the last `advance`.
     pub fn alpha(&self) -> f32 {
-        0.0
+        self.accumulator as f32 / UNITS_PER_TICK as f32
     }
 }
 
