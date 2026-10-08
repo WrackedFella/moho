@@ -1,29 +1,49 @@
-use std::fs;
+//! Every WGSL shader the renderer loads parses and validates with naga.
 
-// This test ensures WGSL shaders in the repository parse and validate with naga.
-// It runs as part of `cargo test` for the engine_renderer crate.
+use naga::valid::{Capabilities, ValidationFlags, Validator};
+use std::path::Path;
+
+fn validate(label: &str, source: &str, capabilities: Capabilities) -> naga::Module {
+    let module = naga::front::wgsl::parse_str(source).unwrap_or_else(|e| {
+        panic!(
+            "WGSL parse failed for {label}:\n{}",
+            e.emit_to_string(source)
+        )
+    });
+
+    Validator::new(ValidationFlags::all(), capabilities)
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("WGSL validation failed for {label}: {e:?}"));
+
+    module
+}
+
+fn validate_file(name: &str, capabilities: Capabilities) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../shaders")
+        .join(name);
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read shader {}: {e}", path.display()));
+
+    validate(name, &source, capabilities);
+}
 
 #[test]
-fn validate_wgsl_shaders() {
-    // List of shader files to validate. Add new WGSL files here as needed.
-    let shaders = ["../shaders/instance.wgsl"];
+fn skybox_shader_parses_and_validates() {
+    validate_file("skybox.wgsl", Capabilities::empty());
+}
 
-    for rel in &shaders {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-        let src = fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("failed to read shader {}: {}", path.display(), e));
+#[test]
+fn shadow_shader_parses_and_validates() {
+    validate_file("shadow.wgsl", Capabilities::IMMEDIATES);
+}
 
-        // Parse WGSL
-        let module = naga::front::wgsl::parse_str(&src)
-            .unwrap_or_else(|_| panic!("WGSL parse failed for {}", path.display()));
+#[test]
+fn gtao_shader_parses_and_validates() {
+    validate_file("gtao.wgsl", Capabilities::empty());
+}
 
-        // Validate
-        let mut validator = naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::empty(),
-        );
-        validator
-            .validate(&module)
-            .unwrap_or_else(|_| panic!("WGSL validation failed for {}", path.display()));
-    }
+#[test]
+fn ssao_blur_shader_parses_and_validates() {
+    validate_file("ssao_blur.wgsl", Capabilities::empty());
 }

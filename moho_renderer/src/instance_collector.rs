@@ -169,30 +169,29 @@ mod tests {
     }
 
     #[test]
-    fn test_instance_collector_new() {
-        let collector = InstanceCollector::new();
-        assert_eq!(collector.total_instances(), 0);
-        assert_eq!(collector.sphere_instances().len(), 0);
-        assert_eq!(collector.cube_instances().len(), 0);
-    }
-
-    #[test]
     fn test_collect_spheres() {
         let mut collector = InstanceCollector::new();
         let mut material_table = MaterialTable::new();
-
-        let mat = TestMaterial([1.0, 0.0, 0.0]);
+        let mat_a = TestMaterial([1.0, 0.0, 0.0]);
+        let mat_b = TestMaterial([0.0, 1.0, 0.0]);
         let spheres = vec![
-            TestSphere::new(glam::Vec3::ZERO, 1.0, mat),
-            TestSphere::new(glam::Vec3::new(5.0, 0.0, 0.0), 2.0, mat),
+            TestSphere::new(glam::Vec3::ZERO, 1.0, mat_a),
+            TestSphere::new(glam::Vec3::new(5.0, 0.0, 0.0), 2.0, mat_b),
+            TestSphere::new(glam::Vec3::new(9.0, 0.0, 0.0), 1.0, mat_a),
         ];
         let cubes: Vec<TestCube> = Vec::new();
 
         collector.collect_actors(&spheres, &cubes, &mut material_table);
 
-        assert_eq!(collector.sphere_instances().len(), 2);
+        let materials: Vec<u32> = collector
+            .sphere_instances()
+            .iter()
+            .map(|i| i.material)
+            .collect();
+        assert_eq!(materials, vec![0, 1, 0]);
+        assert_eq!(material_table.as_slice().len(), 2);
         assert_eq!(collector.cube_instances().len(), 0);
-        assert_eq!(collector.total_instances(), 2);
+        assert_eq!(collector.total_instances(), 3);
     }
 
     #[test]
@@ -218,18 +217,18 @@ mod tests {
     fn test_clear() {
         let mut collector = InstanceCollector::new();
         let mut material_table = MaterialTable::new();
-
-        // Add some objects
         let mat = TestMaterial(glam::Vec3::ONE.to_array());
         let spheres = vec![TestSphere::new(glam::Vec3::ZERO, 1.0, mat)];
-        let cubes: Vec<TestCube> = Vec::new();
-
+        let cubes = vec![TestCube::new(glam::Vec3::X, 1.0, 1.0, 1.0, mat)];
         collector.collect_actors(&spheres, &cubes, &mut material_table);
-        assert_eq!(collector.total_instances(), 1);
+        assert_eq!(collector.sphere_instances().len(), 1);
+        assert_eq!(collector.cube_instances().len(), 1);
 
         collector.clear();
+
+        assert!(collector.sphere_instances().is_empty());
+        assert!(collector.cube_instances().is_empty());
         assert_eq!(collector.total_instances(), 0);
-        assert_eq!(collector.sphere_instances().len(), 0);
     }
 
     #[test]

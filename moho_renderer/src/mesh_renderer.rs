@@ -162,46 +162,41 @@ impl MeshRenderer {
 mod tests {
     use super::*;
 
-    fn test_instance() -> moho_render_api::InstanceGpu {
-        moho_render_api::InstanceGpu {
-            model: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-            material: 1,
-            object_type: 0,
-            padding: [0, 0],
-        }
-    }
-
     #[test]
-    fn test_prepare_instances_single() {
-        let ext_instance = test_instance();
-        let instances = MeshRenderer::prepare_instances(&[ext_instance]);
+    fn prepare_instances_copies_every_field_in_order() {
+        let first = moho_render_api::InstanceGpu {
+            model: glam::Mat4::from_translation(glam::Vec3::new(1.0, 2.0, 3.0)).to_cols_array_2d(),
+            material: 4,
+            object_type: 2,
+            padding: [7, 8],
+        };
+        let second = moho_render_api::InstanceGpu {
+            model: glam::Mat4::from_translation(glam::Vec3::new(-5.0, 6.0, 9.0)).to_cols_array_2d(),
+            material: 11,
+            object_type: 1,
+            padding: [9, 10],
+        };
+        let expected = [
+            GpuInstance {
+                model: first.model,
+                material: 4,
+                object_type: 2,
+                padding: [7, 8],
+            },
+            GpuInstance {
+                model: second.model,
+                material: 11,
+                object_type: 1,
+                padding: [9, 10],
+            },
+        ];
 
-        assert_eq!(instances.len(), 1);
-        assert_eq!(instances[0].material, 1);
-        assert_eq!(instances[0].object_type, 0);
-        assert_eq!(instances[0].model[0][0], 1.0);
-    }
+        let instances = MeshRenderer::prepare_instances(&[first, second]);
 
-    #[test]
-    fn test_prepare_instances_multiple() {
-        let mut ext_instances = vec![];
-        for i in 0..5 {
-            let mut inst = test_instance();
-            inst.material = i;
-            ext_instances.push(inst);
-        }
-
-        let instances = MeshRenderer::prepare_instances(&ext_instances);
-
-        assert_eq!(instances.len(), 5);
-        for (i, instance) in instances.iter().enumerate() {
-            assert_eq!(instance.material, i as u32);
-        }
+        assert_eq!(
+            bytemuck::cast_slice::<GpuInstance, u8>(&instances),
+            bytemuck::cast_slice::<GpuInstance, u8>(&expected)
+        );
     }
 
     #[test]
@@ -215,26 +210,27 @@ mod tests {
 
     #[test]
     fn test_flatten_instances_multiple_draws() {
-        let gpu_inst = GpuInstance {
+        let inst = |material: u32| GpuInstance {
             model: [[1.0; 4]; 4],
-            material: 0,
+            material,
             object_type: 0,
             padding: [0, 0],
         };
 
         let pending_draws = vec![
-            (1u32, vec![gpu_inst, gpu_inst, gpu_inst]), // 3 instances, offset 0
-            (2u32, vec![gpu_inst, gpu_inst]),           // 2 instances, offset 3
-            (3u32, vec![gpu_inst]),                     // 1 instance, offset 5
+            (1u32, vec![inst(1), inst(1), inst(1)]),
+            (2u32, vec![inst(2), inst(2)]),
+            (3u32, vec![inst(3)]),
         ];
 
         let (instances, offsets) = MeshRenderer::flatten_instances(&pending_draws);
 
         assert_eq!(instances.len(), 6);
-        assert_eq!(offsets.len(), 3);
-        assert_eq!(offsets[0], 0);
-        assert_eq!(offsets[1], 3);
-        assert_eq!(offsets[2], 5);
+        assert_eq!(offsets, vec![0, 3, 5]);
+        for (k, offset) in offsets.iter().enumerate() {
+            assert_eq!(instances[*offset].material, k as u32 + 1);
+        }
+        assert_eq!(instances[5].material, 3);
     }
 
     #[test]
