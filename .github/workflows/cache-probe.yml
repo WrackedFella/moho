@@ -1,0 +1,49 @@
+name: Cache probe
+
+# Temporary: measures the agent job's setup with and without the gate's cargo cache.
+on:
+  pull_request:
+    paths: [.github/workflows/cache-probe.yml]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  NEXTEST_PROFILE: ci
+  MOHO_BASE: origin/dev
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  probe:
+    name: probe (${{ matrix.cache }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cache: [cold, warm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Install toolchain
+        run: |
+          s=$SECONDS
+          bash scripts/cloud-tools.sh --force
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "### cloud-tools.sh: $((SECONDS - s))s" >> "$GITHUB_STEP_SUMMARY"
+      - if: matrix.cache == 'warm'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: gate-ubuntu-latest
+          save-if: false
+      - name: just check
+        run: |
+          s=$SECONDS
+          just check
+          echo "### just check (${{ matrix.cache }}): $((SECONDS - s))s" >> "$GITHUB_STEP_SUMMARY"
