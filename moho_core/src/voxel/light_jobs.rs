@@ -519,7 +519,6 @@ mod tests {
         }
     }
 
-    /// Jobs submitted out of order complete lowest priority value first.
     #[test]
     fn test_job_priority_ordering() {
         let mut grid = transparent_grid();
@@ -542,8 +541,7 @@ mod tests {
         assert_eq!(priorities, [25, 50, 100]);
     }
 
-    /// A cancelled job is reported cancelled and never touches the grid; the
-    /// token is gone once the job has been drained.
+    /// The cancellation token is gone once the job has been drained.
     #[test]
     fn test_job_cancellation() {
         let mut grid = transparent_grid();
@@ -626,7 +624,6 @@ mod tests {
         assert_eq!(grid.chunk_light(sc).unwrap().block_light_r[si], 0);
     }
 
-    /// A one-block budget lets exactly one job run per frame.
     #[test]
     fn test_frame_budget() {
         let mut grid = transparent_grid();
@@ -668,7 +665,7 @@ mod tests {
         assert!(job_close.priority < job_far.priority);
     }
 
-    /// `total_jobs_processed` counts every completed job, not every frame.
+    /// Counts jobs, not frames.
     #[test]
     fn test_stats_tracking() {
         let mut grid = transparent_grid();

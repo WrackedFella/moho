@@ -105,8 +105,6 @@ fn sky_cross_chunk_occlusion() {
     assert!(sky(&grid, IVec3::new(6, 15, 5)), "adjacent column: exposed");
 }
 
-/// Removing the only opaque block in a column re-exposes the voxels below it
-/// once the sky pass reruns.
 #[test]
 fn sky_recompute_reflects_removed_block() {
     let mut grid = grid_16();
@@ -122,8 +120,7 @@ fn sky_recompute_reflects_removed_block() {
     assert!(sky(&grid, below), "exposed again after the block is gone");
 }
 
-/// `dirty_chunks_below` dirties chunks beneath `chunk_pos` in the same column
-/// only, never `chunk_pos` itself or other columns.
+/// Never dirties `chunk_pos` itself or other columns.
 #[test]
 fn sky_dirty_chunks_below_propagates() {
     let mut grid = grid_16();
@@ -152,7 +149,6 @@ fn sky_dirty_chunks_below_propagates() {
     }
 }
 
-/// `ensure_chunk_sky_ready` does not recompute when sky_dirty is false.
 #[test]
 fn sky_ensure_ready_noop_when_clean() {
     let mut grid = grid_16();
@@ -167,8 +163,6 @@ fn sky_ensure_ready_noop_when_clean() {
     assert!(sky(&grid, below), "a clean chunk keeps its stale exposure");
 }
 
-/// An opaque block in a neighbouring (x, z) chunk column does not shadow this
-/// column.
 #[test]
 fn sky_block_in_other_chunk_column_does_not_occlude() {
     // Opaque blocks in chunks (1,1,0) and (0,1,1), one x and one z neighbour.
@@ -293,8 +287,7 @@ fn block_light_channels_are_independent() {
     assert_eq!(nb[2], 0, "B must stay 0");
 }
 
-/// Each channel decays one level per step from its own emission level,
-/// clamping at zero.
+/// Decay clamps at zero.
 #[test]
 fn block_light_colored_propagation() {
     let mut grid = grid_16();
@@ -361,7 +354,6 @@ fn removal_preserves_surviving_source() {
     assert_eq!(rgb(&grid, IVec3::new(10, 0, 0))[0], 15);
 }
 
-/// Removing at an unlit position changes nothing and affects no chunk.
 #[test]
 fn removal_of_absent_light_is_noop() {
     let mut grid = grid_16();
@@ -380,8 +372,6 @@ fn removal_of_absent_light_is_noop() {
     }
 }
 
-/// An adjacent source of equal level is a survivor, not part of the chain
-/// being removed.
 #[test]
 fn removal_with_adjacent_equal_sources_keeps_survivor() {
     let mut grid = grid_16();
@@ -554,7 +544,6 @@ fn sealed_cave_stays_dark() {
 // Flood-fill
 // ---------------------------------------------------------------------------
 
-/// `flood_fill_block_lights` seeds every channel of every emissive block.
 #[test]
 fn flood_fill_propagates_all_emitters() {
     let mut grid = grid_16();

@@ -370,8 +370,7 @@ mod tests {
         assert_eq!(light_system.pending_jobs(), 1);
     }
 
-    /// One `ChunkMeshDirty` per affected chunk is published, and the pending
-    /// set is drained.
+    /// Drains the pending set.
     #[test]
     fn emit_dirty_events_publishes_one_event_per_affected_chunk() {
         use crate::voxel::grid::MaterialLighting;
