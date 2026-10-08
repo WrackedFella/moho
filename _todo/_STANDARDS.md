@@ -144,7 +144,8 @@ Paused or blocked items stay at their Status; say why in a `**Note:**` line.
 The `agent-ready` label is a run trigger, not a status. A human applies it to the issue
 of an item that is Ready and Agent-eligible Yes, and that starts a remote run
 ([Remote runs](WORKFLOW.md#remote-runs)). Nothing reads it as readiness, and nothing
-removes it.
+removes it. The issue type picks the run: on a work item the orchestrator implements it,
+and on a `feature` issue the refine skill splits it into work items.
 
 ## Card template
 
@@ -226,7 +227,8 @@ something observable when finished.
   available on a user-owned repo); each card's issue is a sub-issue of it, so feature
   progress is visible on GitHub.
 - Labels: `line:engine` | `line:strategy` | `line:fps`; `feature` on feature issues;
-  `engine-request` on engine requests; `agent-ready` to start a remote run. Templates: *Feature*, *Work item*, *Engine
+  `engine-request` on engine requests; `agent-ready` to start a remote run: on a work item it starts the orchestrator, on a
+  `feature` issue it starts refinement into work items. Templates: *Feature*, *Work item*, *Engine
   request*.
 - Every issue goes on the board; Status, Priority and Agent-eligible are set there, and the card header mirrors Status, Gate class and Labels.
 - Branch from `dev`: `<type>/<ID>-<slug>` (e.g. `feat/SG-F1-04-pickup-feedback`);
@@ -247,6 +249,13 @@ something observable when finished.
   reaches the base branch for the implementation PR to edit, or dropped when the
   issue alone is enough. Without card review (see `CLAUDE.md`), the Tech Lead publishes
   as soon as the card is ready and the branch follows the same rule.
+- **Remote refinement skips the draft file.** A `feature` issue labeled `agent-ready`
+  starts `/devflow:refine`, which publishes the cards it writes straight to issues, as
+  sub-issues of the feature, and writes nothing to the repository. The unlabeled issue
+  is the draft. While `Card review` is required, you read each card and apply
+  `agent-ready` to it, and that label is the approval and the start of its run. Once
+  `Card review` is `not required`, refine applies the label itself and the workflow
+  dispatches the runs. An open question reaches you as a comment on the feature.
 - **Ready is set by a human.** A cloud thread cannot write the board, so after filing
   the issue the thread says so and the user sets Ready and Agent-eligible (and applies
   `agent-ready` to start a remote run). From a local terminal the Tech Lead sets them

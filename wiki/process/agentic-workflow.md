@@ -109,7 +109,9 @@ Cloud threads and Actions runs start from a fresh clone and differ from a local 
   Agents never run `scripts/board` there.
 - **Unattended runs** use `claude-code-action` (`.github/workflows/claude.yml`): a human
   applies `agent-ready` to a Ready, Agent-eligible issue and the run executes
-  `/devflow:orchestrate <issue>` with the default token. See
+  `/devflow:orchestrate <issue>` with the default token. On a `feature` issue the label
+  runs `/devflow:refine <issue>` instead, which publishes the feature's cards as
+  sub-issues for you to label in turn. See
   [`_todo/WORKFLOW.md`](../../_todo/WORKFLOW.md#remote-runs).
 
 ## Writing a good work item
