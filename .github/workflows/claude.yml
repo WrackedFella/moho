@@ -1,20 +1,16 @@
 name: Claude
 
-# Runs Claude Code on GitHub's runners with the devflow plugin installed.
-# Triggers: an @claude comment, a manual dispatch with a prompt, or (smoke test)
-# a change to this file on a PR.
+# Runs the devflow orchestrator on one issue. Labeling an issue `agent-ready` starts a
+# run; a manual dispatch with an issue number does the same for testing. The default
+# GitHub token is enough: board Status is moved by the Board sync workflow, not here.
 on:
-  issue_comment:
-    types: [created]
-  pull_request_review_comment:
-    types: [created]
+  issues:
+    types: [labeled]
   workflow_dispatch:
     inputs:
-      prompt:
-        description: Instructions for Claude
+      issue:
+        description: Issue number to orchestrate
         required: true
-  pull_request:
-    paths: [.github/workflows/claude.yml]
 
 permissions:
   contents: write
@@ -22,50 +18,33 @@ permissions:
   issues: write
   id-token: write
 
+concurrency:
+  group: claude-${{ github.event.issue.number || inputs.issue }}
+  cancel-in-progress: false
+
 jobs:
-  claude:
-    name: Claude
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'pull_request' ||
-      contains(github.event.comment.body, '@claude')
+  orchestrate:
+    name: Orchestrate
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'agent-ready'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      # Claude Code may only touch the workspace, so the board script comes from a
-      # checkout here instead of the plugin cache. The ref matches the pin in
-      # .claude/settings.json; bump them together. The action rejects a ref suffix on
-      # plugin_marketplaces, so the installed plugin follows the marketplace's default branch.
-      - uses: actions/checkout@v4
-        with:
-          repository: WrackedFella/claude-skills
-          ref: v0.9.0
-          path: .devflow-src
-      # Shows whether BOARD_TOKEN can read the board before Claude is involved.
-      - name: Board token check
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.BOARD_TOKEN }}
+      # Installs the pinned Rust toolchain and the gate's tools (just, nextest, ...).
+      - name: Install toolchain
         run: |
-          if [[ -z $GH_TOKEN ]]; then echo "BOARD_TOKEN is empty"; exit 1; fi
-          echo "login: $(gh api user -q .login)"
-          gh api -i user | grep -i '^x-oauth-scopes' || echo "no x-oauth-scopes header (not a classic PAT)"
-          bash .devflow-src/plugins/devflow/scripts/board next WrackedFella 1; echo "board exit: $?"
+          bash scripts/cloud-tools.sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: anthropics/claude-code-action@v1
-        env:
-          # scripts/board needs GraphQL and Projects v2, which the default token lacks.
-          GH_TOKEN: ${{ secrets.BOARD_TOKEN }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The action rejects a ref on plugin_marketplaces, so the plugin follows the
+          # marketplace's default branch; .claude/settings.json holds the pinned ref.
           plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
           plugins: devflow@claude-skills
-          # Writes the run to the job summary; the agent runs without GitHub comments on dispatch.
           display_report: true
-          prompt: |
-            ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prompt || '' }}
-            ${{ github.event_name == 'pull_request' && 'Smoke test, read-only. 1) List the devflow skills and agents you can see. 2) Run exactly this single command: bash .devflow-src/plugins/devflow/scripts/board next WrackedFella 1. Report its output or the exact error. Do not combine commands. Change no files and post no comments.' || '' }}
+          prompt: /devflow:orchestrate ${{ github.event.issue.number || inputs.issue }}
           claude_args: |
-            --max-turns 12
-            --allowedTools "Bash(bash .devflow-src/plugins/devflow/scripts/board next *),Bash(ls:*),Bash(cat:*)"
+            --max-turns 200
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Task,Skill"
