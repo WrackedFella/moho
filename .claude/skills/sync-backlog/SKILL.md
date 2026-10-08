@@ -21,14 +21,21 @@ Sync the planning docs in `_todo/` with reality, following `_todo/_STANDARDS.md`
    if nothing fits, a new card under the right feature. Propose a new feature (no
    parent issue until approved) only when no feature's scope covers it; never create cards under an
    unapproved feature.
-4. **Published copies.** Each issue body is the accepted spec (`_todo/_STANDARDS.md`,
+4. **File drafts.** A card with `Status: Draft` and no `**Issue:**` link was written
+   where the board was unreachable. If the user approved it (or `Card review` is `not
+   required`) and this session reaches the board, file it per `_todo/_STANDARDS.md`
+   (Issues and branches): issue `[ID] title` with the full spec, labels from the header,
+   sub-issue of its feature's parent, `scripts/board set` for Gate class and Status
+   (`Ready` only if approved), then add the `Issue` link and `Status: unknown`. Otherwise
+   list the draft and leave it.
+5. **Published copies.** Each issue body is the accepted spec (`_todo/_STANDARDS.md`,
    Issues and branches). Report any card or feature whose file differs from its issue
    body, or whose issue body is only a pointer; republish on the user's say-so.
-5. **Clean up finished work** (`_todo/_STANDARDS.md`, Local drafts and cleanup).
+6. **Clean up finished work** (`_todo/_STANDARDS.md`, Local drafts and cleanup).
    Delete the file of each card whose issue is closed as completed, and the directory
    of each feature whose issue is closed as completed. Point links to them at the issue
    instead. Leave open or not-planned items alone and report them.
-6. **Hygiene.** Keep cards terse; no narration or history. Fix broken links between
+7. **Hygiene.** Keep cards terse; no narration or history. Fix broken links between
    cards, features, the README and ADRs.
 
 Report a short table: item → board Status → mismatch found, "new" or "deleted", plus

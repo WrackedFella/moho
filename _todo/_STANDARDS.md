@@ -257,10 +257,15 @@ something observable when finished.
   `agent-ready` to it, and that label is the approval and the start of its run. Once
   `Card review` is `not required`, refine applies the label itself and the workflow
   dispatches the runs. An open question reaches you as a comment on the feature.
-- **Ready is set by a human.** A cloud thread cannot write the board, so after filing
-  the issue the thread says so and the user sets Ready and Agent-eligible (and applies
-  `agent-ready` to start a remote run). From a local terminal the Tech Lead sets them
-  through `scripts/board`.
+- **Ready is set by a human.** A cloud thread cannot write the board, so it does not
+  file the issue (a filed issue without Status, Gate class and Agent-eligible is half
+  published). The card stays a local draft: `Status: Draft`, intended `Gate class` and
+  `Labels` in its header, full spec, committed on its `plan/` branch. `/sync-backlog`
+  from a full-access session files it and sets the board fields; the user then sets
+  Ready and Agent-eligible (and applies `agent-ready` to start a remote run). From a
+  local terminal the Tech Lead files and sets them through `scripts/board`. Remote
+  refinement is exempt: it files issues without board fields, and the Board sync
+  workflow sets Status.
 - Delete local files once their work is finished: a card's file when its issue is
   closed as completed, and a feature's directory when its issue is closed as completed
   (reference files such as `engine/ENG-F13-dependency-audit/audit.md` stay).
