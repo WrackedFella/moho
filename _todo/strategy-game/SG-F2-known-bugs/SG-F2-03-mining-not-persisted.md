@@ -56,4 +56,4 @@ Written after reproduction: the failing path decides the design.
   save policy (periodic, or on edit) and a scenario for it. Both are product
   calls for the Business Analyst before any design.
 - The fix depends on the save-format migration
-  ([ENG-F2-01](../../engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md)) only if it changes the save format.
+  ([ENG-F2-01](https://github.com/WrackedFella/moho/issues/94)) only if it changes the save format.

@@ -8,7 +8,7 @@ Persisted data is encoded with `bincode` 2.0.1 through its own
 `Encode`/`Decode` derives. Those derives sit on domain types in `moho_game`,
 `moho_core` (paletted chunks) and `moho_render_api`. bincode is unmaintained
 (RUSTSEC-2025-0141). Its 3.0.0 release contains nothing but a
-`compile_error!`, so "upgrade to bincode 3" ([ENG-F2-01](../engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md) as written) isn't
+`compile_error!`, so "upgrade to bincode 3" ([ENG-F2-01](https://github.com/WrackedFella/moho/issues/94) as written) isn't
 possible.
 
 There are four on-disk layouts with separate headers: the world save (`MOHO`
@@ -34,7 +34,7 @@ buildings, [SG-F4](../strategy-game/SG-F4-worker-pawns/_feature.md) pawns, inven
 
 ## Consequences
 
-- [ENG-F2-01](../engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md) becomes "saves use the ADR-0006 envelope and encoding". Its
+- [ENG-F2-01](https://github.com/WrackedFella/moho/issues/94) becomes "saves use the ADR-0006 envelope and encoding". Its
   migration lands before the first feature adds a persisted type, and old
   saves break once.
 - `bincode` and its advisory ignore go away when the migration lands.

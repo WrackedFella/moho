@@ -61,11 +61,11 @@ The 2026-10 test-critic audit judged 498 existing tests (252 keep, 110 strengthe
 | #178 [ENG-F22-11](ENG-F22-11-renderer-tests-fail-for-wrong-implementations.md): renderer tests fail for wrong implementations and every loaded shader is validated |
 | #179 [ENG-F22-12](ENG-F22-12-settings-tests-stay-off-the-real-prefs-file.md): settings tests stay off the real prefs file and pin every binding |
 | #180 [ENG-F22-13](ENG-F22-13-hud-console-and-ui-routing-tests.md): HUD, console and UI routing tests fail for wrong implementations |
-| #181 [ENG-F22-14](ENG-F22-14-confirming-a-keybind-conflict-moves-the-key.md): confirming a keybind conflict moves the key, Sprint included |
-| #182 [ENG-F22-15](ENG-F22-15-chunk-streaming-centres-on-the-players-chunk.md): chunk streaming centres on the player's chunk at negative coordinates |
-| #183 [ENG-F22-16](ENG-F22-16-mixed-smooth-and-blocky-chunks-mesh-with-valid.md): mixed smooth and blocky chunks mesh with valid indices and aligned geometry |
-| #184 [ENG-F22-17](ENG-F22-17-lone-smooth-voxels-have-outward-normals.md): lone smooth voxels have outward normals |
-| #185 [ENG-F22-18](ENG-F22-18-voxel-code-nothing-calls-is-gone.md): voxel code nothing calls is gone |
+| #181 [ENG-F22-14](https://github.com/WrackedFella/moho/issues/181): confirming a keybind conflict moves the key, Sprint included |
+| #182 [ENG-F22-15](https://github.com/WrackedFella/moho/issues/182): chunk streaming centres on the player's chunk at negative coordinates |
+| #183 [ENG-F22-16](https://github.com/WrackedFella/moho/issues/183): mixed smooth and blocky chunks mesh with valid indices and aligned geometry |
+| #184 [ENG-F22-17](https://github.com/WrackedFella/moho/issues/184): lone smooth voxels have outward normals |
+| #185 [ENG-F22-18](https://github.com/WrackedFella/moho/issues/185): voxel code nothing calls is gone |
 | #186 [ENG-F22-19](ENG-F22-19-compass-debug-view-world-name-menu-music.md): compass, debug view, world name, menu music and volume sliders behave as decided |
 | #187 [ENG-F22-20](ENG-F22-20-hotbar-slot-range-config-defaults-and-missing.md): hotbar slot range, config defaults and missing-character moves behave as decided |
 
