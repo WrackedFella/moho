@@ -1,6 +1,4 @@
 //! Face directions for voxel rendering.
-//!
-//! This module provides the `FaceDirection` enum for cube faces.
 
 /// Direction of a cube face
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

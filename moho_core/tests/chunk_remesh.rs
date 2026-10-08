@@ -1,10 +1,9 @@
 use glam::IVec3;
 use moho_core::voxel::{VoxelChunk, VoxelGrid};
 
-/// The mesh change from removing one voxel must be spatially local to that
-/// voxel — this is what makes "the terrain deforms where I mined" true. The
-/// change must also exist: a single-voxel edit to smooth (marching-cubes)
-/// terrain is visually subtle, so the mutate -> remesh contract is pinned here.
+/// Removing one voxel must change the mesh, and only locally. The change is
+/// easy to lose because a single-voxel edit to smooth (marching-cubes) terrain
+/// is visually subtle.
 #[test]
 fn mesh_change_is_local_to_the_removed_voxel() {
     let mut grid = VoxelGrid::new(16);

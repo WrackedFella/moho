@@ -155,8 +155,6 @@ fn sky_ensure_ready_noop_when_clean() {
 // Block-light propagation invariants
 // ---------------------------------------------------------------------------
 
-/// Light decays by exactly 1 per step along a line of transparent blocks, and
-/// reaches all six face neighbours of the source at one step down.
 #[test]
 fn block_light_decay_one_per_step() {
     let mut grid = grid_16();
@@ -194,8 +192,6 @@ fn block_light_decay_one_per_step() {
     }
 }
 
-/// A weaker source must not reduce an existing brighter value, at the source
-/// position or further along the row.
 #[test]
 fn weaker_source_does_not_dim_brighter() {
     let mut grid = grid_16();
@@ -340,7 +336,6 @@ fn removal_of_absent_light_is_noop() {
     prop.remove_light(&mut grid, IVec3::new(0, 0, 0)); // nothing to remove — must not panic
 }
 
-/// Removal clears light along the y and z arms, not just the x axis.
 #[test]
 fn removal_clears_light_along_every_axis() {
     let mut grid = grid_16();
@@ -518,7 +513,6 @@ fn flood_fill_propagates_all_emitters() {
 // Accessor round-trips
 // ---------------------------------------------------------------------------
 
-/// `block_light_rgb_at` surfaces the stored `ChunkLight` RGB.
 #[test]
 fn accessor_round_trip() {
     let mut grid = grid_16();
@@ -536,7 +530,6 @@ fn accessor_round_trip() {
     );
 }
 
-/// A transparent block does not occlude the sky for voxels below it.
 #[test]
 fn transparent_block_does_not_occlude_sky() {
     let mut grid = grid_16();
