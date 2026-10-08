@@ -292,14 +292,14 @@ mod tests {
     fn filter_smooths_across_frames() {
         let mut input_system = InputSystem::new(1.0);
 
-        input_system.collect_mouse_delta((1.0, 0.0));
+        input_system.collect_mouse_delta((1.0, 2.0));
         let first = input_system.sample_frame_input();
-        input_system.collect_mouse_delta((1.0, 0.0));
+        input_system.collect_mouse_delta((1.0, 2.0));
         let second = input_system.sample_frame_input();
 
-        assert_close(first, (0.8, 0.0));
-        // 0.8 * 1.0 + 0.2 * previous output 0.8
-        assert_close(second, (0.96, 0.0));
+        assert_close(first, (0.8, 1.6));
+        // 0.8 * input + 0.2 * previous output, per axis
+        assert_close(second, (0.96, 1.92));
     }
 
     #[test]
@@ -321,11 +321,21 @@ mod tests {
         let mut input_system = InputSystem::new(1.0);
 
         input_system.collect_mouse_delta((0.005, 0.0));
+        let mut tiny_y = InputSystem::new(1.0);
+        tiny_y.collect_mouse_delta((0.0, 0.005));
         let mut just_above = InputSystem::new(1.0);
         just_above.collect_mouse_delta((0.02, 0.0));
+        // Each axis is below 0.01, the magnitude is not.
+        let mut diagonal = InputSystem::new(1.0);
+        diagonal.collect_mouse_delta((0.0075, 0.0075));
+        let mut at_threshold = InputSystem::new(1.0);
+        at_threshold.collect_mouse_delta((0.01, 0.0));
 
         assert_eq!(input_system.sample_frame_input(), (0.0, 0.0));
+        assert_eq!(tiny_y.sample_frame_input(), (0.0, 0.0));
         assert_close(just_above.sample_frame_input(), (0.016, 0.0));
+        assert_close(diagonal.sample_frame_input(), (0.006, 0.006));
+        assert_close(at_threshold.sample_frame_input(), (0.008, 0.0));
     }
 
     #[test]

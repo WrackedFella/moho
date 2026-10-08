@@ -358,6 +358,24 @@ mod event_bus_tests {
     }
 
     #[test]
+    fn deferred_history_cap_evicts_oldest() {
+        let bus = EventBus::with_history(true, 3);
+
+        for value in 1..=5 {
+            bus.publish_deferred(TestEvent { value });
+        }
+
+        assert_eq!(
+            bus.history(),
+            [
+                "TestEvent { value: 3 }",
+                "TestEvent { value: 4 }",
+                "TestEvent { value: 5 }"
+            ]
+        );
+    }
+
+    #[test]
     fn deferred_events_dispatch_in_fifo_order_once() {
         let bus = EventBus::new();
         let seen = Arc::new(Mutex::new(Vec::new()));
