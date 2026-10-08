@@ -28,7 +28,7 @@ a date.
    through [ENG-F10](../ENG-F10-world-geometry-from-any-source/_feature.md)'s contract, using only engine-line crates. The layering
    check enforces that the FPS line can't reach strategy crates, so anything
    generic it needs has moved to the engine by then.
-6. **Boundary has settled.** The seam list named in ADR-0012 is unchanged by
+6. **Boundary has settled.** The seam list named in [ADR-0012](../../adr/0012-engine-crate-map-for-m2.md) is unchanged by
    the last two FPS features.
 7. `v1.0` is tagged on a green `just check`, with all-OS CI passing.
 

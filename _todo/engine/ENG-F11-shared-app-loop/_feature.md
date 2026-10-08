@@ -8,7 +8,7 @@
 Both games need the window, event loop and fixed-tick accumulator. Today they
 live in the strategy binary, so the FPS line would have to copy them, which is
 a fork. The engine owns the loop and a game plugs into it. Relies on
-[ADR-0009](../../adr/0009-simulation-time-is-one-fixed-tick.md) and [ADR-0011](../../adr/0011-simulation-stays-network-ready.md) (proposed in #115).
+[ADR-0009](../../adr/0009-simulation-time-is-one-fixed-tick.md) and [ADR-0011](../../adr/0011-simulation-stays-network-ready.md).
 
 ## Exit criteria
 
