@@ -75,7 +75,6 @@ impl Scene {
         renderer.enqueue_draw(cube_mesh_handle, &prepared.cube_opaque);
         renderer.enqueue_draw(mesh_handle, &prepared.sphere_opaque);
 
-        // World meshes (opaque, one draw per mesh)
         for (handle, instance) in self.world_meshes.draws() {
             renderer.enqueue_draw(handle, &[instance]);
         }

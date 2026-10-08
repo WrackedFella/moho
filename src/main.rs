@@ -72,7 +72,6 @@ struct WindowRenderer {
 struct App {
     entities: SceneEntities,
     scene: moho_renderer::Scene,
-    /// Material table index shared by all terrain chunk meshes.
     terrain_material_idx: u32,
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
 
