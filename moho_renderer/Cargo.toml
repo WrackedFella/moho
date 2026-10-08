@@ -5,7 +5,6 @@ edition = "2024"
 publish = false
 
 [dependencies]
-moho_core = { path = "../moho_core" }
 moho_render_api = { path = "../moho_render_api" }
 bytemuck = { workspace = true, features = ["derive"] }
 wgpu = { workspace = true }
@@ -15,7 +14,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-moho_game = { path = "../moho_game" }
+proptest = { workspace = true }
 naga = { workspace = true, features = ["wgsl-in"] }
 
 [features]

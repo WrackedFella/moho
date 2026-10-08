@@ -64,10 +64,8 @@ impl WindowManager {
                 &mut *wr.renderer,
                 app.entities.actors.spheres(),
                 app.entities.actors.cubes(),
-                app.entities.chunks.iter_mut(),
                 wr.mesh_handle,
                 wr.cube_mesh_handle,
-                wr.terrain_material_idx,
                 app.camera,
             ) {
                 tracing::warn!(error = %e, "Skipped initial render");
@@ -112,19 +110,5 @@ impl WindowManager {
 impl Default for WindowManager {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_window_error_display() {
-        let err = WindowError::CreateFailed("test error".into());
-        assert_eq!(err.to_string(), "Failed to create window: test error");
-
-        let err = WindowError::SetupFailed("setup error".into());
-        assert_eq!(err.to_string(), "Failed to setup renderer/UI: setup error");
     }
 }

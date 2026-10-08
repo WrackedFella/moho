@@ -169,7 +169,7 @@ impl FrameProcessor {
             let (loaded, evicted) = streamer.update(ls.grid_mut(), player_pos);
 
             for pos in &evicted {
-                app.entities.chunks.remove(*pos);
+                crate::app::world_geometry::remove_chunk(&mut app.scene, &mut app.entities, *pos);
                 app.physics.remove_chunk_collider(*pos);
             }
 

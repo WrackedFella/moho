@@ -63,15 +63,6 @@ impl MaterialTable {
     pub fn as_slice(&self) -> &[MaterialGpu] {
         &self.list
     }
-
-    /// Reset internal state (used by tests). Kept small to avoid exposing
-    /// unnecessary API surface in the public renderer.
-    #[allow(dead_code)]
-    pub fn reset_for_tests(&mut self) {
-        self.map.clear();
-        self.list.clear();
-        self.dirty = false;
-    }
 }
 
 impl Default for MaterialTable {
@@ -83,29 +74,55 @@ impl Default for MaterialTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::Vec3;
-    use moho_core::materials::MaterialType;
+
+    /// Material stand-in; the renderer must not name game material types.
+    /// `metal` distinguishes keys that differ only in a non-colour parameter.
+    struct TestMaterial {
+        albedo: [f32; 3],
+        metal: bool,
+    }
+
+    impl RenderMaterial for TestMaterial {
+        fn to_gpu(&self) -> MaterialGpu {
+            MaterialGpu {
+                albedo: [self.albedo[0], self.albedo[1], self.albedo[2], 1.0],
+                params: [0.0; 4],
+            }
+        }
+
+        fn dedup_key(&self) -> MaterialKey {
+            MaterialKey {
+                variant: u8::from(self.metal),
+                albedo_bits: self.albedo.map(f32::to_bits),
+                fuzz_bits: 0,
+                ref_idx_bits: 0,
+                extra_bits: [0; 3],
+            }
+        }
+    }
 
     #[test]
     fn dedup_materials_basic() {
         let mut mt = MaterialTable::new();
-        let m1 = MaterialType::Lambertian {
-            albedo: Vec3::new(0.5, 0.25, 0.125),
+        let m1 = TestMaterial {
+            albedo: [0.5, 0.25, 0.125],
+            metal: false,
         };
-        let m2 = MaterialType::Lambertian {
-            albedo: Vec3::new(0.5, 0.25, 0.125),
+        let m2 = TestMaterial {
+            albedo: [0.5, 0.25, 0.125],
+            metal: false,
         };
-        let m3 = MaterialType::Metal {
-            albedo: Vec3::new(0.5, 0.25, 0.125),
-            fuzz: 0.3,
+        let m3 = TestMaterial {
+            albedo: [0.5, 0.25, 0.125],
+            metal: true,
         };
 
         let i1 = mt.find_or_push(&m1);
         let i2 = mt.find_or_push(&m2);
         let i3 = mt.find_or_push(&m3);
 
-        assert_eq!(i1, i2, "identical lambertian materials should dedupe");
-        assert_ne!(i1, i3, "metal with different fuzz should be distinct");
+        assert_eq!(i1, i2, "identical materials should dedupe");
+        assert_ne!(i1, i3, "materials with different keys should be distinct");
         assert!(mt.is_dirty());
         assert_eq!(mt.as_slice().len(), 2);
     }

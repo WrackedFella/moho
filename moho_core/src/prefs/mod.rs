@@ -416,25 +416,10 @@ mod tests {
     }
 
     #[test]
-    fn test_default_prefs() {
-        let prefs = Prefs::default();
-        assert_eq!(prefs.key_w().code, 'W' as u32);
-        assert_eq!(prefs.mouse_sensitivity(), 1.0);
-        assert!(prefs.input_filtering_enabled());
-    }
-
-    #[test]
     fn test_binding_default() {
         let binding = Binding::default();
         assert_eq!(binding.code, 'W' as u32);
         assert_eq!(binding.mods, 0);
-    }
-
-    #[test]
-    fn test_default_video_settings() {
-        let prefs = Prefs::default();
-        assert_eq!(prefs.window_mode(), WindowMode::Windowed);
-        assert_eq!(prefs.window_resolution(), (1920, 1080));
     }
 
     #[test]

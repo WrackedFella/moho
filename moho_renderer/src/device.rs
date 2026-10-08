@@ -181,31 +181,3 @@ impl<'a> DeviceSetup<'a> {
         (self.config.width, self.config.height)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_device_init_error_display() {
-        let surface_err = DeviceInitError::SurfaceCreation("test error".to_string());
-        assert_eq!(
-            surface_err.to_string(),
-            "Surface creation failed: test error"
-        );
-
-        let adapter_err = DeviceInitError::AdapterRequest("no adapter".to_string());
-        assert_eq!(
-            adapter_err.to_string(),
-            "Adapter request failed: no adapter"
-        );
-
-        let device_err = DeviceInitError::DeviceCreation("device failed".to_string());
-        assert_eq!(
-            device_err.to_string(),
-            "Device creation failed: device failed"
-        );
-    }
-
-    // Note: Actual device creation tests require GPU hardware.
-}

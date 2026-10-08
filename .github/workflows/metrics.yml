@@ -18,6 +18,8 @@ env:
   METRICS_SUMMARY_DIR: metrics-summary
   MAX_FUNCTION_CYCLOMATIC: '20'    # adjust threshold as needed
   MIN_MI_VISUAL_STUDIO: '65'       # adjust threshold as needed
+  # Commit of mozilla/rust-code-analysis the CLI is built from; bumping it rebuilds the cached binary.
+  RCA_REF: 37e5d83c056c8cbf827223d5814a93c5218df1a9
 
 jobs:
   gather-metrics:
@@ -40,13 +42,23 @@ jobs:
           profile: minimal
           override: true
 
+      - name: Cache rust-code-analysis-cli
+        id: rca
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: rust-code-analysis-cli
+          key: rca-cli-${{ runner.os }}-${{ env.RCA_REF }}
+
       - name: Build rust-code-analysis-cli
+        if: steps.rca.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           TMPDIR=$(mktemp -d)
           echo "Building rust-code-analysis in $TMPDIR"
-          git clone --depth 1 https://github.com/mozilla/rust-code-analysis.git "$TMPDIR"
+          git init -q "$TMPDIR"
           cd "$TMPDIR"
+          git fetch -q --depth 1 https://github.com/mozilla/rust-code-analysis.git "$RCA_REF"
+          git checkout -q FETCH_HEAD
           cargo build --release -p rust-code-analysis-cli
           # Find the binary (might be in different locations)
           CLI_PATH=$(find target/release -name "rust-code-analysis-cli" -type f | head -1)

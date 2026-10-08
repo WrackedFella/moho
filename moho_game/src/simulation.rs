@@ -115,25 +115,14 @@ mod tests {
         use super::*;
 
         #[test]
-        fn controller_input_mut_when_written_updates_controller_input() {
-            let mut sim = SimulationController::new(Vec3::ZERO);
-
-            sim.controller_input_mut().forward = 1.0;
-            sim.controller_input_mut().sprint = true;
-
-            assert_eq!(sim.controller_input.forward, 1.0);
-            assert!(sim.controller_input.sprint);
-        }
-
-        #[test]
         fn apply_input_when_moving_forward_advances_position_and_returns_matching_camera() {
-            let mut sim = SimulationController::new(Vec3::ZERO);
+            let mut sim = SimulationController::new(Vec3::new(1.0, 2.0, 3.0));
             sim.controller_input_mut().forward = 1.0;
 
             let (view, proj, cam_pos) = sim.apply_input(0.5);
 
-            assert_vec3_near(sim.position(), Vec3::new(0.0, 0.0, 2.0));
-            assert_vec3_near(cam_pos, Vec3::new(0.0, 0.0, 2.0));
+            assert_vec3_near(sim.position(), Vec3::new(1.0, 2.0, 5.0));
+            assert_vec3_near(cam_pos, Vec3::new(1.0, 2.0, 5.0));
             let (expected_view, expected_proj, expected_pos) =
                 controller_to_camera(&sim.player_controller);
             assert_eq!(view, expected_view);
@@ -166,23 +155,6 @@ mod tests {
         }
 
         #[test]
-        fn position_when_constructed_returns_initial_position() {
-            let sim = SimulationController::new(Vec3::new(1.0, 2.0, 3.0));
-
-            assert_eq!(sim.position(), Vec3::new(1.0, 2.0, 3.0));
-        }
-
-        #[test]
-        fn set_camera_mode_when_isometric_changes_reported_mode() {
-            let mut sim = SimulationController::new(Vec3::ZERO);
-            assert_eq!(sim.camera_mode(), CameraMode::FirstPerson);
-
-            sim.set_camera_mode(CameraMode::Isometric);
-
-            assert_eq!(sim.camera_mode(), CameraMode::Isometric);
-        }
-
-        #[test]
         fn look_at_when_first_person_turns_yaw_and_pitch_toward_target() {
             let mut sim = SimulationController::new(Vec3::ZERO);
 
@@ -197,6 +169,7 @@ mod tests {
         fn look_at_when_isometric_sets_rts_look_target() {
             let mut sim = SimulationController::new(Vec3::ZERO);
             sim.set_camera_mode(CameraMode::Isometric);
+            assert_eq!(sim.camera_mode(), CameraMode::Isometric);
 
             sim.look_at(Vec3::new(7.0, 0.0, -3.0));
 

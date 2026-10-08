@@ -78,9 +78,11 @@ for this card and ENG-F10-04; the card branch PRs into it.
 - Needs ENG-F10-01 merged first: until then `moho_renderer` names `VoxelChunk`,
   and the move would make the engine depend on the strategy line.
 - Every open branch that edits `moho_core/src/voxel/` conflicts. The roadmap lands
-  SG-F1-04 (pickup feedback) and SG-F2-03/02 (mining persistence, mesh gaps)
-  first; announce the move to the Strategy lane before it starts, and hold other
-  `voxel/` edits until it merges.
+  the ENG-F22 voxel cards first ([ENG-F22-02](https://github.com/WrackedFella/moho/issues/169), then
+  [ENG-F22-06](https://github.com/WrackedFella/moho/issues/173) and [ENG-F22-07](https://github.com/WrackedFella/moho/issues/174)); start only when no open
+  PR edits `moho_core/src/voxel/`, announce the move to the Strategy lane before it
+  starts, and hold other `voxel/` edits until it merges. Strategy cards don't gate
+  it: one that starts later targets `moho_voxel`.
 
 ## Verification
 

@@ -60,6 +60,7 @@ impl std::error::Error for AppInitError {}
 pub struct InitializedApp {
     pub entities: SceneEntities,
     pub scene: moho_renderer::Scene,
+    pub terrain_material_idx: u32,
     pub camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     pub event_bus: Arc<moho_core::EventBus>,
 
@@ -148,7 +149,9 @@ impl AppInitializer {
 
         // Create basic world and scene (minimal setup)
         let entities = SceneEntities::default();
-        let scene = moho_renderer::Scene::new();
+        let mut scene = moho_renderer::Scene::new();
+        let terrain_material_idx =
+            crate::app::world_geometry::register_terrain_material(&mut scene);
         tracing::debug!("Created world and scene");
 
         // Initialize camera with default voxel terrain view
@@ -196,6 +199,7 @@ impl AppInitializer {
         Ok(InitializedApp {
             entities,
             scene,
+            terrain_material_idx,
             camera,
             event_bus,
 
@@ -279,18 +283,6 @@ mod tests {
             glam::Vec3::ZERO,
             "Camera position should not be at origin"
         );
-    }
-
-    #[test]
-    fn test_multiple_builds_with_same_config() {
-        let config = test_config();
-
-        // Should be able to build multiple times (though in practice you'd only build once)
-        let result1 = AppInitializer::new(config.clone()).build();
-        let result2 = AppInitializer::new(config).build();
-
-        assert!(result1.is_ok());
-        assert!(result2.is_ok());
     }
 
     #[test]

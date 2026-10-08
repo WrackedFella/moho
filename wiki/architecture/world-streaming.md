@@ -2,7 +2,7 @@
 
 **Source:** `src/app/chunk_streamer.rs`, `src/app/event_loop/frame_processor.rs`
 (`update_chunk_streaming`, `update_light_system`), `event_processor.rs` (`process_world_events`),
-`moho_core/src/voxel/` (`light_system.rs`, `streaming.rs`, `jobs.rs`, `light_jobs.rs`).
+`src/app/world_geometry.rs`, `moho_core/src/voxel/` (`light_system.rs`, `streaming.rs`, `jobs.rs`, `light_jobs.rs`).
 Voxels sit in `moho_core` today and move to the strategy-line `moho_voxel` per [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md).
 
 ## Chunk lifecycle
@@ -22,8 +22,8 @@ flowchart TD
     PW --> LOD{"lod_for_chunk<br/>XZ distance ≥ 4?"}
     LOD -- "no: LOD 0" --> M0["full 16³ hybrid mesh"]
     LOD -- "yes: LOD 1" --> M1["coarse 8³ blocky mesh"]
-    M0 & M1 --> OUT["ChunkStore.insert(chunk)<br/>physics.update_chunk_collider"]
-    OUT --> R["rendered next redraw"]
+    M0 & M1 --> OUT["world_geometry::insert_chunk<br/>(ChunkStore + WorldMeshes.upsert)<br/>physics.update_chunk_collider"]
+    OUT --> R["flushed and drawn next redraw"]
 ```
 
 Neighbours are re-meshed on load because a neighbour meshed before this chunk existed

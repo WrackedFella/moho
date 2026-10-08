@@ -248,5 +248,10 @@ mod tests {
         assert_eq!(std::mem::size_of::<CascadedShadowMatrixGpu>(), 144);
         // MultiLightShadowGpu: 4 matrices (4x64 bytes = 256 bytes) + 2 vec4s (32 bytes) = 288 bytes
         assert_eq!(std::mem::size_of::<MultiLightShadowGpu>(), 288);
+        assert_eq!(
+            std::mem::size_of::<MultiLightShadowGpu>(),
+            MAX_SHADOW_LIGHTS * std::mem::size_of::<ShadowMatrixGpu>() + 32,
+            "one matrix slot per shadow light, plus two vec4s"
+        );
     }
 }

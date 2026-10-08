@@ -105,11 +105,14 @@ Cloud threads and Actions runs start from a fresh clone and differ from a local 
   [projects](https://code.claude.com/docs/en/claude-projects).
 - **The toolchain is on demand.** Threads that build or test run
   `bash scripts/cloud-tools.sh` first; text-only threads skip it and start faster.
-- **GitNexus comes with that script.** It installs the npm dependency (skipping the
-  ONNX download the sandbox proxy resets) and builds the gitignored index; `.mcp.json`
-  registers the server and `.claude/settings.json` enables it. Full-text search stays
-  off in the sandbox; `impact`, `context` and `detect_changes` work. Re-run
-  `npx gitnexus analyze --skip-agents-md` after commits to refresh a stale index.
+- **GitNexus starts itself.** MCP servers start before a thread runs anything and are
+  never restarted, so `.mcp.json` launches `scripts/gitnexus-mcp.sh`: it installs the npm
+  dependency if missing (skipping the ONNX download the sandbox proxy resets), indexes
+  in the background, and serves. The first calls on a fresh clone see no repo until the
+  index finishes (~20 s); `cloud-tools.sh` runs the same script with `--setup` so builds
+  and Actions runs have it ready. Full-text search stays off in the sandbox; `impact`,
+  `context` and `detect_changes` work. Refresh a stale index with
+  `node_modules/.bin/gitnexus analyze --skip-agents-md`.
 - **No board access.** Cloud sessions cannot reach GraphQL or Projects v2, so only the
   Board sync workflow (`BOARD_TOKEN`) moves Status, forward, on PR and issue events.
   Agents never run `scripts/board` there.

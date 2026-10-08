@@ -7,17 +7,14 @@
 
 ## Summary
 
-Small, unrelated renderer cleanups — land any of these independently, any
-time.
+Small, unrelated renderer cleanups; land any of these independently, any time.
+Split from ENG-F3-03, which kept only the unsound frame-callback deletion.
 
 ## Deliverables
 
-- Delete the `*mut dyn FrameCallback` path. It is **unsound**: a safe setter
-  stores a raw pointer that `finish_frame` later dereferences. Nothing calls
-  it; the `Arc<Mutex<>>` form covers all callers.
 - Hoist `InterleavedVertex` (currently redefined inline with hand-tuned
   padding) to a single top-level type.
-- Gate per-vertex sample logging in `register_indexed_mesh` — runs every
+- Gate per-vertex sample logging in `register_indexed_mesh`; it runs every
   chunk registration even when filtered.
 - Replace `MaterialDesc::from_material`/`into_material_type` boilerplate with
   a `serde` derive on `MaterialType`.

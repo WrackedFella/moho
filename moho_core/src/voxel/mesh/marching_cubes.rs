@@ -119,13 +119,14 @@ impl MarchingCubes {
 
         // Find vertices along edges where surface crosses
         let mut edge_vertices = [[0.0f32; 3]; 12];
+        let mut edge_gradients = [[0.0f32; 3]; 12];
         let iso_level = 0.5;
 
         for i in 0..12 {
             if edge_flags & (1 << i) != 0 {
                 let (v0_idx, v1_idx) = EDGE_CONNECTIONS[i];
-                let v0 = Self::corner_position(x, y, z, v0_idx);
-                let v1 = Self::corner_position(x, y, z, v1_idx);
+                let s0 = Self::corner_sample(x, y, z, v0_idx);
+                let s1 = Self::corner_sample(x, y, z, v1_idx);
                 let d0 = corners[v0_idx];
                 let d1 = corners[v1_idx];
 
@@ -136,11 +137,12 @@ impl MarchingCubes {
                     (iso_level - d0) / (d1 - d0)
                 };
 
-                edge_vertices[i] = [
-                    v0[0] + t * (v1[0] - v0[0]),
-                    v0[1] + t * (v1[1] - v0[1]),
-                    v0[2] + t * (v1[2] - v0[2]),
-                ];
+                edge_vertices[i] = lerp3(
+                    Self::corner_position(x, y, z, v0_idx),
+                    Self::corner_position(x, y, z, v1_idx),
+                    t,
+                );
+                edge_gradients[i] = Self::edge_gradient(density_field, (s0, d0), (s1, d1), t);
             }
         }
 
@@ -160,9 +162,7 @@ impl MarchingCubes {
                 let vert = edge_vertices[edge_idx as usize];
                 vertices.push(vert);
 
-                // Compute normal from density gradient
-                let normal = Self::compute_normal(density_field, vert[0], vert[1], vert[2]);
-                normals.push(normal);
+                normals.push(Self::outward_normal(edge_gradients[edge_idx as usize]));
 
                 // Smooth terrain doesn't need complex AO - use density as simple approximation
                 // Lower density (near surface) = less occlusion
@@ -217,55 +217,67 @@ impl MarchingCubes {
 
     /// Get position of a cube corner
     fn corner_position(x: usize, y: usize, z: usize, corner_idx: usize) -> [f32; 3] {
-        let x = x as f32;
-        let y = y as f32;
-        let z = z as f32;
+        Self::corner_sample(x, y, z, corner_idx).map(|c| c as f32)
+    }
 
+    fn corner_sample(x: usize, y: usize, z: usize, corner_idx: usize) -> [usize; 3] {
         match corner_idx {
             0 => [x, y, z],
-            1 => [x + 1.0, y, z],
-            2 => [x + 1.0, y, z + 1.0],
-            3 => [x, y, z + 1.0],
-            4 => [x, y + 1.0, z],
-            5 => [x + 1.0, y + 1.0, z],
-            6 => [x + 1.0, y + 1.0, z + 1.0],
-            7 => [x, y + 1.0, z + 1.0],
-            _ => [x, y, z],
+            1 => [x + 1, y, z],
+            2 => [x + 1, y, z + 1],
+            3 => [x, y, z + 1],
+            4 => [x, y + 1, z],
+            5 => [x + 1, y + 1, z],
+            6 => [x + 1, y + 1, z + 1],
+            7 => [x, y + 1, z + 1],
+            _ => unreachable!("a cube has 8 corners, got {corner_idx}"),
         }
     }
 
-    /// Compute surface normal using central differences on the density field
-    fn compute_normal(density_field: &[[[f32; 18]; 18]; 18], x: f32, y: f32, z: f32) -> [f32; 3] {
-        let xi = x.floor() as usize;
-        let yi = y.floor() as usize;
-        let zi = z.floor() as usize;
-
-        // Sample density at neighboring positions (with bounds checking)
-        let dx = if xi > 0 && xi < 16 {
-            density_field[xi + 1][yi][zi] - density_field[xi - 1][yi][zi]
-        } else {
-            0.0
+    /// Density gradient at an integer sample: central differences, one-sided at the
+    /// field's ends so the outermost meshed layer still gets a gradient.
+    fn sample_gradient(field: &[[[f32; 18]; 18]; 18], [x, y, z]: [usize; 3]) -> [f32; 3] {
+        let diff = |lo: [usize; 3], hi: [usize; 3], span: f32| {
+            (field[hi[0]][hi[1]][hi[2]] - field[lo[0]][lo[1]][lo[2]]) / span
         };
+        let (xl, xh) = (x.saturating_sub(1), (x + 1).min(17));
+        let (yl, yh) = (y.saturating_sub(1), (y + 1).min(17));
+        let (zl, zh) = (z.saturating_sub(1), (z + 1).min(17));
 
-        let dy = if yi > 0 && yi < 16 {
-            density_field[xi][yi + 1][zi] - density_field[xi][yi - 1][zi]
-        } else {
-            0.0
-        };
+        [
+            diff([xl, y, z], [xh, y, z], (xh - xl) as f32),
+            diff([x, yl, z], [x, yh, z], (yh - yl) as f32),
+            diff([x, y, zl], [x, y, zh], (zh - zl) as f32),
+        ]
+    }
 
-        let dz = if zi > 0 && zi < 16 {
-            density_field[xi][yi][zi + 1] - density_field[xi][yi][zi - 1]
+    /// Density gradient at a vertex `t` along the edge from `s0` to `s1`, interpolated from
+    /// the endpoint gradients. When both endpoints sit on flat neighbourhoods (a solid one
+    /// sample from another, say) it falls back to the difference along the edge itself,
+    /// which is never zero because the surface crosses it.
+    fn edge_gradient(
+        field: &[[[f32; 18]; 18]; 18],
+        (s0, d0): ([usize; 3], f32),
+        (s1, d1): ([usize; 3], f32),
+        t: f32,
+    ) -> [f32; 3] {
+        let gradient = lerp3(
+            Self::sample_gradient(field, s0),
+            Self::sample_gradient(field, s1),
+            t,
+        );
+        if gradient == [0.0; 3] {
+            std::array::from_fn(|axis| (s1[axis] as f32 - s0[axis] as f32) * (d1 - d0))
         } else {
-            0.0
-        };
-
-        // Normalize the gradient
-        let len = (dx * dx + dy * dy + dz * dz).sqrt();
-        if len < 0.0001 {
-            [0.0, 1.0, 0.0] // Default to up if gradient is zero
-        } else {
-            [-dx / len, -dy / len, -dz / len] // Negative because we want outward normal
+            gradient
         }
+    }
+
+    /// Outward unit normal from a non-zero density gradient.
+    fn outward_normal(gradient: [f32; 3]) -> [f32; 3] {
+        let len = gradient.iter().map(|g| g * g).sum::<f32>().sqrt();
+        // Density rises into the solid, so outward is the negated gradient.
+        gradient.map(|g| -g / len)
     }
 
     /// Convert voxel block data to density field
@@ -286,6 +298,14 @@ impl MarchingCubes {
 
         field
     }
+}
+
+fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [
+        a[0] + t * (b[0] - a[0]),
+        a[1] + t * (b[1] - a[1]),
+        a[2] + t * (b[2] - a[2]),
+    ]
 }
 
 // Edge connections: which corners does each edge connect?
@@ -924,6 +944,105 @@ mod tests {
             mesh.geometry_type.iter().all(|&t| t == 0),
             "All vertices should be smooth terrain"
         );
+    }
+
+    fn solid_samples_field(
+        solid: impl IntoIterator<Item = (usize, usize, usize)>,
+    ) -> [[[f32; 18]; 18]; 18] {
+        let mut field = [[[0.0f32; 18]; 18]; 18];
+        for (x, y, z) in solid {
+            field[x][y][z] = 1.0;
+        }
+        field
+    }
+
+    fn assert_normals_point_away_from(mesh: &VoxelMesh, centre: [f32; 3]) {
+        assert!(!mesh.vertices.is_empty(), "solid must produce geometry");
+        assert_eq!(mesh.vertices.len(), mesh.normals.len());
+
+        for (v, n) in mesh.vertices.iter().zip(&mesh.normals) {
+            let radial = [v[0] - centre[0], v[1] - centre[1], v[2] - centre[2]];
+            let radial_len = radial.iter().map(|c| c * c).sum::<f32>().sqrt();
+            let normal_len = n.iter().map(|c| c * c).sum::<f32>().sqrt();
+            let cosine = (radial[0] * n[0] + radial[1] * n[1] + radial[2] * n[2])
+                / (radial_len * normal_len);
+
+            assert!(
+                (normal_len - 1.0).abs() < 1e-3,
+                "normal {n:?} at vertex {v:?} is not unit length"
+            );
+            // These solids are symmetric about `centre`, so the normals are exactly radial.
+            assert!(
+                cosine > 0.9999,
+                "normal {n:?} at vertex {v:?} does not point away from {centre:?} (cosine {cosine})"
+            );
+        }
+    }
+
+    #[test]
+    fn single_voxel_normals_point_outward() {
+        // Interior sample, and the chunk's last meshed layer, whose +1 neighbour is padding.
+        for sample in [(8, 8, 8), (16, 16, 16)] {
+            let field = solid_samples_field([sample]);
+
+            let mesh = MarchingCubes::generate_mesh(&field, 16);
+
+            // A lone sample is an octahedron: 8 triangles, none dropped.
+            assert_eq!(mesh.vertices.len(), 24, "lone voxel at {sample:?}");
+            let (x, y, z) = sample;
+            assert_normals_point_away_from(&mesh, [x as f32, y as f32, z as f32]);
+        }
+    }
+
+    #[test]
+    fn voxels_one_sample_apart_normals_point_outward() {
+        // Between the two solids, both edge endpoints have a flat central difference.
+        let field = solid_samples_field([(6, 8, 8), (8, 8, 8)]);
+
+        let mesh = MarchingCubes::generate_mesh(&field, 16);
+
+        assert_eq!(mesh.vertices.len(), 48, "two separate octahedra");
+        for (v, n) in mesh.vertices.iter().zip(&mesh.normals) {
+            let centre_x = if v[0] < 7.0 { 6.0 } else { 8.0 };
+            let outward = [v[0] - centre_x, v[1] - 8.0, v[2] - 8.0].map(|c| c * 2.0);
+            assert!(
+                n.iter().zip(&outward).all(|(a, b)| (a - b).abs() < 1e-5),
+                "normal {n:?} at vertex {v:?}, expected {outward:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn last_layer_gradient_is_one_sided_into_padding() {
+        // 2x2x2 solid on samples 15..=16. At (16.5, 15, 15) the gradient interpolates
+        // sample 16's central difference (-0.5, 0.5, 0.5) with sample 17's one-sided
+        // (-1, 0, 0), giving (-0.75, 0.25, 0.25): outward (3, -1, -1) / sqrt(11).
+        let solid =
+            (15..=16).flat_map(|x| (15..=16).flat_map(move |y| (15..=16).map(move |z| (x, y, z))));
+        let mesh = MarchingCubes::generate_mesh(&solid_samples_field(solid), 16);
+
+        let i = mesh
+            .vertices
+            .iter()
+            .position(|v| *v == [16.5, 15.0, 15.0])
+            .expect("vertex on the edge into padding");
+        let expected = [3.0, -1.0, -1.0].map(|c: f32| c / 11.0f32.sqrt());
+        let n = mesh.normals[i];
+        assert!(
+            n.iter().zip(&expected).all(|(a, b)| (a - b).abs() < 1e-5),
+            "normal {n:?}, expected {expected:?}"
+        );
+    }
+
+    #[test]
+    fn two_cube_solid_normals_point_outward() {
+        let solid =
+            (6..=7).flat_map(|x| (6..=7).flat_map(move |y| (6..=7).map(move |z| (x, y, z))));
+        let field = solid_samples_field(solid);
+
+        let mesh = MarchingCubes::generate_mesh(&field, 16);
+
+        assert_normals_point_away_from(&mesh, [6.5, 6.5, 6.5]);
     }
 
     #[test]

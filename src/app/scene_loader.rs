@@ -31,6 +31,7 @@ pub fn load_scene(
 
     // Reset physics with the entities: a load that fails below must not leave
     // bodies tracking actors that no longer exist.
+    crate::app::world_geometry::remove_all_chunk_meshes(app);
     app.entities.clear();
     app.physics.reset();
 
@@ -38,6 +39,7 @@ pub fn load_scene(
         // Decode the scene before applying the spec, so a bad scene leaves the spec untouched.
         let (camera_data, lights) =
             moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.entities)?;
+        crate::app::world_geometry::upsert_all_chunks(app);
         // Remember the WorldSpec from the loaded file so autosaves and
         // subsequent writes preserve the original metadata.
         app.generation.last_spec = Some(spec.clone());
