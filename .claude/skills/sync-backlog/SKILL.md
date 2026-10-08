@@ -13,8 +13,16 @@ Sync the planning docs in `_todo/` with reality, following `_todo/_STANDARDS.md`
 2. **Status.** The board (WrackedFella project 1) is the record; cards and features
    mirror Status, Gate class and Labels in their header (`_todo/_STANDARDS.md`, Item
    state). The README and the roadmap carry no status. Read the board with devflow's
-   `scripts/board get`. Overwrite each header field that differs from GitHub and list
-   the change in the report. Where a merged PR or an open PR disagrees with the board,
+   `scripts/board get` and the issue's labels with `gh issue view --json labels`.
+   Overwrite each header field that differs from GitHub and list the change in the
+   report, with one exception: **fill gaps upward.** Where GitHub has no value for a
+   field (board Gate class or Status absent from `get`; the issue has no labels) and
+   the header holds a concrete one, push the header value instead: `scripts/board set`
+   for Gate class and Status, `gh issue edit --add-label` for Labels. Never push
+   `unset`, `unknown` or `Draft`, never overwrite a value GitHub already has, and
+   never create a label that does not exist; report any label that cannot be applied.
+   If the issue is not on the board (`get` exits 4), `set` adds it; report that. List
+   every pushed value in the report. Where a merged PR or an open PR disagrees with the board,
    report it for the user; change the board only on the user's say-so. Keep the feature's item table and `_todo/README.md` listing the right
    items. A feature is Done only when its exit criteria are verified, not when its cards are.
 3. **Findings.** Route each new concern to an existing card (add a deliverable) or,
