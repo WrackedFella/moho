@@ -107,9 +107,11 @@ impl SettingsMenu {
     }
 
     pub fn apply_pending_binding(&mut self) {
-        self.keybind_capture.apply_pending(|action, bindings| {
-            self.state.set_staged_binding(action, bindings);
-        });
+        let staged = self.state.staged_bindings().clone();
+        self.keybind_capture
+            .apply_pending(&staged, |action, bindings| {
+                self.state.set_staged_binding(action, bindings);
+            });
     }
 
     pub fn cancel_pending_binding(&mut self) {

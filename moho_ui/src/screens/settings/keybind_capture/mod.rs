@@ -128,15 +128,22 @@ impl KeybindCaptureHandler {
     /// Apply the pending binding (called after user confirms in modal)
     ///
     /// # Arguments
+    /// * `bindings` - The staged bindings, to keep the holder's other keys
     /// * `on_binding_changed` - Callback to update staged bindings
-    pub fn apply_pending<F>(&mut self, mut on_binding_changed: F)
+    pub fn apply_pending<F>(&mut self, bindings: &BindingRegistry, mut on_binding_changed: F)
     where
         F: FnMut(StrategyAction, Vec<Binding>),
     {
         if let Some(pending) = self.conflict_modal.take_pending() {
-            // Clear conflicting binding if any
+            // The holder loses only the contested key
             if let Some(conflicting) = pending.conflicting {
-                on_binding_changed(conflicting, vec![]);
+                let remaining = bindings
+                    .get_binding(conflicting)
+                    .iter()
+                    .filter(|b| **b != Binding::Key(pending.key))
+                    .copied()
+                    .collect();
+                on_binding_changed(conflicting, remaining);
             }
 
             on_binding_changed(pending.target, vec![Binding::Key(pending.key)]);
@@ -288,7 +295,7 @@ mod tests {
         handler.start_listening(target_id);
         handler.apply_key_while_listening(key, &bindings, |_, _| {});
         let mut changes = vec![];
-        handler.apply_pending(|action, b| changes.push((action, b)));
+        handler.apply_pending(&bindings, |action, b| changes.push((action, b)));
         changes
     }
 
