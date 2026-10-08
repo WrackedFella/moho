@@ -13,6 +13,8 @@ into a strategy crate.
 
 - The engine maps keys, mouse buttons, mouse delta and gamepad to a
   game-supplied action type.
+- The action map can produce the per-tick command set ENG-F11's tick takes
+  as input (ADR-0011 rule 1).
 - Bindings are data, rebindable at runtime and persisted in prefs:
   ```gherkin
   Scenario: A rebinding survives a restart

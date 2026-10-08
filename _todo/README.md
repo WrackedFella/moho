@@ -48,6 +48,7 @@ the audit at the v1 gate ([ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md
 | [ENG-F18 Both games share the UI shell](engine/ENG-F18-shared-ui-shell/_feature.md) |
 | [ENG-F19 Games load definitions and content from layered roots](engine/ENG-F19-data-and-mod-content/_feature.md) |
 | [ENG-F20 A wgpu or egui upgrade touches one crate](engine/ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) |
+| [ENG-F21 A game gets a character controller and camera from the engine](engine/ENG-F21-character-controller-and-camera/_feature.md) |
 
 ## strategy-game/
 

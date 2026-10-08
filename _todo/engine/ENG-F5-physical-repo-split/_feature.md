@@ -1,6 +1,6 @@
 # ENG-F5 — Engine and games live in separate repos
 
-**Note:** Phase 3; gate agreed 2026-08-21, amended 2026-10-05
+**Note:** Phase 3; gate agreed 2026-08-21, amended 2026-10-05 and 2026-10-07
 
 ## Summary
 
@@ -28,8 +28,8 @@ a date.
    through [ENG-F10](../ENG-F10-world-geometry-from-any-source/_feature.md)'s contract, using only engine-line crates. The layering
    check enforces that the FPS line can't reach strategy crates, so anything
    generic it needs has moved to the engine by then.
-6. **Boundary has settled.** The last two FPS features merged without
-   changing an engine crate's public API.
+6. **Boundary has settled.** The seam list named in ADR-0012 is unchanged by
+   the last two FPS features.
 7. `v1.0` is tagged on a green `just check`, with all-OS CI passing.
 
 Not required: [SG-F2-01](../../strategy-game/SG-F2-known-bugs/SG-F2-01-spawn-inside-terrain.md) (spawn inside terrain), [ENG-F4-04](../ENG-F4-terrain-rendering-debt/ENG-F4-04-lod1-mesh-holes.md) (LOD1 mesh holes),

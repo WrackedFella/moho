@@ -8,7 +8,7 @@
 Both games need the window, event loop and fixed-tick accumulator. Today they
 live in the strategy binary, so the FPS line would have to copy them, which is
 a fork. The engine owns the loop and a game plugs into it. Relies on
-[ADR-0009](../../adr/0009-simulation-time-is-one-fixed-tick.md) and [ADR-0011](../../adr/0011-simulation-stays-network-ready.md) (proposed, being written).
+[ADR-0009](../../adr/0009-simulation-time-is-one-fixed-tick.md) and [ADR-0011](../../adr/0011-simulation-stays-network-ready.md) (proposed in #115).
 
 ## Exit criteria
 
@@ -17,6 +17,7 @@ a fork. The engine owns the loop and a game plugs into it. Relies on
   a catch-up cap.
 - A game plugs in through one interface: init, fixed tick (with input),
   frame (with interpolation alpha), event.
+- The tick takes a per-tick command set as its input (ADR-0011 rule 1).
 - Same input, any frame rate:
   ```gherkin
   Scenario Outline: Frame rate does not change simulation results
