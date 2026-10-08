@@ -15,4 +15,7 @@ exclude_re = [
     'delete match arm "light" in EventProcessor::handle_debug_event',
     # Equivalent while every file kind is at version 1; drop when one bumps.
     'replace FileKind::current_version -> u16 with 1$',
+    # Equivalent: the fallback is a single-axis vector and only its sign survives
+    # normalisation, which dividing by the density step keeps.
+    'replace \* with / in MarchingCubes::edge_gradient',
 ]
