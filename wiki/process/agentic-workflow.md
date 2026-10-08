@@ -15,7 +15,7 @@ Gate class and Labels in their header, kept current by a sync agent with board a
 | 1. Shape a feature | You + Business Analyst | `/devflow:business-analyst <topic>` | `_feature.md` with exit criteria, you approve scope; feature issue filed |
 | 2. Write work items | You + Business Analyst | same session | Cards with Gherkin acceptance criteria |
 | 3. Specify | You + Tech Lead | `/devflow:tech-lead <item>` | Tech spec, test map, gate class; ADR if needed |
-| 4. Queue | You approve; Tech Lead publishes | You approve the draft (a local file, or a `plan/` branch from a cloud thread). The Tech Lead files the issue (`[ID] title`, full spec). Ready and Agent-eligible are set by you on the board, or by the Tech Lead through `scripts/board` in a local terminal | Issue, canonical from here on |
+| 4. Queue | You approve; Tech Lead publishes | You approve the draft (a local file, or a `plan/` branch from a cloud thread). The Tech Lead files the issue (`[ID] title`, full spec); a cloud thread, which cannot write board fields, leaves the card as a local draft and `/sync-backlog` files it from a full-access session. Ready and Agent-eligible are set by you on the board, or by the Tech Lead through `scripts/board` in a local terminal | Issue, canonical from here on |
 | 5. Implement | Orchestrator | `/devflow:orchestrate <issue>` | Branch from `dev`, test-first commits, PR into `dev` |
 | 6. Review and merge | You | Review the PR; merge | Board Status → Done (set by the Board sync workflow) |
 
