@@ -15,9 +15,10 @@
 //!     .expect("Failed to initialize application");
 //! ```
 
-use moho_core::input::InputSystem;
 use moho_game::scene::SceneEntities;
 use moho_game::simulation::SimulationController;
+use moho_input::action_map::ActionMap;
+use moho_ui::actions::{StrategyAction, load_bindings};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -72,7 +73,7 @@ pub struct InitializedApp {
 
     pub audio_system: Option<moho_audio::AudioSystem>,
     pub simulation: SimulationController,
-    pub input_system: InputSystem,
+    pub actions: ActionMap<StrategyAction>,
 
     pub prefs: Prefs,
 
@@ -189,9 +190,11 @@ impl AppInitializer {
         };
 
         // Create input system with config values
-        let mut input_system =
-            InputSystem::new_with_preset(self.config.mouse_sensitivity, self.config.filter_preset);
-        input_system.set_filter_enabled(self.config.input_filtering_enabled);
+        let mut actions = ActionMap::new(
+            load_bindings(&self.config.prefs),
+            self.config.mouse_sensitivity,
+        );
+        actions.set_filtering(self.config.input_filtering_enabled);
         tracing::debug!("Input system initialized");
 
         tracing::info!("Application initialization complete");
@@ -211,7 +214,7 @@ impl AppInitializer {
 
             audio_system,
             simulation,
-            input_system,
+            actions,
 
             prefs: self.config.prefs,
 
@@ -254,9 +257,9 @@ mod tests {
             .build()
             .expect("non-default config builds");
 
-        initialized.input_system.collect_mouse_delta((10.0, 0.0));
+        initialized.actions.mouse_motion(10.0, 0.0);
 
-        assert_eq!(initialized.input_system.sample_frame_input(), (5.0, 0.0));
+        assert_eq!(initialized.actions.end_tick().look(), (5.0, 0.0));
     }
 
     #[test]

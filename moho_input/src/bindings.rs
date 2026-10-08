@@ -90,7 +90,7 @@ impl<A: Action> ActionBindings<A> {
 
 const UNBOUND: &str = "Unbound";
 
-/// `None` if any item is not a known key; empty or `Unbound` is an empty list.
+/// `None` if any item is not a known key or mouse button; empty or `Unbound` is an empty list.
 fn parse_list(value: &str) -> Option<Vec<Binding>> {
     let value = value.trim();
     if value.is_empty() || value.eq_ignore_ascii_case(UNBOUND) {
@@ -98,7 +98,12 @@ fn parse_list(value: &str) -> Option<Vec<Binding>> {
     }
     value
         .split(',')
-        .map(|item| Key::parse(item.trim()).map(Binding::Key))
+        .map(|item| {
+            let item = item.trim();
+            Key::parse(item)
+                .map(Binding::Key)
+                .or_else(|| MouseButton::parse(item).map(Binding::Mouse))
+        })
         .collect()
 }
 
@@ -110,7 +115,7 @@ fn format_list(bindings: &[Binding]) -> String {
         .iter()
         .map(|binding| match binding {
             Binding::Key(key) => key.name(),
-            Binding::Mouse(_) => todo!("Mouse binding names"),
+            Binding::Mouse(button) => button.name(),
         })
         .collect::<Vec<_>>()
         .join(", ")

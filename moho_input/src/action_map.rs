@@ -1,13 +1,17 @@
 //! Turns platform-free input events into per-tick action frames.
 
+use std::collections::HashSet;
 use std::marker::PhantomData;
 
-use winit::event::{DeviceEvent, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, WindowEvent};
 
-use crate::bindings::{Action, ActionBindings};
+use crate::bindings::{Action, ActionBindings, Binding};
+use crate::filter::FilterPipeline;
 use crate::key::{Key, MouseButton};
 
 /// What the actions did over one tick.
+///
+/// Plain data: masks are indexed by position in `A::ALL`.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ActionFrame<A: Action> {
     held: u64,
@@ -17,82 +21,182 @@ pub struct ActionFrame<A: Action> {
     actions: PhantomData<A>,
 }
 
+fn bit<A: Action>(action: A) -> u64 {
+    A::ALL
+        .iter()
+        .position(|&a| a == action)
+        .map_or(0, |index| 1 << index)
+}
+
 impl<A: Action> ActionFrame<A> {
-    pub fn held(&self, _action: A) -> bool {
-        todo!()
+    /// Down at the end of the tick.
+    pub fn held(&self, action: A) -> bool {
+        self.held & bit(action) != 0
     }
 
-    pub fn pressed(&self, _action: A) -> bool {
-        todo!()
+    /// Went from not held to held at any point during the tick.
+    pub fn pressed(&self, action: A) -> bool {
+        self.pressed & bit(action) != 0
     }
 
-    pub fn released(&self, _action: A) -> bool {
-        todo!()
+    /// Went from held to not held at any point during the tick.
+    pub fn released(&self, action: A) -> bool {
+        self.released & bit(action) != 0
     }
 
+    /// Filtered, sensitivity-scaled mouse motion for the tick.
     pub fn look(&self) -> (f32, f32) {
-        todo!()
+        self.look
     }
 }
 
 /// Collects input events and reports them once per tick.
 #[derive(Debug)]
 pub struct ActionMap<A: Action> {
-    actions: PhantomData<A>,
+    bindings: ActionBindings<A>,
+    down: HashSet<Binding>,
+    held: u64,
+    pressed: u64,
+    released: u64,
+    look_accumulator: (f64, f64),
+    sensitivity: f32,
+    filter: FilterPipeline,
 }
 
 impl<A: Action> ActionMap<A> {
-    pub fn new(_bindings: ActionBindings<A>, _sensitivity: f32) -> Self {
-        todo!()
+    pub fn new(bindings: ActionBindings<A>, sensitivity: f32) -> Self {
+        const { assert!(A::ALL.len() <= 64, "frame masks hold at most 64 actions") };
+        Self {
+            bindings,
+            down: HashSet::new(),
+            held: 0,
+            pressed: 0,
+            released: 0,
+            look_accumulator: (0.0, 0.0),
+            sensitivity,
+            filter: FilterPipeline::new(),
+        }
     }
 
-    pub fn key(&mut self, _key: Key, _down: bool) {
-        todo!()
+    pub fn bindings(&self) -> &ActionBindings<A> {
+        &self.bindings
     }
 
-    pub fn mouse_button(&mut self, _button: MouseButton, _down: bool) {
-        todo!()
+    pub fn key(&mut self, key: Key, down: bool) {
+        self.set_down(Binding::Key(key), down);
     }
 
-    pub fn mouse_motion(&mut self, _dx: f64, _dy: f64) {
-        todo!()
+    pub fn mouse_button(&mut self, button: MouseButton, down: bool) {
+        self.set_down(Binding::Mouse(button), down);
     }
 
+    /// Adds to the motion reported by the next `end_tick`.
+    pub fn mouse_motion(&mut self, dx: f64, dy: f64) {
+        self.look_accumulator.0 += dx;
+        self.look_accumulator.1 += dy;
+    }
+
+    /// Releases every held action, e.g. when the window loses focus.
     pub fn release_all(&mut self) {
-        todo!()
+        self.down.clear();
+        self.refresh_held();
     }
 
+    /// Discards pending motion and smoothing state so a camera jump cannot follow.
     pub fn reset_look(&mut self) {
-        todo!()
+        self.look_accumulator = (0.0, 0.0);
+        self.filter.reset();
     }
 
-    pub fn set_sensitivity(&mut self, _sensitivity: f32) {
-        todo!()
+    pub fn set_sensitivity(&mut self, sensitivity: f32) {
+        self.sensitivity = sensitivity;
     }
 
-    pub fn set_filtering(&mut self, _enabled: bool) {
-        todo!()
+    pub fn set_filtering(&mut self, enabled: bool) {
+        self.filter.set_enabled(enabled);
     }
 
+    /// The only read: reports this tick's edges and look, then starts the next tick.
     pub fn end_tick(&mut self) -> ActionFrame<A> {
-        todo!()
+        let frame = ActionFrame {
+            held: self.held,
+            pressed: self.pressed,
+            released: self.released,
+            look: self.sample_look(),
+            actions: PhantomData,
+        };
+        self.pressed = 0;
+        self.released = 0;
+        frame
+    }
+
+    fn set_down(&mut self, binding: Binding, down: bool) {
+        // Re-inserting an already-down binding (OS key repeat) changes nothing.
+        let changed = if down {
+            self.down.insert(binding)
+        } else {
+            self.down.remove(&binding)
+        };
+        if changed {
+            self.refresh_held();
+        }
+    }
+
+    fn refresh_held(&mut self) {
+        let held = A::ALL
+            .iter()
+            .filter(|&&action| {
+                self.bindings
+                    .get(action)
+                    .iter()
+                    .any(|binding| self.down.contains(binding))
+            })
+            .fold(0, |mask, &action| mask | bit(action));
+        self.pressed |= held & !self.held;
+        self.released |= self.held & !held;
+        self.held = held;
+    }
+
+    fn sample_look(&mut self) -> (f32, f32) {
+        let (dx, dy) = std::mem::take(&mut self.look_accumulator);
+        if dx.abs() < f64::EPSILON && dy.abs() < f64::EPSILON {
+            self.filter.reset();
+            return (0.0, 0.0);
+        }
+        self.filter
+            .apply((dx as f32 * self.sensitivity, dy as f32 * self.sensitivity))
     }
 }
 
 /// Feeds a window event to the map.
-pub fn handle_window_event<A: Action>(_map: &mut ActionMap<A>, _event: &WindowEvent) {
-    todo!()
+pub fn handle_window_event<A: Action>(map: &mut ActionMap<A>, event: &WindowEvent) {
+    match event {
+        WindowEvent::KeyboardInput { event, .. } => {
+            if let Some(key) = Key::from_winit(event.physical_key) {
+                map.key(key, event.state == ElementState::Pressed);
+            }
+        }
+        WindowEvent::MouseInput { state, button, .. } => {
+            if let Some(button) = MouseButton::from_winit(*button) {
+                map.mouse_button(button, *state == ElementState::Pressed);
+            }
+        }
+        WindowEvent::Focused(false) => map.release_all(),
+        _ => {}
+    }
 }
 
 /// Feeds a device event to the map.
-pub fn handle_device_event<A: Action>(_map: &mut ActionMap<A>, _event: &DeviceEvent) {
-    todo!()
+pub fn handle_device_event<A: Action>(map: &mut ActionMap<A>, event: &DeviceEvent) {
+    if let DeviceEvent::MouseMotion { delta } = event {
+        map.mouse_motion(delta.0, delta.1);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bindings::Binding;
+    use std::collections::BTreeMap;
 
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
     enum TestAction {
@@ -122,7 +226,7 @@ mod tests {
     }
 
     fn map(sensitivity: f32) -> ActionMap<TestAction> {
-        let (bindings, _) = ActionBindings::load(&Default::default());
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
         ActionMap::new(bindings, sensitivity)
     }
 
@@ -284,6 +388,20 @@ mod tests {
 
         assert!(!frame.released(TestAction::MoveForward));
         assert!(!frame.held(TestAction::MoveForward));
+    }
+
+    #[test]
+    fn one_key_bound_to_two_actions_drives_both() {
+        let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+        bindings.set(TestAction::Jump, vec![Binding::Key(Key::W)]);
+        let mut map = ActionMap::new(bindings, 1.0);
+
+        map.key(Key::W, true);
+        let frame = map.end_tick();
+
+        assert!(frame.held(TestAction::MoveForward));
+        assert!(frame.held(TestAction::Jump));
+        assert!(!frame.held(TestAction::Fire));
     }
 
     #[test]

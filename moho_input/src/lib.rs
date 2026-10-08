@@ -3,6 +3,7 @@
 
 pub mod action_map;
 pub mod bindings;
+pub mod filter;
 pub mod key;
 
 pub use bindings::Action;

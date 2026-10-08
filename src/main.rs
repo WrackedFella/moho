@@ -6,9 +6,9 @@
 
 use moho_core::prefs::Prefs;
 use moho_game::scene::SceneEntities;
-use moho_input::bindings::{ActionBindings, Binding};
+use moho_input::action_map::{self, ActionFrame};
 use moho_input::key::Key;
-use moho_ui::actions::{StrategyAction, load_bindings};
+use moho_ui::actions::StrategyAction;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -114,7 +114,6 @@ struct App {
 
     // Keybinds and preferences
     prefs: Prefs,
-    bindings: ActionBindings<StrategyAction>,
 
     // Frame timing
     frame_duration: Duration,
@@ -137,7 +136,8 @@ struct App {
 impl App {
     /// Saves prefs together with the current bindings.
     fn save_prefs(&mut self) -> std::io::Result<()> {
-        self.prefs.set_bindings(self.bindings.to_section());
+        self.prefs
+            .set_bindings(self.input.actions.bindings().to_section());
         self.prefs.save()
     }
 
@@ -183,7 +183,6 @@ impl App {
 
             simulation: initialized.simulation,
 
-            bindings: load_bindings(&initialized.prefs),
             prefs: initialized.prefs,
 
             frame_duration: initialized.frame_duration,
@@ -191,7 +190,7 @@ impl App {
 
             physics: app::physics_controller::PhysicsController::new(),
             generation: app::generation_job::WorldGenerationJob::new(),
-            input: app::input_state::InputState::new(initialized.input_system),
+            input: app::input_state::InputState::new(initialized.actions),
             chunk_streamer: None,
             lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
 
@@ -267,18 +266,9 @@ impl App {
         );
     }
 
-    /// Update controller input from keyboard state
-    fn update_controller_input(&mut self) {
-        // An action is active when any of its bindings is held
-        let is_active = |action: StrategyAction| -> bool {
-            self.bindings
-                .get(action)
-                .iter()
-                .any(|binding| match binding {
-                    Binding::Key(key) => self.input.active_keys.contains(key),
-                    Binding::Mouse(_) => false,
-                })
-        };
+    /// Update controller input from this tick's action frame
+    fn update_controller_input(&mut self, frame: &ActionFrame<StrategyAction>) {
+        let is_active = |action: StrategyAction| frame.held(action);
 
         // Calculate forward/backward
         let forward = if is_active(StrategyAction::MoveForward) {
@@ -329,7 +319,9 @@ impl App {
         self.simulation.controller_input.zoom_delta = 0.0;
 
         // Track jump key for physics KCC
-        self.physics.jump_pressed = is_active(StrategyAction::Jump);
+        // A tap shorter than one tick still jumps.
+        self.physics.jump_pressed =
+            frame.held(StrategyAction::Jump) || frame.pressed(StrategyAction::Jump);
     }
 
     /// Handle keyboard input for camera controls
@@ -403,11 +395,7 @@ impl App {
             }
 
             if let Some(key) = Key::from_winit(event.physical_key) {
-                if pressed {
-                    self.input.active_keys.insert(key);
-                } else {
-                    self.input.active_keys.remove(&key);
-                }
+                self.input.actions.key(key, pressed);
             }
         }
     }
@@ -420,7 +408,7 @@ impl App {
         {
             return;
         }
-        self.input.system.collect_mouse_delta((-delta.0, -delta.1));
+        self.input.actions.mouse_motion(delta.0, delta.1);
     }
 
     /// Grab and hide the cursor for game mode
@@ -629,10 +617,21 @@ impl ApplicationHandler for App {
             return; // Don't dispatch Tab further
         }
 
+        // Focus loss must release held actions whatever the UI or game state does.
+        if matches!(event, WindowEvent::Focused(false)) {
+            action_map::handle_window_event(&mut self.input.actions, &event);
+        }
+
         // Dispatch the event to registered subscribers (UI first). If consumed,
         // skip further application-level handling.
         if self.dispatcher.dispatch(&event) {
             return;
+        }
+
+        if matches!(event, WindowEvent::MouseInput { .. })
+            && self.game_state == crate::game_state::GameState::Playing
+        {
+            action_map::handle_window_event(&mut self.input.actions, &event);
         }
 
         let window_event_handler = app::event_loop::WindowEventHandler::new();

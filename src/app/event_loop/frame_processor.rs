@@ -41,14 +41,15 @@ impl FrameProcessor {
             return;
         }
 
-        // Update controller input from keyboard state
-        app.update_controller_input();
+        let frame = app.input.actions.end_tick();
+        app.update_controller_input(&frame);
 
-        let (yaw_delta, pitch_delta) = app.input.system.sample_frame_input();
+        // Mouse motion is fed unnegated; look is inverted here.
+        let (look_x, look_y) = frame.look();
         {
             let ci = app.simulation.controller_input_mut();
-            ci.yaw_delta = yaw_delta;
-            ci.pitch_delta = pitch_delta;
+            ci.yaw_delta = -look_x;
+            ci.pitch_delta = -look_y;
         }
 
         // --- Physics KCC path (FPS only) ---

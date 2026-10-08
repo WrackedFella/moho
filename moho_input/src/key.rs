@@ -613,3 +613,31 @@ pub enum MouseButton {
     Right,
     Middle,
 }
+
+impl MouseButton {
+    /// `None` for buttons the engine does not name.
+    pub fn from_winit(button: winit::event::MouseButton) -> Option<MouseButton> {
+        match button {
+            winit::event::MouseButton::Left => Some(MouseButton::Left),
+            winit::event::MouseButton::Right => Some(MouseButton::Right),
+            winit::event::MouseButton::Middle => Some(MouseButton::Middle),
+            _ => None,
+        }
+    }
+
+    /// Persisted name, e.g. `Mouse Left`.
+    pub fn name(self) -> &'static str {
+        match self {
+            MouseButton::Left => "Mouse Left",
+            MouseButton::Right => "Mouse Right",
+            MouseButton::Middle => "Mouse Middle",
+        }
+    }
+
+    /// `None` unless `s` is a `Mouse …` name, ignoring case.
+    pub fn parse(s: &str) -> Option<MouseButton> {
+        [MouseButton::Left, MouseButton::Right, MouseButton::Middle]
+            .into_iter()
+            .find(|b| b.name().eq_ignore_ascii_case(s))
+    }
+}
