@@ -113,6 +113,28 @@ mod tests {
     }
 
     #[test]
+    fn effective_volume_multiplies_master_and_category_below_one() {
+        let settings = AudioSettings::new()
+            .with_master_volume(0.5)
+            .with_music_volume(0.5);
+
+        let music = settings.effective_volume(&AudioCategory::Music);
+
+        assert!((music - 0.25).abs() < f32::EPSILON, "music={music}");
+    }
+
+    #[test]
+    fn effective_volume_clamps_master() {
+        let settings = AudioSettings::new()
+            .with_master_volume(2.0)
+            .with_music_volume(0.5);
+
+        let music = settings.effective_volume(&AudioCategory::Music);
+
+        assert!((music - 0.5).abs() < f32::EPSILON, "music={music}");
+    }
+
+    #[test]
     fn effective_volume_is_zero_when_muted() {
         let settings = AudioSettings::new()
             .with_master_volume(1.0)
