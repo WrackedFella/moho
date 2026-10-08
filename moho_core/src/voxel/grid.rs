@@ -670,8 +670,8 @@ mod tests {
 
     #[test]
     fn test_get_height() {
-        // Chunks are stored in a randomly seeded HashMap; fresh grids vary the
-        // visit order so an order-dependent answer cannot pass by luck.
+        // HashMap iteration order is randomly seeded per grid; repeat so an
+        // order-dependent answer cannot pass by luck.
         for _ in 0..16 {
             let mut grid = VoxelGrid::new(16);
             assert_eq!(grid.get_height(0, 0), None);

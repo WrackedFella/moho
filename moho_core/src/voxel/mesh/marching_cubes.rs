@@ -906,7 +906,6 @@ mod tests {
 
         let mesh = MarchingCubes::generate_mesh(&field, 16);
 
-        // The isosurface of a solid sits halfway between solid and air samples.
         assert!(!mesh.vertices.is_empty(), "solid must produce geometry");
         assert!(!mesh.indices.is_empty());
         let n = mesh.vertices.len();
