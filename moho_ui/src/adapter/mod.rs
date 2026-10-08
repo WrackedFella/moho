@@ -40,7 +40,7 @@ pub enum UiAudioEvent {
     Error,
 }
 
-pub type UiReceiver = crossbeam_channel::Receiver<UiEvent>;
+pub type UiReceiver = std::sync::mpsc::Receiver<UiEvent>;
 
 /// Global flag for UI overlay visibility
 pub static UI_OVERLAY_VISIBLE: AtomicBool = AtomicBool::new(true);
