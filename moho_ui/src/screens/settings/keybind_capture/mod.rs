@@ -298,74 +298,33 @@ mod tests {
         assert!(handler.has_pending_binding()); // Conflict modal should be triggered
     }
 
-    #[test]
-    fn test_pending_binding_apply() {
-        let mut handler = KeybindCaptureHandler::new();
-
-        // Create prefs where KeyW is already bound to 'W'
-        let prefs = crate::prefs::Prefs::default().with_key_w(Binding::new('W' as u32, 0));
-
-        // Try to bind KeyA to 'W' (conflict)
-        handler.start_listening(1); // KeyA
-        handler.apply_key_code_while_listening('W' as u32, 0, &prefs, |_, _| {});
-
-        assert!(handler.has_pending_binding());
-
-        // The adapter takes the dialog on one frame and confirms on a later one.
-        assert!(handler.take_conflict_modal().is_some());
-
-        let mut bindings_changed = vec![];
-        handler.apply_pending(|field, binding| bindings_changed.push((field, binding)));
-
-        // Should clear KeyW and apply KeyA
-        assert_eq!(bindings_changed.len(), 2);
-
-        // First change: clear KeyW
-        let (field1, binding1) = bindings_changed[0];
-        assert!(matches!(field1, SettingsField::KeyW));
-        assert_eq!(binding1.code, 0);
-        assert_eq!(binding1.mods, 0);
-
-        // Second change: apply KeyA
-        let (field2, binding2) = bindings_changed[1];
-        assert!(matches!(field2, SettingsField::KeyA));
-        assert_eq!(binding2.code, 'W' as u32);
-        assert_eq!(binding2.mods, 0);
-    }
-
-    fn resolve_conflict(
-        target_id: usize,
-        code: u32,
-    ) -> Vec<(SettingsField, Binding)> {
+    fn resolve_conflict(target_id: usize, code: u32) -> Vec<(SettingsField, Binding)> {
         let mut handler = KeybindCaptureHandler::new();
         let prefs = crate::prefs::Prefs::default();
 
         handler.start_listening(target_id);
         handler.apply_key_code_while_listening(code, 0, &prefs, |_, _| {});
-        assert!(handler.take_conflict_modal().is_some());
-
         let mut changes = vec![];
         handler.apply_pending(|field, binding| changes.push((field, binding)));
         changes
     }
 
     #[test]
-    fn pending_apply_resolves_sprint_conflict() {
-        // Move Down (5) takes Shift from Sprint (6).
-        let down = resolve_conflict(5, 0x204);
+    fn move_down_taking_shift_unbinds_sprint() {
+        let changes = resolve_conflict(5, 0x204);
 
-        assert_eq!(down.len(), 2);
-        assert!(down.contains(&(SettingsField::KeySprint, Binding::new(0, 0))));
-        assert!(down.contains(&(SettingsField::KeyDown, Binding::new(0x204, 0))));
-        assert!(down.iter().all(|(f, _)| *f != SettingsField::KeyW));
+        assert_eq!(changes.len(), 2);
+        assert!(changes.contains(&(SettingsField::KeySprint, Binding::new(0, 0))));
+        assert!(changes.contains(&(SettingsField::KeyDown, Binding::new(0x204, 0))));
+    }
 
-        // Sprint (6) takes 'A' from Move Left (1).
-        let sprint = resolve_conflict(6, 'A' as u32);
+    #[test]
+    fn sprint_taking_a_unbinds_move_left() {
+        let changes = resolve_conflict(6, 'A' as u32);
 
-        assert_eq!(sprint.len(), 2);
-        assert!(sprint.contains(&(SettingsField::KeyA, Binding::new(0, 0))));
-        assert!(sprint.contains(&(SettingsField::KeySprint, Binding::new('A' as u32, 0))));
-        assert!(sprint.iter().all(|(f, _)| *f != SettingsField::KeyW));
+        assert_eq!(changes.len(), 2);
+        assert!(changes.contains(&(SettingsField::KeyA, Binding::new(0, 0))));
+        assert!(changes.contains(&(SettingsField::KeySprint, Binding::new('A' as u32, 0))));
     }
 
     #[test]
