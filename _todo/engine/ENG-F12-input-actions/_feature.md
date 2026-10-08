@@ -66,10 +66,10 @@ copying strategy code.
 
 | Item |
 |---|
-| [ENG-F12-01](ENG-F12-01-strategy-app-state-on-strategy-line.md): the strategy game's app state lives on the strategy line |
-| [ENG-F12-02](ENG-F12-02-bindings-are-data-keyed-by-action.md): bindings are data keyed by action name |
-| [ENG-F12-03](ENG-F12-03-actions-arrive-once-per-tick.md): the game reads its actions once per tick |
-| [ENG-F12-04](ENG-F12-04-gamepad-drives-actions.md): a gamepad drives the same actions |
+| #148 [ENG-F12-01](ENG-F12-01-strategy-app-state-on-strategy-line.md): the strategy game's app state lives on the strategy line |
+| #149 [ENG-F12-02](ENG-F12-02-bindings-are-data-keyed-by-action.md): bindings are data keyed by action name |
+| #150 [ENG-F12-03](ENG-F12-03-actions-arrive-once-per-tick.md): the game reads its actions once per tick |
+| #151 [ENG-F12-04](ENG-F12-04-gamepad-drives-actions.md): a gamepad drives the same actions |
 
 Order: 01 is independent. 02 → 03 → 04. 03 and ENG-F11 meet at the tick:
 whichever lands second wires the action frame into the tick.

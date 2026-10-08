@@ -1,6 +1,7 @@
 # The game reads its actions once per tick
 
 **Feature:** ENG-F12
+**Issue:** #150
 
 ## Summary
 

@@ -1,6 +1,7 @@
 # The strategy game's app state lives on the strategy line
 
 **Feature:** ENG-F12
+**Issue:** #148
 
 ## Summary
 

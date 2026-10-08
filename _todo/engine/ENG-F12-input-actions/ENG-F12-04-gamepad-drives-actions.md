@@ -1,6 +1,7 @@
 # A gamepad drives the same actions
 
 **Feature:** ENG-F12
+**Issue:** #151
 
 ## Summary
 
