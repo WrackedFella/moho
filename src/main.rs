@@ -251,7 +251,7 @@ impl App {
 
         tracing::info!(
             count = self.physics.chunk_colliders.len(),
-            "Physics initialized for loaded world chunk colliders"
+            "Physics initialized for loaded world"
         );
     }
 

@@ -98,10 +98,7 @@ pub fn voxel_terrain_scene_with_config(
         chunks.insert(chunk);
     }
 
-    tracing::info!(
-        count = chunks.len(),
-        "Voxel terrain scene ready with chunk entities"
-    );
+    tracing::info!(count = chunks.len(), "Voxel terrain scene ready");
 
     // Return the grid so it can be stored by the caller for light propagation
     grid

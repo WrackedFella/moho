@@ -283,7 +283,7 @@ impl LightJobQueue {
         tracing::debug!(
             job = ?job_id,
             pos = ?source_pos,
-            priority = ?priority,
+            priority,
             queue_size = self.jobs.len(),
             "Submitted light job"
         );

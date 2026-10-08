@@ -52,7 +52,7 @@ impl EventProcessor {
                 }
             }
             UiEvent::NewWorldRequested { name, seed, size } => {
-                tracing::info!(name = %name, seed = ?seed, size = ?size, "UI requested new world");
+                tracing::info!(name = %name, seed = ?seed, size, "UI requested new world");
                 let spec = moho_game::scene_builders::WorldSpec {
                     name,
                     seed,
@@ -257,7 +257,7 @@ impl EventProcessor {
             tracing::debug!(
                 pos = ?outcome.block_pos,
                 distance = outcome.distance,
-                resource_id = %y.resource_id,
+                resource_id = y.resource_id,
                 "Mined block → resource"
             );
         } else {
@@ -494,11 +494,11 @@ impl EventProcessor {
                 // enabled=false means noclip ON (collision disabled)
                 if let Some(ref mut pw) = app.physics.world {
                     pw.noclip = !enabled;
-                    tracing::info!(enabled = pw.noclip, "Noclip toggled");
+                    tracing::info!(noclip = pw.noclip, "Noclip toggled");
                 }
             }
             DebugEvent::SetShadowQuality { quality } => {
-                tracing::info!(quality = %quality, "Setting shadow quality");
+                tracing::info!(quality, "Setting shadow quality");
                 if let Some(wr) = &mut app.window_renderer {
                     wr.renderer.set_shadow_quality(quality as u8);
 
@@ -508,7 +508,7 @@ impl EventProcessor {
                 }
             }
             DebugEvent::SetSsaoQuality { quality } => {
-                tracing::info!(quality = %quality, "Setting SSAO quality");
+                tracing::info!(quality, "Setting SSAO quality");
                 if let Some(wr) = &mut app.window_renderer {
                     wr.renderer.set_ssao_quality(quality as u8);
 

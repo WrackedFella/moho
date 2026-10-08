@@ -232,7 +232,7 @@ impl MeshJobQueue {
             workers.push(handle);
         }
 
-        tracing::info!(workers = num_workers, "MeshJobQueue started");
+        tracing::info!(count = num_workers, "MeshJobQueue started");
 
         Self {
             state,
@@ -270,7 +270,7 @@ impl MeshJobQueue {
         // Notify a worker
         self.condvar.notify_one();
 
-        tracing::debug!(job = ?job_id, chunk = ?chunk_pos, priority = ?priority, "Submitted mesh job");
+        tracing::debug!(job = ?job_id, chunk = ?chunk_pos, priority, "Submitted mesh job");
 
         Some(job_id)
     }

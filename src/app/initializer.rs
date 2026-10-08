@@ -119,13 +119,14 @@ impl AppInitializer {
     /// Build the application by initializing all systems.
     ///
     /// This performs the full initialization sequence:
-    /// 1. Initialize logging (if not already initialized)
-    /// 2. Create world and scene
-    /// 3. Setup camera
-    /// 4. Setup event bus
-    /// 5. Initialize audio system (optional)
-    /// 6. Create simulation controller
-    /// 7. Setup input system
+    /// 1. Create world and scene
+    /// 2. Setup camera
+    /// 3. Setup event bus
+    /// 4. Initialize audio system (optional)
+    /// 5. Create simulation controller
+    /// 6. Setup input system
+    ///
+    /// It installs no `tracing` subscriber; the caller does.
     ///
     /// # Errors
     ///

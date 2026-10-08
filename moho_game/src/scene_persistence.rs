@@ -218,7 +218,7 @@ fn populate_entities(
         if entities.chunks.insert(chunk).is_some() {
             tracing::warn!(
                 chunk = ?chunk_pos,
-                "Scene holds more than one chunk at position; the earlier one was replaced"
+                "Scene holds more than one chunk at the same position; the earlier one was replaced"
             );
         }
     }

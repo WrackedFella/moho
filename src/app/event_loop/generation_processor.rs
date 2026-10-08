@@ -187,7 +187,7 @@ impl GenerationProcessor {
             }
         }
         tracing::info!(
-            columns = PRELOAD_RADIUS * 2 + 1,
+            side = PRELOAD_RADIUS * 2 + 1,
             count = loaded.len(),
             "Preloaded spawn-area chunk columns (non-empty chunks)"
         );
@@ -296,7 +296,7 @@ impl GenerationProcessor {
         tracing::info!(
             chunk_colliders = app.physics.chunk_colliders.len(),
             test_spheres = app.physics.test_bodies.len(),
-            character = ?spawn_pos,
+            pos = ?spawn_pos,
             "Physics world ready"
         );
     }

@@ -313,7 +313,7 @@ impl ShadowSystem {
 
         if CSM_VERBOSE_LOGGING {
             tracing::info!(
-                layers = MAX_SHADOW_LIGHTS,
+                count = MAX_SHADOW_LIGHTS,
                 "Created multi-light shadow array view"
             );
         }
@@ -569,7 +569,7 @@ impl ShadowSystem {
         if !self.csm_logged_once.get() {
             tracing::info!("CSM cascade splits:");
             for (i, (near, far)) in splits.iter().enumerate() {
-                tracing::info!(cascade = i, near, far, "  Cascade split");
+                tracing::info!(cascade = i, near, far, "Cascade split");
             }
         }
 
@@ -642,7 +642,7 @@ impl ShadowSystem {
                 center = ?cascade_center,
                 radius = cascade_radius,
                 texel_size = world_units_per_texel,
-                "  Cascade matrix"
+                "Cascade matrix"
             );
         }
 

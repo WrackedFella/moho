@@ -40,10 +40,13 @@ impl AudioCache {
             if let Ok(audio_data) = std::fs::read(sound_path) {
                 self.ui_sound_cache
                     .insert(sound_path.to_string(), audio_data);
-                debug!(path = %sound_path, "Pre-loaded UI sound");
+                debug!(path = sound_path, "Pre-loaded UI sound");
             } else {
                 // Don't fail initialization if UI sounds are missing
-                debug!(path = %sound_path, "UI sound file not found (will load on-demand)");
+                debug!(
+                    path = sound_path,
+                    "UI sound file not found (will load on-demand)"
+                );
             }
         }
 
@@ -68,7 +71,7 @@ impl AudioCache {
         self.ui_sound_cache
             .insert(path.to_string(), audio_data.clone());
 
-        debug!(path = %path, "Loaded and cached UI sound");
+        debug!(path = path, "Loaded and cached UI sound");
         Ok(audio_data)
     }
 
@@ -90,7 +93,7 @@ impl AudioCache {
         self.audio_cache
             .insert(path.to_string(), audio_data.clone());
 
-        debug!(path = %path, "Loaded and cached audio file");
+        debug!(path = path, "Loaded and cached audio file");
         Ok(audio_data)
     }
 
