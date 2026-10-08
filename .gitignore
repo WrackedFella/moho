@@ -27,7 +27,6 @@ target
 /temp
 *.ini
 /assets/
-recipe.json
 /_rca/
 /todo/
 /_todo/.obsidian/workspace*.json
