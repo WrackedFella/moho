@@ -1,5 +1,7 @@
 # ENG-F21 — A game gets a character controller and camera from the engine
 
+**Issue:** #123
+
 ## End state
 
 Both games move characters and point cameras through one engine controller and
@@ -51,7 +53,7 @@ otherwise copy, and adding the controller to the seam list that
 | Question | Decision | Why / cost of the alternative |
 |---|---|---|
 | Engine feature or per-game code? | Engine feature (Justin, 2026-10-07) | Per-game controllers mean the FPS line copies strategy code, which the layering check would then have to tolerate |
-| Which crate holds the controller? | **Open, for the Tech Lead** (`moho_physics` or another engine-row home, per ADR-0012, proposed) | Decided in the spec, not here |
+| Which crate holds the controller? | **Open, for the Tech Lead** (`moho_physics` or another engine-row home, per [ADR-0012](../../adr/0012-engine-crate-map-for-m2.md)) | Decided in the spec, not here |
 
 ## Deferred
 
