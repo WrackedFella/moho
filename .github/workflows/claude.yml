@@ -23,9 +23,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A feature is a gate, not a work item: it has exit criteria but no tech spec, test map
+  # or gate class, so the orchestrator has nothing to implement. Say so instead of running.
+  skip-feature:
+    name: Skip feature
+    if: github.event.label.name == 'agent-ready' && contains(github.event.issue.labels.*.name, 'feature')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Explain the skip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body 'No run started. This issue is labeled `feature`, and `agent-ready` starts the orchestrator on one work item. Put `agent-ready` on a card under this feature instead.'
+
   orchestrate:
     name: Orchestrate
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'agent-ready'
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.label.name == 'agent-ready'
+          && !contains(github.event.issue.labels.*.name, 'feature'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
