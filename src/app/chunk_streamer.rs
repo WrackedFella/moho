@@ -11,6 +11,7 @@
 //! - Eviction saves happen synchronously in the calling frame, budgeted by
 //!   `streaming_config.chunks_per_frame`.
 
+use crate::app::event_loop::event_processor::lod_player_chunk;
 use crate::save;
 use glam::{IVec3, Vec3};
 use moho_core::voxel::{StreamingConfig, VoxelGrid};
@@ -53,9 +54,8 @@ impl ChunkStreamer {
     /// Returns `(loaded_positions, evicted_positions)` so the caller can
     /// remove stored chunks for evicted chunks.
     pub fn update(&mut self, grid: &mut VoxelGrid, player_pos: Vec3) -> (Vec<IVec3>, Vec<IVec3>) {
-        let cx = player_pos.x.floor() as i32 / 16;
-        let cz = player_pos.z.floor() as i32 / 16;
-        let player_chunk_xz = (cx, cz);
+        let player_chunk = lod_player_chunk(player_pos);
+        let player_chunk_xz = (player_chunk.x, player_chunk.z);
 
         let load_r = self.streaming_config.load_radius_chunks as i32;
         let unload_r = self.streaming_config.unload_radius_chunks as i32;
