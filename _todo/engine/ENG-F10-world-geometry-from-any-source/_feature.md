@@ -73,7 +73,12 @@ for the repo split ([ENG-F5](../ENG-F5-physical-repo-split/_feature.md)). Decisi
   extraction afterwards is mostly mechanical moves and import updates.
 - ENG-F10-01 and ENG-F10-02 PR into `dev`. ENG-F10-03 and ENG-F10-04 are the
   cross-line move: integration branch `feature/ENG-F10-voxel-extraction`, started
-  after ENG-F10-01 merges and after SG-F1-04 and SG-F2-03/02 land, and announced to
-  the Strategy lane first.
+  after ENG-F10-01 merges and after the ENG-F22 cards that edit the voxel code land
+  ([ENG-F22-02](https://github.com/WrackedFella/moho/issues/169), then [ENG-F22-06](https://github.com/WrackedFella/moho/issues/173) and
+  [ENG-F22-07](https://github.com/WrackedFella/moho/issues/174)), and announced to the Strategy lane first.
+- The move does not wait on Strategy cards (2026-10-08). SG-F1-04 and SG-F2-03/02
+  are unfiled; whichever starts after the move targets `moho_voxel`. The conflict
+  risk is open `voxel/` branches, so the start check is: no open PR edits
+  `moho_core/src/voxel/`.
 - The extraction moves many files. Use GitNexus `rename` and `impact` for
   symbol moves, not find-and-replace.
