@@ -111,6 +111,27 @@ mod tests {
         assert!((step.alpha() - (3.0 * 60.0 / 144.0 - 1.0)).abs() < 1e-4);
     }
 
+    #[test]
+    fn capped_frame_keeps_the_sub_tick_remainder() {
+        let mut step = FixedStep::new(LoopConfig::new(60));
+
+        let ticks = step.advance(Duration::from_nanos(13 * 1_000_000_000 / 120));
+
+        assert_eq!(ticks, 5);
+        assert!((step.alpha() - 0.5).abs() < 1e-4, "alpha {}", step.alpha());
+    }
+
+    #[test]
+    fn longest_frame_runs_the_cap_without_overflow() {
+        let mut step = FixedStep::new(LoopConfig::new(60));
+
+        assert_eq!(step.advance(Duration::MAX), 5);
+        assert_eq!(
+            step.advance(Duration::from_nanos(1_000_000_000 / 60 + 1)),
+            1
+        );
+    }
+
     proptest! {
         #[test]
         fn sixty_frames_of_one_sixtieth_run_exactly_sixty_ticks(

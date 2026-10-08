@@ -216,4 +216,10 @@ mod tests {
             game.frames[0]
         );
     }
+
+    #[test]
+    #[should_panic(expected = "tick_hz must be non-zero")]
+    fn zero_tick_rate_is_rejected() {
+        let _ = HeadlessLoop::<Recorder>::new(LoopConfig::new(0));
+    }
 }
