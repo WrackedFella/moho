@@ -639,9 +639,10 @@ mod tests {
         for (time, expected_color, expected_intensity) in cases {
             let (color, intensity) = processor.calculate_ambient_lighting(time);
 
-            for (got, want) in color.iter().zip(expected_color) {
-                assert!((got - want).abs() < 1e-6, "colour at {time}: {color:?}");
-            }
+            assert!(
+                glam::Vec3::from(color).abs_diff_eq(glam::Vec3::from(expected_color), 1e-6),
+                "colour at {time}: {color:?}"
+            );
             assert!(
                 (intensity - expected_intensity).abs() < 1e-6,
                 "intensity at {time}: expected {expected_intensity}, got {intensity}"
