@@ -10,16 +10,13 @@ moho_render_api = { path = "../moho_render_api" }
 bytemuck = { workspace = true, features = ["derive"] }
 wgpu = { workspace = true }
 winit = { workspace = true }
-pollster = { workspace = true }
 glam = { workspace = true }
-bincode = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 moho_game = { path = "../moho_game" }
 naga = { workspace = true, features = ["wgsl-in"] }
-tempfile = { workspace = true }
 
 [features]
 wgpu-experimental = []
