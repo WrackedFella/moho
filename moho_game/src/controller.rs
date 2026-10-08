@@ -204,8 +204,8 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
 mod tests {
     use super::*;
 
-    /// `controller_to_camera` output captured on glam 0.30 (`Mat4::look_at_rh`,
-    /// `Mat4::perspective_rh`); camera matrices must not change across glam versions.
+    /// Golden matrices from glam 0.30 (`Mat4::look_at_rh`, `Mat4::perspective_rh`);
+    /// camera output must not drift across glam upgrades.
     const PREVIOUS_PERSPECTIVE: [[f32; 4]; 4] = [
         [1.357_995, 0.0, 0.0, 0.0],
         [0.0, 2.414_213_4, 0.0, 0.0],
@@ -224,7 +224,7 @@ mod tests {
         [-0.707_106_77, -0.408_248_28, 0.577_350_26, 0.0],
         [-4.242_641_4, 0.816_496_85, -27.135_464, 1.0],
     ];
-    /// Allows last-bit rounding differences between glam implementations.
+    /// Absorbs last-bit rounding differences between glam versions.
     const TOLERANCE: f32 = 1e-5;
 
     fn assert_matrix(actual: Mat4, expected: [[f32; 4]; 4]) {
