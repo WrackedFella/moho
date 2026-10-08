@@ -62,7 +62,7 @@ for the repo split ([ENG-F5](../ENG-F5-physical-repo-split/_feature.md)). Decisi
 
 | Item |
 |---|
-| #138 [ENG-F10-01](ENG-F10-01-renderer-draws-meshes-by-id.md) The renderer draws, replaces and removes a game's meshes by id |
+| #138 [ENG-F10-01](https://github.com/WrackedFella/moho/issues/138) The renderer draws, replaces and removes a game's meshes by id |
 | #139 [ENG-F10-02](ENG-F10-02-physics-collides-with-meshes-by-id.md) Physics collides with a game's meshes by id, and one change updates drawing and collision |
 | #140 [ENG-F10-03](ENG-F10-03-voxel-terrain-is-a-strategy-crate.md) Voxel terrain builds as a strategy-line crate |
 | #141 [ENG-F10-04](ENG-F10-04-no-engine-crate-names-a-voxel-type.md) No engine crate names a voxel type, and the layering check covers tests |
