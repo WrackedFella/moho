@@ -53,7 +53,8 @@ Who writes what:
 - **Orchestrate and implementation PRs** never edit the fields.
 - **Board changes** still go through devflow's `scripts/board` (local terminal only) and
   the Board sync workflow, which moves Status forward on PR and issue events (In
-  progress on a draft PR, In review on a ready PR, Done on merge or close). A human sets
+  progress when `agent-ready` is applied to a work item or a draft PR opens, In review
+  on a ready PR, Done on merge or close). A human sets
   Ready and Agent-eligible. Priority and Agent-eligible are not mirrored; add them here
   if the sync agent needs them.
 
