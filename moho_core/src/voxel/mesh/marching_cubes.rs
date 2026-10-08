@@ -119,6 +119,7 @@ impl MarchingCubes {
 
         // Find vertices along edges where surface crosses
         let mut edge_vertices = [[0.0f32; 3]; 12];
+        let mut edge_gradients = [[0.0f32; 3]; 12];
         let iso_level = 0.5;
 
         for i in 0..12 {
@@ -141,6 +142,24 @@ impl MarchingCubes {
                     v0[1] + t * (v1[1] - v0[1]),
                     v0[2] + t * (v1[2] - v0[2]),
                 ];
+
+                let g0 = Self::sample_gradient(
+                    density_field,
+                    v0[0] as usize,
+                    v0[1] as usize,
+                    v0[2] as usize,
+                );
+                let g1 = Self::sample_gradient(
+                    density_field,
+                    v1[0] as usize,
+                    v1[1] as usize,
+                    v1[2] as usize,
+                );
+                edge_gradients[i] = [
+                    g0[0] + t * (g1[0] - g0[0]),
+                    g0[1] + t * (g1[1] - g0[1]),
+                    g0[2] + t * (g1[2] - g0[2]),
+                ];
             }
         }
 
@@ -160,9 +179,7 @@ impl MarchingCubes {
                 let vert = edge_vertices[edge_idx as usize];
                 vertices.push(vert);
 
-                // Compute normal from density gradient
-                let normal = Self::compute_normal(density_field, vert[0], vert[1], vert[2]);
-                normals.push(normal);
+                normals.push(Self::outward_normal(edge_gradients[edge_idx as usize]));
 
                 // Smooth terrain doesn't need complex AO - use density as simple approximation
                 // Lower density (near surface) = less occlusion
@@ -234,37 +251,31 @@ impl MarchingCubes {
         }
     }
 
-    /// Compute surface normal using central differences on the density field
-    fn compute_normal(density_field: &[[[f32; 18]; 18]; 18], x: f32, y: f32, z: f32) -> [f32; 3] {
-        let xi = x.floor() as usize;
-        let yi = y.floor() as usize;
-        let zi = z.floor() as usize;
-
-        // Sample density at neighboring positions (with bounds checking)
-        let dx = if xi > 0 && xi < 16 {
-            density_field[xi + 1][yi][zi] - density_field[xi - 1][yi][zi]
-        } else {
-            0.0
+    /// Density gradient at an integer sample: central differences, one-sided at the
+    /// field's ends so the outermost meshed layer still gets a gradient.
+    fn sample_gradient(field: &[[[f32; 18]; 18]; 18], x: usize, y: usize, z: usize) -> [f32; 3] {
+        let diff = |lo: [usize; 3], hi: [usize; 3], span: f32| {
+            (field[hi[0]][hi[1]][hi[2]] - field[lo[0]][lo[1]][lo[2]]) / span
         };
+        let (xl, xh) = (x.saturating_sub(1), (x + 1).min(17));
+        let (yl, yh) = (y.saturating_sub(1), (y + 1).min(17));
+        let (zl, zh) = (z.saturating_sub(1), (z + 1).min(17));
 
-        let dy = if yi > 0 && yi < 16 {
-            density_field[xi][yi + 1][zi] - density_field[xi][yi - 1][zi]
-        } else {
-            0.0
-        };
+        [
+            diff([xl, y, z], [xh, y, z], (xh - xl) as f32),
+            diff([x, yl, z], [x, yh, z], (yh - yl) as f32),
+            diff([x, y, zl], [x, y, zh], (zh - zl) as f32),
+        ]
+    }
 
-        let dz = if zi > 0 && zi < 16 {
-            density_field[xi][yi][zi + 1] - density_field[xi][yi][zi - 1]
-        } else {
-            0.0
-        };
-
-        // Normalize the gradient
-        let len = (dx * dx + dy * dy + dz * dz).sqrt();
+    /// Outward unit normal from an interpolated gradient; up if the gradient vanishes.
+    fn outward_normal(gradient: [f32; 3]) -> [f32; 3] {
+        let len = gradient.iter().map(|g| g * g).sum::<f32>().sqrt();
         if len < 0.0001 {
-            [0.0, 1.0, 0.0] // Default to up if gradient is zero
+            [0.0, 1.0, 0.0]
         } else {
-            [-dx / len, -dy / len, -dz / len] // Negative because we want outward normal
+            // Density rises into the solid, so outward is the negated gradient.
+            [-gradient[0] / len, -gradient[1] / len, -gradient[2] / len]
         }
     }
 
