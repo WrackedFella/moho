@@ -306,10 +306,35 @@ mod tests {
 
     #[test]
     fn raycast_returns_none_when_nothing_in_range() {
-        let grid = VoxelGrid::new(16);
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator().place(BlockPos::new(0, 0, 11), 1, None);
 
-        let hit = raycast(&grid, Vec3::ZERO, Vec3::Z, 10.0);
+        let beyond = raycast(&grid, Vec3::ZERO, Vec3::Z, 10.0);
 
-        assert!(hit.is_none());
+        assert!(beyond.is_none());
+
+        grid.mutator().place(BlockPos::new(0, 0, 10), 1, None);
+
+        let at_limit = raycast(&grid, Vec3::ZERO, Vec3::Z, 10.0);
+
+        assert_eq!(at_limit.map(|h| h.block_pos), Some(BlockPos::new(0, 0, 10)));
+    }
+
+    #[test]
+    fn raycast_surface_edge_cases() {
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator().place(BlockPos::new(0, 0, 12), 1, None);
+        let origin = Vec3::new(0.5, 0.5, 0.0);
+
+        assert!(raycast_surface(&grid, origin, Vec3::ZERO, 20.0).is_none());
+        assert!(raycast_surface(&grid, origin, Vec3::Z, 10.0).is_none());
+        let hit = raycast_surface(&grid, origin, Vec3::Z, 13.0).expect("block is within 13");
+        assert_eq!(hit.block_pos, BlockPos::new(0, 0, 12));
+        assert!((hit.distance - 12.0).abs() < 0.01, "{}", hit.distance);
+
+        let mut lone = VoxelGrid::new(16);
+        lone.mutator().place(BlockPos::new(0, 0, 0), 1, None);
+        let inside = Vec3::splat(0.5);
+        assert!(raycast_surface(&lone, inside, Vec3::Z, 20.0).is_none());
     }
 }

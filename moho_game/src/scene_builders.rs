@@ -389,10 +389,19 @@ mod tests {
     #[test]
     fn generate_chunk_outside_world_returns_empty() {
         let cfg = small_config(42);
-        let far = glam::IVec3::new(5, 0, 0);
+
+        for outside in [(1, 0, 0), (-2, 0, 0), (0, 0, 1), (0, 0, -2)] {
+            let chunk = glam::IVec3::from(outside);
+            assert!(
+                generate_chunk(&cfg, chunk).is_empty(),
+                "chunk {chunk:?} lies outside the world and must be empty"
+            );
+        }
+
+        let edge = glam::IVec3::new(-1, 0, 0);
         assert!(
-            generate_chunk(&cfg, far).is_empty(),
-            "chunk outside world bounds must be empty"
+            !generate_chunk(&cfg, edge).is_empty(),
+            "chunk {edge:?} touches the world's -X edge and must have blocks"
         );
     }
 
@@ -416,35 +425,65 @@ mod tests {
     }
 
     #[test]
-    fn generate_chunk_matches_full_terrain_for_origin_chunk() {
+    fn generate_chunk_matches_full_terrain() {
         let cfg = small_config(42);
+        let full = collect_blocks(&generate_grid(42));
 
-        // Collect blocks from generate_chunk for chunk (0,0,0)
-        let chunk_blocks: std::collections::HashSet<(i32, i32, i32)> =
-            generate_chunk(&cfg, glam::IVec3::ZERO)
-                .into_iter()
-                .map(|(p, _, _)| (p.x, p.y, p.z))
+        for chunk_pos in [glam::IVec3::new(0, 4, 0), glam::IVec3::new(-1, 4, -1)] {
+            let min = chunk_pos * CHUNK_SIZE;
+            let max = min + glam::IVec3::splat(CHUNK_SIZE);
+            let expected: Vec<_> = full
+                .iter()
+                .filter(|(p, _, _)| {
+                    (min.x..max.x).contains(&p.x)
+                        && (min.y..max.y).contains(&p.y)
+                        && (min.z..max.z).contains(&p.z)
+                })
+                .copied()
                 .collect();
+            let mut actual = generate_chunk(&cfg, chunk_pos);
+            actual.sort_by_key(|(p, _, _)| (p.x, p.y, p.z));
 
-        // Generate via full terrain, filter to chunk (0,0,0)
-        let mut chunks = moho_core::voxel::ChunkStore::new();
-        let grid = voxel_terrain_scene_with_config(&mut chunks, &cfg);
-        let full_blocks: std::collections::HashSet<(i32, i32, i32)> = grid
-            .iter_block_data()
-            .filter(|b| {
-                b.position.x >= 0
-                    && b.position.x < 16
-                    && b.position.y >= 0
-                    && b.position.y < 16
-                    && b.position.z >= 0
-                    && b.position.z < 16
-            })
-            .map(|b| (b.position.x, b.position.y, b.position.z))
+            assert!(!actual.is_empty(), "chunk {chunk_pos:?} must have blocks");
+            assert_eq!(
+                actual, expected,
+                "generate_chunk must match full terrain for chunk {chunk_pos:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn terrain_column_layers_and_ore_band() {
+        let params = BiomeParams {
+            surface_material: 10,
+            subsurface_material: 20,
+            base_material: 30,
+            ..BiomeType::GentleHills.params()
+        };
+        let column_height = 70;
+
+        let materials: Vec<u32> = (66..=70)
+            .rev()
+            .map(|y| determine_material_id(column_height, y, &params))
             .collect();
 
-        assert_eq!(
-            chunk_blocks, full_blocks,
-            "generate_chunk must match full terrain for origin chunk"
-        );
+        assert_eq!(materials, vec![10, 10, 20, 20, 30]);
+
+        let mut ore_in_band = 0;
+        for seed in 0..4 {
+            for x in -8..8 {
+                for z in -8..8 {
+                    for y in 0..=column_height {
+                        let ore = determine_resource_id(column_height, y, x, z, seed);
+                        if (6..=66).contains(&y) {
+                            ore_in_band += usize::from(ore == Some(1));
+                        } else {
+                            assert_eq!(ore, None, "no ore expected at y={y}");
+                        }
+                    }
+                }
+            }
+        }
+        assert!(ore_in_band > 0, "expected ore somewhere in y 6..=66");
     }
 }

@@ -254,4 +254,129 @@ mod tests {
         assert_matrix(proj, PREVIOUS_PERSPECTIVE);
         assert_eq!(eye, Vec3::new(19.0, 15.0, 13.0));
     }
+
+    #[test]
+    fn movement_rules() {
+        const TOLERANCE: f32 = 1e-3;
+        struct Case {
+            name: &'static str,
+            mode: CameraMode,
+            input: ControllerInput,
+            dt: f32,
+            position: Vec3,
+            pitch: f32,
+            look_target: Vec3,
+            height: f32,
+        }
+        let start = Vec3::new(1.0, 2.0, 3.0);
+        let unmoved = Case {
+            name: "",
+            mode: CameraMode::FirstPerson,
+            input: ControllerInput::default(),
+            dt: 1.0,
+            position: start,
+            pitch: 0.0,
+            look_target: start,
+            height: 20.0,
+        };
+        let cases = [
+            Case {
+                name: "sprint scales speed 1.5x",
+                input: ControllerInput {
+                    forward: 1.0,
+                    sprint: true,
+                    ..Default::default()
+                },
+                dt: 0.5,
+                position: Vec3::new(1.0, 2.0, 6.0),
+                ..unmoved
+            },
+            Case {
+                name: "pitch clamps up",
+                input: ControllerInput {
+                    pitch_delta: 10.0,
+                    ..Default::default()
+                },
+                pitch: 1.54,
+                ..unmoved
+            },
+            Case {
+                name: "pitch clamps down",
+                input: ControllerInput {
+                    pitch_delta: -10.0,
+                    ..Default::default()
+                },
+                pitch: -1.54,
+                ..unmoved
+            },
+            Case {
+                name: "isometric forward pans the look target, not the pawn",
+                mode: CameraMode::Isometric,
+                input: ControllerInput {
+                    forward: 1.0,
+                    ..Default::default()
+                },
+                look_target: start + Vec3::new(-2.828, 0.0, -2.828),
+                ..unmoved
+            },
+            Case {
+                name: "isometric up does nothing",
+                mode: CameraMode::Isometric,
+                input: ControllerInput {
+                    up: 1.0,
+                    ..Default::default()
+                },
+                ..unmoved
+            },
+            Case {
+                name: "zoom in clamps to min height",
+                mode: CameraMode::Isometric,
+                input: ControllerInput {
+                    zoom_delta: 100.0,
+                    ..Default::default()
+                },
+                height: 5.0,
+                ..unmoved
+            },
+            Case {
+                name: "zoom out clamps to max height",
+                mode: CameraMode::Isometric,
+                input: ControllerInput {
+                    zoom_delta: -100.0,
+                    ..Default::default()
+                },
+                height: 50.0,
+                ..unmoved
+            },
+        ];
+
+        for case in cases {
+            let mut pc = PlayerController::new(start);
+            pc.camera_mode = case.mode;
+
+            pc.apply_input(&case.input, case.dt);
+
+            let name = case.name;
+            assert!(
+                pc.position.abs_diff_eq(case.position, TOLERANCE),
+                "{name}: position {}",
+                pc.position
+            );
+            assert!(
+                (pc.pitch - case.pitch).abs() < TOLERANCE,
+                "{name}: pitch {}",
+                pc.pitch
+            );
+            assert!(
+                pc.rts_look_target.abs_diff_eq(case.look_target, TOLERANCE),
+                "{name}: look target {}",
+                pc.rts_look_target
+            );
+            assert!(
+                (pc.rts_height - case.height).abs() < TOLERANCE,
+                "{name}: height {}",
+                pc.rts_height
+            );
+        }
+    }
 }

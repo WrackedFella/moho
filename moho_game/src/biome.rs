@@ -223,4 +223,36 @@ mod tests {
             "expected both biomes to appear in a 800x800 region"
         );
     }
+
+    #[test]
+    fn biome_shapes() {
+        let cases = [
+            (BiomeType::Cliffs, 0.3, 0.25),
+            (BiomeType::Cliffs, -0.1, -0.25),
+            (BiomeType::Canyon, -1.0, -2.0),
+            (BiomeType::Canyon, 1.0, 0.5),
+            (BiomeType::GentleHills, 0.3, 0.3),
+            (BiomeType::Mountains, -0.7, -0.7),
+            (BiomeType::Plains, 0.9, 0.9),
+        ];
+
+        for (biome, raw, expected) in cases {
+            assert_eq!(biome.shape(raw), expected, "{biome:?}.shape({raw})");
+        }
+    }
+
+    #[test]
+    fn different_seeds_pick_different_biomes() {
+        let a = BiomeMap::new(7);
+        let b = BiomeMap::new(8);
+        let enabled = [BiomeType::Plains, BiomeType::Mountains];
+
+        let differs = (-400..400).step_by(8).any(|x| {
+            (-400..400)
+                .step_by(8)
+                .any(|z| a.biome_at(x, z, &enabled) != b.biome_at(x, z, &enabled))
+        });
+
+        assert!(differs, "seeds 7 and 8 must not yield the same biome map");
+    }
 }
