@@ -38,6 +38,16 @@ jobs:
         run: |
           bash scripts/cloud-tools.sh --force
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      # Restore-only: the gate on dev writes this cache. The env matches the gate's so the
+      # key does; it is set on this step alone to leave incremental builds on for the agent.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        env:
+          CARGO_TERM_COLOR: always
+          CARGO_INCREMENTAL: 0
+          RUST_BACKTRACE: 1
+        with:
+          shared-key: gate-ubuntu-latest
+          save-if: false
       - uses: anthropics/claude-code-action@v1
         env:
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
