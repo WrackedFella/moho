@@ -66,8 +66,10 @@ have several, and is active when any is held. Empty or `Unbound` (any case) is a
 case-insensitive and come from `Key::name` in `moho_input/src/key.rs`: letters, digits,
 punctuation spelled as a word (`Comma`, `Semicolon`, `LeftBracket`, ...), `ArrowUp`..,
 `Escape`, `Tab`, `Backspace`, `Enter`, `Spacebar`, and the modifiers `Shift`, `Ctrl`,
-`Alt` bound on their own. `Key::parse` also accepts the punctuation glyph and aliases
-(`Up`, `Esc`, `Return`, `Space`, `Control`). There is no modifier syntax such as `Ctrl+W`
+`Alt` bound on their own. `Key::parse` also accepts the aliases `Up`, `Esc`, `Return`,
+`Space`, `Control` and the punctuation glyphs, but in `prefs.ini` write punctuation as
+words: the INI reader cuts a line at `;` or `#`, reads a line with `[` as a section
+header, and `,` separates list items. There is no modifier syntax such as `Ctrl+W`
 and no numeric key codes.
 
 Strategy actions (`StrategyAction`, `moho_ui/src/actions.rs`) and defaults:

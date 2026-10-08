@@ -16,7 +16,8 @@ pub enum Binding {
 pub trait Action: Copy + Eq + Hash + Debug + 'static {
     const ALL: &'static [Self];
 
-    /// Stable id used as the persisted key; never renamed once shipped.
+    /// Stable id used as the persisted key; never renamed once shipped. Lowercase
+    /// `snake_case`: the INI reader lowercases keys, so other ids would not load back.
     fn name(self) -> &'static str;
 
     fn default_bindings(self) -> &'static [Binding];

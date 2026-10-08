@@ -6,11 +6,12 @@ Engine input vocabulary: the keys the engine names, and bindings a game declares
 
 - `Key`: platform-free key enum. `Key::from_winit` maps a winit `PhysicalKey`;
   `name` is the persisted spelling, `parse` reads it back (case-insensitive, with
-  aliases such as `Up`, `Esc`, `Return`, `Space`, `Control` and punctuation glyphs),
+  aliases such as `Up`, `Esc`, `Return`, `Space`, `Control` and punctuation glyphs;
+  prefs files need the word names, since `;`, `#`, `[` and `,` are special there),
   `label` is the player-facing text.
 - `Binding`: one physical input that triggers an action (`Binding::Key` today).
-- `Action`: trait a game implements on its own action enum: `ALL`, a stable `name`
-  used as the persisted id, and `default_bindings`.
+- `Action`: trait a game implements on its own action enum: `ALL`, a stable lowercase `snake_case`
+  `name` used as the persisted id, and `default_bindings`.
 - `ActionBindings<A>`: every action's current bindings. `load` reads a raw
   `[bindings]` section (action name → comma-separated key names, `Unbound` or
   empty for none) and returns warnings for unusable lines, which keep their
