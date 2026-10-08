@@ -340,6 +340,37 @@ fn removal_of_absent_light_is_noop() {
     prop.remove_light(&mut grid, IVec3::new(0, 0, 0)); // nothing to remove — must not panic
 }
 
+/// Removal clears light along the y and z arms, not just the x axis.
+#[test]
+fn removal_clears_light_along_every_axis() {
+    let mut grid = grid_16();
+    make_transparent(&mut grid);
+    let mut prop = LightPropagator::new(16);
+
+    let center = IVec3::new(5, 5, 5);
+    let arms: Vec<IVec3> = (1..5i32)
+        .flat_map(|i| {
+            [
+                IVec3::new(i, 0, 0),
+                IVec3::new(0, i, 0),
+                IVec3::new(0, 0, i),
+            ]
+        })
+        .map(|d| center + d)
+        .collect();
+    grid.mutator().place(center, 1, None);
+    for &p in &arms {
+        grid.mutator().place(p, 1, None);
+    }
+    prop.add_light_rgb(&mut grid, center, [15, 0, 0]);
+    prop.remove_light(&mut grid, center);
+
+    assert_eq!(rgb(&grid, center)[0], 0, "source should be dark");
+    for p in arms {
+        assert_eq!(rgb(&grid, p)[0], 0, "arm block at {p:?} should be dark");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Cross-chunk propagation
 // ---------------------------------------------------------------------------
