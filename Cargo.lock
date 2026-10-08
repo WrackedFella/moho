@@ -1611,6 +1611,8 @@ name = "moho_physics"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
+ "moho_render_api",
+ "proptest",
  "rapier3d",
  "tracing",
 ]

@@ -458,4 +458,101 @@ pub(crate) mod tests {
         );
         assert_eq!(backend.unregistered, vec![handle], "its GPU mesh was freed");
     }
+
+    fn collider_of(app: &App, pos: IVec3) -> Option<moho_physics::ColliderHandle> {
+        app.physics
+            .world
+            .as_ref()
+            .expect("physics world")
+            .world_mesh_collider(chunk_mesh_id(pos))
+    }
+
+    fn terrain_collider_count(app: &App) -> usize {
+        let pw = app.physics.world.as_ref().expect("physics world");
+        pw.collider_set.len() - usize::from(pw.character_collider.is_some())
+    }
+
+    #[test]
+    fn remesh_updates_draw_and_collider_together() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        let chunk = IVec3::new(10, 4, 10);
+        let remesh = |app: &mut App| {
+            let _ = app.world_event_rx.try_iter().count();
+            app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+                chunk_pos: chunk,
+                terrain_dirty: true,
+                structure_dirty: false,
+            });
+            EventProcessor::new().process_world_events(app);
+        };
+        app.light_system
+            .as_mut()
+            .expect("light system")
+            .grid_mut()
+            .mutator()
+            .place(moho_core::voxel::BlockPos::new(165, 70, 165), 1, None);
+        remesh(&mut app);
+        let mut backend = RecordingBackend::default();
+        app.scene.world_meshes_mut().flush(&mut backend);
+        let first = collider_of(&app, chunk).expect("collider after first mesh");
+        assert_eq!(drawn_handles(&mut app), backend.registered);
+
+        app.light_system
+            .as_mut()
+            .expect("light system")
+            .grid_mut()
+            .mutator()
+            .place(moho_core::voxel::BlockPos::new(166, 70, 165), 1, None);
+        remesh(&mut app);
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        let second = collider_of(&app, chunk).expect("collider after remesh");
+        assert_ne!(first, second, "the collider was replaced");
+        assert_eq!(backend.registered.len(), 2);
+        assert_eq!(drawn_handles(&mut app), vec![backend.registered[1]]);
+        assert_eq!(terrain_collider_count(&app), 1, "the old collider is gone");
+    }
+
+    #[test]
+    fn eviction_frees_draw_and_collider() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_position_yaw_pitch(glam::Vec3::new(8.0, 80.0, 8.0), 0.0, 0.0);
+        app.chunk_streamer = Some(crate::app::chunk_streamer::ChunkStreamer::new(
+            moho_game::scene_builders::TerrainConfig::default(),
+            moho_core::voxel::StreamingConfig {
+                load_radius_chunks: 0,
+                unload_radius_chunks: 1,
+                chunks_per_frame: 1,
+            },
+            "headless-test-eviction-frees-draw-and-collider",
+        ));
+        let far = IVec3::new(10, 4, 10);
+        let grid = app.light_system.as_mut().expect("light system").grid_mut();
+        grid.mutator()
+            .place(moho_core::voxel::BlockPos::new(165, 70, 165), 1, None);
+        grid.clear_chunk_modified(far);
+        let _ = app.world_event_rx.try_iter().count();
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos: far,
+            terrain_dirty: true,
+            structure_dirty: false,
+        });
+        EventProcessor::new().process_world_events(&mut app);
+        let mut backend = RecordingBackend::default();
+        app.scene.world_meshes_mut().flush(&mut backend);
+        assert!(collider_of(&app, far).is_some(), "collider while loaded");
+        assert_eq!(terrain_collider_count(&app), 1);
+        assert_eq!(drawn_handles(&mut app), backend.registered);
+
+        FrameProcessor::new().update_chunk_streaming(&mut app);
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        assert!(app.entities.chunks.get(far).is_none(), "chunk was evicted");
+        assert!(drawn_handles(&mut app).is_empty(), "nothing is drawn");
+        assert!(collider_of(&app, far).is_none(), "its collider was freed");
+        assert_eq!(terrain_collider_count(&app), 0);
+    }
 }

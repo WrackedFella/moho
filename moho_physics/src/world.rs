@@ -427,4 +427,170 @@ mod tests {
             end.x
         );
     }
+
+    use moho_render_api::{WorldMesh, WorldMeshId};
+    use proptest::prelude::*;
+
+    fn floor_mesh(y: f32) -> WorldMesh {
+        let positions = vec![
+            [-10.0, y, -10.0],
+            [10.0, y, -10.0],
+            [10.0, y, 10.0],
+            [-10.0, y, 10.0],
+        ];
+        WorldMesh::new(
+            positions,
+            vec![[0.0, 1.0, 0.0]; 4],
+            vec![1.0; 4],
+            vec![[0.0; 3]; 4],
+            vec![1.0; 4],
+            vec![0; 4],
+            vec![0, 2, 1, 0, 3, 2],
+        )
+        .expect("valid floor mesh")
+    }
+
+    fn empty_mesh() -> WorldMesh {
+        WorldMesh::new(vec![], vec![], vec![], vec![], vec![], vec![], vec![])
+            .expect("empty mesh is valid")
+    }
+
+    fn fall_for_one_second(world: &mut PhysicsWorld, from_y: f32) -> f32 {
+        let ball = world.add_dynamic_sphere(Vec3::new(0.0, from_y, 0.0), 0.5);
+        for _ in 0..60 {
+            world.step(1.0 / 60.0);
+        }
+        world.body_position(ball).unwrap().y
+    }
+
+    #[test]
+    fn body_rests_on_registered_world_mesh() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0));
+
+        let y = fall_for_one_second(&mut world, 3.0);
+
+        assert!((y - 0.5).abs() < 0.2, "should rest on floor at 0.5, y={y}");
+    }
+
+    #[test]
+    fn replacing_world_mesh_moves_the_floor() {
+        let mut world = PhysicsWorld::new();
+        let id = WorldMeshId(1);
+        world.set_world_mesh(id, &floor_mesh(0.0));
+        world.set_world_mesh(id, &floor_mesh(2.0));
+
+        let y = fall_for_one_second(&mut world, 5.0);
+
+        assert!((y - 2.5).abs() < 0.2, "should rest on higher floor, y={y}");
+        assert!(world.world_mesh_collider(id).is_some());
+        assert_eq!(world.collider_set.len(), 1 + 1, "one floor plus the ball");
+    }
+
+    #[test]
+    fn removed_world_mesh_lets_body_fall() {
+        let mut world = PhysicsWorld::new();
+        let id = WorldMeshId(1);
+        world.set_world_mesh(id, &floor_mesh(0.0));
+        world.remove_world_mesh(id);
+
+        let y = fall_for_one_second(&mut world, 3.0);
+
+        assert!(y < -3.0, "should fall past the old floor, y={y}");
+        assert!(world.world_mesh_collider(id).is_none());
+        assert_eq!(world.collider_set.len(), 1, "only the ball remains");
+    }
+
+    #[test]
+    fn empty_world_mesh_holds_no_collider() {
+        let mut world = PhysicsWorld::new();
+        let id = WorldMeshId(1);
+        world.set_world_mesh(id, &floor_mesh(0.0));
+        world.set_world_mesh(id, &empty_mesh());
+
+        assert!(world.world_mesh_collider(id).is_none());
+        assert_eq!(world.collider_set.len(), 0);
+    }
+
+    #[test]
+    fn empty_world_mesh_on_fresh_id_adds_nothing() {
+        let mut world = PhysicsWorld::new();
+
+        world.set_world_mesh(WorldMeshId(9), &empty_mesh());
+
+        assert!(world.world_mesh_collider(WorldMeshId(9)).is_none());
+        assert_eq!(world.collider_set.len(), 0);
+    }
+
+    #[test]
+    fn removing_unknown_world_mesh_is_a_no_op() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0));
+
+        world.remove_world_mesh(WorldMeshId(2));
+
+        assert!(world.world_mesh_collider(WorldMeshId(1)).is_some());
+        assert_eq!(world.collider_set.len(), 1);
+    }
+
+    #[test]
+    fn distinct_ids_hold_distinct_colliders() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(2), &floor_mesh(1.0));
+
+        let a = world.world_mesh_collider(WorldMeshId(1)).unwrap();
+        let b = world.world_mesh_collider(WorldMeshId(2)).unwrap();
+
+        assert_ne!(a, b);
+        assert_eq!(world.collider_set.len(), 2);
+    }
+
+    #[derive(Clone, Debug)]
+    enum Op {
+        Set(u64, bool),
+        Remove(u64),
+    }
+
+    fn op_strategy() -> impl Strategy<Value = Op> {
+        prop_oneof![
+            (0u64..4, any::<bool>()).prop_map(|(id, empty)| Op::Set(id, empty)),
+            (0u64..4).prop_map(Op::Remove),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn colliders_match_live_world_mesh_ids(
+            ops in proptest::collection::vec(op_strategy(), 0..40)
+        ) {
+            let mut world = PhysicsWorld::new();
+            let mut live = std::collections::HashSet::new();
+
+            for op in ops {
+                match op {
+                    Op::Set(id, true) => {
+                        world.set_world_mesh(WorldMeshId(id), &empty_mesh());
+                        live.remove(&id);
+                    }
+                    Op::Set(id, false) => {
+                        world.set_world_mesh(WorldMeshId(id), &floor_mesh(id as f32));
+                        live.insert(id);
+                    }
+                    Op::Remove(id) => {
+                        world.remove_world_mesh(WorldMeshId(id));
+                        live.remove(&id);
+                    }
+                }
+            }
+
+            for id in 0u64..4 {
+                prop_assert_eq!(
+                    world.world_mesh_collider(WorldMeshId(id)).is_some(),
+                    live.contains(&id)
+                );
+            }
+            prop_assert_eq!(world.collider_set.len(), live.len());
+        }
+    }
 }

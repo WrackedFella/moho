@@ -271,4 +271,38 @@ mod tests {
         assert_eq!(controller.chunk_colliders[&known], known_handle);
         assert!(controller.chunk_colliders.contains_key(&fresh));
     }
+
+    #[test]
+    fn reset_then_load_holds_one_collider_per_chunk() {
+        use crate::app::world_geometry::{chunk_mesh_id, tests::chunk_at};
+        let positions = [
+            glam::IVec3::new(7, 0, 7),
+            glam::IVec3::new(8, 0, 7),
+            glam::IVec3::new(7, 1, 9),
+        ];
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut saved = crate::App::headless();
+        for pos in positions {
+            saved.entities.chunks.insert(chunk_at(pos));
+        }
+        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path()).expect("autosave");
+        let mut app = crate::App::headless();
+
+        crate::app::scene_loader::load_scene(&mut app, &temp.path().join("scene.bin"))
+            .expect("load");
+
+        let pw = app.physics.world.as_ref().expect("physics world");
+        for pos in positions {
+            assert!(
+                pw.world_mesh_collider(chunk_mesh_id(pos)).is_some(),
+                "chunk {pos} has a collider after load"
+            );
+        }
+        let character = usize::from(pw.character_collider.is_some());
+        assert_eq!(
+            pw.collider_set.len() - character,
+            positions.len(),
+            "one collider per chunk, character aside"
+        );
+    }
 }
