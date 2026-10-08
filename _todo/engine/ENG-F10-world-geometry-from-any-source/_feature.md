@@ -58,10 +58,18 @@ for the repo split ([ENG-F5](../ENG-F5-physical-repo-split/_feature.md)). Decisi
 
 | Item |
 |---|
+| [ENG-F10-01](ENG-F10-01-renderer-draws-meshes-by-id.md) The renderer draws, replaces and removes a game's meshes by id |
+| [ENG-F10-02](ENG-F10-02-physics-collides-with-meshes-by-id.md) Physics collides with a game's meshes by id, and one change updates drawing and collision |
+| [ENG-F10-03](ENG-F10-03-voxel-terrain-is-a-strategy-crate.md) Voxel terrain builds as a strategy-line crate |
+| [ENG-F10-04](ENG-F10-04-no-engine-crate-names-a-voxel-type.md) No engine crate names a voxel type, and the layering check covers tests |
 
 ## Notes
 
 - Suggested cut: contract and renderer migration first (judgment). The crate
   extraction afterwards is mostly mechanical moves and import updates.
+- ENG-F10-01 and ENG-F10-02 PR into `dev`. ENG-F10-03 and ENG-F10-04 are the
+  cross-line move: integration branch `feature/ENG-F10-voxel-extraction`, started
+  after ENG-F10-01 merges and after SG-F1-04 and SG-F2-03/02 land, and announced to
+  the Strategy lane first.
 - The extraction moves many files. Use GitNexus `rename` and `impact` for
   symbol moves, not find-and-replace.
