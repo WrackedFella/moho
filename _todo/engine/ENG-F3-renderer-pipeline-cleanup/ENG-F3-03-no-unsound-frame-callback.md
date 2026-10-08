@@ -1,7 +1,8 @@
 # The renderer accepts a frame callback only in a sound form
 
 **Feature:** [ENG-F3](_feature.md)
-**Status:** Draft
+**Issue:** [#208](https://github.com/WrackedFella/moho/issues/208)
+**Status:** unknown
 **Gate class:** glue
 **Labels:** line:engine
 
