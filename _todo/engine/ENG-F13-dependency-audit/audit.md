@@ -55,7 +55,7 @@ declarations are follow-ups, not verdicts. Evidence: appendices A–D.
 | Unused declarations, `once_cell`, yanked `chacha20` | [ENG-F2-03](https://github.com/WrackedFella/moho/issues/96) (list corrected) |
 | `log`/`env_logger` → `tracing` | [ENG-F2-05](../ENG-F2-dependency-upgrades/ENG-F2-05-structured-logging.md) |
 | `crossbeam-channel` → std | [ENG-F2-06](../ENG-F2-dependency-upgrades/ENG-F2-06-std-channels.md) |
-| `pollster` → own `block_on` | [ENG-F2-07](../ENG-F2-dependency-upgrades/ENG-F2-07-renderer-blocks-without-pollster.md) |
+| `pollster` → own `block_on` | [ENG-F2-07](https://github.com/WrackedFella/moho/issues/100) |
 | wgpu/naga/egui upgrade | [ENG-F2-08](../ENG-F2-dependency-upgrades/ENG-F2-08-graphics-stack-current.md) |
 | rapier3d/glam upgrade, `paste` | [ENG-F2-09](../ENG-F2-dependency-upgrades/ENG-F2-09-physics-stack-current.md), [ENG-F2-04](../ENG-F2-dependency-upgrades/ENG-F2-04-paste-advisory-cleared.md) |
 | `noise` → in-house Perlin | [ENG-F2-10](../ENG-F2-dependency-upgrades/ENG-F2-10-terrain-noise-in-house.md) |
