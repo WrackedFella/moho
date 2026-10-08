@@ -25,15 +25,17 @@ pub fn load_scene(
         return Err(format!("Scene file does not exist: {}", path.display()).into());
     }
 
+    // Read and validate the save before touching the running world, so a
+    // foreign, unsupported or corrupt file leaves it as it was.
+    let (spec, scene_bytes, block_records) = crate::save::read_scene_and_metadata(path)?;
+
     // Reset physics with the entities: a load that fails below must not leave
     // bodies tracking actors that no longer exist.
     app.entities.clear();
     app.physics.reset();
 
-    // Load the scene from file with metadata support
     {
-        let (spec, scene_bytes, block_records) = crate::save::read_scene_and_metadata(path)?;
-        // Decode the scene before applying the spec, so a bad scene leaves both untouched.
+        // Decode the scene before applying the spec, so a bad scene leaves the spec untouched.
         let (camera_data, lights) =
             moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.entities)?;
         // Remember the WorldSpec from the loaded file so autosaves and
