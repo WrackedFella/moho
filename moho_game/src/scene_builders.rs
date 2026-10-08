@@ -469,14 +469,16 @@ mod tests {
 
         assert_eq!(materials, vec![10, 10, 20, 20, 30]);
 
-        let mut ore_in_band = 0;
+        // Ore seen at each band edge, so a narrowed band fails too.
+        let (mut ore_at_bottom, mut ore_at_top) = (false, false);
         for seed in 0..4 {
             for x in -8..8 {
                 for z in -8..8 {
                     for y in 0..=column_height {
                         let ore = determine_resource_id(column_height, y, x, z, seed);
                         if (6..=66).contains(&y) {
-                            ore_in_band += usize::from(ore == Some(1));
+                            ore_at_bottom |= y == 6 && ore == Some(1);
+                            ore_at_top |= y == 66 && ore == Some(1);
                         } else {
                             assert_eq!(ore, None, "no ore expected at y={y}");
                         }
@@ -484,6 +486,7 @@ mod tests {
                 }
             }
         }
-        assert!(ore_in_band > 0, "expected ore somewhere in y 6..=66");
+        assert!(ore_at_bottom, "expected ore somewhere at y=6");
+        assert!(ore_at_top, "expected ore somewhere at y=66");
     }
 }
