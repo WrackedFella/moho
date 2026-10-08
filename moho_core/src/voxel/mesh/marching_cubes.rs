@@ -125,8 +125,8 @@ impl MarchingCubes {
         for i in 0..12 {
             if edge_flags & (1 << i) != 0 {
                 let (v0_idx, v1_idx) = EDGE_CONNECTIONS[i];
-                let v0 = Self::corner_position(x, y, z, v0_idx);
-                let v1 = Self::corner_position(x, y, z, v1_idx);
+                let s0 = Self::corner_sample(x, y, z, v0_idx);
+                let s1 = Self::corner_sample(x, y, z, v1_idx);
                 let d0 = corners[v0_idx];
                 let d1 = corners[v1_idx];
 
@@ -137,29 +137,16 @@ impl MarchingCubes {
                     (iso_level - d0) / (d1 - d0)
                 };
 
-                edge_vertices[i] = [
-                    v0[0] + t * (v1[0] - v0[0]),
-                    v0[1] + t * (v1[1] - v0[1]),
-                    v0[2] + t * (v1[2] - v0[2]),
-                ];
-
-                let g0 = Self::sample_gradient(
-                    density_field,
-                    v0[0] as usize,
-                    v0[1] as usize,
-                    v0[2] as usize,
+                edge_vertices[i] = lerp3(
+                    Self::corner_position(x, y, z, v0_idx),
+                    Self::corner_position(x, y, z, v1_idx),
+                    t,
                 );
-                let g1 = Self::sample_gradient(
-                    density_field,
-                    v1[0] as usize,
-                    v1[1] as usize,
-                    v1[2] as usize,
+                edge_gradients[i] = lerp3(
+                    Self::sample_gradient(density_field, s0),
+                    Self::sample_gradient(density_field, s1),
+                    t,
                 );
-                edge_gradients[i] = [
-                    g0[0] + t * (g1[0] - g0[0]),
-                    g0[1] + t * (g1[1] - g0[1]),
-                    g0[2] + t * (g1[2] - g0[2]),
-                ];
             }
         }
 
@@ -234,26 +221,27 @@ impl MarchingCubes {
 
     /// Get position of a cube corner
     fn corner_position(x: usize, y: usize, z: usize, corner_idx: usize) -> [f32; 3] {
-        let x = x as f32;
-        let y = y as f32;
-        let z = z as f32;
+        Self::corner_sample(x, y, z, corner_idx).map(|c| c as f32)
+    }
 
+    /// Get the density sample index of a cube corner
+    fn corner_sample(x: usize, y: usize, z: usize, corner_idx: usize) -> [usize; 3] {
         match corner_idx {
             0 => [x, y, z],
-            1 => [x + 1.0, y, z],
-            2 => [x + 1.0, y, z + 1.0],
-            3 => [x, y, z + 1.0],
-            4 => [x, y + 1.0, z],
-            5 => [x + 1.0, y + 1.0, z],
-            6 => [x + 1.0, y + 1.0, z + 1.0],
-            7 => [x, y + 1.0, z + 1.0],
+            1 => [x + 1, y, z],
+            2 => [x + 1, y, z + 1],
+            3 => [x, y, z + 1],
+            4 => [x, y + 1, z],
+            5 => [x + 1, y + 1, z],
+            6 => [x + 1, y + 1, z + 1],
+            7 => [x, y + 1, z + 1],
             _ => [x, y, z],
         }
     }
 
     /// Density gradient at an integer sample: central differences, one-sided at the
     /// field's ends so the outermost meshed layer still gets a gradient.
-    fn sample_gradient(field: &[[[f32; 18]; 18]; 18], x: usize, y: usize, z: usize) -> [f32; 3] {
+    fn sample_gradient(field: &[[[f32; 18]; 18]; 18], [x, y, z]: [usize; 3]) -> [f32; 3] {
         let diff = |lo: [usize; 3], hi: [usize; 3], span: f32| {
             (field[hi[0]][hi[1]][hi[2]] - field[lo[0]][lo[1]][lo[2]]) / span
         };
@@ -297,6 +285,14 @@ impl MarchingCubes {
 
         field
     }
+}
+
+fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [
+        a[0] + t * (b[0] - a[0]),
+        a[1] + t * (b[1] - a[1]),
+        a[2] + t * (b[2] - a[2]),
+    ]
 }
 
 // Edge connections: which corners does each edge connect?
