@@ -1,6 +1,5 @@
 //! Mouse-delta filtering: deadzone, exponential smoothing and a response curve.
 
-/// Default filter configuration constants
 const DEADZONE_DEFAULT: f32 = 0.01;
 const SMOOTHING_DEFAULT: f32 = 0.8;
 

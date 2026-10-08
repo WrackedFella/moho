@@ -265,7 +265,6 @@ impl App {
         );
     }
 
-    /// Update controller input from this tick's action frame
     fn update_controller_input(&mut self, frame: &ActionFrame<StrategyAction>) {
         let is_active = |action: StrategyAction| frame.held(action);
 
@@ -323,12 +322,10 @@ impl App {
             frame.held(StrategyAction::Jump) || frame.pressed(StrategyAction::Jump);
     }
 
-    /// Handle global keyboard hotkeys
     fn handle_keyboard_input(&mut self, event: &KeyEvent) {
         let pressed = event.state == ElementState::Pressed;
 
         if let PhysicalKey::Code(keycode) = event.physical_key {
-            // Global hotkeys (work in any state)
             match keycode {
                 KeyCode::Backquote => {
                     // Backtick (`) toggles console
@@ -383,7 +380,6 @@ impl App {
         }
     }
 
-    /// Feed raw device input (mouse look) to the action map
     fn handle_device_input(&mut self, event: &DeviceEvent) {
         // Only process input in game mode and first person camera mode
         if self.game_state != crate::game_state::GameState::Playing
