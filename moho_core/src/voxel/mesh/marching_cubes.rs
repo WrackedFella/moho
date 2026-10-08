@@ -224,7 +224,6 @@ impl MarchingCubes {
         Self::corner_sample(x, y, z, corner_idx).map(|c| c as f32)
     }
 
-    /// Get the density sample index of a cube corner
     fn corner_sample(x: usize, y: usize, z: usize, corner_idx: usize) -> [usize; 3] {
         match corner_idx {
             0 => [x, y, z],
