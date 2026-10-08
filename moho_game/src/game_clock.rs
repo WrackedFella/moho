@@ -203,6 +203,7 @@ mod tests {
         assert_eq!(clock.time_of_day(), 23.0);
 
         assert_eq!(GameClock::new(30.0, 600.0, 300.0).time_of_day(), 6.0);
+        assert_eq!(GameClock::new(-1.0, 600.0, 300.0).time_of_day(), 23.0);
     }
 
     #[test]
