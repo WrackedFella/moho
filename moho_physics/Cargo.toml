@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 
 [dependencies]
-moho_core = { path = "../moho_core" }
 rapier3d = { workspace = true }
 glam = { workspace = true }
 log = { workspace = true }
