@@ -1,5 +1,7 @@
 # ENG-F21 — A game gets a character controller and camera from the engine
 
+**Issue:** #123
+
 ## End state
 
 Both games move characters and point cameras through one engine controller and
