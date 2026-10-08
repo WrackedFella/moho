@@ -126,7 +126,7 @@ mod tests {
         let path = file.path().to_str().expect("utf-8 path").to_owned();
         assert_eq!(cache.get_audio(&path).unwrap(), b"audio-bytes");
 
-        drop(file);
+        file.close().expect("delete temp file");
 
         assert_eq!(cache.get_audio(&path).unwrap(), b"audio-bytes");
     }
@@ -138,7 +138,7 @@ mod tests {
         let path = file.path().to_str().expect("utf-8 path").to_owned();
         assert_eq!(cache.get_ui_sound(&path).unwrap(), b"ui-bytes");
 
-        drop(file);
+        file.close().expect("delete temp file");
 
         assert_eq!(cache.get_ui_sound(&path).unwrap(), b"ui-bytes");
     }
