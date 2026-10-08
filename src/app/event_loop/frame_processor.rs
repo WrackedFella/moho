@@ -609,6 +609,7 @@ mod tests {
             (above, 6.0, 0.2),
             (above, 7.0, 0.0),
             (above, 12.0, 0.0),
+            (above, 18.0, 0.1),
             (above, 19.0, 0.2),
         ];
 
@@ -629,7 +630,9 @@ mod tests {
             (12.0, [0.4, 0.5, 0.6], 0.15),
             (23.0, [0.3, 0.35, 0.5], 0.05),
             (5.0, [0.5, 0.45, 0.4], 0.05),
-            (6.99, [0.5, 0.45, 0.4], 0.149),
+            (6.0, [0.5, 0.45, 0.4], 0.10),
+            (6.99, [0.5, 0.45, 0.4], 0.1495),
+            (18.0, [0.5, 0.4, 0.35], 0.125),
             (19.0, [0.5, 0.4, 0.35], 0.10),
         ];
 
@@ -639,9 +642,8 @@ mod tests {
             for (got, want) in color.iter().zip(expected_color) {
                 assert!((got - want).abs() < 1e-6, "colour at {time}: {color:?}");
             }
-            let tolerance = if time == 6.99 { 0.01 } else { 1e-6 };
             assert!(
-                (intensity - expected_intensity).abs() < tolerance,
+                (intensity - expected_intensity).abs() < 1e-6,
                 "intensity at {time}: expected {expected_intensity}, got {intensity}"
             );
         }
