@@ -23,10 +23,10 @@ The binary's input dispatch, camera, initializer and day/night lighting tests st
 | `input_dispatcher` `wheel_forwarded_when_ui_hidden`, `wheel_blocked_when_ui_visible`, `wheel_blocked_when_ui_lock_contended` (split from `wheel_forwarding_respects_ui_visibility`) | forwarded event is `MouseWheel { delta_y: 1.0 }` (use `matches!`; `InputEvent` has no `PartialEq`) | forwarding `delta_y: 0.0` |
 | `initializer` `build_sets_60hz_frame_duration` (renamed from `test_build_creates_all_systems`, `is_ok` assert dropped) | frame duration 1/60 s | 1/30 s |
 | `initializer` `build_applies_config_sensitivity_and_filtering` (replaces `test_build_succeeds_with_non_default_config`) | sensitivity 0.5, filtering off, `collect_mouse_delta((10,0))` → `sample_frame_input() == (5.0, 0.0)` | config ignored (gives 0.02 or 4.0) |
-| `camera` `default_camera_looks_from_eye_at_center` (absorbs `test_camera_matrices_are_different`; built through `create_default_camera()`) | view maps eye to the origin and center to (0, 0, ≈-59.08) | `build()` ignoring `center` |
+| `camera` `default_camera_looks_from_eye_at_center` (absorbs `test_camera_matrices_are_different`; built through `create_default_camera()`) | view maps eye to the origin and center to (0, 0, -‖eye − center‖ ≈ -59.07) | `build()` ignoring `center` |
 | `camera` `test_camera_builder_customization` | view maps the custom center to (0, 0, -150); `proj.y_axis.y ≈ 1/tan(30°)` | `with_fov_degrees` ignored |
-| `frame_processor` `moon_intensity_by_time` (table) | 23.0 with the moon below the horizon → 0.0; 5.0 → 0.4; 6.0 → 0.2; dusk 19.0 → 0.2 | horizon guard deleted; dawn returns constant 0.4; dusk branch deleted |
-| `frame_processor` `ambient_lighting_by_time` (table, includes the existing cases) | dusk 19.0 → colour [0.5, 0.4, 0.35], intensity 0.10 (compare within 1e-6) | dusk branch deleted |
+| `frame_processor` `moon_intensity_by_time` (table) | 23.0 with the moon below the horizon → 0.0; 5.0 → 0.4; 6.0 → 0.2; dusk 18.0 → 0.1 and 19.0 → 0.2 | horizon guard deleted; dawn returns constant 0.4; dusk branch deleted or reversed |
+| `frame_processor` `ambient_lighting_by_time` (table, includes the existing cases) | dusk 18.0 → intensity 0.125, 19.0 → colour [0.5, 0.4, 0.35], intensity 0.10 (compare within 1e-6) | dusk branch deleted or reversed |
 
 ## Tech spec
 
@@ -40,6 +40,8 @@ The binary's input dispatch, camera, initializer and day/night lighting tests st
 - `tests/event_bus_integration.rs`: #175 (ENG-F22-08).
 
 **Test map:** the table above.
+
+**Deviations (implementation):** the spec's ≈-59.08 was off; the distance is √3489 ≈ 59.068, so the test derives it from eye and center. The 18.0 rows were added after test review: 19.0 is the dusk midpoint, so a reversed dusk ramp passed with it alone.
 
 **Gate class:** glue (binary wiring and presentation, outside the domain-logic paths).
 
