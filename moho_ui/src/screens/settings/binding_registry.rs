@@ -4,7 +4,7 @@ use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::Key;
 
 use super::types::BINDING_ROWS;
-use crate::actions::StrategyAction;
+use crate::actions::{StrategyAction, load_bindings};
 use crate::prefs::Prefs;
 
 /// The bindings being edited, and the rule that one key serves one listed row.
@@ -16,11 +16,9 @@ pub struct BindingRegistry {
 impl BindingRegistry {
     /// Reads the bindings from prefs, logging each line that had to fall back to a default.
     pub fn from_prefs(prefs: &Prefs) -> Self {
-        let (bindings, warnings) = ActionBindings::load(prefs.bindings());
-        for w in warnings {
-            tracing::warn!(action = %w.name, value = %w.value, "Unusable binding, default kept");
+        Self {
+            bindings: load_bindings(prefs),
         }
-        Self { bindings }
     }
 
     pub fn write_to_prefs(&self, prefs: &mut Prefs) {

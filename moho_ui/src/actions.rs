@@ -1,7 +1,8 @@
 //! The strategy game's actions: stable ids and default bindings.
 
+use moho_core::prefs::Prefs;
 use moho_input::Action;
-use moho_input::bindings::Binding;
+use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::Key;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -52,6 +53,15 @@ impl Action for StrategyAction {
             StrategyAction::Sprint => &[Binding::Key(Key::Shift)],
         }
     }
+}
+
+/// Reads the strategy bindings from prefs, warning about each line that fell back to a default.
+pub fn load_bindings(prefs: &Prefs) -> ActionBindings<StrategyAction> {
+    let (bindings, warnings) = ActionBindings::load(prefs.bindings());
+    for w in warnings {
+        tracing::warn!(action = %w.name, value = %w.value, "Unusable binding, default kept");
+    }
+    bindings
 }
 
 #[cfg(test)]

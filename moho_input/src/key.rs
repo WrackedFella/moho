@@ -216,7 +216,7 @@ impl Key {
 
     /// Case-insensitive; accepts the canonical name and the aliases.
     pub fn parse(s: &str) -> Option<Key> {
-        let glyph = match s {
+        let glyph_or_alias = match s {
             "." => Some(Key::Period),
             "," => Some(Key::Comma),
             "/" => Some(Key::Slash),
@@ -228,23 +228,19 @@ impl Key {
             "-" => Some(Key::Minus),
             "=" => Some(Key::Equals),
             "`" => Some(Key::Backtick),
-            _ => None,
+            _ => match s.to_ascii_lowercase().as_str() {
+                "up" => Some(Key::ArrowUp),
+                "down" => Some(Key::ArrowDown),
+                "left" => Some(Key::ArrowLeft),
+                "right" => Some(Key::ArrowRight),
+                "esc" => Some(Key::Escape),
+                "return" => Some(Key::Enter),
+                "space" => Some(Key::Space),
+                "control" => Some(Key::Ctrl),
+                _ => None,
+            },
         };
-        if glyph.is_some() {
-            return glyph;
-        }
-        let alias = match s.to_ascii_lowercase().as_str() {
-            "up" => Some(Key::ArrowUp),
-            "down" => Some(Key::ArrowDown),
-            "left" => Some(Key::ArrowLeft),
-            "right" => Some(Key::ArrowRight),
-            "esc" => Some(Key::Escape),
-            "return" => Some(Key::Enter),
-            "space" => Some(Key::Space),
-            "control" => Some(Key::Ctrl),
-            _ => None,
-        };
-        alias.or_else(|| {
+        glyph_or_alias.or_else(|| {
             Key::ALL
                 .iter()
                 .copied()

@@ -112,7 +112,8 @@ impl SettingsMenu {
     }
 
     /// Runs `run` on the capture handler with a snapshot of the staged bindings, and a
-    /// callback that writes changes back to the staged state.
+    /// callback that writes changes back to the staged state. The snapshot is a clone
+    /// because the callback mutates the registry it is read from.
     fn capture<R>(
         &mut self,
         run: impl FnOnce(
@@ -242,9 +243,11 @@ impl UiComponent for SettingsMenu {
         render_ops::render_content_area(ctx, self);
 
         // Handle key capture when listening for a binding - delegates to keybind_capture
-        self.capture(|handler, staged, on_change| {
-            handler.handle_key_capture(ctx, staged, on_change);
-        });
+        if self.is_listening() {
+            self.capture(|handler, staged, on_change| {
+                handler.handle_key_capture(ctx, staged, on_change);
+            });
+        }
 
         items
     }
@@ -271,9 +274,10 @@ impl Screen for SettingsMenu {
 
     /// Handle raw input for keybind capture
     fn handle_raw_input(&mut self, event: &winit::event::WindowEvent) -> bool {
-        self.capture(|handler, staged, on_change| {
-            handler.handle_winit_event(event, staged, on_change)
-        })
+        self.is_listening()
+            && self.capture(|handler, staged, on_change| {
+                handler.handle_winit_event(event, staged, on_change)
+            })
     }
 
     /// Check if settings wants to show the keybind conflict modal

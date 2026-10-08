@@ -8,7 +8,7 @@ use moho_core::prefs::Prefs;
 use moho_game::scene::SceneEntities;
 use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::Key;
-use moho_ui::actions::StrategyAction;
+use moho_ui::actions::{StrategyAction, load_bindings};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -662,15 +662,6 @@ impl Drop for App {
 }
 
 /// Installs the global subscriber, which also forwards `log` records from dependencies.
-/// Reads the strategy bindings from prefs, warning about each line that fell back to a default.
-fn load_bindings(prefs: &Prefs) -> ActionBindings<StrategyAction> {
-    let (bindings, warnings) = ActionBindings::load(prefs.bindings());
-    for w in warnings {
-        tracing::warn!(action = %w.name, value = %w.value, "Unusable binding, default kept");
-    }
-    bindings
-}
-
 fn init_logging() {
     tracing_subscriber::fmt()
         .with_env_filter(
