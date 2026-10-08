@@ -127,7 +127,7 @@ Window-free scheduling for any game line ([ADR-0009](../../_todo/adr/0009-simula
 | `HeadlessLoop` (`headless.rs`) | Drives a `Game` without a window: `advance(game, frame_dt)` runs due ticks then one frame; `step(game, n)` runs ticks only |
 
 Invariants: ticks per frame are capped by `max_catch_up_ticks` (default 5) and time beyond the cap is
-dropped except the sub-tick remainder; `tick_hz` must be non-zero (`HeadlessLoop::new` panics); `TickContext::tick` counts from 0.
+dropped except the sub-tick remainder; `tick_hz` must be non-zero (`FixedStep::new` panics); `TickContext::tick` counts from 0.
 
 ## Runtime composition
 

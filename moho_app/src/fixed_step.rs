@@ -42,7 +42,11 @@ pub struct FixedStep {
 }
 
 impl FixedStep {
+    /// # Panics
+    ///
+    /// Panics if `config.tick_hz` is 0, which would never tick.
     pub fn new(config: LoopConfig) -> Self {
+        assert!(config.tick_hz > 0, "tick_hz must be non-zero");
         Self {
             config,
             accumulator: 0,

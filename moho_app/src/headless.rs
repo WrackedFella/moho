@@ -21,7 +21,6 @@ impl<G: Game> HeadlessLoop<G> {
     ///
     /// Panics if `config.tick_hz` is 0.
     pub fn new(config: LoopConfig) -> Self {
-        assert!(config.tick_hz > 0, "tick_hz must be non-zero");
         Self {
             step: FixedStep::new(config),
             tick_length: config.tick_length(),
