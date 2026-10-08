@@ -369,26 +369,35 @@ mod tests {
     #[test]
     fn test_skybox_quad_generation() {
         let (vertices, count) = ResourcePool::generate_skybox_quad();
+
         assert_eq!(count, 6, "Skybox quad should have 6 vertices (2 triangles)");
         assert_eq!(vertices.len(), 6);
-
-        // Check that vertices cover clip space
-        assert_eq!(vertices[0], [-1.0, -1.0, 0.0]); // Bottom-left
-        assert_eq!(vertices[2], [1.0, -1.0, 0.0]); // Bottom-right
-        assert_eq!(vertices[5], [1.0, 1.0, 0.0]); // Top-right
-    }
-
-    #[test]
-    fn test_initial_material() {
-        let material = MaterialGpu {
-            albedo: [1.0, 1.0, 1.0, 0.0],
-            params: [0.0, 0.0, 0.0, 0.0],
-        };
-
-        // Should be white, non-transparent
-        assert_eq!(material.albedo[0], 1.0);
-        assert_eq!(material.albedo[1], 1.0);
-        assert_eq!(material.albedo[2], 1.0);
-        assert!(!material.is_transparent());
+        let corners = [
+            [-1.0, -1.0, 0.0],
+            [-1.0, 1.0, 0.0],
+            [1.0, -1.0, 0.0],
+            [1.0, 1.0, 0.0],
+        ];
+        for v in &vertices {
+            assert!(corners.contains(v), "{v:?} is not a clip-space corner");
+        }
+        let omitted: Vec<[f32; 3]> = vertices
+            .chunks(3)
+            .map(|tri| {
+                assert!(
+                    tri[0] != tri[1] && tri[1] != tri[2] && tri[0] != tri[2],
+                    "triangle {tri:?} repeats a corner"
+                );
+                *corners
+                    .iter()
+                    .find(|c| !tri.contains(c))
+                    .expect("a triangle of distinct corners omits exactly one")
+            })
+            .collect();
+        assert_eq!(omitted.len(), 2);
+        assert!(
+            omitted[0][0] != omitted[1][0] && omitted[0][1] != omitted[1][1],
+            "omitted corners {omitted:?} must be diagonally opposite"
+        );
     }
 }

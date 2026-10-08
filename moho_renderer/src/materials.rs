@@ -125,5 +125,12 @@ mod tests {
         assert_ne!(i1, i3, "materials with different keys should be distinct");
         assert!(mt.is_dirty());
         assert_eq!(mt.as_slice().len(), 2);
+
+        mt.clear_dirty();
+        let again = mt.find_or_push(&m3);
+
+        assert_eq!(again, i3, "existing material returns its original index");
+        assert!(!mt.is_dirty(), "lookup of an existing material stays clean");
+        assert_eq!(mt.as_slice().len(), 2);
     }
 }
