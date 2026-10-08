@@ -32,8 +32,8 @@ The event bus, input filtering, state coordinator and prefs warning tests pin th
 | `moho_core::input` `test_input_accumulation` | filter off: (1,0)+(1,1) → (2.0, 1.0), then (0.0, 0.0) | smoothing applied with the filter off |
 | `moho_core::input` `test_sensitivity_scaling` | filter off, sensitivity 2, input (1,3) → (2.0, 6.0) | axes swapped |
 | `moho_core::input` `filter_smooths_across_frames`, `filter_resets_on_idle_frame`, `deadzone_zeroes_tiny_output`, `clear_pending_input_discards_accumulated_delta` | smoothing uses the previous output; an idle frame resets it; output below 0.01 reads 0; after `clear_pending_input` the next sample equals a fresh `InputSystem`'s | previous output never updated; reset skipped; deadzone removed; clear is a no-op |
-| `moho_types::state_coordinator` `test_enter_console` | the whole `StateTransitionActions` with `show_menu: None` | `menu_for_state(ConsoleOpen) == Some("start")` |
-| `moho_types::app_state` `can_transition_to_matrix` | all 16 `GameState` pairs, expected per `can_transition_to`'s rustdoc | `Menu → Paused` allowed |
+| `moho_ui::app_state::state_coordinator` `test_enter_console` | the whole `StateTransitionActions` with `show_menu: None` | `menu_for_state(ConsoleOpen) == Some("start")` |
+| `moho_ui::app_state::game_state` `can_transition_to_matrix` | all 16 `GameState` pairs, expected per `can_transition_to`'s rustdoc | `Menu → Paused` allowed |
 | `moho_core::prefs::reader` `warning_display_names_file_and_detail_for_each_issue` | each of the 7 `PrefsIssue` arms' text contains the file and its section, key, value or reason | `{section}` dropped from one arm |
 
 ## Tech spec
@@ -49,6 +49,6 @@ The event bus, input filtering, state coordinator and prefs warning tests pin th
 
 **Test map:** the table above.
 
-**Gate class:** domain (`moho_core` and `moho_types` contracts).
+**Gate class:** domain (`moho_core` and `moho_ui::app_state` contracts).
 
 **Risks:** if a row of the transition matrix disagrees with the rustdoc, that is a defect to report, not to pin.
