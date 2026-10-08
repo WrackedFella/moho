@@ -1,6 +1,6 @@
 //! Platform-free key identity and its canonical text names.
 
-use winit::keyboard::PhysicalKey;
+use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// A physical key the engine can name, bind and persist.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -130,24 +130,195 @@ impl Key {
         Key::Alt,
     ];
 
-    /// Canonical persisted name; `parse` accepts it back.
+    /// Canonical persisted name; `parse` accepts it back. Punctuation is spelled
+    /// as a word because `,` separates list items and `;`/`#` start ini comments.
     pub fn name(self) -> &'static str {
-        ""
+        match self {
+            Key::A => "A",
+            Key::B => "B",
+            Key::C => "C",
+            Key::D => "D",
+            Key::E => "E",
+            Key::F => "F",
+            Key::G => "G",
+            Key::H => "H",
+            Key::I => "I",
+            Key::J => "J",
+            Key::K => "K",
+            Key::L => "L",
+            Key::M => "M",
+            Key::N => "N",
+            Key::O => "O",
+            Key::P => "P",
+            Key::Q => "Q",
+            Key::R => "R",
+            Key::S => "S",
+            Key::T => "T",
+            Key::U => "U",
+            Key::V => "V",
+            Key::W => "W",
+            Key::X => "X",
+            Key::Y => "Y",
+            Key::Z => "Z",
+            Key::Digit0 => "0",
+            Key::Digit1 => "1",
+            Key::Digit2 => "2",
+            Key::Digit3 => "3",
+            Key::Digit4 => "4",
+            Key::Digit5 => "5",
+            Key::Digit6 => "6",
+            Key::Digit7 => "7",
+            Key::Digit8 => "8",
+            Key::Digit9 => "9",
+            Key::Period => "Period",
+            Key::Comma => "Comma",
+            Key::Slash => "Slash",
+            Key::Backslash => "Backslash",
+            Key::Semicolon => "Semicolon",
+            Key::Apostrophe => "Apostrophe",
+            Key::LeftBracket => "LeftBracket",
+            Key::RightBracket => "RightBracket",
+            Key::Minus => "Minus",
+            Key::Equals => "Equals",
+            Key::Backtick => "Backtick",
+            Key::ArrowUp => "ArrowUp",
+            Key::ArrowDown => "ArrowDown",
+            Key::ArrowLeft => "ArrowLeft",
+            Key::ArrowRight => "ArrowRight",
+            Key::Escape => "Escape",
+            Key::Tab => "Tab",
+            Key::Backspace => "Backspace",
+            Key::Enter => "Enter",
+            Key::Space => "Spacebar",
+            Key::Shift => "Shift",
+            Key::Ctrl => "Ctrl",
+            Key::Alt => "Alt",
+        }
     }
 
     /// Player-facing label for the settings screen.
     pub fn label(self) -> &'static str {
-        ""
+        match self {
+            Key::Period => ".",
+            Key::Comma => ",",
+            Key::Slash => "/",
+            Key::Backslash => "\\",
+            Key::Semicolon => ";",
+            Key::Apostrophe => "'",
+            Key::LeftBracket => "[",
+            Key::RightBracket => "]",
+            Key::Minus => "-",
+            Key::Equals => "=",
+            Key::Backtick => "`",
+            other => other.name(),
+        }
     }
 
     /// Case-insensitive; accepts the canonical name and the aliases.
-    pub fn parse(_s: &str) -> Option<Key> {
-        None
+    pub fn parse(s: &str) -> Option<Key> {
+        let glyph = match s {
+            "." => Some(Key::Period),
+            "," => Some(Key::Comma),
+            "/" => Some(Key::Slash),
+            "\\" => Some(Key::Backslash),
+            ";" => Some(Key::Semicolon),
+            "'" => Some(Key::Apostrophe),
+            "[" => Some(Key::LeftBracket),
+            "]" => Some(Key::RightBracket),
+            "-" => Some(Key::Minus),
+            "=" => Some(Key::Equals),
+            "`" => Some(Key::Backtick),
+            _ => None,
+        };
+        if glyph.is_some() {
+            return glyph;
+        }
+        let alias = match s.to_ascii_lowercase().as_str() {
+            "up" => Some(Key::ArrowUp),
+            "down" => Some(Key::ArrowDown),
+            "left" => Some(Key::ArrowLeft),
+            "right" => Some(Key::ArrowRight),
+            "esc" => Some(Key::Escape),
+            "return" => Some(Key::Enter),
+            "space" => Some(Key::Space),
+            "control" => Some(Key::Ctrl),
+            _ => None,
+        };
+        alias.or_else(|| {
+            Key::ALL
+                .iter()
+                .copied()
+                .find(|k| k.name().eq_ignore_ascii_case(s))
+        })
     }
 
     /// `None` for keys the engine does not name.
-    pub fn from_winit(_key: PhysicalKey) -> Option<Key> {
-        None
+    pub fn from_winit(key: PhysicalKey) -> Option<Key> {
+        let PhysicalKey::Code(code) = key else {
+            return None;
+        };
+        Some(match code {
+            KeyCode::KeyA => Key::A,
+            KeyCode::KeyB => Key::B,
+            KeyCode::KeyC => Key::C,
+            KeyCode::KeyD => Key::D,
+            KeyCode::KeyE => Key::E,
+            KeyCode::KeyF => Key::F,
+            KeyCode::KeyG => Key::G,
+            KeyCode::KeyH => Key::H,
+            KeyCode::KeyI => Key::I,
+            KeyCode::KeyJ => Key::J,
+            KeyCode::KeyK => Key::K,
+            KeyCode::KeyL => Key::L,
+            KeyCode::KeyM => Key::M,
+            KeyCode::KeyN => Key::N,
+            KeyCode::KeyO => Key::O,
+            KeyCode::KeyP => Key::P,
+            KeyCode::KeyQ => Key::Q,
+            KeyCode::KeyR => Key::R,
+            KeyCode::KeyS => Key::S,
+            KeyCode::KeyT => Key::T,
+            KeyCode::KeyU => Key::U,
+            KeyCode::KeyV => Key::V,
+            KeyCode::KeyW => Key::W,
+            KeyCode::KeyX => Key::X,
+            KeyCode::KeyY => Key::Y,
+            KeyCode::KeyZ => Key::Z,
+            KeyCode::Digit0 => Key::Digit0,
+            KeyCode::Digit1 => Key::Digit1,
+            KeyCode::Digit2 => Key::Digit2,
+            KeyCode::Digit3 => Key::Digit3,
+            KeyCode::Digit4 => Key::Digit4,
+            KeyCode::Digit5 => Key::Digit5,
+            KeyCode::Digit6 => Key::Digit6,
+            KeyCode::Digit7 => Key::Digit7,
+            KeyCode::Digit8 => Key::Digit8,
+            KeyCode::Digit9 => Key::Digit9,
+            KeyCode::Period => Key::Period,
+            KeyCode::Comma => Key::Comma,
+            KeyCode::Slash => Key::Slash,
+            KeyCode::Backslash => Key::Backslash,
+            KeyCode::Semicolon => Key::Semicolon,
+            KeyCode::Quote => Key::Apostrophe,
+            KeyCode::BracketLeft => Key::LeftBracket,
+            KeyCode::BracketRight => Key::RightBracket,
+            KeyCode::Minus => Key::Minus,
+            KeyCode::Equal => Key::Equals,
+            KeyCode::Backquote => Key::Backtick,
+            KeyCode::ArrowUp => Key::ArrowUp,
+            KeyCode::ArrowDown => Key::ArrowDown,
+            KeyCode::ArrowLeft => Key::ArrowLeft,
+            KeyCode::ArrowRight => Key::ArrowRight,
+            KeyCode::Escape => Key::Escape,
+            KeyCode::Tab => Key::Tab,
+            KeyCode::Backspace => Key::Backspace,
+            KeyCode::Enter => Key::Enter,
+            KeyCode::Space => Key::Space,
+            KeyCode::ShiftLeft | KeyCode::ShiftRight => Key::Shift,
+            KeyCode::ControlLeft | KeyCode::ControlRight => Key::Ctrl,
+            KeyCode::AltLeft | KeyCode::AltRight => Key::Alt,
+            _ => return None,
+        })
     }
 }
 

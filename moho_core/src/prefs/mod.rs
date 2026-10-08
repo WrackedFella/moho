@@ -3,16 +3,12 @@
 //! This module handles loading, saving, and managing user preferences including
 //! key bindings, mouse sensitivity, input filtering, audio volumes, and video settings.
 
-mod key_names;
-mod parser;
 mod reader;
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub use key_names::parse_key_name;
-pub use parser::{binding_to_string, parse_binding};
 pub use reader::{PrefsIssue, PrefsWarning};
 
 /// Window display mode.
@@ -53,36 +49,8 @@ pub const RESOLUTION_PRESETS: &[(&str, (u32, u32))] = &[
     ("3840×2160 (4K)", (3840, 2160)),
 ];
 
-/// A numeric key binding: key code and modifier bits.
-/// mods bitflags: bit0 = ctrl, bit1 = shift, bit2 = alt
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Binding {
-    pub code: u32,
-    pub mods: u8,
-}
-
-impl Binding {
-    pub fn new(code: u32, mods: u8) -> Self {
-        Self { code, mods }
-    }
-}
-
-impl Default for Binding {
-    fn default() -> Self {
-        Binding::new('W' as u32, 0)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Prefs {
-    key_w: Binding,
-    key_a: Binding,
-    key_s: Binding,
-    key_d: Binding,
-    key_up: Binding,
-    key_down: Binding,
-    key_sprint: Binding,
-    key_jump: Binding,
     mouse_sensitivity: f32,
     input_filtering_enabled: bool,
     // Audio settings (values 1.0 to 10.0)
@@ -106,68 +74,14 @@ pub struct Prefs {
 const MAX_GRAPHICS_QUALITY: u32 = 4;
 
 impl Prefs {
-    // --- Binding accessors ---
-
-    pub fn key_w(&self) -> Binding {
-        self.key_w
-    }
-    pub fn key_a(&self) -> Binding {
-        self.key_a
-    }
-    pub fn key_s(&self) -> Binding {
-        self.key_s
-    }
-    pub fn key_d(&self) -> Binding {
-        self.key_d
-    }
-    pub fn key_up(&self) -> Binding {
-        self.key_up
-    }
-    pub fn key_down(&self) -> Binding {
-        self.key_down
-    }
-
-    pub fn key_sprint(&self) -> Binding {
-        self.key_sprint
-    }
-
-    pub fn key_jump(&self) -> Binding {
-        self.key_jump
-    }
-
-    pub fn set_key_w(&mut self, b: Binding) {
-        self.key_w = b;
-    }
-    pub fn set_key_a(&mut self, b: Binding) {
-        self.key_a = b;
-    }
-    pub fn set_key_s(&mut self, b: Binding) {
-        self.key_s = b;
-    }
-    pub fn set_key_d(&mut self, b: Binding) {
-        self.key_d = b;
-    }
-    pub fn set_key_up(&mut self, b: Binding) {
-        self.key_up = b;
-    }
-    pub fn set_key_down(&mut self, b: Binding) {
-        self.key_down = b;
-    }
-
-    pub fn set_key_sprint(&mut self, b: Binding) {
-        self.key_sprint = b;
-    }
-
-    pub fn set_key_jump(&mut self, b: Binding) {
-        self.key_jump = b;
-    }
-
     /// The raw `[bindings]` section: action name to unparsed value.
     pub fn bindings(&self) -> &BTreeMap<String, String> {
         &self.bindings
     }
 
-    pub fn set_bindings(&mut self, _section: BTreeMap<String, String>) {}
+    pub fn set_bindings(&mut self, section: BTreeMap<String, String>) {
+        self.bindings = section;
+    }
 
     // --- Scalar getters ---
 
@@ -261,14 +175,6 @@ impl Prefs {
 
     // --- Builder methods (for construction in tests) ---
 
-    pub fn with_key_w(mut self, b: Binding) -> Self {
-        self.key_w = b;
-        self
-    }
-    pub fn with_key_a(mut self, b: Binding) -> Self {
-        self.key_a = b;
-        self
-    }
     pub fn with_mouse_sensitivity(mut self, v: f32) -> Self {
         self.mouse_sensitivity = v;
         self
@@ -282,14 +188,6 @@ impl Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         Self {
-            key_w: Binding::new('W' as u32, 0),
-            key_a: Binding::new('A' as u32, 0),
-            key_s: Binding::new('S' as u32, 0),
-            key_d: Binding::new('D' as u32, 0),
-            key_up: Binding::new(' ' as u32, 0),   // Space
-            key_down: Binding::new(0x205, 0),      // Ctrl
-            key_sprint: Binding::new(0x204, 0),    // Shift
-            key_jump: Binding::new(' ' as u32, 0), // Space
             mouse_sensitivity: 1.0,
             input_filtering_enabled: true,
             // Default audio volumes (mid-range)
@@ -327,17 +225,8 @@ impl Prefs {
     }
 
     pub fn to_ini_string(&self) -> String {
-        let bind = parser::binding_to_string;
-        format!(
+        let mut text = format!(
             "[prefs]\n\
-             key_w={key_w}\n\
-             key_a={key_a}\n\
-             key_s={key_s}\n\
-             key_d={key_d}\n\
-             key_up={key_up}\n\
-             key_down={key_down}\n\
-             key_sprint={key_sprint}\n\
-             key_jump={key_jump}\n\
              mouse_sensitivity={mouse_sensitivity}\n\
              input_filtering_enabled={input_filtering_enabled}\n\
              \n[audio]\n\
@@ -356,14 +245,6 @@ impl Prefs {
              load_radius={load}\n\
              unload_radius={unload}\n\
              chunks_per_frame={chunks}\n",
-            key_w = bind(&self.key_w),
-            key_a = bind(&self.key_a),
-            key_s = bind(&self.key_s),
-            key_d = bind(&self.key_d),
-            key_up = bind(&self.key_up),
-            key_down = bind(&self.key_down),
-            key_sprint = bind(&self.key_sprint),
-            key_jump = bind(&self.key_jump),
             mouse_sensitivity = self.mouse_sensitivity,
             input_filtering_enabled = self.input_filtering_enabled,
             sfx = self.audio_sound_effect_volume,
@@ -378,7 +259,16 @@ impl Prefs {
             load = self.world_load_radius,
             unload = self.world_unload_radius,
             chunks = self.world_chunks_per_frame,
-        )
+        );
+        if !self.bindings.is_empty() {
+            text.push_str("\n[bindings]\n");
+            text.extend(
+                self.bindings
+                    .iter()
+                    .map(|(action, value)| format!("{action}={value}\n")),
+            );
+        }
+        text
     }
 
     pub fn save(&self) -> Result<(), std::io::Error> {
@@ -423,13 +313,6 @@ mod tests {
 
         assert!(dir.path().join("config/prefs.ini").is_file());
         assert_eq!(loaded, prefs);
-    }
-
-    #[test]
-    fn test_binding_default() {
-        let binding = Binding::default();
-        assert_eq!(binding.code, 'W' as u32);
-        assert_eq!(binding.mods, 0);
     }
 
     #[test]

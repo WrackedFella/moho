@@ -11,21 +11,17 @@ mod video_tab;
 
 use conflict_modal::ConflictModalState;
 use keybind_capture::KeybindCaptureHandler;
+use moho_input::bindings::Binding;
+use moho_input::key::Key;
 use state::SettingsState;
 pub use types::SettingsTab;
 
 use super::{FormControls, MenuAction, Screen, ScreenSpec, UiComponent};
-use crate::prefs::Binding;
+use crate::actions::StrategyAction;
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 pub(super) enum SettingsField {
-    KeyW,
-    KeyA,
-    KeyS,
-    KeyD,
-    KeyUp,
-    KeyDown,
-    KeySprint,
+    Binding(StrategyAction),
     MouseSensitivity,
     InputFiltering,
     AudioSoundEffect,
@@ -111,8 +107,8 @@ impl SettingsMenu {
     }
 
     pub fn apply_pending_binding(&mut self) {
-        self.keybind_capture.apply_pending(|field, binding| {
-            self.state.set_staged_binding(field, binding);
+        self.keybind_capture.apply_pending(|action, bindings| {
+            self.state.set_staged_binding(action, bindings);
         });
     }
 
@@ -144,23 +140,19 @@ impl SettingsMenu {
         self.keybind_capture.start_listening(binding_id);
     }
 
-    /// Testable helper: apply a resolved key code while the menu is listening.
+    /// Testable helper: apply a resolved key while the menu is listening.
     ///
     /// This function contains the core logic for applying a binding or queuing a
     /// conflict modal when `listening` is active. It's public so unit tests
     /// can exercise the behavior without depending on winit event construction.
     ///
     /// For testing purposes: allows direct simulation of key input during binding listen mode.
-    pub fn apply_key_code_while_listening(&mut self, code: u32, mods_bits: u8) -> bool {
-        let staged_prefs = self.state.staged().clone();
-        self.keybind_capture.apply_key_code_while_listening(
-            code,
-            mods_bits,
-            &staged_prefs,
-            |field, binding| {
-                self.state.set_staged_binding(field, binding);
-            },
-        )
+    pub fn apply_key_while_listening(&mut self, key: Key) -> bool {
+        let bindings = self.state.staged_bindings().clone();
+        self.keybind_capture
+            .apply_key_while_listening(key, &bindings, |action, bindings| {
+                self.state.set_staged_binding(action, bindings);
+            })
     }
 
     /// Get the currently active tab.
@@ -181,20 +173,11 @@ impl SettingsMenu {
         self.is_dirty()
     }
 
-    /// Get the staged binding for a specific binding ID.
+    /// Get the staged bindings for a specific binding ID.
     /// For testing purposes only - allows tests to verify binding state.
-    pub fn get_staged_binding(&self, binding_id: usize) -> Binding {
-        let field = match binding_id {
-            0 => SettingsField::KeyW,
-            1 => SettingsField::KeyA,
-            2 => SettingsField::KeyS,
-            3 => SettingsField::KeyD,
-            4 => SettingsField::KeyUp,
-            5 => SettingsField::KeyDown,
-            6 => SettingsField::KeySprint,
-            _ => return Binding::new(0, 0),
-        };
-        self.state.get_staged_binding(field)
+    /// Empty for an unbound action or an unknown ID.
+    pub fn get_staged_binding(&self, binding_id: usize) -> &[Binding] {
+        types::row_action(binding_id).map_or(&[], |action| self.state.get_staged_binding(action))
     }
 
     /// Apply and save staged changes.
@@ -242,10 +225,10 @@ impl UiComponent for SettingsMenu {
         render_ops::render_content_area(ctx, self);
 
         // Handle key capture when listening for a binding - delegates to keybind_capture
-        let staged_prefs = self.state.staged().clone();
+        let bindings = self.state.staged_bindings().clone();
         self.keybind_capture
-            .handle_key_capture(ctx, &staged_prefs, |field, binding| {
-                self.state.set_staged_binding(field, binding);
+            .handle_key_capture(ctx, &bindings, |action, bindings| {
+                self.state.set_staged_binding(action, bindings);
             });
 
         items
@@ -273,10 +256,10 @@ impl Screen for SettingsMenu {
 
     /// Handle raw input for keybind capture
     fn handle_raw_input(&mut self, event: &winit::event::WindowEvent) -> bool {
-        let staged_prefs = self.state.staged().clone();
+        let bindings = self.state.staged_bindings().clone();
         self.keybind_capture
-            .handle_winit_event(event, &staged_prefs, |field, binding| {
-                self.state.set_staged_binding(field, binding);
+            .handle_winit_event(event, &bindings, |action, bindings| {
+                self.state.set_staged_binding(action, bindings);
             })
     }
 
@@ -305,24 +288,25 @@ impl Screen for SettingsMenu {
 mod tests {
     use super::*;
 
+    fn key(k: Key) -> Vec<Binding> {
+        vec![Binding::Key(k)]
+    }
+
     #[test]
     fn modifier_only_capture_applies() {
-        // Use isolated prefs so the test is not affected by key_down=Ctrl on disk.
-        // key_down defaults to Ctrl (0x205) which would conflict with the Ctrl
-        // binding we're trying to capture for KeyW.
-        let mut prefs = crate::prefs::Prefs::default();
-        prefs.set_key_down(Binding::new('Z' as u32, 0));
-        let mut menu = SettingsMenu::with_prefs(prefs);
+        // Descend holds Ctrl by default, which would conflict with the Ctrl
+        // binding we are trying to capture for Move Forward.
+        let mut menu = SettingsMenu::with_prefs(crate::prefs::Prefs::default());
+        menu.state
+            .set_staged_binding(StrategyAction::Descend, key(Key::Z));
         menu.keybind_capture.start_listening(0);
 
-        let staged_prefs = menu.state.staged().clone();
-        let applied = menu.keybind_capture.capture_modifier_if_listening(
-            1,
-            &staged_prefs,
-            |field, binding| {
-                menu.state.set_staged_binding(field, binding);
-            },
-        );
+        let bindings = menu.state.staged_bindings().clone();
+        let applied =
+            menu.keybind_capture
+                .capture_modifier_if_listening(1, &bindings, |action, b| {
+                    menu.state.set_staged_binding(action, b);
+                });
 
         assert!(applied, "modifier capture should apply");
         assert!(
@@ -330,27 +314,25 @@ mod tests {
             "should stop listening after capture"
         );
         assert_eq!(
-            menu.state.get_staged_binding(SettingsField::KeyW),
-            Binding::new(0x205, 0)
+            menu.state.get_staged_binding(StrategyAction::MoveForward),
+            key(Key::Ctrl)
         );
     }
 
     #[test]
     fn modifier_only_conflict_shows_modal() {
-        let mut menu = SettingsMenu::new();
-        // set staged key_a to Ctrl so Ctrl will conflict with listening target 0
+        let mut menu = SettingsMenu::with_prefs(crate::prefs::Prefs::default());
+        // set staged Move Left to Ctrl so Ctrl will conflict with listening target 0
         menu.state
-            .set_staged_binding(SettingsField::KeyA, Binding::new(0x205, 0));
+            .set_staged_binding(StrategyAction::MoveLeft, key(Key::Ctrl));
         menu.keybind_capture.start_listening(0);
 
-        let staged_prefs = menu.state.staged().clone();
-        let applied = menu.keybind_capture.capture_modifier_if_listening(
-            1,
-            &staged_prefs,
-            |field, binding| {
-                menu.state.set_staged_binding(field, binding);
-            },
-        );
+        let bindings = menu.state.staged_bindings().clone();
+        let applied =
+            menu.keybind_capture
+                .capture_modifier_if_listening(1, &bindings, |action, b| {
+                    menu.state.set_staged_binding(action, b);
+                });
 
         assert!(applied, "modifier conflict should be processed");
         assert!(
@@ -372,18 +354,16 @@ mod tests {
 
     #[test]
     fn modifier_multiple_mods_ignored() {
-        let mut menu = SettingsMenu::new();
+        let mut menu = SettingsMenu::with_prefs(crate::prefs::Prefs::default());
         menu.keybind_capture.start_listening(0);
 
-        let staged_prefs = menu.state.staged().clone();
+        let bindings = menu.state.staged_bindings().clone();
         // ctrl+shift (bits 1 and 2) should not create a modifier-only binding
-        let applied = menu.keybind_capture.capture_modifier_if_listening(
-            3,
-            &staged_prefs,
-            |field, binding| {
-                menu.state.set_staged_binding(field, binding);
-            },
-        );
+        let applied =
+            menu.keybind_capture
+                .capture_modifier_if_listening(3, &bindings, |action, b| {
+                    menu.state.set_staged_binding(action, b);
+                });
 
         assert!(!applied, "combined modifiers should not be captured");
         assert!(
@@ -395,11 +375,10 @@ mod tests {
     #[test]
     fn egui_integration_modifier_capture() {
         let ctx = egui::Context::default();
-        // Use isolated prefs so key_down=Ctrl (the default) does not conflict
-        // with the Ctrl modifier binding we are capturing for KeyW.
-        let mut prefs = crate::prefs::Prefs::default();
-        prefs.set_key_down(Binding::new('Z' as u32, 0));
-        let mut menu = SettingsMenu::with_prefs(prefs);
+        // Descend holds Ctrl by default; free it so the capture does not conflict.
+        let mut menu = SettingsMenu::with_prefs(crate::prefs::Prefs::default());
+        menu.state
+            .set_staged_binding(StrategyAction::Descend, key(Key::Z));
         menu.keybind_capture.start_listening(0);
 
         let mut raw = egui::RawInput::default();
@@ -410,8 +389,8 @@ mod tests {
         });
 
         assert_eq!(
-            menu.state.get_staged_binding(SettingsField::KeyW),
-            Binding::new(0x205, 0)
+            menu.state.get_staged_binding(StrategyAction::MoveForward),
+            key(Key::Ctrl)
         );
         assert!(!menu.keybind_capture.is_listening());
     }

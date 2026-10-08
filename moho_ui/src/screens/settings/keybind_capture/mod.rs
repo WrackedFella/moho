@@ -1,7 +1,7 @@
 //! Keybind capture handler for configuring input bindings.
 //!
 //! This module contains all keybind configuration logic including:
-//! - Key press capture (modifier keys are treated as regular key codes)
+//! - Key press capture (modifier keys are treated as regular keys)
 //! - Conflict detection and modal triggering
 //! - Input state tracking
 //!
@@ -9,12 +9,14 @@
 //! (accessed via "Edit Keybinds" button).
 
 mod binding_logic;
-mod modifier_encoding;
 
-use super::SettingsField;
+use moho_input::bindings::Binding;
+use moho_input::key::Key;
+
+use super::binding_registry::BindingRegistry;
 use super::conflict_modal::ConflictModalState;
-use super::types::BindingId;
-use crate::prefs::Binding;
+use super::types::display_name;
+use crate::actions::StrategyAction;
 
 /// Keybind capture handler for configuring input bindings.
 ///
@@ -77,16 +79,16 @@ impl KeybindCaptureHandler {
     ///
     /// # Arguments
     /// * `event` - The winit WindowEvent to process
-    /// * `staged_prefs` - The staged preferences to check for conflicts and apply bindings
+    /// * `bindings` - The staged bindings to check for conflicts
     /// * `on_binding_changed` - Callback to update staged binding
     pub fn handle_winit_event<F>(
         &mut self,
         event: &winit::event::WindowEvent,
-        staged_prefs: &crate::prefs::Prefs,
+        bindings: &BindingRegistry,
         on_binding_changed: F,
     ) -> bool
     where
-        F: FnMut(SettingsField, Binding),
+        F: FnMut(StrategyAction, Vec<Binding>),
     {
         use winit::event::{ElementState, WindowEvent as WEvent};
 
@@ -104,21 +106,12 @@ impl KeybindCaptureHandler {
                 return false;
             }
 
-            // Map physical key to binding code (delegated to shared helper)
-            let code = moho_input::physical_key_to_binding_code(key_event.physical_key);
+            // Keys the engine does not name cannot be bound; keep listening.
+            let Some(key) = Key::from_winit(key_event.physical_key) else {
+                return false;
+            };
 
-            // We don't have reliable modifier state here (winit KeyEvent doesn't expose it
-            // in a consistent, portable way), so record no modifier bits for non-modifier
-            // keys. We forward the resolved key code to a helper so tests can exercise
-            // the post-mapping logic without constructing full winit KeyEvent structs.
-            let mods_bits = 0u8;
-
-            return self.apply_key_code_while_listening(
-                code,
-                mods_bits,
-                staged_prefs,
-                on_binding_changed,
-            );
+            return self.apply_key_while_listening(key, bindings, on_binding_changed);
         }
         false
     }
@@ -138,17 +131,15 @@ impl KeybindCaptureHandler {
     /// * `on_binding_changed` - Callback to update staged bindings
     pub fn apply_pending<F>(&mut self, mut on_binding_changed: F)
     where
-        F: FnMut(SettingsField, Binding),
+        F: FnMut(StrategyAction, Vec<Binding>),
     {
         if let Some(pending) = self.conflict_modal.take_pending() {
             // Clear conflicting binding if any
-            if let Some(id) = pending.conflicting_id.and_then(BindingId::from_usize) {
-                on_binding_changed(id.to_settings_field(), Binding::new(0, 0));
+            if let Some(conflicting) = pending.conflicting {
+                on_binding_changed(conflicting, vec![]);
             }
 
-            if let Some(id) = BindingId::from_usize(pending.target_id) {
-                on_binding_changed(id.to_settings_field(), pending.binding);
-            }
+            on_binding_changed(pending.target, vec![Binding::Key(pending.key)]);
         }
         self.conflict_modal.hide();
     }
@@ -172,8 +163,8 @@ impl KeybindCaptureHandler {
         ))
     }
 
-    pub(super) fn get_key_name(id: usize) -> &'static str {
-        BindingId::from_usize(id).map_or("Unknown", super::types::BindingId::display_name)
+    pub(super) fn get_key_name(action: StrategyAction) -> &'static str {
+        display_name(action)
     }
 }
 
@@ -181,6 +172,11 @@ impl KeybindCaptureHandler {
 mod tests {
     use super::super::key_mapping::binding_label;
     use super::*;
+    use crate::prefs::Prefs;
+
+    fn registry() -> BindingRegistry {
+        BindingRegistry::from_prefs(&Prefs::default())
+    }
 
     #[test]
     fn test_start_stop_listening() {
@@ -197,16 +193,14 @@ mod tests {
     #[test]
     fn test_escape_cancels_listening() {
         let mut handler = KeybindCaptureHandler::new();
-        let prefs = crate::prefs::Prefs::default();
+        let bindings = registry();
         let mut bindings_changed = vec![];
 
         handler.start_listening(0);
 
-        // Escape key code is 0x200
-        let consumed =
-            handler.apply_key_code_while_listening(0x200, 0, &prefs, |field, binding| {
-                bindings_changed.push((field, binding));
-            });
+        let consumed = handler.apply_key_while_listening(Key::Escape, &bindings, |action, b| {
+            bindings_changed.push((action, b));
+        });
 
         assert!(consumed);
         assert!(!handler.is_listening());
@@ -216,70 +210,56 @@ mod tests {
     #[test]
     fn test_modifier_only_capture() {
         let mut handler = KeybindCaptureHandler::new();
-        let prefs = crate::prefs::Prefs::default();
+        let bindings = registry();
         let mut bindings_changed = vec![];
 
         handler.start_listening(0);
 
-        // Alt modifier-only binding (code 0x206, mods 0)
-        // Note: Default prefs uses Shift (0x204) for key_down, so use Alt to avoid conflict
-        let consumed =
-            handler.apply_key_code_while_listening(0x206, 0, &prefs, |field, binding| {
-                bindings_changed.push((field, binding));
-            });
+        // Alt is free by default (Descend holds Ctrl, Sprint holds Shift).
+        let consumed = handler.apply_key_while_listening(Key::Alt, &bindings, |action, b| {
+            bindings_changed.push((action, b));
+        });
 
         assert!(consumed);
         assert!(!handler.is_listening());
-        assert_eq!(bindings_changed.len(), 1);
-
-        let (field, binding) = bindings_changed[0];
-        assert!(matches!(field, SettingsField::KeyW));
-        assert_eq!(binding.code, 0x206);
-        assert_eq!(binding.mods, 0);
+        assert_eq!(
+            bindings_changed,
+            vec![(StrategyAction::MoveForward, vec![Binding::Key(Key::Alt)])]
+        );
     }
 
     #[test]
     fn test_normal_key_capture() {
         let mut handler = KeybindCaptureHandler::new();
-        let prefs = crate::prefs::Prefs::default();
+        let bindings = registry();
         let mut bindings_changed = vec![];
 
-        handler.start_listening(1); // KeyA
+        handler.start_listening(1); // Move Left
 
-        // Press 'W' key with Ctrl modifier
-        let w_code = 'W' as u32;
-        let ctrl_mods = 1u8;
-        let consumed =
-            handler.apply_key_code_while_listening(w_code, ctrl_mods, &prefs, |field, binding| {
-                bindings_changed.push((field, binding));
-            });
+        let consumed = handler.apply_key_while_listening(Key::Q, &bindings, |action, b| {
+            bindings_changed.push((action, b));
+        });
 
         assert!(consumed);
         assert!(!handler.is_listening());
-        assert_eq!(bindings_changed.len(), 1);
-
-        let (field, binding) = bindings_changed[0];
-        assert!(matches!(field, SettingsField::KeyA));
-        assert_eq!(binding.code, w_code);
-        assert_eq!(binding.mods, ctrl_mods);
+        assert_eq!(
+            bindings_changed,
+            vec![(StrategyAction::MoveLeft, vec![Binding::Key(Key::Q)])]
+        );
     }
 
     #[test]
     fn test_conflict_detection() {
         let mut handler = KeybindCaptureHandler::new();
-
-        // Create prefs where KeyW is already bound to 'W'
-        let prefs = crate::prefs::Prefs::default().with_key_w(Binding::new('W' as u32, 0));
-
+        let bindings = registry(); // Move Forward holds W
         let mut bindings_changed = vec![];
 
-        // Try to bind KeyA to the same key 'W'
-        handler.start_listening(1); // KeyA
+        // Try to bind Move Left to the same key 'W'
+        handler.start_listening(1);
 
-        let consumed =
-            handler.apply_key_code_while_listening('W' as u32, 0, &prefs, |field, binding| {
-                bindings_changed.push((field, binding));
-            });
+        let consumed = handler.apply_key_while_listening(Key::W, &bindings, |action, b| {
+            bindings_changed.push((action, b));
+        });
 
         assert!(consumed);
         assert!(!handler.is_listening());
@@ -290,10 +270,10 @@ mod tests {
     #[test]
     fn take_conflict_modal_returns_holder_name_then_key_description() {
         let mut handler = KeybindCaptureHandler::new();
-        let prefs = crate::prefs::Prefs::default();
+        let bindings = registry();
 
         handler.start_listening(1); // Move Left
-        handler.apply_key_code_while_listening('W' as u32, 0, &prefs, |_, _| {});
+        handler.apply_key_while_listening(Key::W, &bindings, |_, _| {});
 
         assert_eq!(
             handler.take_conflict_modal(),
@@ -301,63 +281,41 @@ mod tests {
         );
     }
 
-    fn resolve_conflict(target_id: usize, code: u32) -> Vec<(SettingsField, Binding)> {
+    fn resolve_conflict(target_id: usize, key: Key) -> Vec<(StrategyAction, Vec<Binding>)> {
         let mut handler = KeybindCaptureHandler::new();
-        let prefs = crate::prefs::Prefs::default();
+        let bindings = registry();
 
         handler.start_listening(target_id);
-        handler.apply_key_code_while_listening(code, 0, &prefs, |_, _| {});
+        handler.apply_key_while_listening(key, &bindings, |_, _| {});
         let mut changes = vec![];
-        handler.apply_pending(|field, binding| changes.push((field, binding)));
+        handler.apply_pending(|action, b| changes.push((action, b)));
         changes
     }
 
     #[test]
     fn move_down_taking_shift_unbinds_sprint() {
-        let changes = resolve_conflict(5, 0x204);
+        let changes = resolve_conflict(5, Key::Shift);
 
         assert_eq!(changes.len(), 2);
-        assert!(changes.contains(&(SettingsField::KeySprint, Binding::new(0, 0))));
-        assert!(changes.contains(&(SettingsField::KeyDown, Binding::new(0x204, 0))));
+        assert!(changes.contains(&(StrategyAction::Sprint, vec![])));
+        assert!(changes.contains(&(StrategyAction::Descend, vec![Binding::Key(Key::Shift)])));
     }
 
     #[test]
     fn sprint_taking_a_unbinds_move_left() {
-        let changes = resolve_conflict(6, 'A' as u32);
+        let changes = resolve_conflict(6, Key::A);
 
         assert_eq!(changes.len(), 2);
-        assert!(changes.contains(&(SettingsField::KeyA, Binding::new(0, 0))));
-        assert!(changes.contains(&(SettingsField::KeySprint, Binding::new('A' as u32, 0))));
+        assert!(changes.contains(&(StrategyAction::MoveLeft, vec![])));
+        assert!(changes.contains(&(StrategyAction::Sprint, vec![Binding::Key(Key::A)])));
     }
 
     #[test]
     fn test_binding_label_formatting() {
-        // Unbound
-        let unbound = Binding::new(0, 0);
-        assert_eq!(binding_label(&unbound), "Unbound");
-
-        // Simple key
-        let w_key = Binding::new('W' as u32, 0);
-        assert_eq!(binding_label(&w_key), "W");
-
-        // Key with Ctrl
-        let ctrl_w = Binding::new('W' as u32, 1);
-        assert_eq!(binding_label(&ctrl_w), "Ctrl+W");
-
-        // Key with multiple modifiers
-        let ctrl_shift_w = Binding::new('W' as u32, 3); // Ctrl(1) | Shift(2)
-        assert_eq!(binding_label(&ctrl_shift_w), "Ctrl+Shift+W");
-
-        // Modifier-only (Shift alone)
-        let shift_only = Binding::new(0x204, 0);
-        assert_eq!(binding_label(&shift_only), "Shift");
-
-        // Arrow key
-        let arrow_up = Binding::new(0x100, 0);
-        assert_eq!(binding_label(&arrow_up), "ArrowUp");
-
-        // Space
-        let space = Binding::new(' ' as u32, 0);
-        assert_eq!(binding_label(&space), "Spacebar");
+        assert_eq!(binding_label(&[]), "Unbound");
+        assert_eq!(binding_label(&[Binding::Key(Key::W)]), "W");
+        assert_eq!(binding_label(&[Binding::Key(Key::Shift)]), "Shift");
+        assert_eq!(binding_label(&[Binding::Key(Key::ArrowUp)]), "ArrowUp");
+        assert_eq!(binding_label(&[Binding::Key(Key::Space)]), "Spacebar");
     }
 }

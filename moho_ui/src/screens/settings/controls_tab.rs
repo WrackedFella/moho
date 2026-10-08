@@ -2,6 +2,7 @@
 ///
 /// This includes keybind settings, mouse sensitivity, and input filtering options.
 use super::key_mapping::binding_label;
+use super::types::{BINDING_ROWS, display_name};
 use super::{FormControls, SettingsField, SettingsMenu};
 
 pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
@@ -21,122 +22,19 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
         // Use fixed-width layout for right-aligned inputs
         let label_width = 150.0;
 
-        // Move Forward
-        {
-            let is_dirty = menu.state.is_binding_modified(SettingsField::KeyW);
-            let binding = menu.state.get_staged_binding(SettingsField::KeyW);
+        for (id, action) in BINDING_ROWS.into_iter().enumerate() {
+            let is_dirty = menu.state.is_binding_modified(action);
+            let label = binding_label(menu.state.get_staged_binding(action));
             let clicked = FormControls::keybind_control(
                 ui,
-                "Move Forward:",
-                &binding_label(&binding),
+                &format!("{}:", display_name(action)),
+                &label,
                 is_dirty,
-                menu.is_listening_for(0),
+                menu.is_listening_for(id),
                 label_width,
             );
             if clicked {
-                menu.start_listening(0);
-            }
-        }
-
-        // Move Left
-        {
-            let is_dirty = menu.state.is_binding_modified(SettingsField::KeyA);
-            let binding = menu.state.get_staged_binding(SettingsField::KeyA);
-            let clicked = FormControls::keybind_control(
-                ui,
-                "Move Left:",
-                &binding_label(&binding),
-                is_dirty,
-                menu.is_listening_for(1),
-                label_width,
-            );
-            if clicked {
-                menu.start_listening(1);
-            }
-        }
-
-        // Move Back
-        {
-            let is_dirty = menu.state.is_binding_modified(SettingsField::KeyS);
-            let binding = menu.state.get_staged_binding(SettingsField::KeyS);
-            let clicked = FormControls::keybind_control(
-                ui,
-                "Move Back:",
-                &binding_label(&binding),
-                is_dirty,
-                menu.is_listening_for(2),
-                label_width,
-            );
-            if clicked {
-                menu.start_listening(2);
-            }
-        }
-
-        // Move Right
-        {
-            let is_dirty = menu.state.is_binding_modified(SettingsField::KeyD);
-            let binding = menu.state.get_staged_binding(SettingsField::KeyD);
-            let clicked = FormControls::keybind_control(
-                ui,
-                "Move Right:",
-                &binding_label(&binding),
-                is_dirty,
-                menu.is_listening_for(3),
-                label_width,
-            );
-            if clicked {
-                menu.start_listening(3);
-            }
-        }
-
-        // Move Up
-        {
-            let is_dirty = menu.state.is_binding_modified(SettingsField::KeyUp);
-            let binding = menu.state.get_staged_binding(SettingsField::KeyUp);
-            let clicked = FormControls::keybind_control(
-                ui,
-                "Move Up:",
-                &binding_label(&binding),
-                is_dirty,
-                menu.is_listening_for(4),
-                label_width,
-            );
-            if clicked {
-                menu.start_listening(4);
-            }
-        }
-
-        // Move Down
-        {
-            let is_dirty = menu.state.is_binding_modified(SettingsField::KeyDown);
-            let binding = menu.state.get_staged_binding(SettingsField::KeyDown);
-            let clicked = FormControls::keybind_control(
-                ui,
-                "Move Down:",
-                &binding_label(&binding),
-                is_dirty,
-                menu.is_listening_for(5),
-                label_width,
-            );
-            if clicked {
-                menu.start_listening(5);
-            }
-        }
-
-        // Sprint
-        {
-            let is_dirty = menu.state.is_binding_modified(SettingsField::KeySprint);
-            let binding = menu.state.get_staged_binding(SettingsField::KeySprint);
-            let clicked = FormControls::keybind_control(
-                ui,
-                "Sprint:",
-                &binding_label(&binding),
-                is_dirty,
-                menu.is_listening_for(6),
-                label_width,
-            );
-            if clicked {
-                menu.start_listening(6);
+                menu.start_listening(id);
             }
         }
         ui.add_space(8.0);

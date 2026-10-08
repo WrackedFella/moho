@@ -6,6 +6,9 @@
 
 use moho_core::prefs::Prefs;
 use moho_game::scene::SceneEntities;
+use moho_input::bindings::{ActionBindings, Binding};
+use moho_input::key::Key;
+use moho_ui::actions::StrategyAction;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -111,6 +114,7 @@ struct App {
 
     // Keybinds and preferences
     prefs: Prefs,
+    bindings: ActionBindings<StrategyAction>,
 
     // Frame timing
     frame_duration: Duration,
@@ -131,6 +135,12 @@ struct App {
 }
 
 impl App {
+    /// Saves prefs together with the current bindings.
+    fn save_prefs(&mut self) -> std::io::Result<()> {
+        self.prefs.set_bindings(self.bindings.to_section());
+        self.prefs.save()
+    }
+
     fn from_config(config: crate::app::config::AppConfig) -> Self {
         let initialized = crate::app::initializer::AppInitializer::new(config)
             .build()
@@ -173,6 +183,7 @@ impl App {
 
             simulation: initialized.simulation,
 
+            bindings: load_bindings(&initialized.prefs),
             prefs: initialized.prefs,
 
             frame_duration: initialized.frame_duration,
@@ -258,30 +269,31 @@ impl App {
 
     /// Update controller input from keyboard state
     fn update_controller_input(&mut self) {
-        // Helper to check if a binding is currently active
-        let is_active = |binding: &moho_core::prefs::Binding| -> bool {
-            self.input
-                .active_keys
-                .contains(&(binding.code, binding.mods))
+        // An action is active when any of its bindings is held
+        let is_active = |action: StrategyAction| -> bool {
+            self.bindings
+                .get(action)
+                .iter()
+                .any(|Binding::Key(key)| self.input.active_keys.contains(key))
         };
 
         // Calculate forward/backward
-        let forward = if is_active(&self.prefs.key_w()) {
+        let forward = if is_active(StrategyAction::MoveForward) {
             1.0
         } else {
             0.0
-        } - if is_active(&self.prefs.key_s()) {
+        } - if is_active(StrategyAction::MoveBack) {
             1.0
         } else {
             0.0
         };
 
         // Calculate left/right (A is left, so negative)
-        let right = if is_active(&self.prefs.key_d()) {
+        let right = if is_active(StrategyAction::MoveRight) {
             1.0
         } else {
             0.0
-        } - if is_active(&self.prefs.key_a()) {
+        } - if is_active(StrategyAction::MoveLeft) {
             1.0
         } else {
             0.0
@@ -290,11 +302,11 @@ impl App {
         // Calculate up/down - only in first person mode
         let up = if self.simulation.camera_mode() == moho_game::controller::CameraMode::FirstPerson
         {
-            (if is_active(&self.prefs.key_up()) {
+            (if is_active(StrategyAction::Ascend) {
                 1.0
             } else {
                 0.0
-            }) - (if is_active(&self.prefs.key_down()) {
+            }) - (if is_active(StrategyAction::Descend) {
                 1.0
             } else {
                 0.0
@@ -304,7 +316,7 @@ impl App {
         };
 
         // Check if sprint is active (Shift)
-        let sprint = is_active(&self.prefs.key_sprint());
+        let sprint = is_active(StrategyAction::Sprint);
 
         self.simulation.controller_input.forward = forward;
         self.simulation.controller_input.right = right;
@@ -314,7 +326,7 @@ impl App {
         self.simulation.controller_input.zoom_delta = 0.0;
 
         // Track jump key for physics KCC
-        self.physics.jump_pressed = is_active(&self.prefs.key_jump());
+        self.physics.jump_pressed = is_active(StrategyAction::Jump);
     }
 
     /// Handle keyboard input for camera controls
@@ -387,19 +399,11 @@ impl App {
                 return;
             }
 
-            // Convert physical keycode to our binding code using shared helper
-            let pk = event.physical_key;
-            let code = moho_input::physical_key_to_binding_code(pk);
-
-            // No longer using modifiers
-            let mods = 0u8;
-
-            if code != 0 || mods != 0 {
-                let key_binding = (code, mods);
+            if let Some(key) = Key::from_winit(event.physical_key) {
                 if pressed {
-                    self.input.active_keys.insert(key_binding);
+                    self.input.active_keys.insert(key);
                 } else {
-                    self.input.active_keys.remove(&key_binding);
+                    self.input.active_keys.remove(&key);
                 }
             }
         }
@@ -658,6 +662,15 @@ impl Drop for App {
 }
 
 /// Installs the global subscriber, which also forwards `log` records from dependencies.
+/// Reads the strategy bindings from prefs, warning about each line that fell back to a default.
+fn load_bindings(prefs: &Prefs) -> ActionBindings<StrategyAction> {
+    let (bindings, warnings) = ActionBindings::load(prefs.bindings());
+    for w in warnings {
+        tracing::warn!(action = %w.name, value = %w.value, "Unusable binding, default kept");
+    }
+    bindings
+}
+
 fn init_logging() {
     tracing_subscriber::fmt()
         .with_env_filter(

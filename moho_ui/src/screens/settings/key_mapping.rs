@@ -1,178 +1,86 @@
-//! Key mapping utilities for converting between egui keys, binding codes, and display labels.
-//!
-//! This module uses compile-time lookup tables (PHF - Perfect Hash Functions) to efficiently
-//! map between egui::Key variants and numeric codes, reducing cyclomatic complexity.
+//! Conversions between egui input and engine keys, and binding display labels.
 
-use crate::prefs::Binding;
+use moho_input::bindings::Binding;
+use moho_input::key::Key;
 
-/// Compile-time lookup table for special key code to display name mappings.
-/// Used by binding_label() to format special keys efficiently.
-static CODE_TO_LABEL_MAP: phf::Map<u32, &'static str> = phf::phf_map! {
-    // Arrow keys
-    0x100u32 => "ArrowUp",
-    0x101u32 => "ArrowDown",
-    0x102u32 => "ArrowLeft",
-    0x103u32 => "ArrowRight",
+/// `None` for egui keys the engine does not name.
+pub fn egui_key_to_key(k: egui::Key) -> Option<Key> {
+    use egui::Key as E;
+    Some(match k {
+        E::A => Key::A,
+        E::B => Key::B,
+        E::C => Key::C,
+        E::D => Key::D,
+        E::E => Key::E,
+        E::F => Key::F,
+        E::G => Key::G,
+        E::H => Key::H,
+        E::I => Key::I,
+        E::J => Key::J,
+        E::K => Key::K,
+        E::L => Key::L,
+        E::M => Key::M,
+        E::N => Key::N,
+        E::O => Key::O,
+        E::P => Key::P,
+        E::Q => Key::Q,
+        E::R => Key::R,
+        E::S => Key::S,
+        E::T => Key::T,
+        E::U => Key::U,
+        E::V => Key::V,
+        E::W => Key::W,
+        E::X => Key::X,
+        E::Y => Key::Y,
+        E::Z => Key::Z,
+        E::Num0 => Key::Digit0,
+        E::Num1 => Key::Digit1,
+        E::Num2 => Key::Digit2,
+        E::Num3 => Key::Digit3,
+        E::Num4 => Key::Digit4,
+        E::Num5 => Key::Digit5,
+        E::Num6 => Key::Digit6,
+        E::Num7 => Key::Digit7,
+        E::Num8 => Key::Digit8,
+        E::Num9 => Key::Digit9,
+        E::ArrowUp => Key::ArrowUp,
+        E::ArrowDown => Key::ArrowDown,
+        E::ArrowLeft => Key::ArrowLeft,
+        E::ArrowRight => Key::ArrowRight,
+        E::Escape => Key::Escape,
+        E::Tab => Key::Tab,
+        E::Backspace => Key::Backspace,
+        E::Enter => Key::Enter,
+        E::Space => Key::Space,
+        _ => return None,
+    })
+}
 
-    // Control keys
-    0x200u32 => "Escape",
-    0x201u32 => "Tab",
-    0x202u32 => "Backspace",
-    0x203u32 => "Enter",
+/// Modifier state as a bitfield: Ctrl = 1, Shift = 2, Alt = 4.
+pub fn modifier_bits(modifiers: &egui::Modifiers) -> u8 {
+    u8::from(modifiers.ctrl) | (u8::from(modifiers.shift) << 1) | (u8::from(modifiers.alt) << 2)
+}
 
-    // Modifier keys (used when pressed alone)
-    0x204u32 => "Shift",
-    0x205u32 => "Ctrl",
-    0x206u32 => "Alt",
-};
-
-/// Map egui::Key to numeric code for binding storage.
-///
-/// Uses a match statement but with cleaner organization. The complexity comes from
-/// the inherent need to map 40+ enum variants, not from unnecessary logic.
-/// Letters and digits map to their ASCII uppercased codes.
-///
-/// # Arguments
-/// * `key` - The egui key to convert
-///
-/// # Returns
-/// Numeric code for binding storage (0 if key is unmapped)
-pub fn key_to_code(k: &egui::Key) -> u32 {
-    use egui::Key::{
-        A, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, B, Backspace, C, D, E, Enter, Escape, F, G,
-        H, I, J, K, L, M, N, Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9, O, P, Q,
-        R, S, Space, T, Tab, U, V, W, X, Y, Z,
-    };
-    match k {
-        // Letters (A-Z) - map to ASCII uppercase
-        A => 'A' as u32,
-        B => 'B' as u32,
-        C => 'C' as u32,
-        D => 'D' as u32,
-        E => 'E' as u32,
-        F => 'F' as u32,
-        G => 'G' as u32,
-        H => 'H' as u32,
-        I => 'I' as u32,
-        J => 'J' as u32,
-        K => 'K' as u32,
-        L => 'L' as u32,
-        M => 'M' as u32,
-        N => 'N' as u32,
-        O => 'O' as u32,
-        P => 'P' as u32,
-        Q => 'Q' as u32,
-        R => 'R' as u32,
-        S => 'S' as u32,
-        T => 'T' as u32,
-        U => 'U' as u32,
-        V => 'V' as u32,
-        W => 'W' as u32,
-        X => 'X' as u32,
-        Y => 'Y' as u32,
-        Z => 'Z' as u32,
-
-        // Numbers (0-9) - map to ASCII digits
-        Num0 => '0' as u32,
-        Num1 => '1' as u32,
-        Num2 => '2' as u32,
-        Num3 => '3' as u32,
-        Num4 => '4' as u32,
-        Num5 => '5' as u32,
-        Num6 => '6' as u32,
-        Num7 => '7' as u32,
-        Num8 => '8' as u32,
-        Num9 => '9' as u32,
-
-        // Arrow keys - custom range 0x100-0x103
-        ArrowUp => 0x100,
-        ArrowDown => 0x101,
-        ArrowLeft => 0x102,
-        ArrowRight => 0x103,
-
-        // Special keys - custom range 0x200+
-        Escape => 0x200,
-        Tab => 0x201,
-        Backspace => 0x202,
-        Enter => 0x203,
-        Space => ' ' as u32,
-
-        // Unmapped keys return 0
-        _ => 0,
+/// The modifier key held alone, for `modifier_bits` of exactly one modifier.
+pub fn lone_modifier_key(bits: u8) -> Option<Key> {
+    match bits {
+        1 => Some(Key::Ctrl),
+        2 => Some(Key::Shift),
+        4 => Some(Key::Alt),
+        _ => None,
     }
 }
 
-/// Format a binding as a human-readable label.
-///
-/// Uses compile-time lookup for special keys, reducing complexity from CC: 28 to ~5.
-///
-/// # Arguments
-/// * `binding` - The binding to format
-///
-/// # Returns
-/// Human-readable string (e.g., "Ctrl+W", "Shift", "Unbound")
-pub fn binding_label(b: &Binding) -> String {
-    // Handle unbound case
-    if b.code == 0 && b.mods == 0 {
+/// Human-readable label for an action's bindings, e.g. `W`, `Shift, Ctrl`, `Unbound`.
+pub fn binding_label(bindings: &[Binding]) -> String {
+    if bindings.is_empty() {
         return "Unbound".to_string();
     }
-
-    let mut s = String::new();
-
-    // If only modifiers are set (no key code), show just the modifier
-    if b.code == 0 {
-        if b.mods & 1 != 0 {
-            s.push_str("Ctrl");
-        }
-        if b.mods & 2 != 0 {
-            if !s.is_empty() {
-                s.push('+');
-            }
-            s.push_str("Shift");
-        }
-        if b.mods & 4 != 0 {
-            if !s.is_empty() {
-                s.push('+');
-            }
-            s.push_str("Alt");
-        }
-        return s;
-    }
-
-    // Add modifiers prefix
-    if b.mods & 1 != 0 {
-        s.push_str("Ctrl+");
-    }
-    if b.mods & 2 != 0 {
-        s.push_str("Shift+");
-    }
-    if b.mods & 4 != 0 {
-        s.push_str("Alt+");
-    }
-
-    // Check special keys in lookup table (CC: 1 for the lookup)
-    if let Some(&label) = CODE_TO_LABEL_MAP.get(&b.code) {
-        s.push_str(label);
-        return s;
-    }
-
-    // Handle Space specially (common enough to check explicitly)
-    if b.code == ' ' as u32 {
-        s.push_str("Spacebar");
-        return s;
-    }
-
-    // Handle regular ASCII characters
-    if let Some(ch) = std::char::from_u32(b.code)
-        && ch.is_ascii_graphic()
-    {
-        s.push(ch.to_ascii_uppercase());
-        return s;
-    }
-
-    // Fallback for unknown codes
-    s.push_str("Unknown");
-    s
+    bindings
+        .iter()
+        .map(|Binding::Key(key)| key.label())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]
@@ -180,72 +88,66 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_key_to_code_letters() {
-        assert_eq!(key_to_code(&egui::Key::A), 'A' as u32);
-        assert_eq!(key_to_code(&egui::Key::Z), 'Z' as u32);
-        assert_eq!(key_to_code(&egui::Key::M), 'M' as u32);
+    fn egui_letters_and_digits_map_to_their_keys() {
+        assert_eq!(egui_key_to_key(egui::Key::A), Some(Key::A));
+        assert_eq!(egui_key_to_key(egui::Key::Z), Some(Key::Z));
+        assert_eq!(egui_key_to_key(egui::Key::Num0), Some(Key::Digit0));
+        assert_eq!(egui_key_to_key(egui::Key::Num9), Some(Key::Digit9));
     }
 
     #[test]
-    fn test_key_to_code_numbers() {
-        assert_eq!(key_to_code(&egui::Key::Num0), '0' as u32);
-        assert_eq!(key_to_code(&egui::Key::Num9), '9' as u32);
+    fn egui_special_keys_map_to_their_keys() {
+        assert_eq!(egui_key_to_key(egui::Key::ArrowUp), Some(Key::ArrowUp));
+        assert_eq!(egui_key_to_key(egui::Key::ArrowDown), Some(Key::ArrowDown));
+        assert_eq!(egui_key_to_key(egui::Key::Escape), Some(Key::Escape));
+        assert_eq!(egui_key_to_key(egui::Key::Enter), Some(Key::Enter));
+        assert_eq!(egui_key_to_key(egui::Key::Space), Some(Key::Space));
     }
 
     #[test]
-    fn test_key_to_code_special() {
-        assert_eq!(key_to_code(&egui::Key::ArrowUp), 0x100);
-        assert_eq!(key_to_code(&egui::Key::ArrowDown), 0x101);
-        assert_eq!(key_to_code(&egui::Key::Escape), 0x200);
-        assert_eq!(key_to_code(&egui::Key::Enter), 0x203);
-        assert_eq!(key_to_code(&egui::Key::Space), ' ' as u32);
+    fn unnamed_egui_keys_do_not_map() {
+        assert_eq!(egui_key_to_key(egui::Key::F5), None);
     }
 
     #[test]
-    fn test_binding_label_unbound() {
-        let binding = Binding::new(0, 0);
-        assert_eq!(binding_label(&binding), "Unbound");
+    fn modifier_bits_encode_ctrl_shift_alt() {
+        let mods = |ctrl, shift, alt| egui::Modifiers {
+            ctrl,
+            shift,
+            alt,
+            ..Default::default()
+        };
+
+        assert_eq!(modifier_bits(&mods(false, false, false)), 0);
+        assert_eq!(modifier_bits(&mods(true, false, false)), 1);
+        assert_eq!(modifier_bits(&mods(false, true, false)), 2);
+        assert_eq!(modifier_bits(&mods(false, false, true)), 4);
+        assert_eq!(modifier_bits(&mods(true, true, true)), 7);
     }
 
     #[test]
-    fn test_binding_label_simple_key() {
-        let binding = Binding::new('W' as u32, 0);
-        assert_eq!(binding_label(&binding), "W");
+    fn only_a_single_modifier_is_a_lone_modifier_key() {
+        assert_eq!(lone_modifier_key(1), Some(Key::Ctrl));
+        assert_eq!(lone_modifier_key(2), Some(Key::Shift));
+        assert_eq!(lone_modifier_key(4), Some(Key::Alt));
+        assert_eq!(lone_modifier_key(0), None);
+        assert_eq!(lone_modifier_key(3), None);
     }
 
     #[test]
-    fn test_binding_label_with_modifiers() {
-        let binding = Binding::new('W' as u32, 1); // Ctrl+W
-        assert_eq!(binding_label(&binding), "Ctrl+W");
-
-        let binding = Binding::new('W' as u32, 2); // Shift+W
-        assert_eq!(binding_label(&binding), "Shift+W");
-
-        let binding = Binding::new('W' as u32, 7); // Ctrl+Shift+Alt+W
-        assert_eq!(binding_label(&binding), "Ctrl+Shift+Alt+W");
+    fn binding_label_unbound() {
+        assert_eq!(binding_label(&[]), "Unbound");
     }
 
     #[test]
-    fn test_binding_label_modifier_only() {
-        let binding = Binding::new(0x205, 0); // Ctrl key alone
-        assert_eq!(binding_label(&binding), "Ctrl");
-
-        let binding = Binding::new(0x204, 0); // Shift key alone
-        assert_eq!(binding_label(&binding), "Shift");
-
-        let binding = Binding::new(0x206, 0); // Alt key alone
-        assert_eq!(binding_label(&binding), "Alt");
-    }
-
-    #[test]
-    fn test_binding_label_special_keys() {
-        let binding = Binding::new(0x100, 0); // ArrowUp
-        assert_eq!(binding_label(&binding), "ArrowUp");
-
-        let binding = Binding::new(0x200, 0); // Escape
-        assert_eq!(binding_label(&binding), "Escape");
-
-        let binding = Binding::new(' ' as u32, 0); // Space
-        assert_eq!(binding_label(&binding), "Spacebar");
+    fn binding_label_names_each_key() {
+        assert_eq!(binding_label(&[Binding::Key(Key::W)]), "W");
+        assert_eq!(binding_label(&[Binding::Key(Key::Shift)]), "Shift");
+        assert_eq!(binding_label(&[Binding::Key(Key::ArrowUp)]), "ArrowUp");
+        assert_eq!(binding_label(&[Binding::Key(Key::Space)]), "Spacebar");
+        assert_eq!(
+            binding_label(&[Binding::Key(Key::F), Binding::Key(Key::Space)]),
+            "F, Spacebar"
+        );
     }
 }

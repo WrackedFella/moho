@@ -2,6 +2,7 @@
 
 use moho_input::Action;
 use moho_input::bindings::Binding;
+use moho_input::key::Key;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StrategyAction {
@@ -28,11 +29,28 @@ impl Action for StrategyAction {
     ];
 
     fn name(self) -> &'static str {
-        ""
+        match self {
+            StrategyAction::MoveForward => "move_forward",
+            StrategyAction::MoveBack => "move_back",
+            StrategyAction::MoveLeft => "move_left",
+            StrategyAction::MoveRight => "move_right",
+            StrategyAction::Ascend => "ascend",
+            StrategyAction::Descend => "descend",
+            StrategyAction::Sprint => "sprint",
+            StrategyAction::Jump => "jump",
+        }
     }
 
     fn default_bindings(self) -> &'static [Binding] {
-        &[]
+        match self {
+            StrategyAction::MoveForward => &[Binding::Key(Key::W)],
+            StrategyAction::MoveBack => &[Binding::Key(Key::S)],
+            StrategyAction::MoveLeft => &[Binding::Key(Key::A)],
+            StrategyAction::MoveRight => &[Binding::Key(Key::D)],
+            StrategyAction::Ascend | StrategyAction::Jump => &[Binding::Key(Key::Space)],
+            StrategyAction::Descend => &[Binding::Key(Key::Ctrl)],
+            StrategyAction::Sprint => &[Binding::Key(Key::Shift)],
+        }
     }
 }
 

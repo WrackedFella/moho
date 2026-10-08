@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use super::parser::parse_binding;
 use super::{Prefs, WindowMode};
 
 /// One problem found while loading preferences.
@@ -98,22 +97,6 @@ fn parse_u32(s: &str) -> Option<u32> {
 
 /// Every key `parse` accepts: `(section, key, setter)`.
 const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
-    ("prefs", "key_w", |p, s| set(&mut p.key_w, parse_binding(s))),
-    ("prefs", "key_a", |p, s| set(&mut p.key_a, parse_binding(s))),
-    ("prefs", "key_s", |p, s| set(&mut p.key_s, parse_binding(s))),
-    ("prefs", "key_d", |p, s| set(&mut p.key_d, parse_binding(s))),
-    ("prefs", "key_up", |p, s| {
-        set(&mut p.key_up, parse_binding(s))
-    }),
-    ("prefs", "key_down", |p, s| {
-        set(&mut p.key_down, parse_binding(s))
-    }),
-    ("prefs", "key_sprint", |p, s| {
-        set(&mut p.key_sprint, parse_binding(s))
-    }),
-    ("prefs", "key_jump", |p, s| {
-        set(&mut p.key_jump, parse_binding(s))
-    }),
     ("prefs", "mouse_sensitivity", |p, s| {
         set(&mut p.mouse_sensitivity, parse_f32(s))
     }),
@@ -198,6 +181,24 @@ fn read_section(
     issues
 }
 
+/// Takes the `[bindings]` section verbatim; interpreting it is the game's job.
+fn read_bindings(prefs: &mut Prefs, keys: &SectionKeys) -> Vec<PrefsIssue> {
+    let mut issues = Vec::new();
+    for (key, value) in sorted_entries(keys) {
+        match value {
+            Some(value) => {
+                prefs.bindings.insert(key.clone(), value.clone());
+            }
+            None => issues.push(PrefsIssue::Malformed {
+                section: "bindings".to_string(),
+                key: key.clone(),
+                value: None,
+            }),
+        }
+    }
+    issues
+}
+
 impl Prefs {
     /// Parses INI text. Every problem is returned alongside the preferences, and the
     /// affected key keeps its default. Keys before any header count as `[prefs]`
@@ -214,6 +215,10 @@ impl Prefs {
         let mut sections: Vec<_> = map.iter().collect();
         sections.sort_by_key(|(name, _)| name.as_str());
         for (name, keys) in sections {
+            if name == "bindings" {
+                issues.extend(read_bindings(&mut prefs, keys));
+                continue;
+            }
             let table = match name.as_str() {
                 "default" if map.contains_key("prefs") => {
                     issues.extend(sorted_entries(keys).into_iter().map(|(key, _)| {
@@ -275,7 +280,7 @@ impl Prefs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prefs::{Binding, WindowMode};
+    use crate::prefs::WindowMode;
     use proptest::prelude::*;
     use std::fmt::Write as _;
 
@@ -284,14 +289,6 @@ mod tests {
         (
             "prefs",
             &[
-                ("key_w", "I"),
-                ("key_a", "J"),
-                ("key_s", "K"),
-                ("key_d", "L"),
-                ("key_up", "ArrowUp"),
-                ("key_down", "Alt"),
-                ("key_sprint", "Tab"),
-                ("key_jump", "Enter"),
                 ("mouse_sensitivity", "2.5"),
                 ("input_filtering_enabled", "false"),
             ],
@@ -349,16 +346,7 @@ mod tests {
 
     /// `BASE` as a `Prefs`, built without going through the reader.
     fn base_prefs() -> Prefs {
-        let b = |name: &str| Binding::new(name.chars().next().unwrap() as u32, 0);
         let mut p = Prefs::default();
-        p.set_key_w(b("I"));
-        p.set_key_a(b("J"));
-        p.set_key_s(b("K"));
-        p.set_key_d(b("L"));
-        p.set_key_up(Binding::new(0x100, 0));
-        p.set_key_down(Binding::new(0x206, 0));
-        p.set_key_sprint(Binding::new(0x201, 0));
-        p.set_key_jump(Binding::new(0x203, 0));
         *p.mouse_sensitivity_mut() = 2.5;
         *p.input_filtering_enabled_mut() = false;
         *p.sound_effect_volume_mut() = 1.5;
@@ -378,14 +366,6 @@ mod tests {
     /// Every persisted value, keyed `section.key`, so tests can compare key by key.
     fn snapshot(p: &Prefs) -> Vec<(&'static str, String)> {
         vec![
-            ("prefs.key_w", format!("{:?}", p.key_w())),
-            ("prefs.key_a", format!("{:?}", p.key_a())),
-            ("prefs.key_s", format!("{:?}", p.key_s())),
-            ("prefs.key_d", format!("{:?}", p.key_d())),
-            ("prefs.key_up", format!("{:?}", p.key_up())),
-            ("prefs.key_down", format!("{:?}", p.key_down())),
-            ("prefs.key_sprint", format!("{:?}", p.key_sprint())),
-            ("prefs.key_jump", format!("{:?}", p.key_jump())),
             (
                 "prefs.mouse_sensitivity",
                 format!("{:?}", p.mouse_sensitivity()),
@@ -464,8 +444,7 @@ mod tests {
         let rows = [
             ("prefs", "mouse_sensitivity", "fast"),
             ("prefs", "mouse_sensitivity", "NaN"),
-            ("prefs", "key_jump", "Spcae"),
-            ("prefs", "key_w", ""),
+            ("prefs", "mouse_sensitivity", ""),
             ("prefs", "input_filtering_enabled", "yes"),
             ("audio", "music_volume", "5,0"),
             ("graphics", "shadow_quality", "high"),
@@ -597,20 +576,8 @@ mod tests {
         let default = Prefs::default();
         assert_eq!(prefs.window_mode(), default.window_mode());
         assert_eq!(prefs.window_resolution(), default.window_resolution());
-        assert_eq!(prefs.key_w(), base_prefs().key_w());
+        assert!(!prefs.input_filtering_enabled());
         assert_eq!(prefs.music_volume(), 2.5);
-    }
-
-    #[test]
-    fn unbound_unbinds_without_warning() {
-        for spelling in ["unbound", "Unbound", "UNBOUND"] {
-            let content = format!("[prefs]\nkey_jump={spelling}\n");
-
-            let (prefs, issues) = Prefs::parse(&content);
-
-            assert_eq!(issues, vec![], "{spelling}");
-            assert_eq!(prefs.key_jump(), Binding::new(0, 0), "{spelling}");
-        }
     }
 
     #[test]
@@ -700,18 +667,18 @@ mod tests {
 
     #[test]
     fn keys_before_any_header_load_as_prefs() {
-        let content = "key_w=I\nmouse_sensitivity=2.5\n";
+        let content = "input_filtering_enabled=false\nmouse_sensitivity=2.5\n";
 
         let (prefs, issues) = Prefs::parse(content);
 
         assert_eq!(issues, vec![]);
-        assert_eq!(prefs.key_w(), Binding::new('I' as u32, 0));
+        assert!(!prefs.input_filtering_enabled());
         assert_eq!(prefs.mouse_sensitivity(), 2.5);
     }
 
     #[test]
     fn keys_before_header_are_reported_when_prefs_section_exists() {
-        let content = "mouse_sensitivity=2.0\n[prefs]\nkey_w=I\n";
+        let content = "mouse_sensitivity=2.0\n[prefs]\ninput_filtering_enabled=false\n";
 
         let (prefs, issues) = Prefs::parse(content);
 
@@ -726,21 +693,13 @@ mod tests {
             prefs.mouse_sensitivity(),
             Prefs::default().mouse_sensitivity()
         );
-        assert_eq!(prefs.key_w(), Binding::new('I' as u32, 0));
+        assert!(!prefs.input_filtering_enabled());
     }
 
     /// Pins the exact text written for the defaults, so a format change is deliberate.
     #[test]
     fn to_ini_string_of_defaults_is_the_save_format() {
         let expected = "[prefs]\n\
-             key_w=W\n\
-             key_a=A\n\
-             key_s=S\n\
-             key_d=D\n\
-             key_up=Spacebar\n\
-             key_down=Ctrl\n\
-             key_sprint=Shift\n\
-             key_jump=Spacebar\n\
              mouse_sensitivity=1\n\
              input_filtering_enabled=true\n\
              \n[audio]\n\
@@ -778,15 +737,6 @@ mod tests {
         );
     }
 
-    fn binding_strategy() -> impl Strategy<Value = Binding> {
-        let mut codes: Vec<u32> = ('A'..='Z').chain('0'..='9').map(|c| c as u32).collect();
-        codes.extend(['.', ',', '/', '-', ' '].map(|c| c as u32));
-        codes.extend(0x100..=0x103);
-        codes.extend(0x200..=0x206);
-        codes.push(0);
-        prop::sample::select(codes).prop_map(|code| Binding::new(code, 0))
-    }
-
     fn volume_strategy() -> impl Strategy<Value = f32> {
         (0u32..=100).prop_map(|n| n as f32 / 10.0)
     }
@@ -801,7 +751,6 @@ mod tests {
 
     fn prefs_strategy() -> impl Strategy<Value = Prefs> {
         (
-            prop::array::uniform8(binding_strategy()),
             any::<f32>().prop_filter("finite", |v| v.is_finite()),
             any::<bool>(),
             [
@@ -814,16 +763,8 @@ mod tests {
             (window_mode_strategy(), any::<u32>(), any::<u32>()),
             (any::<u32>(), any::<u32>(), 1u32..=u32::MAX),
         )
-            .prop_map(|(keys, sens, filtering, vols, quality, video, world)| {
+            .prop_map(|(sens, filtering, vols, quality, video, world)| {
                 let mut p = Prefs::default();
-                p.set_key_w(keys[0]);
-                p.set_key_a(keys[1]);
-                p.set_key_s(keys[2]);
-                p.set_key_d(keys[3]);
-                p.set_key_up(keys[4]);
-                p.set_key_down(keys[5]);
-                p.set_key_sprint(keys[6]);
-                p.set_key_jump(keys[7]);
                 *p.mouse_sensitivity_mut() = sens;
                 *p.input_filtering_enabled_mut() = filtering;
                 *p.sound_effect_volume_mut() = vols[0];

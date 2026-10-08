@@ -504,7 +504,7 @@ impl EventProcessor {
 
                     // Update prefs
                     app.prefs.set_shadow_quality(quality);
-                    let _ = app.prefs.save();
+                    let _ = app.save_prefs();
                 }
             }
             DebugEvent::SetSsaoQuality { quality } => {
@@ -514,7 +514,7 @@ impl EventProcessor {
 
                     // Update prefs
                     app.prefs.set_ssao_quality(quality);
-                    let _ = app.prefs.save();
+                    let _ = app.save_prefs();
                 }
             }
             _ => {}

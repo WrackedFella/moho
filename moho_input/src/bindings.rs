@@ -39,26 +39,77 @@ pub struct ActionBindings<A: Action> {
 }
 
 impl<A: Action> ActionBindings<A> {
+    fn defaults() -> Self {
+        Self {
+            map: A::ALL
+                .iter()
+                .map(|a| (a.name(), a.default_bindings().to_vec()))
+                .collect(),
+            _action: PhantomData,
+        }
+    }
+
     /// Reads the raw `[bindings]` section. Absent actions and unusable lines keep
     /// their defaults; each unusable line yields a warning.
-    pub fn load(_section: &BTreeMap<String, String>) -> (Self, Vec<BindingWarning>) {
-        let empty = Self {
-            map: BTreeMap::new(),
-            _action: PhantomData,
-        };
-        (empty, Vec::new())
+    pub fn load(section: &BTreeMap<String, String>) -> (Self, Vec<BindingWarning>) {
+        let mut loaded = Self::defaults();
+        let mut warnings = Vec::new();
+        for (name, value) in section {
+            let action = A::ALL.iter().find(|a| a.name() == name);
+            let parsed = action.and_then(|_| parse_list(value));
+            match (action, parsed) {
+                (Some(action), Some(bindings)) => {
+                    loaded.map.insert(action.name(), bindings);
+                }
+                _ => warnings.push(BindingWarning {
+                    name: name.clone(),
+                    value: value.clone(),
+                }),
+            }
+        }
+        (loaded, warnings)
     }
 
     /// Writes every action, including those left at their defaults.
     pub fn to_section(&self) -> BTreeMap<String, String> {
-        BTreeMap::new()
+        self.map
+            .iter()
+            .map(|(name, bindings)| ((*name).to_string(), format_list(bindings)))
+            .collect()
     }
 
-    pub fn get(&self, _action: A) -> &[Binding] {
-        &[]
+    pub fn get(&self, action: A) -> &[Binding] {
+        self.map.get(action.name()).map_or(&[], Vec::as_slice)
     }
 
-    pub fn set(&mut self, _action: A, _bindings: Vec<Binding>) {}
+    pub fn set(&mut self, action: A, bindings: Vec<Binding>) {
+        self.map.insert(action.name(), bindings);
+    }
+}
+
+const UNBOUND: &str = "Unbound";
+
+/// `None` if any item is not a known key; empty or `Unbound` is an empty list.
+fn parse_list(value: &str) -> Option<Vec<Binding>> {
+    let value = value.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case(UNBOUND) {
+        return Some(Vec::new());
+    }
+    value
+        .split(',')
+        .map(|item| Key::parse(item.trim()).map(Binding::Key))
+        .collect()
+}
+
+fn format_list(bindings: &[Binding]) -> String {
+    if bindings.is_empty() {
+        return UNBOUND.to_string();
+    }
+    bindings
+        .iter()
+        .map(|Binding::Key(key)| key.name())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]
