@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use glam::IVec3;
 use moho_core::voxel::{VoxelChunk, VoxelGrid};
 
@@ -15,15 +17,16 @@ fn grid_with(blocks: &[(IVec3, u32)]) -> VoxelGrid {
     grid
 }
 
-/// Axis-aligned bounds of the vertices whose geometry type is `geometry`.
-fn bbox_of(chunk: &VoxelChunk, geometry: u32) -> ([f32; 3], [f32; 3]) {
+/// Axis-aligned bounds of the vertices whose geometry type is `geometry`, or of
+/// every vertex when `geometry` is `None`.
+fn bbox_of(chunk: &VoxelChunk, geometry: Option<u32>) -> ([f32; 3], [f32; 3]) {
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
     let selected = chunk
         .vertices()
         .iter()
         .zip(chunk.geometry_type())
-        .filter(|&(_, &g)| g == geometry);
+        .filter(|&(_, &g)| geometry.is_none_or(|want| g == want));
     for (p, _) in selected {
         for a in 0..3 {
             min[a] = min[a].min(p[a]);
@@ -38,6 +41,7 @@ fn mixed_chunk_indices_are_in_range() {
     let grid = grid_with(&[
         (IVec3::new(5, 5, 5), SMOOTH_MATERIAL),
         (IVec3::new(12, 12, 12), BLOCKY_MATERIAL),
+        (IVec3::new(12, 12, 8), BLOCKY_MATERIAL),
     ]);
 
     let chunk = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 0);
@@ -54,6 +58,22 @@ fn mixed_chunk_indices_are_in_range() {
         (worst as usize) < count,
         "index {worst} out of range for {count} vertices"
     );
+    let referenced: HashSet<u32> = chunk.indices().iter().copied().collect();
+    assert_eq!(
+        referenced.len(),
+        count,
+        "every vertex must be referenced by at least one index"
+    );
+    for tri in chunk.indices().as_chunks::<3>().0 {
+        let kinds: Vec<u32> = tri
+            .iter()
+            .map(|&i| chunk.geometry_type()[i as usize])
+            .collect();
+        assert!(
+            kinds.iter().all(|&k| k == kinds[0]),
+            "triangle {tri:?} mixes geometry types {kinds:?}"
+        );
+    }
 }
 
 #[test]
@@ -66,7 +86,7 @@ fn mixed_chunk_smooth_part_is_aligned() {
 
     let chunk = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 0);
 
-    let (min, max) = bbox_of(&chunk, SMOOTH_GEOMETRY);
+    let (min, max) = bbox_of(&chunk, Some(SMOOTH_GEOMETRY));
     assert!(
         min[0].is_finite(),
         "expected smooth vertices in mixed chunk"
@@ -78,6 +98,17 @@ fn mixed_chunk_smooth_part_is_aligned() {
             (center - expected).abs() < TOLERANCE,
             "axis {a}: smooth part of mixed chunk centred at {center}, expected {expected} \
              (bbox {min:?}..{max:?})"
+        );
+    }
+    let (bmin, bmax) = bbox_of(&chunk, Some(BLOCKY_GEOMETRY));
+    assert!(
+        bmin[0].is_finite(),
+        "expected blocky vertices in mixed chunk"
+    );
+    for a in 0..3 {
+        assert!(
+            (bmin[a] - 12.0).abs() < TOLERANCE && (bmax[a] - 13.0).abs() < TOLERANCE,
+            "axis {a}: blocky part of mixed chunk spans {bmin:?}..{bmax:?}, expected 12..13"
         );
     }
 }
@@ -94,7 +125,6 @@ struct Case {
     name: &'static str,
     blocks: Vec<(IVec3, u32)>,
     lod: u8,
-    geometry: u32,
     span: Span,
 }
 
@@ -117,22 +147,18 @@ fn mesh_is_centered_on_the_voxel_it_represents() {
             name: "smooth block at (5,5,5), LOD 0",
             blocks: vec![(IVec3::new(5, 5, 5), SMOOTH_MATERIAL)],
             lod: 0,
-            geometry: SMOOTH_GEOMETRY,
             span: Span::Centre(5.5),
         },
         Case {
             name: "blocky block at (5,5,5), LOD 0",
             blocks: vec![(IVec3::new(5, 5, 5), BLOCKY_MATERIAL)],
             lod: 0,
-            geometry: BLOCKY_GEOMETRY,
             span: Span::Exact(5.0, 6.0),
         },
         Case {
             name: "smooth 2x2x2 cell at (4,4,4), LOD 1",
             blocks: cell,
             lod: 1,
-            // The coarse path emits blocky-typed cubes even for smooth materials.
-            geometry: BLOCKY_GEOMETRY,
             span: Span::Exact(4.0, 6.0),
         },
     ];
@@ -143,7 +169,7 @@ fn mesh_is_centered_on_the_voxel_it_represents() {
 
         let chunk = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, case.lod);
 
-        let (min, max) = bbox_of(&chunk, case.geometry);
+        let (min, max) = bbox_of(&chunk, None);
         for a in 0..3 {
             let ok = match case.span {
                 Span::Centre(c) => ((min[a] + max[a]) * 0.5 - c).abs() < TOLERANCE,
