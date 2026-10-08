@@ -184,12 +184,19 @@ mod tests {
 
     #[derive(Debug)]
     struct StubOverlay {
+        name: &'static str,
         visible: bool,
+    }
+
+    impl StubOverlay {
+        fn new(name: &'static str, visible: bool) -> Self {
+            Self { name, visible }
+        }
     }
 
     impl Overlay for StubOverlay {
         fn name(&self) -> &'static str {
-            "stub"
+            self.name
         }
         fn render(&mut self, _ctx: &egui::Context, _data: &HudData) {}
         fn is_visible(&self) -> bool {
@@ -200,23 +207,32 @@ mod tests {
         }
     }
 
+    fn visibility(mgr: &OverlayManager) -> Vec<bool> {
+        mgr.overlays.iter().map(|o| o.is_visible()).collect()
+    }
+
     #[test]
     fn toggle_overlay_by_name() {
         let mut mgr = OverlayManager::new();
-        mgr.register(Box::new(StubOverlay { visible: false }));
-        assert!(!mgr.overlays[0].is_visible());
+        mgr.register(Box::new(StubOverlay::new("first", false)));
+        mgr.register(Box::new(StubOverlay::new("second", false)));
 
-        mgr.toggle("stub");
-        assert!(mgr.overlays[0].is_visible());
+        mgr.toggle("second");
+        assert_eq!(visibility(&mgr), [false, true]);
 
-        mgr.toggle("stub");
-        assert!(!mgr.overlays[0].is_visible());
+        mgr.toggle("second");
+        assert_eq!(visibility(&mgr), [false, false]);
     }
 
     #[test]
     fn toggle_unknown_name_is_noop() {
         let mut mgr = OverlayManager::new();
-        mgr.toggle("nonexistent"); // should not panic
+        mgr.register(Box::new(StubOverlay::new("first", true)));
+        mgr.register(Box::new(StubOverlay::new("second", false)));
+
+        mgr.toggle("nonexistent");
+
+        assert_eq!(visibility(&mgr), [true, false]);
     }
 
     #[test]
