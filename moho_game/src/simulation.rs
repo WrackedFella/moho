@@ -169,6 +169,7 @@ mod tests {
         fn look_at_when_isometric_sets_rts_look_target() {
             let mut sim = SimulationController::new(Vec3::ZERO);
             sim.set_camera_mode(CameraMode::Isometric);
+            assert_eq!(sim.camera_mode(), CameraMode::Isometric);
 
             sim.look_at(Vec3::new(7.0, 0.0, -3.0));
 
