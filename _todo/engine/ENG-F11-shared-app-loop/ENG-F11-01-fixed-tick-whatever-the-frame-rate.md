@@ -1,7 +1,10 @@
 # A game's tick runs at a fixed rate whatever the frame rate
 
 **Feature:** [ENG-F11](_feature.md)
-**Issue:** #143
+**Issue:** [#143](https://github.com/WrackedFella/moho/issues/143)
+**Status:** unknown
+**Gate class:** glue
+**Labels:** line:engine
 
 ## Summary
 

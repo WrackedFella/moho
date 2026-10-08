@@ -1,7 +1,10 @@
 # In-game time advances only through the engine's tick
 
 **Feature:** [ENG-F11](_feature.md)
-**Issue:** #145
+**Issue:** [#145](https://github.com/WrackedFella/moho/issues/145)
+**Status:** unknown
+**Gate class:** domain
+**Labels:** line:engine
 
 ## Summary
 
