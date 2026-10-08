@@ -7,8 +7,8 @@
 //! - Chunk-based organization
 //!
 //! # Module Organization
-//! - `grid` - Core data structures (VoxelGrid, VoxelBlock)
-//! - `face` - Face direction lookup tables
+//! - `grid` - Core data structures (VoxelGrid, BlockData)
+//! - `face` - Face directions (FaceDirection)
 //! - `mesh` - Mesh generation (MeshGenerator)
 //! - `chunk` - Chunk optimization (VoxelChunk)
 //! - `modification` - Named block mutations (VoxelMutator)
@@ -30,10 +30,7 @@ pub mod streaming;
 pub use chunk::VoxelChunk;
 pub use chunk_store::ChunkStore;
 pub use face::FaceDirection;
-pub use grid::{
-    BlockCategory, BlockData, BlockPos, MaterialLighting, MaterialRegistry, ResourceData,
-    ResourceRegistry, VoxelBlock, VoxelGrid,
-};
+pub use grid::{BlockData, BlockPos, MaterialLighting, MaterialRegistry, ResourceData, VoxelGrid};
 pub use light_jobs::{
     JobId, LightCancellationToken, LightFrameBudget, LightJobQueue, LightJobStats, LightUpdateJob,
     LightUpdateOp, LightUpdateResult,

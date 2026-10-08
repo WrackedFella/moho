@@ -96,34 +96,6 @@ impl AudioCache {
         debug!(path = path, "Loaded and cached audio file");
         Ok(audio_data)
     }
-
-    /// Clear all caches to free memory.
-    pub fn clear(&mut self) {
-        self.audio_cache.clear();
-        self.ui_sound_cache.clear();
-        debug!("Audio caches cleared");
-    }
-
-    /// Clear only the general audio cache (keeps UI sounds cached).
-    pub fn clear_audio_cache(&mut self) {
-        self.audio_cache.clear();
-        debug!("Audio cache cleared (UI sounds retained)");
-    }
-
-    /// Get the number of cached audio files (excluding UI sounds).
-    pub fn audio_cache_size(&self) -> usize {
-        self.audio_cache.len()
-    }
-
-    /// Get the number of cached UI sounds.
-    pub fn ui_cache_size(&self) -> usize {
-        self.ui_sound_cache.len()
-    }
-
-    /// Get total number of cached items.
-    pub fn total_cache_size(&self) -> usize {
-        self.audio_cache.len() + self.ui_sound_cache.len()
-    }
 }
 
 impl Default for AudioCache {
@@ -133,72 +105,5 @@ impl Default for AudioCache {
             audio_cache: HashMap::new(),
             ui_sound_cache: HashMap::new(),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_cache_size_tracking() {
-        let mut cache = AudioCache {
-            audio_cache: HashMap::new(),
-            ui_sound_cache: HashMap::new(),
-        };
-
-        cache
-            .audio_cache
-            .insert("test1.mp3".to_string(), vec![1, 2, 3]);
-        cache
-            .audio_cache
-            .insert("test2.mp3".to_string(), vec![4, 5, 6]);
-        cache
-            .ui_sound_cache
-            .insert("ui_sound.mp3".to_string(), vec![7, 8, 9]);
-
-        assert_eq!(cache.audio_cache_size(), 2);
-        assert_eq!(cache.ui_cache_size(), 1);
-        assert_eq!(cache.total_cache_size(), 3);
-    }
-
-    #[test]
-    fn test_clear_audio_cache() {
-        let mut cache = AudioCache {
-            audio_cache: HashMap::new(),
-            ui_sound_cache: HashMap::new(),
-        };
-
-        cache
-            .audio_cache
-            .insert("test.mp3".to_string(), vec![1, 2, 3]);
-        cache
-            .ui_sound_cache
-            .insert("ui.mp3".to_string(), vec![4, 5, 6]);
-
-        cache.clear_audio_cache();
-
-        assert_eq!(cache.audio_cache_size(), 0);
-        assert_eq!(cache.ui_cache_size(), 1); // UI cache retained
-    }
-
-    #[test]
-    fn test_clear_all_caches() {
-        let mut cache = AudioCache {
-            audio_cache: HashMap::new(),
-            ui_sound_cache: HashMap::new(),
-        };
-
-        cache
-            .audio_cache
-            .insert("test.mp3".to_string(), vec![1, 2, 3]);
-        cache
-            .ui_sound_cache
-            .insert("ui.mp3".to_string(), vec![4, 5, 6]);
-
-        cache.clear();
-
-        assert_eq!(cache.audio_cache_size(), 0);
-        assert_eq!(cache.ui_cache_size(), 0);
     }
 }

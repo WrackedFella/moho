@@ -51,13 +51,13 @@ declarations are follow-ups, not verdicts. Evidence: appendices A–D.
 
 | Call | Owner |
 |---|---|
-| `bincode` → postcard | [ENG-F2-01](../ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md) |
+| `bincode` → postcard | [ENG-F2-01](https://github.com/WrackedFella/moho/issues/94) |
 | Unused declarations, `once_cell`, yanked `chacha20` | [ENG-F2-03](https://github.com/WrackedFella/moho/issues/96) (list corrected) |
-| `log`/`env_logger` → `tracing` | [ENG-F2-05](../ENG-F2-dependency-upgrades/ENG-F2-05-structured-logging.md) |
-| `crossbeam-channel` → std | [ENG-F2-06](../ENG-F2-dependency-upgrades/ENG-F2-06-std-channels.md) |
+| `log`/`env_logger` → `tracing` | [ENG-F2-05](https://github.com/WrackedFella/moho/issues/98) |
+| `crossbeam-channel` → std | [ENG-F2-06](https://github.com/WrackedFella/moho/issues/99) |
 | `pollster` → own `block_on` | [ENG-F2-07](https://github.com/WrackedFella/moho/issues/100) |
 | wgpu/naga/egui upgrade | [ENG-F2-08](../ENG-F2-dependency-upgrades/ENG-F2-08-graphics-stack-current.md) |
-| rapier3d/glam upgrade, `paste` | [ENG-F2-09](../ENG-F2-dependency-upgrades/ENG-F2-09-physics-stack-current.md), [ENG-F2-04](../ENG-F2-dependency-upgrades/ENG-F2-04-paste-advisory-cleared.md) |
+| rapier3d/glam upgrade, `paste` | [ENG-F2-09](https://github.com/WrackedFella/moho/issues/102), [ENG-F2-04](https://github.com/WrackedFella/moho/issues/97) |
 | `noise` → in-house Perlin | [ENG-F2-10](../ENG-F2-dependency-upgrades/ENG-F2-10-terrain-noise-in-house.md) |
 | `phf` → `match` | [ENG-F12](../ENG-F12-input-actions/_feature.md) (key naming is reworked there) |
 | Planned additions | The consuming features (ENG-F12, F14, F16, F19) adopt them; ENG-F16 owns the gain/pan layer |

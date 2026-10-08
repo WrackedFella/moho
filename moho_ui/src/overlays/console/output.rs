@@ -111,18 +111,6 @@ impl ConsoleOutput {
     pub fn clear_output(&mut self) {
         self.output.clear();
     }
-
-    /// Get the number of commands in history.
-    #[cfg(test)]
-    pub fn history_len(&self) -> usize {
-        self.history.len()
-    }
-
-    /// Get the current history index.
-    #[cfg(test)]
-    pub fn history_index(&self) -> Option<usize> {
-        self.history_index
-    }
 }
 
 impl Default for ConsoleOutput {
@@ -135,12 +123,20 @@ impl Default for ConsoleOutput {
 mod tests {
     use super::*;
 
+    fn history_of(commands: &[&str]) -> ConsoleOutput {
+        let mut output = ConsoleOutput::new();
+        for command in commands {
+            output.add_to_history((*command).to_string());
+        }
+        output
+    }
+
     #[test]
     fn test_new_output() {
-        let output = ConsoleOutput::new();
+        let mut output = ConsoleOutput::new();
+
         assert!(output.lines().len() >= 2); // Welcome messages
-        assert_eq!(output.history_len(), 0);
-        assert_eq!(output.history_index(), None);
+        assert_eq!(output.navigate_up(), None);
     }
 
     #[test]
@@ -173,45 +169,41 @@ mod tests {
 
     #[test]
     fn test_add_to_history() {
-        let mut output = ConsoleOutput::new();
+        let mut output = history_of(&["cmd1", "cmd2"]);
+        assert_eq!(output.navigate_up(), Some("cmd2".to_string()));
 
-        output.add_to_history("cmd1".to_string());
-        output.add_to_history("cmd2".to_string());
+        output.add_to_history("cmd3".to_string());
 
-        assert_eq!(output.history_len(), 2);
-        assert_eq!(output.history_index(), None); // Reset after adding
+        assert_eq!(output.navigate_up(), Some("cmd3".to_string()));
     }
 
     #[test]
-    fn test_history_navigation() {
+    fn history_navigation_clamps_up() {
+        let mut output = history_of(&["cmd1", "cmd2"]);
+
+        assert_eq!(output.navigate_up(), Some("cmd2".to_string()));
+        assert_eq!(output.navigate_up(), Some("cmd1".to_string()));
+        assert_eq!(output.navigate_up(), Some("cmd1".to_string()));
+    }
+
+    #[test]
+    fn history_navigation_past_end_clears() {
+        let mut output = history_of(&["cmd1", "cmd2"]);
+        output.navigate_up();
+        output.navigate_up();
+
+        assert_eq!(output.navigate_down(), Some("cmd2".to_string()));
+        assert_eq!(output.navigate_down(), None);
+        assert_eq!(output.navigate_down(), None);
+        assert_eq!(output.navigate_up(), Some("cmd2".to_string()));
+    }
+
+    #[test]
+    fn navigate_on_empty_history_returns_none() {
         let mut output = ConsoleOutput::new();
-        output.add_to_history("cmd1".to_string());
-        output.add_to_history("cmd2".to_string());
 
-        // Navigate up (should get cmd2)
-        let cmd = output.navigate_up();
-        assert_eq!(cmd, Some("cmd2".to_string()));
-        assert_eq!(output.history_index(), Some(1));
-
-        // Navigate up again (should get cmd1)
-        let cmd = output.navigate_up();
-        assert_eq!(cmd, Some("cmd1".to_string()));
-        assert_eq!(output.history_index(), Some(0));
-
-        // Navigate up again (should stay at cmd1)
-        let cmd = output.navigate_up();
-        assert_eq!(cmd, Some("cmd1".to_string()));
-        assert_eq!(output.history_index(), Some(0));
-
-        // Navigate down (should get cmd2)
-        let cmd = output.navigate_down();
-        assert_eq!(cmd, Some("cmd2".to_string()));
-        assert_eq!(output.history_index(), Some(1));
-
-        // Navigate down again (should return None, indicating clear input)
-        let cmd = output.navigate_down();
-        assert_eq!(cmd, None);
-        assert_eq!(output.history_index(), None);
+        assert_eq!(output.navigate_up(), None);
+        assert_eq!(output.navigate_down(), None);
     }
 
     #[test]
@@ -227,12 +219,16 @@ mod tests {
     #[test]
     fn test_history_max_size() {
         let mut output = ConsoleOutput::new();
-
-        // Add more than MAX_HISTORY commands
         for i in 0..MAX_HISTORY + 10 {
             output.add_to_history(format!("cmd{i}"));
         }
 
-        assert_eq!(output.history_len(), MAX_HISTORY);
+        let newest = output.navigate_up();
+        let oldest = (0..MAX_HISTORY * 2)
+            .filter_map(|_| output.navigate_up())
+            .last();
+
+        assert_eq!(newest, Some(format!("cmd{}", MAX_HISTORY + 9)));
+        assert_eq!(oldest, Some("cmd10".to_string()));
     }
 }

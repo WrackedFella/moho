@@ -207,16 +207,6 @@ impl AudioSystem {
             }
         }
     }
-
-    /// Clear the audio cache to free memory
-    pub fn clear_cache(&mut self) {
-        self.audio_cache.clear_audio_cache();
-    }
-
-    /// Get the number of cached audio files
-    pub fn cache_size(&self) -> usize {
-        self.audio_cache.audio_cache_size()
-    }
 }
 
 impl Drop for AudioSystem {

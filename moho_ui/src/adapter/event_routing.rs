@@ -83,22 +83,25 @@ pub fn emit_audio_event(event_bus: &EventBus, audio_event: UiAudioEvent) {
     event_bus.publish(core_event);
 }
 
+/// Menu background music, relative to the working directory.
+pub const MENU_MUSIC_PATH: &str = "audio/music/menu.ogg";
+
 /// Manage menu background music lifecycle.
 ///
 /// Starts music when the player navigates to the start menu, stops it when
-/// they leave. Silently no-ops if the music file does not exist on disk.
-pub fn update_menu_music(actions: &[MenuAction], event_bus: &EventBus, music_playing: &mut bool) {
+/// they leave. Never starts when `music_exists` is false.
+pub fn update_menu_music(
+    actions: &[MenuAction],
+    event_bus: &EventBus,
+    music_playing: &mut bool,
+    music_exists: bool,
+) {
     use moho_core::events::AudioEvent;
-    use std::path::Path;
-
-    const MENU_MUSIC_PATH: &str = "audio/music/menu.ogg";
 
     for action in actions {
         match action {
             // Entering the start menu — start music
-            MenuAction::ShowMenu(name)
-                if name == "start" && !*music_playing && Path::new(MENU_MUSIC_PATH).exists() =>
-            {
+            MenuAction::ShowMenu(name) if name == "start" && !*music_playing && music_exists => {
                 event_bus.publish(AudioEvent::MusicStart {
                     path: MENU_MUSIC_PATH.to_string(),
                     volume: 1.0,
@@ -262,64 +265,289 @@ mod tests {
         }
     }
 
+    fn record<E>(bus: &EventBus) -> std::sync::mpsc::Receiver<E>
+    where
+        E: moho_core::events::Event + Clone,
+    {
+        let (tx, rx) = std::sync::mpsc::channel();
+        bus.subscribe(move |event: &E| {
+            let _ = tx.send(event.clone());
+        });
+        rx
+    }
+
     #[test]
     fn test_emit_audio_events() {
-        let bus = Arc::new(EventBus::new());
+        use moho_core::events::AudioEvent;
 
-        emit_audio_event(&bus, UiAudioEvent::ButtonClick);
-        emit_audio_event(&bus, UiAudioEvent::MenuNavigate);
-        emit_audio_event(&bus, UiAudioEvent::Confirm);
-        emit_audio_event(&bus, UiAudioEvent::Cancel);
-        emit_audio_event(&bus, UiAudioEvent::Error);
+        type ExpectedEvent = fn(&AudioEvent) -> bool;
 
-        // Verify no panics
+        let cases: Vec<(UiAudioEvent, ExpectedEvent)> = vec![
+            (UiAudioEvent::ButtonClick, |e| {
+                matches!(e, AudioEvent::ButtonClick)
+            }),
+            (UiAudioEvent::MenuNavigate, |e| {
+                matches!(e, AudioEvent::MenuNavigate)
+            }),
+            (UiAudioEvent::Confirm, |e| matches!(e, AudioEvent::Confirm)),
+            (UiAudioEvent::Cancel, |e| matches!(e, AudioEvent::Cancel)),
+            (UiAudioEvent::Error, |e| matches!(e, AudioEvent::Error)),
+        ];
+
+        for (ui_event, matches_expected) in cases {
+            let bus = EventBus::new();
+            let rx = record::<AudioEvent>(&bus);
+
+            emit_audio_event(&bus, ui_event.clone());
+
+            let published: Vec<_> = rx.try_iter().collect();
+            assert_eq!(published.len(), 1, "one event for {ui_event:?}");
+            assert!(
+                matches_expected(&published[0]),
+                "unexpected {:?} for {ui_event:?}",
+                published[0]
+            );
+        }
+    }
+
+    mod menu_music {
+        use super::*;
+        use moho_core::events::AudioEvent;
+
+        fn run(
+            actions: &[MenuAction],
+            mut playing: bool,
+            music_exists: bool,
+        ) -> (bool, Vec<AudioEvent>) {
+            let bus = EventBus::new();
+            let rx = record::<AudioEvent>(&bus);
+
+            update_menu_music(actions, &bus, &mut playing, music_exists);
+
+            (playing, rx.try_iter().collect())
+        }
+
+        fn leaving_actions() -> Vec<(&'static str, MenuAction)> {
+            vec![
+                (
+                    "load scene",
+                    MenuAction::LoadScene(std::path::PathBuf::from("saves/scene.bin")),
+                ),
+                (
+                    "generate world",
+                    MenuAction::GenerateWorld(WorldSpec {
+                        name: "Test World".to_string(),
+                        seed: Some(1),
+                        size_xz: 16,
+                        day_length_seconds: 1200.0,
+                        night_length_seconds: 600.0,
+                        initial_time_of_day: 6.0,
+                    }),
+                ),
+                ("exit", MenuAction::Exit),
+                ("settings", MenuAction::ShowMenu("settings".to_string())),
+            ]
+        }
+
+        #[test]
+        fn menu_music_starts_on_show_start() {
+            let actions = [MenuAction::ShowMenu("start".to_string())];
+
+            let (playing, events) = run(&actions, false, true);
+
+            assert!(playing);
+            assert_eq!(events.len(), 1, "events: {events:?}");
+            assert!(
+                matches!(&events[0], AudioEvent::MusicStart { looped: true, .. }),
+                "unexpected {:?}",
+                events[0]
+            );
+        }
+
+        #[test]
+        fn menu_music_missing_file_publishes_nothing() {
+            let actions = [MenuAction::ShowMenu("start".to_string())];
+
+            let (playing, events) = run(&actions, false, false);
+
+            assert!(!playing);
+            assert!(events.is_empty(), "events: {events:?}");
+        }
+
+        #[test]
+        fn menu_music_stops_when_leaving_start() {
+            for (label, action) in leaving_actions() {
+                let (playing, events) = run(&[action], true, true);
+
+                assert!(!playing, "{label}: flag should clear");
+                assert_eq!(events.len(), 1, "{label}: events: {events:?}");
+                assert!(
+                    matches!(events[0], AudioEvent::MusicStop),
+                    "{label}: unexpected {:?}",
+                    events[0]
+                );
+            }
+        }
+
+        #[test]
+        fn menu_music_no_double_stop() {
+            for (label, action) in leaving_actions() {
+                let (playing, events) = run(&[action], false, true);
+
+                assert!(!playing, "{label}");
+                assert!(events.is_empty(), "{label}: events: {events:?}");
+            }
+        }
     }
 
     #[test]
-    fn menu_music_starts_on_show_start() {
-        let bus = Arc::new(EventBus::new());
-        let mut playing = false;
-        let actions = vec![MenuAction::ShowMenu("start".to_string())];
+    fn console_action_publishes_matching_event() {
+        use crate::overlays::ConsoleAction;
+        use moho_core::events::{DebugEvent, GraphicsEvent, UiEvent};
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
-        // File doesn't exist in test environment, so music won't actually start.
-        // Verify the function completes without panic.
-        update_menu_music(&actions, &bus, &mut playing);
-        // music_playing stays false because the file doesn't exist
-        assert!(!playing);
+        #[derive(Debug)]
+        enum Published {
+            Ui(UiEvent),
+            Debug(DebugEvent),
+            Graphics(GraphicsEvent),
+        }
+        type ExpectedEvent = fn(&Published) -> bool;
+
+        let cases: Vec<(ConsoleAction, ExpectedEvent)> = vec![
+            (
+                ConsoleAction::Close,
+                |e| matches!(e, Published::Ui(UiEvent::MenuHidden { name }) if name == "console"),
+            ),
+            (ConsoleAction::Quit, |e| {
+                matches!(e, Published::Ui(UiEvent::ExitRequested))
+            }),
+            (ConsoleAction::ToggleGodMode, |e| {
+                matches!(
+                    e,
+                    Published::Debug(DebugEvent::ToggleGodMode { enabled: true })
+                )
+            }),
+            (ConsoleAction::SetSunDirection(90.0, 45.0), |e| {
+                matches!(
+                    e,
+                    Published::Graphics(GraphicsEvent::SunDirectionChanged { yaw, pitch })
+                        if (yaw - FRAC_PI_2).abs() < 1e-6 && (pitch - FRAC_PI_4).abs() < 1e-6
+                )
+            }),
+            (ConsoleAction::SetTimeOfDay(13.5), |e| {
+                matches!(
+                    e,
+                    Published::Graphics(GraphicsEvent::TimeOfDayChanged { time, .. })
+                        if *time == 13.5
+                )
+            }),
+            (ConsoleAction::SetDebugView(3), |e| {
+                matches!(
+                    e,
+                    Published::Graphics(GraphicsEvent::DebugViewChanged { mode: 3 })
+                )
+            }),
+            (ConsoleAction::SetShadowQuality(2), |e| {
+                matches!(
+                    e,
+                    Published::Debug(DebugEvent::SetShadowQuality { quality: 2 })
+                )
+            }),
+            (ConsoleAction::SetSsaoQuality(4), |e| {
+                matches!(
+                    e,
+                    Published::Debug(DebugEvent::SetSsaoQuality { quality: 4 })
+                )
+            }),
+            (
+                ConsoleAction::Spawn("tree".to_string(), Some("oak".to_string())),
+                |e| {
+                    matches!(
+                        e,
+                        Published::Debug(DebugEvent::SpawnEntity {
+                            entity_type,
+                            args: Some(args),
+                            position: None,
+                        }) if entity_type == "tree" && args == "oak"
+                    )
+                },
+            ),
+        ];
+
+        for (action, matches_expected) in cases {
+            let bus = EventBus::new();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let t = tx.clone();
+            bus.subscribe(move |e: &UiEvent| {
+                let _ = t.send(Published::Ui(e.clone()));
+            });
+            let t = tx.clone();
+            bus.subscribe(move |e: &DebugEvent| {
+                let _ = t.send(Published::Debug(e.clone()));
+            });
+            bus.subscribe(move |e: &GraphicsEvent| {
+                let _ = tx.send(Published::Graphics(e.clone()));
+            });
+
+            process_console_action(action.clone(), &bus);
+
+            let published: Vec<_> = rx.try_iter().collect();
+            assert_eq!(published.len(), 1, "events for {action:?}: {published:?}");
+            assert!(
+                matches_expected(&published[0]),
+                "unexpected {:?} for {action:?}",
+                published[0]
+            );
+        }
     }
 
-    #[test]
-    fn menu_music_stops_on_load_scene() {
-        let bus = Arc::new(EventBus::new());
-        let mut playing = true; // simulate music is already playing
-        let actions = vec![MenuAction::LoadScene(std::path::PathBuf::from(
-            "saves/scene.bin",
-        ))];
+    mod menu_table {
+        use super::*;
+        use moho_core::events::{AudioEvent, UiEvent};
 
-        update_menu_music(&actions, &bus, &mut playing);
-        assert!(!playing, "music should stop when loading a scene");
-    }
+        #[test]
+        fn settings_saved_publishes_saved_and_window_settings() {
+            let mut prefs = crate::prefs::Prefs::default();
+            prefs.set_window_mode(crate::prefs::WindowMode::Fullscreen);
+            prefs.set_window_resolution(1280, 720);
+            let bus = EventBus::new();
+            let ui = record::<UiEvent>(&bus);
 
-    #[test]
-    fn menu_music_stops_on_navigate_away() {
-        let bus = Arc::new(EventBus::new());
-        let mut playing = true;
-        let actions = vec![MenuAction::ShowMenu("settings".to_string())];
+            process_menu_action(&MenuAction::SettingsSaved(prefs), &bus);
 
-        update_menu_music(&actions, &bus, &mut playing);
-        assert!(
-            !playing,
-            "music should stop when navigating away from start"
-        );
-    }
+            let published: Vec<_> = ui.try_iter().collect();
+            assert_eq!(published.len(), 2, "events: {published:?}");
+            assert!(matches!(published[0], UiEvent::SettingsSaved));
+            assert!(
+                matches!(
+                    published[1],
+                    UiEvent::WindowSettingsChanged {
+                        mode: moho_core::events::WindowMode::Fullscreen,
+                        width: 1280,
+                        height: 720,
+                    }
+                ),
+                "unexpected {:?}",
+                published[1]
+            );
+        }
 
-    #[test]
-    fn menu_music_no_double_stop() {
-        let bus = Arc::new(EventBus::new());
-        let mut playing = false; // already not playing
-        let actions = vec![MenuAction::Exit];
+        #[test]
+        fn close_publishes_no_ui_event_and_plays_cancel() {
+            let bus = EventBus::new();
+            let ui = record::<UiEvent>(&bus);
+            let audio = record::<AudioEvent>(&bus);
 
-        update_menu_music(&actions, &bus, &mut playing);
-        assert!(!playing); // still false, no panic
+            process_menu_action(&MenuAction::Close, &bus);
+
+            let ui_events: Vec<_> = ui.try_iter().collect();
+            assert!(ui_events.is_empty(), "events: {ui_events:?}");
+            let audio_events: Vec<_> = audio.try_iter().collect();
+            assert!(
+                matches!(audio_events.as_slice(), [AudioEvent::Cancel]),
+                "events: {audio_events:?}"
+            );
+        }
     }
 }

@@ -24,27 +24,6 @@ pub struct PreparedScene {
     pub materials_uploaded: bool,
 }
 
-impl PreparedScene {
-    /// Create an empty prepared scene (useful for testing or when no geometry exists).
-    #[allow(dead_code)] // Used in tests
-    pub fn empty() -> Self {
-        Self {
-            cube_opaque: Vec::new(),
-            sphere_opaque: Vec::new(),
-            transparent_entries: Vec::new(),
-            materials_uploaded: false,
-        }
-    }
-
-    /// Check if this prepared scene has any geometry to render.
-    #[allow(dead_code)] // Used in tests
-    pub fn is_empty(&self) -> bool {
-        self.cube_opaque.is_empty()
-            && self.sphere_opaque.is_empty()
-            && self.transparent_entries.is_empty()
-    }
-}
-
 /// Scene preparation coordinator.
 ///
 /// Handles the complex logic of collecting instances from actors and chunks,
@@ -226,56 +205,5 @@ impl ScenePreparation {
         }
 
         (cube_opaque, sphere_opaque, transparent_entries)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Helper to create a test instance with identity transform.
-    fn test_instance() -> InstanceGpu {
-        InstanceGpu {
-            model: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-            material: 0,
-            object_type: 0,
-            padding: [0, 0],
-        }
-    }
-
-    #[test]
-    fn test_prepared_scene_empty() {
-        let prepared = PreparedScene::empty();
-        assert!(prepared.is_empty());
-        assert_eq!(prepared.cube_opaque.len(), 0);
-        assert_eq!(prepared.sphere_opaque.len(), 0);
-        assert_eq!(prepared.transparent_entries.len(), 0);
-        assert!(!prepared.materials_uploaded);
-    }
-
-    #[test]
-    fn test_prepared_scene_is_empty_with_cubes() {
-        let mut prepared = PreparedScene::empty();
-        prepared.cube_opaque.push(test_instance());
-        assert!(!prepared.is_empty());
-    }
-
-    #[test]
-    fn test_prepared_scene_is_empty_with_spheres() {
-        let mut prepared = PreparedScene::empty();
-        prepared.sphere_opaque.push(test_instance());
-        assert!(!prepared.is_empty());
-    }
-
-    #[test]
-    fn test_prepared_scene_is_empty_with_transparent() {
-        let mut prepared = PreparedScene::empty();
-        prepared.transparent_entries.push((0, test_instance()));
-        assert!(!prepared.is_empty());
     }
 }

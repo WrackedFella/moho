@@ -359,4 +359,18 @@ mod tests {
             render_hotbar(ctx, Some("Pickaxe"), &[(1, 2)], 99);
         });
     }
+
+    #[test]
+    fn render_hotbar_shows_tool_and_resource_labels() {
+        use crate::overlays::test_support::{second_frame, texts};
+
+        let ctx = egui::Context::default();
+
+        let output = second_frame(&ctx, |ctx| {
+            render_hotbar(ctx, Some("Pickaxe"), &[(7, 3)], 0);
+        });
+        let expected = ["1", "Pickaxe", "2", "R7", "3", "3", "4", "5", "6", "7", "8"];
+
+        assert_eq!(texts(&output), expected);
+    }
 }

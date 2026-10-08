@@ -85,7 +85,7 @@ pub fn voxel_terrain_scene_with_config(
 
     // Initialize block light propagation from all emissive blocks.
     tracing::info!("Initializing light propagation...");
-    let mut light_propagator = LightPropagator::new(grid.chunk_size());
+    let mut light_propagator = LightPropagator::new();
     light_propagator.flood_fill_block_lights(&mut grid);
     tracing::info!("Block light propagation complete");
 
