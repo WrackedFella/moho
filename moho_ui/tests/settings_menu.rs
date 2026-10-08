@@ -144,8 +144,9 @@ fn confirming_conflict_replaces_binding() {
     // Should show conflict modal
     assert!(menu.conflict_modal().is_visible());
 
-    // Confirm the conflict (replace existing binding)
-    menu.confirm_pending_binding();
+    // Confirm the conflict the way the adapter does: take, then confirm.
+    assert!(moho_ui::screens::Screen::take_pending_modal(&mut menu).is_some());
+    moho_ui::screens::Screen::on_modal_confirm(&mut menu);
 
     // Modal should be closed
     assert!(!menu.conflict_modal().is_visible());
@@ -155,6 +156,41 @@ fn confirming_conflict_replaces_binding() {
 
     // key_w should have an empty binding (conflict was replaced)
     assert_eq!(menu.get_staged_binding(0), Binding::new(0, 0));
+}
+
+/// Confirming through the adapter's take-then-confirm order moves the key.
+#[test]
+fn confirming_conflict_through_modal_flow_replaces_binding() {
+    use moho_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(1);
+    menu.apply_key_code_while_listening('W' as u32, 0);
+
+    let modal = Screen::take_pending_modal(&mut menu);
+    assert!(modal.is_some(), "conflict should produce a modal");
+    Screen::on_modal_confirm(&mut menu);
+
+    assert_eq!(menu.get_staged_binding(1), Binding::new('W' as u32, 0));
+    assert_eq!(menu.get_staged_binding(0), Binding::new(0, 0));
+}
+
+/// Cancelling through the adapter's take-then-cancel order changes nothing.
+#[test]
+fn cancelling_conflict_through_modal_flow_keeps_bindings() {
+    use moho_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before: Vec<Binding> = (0..7).map(|i| menu.get_staged_binding(i)).collect();
+    menu.start_listening(1);
+    menu.apply_key_code_while_listening('W' as u32, 0);
+
+    let modal = Screen::take_pending_modal(&mut menu);
+    assert!(modal.is_some(), "conflict should produce a modal");
+    Screen::on_modal_cancel(&mut menu);
+
+    let after: Vec<Binding> = (0..7).map(|i| menu.get_staged_binding(i)).collect();
+    assert_eq!(before, after);
 }
 
 /// Test 7: Canceling conflict preserves original binding
