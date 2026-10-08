@@ -9,7 +9,7 @@ Voxels sit in `moho_core` today and move to the strategy-line `moho_voxel` per [
 
 ```mermaid
 flowchart TD
-    subgraph frame["each Playing frame"]
+    subgraph frame["each Playing tick"]
         S["ChunkStreamer::update(grid, player_pos)"]
         S -->|"beyond unload_radius"| EV["evict: save if modified,<br/>remove mesh + collider"]
         S -->|"within load_radius,<br/>≤ chunks_per_frame columns"| LD["generate column<br/>chunk Y 0..=8"]
