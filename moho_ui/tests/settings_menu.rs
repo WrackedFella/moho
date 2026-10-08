@@ -127,34 +127,44 @@ fn revert_changes_works() {
     assert!(!menu.has_unsaved_changes());
 }
 
-/// Test 6: Confirming conflict replaces binding
+/// Confirming through the adapter's take-then-confirm order moves the key.
 #[test]
-fn confirming_conflict_replaces_binding() {
+fn confirming_conflict_through_modal_flow_replaces_binding() {
+    use moho_ui::screens::Screen;
+
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
-
-    // Bind key_w to 'W'
-    menu.start_listening(0);
-    menu.apply_key_code_while_listening(87, 0);
-    let key_w_binding = menu.get_staged_binding(0);
-
-    // Try to bind key_a to the same key (will conflict)
     menu.start_listening(1);
-    menu.apply_key_code_while_listening(87, 0);
+    menu.apply_key_code_while_listening('W' as u32, 0);
 
-    // Should show conflict modal
-    assert!(menu.conflict_modal().is_visible());
-
-    // Confirm the conflict (replace existing binding)
-    menu.confirm_pending_binding();
-
-    // Modal should be closed
+    let modal = Screen::take_pending_modal(&mut menu);
+    assert!(modal.is_some(), "conflict should produce a modal");
+    assert!(
+        Screen::take_pending_modal(&mut menu).is_none(),
+        "taking the dialog must hide it"
+    );
     assert!(!menu.conflict_modal().is_visible());
+    Screen::on_modal_confirm(&mut menu);
 
-    // key_a should now have the binding
-    assert_eq!(menu.get_staged_binding(1), key_w_binding);
-
-    // key_w should have an empty binding (conflict was replaced)
+    assert_eq!(menu.get_staged_binding(1), Binding::new('W' as u32, 0));
     assert_eq!(menu.get_staged_binding(0), Binding::new(0, 0));
+}
+
+/// Cancelling through the adapter's take-then-cancel order changes nothing.
+#[test]
+fn cancelling_conflict_through_modal_flow_keeps_bindings() {
+    use moho_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before: Vec<Binding> = (0..7).map(|i| menu.get_staged_binding(i)).collect();
+    menu.start_listening(1);
+    menu.apply_key_code_while_listening('W' as u32, 0);
+
+    let modal = Screen::take_pending_modal(&mut menu);
+    assert!(modal.is_some(), "conflict should produce a modal");
+    Screen::on_modal_cancel(&mut menu);
+
+    let after: Vec<Binding> = (0..7).map(|i| menu.get_staged_binding(i)).collect();
+    assert_eq!(before, after);
 }
 
 /// Test 7: Canceling conflict preserves original binding

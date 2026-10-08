@@ -123,7 +123,8 @@ impl KeybindCaptureHandler {
         false
     }
 
-    /// Check if there's a pending binding to apply (after modal confirmation)
+    /// Whether the conflict dialog is currently visible. Taking the dialog hides it
+    /// while the pending binding is kept, so this is `false` once it has been taken.
     // Note: has_pending_binding is provided for API completeness but currently unused.
     // The conflict modal visibility is checked directly in most cases.
     #[allow(dead_code)]
@@ -141,30 +142,13 @@ impl KeybindCaptureHandler {
     {
         if let Some(pending) = self.conflict_modal.take_pending() {
             // Clear conflicting binding if any
-            if let Some(conflict_id) = pending.conflicting_id {
-                let field = match conflict_id {
-                    0 => SettingsField::KeyW,
-                    1 => SettingsField::KeyA,
-                    2 => SettingsField::KeyS,
-                    3 => SettingsField::KeyD,
-                    4 => SettingsField::KeyUp,
-                    5 => SettingsField::KeyDown,
-                    _ => SettingsField::KeyW, // Fallback (shouldn't happen)
-                };
-                on_binding_changed(field, Binding::new(0, 0));
+            if let Some(id) = pending.conflicting_id.and_then(BindingId::from_usize) {
+                on_binding_changed(id.to_settings_field(), Binding::new(0, 0));
             }
 
-            // Apply new binding
-            let target_field = match pending.target_id {
-                0 => SettingsField::KeyW,
-                1 => SettingsField::KeyA,
-                2 => SettingsField::KeyS,
-                3 => SettingsField::KeyD,
-                4 => SettingsField::KeyUp,
-                5 => SettingsField::KeyDown,
-                _ => SettingsField::KeyW, // Fallback (shouldn't happen)
-            };
-            on_binding_changed(target_field, pending.binding);
+            if let Some(id) = BindingId::from_usize(pending.target_id) {
+                on_binding_changed(id.to_settings_field(), pending.binding);
+            }
         }
         self.conflict_modal.hide();
     }
@@ -174,13 +158,18 @@ impl KeybindCaptureHandler {
         self.conflict_modal.clear();
     }
 
-    /// Get conflict modal state (for checking if modal should be shown)
-    pub fn take_conflict_modal(&mut self) -> Option<ConflictModalState> {
-        if self.conflict_modal.is_visible() {
-            Some(std::mem::take(&mut self.conflict_modal))
-        } else {
-            None
+    /// Take the dialog text (conflict key name, binding description) if the
+    /// modal is visible, hiding it while keeping the pending binding for a
+    /// later `apply_pending`.
+    pub fn take_conflict_modal(&mut self) -> Option<(String, String)> {
+        if !self.conflict_modal.is_visible() {
+            return None;
         }
+        self.conflict_modal.hide();
+        Some((
+            self.conflict_modal.conflict_key_name().to_string(),
+            self.conflict_modal.conflict_binding_desc().to_string(),
+        ))
     }
 
     pub(super) fn get_key_name(id: usize) -> &'static str {
@@ -299,36 +288,46 @@ mod tests {
     }
 
     #[test]
-    fn test_pending_binding_apply() {
+    fn take_conflict_modal_returns_holder_name_then_key_description() {
         let mut handler = KeybindCaptureHandler::new();
+        let prefs = crate::prefs::Prefs::default();
 
-        // Create prefs where KeyW is already bound to 'W'
-        let prefs = crate::prefs::Prefs::default().with_key_w(Binding::new('W' as u32, 0));
-
-        // Try to bind KeyA to 'W' (conflict)
-        handler.start_listening(1); // KeyA
+        handler.start_listening(1); // Move Left
         handler.apply_key_code_while_listening('W' as u32, 0, &prefs, |_, _| {});
 
-        assert!(handler.has_pending_binding());
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Move Forward".to_string(), "W".to_string()))
+        );
+    }
 
-        // Apply pending binding
-        let mut bindings_changed = vec![];
-        handler.apply_pending(|field, binding| bindings_changed.push((field, binding)));
+    fn resolve_conflict(target_id: usize, code: u32) -> Vec<(SettingsField, Binding)> {
+        let mut handler = KeybindCaptureHandler::new();
+        let prefs = crate::prefs::Prefs::default();
 
-        // Should clear KeyW and apply KeyA
-        assert_eq!(bindings_changed.len(), 2);
+        handler.start_listening(target_id);
+        handler.apply_key_code_while_listening(code, 0, &prefs, |_, _| {});
+        let mut changes = vec![];
+        handler.apply_pending(|field, binding| changes.push((field, binding)));
+        changes
+    }
 
-        // First change: clear KeyW
-        let (field1, binding1) = bindings_changed[0];
-        assert!(matches!(field1, SettingsField::KeyW));
-        assert_eq!(binding1.code, 0);
-        assert_eq!(binding1.mods, 0);
+    #[test]
+    fn move_down_taking_shift_unbinds_sprint() {
+        let changes = resolve_conflict(5, 0x204);
 
-        // Second change: apply KeyA
-        let (field2, binding2) = bindings_changed[1];
-        assert!(matches!(field2, SettingsField::KeyA));
-        assert_eq!(binding2.code, 'W' as u32);
-        assert_eq!(binding2.mods, 0);
+        assert_eq!(changes.len(), 2);
+        assert!(changes.contains(&(SettingsField::KeySprint, Binding::new(0, 0))));
+        assert!(changes.contains(&(SettingsField::KeyDown, Binding::new(0x204, 0))));
+    }
+
+    #[test]
+    fn sprint_taking_a_unbinds_move_left() {
+        let changes = resolve_conflict(6, 'A' as u32);
+
+        assert_eq!(changes.len(), 2);
+        assert!(changes.contains(&(SettingsField::KeyA, Binding::new(0, 0))));
+        assert!(changes.contains(&(SettingsField::KeySprint, Binding::new('A' as u32, 0))));
     }
 
     #[test]
