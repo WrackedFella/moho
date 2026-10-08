@@ -130,7 +130,6 @@ pub fn render_progress_overlay(ctx: &egui::Context, progress: &mut ProgressState
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     #[test]
     fn test_render_pause_overlay() {
@@ -141,35 +140,161 @@ mod tests {
         // Verify no panic
     }
 
-    #[test]
-    fn test_render_game_state_playing() {
-        let ctx = egui::Context::default();
-        let mut ui_state = UiStateManager::new();
-        let event_bus = Arc::new(EventBus::new());
+    use crate::screens::{MenuItem, Screen, ScreenSpec, UiComponent};
 
+    /// One button at a fixed position, reporting a real click through its `MenuItem`.
+    struct ButtonScreen {
+        action: MenuAction,
+        enabled: bool,
+        spec: ScreenSpec,
+    }
+
+    impl UiComponent for ButtonScreen {
+        fn name(&self) -> &str {
+            "button_screen"
+        }
+
+        fn render(&mut self, ctx: &egui::Context) -> Vec<MenuItem> {
+            let mut items = Vec::new();
+            egui::Area::new("button_screen_area".into())
+                .fixed_pos(egui::pos2(10.0, 10.0))
+                .show(ctx, |ui| {
+                    let response = ui.button("Go");
+                    items.push(MenuItem {
+                        action: self.action.clone(),
+                        rect: Some(response.rect),
+                        enabled: self.enabled,
+                        clicked: response.clicked(),
+                        hovered: response.hovered(),
+                    });
+                });
+            items
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    impl Screen for ButtonScreen {
+        fn spec(&self) -> &ScreenSpec {
+            &self.spec
+        }
+    }
+
+    fn screen_text(output: &egui::FullOutput) -> String {
+        fn collect(shape: &egui::Shape, out: &mut String) {
+            match shape {
+                egui::Shape::Text(text) => {
+                    out.push_str(text.galley.text());
+                    out.push('\n');
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
+                _ => {}
+            }
+        }
+
+        let mut text = String::new();
+        for clipped in &output.shapes {
+            collect(&clipped.shape, &mut text);
+        }
+        text
+    }
+
+    fn run_frame(
+        ctx: &egui::Context,
+        ui_state: &mut UiStateManager,
+        game_state: GameState,
+        events: Vec<egui::Event>,
+    ) -> (egui::FullOutput, MenuRenderResult) {
+        let bus = EventBus::new();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            events,
+            ..Default::default()
+        };
         let mut result = MenuRenderResult {
             actions: Vec::new(),
             hovered_key: None,
         };
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            result = render_game_state(ctx, &mut ui_state, GameState::Playing, &event_bus);
+
+        let output = ctx.run(input, |ctx| {
+            result = render_game_state(ctx, ui_state, game_state, &bus);
         });
-        assert!(result.actions.is_empty());
+
+        (output, result)
+    }
+
+    fn click_at(pos: egui::Pos2) -> Vec<egui::Event> {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        vec![egui::Event::PointerMoved(pos), button(true), button(false)]
+    }
+
+    fn menu_with_button(enabled: bool) -> UiStateManager {
+        let mut ui_state = UiStateManager::new();
+        ui_state.add_screen(
+            "button_screen".to_string(),
+            Box::new(ButtonScreen {
+                action: MenuAction::Exit,
+                enabled,
+                spec: ScreenSpec::default(),
+            }),
+        );
+        assert!(ui_state.show_screen("button_screen"));
+        ui_state
+    }
+
+    fn clicked_menu_actions(enabled: bool) -> Vec<MenuAction> {
+        let ctx = egui::Context::default();
+        let mut ui_state = menu_with_button(enabled);
+        for _ in 0..2 {
+            run_frame(&ctx, &mut ui_state, GameState::Menu, Vec::new());
+        }
+
+        let (_, result) = run_frame(
+            &ctx,
+            &mut ui_state,
+            GameState::Menu,
+            click_at(egui::pos2(18.0, 18.0)),
+        );
+
+        result.actions
     }
 
     #[test]
-    fn test_render_game_state_paused() {
+    fn render_game_state_by_state() {
         let ctx = egui::Context::default();
         let mut ui_state = UiStateManager::new();
-        let event_bus = Arc::new(EventBus::new());
 
-        let mut result = MenuRenderResult {
-            actions: Vec::new(),
-            hovered_key: None,
-        };
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            result = render_game_state(ctx, &mut ui_state, GameState::Paused, &event_bus);
-        });
-        assert!(result.actions.is_empty());
+        let (playing, playing_result) =
+            run_frame(&ctx, &mut ui_state, GameState::Playing, Vec::new());
+        let (paused, paused_result) = run_frame(&ctx, &mut ui_state, GameState::Paused, Vec::new());
+
+        assert!(
+            !screen_text(&playing).contains("Paused"),
+            "playing text: {}",
+            screen_text(&playing)
+        );
+        assert!(
+            screen_text(&paused).contains("Paused"),
+            "paused text: {}",
+            screen_text(&paused)
+        );
+        assert!(playing_result.actions.is_empty());
+        assert!(paused_result.actions.is_empty());
+        assert_eq!(clicked_menu_actions(true), vec![MenuAction::Exit]);
+        assert!(clicked_menu_actions(false).is_empty());
     }
 }
