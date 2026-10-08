@@ -469,16 +469,133 @@ mod tests {
     }
 
     #[test]
-    fn from_winit_maps_physical_keys() {
-        let code = |kc| Key::from_winit(PhysicalKey::Code(kc));
+    fn from_winit_maps_every_named_key_from_its_codes() {
+        use KeyCode as C;
+        let letters = [
+            (C::KeyA, Key::A),
+            (C::KeyB, Key::B),
+            (C::KeyC, Key::C),
+            (C::KeyD, Key::D),
+            (C::KeyE, Key::E),
+            (C::KeyF, Key::F),
+            (C::KeyG, Key::G),
+            (C::KeyH, Key::H),
+            (C::KeyI, Key::I),
+            (C::KeyJ, Key::J),
+            (C::KeyK, Key::K),
+            (C::KeyL, Key::L),
+            (C::KeyM, Key::M),
+            (C::KeyN, Key::N),
+            (C::KeyO, Key::O),
+            (C::KeyP, Key::P),
+            (C::KeyQ, Key::Q),
+            (C::KeyR, Key::R),
+            (C::KeyS, Key::S),
+            (C::KeyT, Key::T),
+            (C::KeyU, Key::U),
+            (C::KeyV, Key::V),
+            (C::KeyW, Key::W),
+            (C::KeyX, Key::X),
+            (C::KeyY, Key::Y),
+            (C::KeyZ, Key::Z),
+        ];
+        let rest = [
+            (C::Digit0, Key::Digit0),
+            (C::Digit1, Key::Digit1),
+            (C::Digit2, Key::Digit2),
+            (C::Digit3, Key::Digit3),
+            (C::Digit4, Key::Digit4),
+            (C::Digit5, Key::Digit5),
+            (C::Digit6, Key::Digit6),
+            (C::Digit7, Key::Digit7),
+            (C::Digit8, Key::Digit8),
+            (C::Digit9, Key::Digit9),
+            (C::Period, Key::Period),
+            (C::Comma, Key::Comma),
+            (C::Slash, Key::Slash),
+            (C::Backslash, Key::Backslash),
+            (C::Semicolon, Key::Semicolon),
+            (C::Quote, Key::Apostrophe),
+            (C::BracketLeft, Key::LeftBracket),
+            (C::BracketRight, Key::RightBracket),
+            (C::Minus, Key::Minus),
+            (C::Equal, Key::Equals),
+            (C::Backquote, Key::Backtick),
+            (C::ArrowUp, Key::ArrowUp),
+            (C::ArrowDown, Key::ArrowDown),
+            (C::ArrowLeft, Key::ArrowLeft),
+            (C::ArrowRight, Key::ArrowRight),
+            (C::Escape, Key::Escape),
+            (C::Tab, Key::Tab),
+            (C::Backspace, Key::Backspace),
+            (C::Enter, Key::Enter),
+            (C::Space, Key::Space),
+            (C::ShiftLeft, Key::Shift),
+            (C::ShiftRight, Key::Shift),
+            (C::ControlLeft, Key::Ctrl),
+            (C::ControlRight, Key::Ctrl),
+            (C::AltLeft, Key::Alt),
+            (C::AltRight, Key::Alt),
+        ];
 
-        assert_eq!(code(KeyCode::KeyA), Some(Key::A));
-        assert_eq!(code(KeyCode::Space), Some(Key::Space));
-        assert_eq!(code(KeyCode::ArrowUp), Some(Key::ArrowUp));
-        assert_eq!(code(KeyCode::Escape), Some(Key::Escape));
-        assert_eq!(code(KeyCode::ShiftLeft), Some(Key::Shift));
-        assert_eq!(code(KeyCode::ShiftRight), Some(Key::Shift));
-        assert_eq!(code(KeyCode::F5), None);
+        let mut reached = HashSet::new();
+        for (code, expected) in letters.into_iter().chain(rest) {
+            let got = Key::from_winit(PhysicalKey::Code(code));
+
+            assert_eq!(got, Some(expected), "{code:?}");
+            reached.insert(expected);
+        }
+        let all: HashSet<Key> = Key::ALL.iter().copied().collect();
+        assert_eq!(reached, all, "some Key is unreachable from winit");
+    }
+
+    #[test]
+    fn from_winit_leaves_unnamed_codes_unmapped() {
+        for code in [
+            KeyCode::F5,
+            KeyCode::Insert,
+            KeyCode::SuperLeft,
+            KeyCode::Numpad1,
+        ] {
+            assert_eq!(Key::from_winit(PhysicalKey::Code(code)), None, "{code:?}");
+        }
+    }
+
+    const GLYPHS: [(&str, Key); 11] = [
+        (".", Key::Period),
+        (",", Key::Comma),
+        ("/", Key::Slash),
+        ("\\", Key::Backslash),
+        (";", Key::Semicolon),
+        ("'", Key::Apostrophe),
+        ("[", Key::LeftBracket),
+        ("]", Key::RightBracket),
+        ("-", Key::Minus),
+        ("=", Key::Equals),
+        ("`", Key::Backtick),
+    ];
+
+    #[test]
+    fn glyph_aliases_parse_to_their_key() {
+        for (glyph, key) in GLYPHS {
+            assert_eq!(Key::parse(glyph), Some(key), "{glyph:?}");
+        }
+    }
+
+    #[test]
+    fn punctuation_labels_are_glyphs() {
+        for (glyph, key) in GLYPHS {
+            assert_eq!(key.label(), glyph, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn non_punctuation_labels_are_readable_names() {
+        assert_eq!(Key::W.label(), "W");
+        assert_eq!(Key::Digit5.label(), "5");
+        assert_eq!(Key::Space.label(), "Spacebar");
+        assert_eq!(Key::ArrowUp.label(), "ArrowUp");
+        assert_eq!(Key::Ctrl.label(), "Ctrl");
     }
 
     #[test]

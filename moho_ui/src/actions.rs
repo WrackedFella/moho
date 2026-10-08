@@ -93,4 +93,16 @@ mod tests {
             .collect();
         assert_eq!(actual, want);
     }
+
+    #[test]
+    fn old_per_key_lines_are_not_migrated() {
+        let (prefs, _) = Prefs::parse("[prefs]\nkey_w = Z\n");
+
+        let bindings = load_bindings(&prefs);
+
+        assert_eq!(
+            bindings.get(StrategyAction::MoveForward),
+            [Binding::Key(Key::W)]
+        );
+    }
 }

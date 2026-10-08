@@ -88,25 +88,65 @@ mod tests {
     use super::*;
 
     #[test]
-    fn egui_letters_and_digits_map_to_their_keys() {
-        assert_eq!(egui_key_to_key(egui::Key::A), Some(Key::A));
-        assert_eq!(egui_key_to_key(egui::Key::Z), Some(Key::Z));
-        assert_eq!(egui_key_to_key(egui::Key::Num0), Some(Key::Digit0));
-        assert_eq!(egui_key_to_key(egui::Key::Num9), Some(Key::Digit9));
-    }
+    fn every_mapped_egui_key_maps_to_its_key() {
+        let table = [
+            (egui::Key::A, Key::A),
+            (egui::Key::B, Key::B),
+            (egui::Key::C, Key::C),
+            (egui::Key::D, Key::D),
+            (egui::Key::E, Key::E),
+            (egui::Key::F, Key::F),
+            (egui::Key::G, Key::G),
+            (egui::Key::H, Key::H),
+            (egui::Key::I, Key::I),
+            (egui::Key::J, Key::J),
+            (egui::Key::K, Key::K),
+            (egui::Key::L, Key::L),
+            (egui::Key::M, Key::M),
+            (egui::Key::N, Key::N),
+            (egui::Key::O, Key::O),
+            (egui::Key::P, Key::P),
+            (egui::Key::Q, Key::Q),
+            (egui::Key::R, Key::R),
+            (egui::Key::S, Key::S),
+            (egui::Key::T, Key::T),
+            (egui::Key::U, Key::U),
+            (egui::Key::V, Key::V),
+            (egui::Key::W, Key::W),
+            (egui::Key::X, Key::X),
+            (egui::Key::Y, Key::Y),
+            (egui::Key::Z, Key::Z),
+            (egui::Key::Num0, Key::Digit0),
+            (egui::Key::Num1, Key::Digit1),
+            (egui::Key::Num2, Key::Digit2),
+            (egui::Key::Num3, Key::Digit3),
+            (egui::Key::Num4, Key::Digit4),
+            (egui::Key::Num5, Key::Digit5),
+            (egui::Key::Num6, Key::Digit6),
+            (egui::Key::Num7, Key::Digit7),
+            (egui::Key::Num8, Key::Digit8),
+            (egui::Key::Num9, Key::Digit9),
+            (egui::Key::ArrowUp, Key::ArrowUp),
+            (egui::Key::ArrowDown, Key::ArrowDown),
+            (egui::Key::ArrowLeft, Key::ArrowLeft),
+            (egui::Key::ArrowRight, Key::ArrowRight),
+            (egui::Key::Escape, Key::Escape),
+            (egui::Key::Tab, Key::Tab),
+            (egui::Key::Backspace, Key::Backspace),
+            (egui::Key::Enter, Key::Enter),
+            (egui::Key::Space, Key::Space),
+        ];
 
-    #[test]
-    fn egui_special_keys_map_to_their_keys() {
-        assert_eq!(egui_key_to_key(egui::Key::ArrowUp), Some(Key::ArrowUp));
-        assert_eq!(egui_key_to_key(egui::Key::ArrowDown), Some(Key::ArrowDown));
-        assert_eq!(egui_key_to_key(egui::Key::Escape), Some(Key::Escape));
-        assert_eq!(egui_key_to_key(egui::Key::Enter), Some(Key::Enter));
-        assert_eq!(egui_key_to_key(egui::Key::Space), Some(Key::Space));
+        for (egui_key, key) in table {
+            assert_eq!(egui_key_to_key(egui_key), Some(key), "{egui_key:?}");
+        }
     }
 
     #[test]
     fn unnamed_egui_keys_do_not_map() {
-        assert_eq!(egui_key_to_key(egui::Key::F5), None);
+        for k in [egui::Key::F5, egui::Key::Insert, egui::Key::Home] {
+            assert_eq!(egui_key_to_key(k), None, "{k:?}");
+        }
     }
 
     #[test]
@@ -122,6 +162,9 @@ mod tests {
         assert_eq!(modifier_bits(&mods(true, false, false)), 1);
         assert_eq!(modifier_bits(&mods(false, true, false)), 2);
         assert_eq!(modifier_bits(&mods(false, false, true)), 4);
+        assert_eq!(modifier_bits(&mods(true, true, false)), 3);
+        assert_eq!(modifier_bits(&mods(true, false, true)), 5);
+        assert_eq!(modifier_bits(&mods(false, true, true)), 6);
         assert_eq!(modifier_bits(&mods(true, true, true)), 7);
     }
 
