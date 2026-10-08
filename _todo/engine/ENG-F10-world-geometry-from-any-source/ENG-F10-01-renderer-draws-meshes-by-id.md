@@ -1,6 +1,7 @@
 # The renderer draws, replaces and removes a game's meshes by id
 
 **Feature:** [ENG-F10](_feature.md)
+**Issue:** #138
 
 ## Summary
 

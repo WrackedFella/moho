@@ -45,12 +45,14 @@ for the repo split ([ENG-F5](../ENG-F5-physical-repo-split/_feature.md)). Decisi
 - In: the world-geometry contract in `moho_render_api`; the renderer and the
   binary's physics wiring moved onto it; extracting `moho_voxel`; moving
   `MaterialType` and the voxel events; updating `CLAUDE.md`'s architecture
-  table and [ADR-0005](../../adr/0005-crate-lines-and-dependency-direction.md)'s line table.
+  table.
 - Out:
   - Any FPS map format, loader or generator (FPS line).
   - Streaming for non-voxel maps.
   - The material-model rethink ([ENG-F1-05](../ENG-F1-engine-hygiene/ENG-F1-05-material-model-revisit.md)).
   - A shared app shell for the two binaries.
+  - Editing [ADR-0005](../../adr/0005-crate-lines-and-dependency-direction.md)'s line table.
+    ADR-0010 records the move; ADRs are superseded, not edited.
   - Moving the generic `PlayerController` math to the engine. That happens
     when an FPS crate needs it, and the layering check forces it.
 
@@ -58,10 +60,10 @@ for the repo split ([ENG-F5](../ENG-F5-physical-repo-split/_feature.md)). Decisi
 
 | Item |
 |---|
-| [ENG-F10-01](ENG-F10-01-renderer-draws-meshes-by-id.md) The renderer draws, replaces and removes a game's meshes by id |
-| [ENG-F10-02](ENG-F10-02-physics-collides-with-meshes-by-id.md) Physics collides with a game's meshes by id, and one change updates drawing and collision |
-| [ENG-F10-03](ENG-F10-03-voxel-terrain-is-a-strategy-crate.md) Voxel terrain builds as a strategy-line crate |
-| [ENG-F10-04](ENG-F10-04-no-engine-crate-names-a-voxel-type.md) No engine crate names a voxel type, and the layering check covers tests |
+| #138 [ENG-F10-01](ENG-F10-01-renderer-draws-meshes-by-id.md) The renderer draws, replaces and removes a game's meshes by id |
+| #139 [ENG-F10-02](ENG-F10-02-physics-collides-with-meshes-by-id.md) Physics collides with a game's meshes by id, and one change updates drawing and collision |
+| #140 [ENG-F10-03](ENG-F10-03-voxel-terrain-is-a-strategy-crate.md) Voxel terrain builds as a strategy-line crate |
+| #141 [ENG-F10-04](ENG-F10-04-no-engine-crate-names-a-voxel-type.md) No engine crate names a voxel type, and the layering check covers tests |
 
 ## Notes
 
