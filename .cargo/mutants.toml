@@ -13,4 +13,6 @@ exclude_re = [
     "WindowEventHandler::handle_redraw_requested",
     "WindowManager::initial_render",
     'delete match arm "light" in EventProcessor::handle_debug_event',
+    # Equivalent while every file kind is at version 1; drop when one bumps.
+    'replace FileKind::current_version -> u16 with 1$',
 ]

@@ -171,6 +171,50 @@ mod tests {
         result.expect_err("must reject")
     }
 
+    /// Unique world name whose chunk folder (and an emptied `saves/`) is removed on drop.
+    struct ScratchWorld(String);
+
+    impl ScratchWorld {
+        fn new(suffix: &str) -> Self {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time ok")
+                .as_nanos();
+            Self(format!("moho_test_world_{now}_{suffix}"))
+        }
+    }
+
+    impl Drop for ScratchWorld {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(Path::new("saves").join(&self.0));
+            let _ = fs::remove_dir("saves");
+        }
+    }
+
+    #[test]
+    fn chunk_file_round_trips_and_a_missing_one_is_none() {
+        let world = ScratchWorld::new("chunk_rt");
+        let pos = IVec3::new(1, -2, 3);
+
+        let before = read_chunk_file(&world.0, pos).expect("missing is not an error");
+        write_chunk_file(&world.0, pos, &[7, 8, 9]).expect("write ok");
+        let after = read_chunk_file(&world.0, pos).expect("read ok");
+
+        assert_eq!(before, None);
+        assert_eq!(after, Some(vec![7, 8, 9]));
+    }
+
+    #[test]
+    fn unreadable_chunk_file_returns_io_error() {
+        let world = ScratchWorld::new("chunk_unreadable");
+        let pos = IVec3::ZERO;
+        fs::create_dir_all(chunk_path(&world.0, pos)).expect("directory in place of the file");
+
+        let err = read_chunk_file(&world.0, pos).expect_err("must fail");
+
+        assert!(matches!(err, PersistError::Io(_)), "{err:?}");
+    }
+
     /// Header of a pre-migration save: `MOHO` + `u32` version + meta, scene
     /// and block lengths of zero.
     fn pre_migration_save(version: u32) -> Vec<u8> {

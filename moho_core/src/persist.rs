@@ -155,6 +155,14 @@ mod tests {
     }
 
     #[test]
+    fn header_only_envelope_round_trips_an_empty_payload() {
+        let bytes = encode(FileKind::World, &()).expect("encode");
+
+        assert_eq!(bytes.len(), HEADER_LEN);
+        decode::<()>(FileKind::World, &bytes).expect("decode");
+    }
+
+    #[test]
     fn wrong_magic_returns_not_a_save_file() {
         let mut bytes = envelope_around(FileKind::World as u8, 1, &PAYLOAD);
         bytes[0] = b'X';
