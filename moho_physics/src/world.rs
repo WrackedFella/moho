@@ -15,6 +15,7 @@ pub struct PhysicsWorld {
     pub collider_set: ColliderSet,
     impulse_joint_set: ImpulseJointSet,
     multibody_joint_set: MultibodyJointSet,
+    soft_body_set: SoftBodySet,
     ccd_solver: CCDSolver,
     character_controller: KinematicCharacterController,
     pub character_body: Option<RigidBodyHandle>,
@@ -46,6 +47,7 @@ impl PhysicsWorld {
         let collider_set = ColliderSet::new();
         let impulse_joint_set = ImpulseJointSet::new();
         let multibody_joint_set = MultibodyJointSet::new();
+        let soft_body_set = SoftBodySet::new();
         let ccd_solver = CCDSolver::new();
 
         let character_controller = KinematicCharacterController {
@@ -69,6 +71,7 @@ impl PhysicsWorld {
             collider_set,
             impulse_joint_set,
             multibody_joint_set,
+            soft_body_set,
             ccd_solver,
             character_controller,
             character_body: None,
@@ -92,6 +95,7 @@ impl PhysicsWorld {
             &mut self.collider_set,
             &mut self.impulse_joint_set,
             &mut self.multibody_joint_set,
+            &mut self.soft_body_set,
             &mut self.ccd_solver,
             &(),
             &(),
@@ -144,6 +148,7 @@ impl PhysicsWorld {
             handle,
             &mut self.island_manager,
             &mut self.rigid_body_set,
+            &mut self.soft_body_set,
             false,
         );
     }

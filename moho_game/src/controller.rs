@@ -1,3 +1,4 @@
+use glam::camera::rh::{proj::directx::perspective, view::look_at_mat4};
 use glam::{Mat4, Vec3};
 
 // ── Camera / movement defaults ─────────────────────────────────────────
@@ -170,8 +171,8 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
             let forward = Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
             let center = eye + forward;
             let up = Vec3::Y;
-            let view = Mat4::look_at_rh(eye, center, up);
-            let proj = Mat4::perspective_rh(
+            let view = look_at_mat4(eye, center, up);
+            let proj = perspective(
                 DEFAULT_FOV_DEG.to_radians(),
                 DEFAULT_ASPECT_RATIO,
                 NEAR_CLIP,
@@ -187,8 +188,8 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
             let eye = pc.rts_look_target + camera_offset;
             let center = pc.rts_look_target;
             let up = Vec3::Y;
-            let view = Mat4::look_at_rh(eye, center, up);
-            let proj = Mat4::perspective_rh(
+            let view = look_at_mat4(eye, center, up);
+            let proj = perspective(
                 DEFAULT_FOV_DEG.to_radians(),
                 DEFAULT_ASPECT_RATIO,
                 NEAR_CLIP,
