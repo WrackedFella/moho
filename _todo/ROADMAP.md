@@ -41,7 +41,7 @@ just before the work that needs them, not sooner.
 
 | # | Item | When |
 |---|---|---|
-| 1.6 | [ENG-F3-03](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-03-misc-cleanups.md): delete the unsound `FrameCallback` path | now (soundness) |
+| 1.6 | [ENG-F3-03](https://github.com/WrackedFella/moho/issues/208): delete the unsound `FrameCallback` path | now (soundness) |
 | 1.2 | [ENG-F2-03](https://github.com/WrackedFella/moho/issues/96): winit/egui-winit default features off; unused deps removed ([ADR-0008](adr/0008-keep-winit-for-windowing-and-input.md)) | now |
 | 1.7 | Amend [ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md)'s gate (boundary readiness, FPS as second consumer) | now |
 | 1.11 | [ENG-F13](https://github.com/WrackedFella/moho/issues/83): dependency audit | now, before ENG-F12 or any new dependency |
