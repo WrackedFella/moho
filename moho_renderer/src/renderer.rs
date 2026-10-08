@@ -428,35 +428,16 @@ impl<'a> Renderer<'a> {
     }
 
     fn prepare_instance_buffer(&mut self, instances_gpu: &[GpuInstance]) -> Option<&wgpu::Buffer> {
-        let new_cap = MeshRenderer::next_capacity(self.instance_capacity, instances_gpu.len());
-        if new_cap != self.instance_capacity {
-            let size_bytes = (new_cap * std::mem::size_of::<GpuInstance>()) as wgpu::BufferAddress;
-            let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("instance-buffer"),
-                size: size_bytes,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.instance_buffer = Some(buf);
-            self.instance_capacity = new_cap;
+        if !MeshRenderer::ensure_capacity_and_upload(
+            &self.device,
+            &self.queue,
+            &mut self.instance_buffer,
+            &mut self.instance_capacity,
+            instances_gpu,
+        ) {
+            return None;
         }
-
-        let ibuf = self.instance_buffer.as_ref()?;
-        if instances_gpu.is_empty() {
-            let zero = GpuInstance {
-                model: [[0.0; 4]; 4],
-                material: 0,
-                object_type: 0,
-                padding: [0, 0],
-            };
-            self.queue
-                .write_buffer(ibuf, 0, bytemuck::cast_slice(&[zero]));
-        } else {
-            self.queue
-                .write_buffer(ibuf, 0, bytemuck::cast_slice(instances_gpu));
-        }
-
-        Some(ibuf)
+        self.instance_buffer.as_ref()
     }
 
     /// Begin a new frame: uploads the camera, culls/updates dynamic lights,
