@@ -109,7 +109,6 @@ mod tests {
         encode(kind, &fixture()).expect("encode fixture")
     }
 
-    /// Envelope around `payload` with a correct length and CRC.
     fn envelope_around(kind: u8, version: u16, payload: &[u8]) -> Vec<u8> {
         let mut out = b"MOHO".to_vec();
         out.push(kind);
