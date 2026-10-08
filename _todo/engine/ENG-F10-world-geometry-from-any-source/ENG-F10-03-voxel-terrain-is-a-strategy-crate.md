@@ -1,7 +1,10 @@
 # Voxel terrain builds as a strategy-line crate
 
 **Feature:** [ENG-F10](_feature.md)
-**Issue:** #140
+**Issue:** [#140](https://github.com/WrackedFella/moho/issues/140)
+**Status:** unknown
+**Gate class:** glue
+**Labels:** line:engine
 
 ## Summary
 

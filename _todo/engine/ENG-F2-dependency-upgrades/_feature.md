@@ -71,7 +71,7 @@ to copy, and setting the upgrade rhythm later milestones follow.
 | [ENG-F2-04 The paste advisory ignore is removed](ENG-F2-04-paste-advisory-cleared.md) |
 | [ENG-F2-05 Engine and game logs are structured tracing events](ENG-F2-05-structured-logging.md) |
 | [ENG-F2-06 Event and job channels use the standard library](ENG-F2-06-std-channels.md) |
-| [ENG-F2-07 Renderer device setup blocks on async without pollster](ENG-F2-07-renderer-blocks-without-pollster.md) |
+| [ENG-F2-07 Renderer device setup blocks on async without pollster](https://github.com/WrackedFella/moho/issues/100) |
 | [ENG-F2-08 The graphics stack is on current wgpu and egui](ENG-F2-08-graphics-stack-current.md) |
 | [ENG-F2-09 The physics stack is on current rapier3d](ENG-F2-09-physics-stack-current.md) |
 | [ENG-F2-10 Terrain generation uses in-house Perlin noise](ENG-F2-10-terrain-noise-in-house.md) |

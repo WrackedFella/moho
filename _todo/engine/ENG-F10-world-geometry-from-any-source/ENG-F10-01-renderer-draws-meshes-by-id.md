@@ -1,7 +1,10 @@
 # The renderer draws, replaces and removes a game's meshes by id
 
 **Feature:** [ENG-F10](_feature.md)
-**Issue:** #138
+**Issue:** [#138](https://github.com/WrackedFella/moho/issues/138)
+**Status:** unknown
+**Gate class:** glue
+**Labels:** line:engine
 
 ## Summary
 

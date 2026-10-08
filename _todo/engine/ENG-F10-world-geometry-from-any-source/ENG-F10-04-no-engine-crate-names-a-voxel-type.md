@@ -1,7 +1,10 @@
 # No engine crate names a voxel type, and the layering check covers tests
 
 **Feature:** [ENG-F10](_feature.md)
-**Issue:** #141
+**Issue:** [#141](https://github.com/WrackedFella/moho/issues/141)
+**Status:** unknown
+**Gate class:** glue
+**Labels:** line:engine
 
 ## Summary
 
