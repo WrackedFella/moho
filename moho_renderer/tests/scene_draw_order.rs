@@ -251,21 +251,24 @@ fn transparent_material_routes_to_transparent_pass() {
 fn out_of_range_material_index_draws_opaque() {
     let mut scene = Scene::new();
     let mut renderer = RecordingRenderer::default();
-    let stray = Prop {
-        x: 3.0,
+    // The table holds OPAQUE and GLASS, so index 2 is the first one past its end.
+    let stray = |x| Prop {
+        x,
         material: OPAQUE,
-        forced_index: Some(999),
+        forced_index: Some(2),
     };
-    let spheres = [stray, prop(7.0, GLASS)];
+    let spheres = [stray(3.0), prop(7.0, GLASS)];
+    let cubes = [stray(5.0)];
 
-    render_frame(&mut scene, &mut renderer, &spheres, &[]);
+    render_frame(&mut scene, &mut renderer, &spheres, &cubes);
 
     let calls = renderer.non_empty_draws();
-    assert_eq!(
-        calls,
-        vec![&draw(SPHERE_MESH, &[3.0]), &draw(SPHERE_MESH, &[7.0])],
-        "the stray instance is an opaque call ahead of the transparent one"
+    let (opaque, transparent) = calls.split_at(2);
+    assert!(
+        opaque.contains(&&draw(CUBE_MESH, &[5.0])) && opaque.contains(&&draw(SPHERE_MESH, &[3.0])),
+        "the stray instances are opaque calls ahead of the transparent one: {calls:?}"
     );
+    assert_eq!(transparent, [&draw(SPHERE_MESH, &[7.0])]);
 }
 
 #[test]
