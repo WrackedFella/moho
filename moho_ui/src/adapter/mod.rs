@@ -397,6 +397,9 @@ impl FrameCallback for EguiAdapter {
             &menu_actions,
             &self.event_bus,
             &mut self.menu_music_playing,
+            // Only frames with menu actions can start music, so only they touch the disk.
+            !menu_actions.is_empty()
+                && std::path::Path::new(event_routing::MENU_MUSIC_PATH).exists(),
         );
 
         // Handle platform output

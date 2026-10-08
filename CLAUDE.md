@@ -44,8 +44,7 @@ cargo run                          # RUST_LOG=debug for logging
   Adapters, UI wiring and config are glue.
 - **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
   `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing
-  tests before implementation and the PR carries its findings). Card review becomes
-  `not required` at Stage 3 of `_todo/WORKFLOW.md`.
+  tests before implementation and the PR carries its findings). Switches and runtimes: `_todo/WORKFLOW.md`.
 - **Local planning files are drafts.** A card or feature in `_todo/` is reviewed there;
   on approval, agents publish it as an issue on the board, and the issue is canonical
   from then on. Local files of finished items are deleted (`_todo/_STANDARDS.md`).
@@ -67,7 +66,6 @@ moho_ui         egui: menus, settings, console, HUD
 moho_audio      rodio playback, event-driven
 moho_physics    rapier3d character controller and colliders
 moho_input      key → binding-code mapping
-moho_types      AppState, StateCoordinator
 ```
 
 - Engine crates never depend on `moho_game` (ADR-0001). World geometry reaches

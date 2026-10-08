@@ -33,7 +33,6 @@ pub struct VoxelChunk {
     sky_exposed: Vec<f32>,
     indices: Vec<u32>,
     material_id: u32,
-    mesh_handle: Option<u32>,
     /// LOD tier: 0 = full 16³ hybrid, 1 = coarse 8³ blocky
     lod: u8,
 }
@@ -64,7 +63,6 @@ impl VoxelChunk {
             sky_exposed,
             indices,
             material_id,
-            mesh_handle: None,
             lod: 0,
         }
     }
@@ -111,7 +109,6 @@ impl VoxelChunk {
             sky_exposed: mesh.sky_exposed,
             indices: mesh.indices,
             material_id,
-            mesh_handle: None,
             lod,
         }
     }
@@ -186,7 +183,6 @@ impl VoxelChunk {
             sky_exposed: mesh.sky_exposed,
             indices: mesh.indices,
             material_id,
-            mesh_handle: None,
             lod: 0,
         }
     }
@@ -196,36 +192,9 @@ impl VoxelChunk {
         self.vertices.is_empty()
     }
 
-    /// Get approximate memory usage of this chunk in bytes
-    pub fn memory_size(&self) -> usize {
-        self.vertices.len() * std::mem::size_of::<[f32; 3]>()
-            + self.normals.len() * std::mem::size_of::<[f32; 3]>()
-            + self.ambient_occlusion.len() * std::mem::size_of::<f32>()
-            + self.geometry_type.len() * std::mem::size_of::<u32>()
-            + self.light_level.len() * std::mem::size_of::<f32>()
-            + self.block_light_rgb.len() * std::mem::size_of::<[f32; 3]>()
-            + self.sky_exposed.len() * std::mem::size_of::<f32>()
-            + self.indices.len() * std::mem::size_of::<u32>()
-    }
-
     /// Check if this chunk has geometry to render
     pub fn has_geometry(&self) -> bool {
         !self.vertices.is_empty() && !self.indices.is_empty()
-    }
-
-    /// Check if mesh is already uploaded to renderer
-    pub fn is_uploaded(&self) -> bool {
-        self.mesh_handle.is_some()
-    }
-
-    /// Set the renderer mesh handle
-    pub fn set_mesh_handle(&mut self, handle: u32) {
-        self.mesh_handle = Some(handle);
-    }
-
-    /// Get the renderer mesh handle (if uploaded)
-    pub fn get_mesh_handle(&self) -> Option<u32> {
-        self.mesh_handle
     }
 }
 
@@ -250,7 +219,6 @@ mod tests {
 
         assert!(chunk.is_empty());
         assert!(!chunk.has_geometry());
-        assert!(!chunk.is_uploaded());
     }
 
     #[test]
@@ -270,29 +238,6 @@ mod tests {
 
         assert!(!chunk.is_empty());
         assert!(chunk.has_geometry());
-        assert!(!chunk.is_uploaded());
-    }
-
-    #[test]
-    fn test_chunk_mesh_handle() {
-        let mut chunk = VoxelChunk::new(
-            IVec3::ZERO,
-            vec![[0.0, 0.0, 0.0]],
-            vec![[0.0, 1.0, 0.0]],
-            vec![1.0],
-            vec![1],
-            vec![1.0],
-            vec![[1.0, 1.0, 1.0]],
-            vec![1.0],
-            vec![0],
-            0,
-        );
-
-        assert_eq!(chunk.get_mesh_handle(), None);
-
-        chunk.set_mesh_handle(42);
-        assert_eq!(chunk.get_mesh_handle(), Some(42));
-        assert!(chunk.is_uploaded());
     }
 
     #[test]
@@ -303,25 +248,5 @@ mod tests {
         assert_eq!(chunk0.lod(), 0);
         let chunk1 = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 1);
         assert_eq!(chunk1.lod(), 1);
-    }
-
-    #[test]
-    fn test_chunk_memory_size() {
-        let chunk = VoxelChunk::new(
-            IVec3::ZERO,
-            vec![[0.0, 0.0, 0.0]; 100],
-            vec![[0.0, 1.0, 0.0]; 100],
-            vec![1.0; 100],
-            vec![1; 100],
-            vec![1.0; 100],
-            vec![[1.0, 1.0, 1.0]; 100],
-            vec![1.0; 100],
-            vec![0; 150],
-            0,
-        );
-
-        let expected =
-            100 * 12 + 100 * 12 + 100 * 4 + 100 * 4 + 100 * 4 + 100 * 12 + 100 * 4 + 150 * 4; // verts + normals + ao + geo_type + light + block_light_rgb + sky_exposed + indices
-        assert_eq!(chunk.memory_size(), expected);
     }
 }

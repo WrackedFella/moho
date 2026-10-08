@@ -1540,14 +1540,23 @@ dependencies = [
  "moho_game",
  "moho_input",
  "moho_physics",
+ "moho_render_api",
  "moho_renderer",
  "moho_ui",
+ "proptest",
  "serde",
  "tempfile",
  "tracing",
  "tracing-subscriber",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "moho_app"
+version = "0.1.0"
+dependencies = [
+ "proptest",
 ]
 
 [[package]]
@@ -1619,10 +1628,9 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
- "moho_core",
- "moho_game",
  "moho_render_api",
  "naga",
+ "proptest",
  "thiserror 2.0.20",
  "tracing",
  "wgpu",

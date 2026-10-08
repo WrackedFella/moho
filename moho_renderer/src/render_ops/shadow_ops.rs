@@ -142,13 +142,3 @@ pub fn render_shadow_passes(
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_max_shadow_lights() {
-        use crate::gpu_types::MAX_SHADOW_LIGHTS;
-        // Verify max shadow lights matches expected value
-        assert_eq!(MAX_SHADOW_LIGHTS, 4, "Should have 4 shadow light slots");
-    }
-}

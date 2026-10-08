@@ -70,10 +70,8 @@ impl WindowEventHandler {
                 &mut *wr.renderer,
                 app.entities.actors.spheres(),
                 app.entities.actors.cubes(),
-                app.entities.chunks.iter_mut(),
                 wr.mesh_handle,
                 wr.cube_mesh_handle,
-                wr.terrain_material_idx,
                 app.camera,
             )
         {

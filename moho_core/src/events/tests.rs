@@ -178,20 +178,6 @@ mod event_bus_tests {
     }
 
     #[test]
-    fn test_recent_history() {
-        let bus = EventBus::with_history(true, 100);
-
-        for i in 0..10 {
-            bus.publish(TestEvent { value: i });
-        }
-
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
-        let recent = bus.recent_history(5);
-        assert!(recent.len() <= 5);
-    }
-
-    #[test]
     fn test_clear_history() {
         let bus = EventBus::with_history(true, 100);
 

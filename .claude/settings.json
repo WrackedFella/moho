@@ -30,6 +30,9 @@
   "enabledMcpjsonServers": [
     "gitnexus"
   ],
+  "env": {
+    "MCP_TIMEOUT": "120000"
+  },
   "extraKnownMarketplaces": {
     "claude-skills": {
       "source": {
