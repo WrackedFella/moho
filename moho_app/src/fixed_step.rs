@@ -5,9 +5,8 @@ use std::time::Duration;
 /// Tick rate and catch-up limit for a loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoopConfig {
-    /// Ticks per second.
     pub tick_hz: u32,
-    /// Most ticks run for a single frame; excess time is dropped.
+    /// Cap on ticks run for one frame; excess time is dropped.
     pub max_catch_up_ticks: u32,
 }
 
@@ -43,7 +42,6 @@ pub struct FixedStep {
 }
 
 impl FixedStep {
-    /// A step with an empty accumulator.
     pub fn new(config: LoopConfig) -> Self {
         Self {
             config,

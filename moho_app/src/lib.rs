@@ -13,14 +13,12 @@ pub use headless::HeadlessLoop;
 pub struct TickContext {
     /// Index of this tick, starting at 0.
     pub tick: u64,
-    /// Simulated time one tick covers.
     pub tick_length: Duration,
 }
 
 /// Per-frame context handed to [`Game::frame`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameContext {
-    /// Simulated time one tick covers.
     pub tick_length: Duration,
 }
 
@@ -32,7 +30,6 @@ pub trait Game {
     /// Samples the command for the next tick.
     fn command(&mut self) -> Self::Command;
 
-    /// Advances the simulation by one tick.
     fn tick(&mut self, ctx: &mut TickContext, command: &Self::Command);
 
     /// Presents a frame, `alpha` of the way between the last two ticks.
