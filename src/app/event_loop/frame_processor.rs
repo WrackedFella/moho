@@ -495,9 +495,8 @@ mod tests {
         app.game_state = GameState::Playing;
         spawn_sphere_with_body(&mut app, glam::Vec3::new(0.0, 50.0, 0.0));
 
-        for _ in 0..30 {
-            FrameProcessor::new().update_game_state(&mut app, DT);
-        }
+        moho_app::HeadlessLoop::new(moho_app::LoopConfig::new(moho_game::TICK_HZ))
+            .step(&mut app, 30);
 
         let y = app.entities.actors.spheres()[0].center.y;
         assert!(y < 49.0, "sphere should fall under gravity, y = {y}");

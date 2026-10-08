@@ -5,6 +5,9 @@ edition = "2024"
 publish = false
 
 [dependencies]
+winit = { workspace = true }
+moho_renderer = { path = "../moho_renderer" }
+moho_audio = { path = "../moho_audio" }
 
 [dev-dependencies]
 proptest = { workspace = true }

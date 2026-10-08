@@ -35,9 +35,7 @@ impl<G: Game> HeadlessLoop<G> {
         for _ in 0..n {
             self.run_tick(game);
         }
-        let mut ctx = FrameContext {
-            tick_length: self.tick_length,
-        };
+        let mut ctx = FrameContext::headless(self.tick_length);
         game.frame(&mut ctx, self.step.alpha());
         n
     }
@@ -93,7 +91,7 @@ mod tests {
             self.history.push(self.state);
         }
 
-        fn frame(&mut self, _ctx: &mut FrameContext, _alpha: f32) {}
+        fn frame(&mut self, _ctx: &mut FrameContext<'_>, _alpha: f32) {}
     }
 
     fn state_after_600_ticks(fps: u64) -> u64 {
@@ -153,7 +151,7 @@ mod tests {
             self.tick_lengths.push(ctx.tick_length);
         }
 
-        fn frame(&mut self, _ctx: &mut FrameContext, alpha: f32) {
+        fn frame(&mut self, _ctx: &mut FrameContext<'_>, alpha: f32) {
             self.frames.push(alpha);
         }
     }
@@ -214,6 +212,39 @@ mod tests {
             "alpha {}",
             game.frames[0]
         );
+    }
+
+    #[derive(Default)]
+    struct ContextProbe {
+        renderer_absent: Option<bool>,
+        audio_absent: Option<bool>,
+        tick_length: Option<Duration>,
+    }
+
+    impl Game for ContextProbe {
+        type Command = ();
+
+        fn command(&mut self) {}
+
+        fn tick(&mut self, _ctx: &mut TickContext, _command: &()) {}
+
+        fn frame(&mut self, ctx: &mut FrameContext<'_>, _alpha: f32) {
+            self.renderer_absent = Some(ctx.renderer().is_none());
+            self.audio_absent = Some(ctx.audio().is_none());
+            self.tick_length = Some(ctx.tick_length);
+        }
+    }
+
+    #[test]
+    fn headless_frame_context_has_no_renderer_and_no_audio() {
+        let mut game = ContextProbe::default();
+        let mut sim = HeadlessLoop::new(LoopConfig::new(60));
+
+        sim.advance(&mut game, Duration::from_nanos(NS / 60));
+
+        assert_eq!(game.renderer_absent, Some(true), "frame must run");
+        assert_eq!(game.audio_absent, Some(true));
+        assert_eq!(game.tick_length, Some(Duration::from_secs(1) / 60));
     }
 
     #[test]

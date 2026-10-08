@@ -10,6 +10,7 @@ pub mod chunk_streamer;
 pub mod config;
 pub mod event_loop;
 pub mod event_setup;
+pub mod game;
 pub mod generation_job;
 pub mod initializer;
 pub mod input_state;
