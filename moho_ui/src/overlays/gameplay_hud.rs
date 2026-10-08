@@ -325,9 +325,10 @@ mod tests {
 
     #[test]
     fn render_hotbar_edge_inputs_do_not_panic() {
-        // `render_hotbar` indexes the 7 resource slots (HOTBAR_SLOTS - 1, slot 0 is
-        // the tool) via `hotbar.get(i - 1)`; `selected_slot` is only compared, so an
-        // out-of-range value highlights nothing.
+        use crate::overlays::test_support::second_frame;
+
+        // Slot 0 is the tool, so resources index via `hotbar.get(i - 1)`; `selected_slot`
+        // is only compared, so out-of-range highlights nothing.
         let overfull: Vec<(u32, u32)> = (0..HOTBAR_SLOTS as u32 + 3)
             .map(|id| (id, id + 1))
             .collect();
@@ -345,9 +346,7 @@ mod tests {
         for (case, tool, hotbar, selected_slot) in cases {
             let ctx = egui::Context::default();
 
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
-                render_hotbar(ctx, tool, hotbar, selected_slot);
-            });
+            let output = second_frame(&ctx, |ctx| render_hotbar(ctx, tool, hotbar, selected_slot));
 
             assert!(!output.shapes.is_empty(), "{case}: nothing drawn");
         }

@@ -19,7 +19,6 @@ fn settings_menu_structure() {
         items = menu.render(ctx);
     });
 
-    // Settings menu returns its bottom-panel items: save and back/cancel
     assert_eq!(items.len(), 2, "SettingsMenu should return 2 menu items");
 
     // Check that items have proper structure
