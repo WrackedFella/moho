@@ -4,12 +4,13 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::hash::Hash;
 
-use crate::key::Key;
+use crate::key::{Key, MouseButton};
 
 /// One physical input that triggers an action.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Binding {
     Key(Key),
+    Mouse(MouseButton),
 }
 
 /// A game's action enum: stable names and default bindings, as data.
@@ -107,7 +108,10 @@ fn format_list(bindings: &[Binding]) -> String {
     }
     bindings
         .iter()
-        .map(|Binding::Key(key)| key.name())
+        .map(|binding| match binding {
+            Binding::Key(key) => key.name(),
+            Binding::Mouse(_) => todo!("Mouse binding names"),
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -197,6 +201,34 @@ mod tests {
                 "{rebound:?}"
             );
             assert_defaults_except(&restored, &[TestAction::Jump]);
+        }
+    }
+
+    #[test]
+    fn mouse_bindings_round_trip_by_name() {
+        let cases = [
+            (MouseButton::Left, "Mouse Left"),
+            (MouseButton::Right, "Mouse Right"),
+            (MouseButton::Middle, "Mouse Middle"),
+        ];
+
+        for (button, name) in cases {
+            let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+            bindings.set(
+                TestAction::Jump,
+                vec![Binding::Key(Key::F), Binding::Mouse(button)],
+            );
+
+            let written = bindings.to_section();
+            let (restored, warnings) = ActionBindings::<TestAction>::load(&written);
+
+            assert_eq!(written["jump"], format!("F, {name}"));
+            assert_eq!(warnings, vec![], "{name}");
+            assert_eq!(
+                restored.get(TestAction::Jump),
+                [Binding::Key(Key::F), Binding::Mouse(button)],
+                "{name}"
+            );
         }
     }
 

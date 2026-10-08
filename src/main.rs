@@ -274,7 +274,10 @@ impl App {
             self.bindings
                 .get(action)
                 .iter()
-                .any(|Binding::Key(key)| self.input.active_keys.contains(key))
+                .any(|binding| match binding {
+                    Binding::Key(key) => self.input.active_keys.contains(key),
+                    Binding::Mouse(_) => false,
+                })
         };
 
         // Calculate forward/backward

@@ -78,7 +78,10 @@ pub fn binding_label(bindings: &[Binding]) -> String {
     }
     bindings
         .iter()
-        .map(|Binding::Key(key)| key.label())
+        .map(|binding| match binding {
+            Binding::Key(key) => key.label(),
+            Binding::Mouse(_) => todo!("Mouse binding labels"),
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }

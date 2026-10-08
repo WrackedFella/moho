@@ -605,3 +605,11 @@ mod tests {
         }
     }
 }
+
+/// A mouse button that can be bound to an action.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
