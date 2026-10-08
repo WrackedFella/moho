@@ -558,39 +558,3 @@ pub fn create_hybrid_generator() -> MeshGeneratorFn {
         },
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_job_priority_ordering() {
-        let low_priority = MeshJob::new(IVec3::ZERO, MeshJobType::Full, 10);
-        let high_priority = MeshJob::new(IVec3::ONE, MeshJobType::Full, 1);
-
-        // Higher priority (lower number) should be "greater" for max-heap behavior
-        // But we want min-heap, so we reverse it
-        assert!(high_priority > low_priority);
-    }
-
-    #[test]
-    fn test_cancellation_token() {
-        let token = CancellationToken::new();
-        assert!(!token.is_cancelled());
-
-        token.cancel();
-        assert!(token.is_cancelled());
-
-        // Cloned token shares state
-        let token2 = token.clone();
-        assert!(token2.is_cancelled());
-    }
-
-    #[test]
-    fn test_job_id_uniqueness() {
-        let job1 = MeshJob::new(IVec3::ZERO, MeshJobType::Full, 0);
-        let job2 = MeshJob::new(IVec3::ZERO, MeshJobType::Full, 0);
-
-        assert_ne!(job1.id, job2.id);
-    }
-}

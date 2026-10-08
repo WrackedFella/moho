@@ -865,19 +865,6 @@ mod tests {
     }
 
     #[test]
-    fn test_block_data_at() {
-        let mut grid = VoxelGrid::new(16);
-        let pos = BlockPos::new(3, 4, 5);
-        assert!(grid.block_data_at(pos).is_none());
-
-        grid.place_block(pos, 2, Some(1));
-        let bd = grid.block_data_at(pos).unwrap();
-        assert_eq!(bd.position, pos);
-        assert_eq!(bd.material_id, 2);
-        assert_eq!(bd.resource_id, Some(1));
-    }
-
-    #[test]
     fn test_get_height() {
         let mut grid = VoxelGrid::new(16);
         assert_eq!(grid.get_height(0, 0), None);

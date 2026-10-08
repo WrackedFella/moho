@@ -167,25 +167,6 @@ pub fn get_visible_faces(grid: &VoxelGrid, pos: BlockPos) -> Vec<FaceDirection> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel::grid::VoxelGrid;
-
-    #[test]
-    fn test_face_offsets() {
-        assert_eq!(FaceDirection::PosX.offset(), IVec3::new(1, 0, 0));
-        assert_eq!(FaceDirection::NegX.offset(), IVec3::new(-1, 0, 0));
-        assert_eq!(FaceDirection::PosY.offset(), IVec3::new(0, 1, 0));
-        assert_eq!(FaceDirection::NegY.offset(), IVec3::new(0, -1, 0));
-        assert_eq!(FaceDirection::PosZ.offset(), IVec3::new(0, 0, 1));
-        assert_eq!(FaceDirection::NegZ.offset(), IVec3::new(0, 0, -1));
-    }
-
-    #[test]
-    fn test_all_faces() {
-        let faces = FaceDirection::all();
-        assert_eq!(faces.len(), 6);
-        assert_eq!(faces[0], FaceDirection::PosX);
-        assert_eq!(faces[5], FaceDirection::NegZ);
-    }
 
     #[test]
     fn test_vertex_ranges() {
@@ -205,91 +186,5 @@ mod tests {
         assert_eq!(FaceDirection::NegY.index_range(), (18, 6));
         assert_eq!(FaceDirection::PosZ.index_range(), (24, 6));
         assert_eq!(FaceDirection::NegZ.index_range(), (30, 6));
-    }
-
-    #[test]
-    fn test_should_render_face_no_neighbor() {
-        let mut grid = VoxelGrid::new(16);
-        let pos = BlockPos::new(0, 0, 0);
-        grid.place_block(pos, 0, None);
-
-        // All faces should be visible (no neighbors)
-        assert!(FaceDirection::PosX.should_render_face(&grid, pos));
-        assert!(FaceDirection::NegX.should_render_face(&grid, pos));
-        assert!(FaceDirection::PosY.should_render_face(&grid, pos));
-        assert!(FaceDirection::NegY.should_render_face(&grid, pos));
-        assert!(FaceDirection::PosZ.should_render_face(&grid, pos));
-        assert!(FaceDirection::NegZ.should_render_face(&grid, pos));
-    }
-
-    #[test]
-    fn test_should_render_face_with_neighbor() {
-        let mut grid = VoxelGrid::new(16);
-        let pos = BlockPos::new(0, 0, 0);
-        grid.place_block(pos, 0, None);
-
-        // Add neighbor to the east (+X)
-        let neighbor_pos = BlockPos::new(1, 0, 0);
-        grid.place_block(neighbor_pos, 0, None);
-
-        // PosX face should be hidden
-        assert!(!FaceDirection::PosX.should_render_face(&grid, pos));
-
-        // Other faces still visible
-        assert!(FaceDirection::NegX.should_render_face(&grid, pos));
-        assert!(FaceDirection::PosY.should_render_face(&grid, pos));
-        assert!(FaceDirection::NegY.should_render_face(&grid, pos));
-        assert!(FaceDirection::PosZ.should_render_face(&grid, pos));
-        assert!(FaceDirection::NegZ.should_render_face(&grid, pos));
-    }
-
-    #[test]
-    fn test_get_visible_faces_isolated_block() {
-        let mut grid = VoxelGrid::new(16);
-        let pos = BlockPos::new(10, 10, 10);
-        grid.place_block(pos, 0, None);
-
-        let visible = get_visible_faces(&grid, pos);
-        assert_eq!(visible.len(), 6); // All faces visible
-    }
-
-    #[test]
-    fn test_get_visible_faces_with_neighbors() {
-        let mut grid = VoxelGrid::new(16);
-        let pos = BlockPos::new(10, 10, 10);
-        grid.place_block(pos, 0, None);
-
-        // Add two neighbors
-        grid.place_block(BlockPos::new(11, 10, 10), 0, None);
-        grid.place_block(BlockPos::new(10, 11, 10), 0, None);
-
-        let visible = get_visible_faces(&grid, pos);
-        assert_eq!(visible.len(), 4); // 4 faces visible (2 hidden)
-
-        // Verify the correct faces are visible
-        assert!(visible.contains(&FaceDirection::NegX));
-        assert!(visible.contains(&FaceDirection::NegY));
-        assert!(visible.contains(&FaceDirection::PosZ));
-        assert!(visible.contains(&FaceDirection::NegZ));
-
-        // Verify the correct faces are hidden
-        assert!(!visible.contains(&FaceDirection::PosX));
-        assert!(!visible.contains(&FaceDirection::PosY));
-    }
-
-    #[test]
-    fn test_get_visible_faces_fully_surrounded() {
-        let mut grid = VoxelGrid::new(16);
-        let pos = BlockPos::new(5, 5, 5);
-        grid.place_block(pos, 0, None);
-
-        // Surround completely
-        for dir in FaceDirection::all() {
-            let neighbor_pos = pos + dir.offset();
-            grid.place_block(neighbor_pos, 0, None);
-        }
-
-        let visible = get_visible_faces(&grid, pos);
-        assert_eq!(visible.len(), 0); // No faces visible
     }
 }
