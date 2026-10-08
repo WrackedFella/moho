@@ -8,6 +8,8 @@ publish = false
 winit = { workspace = true }
 moho_renderer = { path = "../moho_renderer" }
 moho_audio = { path = "../moho_audio" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

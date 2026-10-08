@@ -6,11 +6,10 @@
 //! - Graphics events (time of day, lighting)
 //! - Input events (mouse wheel, keyboard)
 
-use crate::App;
 use crate::input_event::InputEvent;
+use crate::{App, RenderRequest};
 use moho_core::events::{GraphicsEvent, UiEvent, WorldEvent};
 use moho_core::voxel::VoxelChunk;
-use winit::event_loop::ActiveEventLoop;
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
@@ -36,14 +35,14 @@ impl EventProcessor {
     }
 
     /// Process all pending UI events from the event bus
-    pub fn process_ui_events(&self, app: &mut App, event_loop: &ActiveEventLoop) {
+    pub fn process_ui_events(&self, app: &mut App) {
         while let Ok(event) = app.ui_event_rx.try_recv() {
-            self.handle_ui_event(app, event_loop, event);
+            self.handle_ui_event(app, event);
         }
     }
 
     /// Process a single UI event
-    fn handle_ui_event(&self, app: &mut App, event_loop: &ActiveEventLoop, event: UiEvent) {
+    fn handle_ui_event(&self, app: &mut App, event: UiEvent) {
         match event {
             UiEvent::LoadSceneRequested { path } => {
                 tracing::info!(path = %path.display(), "UI requested load scene");
@@ -67,11 +66,7 @@ impl EventProcessor {
             }
             UiEvent::ExitRequested => {
                 tracing::info!("UI requested exit");
-                // Auto-save before exit
-                if let Err(e) = app.auto_save_on_shutdown() {
-                    tracing::warn!(error = %e, "Failed to auto-save on exit");
-                }
-                event_loop.exit();
+                app.exit_requested = true;
             }
             UiEvent::MenuShown { name } => {
                 tracing::info!(name = %name, "UI requested show menu");
@@ -90,8 +85,8 @@ impl EventProcessor {
             }
             UiEvent::OverlayToggled { name, visible } => {
                 tracing::info!(name = %name, visible, "Overlay toggled");
-                if visible && let Some(ref wr) = app.window_renderer {
-                    wr.window.set_cursor_visible(true);
+                if visible && let Some(window) = &app.window {
+                    window.set_cursor_visible(true);
                 }
             }
             UiEvent::SettingsSaved => {
@@ -105,31 +100,22 @@ impl EventProcessor {
                 height,
             } => {
                 tracing::info!(mode = ?mode, width, height, "Window settings changed");
-                if let Some(ref wr) = app.window_renderer {
+                if let Some(window) = &app.window {
                     use moho_core::events::WindowMode;
                     use winit::dpi::PhysicalSize;
                     use winit::window::Fullscreen;
 
                     match mode {
                         WindowMode::Fullscreen | WindowMode::Borderless => {
-                            wr.window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
                         }
                         WindowMode::Windowed => {
-                            wr.window.set_fullscreen(None);
-                            let _ = wr
-                                .window
-                                .request_inner_size(PhysicalSize::new(width, height));
+                            window.set_fullscreen(None);
+                            let _ = window.request_inner_size(PhysicalSize::new(width, height));
                         }
                     }
                 }
             }
-        }
-    }
-
-    /// Process all pending audio events from the event bus
-    pub fn process_audio_events(&self, app: &mut App) {
-        while let Ok(event) = app.audio_event_rx.try_recv() {
-            app.handle_audio_event(event);
         }
     }
 
@@ -393,8 +379,8 @@ impl EventProcessor {
                         }
                         "light" => {
                             // Spawn dynamic light
-                            // We need to access the renderer backend to add a light
-                            if let Some(wr) = &mut app.window_renderer {
+                            // The renderer is only reachable from `frame`, so the light is queued.
+                            if app.window.is_some() {
                                 // Parse color from args if present
                                 let color = if let Some(arg_str) = &args {
                                     // Simple parsing: "r g b"
@@ -412,12 +398,12 @@ impl EventProcessor {
                                     glam::Vec3::ONE // White default
                                 };
 
-                                wr.renderer.add_point_light(
-                                    spawn_pos,
+                                app.pending_render.push(RenderRequest::AddPointLight {
+                                    position: spawn_pos,
                                     color,
-                                    DEFAULT_POINT_LIGHT_INTENSITY,
-                                    DEFAULT_POINT_LIGHT_RANGE,
-                                );
+                                    intensity: DEFAULT_POINT_LIGHT_INTENSITY,
+                                    range: DEFAULT_POINT_LIGHT_RANGE,
+                                });
                                 tracing::info!(pos = ?spawn_pos, "Added point light");
 
                                 // Spawn a small gizmo sphere so the light origin is
@@ -495,8 +481,9 @@ impl EventProcessor {
             }
             DebugEvent::SetShadowQuality { quality } => {
                 tracing::info!(quality, "Setting shadow quality");
-                if let Some(wr) = &mut app.window_renderer {
-                    wr.renderer.set_shadow_quality(quality as u8);
+                if app.window.is_some() {
+                    app.pending_render
+                        .push(RenderRequest::ShadowQuality(quality as u8));
 
                     // Update prefs
                     app.prefs.set_shadow_quality(quality);
@@ -505,8 +492,9 @@ impl EventProcessor {
             }
             DebugEvent::SetSsaoQuality { quality } => {
                 tracing::info!(quality, "Setting SSAO quality");
-                if let Some(wr) = &mut app.window_renderer {
-                    wr.renderer.set_ssao_quality(quality as u8);
+                if app.window.is_some() {
+                    app.pending_render
+                        .push(RenderRequest::SsaoQuality(quality as u8));
 
                     // Update prefs
                     app.prefs.set_ssao_quality(quality);

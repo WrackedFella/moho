@@ -31,13 +31,28 @@ impl<G: Game> HeadlessLoop<G> {
 
     /// Runs the ticks due for `frame_dt`, then one frame. Returns ticks run.
     pub fn advance(&mut self, game: &mut G, frame_dt: Duration) -> u32 {
+        let n = self.run_ticks(game, frame_dt);
+        let mut ctx = FrameContext::headless(self.tick_length);
+        game.frame(&mut ctx, self.step.alpha());
+        n
+    }
+
+    /// Runs the ticks due for `frame_dt` and no frame. Returns ticks run.
+    pub(crate) fn run_ticks(&mut self, game: &mut G, frame_dt: Duration) -> u32 {
         let n = self.step.advance(frame_dt);
         for _ in 0..n {
             self.run_tick(game);
         }
-        let mut ctx = FrameContext::headless(self.tick_length);
-        game.frame(&mut ctx, self.step.alpha());
         n
+    }
+
+    /// Fraction of a tick left over after the last run.
+    pub(crate) fn alpha(&self) -> f32 {
+        self.step.alpha()
+    }
+
+    pub(crate) fn tick_length(&self) -> Duration {
+        self.tick_length
     }
 
     /// Runs exactly `n` ticks and no frame.

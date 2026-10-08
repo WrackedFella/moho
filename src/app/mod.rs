@@ -3,7 +3,6 @@
 //! This module contains sub-modules for different aspects of application initialization,
 //! making the main App::new() function more modular and testable.
 
-pub mod audio_init;
 pub mod autosave;
 pub mod camera;
 pub mod chunk_streamer;

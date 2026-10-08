@@ -39,13 +39,6 @@ pub struct AppConfig {
     /// Preferences object (contains keybindings and other settings)
     pub prefs: Prefs,
 
-    /// Whether to initialize the audio system during `build()`.
-    ///
-    /// Default is `true`. Tests that exercise `AppInitializer::build()` without
-    /// needing audio should set this to `false` — concurrent WASAPI init across
-    /// parallel tests can crash on Windows runners.
-    pub init_audio: bool,
-
     /// Chunk streaming radii and per-frame budget, sourced from `[world]` in prefs.ini.
     pub streaming: moho_core::voxel::StreamingConfig,
 }
@@ -64,7 +57,6 @@ impl Default for AppConfig {
             input_filtering_enabled: prefs.input_filtering_enabled(),
             filter_preset: moho_core::input::FilterPreset::Default,
             prefs,
-            init_audio: true,
             streaming,
         }
     }
@@ -105,7 +97,6 @@ impl AppConfig {
             input_filtering_enabled,
             filter_preset: moho_core::input::FilterPreset::Default,
             prefs,
-            init_audio: true,
             streaming,
         }
     }
@@ -141,7 +132,6 @@ pub struct AppConfigBuilder {
     input_filtering_enabled: Option<bool>,
     filter_preset: Option<moho_core::input::FilterPreset>,
     prefs: Option<Prefs>,
-    init_audio: Option<bool>,
 }
 
 #[allow(dead_code)] // Builder API for future use
@@ -170,12 +160,6 @@ impl AppConfigBuilder {
         self
     }
 
-    /// Set whether the audio system should be initialized during `build()`.
-    pub fn init_audio(mut self, init: bool) -> Self {
-        self.init_audio = Some(init);
-        self
-    }
-
     /// Build the AppConfig with the specified settings.
     ///
     /// Any unset values will use defaults from AppConfig::default().
@@ -192,7 +176,6 @@ impl AppConfigBuilder {
                 .unwrap_or(defaults.input_filtering_enabled),
             filter_preset: self.filter_preset.unwrap_or(defaults.filter_preset),
             prefs,
-            init_audio: self.init_audio.unwrap_or(defaults.init_audio),
             streaming: defaults.streaming,
         }
     }
