@@ -19,7 +19,6 @@ pub struct StrategyCommand {
 impl App {
     /// Sums the held bindings into the movement and look input for one tick.
     fn sample_command(&mut self) -> StrategyCommand {
-        // An action is active when any of its bindings is held
         let is_active = |action: StrategyAction| -> bool {
             self.bindings
                 .get(action)
@@ -31,7 +30,6 @@ impl App {
         };
 
         let forward = axis(StrategyAction::MoveForward, StrategyAction::MoveBack);
-        // A is left, so negative
         let right = axis(StrategyAction::MoveRight, StrategyAction::MoveLeft);
         // No up/down in isometric mode
         let up = if self.simulation.camera_mode() == CameraMode::FirstPerson {
@@ -133,11 +131,9 @@ impl App {
             && self.game_state == GameState::Playing
         {
             self.toggle_camera_mode();
-            return; // Don't dispatch Tab further
+            return;
         }
 
-        // Dispatch the event to registered subscribers (UI first). If consumed,
-        // skip further application-level handling.
         if self.dispatcher.dispatch(&event) {
             return;
         }
@@ -204,10 +200,8 @@ impl moho_app::Game for App {
         event_processor.process_input_events(self);
         event_processor.process_debug_events(self);
 
-        // Check for generation cancellation from UI
         event_processor.check_generation_cancel(self);
 
-        // Poll async generation if running
         GenerationProcessor::new().poll_generation(self);
     }
 
@@ -248,7 +242,6 @@ impl moho_app::Game for App {
             self.render_scene(renderer);
         }
 
-        // Recall staging belt after render
         if let Some(ui_adapter) = &self.ui_adapter
             && let Ok(mut a) = ui_adapter.lock()
         {

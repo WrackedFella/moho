@@ -17,8 +17,6 @@ fn ui_is_capturing_input(ui_adapter: &Arc<Mutex<moho_ui::EguiAdapter>>) -> bool 
     }
 }
 
-/// Initialize the game's renderer state and UI adapter for the given window.
-///
 /// Applies the saved quality settings, registers the shared sphere and cube mesh
 /// handles, builds the egui adapter, connects it to the renderer frame callback, and
 /// registers all input-dispatcher subscribers. Populates `app.window`, `app.mesh_handle`,
@@ -216,7 +214,6 @@ pub fn init_renderer_and_ui(
     app.cube_mesh_handle = cube_mesh_handle;
 }
 
-/// Applies the saved window mode and resolution from `prefs` to `window`.
 pub fn apply_video_settings(prefs: &moho_core::prefs::Prefs, window: &Window) {
     use moho_core::prefs::WindowMode;
     use winit::dpi::PhysicalSize;

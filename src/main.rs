@@ -74,7 +74,6 @@ enum RenderRequest {
     SsaoQuality(u8),
 }
 
-// Application state structure that implements `moho_app::Game`
 struct App {
     entities: SceneEntities,
     scene: moho_renderer::Scene,
@@ -95,7 +94,6 @@ struct App {
     // Renderer changes queued by the tick, applied by `frame`
     pending_render: Vec<RenderRequest>,
 
-    // Directory for autosaves and generated worlds
     saves_dir: std::path::PathBuf,
 
     // Set when the UI asks to quit; `frame` autosaves and leaves the loop

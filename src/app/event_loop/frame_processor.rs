@@ -247,7 +247,6 @@ impl FrameProcessor {
         }
     }
 
-    /// Upload lighting based on celestial positions and time of day
     pub fn update_lighting(&self, app: &App, renderer: &mut dyn moho_renderer::RendererBackend) {
         if app.game_state != crate::game_state::GameState::Playing {
             return;
@@ -256,20 +255,17 @@ impl FrameProcessor {
         let (sun_dir, moon_dir) = app.simulation.celestial_directions();
         let time = app.simulation.time_of_day();
 
-        // Calculate sun intensity (0 when below horizon)
         let sun_intensity = if sun_dir.y > 0.0 { 1.0 } else { 0.0 };
 
-        // Calculate moon intensity based on position and time
         let moon_base_intensity = self.calculate_moon_intensity(moon_dir, time);
 
-        // Calculate ambient lighting based on time of day
         let (ambient_color, ambient_intensity) = self.calculate_ambient_lighting(time);
 
         let lighting = moho_renderer::LightingGpu {
             sun_direction: [sun_dir.x, sun_dir.y, sun_dir.z, sun_intensity],
-            sun_color: [1.0, 0.95, 0.8, 0.0], // Warm sunlight
+            sun_color: [1.0, 0.95, 0.8, 0.0],
             moon_direction: [moon_dir.x, moon_dir.y, moon_dir.z, moon_base_intensity],
-            moon_color: [0.7, 0.8, 0.9, 0.0], // Silver-blue moonlight
+            moon_color: [0.7, 0.8, 0.9, 0.0],
             ambient: [
                 ambient_color[0],
                 ambient_color[1],
