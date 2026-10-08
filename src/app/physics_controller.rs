@@ -218,4 +218,46 @@ mod tests {
             "one collider per chunk, character aside"
         );
     }
+
+    #[test]
+    fn load_replaces_the_previous_physics_world() {
+        use crate::app::world_geometry::tests::{chunk_at, terrain_collider_count};
+        let positions = [glam::IVec3::new(7, 0, 7), glam::IVec3::new(8, 0, 7)];
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut saved = crate::App::headless();
+        for pos in positions {
+            saved.entities.chunks.insert(chunk_at(pos));
+        }
+        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path()).expect("autosave");
+        let mut app = crate::App::headless();
+        let mut actors = ActorStore::new();
+        let material = MaterialType::Lambertian {
+            albedo: glam::Vec3::ONE,
+        };
+        let stale_actor =
+            actors.spawn_sphere(Sphere::new(glam::Vec3::new(0.0, 9.0, 0.0), 0.5, material));
+        let pw = app.physics.world.as_mut().expect("physics world");
+        let (_, old_character) = pw.add_character(glam::Vec3::new(50.0, 50.0, 50.0));
+        let stale_body = pw.add_dynamic_sphere(glam::Vec3::new(0.0, 9.0, 0.0), 0.5);
+        let unowned = pw.collider_set[old_character].clone();
+        pw.collider_set.insert(unowned);
+        app.physics.test_bodies.push((stale_body, stale_actor));
+
+        crate::app::scene_loader::load_scene(&mut app, &temp.path().join("scene.bin"))
+            .expect("load");
+
+        let pw = app.physics.world.as_ref().expect("physics world");
+        let with_geometry = app
+            .entities
+            .chunks
+            .iter()
+            .filter(|c| c.has_geometry())
+            .count();
+        assert!(with_geometry > 0, "the save holds chunks with geometry");
+        assert!(app.physics.test_bodies.is_empty(), "no stale test bodies");
+        assert!(pw.character_collider.is_some(), "a new character is placed");
+        assert_eq!(terrain_collider_count(&app), with_geometry);
+        assert_eq!(pw.collider_set.len(), with_geometry + 1);
+        assert_eq!(pw.rigid_body_set.len(), 1, "only the character body");
+    }
 }

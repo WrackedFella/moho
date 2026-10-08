@@ -383,6 +383,64 @@ mod tests {
     }
 
     #[test]
+    fn second_completed_generation_replaces_the_first_worlds_physics_bodies() {
+        use crate::app::world_geometry::tests::terrain_collider_count;
+        let mut app = App::headless();
+        let complete = |app: &mut App, name: &str| {
+            let spec = moho_game::scene_builders::WorldSpec {
+                name: name.to_string(),
+                seed: Some(7),
+                size_xz: 64,
+                day_length_seconds: 600.0,
+                night_length_seconds: 420.0,
+                initial_time_of_day: 6.0,
+            };
+            let scene_bytes = moho_game::scene_persistence::encode_to_bytes(
+                &moho_game::scene::SceneEntities::default(),
+                None,
+                &[],
+            )
+            .expect("encode empty scene");
+            GenerationProcessor::new().handle_completed(
+                app,
+                scene_bytes,
+                spec,
+                moho_game::scene_builders::TerrainConfig::default(),
+                moho_core::voxel::VoxelGrid::new(16),
+            );
+        };
+        complete(&mut app, "headless-test-twice-first");
+        assert_eq!(app.physics.test_bodies.len(), 3);
+
+        complete(&mut app, "headless-test-twice-second");
+
+        let pw = app.physics.world.as_ref().expect("physics world");
+        let with_geometry = app
+            .entities
+            .chunks
+            .iter()
+            .filter(|c| c.has_geometry())
+            .count();
+        assert_eq!(app.physics.test_bodies.len(), 3, "one world's test bodies");
+        assert_eq!(app.entities.actors.spheres().len(), 3);
+        assert_eq!(
+            terrain_collider_count(&app),
+            with_geometry + 3,
+            "terrain plus the three spheres, character aside"
+        );
+        assert_eq!(
+            pw.collider_set.len(),
+            with_geometry + 1 + 3,
+            "terrain, one character and three spheres"
+        );
+        assert_eq!(
+            pw.rigid_body_set.len(),
+            1 + 3,
+            "one character, three spheres"
+        );
+    }
+
+    #[test]
     fn completed_generation_replaces_the_previous_worlds_meshes_with_spawn_chunks() {
         use crate::app::world_geometry::tests::{RecordingBackend, chunk_at};
         let mut app = App::headless();

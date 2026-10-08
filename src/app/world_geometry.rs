@@ -546,6 +546,14 @@ pub(crate) mod tests {
         app.scene.world_meshes_mut().flush(&mut backend);
         let first = collider_of(&app, chunk).expect("collider after first mesh");
         assert_eq!(drawn_handles(&mut app), backend.registered);
+        let first_triangles = app
+            .entities
+            .chunks
+            .get(chunk)
+            .expect("chunk")
+            .indices()
+            .len()
+            / 3;
 
         remesh_with_block(
             &mut app,
@@ -555,7 +563,33 @@ pub(crate) mod tests {
         app.scene.world_meshes_mut().flush(&mut backend);
 
         let second = collider_of(&app, chunk).expect("collider after remesh");
+        let second_triangles = app
+            .entities
+            .chunks
+            .get(chunk)
+            .expect("chunk")
+            .indices()
+            .len()
+            / 3;
+        let collider_triangles = app
+            .physics
+            .world
+            .as_ref()
+            .expect("physics world")
+            .collider_set[second]
+            .shape()
+            .as_trimesh()
+            .expect("terrain collider is a trimesh")
+            .num_triangles();
         assert_ne!(first, second, "the collider was replaced");
+        assert_ne!(
+            first_triangles, second_triangles,
+            "the remesh changed the geometry"
+        );
+        assert_eq!(
+            collider_triangles, second_triangles,
+            "the collider matches the new mesh"
+        );
         assert_eq!(backend.registered.len(), 2);
         assert_eq!(drawn_handles(&mut app), vec![backend.registered[1]]);
         assert_eq!(terrain_collider_count(&app), 1, "the old collider is gone");
