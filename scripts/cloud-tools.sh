@@ -6,6 +6,12 @@
 # Gate tools come as prebuilt binaries only: compiling them from source takes ~10 minutes.
 set -euo pipefail
 
+# Installs apt packages with sudo, so it must not run on a developer machine.
+if [[ "${CLAUDE_CODE_REMOTE:-}" != true && "${1:-}" != --force ]]; then
+  echo "cloud-tools: not a cloud thread (CLAUDE_CODE_REMOTE is not true); pass --force to run anyway" >&2
+  exit 1
+fi
+
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 log="$(mktemp -d)"
