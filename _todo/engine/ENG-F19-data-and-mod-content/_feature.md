@@ -1,5 +1,7 @@
 # ENG-F19 — Games load definitions and content from layered roots
 
+**Status:** Draft
+**Labels:** feature, line:engine
 
 ## Summary
 

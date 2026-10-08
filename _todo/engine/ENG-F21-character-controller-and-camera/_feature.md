@@ -1,6 +1,8 @@
 # ENG-F21 — A game gets a character controller and camera from the engine
 
-**Issue:** #123
+**Issue:** [#123](https://github.com/WrackedFella/moho/issues/123)
+**Status:** unknown
+**Labels:** feature, line:engine
 
 ## End state
 

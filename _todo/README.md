@@ -2,12 +2,12 @@
 
 Three project lines sharing one repo until the split
 ([ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md)). Card format, IDs and
-lifecycle: [`_STANDARDS.md`](_STANDARDS.md). Item state (Status, Priority, Agent-eligible)
-is not tracked in this repo; it lives on the
-[project board](https://github.com/users/WrackedFella/projects/1). Architecture decisions:
+lifecycle: [`_STANDARDS.md`](_STANDARDS.md). Item state lives on the
+[project board](https://github.com/users/WrackedFella/projects/1); each card mirrors
+Status, Gate class and Labels in its header (Priority and Agent-eligible are board-only). Architecture decisions:
 [`adr/`](adr/README.md). Order of work: [`ROADMAP.md`](ROADMAP.md).
 
-The Foundation gate ([ENG-F8](engine/ENG-F8-foundation-gate/_feature.md)) holds; feature work is open. Milestones
+The Foundation gate ([ENG-F8](https://github.com/WrackedFella/moho/issues/61)) holds; feature work is open. Milestones
 and their gates are in [`ROADMAP.md`](ROADMAP.md).
 
 **Planning review checklist item: commercial licensing.** Decided 2026-10-02 in
@@ -34,13 +34,13 @@ the audit at the v1 gate ([ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md
 | [ENG-F4 Terrain rendering debt](engine/ENG-F4-terrain-rendering-debt/_feature.md) |
 | [ENG-F5 Engine and games live in separate repos](engine/ENG-F5-physical-repo-split/_feature.md) |
 | [ENG-F6 Headless, deterministic logic](engine/ENG-F6-headless-deterministic-logic/_feature.md) |
-| [ENG-F7 Entity storage is maintained and legion-free](engine/ENG-F7-maintained-ecs/_feature.md) |
-| [ENG-F8 Foundation gate](engine/ENG-F8-foundation-gate/_feature.md) |
+| [ENG-F7 Entity storage is maintained and legion-free](https://github.com/WrackedFella/moho/issues/62) |
+| [ENG-F8 Foundation gate](https://github.com/WrackedFella/moho/issues/61) |
 | [ENG-F9 Domain tests catch behaviour changes](engine/ENG-F9-tests-prove-behaviour/_feature.md) |
 | [ENG-F10 World geometry from any source](engine/ENG-F10-world-geometry-from-any-source/_feature.md) |
 | [ENG-F11 A game runs on the engine without copying the app loop](engine/ENG-F11-shared-app-loop/_feature.md) |
 | [ENG-F12 Input is game-defined actions bound as data](engine/ENG-F12-input-actions/_feature.md) |
-| [ENG-F13 Every dependency has a reasoned verdict](engine/ENG-F13-dependency-audit/_feature.md) |
+| [ENG-F13 Every dependency has a reasoned verdict](https://github.com/WrackedFella/moho/issues/83) |
 | [ENG-F14 A game loads a static scene from a file](engine/ENG-F14-scene-import/_feature.md) |
 | [ENG-F15 Games query physics and run many bodies](engine/ENG-F15-physics-queries-and-bodies/_feature.md) |
 | [ENG-F16 Sounds play from positions](engine/ENG-F16-positional-audio/_feature.md) |

@@ -1,7 +1,10 @@
 # The physics stack is on current rapier3d
 
 **Feature:** [ENG-F2](_feature.md)
-**Issue:** #102
+**Issue:** [#102](https://github.com/WrackedFella/moho/issues/102)
+**Status:** unknown
+**Gate class:** glue
+**Labels:** line:engine
 
 ## Summary
 

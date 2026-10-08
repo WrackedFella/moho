@@ -10,19 +10,19 @@ indexes what exists; this file sequences it. Item status is not tracked here; it
 ## M0 — Foundation (done 2026-10-05)
 
 **Intent:** Feature work can start safely.
-**Gate:** [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) criteria (verified).
+**Gate:** [ENG-F8](https://github.com/WrackedFella/moho/issues/61) criteria (verified).
 
-Exit: all four [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) criteria verified. Order matters: the crate table comes
-first, so later moves land in the right crates. [ENG-F7-01](engine/ENG-F7-maintained-ecs/ENG-F7-01-typed-entity-stores.md) has no dependency
+Exit: all four [ENG-F8](https://github.com/WrackedFella/moho/issues/61) criteria verified. Order matters: the crate table comes
+first, so later moves land in the right crates. [ENG-F7-01](https://github.com/WrackedFella/moho/issues/65) has no dependency
 and can run alongside 0.2–0.3.
 
 | # | Item | Criterion | Depends on |
 |---|---|---|---|
-| 0.1 | Accept [ADR-0005](adr/0005-crate-lines-and-dependency-direction.md) (crate lines) and [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) | G2 | — |
-| 0.2 | [ENG-F8-01](engine/ENG-F8-foundation-gate/ENG-F8-01-moho-sim-merged-into-game.md): `moho_sim` merged into `moho_game` | G2 | 0.1 |
-| 0.3 | [ENG-F8-02](engine/ENG-F8-foundation-gate/ENG-F8-02-layering-check.md): layering check in `just check`; `moho_core` drops `winit` | G2 | 0.2 |
-| 0.4 | [ENG-F7-01](engine/ENG-F7-maintained-ecs/ENG-F7-01-typed-entity-stores.md): typed chunk and actor stores (domain: tests reviewed first) | G1 | 0.1 |
-| 0.5 | [ENG-F7-02](engine/ENG-F7-maintained-ecs/ENG-F7-02-legion-removed.md): legion removed; deny ignores name their owning cards | G1, G3 | 0.4 |
+| 0.1 | Accept [ADR-0005](adr/0005-crate-lines-and-dependency-direction.md) (crate lines) and [ENG-F8](https://github.com/WrackedFella/moho/issues/61) | G2 | — |
+| 0.2 | [ENG-F8-01](https://github.com/WrackedFella/moho/issues/63): `moho_sim` merged into `moho_game` | G2 | 0.1 |
+| 0.3 | [ENG-F8-02](https://github.com/WrackedFella/moho/issues/64): layering check in `just check`; `moho_core` drops `winit` | G2 | 0.2 |
+| 0.4 | [ENG-F7-01](https://github.com/WrackedFella/moho/issues/65): typed chunk and actor stores (domain: tests reviewed first) | G1 | 0.1 |
+| 0.5 | [ENG-F7-02](https://github.com/WrackedFella/moho/issues/66): legion removed; deny ignores name their owning cards | G1, G3 | 0.4 |
 | 0.6 | [ENG-F2-01](engine/ENG-F2-dependency-upgrades/ENG-F2-01-bincode-migration.md) rewritten to [ADR-0006](adr/0006-save-format-contract.md) (decision only) | G4 | — |
 
 
@@ -31,7 +31,7 @@ and can run alongside 0.2–0.3.
 **Intent:** Both games build on the engine without forking it.
 **Gate (all must hold):**
 - [ENG-F10](engine/ENG-F10-world-geometry-from-any-source/_feature.md), [ENG-F11](engine/ENG-F11-shared-app-loop/_feature.md) and [ENG-F12](engine/ENG-F12-input-actions/_feature.md) done.
-- [ENG-F13](engine/ENG-F13-dependency-audit/_feature.md) verdicts recorded.
+- [ENG-F13](https://github.com/WrackedFella/moho/issues/83) verdicts recorded.
 - [ADR-0011](adr/0011-simulation-stays-network-ready.md) accepted.
 - [ADR-0012](adr/0012-engine-crate-map-for-m2.md) (engine crate map) accepted.
 - 1.2 and 1.6 done.
@@ -42,9 +42,9 @@ just before the work that needs them, not sooner.
 | # | Item | When |
 |---|---|---|
 | 1.6 | [ENG-F3-03](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-03-misc-cleanups.md): delete the unsound `FrameCallback` path | now (soundness) |
-| 1.2 | [ENG-F2-03](engine/ENG-F2-dependency-upgrades/ENG-F2-03-platform-default-features-and-unused-deps.md): winit/egui-winit default features off; unused deps removed ([ADR-0008](adr/0008-keep-winit-for-windowing-and-input.md)) | now |
+| 1.2 | [ENG-F2-03](https://github.com/WrackedFella/moho/issues/96): winit/egui-winit default features off; unused deps removed ([ADR-0008](adr/0008-keep-winit-for-windowing-and-input.md)) | now |
 | 1.7 | Amend [ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md)'s gate (boundary readiness, FPS as second consumer) | now |
-| 1.11 | [ENG-F13](engine/ENG-F13-dependency-audit/_feature.md): dependency audit | now, before ENG-F12 or any new dependency |
+| 1.11 | [ENG-F13](https://github.com/WrackedFella/moho/issues/83): dependency audit | now, before ENG-F12 or any new dependency |
 | 1.8 | [ENG-F10](engine/ENG-F10-world-geometry-from-any-source/_feature.md): world geometry from any source; voxels move to the strategy line ([ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md)) | before P.2; contract and renderer first |
 | 1.9 | [ENG-F11](engine/ENG-F11-shared-app-loop/_feature.md): shared app loop, headless tick, engine `GameClock` | before P.2 |
 | 1.10 | [ENG-F12](engine/ENG-F12-input-actions/_feature.md): game-defined input actions; replaces the former 1.5 | before P.2; after 1.11 |
@@ -129,13 +129,13 @@ edits data); ADR-0011's rules cover netcode.
 
 [ENG-F1-01](engine/ENG-F1-engine-hygiene/ENG-F1-01-constructor-size-cleanup.md)/[02](engine/ENG-F1-engine-hygiene/ENG-F1-02-error-handling-backlog.md)/[03](engine/ENG-F1-engine-hygiene/ENG-F1-03-god-module-splits.md)/[05](engine/ENG-F1-engine-hygiene/ENG-F1-05-material-model-revisit.md)/[07](engine/ENG-F1-engine-hygiene/ENG-F1-07-lint-ratchet.md), [ENG-F2-02](engine/ENG-F2-dependency-upgrades/ENG-F2-02-egui-ui-architecture-migration.md), [ENG-F3-01](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-01-bind-group-split.md)/[02](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-02-frustum-culling-sorting.md), [ENG-F4](engine/ENG-F4-terrain-rendering-debt/_feature.md)-*, ENG-F2-05/06/07 (`tracing`, std channels, own `block_on`), [ENG-F2-04](engine/ENG-F2-dependency-upgrades/ENG-F2-04-paste-advisory-cleared.md) (`paste` advisory via `rapier3d`),
 [ENG-F1-08](engine/ENG-F1-engine-hygiene/ENG-F1-08-headless-app-tests.md) (headless app wiring tests),
-[ENG-F1-09](engine/ENG-F1-engine-hygiene/ENG-F1-09-malformed-prefs-are-reported.md) (malformed prefs reported; land before 1.10, ENG-F12, reworks bindings in prefs).
+[ENG-F1-09](https://github.com/WrackedFella/moho/issues/91) (malformed prefs reported; land before 1.10, ENG-F12, reworks bindings in prefs).
 
 ## Decisions
 
 | Date | Decision | Record |
 |---|---|---|
-| 2026-10-02 | Foundation gate defines when feature work starts | [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) |
+| 2026-10-02 | Foundation gate defines when feature work starts | [ENG-F8](https://github.com/WrackedFella/moho/issues/61) |
 | 2026-10-02 | Crates belong to one line; dependencies point game → engine; checked in `just check` | [ADR-0005](adr/0005-crate-lines-and-dependency-direction.md) |
 | 2026-10-02 | Typed entity stores now; `hecs` when a consumer needs an ECS | [ADR-0004](adr/0004-entity-storage-without-a-general-ecs.md) |
 | 2026-10-02 | Save format: postcard envelope; old saves break, no promise before v1.0 | [ADR-0006](adr/0006-save-format-contract.md) |
@@ -144,18 +144,18 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-04 | [ENG-F6](engine/ENG-F6-headless-deterministic-logic/_feature.md) parked: simulation already steps at a fixed 1/60 s; no determinism defect found | [ENG-F6](engine/ENG-F6-headless-deterministic-logic/_feature.md) Notes |
 | 2026-10-04 | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) is reproduce-first and no longer waits on the save-format migration | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) |
 | 2026-10-04 | Simulation time comes from one fixed tick; no separate clock | [ADR-0009](adr/0009-simulation-time-is-one-fixed-tick.md) |
-| 2026-10-05 | G1 amended: `paste` also arrives via `rapier3d`, so its ignore moves to ENG-F2-04 (G3 covers it); gate verified and closed | [ENG-F8](engine/ENG-F8-foundation-gate/_feature.md) |
+| 2026-10-05 | G1 amended: `paste` also arrives via `rapier3d`, so its ignore moves to ENG-F2-04 (G3 covers it); gate verified and closed | [ENG-F8](https://github.com/WrackedFella/moho/issues/61) |
 | 2026-10-05 | The engine sees world geometry as meshes; voxels move to a strategy-line crate | [ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md) |
 | 2026-10-05 | Repo-split gate requires an agnostic engine and the FPS as a settled second consumer | [ENG-F5](engine/ENG-F5-physical-repo-split/_feature.md) |
 | 2026-10-06 | ADR-0010 accepted; ADR-0002 superseded, ADR-0003 narrowed to engine-wide events | [ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md) |
 | 2026-10-05 | Multiplayer later or never; no design may close it | [ADR-0011](adr/0011-simulation-stays-network-ready.md) |
 | 2026-10-05 | Shared app loop is an engine crate ([ENG-F11](engine/ENG-F11-shared-app-loop/_feature.md)); input is engine actions ([ENG-F12](engine/ENG-F12-input-actions/_feature.md)), replacing 1.5 | [ENG-F11](engine/ENG-F11-shared-app-loop/_feature.md), [ENG-F12](engine/ENG-F12-input-actions/_feature.md) |
 | 2026-10-05 | Mods data-only now (layered roots, override by stable id); scripted mods later, own ADR | [ENG-F19](engine/ENG-F19-data-and-mod-content/_feature.md) |
-| 2026-10-05 | No dependency assumed; audit verdicts keep / replace / fork / homebrew / drop | [ENG-F13](engine/ENG-F13-dependency-audit/_feature.md) |
+| 2026-10-05 | No dependency assumed; audit verdicts keep / replace / fork / homebrew / drop | [ENG-F13](https://github.com/WrackedFella/moho/issues/83) |
 | 2026-10-05 | Map format: glTF 2.0 recommended (audit confirms); importer engine, map loader FPS-line | [ENG-F14](engine/ENG-F14-scene-import/_feature.md) |
 | 2026-10-06 | Milestones with gates; only the next milestone is carded | [`_STANDARDS.md`](_STANDARDS.md#milestones) |
 | 2026-10-06 | ENG-F6's tick criterion moves to ENG-F11; ENG-F6 keeps seeded RNG | [ENG-F6](engine/ENG-F6-headless-deterministic-logic/_feature.md) |
-| 2026-10-07 | Audit gives economical and lean verdicts per crate, user calls each; large well-maintained crates green-lit; follow-ups go under ENG-F2 or the feature reworking that code | [ENG-F13](engine/ENG-F13-dependency-audit/_feature.md) |
+| 2026-10-07 | Audit gives economical and lean verdicts per crate, user calls each; large well-maintained crates green-lit; follow-ups go under ENG-F2 or the feature reworking that code | [ENG-F13](https://github.com/WrackedFella/moho/issues/83) |
 | 2026-10-07 | Dependency calls recorded: `noise`, `crossbeam-channel`, `pollster`, `phf`, `log`/`env_logger` leave; `ini` stays; `rodio` + own gain/pan for ENG-F16 | [audit](engine/ENG-F13-dependency-audit/audit.md) |
 | 2026-10-07 | Engine crate map decided in an ADR before ENG-F11 (modules first) | [ADR-0012](adr/0012-engine-crate-map-for-m2.md) |
 | 2026-10-07 | Generic controller and camera are an engine feature | [ENG-F21](engine/ENG-F21-character-controller-and-camera/_feature.md) |

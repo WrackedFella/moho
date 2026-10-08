@@ -1,6 +1,8 @@
 # ENG-F20 — A wgpu or egui upgrade touches one crate
 
-**Issue:** #104
+**Issue:** [#104](https://github.com/WrackedFella/moho/issues/104)
+**Status:** unknown
+**Labels:** feature, line:engine
 
 ## End state
 

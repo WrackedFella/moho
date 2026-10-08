@@ -2,7 +2,10 @@
 
 **Note:** Decided by [ADR-0006](../../adr/0006-save-format-contract.md); must land before [SG-F3](../../strategy-game/SG-F3-buildings-and-construction/_feature.md)
 **Feature:** [ENG-F2](_feature.md)
-**Issue:** #94
+**Issue:** [#94](https://github.com/WrackedFella/moho/issues/94)
+**Status:** unknown
+**Gate class:** domain
+**Labels:** line:engine
 
 ## Summary
 

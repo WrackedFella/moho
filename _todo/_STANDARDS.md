@@ -26,21 +26,39 @@ in `engine/`.
 `ENG-F3-01`, `FPS-F1`. IDs are unique across the repo and never reused; use
 them verbatim in issue titles and branch names, never in code comments.
 
-## Item state lives on the board
+## Item state: the board, mirrored on the card
 
-The [project board](https://github.com/users/WrackedFella/projects/1) is the single
-record of work-item state: **Status** (Backlog, Needs spec, Ready, In progress, In
-review, Done), **Priority** (P0-P2), **Gate class** (domain, glue) and
-**Agent-eligible** (Yes, No). Cards, feature files, the README index and the roadmap
-carry no status. Skills change the board only through devflow's `scripts/board`, which
-needs GraphQL and so runs only in a local terminal. Cloud threads and Actions runs never
-write it: the Board sync workflow moves Status forward on PR and issue events (In
-progress on a draft PR, In review on a ready PR, Done on merge or close), and a human
-sets Ready and Agent-eligible.
+The [project board](https://github.com/users/WrackedFella/projects/1) and the issue are
+authoritative for item state. Each card and feature file mirrors three of those fields in
+its header so a reader (and the sync agent) sees them without GitHub access:
 
-If a card and the board disagree, the board wins. Never "fix" the conflict by editing
-the card; report it to the user. Reasons an item is paused or blocked stay in the card
-as prose under a `**Note:**` line, not as a status.
+| Field | Values | Mirrors |
+|---|---|---|
+| `**Status:**` | `Backlog`, `Needs spec`, `Ready`, `In progress`, `In review`, `Done` (board values), plus `Draft` (no issue yet, not on the board) and `unknown` (issue exists, board value not yet synced) | board Status |
+| `**Gate class:**` (cards only) | `domain`, `glue`, `unset` (not yet decided) | board Gate class |
+| `**Labels:**` | the issue's labels, comma-separated: `line:engine` \| `line:strategy` \| `line:fps`, plus `feature` on feature files, `engine-request`, `agent-ready` | issue labels |
+
+The header also carries `**Issue:** [#n](url)` once the item is filed, linking its GitHub
+issue. Header fields are not part of the published issue body.
+
+Who writes what:
+
+- **Sync agent (board and issue access): the only writer after publish.** It copies
+  Status, Gate class and Labels from GitHub into the card header, and deletes the files
+  of items whose issue is closed as completed. When a card and GitHub disagree, GitHub
+  wins; the agent overwrites the card and reports the change.
+- **Planning threads** write the fields only while an item has no issue: `Status: Draft`,
+  the intended `Gate class` (or `unset`) and `Labels`. On publish they add the `Issue`
+  link and set `Status: unknown`, which the sync agent replaces.
+- **Orchestrate and implementation PRs** never edit the fields.
+- **Board changes** still go through devflow's `scripts/board` (local terminal only) and
+  the Board sync workflow, which moves Status forward on PR and issue events (In
+  progress on a draft PR, In review on a ready PR, Done on merge or close). A human sets
+  Ready and Agent-eligible. Priority and Agent-eligible are not mirrored; add them here
+  if the sync agent needs them.
+
+The README index and the roadmap carry no status. Reasons an item is paused or blocked
+stay in the card as prose under a `**Note:**` line, not in `Status`.
 
 ## Features first
 
@@ -54,7 +72,7 @@ planning and the gate for progress; cards are how it gets built.
 3. Only then decompose into cards. A card exists only under an approved
    feature, and only for work inside that feature's scope. Work that falls
    outside it is a new feature proposal, not a stray card.
-4. The feature is Done on the board when its exit criteria are verified, not merely when
+4. The feature is Done on the board (and its issue closed) when its exit criteria are verified, not merely when
    its cards are done. Missing coverage becomes a new card.
 
 A feature written without exit criteria or scope gets them the next time it is planned,
@@ -75,7 +93,9 @@ when the previous gate closes.
 ```markdown
 # <LINE>-F<n> — <observable outcome>
 
-**Issue:** #<n>            <!-- parent issue, filed when scope is approved; dropped from the issue body on publish -->
+**Issue:** [#<n>](url)     <!-- parent issue, filed when scope is approved -->
+**Status:** Draft          <!-- see Item state; Draft until filed -->
+**Labels:** feature, line:engine
 
 ## End state                  <!-- where this is heading; link the vision doc/GDD -->
 Two or three sentences: what the finished system does, and for whom.
@@ -109,8 +129,8 @@ One paragraph: what the player/caller can do when this ships, and why it matters
 
 ## Card readiness
 
-A card's readiness is its board Status, not a field in the file. What each state needs
-in the card:
+A card's readiness is its Status (board value, mirrored in the header). What each state
+needs in the card:
 
 | Board Status | Required card sections |
 |---|---|
@@ -132,7 +152,10 @@ removes it.
 # <observable outcome, not the component touched>
 
 **Feature:** SG-F1
-**Issue:** #<n>            <!-- once filed -->
+**Issue:** [#<n>](url)     <!-- once filed -->
+**Status:** Draft          <!-- see Item state; Draft until filed -->
+**Gate class:** unset      <!-- domain | glue, set by the Tech Lead -->
+**Labels:** line:strategy
 
 ## Summary
 1-3 sentences: what this does and why.
@@ -190,7 +213,7 @@ something observable when finished.
   card or `_feature.md`. The file in `_todo/` is a draft until approval, and a local
   working copy after. When they disagree, the issue wins.
 - The body is the full spec and stands alone: every section of the card or feature,
-  minus the `**Issue:**`/`**Feature:**` header lines and template comments. Refer to
+  minus the `**Issue:**`, `**Feature:**`, `**Status:**`, `**Gate class:**` and `**Labels:**` header lines and template comments. Refer to
   other items as `#N` (with ID and a few words) and to the parent through the
   sub-issue link, never by `_todo/` path. An item with no issue yet (a proposed
   feature) is named by ID and a few words until it is filed. Link ADRs and wiki
@@ -205,7 +228,7 @@ something observable when finished.
 - Labels: `line:engine` | `line:strategy` | `line:fps`; `feature` on feature issues;
   `engine-request` on engine requests; `agent-ready` to start a remote run. Templates: *Feature*, *Work item*, *Engine
   request*.
-- Every issue goes on the board; Status, Priority and Agent-eligible are set there.
+- Every issue goes on the board; Status, Priority and Agent-eligible are set there, and the card header mirrors Status, Gate class and Labels.
 - Branch from `dev`: `<type>/<ID>-<slug>` (e.g. `feat/SG-F1-04-pickup-feedback`);
   PR back into `dev`. `main` receives promotions from `dev` only.
 
@@ -229,7 +252,8 @@ something observable when finished.
   `agent-ready` to start a remote run). From a local terminal the Tech Lead sets them
   through `scripts/board`.
 - Delete local files once their work is finished: a card's file when its issue is
-  closed as completed, and a feature's directory when the feature is Done on the board.
+  closed as completed, and a feature's directory when its issue is closed as completed
+  (reference files such as `engine/ENG-F13-dependency-audit/audit.md` stay).
   Git history and the issue keep the record. Replace links to deleted files (README
   index, roadmap, other cards) with links to the issue. `/sync-backlog` does this
   after merges.
@@ -242,4 +266,4 @@ something observable when finished.
 - `/devflow:wiki` run on the diff: the PR lists the pages updated or says none were
   needed.
 - Verification steps performed for anything observable.
-- Board Status moved by the workflow; the PR does not edit card status.
+- Board Status moved by the workflow; the PR does not edit the card's mirrored fields (the sync agent does).

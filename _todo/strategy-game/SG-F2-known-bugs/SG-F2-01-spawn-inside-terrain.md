@@ -2,6 +2,9 @@
 
 **Note:** Confirm the trigger first
 **Feature:** [SG-F2](_feature.md)
+**Status:** Draft
+**Gate class:** unset
+**Labels:** line:strategy
 
 ## Summary
 

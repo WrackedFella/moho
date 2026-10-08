@@ -1,5 +1,7 @@
 # SG-F4 — Worker pawns gather resources on their own
 
+**Status:** Draft
+**Labels:** feature, line:strategy
 
 ## Summary
 
