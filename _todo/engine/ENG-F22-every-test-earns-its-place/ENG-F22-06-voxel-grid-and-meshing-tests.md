@@ -21,7 +21,7 @@
 |---|---|---|
 | `grid` `test_is_smooth_at` | material 99 → `Some(true)` (with 0 and 100) | `< 99` |
 | `grid` `block_positions_reconstruct_world_coords` (from `test_block_positions_count`) | the set is exactly {(0,0,0), (1,0,0), (-1,17,3)} | x and z swapped in local reconstruction |
-| `grid` `test_get_height` | blocks at y=20 and y=-3 in one column → `Some(20)` | first chunk's hit returned |
+| `grid` `test_get_height` | blocks at y=17, y=20 and y=-3 in one column, plus one in another column's chunk → `Some(20)`, over 16 fresh grids (chunk storage is a randomly seeded `HashMap`) | first chunk's hit returned |
 | `grid` `test_iter_block_data` | the exact set of (position, material, resource), one block with a resource | material and resource swapped |
 | `grid` `test_chunk_block_data` | chunk (1,0,0) → [(20,0,0), material 2, no resource] | chunk base offset dropped |
 | `grid` `negative_positions_round_trip` | place and read back (-1,-1,-1), (-16,0,0), (-17,5,31) | truncating division in chunk lookup |
@@ -31,11 +31,11 @@
 | `grid::paletted` `test_palette_deduplication` | re-setting an existing material leaves `to_bytes().len()` unchanged (no private `palette.len()`) | no dedup |
 | `chunk` `test_chunk_with_geometry` | vertices with no indices → `!has_geometry()`; both → true | `&&` → `||` |
 | `chunk` `test_from_grid_lod_stamps_lod_field` | a smooth block at (1,1,1): every LOD 1 coordinate is an even integer; some LOD 0 coordinate is not an integer | `lod` ignored |
-| `mesh::blocky` `test_corner_block_has_occlusion` | neighbours at (1,1,0) and (0,1,1): the +Y vertex at (0.5,0.5,0.5) has AO ≈ 0.4, the one at (-0.5,0.5,-0.5) 1.0; vertices found by position and normal | no "both sides → max occlusion" rule (gives 0.6) |
+| `mesh::blocky` `test_corner_block_has_occlusion` | neighbours at (1,1,0) and (0,1,1): the +Y vertex at (1,1,1) has AO ≈ 0.4, the one at (0,1,0) 1.0 (the block's local cube is [0,1]³ since #196); vertices found by position and normal | no "both sides → max occlusion" rule (gives 0.6) |
 | `mesh::blocky` `all_indices_in_range` | referenced indices are exactly 0..24 | `base_index = 0` |
 | `mesh::hybrid` `test_generate_coarse_mesh_solid_chunk_has_geometry` | full 16³ chunk: 2560 vertices, 3840 indices, 128 quads facing +X | culling disabled |
 | `mesh::hybrid` `test_generate_coarse_mesh_uses_stride2` | a single block at (1,1,1) yields geometry | only the cell root sampled |
-| `mesh::marching_cubes` `test_full_density_field` | a 2³ solid at samples 6..=7: vertices in [5.5,7.5]³, normals point away from (6.5,6.5,6.5), trilinear density at each vertex ≈ 0.5, all per-vertex arrays the same length; fix the "outer shell" comment | corners 1 and 3 swapped |
+| `mesh::marching_cubes` `test_full_density_field` | a 2³ solid at samples 6..=7: vertices in [5.5,7.5]³, normals point away from (6.5,6.5,6.5), trilinear density at each vertex ≈ 0.5, all per-vertex arrays the same length; drop the "outer shell" comment | corners 1 and 3 swapped |
 
 ## Tech spec
 

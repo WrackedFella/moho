@@ -463,20 +463,25 @@ mod tests {
         let mut grid = VoxelGrid::new(16);
         let pos = IVec3::new(16, 16, 16);
         grid.place_block(pos, 100, None);
-
-        // Add neighbors to create occlusion (forms a corner)
-        grid.place_block(pos + IVec3::new(1, 0, 0), 100, None);
-        grid.place_block(pos + IVec3::new(0, 1, 0), 100, None);
         grid.place_block(pos + IVec3::new(1, 1, 0), 100, None);
+        grid.place_block(pos + IVec3::new(0, 1, 1), 100, None);
 
         let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
 
-        // Some vertices should have reduced AO (< 1.0) due to neighbors
-        let has_occlusion = mesh.ambient_occlusion.iter().any(|&ao| ao < 1.0);
-        assert!(
-            has_occlusion,
-            "Block with neighbors should have some occlusion"
-        );
+        let ao_on_top_face_at = |vertex: [f32; 3]| {
+            let matches: Vec<f32> = mesh
+                .vertices
+                .iter()
+                .zip(&mesh.normals)
+                .zip(&mesh.ambient_occlusion)
+                .filter(|((v, n), _)| **v == vertex && **n == [0.0, 1.0, 0.0])
+                .map(|(_, ao)| *ao)
+                .collect();
+            assert_eq!(matches.len(), 1, "one +Y vertex at {vertex:?}");
+            matches[0]
+        };
+        assert!((ao_on_top_face_at([1.0, 1.0, 1.0]) - 0.4).abs() < 1e-6);
+        assert!((ao_on_top_face_at([0.0, 1.0, 0.0]) - 1.0).abs() < 1e-6);
     }
 
     #[test]
@@ -526,18 +531,13 @@ mod tests {
 
     #[test]
     fn all_indices_in_range() {
-        // Regression guard: out-of-range indices cause silent GPU crashes on some hardware.
         let mut grid = VoxelGrid::new(16);
         let pos = IVec3::new(16, 16, 16);
         grid.place_block(pos, 100, None);
 
         let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
-        let vertex_count = mesh.vertices.len() as u32;
-        for &idx in &mesh.indices {
-            assert!(
-                idx < vertex_count,
-                "index {idx} out of range ({vertex_count} vertices)"
-            );
-        }
+
+        let referenced: std::collections::BTreeSet<u32> = mesh.indices.iter().copied().collect();
+        assert_eq!(referenced, (0..24).collect());
     }
 }

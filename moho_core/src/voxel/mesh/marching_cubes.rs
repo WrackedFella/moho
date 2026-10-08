@@ -888,15 +888,6 @@ mod tests {
     }
 
     #[test]
-    fn test_corner_position() {
-        let pos = MarchingCubes::corner_position(0, 0, 0, 0);
-        assert_eq!(pos, [0.0, 0.0, 0.0]);
-
-        let pos = MarchingCubes::corner_position(1, 2, 3, 6);
-        assert_eq!(pos, [2.0, 3.0, 4.0]); // Corner 6 is (+1, +1, +1) from base
-    }
-
-    #[test]
     fn test_empty_density_field() {
         let blocks = [[[false; 16]; 16]; 16];
         let field = MarchingCubes::create_density_field(&blocks);
@@ -909,41 +900,34 @@ mod tests {
 
     #[test]
     fn test_full_density_field() {
-        let blocks = [[[true; 16]; 16]; 16];
-        let field = MarchingCubes::create_density_field(&blocks);
+        let solid =
+            (6..=7).flat_map(|x| (6..=7).flat_map(move |y| (6..=7).map(move |z| (x, y, z))));
+        let field = solid_samples_field(solid);
+
         let mesh = MarchingCubes::generate_mesh(&field, 16);
 
-        // Full field should generate boundary geometry (outer shell)
-        // The 16x16x16 block will have an isosurface at its boundary with air
-        assert!(
-            !mesh.vertices.is_empty(),
-            "Expected boundary geometry for solid block"
-        );
-        assert!(
-            !mesh.indices.is_empty(),
-            "Expected indices for boundary geometry"
-        );
-        assert_eq!(
-            mesh.vertices.len(),
-            mesh.normals.len(),
-            "Each vertex should have a normal"
-        );
-        assert_eq!(
-            mesh.vertices.len(),
-            mesh.ambient_occlusion.len(),
-            "Each vertex should have AO"
-        );
-        assert_eq!(
-            mesh.vertices.len(),
-            mesh.geometry_type.len(),
-            "Each vertex should have geometry type"
-        );
-
-        // All vertices should be marked as smooth terrain (geometry_type = 0)
-        assert!(
-            mesh.geometry_type.iter().all(|&t| t == 0),
-            "All vertices should be smooth terrain"
-        );
+        assert!(!mesh.vertices.is_empty(), "solid must produce geometry");
+        assert!(!mesh.indices.is_empty());
+        let n = mesh.vertices.len();
+        assert_eq!(mesh.normals.len(), n);
+        assert_eq!(mesh.ambient_occlusion.len(), n);
+        assert_eq!(mesh.geometry_type.len(), n);
+        assert_eq!(mesh.light_level.len(), n);
+        assert_eq!(mesh.block_light_rgb.len(), n);
+        assert_eq!(mesh.sky_exposed.len(), n);
+        assert!(mesh.geometry_type.iter().all(|&t| t == 0));
+        for v in &mesh.vertices {
+            assert!(
+                v.iter().all(|c| (5.5 - 1e-4..=7.5 + 1e-4).contains(c)),
+                "vertex {v:?} outside the solid's shell"
+            );
+            let density = MarchingCubes::sample_density(&field, v[0], v[1], v[2]);
+            assert!(
+                (density - 0.5).abs() < 1e-4,
+                "vertex {v:?} has density {density}, not on the isosurface"
+            );
+        }
+        assert_normals_point_away_from(&mesh, [6.5, 6.5, 6.5]);
     }
 
     fn solid_samples_field(

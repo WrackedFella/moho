@@ -583,6 +583,7 @@ impl BlockData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn corrupt_chunk_leaves_grid_unchanged() {
@@ -642,51 +643,165 @@ mod tests {
         let pos = BlockPos::new(0, 0, 0);
 
         assert_eq!(grid.is_smooth_at(pos), None);
-        grid.place_block(pos, 0, None); // smooth
-        assert_eq!(grid.is_smooth_at(pos), Some(true));
-        grid.place_block(pos, 100, None); // blocky
-        assert_eq!(grid.is_smooth_at(pos), Some(false));
+        for (material, smooth) in [(0, true), (99, true), (100, false)] {
+            grid.place_block(pos, material, None);
+
+            assert_eq!(grid.is_smooth_at(pos), Some(smooth), "material {material}");
+        }
     }
 
     #[test]
-    fn test_block_positions_count() {
+    fn block_positions_reconstruct_world_coords() {
         let mut grid = VoxelGrid::new(16);
         assert_eq!(grid.block_positions().count(), 0);
+        let placed = [
+            IVec3::new(0, 0, 0),
+            IVec3::new(1, 0, 0),
+            IVec3::new(-1, 17, 3),
+        ];
+        for pos in placed {
+            grid.place_block(pos, 0, None);
+        }
 
-        grid.place_block(IVec3::new(0, 0, 0), 0, None);
-        grid.place_block(IVec3::new(1, 0, 0), 0, None);
-        assert_eq!(grid.block_positions().count(), 2);
+        let found: HashSet<IVec3> = grid.block_positions().collect();
+
+        assert_eq!(found, HashSet::from(placed));
     }
 
     #[test]
     fn test_get_height() {
-        let mut grid = VoxelGrid::new(16);
-        assert_eq!(grid.get_height(0, 0), None);
+        // HashMap iteration order is randomly seeded per grid; repeat so an
+        // order-dependent answer cannot pass by luck.
+        for _ in 0..16 {
+            let mut grid = VoxelGrid::new(16);
+            assert_eq!(grid.get_height(0, 0), None);
 
-        grid.place_block(IVec3::new(0, 2, 0), 0, None);
-        grid.place_block(IVec3::new(0, 5, 0), 0, None);
-        assert_eq!(grid.get_height(0, 0), Some(5));
-        assert_eq!(grid.get_height(1, 0), None);
+            for y in [17, 20, -3] {
+                grid.place_block(IVec3::new(0, y, 0), 0, None);
+            }
+            grid.place_block(IVec3::new(0, 30, 16), 0, None);
+
+            assert_eq!(grid.get_height(0, 0), Some(20));
+            assert_eq!(grid.get_height(1, 0), None);
+        }
     }
 
     #[test]
     fn test_iter_block_data() {
         let mut grid = VoxelGrid::new(16);
         grid.place_block(IVec3::new(0, 0, 0), 1, None);
-        grid.place_block(IVec3::new(1, 0, 0), 2, None);
+        grid.place_block(IVec3::new(1, 0, 0), 2, Some(9));
+        grid.place_block(IVec3::new(-3, 20, 5), 4, None);
 
-        let data: Vec<_> = grid.iter_block_data().collect();
-        assert_eq!(data.len(), 2);
+        let data: HashSet<_> = grid
+            .iter_block_data()
+            .map(|b| (b.position, b.material_id, b.resource_id))
+            .collect();
+
+        assert_eq!(
+            data,
+            HashSet::from([
+                (IVec3::new(0, 0, 0), 1, None),
+                (IVec3::new(1, 0, 0), 2, Some(9)),
+                (IVec3::new(-3, 20, 5), 4, None),
+            ])
+        );
     }
 
     #[test]
     fn test_chunk_block_data() {
         let mut grid = VoxelGrid::new(16);
         grid.place_block(IVec3::new(0, 0, 0), 1, None);
-        grid.place_block(IVec3::new(20, 0, 0), 2, None); // different chunk
+        grid.place_block(IVec3::new(20, 0, 0), 2, None);
 
-        let in_chunk = grid.chunk_block_data(IVec3::ZERO);
-        assert_eq!(in_chunk.len(), 1);
-        assert_eq!(in_chunk[0].material_id, 1);
+        let in_chunk = grid.chunk_block_data(IVec3::new(1, 0, 0));
+
+        assert_eq!(
+            in_chunk,
+            vec![BlockData {
+                position: IVec3::new(20, 0, 0),
+                material_id: 2,
+                resource_id: None,
+            }]
+        );
+        assert!(grid.chunk_block_data(IVec3::new(5, 5, 5)).is_empty());
+    }
+
+    #[test]
+    fn negative_positions_round_trip() {
+        let mut grid = VoxelGrid::new(16);
+        let positions = [
+            IVec3::new(-1, -1, -1),
+            IVec3::new(-16, 0, 0),
+            IVec3::new(-17, 5, 31),
+        ];
+
+        for (material, pos) in (10..).zip(positions) {
+            grid.place_block(pos, material, None);
+        }
+
+        for (material, pos) in (10..).zip(positions) {
+            assert_eq!(grid.material_at(pos), Some(material), "{pos}");
+        }
+        assert_eq!(grid.block_count(), 3);
+        assert_eq!(grid.material_at(IVec3::new(15, 15, 15)), None);
+        assert_eq!(grid.material_at(IVec3::new(0, 0, 0)), None);
+    }
+
+    #[test]
+    fn overwrite_without_resource_clears_resource() {
+        let mut grid = VoxelGrid::new(16);
+        let pos = BlockPos::new(3, 4, 5);
+        grid.place_block(pos, 1, Some(7));
+        assert_eq!(grid.resource_at(pos), Some(7));
+
+        grid.place_block(pos, 1, None);
+
+        assert_eq!(grid.resource_at(pos), None);
+        assert_eq!(grid.material_at(pos), Some(1));
+    }
+
+    #[test]
+    fn chunk_persists_only_when_modified() {
+        let mut grid = VoxelGrid::new(16);
+        let chunk = IVec3::ZERO;
+        assert!(grid.serialize_chunk(chunk).is_none(), "absent chunk");
+
+        grid.place_block(BlockPos::new(1, 1, 1), 2, None);
+        assert!(grid.serialize_chunk(chunk).is_some(), "edited chunk");
+
+        grid.clear_chunk_modified(chunk);
+
+        assert!(grid.serialize_chunk(chunk).is_none(), "unmodified chunk");
+        assert!(!grid.chunk_is_modified(chunk));
+        assert_eq!(grid.material_at(BlockPos::new(1, 1, 1)), Some(2));
+    }
+
+    #[test]
+    fn chunk_round_trips_into_other_chunk_pos() {
+        let mut source = VoxelGrid::new(16);
+        source.place_block(BlockPos::new(1, 2, 3), 4, Some(6));
+        source.place_block(BlockPos::new(15, 15, 15), 5, None);
+        let bytes = source.serialize_chunk(IVec3::ZERO).expect("modified");
+        let target = IVec3::new(2, 0, -1);
+        let mut grid = VoxelGrid::new(16);
+        grid.chunk_light_mut(target).light_dirty = false;
+
+        grid.deserialize_chunk_into(target, &bytes).expect("decode");
+
+        let base = IVec3::new(32, 0, -16);
+        let data: HashSet<_> = grid
+            .iter_block_data()
+            .map(|b| (b.position, b.material_id, b.resource_id))
+            .collect();
+        assert_eq!(
+            data,
+            HashSet::from([
+                (base + IVec3::new(1, 2, 3), 4, Some(6)),
+                (base + IVec3::new(15, 15, 15), 5, None),
+            ])
+        );
+        assert_eq!(grid.material_at(IVec3::new(1, 2, 3)), None);
+        assert!(grid.chunk_light(target).expect("light entry").light_dirty);
     }
 }
