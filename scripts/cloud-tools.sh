@@ -40,16 +40,22 @@ rust_toolchain() {
 }
 
 gate_tools() {
-  if ! command -v cargo-binstall >/dev/null; then
-    mkdir -p "$HOME/.cargo/bin"
-    curl -fsSL https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz \
-      | tar -xz -C "$HOME/.cargo/bin"
-  fi
-  local missing=() t
-  for t in just cargo-nextest cargo-mutants cargo-deny; do
-    command -v "$t" >/dev/null || missing+=("$t")
-  done
-  [ ${#missing[@]} -eq 0 ] || cargo binstall -y --locked --disable-strategies compile "${missing[@]}"
+  # Direct release downloads rather than cargo-binstall: binstall looks assets up through
+  # the GitHub API, which the cloud sandbox's proxy refuses for repos outside the session.
+  local gh=https://github.com target=x86_64-unknown-linux name url tmp
+  mkdir -p "$HOME/.cargo/bin"
+  while read -r name url; do
+    command -v "$name" >/dev/null && continue
+    tmp="$(mktemp -d)"
+    curl -fsSL "$url" | tar -xz -C "$tmp"
+    install -m 755 "$(find "$tmp" -type f -name "$name" | head -n 1)" "$HOME/.cargo/bin/$name"
+    rm -rf "$tmp"
+  done <<TOOLS
+just $gh/casey/just/releases/download/1.58.0/just-1.58.0-$target-musl.tar.gz
+cargo-nextest $gh/nextest-rs/nextest/releases/download/cargo-nextest-0.9.148/cargo-nextest-0.9.148-$target-musl.tar.gz
+cargo-mutants $gh/sourcefrog/cargo-mutants/releases/download/v27.1.0/cargo-mutants-$target-gnu.tar.gz
+cargo-deny $gh/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-$target-musl.tar.gz
+TOOLS
 }
 
 node_deps() {
