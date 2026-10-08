@@ -1,9 +1,10 @@
+use crate::persist::PersistError;
 use std::collections::HashMap;
 
 pub const CHUNK_VOL: usize = 4096; // 16³
 
 /// Serializable snapshot of a chunk's block data (no runtime-only flags).
-#[derive(bincode::Encode, bincode::Decode)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct ChunkSnapshot {
     palette: Vec<u32>,
     /// Flattened indices (CHUNK_VOL entries).
@@ -118,27 +119,36 @@ impl PalettedChunk {
     /// Runtime-only flags (`mesh_dirty`, `light_dirty`, `modified`) are not
     /// included; they are re-derived when the chunk is loaded back.
     pub fn to_bytes(&self) -> Vec<u8> {
+        // HashMap order is unspecified; sort so equal chunks encode to equal bytes.
+        let mut resources: Vec<(u16, u32)> = self.resources.iter().map(|(&k, &v)| (k, v)).collect();
+        resources.sort_unstable_by_key(|&(idx, _)| idx);
         let snap = ChunkSnapshot {
             palette: self.palette.clone(),
             indices: self.indices.to_vec(),
-            resources: self.resources.iter().map(|(&k, &v)| (k, v)).collect(),
+            resources,
         };
-        bincode::encode_to_vec(&snap, bincode::config::standard())
+        crate::persist::encode(crate::persist::FileKind::Chunk, &snap)
             .expect("PalettedChunk serialization must not fail")
     }
 
     /// Deserialize a chunk from bytes produced by `to_bytes`.
-    /// Returns `None` if the data is malformed or the index count is wrong.
-    pub fn from_bytes(data: &[u8]) -> Option<Self> {
-        let (snap, _): (ChunkSnapshot, _) =
-            bincode::decode_from_slice(data, bincode::config::standard()).ok()?;
-        if snap.indices.len() != CHUNK_VOL {
-            return None;
+    /// Fails if the data is malformed, the index count is wrong, or an index
+    /// points outside the palette.
+    pub fn from_bytes(data: &[u8]) -> Result<Self, PersistError> {
+        let snap: ChunkSnapshot = crate::persist::decode(crate::persist::FileKind::Chunk, data)?;
+        if snap.indices.len() != CHUNK_VOL
+            || snap.palette.is_empty()
+            || snap
+                .indices
+                .iter()
+                .any(|&i| usize::from(i) >= snap.palette.len())
+        {
+            return Err(PersistError::Corrupt);
         }
         let mut indices = [0u16; CHUNK_VOL];
         indices.copy_from_slice(&snap.indices);
         let resources = snap.resources.into_iter().collect();
-        Some(Self {
+        Ok(Self {
             palette: snap.palette,
             indices,
             resources,
@@ -175,6 +185,85 @@ impl PalettedChunk {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn edited_chunk() -> PalettedChunk {
+        let mut c = PalettedChunk::new();
+        c.set_block(0, 5, None);
+        c.set_block(17, 9, Some(3));
+        c.set_block(4095, 5, Some(8));
+        c
+    }
+
+    #[test]
+    fn chunk_round_trips_through_bytes() {
+        let chunk = edited_chunk();
+
+        let bytes = chunk.to_bytes();
+        let back = PalettedChunk::from_bytes(&bytes).expect("decode");
+
+        assert_eq!(&bytes[..5], b"MOHO\x03", "chunk envelope magic and kind");
+        assert_eq!(
+            back.iter_blocks().collect::<Vec<_>>(),
+            chunk.iter_blocks().collect::<Vec<_>>()
+        );
+        assert_eq!(back.block_count(), 3);
+        assert!(back.mesh_dirty && back.light_dirty);
+        assert!(!back.is_modified());
+    }
+
+    #[test]
+    fn bytes_ignore_resource_insertion_order() {
+        let mut ascending = PalettedChunk::new();
+        let mut descending = PalettedChunk::new();
+        for i in 0..64usize {
+            ascending.set_block(i, 1, Some(i as u32 + 100));
+        }
+        for i in (0..64usize).rev() {
+            descending.set_block(i, 1, Some(i as u32 + 100));
+        }
+
+        assert_eq!(ascending.to_bytes(), descending.to_bytes());
+    }
+
+    #[test]
+    fn wrong_index_count_returns_corrupt() {
+        let short = (vec![u32::MAX], vec![0u16; 3], Vec::<(u16, u32)>::new());
+        let bytes =
+            crate::persist::encode(crate::persist::FileKind::Chunk, &short).expect("encode");
+
+        let err = PalettedChunk::from_bytes(&bytes).expect_err("must reject");
+
+        assert!(matches!(err, PersistError::Corrupt), "{err:?}");
+    }
+
+    #[test]
+    fn index_outside_palette_returns_corrupt() {
+        let mut indices = vec![0u16; CHUNK_VOL];
+        indices[7] = 2;
+        for (palette, indices) in [
+            (vec![u32::MAX, 5], indices),
+            (Vec::new(), vec![0u16; CHUNK_VOL]),
+        ] {
+            let snap = (palette, indices, Vec::<(u16, u32)>::new());
+            let bytes =
+                crate::persist::encode(crate::persist::FileKind::Chunk, &snap).expect("encode");
+
+            let err = PalettedChunk::from_bytes(&bytes).expect_err("must reject");
+
+            assert!(matches!(err, PersistError::Corrupt), "{err:?}");
+        }
+    }
+
+    #[test]
+    fn checksum_mismatch_in_chunk_returns_corrupt() {
+        let mut bytes = edited_chunk().to_bytes();
+        assert_eq!(&bytes[..5], b"MOHO\x03", "chunk envelope magic and kind");
+        bytes[15] ^= 0xFF; // inside the stored CRC
+
+        let err = PalettedChunk::from_bytes(&bytes).expect_err("must reject");
+
+        assert!(matches!(err, PersistError::Corrupt), "{err:?}");
+    }
 
     #[test]
     fn test_empty_chunk_is_all_air() {

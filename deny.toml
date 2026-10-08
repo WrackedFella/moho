@@ -6,9 +6,7 @@ all-features = true
 [advisories]
 # Unmaintained-crate notices only (no known vulnerabilities). Remove each entry
 # when the dependency that pulls it in is replaced or upgraded.
-ignore = [
-    { id = "RUSTSEC-2025-0141", reason = "bincode: direct dep; save-format migration to postcard per ADR-0006; owned by ENG-F2-01" },
-]
+ignore = []
 
 [licenses]
 # Permissive licenses plus MPL-2.0 (symphonia audio codecs via rodio). GPL and
