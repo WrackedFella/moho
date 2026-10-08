@@ -80,6 +80,8 @@ pub struct EguiAdapter {
 
     // Whether menu music is currently playing (to avoid redundant start/stop)
     menu_music_playing: bool,
+    // Whether the menu music file was on disk at startup (checked once, not per frame)
+    menu_music_exists: bool,
 }
 
 /// Lightweight progress state used by the adapter to render an overlay.
@@ -130,6 +132,7 @@ impl EguiAdapter {
             progress: None,
             last_hovered_key: None,
             menu_music_playing: false,
+            menu_music_exists: std::path::Path::new(event_routing::MENU_MUSIC_PATH).exists(),
         }
     }
 
@@ -397,6 +400,7 @@ impl FrameCallback for EguiAdapter {
             &menu_actions,
             &self.event_bus,
             &mut self.menu_music_playing,
+            self.menu_music_exists,
         );
 
         // Handle platform output

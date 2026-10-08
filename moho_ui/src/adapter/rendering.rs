@@ -150,7 +150,7 @@ mod tests {
     }
 
     impl UiComponent for ButtonScreen {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "button_screen"
         }
 

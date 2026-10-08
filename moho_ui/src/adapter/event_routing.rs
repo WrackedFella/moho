@@ -83,22 +83,25 @@ pub fn emit_audio_event(event_bus: &EventBus, audio_event: UiAudioEvent) {
     event_bus.publish(core_event);
 }
 
+/// Menu background music, relative to the working directory.
+pub const MENU_MUSIC_PATH: &str = "audio/music/menu.ogg";
+
 /// Manage menu background music lifecycle.
 ///
 /// Starts music when the player navigates to the start menu, stops it when
-/// they leave. Silently no-ops if the music file does not exist on disk.
-pub fn update_menu_music(actions: &[MenuAction], event_bus: &EventBus, music_playing: &mut bool) {
+/// they leave. Never starts when `music_exists` is false.
+pub fn update_menu_music(
+    actions: &[MenuAction],
+    event_bus: &EventBus,
+    music_playing: &mut bool,
+    music_exists: bool,
+) {
     use moho_core::events::AudioEvent;
-    use std::path::Path;
-
-    const MENU_MUSIC_PATH: &str = "audio/music/menu.ogg";
 
     for action in actions {
         match action {
             // Entering the start menu — start music
-            MenuAction::ShowMenu(name)
-                if name == "start" && !*music_playing && Path::new(MENU_MUSIC_PATH).exists() =>
-            {
+            MenuAction::ShowMenu(name) if name == "start" && !*music_playing && music_exists => {
                 event_bus.publish(AudioEvent::MusicStart {
                     path: MENU_MUSIC_PATH.to_string(),
                     volume: 1.0,
