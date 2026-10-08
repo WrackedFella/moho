@@ -135,12 +135,9 @@ pub trait RendererBackend {
     fn surface_format(&self) -> Option<TextureFormatRepr> {
         None
     }
-    /// Set an optional raw FrameCallback pointer. The renderer will call the callback during
+    /// Set an optional `Arc<Mutex<dyn FrameCallback>>`. The renderer calls it during
     /// finalization so the application can record UI commands into the frame encoder.
-    /// The pointer must remain valid until cleared.
-    fn set_frame_callback_raw(&mut self, ptr: Option<*mut dyn FrameCallback>);
-    /// Set an optional safe Arc<Mutex<dyn FrameCallback>>. Prefer this over the raw pointer
-    /// variant; it's thread-safe and avoids pointer lifetime issues. Passing `None` clears.
+    /// Passing `None` clears.
     fn set_frame_callback_arc(
         &mut self,
         cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
@@ -199,9 +196,6 @@ impl RendererBackend for Renderer<'_> {
     }
     fn surface_format(&self) -> Option<TextureFormatRepr> {
         Some(self.surface_format())
-    }
-    fn set_frame_callback_raw(&mut self, ptr: Option<*mut dyn FrameCallback>) {
-        self.set_frame_callback_raw_inherent(ptr);
     }
     fn set_frame_callback_arc(
         &mut self,

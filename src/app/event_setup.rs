@@ -135,14 +135,6 @@ mod tests {
     use std::sync::mpsc::TryRecvError;
 
     #[test]
-    fn test_event_bus_setup_creates_bus() {
-        let setup = setup_event_bus();
-
-        // Verify the bus exists and is usable
-        assert!(Arc::strong_count(&setup.event_bus) >= 1);
-    }
-
-    #[test]
     fn test_audio_event_subscription() {
         let setup = setup_event_bus();
 

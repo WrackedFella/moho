@@ -25,7 +25,6 @@ pub struct Renderer<'a> {
     pending_frame: Option<wgpu::SurfaceTexture>,
     pending_draws: Vec<(u32, Vec<GpuInstance>)>,
     pending_frame_view: Option<wgpu::TextureView>,
-    frame_callback_raw: Option<*mut dyn crate::FrameCallback>,
     frame_callback_arc: Option<std::sync::Arc<std::sync::Mutex<dyn crate::FrameCallback>>>,
     skybox_pipeline: wgpu::RenderPipeline,
     skybox_vertex_buffer: wgpu::Buffer,
@@ -104,7 +103,6 @@ impl<'a> Renderer<'a> {
             pending_frame: None,
             pending_draws: Vec::new(),
             pending_frame_view: None,
-            frame_callback_raw: None,
             frame_callback_arc: None,
             skybox_pipeline: pipeline_setup.skybox_pipeline().clone(),
             skybox_vertex_buffer: resources.skybox_vertex_buffer,
@@ -217,10 +215,6 @@ impl<'a> Renderer<'a> {
             });
         self.material_buffer = Some(mat_buf);
         self.recreate_camera_bind_group();
-    }
-
-    pub fn set_frame_callback_raw_inherent(&mut self, ptr: Option<*mut dyn crate::FrameCallback>) {
-        self.frame_callback_raw = ptr;
     }
 
     pub fn set_frame_callback_arc_inherent(
@@ -618,21 +612,13 @@ impl<'a> Renderer<'a> {
             );
         }
 
-        let frame_callback = if let Some(cb_arc) = &self.frame_callback_arc {
-            crate::render_ops::frame_ops::FrameCallbackWrapper::Arc(cb_arc)
-        } else if let Some(cb_ptr) = self.frame_callback_raw {
-            crate::render_ops::frame_ops::FrameCallbackWrapper::Raw(cb_ptr)
-        } else {
-            crate::render_ops::frame_ops::FrameCallbackWrapper::None
-        };
-
         let draw_count = self.pending_draws.len();
         crate::render_ops::frame_ops::finish_frame(
             encoder,
             &self.queue,
             self.pending_frame.take(),
             self.pending_frame_view.as_ref(),
-            frame_callback,
+            self.frame_callback_arc.as_ref(),
             self.config.width,
             self.config.height,
             &self.device,

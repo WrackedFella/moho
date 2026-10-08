@@ -1,6 +1,6 @@
 # Architecture overview
 
-**Source:** crate `Cargo.toml`s, `scripts/layering.txt`, `src/app/`, `src/main.rs`.
+**Source:** crate `Cargo.toml`s, `scripts/layering.txt`, `moho_app/src/`, `src/app/`, `src/main.rs`.
 **Decisions:** ADRs
 [0001](../../_todo/adr/0001-render-api-boundary.md),
 [0003](../../_todo/adr/0003-core-owns-event-types.md),
@@ -26,6 +26,7 @@ flowchart TD
     physics["moho_physics<br/>rapier3d"]:::engine
     input["moho_input<br/>key to binding code"]:::engine
     types["moho_types<br/>GameState, coordinator"]:::engine
+    app["moho_app<br/>fixed-step loop, Game trait"]:::engine
 
     ui --> renderer & input & core & game & types
     game --> core & rapi
@@ -39,6 +40,8 @@ flowchart TD
 ```
 
 Blue is the engine line, green is the strategy line. The FPS line has no crates yet.
+`moho_app` has no dependencies yet and nothing depends on it; the binary still drives its own loop
+([frame loop](frame-loop.md)).
 
 ## Lines and rules
 
@@ -59,7 +62,7 @@ strategy-line `moho_voxel`; ENG-F10 delivers the move.
 
 Where the M1–M2 engine work lands, from [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md)
 (Proposed). Capabilities land as modules of an existing crate first; a new crate needs a
-deployable, reuse or compile-time boundary. Dashed boxes are crates that don't exist yet.
+deployable, reuse or compile-time boundary. Dashed boxes are crates that don't exist yet, or (`moho_app`) exist with only part of the listed scope: today the accumulator and `Game` trait.
 Edges are the intended direction, not a list each crate must have.
 
 ```mermaid
@@ -112,6 +115,19 @@ The public APIs the [ENG-F5](../../_todo/engine/ENG-F5-physical-repo-split/_feat
 gate holds fixed: game plug-in interface, world-geometry contract, action map, physics
 queries, spatial audio, content roots, save envelope, scene import. Adding or changing
 one is an ADR-level change.
+
+## Fixed-step loop (`moho_app`)
+
+Window-free scheduling for any game line ([ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md)).
+
+| Item | Role |
+|---|---|
+| `Game` trait (`lib.rs`) | `command()` sampled once per tick, `tick()` applies it, `frame()` presents with an interpolation `alpha` |
+| `LoopConfig` / `FixedStep` (`fixed_step.rs`) | Integer accumulator (`nanoseconds * tick_hz`), so no drift; returns whole ticks due per frame |
+| `HeadlessLoop` (`headless.rs`) | Drives a `Game` without a window: `advance(game, frame_dt)` runs due ticks then one frame; `step(game, n)` runs ticks only |
+
+Invariants: ticks per frame are capped by `max_catch_up_ticks` (default 5) and time beyond the cap is
+dropped except the sub-tick remainder; `tick_hz` must be non-zero (`FixedStep::new` panics); `TickContext::tick` counts from 0.
 
 ## Runtime composition
 

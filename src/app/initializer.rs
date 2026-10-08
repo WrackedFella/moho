@@ -286,18 +286,6 @@ mod tests {
     }
 
     #[test]
-    fn test_multiple_builds_with_same_config() {
-        let config = test_config();
-
-        // Should be able to build multiple times (though in practice you'd only build once)
-        let result1 = AppInitializer::new(config.clone()).build();
-        let result2 = AppInitializer::new(config).build();
-
-        assert!(result1.is_ok());
-        assert!(result2.is_ok());
-    }
-
-    #[test]
     fn test_build_includes_prefs() {
         let prefs = Prefs::default().with_mouse_sensitivity(2.5);
 

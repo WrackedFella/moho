@@ -4,17 +4,6 @@
 
 use wgpu::{CommandEncoder, Queue, SurfaceTexture, TextureView};
 
-/// Frame callback wrapper for safe access to frame callbacks.
-///
-/// The renderer supports two types of callbacks:
-/// - Arc<Mutex<dyn FrameCallback>> (safe, preferred)
-/// - *mut dyn FrameCallback (raw pointer, unsafe)
-pub enum FrameCallbackWrapper<'a> {
-    Arc(&'a std::sync::Arc<std::sync::Mutex<dyn crate::FrameCallback>>),
-    Raw(*mut dyn crate::FrameCallback),
-    None,
-}
-
 /// Finish rendering and present the frame.
 ///
 /// This handles:
@@ -40,53 +29,27 @@ pub fn finish_frame(
     queue: &Queue,
     pending_frame: Option<SurfaceTexture>,
     pending_frame_view: Option<&TextureView>,
-    frame_callback: FrameCallbackWrapper,
+    frame_callback: Option<&std::sync::Arc<std::sync::Mutex<dyn crate::FrameCallback>>>,
     surface_width: u32,
     surface_height: u32,
     device: &wgpu::Device,
     draw_count: usize,
 ) {
     // Call frame callback if registered (for UI rendering, etc.)
-    match frame_callback {
-        FrameCallbackWrapper::Arc(cb_arc) => {
-            tracing::debug!("[frame_ops] calling frame_callback_arc");
-            if let Some(view) = pending_frame_view {
-                if let Ok(mut guard) = cb_arc.lock() {
-                    guard.call(
-                        device,
-                        queue,
-                        view,
-                        &mut encoder,
-                        surface_width,
-                        surface_height,
-                    );
-                    tracing::debug!("[frame_ops] frame_callback_arc returned");
-                } else {
-                    tracing::warn!("[frame_ops] failed to lock frame_callback_arc");
-                }
-            }
-        }
-        // SAFETY: relies on `set_frame_callback_raw`'s documented contract that the
-        // pointer stays valid until cleared. The setter is safe, so nothing enforces
-        // that contract: this path is unsound by construction. Use the Arc variant.
-        #[allow(unsafe_code)]
-        FrameCallbackWrapper::Raw(cb_ptr) => unsafe {
-            tracing::info!("[frame_ops] calling frame_callback_raw");
-            if let Some(view) = pending_frame_view {
-                let cb: &mut dyn crate::FrameCallback = &mut *cb_ptr;
-                cb.call(
-                    device,
-                    queue,
-                    view,
-                    &mut encoder,
-                    surface_width,
-                    surface_height,
-                );
-                tracing::info!("[frame_ops] frame_callback_raw returned");
-            }
-        },
-        FrameCallbackWrapper::None => {
-            // No callback registered
+    if let (Some(cb_arc), Some(view)) = (frame_callback, pending_frame_view) {
+        tracing::debug!("[frame_ops] calling frame_callback_arc");
+        if let Ok(mut guard) = cb_arc.lock() {
+            guard.call(
+                device,
+                queue,
+                view,
+                &mut encoder,
+                surface_width,
+                surface_height,
+            );
+            tracing::debug!("[frame_ops] frame_callback_arc returned");
+        } else {
+            tracing::warn!("[frame_ops] failed to lock frame_callback_arc");
         }
     }
 
@@ -96,30 +59,5 @@ pub fn finish_frame(
     if let Some(frame) = pending_frame {
         queue.submit(Some(finished));
         frame.present();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_frame_callback_wrapper_none() {
-        // Test that None variant exists and can be matched
-        let wrapper = FrameCallbackWrapper::None;
-        match wrapper {
-            FrameCallbackWrapper::None => {
-                // Success
-            }
-            _ => panic!("Expected None variant"),
-        }
-    }
-
-    #[test]
-    fn test_frame_callback_wrapper_size() {
-        // Verify wrapper size is reasonable (should be pointer-sized)
-        let size = std::mem::size_of::<FrameCallbackWrapper>();
-        // Should be at most 24 bytes (two pointers + discriminant on 64-bit)
-        assert!(size <= 24, "FrameCallbackWrapper size: {size} bytes");
     }
 }

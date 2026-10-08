@@ -1554,6 +1554,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "moho_app"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "moho_audio"
 version = "0.1.0"
 dependencies = [
