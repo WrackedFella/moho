@@ -124,6 +124,7 @@ impl GenerationProcessor {
         // Load produced scene bytes into the main world
         crate::app::world_geometry::remove_all_chunk_meshes(app);
         app.entities.clear();
+        app.physics.reset();
         match moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.entities) {
             Ok((camera_data, _lights)) => {
                 crate::app::world_geometry::upsert_all_chunks(app);
@@ -216,12 +217,10 @@ impl GenerationProcessor {
     /// `preload_spawn_area`. Their meshes are built here (before the character
     /// is placed) so real terrain colliders exist at spawn time. Passing an
     /// empty slice is fine for the load-scene path.
+    ///
+    /// Expects physics to be already reset and the loaded chunks registered
+    /// by the loader.
     fn setup_physics_for_world(&self, app: &mut App, preloaded_chunks: &[glam::IVec3]) {
-        app.physics.reset();
-
-        // Covers the load-scene path, where chunks exist before any generation event.
-        crate::app::world_geometry::upsert_all_chunks(app);
-
         // Build meshes and colliders for preloaded spawn-area chunks immediately so
         // the character doesn't fall through before async event processing kicks in.
         if let Some(ls) = &app.light_system {

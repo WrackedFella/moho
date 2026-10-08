@@ -515,9 +515,24 @@ pub(crate) mod tests {
             .world_mesh_collider(chunk_mesh_id(pos))
     }
 
-    fn terrain_collider_count(app: &App) -> usize {
+    pub(crate) fn terrain_collider_count(app: &App) -> usize {
         let pw = app.physics.world.as_ref().expect("physics world");
         pw.collider_set.len() - usize::from(pw.character_collider.is_some())
+    }
+
+    /// Places `block`, then drains stale events and meshes `chunk` from the dirty event.
+    /// The chunk's modified flag is cleared so streaming treats it as unmodified.
+    fn remesh_with_block(app: &mut App, block: moho_core::voxel::BlockPos, chunk: IVec3) {
+        let grid = app.light_system.as_mut().expect("light system").grid_mut();
+        grid.mutator().place(block, 1, None);
+        grid.clear_chunk_modified(chunk);
+        let _ = app.world_event_rx.try_iter().count();
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos: chunk,
+            terrain_dirty: true,
+            structure_dirty: false,
+        });
+        EventProcessor::new().process_world_events(app);
     }
 
     #[test]
@@ -525,34 +540,21 @@ pub(crate) mod tests {
         let mut app = App::headless();
         app.game_state = GameState::Playing;
         let chunk = IVec3::new(10, 4, 10);
-        let remesh = |app: &mut App| {
-            let _ = app.world_event_rx.try_iter().count();
-            app.event_bus.publish(WorldEvent::ChunkMeshDirty {
-                chunk_pos: chunk,
-                terrain_dirty: true,
-                structure_dirty: false,
-            });
-            EventProcessor::new().process_world_events(app);
-        };
-        app.light_system
-            .as_mut()
-            .expect("light system")
-            .grid_mut()
-            .mutator()
-            .place(moho_core::voxel::BlockPos::new(165, 70, 165), 1, None);
-        remesh(&mut app);
+        remesh_with_block(
+            &mut app,
+            moho_core::voxel::BlockPos::new(165, 70, 165),
+            chunk,
+        );
         let mut backend = RecordingBackend::default();
         app.scene.world_meshes_mut().flush(&mut backend);
         let first = collider_of(&app, chunk).expect("collider after first mesh");
         assert_eq!(drawn_handles(&mut app), backend.registered);
 
-        app.light_system
-            .as_mut()
-            .expect("light system")
-            .grid_mut()
-            .mutator()
-            .place(moho_core::voxel::BlockPos::new(166, 70, 165), 1, None);
-        remesh(&mut app);
+        remesh_with_block(
+            &mut app,
+            moho_core::voxel::BlockPos::new(166, 70, 165),
+            chunk,
+        );
         app.scene.world_meshes_mut().flush(&mut backend);
 
         let second = collider_of(&app, chunk).expect("collider after remesh");
@@ -578,17 +580,7 @@ pub(crate) mod tests {
             "headless-test-eviction-frees-draw-and-collider",
         ));
         let far = IVec3::new(10, 4, 10);
-        let grid = app.light_system.as_mut().expect("light system").grid_mut();
-        grid.mutator()
-            .place(moho_core::voxel::BlockPos::new(165, 70, 165), 1, None);
-        grid.clear_chunk_modified(far);
-        let _ = app.world_event_rx.try_iter().count();
-        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
-            chunk_pos: far,
-            terrain_dirty: true,
-            structure_dirty: false,
-        });
-        EventProcessor::new().process_world_events(&mut app);
+        remesh_with_block(&mut app, moho_core::voxel::BlockPos::new(165, 70, 165), far);
         let mut backend = RecordingBackend::default();
         app.scene.world_meshes_mut().flush(&mut backend);
         assert!(collider_of(&app, far).is_some(), "collider while loaded");

@@ -185,7 +185,10 @@ mod tests {
 
     #[test]
     fn reset_then_load_holds_one_collider_per_chunk() {
-        use crate::app::world_geometry::{chunk_mesh_id, tests::chunk_at};
+        use crate::app::world_geometry::{
+            chunk_mesh_id,
+            tests::{chunk_at, terrain_collider_count},
+        };
         let positions = [
             glam::IVec3::new(7, 0, 7),
             glam::IVec3::new(8, 0, 7),
@@ -209,9 +212,8 @@ mod tests {
                 "chunk {pos} has a collider after load"
             );
         }
-        let character = usize::from(pw.character_collider.is_some());
         assert_eq!(
-            pw.collider_set.len() - character,
+            terrain_collider_count(&app),
             positions.len(),
             "one collider per chunk, character aside"
         );

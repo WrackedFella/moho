@@ -224,11 +224,11 @@ impl App {
         crate::app::scene_loader::load_scene(self, path.as_ref())
     }
 
-    /// Initialize physics world after a scene is loaded.
+    /// Place the character after a scene is loaded.
+    ///
+    /// Expects physics to be already reset and the loaded chunks registered
+    /// by the loader.
     fn setup_physics_for_loaded_world(&mut self) {
-        self.physics.reset();
-        crate::app::world_geometry::upsert_all_chunks(self);
-
         // Spawn the physics character at the saved player position so the KCC
         // doesn't immediately override the restored camera on the first frame.
         let saved_pos = self.simulation.position();

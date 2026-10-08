@@ -304,6 +304,7 @@ impl Default for PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_gravity_drops_rigid_body() {
@@ -445,30 +446,20 @@ mod tests {
         .expect("valid quad mesh")
     }
 
-    use proptest::prelude::*;
-
     fn floor_mesh(y: f32) -> WorldMesh {
-        let positions = vec![
-            [-10.0, y, -10.0],
-            [10.0, y, -10.0],
-            [10.0, y, 10.0],
-            [-10.0, y, 10.0],
-        ];
-        WorldMesh::new(
-            positions,
-            vec![[0.0, 1.0, 0.0]; 4],
-            vec![1.0; 4],
-            vec![[0.0; 3]; 4],
-            vec![1.0; 4],
-            vec![0; 4],
-            vec![0, 2, 1, 0, 3, 2],
+        quad_mesh(
+            &[
+                [-10.0, y, -10.0],
+                [10.0, y, -10.0],
+                [10.0, y, 10.0],
+                [-10.0, y, 10.0],
+            ],
+            &[0, 2, 1, 0, 3, 2],
         )
-        .expect("valid floor mesh")
     }
 
     fn empty_mesh() -> WorldMesh {
-        WorldMesh::new(vec![], vec![], vec![], vec![], vec![], vec![], vec![])
-            .expect("empty mesh is valid")
+        quad_mesh(&[], &[])
     }
 
     fn fall_for_one_second(world: &mut PhysicsWorld, from_y: f32) -> f32 {
