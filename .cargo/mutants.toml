@@ -31,4 +31,7 @@ exclude_re = [
     'replace <impl Screen for SettingsMenu>::handle_raw_input -> bool with false',
     # Equivalent: the settings menu's spec is always `ScreenSpec::default()`.
     'replace <impl Screen for SettingsMenu>::spec -> &ScreenSpec with Box::leak',
+    # `Default` calls `new`, which calls `from_prefs`: this mutant recurses until the
+    # stack runs out and reads as a timeout, not a survivor.
+    'replace SettingsState::from_prefs -> Self with Default::default\(\)',
 ]
