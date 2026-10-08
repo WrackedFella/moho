@@ -76,4 +76,4 @@ Same-state transitions are allowed (no-op). Everything else is rejected, includi
 | `ConsoleOpen` | console text | world (frozen) + console | free | paused |
 | `Paused` | pause menu | world (frozen) + menu | free | paused |
 
-`src/game_state.rs` re-exports it; the app maps it to `moho_ui::GameState` for the UI adapter. Per-frame gameplay steps check `== Playing` ([frame-loop](frame-loop.md)).
+`src/game_state.rs` re-exports `moho_ui::GameState`; the UI adapter takes the same type. Per-frame gameplay steps check `== Playing` ([frame-loop](frame-loop.md)).

@@ -1,4 +1,4 @@
-//! Application state types shared across the moho workspace.
+//! The strategy game's application modes.
 
 use std::fmt;
 
