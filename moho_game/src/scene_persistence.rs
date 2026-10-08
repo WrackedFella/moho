@@ -398,33 +398,22 @@ mod tests {
             },
         ];
         let mut entities = SceneEntities::default();
-        let spheres: Vec<Sphere> = materials
-            .iter()
-            .enumerate()
-            .map(|(i, m)| {
-                let n = i as f32;
-                Sphere::new(glam::Vec3::new(n, 2.0 * n, -3.0 * n), 0.25 + n, *m)
-            })
-            .collect();
-        let cubes: Vec<Cube> = materials
-            .iter()
-            .enumerate()
-            .map(|(i, m)| {
-                let n = i as f32;
-                Cube::new(
-                    glam::Vec3::new(-n, 4.0 * n, 5.0 * n),
-                    1.0 + n,
-                    2.0 + n,
-                    3.0 + n,
-                    *m,
-                )
-            })
-            .collect();
-        for sphere in &spheres {
-            entities.actors.spawn_sphere(*sphere);
-        }
-        for cube in &cubes {
-            entities.actors.spawn_cube(*cube);
+        let mut spheres = Vec::new();
+        let mut cubes = Vec::new();
+        for (i, m) in materials.iter().enumerate() {
+            let n = i as f32;
+            let sphere = Sphere::new(glam::Vec3::new(n, 2.0 * n, -3.0 * n), 0.25 + n, *m);
+            let cube = Cube::new(
+                glam::Vec3::new(-n, 4.0 * n, 5.0 * n),
+                1.0 + n,
+                2.0 + n,
+                3.0 + n,
+                *m,
+            );
+            entities.actors.spawn_sphere(sphere);
+            entities.actors.spawn_cube(cube);
+            spheres.push(sphere);
+            cubes.push(cube);
         }
         entities
             .chunks
