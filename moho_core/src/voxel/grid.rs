@@ -679,6 +679,7 @@ mod tests {
             for y in [17, 20, -3] {
                 grid.place_block(IVec3::new(0, y, 0), 0, None);
             }
+            grid.place_block(IVec3::new(0, 30, 16), 0, None);
 
             assert_eq!(grid.get_height(0, 0), Some(20));
             assert_eq!(grid.get_height(1, 0), None);
