@@ -32,7 +32,9 @@ jobs:
       - uses: actions/checkout@v4
       # Installs the pinned Rust toolchain and the gate's tools (just, nextest, ...).
       - name: Install toolchain
-        run: bash scripts/cloud-tools.sh
+        run: |
+          bash scripts/cloud-tools.sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
