@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "gitnexus": {
+      "command": "npx",
+      "args": [
+        "--no-install",
+        "gitnexus",
+        "mcp"
+      ]
+    }
+  }
+}

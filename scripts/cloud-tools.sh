@@ -59,9 +59,19 @@ TOOLS
 }
 
 node_deps() {
-  # GitNexus is optional: a failed install must not fail the run.
-  [ -f package-lock.json ] && [ ! -d node_modules ] || return 0
-  npm ci --no-audit --no-fund || echo "npm ci failed; GitNexus unavailable this session"
+  # GitNexus is optional: a failed step must not fail the run.
+  # ONNXRUNTIME_NODE_INSTALL=skip: onnxruntime-node's postinstall downloads from nuget.org,
+  # which the cloud sandbox proxy resets; it only serves embeddings, which are off.
+  if [ -f package-lock.json ] && [ ! -d node_modules ]; then
+    ONNXRUNTIME_NODE_INSTALL=skip npm ci --no-audit --no-fund \
+      || { echo "npm ci failed; GitNexus unavailable this session"; return 0; }
+  fi
+  # The index is gitignored, so every fresh clone starts without one. Full-text search
+  # stays off (its extension downloads from ladybugdb.com); impact, context and
+  # detect_changes do not need it.
+  [ -d .gitnexus ] || [ ! -x node_modules/.bin/gitnexus ] \
+    || npx --no-install gitnexus analyze --skip-agents-md \
+    || echo "gitnexus analyze failed; GitNexus unavailable this session"
 }
 
 # Runs first and alone: every cargo call below would otherwise start its own
