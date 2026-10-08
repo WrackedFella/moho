@@ -51,12 +51,34 @@ a fork. The engine owns the loop and a game plugs into it. Relies on
 - In: loop extraction, accumulator, headless stepping, `GameClock` move.
 - Out: networking; scene/asset management; a second plug-in interface.
 
-## Notes
+## Direction-setting decisions
 
-- Moves the binary's renderer setup, which names wgpu today. Add no new wgpu use outside the
-  renderer crate; [ENG-F20](../ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) contains it.
+| Question | Decision | Why / cost of the alternative |
+|---|---|---|
+| Who produces the per-tick command? | The game, through a `command()` hook the loop calls once before each tick | The loop owning an action map would tie `moho_app` to ENG-F12's design; the hook lets ENG-F12 change how the value is built without changing the seam |
+| Raw winit events or an engine event enum at the seam? | Raw winit events | egui-winit needs them; an enum adds a translation layer with no consumer. Cost: a winit major upgrade changes seam 1 |
+| Where does `GameClock` live? | `moho_app` (ADR-0012); `moho_game` stops holding it | `moho_game` is platform-free and can't depend on `moho_app` |
+| Does physics setup move into the engine loop? | **Open, for Justin** (proposed: no, stays with the game until ENG-F15) | Moving it now drags the strategy's chunk colliders and KCC wiring into the engine with no second consumer |
+
+## Deferred
+
+| Idea | Why it waits | Revisit when |
+|---|---|---|
+| Rendering faster than the tick, with interpolation | Needs camera interpolation; strategy runs at 60/60 | ENG-F21 (FPS camera) |
+| Engine-owned physics stepping | No engine physics API yet | ENG-F15 |
+| Bus requests become tick commands (ADR-0011 rule 5) | Their owners rework them | ENG-F12 (input), ENG-F18 (UI shell) |
 
 ## Items
 
 | Item |
 |---|
+| [ENG-F11-01](ENG-F11-01-fixed-tick-whatever-the-frame-rate.md) a game's tick runs at a fixed rate whatever the frame rate |
+| [ENG-F11-02](ENG-F11-02-strategy-game-runs-on-the-engine-loop.md) the strategy game runs on the engine's app loop |
+| [ENG-F11-03](ENG-F11-03-in-game-time-advances-only-through-the-tick.md) in-game time advances only through the engine's tick |
+
+## Notes
+
+- Moves the binary's renderer setup, which names wgpu today. Add no new wgpu use outside the
+  renderer crate; [ENG-F20](../ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) contains it.
+- Order: 01 → 02 → 03. 02 rewrites `src/main.rs` and `src/app/event_loop`; run it
+  after, not alongside, any ENG-F10 card touching those files.
