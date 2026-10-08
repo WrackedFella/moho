@@ -66,7 +66,8 @@ Movement speed, day/night speed and frame pacing match `dev`.
   renderer/audio access plus `request_exit()`. Headless, `init` is not called and
   `frame` gets no renderer (`Option`).
 - Binary: `App` implements `Game`. `Command` is a value snapshot of today's input:
-  `ControllerInput` fields, jump, and the look delta from `sample_frame_input`.
+  `ControllerInput` fields, jump, and the look delta sampled once per tick (from
+  ENG-F12-03's action frame once it lands; `sample_frame_input` before then).
   `command()` builds it (body of `update_controller_input`); `tick` applies it and runs
   what `process_frame` and `new_events` do today except presentation: game state,
   physics, chunk streaming, light propagation, bus event processing, generation
@@ -95,6 +96,21 @@ Movement speed, day/night speed and frame pacing match `dev`.
 | Existing behaviour | existing `frame_processor`, `event_processor`, `generation_processor`, `autosave` tests, ported |
 | Resize/close routing | `moho_app::runner::tests::*` on the event-routing function, split out from the winit handler so it runs without a display |
 | Layering | `just check` |
+
+**Deviations (implementation).**
+- The renderer is reachable only through the frame and event contexts, so renderer work
+  the tick asks for (point lights from the console or a loaded scene, shadow and SSAO
+  quality) is queued as `RenderRequest` and applied by the next `frame`. A UI exit
+  request sets a flag that the next `frame` handles: autosave with the renderer's
+  lights, then `request_exit`.
+- Audio events are drained in `frame` (the runner owns `AudioSystem`).
+- `FrameContext::new` and `EventContext::new` are public so a game's tests can drive
+  `frame` and `event` with a fake renderer. `App` carries `saves_dir` so autosave tests
+  write to a temp directory.
+- `Game::init` and `Game::event` have empty default bodies, since headless games need
+  neither.
+- Pre-existing, kept: `zoom_delta` is reset each tick before it is applied, so wheel zoom
+  in the isometric camera has no effect (same as `dev`).
 
 **Risks.**
 - Large move across `src/main.rs` and `src/app/*`; GitNexus `impact` on `App` and
