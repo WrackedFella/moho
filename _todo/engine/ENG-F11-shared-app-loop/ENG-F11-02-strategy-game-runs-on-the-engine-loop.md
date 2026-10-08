@@ -76,7 +76,7 @@ Movement speed, day/night speed and frame pacing match `dev`.
 
 **Out of scope.**
 - `GameClock` (ENG-F11-03); the clock still advances inside the strategy tick here.
-- Physics setup and stepping stay in the binary (see the feature's open question).
+- Physics setup and stepping stay in the binary's tick (feature decision; engine physics API is ENG-F15).
 - Turning bus requests into commands (ADR-0011 rule 5), the `FrameStart`/`FrameEnd`
   bus events, `FRAME_COUNTER`, `GameState` (ENG-F12), egui/console in the engine
   (ENG-F18), splitting `App`'s fields (ENG-F1-03), camera interpolation (ENG-F21).

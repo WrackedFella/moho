@@ -13,7 +13,7 @@ a fork. The engine owns the loop and a game plugs into it. Relies on
 ## Exit criteria
 
 - An engine-line crate (engine row in the layering check) owns the window,
-  event loop, renderer/physics/audio setup and the ADR-0009 accumulator with
+  event loop, renderer and audio setup and the ADR-0009 accumulator with
   a catch-up cap.
 - A game plugs in through one interface: init, fixed tick (with input),
   frame (with interpolation alpha), event.
@@ -58,7 +58,7 @@ a fork. The engine owns the loop and a game plugs into it. Relies on
 | Who produces the per-tick command? | The game, through a `command()` hook the loop calls once before each tick | The loop owning an action map would tie `moho_app` to ENG-F12's design; the hook lets ENG-F12 change how the value is built without changing the seam |
 | Raw winit events or an engine event enum at the seam? | Raw winit events | egui-winit needs them; an enum adds a translation layer with no consumer. Cost: a winit major upgrade changes seam 1 |
 | Where does `GameClock` live? | `moho_app` (ADR-0012); `moho_game` stops holding it | `moho_game` is platform-free and can't depend on `moho_app` |
-| Does physics setup move into the engine loop? | **Open, for Justin** (proposed: no, stays with the game until ENG-F15) | Moving it now drags the strategy's chunk colliders and KCC wiring into the engine with no second consumer |
+| Does the loop create and step the physics world? | No; the game does, in its tick, against `moho_physics` (Justin, 2026-10-08) | Today's setup is strategy wiring (chunk colliders, KCC, actor sync); loop-owned stepping needs a post-step hook that belongs with ENG-F15's body API |
 
 ## Deferred
 
