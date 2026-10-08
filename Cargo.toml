@@ -27,7 +27,7 @@ rodio = "0.22"
 serde = "1.0"
 thiserror = "2.0"
 wgpu = "29.0.4"
-winit = "0.30"
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 moho_physics = { path = "moho_physics" }
 rapier3d = { version = "0.32", features = ["simd-stable"] }
 tempfile = "3.5"
@@ -75,10 +75,6 @@ crossbeam-channel = { workspace = true }
 [dependencies.bincode]
 workspace = true
 
-[dependencies.bytemuck]
-workspace = true
-features = ["derive"]
-
 [dependencies.env_logger]
 workspace = true
 
@@ -111,9 +107,6 @@ workspace = true
 
 [dependencies.moho_ui]
 path = "moho_ui"
-
-[dependencies.rand]
-workspace = true
 
 [dependencies.wgpu]
 workspace = true
