@@ -128,7 +128,7 @@ Chunk-based voxel terrain.
 
 **Architecture:**
 - `VoxelGrid` - Stores block data in 3D grid
-- `VoxelChunk` - Fixed-size chunk (typically 64×64×64)
+- `VoxelChunk` - Fixed-size 16×16×16 chunk
 - `BlockData` - Snapshot of a stored block's position, material and resource
 
 **Usage:**
