@@ -132,10 +132,17 @@ impl PalettedChunk {
     }
 
     /// Deserialize a chunk from bytes produced by `to_bytes`.
-    /// Fails if the data is malformed or the index count is wrong.
+    /// Fails if the data is malformed, the index count is wrong, or an index
+    /// points outside the palette.
     pub fn from_bytes(data: &[u8]) -> Result<Self, PersistError> {
         let snap: ChunkSnapshot = crate::persist::decode(crate::persist::FileKind::Chunk, data)?;
-        if snap.indices.len() != CHUNK_VOL {
+        if snap.indices.len() != CHUNK_VOL
+            || snap.palette.is_empty()
+            || snap
+                .indices
+                .iter()
+                .any(|&i| usize::from(i) >= snap.palette.len())
+        {
             return Err(PersistError::Corrupt);
         }
         let mut indices = [0u16; CHUNK_VOL];
@@ -227,6 +234,24 @@ mod tests {
         let err = PalettedChunk::from_bytes(&bytes).expect_err("must reject");
 
         assert!(matches!(err, PersistError::Corrupt), "{err:?}");
+    }
+
+    #[test]
+    fn index_outside_palette_returns_corrupt() {
+        let mut indices = vec![0u16; CHUNK_VOL];
+        indices[7] = 2;
+        for (palette, indices) in [
+            (vec![u32::MAX, 5], indices),
+            (Vec::new(), vec![0u16; CHUNK_VOL]),
+        ] {
+            let snap = (palette, indices, Vec::<(u16, u32)>::new());
+            let bytes =
+                crate::persist::encode(crate::persist::FileKind::Chunk, &snap).expect("encode");
+
+            let err = PalettedChunk::from_bytes(&bytes).expect_err("must reject");
+
+            assert!(matches!(err, PersistError::Corrupt), "{err:?}");
+        }
     }
 
     #[test]

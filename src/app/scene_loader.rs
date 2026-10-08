@@ -33,14 +33,15 @@ pub fn load_scene(
     // Load the scene from file with metadata support
     {
         let (spec, scene_bytes, block_records) = crate::save::read_scene_and_metadata(path)?;
+        // Decode the scene before applying the spec, so a bad scene leaves both untouched.
+        let (camera_data, lights) =
+            moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.entities)?;
         // Remember the WorldSpec from the loaded file so autosaves and
         // subsequent writes preserve the original metadata.
         app.generation.last_spec = Some(spec.clone());
         tracing::info!(spec = ?spec, "Loaded WorldSpec from save");
         // Restore time of day from the persisted WorldSpec.
         app.simulation.set_time_of_day(spec.initial_time_of_day);
-        let (camera_data, lights) =
-            moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.entities)?;
         tracing::info!(
             path = %path.display(),
             count = lights.len(),
@@ -64,10 +65,9 @@ pub fn load_scene(
         // Reconstruct VoxelGrid from persisted block records, then initialize LightSystem.
         let mut grid = moho_core::voxel::VoxelGrid::new(16);
         if block_records.is_empty() {
-            // KNOWN LIMITATION: v1 saves do not contain block data. Light propagation
-            // will be inactive until the world is regenerated and saved in v2 format.
+            // Without block records there is nothing to light; the light system stays off.
             tracing::warn!(
-                "Save file contains no block data (v1 format). \
+                "Save file contains no block data. \
                  Light propagation disabled for this session. \
                  Regenerate the world to fix permanently."
             );

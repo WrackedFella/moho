@@ -135,6 +135,7 @@ pub fn clear_chunk_files(world_name: &str) -> io::Result<()> {
 fn chunk_path(world_name: &str, pos: IVec3) -> std::path::PathBuf {
     chunk_dir(world_name).join(format!("{}_{}_{}.bin", pos.x, pos.y, pos.z))
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
