@@ -980,6 +980,24 @@ mod tests {
     }
 
     #[test]
+    fn voxels_one_sample_apart_normals_point_outward() {
+        // Between the two solids, both edge endpoints have a flat central difference.
+        let field = solid_samples_field([(6, 8, 8), (8, 8, 8)]);
+
+        let mesh = MarchingCubes::generate_mesh(&field, 16);
+
+        assert_eq!(mesh.vertices.len(), 48, "two separate octahedra");
+        for (v, n) in mesh.vertices.iter().zip(&mesh.normals) {
+            let centre_x = if v[0] < 7.0 { 6.0 } else { 8.0 };
+            let outward = [v[0] - centre_x, v[1] - 8.0, v[2] - 8.0].map(|c| c * 2.0);
+            assert!(
+                n.iter().zip(&outward).all(|(a, b)| (a - b).abs() < 1e-5),
+                "normal {n:?} at vertex {v:?}, expected {outward:?}"
+            );
+        }
+    }
+
+    #[test]
     fn two_cube_solid_normals_point_outward() {
         let solid =
             (6..=7).flat_map(|x| (6..=7).flat_map(move |y| (6..=7).map(move |z| (x, y, z))));
