@@ -9,7 +9,7 @@
 ## Summary
 
 Physics builds static colliders from the same contract meshes and ids as the
-renderer ([ENG-F10-01](ENG-F10-01-renderer-draws-meshes-by-id.md)), so the
+renderer ([ENG-F10-01](https://github.com/WrackedFella/moho/issues/138)), so the
 engine, not each game binary, keeps the id-to-collider map. The strategy binary
 sends each mesh change to both through one call, and its chunk-keyed collider
 code goes.
@@ -73,12 +73,14 @@ Scenario: Evicting a chunk frees both its mesh and its collider
   `add_terrain_trimesh` and its dummy-ball fallback go. Why here and not in the
   binary: the FPS gets id-keyed colliders without copying the strategy binary's
   map (the placement test).
-- Strategy binary, `src/app/world_geometry.rs` (from ENG-F10-01): `set_mesh(app,
-  id, WorldMesh, material_idx)` and `remove_mesh(app, id)` call the renderer queue
-  and then physics. Every chunk call site from ENG-F10-01 goes through them.
+- Strategy binary, `src/app/world_geometry.rs` (shipped by ENG-F10-01): its chunk
+  helpers `insert_chunk`, `remove_chunk`, `upsert_all_chunks` and
+  `remove_all_chunk_meshes` already keep the `ChunkStore` and the renderer's world
+  meshes in step; each also sets or removes the chunk's collider by the same
+  `chunk_mesh_id`. Every chunk call site already goes through them.
 - `PhysicsController` loses `chunk_colliders`, `update_chunk_collider`,
   `remove_chunk_collider` and `sync_colliders`. After `reset()` (scene load), the
-  load path re-sends every stored chunk through `set_mesh`.
+  load path re-sends every stored chunk through `upsert_all_chunks`.
 
 **Out of scope.**
 - Dropping `moho_physics`'s unused `moho_core` dependency
@@ -102,9 +104,9 @@ Scenario: Evicting a chunk frees both its mesh and its collider
 **Gate class:** glue.
 
 **Risks.**
-- Depends on ENG-F10-01 for the contract types.
-- [#102 ENG-F2-09, rapier upgrade](https://github.com/WrackedFella/moho/issues/102)
-  touches `PhysicsWorld`'s trimesh build; whichever lands second rebases.
+- Builds on ENG-F10-01 (#138, merged) for the contract types and the chunk helpers.
+- `remove_chunk` takes `&mut Scene` and `&mut SceneEntities`, not `&mut App`; it
+  needs physics access too, so its signature changes (run GitNexus `impact` first).
 
 ## Verification
 
