@@ -56,8 +56,8 @@ let bus = EventBus::with_history(true, 100);
 
 // ... publish events ...
 
-// Check recent events
-let history = bus.recent_history(10);
+// Read the retained events
+let history = bus.history();
 for event in history {
     println!("{}", event);
 }
