@@ -63,15 +63,6 @@ impl MaterialTable {
     pub fn as_slice(&self) -> &[MaterialGpu] {
         &self.list
     }
-
-    /// Reset internal state (used by tests). Kept small to avoid exposing
-    /// unnecessary API surface in the public renderer.
-    #[allow(dead_code)]
-    pub fn reset_for_tests(&mut self) {
-        self.map.clear();
-        self.list.clear();
-        self.dirty = false;
-    }
 }
 
 impl Default for MaterialTable {

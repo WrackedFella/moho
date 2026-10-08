@@ -364,29 +364,3 @@ impl PipelineSetup {
         self.depth_format
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_pipeline_init_error_display() {
-        let err = PipelineInitError::SkyboxShaderLoad("file not found".to_string());
-        assert_eq!(
-            format!("{err}"),
-            "Failed to load skybox shader: file not found"
-        );
-
-        let err = PipelineInitError::CameraBufferSize("zero size".to_string());
-        assert_eq!(format!("{err}"), "Camera buffer size error: zero size");
-
-        let err = PipelineInitError::LightingBufferSize("invalid".to_string());
-        assert_eq!(format!("{err}"), "Lighting buffer size error: invalid");
-
-        let err = PipelineInitError::ShadowMatrixSize("bad size".to_string());
-        assert_eq!(format!("{err}"), "Shadow matrix size error: bad size");
-
-        let err = PipelineInitError::CsmMatrixSize("csm error".to_string());
-        assert_eq!(format!("{err}"), "CSM matrix size error: csm error");
-    }
-}

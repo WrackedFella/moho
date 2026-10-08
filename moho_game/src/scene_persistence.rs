@@ -461,58 +461,6 @@ mod tests {
         assert_eq!(ids, vec![8, 9, 7]);
     }
 
-    #[test]
-    fn save_to_file_then_load_from_file_round_trips() {
-        let path = std::env::temp_dir().join(format!(
-            "moho_save_to_file_then_load_from_file_round_trips_{}.scene",
-            std::process::id()
-        ));
-        let mut entities = SceneEntities::default();
-        entities.actors.spawn_sphere(Sphere::new(
-            glam::Vec3::new(1.0, 2.0, 3.0),
-            0.75,
-            MaterialType::Lambertian {
-                albedo: glam::Vec3::new(0.1, 0.2, 0.3),
-            },
-        ));
-        entities
-            .chunks
-            .insert(meshed_chunk(glam::IVec3::new(4, 0, -2), 1.0, 3));
-        let cam_pos = glam::Vec3::new(5.0, 6.0, 7.0);
-        let light = LightDesc {
-            position: [1.0, 2.0, 3.0],
-            color: [0.5, 0.25, 1.0],
-            intensity: 3.0,
-            range: 12.0,
-            enabled: true,
-        };
-
-        let saved = save_to_file(&path, &entities, Some((cam_pos, 0.5, -0.25)), &[light]);
-        let mut loaded = SceneEntities::default();
-        let result = load_from_file(&path, &mut loaded);
-        let _ = std::fs::remove_file(&path);
-
-        saved.expect("save");
-        let (camera, lights) = result.expect("load");
-        let (pos, yaw, pitch) = camera.expect("camera present");
-        assert_eq!(pos, cam_pos);
-        assert_eq!((yaw, pitch), (0.5, -0.25));
-        assert_eq!(lights.len(), 1);
-        assert_eq!(lights[0].position, [1.0, 2.0, 3.0]);
-        assert_eq!(lights[0].intensity, 3.0);
-        assert_eq!(loaded.actors.spheres().len(), 1);
-        assert_eq!(
-            loaded.actors.spheres()[0].center,
-            glam::Vec3::new(1.0, 2.0, 3.0)
-        );
-        let positions: Vec<glam::IVec3> = loaded
-            .chunks
-            .iter()
-            .map(moho_core::voxel::VoxelChunk::chunk_pos)
-            .collect();
-        assert_eq!(positions, vec![glam::IVec3::new(4, 0, -2)]);
-    }
-
     fn populated_entities() -> SceneEntities {
         let mut entities = SceneEntities::default();
         entities.actors.spawn_sphere(Sphere::new(
@@ -560,6 +508,7 @@ mod tests {
         assert_eq!(camera, Some((cam_pos, 0.5, -0.25)));
         assert_eq!(lights.len(), 1);
         assert_eq!(lights[0].position, [1.0, 2.0, 3.0]);
+        assert_eq!(lights[0].intensity, 3.0);
         assert_eq!(loaded.actors.spheres().len(), 1);
         assert_eq!(
             loaded.actors.spheres()[0].center,
