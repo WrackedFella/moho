@@ -328,7 +328,10 @@ impl ResourcePool {
     /// Returns: (buffer, vertex_count)
     fn create_skybox_vertex_buffer(device: &wgpu::Device) -> (wgpu::Buffer, u32) {
         let (skybox_vertices, skybox_vertex_count) = Self::generate_skybox_quad();
-        log::info!("Generated skybox fullscreen quad with {skybox_vertex_count} vertices");
+        tracing::info!(
+            count = skybox_vertex_count,
+            "Generated skybox fullscreen quad vertices"
+        );
         let skybox_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("skybox-vertex-buffer"),
             contents: bytemuck::cast_slice(&skybox_vertices),

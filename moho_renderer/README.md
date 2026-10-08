@@ -228,10 +228,10 @@ Enable with cargo feature: `backend-wgpu` (enabled by default)
 
 ## Logging
 
-The crate uses the `log` facade. Initialize a logger to see renderer output:
+The crate emits `tracing` events. Install a subscriber to see renderer output:
 
 ```rust
-env_logger::init(); // Or any log implementation
+tracing_subscriber::fmt::init(); // Or any tracing subscriber
 ```
 
 Set log level:

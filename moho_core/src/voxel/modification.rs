@@ -559,9 +559,9 @@ impl BlockModifier {
                 .or_insert_with(|| ChunkState::new(chunk_pos));
         }
 
-        log::info!(
-            "Initialized {} chunk states from grid",
-            self.chunk_states.len()
+        tracing::info!(
+            count = self.chunk_states.len(),
+            "Initialized chunk states from grid"
         );
     }
 }

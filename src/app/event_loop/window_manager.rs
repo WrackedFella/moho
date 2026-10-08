@@ -58,7 +58,7 @@ impl WindowManager {
 
     /// Perform initial render after window creation
     pub fn initial_render(&self, app: &mut App) {
-        log::info!("Initial render");
+        tracing::info!("Initial render");
         if let Some(ref mut wr) = app.window_renderer {
             if let Err(e) = app.scene.render(
                 &mut *wr.renderer,
@@ -70,7 +70,7 @@ impl WindowManager {
                 wr.terrain_material_idx,
                 app.camera,
             ) {
-                log::warn!("Skipped initial render: {e}");
+                tracing::warn!(error = %e, "Skipped initial render");
             }
             wr.window.request_redraw();
         }

@@ -18,7 +18,7 @@ pub fn load_scene(
     app: &mut crate::App,
     path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    log::info!("Loading scene from: {}", path.display());
+    tracing::info!(path = %path.display(), "Loading scene");
 
     // Check if the file exists
     if !path.exists() {
@@ -36,15 +36,15 @@ pub fn load_scene(
         // Remember the WorldSpec from the loaded file so autosaves and
         // subsequent writes preserve the original metadata.
         app.generation.last_spec = Some(spec.clone());
-        log::info!("Loaded WorldSpec from save: {spec:?}");
+        tracing::info!(spec = ?spec, "Loaded WorldSpec from save");
         // Restore time of day from the persisted WorldSpec.
         app.simulation.set_time_of_day(spec.initial_time_of_day);
         let (camera_data, lights) =
             moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.entities)?;
-        log::info!(
-            "Scene loaded successfully from {}, {} lights",
-            path.display(),
-            lights.len()
+        tracing::info!(
+            path = %path.display(),
+            count = lights.len(),
+            "Scene loaded successfully"
         );
 
         // Re-add persisted lights to the renderer
@@ -66,7 +66,7 @@ pub fn load_scene(
         if block_records.is_empty() {
             // KNOWN LIMITATION: v1 saves do not contain block data. Light propagation
             // will be inactive until the world is regenerated and saved in v2 format.
-            log::warn!(
+            tracing::warn!(
                 "Save file contains no block data (v1 format). \
                  Light propagation disabled for this session. \
                  Regenerate the world to fix permanently."
@@ -77,9 +77,9 @@ pub fn load_scene(
                 grid.mutator()
                     .place(pos, record.material_id, record.resource_id);
             }
-            log::info!(
-                "Reconstructed VoxelGrid with {} blocks for LightSystem",
-                block_records.len()
+            tracing::info!(
+                count = block_records.len(),
+                "Reconstructed VoxelGrid blocks for LightSystem"
             );
         }
         app.light_system = Some(moho_core::voxel::LightSystem::with_default_budget(
@@ -111,9 +111,9 @@ pub fn load_scene(
             // orientation isn't immediately overridden by
             // accumulated mouse deltas or smoothing state.
             app.input.system.clear_pending_input();
-            log::info!("Restored camera position: {position:?}, yaw: {yaw:.2}, pitch: {pitch:.2}");
+            tracing::info!(pos = ?position, yaw, pitch, "Restored camera position");
         } else {
-            log::info!("No camera data found in scene file, keeping current position");
+            tracing::info!("No camera data found in scene file, keeping current position");
         }
     }
 
@@ -129,6 +129,6 @@ pub fn load_scene(
     app.game_state = crate::game_state::GameState::Playing;
     app.hide_menu();
 
-    log::info!("Scene loading complete - switched to game mode");
+    tracing::info!("Scene loading complete - switched to game mode");
     Ok(())
 }

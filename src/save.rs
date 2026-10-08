@@ -188,7 +188,7 @@ pub fn clear_chunk_files(world_name: &str) -> io::Result<()> {
     let dir = chunk_dir(world_name);
     if dir.exists() {
         fs::remove_dir_all(&dir)?;
-        log::info!("Cleared chunk save files for world '{world_name}'");
+        tracing::info!(world = world_name, "Cleared chunk save files for world");
     }
     Ok(())
 }

@@ -3,9 +3,9 @@ use crate::audio_events::AudioEvent;
 use crate::audio_settings::AudioSettings;
 use crate::audio_source::{AudioCategory, AudioSource};
 use crate::error::{AudioError, AudioResult};
-use log::{debug, warn};
 use rodio::Source;
 use std::path::Path;
+use tracing::{debug, warn};
 
 /// Main audio system for the Moho engine.
 ///
@@ -63,8 +63,8 @@ impl AudioSystem {
 
         if effective_volume <= 0.0 {
             debug!(
-                "Skipping audio playback due to zero volume: {}",
-                source.path()
+                path = source.path(),
+                "Skipping audio playback due to zero volume"
             );
             return Ok(());
         }
@@ -103,9 +103,9 @@ impl AudioSystem {
         }
 
         debug!(
-            "Playing audio: {} at volume {:.2}",
-            source.path(),
-            effective_volume
+            path = source.path(),
+            volume = effective_volume,
+            "Playing audio"
         );
         Ok(())
     }
@@ -161,7 +161,7 @@ impl AudioSystem {
             * volume;
 
         if effective_volume <= 0.0 {
-            debug!("Skipping UI audio playback due to zero volume: {path_str}");
+            debug!(path = %path_str, "Skipping UI audio playback due to zero volume");
             return Ok(());
         }
 
@@ -181,7 +181,7 @@ impl AudioSystem {
         player.play();
         player.detach(); // Let it play and clean up automatically
 
-        debug!("Playing UI audio: {path_str} at volume {effective_volume:.2}");
+        debug!(path = %path_str, volume = effective_volume, "Playing UI audio");
         Ok(())
     }
 

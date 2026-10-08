@@ -8,7 +8,7 @@ publish = false
 [dependencies]
 moho_render_api = { path = "../moho_render_api" }
 glam = { workspace = true }
-log = { workspace = true }
+tracing = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 bincode = { workspace = true }
 ini = "1.3.0"

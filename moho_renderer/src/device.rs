@@ -79,7 +79,7 @@ impl<'a> DeviceSetup<'a> {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn new(window: &'a winit::window::Window) -> Result<Self, DeviceInitError> {
-        log::info!("Initializing wgpu device");
+        tracing::info!("Initializing wgpu device");
 
         let size = window.inner_size();
 
@@ -154,11 +154,11 @@ impl<'a> DeviceSetup<'a> {
         };
         surface.configure(&device, &config);
 
-        log::info!(
-            "wgpu device initialized: format={:?}, size={}x{}",
-            config.format,
-            config.width,
-            config.height
+        tracing::info!(
+            format = ?config.format,
+            width = config.width,
+            height = config.height,
+            "wgpu device initialized"
         );
 
         Ok(DeviceSetup {

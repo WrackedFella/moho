@@ -119,13 +119,14 @@ impl AppInitializer {
     /// Build the application by initializing all systems.
     ///
     /// This performs the full initialization sequence:
-    /// 1. Initialize logging (if not already initialized)
-    /// 2. Create world and scene
-    /// 3. Setup camera
-    /// 4. Setup event bus
-    /// 5. Initialize audio system (optional)
-    /// 6. Create simulation controller
-    /// 7. Setup input system
+    /// 1. Create world and scene
+    /// 2. Setup camera
+    /// 3. Setup event bus
+    /// 4. Initialize audio system (optional)
+    /// 5. Create simulation controller
+    /// 6. Setup input system
+    ///
+    /// It installs no `tracing` subscriber; the caller does.
     ///
     /// # Errors
     ///
@@ -143,23 +144,20 @@ impl AppInitializer {
     /// }
     /// ```
     pub fn build(self) -> Result<InitializedApp, AppInitError> {
-        // Initialize logging (ignore error if already initialized for tests)
-        let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-            .try_init();
-        log::info!("Starting application initialization");
+        tracing::info!("Starting application initialization");
 
         // Create basic world and scene (minimal setup)
         let entities = SceneEntities::default();
         let scene = moho_renderer::Scene::new();
-        log::debug!("Created world and scene");
+        tracing::debug!("Created world and scene");
 
         // Initialize camera with default voxel terrain view
         let camera = create_default_camera();
-        log::debug!("Initialized camera at position {:?}", camera.2);
+        tracing::debug!(pos = ?camera.2, "Initialized camera");
 
         // Initialize simulation wrapper (owns controller + input state)
         let simulation = SimulationController::new(camera.2);
-        log::debug!("Created simulation controller");
+        tracing::debug!("Created simulation controller");
 
         // Initialize event bus and subscribers
         let event_bus_setup = setup_event_bus();
@@ -169,7 +167,7 @@ impl AppInitializer {
         let graphics_event_rx = event_bus_setup.graphics_event_rx;
         let world_event_rx = event_bus_setup.world_event_rx;
         let debug_event_rx = event_bus_setup.debug_event_rx;
-        log::debug!("Event bus initialized with subscribers");
+        tracing::debug!("Event bus initialized with subscribers");
 
         // Initialize audio system (optional - graceful failure).
         // Tests can skip this via AppConfig::init_audio = false: concurrent
@@ -177,13 +175,13 @@ impl AppInitializer {
         let audio_system = if self.config.init_audio {
             let audio = initialize_audio_system();
             if audio.is_some() {
-                log::info!("Audio system initialized successfully");
+                tracing::info!("Audio system initialized successfully");
             } else {
-                log::warn!("Audio system initialization failed - continuing without audio");
+                tracing::warn!("Audio system initialization failed - continuing without audio");
             }
             audio
         } else {
-            log::debug!("Audio system initialization skipped (init_audio = false)");
+            tracing::debug!("Audio system initialization skipped (init_audio = false)");
             None
         };
 
@@ -191,9 +189,9 @@ impl AppInitializer {
         let mut input_system =
             InputSystem::new_with_preset(self.config.mouse_sensitivity, self.config.filter_preset);
         input_system.set_filter_enabled(self.config.input_filtering_enabled);
-        log::debug!("Input system initialized");
+        tracing::debug!("Input system initialized");
 
-        log::info!("Application initialization complete");
+        tracing::info!("Application initialization complete");
 
         Ok(InitializedApp {
             entities,

@@ -232,7 +232,7 @@ impl MeshJobQueue {
             workers.push(handle);
         }
 
-        log::info!("MeshJobQueue started with {num_workers} workers");
+        tracing::info!(count = num_workers, "MeshJobQueue started");
 
         Self {
             state,
@@ -253,7 +253,7 @@ impl MeshJobQueue {
 
         // Check queue capacity
         if state.jobs.len() >= self.max_pending {
-            log::warn!("Mesh job queue full, rejecting job for {chunk_pos:?}");
+            tracing::warn!(chunk = ?chunk_pos, "Mesh job queue full, rejecting job");
             return None;
         }
 
@@ -270,7 +270,7 @@ impl MeshJobQueue {
         // Notify a worker
         self.condvar.notify_one();
 
-        log::debug!("Submitted mesh job {job_id:?} for chunk {chunk_pos:?} (priority {priority})");
+        tracing::debug!(job = ?job_id, chunk = ?chunk_pos, priority, "Submitted mesh job");
 
         Some(job_id)
     }
@@ -288,14 +288,14 @@ impl MeshJobQueue {
             state.jobs = jobs.into_iter().collect();
             state.cancellation_tokens.remove(&job_id);
 
-            log::debug!("Cancelled pending job {job_id:?}");
+            tracing::debug!(job = ?job_id, "Cancelled pending job");
             return true;
         }
 
         // If job is in progress, set cancellation flag
         if let Some(token) = state.cancellation_tokens.get(&job_id) {
             token.cancel();
-            log::debug!("Requested cancellation of in-progress job {job_id:?}");
+            tracing::debug!(job = ?job_id, "Requested cancellation of in-progress job");
             return true;
         }
 
@@ -444,12 +444,12 @@ impl MeshJobQueue {
             // Clean up cancellation token
             state.lock().unwrap().cancellation_tokens.remove(&job.id);
 
-            log::debug!(
-                "Completed mesh job {:?} for {:?} in {}ms (cancelled: {})",
-                job.id,
-                job.chunk_pos,
-                generation_time_ms,
-                cancelled
+            tracing::debug!(
+                job = ?job.id,
+                chunk = ?job.chunk_pos,
+                generation_time_ms = generation_time_ms,
+                cancelled = cancelled,
+                "Completed mesh job"
             );
         }
     }
@@ -474,7 +474,7 @@ impl MeshJobQueue {
             let _ = worker.join();
         }
 
-        log::info!("MeshJobQueue shutdown complete");
+        tracing::info!("MeshJobQueue shutdown complete");
     }
 }
 

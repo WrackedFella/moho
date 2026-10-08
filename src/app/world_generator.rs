@@ -19,7 +19,7 @@ pub fn generate_new_world(
     spec: moho_game::scene_builders::WorldSpec,
     saves_dir: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    log::info!("Starting async generation for spec={spec:?}");
+    tracing::info!(spec = ?spec, "Starting async generation");
 
     // Prepare communication channel and cancellation flag
     let (tx, rx) = channel::<crate::GenerationMsg>();

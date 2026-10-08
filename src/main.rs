@@ -9,6 +9,8 @@ use moho_game::scene::SceneEntities;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::LevelFilter;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, StartCause, WindowEvent};
 mod input_dispatcher;
@@ -141,7 +143,7 @@ impl App {
             voxel_grid,
             initialized.event_bus.clone(),
         );
-        log::info!("Created LightSystem for frame loop integration");
+        tracing::info!("Created LightSystem for frame loop integration");
 
         Self {
             entities: initialized.entities,
@@ -247,9 +249,9 @@ impl App {
         self.simulation
             .set_position_yaw_pitch(spawn_pos, yaw, pitch);
 
-        log::info!(
-            "Physics initialized for loaded world: {} chunk colliders",
-            self.physics.chunk_colliders.len()
+        tracing::info!(
+            count = self.physics.chunk_colliders.len(),
+            "Physics initialized for loaded world"
         );
     }
 
@@ -439,7 +441,7 @@ impl App {
 
         match StateTransitionCoordinator::hide_menu(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
-            Err(e) => log::warn!("Cannot hide menu: {e}"),
+            Err(e) => tracing::warn!(error = %e, "Cannot hide menu"),
         }
     }
 
@@ -448,7 +450,7 @@ impl App {
 
         match StateTransitionCoordinator::show_menu(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
-            Err(e) => log::warn!("Cannot show menu: {e}"),
+            Err(e) => tracing::warn!(error = %e, "Cannot show menu"),
         }
     }
 
@@ -458,7 +460,7 @@ impl App {
 
         match StateTransitionCoordinator::enter_console(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
-            Err(e) => log::warn!("{e}"),
+            Err(e) => tracing::warn!(error = %e, "Cannot enter console"),
         }
     }
 
@@ -468,7 +470,7 @@ impl App {
 
         match StateTransitionCoordinator::exit_console(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
-            Err(e) => log::warn!("{e}"),
+            Err(e) => tracing::warn!(error = %e, "Cannot exit console"),
         }
     }
 
@@ -479,7 +481,7 @@ impl App {
 
         match StateTransitionCoordinator::toggle_pause(self.game_state) {
             Ok(actions) => self.apply_transition(actions),
-            Err(e) => log::debug!("{e}"),
+            Err(e) => tracing::debug!(error = %e, "Cannot toggle pause"),
         }
     }
 
@@ -491,10 +493,10 @@ impl App {
     /// - Handle cursor grab/release
     /// - Show specific menu if requested
     fn apply_transition(&mut self, actions: moho_types::StateTransitionActions) {
-        log::info!(
-            "State transition: {:?} -> {:?}",
-            self.game_state,
-            actions.new_state
+        tracing::info!(
+            from = ?self.game_state,
+            to = ?actions.new_state,
+            "State transition"
         );
 
         // Update core state
@@ -524,10 +526,10 @@ impl App {
                 adapter.show_menu(menu_name);
             }
 
-            log::debug!(
-                "UI updated: visible={}, state={:?}",
-                actions.ui_visible,
-                ui_state
+            tracing::debug!(
+                visible = actions.ui_visible,
+                state = ?ui_state,
+                "UI updated"
             );
         }
 
@@ -545,7 +547,7 @@ impl App {
             && let Err(e) = audio.handle_event(event)
         {
             // Don't spam errors for missing audio files during development
-            log::debug!("Audio event failed: {e}");
+            tracing::debug!(error = %e, "Audio event failed");
         }
     }
 }
@@ -554,7 +556,7 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_manager = app::event_loop::WindowManager::new();
         if let Err(e) = window_manager.handle_resumed(self, event_loop) {
-            log::error!("{e}");
+            tracing::error!(error = %e, "Window resume failed");
             event_loop.exit();
         }
     }
@@ -619,9 +621,9 @@ impl ApplicationHandler for App {
                         .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
                 }
             }
-            log::info!(
-                "Switched to camera mode: {:?}",
-                self.simulation.camera_mode()
+            tracing::info!(
+                mode = ?self.simulation.camera_mode(),
+                "Switched to camera mode"
             );
             return; // Don't dispatch Tab further
         }
@@ -649,12 +651,24 @@ impl ApplicationHandler for App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        log::info!("Shutting down application...");
+        tracing::info!("Shutting down application...");
         // WorldGenerationJob::drop handles cancel + join automatically.
     }
 }
 
+/// Installs the global subscriber, which also forwards `log` records from dependencies.
+fn init_logging() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
+                .from_env_lossy(),
+        )
+        .init();
+}
+
 fn main() {
+    init_logging();
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut app = App::from_config(crate::app::config::AppConfig::from_prefs());
 

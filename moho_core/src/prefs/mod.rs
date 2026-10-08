@@ -311,7 +311,7 @@ impl Prefs {
     pub fn load() -> Self {
         let (prefs, warnings) = Self::load_from(&Self::config_path());
         for w in warnings {
-            log::warn!("{w}");
+            tracing::warn!(warning = %w, "Preferences load fallback");
         }
         prefs
     }

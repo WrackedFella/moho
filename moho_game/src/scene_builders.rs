@@ -81,27 +81,24 @@ pub fn voxel_terrain_scene_with_config(
     // due to hardcoded density field size in Marching Cubes
     let mut grid = VoxelGrid::new(16); // 16×16×16 chunks
 
-    log::info!("Generating voxel terrain (seed={})...", config.seed);
+    tracing::info!(seed = config.seed, "Generating voxel terrain");
     generate_terrain(&mut grid, config);
 
     // Initialize block light propagation from all emissive blocks.
-    log::info!("Initializing light propagation...");
+    tracing::info!("Initializing light propagation...");
     let mut light_propagator = LightPropagator::new(grid.chunk_size());
     light_propagator.flood_fill_block_lights(&mut grid);
-    log::info!("Block light propagation complete");
+    tracing::info!("Block light propagation complete");
 
     // TODO: Consider making grid size configurable via the config struct
     // (e.g., grid_size: u32) so callers can control world extents.
 
-    log::info!("Converting grid to renderable chunks...");
+    tracing::info!("Converting grid to renderable chunks...");
     for chunk in grid_to_chunks(&grid) {
         chunks.insert(chunk);
     }
 
-    log::info!(
-        "Voxel terrain scene ready with {} chunk entities",
-        chunks.len()
-    );
+    tracing::info!(count = chunks.len(), "Voxel terrain scene ready");
 
     // Return the grid so it can be stored by the caller for light propagation
     grid
@@ -257,7 +254,7 @@ fn grid_to_chunks(grid: &VoxelGrid) -> Vec<VoxelChunk> {
         chunk_positions.insert(chunk_pos);
     }
 
-    log::info!("Converting {} chunks from grid", chunk_positions.len());
+    tracing::info!(count = chunk_positions.len(), "Converting chunks from grid");
 
     // Generate a VoxelChunk for each chunk position
     let mut chunks = Vec::new();
@@ -266,17 +263,17 @@ fn grid_to_chunks(grid: &VoxelGrid) -> Vec<VoxelChunk> {
 
         // Only include non-empty chunks
         if !chunk.is_empty() {
-            log::debug!(
-                "Chunk at {:?}: {} vertices, {} indices",
-                chunk_pos,
-                chunk.vertices().len(),
-                chunk.indices().len()
+            tracing::debug!(
+                chunk = ?chunk_pos,
+                vertices = chunk.vertices().len(),
+                indices = chunk.indices().len(),
+                "Chunk generated"
             );
             chunks.push(chunk);
         }
     }
 
-    log::info!("Generated {} non-empty chunks", chunks.len());
+    tracing::info!(count = chunks.len(), "Generated non-empty chunks");
     chunks
 }
 

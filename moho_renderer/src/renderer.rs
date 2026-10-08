@@ -262,14 +262,14 @@ impl<'a> Renderer<'a> {
 
     fn recreate_camera_bind_group(&mut self) {
         let Some(mat_buffer) = &self.material_buffer else {
-            log::error!("material buffer missing when creating camera bind group");
+            tracing::error!("material buffer missing when creating camera bind group");
             return;
         };
 
         let (ssao_view, ssao_sampler) = if let Some(ssao) = &self.ssao {
             (ssao.blurred_ao_view(), &ssao.ao_sampler)
         } else {
-            log::warn!("recreate_camera_bind_group called without SSAO system");
+            tracing::warn!("recreate_camera_bind_group called without SSAO system");
             return;
         };
 
@@ -351,15 +351,11 @@ impl<'a> Renderer<'a> {
             });
         }
         for (i, v) in iv.iter().enumerate().take(6) {
-            log::trace!(
-                "[register_indexed_mesh] v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})",
-                i,
-                v.position[0],
-                v.position[1],
-                v.position[2],
-                v.normal[0],
-                v.normal[1],
-                v.normal[2]
+            tracing::trace!(
+                index = i,
+                pos = ?v.position,
+                normal = ?v.normal,
+                "[register_indexed_mesh] vertex"
             );
         }
         if iv.len() > 50 {
@@ -372,15 +368,11 @@ impl<'a> Renderer<'a> {
             ];
             for idx in samples {
                 let v = &iv[idx];
-                log::debug!(
-                    "[register_indexed_mesh] sample v{} pos=({:.3},{:.3},{:.3}) nor=({:.3},{:.3},{:.3})",
-                    idx,
-                    v.position[0],
-                    v.position[1],
-                    v.position[2],
-                    v.normal[0],
-                    v.normal[1],
-                    v.normal[2]
+                tracing::debug!(
+                    index = idx,
+                    pos = ?v.position,
+                    normal = ?v.normal,
+                    "[register_indexed_mesh] sample vertex"
                 );
             }
         }
@@ -528,7 +520,7 @@ impl<'a> Renderer<'a> {
         let instances_gpu = MeshRenderer::prepare_instances(instances);
 
         if self.prepare_instance_buffer(&instances_gpu).is_none() {
-            log::error!("instance buffer missing when uploading instances");
+            tracing::error!("instance buffer missing when uploading instances");
             return;
         }
 
@@ -585,7 +577,7 @@ impl<'a> Renderer<'a> {
             &mut self.instance_capacity,
             &all_instances,
         ) {
-            log::error!("instance buffer missing when uploading batched instances");
+            tracing::error!("instance buffer missing when uploading batched instances");
             return;
         }
 

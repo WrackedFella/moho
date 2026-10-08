@@ -134,7 +134,7 @@ impl<'a> RendererBuilder<'a> {
     /// # }
     /// ```
     pub fn init_device(self) -> Result<DeviceBuilder<'a>, Box<dyn std::error::Error>> {
-        log::info!("(wgpu) Initializing renderer (instanced cubes)");
+        tracing::info!("(wgpu) Initializing renderer (instanced cubes)");
         let device_setup = DeviceSetup::new(self.window)?;
         Ok(DeviceBuilder {
             window: self.window,

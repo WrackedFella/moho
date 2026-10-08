@@ -1,6 +1,6 @@
 # Architecture overview
 
-**Source:** crate `Cargo.toml`s, `scripts/layering.txt`, `src/app/`.
+**Source:** crate `Cargo.toml`s, `scripts/layering.txt`, `src/app/`, `src/main.rs`.
 **Decisions:** ADRs
 [0001](../../_todo/adr/0001-render-api-boundary.md),
 [0003](../../_todo/adr/0003-core-owns-event-types.md),
@@ -143,6 +143,14 @@ flowchart LR
 | Prefs | `moho_core::prefs::Prefs` ([format](../reference/prefs-format.md)) |
 
 Entities live in typed stores; there is no general ECS (ADR-0004).
+
+## Logging
+
+All crates emit `tracing` events (`tracing::info!(count = n, "message")`, structured
+fields over interpolated text); the `log` facade is not a workspace dependency.
+`init_logging` in `src/main.rs` installs the only subscriber, filtered by `RUST_LOG`
+(default `info`), and also receives `log` records from third-party dependencies.
+Library crates never install a subscriber.
 
 ## Next
 

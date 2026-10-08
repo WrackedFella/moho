@@ -71,12 +71,12 @@ impl GenerationProcessor {
         terrain_config: moho_game::scene_builders::TerrainConfig,
         grid: moho_core::voxel::VoxelGrid,
     ) {
-        log::info!("Generation completed for spec={:?}", spec.name);
+        tracing::info!(spec = ?spec.name, "Generation completed");
 
         app.generation.last_spec = Some(spec.clone());
 
         // Initialize LightSystem with the generated grid
-        log::info!("Initializing LightSystem with generated grid");
+        tracing::info!("Initializing LightSystem with generated grid");
         app.light_system = Some(moho_core::voxel::LightSystem::with_default_budget(
             grid,
             app.event_bus.clone(),
@@ -85,7 +85,7 @@ impl GenerationProcessor {
         // Clear stale chunk files so saved data from a previous world cannot
         // override freshly generated terrain.
         if let Err(e) = crate::save::clear_chunk_files(&spec.name) {
-            log::warn!("Failed to clear chunk files for '{}': {}", spec.name, e);
+            tracing::warn!(world = %spec.name, error = %e, "Failed to clear chunk files");
         }
 
         // Pre-generate the spawn-column chunks synchronously so that get_height and
@@ -132,7 +132,7 @@ impl GenerationProcessor {
                 }
             }
             Err(e) => {
-                log::error!("Failed to load generated scene bytes: {e}");
+                tracing::error!(error = %e, "Failed to load generated scene bytes");
             }
         }
 
@@ -186,11 +186,10 @@ impl GenerationProcessor {
                 }
             }
         }
-        log::info!(
-            "Preloaded {}×{} spawn-area chunk columns ({} non-empty chunks)",
-            PRELOAD_RADIUS * 2 + 1,
-            PRELOAD_RADIUS * 2 + 1,
-            loaded.len()
+        tracing::info!(
+            side = PRELOAD_RADIUS * 2 + 1,
+            count = loaded.len(),
+            "Preloaded spawn-area chunk columns (non-empty chunks)"
         );
         loaded
     }
@@ -206,7 +205,7 @@ impl GenerationProcessor {
             let _ = h.join();
         }
         app.generation.cancel = None;
-        log::info!("Generation canceled by user");
+        tracing::info!("Generation canceled by user");
     }
 
     /// Set up physics world after a world is loaded or generated.
@@ -294,17 +293,17 @@ impl GenerationProcessor {
             }
         }
 
-        log::info!(
-            "Physics world ready: {} chunk colliders, {} test spheres, character at {:?}",
-            app.physics.chunk_colliders.len(),
-            app.physics.test_bodies.len(),
-            spawn_pos
+        tracing::info!(
+            chunk_colliders = app.physics.chunk_colliders.len(),
+            test_spheres = app.physics.test_bodies.len(),
+            pos = ?spawn_pos,
+            "Physics world ready"
         );
     }
 
     /// Handle generation failure
     fn handle_failed(&self, app: &mut App, reason: String) {
-        log::error!("Generation failed: {reason}");
+        tracing::error!(reason = %reason, "Generation failed");
         if let Some(ui_adapter) = &app.ui_adapter
             && let Ok(mut a) = ui_adapter.lock()
         {

@@ -46,13 +46,13 @@ impl EventProcessor {
     fn handle_ui_event(&self, app: &mut App, event_loop: &ActiveEventLoop, event: UiEvent) {
         match event {
             UiEvent::LoadSceneRequested { path } => {
-                log::info!("UI requested load scene: {}", path.display());
+                tracing::info!(path = %path.display(), "UI requested load scene");
                 if let Err(e) = app.load_scene(&path) {
-                    log::error!("Failed to load scene from {}: {e}", path.display());
+                    tracing::error!(path = %path.display(), error = %e, "Failed to load scene");
                 }
             }
             UiEvent::NewWorldRequested { name, seed, size } => {
-                log::info!("UI requested new world: {name} (seed: {seed:?}, size: {size})");
+                tracing::info!(name = %name, seed = ?seed, size, "UI requested new world");
                 let spec = moho_game::scene_builders::WorldSpec {
                     name,
                     seed,
@@ -62,19 +62,19 @@ impl EventProcessor {
                     initial_time_of_day: 6.0,
                 };
                 if let Err(e) = app.generate_new_world(spec) {
-                    log::error!("Failed to generate new world: {e}");
+                    tracing::error!(error = %e, "Failed to generate new world");
                 }
             }
             UiEvent::ExitRequested => {
-                log::info!("UI requested exit");
+                tracing::info!("UI requested exit");
                 // Auto-save before exit
                 if let Err(e) = app.auto_save_on_shutdown() {
-                    log::warn!("Failed to auto-save on exit: {e}");
+                    tracing::warn!(error = %e, "Failed to auto-save on exit");
                 }
                 event_loop.exit();
             }
             UiEvent::MenuShown { name } => {
-                log::info!("UI requested show menu: {name}");
+                tracing::info!(name = %name, "UI requested show menu");
                 if let Some(ui_adapter) = &app.ui_adapter
                     && let Ok(mut adapter) = ui_adapter.lock()
                 {
@@ -82,20 +82,20 @@ impl EventProcessor {
                 }
             }
             UiEvent::MenuHidden { name } => {
-                log::info!("Menu hidden: {name}");
+                tracing::info!(name = %name, "Menu hidden");
                 // Handle console close event
                 if name == "console" {
                     app.exit_console();
                 }
             }
             UiEvent::OverlayToggled { name, visible } => {
-                log::info!("Overlay {name} toggled: {visible}");
+                tracing::info!(name = %name, visible, "Overlay toggled");
                 if visible && let Some(ref wr) = app.window_renderer {
                     wr.window.set_cursor_visible(true);
                 }
             }
             UiEvent::SettingsSaved => {
-                log::info!("Settings saved");
+                tracing::info!("Settings saved");
                 // Settings are already saved by the UI adapter
                 // Here we could reload/apply them if needed
             }
@@ -104,7 +104,7 @@ impl EventProcessor {
                 width,
                 height,
             } => {
-                log::info!("Window settings changed: {mode:?} {width}x{height}");
+                tracing::info!(mode = ?mode, width, height, "Window settings changed");
                 if let Some(ref wr) = app.window_renderer {
                     use moho_core::events::WindowMode;
                     use winit::dpi::PhysicalSize;
@@ -140,15 +140,15 @@ impl EventProcessor {
                 GraphicsEvent::TimeOfDayChanged { time, .. } => {
                     // Set the game clock time directly (time is in hours 0-24)
                     app.simulation.set_time_of_day(time);
-                    log::info!(
-                        "Time set to {:.2} ({})",
+                    tracing::info!(
                         time,
-                        app.simulation.game_clock().time_string()
+                        time_string = %app.simulation.game_clock().time_string(),
+                        "Time set"
                     );
                 }
                 GraphicsEvent::DebugViewChanged { mode } => {
                     app.debug_mode = mode;
-                    log::info!("Debug view mode set to {mode}");
+                    tracing::info!(mode = %mode, "Debug view mode set");
                 }
                 _ => {
                     // Other graphics events not yet handled
@@ -222,7 +222,7 @@ impl EventProcessor {
         let forward = -view_matrix.inverse().col(2).truncate().normalize();
 
         if app.pawn.equipped_tool.is_none() {
-            log::debug!("Mine attempt blocked: no tool equipped");
+            tracing::debug!("Mine attempt blocked: no tool equipped");
             return;
         }
 
@@ -232,7 +232,10 @@ impl EventProcessor {
         let grid = light_system.grid_mut();
 
         let Some(outcome) = app.pawn.mine(grid, camera_pos, forward, MINE_MAX_DISTANCE) else {
-            log::debug!("Mine attempt found nothing solid within {MINE_MAX_DISTANCE} units");
+            tracing::debug!(
+                distance = MINE_MAX_DISTANCE,
+                "Mine attempt found nothing solid within range"
+            );
             return;
         };
 
@@ -250,18 +253,19 @@ impl EventProcessor {
             structure_dirty: true,
         });
 
-        match outcome.yield_ {
-            Some(y) => log::debug!(
-                "Mined {:?} at {:.1}m → resource {}",
-                outcome.block_pos,
-                outcome.distance,
-                y.resource_id
-            ),
-            None => log::debug!(
-                "Mined {:?} at {:.1}m (no resource)",
-                outcome.block_pos,
-                outcome.distance
-            ),
+        if let Some(y) = outcome.yield_ {
+            tracing::debug!(
+                pos = ?outcome.block_pos,
+                distance = outcome.distance,
+                resource_id = y.resource_id,
+                "Mined block → resource"
+            );
+        } else {
+            tracing::debug!(
+                pos = ?outcome.block_pos,
+                distance = outcome.distance,
+                "Mined block (no resource)"
+            );
         }
     }
 
@@ -297,9 +301,9 @@ impl EventProcessor {
                         .update_chunk_collider(chunk_pos, chunk.vertices(), chunk.indices());
 
                     if app.entities.chunks.insert(chunk).is_some() {
-                        log::trace!("Updated mesh for chunk {chunk_pos:?}");
+                        tracing::trace!(chunk = ?chunk_pos, "Updated mesh for chunk");
                     } else {
-                        log::trace!("Created new mesh for chunk {chunk_pos:?}");
+                        tracing::trace!(chunk = ?chunk_pos, "Created new mesh for chunk");
                     }
                 }
             }
@@ -358,7 +362,7 @@ impl EventProcessor {
                         camera_pos + forward * SPAWN_FALLBACK_DISTANCE
                     };
 
-                    log::info!("Spawning {entity_type} at {spawn_pos:?}");
+                    tracing::info!(entity_type = %entity_type, pos = ?spawn_pos, "Spawning entity");
 
                     match entity_type.to_lowercase().as_str() {
                         "torch" => {
@@ -418,7 +422,7 @@ impl EventProcessor {
                                     DEFAULT_POINT_LIGHT_INTENSITY,
                                     DEFAULT_POINT_LIGHT_RANGE,
                                 );
-                                log::info!("Added point light at {spawn_pos:?}");
+                                tracing::info!(pos = ?spawn_pos, "Added point light");
 
                                 // Spawn a small gizmo sphere so the light origin is
                                 // visible in world space. Emissive material bypasses
@@ -453,7 +457,7 @@ impl EventProcessor {
                                 let handle = pw.add_dynamic_cuboid(spawn_pos, 0.5, 0.5, 0.5);
                                 app.physics.test_bodies.push((handle, entity));
                             }
-                            log::info!("Spawned cube at {spawn_pos:?}");
+                            tracing::info!(pos = ?spawn_pos, "Spawned cube");
                         }
                         "sphere" => {
                             // Spawn sphere actor
@@ -473,28 +477,28 @@ impl EventProcessor {
                                 let handle = pw.add_dynamic_sphere(spawn_pos, 0.5);
                                 app.physics.test_bodies.push((handle, entity));
                             }
-                            log::info!("Spawned sphere at {spawn_pos:?}");
+                            tracing::info!(pos = ?spawn_pos, "Spawned sphere");
                         }
                         _ => {
-                            log::warn!("Unknown entity type: {entity_type}");
+                            tracing::warn!(entity_type = %entity_type, "Unknown entity type");
                         }
                     }
                 }
             }
             DebugEvent::ToggleGodMode { enabled } => {
-                log::info!("God mode toggled: {enabled}");
+                tracing::info!(enabled, "God mode toggled");
                 // TODO: Implement god mode logic
             }
             DebugEvent::ToggleCollision { enabled } => {
-                log::info!("Collision toggled: {enabled}");
+                tracing::info!(enabled, "Collision toggled");
                 // enabled=false means noclip ON (collision disabled)
                 if let Some(ref mut pw) = app.physics.world {
                     pw.noclip = !enabled;
-                    log::info!("Noclip {}", if pw.noclip { "enabled" } else { "disabled" });
+                    tracing::info!(noclip = pw.noclip, "Noclip toggled");
                 }
             }
             DebugEvent::SetShadowQuality { quality } => {
-                log::info!("Setting shadow quality to: {quality}");
+                tracing::info!(quality, "Setting shadow quality");
                 if let Some(wr) = &mut app.window_renderer {
                     wr.renderer.set_shadow_quality(quality as u8);
 
@@ -504,7 +508,7 @@ impl EventProcessor {
                 }
             }
             DebugEvent::SetSsaoQuality { quality } => {
-                log::info!("Setting SSAO quality to: {quality}");
+                tracing::info!(quality, "Setting SSAO quality");
                 if let Some(wr) = &mut app.window_renderer {
                     wr.renderer.set_ssao_quality(quality as u8);
 

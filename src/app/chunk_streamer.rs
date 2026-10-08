@@ -84,16 +84,16 @@ impl ChunkStreamer {
         for &pos in &to_evict {
             if let Some(data) = grid.serialize_chunk(pos) {
                 if let Err(e) = save::write_chunk_file(&self.world_name, pos, &data) {
-                    log::warn!("Failed to save evicted chunk {pos:?}: {e}");
+                    tracing::warn!(chunk = ?pos, error = %e, "Failed to save evicted chunk");
                 } else {
-                    log::debug!("Saved evicted chunk {pos:?}");
+                    tracing::debug!(chunk = ?pos, "Saved evicted chunk");
                 }
             }
             grid.remove_chunk(pos);
         }
 
         if !to_evict.is_empty() {
-            log::debug!("Evicted {} chunks", to_evict.len());
+            tracing::debug!(count = to_evict.len(), "Evicted chunks");
         }
         to_evict
     }
@@ -134,7 +134,7 @@ impl ChunkStreamer {
         }
 
         if !loaded.is_empty() {
-            log::debug!("Loaded {} chunk(s)", loaded.len());
+            tracing::debug!(count = loaded.len(), "Loaded chunk(s)");
         }
         loaded
     }
@@ -145,10 +145,10 @@ impl ChunkStreamer {
         // Try disk first (player-modified chunk saved on a previous eviction).
         if let Some(data) = save::read_chunk_file(&self.world_name, pos) {
             if grid.deserialize_chunk_into(pos, &data) {
-                log::trace!("Loaded chunk {pos:?} from disk");
+                tracing::trace!(chunk = ?pos, "Loaded chunk from disk");
                 return true;
             }
-            log::warn!("Corrupt chunk file for {pos:?}; regenerating");
+            tracing::warn!(chunk = ?pos, "Corrupt chunk file; regenerating");
         }
 
         // Generate from the deterministic terrain function.

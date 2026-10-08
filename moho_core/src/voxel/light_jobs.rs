@@ -280,12 +280,12 @@ impl LightJobQueue {
         self.cancellation_tokens.insert(job_id, token);
         self.jobs.push(job);
 
-        log::debug!(
-            "Submitted light job {:?} for position {:?} (priority {}, queue size: {})",
-            job_id,
-            source_pos,
+        tracing::debug!(
+            job = ?job_id,
+            pos = ?source_pos,
             priority,
-            self.jobs.len()
+            queue_size = self.jobs.len(),
+            "Submitted light job"
         );
 
         job_id
@@ -297,7 +297,7 @@ impl LightJobQueue {
     pub fn cancel(&mut self, job_id: JobId) -> bool {
         if let Some(token) = self.cancellation_tokens.get(&job_id) {
             token.cancel();
-            log::debug!("Cancelled light job {job_id:?}");
+            tracing::debug!(job = ?job_id, "Cancelled light job");
             true
         } else {
             false
@@ -361,13 +361,13 @@ impl LightJobQueue {
         let frame_time_us = frame_start.elapsed().as_micros() as u64;
 
         if jobs_completed > 0 {
-            log::debug!(
-                "Processed {} light jobs, {} blocks in {}µs (budget: {} blocks, {}µs)",
-                jobs_completed,
-                blocks_processed_this_frame,
-                frame_time_us,
-                self.budget.max_blocks_per_frame,
-                self.budget.max_time_us
+            tracing::debug!(
+                jobs_completed = jobs_completed,
+                blocks_processed = blocks_processed_this_frame,
+                frame_time_us = frame_time_us,
+                budget_blocks = self.budget.max_blocks_per_frame,
+                budget_time_us = self.budget.max_time_us,
+                "Processed light jobs"
             );
         }
 
