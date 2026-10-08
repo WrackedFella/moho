@@ -370,7 +370,7 @@ mod tests {
         assert_eq!(light_system.pending_jobs(), 1);
     }
 
-    /// Drains the pending set.
+    /// The first call drains the pending set, so a second emits nothing.
     #[test]
     fn emit_dirty_events_publishes_one_event_per_affected_chunk() {
         use crate::voxel::grid::MaterialLighting;
