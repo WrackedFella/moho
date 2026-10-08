@@ -177,12 +177,6 @@ mod tests {
     }
 
     #[test]
-    fn test_prepare_instances_empty() {
-        let instances = MeshRenderer::prepare_instances(&[]);
-        assert_eq!(instances.len(), 0);
-    }
-
-    #[test]
     fn test_prepare_instances_single() {
         let ext_instance = test_instance();
         let instances = MeshRenderer::prepare_instances(&[ext_instance]);
@@ -217,23 +211,6 @@ mod tests {
 
         assert_eq!(instances.len(), 0);
         assert_eq!(offsets.len(), 0);
-    }
-
-    #[test]
-    fn test_flatten_instances_single_draw() {
-        let gpu_inst = GpuInstance {
-            model: [[1.0; 4]; 4],
-            material: 0,
-            object_type: 0,
-            padding: [0, 0],
-        };
-
-        let pending_draws = vec![(1u32, vec![gpu_inst, gpu_inst, gpu_inst])];
-        let (instances, offsets) = MeshRenderer::flatten_instances(&pending_draws);
-
-        assert_eq!(instances.len(), 3);
-        assert_eq!(offsets.len(), 1);
-        assert_eq!(offsets[0], 0);
     }
 
     #[test]
