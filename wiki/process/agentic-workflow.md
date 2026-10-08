@@ -20,7 +20,10 @@ Gate class and Labels in their header, kept current by a sync agent with board a
 | 6. Review and merge | You | Review the PR; merge | Board Status → Done (set by the Board sync workflow) |
 
 During step 5 the Orchestrator pauses for your review of failing tests when the item's
-gate class is `domain` and `CLAUDE.md` requires domain-test review. Otherwise it runs
+gate class is `domain` and `CLAUDE.md` sets `Domain-test review: required`. Under
+`agent` (the current setting) it does not pause: `devflow:test-critic` tries to break the
+pushed tests in a fresh context (at most 2 rounds), the test-writer fixes what it finds,
+and the PR lists the findings. Otherwise it runs
 through: failing tests → implementation → adversarial challenges (as tests) → refactor
 under green plus `/simplify` → mutation testing → `/devflow:comment-audit` →
 `/devflow:wiki` → full-platform CI when the change is platform-sensitive →
@@ -41,7 +44,8 @@ pages are flagged in the PR for your review.
 | `just deny` | CI | CI (Phase C) |
 | Format on edit | Every Rust edit in a single-repo session | PostToolUse hook |
 | CI matrix | Linux on PRs into `dev`; three OSes on `main` and manual runs | CI |
-| Human review | Domain tests; every PR | You |
+| Test review | Domain tests, before implementation | `devflow:test-critic` (or you under `required`) |
+| Human review | Every PR, including the tests | You |
 
 ## Coordinating lanes
 
