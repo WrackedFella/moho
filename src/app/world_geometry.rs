@@ -207,6 +207,127 @@ mod tests {
         }
     }
 
+    fn drawn_handles(app: &mut App) -> Vec<u32> {
+        app.scene
+            .world_meshes_mut()
+            .draws()
+            .map(|(h, _)| h)
+            .collect()
+    }
+
+    /// A chunk with a distinct value in every channel, so a swapped pair of
+    /// same-typed channels shows up.
+    fn chunk_at(pos: IVec3) -> VoxelChunk {
+        VoxelChunk::new(
+            pos,
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            vec![[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            vec![0.25, 0.3, 0.35],
+            vec![3, 4, 5],
+            vec![0.6, 0.6, 0.6],
+            vec![[0.2, 0.9, 0.5], [0.1, 0.1, 0.1], [0.4, 0.3, 0.2]],
+            vec![0.75, 0.8, 0.85],
+            vec![0, 1, 2],
+            1,
+        )
+    }
+
+    #[test]
+    fn chunk_world_mesh_carries_every_channel() {
+        let chunk = chunk_at(IVec3::new(1, 2, 3));
+
+        let mesh = chunk_world_mesh(&chunk).expect("well-formed chunk");
+
+        assert_eq!(mesh.positions(), chunk.vertices());
+        assert_eq!(mesh.normals(), chunk.normals());
+        assert_eq!(mesh.ao(), [0.25, 0.3, 0.35]);
+        assert_eq!(mesh.ao(), chunk.ambient_occlusion());
+        assert_eq!(mesh.light_rgb(), chunk.block_light_rgb());
+        assert_eq!(mesh.sky_exposure(), [0.75, 0.8, 0.85]);
+        assert_eq!(mesh.sky_exposure(), chunk.sky_exposed());
+        assert_eq!(mesh.surface(), chunk.geometry_type());
+        assert_eq!(mesh.indices(), chunk.indices());
+    }
+
+    #[test]
+    fn loading_a_scene_stops_drawing_the_previous_worlds_chunks() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut saved = App::headless();
+        saved.entities.chunks.insert(chunk_at(IVec3::new(7, 0, 7)));
+        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path()).expect("autosave");
+        let mut app = App::headless();
+        insert_chunk(&mut app, chunk_at(IVec3::new(1, 0, 1)));
+        let mut backend = RecordingBackend::default();
+        app.scene.world_meshes_mut().flush(&mut backend);
+        let old = backend.registered[0];
+        assert_eq!(drawn_handles(&mut app), vec![old], "drawn before the load");
+
+        crate::app::scene_loader::load_scene(&mut app, &temp.path().join("scene.bin"))
+            .expect("load");
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        assert_eq!(backend.unregistered, vec![old], "the old chunk was freed");
+        assert_eq!(backend.registered.len(), 2, "the saved chunk was uploaded");
+        assert_eq!(
+            drawn_handles(&mut app),
+            vec![backend.registered[1]],
+            "only the saved chunk is drawn"
+        );
+    }
+
+    #[test]
+    fn remeshing_a_chunk_to_empty_frees_its_mesh() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        let chunk = IVec3::new(10, 4, 10);
+        let block = moho_core::voxel::BlockPos::new(165, 70, 165);
+        app.light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut()
+            .mutator()
+            .place(block, 1, None);
+        let _ = app.world_event_rx.try_iter().count();
+        let dirty = WorldEvent::ChunkMeshDirty {
+            chunk_pos: chunk,
+            terrain_dirty: true,
+            structure_dirty: false,
+        };
+        app.event_bus.publish(dirty.clone());
+        EventProcessor::new().process_world_events(&mut app);
+        let mut backend = RecordingBackend::default();
+        app.scene.world_meshes_mut().flush(&mut backend);
+        assert_eq!(backend.registered.len(), 1, "the chunk is uploaded");
+        assert_eq!(drawn_handles(&mut app), backend.registered);
+
+        assert!(
+            app.light_system
+                .as_mut()
+                .expect("light system")
+                .grid_mut()
+                .mutator()
+                .remove(block),
+            "the block was there to remove"
+        );
+        let _ = app.world_event_rx.try_iter().count();
+        app.event_bus.publish(dirty);
+        EventProcessor::new().process_world_events(&mut app);
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        assert!(
+            app.entities
+                .chunks
+                .get(chunk)
+                .is_none_or(|c| !c.has_geometry()),
+            "the chunk no longer has geometry"
+        );
+        assert!(drawn_handles(&mut app).is_empty(), "nothing is drawn");
+        assert_eq!(
+            backend.unregistered, backend.registered,
+            "its mesh was freed"
+        );
+    }
+
     #[test]
     fn evicted_chunk_is_not_drawn() {
         let mut app = App::headless();

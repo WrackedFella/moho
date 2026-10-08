@@ -103,6 +103,21 @@ mod tests {
         next_handle: u32,
         registered: Vec<(u32, usize)>,
         unregistered: Vec<u32>,
+        uploads: Vec<Upload>,
+    }
+
+    /// The channel slices of one `register_indexed_mesh` call, named as the
+    /// backend parameters are.
+    #[derive(Debug, Default, PartialEq)]
+    struct Upload {
+        vertices: Vec<[f32; 3]>,
+        normals: Vec<[f32; 3]>,
+        ao: Vec<f32>,
+        geometry_type: Vec<u32>,
+        light_level: Vec<f32>,
+        block_light_rgb: Vec<[f32; 3]>,
+        sky_exposed: Vec<f32>,
+        indices: Vec<u32>,
     }
 
     impl RecordingBackend {
@@ -130,15 +145,25 @@ mod tests {
         }
         fn register_indexed_mesh(
             &mut self,
-            _vertices: &[[f32; 3]],
-            _normals: &[[f32; 3]],
-            _ao: &[f32],
-            _geometry_type: &[u32],
-            _light_level: &[f32],
-            _block_light_rgb: &[[f32; 3]],
-            _sky_exposed: &[f32],
+            vertices: &[[f32; 3]],
+            normals: &[[f32; 3]],
+            ao: &[f32],
+            geometry_type: &[u32],
+            light_level: &[f32],
+            block_light_rgb: &[[f32; 3]],
+            sky_exposed: &[f32],
             indices: &[u32],
         ) -> u32 {
+            self.uploads.push(Upload {
+                vertices: vertices.to_vec(),
+                normals: normals.to_vec(),
+                ao: ao.to_vec(),
+                geometry_type: geometry_type.to_vec(),
+                light_level: light_level.to_vec(),
+                block_light_rgb: block_light_rgb.to_vec(),
+                sky_exposed: sky_exposed.to_vec(),
+                indices: indices.to_vec(),
+            });
             self.next_handle += 1;
             self.registered.push((self.next_handle, indices.len()));
             self.next_handle
@@ -219,6 +244,42 @@ mod tests {
             instance.model,
             glam::Mat4::IDENTITY.to_cols_array_2d(),
             "world meshes are already in world space"
+        );
+    }
+
+    #[test]
+    fn flush_uploads_each_channel_into_its_gpu_vertex_slot() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        let positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let normals = vec![[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let light_rgb = vec![[0.2, 0.9, 0.5], [0.9, 0.1, 0.1], [0.3, 0.4, 0.6]];
+        let world_mesh = WorldMesh::new(
+            positions.clone(),
+            normals.clone(),
+            vec![0.25; 3],
+            light_rgb.clone(),
+            vec![0.75; 3],
+            vec![3; 3],
+            vec![0, 2, 1],
+        )
+        .expect("well-formed test mesh");
+        meshes.upsert(A, world_mesh, 0);
+
+        meshes.flush(&mut backend);
+
+        assert_eq!(
+            backend.uploads,
+            vec![Upload {
+                vertices: positions,
+                normals,
+                ao: vec![0.25; 3],
+                geometry_type: vec![3; 3],
+                light_level: vec![0.9, 0.9, 0.6],
+                block_light_rgb: light_rgb,
+                sky_exposed: vec![0.75; 3],
+                indices: vec![0, 2, 1],
+            }]
         );
     }
 
