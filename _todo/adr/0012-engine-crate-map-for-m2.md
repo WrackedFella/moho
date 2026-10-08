@@ -1,6 +1,6 @@
 # 0012 — Engine capabilities land as modules first; the crate map for M1–M2
 
-**Status:** Proposed
+**Status:** Accepted (2026-10-08)
 
 ## Context
 
