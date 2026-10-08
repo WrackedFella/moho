@@ -68,8 +68,8 @@ Why channels instead of handling inside bus handlers: [events](events.md#the-cha
 
 ## Redraw
 
-`handle_redraw_requested` calls `scene.render(...)` with actors, chunk meshes, the
-camera, and material indices, then recalls the egui staging belt. A
+`handle_redraw_requested` calls `scene.render(...)` with actors, the camera, and
+material indices (world meshes are already queued on the scene), then recalls the egui staging belt. A
 `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
 [rendering](rendering.md#pass-order).
 
