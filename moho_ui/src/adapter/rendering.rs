@@ -6,10 +6,10 @@
 //! - Progress overlay rendering
 //! - Pause overlay rendering
 use crate::adapter::ProgressState;
+use crate::app_state::GameState;
 use crate::screens::MenuAction;
 use crate::ui_state::UiStateManager;
 use moho_core::EventBus;
-use moho_types::GameState;
 
 /// Result of rendering the menu for a single frame.
 pub struct MenuRenderResult {
