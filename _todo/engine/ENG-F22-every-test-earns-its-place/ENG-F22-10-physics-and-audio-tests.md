@@ -23,7 +23,6 @@ The physics tests assert where bodies come to rest, not just an upper bound, and
 | `moho_physics::world` `test_floor_stops_rigid_body` | the sphere rests with 0.4 < y < 0.7 | floor collider missing |
 | `moho_physics::world` `test_character_controller_falls_to_floor` | the capsule centre settles within 1.1..1.3 and `is_grounded` | character tunnels through the floor |
 | `moho_physics::world` `set_character_position_teleports_and_stops_falling` | after falling a few steps, `set_character_position(p)` → position `p`, vertical velocity 0 | velocity kept |
-| `moho_physics::world` `empty_trimesh_still_returns_a_collider` | `add_terrain_trimesh(&[], &[])` returns a handle present in the collider set | handle not inserted |
 | `moho_audio::audio_cache` `cached_audio_survives_file_deletion` | write a temp file, `get_audio` returns its bytes; delete it; `get_audio` returns the same bytes. Same for `get_ui_sound` | cache bypassed |
 | `moho_audio::audio_cache` `missing_file_returns_file_not_found` | `get_audio` and `get_ui_sound` on a missing path → `Err(AudioError::FileNotFound(_))` | other error variant |
 | `moho_audio::audio_settings` `effective_volume_multiplies_clamped_master_and_category` | `with_master_volume(0.5).with_music_volume(1.5)` → Music 0.5; muted → 0.0 | clamp skipped; mute ignored |
