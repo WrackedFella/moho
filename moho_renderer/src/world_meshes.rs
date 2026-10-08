@@ -2,10 +2,26 @@
 
 use crate::RendererBackend;
 use moho_render_api::{InstanceGpu, WorldMesh, WorldMeshId};
+use std::collections::BTreeMap;
+
+/// A mesh waiting for the next `flush`; `None` is a queued remove.
+type Pending = Option<(WorldMesh, u32)>;
+
+/// A mesh uploaded to the backend.
+#[derive(Debug, Clone, Copy)]
+struct Live {
+    handle: u32,
+    material_idx: u32,
+}
 
 /// Queues world-mesh changes and applies them to a backend on `flush`.
+///
+/// Live meshes are kept in id order so the draw order is deterministic.
 #[derive(Debug, Default)]
-pub struct WorldMeshes {}
+pub struct WorldMeshes {
+    live: BTreeMap<WorldMeshId, Live>,
+    pending: BTreeMap<WorldMeshId, Pending>,
+}
 
 impl WorldMeshes {
     pub fn new() -> Self {
@@ -13,23 +29,64 @@ impl WorldMeshes {
     }
 
     /// Queue adding or replacing the mesh under `id`. An empty mesh is a remove.
-    pub fn upsert(&mut self, _id: WorldMeshId, _mesh: WorldMesh, _material_idx: u32) {
-        todo!("queue upsert")
+    pub fn upsert(&mut self, id: WorldMeshId, mesh: WorldMesh, material_idx: u32) {
+        if mesh.is_empty() {
+            self.remove(id);
+        } else {
+            self.pending.insert(id, Some((mesh, material_idx)));
+        }
     }
 
     /// Queue removing the mesh under `id`.
-    pub fn remove(&mut self, _id: WorldMeshId) {
-        todo!("queue remove")
+    pub fn remove(&mut self, id: WorldMeshId) {
+        self.pending.insert(id, None);
     }
 
     /// Apply queued changes: register new meshes, unregister replaced or removed ones.
-    pub fn flush(&mut self, _backend: &mut dyn RendererBackend) {
-        todo!("flush")
+    pub fn flush(&mut self, backend: &mut dyn RendererBackend) {
+        for (id, change) in std::mem::take(&mut self.pending) {
+            if let Some(old) = self.live.remove(&id) {
+                backend.unregister_mesh(old.handle);
+            }
+            let Some((mesh, material_idx)) = change else {
+                continue;
+            };
+            let light_level: Vec<f32> = mesh
+                .light_rgb()
+                .iter()
+                .map(|rgb| rgb[0].max(rgb[1]).max(rgb[2]))
+                .collect();
+            let handle = backend.register_indexed_mesh(
+                mesh.positions(),
+                mesh.normals(),
+                mesh.ao(),
+                mesh.surface(),
+                &light_level,
+                mesh.light_rgb(),
+                mesh.sky_exposure(),
+                mesh.indices(),
+            );
+            self.live.insert(
+                id,
+                Live {
+                    handle,
+                    material_idx,
+                },
+            );
+        }
     }
 
     /// One identity-transform instance per live mesh, as `(backend handle, instance)`.
     pub fn draws(&self) -> impl Iterator<Item = (u32, InstanceGpu)> + '_ {
-        std::iter::empty()
+        self.live.values().map(|live| {
+            let instance = InstanceGpu {
+                model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                material: live.material_idx,
+                object_type: 0, // terrain: the fragment shader colours by normal
+                padding: [0, 0],
+            };
+            (live.handle, instance)
+        })
     }
 }
 

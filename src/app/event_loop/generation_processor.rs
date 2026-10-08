@@ -122,9 +122,11 @@ impl GenerationProcessor {
         }
 
         // Load produced scene bytes into the main world
+        crate::app::world_geometry::remove_all_chunk_meshes(app);
         app.entities.clear();
         match moho_game::scene_persistence::load_from_bytes(&scene_bytes, &mut app.entities) {
             Ok((camera_data, _lights)) => {
+                crate::app::world_geometry::upsert_all_chunks(app);
                 // Generated worlds have no pre-spawned lights; nothing to restore.
                 if let Some((position, yaw, pitch)) = camera_data {
                     app.simulation.set_position_yaw_pitch(position, yaw, pitch);
@@ -224,11 +226,15 @@ impl GenerationProcessor {
         // the character doesn't fall through before async event processing kicks in.
         if let Some(ls) = &app.light_system {
             let grid = ls.grid();
+            let mut chunks = Vec::with_capacity(preloaded_chunks.len());
             for &pos in preloaded_chunks {
                 let chunk = moho_core::voxel::VoxelChunk::from_grid_hybrid(grid, pos);
                 app.physics
                     .update_chunk_collider(pos, chunk.vertices(), chunk.indices());
-                app.entities.chunks.insert(chunk);
+                chunks.push(chunk);
+            }
+            for chunk in chunks {
+                crate::app::world_geometry::insert_chunk(app, chunk);
             }
         }
 

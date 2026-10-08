@@ -1,5 +1,4 @@
-use crate::{BufferManager, InstanceCollector, MaterialTable, RendererBackend, WorldMeshes};
-use moho_core::voxel::VoxelChunk;
+use crate::{InstanceCollector, MaterialTable, RendererBackend, WorldMeshes};
 use moho_render_api::{InstanceGpu, Renderable};
 
 mod preparation;
@@ -8,7 +7,7 @@ pub use preparation::PreparedScene;
 pub use preparation::ScenePreparation;
 
 /// Scene manager that owns the `MaterialTable` and provides a simple
-/// `render` API to submit actors and terrain chunks for drawing. This centralizes
+/// `render` API to submit actors and world meshes for drawing. This centralizes
 /// material deduplication, instance collection, and transparent sorting.
 ///
 /// Scene *persistence* (save/load) lives in `moho_game::scene_persistence` —
@@ -16,7 +15,6 @@ pub use preparation::ScenePreparation;
 #[derive(Debug)]
 pub struct Scene {
     pub material_table: MaterialTable,
-    buffer_manager: BufferManager,
     instance_collector: InstanceCollector,
     world_meshes: WorldMeshes,
 }
@@ -25,7 +23,6 @@ impl Scene {
     pub fn new() -> Self {
         Scene {
             material_table: MaterialTable::new(),
-            buffer_manager: BufferManager::new(),
             instance_collector: InstanceCollector::new(),
             world_meshes: WorldMeshes::new(),
         }
@@ -36,18 +33,16 @@ impl Scene {
         &mut self.world_meshes
     }
 
-    /// Render the provided actors and chunks using `renderer`. `mesh_handle` is the
-    /// spherical mesh handle, `cube_mesh_handle` is the cube mesh handle, and
-    /// `terrain_material_idx` is the material table index for terrain chunks
-    /// — all previously registered with the renderer/material table at
-    /// startup. `S`/`C` are the concrete sphere-like/cube-like actor
+    /// Render the provided actors and the world meshes using `renderer`.
+    /// `mesh_handle` is the spherical mesh handle and `cube_mesh_handle` is the
+    /// cube mesh handle, both previously registered with the renderer at
+    /// startup. Queued world-mesh changes are flushed first. `S`/`C` are the concrete sphere-like/cube-like actor
     /// types (supplied by the caller so this crate doesn't need
     /// to name game-domain types).
     ///
     /// Returns `Err` if the frame's surface texture couldn't be acquired
     /// (e.g. surface lost/outdated); the surface has already been
     /// reconfigured in that case, so callers should just skip the frame.
-    #[allow(clippy::too_many_arguments)]
     pub fn render<S, C>(
         &mut self,
         renderer: &mut dyn RendererBackend,
@@ -61,18 +56,17 @@ impl Scene {
         S: Renderable,
         C: Renderable,
     {
+        self.world_meshes.flush(renderer);
+
         // Prepare scene: collect instances, process materials, separate by transparency
         let prepared = ScenePreparation::prepare(
             spheres,
             cubes,
-            std::iter::empty::<&mut VoxelChunk>(),
             &mut self.material_table,
-            &mut self.buffer_manager,
             &mut self.instance_collector,
             renderer,
             mesh_handle,
             cube_mesh_handle,
-            0,
         );
 
         renderer.begin_frame(camera)?;
@@ -81,9 +75,9 @@ impl Scene {
         renderer.enqueue_draw(cube_mesh_handle, &prepared.cube_opaque);
         renderer.enqueue_draw(mesh_handle, &prepared.sphere_opaque);
 
-        // Render VoxelChunks (opaque, each chunk as separate draw)
-        for (chunk_handle, chunk_inst) in self.instance_collector.chunk_renders() {
-            renderer.enqueue_draw(*chunk_handle, &[*chunk_inst]);
+        // World meshes (opaque, one draw per mesh)
+        for (handle, instance) in self.world_meshes.draws() {
+            renderer.enqueue_draw(handle, &[instance]);
         }
 
         // Render transparent instances (back-to-front sorted)

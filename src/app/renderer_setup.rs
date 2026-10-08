@@ -76,15 +76,6 @@ pub fn setup_renderer_and_ui(
         &cube_indices,
     );
 
-    // Pre-register the default VoxelTerrain material so all terrain chunks
-    // share a single GPU material entry sourcing colours from the material
-    // buffer rather than hardcoding them in the shader.
-    let terrain_mat = moho_core::materials::MaterialType::VoxelTerrain {
-        top_albedo: glam::Vec3::new(0.3, 0.6, 0.3),  // grass green
-        side_albedo: glam::Vec3::new(0.6, 0.5, 0.4), // dirt brown
-    };
-    let terrain_material_idx = app.scene.material_table.find_or_push(&terrain_mat);
-
     // UI setup
     {
         let adapter = moho_ui::build_adapter(Some(window.clone()), app.event_bus.clone());
@@ -235,7 +226,6 @@ pub fn setup_renderer_and_ui(
         renderer,
         mesh_handle,
         cube_mesh_handle,
-        terrain_material_idx,
     });
 
     Ok(())

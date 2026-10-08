@@ -1,17 +1,98 @@
 //! Hands voxel chunk meshes to the renderer through the world-geometry contract.
 
+use crate::App;
 use glam::IVec3;
+use moho_core::materials::MaterialType;
 use moho_core::voxel::VoxelChunk;
+use moho_game::scene::SceneEntities;
 use moho_render_api::{WorldMesh, WorldMeshError, WorldMeshId};
+use moho_renderer::Scene;
 
-/// Stable renderer key for the chunk at `pos`.
-pub fn chunk_mesh_id(_pos: IVec3) -> WorldMeshId {
-    WorldMeshId(0)
+const AXIS_BITS: u32 = 21;
+const AXIS_OFFSET: i32 = 1 << (AXIS_BITS - 1);
+
+/// Stable renderer key for the chunk at `pos`: 21 bits per signed axis.
+pub fn chunk_mesh_id(pos: IVec3) -> WorldMeshId {
+    debug_assert!(
+        pos.cmpge(IVec3::splat(-AXIS_OFFSET)).all() && pos.cmplt(IVec3::splat(AXIS_OFFSET)).all(),
+        "chunk position {pos} does not fit 21 bits per axis"
+    );
+    let axis = |v: i32| u64::from((v + AXIS_OFFSET).cast_unsigned()) & ((1 << AXIS_BITS) - 1);
+    WorldMeshId((axis(pos.x) << (2 * AXIS_BITS)) | (axis(pos.y) << AXIS_BITS) | axis(pos.z))
 }
 
 /// The chunk's mesh in the world-geometry contract's form.
-pub fn chunk_world_mesh(_chunk: &VoxelChunk) -> Result<WorldMesh, WorldMeshError> {
-    todo!("convert chunk channels to a WorldMesh")
+pub fn chunk_world_mesh(chunk: &VoxelChunk) -> Result<WorldMesh, WorldMeshError> {
+    WorldMesh::new(
+        chunk.vertices().to_vec(),
+        chunk.normals().to_vec(),
+        chunk.ambient_occlusion().to_vec(),
+        chunk.block_light_rgb().to_vec(),
+        chunk.sky_exposed().to_vec(),
+        chunk.geometry_type().to_vec(),
+        chunk.indices().to_vec(),
+    )
+}
+
+/// Register the terrain material once and return its table index; idempotent.
+pub fn register_terrain_material(scene: &mut Scene) -> u32 {
+    let terrain = MaterialType::VoxelTerrain {
+        top_albedo: glam::Vec3::new(0.3, 0.6, 0.3),  // grass green
+        side_albedo: glam::Vec3::new(0.6, 0.5, 0.4), // dirt brown
+    };
+    scene.material_table.find_or_push(&terrain)
+}
+
+/// Queue `chunk`'s mesh with the renderer. A refused mesh is logged and the
+/// chunk is not drawn.
+fn upsert_chunk_mesh(scene: &mut Scene, material_idx: u32, chunk: &VoxelChunk) {
+    let id = chunk_mesh_id(chunk.chunk_pos());
+    match chunk_world_mesh(chunk) {
+        Ok(mesh) => {
+            scene.world_meshes_mut().upsert(id, mesh, material_idx);
+        }
+        Err(error) => {
+            tracing::warn!(chunk = ?chunk.chunk_pos(), %error, "chunk mesh refused, not drawn");
+            scene.world_meshes_mut().remove(id);
+        }
+    }
+}
+
+/// Put `chunk` in the store and hand its mesh to the renderer, replacing any
+/// previous chunk at that position.
+pub fn insert_chunk(app: &mut App, chunk: VoxelChunk) -> Option<VoxelChunk> {
+    upsert_chunk_mesh(&mut app.scene, app.terrain_material_idx, &chunk);
+    app.entities.chunks.insert(chunk)
+}
+
+/// Drop the chunk at `pos` from the store and stop drawing it.
+pub fn remove_chunk(
+    scene: &mut Scene,
+    entities: &mut SceneEntities,
+    pos: IVec3,
+) -> Option<VoxelChunk> {
+    scene.world_meshes_mut().remove(chunk_mesh_id(pos));
+    entities.chunks.remove(pos)
+}
+
+/// Hand the mesh of every chunk in the store to the renderer, after a bulk load.
+pub fn upsert_all_chunks(app: &mut App) {
+    for chunk in app.entities.chunks.iter() {
+        upsert_chunk_mesh(&mut app.scene, app.terrain_material_idx, chunk);
+    }
+}
+
+/// Stop drawing every chunk in the store, before it is cleared.
+pub fn remove_all_chunk_meshes(app: &mut App) {
+    let positions: Vec<IVec3> = app
+        .entities
+        .chunks
+        .iter()
+        .map(VoxelChunk::chunk_pos)
+        .collect();
+    for pos in positions {
+        app.scene.world_meshes_mut().remove(chunk_mesh_id(pos));
+    }
 }
 
 #[cfg(test)]

@@ -23,7 +23,28 @@ pub enum WorldMeshError {
 
 impl fmt::Display for WorldMeshError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
+        match self {
+            Self::ChannelLengthMismatch {
+                channel,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "channel `{channel}` has {actual} entries, expected {expected}"
+            ),
+            Self::IndexOutOfRange {
+                index,
+                vertex_count,
+            } => {
+                write!(
+                    f,
+                    "index {index} is past the last of {vertex_count} vertices"
+                )
+            }
+            Self::PartialTriangle { index_count } => {
+                write!(f, "index count {index_count} is not a multiple of three")
+            }
+        }
     }
 }
 
@@ -42,6 +63,8 @@ pub struct WorldMesh {
 }
 
 impl WorldMesh {
+    /// Build a mesh, refusing mismatched channel lengths, indices past the last
+    /// vertex, and index counts that are not whole triangles.
     pub fn new(
         positions: Vec<[f32; 3]>,
         normals: Vec<[f32; 3]>,
@@ -51,6 +74,34 @@ impl WorldMesh {
         surface: Vec<u32>,
         indices: Vec<u32>,
     ) -> Result<Self, WorldMeshError> {
+        let expected = positions.len();
+        let channels = [
+            ("normals", normals.len()),
+            ("ao", ao.len()),
+            ("light_rgb", light_rgb.len()),
+            ("sky_exposure", sky_exposure.len()),
+            ("surface", surface.len()),
+        ];
+        for (channel, actual) in channels {
+            if actual != expected {
+                return Err(WorldMeshError::ChannelLengthMismatch {
+                    channel,
+                    expected,
+                    actual,
+                });
+            }
+        }
+        if !indices.len().is_multiple_of(3) {
+            return Err(WorldMeshError::PartialTriangle {
+                index_count: indices.len(),
+            });
+        }
+        if let Some(&index) = indices.iter().find(|&&i| i as usize >= expected) {
+            return Err(WorldMeshError::IndexOutOfRange {
+                index,
+                vertex_count: expected,
+            });
+        }
         Ok(Self {
             positions,
             normals,

@@ -66,13 +66,14 @@ struct WindowRenderer {
     renderer: Box<dyn moho_renderer::RendererBackend>,
     mesh_handle: u32,
     cube_mesh_handle: u32,
-    terrain_material_idx: u32,
 }
 
 // Application state structure that implements ApplicationHandler
 struct App {
     entities: SceneEntities,
     scene: moho_renderer::Scene,
+    /// Material table index shared by all terrain chunk meshes.
+    terrain_material_idx: u32,
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
 
     // Light propagation system (owns the voxel grid internally)
@@ -148,6 +149,7 @@ impl App {
         Self {
             entities: initialized.entities,
             scene: initialized.scene,
+            terrain_material_idx: initialized.terrain_material_idx,
             camera: initialized.camera,
 
             light_system: Some(light_system),
