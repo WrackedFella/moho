@@ -287,6 +287,18 @@ mod tests {
     }
 
     #[test]
+    fn unknown_action_line_does_not_disturb_valid_lines() {
+        let raw = section(&[("jump", "F"), ("teleport", "T")]);
+
+        let (bindings, warnings) = ActionBindings::<TestAction>::load(&raw);
+
+        let names: Vec<_> = warnings.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, ["teleport"]);
+        assert_eq!(bindings.get(TestAction::Jump), keys(&[Key::F]));
+        assert_defaults_except(&bindings, &[TestAction::Jump]);
+    }
+
+    #[test]
     fn unbound_leaves_action_without_binding() {
         for spelling in ["Unbound", "unbound", "UNBOUND", ""] {
             let (bindings, warnings) =

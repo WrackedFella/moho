@@ -272,3 +272,21 @@ fn modifier_key_can_be_bound() {
     assert!(!menu.conflict_modal().is_visible());
     assert_eq!(menu.get_staged_binding(0), [Binding::Key(Key::Ctrl)]);
 }
+
+/// Confirming a conflict removes only the contested key from the other row.
+#[test]
+fn confirming_conflict_removes_only_the_contested_key_from_a_multi_key_row() {
+    use moho_ui::screens::Screen;
+
+    let (prefs, issues) = Prefs::parse("[bindings]\nmove_forward = W, ArrowUp\n");
+    assert_eq!(issues, vec![]);
+    let mut menu = SettingsMenu::with_prefs(prefs);
+    menu.start_listening(1);
+    menu.apply_key_while_listening(Key::W);
+
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_confirm(&mut menu);
+
+    assert_eq!(menu.get_staged_binding(0), [Binding::Key(Key::ArrowUp)]);
+    assert_eq!(menu.get_staged_binding(1), [Binding::Key(Key::W)]);
+}

@@ -562,6 +562,14 @@ mod tests {
     }
 
     #[test]
+    fn bindings_line_without_value_is_malformed() {
+        let (prefs, issues) = Prefs::parse("[bindings]\njump\n");
+
+        assert_eq!(issues, vec![malformed("bindings", "jump", None)]);
+        assert!(prefs.bindings().is_empty());
+    }
+
+    #[test]
     fn unknown_section_is_reported_and_its_keys_default() {
         let content = base_ini_with(None).replace("[video]", "[vidoe]");
 
