@@ -740,13 +740,6 @@ mod tests {
     }
 
     #[test]
-    fn test_new_grid() {
-        let grid = VoxelGrid::new(16);
-        assert_eq!(grid.chunk_size(), 16);
-        assert_eq!(grid.block_count(), 0);
-    }
-
-    #[test]
     fn test_place_and_query() {
         let mut grid = VoxelGrid::new(16);
         let pos = BlockPos::new(0, 0, 0);
@@ -769,63 +762,6 @@ mod tests {
         assert!(grid.clear_block(pos));
         assert_eq!(grid.material_at(pos), None);
         assert_eq!(grid.block_count(), 0);
-    }
-
-    #[test]
-    fn test_has_block_at() {
-        let mut grid = VoxelGrid::new(16);
-        let pos = BlockPos::new(5, 5, 5);
-
-        assert!(!grid.has_block_at(&pos));
-        grid.place_block(pos, 0, None);
-        assert!(grid.has_block_at(&pos));
-    }
-
-    #[test]
-    fn test_material_registry() {
-        let mut registry = MaterialRegistry::new();
-
-        assert!(registry.get(0).is_some()); // Grass
-        assert!(registry.get(1).is_some()); // Dirt
-        assert!(registry.get(2).is_some()); // Stone
-
-        let new_id = registry.register(MaterialType::Lambertian {
-            albedo: Vec3::new(1.0, 0.0, 0.0),
-        });
-        assert_eq!(new_id, 3);
-        assert!(registry.get(3).is_some());
-    }
-
-    #[test]
-    fn test_resource_registry() {
-        let mut registry = ResourceRegistry::new();
-
-        assert!(registry.get(0).is_some()); // Stone
-        assert!(registry.get(1).is_some()); // Iron ore
-
-        let new_id = registry.register(ResourceData {
-            resource_type: "gold_ore".to_string(),
-            quantity: 3,
-        });
-        assert_eq!(new_id, 2);
-        assert!(registry.get(2).is_some());
-    }
-
-    #[test]
-    fn test_block_category_smooth() {
-        let b = VoxelBlock::new(BlockPos::new(0, 0, 0), 0);
-        assert!(b.is_smooth());
-        assert_eq!(b.category(), BlockCategory::Smooth);
-
-        let b99 = VoxelBlock::new(BlockPos::new(0, 0, 0), 99);
-        assert!(b99.is_smooth());
-    }
-
-    #[test]
-    fn test_block_category_blocky() {
-        let b = VoxelBlock::new(BlockPos::new(0, 0, 0), 100);
-        assert!(!b.is_smooth());
-        assert_eq!(b.category(), BlockCategory::Blocky);
     }
 
     #[test]

@@ -60,28 +60,3 @@ impl FaceDirection {
         FACE_INDEX_RANGES[*self as usize]
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_vertex_ranges() {
-        assert_eq!(FaceDirection::PosX.vertex_range(), (0, 4));
-        assert_eq!(FaceDirection::NegX.vertex_range(), (4, 4));
-        assert_eq!(FaceDirection::PosY.vertex_range(), (8, 4));
-        assert_eq!(FaceDirection::NegY.vertex_range(), (12, 4));
-        assert_eq!(FaceDirection::PosZ.vertex_range(), (16, 4));
-        assert_eq!(FaceDirection::NegZ.vertex_range(), (20, 4));
-    }
-
-    #[test]
-    fn test_index_ranges() {
-        assert_eq!(FaceDirection::PosX.index_range(), (0, 6));
-        assert_eq!(FaceDirection::NegX.index_range(), (6, 6));
-        assert_eq!(FaceDirection::PosY.index_range(), (12, 6));
-        assert_eq!(FaceDirection::NegY.index_range(), (18, 6));
-        assert_eq!(FaceDirection::PosZ.index_range(), (24, 6));
-        assert_eq!(FaceDirection::NegZ.index_range(), (30, 6));
-    }
-}

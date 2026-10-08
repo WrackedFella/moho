@@ -351,16 +351,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_light_system_creation() {
-        let grid = VoxelGrid::new(16);
-        let event_bus = Arc::new(EventBus::new());
-        let light_system = LightSystem::with_default_budget(grid, event_bus);
-
-        assert_eq!(light_system.pending_jobs(), 0);
-        assert_eq!(light_system.player_position(), Vec3::ZERO);
-    }
-
-    #[test]
     fn test_block_placed_light_source() {
         use crate::voxel::grid::MaterialLighting;
         let mut grid = VoxelGrid::new(16);

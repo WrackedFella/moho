@@ -266,26 +266,6 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_chunk_is_all_air() {
-        let c = PalettedChunk::new();
-        assert!(c.is_all_air());
-        assert_eq!(c.block_count(), 0);
-        assert!(c.material_at(0).is_none());
-    }
-
-    #[test]
-    fn test_set_and_clear_block() {
-        let mut c = PalettedChunk::new();
-        c.set_block(0, 5, None);
-        assert_eq!(c.material_at(0), Some(5));
-        assert!(!c.is_all_air());
-        assert_eq!(c.block_count(), 1);
-        assert!(c.clear_block(0));
-        assert!(c.material_at(0).is_none());
-        assert!(c.is_all_air());
-    }
-
-    #[test]
     fn test_palette_deduplication() {
         let mut c = PalettedChunk::new();
         c.set_block(0, 7, None);

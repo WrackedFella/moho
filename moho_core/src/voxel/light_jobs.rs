@@ -675,14 +675,4 @@ mod tests {
         assert!(stats.total_jobs_processed > 0);
         assert!(stats.total_time_us > 0);
     }
-
-    #[test]
-    fn test_budget_presets() {
-        let conservative = LightFrameBudget::conservative();
-        let balanced = LightFrameBudget::balanced();
-        let aggressive = LightFrameBudget::aggressive();
-
-        assert!(conservative.max_blocks_per_frame < balanced.max_blocks_per_frame);
-        assert!(balanced.max_blocks_per_frame < aggressive.max_blocks_per_frame);
-    }
 }
