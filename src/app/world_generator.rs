@@ -5,9 +5,9 @@
 //! Progress messages flow back via `GenerationMsg`; `GenerationProcessor` polls
 //! them each frame.
 
-use crossbeam_channel::unbounded;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::channel;
 
 /// Start async world generation for the given `spec`.
 ///
@@ -22,7 +22,7 @@ pub fn generate_new_world(
     tracing::info!(spec = ?spec, "Starting async generation");
 
     // Prepare communication channel and cancellation flag
-    let (tx, rx) = unbounded::<crate::GenerationMsg>();
+    let (tx, rx) = channel::<crate::GenerationMsg>();
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
     // Start UI progress overlay immediately

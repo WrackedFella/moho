@@ -7,7 +7,6 @@ publish = false
 [dependencies]
 wgpu = { workspace = true }
 moho_renderer = { path = "../moho_renderer" }
-crossbeam-channel = { workspace = true }
 winit = { workspace = true }
 egui = "0.34.3"
 egui-winit = { version = "0.34.3", default-features = false, features = ["clipboard", "wayland", "x11"] }

@@ -4,7 +4,7 @@
 //! The event bus follows a pub-sub pattern where:
 //! - Publishers emit events to the bus
 //! - Subscribers receive events via channels
-//! - Events that need to mutate App state are collected via crossbeam channels
+//! - Events that need to mutate App state are collected via `std::sync::mpsc` channels
 //!
 //! # Architecture
 //!
@@ -16,9 +16,9 @@
 //! Each subscriber gets its own channel to avoid blocking. Events are processed
 //! in the main event loop, allowing them to safely mutate App state.
 
-use crossbeam_channel::{Receiver, unbounded};
 use moho_core::EventBus;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, channel};
 
 /// Result of event bus setup containing the bus and all subscriber receivers.
 pub struct EventBusSetup {
@@ -72,11 +72,11 @@ pub fn setup_event_bus() -> EventBusSetup {
     tracing::info!("Event bus initialized");
 
     // Create channels for event collection
-    let (ui_event_tx, ui_event_rx) = unbounded::<moho_core::events::UiEvent>();
-    let (audio_event_tx, audio_event_rx) = unbounded::<moho_core::events::AudioEvent>();
-    let (graphics_event_tx, graphics_event_rx) = unbounded::<moho_core::events::GraphicsEvent>();
-    let (world_event_tx, world_event_rx) = unbounded::<moho_core::events::WorldEvent>();
-    let (debug_event_tx, debug_event_rx) = unbounded::<moho_core::events::DebugEvent>();
+    let (ui_event_tx, ui_event_rx) = channel::<moho_core::events::UiEvent>();
+    let (audio_event_tx, audio_event_rx) = channel::<moho_core::events::AudioEvent>();
+    let (graphics_event_tx, graphics_event_rx) = channel::<moho_core::events::GraphicsEvent>();
+    let (world_event_tx, world_event_rx) = channel::<moho_core::events::WorldEvent>();
+    let (debug_event_tx, debug_event_rx) = channel::<moho_core::events::DebugEvent>();
 
     // Subscribe to UI events
     {
@@ -132,6 +132,7 @@ pub fn setup_event_bus() -> EventBusSetup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::TryRecvError;
 
     #[test]
     fn test_event_bus_setup_creates_bus() {
@@ -196,8 +197,35 @@ mod tests {
         let setup = setup_event_bus();
 
         // Channels should start empty
-        assert!(setup.audio_event_rx.is_empty());
-        assert!(setup.graphics_event_rx.is_empty());
-        assert!(setup.ui_event_rx.is_empty());
+        assert!(matches!(
+            setup.audio_event_rx.try_recv(),
+            Err(TryRecvError::Empty)
+        ));
+        assert!(matches!(
+            setup.graphics_event_rx.try_recv(),
+            Err(TryRecvError::Empty)
+        ));
+        assert!(matches!(
+            setup.ui_event_rx.try_recv(),
+            Err(TryRecvError::Empty)
+        ));
+    }
+
+    #[test]
+    fn try_recv_after_bus_dropped_reports_disconnected() {
+        let EventBusSetup {
+            event_bus,
+            audio_event_rx,
+            ..
+        } = setup_event_bus();
+
+        drop(event_bus);
+
+        // Dropping the bus drops the forwarding closures and their senders, so the
+        // receiver must report the channel as closed, not merely empty.
+        assert!(matches!(
+            audio_event_rx.try_recv(),
+            Err(TryRecvError::Disconnected)
+        ));
     }
 }

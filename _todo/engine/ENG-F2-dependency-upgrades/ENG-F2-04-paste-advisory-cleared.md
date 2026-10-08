@@ -22,8 +22,9 @@ ignore until a `rapier3d` release drops it.
 ## Notes
 
 The advisory is "unmaintained", not a vulnerability, and `paste` runs only at
-compile time. It isn't worth forking or patching `simba`. Unblock when a
-`rapier3d` upgrade (see the `glam` watchlist entry) drops `paste`.
+compile time. It isn't worth forking or patching `simba`. Unblocked by the
+`rapier3d` 0.36 upgrade in [ENG-F2-09](ENG-F2-09-physics-stack-current.md),
+which drops `paste` from the graph.
 
 ## Acceptance criteria
 

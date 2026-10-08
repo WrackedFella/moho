@@ -126,7 +126,7 @@ flowchart LR
     init --> phys["PhysicsController<br/>physics_controller.rs"]
     init --> sim["Simulation<br/>moho_game"]
     init --> disp["InputDispatcher<br/>handlers registered in<br/>renderer_setup.rs"]
-    bus -->|"subscribers forward into<br/>crossbeam channels"| chans["ui · audio · graphics ·<br/>world · debug receivers"]
+    bus -->|"subscribers forward into<br/>mpsc channels"| chans["ui · audio · graphics ·<br/>world · debug receivers"]
     chans --> loop["winit loop<br/>drains receivers each frame"]
 ```
 

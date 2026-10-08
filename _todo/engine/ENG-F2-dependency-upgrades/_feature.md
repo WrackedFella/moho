@@ -78,11 +78,10 @@ to copy, and setting the upgrade rhythm later milestones follow.
 
 ## Watchlist (blocked, no action until unblocked)
 
-- `glam` 0.30→0.34 — blocked on `rapier3d` (pins glam 0.30 via `glamx`); re-check in [ENG-F2-09](ENG-F2-09-physics-stack-current.md).
+- `glam` 0.33→0.34 — blocked on `glamx` (`rapier3d` 0.36 pins glam 0.33 via `glamx` 0.3.1); re-check at the next `rapier3d` release.
 - `wgpu`/`naga` 29→30 — recorded as blocked on `egui-wgpu`; `egui-wgpu` 0.36.2 has since shipped, so re-check in [ENG-F2-08](ENG-F2-08-graphics-stack-current.md).
 - `ttf-parser` unmaintained (RUSTSEC-2026-0192) — removed by [ENG-F2-03](https://github.com/WrackedFella/moho/issues/96) (winit default features off).
 - `bincode` unmaintained (RUSTSEC-2025-0141); 3.0.0 is a `compile_error!` tombstone — replaced by [ENG-F2-01](ENG-F2-01-bincode-migration.md) ([ADR-0006](../../adr/0006-save-format-contract.md)).
-- `paste` unmaintained (RUSTSEC-2024-0436) — via `rapier3d` → `simba`; tracked by [ENG-F2-04](ENG-F2-04-paste-advisory-cleared.md).
 
 ## Notes
 

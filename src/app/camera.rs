@@ -14,6 +14,7 @@
 //! which matches the existing App structure. This can be refactored later to use a
 //! dedicated Camera type from moho_types if needed.
 
+use glam::camera::rh::{proj::directx::perspective, view::look_at_mat4};
 use glam::{Mat4, Vec3};
 
 /// Camera configuration result: (view_matrix, projection_matrix, eye_position)
@@ -130,8 +131,8 @@ impl CameraBuilder {
     ///
     /// Returns: (view_matrix, projection_matrix, eye_position)
     pub fn build(self) -> CameraSetup {
-        let view = Mat4::look_at_rh(self.eye, self.center, self.up);
-        let proj = Mat4::perspective_rh(
+        let view = look_at_mat4(self.eye, self.center, self.up);
+        let proj = perspective(
             self.fov_degrees.to_radians(),
             self.aspect_ratio,
             self.near,

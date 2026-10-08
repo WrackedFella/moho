@@ -1,9 +1,9 @@
 //! World generation job — owns the async generation channel, thread handle,
 //! cancellation flag, and the most-recently-used WorldSpec.
 
-use crossbeam_channel::Receiver;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Receiver;
 
 pub struct WorldGenerationJob {
     pub receiver: Option<Receiver<crate::GenerationMsg>>,

@@ -33,7 +33,7 @@ flowchart LR
 ## The channel hand-off
 
 Handlers can't mutate `App` (they are `Fn + Send + Sync`) and can't publish. The
-binary solves both with one `crossbeam` channel per event family. `setup_event_bus`
+binary solves both with one `std::sync::mpsc` channel per event family. `setup_event_bus`
 (`event_setup.rs`) subscribes a forwarding closure per family, and the frame loop
 drains the receivers on the main thread.
 
@@ -42,7 +42,7 @@ sequenceDiagram
     participant P as Publisher<br/>(any thread)
     participant B as EventBus
     participant F as forwarding handler
-    participant C as crossbeam channel
+    participant C as mpsc channel
     participant L as frame loop<br/>(main thread)
     P->>B: publish(UiEvent::…)
     B->>F: call handler

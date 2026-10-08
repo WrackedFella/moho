@@ -12,10 +12,10 @@ pub struct InputState {
 
     /// Sender side of the channel for input events not consumed by the UI.
     /// `None` before the UI is set up.
-    pub unconsumed_tx: Option<crossbeam_channel::Sender<crate::input_event::InputEvent>>,
+    pub unconsumed_tx: Option<std::sync::mpsc::Sender<crate::input_event::InputEvent>>,
 
     /// Receiver side of the same channel.
-    pub unconsumed_rx: Option<crossbeam_channel::Receiver<crate::input_event::InputEvent>>,
+    pub unconsumed_rx: Option<std::sync::mpsc::Receiver<crate::input_event::InputEvent>>,
 }
 
 impl InputState {

@@ -46,7 +46,7 @@ enum GenerationMsg {
 /// Returns true if the event was forwarded.
 pub(crate) fn forward_wheel_if_allowed(
     ui_adapter: &std::sync::Arc<std::sync::Mutex<moho_ui::EguiAdapter>>,
-    tx: &crossbeam_channel::Sender<crate::input_event::InputEvent>,
+    tx: &std::sync::mpsc::Sender<crate::input_event::InputEvent>,
     delta_y: f32,
 ) -> bool {
     // Conservative: if we can't acquire the lock, do not forward.
@@ -88,11 +88,11 @@ struct App {
     event_bus: Arc<moho_core::EventBus>,
 
     // Event collection channels (for events that need to mutate App state)
-    ui_event_rx: crossbeam_channel::Receiver<moho_core::events::UiEvent>,
-    audio_event_rx: crossbeam_channel::Receiver<moho_core::events::AudioEvent>,
-    graphics_event_rx: crossbeam_channel::Receiver<moho_core::events::GraphicsEvent>,
-    world_event_rx: crossbeam_channel::Receiver<moho_core::events::WorldEvent>,
-    debug_event_rx: crossbeam_channel::Receiver<moho_core::events::DebugEvent>,
+    ui_event_rx: std::sync::mpsc::Receiver<moho_core::events::UiEvent>,
+    audio_event_rx: std::sync::mpsc::Receiver<moho_core::events::AudioEvent>,
+    graphics_event_rx: std::sync::mpsc::Receiver<moho_core::events::GraphicsEvent>,
+    world_event_rx: std::sync::mpsc::Receiver<moho_core::events::WorldEvent>,
+    debug_event_rx: std::sync::mpsc::Receiver<moho_core::events::DebugEvent>,
 
     // Audio system (not thread-safe, stays on main thread)
     audio_system: Option<moho_audio::AudioSystem>,

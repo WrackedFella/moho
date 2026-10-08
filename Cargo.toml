@@ -15,8 +15,7 @@ members = ["moho_core", "moho_game", "moho_render_api", "moho_renderer", "moho_a
 [workspace.dependencies]
 bincode = "2.0"
 bytemuck = "1.24"
-crossbeam-channel = "0.5"
-glam = "0.30.8"
+glam = "0.33"
 naga = "29.0.1"
 noise = "0.9"
 proptest = { version = "1.11", default-features = false, features = ["std"] }
@@ -29,7 +28,7 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 wgpu = "29.0.4"
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 moho_physics = { path = "moho_physics" }
-rapier3d = { version = "0.32", features = ["simd-stable"] }
+rapier3d = "0.36"
 tempfile = "3.5"
 
 [workspace.lints.rust]
@@ -70,7 +69,6 @@ trivially_copy_pass_by_ref = "allow"
 unnecessary_wraps = "allow"
 
 [dependencies]
-crossbeam-channel = { workspace = true }
 
 [dependencies.bincode]
 workspace = true
