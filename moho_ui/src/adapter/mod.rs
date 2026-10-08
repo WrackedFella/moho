@@ -6,11 +6,11 @@ mod event_routing;
 mod gpu_ops;
 mod rendering;
 
+pub use crate::app_state::GameState;
 use crate::prefs::Prefs;
 use crate::screens::{Menu, MenuAction};
 use crate::ui_state::UiStateManager;
 use moho_renderer::FrameCallback;
-pub use moho_types::GameState;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

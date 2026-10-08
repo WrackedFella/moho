@@ -67,7 +67,6 @@ moho_audio      rodio playback, event-driven
 moho_physics    rapier3d character controller and colliders
 moho_input      key → binding-code mapping
 moho_app        fixed-tick loop shared by the games: Game trait, headless loop
-moho_types      AppState, StateCoordinator
 ```
 
 - Engine crates never depend on `moho_game` (ADR-0001). World geometry reaches
