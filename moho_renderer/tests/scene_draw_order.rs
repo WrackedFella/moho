@@ -161,16 +161,19 @@ fn render_frame(
     spheres: &[Prop],
     cubes: &[Prop],
 ) {
-    let eye_at_origin = (glam::Mat4::IDENTITY, glam::Mat4::IDENTITY, Vec3::ZERO);
+    render_frame_from(scene, renderer, spheres, cubes, Vec3::ZERO);
+}
+
+fn render_frame_from(
+    scene: &mut Scene,
+    renderer: &mut RecordingRenderer,
+    spheres: &[Prop],
+    cubes: &[Prop],
+    eye: Vec3,
+) {
+    let camera = (glam::Mat4::IDENTITY, glam::Mat4::IDENTITY, eye);
     scene
-        .render::<Prop, Prop>(
-            renderer,
-            spheres,
-            cubes,
-            SPHERE_MESH,
-            CUBE_MESH,
-            eye_at_origin,
-        )
+        .render::<Prop, Prop>(renderer, spheres, cubes, SPHERE_MESH, CUBE_MESH, camera)
         .expect("recording renderer's begin_frame always succeeds");
 }
 
@@ -199,6 +202,28 @@ fn transparent_instances_draw_back_to_front_grouped_by_mesh() {
             &draw(SPHERE_MESH, &[1.0]),
         ]
     );
+
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+
+    render_frame_from(
+        &mut scene,
+        &mut renderer,
+        &spheres,
+        &cubes,
+        Vec3::new(6.0, 0.0, 0.0),
+    );
+
+    let calls = renderer.non_empty_draws();
+    assert_eq!(
+        calls,
+        vec![
+            &draw(SPHERE_MESH, &[1.0]),
+            &draw(CUBE_MESH, &[3.0, 4.0]),
+            &draw(SPHERE_MESH, &[5.0]),
+        ],
+        "distance is measured from the camera eye, not the world origin"
+    );
 }
 
 #[test]
@@ -211,14 +236,14 @@ fn transparent_material_routes_to_transparent_pass() {
     render_frame(&mut scene, &mut renderer, &spheres, &cubes);
 
     let calls = renderer.non_empty_draws();
+    let (opaque, transparent) = calls.split_at(2);
+    assert!(
+        opaque.contains(&&draw(CUBE_MESH, &[3.0])) && opaque.contains(&&draw(SPHERE_MESH, &[1.0])),
+        "opaque calls come first, in either order: {calls:?}"
+    );
     assert_eq!(
-        calls,
-        vec![
-            &draw(CUBE_MESH, &[3.0]),
-            &draw(SPHERE_MESH, &[1.0]),
-            &draw(SPHERE_MESH, &[4.0]),
-            &draw(CUBE_MESH, &[2.0]),
-        ]
+        transparent,
+        [&draw(SPHERE_MESH, &[4.0]), &draw(CUBE_MESH, &[2.0])]
     );
 }
 
