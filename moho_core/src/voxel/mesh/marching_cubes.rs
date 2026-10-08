@@ -960,11 +960,17 @@ mod tests {
 
     #[test]
     fn single_voxel_normals_point_outward() {
-        let field = solid_samples_field([(8, 8, 8)]);
+        // Interior sample, and the chunk's last meshed layer, whose +1 neighbour is padding.
+        for sample in [(8, 8, 8), (16, 16, 16)] {
+            let field = solid_samples_field([sample]);
 
-        let mesh = MarchingCubes::generate_mesh(&field, 16);
+            let mesh = MarchingCubes::generate_mesh(&field, 16);
 
-        assert_normals_point_away_from(&mesh, [8.0, 8.0, 8.0]);
+            // A lone sample is an octahedron: 8 triangles, none dropped.
+            assert_eq!(mesh.vertices.len(), 24, "lone voxel at {sample:?}");
+            let (x, y, z) = sample;
+            assert_normals_point_away_from(&mesh, [x as f32, y as f32, z as f32]);
+        }
     }
 
     #[test]
