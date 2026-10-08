@@ -169,36 +169,39 @@ mod tests {
     #[test]
     fn test_camera_builder_customization() {
         let custom_eye = Vec3::new(100.0, 50.0, 100.0);
-        let custom_center = Vec3::new(0.0, 0.0, 0.0);
+        let custom_center = Vec3::ZERO;
 
-        let (_, _, eye) = CameraBuilder::default()
+        let (view, proj, eye) = CameraBuilder::default()
             .with_eye(custom_eye)
             .with_center(custom_center)
             .with_fov_degrees(60.0)
             .build();
 
         assert_eq!(eye, custom_eye);
+        let center_in_view = view.transform_point3(custom_center);
+        assert!(
+            (center_in_view - Vec3::new(0.0, 0.0, -150.0)).length() < 1e-3,
+            "center in view space: {center_in_view:?}"
+        );
+        let expected_focal = 1.0 / 30.0_f32.to_radians().tan();
+        assert!(
+            (proj.y_axis.y - expected_focal).abs() < 1e-4,
+            "proj.y_axis.y = {}",
+            proj.y_axis.y
+        );
     }
 
     #[test]
-    fn test_create_default_camera() {
-        let (view, proj, eye) = create_default_camera();
+    fn default_camera_looks_from_eye_at_center() {
+        let (view, _, eye) = create_default_camera();
 
-        // Should be identical to builder default
-        let (view2, proj2, eye2) = CameraBuilder::default().build();
+        let eye_in_view = view.transform_point3(eye);
+        let center_in_view = view.transform_point3(Vec3::new(0.0, 8.0, 0.0));
 
-        assert_eq!(view, view2);
-        assert_eq!(proj, proj2);
-        assert_eq!(eye, eye2);
-    }
-
-    #[test]
-    fn test_camera_matrices_are_different() {
-        // View and projection matrices should not be identity
-        let (view, proj, _) = CameraBuilder::default().build();
-
-        let identity = Mat4::IDENTITY;
-        assert_ne!(view, identity, "View matrix should not be identity");
-        assert_ne!(proj, identity, "Projection matrix should not be identity");
+        assert!(eye_in_view.length() < 1e-3, "eye in view: {eye_in_view:?}");
+        assert!(
+            (center_in_view - Vec3::new(0.0, 0.0, -59.07)).length() < 0.01,
+            "center in view: {center_in_view:?}"
+        );
     }
 }
