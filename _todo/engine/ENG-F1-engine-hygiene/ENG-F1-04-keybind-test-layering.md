@@ -1,6 +1,9 @@
 # Collapse redundant keybind-conflict test layers
 
 **Feature:** [ENG-F1](_feature.md)
+**Status:** Draft
+**Gate class:** unset
+**Labels:** line:engine
 
 ## Summary
 

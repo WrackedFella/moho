@@ -10,11 +10,12 @@ Sync the planning docs in `_todo/` with reality, following `_todo/_STANDARDS.md`
 1. **Establish what landed.** Merged PRs into `dev` since the last sync
    (`gh pr list --state merged --base dev`), the current branch's diff, and any
    findings raised in this session.
-2. **Status.** Cards, features, the README and the roadmap carry no status; the board
-   (WrackedFella project 1) is the record. Read it with devflow's `scripts/board get`.
-   Where a merged PR, an open PR or a card disagrees with the board, report it for the
-   user; never edit a card's status to resolve it, and change the board only on the
-   user's say-so. Keep the feature's item table and `_todo/README.md` listing the right
+2. **Status.** The board (WrackedFella project 1) is the record; cards and features
+   mirror Status, Gate class and Labels in their header (`_todo/_STANDARDS.md`, Item
+   state). The README and the roadmap carry no status. Read the board with devflow's
+   `scripts/board get`. Overwrite each header field that differs from GitHub and list
+   the change in the report. Where a merged PR or an open PR disagrees with the board,
+   report it for the user; change the board only on the user's say-so. Keep the feature's item table and `_todo/README.md` listing the right
    items. A feature is Done only when its exit criteria are verified, not when its cards are.
 3. **Findings.** Route each new concern to an existing card (add a deliverable) or,
    if nothing fits, a new card under the right feature. Propose a new feature (no
@@ -25,7 +26,7 @@ Sync the planning docs in `_todo/` with reality, following `_todo/_STANDARDS.md`
    body, or whose issue body is only a pointer; republish on the user's say-so.
 5. **Clean up finished work** (`_todo/_STANDARDS.md`, Local drafts and cleanup).
    Delete the file of each card whose issue is closed as completed, and the directory
-   of each feature that is Done on the board. Point links to them at the issue
+   of each feature whose issue is closed as completed. Point links to them at the issue
    instead. Leave open or not-planned items alone and report them.
 6. **Hygiene.** Keep cards terse; no narration or history. Fix broken links between
    cards, features, the README and ADRs.

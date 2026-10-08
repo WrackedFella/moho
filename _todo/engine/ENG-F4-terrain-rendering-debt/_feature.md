@@ -1,5 +1,7 @@
 # ENG-F4 — Terrain Rendering Debt
 
+**Status:** Draft
+**Labels:** feature, line:engine
 
 ## Summary
 

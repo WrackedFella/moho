@@ -1,6 +1,9 @@
 # Mining requires an equipped tool
 
 **Feature:** [SG-F1](_feature.md)
+**Status:** Draft
+**Gate class:** unset
+**Labels:** line:strategy
 
 ## Summary
 

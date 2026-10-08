@@ -1,6 +1,9 @@
 # Mining shows a pickup feedback popup
 
 **Feature:** [SG-F1](_feature.md)
+**Status:** Draft
+**Gate class:** unset
+**Labels:** line:strategy
 
 ## Summary
 

@@ -1,6 +1,9 @@
 # Per-chunk material majority vote is wrong
 
 **Feature:** [ENG-F4](_feature.md)
+**Status:** Draft
+**Gate class:** unset
+**Labels:** line:engine
 
 ## Summary
 

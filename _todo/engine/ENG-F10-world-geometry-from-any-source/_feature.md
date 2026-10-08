@@ -1,6 +1,8 @@
 # ENG-F10 — The engine renders and collides with world geometry from any source
 
-**Issue:** #80
+**Issue:** [#80](https://github.com/WrackedFella/moho/issues/80)
+**Status:** unknown
+**Labels:** feature, line:engine
 
 
 ## Summary

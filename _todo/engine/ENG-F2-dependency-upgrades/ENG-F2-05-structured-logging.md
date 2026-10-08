@@ -1,7 +1,10 @@
 # Engine and game logs are structured tracing events
 
 **Feature:** [ENG-F2](_feature.md)
-**Issue:** #98
+**Issue:** [#98](https://github.com/WrackedFella/moho/issues/98)
+**Status:** unknown
+**Gate class:** glue
+**Labels:** line:engine
 
 ## Summary
 

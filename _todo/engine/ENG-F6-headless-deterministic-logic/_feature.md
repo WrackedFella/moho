@@ -1,6 +1,8 @@
 # ENG-F6 — Game logic runs and is tested headless and deterministically
 
 **Note:** No current defect; reopen when a feature's rules need it, see Notes
+**Status:** Draft
+**Labels:** feature, line:engine
 
 ## Summary
 
@@ -23,7 +25,7 @@ replays and future lockstep multiplayer.
 
 - In: decoupling the fixed tick from rendering (one seam, [ADR-0009](../../adr/0009-simulation-time-is-one-fixed-tick.md));
   seeded randomness.
-- Out: dependency cleanup (gate G2, [ENG-F8](../ENG-F8-foundation-gate/_feature.md)); `proptest`/`insta` adoption
+- Out: dependency cleanup (gate G2, [ENG-F8](https://github.com/WrackedFella/moho/issues/61)); `proptest`/`insta` adoption
   ([ENG-F9](../ENG-F9-tests-prove-behaviour/_feature.md)); refactoring rendering or UI for testability; physics determinism
   (rapier) beyond fixed-step stepping.
 
@@ -42,7 +44,7 @@ frame loop already advances simulation by a constant 1/60 s step (fixed
 timestep, coupled to the frame loop); wall-clock reads feed only fields no
 logic reads, or timing instrumentation; the process-wide counters (`JobId`,
 renderer light IDs) aren't simulation state; there is no RNG. The `winit`
-criterion is gate G2 ([ENG-F8](../ENG-F8-foundation-gate/_feature.md)); `proptest`/`insta` adoption is [ENG-F9](../ENG-F9-tests-prove-behaviour/_feature.md). Reopen when
+criterion is gate G2 ([ENG-F8](https://github.com/WrackedFella/moho/issues/61)); `proptest`/`insta` adoption is [ENG-F9](../ENG-F9-tests-prove-behaviour/_feature.md). Reopen when
 a feature needs rules that read elapsed time from a test-controlled clock,
 or when render and simulation rates must decouple. The design for that is
 [ADR-0009](../../adr/0009-simulation-time-is-one-fixed-tick.md) (accepted).
