@@ -11,7 +11,7 @@ Voxels sit in `moho_core` today and move to the strategy-line `moho_voxel` per [
 flowchart TD
     subgraph frame["each Playing frame"]
         S["ChunkStreamer::update(grid, player_pos)"]
-        S -->|"beyond unload_radius"| EV["evict: save if modified,<br/>remove entity + collider"]
+        S -->|"beyond unload_radius"| EV["evict: save if modified,<br/>remove mesh + collider"]
         S -->|"within load_radius,<br/>≤ chunks_per_frame columns"| LD["generate column<br/>chunk Y 0..=8"]
         LD --> D1["publish ChunkMeshDirty<br/>for chunk and its 6 neighbours"]
         LS["LightSystem::process_frame<br/>(budgeted)"] --> D2["emit_dirty_events →<br/>ChunkMeshDirty"]
@@ -22,7 +22,7 @@ flowchart TD
     PW --> LOD{"lod_for_chunk<br/>XZ distance ≥ 4?"}
     LOD -- "no: LOD 0" --> M0["full 16³ hybrid mesh"]
     LOD -- "yes: LOD 1" --> M1["coarse 8³ blocky mesh"]
-    M0 & M1 --> OUT["world_geometry::insert_chunk<br/>(ChunkStore + WorldMeshes.upsert)<br/>physics.update_chunk_collider"]
+    M0 & M1 --> OUT["world_geometry::insert_chunk<br/>(ChunkStore + WorldMeshes.upsert<br/>+ PhysicsWorld.set_world_mesh)"]
     OUT --> R["flushed and drawn next redraw"]
 ```
 

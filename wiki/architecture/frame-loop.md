@@ -60,7 +60,7 @@ After `process_frame`, `new_events` drains one channel per event family, in this
 | 1 | `process_ui_events` | load/new world, exit (auto-save), menus |
 | 2 | `process_audio_events` | forward to `AudioSystem` |
 | 3 | `process_graphics_events` | time of day, quality settings |
-| 4 | `process_world_events` | `ChunkMeshDirty` → remesh + collider |
+| 4 | `process_world_events` | `ChunkMeshDirty` → remesh (draw + collider) |
 | 5 | `process_input_events` | wheel zoom, mine action |
 | 6 | `process_debug_events` | spawn, god mode, noclip |
 
