@@ -81,7 +81,10 @@ behavior; the callback itself needs a GPU device, and `moho_renderer` is exclude
   tests to #156; no conflict beyond the `instance_collector` mock line.
 - ENG-F11 (#143 to #145): no shared files.
 
-**Risks:** none beyond the UI draw path. Blast radius is `moho_renderer` only.
+**Risks:** none beyond the UI draw path. Blast radius is `moho_renderer` only: GitNexus
+upstream impact is LOW for the raw setter, `FrameCallbackWrapper` (no dependents) and
+`finish_frame` (only `submit_frame`). The kept `FrameCallback` trait reaches `EguiAdapter`
+and `StubUi` in `moho_ui`, which this card doesn't change.
 
 ## Verification
 
