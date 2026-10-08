@@ -33,6 +33,14 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # Claude Code may only touch the workspace, so the board script comes from a
+      # checkout here instead of the plugin cache. Both refs below match the pin in
+      # .claude/settings.json; bump them together.
+      - uses: actions/checkout@v4
+        with:
+          repository: WrackedFella/claude-skills
+          ref: v0.9.0
+          path: .devflow-src
       - uses: anthropics/claude-code-action@v1
         env:
           # scripts/board needs GraphQL and Projects v2, which the default token lacks.
@@ -40,13 +48,13 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
+          plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git#v0.9.0
           plugins: devflow@claude-skills
           # Writes the run to the job summary; the agent runs without GitHub comments on dispatch.
           display_report: true
           prompt: |
             ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prompt || '' }}
-            ${{ github.event_name == 'pull_request' && 'Smoke test, read-only. 1) List the devflow skills and agents you can see. 2) Find the devflow plugin directory with find under ~/.claude/plugins and run its scripts/board next WrackedFella 1, reporting the output or the exact error. Change no files and post no comments.' || '' }}
+            ${{ github.event_name == 'pull_request' && 'Smoke test, read-only. 1) List the devflow skills and agents you can see. 2) Run exactly this single command: bash .devflow-src/plugins/devflow/scripts/board next WrackedFella 1. Report its output or the exact error. Do not combine commands. Change no files and post no comments.' || '' }}
           claude_args: |
             --max-turns 12
-            --allowedTools "Bash(find:*),Bash(ls:*),Bash(cat:*),Bash(*board next*),Bash(gh auth status)"
+            --allowedTools "Bash(bash .devflow-src/plugins/devflow/scripts/board next *),Bash(ls:*),Bash(cat:*)"
