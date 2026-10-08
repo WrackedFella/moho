@@ -1,0 +1,193 @@
+//! Hands voxel chunk meshes to the renderer through the world-geometry contract.
+
+use glam::IVec3;
+use moho_core::voxel::VoxelChunk;
+use moho_render_api::{WorldMesh, WorldMeshError, WorldMeshId};
+
+/// Stable renderer key for the chunk at `pos`.
+pub fn chunk_mesh_id(_pos: IVec3) -> WorldMeshId {
+    WorldMeshId(0)
+}
+
+/// The chunk's mesh in the world-geometry contract's form.
+pub fn chunk_world_mesh(_chunk: &VoxelChunk) -> Result<WorldMesh, WorldMeshError> {
+    todo!("convert chunk channels to a WorldMesh")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::App;
+    use crate::app::event_loop::event_processor::EventProcessor;
+    use crate::app::event_loop::frame_processor::FrameProcessor;
+    use crate::game_state::GameState;
+    use moho_core::events::WorldEvent;
+    use moho_renderer::RendererBackend;
+    use proptest::prelude::*;
+    use std::collections::HashSet;
+
+    const LIMIT: i32 = 1 << 20;
+
+    proptest! {
+        #[test]
+        fn chunk_mesh_id_is_unique_within_range(
+            a in (-LIMIT..LIMIT, -LIMIT..LIMIT, -LIMIT..LIMIT),
+            b in (-LIMIT..LIMIT, -LIMIT..LIMIT, -LIMIT..LIMIT),
+            step in (-1..=1i32, -1..=1i32, -1..=1i32),
+        ) {
+            let a = IVec3::new(a.0, a.1, a.2);
+            let b = IVec3::new(b.0, b.1, b.2);
+            let near = (a + IVec3::new(step.0, step.1, step.2)).clamp(IVec3::splat(-LIMIT), IVec3::splat(LIMIT - 1));
+
+            prop_assert_eq!(a == b, chunk_mesh_id(a) == chunk_mesh_id(b));
+            prop_assert_eq!(a == near, chunk_mesh_id(a) == chunk_mesh_id(near));
+        }
+    }
+
+    #[test]
+    fn chunk_mesh_id_is_unique_across_axis_extremes() {
+        let corners = [-LIMIT, -1, 0, 1, LIMIT - 1];
+        let mut seen = HashSet::new();
+
+        for x in corners {
+            for y in corners {
+                for z in corners {
+                    assert!(
+                        seen.insert(chunk_mesh_id(IVec3::new(x, y, z))),
+                        "id collision at ({x}, {y}, {z})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Records register and unregister calls; handles are never reused.
+    #[derive(Default)]
+    struct RecordingBackend {
+        next_handle: u32,
+        registered: Vec<u32>,
+        unregistered: Vec<u32>,
+    }
+
+    impl RendererBackend for RecordingBackend {
+        fn resize(&mut self, _width: u32, _height: u32) {}
+        fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+            unreachable!("world meshes upload indexed meshes")
+        }
+        fn register_indexed_mesh(
+            &mut self,
+            _vertices: &[[f32; 3]],
+            _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
+            _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
+            _indices: &[u32],
+        ) -> u32 {
+            self.next_handle += 1;
+            self.registered.push(self.next_handle);
+            self.next_handle
+        }
+        fn unregister_mesh(&mut self, mesh: u32) {
+            self.unregistered.push(mesh);
+        }
+        fn begin_frame(
+            &mut self,
+            _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+        ) -> Result<(), moho_renderer::FrameError> {
+            Ok(())
+        }
+        fn enqueue_draw(&mut self, _mesh: u32, _instances: &[moho_renderer::InstanceGpu]) {}
+        fn submit_frame(&mut self) {}
+        fn set_materials(&mut self, _materials: &[moho_renderer::MaterialGpu]) {}
+        fn update_lighting(&mut self, _lighting: moho_renderer::LightingGpu) {}
+        fn add_point_light(
+            &mut self,
+            _position: glam::Vec3,
+            _color: glam::Vec3,
+            _intensity: f32,
+            _range: f32,
+        ) -> u32 {
+            0
+        }
+        fn remove_light(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
+        fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_ssao_quality(&mut self, _quality: u8) {}
+        fn set_frame_callback_raw(&mut self, _ptr: Option<*mut dyn moho_renderer::FrameCallback>) {}
+        fn set_frame_callback_arc(
+            &mut self,
+            _cb: Option<std::sync::Arc<std::sync::Mutex<dyn moho_renderer::FrameCallback>>>,
+        ) {
+        }
+    }
+
+    #[test]
+    fn evicted_chunk_is_not_drawn() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_position_yaw_pitch(glam::Vec3::new(8.0, 80.0, 8.0), 0.0, 0.0);
+        app.chunk_streamer = Some(crate::app::chunk_streamer::ChunkStreamer::new(
+            moho_game::scene_builders::TerrainConfig::default(),
+            moho_core::voxel::StreamingConfig {
+                load_radius_chunks: 0,
+                unload_radius_chunks: 1,
+                chunks_per_frame: 1,
+            },
+            "headless-test-evicted-chunk-not-drawn",
+        ));
+        let far = IVec3::new(10, 4, 10);
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        grid.mutator()
+            .place(moho_core::voxel::BlockPos::new(165, 70, 165), 1, None);
+        // Unmodified, so eviction doesn't write a chunk file to the working directory.
+        grid.clear_chunk_modified(far);
+        let _ = app.world_event_rx.try_iter().count();
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos: far,
+            terrain_dirty: true,
+            structure_dirty: false,
+        });
+        EventProcessor::new().process_world_events(&mut app);
+        assert!(
+            app.entities
+                .chunks
+                .get(far)
+                .is_some_and(VoxelChunk::has_geometry),
+            "the placed block meshes into a chunk with geometry"
+        );
+        let mut backend = RecordingBackend::default();
+        app.scene.world_meshes_mut().flush(&mut backend);
+        assert_eq!(backend.registered.len(), 1, "the chunk's mesh is uploaded");
+        let handle = backend.registered[0];
+        assert_eq!(
+            app.scene
+                .world_meshes_mut()
+                .draws()
+                .map(|(h, _)| h)
+                .collect::<Vec<_>>(),
+            vec![handle],
+            "the chunk is drawn while loaded"
+        );
+
+        FrameProcessor::new().update_chunk_streaming(&mut app);
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        assert!(app.entities.chunks.get(far).is_none(), "chunk was evicted");
+        assert_eq!(
+            app.scene.world_meshes_mut().draws().count(),
+            0,
+            "nothing is drawn for the evicted chunk"
+        );
+        assert_eq!(backend.unregistered, vec![handle], "its GPU mesh was freed");
+    }
+}

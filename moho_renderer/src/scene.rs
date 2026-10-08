@@ -1,4 +1,4 @@
-use crate::{BufferManager, InstanceCollector, MaterialTable, RendererBackend};
+use crate::{BufferManager, InstanceCollector, MaterialTable, RendererBackend, WorldMeshes};
 use moho_core::voxel::VoxelChunk;
 use moho_render_api::{InstanceGpu, Renderable};
 
@@ -18,6 +18,7 @@ pub struct Scene {
     pub material_table: MaterialTable,
     buffer_manager: BufferManager,
     instance_collector: InstanceCollector,
+    world_meshes: WorldMeshes,
 }
 
 impl Scene {
@@ -26,7 +27,13 @@ impl Scene {
             material_table: MaterialTable::new(),
             buffer_manager: BufferManager::new(),
             instance_collector: InstanceCollector::new(),
+            world_meshes: WorldMeshes::new(),
         }
+    }
+
+    /// Queue world-geometry changes; they reach the backend on the next `render`.
+    pub fn world_meshes_mut(&mut self) -> &mut WorldMeshes {
+        &mut self.world_meshes
     }
 
     /// Render the provided actors and chunks using `renderer`. `mesh_handle` is the
@@ -41,15 +48,13 @@ impl Scene {
     /// (e.g. surface lost/outdated); the surface has already been
     /// reconfigured in that case, so callers should just skip the frame.
     #[allow(clippy::too_many_arguments)]
-    pub fn render<'a, S, C>(
+    pub fn render<S, C>(
         &mut self,
         renderer: &mut dyn RendererBackend,
         spheres: &[S],
         cubes: &[C],
-        chunks: impl IntoIterator<Item = &'a mut VoxelChunk>,
         mesh_handle: u32,
         cube_mesh_handle: u32,
-        terrain_material_idx: u32,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) -> Result<(), crate::FrameError>
     where
@@ -60,14 +65,14 @@ impl Scene {
         let prepared = ScenePreparation::prepare(
             spheres,
             cubes,
-            chunks,
+            std::iter::empty::<&mut VoxelChunk>(),
             &mut self.material_table,
             &mut self.buffer_manager,
             &mut self.instance_collector,
             renderer,
             mesh_handle,
             cube_mesh_handle,
-            terrain_material_idx,
+            0,
         );
 
         renderer.begin_frame(camera)?;

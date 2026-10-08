@@ -90,6 +90,9 @@ path = "moho_game"
 [dependencies.moho_input]
 path = "moho_input"
 
+[dependencies.moho_render_api]
+path = "moho_render_api"
+
 [dependencies.moho_renderer]
 path = "moho_renderer"
 
@@ -117,6 +120,7 @@ workspace = true
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 tempfile = { workspace = true }
+proptest = { workspace = true }
 
 [[bench]]
 name = "event_bus_bench"

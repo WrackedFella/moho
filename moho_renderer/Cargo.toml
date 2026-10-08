@@ -15,7 +15,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-moho_game = { path = "../moho_game" }
+proptest = { workspace = true }
 naga = { workspace = true, features = ["wgsl-in"] }
 
 [features]
