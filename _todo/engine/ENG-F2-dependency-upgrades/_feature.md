@@ -1,11 +1,13 @@
 # ENG-F2 — The dependency tree is current, clean and carries only chosen crates
 
-**Issue:** #93
+**Issue:** [#93](https://github.com/WrackedFella/moho/issues/93)
+**Status:** unknown
+**Labels:** feature, line:engine
 
 ## End state
 
 The engine ships as a separate repo ([ENG-F5](../ENG-F5-physical-repo-split/_feature.md))
-whose dependencies are each chosen on purpose ([ENG-F13](../ENG-F13-dependency-audit/_feature.md)),
+whose dependencies are each chosen on purpose ([ENG-F13](https://github.com/WrackedFella/moho/issues/83)),
 free of unowned advisories, and close enough to upstream that an upgrade is
 routine work, not a rewrite.
 
@@ -65,7 +67,7 @@ to copy, and setting the upgrade rhythm later milestones follow.
 |---|
 | [ENG-F2-01 Saves use the ADR-0006 envelope and encoding](ENG-F2-01-bincode-migration.md) |
 | [ENG-F2-02 UI screens use egui's current entry points](ENG-F2-02-egui-ui-architecture-migration.md) |
-| [ENG-F2-03 Unused dependencies and default features are trimmed](ENG-F2-03-platform-default-features-and-unused-deps.md) |
+| [ENG-F2-03 Unused dependencies and default features are trimmed](https://github.com/WrackedFella/moho/issues/96) |
 | [ENG-F2-04 The paste advisory ignore is removed](ENG-F2-04-paste-advisory-cleared.md) |
 | [ENG-F2-05 Engine and game logs are structured tracing events](ENG-F2-05-structured-logging.md) |
 | [ENG-F2-06 Event and job channels use the standard library](ENG-F2-06-std-channels.md) |
@@ -78,7 +80,7 @@ to copy, and setting the upgrade rhythm later milestones follow.
 
 - `glam` 0.30→0.34 — blocked on `rapier3d` (pins glam 0.30 via `glamx`); re-check in [ENG-F2-09](ENG-F2-09-physics-stack-current.md).
 - `wgpu`/`naga` 29→30 — recorded as blocked on `egui-wgpu`; `egui-wgpu` 0.36.2 has since shipped, so re-check in [ENG-F2-08](ENG-F2-08-graphics-stack-current.md).
-- `ttf-parser` unmaintained (RUSTSEC-2026-0192) — removed by [ENG-F2-03](ENG-F2-03-platform-default-features-and-unused-deps.md) (winit default features off).
+- `ttf-parser` unmaintained (RUSTSEC-2026-0192) — removed by [ENG-F2-03](https://github.com/WrackedFella/moho/issues/96) (winit default features off).
 - `bincode` unmaintained (RUSTSEC-2025-0141); 3.0.0 is a `compile_error!` tombstone — replaced by [ENG-F2-01](ENG-F2-01-bincode-migration.md) ([ADR-0006](../../adr/0006-save-format-contract.md)).
 - `paste` unmaintained (RUSTSEC-2024-0436) — via `rapier3d` → `simba`; tracked by [ENG-F2-04](ENG-F2-04-paste-advisory-cleared.md).
 

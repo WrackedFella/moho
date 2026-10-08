@@ -1,7 +1,10 @@
 # The graphics stack is on current wgpu and egui
 
 **Feature:** [ENG-F2](_feature.md)
-**Issue:** #101
+**Issue:** [#101](https://github.com/WrackedFella/moho/issues/101)
+**Status:** unknown
+**Gate class:** glue
+**Labels:** line:engine
 
 ## Summary
 

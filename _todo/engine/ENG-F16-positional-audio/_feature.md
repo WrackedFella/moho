@@ -1,5 +1,7 @@
 # ENG-F16 — Sounds play from positions
 
+**Status:** Draft
+**Labels:** feature, line:engine
 
 ## Summary
 

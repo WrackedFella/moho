@@ -1,5 +1,7 @@
 # ENG-F18 — Both games share the UI shell
 
+**Status:** Draft
+**Labels:** feature, line:engine
 
 ## Summary
 

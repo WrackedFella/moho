@@ -1,6 +1,8 @@
 # ENG-F12 — Input is game-defined actions bound as data
 
-**Issue:** #82
+**Issue:** [#82](https://github.com/WrackedFella/moho/issues/82)
+**Status:** unknown
+**Labels:** feature, line:engine
 
 
 ## Summary

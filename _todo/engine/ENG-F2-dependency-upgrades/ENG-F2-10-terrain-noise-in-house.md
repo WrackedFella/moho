@@ -1,7 +1,10 @@
 # Terrain generation uses in-house Perlin noise
 
 **Feature:** [ENG-F2](_feature.md)
-**Issue:** #105
+**Issue:** [#105](https://github.com/WrackedFella/moho/issues/105)
+**Status:** unknown
+**Gate class:** unset
+**Labels:** line:engine
 
 ## Summary
 

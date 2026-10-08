@@ -1,6 +1,9 @@
 # CPU frustum culling + draw sorting
 
 **Feature:** [ENG-F3](_feature.md)
+**Status:** Draft
+**Gate class:** unset
+**Labels:** line:engine
 
 ## Summary
 

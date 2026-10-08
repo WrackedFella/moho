@@ -1,7 +1,10 @@
 # Event and job channels use the standard library
 
 **Feature:** [ENG-F2](_feature.md)
-**Issue:** #99
+**Issue:** [#99](https://github.com/WrackedFella/moho/issues/99)
+**Status:** unknown
+**Gate class:** glue
+**Labels:** line:engine
 
 ## Summary
 

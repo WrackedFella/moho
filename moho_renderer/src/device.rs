@@ -16,6 +16,7 @@
 //! // let setup = DeviceSetup::new(window)?;
 //! ```
 
+use crate::block_on::block_on;
 use std::error::Error;
 use std::fmt;
 
@@ -95,7 +96,7 @@ impl<'a> DeviceSetup<'a> {
             .map_err(|e| DeviceInitError::SurfaceCreation(format!("{e:?}")))?;
 
         // 3. Request Adapter
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
@@ -129,7 +130,7 @@ impl<'a> DeviceSetup<'a> {
         }
 
         // 5. Request Device and Queue
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: None,
             required_features,
             required_limits: limits,

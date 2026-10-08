@@ -1,6 +1,9 @@
 # LOD1 mesh has holes and looks too blocky
 
 **Feature:** [ENG-F4](_feature.md)
+**Status:** Draft
+**Gate class:** unset
+**Labels:** line:engine
 
 ## Summary
 

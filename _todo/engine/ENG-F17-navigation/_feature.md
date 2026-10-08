@@ -1,5 +1,7 @@
 # ENG-F17 — Agents path over any static level
 
+**Status:** Draft
+**Labels:** feature, line:engine
 
 ## Summary
 
