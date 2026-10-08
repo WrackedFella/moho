@@ -2,6 +2,7 @@
 name: sync-backlog
 description: Bring _todo/ in line with what actually landed - item tables, the README index, and board/card disagreements - and route new findings to existing cards or a proposed feature. Use after work merges or when findings need tracking.
 argument-hint: "[scope: feature/item IDs, or blank for everything touched recently]"
+disable-model-invocation: true
 ---
 
 Sync the planning docs in `_todo/` with reality, following `_todo/_STANDARDS.md`.

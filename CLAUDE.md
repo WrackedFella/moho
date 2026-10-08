@@ -15,6 +15,7 @@ just check                         # the gate
 just test -E 'package(moho_core)'  # one crate; -E 'test(name)' for one test
 just mutants                       # mutation-test changes since origin/dev; exit 2 = survivor
 just deny                          # licenses, advisories, sources
+bash scripts/cloud-tools.sh        # cloud threads only, before the first build
 gh workflow run CI --ref <branch>  # all three OSes on a branch (PRs into dev run Linux only)
 cargo run                          # RUST_LOG=debug for logging
 ```
@@ -35,6 +36,8 @@ cargo run                          # RUST_LOG=debug for logging
 - **Planning:** index `_todo/README.md`, rules `_todo/_STANDARDS.md` (features first,
   IDs like `SG-F1-04`, card lifecycle). Check `_todo/ROADMAP.md` for order before
   picking up work.
+- **Environment setup command:** `bash scripts/cloud-tools.sh` (cloud threads only;
+  text-only threads skip it).
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
 - **Domain-logic paths** (gate class `domain`): rules in `moho_game`, `moho_core`.
   Adapters, UI wiring and config are glue.

@@ -1,6 +1,7 @@
 ---
 name: next
 description: Short status, then the next logical increment of work and whether it needs planning, design discussion or can start now. Use when asking "what's next?".
+disable-model-invocation: true
 ---
 
 1. Run `/devflow:sitrep` for the project overview.
