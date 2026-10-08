@@ -46,7 +46,10 @@ Who writes what:
 - **Sync agent (board and issue access): the only writer after publish.** It copies
   Status, Gate class and Labels from GitHub into the card header, and deletes the files
   of items whose issue is closed as completed. When a card and GitHub disagree, GitHub
-  wins; the agent overwrites the card and reports the change.
+  wins; the agent overwrites the card and reports the change. The one exception is a
+  field GitHub has no value for (Gate class or Status missing on the board, no issue
+  labels): if the header holds a concrete value (not `unset`, `unknown` or `Draft`),
+  the agent pushes it to GitHub and reports it.
 - **Planning threads** write the fields only while an item has no issue: `Status: Draft`,
   the intended `Gate class` (or `unset`) and `Labels`. On publish they add the `Issue`
   link and set `Status: unknown`, which the sync agent replaces.
