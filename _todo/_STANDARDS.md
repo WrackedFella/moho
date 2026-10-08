@@ -147,7 +147,7 @@ Paused or blocked items stay at their Status; say why in a `**Note:**` line.
 
 The `agent-ready` label is a run trigger, not a status. A human applies it to the issue
 of an item that is Ready and Agent-eligible Yes, and that starts a remote run
-([Remote runs](WORKFLOW.md#remote-runs)). Nothing reads it as readiness, and nothing
+([Run options](WORKFLOW.md#run-options)). Nothing reads it as readiness, and nothing
 removes it. The issue type picks the run: on a work item the orchestrator implements it,
 and on a `feature` issue the refine skill splits it into work items.
 
