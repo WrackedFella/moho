@@ -403,7 +403,11 @@ mod tests {
         for _ in 0..10 {
             world.move_character(Vec3::ZERO, 1.0 / 60.0);
         }
-        assert!(world.vertical_velocity < 0.0);
+        assert!(
+            (world.vertical_velocity + 3.0).abs() < 1e-4,
+            "10 airborne frames at -18 should give -3.0, v={}",
+            world.vertical_velocity
+        );
 
         let target = Vec3::new(3.0, 20.0, -4.0);
         world.set_character_position(target);
