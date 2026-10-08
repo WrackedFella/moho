@@ -16,7 +16,6 @@ moho_input = { path = "../moho_input" }
 moho_core = { path = "../moho_core" }
 moho_game = { path = "../moho_game" }
 rand = { workspace = true }
-phf = { version = "0.13.1", features = ["macros"] }
 
 [features]
 default = []

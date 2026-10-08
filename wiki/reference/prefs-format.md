@@ -1,6 +1,7 @@
 # Preferences file
 
-**Source:** `moho_core/src/prefs/` (`mod.rs`, `reader.rs`, `parser.rs`, `key_names.rs`). Path: `config/prefs.ini`,
+**Source:** `moho_core/src/prefs/` (`mod.rs`, `reader.rs`), `moho_input/src/bindings.rs`, `moho_input/src/key.rs`,
+`moho_ui/src/actions.rs`. Path: `config/prefs.ini`,
 relative to the working directory.
 
 `Prefs::load` creates the file with defaults if it is missing. Missing sections or keys
@@ -26,11 +27,13 @@ unknown key of section `[default]`.
 ```mermaid
 flowchart LR
     F["config/prefs.ini"] -->|"Prefs::load"| P["Prefs"]
-    P --> I["input: bindings, sensitivity"]
+    P --> B["[bindings] raw text"] -->|"ActionBindings::load"| I["input: bindings"]
+    P --> M["input: sensitivity"]
     P --> Au["moho_audio: category volumes"]
     P --> Rn["moho_renderer: shadow / SSAO quality"]
     P --> W["window: mode, resolution"]
     P --> S["ChunkStreamer: radii, budget"]
+    B -.->|"ActionBindings::to_section"| P
     P -->|"Prefs::save"| F
 ```
 
@@ -38,11 +41,9 @@ flowchart LR
 
 | Section | Key | Accepted values | Default |
 |---|---|---|---|
-| `[prefs]` | `key_w` `key_a` `key_s` `key_d` | binding string | `W` `A` `S` `D` |
-| | `key_up` `key_down` | binding string | `Spacebar` `Ctrl` |
-| | `key_sprint` `key_jump` | binding string | `Shift` `Spacebar` |
-| | `mouse_sensitivity` | finite float | `1` |
+| `[prefs]` | `mouse_sensitivity` | finite float | `1` |
 | | `input_filtering_enabled` | `true` `false` `1` `0` (any case) | `true` |
+| `[bindings]` | one key per action id | binding list | per action, below |
 | `[audio]` | `sound_effect_volume` `music_volume` `ui_volume` `voice_volume` | finite float, written with 1 decimal | `7.0` `5.0` `8.0` `7.0` |
 | `[graphics]` | `shadow_quality` `ssao_quality` | unsigned integer; the UI offers 0 (off) to 4 (ultra) | `3` `3` |
 | `[video]` | `window_mode` | `Windowed` \| `Fullscreen` \| `Borderless`, exact case | `Windowed` |
@@ -50,10 +51,37 @@ flowchart LR
 | `[world]` | `load_radius` `unload_radius` | integer chunks | `8` `12` |
 | | `chunks_per_frame` | unsigned integer, 1 or more | `4` |
 
-A binding string is one key name, case-insensitive: a single character (`W`), a named
-key (`ArrowUp`, `Spacebar`, `Escape`), a modifier key bound on its own (`Ctrl`, `Shift`,
-`Alt`), a numeric key code of two or more digits, or `Unbound`. There is no modifier syntax such as `Ctrl+W`. Names live in
-`prefs/key_names.rs`; parsing and serialisation in `prefs/parser.rs`.
+`[bindings]` is stored by `Prefs` as raw text (`Prefs::bindings`, `Prefs::set_bindings`);
+the game interprets it. `ActionBindings::load` (`moho_input`) reads it against the
+game's `Action` enum: each key is an action's stable `name()`, each value a binding
+list. Absent actions keep their defaults; `ActionBindings::to_section` writes every
+action, defaults included. Line problems are returned as `BindingWarning`s and the
+action keeps its default (`moho_ui::actions::load_bindings` logs them): an unknown
+action id, or a value with any unrecognised key. A `[bindings]` line with no `=` is a
+malformed prefs line. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
+keys and ignored.
+
+A binding list is comma-separated key names (`W`, `Spacebar, Enter`); an action may
+have several, and is active when any is held. Empty or `Unbound` (any case) is an empty list. Names are
+case-insensitive and come from `Key::name` in `moho_input/src/key.rs`: letters, digits,
+punctuation spelled as a word (`Comma`, `Semicolon`, `LeftBracket`, ...), `ArrowUp`..,
+`Escape`, `Tab`, `Backspace`, `Enter`, `Spacebar`, and the modifiers `Shift`, `Ctrl`,
+`Alt` bound on their own. `Key::parse` also accepts the aliases `Up`, `Esc`, `Return`,
+`Space`, `Control` and the punctuation glyphs, but in `prefs.ini` write punctuation as
+words: the INI reader cuts a line at `;` or `#`, reads a line with `[` as a section
+header, and `,` separates list items. There is no modifier syntax such as `Ctrl+W`
+and no numeric key codes.
+
+Strategy actions (`StrategyAction`, `moho_ui/src/actions.rs`) and defaults:
+
+| Id | Default |
+|---|---|
+| `move_forward` `move_back` `move_left` `move_right` | `W` `S` `A` `D` |
+| `ascend` `jump` | `Spacebar` |
+| `descend` | `Ctrl` |
+| `sprint` | `Shift` |
+
+Action ids are persisted and never renamed.
 
 Audio sections map to `AudioCategory` in `moho_audio/src/audio_source.rs`: `SoundEffect`,
 `Music`, `UserInterface`, `Voice`.
@@ -64,12 +92,13 @@ World keys drive [world streaming](../architecture/world-streaming.md).
 
 ```ini
 [prefs]
-key_w=W
-key_a=A
-key_s=S
-key_d=D
 mouse_sensitivity=1.2
 input_filtering_enabled=true
+
+[bindings]
+move_forward=W
+jump=Spacebar, Enter
+descend=Unbound
 
 [audio]
 music_volume=5.0

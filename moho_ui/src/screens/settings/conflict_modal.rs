@@ -3,17 +3,16 @@
 /// This module manages the state needed to display and resolve keybinding conflicts.
 /// When a user attempts to bind a key that's already assigned to another action,
 /// this modal prompts them to confirm whether they want to replace the existing binding.
-use crate::prefs::Binding;
+use moho_input::key::Key;
+
+use crate::actions::StrategyAction;
 
 /// Represents a pending binding that triggered a conflict.
 #[derive(Clone)]
 pub struct PendingBinding {
-    /// The ID of the binding slot being configured (0-5 for key_w through key_down)
-    pub target_id: usize,
-    /// The new binding the user wants to assign
-    pub binding: Binding,
-    /// The ID of the conflicting binding slot, if any
-    pub conflicting_id: Option<usize>,
+    pub target: StrategyAction,
+    pub key: Key,
+    pub conflicting: Option<StrategyAction>,
 }
 
 /// State for managing the keybind conflict modal.
@@ -27,7 +26,7 @@ pub struct ConflictModalState {
     pending: Option<PendingBinding>,
     /// The display name of the conflicting key (e.g., "Move Forward")
     conflict_key_name: String,
-    /// The binding description (e.g., "Ctrl+W")
+    /// The binding description (e.g., "Ctrl")
     conflict_binding_desc: String,
 }
 
@@ -47,7 +46,7 @@ impl ConflictModalState {
     /// # Arguments
     /// * `pending` - The pending binding that caused the conflict
     /// * `conflict_key_name` - Display name of the conflicting key
-    /// * `conflict_binding_desc` - Description of the binding (e.g., "Ctrl+W")
+    /// * `conflict_binding_desc` - Description of the binding (e.g., "Ctrl")
     pub fn show(
         &mut self,
         pending: PendingBinding,
@@ -118,9 +117,9 @@ mod tests {
     fn show_makes_modal_visible() {
         let mut modal = ConflictModalState::new();
         let pending = PendingBinding {
-            target_id: 0,
-            binding: Binding::new('Q' as u32, 0),
-            conflicting_id: Some(1),
+            target: StrategyAction::MoveForward,
+            key: Key::Q,
+            conflicting: Some(StrategyAction::MoveLeft),
         };
 
         modal.show(pending, "Move Left".to_string(), "Q".to_string());
@@ -135,9 +134,9 @@ mod tests {
     fn hide_hides_modal() {
         let mut modal = ConflictModalState::new();
         let pending = PendingBinding {
-            target_id: 0,
-            binding: Binding::new('Q' as u32, 0),
-            conflicting_id: Some(1),
+            target: StrategyAction::MoveForward,
+            key: Key::Q,
+            conflicting: Some(StrategyAction::MoveLeft),
         };
 
         modal.show(pending, "Move Left".to_string(), "Q".to_string());
@@ -152,16 +151,16 @@ mod tests {
     fn take_pending_removes_binding() {
         let mut modal = ConflictModalState::new();
         let pending = PendingBinding {
-            target_id: 0,
-            binding: Binding::new('Q' as u32, 0),
-            conflicting_id: Some(1),
+            target: StrategyAction::MoveForward,
+            key: Key::Q,
+            conflicting: Some(StrategyAction::MoveLeft),
         };
 
         modal.show(pending, "Move Left".to_string(), "Q".to_string());
         let taken = modal.take_pending();
 
         assert!(taken.is_some());
-        assert_eq!(taken.unwrap().target_id, 0);
+        assert_eq!(taken.unwrap().target, StrategyAction::MoveForward);
         assert!(modal.pending.is_none());
     }
 
@@ -169,9 +168,9 @@ mod tests {
     fn clear_resets_all_state() {
         let mut modal = ConflictModalState::new();
         let pending = PendingBinding {
-            target_id: 0,
-            binding: Binding::new('Q' as u32, 0),
-            conflicting_id: Some(1),
+            target: StrategyAction::MoveForward,
+            key: Key::Q,
+            conflicting: Some(StrategyAction::MoveLeft),
         };
 
         modal.show(pending, "Move Left".to_string(), "Q".to_string());

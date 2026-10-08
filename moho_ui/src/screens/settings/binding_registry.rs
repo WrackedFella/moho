@@ -1,129 +1,43 @@
-//! Data-driven registry for managing key bindings and conflict detection.
-//!
-//! This module replaces the manual if-else chains used for binding conflict
-//! detection with a clean, testable registry pattern.
+//! Registry of the settings screen's bindings, with conflict detection.
 
-use super::types::BindingId;
-use crate::prefs::{Binding, Prefs};
+use moho_input::bindings::{ActionBindings, Binding};
+use moho_input::key::Key;
 
-/// Registry that manages all key bindings and provides conflict detection.
-///
-/// Instead of manually checking each binding field against every other field,
-/// the registry provides a unified API for:
-/// - Finding conflicts between bindings
-/// - Updating bindings by ID
-/// - Iterating over all bindings
-#[derive(Clone, Debug)]
-#[allow(dead_code)] // Methods will be used in subsequent refactoring increments
+use super::types::BINDING_ROWS;
+use crate::actions::{StrategyAction, load_bindings};
+use crate::prefs::Prefs;
+
+/// The bindings being edited, and the rule that one key serves one listed row.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BindingRegistry {
-    bindings: [(BindingId, Binding); 7],
+    bindings: ActionBindings<StrategyAction>,
 }
 
-#[allow(dead_code)] // Methods will be used in subsequent refactoring increments
 impl BindingRegistry {
-    /// Create a new binding registry from Prefs.
-    ///
-    /// # Arguments
-    /// * `prefs` - The preferences containing current binding values
-    ///
-    /// # Returns
-    /// A new BindingRegistry with all bindings loaded
+    /// Reads the bindings from prefs, logging each line that had to fall back to a default.
     pub fn from_prefs(prefs: &Prefs) -> Self {
         Self {
-            bindings: [
-                (BindingId::KeyW, prefs.key_w()),
-                (BindingId::KeyA, prefs.key_a()),
-                (BindingId::KeyS, prefs.key_s()),
-                (BindingId::KeyD, prefs.key_d()),
-                (BindingId::KeyUp, prefs.key_up()),
-                (BindingId::KeyDown, prefs.key_down()),
-                (BindingId::KeySprint, prefs.key_sprint()),
-            ],
+            bindings: load_bindings(prefs),
         }
     }
 
-    /// Write the current bindings back to Prefs.
-    ///
-    /// # Arguments
-    /// * `prefs` - The preferences to update with current binding values
     pub fn write_to_prefs(&self, prefs: &mut Prefs) {
-        for (id, binding) in &self.bindings {
-            match id {
-                BindingId::KeyW => prefs.set_key_w(*binding),
-                BindingId::KeyA => prefs.set_key_a(*binding),
-                BindingId::KeyS => prefs.set_key_s(*binding),
-                BindingId::KeyD => prefs.set_key_d(*binding),
-                BindingId::KeyUp => prefs.set_key_up(*binding),
-                BindingId::KeyDown => prefs.set_key_down(*binding),
-                BindingId::KeySprint => prefs.set_key_sprint(*binding),
-            }
-        }
+        prefs.set_bindings(self.bindings.to_section());
     }
 
-    /// Find a binding conflict.
-    ///
-    /// Checks if `new_binding` is already assigned to a different binding ID.
-    ///
-    /// # Arguments
-    /// * `new_binding` - The binding to check for conflicts
-    /// * `exclude_id` - The binding ID being edited (ignore conflicts with self)
-    ///
-    /// # Returns
-    /// Some(BindingId) if there's a conflict, None if the binding is available
-    ///
-    /// # Example
-    /// ```ignore
-    /// let registry = BindingRegistry::from_prefs(&prefs);
-    /// let new_binding = Binding::new('W' as u32, 0);
-    ///
-    /// // Check if 'W' is already bound (excluding KeyA itself)
-    /// if let Some(conflicting_id) = registry.find_conflict(&new_binding, BindingId::KeyA) {
-    ///     println!("'W' is already bound to {:?}", conflicting_id);
-    /// }
-    /// ```
-    pub fn find_conflict(&self, new_binding: &Binding, exclude_id: BindingId) -> Option<BindingId> {
-        // Ignore unbound keys (code 0)
-        if new_binding.code == 0 {
-            return None;
-        }
-
-        self.bindings
-            .iter()
-            .find(|(id, binding)| *id != exclude_id && binding == new_binding)
-            .map(|(id, _)| *id)
+    /// The listed row (other than `exclude`) already bound to `key`, if any.
+    pub fn find_conflict(&self, key: Key, exclude: StrategyAction) -> Option<StrategyAction> {
+        BINDING_ROWS
+            .into_iter()
+            .find(|&row| row != exclude && self.bindings.get(row).contains(&Binding::Key(key)))
     }
 
-    /// Update a specific binding by ID.
-    ///
-    /// # Arguments
-    /// * `id` - The binding ID to update
-    /// * `new_binding` - The new binding value
-    pub fn update_binding(&mut self, id: BindingId, new_binding: Binding) {
-        if let Some((_, binding)) = self.bindings.iter_mut().find(|(bid, _)| *bid == id) {
-            *binding = new_binding;
-        }
+    pub fn set_binding(&mut self, action: StrategyAction, bindings: Vec<Binding>) {
+        self.bindings.set(action, bindings);
     }
 
-    /// Get the current binding for a specific ID.
-    ///
-    /// # Arguments
-    /// * `id` - The binding ID to query
-    ///
-    /// # Returns
-    /// The current binding, or an unbound binding if ID is invalid
-    pub fn get_binding(&self, id: BindingId) -> Binding {
-        self.bindings
-            .iter()
-            .find(|(bid, _)| *bid == id)
-            .map_or_else(|| Binding::new(0, 0), |(_, binding)| *binding)
-    }
-
-    /// Iterate over all bindings in order.
-    ///
-    /// # Returns
-    /// Iterator yielding (BindingId, Binding) tuples
-    pub fn iter(&self) -> impl Iterator<Item = &(BindingId, Binding)> {
-        self.bindings.iter()
+    pub fn get_binding(&self, action: StrategyAction) -> &[Binding] {
+        self.bindings.get(action)
     }
 }
 
@@ -131,108 +45,104 @@ impl BindingRegistry {
 mod tests {
     use super::*;
 
-    #[test]
-    fn from_prefs_loads_all_bindings() {
-        let prefs = Prefs::default();
-        let registry = BindingRegistry::from_prefs(&prefs);
-
-        assert_eq!(registry.get_binding(BindingId::KeyW), prefs.key_w());
-        assert_eq!(registry.get_binding(BindingId::KeyA), prefs.key_a());
-        assert_eq!(registry.get_binding(BindingId::KeyS), prefs.key_s());
-        assert_eq!(registry.get_binding(BindingId::KeyD), prefs.key_d());
-        assert_eq!(registry.get_binding(BindingId::KeyUp), prefs.key_up());
-        assert_eq!(registry.get_binding(BindingId::KeyDown), prefs.key_down());
+    fn registry() -> BindingRegistry {
+        BindingRegistry::from_prefs(&Prefs::default())
     }
 
     #[test]
-    fn write_to_prefs_updates_all_bindings() {
+    fn from_prefs_loads_defaults_for_every_listed_row() {
+        let registry = registry();
+
+        for row in BINDING_ROWS {
+            assert_eq!(
+                registry.get_binding(row),
+                moho_input::Action::default_bindings(row),
+                "{row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn write_to_prefs_round_trips_changes() {
         let mut prefs = Prefs::default();
         let mut registry = BindingRegistry::from_prefs(&prefs);
+        registry.set_binding(StrategyAction::MoveForward, vec![Binding::Key(Key::Q)]);
+        registry.set_binding(StrategyAction::MoveLeft, vec![Binding::Key(Key::E)]);
 
-        // Modify some bindings
-        registry.update_binding(BindingId::KeyW, Binding::new('Q' as u32, 0));
-        registry.update_binding(BindingId::KeyA, Binding::new('E' as u32, 0));
-
-        // Write back to prefs
         registry.write_to_prefs(&mut prefs);
 
-        assert_eq!(prefs.key_w(), Binding::new('Q' as u32, 0));
-        assert_eq!(prefs.key_a(), Binding::new('E' as u32, 0));
+        let reloaded = BindingRegistry::from_prefs(&prefs);
+        assert_eq!(reloaded, registry);
+        assert_eq!(
+            reloaded.get_binding(StrategyAction::MoveForward),
+            [Binding::Key(Key::Q)]
+        );
     }
 
     #[test]
     fn find_conflict_detects_duplicate_bindings() {
-        let prefs = Prefs::default()
-            .with_key_w(Binding::new('W' as u32, 0))
-            .with_key_a(Binding::new('A' as u32, 0));
+        let registry = registry();
 
-        let registry = BindingRegistry::from_prefs(&prefs);
-
-        // Try to bind KeyS to 'W' (already bound to KeyW)
-        let conflict = registry.find_conflict(&Binding::new('W' as u32, 0), BindingId::KeyS);
-        assert_eq!(conflict, Some(BindingId::KeyW));
-
-        // Try to bind KeyS to 'A' (already bound to KeyA)
-        let conflict = registry.find_conflict(&Binding::new('A' as u32, 0), BindingId::KeyS);
-        assert_eq!(conflict, Some(BindingId::KeyA));
+        assert_eq!(
+            registry.find_conflict(Key::W, StrategyAction::MoveBack),
+            Some(StrategyAction::MoveForward)
+        );
+        assert_eq!(
+            registry.find_conflict(Key::A, StrategyAction::MoveBack),
+            Some(StrategyAction::MoveLeft)
+        );
     }
 
     #[test]
     fn find_conflict_ignores_exclude_id() {
-        let prefs = Prefs::default().with_key_w(Binding::new('W' as u32, 0));
+        let registry = registry();
 
-        let registry = BindingRegistry::from_prefs(&prefs);
-
-        // Binding KeyW to 'W' again should not conflict with itself
-        let conflict = registry.find_conflict(&Binding::new('W' as u32, 0), BindingId::KeyW);
-        assert_eq!(conflict, None);
+        assert_eq!(
+            registry.find_conflict(Key::W, StrategyAction::MoveForward),
+            None
+        );
     }
 
     #[test]
     fn find_conflict_returns_none_for_unique_binding() {
-        let prefs = Prefs::default();
-        let registry = BindingRegistry::from_prefs(&prefs);
+        let registry = registry();
 
-        // 'Q' is not bound to anything by default
-        let conflict = registry.find_conflict(&Binding::new('Q' as u32, 0), BindingId::KeyW);
-        assert_eq!(conflict, None);
+        assert_eq!(
+            registry.find_conflict(Key::Q, StrategyAction::MoveForward),
+            None
+        );
     }
 
     #[test]
-    fn find_conflict_ignores_unbound_keys() {
-        let prefs = Prefs::default();
-        let registry = BindingRegistry::from_prefs(&prefs);
+    fn find_conflict_ignores_jump_which_shares_space_with_ascend() {
+        let registry = registry();
 
-        // Code 0 means unbound - should never conflict
-        let conflict = registry.find_conflict(&Binding::new(0, 0), BindingId::KeyW);
-        assert_eq!(conflict, None);
+        assert_eq!(
+            registry.find_conflict(Key::Space, StrategyAction::Ascend),
+            None
+        );
     }
 
     #[test]
-    fn update_binding_modifies_registry() {
-        let prefs = Prefs::default();
-        let mut registry = BindingRegistry::from_prefs(&prefs);
+    fn unbound_row_conflicts_with_nothing() {
+        let mut registry = registry();
+        registry.set_binding(StrategyAction::MoveForward, vec![]);
 
-        let new_binding = Binding::new('Q' as u32, 1); // Ctrl+Q
-        registry.update_binding(BindingId::KeyW, new_binding);
-
-        assert_eq!(registry.get_binding(BindingId::KeyW), new_binding);
+        assert_eq!(
+            registry.find_conflict(Key::W, StrategyAction::MoveBack),
+            None
+        );
     }
 
     #[test]
-    fn iter_returns_all_bindings_in_order() {
-        let prefs = Prefs::default();
-        let registry = BindingRegistry::from_prefs(&prefs);
+    fn set_binding_replaces_the_rows_keys() {
+        let mut registry = registry();
 
-        let bindings: Vec<_> = registry.iter().collect();
-        assert_eq!(bindings.len(), 7);
+        registry.set_binding(StrategyAction::MoveForward, vec![Binding::Key(Key::Q)]);
 
-        assert_eq!(bindings[0].0, BindingId::KeyW);
-        assert_eq!(bindings[1].0, BindingId::KeyA);
-        assert_eq!(bindings[2].0, BindingId::KeyS);
-        assert_eq!(bindings[3].0, BindingId::KeyD);
-        assert_eq!(bindings[4].0, BindingId::KeyUp);
-        assert_eq!(bindings[5].0, BindingId::KeyDown);
-        assert_eq!(bindings[6].0, BindingId::KeySprint);
+        assert_eq!(
+            registry.get_binding(StrategyAction::MoveForward),
+            [Binding::Key(Key::Q)]
+        );
     }
 }

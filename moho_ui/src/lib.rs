@@ -45,6 +45,7 @@ impl FrameCallback for StubUi {
 }
 
 // Modern egui-based UI system
+pub mod actions;
 pub mod adapter;
 
 pub mod app_state;

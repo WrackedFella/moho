@@ -3,9 +3,11 @@
 
 use std::collections::HashSet;
 
+use moho_input::key::Key;
+
 pub struct InputState {
-    /// Currently held physical keys, stored as (binding_code, modifier_mask).
-    pub active_keys: HashSet<(u32, u8)>,
+    /// Currently held physical keys.
+    pub active_keys: HashSet<Key>,
 
     /// Smoothing / accumulation for mouse deltas.
     pub system: moho_core::input::InputSystem,

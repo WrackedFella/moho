@@ -4,7 +4,10 @@
 //! state, providing a clean API for state mutations and queries.
 
 use super::SettingsField;
-use crate::prefs::{Binding, Prefs};
+use super::binding_registry::BindingRegistry;
+use crate::actions::StrategyAction;
+use crate::prefs::Prefs;
+use moho_input::bindings::Binding;
 use std::collections::HashSet;
 
 /// Manages the state of the settings menu including saved prefs, staged changes,
@@ -20,6 +23,10 @@ pub struct SettingsState {
     prefs: Prefs,
     /// Staged changes (working copy, not yet saved)
     staged: Prefs,
+    /// Bindings as last saved
+    saved_bindings: BindingRegistry,
+    /// Bindings being edited; written into `staged` on save
+    staged_bindings: BindingRegistry,
     /// Fields that have been modified (differ from prefs)
     dirty_fields: HashSet<SettingsField>,
 }
@@ -30,12 +37,7 @@ impl SettingsState {
     /// # Returns
     /// A new SettingsState with prefs loaded and no dirty fields.
     pub fn new() -> Self {
-        let prefs = Prefs::load();
-        Self {
-            prefs: prefs.clone(),
-            staged: prefs,
-            dirty_fields: HashSet::new(),
-        }
+        Self::from_prefs(Prefs::load())
     }
 
     /// Create a settings state from existing preferences.
@@ -45,11 +47,13 @@ impl SettingsState {
     ///
     /// # Returns
     /// A new SettingsState with the given prefs and no dirty fields.
-    #[allow(dead_code)]
     pub fn from_prefs(prefs: Prefs) -> Self {
+        let bindings = BindingRegistry::from_prefs(&prefs);
         Self {
             prefs: prefs.clone(),
             staged: prefs,
+            saved_bindings: bindings.clone(),
+            staged_bindings: bindings,
             dirty_fields: HashSet::new(),
         }
     }
@@ -111,8 +115,10 @@ impl SettingsState {
     /// # Returns
     /// Result indicating success or failure of save operation
     pub fn apply_changes(&mut self) -> Result<(), std::io::Error> {
+        self.staged_bindings.write_to_prefs(&mut self.staged);
         self.staged.save()?;
         self.prefs = self.staged.clone();
+        self.saved_bindings = self.staged_bindings.clone();
         self.dirty_fields.clear();
         Ok(())
     }
@@ -122,68 +128,29 @@ impl SettingsState {
     /// Discards all uncommitted changes and clears dirty flags.
     pub fn revert_changes(&mut self) {
         self.staged = self.prefs.clone();
+        self.staged_bindings = self.saved_bindings.clone();
         self.dirty_fields.clear();
     }
 
-    /// Get a specific binding from staged preferences by field.
-    ///
-    /// # Arguments
-    /// * `field` - The binding field to retrieve
-    ///
-    /// # Returns
-    /// The current staged binding for the specified field
-    pub fn get_staged_binding(&self, field: SettingsField) -> Binding {
-        match field {
-            SettingsField::KeyW => self.staged.key_w(),
-            SettingsField::KeyA => self.staged.key_a(),
-            SettingsField::KeyS => self.staged.key_s(),
-            SettingsField::KeyD => self.staged.key_d(),
-            SettingsField::KeyUp => self.staged.key_up(),
-            SettingsField::KeyDown => self.staged.key_down(),
-            SettingsField::KeySprint => self.staged.key_sprint(),
-            _ => Binding::new(0, 0), // Non-binding fields return unbound
-        }
+    /// The staged bindings, for conflict checks.
+    pub fn staged_bindings(&self) -> &BindingRegistry {
+        &self.staged_bindings
     }
 
-    /// Set a specific binding in staged preferences by field.
-    ///
-    /// # Arguments
-    /// * `field` - The binding field to update
-    /// * `binding` - The new binding value
-    pub fn set_staged_binding(&mut self, field: SettingsField, binding: Binding) {
-        match field {
-            SettingsField::KeyW => self.staged.set_key_w(binding),
-            SettingsField::KeyA => self.staged.set_key_a(binding),
-            SettingsField::KeyS => self.staged.set_key_s(binding),
-            SettingsField::KeyD => self.staged.set_key_d(binding),
-            SettingsField::KeyUp => self.staged.set_key_up(binding),
-            SettingsField::KeyDown => self.staged.set_key_down(binding),
-            SettingsField::KeySprint => self.staged.set_key_sprint(binding),
-            _ => {} // Non-binding fields are no-op
-        }
-        self.mark_dirty(field);
+    /// The staged bindings of one action.
+    pub fn get_staged_binding(&self, action: StrategyAction) -> &[Binding] {
+        self.staged_bindings.get_binding(action)
     }
 
-    /// Check if a specific binding field differs from saved state.
-    ///
-    /// # Arguments
-    /// * `field` - The field to compare
-    ///
-    /// # Returns
-    /// true if the staged value differs from saved value
-    pub fn is_binding_modified(&self, field: SettingsField) -> bool {
-        let staged = self.get_staged_binding(field);
-        let saved = match field {
-            SettingsField::KeyW => self.prefs.key_w(),
-            SettingsField::KeyA => self.prefs.key_a(),
-            SettingsField::KeyS => self.prefs.key_s(),
-            SettingsField::KeyD => self.prefs.key_d(),
-            SettingsField::KeyUp => self.prefs.key_up(),
-            SettingsField::KeyDown => self.prefs.key_down(),
-            SettingsField::KeySprint => self.prefs.key_sprint(),
-            _ => Binding::new(0, 0),
-        };
-        staged != saved
+    /// Replace the staged bindings of one action and mark it dirty.
+    pub fn set_staged_binding(&mut self, action: StrategyAction, bindings: Vec<Binding>) {
+        self.staged_bindings.set_binding(action, bindings);
+        self.mark_dirty(SettingsField::Binding(action));
+    }
+
+    /// Whether the staged bindings of `action` differ from the saved ones.
+    pub fn is_binding_modified(&self, action: StrategyAction) -> bool {
+        self.staged_bindings.get_binding(action) != self.saved_bindings.get_binding(action)
     }
 }
 
@@ -196,6 +163,11 @@ impl Default for SettingsState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moho_input::key::Key;
+
+    fn key(k: Key) -> Vec<Binding> {
+        vec![Binding::Key(k)]
+    }
 
     #[test]
     fn new_state_has_no_dirty_fields() {
@@ -206,107 +178,105 @@ mod tests {
     #[test]
     fn mark_dirty_sets_dirty_flag() {
         let mut state = SettingsState::new();
+        let forward = SettingsField::Binding(StrategyAction::MoveForward);
+        let left = SettingsField::Binding(StrategyAction::MoveLeft);
         assert!(!state.is_dirty());
 
-        state.mark_dirty(SettingsField::KeyW);
+        state.mark_dirty(forward);
         assert!(state.is_dirty());
-        assert!(state.is_field_dirty(SettingsField::KeyW));
-        assert!(!state.is_field_dirty(SettingsField::KeyA));
+        assert!(state.is_field_dirty(forward));
+        assert!(!state.is_field_dirty(left));
     }
 
     #[test]
     fn revert_changes_clears_dirty_fields() {
-        let mut state = SettingsState::new();
-
-        // Modify staged prefs
-        state.staged_mut().set_key_w(Binding::new('Q' as u32, 0));
-        state.mark_dirty(SettingsField::KeyW);
-
+        let mut state = SettingsState::from_prefs(Prefs::default());
+        state.set_staged_binding(StrategyAction::MoveForward, key(Key::Q));
         assert!(state.is_dirty());
 
-        // Revert changes
         state.revert_changes();
 
         assert!(!state.is_dirty());
-        assert_eq!(state.staged().key_w(), state.prefs().key_w());
+        assert_eq!(
+            state.get_staged_binding(StrategyAction::MoveForward),
+            key(Key::W)
+        );
     }
 
     #[test]
     fn apply_changes_clears_dirty_fields() {
-        let mut state = SettingsState::new();
-
-        // Modify staged prefs
-        state.staged_mut().set_key_w(Binding::new('Q' as u32, 0));
-        state.mark_dirty(SettingsField::KeyW);
-
+        let mut state = SettingsState::from_prefs(Prefs::default());
+        state.set_staged_binding(StrategyAction::MoveForward, key(Key::Q));
         assert!(state.is_dirty());
 
-        // Apply changes (saves to disk)
         let result = state.apply_changes();
         assert!(result.is_ok());
 
         assert!(!state.is_dirty());
-        assert_eq!(state.prefs().key_w(), state.staged().key_w());
+        assert!(!state.is_binding_modified(StrategyAction::MoveForward));
+        assert_eq!(
+            state
+                .prefs()
+                .bindings()
+                .get("move_forward")
+                .map(String::as_str),
+            Some("Q")
+        );
     }
 
     #[test]
     fn set_staged_binding_marks_dirty() {
-        let mut state = SettingsState::new();
+        let mut state = SettingsState::from_prefs(Prefs::default());
 
-        let new_binding = Binding::new('Q' as u32, 1);
-        state.set_staged_binding(SettingsField::KeyW, new_binding);
+        state.set_staged_binding(StrategyAction::MoveForward, key(Key::Q));
 
         assert!(state.is_dirty());
-        assert!(state.is_field_dirty(SettingsField::KeyW));
-        assert_eq!(state.staged().key_w(), new_binding);
+        assert!(state.is_field_dirty(SettingsField::Binding(StrategyAction::MoveForward)));
+        assert_eq!(
+            state.get_staged_binding(StrategyAction::MoveForward),
+            key(Key::Q)
+        );
     }
 
     #[test]
     fn get_staged_binding_returns_correct_value() {
-        let mut state = SettingsState::new();
+        let mut state = SettingsState::from_prefs(Prefs::default());
 
-        let new_binding = Binding::new('Q' as u32, 1);
-        state.set_staged_binding(SettingsField::KeyA, new_binding);
+        state.set_staged_binding(StrategyAction::MoveLeft, key(Key::Q));
 
-        assert_eq!(state.get_staged_binding(SettingsField::KeyA), new_binding);
+        assert_eq!(
+            state.get_staged_binding(StrategyAction::MoveLeft),
+            key(Key::Q)
+        );
     }
 
     #[test]
     fn is_binding_modified_detects_changes() {
-        let prefs = Prefs::default();
-        let mut state = SettingsState::from_prefs(prefs);
+        let mut state = SettingsState::from_prefs(Prefs::default());
+        assert!(!state.is_binding_modified(StrategyAction::MoveForward));
 
-        // Initially not modified
-        assert!(!state.is_binding_modified(SettingsField::KeyW));
+        state.set_staged_binding(StrategyAction::MoveForward, key(Key::Q));
 
-        // Modify the binding to something different from default (W = 87, Q = 81)
-        state.set_staged_binding(SettingsField::KeyW, Binding::new('Q' as u32, 0));
-
-        // Now it's modified
-        assert!(state.is_binding_modified(SettingsField::KeyW));
-        assert!(!state.is_binding_modified(SettingsField::KeyA)); // Other fields unchanged
+        assert!(state.is_binding_modified(StrategyAction::MoveForward));
+        assert!(!state.is_binding_modified(StrategyAction::MoveLeft));
     }
 
     #[test]
-    fn from_prefs_creates_clean_state() {
-        let prefs = Prefs::default().with_key_w(Binding::new('Q' as u32, 0));
+    fn from_prefs_reads_saved_bindings() {
+        let mut prefs = Prefs::default();
+        prefs.set_bindings(
+            [("move_forward".to_string(), "Q".to_string())]
+                .into_iter()
+                .collect(),
+        );
 
-        let state = SettingsState::from_prefs(prefs.clone());
+        let state = SettingsState::from_prefs(prefs);
 
         assert!(!state.is_dirty());
-        assert_eq!(state.prefs().key_w(), prefs.key_w());
-        assert_eq!(state.staged().key_w(), prefs.key_w());
-    }
-
-    #[test]
-    fn non_binding_fields_handled_gracefully() {
-        let mut state = SettingsState::new();
-
-        // Setting a non-binding field should not panic
-        state.set_staged_binding(SettingsField::MouseSensitivity, Binding::new(0, 0));
-
-        // Getting a non-binding field returns unbound
-        let binding = state.get_staged_binding(SettingsField::AudioMusic);
-        assert_eq!(binding, Binding::new(0, 0));
+        assert_eq!(
+            state.get_staged_binding(StrategyAction::MoveForward),
+            key(Key::Q)
+        );
+        assert!(!state.is_binding_modified(StrategyAction::MoveForward));
     }
 }

@@ -9,3 +9,7 @@ winit = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+moho_core = { path = "../moho_core" }
+tempfile = { workspace = true }

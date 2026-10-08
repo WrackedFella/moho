@@ -129,3 +129,14 @@ whichever lands second rebases.
 
 - Rebind forward to another key in settings, save, restart: the new key moves
   the player and W does not.
+
+## Deviations (implementation)
+
+- Punctuation keys persist as words (`Comma`, `Semicolon`, `LeftBracket`, ...), not
+  the glyphs `binding_to_string` wrote: `,` separates list items and the INI reader
+  cuts lines at `;`/`#` and reads `[` as a section header. Glyphs still parse as aliases.
+- A `[bindings]` line with any unusable item is rejected whole; the action keeps its default.
+- `moho_ui/tests/settings_menu.rs`: `modifier_keys_handled` (Ctrl+W chords) is replaced by
+  `modifier_key_can_be_bound`, since chords are out per the accepted decisions.
+- Confirming a settings conflict removes only the contested key from the other action,
+  so a hand-edited multi-key action keeps its other keys.
