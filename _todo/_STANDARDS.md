@@ -32,7 +32,11 @@ The [project board](https://github.com/users/WrackedFella/projects/1) is the sin
 record of work-item state: **Status** (Backlog, Needs spec, Ready, In progress, In
 review, Done), **Priority** (P0-P2), **Gate class** (domain, glue) and
 **Agent-eligible** (Yes, No). Cards, feature files, the README index and the roadmap
-carry no status. Skills change the board only through devflow's `scripts/board`.
+carry no status. Skills change the board only through devflow's `scripts/board`, which
+needs GraphQL and so runs only in a local terminal. Cloud threads and Actions runs never
+write it: the Board sync workflow moves Status forward on PR and issue events (In
+progress on a draft PR, In review on a ready PR, Done on merge or close), and a human
+sets Ready and Agent-eligible.
 
 If a card and the board disagree, the board wins. Never "fix" the conflict by editing
 the card; report it to the user. Reasons an item is paused or blocked stay in the card
@@ -43,8 +47,8 @@ as prose under a `**Note:**` line, not as a status.
 Planning produces a feature before any cards. A feature is the unit of
 planning and the gate for progress; cards are how it gets built.
 
-1. Draft `_feature.md` as a draft: the end state, the outcome, its exit
-   criteria, and deferred scope.
+1. Draft `_feature.md`: the end state, the outcome, its exit criteria, and deferred
+   scope.
 2. The user approves scope and exit criteria; the feature then gets its parent issue
    (see Issues and branches). A feature with no `feature` issue is a proposal.
 3. Only then decompose into cards. A card exists only under an approved
@@ -53,8 +57,8 @@ planning and the gate for progress; cards are how it gets built.
 4. The feature is Done on the board when its exit criteria are verified, not merely when
    its cards are done. Missing coverage becomes a new card.
 
-Features written before this rule lack exit criteria and scope; add them the
-next time the feature is planned, not in a sweep.
+A feature written without exit criteria or scope gets them the next time it is planned,
+not in a sweep.
 
 ## Milestones
 
@@ -71,7 +75,7 @@ when the previous gate closes.
 ```markdown
 # <LINE>-F<n> — <observable outcome>
 
-**Issue:** #<n>            <!-- parent issue, filed when scope is approved -->
+**Issue:** #<n>            <!-- parent issue, filed when scope is approved; dropped from the issue body on publish -->
 
 ## End state                  <!-- where this is heading; link the vision doc/GDD -->
 Two or three sentences: what the finished system does, and for whom.
@@ -114,9 +118,13 @@ in the card:
 | Needs spec | Summary, Deliverables; acceptance criteria or tech spec pending |
 | Ready | + Acceptance criteria, Tech spec; issue filed with Gate class set |
 
-Ready plus Agent-eligible Yes is what makes an item available to the orchestrator; there
-is no `agent-ready` label. Paused or blocked items stay at their Status; say why in a
-`**Note:**` line.
+Ready plus Agent-eligible Yes is what makes an item available to the orchestrator.
+Paused or blocked items stay at their Status; say why in a `**Note:**` line.
+
+The `agent-ready` label is a run trigger, not a status. A human applies it to the issue
+of an item that is Ready and Agent-eligible Yes, and that starts a remote run
+([Remote runs](WORKFLOW.md#remote-runs)). Nothing reads it as readiness, and nothing
+removes it.
 
 ## Card template
 
@@ -160,7 +168,7 @@ be asserted, so those go under Verification instead.
 - Crates/modules and public interfaces touched; anything out of scope.
 - Test map: each scenario → the test that proves it
   (`crate::module::tests::scenario_expected_result`), and its gate class:
-  **domain** (`moho_game`, `moho_core` rules: tests reviewed
+  **domain** (the paths `CLAUDE.md` lists under Domain-logic paths: tests reviewed
   before implementation while domain-test review is required) or **glue**
   (adapters/wiring: tests and code together).
 - ADR link if the item makes or relies on an architectural decision.
@@ -195,7 +203,7 @@ something observable when finished.
   available on a user-owned repo); each card's issue is a sub-issue of it, so feature
   progress is visible on GitHub.
 - Labels: `line:engine` | `line:strategy` | `line:fps`; `feature` on feature issues;
-  `engine-request` on engine requests. Templates: *Feature*, *Work item*, *Engine
+  `engine-request` on engine requests; `agent-ready` to start a remote run. Templates: *Feature*, *Work item*, *Engine
   request*.
 - Every issue goes on the board; Status, Priority and Agent-eligible are set there.
 - Branch from `dev`: `<type>/<ID>-<slug>` (e.g. `feat/SG-F1-04-pickup-feedback`);
@@ -203,11 +211,23 @@ something observable when finished.
 
 ## Local drafts and cleanup
 
-- A card or feature starts as a local file. While card review is required (see
-  `CLAUDE.md`), the user reviews the card there. On approval, agents publish it as an
-  issue and put it on the board, and the issue becomes canonical. Without card review,
-  the Tech Lead publishes once the card is ready.
-- Drafts are not on the board until published.
+- A card or feature starts as a draft file in `_todo/`. Drafts are not on the board
+  until published.
+- **Where the draft lives while it is reviewed.** In a local terminal the user reads the
+  file in the working tree. A cloud thread's files exist only on its branch, so the
+  planning thread commits drafts to `plan/<ID>-<slug>` (branched from the item's base
+  branch) and pushes after each draft, because unpushed work is lost if the sandbox
+  does not resume. The user reviews in the thread, or on a draft PR when the draft is
+  long or needs inline comments, and answers there.
+- **On approval,** the same thread files the issue (`[ID] title`, full spec) and the
+  draft becomes a working copy. The `plan/` branch is merged by a human so the card file
+  reaches the base branch for the implementation PR to edit, or dropped when the
+  issue alone is enough. Without card review (see `CLAUDE.md`), the Tech Lead publishes
+  as soon as the card is ready and the branch follows the same rule.
+- **Ready is set by a human.** A cloud thread cannot write the board, so after filing
+  the issue the thread says so and the user sets Ready and Agent-eligible (and applies
+  `agent-ready` to start a remote run). From a local terminal the Tech Lead sets them
+  through `scripts/board`.
 - Delete local files once their work is finished: a card's file when its issue is
   closed as completed, and a feature's directory when the feature is Done on the board.
   Git history and the issue keep the record. Replace links to deleted files (README
@@ -219,5 +239,7 @@ something observable when finished.
 - `just check` passes.
 - Agent-written tests survive mutation testing on the changed code (`just mutants`).
 - `/devflow:comment-audit` run on the diff.
+- `/devflow:wiki` run on the diff: the PR lists the pages updated or says none were
+  needed.
 - Verification steps performed for anything observable.
 - Board Status moved by the workflow; the PR does not edit card status.
