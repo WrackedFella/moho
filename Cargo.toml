@@ -16,7 +16,7 @@ members = ["moho_core", "moho_game", "moho_render_api", "moho_renderer", "moho_a
 bincode = "2.0"
 bytemuck = "1.24"
 env_logger = "0.11"
-glam = "0.30.8"
+glam = "0.33"
 log = "0.4"
 naga = "29.0.1"
 noise = "0.9"
@@ -28,7 +28,7 @@ thiserror = "2.0"
 wgpu = "29.0.4"
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 moho_physics = { path = "moho_physics" }
-rapier3d = { version = "0.32", features = ["simd-stable"] }
+rapier3d = "0.36"
 tempfile = "3.5"
 
 [workspace.lints.rust]

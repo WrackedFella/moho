@@ -1,3 +1,4 @@
+use glam::camera::rh::{proj::directx::perspective, view::look_at_mat4};
 use glam::{Mat4, Vec3};
 
 // ── Camera / movement defaults ─────────────────────────────────────────
@@ -170,8 +171,8 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
             let forward = Vec3::new(sy * cp, sp, cy * cp).normalize_or_zero();
             let center = eye + forward;
             let up = Vec3::Y;
-            let view = Mat4::look_at_rh(eye, center, up);
-            let proj = Mat4::perspective_rh(
+            let view = look_at_mat4(eye, center, up);
+            let proj = perspective(
                 DEFAULT_FOV_DEG.to_radians(),
                 DEFAULT_ASPECT_RATIO,
                 NEAR_CLIP,
@@ -187,8 +188,8 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
             let eye = pc.rts_look_target + camera_offset;
             let center = pc.rts_look_target;
             let up = Vec3::Y;
-            let view = Mat4::look_at_rh(eye, center, up);
-            let proj = Mat4::perspective_rh(
+            let view = look_at_mat4(eye, center, up);
+            let proj = perspective(
                 DEFAULT_FOV_DEG.to_radians(),
                 DEFAULT_ASPECT_RATIO,
                 NEAR_CLIP,
@@ -196,5 +197,61 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
             );
             (view, proj, eye)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Golden matrices from glam 0.30 (`Mat4::look_at_rh`, `Mat4::perspective_rh`);
+    /// camera output must not drift across glam upgrades.
+    const PREVIOUS_PERSPECTIVE: [[f32; 4]; 4] = [
+        [1.357_995, 0.0, 0.0, 0.0],
+        [0.0, 2.414_213_4, 0.0, 0.0],
+        [0.0, 0.0, -1.000_066_6, -1.0],
+        [0.0, 0.0, -0.100_006_66, 0.0],
+    ];
+    const PREVIOUS_FIRST_PERSON_VIEW: [[f32; 4]; 4] = [
+        [-0.764_842_33, 0.190_379_28, -0.615_444_6, 0.0],
+        [0.0, 0.955_336_63, 0.295_520_16, 0.0],
+        [0.644_217_55, 0.226_026_33, -0.730_681_84, 0.0],
+        [5.515_614_5, -1.351_679_4, -2.398_115_9, 1.0],
+    ];
+    const PREVIOUS_ISOMETRIC_VIEW: [[f32; 4]; 4] = [
+        [0.707_106_77, -0.408_248_28, 0.577_350_26, 0.0],
+        [0.0, 0.816_496_55, 0.577_350_26, 0.0],
+        [-0.707_106_77, -0.408_248_28, 0.577_350_26, 0.0],
+        [-4.242_641_4, 0.816_496_85, -27.135_464, 1.0],
+    ];
+    /// Absorbs last-bit rounding differences between glam versions.
+    const TOLERANCE: f32 = 1e-5;
+
+    fn assert_matrix(actual: Mat4, expected: [[f32; 4]; 4]) {
+        let expected = Mat4::from_cols_array_2d(&expected);
+        assert!(
+            actual.abs_diff_eq(expected, TOLERANCE),
+            "actual {actual:?}\nexpected {expected:?}"
+        );
+    }
+
+    #[test]
+    fn view_projection_matches_previous_glam_output() {
+        let mut first_person = PlayerController::new(Vec3::new(3.0, 2.0, -5.0));
+        first_person.yaw = 0.7;
+        first_person.pitch = -0.3;
+        let (view, proj, eye) = controller_to_camera(&first_person);
+        assert_matrix(view, PREVIOUS_FIRST_PERSON_VIEW);
+        assert_matrix(proj, PREVIOUS_PERSPECTIVE);
+        assert_eq!(eye, Vec3::new(3.0, 2.0, -5.0));
+
+        let mut isometric = PlayerController::new(Vec3::ZERO);
+        isometric.camera_mode = CameraMode::Isometric;
+        isometric.rts_height = 30.0;
+        isometric.rts_look_target = Vec3::new(4.0, 0.0, -2.0);
+        let (view, proj, eye) = controller_to_camera(&isometric);
+        assert_matrix(view, PREVIOUS_ISOMETRIC_VIEW);
+        assert_matrix(proj, PREVIOUS_PERSPECTIVE);
+        assert_eq!(eye, Vec3::new(19.0, 15.0, 13.0));
     }
 }

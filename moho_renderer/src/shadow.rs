@@ -1,3 +1,4 @@
+use glam::camera::rh::{proj::directx::orthographic, view::look_at_mat4};
 use wgpu::util::DeviceExt;
 
 use crate::gpu_types::MAX_SHADOW_LIGHTS;
@@ -533,19 +534,12 @@ impl ShadowSystem {
         let light_distance = 300.0;
         let light_pos = scene_center - light_dir * light_distance;
 
-        let light_view = glam::Mat4::look_at_rh(light_pos, scene_center, glam::Vec3::Y);
+        let light_view = look_at_mat4(light_pos, scene_center, glam::Vec3::Y);
         let ortho_size = 100.0;
         let near = 1.0;
         let far = 400.0;
 
-        let light_proj = glam::Mat4::orthographic_rh(
-            -ortho_size,
-            ortho_size,
-            -ortho_size,
-            ortho_size,
-            near,
-            far,
-        );
+        let light_proj = orthographic(-ortho_size, ortho_size, -ortho_size, ortho_size, near, far);
 
         light_proj * light_view
     }
@@ -591,7 +585,7 @@ impl ShadowSystem {
         // light_dir points TO the light (sun_dir), so we add it to center to get light position
         let light_pos = cascade_center + light_dir * light_distance;
 
-        let light_view = glam::Mat4::look_at_rh(light_pos, cascade_center, glam::Vec3::Y);
+        let light_view = look_at_mat4(light_pos, cascade_center, glam::Vec3::Y);
 
         // Radius must cover the 'far' distance (diagonal of frustum)
         // sqrt(far^2 + far^2) approx 1.414 * far. 1.5 is safe.
@@ -601,8 +595,8 @@ impl ShadowSystem {
         let shadow_map_size = SHADOW_MAP_SIZE as f32;
         let world_units_per_texel = (2.0 * cascade_radius) / shadow_map_size;
 
-        // Standard Orthographic Projection (-1..1 Z)
-        let light_proj = glam::Mat4::orthographic_rh(
+        // Orthographic projection, [0, 1] depth
+        let light_proj = orthographic(
             -cascade_radius,
             cascade_radius,
             -cascade_radius,
@@ -698,7 +692,7 @@ impl ShadowSystem {
         // light_dir points TO the light, so we add it to center to get light position
         let light_pos = cascade_center + light_dir * light_distance;
 
-        let light_view = glam::Mat4::look_at_rh(light_pos, cascade_center, glam::Vec3::Y);
+        let light_view = look_at_mat4(light_pos, cascade_center, glam::Vec3::Y);
 
         // Texel Snapping: Stabilize shadow map by snapping projection to texel grid
         // This prevents "shimmering" or "flame-like" flickering when camera moves
@@ -706,8 +700,8 @@ impl ShadowSystem {
         let cascade_radius = SHADOW_DISTANCE * CASCADE_RADIUS_MULTIPLIER;
         let world_units_per_texel = (2.0 * cascade_radius) / shadow_map_size;
 
-        // Standard Orthographic Projection (-1..1 Z)
-        let light_proj = glam::Mat4::orthographic_rh(
+        // Orthographic projection, [0, 1] depth
+        let light_proj = orthographic(
             -cascade_radius,
             cascade_radius,
             -cascade_radius,

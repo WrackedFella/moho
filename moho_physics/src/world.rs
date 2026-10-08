@@ -15,6 +15,7 @@ pub struct PhysicsWorld {
     pub collider_set: ColliderSet,
     impulse_joint_set: ImpulseJointSet,
     multibody_joint_set: MultibodyJointSet,
+    soft_body_set: SoftBodySet,
     ccd_solver: CCDSolver,
     character_controller: KinematicCharacterController,
     pub character_body: Option<RigidBodyHandle>,
@@ -46,6 +47,7 @@ impl PhysicsWorld {
         let collider_set = ColliderSet::new();
         let impulse_joint_set = ImpulseJointSet::new();
         let multibody_joint_set = MultibodyJointSet::new();
+        let soft_body_set = SoftBodySet::new();
         let ccd_solver = CCDSolver::new();
 
         let character_controller = KinematicCharacterController {
@@ -69,6 +71,7 @@ impl PhysicsWorld {
             collider_set,
             impulse_joint_set,
             multibody_joint_set,
+            soft_body_set,
             ccd_solver,
             character_controller,
             character_body: None,
@@ -92,6 +95,7 @@ impl PhysicsWorld {
             &mut self.collider_set,
             &mut self.impulse_joint_set,
             &mut self.multibody_joint_set,
+            &mut self.soft_body_set,
             &mut self.ccd_solver,
             &(),
             &(),
@@ -144,6 +148,7 @@ impl PhysicsWorld {
             handle,
             &mut self.island_manager,
             &mut self.rigid_body_set,
+            &mut self.soft_body_set,
             false,
         );
     }
@@ -335,6 +340,29 @@ mod tests {
         let pos = world.body_position(sphere).unwrap();
         // Should rest near y=0.5 (radius)
         assert!(pos.y < 2.0, "Sphere should rest on floor, y={}", pos.y);
+    }
+
+    #[test]
+    fn test_removed_floor_no_longer_stops_rigid_body() {
+        let mut world = PhysicsWorld::new();
+        let verts = vec![
+            [-10.0f32, 0.0, -10.0],
+            [10.0, 0.0, -10.0],
+            [10.0, 0.0, 10.0],
+            [-10.0, 0.0, 10.0],
+        ];
+        let idxs: Vec<u32> = vec![0, 1, 2, 0, 2, 3];
+        let floor = world.add_terrain_trimesh(&verts, &idxs);
+        world.remove_collider(floor);
+
+        let sphere = world.add_dynamic_sphere(Vec3::new(0.0, 5.0, 0.0), 0.5);
+        for _ in 0..180 {
+            world.step(1.0 / 60.0);
+        }
+
+        assert!(world.collider_set.get(floor).is_none());
+        let pos = world.body_position(sphere).unwrap();
+        assert!(pos.y < -1.0, "Sphere should fall through, y={}", pos.y);
     }
 
     #[test]
