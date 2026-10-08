@@ -1,7 +1,10 @@
 # The strategy game's app state lives on the strategy line
 
-**Feature:** ENG-F12
-**Issue:** #148
+**Feature:** [ENG-F12](_feature.md)
+**Issue:** [#148](https://github.com/WrackedFella/moho/issues/148)
+**Status:** unknown
+**Gate class:** glue
+**Labels:** line:engine
 
 ## Summary
 

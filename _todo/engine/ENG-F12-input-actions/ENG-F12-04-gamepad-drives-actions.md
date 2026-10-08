@@ -1,7 +1,10 @@
 # A gamepad drives the same actions
 
-**Feature:** ENG-F12
-**Issue:** #151
+**Feature:** [ENG-F12](_feature.md)
+**Issue:** [#151](https://github.com/WrackedFella/moho/issues/151)
+**Status:** unknown
+**Gate class:** glue
+**Labels:** line:engine
 
 ## Summary
 
