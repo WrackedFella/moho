@@ -40,8 +40,8 @@ pages are flagged in the PR for your review.
 | Gate | Where | Enforced by |
 |---|---|---|
 | `just check`: fmt, clippy `-D warnings`, nextest, doctests, comment refs | Every agent stop with Rust changes; CI | Stop hook, CI |
-| `just mutants` on changed code | Orchestrator step; PR evidence | Orchestrator, CI (Phase C) |
-| `just deny` | CI | CI (Phase C) |
+| `just mutants` on changed code | Orchestrator step; PR evidence | Orchestrator, CI |
+| `just deny` | CI | CI |
 | Format on edit | Every Rust edit in a single-repo session | PostToolUse hook |
 | CI matrix | Linux on PRs into `dev`; three OSes on `main` and manual runs | CI |
 | Test review | Domain tests, before implementation | `devflow:test-critic` (or you under `required`) |
@@ -73,8 +73,8 @@ Rules:
 - **Approval comes before implementation.** A project may run Business Analyst and
   Tech Lead threads. They leave cards as local drafts in `_todo/`, which you review;
   on approval, agents publish each one as an issue on the board (Ready). An
-  implementation thread starts only for a published card. From Stage 3 of the
-  [rollout](../../_todo/WORKFLOW.md#stages), approving the feature is enough.
+  implementation thread starts only for a published card. With `Card review: not
+  required` ([switches](../../_todo/WORKFLOW.md#run-options)), approving the feature is enough.
 - **Cross-line needs go through an engine request,** not a shared edit. A game lane
   files the request (issue template *Engine request*), and the engine lane designs the
   answer. Game lanes never edit engine crates as a side effect; the layering check
@@ -95,16 +95,13 @@ Rules:
 
 Cloud threads and Actions runs start from a fresh clone and differ from a local session:
 
-- **devflow comes from the environment, not the repo pin.** Anthropic's docs say plugins
-  enabled in a repository's `.claude/settings.json` are not loaded in cloud sessions, and
-  name **Project settings > Plugins** as the route for project threads. The setup script
-  is documented for command-line tools and packages, not plugins. This workflow installs
-  devflow at user scope from the environment's setup script anyway, so one account-level
-  environment serves all three line projects and pins a tag. Two consequences: the
-  script's `DEVFLOW_REF` must be bumped by hand with `.claude/settings.json`, and the
-  environment is a filesystem snapshot rebuilt when the script changes or after about
-  seven days, so a new tag reaches threads only after a rebuild.
-  [Anthropic: cloud environments](https://code.claude.com/docs/en/cloud-environments),
+- **devflow comes from the environment, not the repo pin.** Plugins enabled in a
+  repository's `.claude/settings.json` are not loaded in cloud sessions, so the
+  environment's setup script installs devflow at user scope, pinned to a tag. One
+  account-level environment serves all three line projects. Bump the script's
+  `DEVFLOW_REF` together with `.claude/settings.json`; the environment is a snapshot
+  rebuilt when the script changes or after about seven days, so a new tag reaches threads
+  only then. [Anthropic: cloud environments](https://code.claude.com/docs/en/cloud-environments),
   [projects](https://code.claude.com/docs/en/claude-projects).
 - **The toolchain is on demand.** Threads that build or test run
   `bash scripts/cloud-tools.sh` first; text-only threads skip it and start faster.
@@ -124,7 +121,7 @@ Cloud threads and Actions runs start from a fresh clone and differ from a local 
   `/devflow:orchestrate <issue>` with the default token. On a `feature` issue the label
   runs `/devflow:refine <issue>` instead, which publishes the feature's cards as
   sub-issues for you to label in turn. See
-  [`_todo/WORKFLOW.md`](../../_todo/WORKFLOW.md#remote-runs).
+  [`_todo/WORKFLOW.md`](../../_todo/WORKFLOW.md#run-options).
 
 ## Writing a good work item
 
