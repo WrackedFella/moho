@@ -1557,6 +1557,7 @@ dependencies = [
 name = "moho_app"
 version = "0.1.0"
 dependencies = [
+ "glam 0.33.12",
  "moho_audio",
  "moho_renderer",
  "proptest",

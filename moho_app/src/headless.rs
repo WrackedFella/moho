@@ -263,6 +263,40 @@ mod tests {
     }
 
     #[test]
+    fn run_ticks_runs_due_ticks_without_a_frame_and_exposes_the_leftover_alpha() {
+        let mut game = Recorder::default();
+        let mut sim = HeadlessLoop::new(LoopConfig::new(60));
+
+        let ran = sim.run_ticks(&mut game, Duration::from_nanos(NS / 144));
+
+        assert_eq!(ran, 0);
+        assert!(game.frames.is_empty(), "run_ticks must not run a frame");
+        assert!(
+            (sim.alpha() - 60.0 / 144.0).abs() < 1e-4,
+            "alpha {}",
+            sim.alpha()
+        );
+    }
+
+    #[test]
+    fn alpha_is_the_fraction_of_a_tick_left_after_whole_ticks() {
+        let mut game = Recorder::default();
+        let mut sim = HeadlessLoop::new(LoopConfig::new(60));
+
+        let ran = sim.run_ticks(&mut game, Duration::from_nanos(NS / 60 + NS / 240));
+
+        assert_eq!(ran, 1);
+        assert!((sim.alpha() - 0.25).abs() < 1e-3, "alpha {}", sim.alpha());
+    }
+
+    #[test]
+    fn tick_length_is_the_configured_tick_period() {
+        let sim = HeadlessLoop::<Recorder>::new(LoopConfig::new(60));
+
+        assert_eq!(sim.tick_length(), Duration::from_secs(1) / 60);
+    }
+
+    #[test]
     #[should_panic(expected = "tick_hz must be non-zero")]
     fn zero_tick_rate_is_rejected() {
         let _ = HeadlessLoop::<Recorder>::new(LoopConfig::new(0));

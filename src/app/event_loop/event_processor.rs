@@ -538,6 +538,18 @@ impl Default for EventProcessor {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ui_exit_request_sets_the_exit_flag() {
+        let mut app = App::headless();
+        app.event_bus.publish(UiEvent::ExitRequested);
+        app.event_bus.process_deferred();
+        assert!(!app.exit_requested, "nothing processed yet");
+
+        EventProcessor::new().process_ui_events(&mut app);
+
+        assert!(app.exit_requested);
+    }
+
     use super::*;
     use moho_core::events::DebugEvent;
 

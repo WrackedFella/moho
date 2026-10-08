@@ -95,6 +95,9 @@ struct App {
     // Renderer changes queued by the tick, applied by `frame`
     pending_render: Vec<RenderRequest>,
 
+    // Directory for autosaves and generated worlds
+    saves_dir: std::path::PathBuf,
+
     // Set when the UI asks to quit; `frame` autosaves and leaves the loop
     exit_requested: bool,
 
@@ -172,6 +175,7 @@ impl App {
             mesh_handle: 0,
             cube_mesh_handle: 0,
             pending_render: Vec::new(),
+            saves_dir: std::path::PathBuf::from("saves"),
             exit_requested: false,
             event_bus: initialized.event_bus,
 
@@ -213,14 +217,16 @@ impl App {
         &mut self,
         spec: moho_game::scene_builders::WorldSpec,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        crate::app::world_generator::generate_new_world(self, spec, std::path::Path::new("saves"))
+        let saves_dir = self.saves_dir.clone();
+        crate::app::world_generator::generate_new_world(self, spec, &saves_dir)
     }
 
     fn auto_save_on_shutdown(
         &mut self,
         lights: &[moho_render_api::LightDesc],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        crate::app::autosave::auto_save_on_shutdown(self, std::path::Path::new("saves"), lights)
+        let saves_dir = self.saves_dir.clone();
+        crate::app::autosave::auto_save_on_shutdown(self, &saves_dir, lights)
     }
 
     fn load_scene<P: AsRef<std::path::Path>>(

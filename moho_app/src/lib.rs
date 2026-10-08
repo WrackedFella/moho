@@ -33,7 +33,9 @@ pub struct FrameContext<'a> {
 }
 
 impl<'a> FrameContext<'a> {
-    pub(crate) fn new(
+    /// A context for driving [`Game::frame`] directly; a game's tests use it
+    /// with a fake renderer.
+    pub fn new(
         tick_length: Duration,
         renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
         audio: Option<&'a mut AudioSystem>,
@@ -65,7 +67,8 @@ impl<'a> FrameContext<'a> {
         self.exit_requested = true;
     }
 
-    pub(crate) fn exit_requested(&self) -> bool {
+    /// Whether the game asked to leave the loop.
+    pub fn exit_requested(&self) -> bool {
         self.exit_requested
     }
 }
@@ -85,7 +88,9 @@ pub struct EventContext<'a> {
 }
 
 impl<'a> EventContext<'a> {
-    pub(crate) fn new(
+    /// A context for driving [`Game::event`] directly; a game's tests use it
+    /// with a fake renderer.
+    pub fn new(
         renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
         audio: Option<&'a mut AudioSystem>,
     ) -> Self {
@@ -111,7 +116,8 @@ impl<'a> EventContext<'a> {
         self.exit_requested = true;
     }
 
-    pub(crate) fn exit_requested(&self) -> bool {
+    /// Whether the game asked to leave the loop.
+    pub fn exit_requested(&self) -> bool {
         self.exit_requested
     }
 }
@@ -164,4 +170,137 @@ pub trait Game {
 
     /// Presents a frame, `alpha` of the way between the last two ticks.
     fn frame(&mut self, ctx: &mut FrameContext<'_>, alpha: f32);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use moho_renderer::{FrameError, InstanceGpu, LightingGpu, MaterialGpu};
+
+    /// Records the point lights it is given; everything else is a no-op.
+    #[derive(Default)]
+    struct FakeRenderer {
+        lights: Vec<f32>,
+    }
+
+    impl RendererBackend for FakeRenderer {
+        fn resize(&mut self, _width: u32, _height: u32) {}
+        fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+            0
+        }
+        fn register_indexed_mesh(
+            &mut self,
+            _vertices: &[[f32; 3]],
+            _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
+            _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
+            _indices: &[u32],
+        ) -> u32 {
+            0
+        }
+        fn unregister_mesh(&mut self, _mesh: u32) {}
+        fn begin_frame(
+            &mut self,
+            _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+        ) -> Result<(), FrameError> {
+            Ok(())
+        }
+        fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
+        fn submit_frame(&mut self) {}
+        fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
+        fn update_lighting(&mut self, _lighting: LightingGpu) {}
+        fn add_point_light(
+            &mut self,
+            _position: glam::Vec3,
+            _color: glam::Vec3,
+            intensity: f32,
+            _range: f32,
+        ) -> u32 {
+            self.lights.push(intensity);
+            0
+        }
+        fn remove_light(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
+        fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_ssao_quality(&mut self, _quality: u8) {}
+        fn set_frame_callback_arc(
+            &mut self,
+            _cb: Option<std::sync::Arc<std::sync::Mutex<dyn moho_renderer::FrameCallback>>>,
+        ) {
+        }
+    }
+
+    const TICK: Duration = Duration::from_millis(16);
+
+    fn light(ctx_renderer: Option<&mut (dyn RendererBackend + 'static)>, intensity: f32) {
+        ctx_renderer.expect("renderer present").add_point_light(
+            glam::Vec3::ZERO,
+            glam::Vec3::ONE,
+            intensity,
+            1.0,
+        );
+    }
+
+    #[test]
+    fn frame_context_hands_out_the_renderer_it_was_built_with() {
+        let mut fake = FakeRenderer::default();
+        let mut ctx = FrameContext::new(TICK, Some(&mut fake), None);
+
+        light(ctx.renderer(), 3.0);
+
+        assert_eq!(ctx.tick_length, TICK);
+        assert_eq!(fake.lights, vec![3.0]);
+    }
+
+    #[test]
+    fn frame_context_without_renderer_or_audio_has_neither() {
+        let mut ctx = FrameContext::new(TICK, None, None);
+
+        assert!(ctx.renderer().is_none());
+        assert!(ctx.audio().is_none());
+    }
+
+    #[test]
+    fn frame_context_exit_is_not_requested_until_asked() {
+        let mut ctx = FrameContext::new(TICK, None, None);
+        assert!(!ctx.exit_requested());
+
+        ctx.request_exit();
+
+        assert!(ctx.exit_requested());
+    }
+
+    #[test]
+    fn event_context_hands_out_the_renderer_it_was_built_with() {
+        let mut fake = FakeRenderer::default();
+        let mut ctx = EventContext::new(Some(&mut fake), None);
+
+        light(ctx.renderer(), 5.0);
+
+        assert_eq!(fake.lights, vec![5.0]);
+    }
+
+    #[test]
+    fn event_context_without_renderer_or_audio_has_neither() {
+        let mut ctx = EventContext::new(None, None);
+
+        assert!(ctx.renderer().is_none());
+        assert!(ctx.audio().is_none());
+    }
+
+    #[test]
+    fn event_context_exit_is_not_requested_until_asked() {
+        let mut ctx = EventContext::new(None, None);
+        assert!(!ctx.exit_requested());
+
+        ctx.request_exit();
+
+        assert!(ctx.exit_requested());
+    }
 }
