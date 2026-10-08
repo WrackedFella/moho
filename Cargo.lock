@@ -1542,7 +1542,6 @@ dependencies = [
  "moho_physics",
  "moho_render_api",
  "moho_renderer",
- "moho_types",
  "moho_ui",
  "proptest",
  "serde",
@@ -1639,10 +1638,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "moho_types"
-version = "0.1.0"
-
-[[package]]
 name = "moho_ui"
 version = "0.1.0"
 dependencies = [
@@ -1653,7 +1648,6 @@ dependencies = [
  "moho_game",
  "moho_input",
  "moho_renderer",
- "moho_types",
  "phf",
  "rand 0.10.2",
  "tracing",

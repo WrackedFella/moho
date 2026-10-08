@@ -597,69 +597,56 @@ mod tests {
     }
 
     #[test]
-    fn test_moon_intensity_below_horizon() {
+    fn moon_intensity_by_time() {
         let processor = FrameProcessor::new();
-        let moon_dir = glam::Vec3::new(0.0, -1.0, 0.0); // Below horizon
-        let intensity = processor.calculate_moon_intensity(moon_dir, 12.0);
-        assert_eq!(intensity, 0.0);
+        let above = glam::Vec3::Y;
+        let below = glam::Vec3::NEG_Y;
+        let cases = [
+            (below, 12.0, 0.0),
+            (below, 23.0, 0.0),
+            (above, 23.0, 0.4),
+            (above, 5.0, 0.4),
+            (above, 6.0, 0.2),
+            (above, 7.0, 0.0),
+            (above, 12.0, 0.0),
+            (above, 18.0, 0.1),
+            (above, 19.0, 0.2),
+        ];
+
+        for (moon_dir, time, expected) in cases {
+            let got = processor.calculate_moon_intensity(moon_dir, time);
+
+            assert!(
+                (got - expected).abs() < 1e-6,
+                "moon {moon_dir:?} at {time}: expected {expected}, got {got}"
+            );
+        }
     }
 
     #[test]
-    fn test_moon_intensity_deep_night() {
+    fn ambient_lighting_by_time() {
         let processor = FrameProcessor::new();
-        let moon_dir = glam::Vec3::new(0.0, 1.0, 0.0); // Above horizon
-        let intensity = processor.calculate_moon_intensity(moon_dir, 23.0); // 11 PM
-        assert_eq!(intensity, 0.4);
-    }
+        let cases = [
+            (12.0, [0.4, 0.5, 0.6], 0.15),
+            (23.0, [0.3, 0.35, 0.5], 0.05),
+            (5.0, [0.5, 0.45, 0.4], 0.05),
+            (6.0, [0.5, 0.45, 0.4], 0.10),
+            (6.99, [0.5, 0.45, 0.4], 0.1495),
+            (18.0, [0.5, 0.4, 0.35], 0.125),
+            (19.0, [0.5, 0.4, 0.35], 0.10),
+        ];
 
-    #[test]
-    fn test_moon_intensity_dawn() {
-        let processor = FrameProcessor::new();
-        let moon_dir = glam::Vec3::new(0.0, 1.0, 0.0); // Above horizon
-        let intensity = processor.calculate_moon_intensity(moon_dir, 5.0); // 5 AM
-        assert_eq!(intensity, 0.4); // Full brightness at start of dawn
+        for (time, expected_color, expected_intensity) in cases {
+            let (color, intensity) = processor.calculate_ambient_lighting(time);
 
-        let intensity = processor.calculate_moon_intensity(moon_dir, 7.0); // 7 AM
-        assert_eq!(intensity, 0.0); // Faded by end of dawn
-    }
-
-    #[test]
-    fn test_moon_intensity_day() {
-        let processor = FrameProcessor::new();
-        let moon_dir = glam::Vec3::new(0.0, 1.0, 0.0); // Above horizon
-        let intensity = processor.calculate_moon_intensity(moon_dir, 12.0); // Noon
-        assert_eq!(intensity, 0.0);
-    }
-
-    #[test]
-    fn test_ambient_lighting_day() {
-        let processor = FrameProcessor::new();
-        let (color, intensity) = processor.calculate_ambient_lighting(12.0); // Noon
-        assert_eq!(color, [0.4, 0.5, 0.6]);
-        assert_eq!(intensity, 0.15);
-    }
-
-    #[test]
-    fn test_ambient_lighting_night() {
-        let processor = FrameProcessor::new();
-        let (color, intensity) = processor.calculate_ambient_lighting(23.0); // 11 PM
-        assert_eq!(color, [0.3, 0.35, 0.5]);
-        assert_eq!(intensity, 0.05);
-    }
-
-    #[test]
-    fn test_ambient_lighting_dawn_start() {
-        let processor = FrameProcessor::new();
-        let (color, intensity) = processor.calculate_ambient_lighting(5.0); // 5 AM
-        assert_eq!(color, [0.5, 0.45, 0.4]);
-        assert!((intensity - 0.05).abs() < 0.001); // Start of dawn
-    }
-
-    #[test]
-    fn test_ambient_lighting_dawn_end() {
-        let processor = FrameProcessor::new();
-        let (color, intensity) = processor.calculate_ambient_lighting(6.99); // Just before 7 AM - end of dawn
-        assert_eq!(color, [0.5, 0.45, 0.4]);
-        assert!((intensity - 0.149).abs() < 0.01); // Very close to full brightness
+            assert!(
+                glam::Vec3::from(color).abs_diff_eq(glam::Vec3::from(expected_color), 1e-6),
+                "colour at {time}: {color:?}"
+            );
+            assert!(
+                (intensity - expected_intensity).abs() < 1e-6,
+                "intensity at {time}: expected {expected_intensity}, got {intensity}"
+            );
+        }
     }
 }
