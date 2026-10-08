@@ -24,7 +24,7 @@ flowchart TD
     core["moho_core<br/>event bus, voxel, materials,<br/>input, prefs"]:::engine
     audio["moho_audio<br/>rodio"]:::engine
     physics["moho_physics<br/>rapier3d"]:::engine
-    input["moho_input<br/>key to binding code"]:::engine
+    input["moho_input<br/>Key, Action, ActionBindings"]:::engine
     types["moho_types<br/>GameState, coordinator"]:::engine
     app["moho_app<br/>fixed-step loop, Game trait"]:::engine
 

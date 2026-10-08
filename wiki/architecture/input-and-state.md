@@ -1,6 +1,6 @@
 # Input and state
 
-**Source:** `src/input_dispatcher.rs`, `src/app/renderer_setup.rs` (registrations),
+**Source:** `src/input_dispatcher.rs`, `moho_input/src/`, `moho_ui/src/actions.rs`, `src/app/renderer_setup.rs` (registrations),
 `src/main.rs` (`window_event`, `handle_keyboard_input`), `moho_types/src/app_state.rs`,
 `moho_types/src/state_coordinator.rs`.
 
@@ -44,8 +44,12 @@ Global hotkeys in `handle_keyboard_input`, checked before game keys:
 | `F4` | Toggle chunk-boundary minimap |
 | `Tab` | Toggle camera mode (handled before the dispatcher) |
 
-Key → binding-code mapping is in `moho_input`; bindings come from
-[prefs](../reference/prefs-format.md).
+Gameplay keys are action-keyed. `moho_input` holds the platform-free `Key`
+(`Key::from_winit` maps `PhysicalKey`), the `Action` trait (stable id plus default
+bindings) and `ActionBindings<A>`; each game declares its own action enum
+(`StrategyAction` in `moho_ui/src/actions.rs`). The binary tracks held `Key`s and an
+action is active when any of its bindings is held. Bindings persist in the `[bindings]`
+section of [prefs](../reference/prefs-format.md).
 
 ## GameState
 
