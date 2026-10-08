@@ -116,6 +116,14 @@ Edge: `frame_masks_index_by_action_position` (property: for any press set, `held
   ENG-F21 owns any per-frame presentation smoothing.
 - Overlaps ENG-F11's edits to the binary's input path; coordinate order.
 
+**Deviations (implementation).**
+- `moho_core::input` had no filter tests, only `InputSystem` tests. The accumulation and
+  sensitivity ones are ported to `action_map::tests`; `has_pending_input` (no callers)
+  and its test are gone. The filter code lives in a private `moho_input::filter`.
+- `FilterPreset` (one variant, ignored) is deleted with `AppConfig::filter_preset`.
+- Look is fed raw and negated where the frame is read, same result as before.
+- The jump flag is `held || pressed`, so a sub-tick tap still jumps.
+
 ## Verification
 
 - Strategy at 60 fps: walk, sprint, jump, fly up/down and mouselook feel as before.
