@@ -595,7 +595,7 @@ impl ShadowSystem {
         let shadow_map_size = SHADOW_MAP_SIZE as f32;
         let world_units_per_texel = (2.0 * cascade_radius) / shadow_map_size;
 
-        // Standard Orthographic Projection (-1..1 Z)
+        // Orthographic projection, [0, 1] depth
         let light_proj = orthographic(
             -cascade_radius,
             cascade_radius,
@@ -700,7 +700,7 @@ impl ShadowSystem {
         let cascade_radius = SHADOW_DISTANCE * CASCADE_RADIUS_MULTIPLIER;
         let world_units_per_texel = (2.0 * cascade_radius) / shadow_map_size;
 
-        // Standard Orthographic Projection (-1..1 Z)
+        // Orthographic projection, [0, 1] depth
         let light_proj = orthographic(
             -cascade_radius,
             cascade_radius,
