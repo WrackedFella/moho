@@ -225,6 +225,7 @@ mod tests {
     fn update_centers_on_euclidean_chunk_for_negative_positions() {
         assert_only_column_loaded(-1.0, -1.0, (-1, -1));
         assert_only_column_loaded(-17.0, 5.0, (-2, 0));
+        assert_only_column_loaded(-0.5, -0.5, (-1, -1));
     }
 
     #[test]
@@ -239,8 +240,13 @@ mod tests {
 
         let (loaded, _) = streamer.update(&mut grid, Vec3::new(0.0, 64.0, 0.0));
 
+        let mut ys: Vec<i32> = loaded.iter().map(|p| p.y).collect();
+        ys.sort_unstable();
+
         assert_eq!(columns(&loaded), BTreeSet::from([(0, 0)]));
+        assert_eq!(ys, vec![0, 1, 2, 3, 4]);
         let in_grid: Vec<IVec3> = grid.chunk_positions().collect();
         assert_eq!(columns(&in_grid), BTreeSet::from([(0, 0)]));
+        assert_eq!(in_grid.len(), 5);
     }
 }
