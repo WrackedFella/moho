@@ -16,7 +16,7 @@ use crate::{
 
 /// What the runner does with a window event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Route {
+pub(crate) enum Route {
     /// Run a frame; the game does not see the event.
     Frame,
     /// Resize the renderer, then forward the event.
@@ -28,7 +28,7 @@ pub enum Route {
 }
 
 /// Decides how the runner handles `event`, without needing a display.
-pub fn route(event: &WindowEvent) -> Route {
+pub(crate) fn route(event: &WindowEvent) -> Route {
     match event {
         WindowEvent::RedrawRequested => Route::Frame,
         WindowEvent::Resized(size) => Route::Resize {

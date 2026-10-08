@@ -109,9 +109,12 @@ impl App {
         ctx.window.request_redraw();
     }
 
-    /// Autosaves with the renderer's current lights, logging a failure.
+    /// Autosaves with the renderer's lights, queued ones included, logging a failure.
     fn autosave(&mut self, renderer: Option<&mut (dyn moho_renderer::RendererBackend + 'static)>) {
-        let lights = renderer.map_or_else(Vec::new, |r| r.all_lights_as_descs());
+        let lights = renderer.map_or_else(Vec::new, |r| {
+            self.apply_pending_render(r);
+            r.all_lights_as_descs()
+        });
         if let Err(e) = self.auto_save_on_shutdown(&lights) {
             tracing::warn!(error = %e, "Failed to auto-save on exit");
         }
@@ -685,6 +688,29 @@ mod tests {
 
             assert!(ctx.exit_requested());
             assert!(app.saves_dir.join("scene.bin").is_file());
+        }
+
+        #[test]
+        fn close_requested_applies_queued_lights_before_autosaving() {
+            let (mut app, _temp) = app_with_saves_dir();
+            let position = glam::Vec3::new(1.0, 2.0, 3.0);
+            app.pending_render.push(RenderRequest::AddPointLight {
+                position,
+                color: glam::Vec3::ONE,
+                intensity: 5.0,
+                range: 20.0,
+            });
+            let mut fake = FakeRenderer::default();
+            let mut ctx = EventContext::new(Some(&mut fake), None);
+
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Window(WindowEvent::CloseRequested),
+            );
+
+            assert!(app.pending_render.is_empty());
+            assert_eq!(fake.lights, vec![(position, glam::Vec3::ONE, 5.0, 20.0)]);
         }
 
         #[test]

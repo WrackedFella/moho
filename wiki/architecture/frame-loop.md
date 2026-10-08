@@ -65,7 +65,7 @@ The tick drains one channel per event family, in this order:
 
 | # | Drain | Effect |
 |---|---|---|
-| 1 | `process_ui_events` | load/new world, exit (auto-save), menus |
+| 1 | `process_ui_events` | load/new world, exit request (auto-save runs in `frame`), menus |
 | 2 | `process_graphics_events` | time of day, debug view |
 | 3 | `process_world_events` | `ChunkMeshDirty` → remesh (draw + collider) |
 | 4 | `process_input_events` | wheel zoom, mine action |

@@ -16,7 +16,6 @@ exclude_re = [
     'replace run -> Result<\(\), AppError> with Ok\(\(\)\)',
     # `Game::init` only runs once the runner has created a real window.
     'replace <impl moho_app::Game for App>::init with \(\)',
-    "App::render_scene",
     "App::initial_render",
     'delete match arm "light" in EventProcessor::handle_debug_event',
     'delete match arm DebugEvent::SetShadowQuality\{quality\} in EventProcessor::handle_debug_event',
@@ -40,7 +39,8 @@ exclude_re = [
     # A non-empty audio accessor needs an `AudioSystem`, which needs an audio device.
     'replace FrameContext<.a>::audio -> Option<&mut AudioSystem> with None',
     'replace EventContext<.a>::audio -> Option<&mut AudioSystem> with None',
-    # The egui adapter keeps HUD data private, so no test can read back what was pushed.
+    # Headless tests have no `ui_adapter`, and the egui adapter exposes no HUD data to
+    # read back.
     'replace FrameProcessor::update_hud_data with \(\)',
     # Equivalent: the settings menu's spec is always `ScreenSpec::default()`.
     'replace <impl Screen for SettingsMenu>::spec -> &ScreenSpec with Box::leak',
