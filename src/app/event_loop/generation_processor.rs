@@ -220,19 +220,16 @@ impl GenerationProcessor {
         app.physics.reset();
 
         // Covers the load-scene path, where chunks exist before any generation event.
-        app.physics.sync_colliders(&app.entities.chunks);
+        crate::app::world_geometry::upsert_all_chunks(app);
 
         // Build meshes and colliders for preloaded spawn-area chunks immediately so
         // the character doesn't fall through before async event processing kicks in.
         if let Some(ls) = &app.light_system {
             let grid = ls.grid();
-            let mut chunks = Vec::with_capacity(preloaded_chunks.len());
-            for &pos in preloaded_chunks {
-                let chunk = moho_core::voxel::VoxelChunk::from_grid_hybrid(grid, pos);
-                app.physics
-                    .update_chunk_collider(pos, chunk.vertices(), chunk.indices());
-                chunks.push(chunk);
-            }
+            let chunks: Vec<_> = preloaded_chunks
+                .iter()
+                .map(|&pos| moho_core::voxel::VoxelChunk::from_grid_hybrid(grid, pos))
+                .collect();
             for chunk in chunks {
                 crate::app::world_geometry::insert_chunk(app, chunk);
             }
@@ -300,7 +297,7 @@ impl GenerationProcessor {
         }
 
         tracing::info!(
-            chunk_colliders = app.physics.chunk_colliders.len(),
+            chunks = app.entities.chunks.len(),
             test_spheres = app.physics.test_bodies.len(),
             pos = ?spawn_pos,
             "Physics world ready"
@@ -362,7 +359,16 @@ mod tests {
         assert_eq!(app.game_state, GameState::Playing);
         assert!(app.chunk_streamer.is_some());
         assert!(!app.entities.chunks.is_empty(), "spawn area is meshed");
-        assert_eq!(app.physics.chunk_colliders.len(), app.entities.chunks.len());
+        let pw = app.physics.world.as_ref().expect("physics world");
+        for chunk in app.entities.chunks.iter() {
+            let id = crate::app::world_geometry::chunk_mesh_id(chunk.chunk_pos());
+            assert_eq!(
+                pw.world_mesh_collider(id).is_some(),
+                chunk.has_geometry(),
+                "chunk {} has a collider iff it has geometry",
+                chunk.chunk_pos()
+            );
+        }
         assert!(
             app.physics.is_kcc_active(),
             "the character controller is placed"

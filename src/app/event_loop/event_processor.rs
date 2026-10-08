@@ -296,10 +296,6 @@ impl EventProcessor {
                 };
 
                 if let Some(chunk) = new_chunk {
-                    // Remove old collider for this chunk and re-add updated one
-                    app.physics
-                        .update_chunk_collider(chunk_pos, chunk.vertices(), chunk.indices());
-
                     if crate::app::world_geometry::insert_chunk(app, chunk).is_some() {
                         tracing::trace!(chunk = ?chunk_pos, "Updated mesh for chunk");
                     } else {
@@ -621,7 +617,9 @@ mod tests {
 
         let chunk = app.entities.chunks.get(chunk_pos).expect("chunk is stored");
         assert!(!chunk.vertices().is_empty(), "the placed block is meshed");
-        assert!(app.physics.chunk_colliders.contains_key(&chunk_pos));
+        let id = crate::app::world_geometry::chunk_mesh_id(chunk_pos);
+        let pw = app.physics.world.as_ref().expect("physics world");
+        assert!(pw.world_mesh_collider(id).is_some());
     }
 
     #[test]

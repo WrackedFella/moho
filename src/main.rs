@@ -227,7 +227,7 @@ impl App {
     /// Initialize physics world after a scene is loaded.
     fn setup_physics_for_loaded_world(&mut self) {
         self.physics.reset();
-        self.physics.sync_colliders(&self.entities.chunks);
+        crate::app::world_geometry::upsert_all_chunks(self);
 
         // Spawn the physics character at the saved player position so the KCC
         // doesn't immediately override the restored camera on the first frame.
@@ -251,7 +251,7 @@ impl App {
             .set_position_yaw_pitch(spawn_pos, yaw, pitch);
 
         tracing::info!(
-            count = self.physics.chunk_colliders.len(),
+            count = self.entities.chunks.len(),
             "Physics initialized for loaded world"
         );
     }

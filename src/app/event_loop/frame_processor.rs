@@ -157,6 +157,7 @@ impl FrameProcessor {
             return;
         }
         let player_pos = app.simulation.position();
+        let mut evicted = Vec::new();
         if let (Some(streamer), Some(ls)) = (&mut app.chunk_streamer, &mut app.light_system) {
             const FACE_DIRS: [glam::IVec3; 6] = [
                 glam::IVec3::X,
@@ -166,12 +167,8 @@ impl FrameProcessor {
                 glam::IVec3::Z,
                 glam::IVec3::NEG_Z,
             ];
-            let (loaded, evicted) = streamer.update(ls.grid_mut(), player_pos);
-
-            for pos in &evicted {
-                crate::app::world_geometry::remove_chunk(&mut app.scene, &mut app.entities, *pos);
-                app.physics.remove_chunk_collider(*pos);
-            }
+            let loaded;
+            (loaded, evicted) = streamer.update(ls.grid_mut(), player_pos);
 
             // Directly publish ChunkMeshDirty for every loaded chunk. The light
             // system's emit_dirty_events only covers chunks that went through a
@@ -201,6 +198,11 @@ impl FrameProcessor {
                     }
                 }
             }
+        }
+
+        // The streamer borrow above ends first: removal needs all of `app`.
+        for pos in evicted {
+            crate::app::world_geometry::remove_chunk(app, pos);
         }
 
         // Re-scan for LOD tier changes only when the player crosses a chunk boundary.

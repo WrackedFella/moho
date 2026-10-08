@@ -4,7 +4,6 @@ use crate::App;
 use glam::IVec3;
 use moho_core::materials::MaterialType;
 use moho_core::voxel::VoxelChunk;
-use moho_game::scene::SceneEntities;
 use moho_render_api::{WorldMesh, WorldMeshError, WorldMeshId};
 use moho_renderer::Scene;
 
@@ -44,52 +43,63 @@ pub fn register_terrain_material(scene: &mut Scene) -> u32 {
     scene.material_table.find_or_push(&terrain)
 }
 
-/// Queue `chunk`'s mesh with the renderer. A refused mesh is logged and the
-/// chunk is not drawn.
-fn upsert_chunk_mesh(scene: &mut Scene, material_idx: u32, chunk: &VoxelChunk) {
+/// Queue `chunk`'s mesh with the renderer and register its collider. A refused
+/// mesh is logged; the chunk is neither drawn nor solid.
+fn upsert_chunk_mesh(app: &mut App, chunk: &VoxelChunk) {
     let id = chunk_mesh_id(chunk.chunk_pos());
     match chunk_world_mesh(chunk) {
         Ok(mesh) => {
-            scene.world_meshes_mut().upsert(id, mesh, material_idx);
+            if let Some(pw) = app.physics.world.as_mut() {
+                pw.set_world_mesh(id, &mesh);
+            }
+            app.scene
+                .world_meshes_mut()
+                .upsert(id, mesh, app.terrain_material_idx);
         }
         Err(error) => {
             tracing::warn!(chunk = ?chunk.chunk_pos(), %error, "chunk mesh refused, not drawn");
-            scene.world_meshes_mut().remove(id);
+            remove_chunk_mesh(app, id);
         }
     }
 }
 
-/// Put `chunk` in the store and hand its mesh to the renderer, replacing any
-/// previous chunk at that position.
+/// Stop drawing the mesh `id` and drop its collider.
+fn remove_chunk_mesh(app: &mut App, id: WorldMeshId) {
+    app.scene.world_meshes_mut().remove(id);
+    if let Some(pw) = app.physics.world.as_mut() {
+        pw.remove_world_mesh(id);
+    }
+}
+
+/// Put `chunk` in the store and hand its mesh to the renderer and physics,
+/// replacing any previous chunk at that position.
 pub fn insert_chunk(app: &mut App, chunk: VoxelChunk) -> Option<VoxelChunk> {
-    upsert_chunk_mesh(&mut app.scene, app.terrain_material_idx, &chunk);
+    upsert_chunk_mesh(app, &chunk);
     app.entities.chunks.insert(chunk)
 }
 
-/// Drop the chunk at `pos` from the store and stop drawing it.
-pub fn remove_chunk(
-    scene: &mut Scene,
-    entities: &mut SceneEntities,
-    pos: IVec3,
-) -> Option<VoxelChunk> {
-    scene.world_meshes_mut().remove(chunk_mesh_id(pos));
-    entities.chunks.remove(pos)
+/// Drop the chunk at `pos` from the store and stop drawing or colliding with it.
+pub fn remove_chunk(app: &mut App, pos: IVec3) -> Option<VoxelChunk> {
+    remove_chunk_mesh(app, chunk_mesh_id(pos));
+    app.entities.chunks.remove(pos)
 }
 
-/// Hand the mesh of every chunk in the store to the renderer, after a bulk load.
+/// Hand the mesh of every chunk in the store to the renderer and physics, after a bulk load.
 pub fn upsert_all_chunks(app: &mut App) {
-    for chunk in app.entities.chunks.iter() {
-        upsert_chunk_mesh(&mut app.scene, app.terrain_material_idx, chunk);
+    let chunks = std::mem::take(&mut app.entities.chunks);
+    for chunk in chunks.iter() {
+        upsert_chunk_mesh(app, chunk);
     }
+    app.entities.chunks = chunks;
 }
 
-/// Stop drawing every chunk in the store, before it is cleared.
+/// Stop drawing or colliding with every chunk in the store, before it is cleared.
 pub fn remove_all_chunk_meshes(app: &mut App) {
-    for chunk in app.entities.chunks.iter() {
-        app.scene
-            .world_meshes_mut()
-            .remove(chunk_mesh_id(chunk.chunk_pos()));
+    let chunks = std::mem::take(&mut app.entities.chunks);
+    for chunk in chunks.iter() {
+        remove_chunk_mesh(app, chunk_mesh_id(chunk.chunk_pos()));
     }
+    app.entities.chunks = chunks;
 }
 
 #[cfg(test)]
