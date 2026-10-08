@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod event_bus_tests {
-    use crate::events::{Event, EventBus};
+    use crate::events::{AudioEvent, Event, EventBus, InputEvent, SystemEvent, UiEvent};
     use std::any::Any;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, Mutex};
 
     // Test event types
     #[derive(Clone, Debug)]
@@ -58,11 +58,9 @@ mod event_bus_tests {
         });
 
         bus.publish(TestEvent { value: 5 });
+        assert_eq!(counter.load(Ordering::Relaxed), 5);
+
         bus.publish(TestEvent { value: 3 });
-
-        // Small delay to ensure async processing
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
         assert_eq!(counter.load(Ordering::Relaxed), 8);
     }
 
@@ -84,8 +82,6 @@ mod event_bus_tests {
         });
 
         bus.publish(TestEvent { value: 10 });
-
-        std::thread::sleep(std::time::Duration::from_millis(10));
 
         assert_eq!(counter1.load(Ordering::Relaxed), 10);
         assert_eq!(counter2.load(Ordering::Relaxed), 20);
@@ -124,8 +120,6 @@ mod event_bus_tests {
 
         bus.publish(TestEvent { value: 42 });
 
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
         let execution_order = order.lock().unwrap();
         assert_eq!(*execution_order, vec![1, 2, 3]);
     }
@@ -153,8 +147,6 @@ mod event_bus_tests {
         });
         bus.publish(TestEvent { value: 2 });
 
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
         assert_eq!(test_counter.load(Ordering::Relaxed), 2);
         assert_eq!(high_priority_counter.load(Ordering::Relaxed), 1);
     }
@@ -167,14 +159,12 @@ mod event_bus_tests {
         bus.publish(TestEvent { value: 2 });
         bus.publish(HighFrequencyEvent { _count: 100 }); // Should not be recorded
 
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
         let history = bus.history();
 
-        // Should have 2 TestEvents but not HighFrequencyEvent (should_record = false)
-        assert!(history.len() >= 2);
-        assert!(history.iter().any(|s| s.contains("TestEvent")));
-        assert!(!history.iter().any(|s| s.contains("HighFrequencyEvent")));
+        assert_eq!(
+            history,
+            ["TestEvent { value: 1 }", "TestEvent { value: 2 }"]
+        );
     }
 
     #[test]
@@ -183,8 +173,6 @@ mod event_bus_tests {
 
         bus.publish(TestEvent { value: 1 });
         bus.publish(TestEvent { value: 2 });
-
-        std::thread::sleep(std::time::Duration::from_millis(10));
 
         assert!(!bus.history().is_empty());
 
@@ -205,8 +193,6 @@ mod event_bus_tests {
         bus.publish(TestEvent { value: 1 });
         bus.publish(TestEvent { value: 2 });
         bus.publish(TestEvent { value: 3 });
-
-        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let metrics = bus.metrics();
         assert_eq!(metrics.total_published, 3);
@@ -241,8 +227,6 @@ mod event_bus_tests {
             handle.join().unwrap();
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
         // Each thread publishes 10 events with values 0-9
         // Total = 0*10 + 1*10 + 2*10 + ... + 9*10 = (0+1+2+...+9) * 10 = 45 * 10 = 450
         assert_eq!(counter.load(Ordering::Relaxed), 450);
@@ -262,8 +246,6 @@ mod event_bus_tests {
         bus.publish_deferred(TestEvent { value: 1 });
         bus.publish_deferred(TestEvent { value: 2 });
 
-        // Events should not be processed yet
-        std::thread::sleep(std::time::Duration::from_millis(10));
         assert_eq!(counter.load(Ordering::Relaxed), 0);
 
         bus.process_deferred();
@@ -278,6 +260,10 @@ mod event_bus_tests {
         bus.publish(TestEvent { value: 42 });
         bus.publish_deferred(TestEvent { value: 100 });
         bus.process_deferred();
+
+        let metrics = bus.metrics();
+        assert_eq!(metrics.total_published, 2);
+        assert_eq!(metrics.total_processed, 0);
     }
 
     #[test]
@@ -296,9 +282,110 @@ mod event_bus_tests {
         // This event should be received
         bus.publish(TestEvent { value: 5 });
 
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
         // Only the second event should be counted
         assert_eq!(counter.load(Ordering::Relaxed), 5);
+    }
+
+    #[test]
+    fn frame_and_mouse_move_events_are_not_recorded() {
+        let bus = EventBus::with_history(true, 100);
+
+        bus.publish(SystemEvent::FrameStart {
+            frame_number: 0,
+            delta_time: 0.016,
+        });
+        bus.publish(SystemEvent::FrameEnd { frame_number: 0 });
+        bus.publish(SystemEvent::Started);
+        bus.publish(InputEvent::MouseMoved {
+            delta_x: 1.0,
+            delta_y: -1.0,
+        });
+        bus.publish(InputEvent::KeyPressed { code: 65, mods: 0 });
+
+        assert_eq!(
+            bus.history(),
+            ["Started", "KeyPressed { code: 65, mods: 0 }"]
+        );
+    }
+
+    #[test]
+    fn test_metrics_tracking() {
+        let bus = EventBus::new();
+        let counter = Arc::new(AtomicU32::new(0));
+        let c = counter.clone();
+        bus.subscribe(move |_event: &UiEvent| {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+
+        bus.publish(UiEvent::MenuShown {
+            name: "test".to_string(),
+        });
+        bus.publish(AudioEvent::ButtonClick);
+        bus.publish(SystemEvent::Started);
+
+        let metrics = bus.metrics();
+        assert_eq!(metrics.total_published, 3);
+        assert_eq!(metrics.total_processed, 1); // Only the UiEvent subscriber
+        assert_eq!(counter.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn history_is_off_by_default() {
+        let bus = EventBus::new();
+
+        bus.publish(TestEvent { value: 1 });
+        bus.publish_deferred(TestEvent { value: 2 });
+
+        assert_eq!(bus.history(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn history_cap_evicts_oldest() {
+        let bus = EventBus::with_history(true, 3);
+
+        for value in 1..=5 {
+            bus.publish(TestEvent { value });
+        }
+
+        assert_eq!(
+            bus.history(),
+            [
+                "TestEvent { value: 3 }",
+                "TestEvent { value: 4 }",
+                "TestEvent { value: 5 }"
+            ]
+        );
+    }
+
+    #[test]
+    fn deferred_events_dispatch_in_fifo_order_once() {
+        let bus = EventBus::new();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        bus.subscribe(move |event: &TestEvent| {
+            sink.lock().unwrap().push(event.value);
+        });
+
+        bus.publish_deferred(TestEvent { value: 1 });
+        bus.publish_deferred(TestEvent { value: 2 });
+        bus.publish_deferred(TestEvent { value: 3 });
+        assert_eq!(*seen.lock().unwrap(), Vec::<i32>::new());
+
+        bus.process_deferred();
+        assert_eq!(*seen.lock().unwrap(), vec![1, 2, 3]);
+
+        bus.process_deferred();
+        assert_eq!(*seen.lock().unwrap(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn deferred_event_is_recorded_when_deferred() {
+        let bus = EventBus::with_history(true, 100);
+
+        bus.publish_deferred(TestEvent { value: 7 });
+
+        assert_eq!(bus.history(), ["TestEvent { value: 7 }"]);
+        bus.process_deferred();
+        assert_eq!(bus.history(), ["TestEvent { value: 7 }"]);
     }
 }

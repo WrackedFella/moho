@@ -259,39 +259,85 @@ impl InputSystem {
 mod tests {
     use super::*;
 
+    fn assert_close(actual: (f32, f32), expected: (f32, f32)) {
+        assert!(
+            (actual.0 - expected.0).abs() < 1e-6 && (actual.1 - expected.1).abs() < 1e-6,
+            "expected {expected:?}, got {actual:?}"
+        );
+    }
+
     #[test]
     fn test_input_accumulation() {
         let mut input_system = InputSystem::new(1.0);
+        input_system.set_filter_enabled(false);
 
-        // Simulate multiple mouse events between frames
         input_system.collect_mouse_delta((1.0, 0.0));
-        input_system.collect_mouse_delta((1.0, 0.0));
-        input_system.collect_mouse_delta((0.0, 1.0));
+        input_system.collect_mouse_delta((1.0, 1.0));
 
-        // Sample should return accumulated delta with filtering applied
-        // Exponential smoothing factor 0.8: output = 0.8 * input + 0.2 * previous
-        // First frame: previous = 0.0, so output = 0.8 * input
-        let (x, y) = input_system.sample_frame_input();
-        assert_eq!(x, 1.6); // 0.8 * (1.0 + 1.0)
-        assert_eq!(y, 0.8); // 0.8 * (0.0 + 0.0 + 1.0)
-
-        // Should be reset after sampling
-        let (x2, y2) = input_system.sample_frame_input();
-        assert_eq!(x2, 0.0);
-        assert_eq!(y2, 0.0);
+        assert_eq!(input_system.sample_frame_input(), (2.0, 1.0));
+        assert_eq!(input_system.sample_frame_input(), (0.0, 0.0));
     }
 
     #[test]
     fn test_sensitivity_scaling() {
         let mut input_system = InputSystem::new(2.0);
+        input_system.set_filter_enabled(false);
 
-        input_system.collect_mouse_delta((1.0, 1.0));
-        let (x, y) = input_system.sample_frame_input();
+        input_system.collect_mouse_delta((1.0, 3.0));
 
-        // Input (1.0, 1.0) * sensitivity 2.0 = (2.0, 2.0)
-        // After exponential smoothing (factor 0.8): (1.6, 1.6)
-        assert_eq!(x, 1.6);
-        assert_eq!(y, 1.6);
+        assert_eq!(input_system.sample_frame_input(), (2.0, 6.0));
+    }
+
+    #[test]
+    fn filter_smooths_across_frames() {
+        let mut input_system = InputSystem::new(1.0);
+
+        input_system.collect_mouse_delta((1.0, 0.0));
+        let first = input_system.sample_frame_input();
+        input_system.collect_mouse_delta((1.0, 0.0));
+        let second = input_system.sample_frame_input();
+
+        assert_close(first, (0.8, 0.0));
+        // 0.8 * 1.0 + 0.2 * previous output 0.8
+        assert_close(second, (0.96, 0.0));
+    }
+
+    #[test]
+    fn filter_resets_on_idle_frame() {
+        let mut input_system = InputSystem::new(1.0);
+
+        input_system.collect_mouse_delta((1.0, 0.0));
+        input_system.sample_frame_input();
+        let idle = input_system.sample_frame_input();
+        input_system.collect_mouse_delta((1.0, 0.0));
+        let after_idle = input_system.sample_frame_input();
+
+        assert_eq!(idle, (0.0, 0.0));
+        assert_close(after_idle, (0.8, 0.0));
+    }
+
+    #[test]
+    fn deadzone_zeroes_tiny_output() {
+        let mut input_system = InputSystem::new(1.0);
+
+        input_system.collect_mouse_delta((0.005, 0.0));
+
+        assert_eq!(input_system.sample_frame_input(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn clear_pending_input_discards_accumulated_delta() {
+        let mut dirty = InputSystem::new(1.0);
+        dirty.collect_mouse_delta((1.0, 0.0));
+        dirty.sample_frame_input();
+        dirty.collect_mouse_delta((5.0, 5.0));
+        dirty.clear_pending_input();
+        let mut fresh = InputSystem::new(1.0);
+
+        dirty.collect_mouse_delta((1.0, 0.0));
+        fresh.collect_mouse_delta((1.0, 0.0));
+
+        assert_eq!(dirty.sample_frame_input(), fresh.sample_frame_input());
     }
 
     #[test]
