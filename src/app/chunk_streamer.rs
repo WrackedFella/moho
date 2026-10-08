@@ -11,6 +11,7 @@
 //! - Eviction saves happen synchronously in the calling frame, budgeted by
 //!   `streaming_config.chunks_per_frame`.
 
+use crate::app::event_loop::event_processor::lod_player_chunk;
 use crate::save;
 use glam::{IVec3, Vec3};
 use moho_core::voxel::{StreamingConfig, VoxelGrid};
@@ -53,9 +54,8 @@ impl ChunkStreamer {
     /// Returns `(loaded_positions, evicted_positions)` so the caller can
     /// remove stored chunks for evicted chunks.
     pub fn update(&mut self, grid: &mut VoxelGrid, player_pos: Vec3) -> (Vec<IVec3>, Vec<IVec3>) {
-        let cx = player_pos.x.floor() as i32 / 16;
-        let cz = player_pos.z.floor() as i32 / 16;
-        let player_chunk_xz = (cx, cz);
+        let player_chunk = lod_player_chunk(player_pos);
+        let player_chunk_xz = (player_chunk.x, player_chunk.z);
 
         let load_r = self.streaming_config.load_radius_chunks as i32;
         let unload_r = self.streaming_config.unload_radius_chunks as i32;
@@ -183,4 +183,70 @@ fn chebyshev_xz(pos: IVec3, pcx: i32, pcz: i32) -> i32 {
 #[inline]
 fn chebyshev(dx: i32, dz: i32) -> i32 {
     dx.abs().max(dz.abs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    // No chunk files exist under saves/ for this name, so every load generates from seed.
+    const WORLD: &str = "chunk_streamer_unit_test_nonexistent_world";
+
+    fn streamer(load_radius: u32, budget: u32) -> ChunkStreamer {
+        ChunkStreamer::new(
+            TerrainConfig::default(),
+            StreamingConfig {
+                load_radius_chunks: load_radius,
+                unload_radius_chunks: load_radius,
+                chunks_per_frame: budget,
+            },
+            WORLD,
+        )
+    }
+
+    fn columns(positions: &[IVec3]) -> BTreeSet<(i32, i32)> {
+        positions.iter().map(|p| (p.x, p.z)).collect()
+    }
+
+    fn assert_only_column_loaded(x: f32, z: f32, expected: (i32, i32)) {
+        let mut streamer = streamer(0, 1);
+        let mut grid = VoxelGrid::new(16);
+
+        let (loaded, evicted) = streamer.update(&mut grid, Vec3::new(x, 64.0, z));
+
+        assert_eq!(columns(&loaded), BTreeSet::from([expected]));
+        assert!(evicted.is_empty());
+        let in_grid: Vec<IVec3> = grid.chunk_positions().collect();
+        assert_eq!(columns(&in_grid), BTreeSet::from([expected]));
+    }
+
+    #[test]
+    fn update_centers_on_euclidean_chunk_for_negative_positions() {
+        assert_only_column_loaded(-1.0, -1.0, (-1, -1));
+        assert_only_column_loaded(-17.0, 5.0, (-2, 0));
+        assert_only_column_loaded(-0.5, -0.5, (-1, -1));
+    }
+
+    #[test]
+    fn update_centers_on_chunk_for_positive_positions() {
+        assert_only_column_loaded(15.0, 16.0, (0, 1));
+    }
+
+    #[test]
+    fn update_loads_closest_columns_first_within_budget() {
+        let mut streamer = streamer(1, 1);
+        let mut grid = VoxelGrid::new(16);
+
+        let (loaded, _) = streamer.update(&mut grid, Vec3::new(0.0, 64.0, 0.0));
+
+        let mut ys: Vec<i32> = loaded.iter().map(|p| p.y).collect();
+        ys.sort_unstable();
+
+        assert_eq!(columns(&loaded), BTreeSet::from([(0, 0)]));
+        assert_eq!(ys, vec![0, 1, 2, 3, 4]);
+        let in_grid: Vec<IVec3> = grid.chunk_positions().collect();
+        assert_eq!(columns(&in_grid), BTreeSet::from([(0, 0)]));
+        assert_eq!(in_grid.len(), 5);
+    }
 }
