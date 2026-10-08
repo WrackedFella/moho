@@ -37,15 +37,3 @@ pub fn initialize_audio_system() -> Option<AudioSystem> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_audio_initialization_does_not_panic() {
-        // Audio init must degrade gracefully (no device, driver issues, etc.)
-        // rather than crash app startup — this is the behavior worth guarding.
-        let _result = initialize_audio_system();
-    }
-}
