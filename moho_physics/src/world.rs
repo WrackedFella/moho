@@ -419,36 +419,81 @@ mod tests {
     #[test]
     fn test_character_horizontal_movement() {
         let mut world = PhysicsWorld::new();
-
-        // Build a flat floor at y=0
-        let verts = vec![
-            [-20.0f32, 0.0, -20.0],
-            [20.0, 0.0, -20.0],
-            [20.0, 0.0, 20.0],
-            [-20.0, 0.0, 20.0],
-        ];
-        let idxs: Vec<u32> = vec![0, 1, 2, 0, 2, 3];
-        world.set_world_mesh(WorldMeshId(0), &quad_mesh(&verts, &idxs));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
         world.add_character(Vec3::new(0.0, 1.0, 0.0));
-
-        // First, settle on the ground
         for _ in 0..60 {
             world.move_character(Vec3::ZERO, 1.0 / 60.0);
+            world.step(1.0 / 60.0);
         }
-
         let start = world.character_position().unwrap();
 
-        // Move in +X direction
         for _ in 0..30 {
             world.move_character(Vec3::new(4.0 * (1.0 / 60.0), 0.0, 0.0), 1.0 / 60.0);
+            world.step(1.0 / 60.0);
+
+            let y = world.character_position().unwrap().y;
+            assert!(
+                (1.1..1.3).contains(&y),
+                "capsule centre left the floor, y={y}"
+            );
+            assert!(world.is_grounded, "character lost ground contact");
         }
 
         let end = world.character_position().unwrap();
         assert!(
-            end.x > start.x + 0.5,
-            "Character should have moved in +X, start={}, end={}",
+            (end.x - start.x - 2.0).abs() < 0.05,
+            "30 frames at 4 m/s should move 2.0 m, start={}, end={}",
             start.x,
             end.x
+        );
+    }
+
+    #[test]
+    fn landing_character_stops_vertical_velocity() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
+        world.add_character(Vec3::new(0.0, 3.0, 0.0));
+
+        for _ in 0..60 {
+            world.move_character(Vec3::ZERO, 1.0 / 60.0);
+            world.step(1.0 / 60.0);
+        }
+
+        assert!(world.is_grounded);
+        assert_eq!(world.vertical_velocity, 0.0);
+    }
+
+    #[test]
+    fn airborne_character_falls_by_integrated_gravity() {
+        let mut world = PhysicsWorld::new();
+        world.add_character(Vec3::new(0.0, 10.0, 0.0));
+
+        for _ in 0..10 {
+            world.move_character(Vec3::ZERO, 1.0 / 60.0);
+            world.step(1.0 / 60.0);
+        }
+
+        let y = world.character_position().unwrap().y;
+        assert!(
+            (y - 9.725).abs() < 1e-4,
+            "10 frames of -18 m/s^2 should drop 0.275 m, y={y}"
+        );
+    }
+
+    #[test]
+    fn dynamic_cuboid_rests_on_its_half_height() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
+        let body = world.add_dynamic_cuboid(Vec3::new(0.0, 3.0, 0.0), 0.5, 0.25, 0.5);
+
+        for _ in 0..180 {
+            world.step(1.0 / 60.0);
+        }
+
+        let y = world.body_position(body).unwrap().y;
+        assert!(
+            (0.2..0.3).contains(&y),
+            "cuboid should rest at half height 0.25, y={y}"
         );
     }
 
