@@ -7,7 +7,7 @@
 `moho_renderer` once imported game types directly (actors, materials), so the
 engine could not be reused without the game. Engine crates must stay usable
 by a second game (the FPS line) and splittable into their own repo
-([ENG-F5](../engine/ENG-F5-physical-repo-split/_feature.md)).
+([ENG-F5](https://github.com/WrackedFella/moho/issues/232)).
 
 ## Decision
 

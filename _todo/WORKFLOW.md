@@ -27,7 +27,7 @@ Where it runs:
 |---|---|---|
 | GitHub Actions (`claude.yml`) | Label `agent-ready`, or manual dispatch with an issue number | Unattended. Default Claude App token only, no board access. One run per issue at a time; refine 30 min / 100 turns, orchestrate 60 min / 200 turns. devflow follows the marketplace's default branch, not the repo pin. Edits to workflow files need a human merge |
 | `@claude` comment (`claude-comment.yml`) | A comment by an owner, member or collaborator on an issue or PR | For small jobs such as resolving a PR's merge conflict |
-| Project thread | `/devflow:orchestrate <issue>` or a planning skill | Cloud session on its own branch. Run `bash scripts/cloud-tools.sh` first when it must build. Cannot reach the board, so a thread leaves cards as `Status: Draft` files and `/sync-backlog` from a full-access session files them |
+| Project thread | `/devflow:orchestrate <issue>` or a planning skill | Cloud session on its own branch. Run `bash scripts/cloud-tools.sh` first when it must build. Cannot reach the board. Files an approved card as an issue with `gh` and deletes its draft; the Board sync workflow moves Status |
 | Local terminal | Same slash commands | The repo pin in `.claude/settings.json` applies; the Stop hook runs the gate |
 
 Always on: only humans merge; agents answer PR comments with commits and replies and never
