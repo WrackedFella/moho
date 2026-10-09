@@ -641,4 +641,92 @@ mod tests {
         assert!((x - 0.16).abs() < 1e-6, "x = {x}");
         assert!((y - 0.16).abs() < 1e-6, "y = {y}");
     }
+
+    fn assert_close(actual: (f32, f32), expected: (f32, f32)) {
+        assert!(
+            (actual.0 - expected.0).abs() < 1e-6 && (actual.1 - expected.1).abs() < 1e-6,
+            "expected {expected:?}, got {actual:?}"
+        );
+    }
+
+    #[test]
+    fn test_input_accumulation() {
+        let mut map = map(1.0);
+        map.set_filtering(false);
+
+        map.mouse_motion(1.0, 0.0);
+        map.mouse_motion(1.0, 1.0);
+
+        assert_eq!(map.end_tick().look(), (2.0, 1.0));
+        assert_eq!(map.end_tick().look(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn test_sensitivity_scaling() {
+        let mut map = map(2.0);
+        map.set_filtering(false);
+
+        map.mouse_motion(1.0, 3.0);
+
+        assert_eq!(map.end_tick().look(), (2.0, 6.0));
+    }
+
+    #[test]
+    fn filter_smooths_across_frames() {
+        let mut map = map(1.0);
+
+        map.mouse_motion(1.0, 2.0);
+        let first = map.end_tick().look();
+        map.mouse_motion(1.0, 2.0);
+        let second = map.end_tick().look();
+
+        assert_close(first, (0.8, 1.6));
+        // 0.8 * input + 0.2 * previous output, per axis
+        assert_close(second, (0.96, 1.92));
+    }
+
+    #[test]
+    fn filter_resets_on_idle_frame() {
+        let mut map = map(1.0);
+
+        map.mouse_motion(1.0, 0.0);
+        map.end_tick();
+        let idle = map.end_tick().look();
+        map.mouse_motion(1.0, 0.0);
+        let after_idle = map.end_tick().look();
+
+        assert_eq!(idle, (0.0, 0.0));
+        assert_close(after_idle, (0.8, 0.0));
+    }
+
+    #[test]
+    fn deadzone_zeroes_tiny_output() {
+        let look_of = |dx, dy| {
+            let mut map = map(1.0);
+            map.mouse_motion(dx, dy);
+            map.end_tick().look()
+        };
+
+        assert_eq!(look_of(0.005, 0.0), (0.0, 0.0));
+        assert_eq!(look_of(0.0, 0.005), (0.0, 0.0));
+        assert_close(look_of(0.02, 0.0), (0.016, 0.0));
+        // Each axis is below 0.01, the magnitude is not.
+        assert_close(look_of(0.0075, 0.0075), (0.006, 0.006));
+        assert_close(look_of(0.01, 0.0), (0.008, 0.0));
+    }
+
+    #[test]
+    fn reset_look_discards_accumulated_delta() {
+        let mut dirty = map(1.0);
+        dirty.mouse_motion(1.0, 0.0);
+        dirty.end_tick();
+        dirty.mouse_motion(5.0, 5.0);
+        dirty.reset_look();
+        let mut fresh = map(1.0);
+
+        dirty.mouse_motion(1.0, 0.0);
+        fresh.mouse_motion(1.0, 0.0);
+
+        assert_eq!(dirty.end_tick().look(), fresh.end_tick().look());
+    }
 }

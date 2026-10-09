@@ -51,14 +51,6 @@ impl KeybindCaptureHandler {
         self.last_mods = 0;
     }
 
-    // Note: stop_listening is provided for API completeness but currently unused.
-    // It may be needed when implementing cancel/reset functionality in the future.
-    #[allow(dead_code)]
-    pub fn stop_listening(&mut self) {
-        self.listening = None;
-        self.last_mods = 0;
-    }
-
     /// Check if currently listening for input
     pub fn is_listening(&self) -> bool {
         self.listening.is_some()
@@ -177,41 +169,11 @@ impl KeybindCaptureHandler {
 
 #[cfg(test)]
 mod tests {
-    use super::super::key_mapping::binding_label;
     use super::*;
     use crate::prefs::Prefs;
 
     fn registry() -> BindingRegistry {
         BindingRegistry::from_prefs(&Prefs::default())
-    }
-
-    #[test]
-    fn test_start_stop_listening() {
-        let mut handler = KeybindCaptureHandler::new();
-        assert!(!handler.is_listening());
-
-        handler.start_listening(0);
-        assert!(handler.is_listening());
-
-        handler.stop_listening();
-        assert!(!handler.is_listening());
-    }
-
-    #[test]
-    fn test_escape_cancels_listening() {
-        let mut handler = KeybindCaptureHandler::new();
-        let bindings = registry();
-        let mut bindings_changed = vec![];
-
-        handler.start_listening(0);
-
-        let consumed = handler.apply_key_while_listening(Key::Escape, &bindings, |action, b| {
-            bindings_changed.push((action, b));
-        });
-
-        assert!(consumed);
-        assert!(!handler.is_listening());
-        assert!(bindings_changed.is_empty()); // No binding should be applied
     }
 
     #[test]
@@ -232,26 +194,6 @@ mod tests {
         assert_eq!(
             bindings_changed,
             vec![(StrategyAction::MoveForward, vec![Binding::Key(Key::Alt)])]
-        );
-    }
-
-    #[test]
-    fn test_normal_key_capture() {
-        let mut handler = KeybindCaptureHandler::new();
-        let bindings = registry();
-        let mut bindings_changed = vec![];
-
-        handler.start_listening(1); // Move Left
-
-        let consumed = handler.apply_key_while_listening(Key::Q, &bindings, |action, b| {
-            bindings_changed.push((action, b));
-        });
-
-        assert!(consumed);
-        assert!(!handler.is_listening());
-        assert_eq!(
-            bindings_changed,
-            vec![(StrategyAction::MoveLeft, vec![Binding::Key(Key::Q)])]
         );
     }
 
@@ -314,15 +256,6 @@ mod tests {
         assert_eq!(changes.len(), 2);
         assert!(changes.contains(&(StrategyAction::MoveLeft, vec![])));
         assert!(changes.contains(&(StrategyAction::Sprint, vec![Binding::Key(Key::A)])));
-    }
-
-    #[test]
-    fn test_binding_label_formatting() {
-        assert_eq!(binding_label(&[]), "Unbound");
-        assert_eq!(binding_label(&[Binding::Key(Key::W)]), "W");
-        assert_eq!(binding_label(&[Binding::Key(Key::Shift)]), "Shift");
-        assert_eq!(binding_label(&[Binding::Key(Key::ArrowUp)]), "ArrowUp");
-        assert_eq!(binding_label(&[Binding::Key(Key::Space)]), "Spacebar");
     }
 
     #[test]

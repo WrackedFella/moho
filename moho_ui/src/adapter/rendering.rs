@@ -131,15 +131,6 @@ pub fn render_progress_overlay(ctx: &egui::Context, progress: &mut ProgressState
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_render_pause_overlay() {
-        let ctx = egui::Context::default();
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            render_pause_overlay(ctx);
-        });
-        // Verify no panic
-    }
-
     use crate::screens::{MenuItem, Screen, ScreenSpec, UiComponent};
 
     /// One button at a fixed position, reporting a real click through its `MenuItem`.

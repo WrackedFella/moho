@@ -8,7 +8,7 @@
 
 ## Summary
 
-The event bus, state coordinator and prefs warning tests pin their documented contracts: synchronous dispatch without sleeps, exact history, the deferred queue, the full transition matrix and every warning's text. The event-bus tests that live in the binary move to `moho_core`. Each test is shown red against the wrong implementation it targets.
+The event bus, input filtering, state coordinator and prefs warning tests pin their documented contracts: synchronous dispatch without sleeps, exact history, the deferred queue, the input filter, the full transition matrix and every warning's text. The event-bus tests that live in the binary move to `moho_core`. Each test is shown red against the wrong implementation it targets.
 
 ## Deliverables
 
@@ -29,8 +29,11 @@ The event bus, state coordinator and prefs warning tests pin their documented co
 | `moho_core::events` `history_cap_evicts_oldest` | `with_history(true, 3)` and 5 events, history holds events 3, 4, 5 | newest evicted |
 | `moho_core::events` `deferred_events_dispatch_in_fifo_order_once` | three deferred events arrive in order on `process_deferred`; a second call dispatches nothing | LIFO; queue not drained |
 | `moho_core::events` `deferred_event_is_recorded_when_deferred` | history holds the event before `process_deferred` runs | recorded at dispatch |
-| `moho_types::state_coordinator` `test_enter_console` | the whole `StateTransitionActions` with `show_menu: None` | `menu_for_state(ConsoleOpen) == Some("start")` |
-| `moho_types::app_state` `can_transition_to_matrix` | all 16 `GameState` pairs, expected per `can_transition_to`'s rustdoc | `Menu → Paused` allowed |
+| `moho_input::action_map` (was `moho_core::input`, moved by #150) `test_input_accumulation` | filter off: (1,0)+(1,1) → (2.0, 1.0), then (0.0, 0.0) | smoothing applied with the filter off |
+| `moho_input::action_map` (was `moho_core::input`, moved by #150) `test_sensitivity_scaling` | filter off, sensitivity 2, input (1,3) → (2.0, 6.0) | axes swapped |
+| `moho_input::action_map` (was `moho_core::input`, moved by #150) `filter_smooths_across_frames`, `filter_resets_on_idle_frame`, `deadzone_zeroes_tiny_output`, `reset_look_discards_accumulated_delta` (was `clear_pending_input_discards_accumulated_delta`) | smoothing uses the previous output; an idle frame resets it; input whose magnitude after sensitivity is below 0.01 reads 0; after `reset_look` the next sample equals a fresh map's | previous output never updated; reset skipped; deadzone removed; clear is a no-op |
+| `moho_ui::app_state::state_coordinator` `test_enter_console` | the whole `StateTransitionActions` with `show_menu: None` | `menu_for_state(ConsoleOpen) == Some("start")` |
+| `moho_ui::app_state::game_state` `can_transition_to_matrix` | all 16 `GameState` pairs, expected per `can_transition_to`'s rustdoc | `Menu → Paused` allowed |
 | `moho_core::prefs::reader` `warning_display_names_file_and_detail_for_each_issue` | each of the 7 `PrefsIssue` arms' text contains the file and its section, key, value or reason | `{section}` dropped from one arm |
 
 ## Tech spec
@@ -41,12 +44,11 @@ The event bus, state coordinator and prefs warning tests pin their documented co
 
 **Out of scope**
 - Binding parse and save tests, the proptest's key-code domain, `moho_input`'s mapper: #149 (ENG-F12-02).
-- Input filter and look accumulation: `moho_core::input` was deleted by #150 (ENG-F12-03); its tests live in `moho_input::action_map`.
 - `pause_game`, `resume_game` and the coordinator "valid from" docs: deferred.
 - `recent_history`: deleted in #168 (ENG-F22-01).
 
 **Test map:** the table above.
 
-**Gate class:** domain (`moho_core` and `moho_types` contracts).
+**Gate class:** domain (`moho_core` and `moho_ui::app_state` contracts).
 
 **Risks:** if a row of the transition matrix disagrees with the rustdoc, that is a defect to report, not to pin.

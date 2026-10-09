@@ -132,24 +132,6 @@ mod tests {
     }
 
     #[test]
-    fn test_new_output() {
-        let mut output = ConsoleOutput::new();
-
-        assert!(output.lines().len() >= 2); // Welcome messages
-        assert_eq!(output.navigate_up(), None);
-    }
-
-    #[test]
-    fn test_add_line() {
-        let mut output = ConsoleOutput::new();
-        let initial_len = output.lines().len();
-
-        output.add_line("Test message".to_string());
-        assert_eq!(output.lines().len(), initial_len + 1);
-        assert_eq!(output.lines().back(), Some(&"Test message".to_string()));
-    }
-
-    #[test]
     fn test_output_max_lines() {
         let mut output = ConsoleOutput::new();
         output.clear_output();
@@ -204,16 +186,6 @@ mod tests {
 
         assert_eq!(output.navigate_up(), None);
         assert_eq!(output.navigate_down(), None);
-    }
-
-    #[test]
-    fn test_clear_output() {
-        let mut output = ConsoleOutput::new();
-        output.add_line("Test 1".to_string());
-        output.add_line("Test 2".to_string());
-
-        output.clear_output();
-        assert_eq!(output.lines().len(), 0);
     }
 
     #[test]

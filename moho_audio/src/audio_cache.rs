@@ -107,3 +107,56 @@ impl Default for AudioCache {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn temp_file(bytes: &[u8]) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().expect("create temp file");
+        file.write_all(bytes).expect("write temp file");
+        file
+    }
+
+    #[test]
+    fn cached_audio_survives_file_deletion() {
+        let mut cache = AudioCache::default();
+        let file = temp_file(b"audio-bytes");
+        let path = file.path().to_str().expect("utf-8 path").to_owned();
+        assert_eq!(cache.get_audio(&path).unwrap(), b"audio-bytes");
+
+        file.close().expect("delete temp file");
+
+        assert_eq!(cache.get_audio(&path).unwrap(), b"audio-bytes");
+    }
+
+    #[test]
+    fn cached_ui_sound_survives_file_deletion() {
+        let mut cache = AudioCache::default();
+        let file = temp_file(b"ui-bytes");
+        let path = file.path().to_str().expect("utf-8 path").to_owned();
+        assert_eq!(cache.get_ui_sound(&path).unwrap(), b"ui-bytes");
+
+        file.close().expect("delete temp file");
+
+        assert_eq!(cache.get_ui_sound(&path).unwrap(), b"ui-bytes");
+    }
+
+    #[test]
+    fn missing_file_returns_file_not_found() {
+        let mut cache = AudioCache::default();
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let missing = dir.path().join("absent.mp3");
+        let path = missing.to_str().expect("utf-8 path");
+
+        let audio = cache.get_audio(path);
+        let ui = cache.get_ui_sound(path);
+
+        assert!(
+            matches!(audio, Err(AudioError::FileNotFound(_))),
+            "{audio:?}"
+        );
+        assert!(matches!(ui, Err(AudioError::FileNotFound(_))), "{ui:?}");
+    }
+}

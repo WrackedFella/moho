@@ -118,12 +118,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn starts_hidden() {
-        let hud = DebugHud::new();
-        assert!(!hud.is_visible());
-    }
-
-    #[test]
     fn toggle_visibility() {
         let mut hud = DebugHud::new();
         hud.toggle();

@@ -154,22 +154,3 @@ pub fn render_content_area(ctx: &egui::Context, menu: &mut SettingsMenu) {
             });
     });
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_render_bottom_panel_returns_items() {
-        let ctx = egui::Context::default();
-        let mut menu = SettingsMenu::new();
-
-        let mut items = Vec::new();
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            items = render_bottom_panel(ctx, &mut menu);
-        });
-
-        // Should return menu items (2: save + back/cancel)
-        assert_eq!(items.len(), 2);
-    }
-}

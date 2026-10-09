@@ -329,9 +329,8 @@ fn test_my_event() {
         c.fetch_add(1, Ordering::Relaxed);
     });
     
+    // Handlers run synchronously on the publisher's thread: no wait needed.
     bus.publish(MyEvent::Something);
-    
-    std::thread::sleep(Duration::from_millis(10));
     assert_eq!(counter.load(Ordering::Relaxed), 1);
 }
 ```
