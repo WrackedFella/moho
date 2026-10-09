@@ -5,9 +5,9 @@
 
 use crate::actors::{Cube, Sphere};
 use crate::scene::SceneEntities;
-use moho_core::materials::MaterialType;
 use moho_core::persist::{self, FileKind, PersistError};
 use moho_render_api::{CameraDesc, LightDesc};
+use moho_voxel::MaterialType;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -302,8 +302,7 @@ mod tests {
     use super::*;
     use crate::actors::{Cube, Sphere};
     use crate::scene::SceneEntities;
-    use moho_core::materials::MaterialType;
-    use moho_voxel::VoxelChunk;
+    use moho_voxel::{MaterialType, VoxelChunk};
 
     #[test]
     fn camera_and_lights_round_trip_through_encode_decode() {

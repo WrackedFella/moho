@@ -94,7 +94,7 @@ impl GenerationProcessor {
         // Also publish events so the streaming pipeline keeps them in sync.
         for pos in &preloaded {
             app.event_bus
-                .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                .publish(moho_voxel::WorldEvent::ChunkMeshDirty {
                     chunk_pos: *pos,
                     terrain_dirty: true,
                     structure_dirty: false,
@@ -131,7 +131,7 @@ impl GenerationProcessor {
                 // Generated worlds have no pre-spawned lights; nothing to restore.
                 if let Some((position, yaw, pitch)) = camera_data {
                     app.simulation.set_position_yaw_pitch(position, yaw, pitch);
-                    app.input.system.clear_pending_input();
+                    app.input.actions.reset_look();
                 }
             }
             Err(e) => {
@@ -280,8 +280,8 @@ impl GenerationProcessor {
                 .map(|pw| pw.add_dynamic_sphere(sphere_pos, 0.5));
 
             if let Some(handle) = body_handle {
-                use moho_core::materials::MaterialType;
                 use moho_game::actors::Sphere;
+                use moho_voxel::MaterialType;
                 let sphere = Sphere::new(
                     sphere_pos,
                     0.5,

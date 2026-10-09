@@ -1,12 +1,11 @@
 //! Frame Processing
 //!
-//! Handles frame timing, game state updates, and lighting calculations.
+//! Handles per-tick game state updates and per-frame lighting and HUD data.
 
 use crate::App;
 use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
-use winit::event_loop::{ActiveEventLoop, ControlFlow};
+use std::time::Duration;
 
 /// Frame counter for tracking frame numbers
 static FRAME_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -17,11 +16,6 @@ pub struct FrameProcessor;
 impl FrameProcessor {
     pub fn new() -> Self {
         Self
-    }
-
-    /// Check if it's time for a new frame
-    pub fn should_process_frame(&self, app: &App) -> bool {
-        Instant::now() >= app.last_frame + app.frame_duration
     }
 
     /// Publish frame start event
@@ -39,16 +33,6 @@ impl FrameProcessor {
     pub fn update_game_state(&self, app: &mut App, dt: f32) {
         if app.game_state != crate::game_state::GameState::Playing {
             return;
-        }
-
-        // Update controller input from keyboard state
-        app.update_controller_input();
-
-        let (yaw_delta, pitch_delta) = app.input.system.sample_frame_input();
-        {
-            let ci = app.simulation.controller_input_mut();
-            ci.yaw_delta = yaw_delta;
-            ci.pitch_delta = pitch_delta;
         }
 
         // --- Physics KCC path (FPS only) ---
@@ -181,7 +165,7 @@ impl FrameProcessor {
             // the density field to close the seam.
             for pos in loaded {
                 app.event_bus
-                    .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                    .publish(moho_voxel::WorldEvent::ChunkMeshDirty {
                         chunk_pos: pos,
                         terrain_dirty: true,
                         structure_dirty: false,
@@ -190,7 +174,7 @@ impl FrameProcessor {
                     let neighbor = pos + dir;
                     if ls.grid().has_chunk(neighbor) {
                         app.event_bus
-                            .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                            .publish(moho_voxel::WorldEvent::ChunkMeshDirty {
                                 chunk_pos: neighbor,
                                 terrain_dirty: true,
                                 structure_dirty: false,
@@ -230,7 +214,7 @@ impl FrameProcessor {
 
         for pos in dirty {
             app.event_bus
-                .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                .publish(moho_voxel::WorldEvent::ChunkMeshDirty {
                     chunk_pos: pos,
                     terrain_dirty: true,
                     structure_dirty: false,
@@ -263,40 +247,34 @@ impl FrameProcessor {
         }
     }
 
-    /// Update lighting based on celestial positions and time of day
-    pub fn update_lighting(&self, app: &mut App) {
+    pub fn update_lighting(&self, app: &App, renderer: &mut dyn moho_renderer::RendererBackend) {
         if app.game_state != crate::game_state::GameState::Playing {
             return;
         }
 
-        if let Some(ref mut wr) = app.window_renderer {
-            let (sun_dir, moon_dir) = app.simulation.celestial_directions();
-            let time = app.simulation.time_of_day();
+        let (sun_dir, moon_dir) = app.simulation.celestial_directions();
+        let time = app.simulation.time_of_day();
 
-            // Calculate sun intensity (0 when below horizon)
-            let sun_intensity = if sun_dir.y > 0.0 { 1.0 } else { 0.0 };
+        let sun_intensity = if sun_dir.y > 0.0 { 1.0 } else { 0.0 };
 
-            // Calculate moon intensity based on position and time
-            let moon_base_intensity = self.calculate_moon_intensity(moon_dir, time);
+        let moon_base_intensity = self.calculate_moon_intensity(moon_dir, time);
 
-            // Calculate ambient lighting based on time of day
-            let (ambient_color, ambient_intensity) = self.calculate_ambient_lighting(time);
+        let (ambient_color, ambient_intensity) = self.calculate_ambient_lighting(time);
 
-            let lighting = moho_renderer::LightingGpu {
-                sun_direction: [sun_dir.x, sun_dir.y, sun_dir.z, sun_intensity],
-                sun_color: [1.0, 0.95, 0.8, 0.0], // Warm sunlight
-                moon_direction: [moon_dir.x, moon_dir.y, moon_dir.z, moon_base_intensity],
-                moon_color: [0.7, 0.8, 0.9, 0.0], // Silver-blue moonlight
-                ambient: [
-                    ambient_color[0],
-                    ambient_color[1],
-                    ambient_color[2],
-                    ambient_intensity,
-                ],
-                params: [time, app.debug_mode as f32, 0.0, 0.0],
-            };
-            wr.renderer.update_lighting(lighting);
-        }
+        let lighting = moho_renderer::LightingGpu {
+            sun_direction: [sun_dir.x, sun_dir.y, sun_dir.z, sun_intensity],
+            sun_color: [1.0, 0.95, 0.8, 0.0],
+            moon_direction: [moon_dir.x, moon_dir.y, moon_dir.z, moon_base_intensity],
+            moon_color: [0.7, 0.8, 0.9, 0.0],
+            ambient: [
+                ambient_color[0],
+                ambient_color[1],
+                ambient_color[2],
+                ambient_intensity,
+            ],
+            params: [time, app.debug_mode as f32, 0.0, 0.0],
+        };
+        renderer.update_lighting(lighting);
     }
 
     /// Calculate moon intensity based on position and time
@@ -349,13 +327,6 @@ impl FrameProcessor {
         }
     }
 
-    /// Request window redraw if renderer is available
-    pub fn request_redraw(&self, app: &App) {
-        if let Some(ref wr) = app.window_renderer {
-            wr.window.request_redraw();
-        }
-    }
-
     /// Publish frame end event and process deferred events
     pub fn publish_frame_end(&self, app: &mut App, frame_number: u64) {
         app.event_bus
@@ -363,31 +334,8 @@ impl FrameProcessor {
         app.event_bus.process_deferred();
     }
 
-    /// Update control flow for next frame
-    pub fn update_control_flow(&self, app: &App, event_loop: &ActiveEventLoop) {
-        let next = app.last_frame + app.frame_duration;
-        event_loop.set_control_flow(ControlFlow::WaitUntil(next));
-    }
-
-    /// Process a complete frame update
-    pub fn process_frame(&self, app: &mut App, event_loop: &ActiveEventLoop) {
-        let dt = app.frame_duration.as_secs_f32();
-        app.last_frame += app.frame_duration;
-
-        // Frame lifecycle
-        let frame_number = self.publish_frame_start(app, dt);
-        self.update_game_state(app, dt);
-        self.update_chunk_streaming(app);
-        self.update_light_system(app); // Process light propagation after game state
-        self.update_lighting(app);
-        self.update_hud_data(app);
-        self.request_redraw(app);
-        self.publish_frame_end(app, frame_number);
-        self.update_control_flow(app, event_loop);
-    }
-
     /// Push current world state into the overlay HUD data.
-    fn update_hud_data(&self, app: &mut App) {
+    pub fn update_hud_data(&self, app: &App, tick_length: Duration) {
         let Some(ui_adapter) = &app.ui_adapter else {
             return;
         };
@@ -427,7 +375,7 @@ impl FrameProcessor {
             chunk_position: chunk_pos,
             camera_mode: format!("{mode:?}"),
             is_fps_mode: is_fps,
-            frame_time_secs: app.frame_duration.as_secs_f32(),
+            frame_time_secs: tick_length.as_secs_f32(),
             time_of_day: app.simulation.time_of_day(),
             material_under_crosshair: None,
             camera_yaw: yaw,
@@ -455,8 +403,7 @@ impl Default for FrameProcessor {
 mod tests {
     use super::*;
     use crate::game_state::GameState;
-    use moho_core::events::WorldEvent;
-    use moho_voxel::VoxelChunk;
+    use moho_voxel::{VoxelChunk, WorldEvent};
 
     const DT: f32 = 1.0 / 60.0;
 
@@ -474,7 +421,7 @@ mod tests {
         let sphere = moho_game::actors::Sphere::new(
             center,
             0.5,
-            moho_core::materials::MaterialType::Lambertian {
+            moho_voxel::MaterialType::Lambertian {
                 albedo: glam::Vec3::ONE,
             },
         );
@@ -495,9 +442,8 @@ mod tests {
         app.game_state = GameState::Playing;
         spawn_sphere_with_body(&mut app, glam::Vec3::new(0.0, 50.0, 0.0));
 
-        for _ in 0..30 {
-            FrameProcessor::new().update_game_state(&mut app, DT);
-        }
+        moho_app::HeadlessLoop::new(moho_app::LoopConfig::new(moho_game::TICK_HZ))
+            .step(&mut app, 30);
 
         let y = app.entities.actors.spheres()[0].center.y;
         assert!(y < 49.0, "sphere should fall under gravity, y = {y}");

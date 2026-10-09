@@ -39,7 +39,6 @@ bus.publish(UiEvent::MenuShown { name: "main".to_string() });
 - `GameEvent` - Player actions, objectives
 - `PhysicsEvent` - Collisions, triggers
 - `GraphicsEvent` - Rendering, camera, lighting
-- `WorldEvent` - Chunk loading, streaming
 - `DebugEvent` - Logging, profiling
 - `NetworkEvent` - Multiplayer, sync
 
@@ -148,52 +147,6 @@ camera.process_mouse(delta_x, delta_y);
 // Get matrices for rendering
 let view = camera.view_matrix();
 let proj = camera.projection_matrix(aspect_ratio);
-```
-
-### Materials & Resources
-
-Type-safe material and resource registration system.
-
-**Materials:**
-```rust
-pub enum Material {
-    Air,
-    Grass,
-    Dirt,
-    Stone,
-    // ... more materials
-}
-```
-
-**Resources:**
-```rust
-pub enum ResourceType {
-    None,
-    Stone,
-    IronOre,
-    Coal,
-    // ... more resources
-}
-```
-
-### Input System
-
-Low-level input accumulation and sensitivity scaling.
-
-**Usage:**
-```rust
-use moho_core::input::InputState;
-
-let mut input = InputState::new();
-
-// Accumulate input each frame
-input.add_movement(delta_x, delta_y);
-
-// Apply sensitivity and reset
-if input.has_pending_input() {
-    let (scaled_x, scaled_y) = input.take_movement(sensitivity);
-    camera.process_mouse(scaled_x, scaled_y);
-}
 ```
 
 ## Testing

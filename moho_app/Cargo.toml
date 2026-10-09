@@ -5,8 +5,14 @@ edition = "2024"
 publish = false
 
 [dependencies]
+winit = { workspace = true }
+moho_renderer = { path = "../moho_renderer" }
+moho_audio = { path = "../moho_audio" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
+glam = { workspace = true }
 proptest = { workspace = true }
 
 [lints]

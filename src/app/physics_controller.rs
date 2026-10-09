@@ -87,8 +87,8 @@ impl Default for PhysicsController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use moho_core::materials::MaterialType;
     use moho_game::actors::{ActorStore, Cube, Sphere};
+    use moho_voxel::MaterialType;
 
     #[test]
     fn step_reports_bodies_by_actor_id() {
@@ -199,7 +199,8 @@ mod tests {
         for pos in positions {
             saved.entities.chunks.insert(chunk_at(pos));
         }
-        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path()).expect("autosave");
+        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path(), &[])
+            .expect("autosave");
         let mut app = crate::App::headless();
 
         crate::app::scene_loader::load_scene(&mut app, &temp.path().join("scene.bin"))
@@ -228,7 +229,8 @@ mod tests {
         for pos in positions {
             saved.entities.chunks.insert(chunk_at(pos));
         }
-        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path()).expect("autosave");
+        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path(), &[])
+            .expect("autosave");
         let mut app = crate::App::headless();
         let mut actors = ActorStore::new();
         let material = MaterialType::Lambertian {

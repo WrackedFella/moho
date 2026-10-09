@@ -33,7 +33,7 @@ Audit, 2026-10 (`cargo deny list`, all features):
   for unmodified upstream crates.
 - Every distributed build ships a third-party notices file covering crate
   licences and asset licences. Generating it is part of the release
-  checklist ([ENG-F5](../engine/ENG-F5-physical-repo-split/_feature.md) gate), not this gate.
+  checklist ([ENG-F5](https://github.com/WrackedFella/moho/issues/232) gate), not this gate.
 - Assets (fonts, audio, textures, models) are added with their licence
   recorded next to them. An asset whose licence forbids commercial
   redistribution is never added.

@@ -3,6 +3,7 @@
 pub fn auto_save_on_shutdown(
     app: &mut crate::App,
     saves_dir: &std::path::Path,
+    lights: &[moho_render_api::LightDesc],
 ) -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Auto-saving on shutdown...");
 
@@ -12,13 +13,8 @@ pub fn auto_save_on_shutdown(
     let (yaw, pitch) = app.simulation.yaw_pitch();
     let camera_data = Some((app.simulation.position(), yaw, pitch));
 
-    let scene_bytes = moho_game::scene_persistence::encode_to_bytes(
-        &app.entities,
-        camera_data,
-        &app.window_renderer
-            .as_ref()
-            .map_or_else(Vec::new, |wr| wr.renderer.all_lights_as_descs()),
-    )?;
+    let scene_bytes =
+        moho_game::scene_persistence::encode_to_bytes(&app.entities, camera_data, lights)?;
     let mut spec =
         app.generation
             .last_spec
@@ -71,7 +67,7 @@ mod tests {
             .spawn_sphere(moho_game::actors::Sphere::new(
                 sphere_center,
                 0.5,
-                moho_core::materials::MaterialType::Lambertian {
+                moho_voxel::MaterialType::Lambertian {
                     albedo: glam::Vec3::ONE,
                 },
             ));
@@ -87,7 +83,7 @@ mod tests {
             .mutator()
             .place(moho_voxel::BlockPos::new(3, 70, 3), 1, None);
 
-        auto_save_on_shutdown(&mut saved, &saves).expect("autosave");
+        auto_save_on_shutdown(&mut saved, &saves, &[]).expect("autosave");
         let mut loaded = App::headless();
         crate::app::scene_loader::load_scene(&mut loaded, &saves.join("scene.bin")).expect("load");
 

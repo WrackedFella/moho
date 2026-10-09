@@ -2,26 +2,22 @@
 //!
 //! This is the main executable that wires together the engine crates
 //! ([`moho_core`], [`moho_renderer`], [`moho_audio`], [`moho_ui`]) into a
-//! runnable application via [`winit`]'s event loop.
+//! runnable application: [`App`] implements [`moho_app::Game`] and `main` hands
+//! it to [`moho_app::run`].
 
 use moho_core::prefs::Prefs;
 use moho_game::scene::SceneEntities;
-use moho_input::bindings::{ActionBindings, Binding};
-use moho_input::key::Key;
-use moho_ui::actions::{StrategyAction, load_bindings};
+use moho_input::action_map;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
-use winit::application::ApplicationHandler;
-use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, StartCause, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, KeyEvent};
 mod input_dispatcher;
 use crate::input_dispatcher::InputDispatcher;
 mod input_event;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{CursorGrabMode, Window, WindowId};
+use winit::window::{CursorGrabMode, Window};
 
 // Core game state module
 mod game_state;
@@ -63,15 +59,19 @@ pub(crate) fn forward_wheel_if_allowed(
         .is_ok()
 }
 
-// Combined state to handle lifetimes properly
-struct WindowRenderer {
-    window: Arc<Window>,
-    renderer: Box<dyn moho_renderer::RendererBackend>,
-    mesh_handle: u32,
-    cube_mesh_handle: u32,
+/// A renderer change queued during a tick and applied by the next frame, the only
+/// place the renderer is reachable.
+enum RenderRequest {
+    AddPointLight {
+        position: glam::Vec3,
+        color: glam::Vec3,
+        intensity: f32,
+        range: f32,
+    },
+    ShadowQuality(u8),
+    SsaoQuality(u8),
 }
 
-// Application state structure that implements ApplicationHandler
 struct App {
     entities: SceneEntities,
     scene: moho_renderer::Scene,
@@ -85,7 +85,17 @@ struct App {
     game_state: crate::game_state::GameState,
 
     // Runtime state (initialized after window creation)
-    window_renderer: Option<WindowRenderer>,
+    window: Option<Arc<Window>>,
+    mesh_handle: u32,
+    cube_mesh_handle: u32,
+
+    // Renderer changes queued by the tick, applied by `frame`
+    pending_render: Vec<RenderRequest>,
+
+    saves_dir: std::path::PathBuf,
+
+    // Set when the UI asks to quit; `frame` autosaves and leaves the loop
+    exit_requested: bool,
 
     // Event bus for application-wide events
     event_bus: Arc<moho_core::EventBus>,
@@ -94,11 +104,8 @@ struct App {
     ui_event_rx: std::sync::mpsc::Receiver<moho_core::events::UiEvent>,
     audio_event_rx: std::sync::mpsc::Receiver<moho_core::events::AudioEvent>,
     graphics_event_rx: std::sync::mpsc::Receiver<moho_core::events::GraphicsEvent>,
-    world_event_rx: std::sync::mpsc::Receiver<moho_core::events::WorldEvent>,
+    world_event_rx: std::sync::mpsc::Receiver<moho_voxel::WorldEvent>,
     debug_event_rx: std::sync::mpsc::Receiver<moho_core::events::DebugEvent>,
-
-    // Audio system (not thread-safe, stays on main thread)
-    audio_system: Option<moho_audio::AudioSystem>,
 
     // UI adapter
     ui_adapter: Option<Arc<Mutex<moho_ui::EguiAdapter>>>,
@@ -114,11 +121,6 @@ struct App {
 
     // Keybinds and preferences
     prefs: Prefs,
-    bindings: ActionBindings<StrategyAction>,
-
-    // Frame timing
-    frame_duration: Duration,
-    last_frame: Instant,
 
     // Grouped sub-systems
     physics: app::physics_controller::PhysicsController,
@@ -137,7 +139,8 @@ struct App {
 impl App {
     /// Saves prefs together with the current bindings.
     fn save_prefs(&mut self) -> std::io::Result<()> {
-        self.prefs.set_bindings(self.bindings.to_section());
+        self.prefs
+            .set_bindings(self.input.actions.bindings().to_section());
         self.prefs.save()
     }
 
@@ -162,7 +165,12 @@ impl App {
             light_system: Some(light_system),
 
             game_state: crate::game_state::GameState::Menu, // Start in menu
-            window_renderer: None,
+            window: None,
+            mesh_handle: 0,
+            cube_mesh_handle: 0,
+            pending_render: Vec::new(),
+            saves_dir: std::path::PathBuf::from("saves"),
+            exit_requested: false,
             event_bus: initialized.event_bus,
 
             ui_event_rx: initialized.ui_event_rx,
@@ -170,8 +178,6 @@ impl App {
             graphics_event_rx: initialized.graphics_event_rx,
             world_event_rx: initialized.world_event_rx,
             debug_event_rx: initialized.debug_event_rx,
-
-            audio_system: initialized.audio_system,
 
             ui_adapter: None,
 
@@ -181,15 +187,11 @@ impl App {
 
             simulation: initialized.simulation,
 
-            bindings: load_bindings(&initialized.prefs),
             prefs: initialized.prefs,
-
-            frame_duration: initialized.frame_duration,
-            last_frame: initialized.last_frame,
 
             physics: app::physics_controller::PhysicsController::new(),
             generation: app::generation_job::WorldGenerationJob::new(),
-            input: app::input_state::InputState::new(initialized.input_system),
+            input: app::input_state::InputState::new(initialized.actions),
             chunk_streamer: None,
             lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
 
@@ -201,29 +203,23 @@ impl App {
     /// prefs so tests never read `config/prefs.ini`.
     #[cfg(test)]
     fn headless() -> Self {
-        Self::from_config(
-            crate::app::config::AppConfig::builder()
-                .init_audio(false)
-                .build(),
-        )
-    }
-
-    fn setup_renderer_and_ui(
-        &mut self,
-        window: Arc<Window>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        crate::app::renderer_setup::setup_renderer_and_ui(self, window)
+        Self::from_config(crate::app::config::AppConfig::builder().build())
     }
 
     fn generate_new_world(
         &mut self,
         spec: moho_game::scene_builders::WorldSpec,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        crate::app::world_generator::generate_new_world(self, spec, std::path::Path::new("saves"))
+        let saves_dir = self.saves_dir.clone();
+        crate::app::world_generator::generate_new_world(self, spec, &saves_dir)
     }
 
-    fn auto_save_on_shutdown(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        crate::app::autosave::auto_save_on_shutdown(self, std::path::Path::new("saves"))
+    fn auto_save_on_shutdown(
+        &mut self,
+        lights: &[moho_render_api::LightDesc],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let saves_dir = self.saves_dir.clone();
+        crate::app::autosave::auto_save_on_shutdown(self, &saves_dir, lights)
     }
 
     fn load_scene<P: AsRef<std::path::Path>>(
@@ -265,74 +261,11 @@ impl App {
         );
     }
 
-    /// Update controller input from keyboard state
-    fn update_controller_input(&mut self) {
-        // An action is active when any of its bindings is held
-        let is_active = |action: StrategyAction| -> bool {
-            self.bindings
-                .get(action)
-                .iter()
-                .any(|Binding::Key(key)| self.input.active_keys.contains(key))
-        };
-
-        // Calculate forward/backward
-        let forward = if is_active(StrategyAction::MoveForward) {
-            1.0
-        } else {
-            0.0
-        } - if is_active(StrategyAction::MoveBack) {
-            1.0
-        } else {
-            0.0
-        };
-
-        // Calculate left/right (A is left, so negative)
-        let right = if is_active(StrategyAction::MoveRight) {
-            1.0
-        } else {
-            0.0
-        } - if is_active(StrategyAction::MoveLeft) {
-            1.0
-        } else {
-            0.0
-        };
-
-        // Calculate up/down - only in first person mode
-        let up = if self.simulation.camera_mode() == moho_game::controller::CameraMode::FirstPerson
-        {
-            (if is_active(StrategyAction::Ascend) {
-                1.0
-            } else {
-                0.0
-            }) - (if is_active(StrategyAction::Descend) {
-                1.0
-            } else {
-                0.0
-            })
-        } else {
-            0.0 // No up/down in isometric mode
-        };
-
-        // Check if sprint is active (Shift)
-        let sprint = is_active(StrategyAction::Sprint);
-
-        self.simulation.controller_input.forward = forward;
-        self.simulation.controller_input.right = right;
-        self.simulation.controller_input.up = up;
-        self.simulation.controller_input.sprint = sprint;
-        // Zoom is handled separately via mouse wheel input
-        self.simulation.controller_input.zoom_delta = 0.0;
-
-        // Track jump key for physics KCC
-        self.physics.jump_pressed = is_active(StrategyAction::Jump);
-    }
-
     /// Handle keyboard input for camera controls
     fn handle_keyboard_input(&mut self, event: &KeyEvent) {
         let pressed = event.state == ElementState::Pressed;
 
         if let PhysicalKey::Code(keycode) = event.physical_key {
-            // Handle global hotkeys first (work in any state)
             match keycode {
                 KeyCode::Backquote => {
                     // Backtick (`) toggles console
@@ -344,7 +277,6 @@ impl App {
                             _ => {}
                         }
                     }
-                    return; // Don't process further
                 }
                 KeyCode::F3 => {
                     // F3 toggles the debug HUD overlay
@@ -354,7 +286,6 @@ impl App {
                     {
                         adapter.toggle_debug_hud();
                     }
-                    return;
                 }
                 KeyCode::F4 => {
                     // F4 toggles the chunk-boundary debug minimap
@@ -364,16 +295,12 @@ impl App {
                     {
                         adapter.toggle_overlay("chunk_debug");
                     }
-                    return;
                 }
                 // Escape closes console if open, otherwise opens menu
                 KeyCode::Escape if pressed => {
                     use crate::game_state::GameState;
                     match self.game_state {
-                        GameState::ConsoleOpen => {
-                            self.exit_console();
-                            return;
-                        }
+                        GameState::ConsoleOpen => self.exit_console(),
                         GameState::Playing => {
                             // ESC to show menu
                             self.show_menu();
@@ -384,58 +311,42 @@ impl App {
                             {
                                 adapter.show_menu("start");
                             }
-                            return;
                         }
                         _ => {}
                     }
                 }
                 _ => {}
             }
-
-            // Only process game input in Playing mode
-            if self.game_state != crate::game_state::GameState::Playing {
-                return;
-            }
-
-            if let Some(key) = Key::from_winit(event.physical_key) {
-                if pressed {
-                    self.input.active_keys.insert(key);
-                } else {
-                    self.input.active_keys.remove(&key);
-                }
-            }
         }
     }
 
-    /// Handle mouse motion for camera look
-    fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
+    fn handle_device_input(&mut self, event: &DeviceEvent) {
         // Only process input in game mode and first person camera mode
         if self.game_state != crate::game_state::GameState::Playing
             || self.simulation.camera_mode() != moho_game::controller::CameraMode::FirstPerson
         {
             return;
         }
-        self.input.system.collect_mouse_delta((-delta.0, -delta.1));
+        action_map::handle_device_event(&mut self.input.actions, event);
     }
 
     /// Grab and hide the cursor for game mode
     fn grab_cursor(&mut self) {
-        if let Some(ref wr) = self.window_renderer {
-            wr.window.set_cursor_visible(false);
+        if let Some(window) = &self.window {
+            window.set_cursor_visible(false);
 
             // Try to grab the cursor - confined mode keeps it in window
-            let _ = wr
-                .window
+            let _ = window
                 .set_cursor_grab(CursorGrabMode::Confined)
-                .or_else(|_| wr.window.set_cursor_grab(CursorGrabMode::Locked));
+                .or_else(|_| window.set_cursor_grab(CursorGrabMode::Locked));
         }
     }
 
     /// Release the cursor for menu mode
     fn release_cursor(&mut self) {
-        if let Some(ref wr) = self.window_renderer {
-            wr.window.set_cursor_visible(true);
-            let _ = wr.window.set_cursor_grab(CursorGrabMode::None);
+        if let Some(window) = &self.window {
+            window.set_cursor_visible(true);
+            let _ = window.set_cursor_grab(CursorGrabMode::None);
         }
     }
 
@@ -536,113 +447,6 @@ impl App {
             self.release_cursor();
         }
     }
-
-    /// Handle audio events from the UI or game
-    fn handle_audio_event(&mut self, event: moho_audio::AudioEvent) {
-        if let Some(ref mut audio) = self.audio_system
-            && let Err(e) = audio.handle_event(event)
-        {
-            // Don't spam errors for missing audio files during development
-            tracing::debug!(error = %e, "Audio event failed");
-        }
-    }
-}
-
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window_manager = app::event_loop::WindowManager::new();
-        if let Err(e) = window_manager.handle_resumed(self, event_loop) {
-            tracing::error!(error = %e, "Window resume failed");
-            event_loop.exit();
-        }
-    }
-
-    fn new_events(&mut self, event_loop: &ActiveEventLoop, _cause: StartCause) {
-        let frame_processor = app::event_loop::FrameProcessor::new();
-        let event_processor = app::event_loop::EventProcessor::new();
-        let generation_processor = app::event_loop::GenerationProcessor::new();
-
-        // Check if it's time to process a frame
-        if !frame_processor.should_process_frame(self) {
-            frame_processor.update_control_flow(self, event_loop);
-            return;
-        }
-
-        // Process complete frame (timing, game state, lighting)
-        frame_processor.process_frame(self, event_loop);
-
-        // Process all event types from event bus
-        event_processor.process_ui_events(self, event_loop);
-        event_processor.process_audio_events(self);
-        event_processor.process_graphics_events(self);
-        event_processor.process_world_events(self);
-        event_processor.process_input_events(self);
-        event_processor.process_debug_events(self);
-
-        // Check for generation cancellation from UI
-        event_processor.check_generation_cancel(self);
-
-        // Poll async generation if running
-        generation_processor.poll_generation(self);
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        // Handle Tab key BEFORE dispatcher to prevent UI from consuming it
-        if let WindowEvent::KeyboardInput {
-            event:
-                KeyEvent {
-                    physical_key: PhysicalKey::Code(KeyCode::Tab),
-                    state: ElementState::Pressed,
-                    ..
-                },
-            ..
-        } = &event
-            && self.game_state == crate::game_state::GameState::Playing
-        {
-            match self.simulation.camera_mode() {
-                moho_game::controller::CameraMode::FirstPerson => {
-                    // Switch to RTS first so look_at runs in Isometric mode,
-                    // setting rts_look_target without touching FPS yaw/pitch.
-                    self.simulation
-                        .set_camera_mode(moho_game::controller::CameraMode::Isometric);
-                    self.simulation.look_at(self.simulation.position());
-                }
-                moho_game::controller::CameraMode::Isometric => {
-                    self.simulation
-                        .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
-                }
-            }
-            tracing::info!(
-                mode = ?self.simulation.camera_mode(),
-                "Switched to camera mode"
-            );
-            return; // Don't dispatch Tab further
-        }
-
-        // Dispatch the event to registered subscribers (UI first). If consumed,
-        // skip further application-level handling.
-        if self.dispatcher.dispatch(&event) {
-            return;
-        }
-
-        let window_event_handler = app::event_loop::WindowEventHandler::new();
-        window_event_handler.handle_window_event(self, event_loop, event);
-    }
-
-    fn device_event(
-        &mut self,
-        _event_loop: &ActiveEventLoop,
-        _device_id: DeviceId,
-        event: DeviceEvent,
-    ) {
-        let window_event_handler = app::event_loop::WindowEventHandler::new();
-        window_event_handler.handle_device_event(self, event);
-    }
 }
 
 impl Drop for App {
@@ -663,11 +467,37 @@ fn init_logging() {
         .init();
 }
 
+/// Window, loop rate and audio settings for the strategy game.
+fn app_config() -> moho_app::AppConfig {
+    moho_app::AppConfig {
+        window_title: "Project: Moho - Prototype".into(),
+        loop_config: moho_app::LoopConfig::new(moho_game::TICK_HZ),
+        init_audio: true,
+    }
+}
+
 fn main() {
     init_logging();
-    let event_loop = EventLoop::new().expect("Failed to create event loop");
-    let mut app = App::from_config(crate::app::config::AppConfig::from_prefs());
+    let app = App::from_config(crate::app::config::AppConfig::from_prefs());
 
-    // Run the modern event loop with ApplicationHandler
-    let _ = event_loop.run_app(&mut app);
+    if let Err(e) = moho_app::run(app, app_config()) {
+        tracing::error!(error = %e, "Application failed");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_config_ticks_at_60hz() {
+        let config = app_config();
+
+        assert_eq!(config.loop_config.tick_hz, moho_game::TICK_HZ);
+        assert_eq!(
+            config.loop_config.tick_length(),
+            std::time::Duration::from_secs(1) / 60
+        );
+    }
 }

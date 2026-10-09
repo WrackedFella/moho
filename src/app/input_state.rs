@@ -1,16 +1,12 @@
-//! Input state — groups keyboard tracking, the input smoothing system,
-//! and the uncaptured-input channel used to forward events to the game loop.
+//! Input state: the action map and the uncaptured-input channel used to
+//! forward events to the game loop.
 
-use std::collections::HashSet;
-
-use moho_input::key::Key;
+use moho_input::action_map::ActionMap;
+use moho_ui::actions::StrategyAction;
 
 pub struct InputState {
-    /// Currently held physical keys.
-    pub active_keys: HashSet<Key>,
-
-    /// Smoothing / accumulation for mouse deltas.
-    pub system: moho_core::input::InputSystem,
+    /// Bindings, held actions and mouse look, read once per update.
+    pub actions: ActionMap<StrategyAction>,
 
     /// Sender side of the channel for input events not consumed by the UI.
     /// `None` before the UI is set up.
@@ -21,10 +17,9 @@ pub struct InputState {
 }
 
 impl InputState {
-    pub fn new(system: moho_core::input::InputSystem) -> Self {
+    pub fn new(actions: ActionMap<StrategyAction>) -> Self {
         Self {
-            active_keys: HashSet::new(),
-            system,
+            actions,
             unconsumed_tx: None,
             unconsumed_rx: None,
         }

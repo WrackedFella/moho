@@ -33,8 +33,9 @@ use super::grid::VoxelGrid;
 use super::light_jobs::{
     LightFrameBudget, LightJobQueue, LightJobStats, LightUpdateJob, LightUpdateResult,
 };
+use crate::events::{BlockChangeReason, WorldEvent};
 use glam::{IVec3, Vec3};
-use moho_core::events::{BlockChangeReason, EventBus, WorldEvent};
+use moho_core::events::EventBus;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 

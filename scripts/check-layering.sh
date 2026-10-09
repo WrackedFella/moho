@@ -46,7 +46,7 @@ collect_graph() {
     crates="$(cargo tree --workspace --depth 0 -e normal --target all --prefix none --format '{p}' \
         | awk 'NF{print $1}')" || return 1
     for crate in $crates; do
-        deps="$(cargo tree -p "$crate" -e normal,build --all-features --target all --prefix none --format '{p}' \
+        deps="$(cargo tree -p "$crate" -e normal,build,dev --all-features --target all --prefix none --format '{p}' \
             | awk -v self="$crate" 'NF && $1 != self {print $1}' | sort -u | tr '\n' ' ')" || return 1
         echo "$crate: $deps"
     done

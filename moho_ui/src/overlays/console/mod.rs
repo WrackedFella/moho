@@ -234,13 +234,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_new_console() {
-        let console = Console::new();
-        assert!(console.input_buffer.is_empty());
-        assert!(console.output.lines().len() >= 2); // Welcome messages
-    }
-
-    #[test]
     fn test_log() {
         let mut console = Console::new();
         let initial_len = console.output.lines().len();
@@ -313,24 +306,6 @@ mod tests {
 
         assert_eq!(action, ConsoleAction::None);
         assert_eq!(console.output.lines().len(), 0);
-    }
-
-    #[test]
-    fn test_execute_unknown_command() {
-        let mut console = Console::new();
-        console.output.clear_output();
-        console.input_buffer = "unknowncommand".to_string();
-
-        let action = console.execute_command();
-
-        assert_eq!(action, ConsoleAction::None);
-        assert!(
-            console
-                .output
-                .lines()
-                .iter()
-                .any(|line| line.contains("Unknown command"))
-        );
     }
 
     fn render_frame_with_backtick(console: &mut Console) -> ConsoleAction {

@@ -1,5 +1,5 @@
-use crate::events::Event;
 use glam::IVec3;
+use moho_core::events::Event;
 use std::any::Any;
 
 /// Reason a block was modified (for gameplay/analytics)

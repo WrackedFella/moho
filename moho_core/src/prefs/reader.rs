@@ -284,6 +284,76 @@ mod tests {
     use proptest::prelude::*;
     use std::fmt::Write as _;
 
+    #[test]
+    fn warning_display_names_file_and_detail_for_each_issue() {
+        let issues = [
+            (
+                PrefsIssue::Malformed {
+                    section: "audio".into(),
+                    key: "music_volume".into(),
+                    value: Some("loud".into()),
+                },
+                vec!["audio", "music_volume", "loud"],
+            ),
+            (
+                PrefsIssue::Malformed {
+                    section: "video".into(),
+                    key: "window_mode".into(),
+                    value: None,
+                },
+                vec!["video", "window_mode"],
+            ),
+            (
+                PrefsIssue::UnknownKey {
+                    section: "world".into(),
+                    key: "mystery_key".into(),
+                },
+                vec!["world", "mystery_key"],
+            ),
+            (
+                PrefsIssue::UnknownSection {
+                    section: "mystery_section".into(),
+                },
+                vec!["mystery_section"],
+            ),
+            (
+                PrefsIssue::Unparseable {
+                    reason: "unparseable-reason".into(),
+                },
+                vec!["unparseable-reason"],
+            ),
+            (
+                PrefsIssue::Unreadable {
+                    reason: "unreadable-reason".into(),
+                },
+                vec!["unreadable-reason"],
+            ),
+            (
+                PrefsIssue::NotCreated {
+                    reason: "notcreated-reason".into(),
+                },
+                vec!["notcreated-reason"],
+            ),
+        ];
+
+        for (issue, details) in issues {
+            let warning = PrefsWarning {
+                file: PathBuf::from("settings/prefs.ini"),
+                issue,
+            };
+
+            let text = warning.to_string();
+
+            assert!(
+                text.contains("settings/prefs.ini"),
+                "file missing in {text}"
+            );
+            for detail in details {
+                assert!(text.contains(detail), "{detail} missing in {text}");
+            }
+        }
+    }
+
     /// Every key with a valid value that differs from the default, as `(section, [(key, value)])`.
     const BASE: &[(&str, &[(&str, &str)])] = &[
         (

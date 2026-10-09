@@ -6,11 +6,10 @@
 //! - Graphics events (time of day, lighting)
 //! - Input events (mouse wheel, keyboard)
 
-use crate::App;
 use crate::input_event::InputEvent;
-use moho_core::events::{GraphicsEvent, UiEvent, WorldEvent};
-use moho_voxel::VoxelChunk;
-use winit::event_loop::ActiveEventLoop;
+use crate::{App, RenderRequest};
+use moho_core::events::{GraphicsEvent, UiEvent};
+use moho_voxel::{BlockChangeReason, VoxelChunk, WorldEvent};
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
@@ -36,14 +35,14 @@ impl EventProcessor {
     }
 
     /// Process all pending UI events from the event bus
-    pub fn process_ui_events(&self, app: &mut App, event_loop: &ActiveEventLoop) {
+    pub fn process_ui_events(&self, app: &mut App) {
         while let Ok(event) = app.ui_event_rx.try_recv() {
-            self.handle_ui_event(app, event_loop, event);
+            self.handle_ui_event(app, event);
         }
     }
 
     /// Process a single UI event
-    fn handle_ui_event(&self, app: &mut App, event_loop: &ActiveEventLoop, event: UiEvent) {
+    fn handle_ui_event(&self, app: &mut App, event: UiEvent) {
         match event {
             UiEvent::LoadSceneRequested { path } => {
                 tracing::info!(path = %path.display(), "UI requested load scene");
@@ -67,11 +66,7 @@ impl EventProcessor {
             }
             UiEvent::ExitRequested => {
                 tracing::info!("UI requested exit");
-                // Auto-save before exit
-                if let Err(e) = app.auto_save_on_shutdown() {
-                    tracing::warn!(error = %e, "Failed to auto-save on exit");
-                }
-                event_loop.exit();
+                app.exit_requested = true;
             }
             UiEvent::MenuShown { name } => {
                 tracing::info!(name = %name, "UI requested show menu");
@@ -90,8 +85,8 @@ impl EventProcessor {
             }
             UiEvent::OverlayToggled { name, visible } => {
                 tracing::info!(name = %name, visible, "Overlay toggled");
-                if visible && let Some(ref wr) = app.window_renderer {
-                    wr.window.set_cursor_visible(true);
+                if visible && let Some(window) = &app.window {
+                    window.set_cursor_visible(true);
                 }
             }
             UiEvent::SettingsSaved => {
@@ -105,31 +100,22 @@ impl EventProcessor {
                 height,
             } => {
                 tracing::info!(mode = ?mode, width, height, "Window settings changed");
-                if let Some(ref wr) = app.window_renderer {
+                if let Some(window) = &app.window {
                     use moho_core::events::WindowMode;
                     use winit::dpi::PhysicalSize;
                     use winit::window::Fullscreen;
 
                     match mode {
                         WindowMode::Fullscreen | WindowMode::Borderless => {
-                            wr.window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
                         }
                         WindowMode::Windowed => {
-                            wr.window.set_fullscreen(None);
-                            let _ = wr
-                                .window
-                                .request_inner_size(PhysicalSize::new(width, height));
+                            window.set_fullscreen(None);
+                            let _ = window.request_inner_size(PhysicalSize::new(width, height));
                         }
                     }
                 }
             }
-        }
-    }
-
-    /// Process all pending audio events from the event bus
-    pub fn process_audio_events(&self, app: &mut App) {
-        while let Ok(event) = app.audio_event_rx.try_recv() {
-            app.handle_audio_event(event);
         }
     }
 
@@ -244,7 +230,7 @@ impl EventProcessor {
         app.event_bus.publish(WorldEvent::BlockRemoved {
             position: outcome.block_pos,
             old_material_id: outcome.old_material_id,
-            reason: moho_core::events::BlockChangeReason::Player,
+            reason: BlockChangeReason::Player,
         });
         app.event_bus.publish(WorldEvent::ChunkMeshDirty {
             chunk_pos,
@@ -387,13 +373,13 @@ impl EventProcessor {
                             app.event_bus.publish(WorldEvent::BlockPlaced {
                                 position: block_pos,
                                 material_id: torch_id,
-                                reason: moho_core::events::BlockChangeReason::Player,
+                                reason: BlockChangeReason::Player,
                             });
                         }
                         "light" => {
                             // Spawn dynamic light
-                            // We need to access the renderer backend to add a light
-                            if let Some(wr) = &mut app.window_renderer {
+                            // The renderer is only reachable from `frame`, so the light is queued.
+                            if app.window.is_some() {
                                 // Parse color from args if present
                                 let color = if let Some(arg_str) = &args {
                                     // Simple parsing: "r g b"
@@ -411,12 +397,12 @@ impl EventProcessor {
                                     glam::Vec3::ONE // White default
                                 };
 
-                                wr.renderer.add_point_light(
-                                    spawn_pos,
+                                app.pending_render.push(RenderRequest::AddPointLight {
+                                    position: spawn_pos,
                                     color,
-                                    DEFAULT_POINT_LIGHT_INTENSITY,
-                                    DEFAULT_POINT_LIGHT_RANGE,
-                                );
+                                    intensity: DEFAULT_POINT_LIGHT_INTENSITY,
+                                    range: DEFAULT_POINT_LIGHT_RANGE,
+                                });
                                 tracing::info!(pos = ?spawn_pos, "Added point light");
 
                                 // Spawn a small gizmo sphere so the light origin is
@@ -425,7 +411,7 @@ impl EventProcessor {
                                 let gizmo = moho_game::actors::Sphere::new(
                                     spawn_pos,
                                     0.15,
-                                    moho_core::materials::MaterialType::Emissive {
+                                    moho_voxel::MaterialType::Emissive {
                                         color,
                                         intensity: 1.5,
                                     },
@@ -435,8 +421,8 @@ impl EventProcessor {
                         }
                         "cube" => {
                             // Spawn cube actor
-                            use moho_core::materials::MaterialType;
                             use moho_game::actors::Cube;
+                            use moho_voxel::MaterialType;
 
                             let cube = Cube::new(
                                 spawn_pos,
@@ -456,8 +442,8 @@ impl EventProcessor {
                         }
                         "sphere" => {
                             // Spawn sphere actor
-                            use moho_core::materials::MaterialType;
                             use moho_game::actors::Sphere;
+                            use moho_voxel::MaterialType;
 
                             let sphere = Sphere::new(
                                 spawn_pos,
@@ -494,8 +480,9 @@ impl EventProcessor {
             }
             DebugEvent::SetShadowQuality { quality } => {
                 tracing::info!(quality, "Setting shadow quality");
-                if let Some(wr) = &mut app.window_renderer {
-                    wr.renderer.set_shadow_quality(quality as u8);
+                if app.window.is_some() {
+                    app.pending_render
+                        .push(RenderRequest::ShadowQuality(quality as u8));
 
                     // Update prefs
                     app.prefs.set_shadow_quality(quality);
@@ -504,8 +491,9 @@ impl EventProcessor {
             }
             DebugEvent::SetSsaoQuality { quality } => {
                 tracing::info!(quality, "Setting SSAO quality");
-                if let Some(wr) = &mut app.window_renderer {
-                    wr.renderer.set_ssao_quality(quality as u8);
+                if app.window.is_some() {
+                    app.pending_render
+                        .push(RenderRequest::SsaoQuality(quality as u8));
 
                     // Update prefs
                     app.prefs.set_ssao_quality(quality);
@@ -549,6 +537,18 @@ impl Default for EventProcessor {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ui_exit_request_sets_the_exit_flag() {
+        let mut app = App::headless();
+        app.event_bus.publish(UiEvent::ExitRequested);
+        app.event_bus.process_deferred();
+        assert!(!app.exit_requested, "nothing processed yet");
+
+        EventProcessor::new().process_ui_events(&mut app);
+
+        assert!(app.exit_requested);
+    }
+
     use super::*;
     use moho_core::events::DebugEvent;
 
@@ -594,6 +594,36 @@ mod tests {
         assert!(cubes[0].center.distance(fallback_spawn_pos(&app)) < 1e-3);
         assert!(app.entities.actors.spheres().is_empty());
         assert_eq!(app.physics.test_bodies.len(), 1);
+    }
+
+    #[test]
+    fn spawn_torch_publishes_torch_placement_at_the_spawn_block() {
+        let mut app = App::headless();
+        let placed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&placed);
+        app.event_bus.subscribe(move |e: &WorldEvent| {
+            if let WorldEvent::BlockPlaced {
+                position,
+                material_id,
+                reason,
+            } = e
+            {
+                sink.lock()
+                    .unwrap()
+                    .push((*position, *material_id, reason.clone()));
+            }
+        });
+        publish_spawn(&app, "torch");
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        let expected = fallback_spawn_pos(&app).floor().as_ivec3();
+        assert_eq!(
+            *placed.lock().unwrap(),
+            vec![(expected, TORCH_MATERIAL_ID, BlockChangeReason::Player)]
+        );
+        assert!(app.entities.actors.spheres().is_empty());
+        assert!(app.entities.actors.cubes().is_empty());
     }
 
     #[test]

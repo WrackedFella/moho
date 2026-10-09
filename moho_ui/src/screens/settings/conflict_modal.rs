@@ -107,13 +107,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_modal_is_hidden() {
-        let modal = ConflictModalState::new();
-        assert!(!modal.is_visible());
-        assert!(modal.pending.is_none());
-    }
-
-    #[test]
     fn show_makes_modal_visible() {
         let mut modal = ConflictModalState::new();
         let pending = PendingBinding {

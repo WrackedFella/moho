@@ -6,7 +6,7 @@
 
 Moho is a modular Rust workspace containing engine components designed for voxel-based games:
 
-- **moho_core** - Event bus, materials, preferences, persistence
+- **moho_core** - Event bus, preferences, persistence
 - **moho_voxel** - Voxel terrain for the strategy line: grid, meshing, lighting, streaming
 - **moho_renderer** - WGPU-based rendering backend  
 - **moho_audio** - Audio playback (rodio-based)
@@ -45,9 +45,6 @@ cargo test --workspace
 
 # Run specific crate tests
 cargo test --package moho_core
-
-# Run integration tests
-cargo test --test event_bus_integration
 ```
 
 ### Performance Benchmarks
@@ -74,7 +71,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ### Library Documentation
 Each workspace crate has comprehensive documentation in its README:
-- **[moho_core/README.md](moho_core/README.md)** - Event bus, materials, preferences
+- **[moho_core/README.md](moho_core/README.md)** - Event bus, preferences, persistence
 - **[moho_voxel/README.md](moho_voxel/README.md)** - Voxel grid, chunks, meshing
 - **[moho_renderer/README.md](moho_renderer/README.md)** - WGPU rendering, CSM shadows, lighting
 - **[moho_audio/README.md](moho_audio/README.md)** - Audio playback and event handling

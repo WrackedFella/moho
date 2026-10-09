@@ -9,6 +9,8 @@ renderer and physics as meshes ([ADR-0010](../_todo/adr/0010-world-geometry-is-a
 - `VoxelGrid` - Stores block data in 3D grid
 - `VoxelChunk` - Fixed-size 16×16×16 chunk
 - `BlockData` - Snapshot of a stored block's position, material and resource
+- `MaterialType` - Surface material (lambertian, metal, emissive, voxel terrain); implements `RenderMaterial`
+- `WorldEvent`, `BlockChangeReason` - Block and chunk events published on the engine's event bus
 
 ## Usage
 

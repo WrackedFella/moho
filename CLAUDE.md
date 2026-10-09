@@ -28,38 +28,41 @@ cargo run                          # RUST_LOG=debug for logging
   gets `feature/<ID>-<slug>` off `dev`; it is the base branch for that feature's
   cards (branch from it, PR into it, `MOHO_BASE=origin/feature/<ID>-<slug>` for
   `just check`/`just mutants`). Card PRs don't auto-close issues there; the
-  feature's PR into `dev` lists `Closes #…` for each card. The feature's card table
-  in `_todo/` names its integration branch. Current: none.
+  feature's PR into `dev` lists `Closes #…` for each card. The feature's issue names
+  its integration branch. Current: none.
 - **Project board:** WrackedFella, project 1 (https://github.com/users/WrackedFella/projects/1).
-  The board and issue are authoritative for item state. Cards mirror Status, Gate class
-  and Labels in their header (`_todo/_STANDARDS.md`, Item state), written only by the
-  sync agent after publish. Agents change the board only through devflow's `scripts/board`.
+  The board and issue are the only record of item state; nothing in `_todo/` mirrors
+  them. Agents change the board only through devflow's `scripts/board`.
+- **The issue is the record of an item.** When scope changes, edit the issue body;
+  deviations and decisions go in an issue comment. Implementation PRs edit no `_todo/`
+  item file (`_todo/_STANDARDS.md`, Issues and branches).
 - **Planning:** index `_todo/README.md`, rules `_todo/_STANDARDS.md` (features first,
   IDs like `SG-F1-04`, card lifecycle). Check `_todo/ROADMAP.md` for order before
   picking up work.
 - **Environment setup command:** `bash scripts/cloud-tools.sh` (cloud threads only;
   text-only threads skip it).
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
-- **Domain-logic paths** (gate class `domain`): rules in `moho_game`, `moho_core`.
+- **Domain-logic paths** (gate class `domain`): rules in `moho_game`, `moho_core`, `moho_voxel`.
   Adapters, UI wiring and config are glue.
 - **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
   `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing
   tests before implementation and the PR carries its findings). Switches and runtimes: `_todo/WORKFLOW.md`.
-- **Local planning files are drafts.** A card or feature in `_todo/` is reviewed there;
-  on approval, agents publish it as an issue on the board, and the issue is canonical
-  from then on. Local files of finished items are deleted (`_todo/_STANDARDS.md`).
+- **Local planning files are drafts.** A card or feature in `_todo/` exists only until
+  it is approved; the approving thread files the issue and deletes the file
+  (`_todo/_STANDARDS.md`, Drafts).
 - **ADRs:** `_todo/adr/`. Order of work: `_todo/ROADMAP.md`.
 - **Docs directory:** `wiki/`, sections and conventions in `wiki/README.md`. The
   orchestrator keeps it current through `/devflow:wiki`; new pages are flagged in the
-  PR, and PR review is their approval. Docs outside `wiki/` (other than cards, ADRs
-  and crate READMEs) need the user's OK first.
+  PR, and PR review is their approval. The wiki is the documentation source of
+  truth; docs outside `wiki/` (other than card drafts, ADRs and crate READMEs) need the
+  user's OK first.
 
 ## Architecture
 
 ```
 src/            binary: winit event loop, wiring
-moho_core       event bus, materials, input, prefs, persistence
-moho_voxel      strategy line: voxel grid, meshing, LOD, lighting, chunk store, streaming
+moho_core       event bus, engine-wide events, prefs, persistence
+moho_voxel      strategy line: voxel grid, meshing, LOD, lighting, chunk store, terrain materials, world events
 moho_game       game domain: pawn, tools, controller, GameClock, scenes, raycast
 moho_render_api engine/game contract: Renderable, RenderMaterial, GPU-layout data
 moho_renderer   wgpu backend: meshes, CSM shadows, SSAO, skybox
