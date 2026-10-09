@@ -178,4 +178,53 @@ mod tests {
             assert_eq!(map_axis(axis), expected, "{axis:?}");
         }
     }
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum PadAction {
+        Jump,
+    }
+
+    impl Action for PadAction {
+        const ALL: &'static [Self] = &[PadAction::Jump];
+
+        fn name(self) -> &'static str {
+            "jump"
+        }
+
+        fn default_bindings(self) -> &'static [crate::bindings::Binding] {
+            &[crate::bindings::Binding::Pad(crate::pad::PadInput::Button(
+                PadButton::South,
+            ))]
+        }
+    }
+
+    fn held_jump_map() -> ActionMap<PadAction> {
+        let (bindings, _) =
+            crate::bindings::ActionBindings::<PadAction>::load(&std::collections::BTreeMap::new());
+        let mut map = ActionMap::new(bindings, 1.0);
+        map.pad_button(PadButton::South, true);
+        map.end_tick();
+        map
+    }
+
+    #[test]
+    fn disconnect_event_releases_pad_bindings() {
+        let mut map = held_jump_map();
+
+        apply_event(gilrs::EventType::Disconnected, &mut map);
+        let frame = map.end_tick();
+
+        assert!(frame.released(PadAction::Jump));
+        assert!(!frame.held(PadAction::Jump));
+    }
+
+    #[test]
+    fn ignored_event_changes_nothing() {
+        let mut map = held_jump_map();
+
+        apply_event(gilrs::EventType::Connected, &mut map);
+        let frame = map.end_tick();
+
+        assert!(frame.held(PadAction::Jump));
+        assert!(!frame.released(PadAction::Jump));
+    }
 }

@@ -512,6 +512,40 @@ mod tests {
     }
 
     #[test]
+    fn resting_or_slightly_deflected_stick_holds_no_direction() {
+        for stick in [Stick::LeftStick, Stick::RightStick] {
+            for value in [0.0, 0.3, -0.3] {
+                let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+                let actions = [TestAction::MoveForward, TestAction::Jump, TestAction::Fire];
+                bindings.set(
+                    TestAction::MoveForward,
+                    vec![Binding::Pad(PadInput::Stick(stick, StickDir::Up))],
+                );
+                bindings.set(
+                    TestAction::Jump,
+                    vec![
+                        Binding::Pad(PadInput::Stick(stick, StickDir::Down)),
+                        Binding::Pad(PadInput::Stick(stick, StickDir::Left)),
+                    ],
+                );
+                bindings.set(
+                    TestAction::Fire,
+                    vec![Binding::Pad(PadInput::Stick(stick, StickDir::Right))],
+                );
+                let mut map = ActionMap::new(bindings, 1.0);
+
+                map.pad_axis(stick, StickAxis::X, value);
+                map.pad_axis(stick, StickAxis::Y, value);
+                let frame = map.end_tick();
+
+                for action in actions {
+                    assert!(!frame.held(action), "{stick:?} at {value}: {action:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn pad_disconnect_releases_pad_bindings() {
         let mut map = pad_map(1.0);
         map.set_filtering(false);
