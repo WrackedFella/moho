@@ -48,7 +48,7 @@ pub(crate) fn route(event: &WindowEvent) -> Route {
 pub fn run<G: Game + 'static>(game: G, config: AppConfig) -> Result<(), AppError> {
     let event_loop = EventLoop::new().map_err(|e| AppError::EventLoop(e.to_string()))?;
     let mut runner = Runner {
-        sim: HeadlessLoop::new(config.loop_config.clone()),
+        sim: HeadlessLoop::new(config.loop_config),
         game,
         config,
         window: None,

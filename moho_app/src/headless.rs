@@ -23,7 +23,7 @@ impl<G: Game> HeadlessLoop<G> {
     ///
     /// Panics if `config.tick_hz` is 0.
     pub fn new(config: LoopConfig) -> Self {
-        let step = FixedStep::new(config.clone());
+        let step = FixedStep::new(config);
         Self {
             step,
             tick_length: config.tick_length(),

@@ -11,15 +11,15 @@ use std::f32::consts::PI;
 /// The clock operates on a 24-hour cycle (0.0 - 24.0) with configurable
 /// day and night lengths. It automatically calculates sun and moon positions
 /// based on the current time.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GameClock {
     /// Current time of day in hours (0.0 = midnight, 12.0 = noon, 24.0 wraps to 0.0)
     time_of_day: f32,
 
-    /// Length of daytime in real-world seconds
+    /// Length of daytime in simulated seconds at time scale 1.0
     day_length_seconds: f32,
 
-    /// Length of nighttime in real-world seconds
+    /// Length of nighttime in simulated seconds at time scale 1.0
     night_length_seconds: f32,
 
     /// Total simulated time in seconds (for debugging/stats)
@@ -34,8 +34,8 @@ impl GameClock {
     ///
     /// # Arguments
     /// * `initial_time` - Starting time in hours (0.0-24.0)
-    /// * `day_length` - Length of daytime in real seconds
-    /// * `night_length` - Length of nighttime in real seconds
+    /// * `day_length` - Length of daytime in simulated seconds at time scale 1.0
+    /// * `night_length` - Length of nighttime in simulated seconds at time scale 1.0
     ///
     /// # Example
     /// ```
@@ -91,7 +91,7 @@ impl GameClock {
         self.time_of_day
     }
 
-    /// Get the total elapsed real-world time in seconds.
+    /// Get the total elapsed simulated time in seconds (scaled by the time scale).
     pub fn elapsed_seconds(&self) -> f64 {
         self.elapsed_seconds
     }
