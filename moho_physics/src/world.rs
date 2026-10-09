@@ -180,12 +180,13 @@ impl PhysicsWorld {
 
     /// Move the character by the desired translation (horizontal only).
     /// Gravity is applied internally via `vertical_velocity`.
-    /// Returns the new world position after movement.
-    pub fn move_character(&mut self, desired_horizontal: Vec3, dt: f32) -> Vec3 {
+    /// Returns the new world position after movement, or `None` if there is
+    /// no character.
+    pub fn move_character(&mut self, desired_horizontal: Vec3, dt: f32) -> Option<Vec3> {
         let (Some(body_handle), Some(collider_handle)) =
             (self.character_body, self.character_collider)
         else {
-            return Vec3::ZERO;
+            return None;
         };
 
         // Integrate gravity into vertical velocity
@@ -232,7 +233,7 @@ impl PhysicsWorld {
         self.rigid_body_set[body_handle].set_next_kinematic_position(new_pose);
         self.rigid_body_set[body_handle].set_position(new_pose, false);
 
-        new_translation
+        Some(new_translation)
     }
 
     /// Teleport the character to `position` and zero out vertical velocity.

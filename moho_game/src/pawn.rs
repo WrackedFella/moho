@@ -64,7 +64,11 @@ impl Pawn {
 
     /// Select a hotbar slot (`0..HOTBAR_SLOT_COUNT`). Selecting `TOOL_SLOT`
     /// equips `STARTING_TOOL`; selecting any other slot un-equips the tool.
+    /// Out-of-range slots are ignored.
     pub fn select_slot(&mut self, slot: usize) {
+        if slot >= HOTBAR_SLOT_COUNT {
+            return;
+        }
         self.selected_slot = slot;
         self.equipped_tool = if slot == TOOL_SLOT {
             Some(STARTING_TOOL)

@@ -35,25 +35,16 @@ pub struct AppConfig {
 
     /// Preferences object (contains keybindings and other settings)
     pub prefs: Prefs,
-
-    /// Chunk streaming radii and per-frame budget, sourced from `[world]` in prefs.ini.
-    pub streaming: moho_core::voxel::StreamingConfig,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         let prefs = Prefs::default();
 
-        let streaming = moho_core::voxel::StreamingConfig {
-            load_radius_chunks: prefs.world_load_radius(),
-            unload_radius_chunks: prefs.world_unload_radius(),
-            chunks_per_frame: prefs.world_chunks_per_frame(),
-        };
         Self {
             mouse_sensitivity: prefs.mouse_sensitivity() * 0.002,
             input_filtering_enabled: prefs.input_filtering_enabled(),
             prefs,
-            streaming,
         }
     }
 }
@@ -83,16 +74,10 @@ impl AppConfig {
         let mouse_sensitivity = prefs.mouse_sensitivity() * 0.002;
         let input_filtering_enabled = prefs.input_filtering_enabled();
 
-        let streaming = moho_core::voxel::StreamingConfig {
-            load_radius_chunks: prefs.world_load_radius(),
-            unload_radius_chunks: prefs.world_unload_radius(),
-            chunks_per_frame: prefs.world_chunks_per_frame(),
-        };
         Self {
             mouse_sensitivity,
             input_filtering_enabled,
             prefs,
-            streaming,
         }
     }
 
@@ -150,20 +135,17 @@ impl AppConfigBuilder {
 
     /// Build the AppConfig with the specified settings.
     ///
-    /// Any unset values will use defaults from AppConfig::default().
+    /// Unset values come from the supplied prefs, or from `Prefs::default()`
+    /// when none were supplied.
     pub fn build(self) -> AppConfig {
-        let defaults = AppConfig::default();
-
-        let prefs = self.prefs.unwrap_or(defaults.prefs);
-        let mouse_sensitivity = self.mouse_sensitivity.unwrap_or(defaults.mouse_sensitivity);
+        let base = AppConfig::from_prefs_struct(self.prefs.unwrap_or_default());
 
         AppConfig {
-            mouse_sensitivity,
+            mouse_sensitivity: self.mouse_sensitivity.unwrap_or(base.mouse_sensitivity),
             input_filtering_enabled: self
                 .input_filtering_enabled
-                .unwrap_or(defaults.input_filtering_enabled),
-            prefs,
-            streaming: defaults.streaming,
+                .unwrap_or(base.input_filtering_enabled),
+            prefs: base.prefs,
         }
     }
 }

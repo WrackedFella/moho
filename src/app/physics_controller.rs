@@ -36,14 +36,14 @@ impl PhysicsController {
     /// Move character for one frame, applying jump if grounded.
     ///
     /// Returns the new world-space position, or `None` if the physics world
-    /// is not initialised.
+    /// is not initialised or has no character.
     pub fn move_character(&mut self, horizontal: glam::Vec3, dt: f32) -> Option<glam::Vec3> {
         const JUMP_VELOCITY: f32 = 8.0;
         let pw = self.world.as_mut()?;
         if self.jump_pressed && pw.is_grounded {
             pw.vertical_velocity = JUMP_VELOCITY;
         }
-        Some(pw.move_character(horizontal, dt))
+        pw.move_character(horizontal, dt)
     }
 
     /// Teleport the character (e.g. respawn after falling off the map).
