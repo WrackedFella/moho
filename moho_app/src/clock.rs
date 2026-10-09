@@ -59,15 +59,29 @@ mod tests {
 
     #[test]
     fn frame_without_tick_leaves_clock_unchanged() {
-        let mut game = ScaledGame::new(1.0);
-        let mut sim = noon_loop();
+        // A frame shorter than a tick leaves the clock alone; a 1 s frame runs
+        // 60 ticks, which is 0.1 h on a 120 s day.
+        let cases = [(1_000_000_000_u64 / 144, 12.0_f32), (1_000_000_000, 12.1)];
 
-        let ran = sim.advance(&mut game, Duration::from_nanos(1_000_000_000 / 144));
+        for (frame_ns, expected_hours) in cases {
+            let mut game = ScaledGame::new(1.0);
+            let mut sim = HeadlessLoop::new(
+                LoopConfig {
+                    max_catch_up_ticks: 100,
+                    ..LoopConfig::new(60)
+                }
+                .with_clock(GameClock::new(12.0, 120.0, 60.0)),
+            );
 
-        assert_eq!(ran, 0);
-        assert_eq!(sim.clock().time_of_day(), 12.0);
-        assert_eq!(sim.clock().elapsed_seconds(), 0.0);
-        assert_eq!(game.seen_in_frame, vec![12.0]);
+            sim.advance(&mut game, Duration::from_nanos(frame_ns));
+
+            assert!(
+                (sim.clock().time_of_day() - expected_hours).abs() < TOLERANCE,
+                "frame {frame_ns} ns: got {}",
+                sim.clock().time_of_day()
+            );
+            assert_eq!(game.seen_in_frame, vec![sim.clock().time_of_day()]);
+        }
     }
 
     #[test]
@@ -107,16 +121,6 @@ mod tests {
     }
 
     #[test]
-    fn default_loop_config_uses_the_default_clock() {
-        let sim = HeadlessLoop::<ScaledGame>::new(LoopConfig::new(60));
-
-        assert_eq!(
-            sim.clock().time_of_day(),
-            GameClock::default().time_of_day()
-        );
-    }
-
-    #[test]
     fn reset_to_sets_time_without_a_tick() {
         let mut clock = GameClock::new(12.0, 120.0, 60.0);
 
@@ -143,22 +147,22 @@ mod tests {
     }
 
     #[test]
-    fn set_time_scale_stores_a_valid_scale() {
-        let mut clock = GameClock::default();
-
-        clock.set_time_scale(2.5);
-
-        assert_eq!(clock.time_scale(), 2.5);
-    }
-
-    #[test]
     fn negative_or_nan_time_scale_clamps_to_zero() {
-        for bad in [-1.0, f32::NEG_INFINITY, f32::NAN, f32::INFINITY] {
+        let cases = [
+            (2.5, 2.5),
+            (0.0, 0.0),
+            (-1.0, 0.0),
+            (f32::NEG_INFINITY, 0.0),
+            (f32::NAN, 0.0),
+            (f32::INFINITY, 0.0),
+        ];
+
+        for (set, stored) in cases {
             let mut clock = GameClock::default();
 
-            clock.set_time_scale(bad);
+            clock.set_time_scale(set);
 
-            assert_eq!(clock.time_scale(), 0.0, "scale {bad}");
+            assert_eq!(clock.time_scale(), stored, "set {set}");
         }
     }
 

@@ -880,6 +880,23 @@ mod tests {
         }
 
         #[test]
+        fn console_time_command_resets_the_loop_clock() {
+            let mut app = playing_app();
+            app.game_state = GameState::ConsoleOpen;
+            app.event_bus
+                .publish(moho_core::events::GraphicsEvent::TimeOfDayChanged {
+                    time: 18.5,
+                    sun_angle: 0.0,
+                });
+            app.event_bus.process_deferred();
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ).with_clock(noon()));
+
+            sim.step(&mut app, 1);
+
+            assert_eq!(sim.clock().time_of_day(), 18.5);
+        }
+
+        #[test]
         fn close_requested_autosaves_the_clock_time_of_day() {
             let (mut app, _temp) = app_with_saves_dir();
             let mut clock = GameClock::default();
