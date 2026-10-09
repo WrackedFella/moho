@@ -180,12 +180,13 @@ impl PhysicsWorld {
 
     /// Move the character by the desired translation (horizontal only).
     /// Gravity is applied internally via `vertical_velocity`.
-    /// Returns the new world position after movement.
-    pub fn move_character(&mut self, desired_horizontal: Vec3, dt: f32) -> Vec3 {
+    /// Returns the new world position after movement, or `None` if there is
+    /// no character.
+    pub fn move_character(&mut self, desired_horizontal: Vec3, dt: f32) -> Option<Vec3> {
         let (Some(body_handle), Some(collider_handle)) =
             (self.character_body, self.character_collider)
         else {
-            return Vec3::ZERO;
+            return None;
         };
 
         // Integrate gravity into vertical velocity
@@ -232,7 +233,7 @@ impl PhysicsWorld {
         self.rigid_body_set[body_handle].set_next_kinematic_position(new_pose);
         self.rigid_body_set[body_handle].set_position(new_pose, false);
 
-        new_translation
+        Some(new_translation)
     }
 
     /// Teleport the character to `position` and zero out vertical velocity.
@@ -305,6 +306,26 @@ impl Default for PhysicsWorld {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn move_character_without_character_returns_none() {
+        let mut world = PhysicsWorld::new();
+
+        let moved = world.move_character(Vec3::ZERO, 1.0 / 60.0);
+
+        assert_eq!(moved, None);
+    }
+
+    #[test]
+    fn move_character_with_character_returns_its_new_position() {
+        let mut world = PhysicsWorld::new();
+        world.add_character(Vec3::new(0.0, 10.0, 0.0));
+
+        let moved = world.move_character(Vec3::ZERO, 1.0 / 60.0);
+
+        assert!(moved.is_some());
+        assert_eq!(moved, world.character_position());
+    }
 
     #[test]
     fn test_gravity_drops_rigid_body() {
