@@ -760,7 +760,8 @@ mod tests {
         #[test]
         fn pad_actions_release_while_unfocused() {
             let mut app = app_holding_pad_jump();
-            let mut ctx = EventContext::new(None, None);
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
 
             Game::event(
                 &mut app,
