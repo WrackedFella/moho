@@ -34,7 +34,7 @@ pub struct MaterialKey {
 /// Trait representing types that can be converted into a GPU-ready material
 /// descriptor and a stable dedup key.
 ///
-/// Implemented by game-domain material types (e.g. terrain materials) so the
+/// Implemented by a game line's material types so the
 /// renderer's `MaterialTable` can deduplicate and upload materials without
 /// naming those concrete types.
 pub trait RenderMaterial {

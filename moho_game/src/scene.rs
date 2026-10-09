@@ -21,8 +21,7 @@ impl SceneEntities {
 mod tests {
     use super::*;
     use crate::actors::Sphere;
-    use moho_voxel::MaterialType;
-    use moho_voxel::VoxelChunk;
+    use moho_voxel::{MaterialType, VoxelChunk};
 
     #[test]
     fn clear_empties_actors_and_chunks() {

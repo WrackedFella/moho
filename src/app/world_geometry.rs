@@ -5,8 +5,7 @@ use glam::IVec3;
 use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshError, WorldMeshId};
 use moho_renderer::Scene;
-use moho_voxel::MaterialType;
-use moho_voxel::VoxelChunk;
+use moho_voxel::{MaterialType, VoxelChunk};
 
 const AXIS_BITS: u32 = 21;
 /// Half the 21-bit range: shifts a signed axis into `0..1 << AXIS_BITS`.

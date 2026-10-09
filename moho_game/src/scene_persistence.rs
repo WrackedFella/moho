@@ -302,8 +302,7 @@ mod tests {
     use super::*;
     use crate::actors::{Cube, Sphere};
     use crate::scene::SceneEntities;
-    use moho_voxel::MaterialType;
-    use moho_voxel::VoxelChunk;
+    use moho_voxel::{MaterialType, VoxelChunk};
 
     #[test]
     fn camera_and_lights_round_trip_through_encode_decode() {

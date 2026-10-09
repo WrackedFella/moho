@@ -15,7 +15,7 @@
 
 mod chunk;
 mod chunk_store;
-pub mod events;
+mod events;
 mod face;
 mod grid;
 mod light_jobs;
@@ -23,7 +23,7 @@ mod light_propagation;
 mod light_sky;
 mod light_storage;
 mod light_system;
-pub mod materials;
+mod materials;
 mod mesh;
 mod modification;
 pub mod streaming;

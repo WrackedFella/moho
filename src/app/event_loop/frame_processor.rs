@@ -403,8 +403,7 @@ impl Default for FrameProcessor {
 mod tests {
     use super::*;
     use crate::game_state::GameState;
-    use moho_voxel::VoxelChunk;
-    use moho_voxel::WorldEvent;
+    use moho_voxel::{VoxelChunk, WorldEvent};
 
     const DT: f32 = 1.0 / 60.0;
 

@@ -9,8 +9,7 @@
 use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
 use moho_core::events::{GraphicsEvent, UiEvent};
-use moho_voxel::VoxelChunk;
-use moho_voxel::WorldEvent;
+use moho_voxel::{BlockChangeReason, VoxelChunk, WorldEvent};
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
@@ -231,7 +230,7 @@ impl EventProcessor {
         app.event_bus.publish(WorldEvent::BlockRemoved {
             position: outcome.block_pos,
             old_material_id: outcome.old_material_id,
-            reason: moho_voxel::BlockChangeReason::Player,
+            reason: BlockChangeReason::Player,
         });
         app.event_bus.publish(WorldEvent::ChunkMeshDirty {
             chunk_pos,
@@ -374,7 +373,7 @@ impl EventProcessor {
                             app.event_bus.publish(WorldEvent::BlockPlaced {
                                 position: block_pos,
                                 material_id: torch_id,
-                                reason: moho_voxel::BlockChangeReason::Player,
+                                reason: BlockChangeReason::Player,
                             });
                         }
                         "light" => {
