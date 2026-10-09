@@ -24,7 +24,7 @@ pub struct TickContext<'a> {
     /// Index of this tick, starting at 0.
     pub tick: u64,
     pub tick_length: Duration,
-    /// The simulation clock; the loop advances it after the game's tick.
+    /// Advanced by the loop after the game's tick.
     pub clock: &'a mut GameClock,
 }
 
@@ -59,7 +59,6 @@ impl<'a> FrameContext<'a> {
         Self::new(tick_length, clock, None, None)
     }
 
-    /// The simulation clock.
     pub fn clock(&self) -> &'a GameClock {
         self.clock
     }
@@ -116,7 +115,6 @@ impl<'a> EventContext<'a> {
         }
     }
 
-    /// The simulation clock.
     pub fn clock(&self) -> &'a GameClock {
         self.clock
     }

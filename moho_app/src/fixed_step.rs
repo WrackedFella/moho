@@ -10,7 +10,6 @@ pub struct LoopConfig {
     pub tick_hz: u32,
     /// Cap on ticks run for one frame; excess time is dropped.
     pub max_catch_up_ticks: u32,
-    /// The clock the loop starts from.
     pub clock: GameClock,
 }
 
@@ -24,7 +23,6 @@ impl LoopConfig {
         }
     }
 
-    /// This config with `clock` as the loop's starting clock.
     pub fn with_clock(mut self, clock: GameClock) -> Self {
         self.clock = clock;
         self

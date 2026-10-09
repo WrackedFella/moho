@@ -55,7 +55,6 @@ impl<G: Game> HeadlessLoop<G> {
         self.step.alpha()
     }
 
-    /// The simulation clock.
     pub fn clock(&self) -> &GameClock {
         &self.clock
     }

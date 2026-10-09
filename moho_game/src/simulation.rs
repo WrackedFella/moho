@@ -1,7 +1,6 @@
 use crate::controller::{CameraMode, ControllerInput, PlayerController, controller_to_camera};
 use glam::{Mat4, Vec3};
 
-/// Owns the player controller and its pending input, and steps them together.
 #[derive(Debug, Clone)]
 pub struct SimulationController {
     pub player_controller: PlayerController,

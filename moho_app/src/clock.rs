@@ -207,8 +207,6 @@ mod tests {
 
     const TOLERANCE: f32 = 1e-4;
 
-    /// Sets a time scale on the first tick and records the time it sees in
-    /// each tick and frame.
     struct ScaledGame {
         scale: f32,
         seen_in_tick: Vec<f32>,
