@@ -1,6 +1,6 @@
 # Frame loop
 
-**Source:** `moho_app/src/` (`runner.rs`, `lib.rs`, `headless.rs`, `fixed_step.rs`), `src/app/game.rs`
+**Source:** `moho_app/src/` (`runner.rs`, `lib.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `src/app/game.rs`
 (`impl moho_app::Game for App`), `src/app/event_loop/`.
 **Related:** [ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md) (fixed tick).
 
@@ -16,7 +16,7 @@ flowchart TD
     RES["resumed"] --> mk["create window, renderer,<br/>AudioSystem if enabled"] --> init["Game::init"]
 
     NE["new_events"] --> acc["FixedStep accumulates<br/>time since last wake"]
-    acc --> tk["per due tick:<br/>Game::command then Game::tick"]
+    acc --> tk["per due tick:<br/>Game::command, Game::tick,<br/>then GameClock advance"]
     tk --> rr["request_redraw if ticks ran"]
     rr --> cf["control flow: wait until next tick"]
 
