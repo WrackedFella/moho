@@ -56,19 +56,19 @@ declarations are follow-ups, not verdicts. Evidence: appendices A–D.
 | `log`/`env_logger` → `tracing` | [ENG-F2-05](https://github.com/WrackedFella/moho/issues/98) |
 | `crossbeam-channel` → std | [ENG-F2-06](https://github.com/WrackedFella/moho/issues/99) |
 | `pollster` → own `block_on` | [ENG-F2-07](https://github.com/WrackedFella/moho/issues/100) |
-| wgpu/naga/egui upgrade | [ENG-F2-08](../ENG-F2-dependency-upgrades/ENG-F2-08-graphics-stack-current.md) |
+| wgpu/naga/egui upgrade | [ENG-F2-08](https://github.com/WrackedFella/moho/issues/101) |
 | rapier3d/glam upgrade, `paste` | [ENG-F2-09](https://github.com/WrackedFella/moho/issues/102), [ENG-F2-04](https://github.com/WrackedFella/moho/issues/97) |
-| `noise` → in-house Perlin | [ENG-F2-10](../ENG-F2-dependency-upgrades/ENG-F2-10-terrain-noise-in-house.md) |
-| `phf` → `match` | [ENG-F12](../ENG-F12-input-actions/_feature.md) (key naming is reworked there) |
+| `noise` → in-house Perlin | [ENG-F2-10](https://github.com/WrackedFella/moho/issues/105) |
+| `phf` → `match` | [ENG-F12](https://github.com/WrackedFella/moho/issues/82) (key naming is reworked there) |
 | Planned additions | The consuming features (ENG-F12, F14, F16, F19) adopt them; ENG-F16 owns the gain/pan layer |
-| Upgrade cost of wgpu/egui | [ENG-F20](../ENG-F20-graphics-upgrade-touches-one-crate/_feature.md) (proposed) |
+| Upgrade cost of wgpu/egui | [ENG-F20](https://github.com/WrackedFella/moho/issues/104) (proposed) |
 
 ## Alternatives considered for the largest stacks
 
 Recorded for reference; no verdict changes.
 
-- **wgpu:** no Rust-native peer with its maturity and reach. `ash` (raw Vulkan) is stable but unsafe-heavy and Vulkan-only; `glow` (OpenGL) is stable but a step back; SDL3 GPU, `bgfx`, `sokol` are mature C libraries with young bindings and a C toolchain; `vulkano`, `blade`, `miniquad` are less proven. Churn is answered by containment ([ENG-F20](../ENG-F20-graphics-upgrade-touches-one-crate/_feature.md)) and the upgrade policy in [ENG-F2](../ENG-F2-dependency-upgrades/_feature.md).
-- **rapier3d:** the only mature pure-Rust engine. Jolt (AAA-proven C++, young bindings, C++ build step) and PhysX 5 (stalled `physx` bindings) are the non-Rust options; `avian3d` requires Bevy's ECS. `parry3d` alone (collision queries, no dynamics) is a lean option if [ENG-F15](../ENG-F15-physics-queries-and-bodies/_feature.md) needs no rigid-body dynamics. Already contained in `moho_physics`.
+- **wgpu:** no Rust-native peer with its maturity and reach. `ash` (raw Vulkan) is stable but unsafe-heavy and Vulkan-only; `glow` (OpenGL) is stable but a step back; SDL3 GPU, `bgfx`, `sokol` are mature C libraries with young bindings and a C toolchain; `vulkano`, `blade`, `miniquad` are less proven. Churn is answered by containment ([ENG-F20](https://github.com/WrackedFella/moho/issues/104)) and the upgrade policy in [ENG-F2](https://github.com/WrackedFella/moho/issues/93).
+- **rapier3d:** the only mature pure-Rust engine. Jolt (AAA-proven C++, young bindings, C++ build step) and PhysX 5 (stalled `physx` bindings) are the non-Rust options; `avian3d` requires Bevy's ECS. `parry3d` alone (collision queries, no dynamics) is a lean option if [ENG-F15](https://github.com/WrackedFella/moho/issues/227) needs no rigid-body dynamics. Already contained in `moho_physics`.
 
 ## Findings outside the verdicts
 

@@ -49,6 +49,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        This issue is the accepted spec; `_feature.md` in _todo/ is a working copy. Add a
+        This issue is the record of the feature: edit this body when scope changes and put
+        decisions in comments; no `_feature.md` in _todo/ copies it. Add a
         `line:engine|strategy|fps` label and add the issue to the Moho project board. Cards
         are filed as sub-issues of this one.

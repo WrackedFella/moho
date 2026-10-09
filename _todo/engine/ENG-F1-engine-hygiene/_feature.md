@@ -8,7 +8,7 @@
 
 Engine-generic cleanup items — none block gameplay. Land opportunistically
 when already touching the relevant file; no standalone sweep. Portable to the
-engine repo once the split ([ENG-F5](../ENG-F5-physical-repo-split/_feature.md)) happens.
+engine repo once the split ([ENG-F5](https://github.com/WrackedFella/moho/issues/232)) happens.
 
 ## Exit criteria
 

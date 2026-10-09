@@ -41,7 +41,7 @@ clock. In 2026-10, time flows like this:
 
 - Replays and determinism tests only need the per-tick input sequence; there
   is no clock to fake.
-- [ENG-F6](../engine/ENG-F6-headless-deterministic-logic/_feature.md)'s "injected clock" criterion becomes "simulation time comes only
+- [ENG-F6](https://github.com/WrackedFella/moho/issues/233)'s "injected clock" criterion becomes "simulation time comes only
   from the tick". ENG-F6's survey note claiming variable frame time is
   corrected.
 - If a future rule needs real time (for example, a real-time event in
