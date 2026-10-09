@@ -49,7 +49,7 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 | [ENG-F19 Games load definitions and content from layered roots](https://github.com/WrackedFella/moho/issues/231) |
 | [ENG-F20 A wgpu or egui upgrade touches one crate](https://github.com/WrackedFella/moho/issues/104) |
 | [ENG-F21 A game gets a character controller and camera from the engine](https://github.com/WrackedFella/moho/issues/123) |
-| [ENG-F22 Every test can fail and earns its place](engine/ENG-F22-every-test-earns-its-place/_feature.md) |
+| [ENG-F22 Every test can fail and earns its place](https://github.com/WrackedFella/moho/issues/167) |
 
 ## strategy-game/
 
