@@ -324,40 +324,32 @@ mod tests {
     }
 
     #[test]
-    fn render_hotbar_with_more_entries_than_slots_does_not_panic() {
-        // Regression guard: `render_hotbar` indexes into the 7 resource slots
-        // (HOTBAR_SLOTS - 1, since slot 0 is reserved for the tool) via
-        // `hotbar.get(i - 1)` — a hotbar with more populated resources than
-        // slots must not panic or index out of bounds.
-        let hotbar: Vec<(u32, u32)> = (0..HOTBAR_SLOTS as u32 + 3)
+    fn render_hotbar_edge_inputs_do_not_panic() {
+        use crate::overlays::test_support::second_frame;
+
+        // Slot 0 is the tool, so resources index via `hotbar.get(i - 1)`; `selected_slot`
+        // is only compared, so out-of-range highlights nothing.
+        let overfull: Vec<(u32, u32)> = (0..HOTBAR_SLOTS as u32 + 3)
             .map(|id| (id, id + 1))
             .collect();
-        let ctx = egui::Context::default();
+        let cases = [
+            ("more entries than slots", Some("Pickaxe"), &overfull[..], 0),
+            ("empty inventory", None, &[][..], 0),
+            (
+                "selected slot out of range",
+                Some("Pickaxe"),
+                &[(1, 2)][..],
+                99,
+            ),
+        ];
 
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            render_hotbar(ctx, Some("Pickaxe"), &hotbar, 0);
-        });
-    }
+        for (case, tool, hotbar, selected_slot) in cases {
+            let ctx = egui::Context::default();
 
-    #[test]
-    fn render_hotbar_with_empty_inventory_does_not_panic() {
-        let ctx = egui::Context::default();
+            let output = second_frame(&ctx, |ctx| render_hotbar(ctx, tool, hotbar, selected_slot));
 
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            render_hotbar(ctx, None, &[], 0);
-        });
-    }
-
-    #[test]
-    fn render_hotbar_with_out_of_range_selected_slot_does_not_panic() {
-        // selected_slot is only ever compared (`i == selected_slot`), never
-        // indexed with — an out-of-range value should just mean "nothing
-        // highlighted," not a panic.
-        let ctx = egui::Context::default();
-
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            render_hotbar(ctx, Some("Pickaxe"), &[(1, 2)], 99);
-        });
+            assert!(!output.shapes.is_empty(), "{case}: nothing drawn");
+        }
     }
 
     #[test]
