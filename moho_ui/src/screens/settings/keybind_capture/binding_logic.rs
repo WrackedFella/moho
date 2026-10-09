@@ -3,7 +3,9 @@ use moho_input::key::Key;
 
 use super::super::binding_registry::BindingRegistry;
 use super::super::conflict_modal::PendingBinding;
-use super::super::key_mapping::{binding_label, egui_key_to_key, lone_modifier_key, modifier_bits};
+use super::super::key_mapping::{
+    binding_label, egui_key_to_key, lone_modifier_key, modifier_bits, rebind_key,
+};
 use super::super::types::row_action;
 use super::KeybindCaptureHandler;
 use crate::actions::StrategyAction;
@@ -137,7 +139,7 @@ impl KeybindCaptureHandler {
                 .show(pending, conflict_key_name, conflict_binding_desc);
             false
         } else {
-            on_binding_changed(target, vec![Binding::Key(key)]);
+            on_binding_changed(target, rebind_key(bindings.get_binding(target), key));
             true
         }
     }

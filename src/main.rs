@@ -482,7 +482,8 @@ fn app_config() -> moho_app::AppConfig {
 
 fn main() {
     init_logging();
-    let app = App::from_config(crate::app::config::AppConfig::from_prefs());
+    let mut app = App::from_config(crate::app::config::AppConfig::from_prefs());
+    app.input.gamepads = moho_input::gamepad::Gamepads::new();
 
     if let Err(e) = moho_app::run(app, app_config()) {
         tracing::error!(error = %e, "Application failed");

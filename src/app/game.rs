@@ -56,6 +56,23 @@ impl App {
         }
     }
 
+    /// Feeds pad events to the action map while playing with focus. Otherwise the
+    /// events are discarded unapplied, so no press edge waits for resume, and pad
+    /// actions are released.
+    fn poll_gamepads(&mut self) {
+        let live = self.game_state == GameState::Playing && self.input.focused;
+        if let Some(gamepads) = self.input.gamepads.as_mut() {
+            if live {
+                gamepads.poll(&mut self.input.actions);
+            } else {
+                gamepads.discard();
+            }
+        }
+        if !live {
+            self.input.actions.pad_disconnected();
+        }
+    }
+
     fn apply_command(&mut self, command: &StrategyCommand) {
         *self.simulation.controller_input_mut() = command.input;
         self.physics.jump_pressed = command.jump;
@@ -140,6 +157,9 @@ impl App {
             return;
         }
 
+        if let WindowEvent::Focused(focused) = event {
+            self.input.focused = focused;
+        }
         // Focus loss must release held actions whatever the UI or game state does.
         if matches!(event, WindowEvent::Focused(false)) {
             action_map::handle_window_event(&mut self.input.actions, &event);
@@ -240,6 +260,7 @@ impl moho_app::Game for App {
     fn frame(&mut self, ctx: &mut moho_app::FrameContext<'_>, _alpha: f32) {
         let frame_processor = FrameProcessor::new();
 
+        self.poll_gamepads();
         if let Some(renderer) = ctx.renderer() {
             self.apply_pending_render(renderer);
         }
@@ -297,7 +318,7 @@ mod tests {
             .iter()
             .find_map(|binding| match binding {
                 Binding::Key(key) => Some(*key),
-                Binding::Mouse(_) => None,
+                Binding::Mouse(_) | Binding::Pad(_) => None,
             })
             .expect("the action has a default key binding")
     }
@@ -709,6 +730,49 @@ mod tests {
             run_frame(&mut app, &mut fake);
 
             assert!(fake.lightings.is_empty());
+        }
+    }
+
+    mod pad_release {
+        use super::*;
+        use moho_input::pad::PadButton;
+
+        fn app_holding_pad_jump() -> App {
+            let mut app = playing_app();
+            app.input.actions.pad_button(PadButton::South, true);
+            assert!(app.input.actions.end_tick().held(StrategyAction::Jump));
+            app
+        }
+
+        #[test]
+        fn pad_actions_release_when_play_stops() {
+            let mut app = app_holding_pad_jump();
+
+            app.game_state = GameState::Menu;
+            app.poll_gamepads();
+            app.game_state = GameState::Playing;
+            let frame = app.input.actions.end_tick();
+
+            assert!(!frame.held(StrategyAction::Jump));
+            assert!(!frame.pressed(StrategyAction::Jump));
+        }
+
+        #[test]
+        fn pad_actions_release_while_unfocused() {
+            let mut app = app_holding_pad_jump();
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Window(WindowEvent::Focused(false)),
+            );
+            app.poll_gamepads();
+            let frame = app.input.actions.end_tick();
+
+            assert!(!frame.held(StrategyAction::Jump));
+            assert!(!frame.pressed(StrategyAction::Jump));
         }
     }
 

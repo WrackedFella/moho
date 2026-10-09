@@ -71,16 +71,25 @@ pub fn lone_modifier_key(bits: u8) -> Option<Key> {
     }
 }
 
-/// Human-readable label for an action's bindings, e.g. `W`, `Shift, Ctrl`, `Unbound`.
+/// Human-readable label for an action's keyboard and mouse bindings, e.g. `W`,
+/// `Shift, Ctrl`, `Unbound`. Pad bindings have no row here and are left out.
 pub fn binding_label(bindings: &[Binding]) -> String {
-    if bindings.is_empty() {
+    let labels: Vec<_> = bindings
+        .iter()
+        .filter(|binding| !binding.is_pad())
+        .map(|binding| binding.label())
+        .collect();
+    if labels.is_empty() {
         return "Unbound".to_string();
     }
-    bindings
-        .iter()
-        .map(|binding| binding.label())
-        .collect::<Vec<_>>()
-        .join(", ")
+    labels.join(", ")
+}
+
+/// `key` as the action's only keyboard binding, followed by the pad bindings in `existing`.
+pub fn rebind_key(existing: &[Binding], key: Key) -> Vec<Binding> {
+    std::iter::once(Binding::Key(key))
+        .chain(existing.iter().copied().filter(|b| b.is_pad()))
+        .collect()
 }
 
 #[cfg(test)]
