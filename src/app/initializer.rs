@@ -1,7 +1,7 @@
 //! Application initialization orchestration using builder pattern.
 //!
 //! This module provides a structured way to initialize the application by composing
-//! all the extracted initialization modules (event bus, audio, camera, config) into
+//! all the extracted initialization modules (event bus, camera, config) into
 //! a cohesive initialization flow.
 //!
 //! # Example
@@ -20,11 +20,9 @@ use moho_game::simulation::SimulationController;
 use moho_input::action_map::ActionMap;
 use moho_ui::actions::{StrategyAction, load_bindings};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use moho_core::prefs::Prefs;
 
-use super::audio_init::initialize_audio_system;
 use super::camera::create_default_camera;
 use super::config::AppConfig;
 use super::event_setup::setup_event_bus;
@@ -71,14 +69,10 @@ pub struct InitializedApp {
     pub world_event_rx: std::sync::mpsc::Receiver<moho_core::events::WorldEvent>,
     pub debug_event_rx: std::sync::mpsc::Receiver<moho_core::events::DebugEvent>,
 
-    pub audio_system: Option<moho_audio::AudioSystem>,
     pub simulation: SimulationController,
     pub actions: ActionMap<StrategyAction>,
 
     pub prefs: Prefs,
-
-    pub frame_duration: Duration,
-    pub last_frame: Instant,
 }
 
 /// Builder for initializing the application in stages.
@@ -124,9 +118,8 @@ impl AppInitializer {
     /// 1. Create world and scene
     /// 2. Setup camera
     /// 3. Setup event bus
-    /// 4. Initialize audio system (optional)
-    /// 5. Create simulation controller
-    /// 6. Setup input system
+    /// 4. Create simulation controller
+    /// 5. Setup input system
     ///
     /// It installs no `tracing` subscriber; the caller does.
     ///
@@ -173,22 +166,6 @@ impl AppInitializer {
         let debug_event_rx = event_bus_setup.debug_event_rx;
         tracing::debug!("Event bus initialized with subscribers");
 
-        // Initialize audio system (optional - graceful failure).
-        // Tests can skip this via AppConfig::init_audio = false: concurrent
-        // WASAPI init across parallel tests can crash on Windows.
-        let audio_system = if self.config.init_audio {
-            let audio = initialize_audio_system();
-            if audio.is_some() {
-                tracing::info!("Audio system initialized successfully");
-            } else {
-                tracing::warn!("Audio system initialization failed - continuing without audio");
-            }
-            audio
-        } else {
-            tracing::debug!("Audio system initialization skipped (init_audio = false)");
-            None
-        };
-
         // Create input system with config values
         let mut actions = ActionMap::new(
             load_bindings(&self.config.prefs),
@@ -212,14 +189,10 @@ impl AppInitializer {
             world_event_rx,
             debug_event_rx,
 
-            audio_system,
             simulation,
             actions,
 
             prefs: self.config.prefs,
-
-            frame_duration: Duration::from_secs_f64(1.0 / 60.0),
-            last_frame: Instant::now(),
         })
     }
 }
@@ -228,30 +201,11 @@ impl AppInitializer {
 mod tests {
     use super::*;
 
-    // Build tests skip audio init: concurrent WASAPI init across parallel
-    // tests crashes on Windows runners.
-    fn test_config() -> AppConfig {
-        AppConfig::builder().init_audio(false).build()
-    }
-
-    #[test]
-    fn build_sets_60hz_frame_duration() {
-        let initialized = AppInitializer::new(test_config())
-            .build()
-            .expect("default config builds");
-
-        assert_eq!(
-            initialized.frame_duration,
-            Duration::from_secs_f64(1.0 / 60.0)
-        );
-    }
-
     #[test]
     fn build_applies_config_sensitivity_and_filtering() {
         let config = AppConfig::builder()
             .mouse_sensitivity(0.5)
             .input_filtering(false)
-            .init_audio(false)
             .build();
         let mut initialized = AppInitializer::new(config)
             .build()
@@ -266,8 +220,7 @@ mod tests {
     fn test_build_includes_prefs() {
         let prefs = Prefs::default().with_mouse_sensitivity(2.5);
 
-        let mut config = AppConfig::from_prefs_struct(prefs.clone());
-        config.init_audio = false;
+        let config = AppConfig::from_prefs_struct(prefs.clone());
         let result = AppInitializer::new(config).build();
 
         assert!(result.is_ok());

@@ -1,8 +1,8 @@
 //! Renderer and UI adapter initialization.
 //!
-//! This module contains the logic for creating the wgpu renderer, registering
-//! shared mesh handles, wiring up egui, and registering input dispatcher
-//! subscribers — all work that was previously inlined in `App::setup_renderer_and_ui`.
+//! This module contains the game-side setup that runs once the engine has created
+//! the window and renderer: quality settings, shared mesh handles, the egui adapter
+//! and the input dispatcher subscribers.
 
 use std::sync::{Arc, Mutex};
 use winit::window::Window;
@@ -17,26 +17,15 @@ fn ui_is_capturing_input(ui_adapter: &Arc<Mutex<moho_ui::EguiAdapter>>) -> bool 
     }
 }
 
-/// Initialize the renderer and UI adapter for the given window.
-///
-/// Creates the wgpu renderer, registers the shared sphere and cube mesh handles,
-/// builds the egui adapter, connects it to the renderer frame callback, and
-/// registers all input-dispatcher subscribers. On success, `app.window_renderer`
-/// and `app.ui_adapter` are populated.
-#[allow(dead_code)]
-pub fn setup_renderer_and_ui(
+/// Applies the saved quality settings, registers the shared sphere and cube mesh
+/// handles, builds the egui adapter, connects it to the renderer frame callback, and
+/// registers all input-dispatcher subscribers. Populates `app.window`, `app.mesh_handle`,
+/// `app.cube_mesh_handle` and `app.ui_adapter`.
+pub fn init_renderer_and_ui(
     app: &mut crate::App,
-    window: Arc<Window>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // SAFETY: The renderer requires a &'static Window because Box<dyn RendererBackend>
-    // is implicitly 'static. We clone the Arc<Window> before leaking it, so the Arc
-    // refcount keeps the Window alive independently of `window`. This is a deliberate
-    // one-time leak for the main window, which lives for the entire program lifetime.
-    // If winit ever allows window recreation (e.g. fullscreen toggle) this should be
-    // replaced by giving RendererBackend a lifetime parameter (TD-09 / TD-06).
-    let window_ref: &'static Window = Box::leak(Box::new(window.clone()));
-    let mut renderer = moho_renderer::create_renderer(Some(window_ref))?;
-
+    window: &Arc<Window>,
+    renderer: &mut dyn moho_renderer::RendererBackend,
+) {
     // Apply initial quality settings
     renderer.set_shadow_quality(app.prefs.shadow_quality() as u8);
     renderer.set_ssao_quality(app.prefs.ssao_quality() as u8);
@@ -220,13 +209,23 @@ pub fn setup_renderer_and_ui(
             });
     }
 
-    // Store everything together in the WindowRenderer
-    app.window_renderer = Some(crate::WindowRenderer {
-        window,
-        renderer,
-        mesh_handle,
-        cube_mesh_handle,
-    });
+    app.window = Some(window.clone());
+    app.mesh_handle = mesh_handle;
+    app.cube_mesh_handle = cube_mesh_handle;
+}
 
-    Ok(())
+pub fn apply_video_settings(prefs: &moho_core::prefs::Prefs, window: &Window) {
+    use moho_core::prefs::WindowMode;
+    use winit::dpi::PhysicalSize;
+    use winit::window::Fullscreen;
+
+    match prefs.window_mode() {
+        WindowMode::Fullscreen | WindowMode::Borderless => {
+            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+        }
+        WindowMode::Windowed => {
+            let (w, h) = prefs.window_resolution();
+            let _ = window.request_inner_size(PhysicalSize::new(w, h));
+        }
+    }
 }

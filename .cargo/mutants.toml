@@ -10,8 +10,13 @@ exclude_globs = [
 # These bodies only drive the renderer backend or window, which need a real
 # `Window`; the binary's headless tests (`App::headless`) can't reach them.
 exclude_re = [
-    "WindowEventHandler::handle_redraw_requested",
-    "WindowManager::initial_render",
+    # The winit handler methods need a display, which tests don't have; the routing
+    # they use is tested through `route`.
+    "ApplicationHandler for Runner",
+    'replace run -> Result<\(\), AppError> with Ok\(\(\)\)',
+    # `Game::init` only runs once the runner has created a real window.
+    'replace <impl moho_app::Game for App>::init with \(\)',
+    "App::initial_render",
     'delete match arm "light" in EventProcessor::handle_debug_event',
     'delete match arm DebugEvent::SetShadowQuality\{quality\} in EventProcessor::handle_debug_event',
     'delete match arm DebugEvent::SetSsaoQuality\{quality\} in EventProcessor::handle_debug_event',
@@ -31,14 +36,21 @@ exclude_re = [
     'replace KeybindCaptureHandler::handle_winit_event -> bool with false',
     'replace != with == in KeybindCaptureHandler::handle_winit_event',
     'replace <impl Screen for SettingsMenu>::handle_raw_input -> bool with false',
+    'replace == with != in App::handle_window_event',
+    'delete match arm WindowEvent::KeyboardInput\{event:key_event, \.\.\} in App::handle_window_event',
+    # Only a key press (Escape, backquote) changes the play state inside this handler.
+    'replace && with \|\| in App::handle_window_event',
+    # A non-empty audio accessor needs an `AudioSystem`, which needs an audio device.
+    'replace FrameContext<.a>::audio -> Option<&mut AudioSystem> with None',
+    'replace EventContext<.a>::audio -> Option<&mut AudioSystem> with None',
+    # Headless tests have no `ui_adapter`, and the egui adapter exposes no HUD data to
+    # read back.
+    'replace FrameProcessor::update_hud_data with \(\)',
     # Same `KeyEvent` limit; and a `MouseInput` event needs `DeviceId::dummy()`, which is
     # unsafe (`unsafe_code` is denied). The `ActionMap` calls these arms make are tested.
     'delete match arm WindowEvent::KeyboardInput\{event, \.\.\} in handle_window_event',
     'delete match arm WindowEvent::MouseInput\{state, button, \.\.\} in handle_window_event',
     'replace == with != in handle_window_event',
-    # Needs an `ActiveEventLoop`, which tests cannot build; its key arm also needs a `KeyEvent`.
-    'replace WindowEventHandler::handle_window_event with \(\)',
-    'delete match arm WindowEvent::KeyboardInput\{event:key_event, \.\.\} in WindowEventHandler::handle_window_event',
     # Equivalent: the settings menu's spec is always `ScreenSpec::default()`.
     'replace <impl Screen for SettingsMenu>::spec -> &ScreenSpec with Box::leak',
     # `Default` calls `new`, which calls `from_prefs`: this mutant recurses until the

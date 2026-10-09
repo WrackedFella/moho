@@ -1,12 +1,12 @@
 # Input and state
 
 **Source:** `src/input_dispatcher.rs`, `moho_input/src/`, `moho_ui/src/actions.rs`, `src/app/renderer_setup.rs` (registrations),
-`src/main.rs` (`window_event`, `handle_keyboard_input`), `moho_ui/src/app_state/game_state.rs`,
+`src/app/game.rs` (`Game::event`), `src/main.rs` (`handle_keyboard_input`), `moho_ui/src/app_state/game_state.rs`,
 `moho_ui/src/app_state/state_coordinator.rs`.
 
 ## Input routing
 
-Every `WindowEvent` goes through `window_event` in this order. The first stage that
+Every `WindowEvent` the runner forwards reaches `Game::event` (`App::handle_window_event`) and goes through this order. The first stage that
 consumes the event ends the path.
 
 ```mermaid
@@ -19,7 +19,7 @@ flowchart TD
     d100 -- consumed --> stop2(["stop"])
     d100 -- no --> d0["priority 0: forwarders<br/>wheel, left click"]
     d0 -- "sent to channel,<br/>unless UI is capturing" --> chan[("unconsumed InputEvent channel")]
-    d0 -- no --> weh["WindowEventHandler<br/>resize, close, keyboard, redraw"]
+    d0 -- no --> weh["close → auto-save and exit<br/>keyboard → handle_keyboard_input"]
     chan --> drain["drained by process_input_events<br/>(zoom, mine)"]
     weh --> hot["handle_keyboard_input<br/>global hotkeys, then game keys"]
 ```
@@ -52,14 +52,14 @@ default bindings), `ActionBindings<A>`, and `ActionMap<A>`
 `InputState` (`src/app/input_state.rs`).
 
 `handle_window_event` and `handle_device_event` feed key, mouse-button and raw
-mouse-motion events into the map. Once per update the frame processor calls `end_tick`,
+mouse-motion events into the map. Once per tick `App::command` (`src/app/game.rs`) calls `end_tick`,
 which returns an `ActionFrame` and resets the per-tick state:
 
 - `held`: down at the end of the tick; `pressed` / `released`: edges at any point in the
   tick, so a tap shorter than a tick is not lost.
 - `look`: the tick's accumulated mouse motion scaled by sensitivity, then, when
   filtering is on, deadzone, exponential smoothing and the linear response curve
-  (`moho_input/src/filter.rs`). Motion is unnegated; the frame processor inverts it for
+  (`moho_input/src/filter.rs`). Motion is unnegated; `App::command` inverts it for
   yaw and pitch.
 
 An action is held when any of its bindings is down. A frame holds at most 64 actions.

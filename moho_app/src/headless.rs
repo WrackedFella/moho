@@ -31,15 +31,28 @@ impl<G: Game> HeadlessLoop<G> {
 
     /// Runs the ticks due for `frame_dt`, then one frame. Returns ticks run.
     pub fn advance(&mut self, game: &mut G, frame_dt: Duration) -> u32 {
+        let n = self.run_ticks(game, frame_dt);
+        let mut ctx = FrameContext::headless(self.tick_length);
+        game.frame(&mut ctx, self.step.alpha());
+        n
+    }
+
+    /// Runs the ticks due for `frame_dt` and no frame. Returns ticks run.
+    pub(crate) fn run_ticks(&mut self, game: &mut G, frame_dt: Duration) -> u32 {
         let n = self.step.advance(frame_dt);
         for _ in 0..n {
             self.run_tick(game);
         }
-        let mut ctx = FrameContext {
-            tick_length: self.tick_length,
-        };
-        game.frame(&mut ctx, self.step.alpha());
         n
+    }
+
+    /// Fraction of a tick left over after the last run.
+    pub(crate) fn alpha(&self) -> f32 {
+        self.step.alpha()
+    }
+
+    pub(crate) fn tick_length(&self) -> Duration {
+        self.tick_length
     }
 
     /// Runs exactly `n` ticks and no frame.
@@ -93,7 +106,7 @@ mod tests {
             self.history.push(self.state);
         }
 
-        fn frame(&mut self, _ctx: &mut FrameContext, _alpha: f32) {}
+        fn frame(&mut self, _ctx: &mut FrameContext<'_>, _alpha: f32) {}
     }
 
     fn state_after_600_ticks(fps: u64) -> u64 {
@@ -153,7 +166,7 @@ mod tests {
             self.tick_lengths.push(ctx.tick_length);
         }
 
-        fn frame(&mut self, _ctx: &mut FrameContext, alpha: f32) {
+        fn frame(&mut self, _ctx: &mut FrameContext<'_>, alpha: f32) {
             self.frames.push(alpha);
         }
     }
@@ -214,6 +227,73 @@ mod tests {
             "alpha {}",
             game.frames[0]
         );
+    }
+
+    #[derive(Default)]
+    struct ContextProbe {
+        renderer_absent: Option<bool>,
+        audio_absent: Option<bool>,
+        tick_length: Option<Duration>,
+    }
+
+    impl Game for ContextProbe {
+        type Command = ();
+
+        fn command(&mut self) {}
+
+        fn tick(&mut self, _ctx: &mut TickContext, _command: &()) {}
+
+        fn frame(&mut self, ctx: &mut FrameContext<'_>, _alpha: f32) {
+            self.renderer_absent = Some(ctx.renderer().is_none());
+            self.audio_absent = Some(ctx.audio().is_none());
+            self.tick_length = Some(ctx.tick_length);
+        }
+    }
+
+    #[test]
+    fn headless_frame_context_has_no_renderer_and_no_audio() {
+        let mut game = ContextProbe::default();
+        let mut sim = HeadlessLoop::new(LoopConfig::new(60));
+
+        sim.advance(&mut game, Duration::from_nanos(NS / 60));
+
+        assert_eq!(game.renderer_absent, Some(true), "frame must run");
+        assert_eq!(game.audio_absent, Some(true));
+        assert_eq!(game.tick_length, Some(Duration::from_secs(1) / 60));
+    }
+
+    #[test]
+    fn run_ticks_runs_due_ticks_without_a_frame_and_exposes_the_leftover_alpha() {
+        let mut game = Recorder::default();
+        let mut sim = HeadlessLoop::new(LoopConfig::new(60));
+
+        let ran = sim.run_ticks(&mut game, Duration::from_nanos(NS / 144));
+
+        assert_eq!(ran, 0);
+        assert!(game.frames.is_empty(), "run_ticks must not run a frame");
+        assert!(
+            (sim.alpha() - 60.0 / 144.0).abs() < 1e-4,
+            "alpha {}",
+            sim.alpha()
+        );
+    }
+
+    #[test]
+    fn alpha_is_the_fraction_of_a_tick_left_after_whole_ticks() {
+        let mut game = Recorder::default();
+        let mut sim = HeadlessLoop::new(LoopConfig::new(60));
+
+        let ran = sim.run_ticks(&mut game, Duration::from_nanos(NS / 60 + NS / 240));
+
+        assert_eq!(ran, 1);
+        assert!((sim.alpha() - 0.25).abs() < 1e-3, "alpha {}", sim.alpha());
+    }
+
+    #[test]
+    fn tick_length_is_the_configured_tick_period() {
+        let sim = HeadlessLoop::<Recorder>::new(LoopConfig::new(60));
+
+        assert_eq!(sim.tick_length(), Duration::from_secs(1) / 60);
     }
 
     #[test]

@@ -25,11 +25,12 @@ flowchart TD
     audio["moho_audio<br/>rodio"]:::engine
     physics["moho_physics<br/>rapier3d"]:::engine
     input["moho_input<br/>Key, Action, ActionBindings,<br/>ActionMap, mouse filtering"]:::engine
-    app["moho_app<br/>fixed-step loop, Game trait"]:::engine
+    app["moho_app<br/>window, fixed-step loop, Game trait"]:::engine
 
     ui --> renderer & input & core & game
     game --> core & rapi
     renderer --> rapi
+    app --> renderer & audio
     audio --> core
     physics --> rapi
     core --> rapi
@@ -39,8 +40,8 @@ flowchart TD
 ```
 
 Blue is the engine line, green is the strategy line. The FPS line has no crates yet.
-`moho_app` has no dependencies yet and nothing depends on it; the binary still drives its own loop
-([frame loop](frame-loop.md)).
+`moho_app` owns the window and winit event loop; the binary implements its `Game` trait and hands it
+to `moho_app::run` ([frame loop](frame-loop.md)).
 
 ## Lines and rules
 
@@ -61,7 +62,7 @@ strategy-line `moho_voxel`; ENG-F10 delivers the move.
 
 Where the M1–M2 engine work lands, from [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md)
 (Proposed). Capabilities land as modules of an existing crate first; a new crate needs a
-deployable, reuse or compile-time boundary. Dashed boxes are crates that don't exist yet, or (`moho_app`) exist with only part of the listed scope: today the accumulator and `Game` trait.
+deployable, reuse or compile-time boundary. Dashed boxes are crates that don't exist yet, or (`moho_app`) exist with only part of the listed scope: today the window and event loop, accumulator and `Game` trait.
 Edges are the intended direction, not a list each crate must have.
 
 ```mermaid
@@ -119,7 +120,9 @@ Window-free scheduling for any game line ([ADR-0009](../../_todo/adr/0009-simula
 
 | Item | Role |
 |---|---|
-| `Game` trait (`lib.rs`) | `command()` sampled once per tick, `tick()` applies it, `frame()` presents with an interpolation `alpha` |
+| `Game` trait (`lib.rs`) | `command()` sampled once per tick, `tick()` applies it, `frame()` presents with an interpolation `alpha`; optional `init()` (window and renderer exist) and `event()` (winit window/device events) |
+| `run`, `AppConfig` (`runner.rs`) | Creates the window, renderer and optional `AudioSystem`, drives the `Game` from the winit loop; `AppError` on startup failure |
+| `InitContext` / `EventContext` / `FrameContext` (`lib.rs`) | What a game may touch: window, renderer, audio, `request_exit`. Renderer and audio are `Option` (absent headless) |
 | `LoopConfig` / `FixedStep` (`fixed_step.rs`) | Integer accumulator (`nanoseconds * tick_hz`), so no drift; returns whole ticks due per frame |
 | `HeadlessLoop` (`headless.rs`) | Drives a `Game` without a window: `advance(game, frame_dt)` runs due ticks then one frame; `step(game, n)` runs ticks only |
 
@@ -128,19 +131,19 @@ dropped except the sub-tick remainder; `tick_hz` must be non-zero (`FixedStep::n
 
 ## Runtime composition
 
-`App::new` (`src/app/initializer.rs`) builds each subsystem and passes dependencies
-explicitly. There is no service locator.
+`App::from_config` (`src/app/initializer.rs`) builds each subsystem and passes dependencies
+explicitly. There is no service locator. The window, renderer and `AudioSystem` are created by
+`moho_app::run` and passed to the game through its contexts.
 
 ```mermaid
 flowchart LR
-    init["App::new<br/>initializer.rs"] --> bus["EventBus (Arc)<br/>event_setup.rs"]
+    init["App::from_config<br/>initializer.rs"] --> bus["EventBus (Arc)<br/>event_setup.rs"]
     init --> rend["Renderer + egui adapter<br/>renderer_setup.rs"]
-    init --> aud["AudioSystem<br/>audio_init.rs"]
     init --> phys["PhysicsController<br/>physics_controller.rs"]
     init --> sim["Simulation<br/>moho_game"]
     init --> disp["InputDispatcher<br/>handlers registered in<br/>renderer_setup.rs"]
     bus -->|"subscribers forward into<br/>mpsc channels"| chans["ui · audio · graphics ·<br/>world · debug receivers"]
-    chans --> loop["winit loop<br/>drains receivers each frame"]
+    chans --> loop["Game::tick / Game::frame<br/>drain receivers"]
 ```
 
 ## Where state lives
