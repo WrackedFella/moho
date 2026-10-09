@@ -29,26 +29,31 @@ impl Gamepads {
     /// Drains pending events into the map.
     pub fn poll<A: Action>(&mut self, map: &mut ActionMap<A>) {
         while let Some(gilrs::Event { event, .. }) = self.gilrs.next_event() {
-            match event {
-                gilrs::EventType::ButtonPressed(button, _) => {
-                    if let Some(button) = map_button(button) {
-                        map.pad_button(button, true);
-                    }
-                }
-                gilrs::EventType::ButtonReleased(button, _) => {
-                    if let Some(button) = map_button(button) {
-                        map.pad_button(button, false);
-                    }
-                }
-                gilrs::EventType::AxisChanged(axis, value, _) => {
-                    if let Some((stick, axis)) = map_axis(axis) {
-                        map.pad_axis(stick, axis, value);
-                    }
-                }
-                gilrs::EventType::Disconnected => map.pad_disconnected(),
-                _ => {}
+            apply_event(event, map);
+        }
+    }
+}
+
+/// Feeds one backend event to the map; events the engine has no use for are ignored.
+pub(crate) fn apply_event<A: Action>(event: gilrs::EventType, map: &mut ActionMap<A>) {
+    match event {
+        gilrs::EventType::ButtonPressed(button, _) => {
+            if let Some(button) = map_button(button) {
+                map.pad_button(button, true);
             }
         }
+        gilrs::EventType::ButtonReleased(button, _) => {
+            if let Some(button) = map_button(button) {
+                map.pad_button(button, false);
+            }
+        }
+        gilrs::EventType::AxisChanged(axis, value, _) => {
+            if let Some((stick, axis)) = map_axis(axis) {
+                map.pad_axis(stick, axis, value);
+            }
+        }
+        gilrs::EventType::Disconnected => map.pad_disconnected(),
+        _ => {}
     }
 }
 

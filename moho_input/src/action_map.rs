@@ -119,10 +119,7 @@ impl<A: Action> ActionMap<A> {
 
     /// `value` is in `-1.0..=1.0` with positive Y up.
     pub fn pad_axis(&mut self, stick: Stick, axis: StickAxis, value: f32) {
-        let slot = match stick {
-            Stick::LeftStick => &mut self.sticks[0],
-            Stick::RightStick => &mut self.sticks[1],
-        };
+        let slot = &mut self.sticks[stick as usize];
         match axis {
             StickAxis::X => slot.0 = value,
             StickAxis::Y => slot.1 = value,
