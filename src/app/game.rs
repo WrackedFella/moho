@@ -263,7 +263,7 @@ impl moho_app::Game for App {
 mod tests {
     use super::*;
     use crate::game_state::GameState;
-    use moho_app::{Game, LoopConfig, TickContext};
+    use moho_app::{Game, GameClock, HeadlessLoop, LoopConfig, TickContext};
     use moho_game::TICK_HZ;
     use moho_input::bindings::Binding;
     use moho_ui::actions::StrategyAction;
@@ -294,11 +294,14 @@ mod tests {
             .expect("the action has a default key binding")
     }
 
-    fn tick_context() -> TickContext {
-        TickContext {
+    fn tick_app(app: &mut App, command: &StrategyCommand) {
+        let mut clock = GameClock::default();
+        let mut ctx = TickContext {
             tick: 0,
-            tick_length: LoopConfig::new(TICK_HZ).tick_length(),
-        }
+            tick_length: tick(),
+            clock: &mut clock,
+        };
+        Game::tick(app, &mut ctx, command);
     }
 
     #[test]
@@ -309,10 +312,10 @@ mod tests {
         let expected_dir = glam::Vec3::new(yaw.sin(), 0.0, yaw.cos());
         let before = app.simulation.position();
         let speed = app.simulation.player_controller.speed;
-        let ctx_dt = tick_context().tick_length.as_secs_f32();
+        let ctx_dt = tick().as_secs_f32();
 
         let cmd = Game::command(&mut app);
-        Game::tick(&mut app, &mut tick_context(), &cmd);
+        tick_app(&mut app, &cmd);
 
         let moved = app.simulation.position() - before;
         assert_eq!(cmd.input.forward, 1.0);
@@ -332,7 +335,7 @@ mod tests {
         let before = app.simulation.position();
 
         let cmd = Game::command(&mut app);
-        Game::tick(&mut app, &mut tick_context(), &cmd);
+        tick_app(&mut app, &cmd);
 
         assert_eq!(cmd.input.forward, 0.0);
         assert!(!cmd.jump);
@@ -464,7 +467,13 @@ mod tests {
     }
 
     fn run_frame(app: &mut App, fake: &mut FakeRenderer) -> bool {
-        let mut ctx = FrameContext::new(tick(), Some(fake), None);
+        run_frame_at(app, fake, GameClock::default().time_of_day())
+    }
+
+    fn run_frame_at(app: &mut App, fake: &mut FakeRenderer, hours: f32) -> bool {
+        let mut clock = GameClock::default();
+        clock.reset_to(hours);
+        let mut ctx = FrameContext::new(tick(), &clock, Some(fake), None);
         Game::frame(app, &mut ctx, 0.5);
         ctx.exit_requested()
     }
@@ -605,7 +614,8 @@ mod tests {
         fn frame_without_a_renderer_does_not_panic() {
             let mut app = playing_app();
             app.pending_render.push(RenderRequest::ShadowQuality(1));
-            let mut ctx = FrameContext::new(tick(), None, None);
+            let clock = GameClock::default();
+            let mut ctx = FrameContext::new(tick(), &clock, None, None);
 
             Game::frame(&mut app, &mut ctx, 0.0);
 
@@ -653,9 +663,8 @@ mod tests {
         fn playing_frame_uploads_full_sun_intensity_by_day() {
             let mut app = playing_app();
             let mut fake = FakeRenderer::default();
-            app.simulation.set_time_of_day(12.0);
 
-            run_frame(&mut app, &mut fake);
+            run_frame_at(&mut app, &mut fake, 12.0);
 
             assert_eq!(fake.lightings.len(), 1);
             assert_eq!(fake.lightings[0].sun_direction[3], 1.0);
@@ -665,9 +674,8 @@ mod tests {
         fn playing_frame_uploads_zero_sun_intensity_by_night() {
             let mut app = playing_app();
             let mut fake = FakeRenderer::default();
-            app.simulation.set_time_of_day(0.0);
 
-            run_frame(&mut app, &mut fake);
+            run_frame_at(&mut app, &mut fake, 0.0);
 
             assert_eq!(fake.lightings.len(), 1);
             assert_eq!(fake.lightings[0].sun_direction[3], 0.0);
@@ -677,9 +685,8 @@ mod tests {
         fn sun_exactly_on_the_horizon_has_no_intensity() {
             let mut app = playing_app();
             let mut fake = FakeRenderer::default();
-            app.simulation.set_time_of_day(6.0);
 
-            run_frame(&mut app, &mut fake);
+            run_frame_at(&mut app, &mut fake, 6.0);
 
             assert_eq!(fake.lightings[0].sun_direction[1], 0.0);
             assert_eq!(fake.lightings[0].sun_direction[3], 0.0);
@@ -705,7 +712,8 @@ mod tests {
         fn close_requested_autosaves_and_requests_exit() {
             let (mut app, _temp) = app_with_saves_dir();
             let mut fake = FakeRenderer::default();
-            let mut ctx = EventContext::new(Some(&mut fake), None);
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, Some(&mut fake), None);
 
             Game::event(
                 &mut app,
@@ -728,7 +736,8 @@ mod tests {
                 range: 20.0,
             });
             let mut fake = FakeRenderer::default();
-            let mut ctx = EventContext::new(Some(&mut fake), None);
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, Some(&mut fake), None);
 
             Game::event(
                 &mut app,
@@ -743,7 +752,8 @@ mod tests {
         #[test]
         fn unrelated_window_event_does_not_exit_or_save() {
             let (mut app, _temp) = app_with_saves_dir();
-            let mut ctx = EventContext::new(None, None);
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
 
             Game::event(
                 &mut app,
@@ -759,7 +769,8 @@ mod tests {
         fn mouse_motion_in_first_person_reaches_the_next_command_look_delta() {
             let mut app = playing_app();
             app.simulation.set_camera_mode(CameraMode::FirstPerson);
-            let mut ctx = EventContext::new(None, None);
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
 
             Game::event(
                 &mut app,
@@ -778,7 +789,8 @@ mod tests {
         fn mouse_motion_in_isometric_is_ignored() {
             let mut app = playing_app();
             app.simulation.set_camera_mode(CameraMode::Isometric);
-            let mut ctx = EventContext::new(None, None);
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
 
             Game::event(
                 &mut app,
@@ -797,7 +809,8 @@ mod tests {
             let mut app = playing_app();
             app.simulation.set_camera_mode(CameraMode::FirstPerson);
             app.game_state = GameState::Menu;
-            let mut ctx = EventContext::new(None, None);
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
 
             Game::event(
                 &mut app,
@@ -820,11 +833,69 @@ mod tests {
             app.input.actions.mouse_motion(5.0, 5.0);
 
             let cmd = Game::command(&mut app);
-            Game::tick(&mut app, &mut tick_context(), &cmd);
+            tick_app(&mut app, &cmd);
 
             let (yaw, pitch) = app.simulation.yaw_pitch();
             assert!(yaw < 0.0, "yaw = {yaw}");
             assert!(pitch < 0.0, "pitch = {pitch}");
+        }
+    }
+
+    mod day_night {
+        use super::*;
+
+        fn time_after_60_ticks(state: GameState, clock: GameClock) -> f32 {
+            let mut app = playing_app();
+            app.game_state = state;
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ).with_clock(clock));
+
+            sim.step(&mut app, 60);
+
+            sim.clock().time_of_day()
+        }
+
+        /// Day runs 12 h per 600 s, so one second of ticks is 0.02 h.
+        fn noon() -> GameClock {
+            GameClock::new(12.0, 600.0, 420.0)
+        }
+
+        #[test]
+        fn time_of_day_advances_only_while_playing() {
+            let playing = time_after_60_ticks(GameState::Playing, noon());
+
+            assert!((playing - 12.02).abs() < 1e-3, "playing: {playing}");
+            for state in [GameState::Menu, GameState::Paused, GameState::ConsoleOpen] {
+                assert_eq!(time_after_60_ticks(state, noon()), 12.0, "{state:?}");
+            }
+        }
+
+        #[test]
+        fn playing_overrides_a_frozen_time_scale() {
+            let mut frozen = noon();
+            frozen.set_time_scale(0.0);
+
+            let time = time_after_60_ticks(GameState::Playing, frozen);
+
+            assert!((time - 12.02).abs() < 1e-3, "time {time}");
+        }
+
+        #[test]
+        fn close_requested_autosaves_the_clock_time_of_day() {
+            let (mut app, _temp) = app_with_saves_dir();
+            let mut clock = GameClock::default();
+            clock.reset_to(17.5);
+            let mut ctx = EventContext::new(&clock, None, None);
+
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Window(WindowEvent::CloseRequested),
+            );
+
+            let (spec, _, _) =
+                crate::save::read_scene_and_metadata(app.saves_dir.join("scene.bin"))
+                    .expect("autosave is readable");
+            assert_eq!(spec.initial_time_of_day, 17.5);
         }
     }
 }

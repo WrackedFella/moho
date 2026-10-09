@@ -129,16 +129,6 @@ mod tests {
             assert_eq!(proj, expected_proj);
             assert_eq!(cam_pos, expected_pos);
         }
-
-        #[test]
-        fn apply_input_when_ticked_advances_game_clock() {
-            let mut sim = SimulationController::with_clock(Vec3::ZERO, 120.0, 120.0, 12.0);
-
-            sim.apply_input(1.0);
-
-            assert!((sim.time_of_day() - 12.1).abs() < EPS);
-            assert_eq!(sim.game_clock().elapsed_seconds(), 1.0);
-        }
     }
 
     mod pose {
@@ -178,48 +168,6 @@ mod tests {
                 Vec3::new(7.0, 0.0, -3.0)
             );
             assert_eq!(sim.yaw_pitch(), (0.0, 0.0));
-        }
-    }
-
-    mod clock {
-        use super::*;
-
-        #[test]
-        fn with_clock_when_given_initial_time_starts_at_that_time() {
-            let sim = SimulationController::with_clock(Vec3::ZERO, 100.0, 50.0, 9.25);
-
-            assert_eq!(sim.time_of_day(), 9.25);
-            assert_eq!(sim.game_clock().time_of_day(), 9.25);
-        }
-
-        #[test]
-        fn game_clock_mut_when_time_set_is_observed_through_accessors() {
-            let mut sim = SimulationController::new(Vec3::ZERO);
-
-            sim.game_clock_mut().set_time(15.5);
-
-            assert_eq!(sim.game_clock().time_of_day(), 15.5);
-            assert_eq!(sim.time_of_day(), 15.5);
-        }
-
-        #[test]
-        fn set_time_of_day_when_out_of_range_wraps() {
-            let mut sim = SimulationController::new(Vec3::ZERO);
-
-            sim.set_time_of_day(30.5);
-
-            assert!((sim.time_of_day() - 6.5).abs() < EPS);
-        }
-
-        #[test]
-        fn celestial_directions_when_noon_matches_clock_and_has_high_sun() {
-            let sim = SimulationController::with_clock(Vec3::ZERO, 600.0, 420.0, 12.0);
-
-            let (sun, moon) = sim.celestial_directions();
-
-            assert_eq!((sun, moon), sim.game_clock().celestial_directions());
-            assert!(sun.y > 0.7);
-            assert_eq!(moon, Vec3::NEG_Y);
         }
     }
 }

@@ -1,5 +1,6 @@
 //! Fixed-timestep application loop shared by every game line.
 
+pub mod clock;
 pub mod fixed_step;
 pub mod headless;
 pub mod runner;
@@ -175,6 +176,7 @@ pub trait Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::GameClock;
     use moho_renderer::{FrameError, InstanceGpu, LightingGpu, MaterialGpu};
 
     /// Records the point lights it is given; everything else is a no-op.
@@ -249,8 +251,9 @@ mod tests {
 
     #[test]
     fn frame_context_hands_out_the_renderer_it_was_built_with() {
+        let clock = GameClock::default();
         let mut fake = FakeRenderer::default();
-        let mut ctx = FrameContext::new(TICK, Some(&mut fake), None);
+        let mut ctx = FrameContext::new(TICK, &clock, Some(&mut fake), None);
 
         light(ctx.renderer(), 3.0);
 
@@ -260,7 +263,8 @@ mod tests {
 
     #[test]
     fn frame_context_without_renderer_or_audio_has_neither() {
-        let mut ctx = FrameContext::new(TICK, None, None);
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
 
         assert!(ctx.renderer().is_none());
         assert!(ctx.audio().is_none());
@@ -268,7 +272,8 @@ mod tests {
 
     #[test]
     fn frame_context_exit_is_not_requested_until_asked() {
-        let mut ctx = FrameContext::new(TICK, None, None);
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
         assert!(!ctx.exit_requested());
 
         ctx.request_exit();
@@ -278,8 +283,9 @@ mod tests {
 
     #[test]
     fn event_context_hands_out_the_renderer_it_was_built_with() {
+        let clock = GameClock::default();
         let mut fake = FakeRenderer::default();
-        let mut ctx = EventContext::new(Some(&mut fake), None);
+        let mut ctx = EventContext::new(&clock, Some(&mut fake), None);
 
         light(ctx.renderer(), 5.0);
 
@@ -288,7 +294,8 @@ mod tests {
 
     #[test]
     fn event_context_without_renderer_or_audio_has_neither() {
-        let mut ctx = EventContext::new(None, None);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
 
         assert!(ctx.renderer().is_none());
         assert!(ctx.audio().is_none());
@@ -296,11 +303,32 @@ mod tests {
 
     #[test]
     fn event_context_exit_is_not_requested_until_asked() {
-        let mut ctx = EventContext::new(None, None);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
         assert!(!ctx.exit_requested());
 
         ctx.request_exit();
 
         assert!(ctx.exit_requested());
+    }
+
+    #[test]
+    fn frame_context_exposes_the_clock_it_was_built_with() {
+        let mut clock = GameClock::default();
+        clock.reset_to(15.25);
+
+        let ctx = FrameContext::new(TICK, &clock, None, None);
+
+        assert_eq!(ctx.clock().time_of_day(), 15.25);
+    }
+
+    #[test]
+    fn event_context_exposes_the_clock_it_was_built_with() {
+        let mut clock = GameClock::default();
+        clock.reset_to(15.25);
+
+        let ctx = EventContext::new(&clock, None, None);
+
+        assert_eq!(ctx.clock().time_of_day(), 15.25);
     }
 }

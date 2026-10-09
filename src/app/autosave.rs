@@ -54,6 +54,7 @@ mod tests {
     use super::*;
     use crate::App;
     use crate::game_state::GameState;
+    use moho_app::GameClock;
 
     #[test]
     fn autosave_then_load_restores_actors_camera_time_and_blocks() {
@@ -74,7 +75,8 @@ mod tests {
         saved
             .simulation
             .set_position_yaw_pitch(glam::Vec3::new(3.5, 90.0, 3.5), 1.25, -0.5);
-        saved.simulation.set_time_of_day(17.5);
+        let mut saved_clock = GameClock::default();
+        saved_clock.reset_to(17.5);
         saved
             .light_system
             .as_mut()
@@ -83,15 +85,21 @@ mod tests {
             .mutator()
             .place(moho_core::voxel::BlockPos::new(3, 70, 3), 1, None);
 
-        auto_save_on_shutdown(&mut saved, &saves, &[]).expect("autosave");
+        auto_save_on_shutdown(&mut saved, &saved_clock, &saves, &[]).expect("autosave");
         let mut loaded = App::headless();
-        crate::app::scene_loader::load_scene(&mut loaded, &saves.join("scene.bin")).expect("load");
+        let mut loaded_clock = GameClock::default();
+        crate::app::scene_loader::load_scene(
+            &mut loaded,
+            &mut loaded_clock,
+            &saves.join("scene.bin"),
+        )
+        .expect("load");
 
         assert_eq!(loaded.game_state, GameState::Playing);
         let spheres = loaded.entities.actors.spheres();
         assert_eq!(spheres.len(), 1);
         assert_eq!(spheres[0].center, sphere_center);
-        assert_eq!(loaded.simulation.time_of_day(), 17.5);
+        assert_eq!(loaded_clock.time_of_day(), 17.5);
         let pos = loaded.simulation.position();
         assert_eq!((pos.x, pos.z), (3.5, 3.5));
         assert_eq!(loaded.simulation.yaw_pitch(), (1.25, -0.5));

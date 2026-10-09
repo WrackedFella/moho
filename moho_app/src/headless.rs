@@ -97,7 +97,7 @@ mod tests {
             (i * 7 + 3) % 11 - 5
         }
 
-        fn tick(&mut self, ctx: &mut TickContext, command: &i64) {
+        fn tick(&mut self, ctx: &mut TickContext<'_>, command: &i64) {
             self.state = self
                 .state
                 .wrapping_mul(31)
@@ -160,7 +160,7 @@ mod tests {
             self.next_command
         }
 
-        fn tick(&mut self, ctx: &mut TickContext, command: &i32) {
+        fn tick(&mut self, ctx: &mut TickContext<'_>, command: &i32) {
             self.commands.push(*command);
             self.ticks.push(ctx.tick);
             self.tick_lengths.push(ctx.tick_length);
@@ -241,7 +241,7 @@ mod tests {
 
         fn command(&mut self) {}
 
-        fn tick(&mut self, _ctx: &mut TickContext, _command: &()) {}
+        fn tick(&mut self, _ctx: &mut TickContext<'_>, _command: &()) {}
 
         fn frame(&mut self, ctx: &mut FrameContext<'_>, _alpha: f32) {
             self.renderer_absent = Some(ctx.renderer().is_none());
