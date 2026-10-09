@@ -75,7 +75,7 @@ a fork. The engine owns the loop and a game plugs into it. Relies on
 | Item |
 |---|
 | [ENG-F11-01](https://github.com/WrackedFella/moho/issues/143) #143 a game's tick runs at a fixed rate whatever the frame rate |
-| [ENG-F11-02](ENG-F11-02-strategy-game-runs-on-the-engine-loop.md) #144 the strategy game runs on the engine's app loop |
+| [ENG-F11-02](https://github.com/WrackedFella/moho/issues/144) #144 the strategy game runs on the engine's app loop |
 | [ENG-F11-03](ENG-F11-03-in-game-time-advances-only-through-the-tick.md) #145 in-game time advances only through the engine's tick |
 
 ## Notes
