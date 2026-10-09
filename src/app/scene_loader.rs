@@ -113,7 +113,7 @@ pub fn load_scene(
             // Clear any pending input so the restored camera
             // orientation isn't immediately overridden by
             // accumulated mouse deltas or smoothing state.
-            app.input.system.clear_pending_input();
+            app.input.actions.reset_look();
             tracing::info!(pos = ?position, yaw, pitch, "Restored camera position");
         } else {
             tracing::info!("No camera data found in scene file, keeping current position");

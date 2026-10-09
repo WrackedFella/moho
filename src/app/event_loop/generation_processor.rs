@@ -131,7 +131,7 @@ impl GenerationProcessor {
                 // Generated worlds have no pre-spawned lights; nothing to restore.
                 if let Some((position, yaw, pitch)) = camera_data {
                     app.simulation.set_position_yaw_pitch(position, yaw, pitch);
-                    app.input.system.clear_pending_input();
+                    app.input.actions.reset_look();
                 }
             }
             Err(e) => {

@@ -37,8 +37,8 @@ Time beyond `max_catch_up_ticks` is dropped ([overview](overview.md#fixed-step-l
 
 ## `Game::tick` order (`App`)
 
-`tick` receives the `StrategyCommand` sampled by `command()` (movement and look from the
-held bindings; default outside `GameState::Playing`). Steps, in order:
+`tick` receives the `StrategyCommand` sampled by `command()` (movement, jump and look from the
+tick's `ActionFrame`; default outside `GameState::Playing`). Steps, in order:
 
 ```mermaid
 sequenceDiagram

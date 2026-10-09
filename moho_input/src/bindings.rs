@@ -4,12 +4,31 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::hash::Hash;
 
-use crate::key::Key;
+use crate::key::{Key, MouseButton};
 
 /// One physical input that triggers an action.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Binding {
     Key(Key),
+    Mouse(MouseButton),
+}
+
+impl Binding {
+    /// Persisted name, e.g. `W` or `Mouse Left`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Binding::Key(key) => key.name(),
+            Binding::Mouse(button) => button.name(),
+        }
+    }
+
+    /// Text shown to the player, e.g. `Spacebar` or `Mouse Left`.
+    pub fn label(self) -> &'static str {
+        match self {
+            Binding::Key(key) => key.label(),
+            Binding::Mouse(button) => button.name(),
+        }
+    }
 }
 
 /// A game's action enum: stable names and default bindings, as data.
@@ -89,7 +108,7 @@ impl<A: Action> ActionBindings<A> {
 
 const UNBOUND: &str = "Unbound";
 
-/// `None` if any item is not a known key; empty or `Unbound` is an empty list.
+/// `None` if any item is not a known key or mouse button; empty or `Unbound` is an empty list.
 fn parse_list(value: &str) -> Option<Vec<Binding>> {
     let value = value.trim();
     if value.is_empty() || value.eq_ignore_ascii_case(UNBOUND) {
@@ -97,7 +116,12 @@ fn parse_list(value: &str) -> Option<Vec<Binding>> {
     }
     value
         .split(',')
-        .map(|item| Key::parse(item.trim()).map(Binding::Key))
+        .map(|item| {
+            let item = item.trim();
+            Key::parse(item)
+                .map(Binding::Key)
+                .or_else(|| MouseButton::parse(item).map(Binding::Mouse))
+        })
         .collect()
 }
 
@@ -107,7 +131,7 @@ fn format_list(bindings: &[Binding]) -> String {
     }
     bindings
         .iter()
-        .map(|Binding::Key(key)| key.name())
+        .map(|binding| binding.name())
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -197,6 +221,40 @@ mod tests {
                 "{rebound:?}"
             );
             assert_defaults_except(&restored, &[TestAction::Jump]);
+        }
+    }
+
+    #[test]
+    fn label_is_the_key_label_or_the_mouse_button_name() {
+        assert_eq!(Binding::Key(Key::Space).label(), "Spacebar");
+        assert_eq!(Binding::Mouse(MouseButton::Left).label(), "Mouse Left");
+    }
+
+    #[test]
+    fn mouse_bindings_round_trip_by_name() {
+        let cases = [
+            (MouseButton::Left, "Mouse Left"),
+            (MouseButton::Right, "Mouse Right"),
+            (MouseButton::Middle, "Mouse Middle"),
+        ];
+
+        for (button, name) in cases {
+            let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+            bindings.set(
+                TestAction::Jump,
+                vec![Binding::Key(Key::F), Binding::Mouse(button)],
+            );
+
+            let written = bindings.to_section();
+            let (restored, warnings) = ActionBindings::<TestAction>::load(&written);
+
+            assert_eq!(written["jump"], format!("F, {name}"));
+            assert_eq!(warnings, vec![], "{name}");
+            assert_eq!(
+                restored.get(TestAction::Jump),
+                [Binding::Key(Key::F), Binding::Mouse(button)],
+                "{name}"
+            );
         }
     }
 

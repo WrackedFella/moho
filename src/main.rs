@@ -7,14 +7,12 @@
 
 use moho_core::prefs::Prefs;
 use moho_game::scene::SceneEntities;
-use moho_input::bindings::ActionBindings;
-use moho_input::key::Key;
-use moho_ui::actions::{StrategyAction, load_bindings};
+use moho_input::action_map;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
-use winit::event::{ElementState, KeyEvent};
+use winit::event::{DeviceEvent, ElementState, KeyEvent};
 mod input_dispatcher;
 use crate::input_dispatcher::InputDispatcher;
 mod input_event;
@@ -123,7 +121,6 @@ struct App {
 
     // Keybinds and preferences
     prefs: Prefs,
-    bindings: ActionBindings<StrategyAction>,
 
     // Grouped sub-systems
     physics: app::physics_controller::PhysicsController,
@@ -142,7 +139,8 @@ struct App {
 impl App {
     /// Saves prefs together with the current bindings.
     fn save_prefs(&mut self) -> std::io::Result<()> {
-        self.prefs.set_bindings(self.bindings.to_section());
+        self.prefs
+            .set_bindings(self.input.actions.bindings().to_section());
         self.prefs.save()
     }
 
@@ -191,12 +189,11 @@ impl App {
 
             simulation: initialized.simulation,
 
-            bindings: load_bindings(&initialized.prefs),
             prefs: initialized.prefs,
 
             physics: app::physics_controller::PhysicsController::new(),
             generation: app::generation_job::WorldGenerationJob::new(),
-            input: app::input_state::InputState::new(initialized.input_system),
+            input: app::input_state::InputState::new(initialized.actions),
             chunk_streamer: None,
             lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
 
@@ -271,7 +268,6 @@ impl App {
         let pressed = event.state == ElementState::Pressed;
 
         if let PhysicalKey::Code(keycode) = event.physical_key {
-            // Handle global hotkeys first (work in any state)
             match keycode {
                 KeyCode::Backquote => {
                     // Backtick (`) toggles console
@@ -283,7 +279,6 @@ impl App {
                             _ => {}
                         }
                     }
-                    return; // Don't process further
                 }
                 KeyCode::F3 => {
                     // F3 toggles the debug HUD overlay
@@ -293,7 +288,6 @@ impl App {
                     {
                         adapter.toggle_debug_hud();
                     }
-                    return;
                 }
                 KeyCode::F4 => {
                     // F4 toggles the chunk-boundary debug minimap
@@ -303,16 +297,12 @@ impl App {
                     {
                         adapter.toggle_overlay("chunk_debug");
                     }
-                    return;
                 }
                 // Escape closes console if open, otherwise opens menu
                 KeyCode::Escape if pressed => {
                     use crate::game_state::GameState;
                     match self.game_state {
-                        GameState::ConsoleOpen => {
-                            self.exit_console();
-                            return;
-                        }
+                        GameState::ConsoleOpen => self.exit_console(),
                         GameState::Playing => {
                             // ESC to show menu
                             self.show_menu();
@@ -323,38 +313,23 @@ impl App {
                             {
                                 adapter.show_menu("start");
                             }
-                            return;
                         }
                         _ => {}
                     }
                 }
                 _ => {}
             }
-
-            // Only process game input in Playing mode
-            if self.game_state != crate::game_state::GameState::Playing {
-                return;
-            }
-
-            if let Some(key) = Key::from_winit(event.physical_key) {
-                if pressed {
-                    self.input.active_keys.insert(key);
-                } else {
-                    self.input.active_keys.remove(&key);
-                }
-            }
         }
     }
 
-    /// Handle mouse motion for camera look
-    fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
+    fn handle_device_input(&mut self, event: &DeviceEvent) {
         // Only process input in game mode and first person camera mode
         if self.game_state != crate::game_state::GameState::Playing
             || self.simulation.camera_mode() != moho_game::controller::CameraMode::FirstPerson
         {
             return;
         }
-        self.input.system.collect_mouse_delta((-delta.0, -delta.1));
+        action_map::handle_device_event(&mut self.input.actions, event);
     }
 
     /// Grab and hide the cursor for game mode

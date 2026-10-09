@@ -4,9 +4,9 @@ use crate::app::event_loop::{EventProcessor, FrameProcessor, GenerationProcessor
 use crate::game_state::GameState;
 use crate::{App, RenderRequest};
 use moho_game::controller::{CameraMode, ControllerInput};
-use moho_input::bindings::Binding;
+use moho_input::action_map;
 use moho_ui::actions::StrategyAction;
-use winit::event::{DeviceEvent, ElementState, KeyEvent, WindowEvent};
+use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// One tick's worth of player input.
@@ -19,12 +19,8 @@ pub struct StrategyCommand {
 impl App {
     /// Sums the held bindings into the movement and look input for one tick.
     fn sample_command(&mut self) -> StrategyCommand {
-        let is_active = |action: StrategyAction| -> bool {
-            self.bindings
-                .get(action)
-                .iter()
-                .any(|Binding::Key(key)| self.input.active_keys.contains(key))
-        };
+        let frame = self.input.actions.end_tick();
+        let is_active = |action: StrategyAction| frame.held(action);
         let axis = |positive: StrategyAction, negative: StrategyAction| -> f32 {
             f32::from(u8::from(is_active(positive))) - f32::from(u8::from(is_active(negative)))
         };
@@ -38,9 +34,12 @@ impl App {
             0.0
         };
         let sprint = is_active(StrategyAction::Sprint);
-        let jump = is_active(StrategyAction::Jump);
+        // A tap shorter than one tick still jumps.
+        let jump = is_active(StrategyAction::Jump) || frame.pressed(StrategyAction::Jump);
 
-        let (yaw_delta, pitch_delta) = self.input.system.sample_frame_input();
+        // Mouse motion is fed unnegated; look is inverted here.
+        let (look_x, look_y) = frame.look();
+        let (yaw_delta, pitch_delta) = (-look_x, -look_y);
 
         StrategyCommand {
             input: ControllerInput {
@@ -137,19 +136,29 @@ impl App {
             return;
         }
 
+        // Focus loss must release held actions whatever the UI or game state does.
+        if matches!(event, WindowEvent::Focused(false)) {
+            action_map::handle_window_event(&mut self.input.actions, &event);
+        }
+
         if self.dispatcher.dispatch(&event) {
             return;
         }
 
-        match event {
+        // Hotkeys run first; an event that leaves or enters play does not reach the action map.
+        let was_playing = self.game_state == GameState::Playing;
+        match &event {
             WindowEvent::CloseRequested => {
                 self.autosave(ctx.renderer());
                 ctx.request_exit();
             }
             WindowEvent::KeyboardInput {
                 event: key_event, ..
-            } => self.handle_keyboard_input(&key_event),
+            } => self.handle_keyboard_input(key_event),
             _ => {}
+        }
+        if was_playing && self.game_state == GameState::Playing {
+            action_map::handle_window_event(&mut self.input.actions, &event);
         }
     }
 
@@ -217,10 +226,7 @@ impl moho_app::Game for App {
     fn event(&mut self, ctx: &mut moho_app::EventContext<'_>, event: moho_app::Event) {
         match event {
             moho_app::Event::Window(event) => self.handle_window_event(ctx, event),
-            moho_app::Event::Device(DeviceEvent::MouseMotion { delta }) => {
-                self.handle_mouse_motion(delta);
-            }
-            moho_app::Event::Device(_) => {}
+            moho_app::Event::Device(event) => self.handle_device_input(&event),
         }
     }
 
@@ -271,12 +277,18 @@ mod tests {
     }
 
     fn hold(app: &mut App, action: StrategyAction) {
-        let Binding::Key(key) = *app
-            .bindings
+        let key = app
+            .input
+            .actions
+            .bindings()
             .get(action)
-            .first()
-            .expect("the action has a default binding");
-        app.input.active_keys.insert(key);
+            .iter()
+            .find_map(|binding| match binding {
+                Binding::Key(key) => Some(*key),
+                Binding::Mouse(_) => None,
+            })
+            .expect("the action has a default key binding");
+        app.input.actions.key(key, true);
     }
 
     fn tick_context() -> TickContext {
@@ -763,6 +775,41 @@ mod tests {
             let cmd = Game::command(&mut app);
 
             assert_eq!(cmd.input.yaw_delta, 0.0);
+        }
+
+        #[test]
+        fn mouse_motion_outside_play_is_ignored() {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            app.game_state = GameState::Menu;
+            let mut ctx = EventContext::new(None, None);
+
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Device(DeviceEvent::MouseMotion {
+                    delta: (400.0, 200.0),
+                }),
+            );
+
+            assert_eq!(app.input.actions.end_tick().look(), (0.0, 0.0));
+        }
+
+        #[test]
+        fn positive_mouse_motion_turns_first_person_yaw_and_pitch_negative() {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            app.simulation
+                .set_position_yaw_pitch(glam::Vec3::new(100.0, 100.0, 100.0), 0.0, 0.0);
+            app.input.actions.set_filtering(false);
+            app.input.actions.mouse_motion(5.0, 5.0);
+
+            let cmd = Game::command(&mut app);
+            Game::tick(&mut app, &mut tick_context(), &cmd);
+
+            let (yaw, pitch) = app.simulation.yaw_pitch();
+            assert!(yaw < 0.0, "yaw = {yaw}");
+            assert!(pitch < 0.0, "pitch = {pitch}");
         }
     }
 }
