@@ -12,6 +12,8 @@
 //! - `mesh` - Mesh generation (MeshGenerator)
 //! - `chunk` - Chunk optimization (VoxelChunk)
 //! - `modification` - Named block mutations (VoxelMutator)
+//! - `materials` - Surface materials (MaterialType)
+//! - `events` - Block and chunk events (WorldEvent, BlockChangeReason)
 
 mod chunk;
 mod chunk_store;

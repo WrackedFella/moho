@@ -57,7 +57,7 @@ inside a handler. Drain order is fixed: [frame-loop](frame-loop.md#event-drain).
 
 ## Event families
 
-Engine families live in `moho_core::events` (`types/`); `WorldEvent` lives in `moho_voxel`. Variant lists: `cargo doc -p moho_core`.
+Engine families live in `moho_core::events` (`types/`); `WorldEvent` lives in `moho_voxel`. Variant lists: `cargo doc -p moho_core -p moho_voxel`.
 
 | Family | Typical producers | Drained by |
 |---|---|---|
