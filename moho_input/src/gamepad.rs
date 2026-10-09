@@ -16,7 +16,7 @@ impl Gamepads {
     }
 
     /// `None` plus exactly one warning when the backend failed to start.
-    pub fn from_backend(backend: Result<gilrs::Gilrs, gilrs::Error>) -> Option<Self> {
+    pub(crate) fn from_backend(backend: Result<gilrs::Gilrs, gilrs::Error>) -> Option<Self> {
         match backend {
             Ok(gilrs) => Some(Self { gilrs }),
             Err(error) => {
@@ -37,14 +37,10 @@ impl Gamepads {
 /// Feeds one backend event to the map; events the engine has no use for are ignored.
 pub(crate) fn apply_event<A: Action>(event: gilrs::EventType, map: &mut ActionMap<A>) {
     match event {
-        gilrs::EventType::ButtonPressed(button, _) => {
+        gilrs::EventType::ButtonPressed(button, _)
+        | gilrs::EventType::ButtonReleased(button, _) => {
             if let Some(button) = map_button(button) {
-                map.pad_button(button, true);
-            }
-        }
-        gilrs::EventType::ButtonReleased(button, _) => {
-            if let Some(button) = map_button(button) {
-                map.pad_button(button, false);
+                map.pad_button(button, matches!(event, gilrs::EventType::ButtonPressed(..)));
             }
         }
         gilrs::EventType::AxisChanged(axis, value, _) => {

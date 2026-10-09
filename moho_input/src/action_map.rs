@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 
 use crate::bindings::{Action, ActionBindings, Binding};
-use crate::filter::FilterPipeline;
+use crate::filter::{DeadzoneFilter, FilterPipeline};
 use crate::key::{Key, MouseButton};
 use crate::pad::{PadButton, PadInput, Stick, StickAxis, StickDir};
 
@@ -130,8 +130,7 @@ impl<A: Action> ActionMap<A> {
     /// Releases pad bindings only and zeroes stored stick axes.
     pub fn pad_disconnected(&mut self) {
         self.sticks = [(0.0, 0.0); 2];
-        self.down
-            .retain(|binding| !matches!(binding, Binding::Pad(_)));
+        self.down.retain(|binding| !binding.is_pad());
         self.refresh_held();
     }
 
@@ -235,10 +234,8 @@ impl<A: Action> ActionMap<A> {
 
     /// Right-stick look for one tick; stick up looks up, and mouse dy is down-positive.
     fn stick_look(&self) -> (f32, f32) {
-        let (x, y) = self.sticks[Stick::RightStick as usize];
-        if x.hypot(y) < STICK_LOOK_DEAD_ZONE {
-            return (0.0, 0.0);
-        }
+        let (x, y) = DeadzoneFilter::new(STICK_LOOK_DEAD_ZONE)
+            .apply(self.sticks[Stick::RightStick as usize]);
         let scale = PAD_LOOK_PER_TICK * self.sensitivity;
         (x * scale, -y * scale)
     }
