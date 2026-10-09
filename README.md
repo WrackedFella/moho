@@ -6,7 +6,8 @@
 
 Moho is a modular Rust workspace containing engine components designed for voxel-based games:
 
-- **moho_core** - Event bus, voxel types, camera, materials, core utilities
+- **moho_core** - Event bus, materials, preferences, persistence
+- **moho_voxel** - Voxel terrain for the strategy line: grid, meshing, lighting, streaming
 - **moho_renderer** - WGPU-based rendering backend  
 - **moho_audio** - Audio playback (rodio-based)
 - **moho_ui** - egui integration for menus and overlays
@@ -73,7 +74,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ### Library Documentation
 Each workspace crate has comprehensive documentation in its README:
-- **[moho_core/README.md](moho_core/README.md)** - Event bus, game clock, voxels, camera
+- **[moho_core/README.md](moho_core/README.md)** - Event bus, materials, preferences
+- **[moho_voxel/README.md](moho_voxel/README.md)** - Voxel grid, chunks, meshing
 - **[moho_renderer/README.md](moho_renderer/README.md)** - WGPU rendering, CSM shadows, lighting
 - **[moho_audio/README.md](moho_audio/README.md)** - Audio playback and event handling
 - **[moho_ui/README.md](moho_ui/README.md)** - egui menus, settings, console, overlays
@@ -145,7 +147,8 @@ moho/
 ├── wiki/                 # Project documentation
 ├── src/                  # Main application
 ├── tests/                # Integration tests
-├── moho_core/            # Core types, events, voxels
+├── moho_core/            # Core types, events
+├── moho_voxel/           # Voxel terrain (strategy line)
 ├── moho_renderer/        # WGPU rendering
 ├── moho_audio/           # Audio playback
 ├── moho_ui/              # egui UI

@@ -58,7 +58,8 @@ cargo run                          # RUST_LOG=debug for logging
 
 ```
 src/            binary: winit event loop, wiring
-moho_core       event bus, voxel grid/meshing/lighting, materials, input, prefs
+moho_core       event bus, materials, input, prefs, persistence
+moho_voxel      strategy line: voxel grid, meshing, LOD, lighting, chunk store, streaming
 moho_game       game domain: pawn, tools, controller, GameClock, scenes, raycast
 moho_render_api engine/game contract: Renderable, RenderMaterial, GPU-layout data
 moho_renderer   wgpu backend: meshes, CSM shadows, SSAO, skybox
@@ -70,12 +71,12 @@ moho_app        fixed-tick loop shared by the games: Game trait, headless loop
 ```
 
 - Engine crates never depend on `moho_game` (ADR-0001). World geometry reaches
-  the engine as meshes; voxels belong to the strategy line (ADR-0010). Until
-  ENG-F10 moves it to `moho_voxel`, `voxel/` still sits in `moho_core`.
+  the engine as meshes; voxels belong to the strategy line
+  (`moho_voxel`, ADR-0010).
 - Engine-wide event types live in `moho_core::events`; line-specific ones live
   with their line's crate (ADR-0003, narrowed by ADR-0010).
 - Use the event bus for cross-system fan-out; call directly within a system.
-- Entities live in typed stores (`ActorStore` in `moho_game`, `ChunkStore` in `moho_core`); no general ECS (ADR-0004).
+- Entities live in typed stores (`ActorStore` in `moho_game`, `ChunkStore` in `moho_voxel`); no general ECS (ADR-0004).
 - Shared dependency versions go in `[workspace.dependencies]`.
 
 ## GitNexus (code graph, index name `moho`)
