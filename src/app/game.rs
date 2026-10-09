@@ -289,7 +289,7 @@ mod tests {
             .iter()
             .find_map(|binding| match binding {
                 Binding::Key(key) => Some(*key),
-                Binding::Mouse(_) => None,
+                Binding::Mouse(_) | Binding::Pad(_) => None,
             })
             .expect("the action has a default key binding")
     }

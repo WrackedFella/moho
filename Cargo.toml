@@ -14,6 +14,7 @@ members = ["moho_app", "moho_core", "moho_game", "moho_render_api", "moho_render
 
 [workspace.dependencies]
 bytemuck = "1.24"
+gilrs = "0.11"
 glam = "0.33"
 naga = "29.0.1"
 noise = "0.9"

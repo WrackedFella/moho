@@ -68,18 +68,61 @@ pub fn load_bindings(prefs: &Prefs) -> ActionBindings<StrategyAction> {
 mod tests {
     use super::*;
     use moho_input::key::Key;
+    use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
 
     #[test]
     fn strategy_actions_keep_their_ids_and_defaults() {
+        let stick = |dir| Binding::Pad(PadInput::Stick(Stick::LeftStick, dir));
+        let button = |b| Binding::Pad(PadInput::Button(b));
         let expected = [
-            (StrategyAction::MoveForward, "move_forward", Key::W),
-            (StrategyAction::MoveBack, "move_back", Key::S),
-            (StrategyAction::MoveLeft, "move_left", Key::A),
-            (StrategyAction::MoveRight, "move_right", Key::D),
-            (StrategyAction::Ascend, "ascend", Key::Space),
-            (StrategyAction::Descend, "descend", Key::Ctrl),
-            (StrategyAction::Sprint, "sprint", Key::Shift),
-            (StrategyAction::Jump, "jump", Key::Space),
+            (
+                StrategyAction::MoveForward,
+                "move_forward",
+                Key::W,
+                stick(StickDir::Up),
+            ),
+            (
+                StrategyAction::MoveBack,
+                "move_back",
+                Key::S,
+                stick(StickDir::Down),
+            ),
+            (
+                StrategyAction::MoveLeft,
+                "move_left",
+                Key::A,
+                stick(StickDir::Left),
+            ),
+            (
+                StrategyAction::MoveRight,
+                "move_right",
+                Key::D,
+                stick(StickDir::Right),
+            ),
+            (
+                StrategyAction::Ascend,
+                "ascend",
+                Key::Space,
+                button(PadButton::RightTrigger),
+            ),
+            (
+                StrategyAction::Descend,
+                "descend",
+                Key::Ctrl,
+                button(PadButton::LeftTrigger),
+            ),
+            (
+                StrategyAction::Sprint,
+                "sprint",
+                Key::Shift,
+                button(PadButton::LeftThumb),
+            ),
+            (
+                StrategyAction::Jump,
+                "jump",
+                Key::Space,
+                button(PadButton::South),
+            ),
         ];
 
         let actual: Vec<_> = StrategyAction::ALL
@@ -89,7 +132,7 @@ mod tests {
 
         let want: Vec<_> = expected
             .iter()
-            .map(|&(a, n, k)| (a, n, vec![Binding::Key(k)]))
+            .map(|&(a, n, k, p)| (a, n, vec![Binding::Key(k), p]))
             .collect();
         assert_eq!(actual, want);
     }

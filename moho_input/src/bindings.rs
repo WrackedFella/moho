@@ -5,12 +5,14 @@ use std::fmt::Debug;
 use std::hash::Hash;
 
 use crate::key::{Key, MouseButton};
+use crate::pad::PadInput;
 
 /// One physical input that triggers an action.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Binding {
     Key(Key),
     Mouse(MouseButton),
+    Pad(PadInput),
 }
 
 impl Binding {
@@ -19,6 +21,7 @@ impl Binding {
         match self {
             Binding::Key(key) => key.name(),
             Binding::Mouse(button) => button.name(),
+            Binding::Pad(input) => input.name(),
         }
     }
 
@@ -27,6 +30,7 @@ impl Binding {
         match self {
             Binding::Key(key) => key.label(),
             Binding::Mouse(button) => button.name(),
+            Binding::Pad(input) => input.name(),
         }
     }
 }
@@ -121,6 +125,7 @@ fn parse_list(value: &str) -> Option<Vec<Binding>> {
             Key::parse(item)
                 .map(Binding::Key)
                 .or_else(|| MouseButton::parse(item).map(Binding::Mouse))
+                .or_else(|| PadInput::parse(item).map(Binding::Pad))
         })
         .collect()
 }
@@ -139,6 +144,7 @@ fn format_list(bindings: &[Binding]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pad::{PadButton, Stick, StickDir};
     use moho_core::prefs::Prefs;
 
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -255,6 +261,76 @@ mod tests {
                 [Binding::Key(Key::F), Binding::Mouse(button)],
                 "{name}"
             );
+        }
+    }
+
+    #[test]
+    fn pad_bindings_round_trip_through_names() {
+        let mut cases: Vec<(PadInput, String)> = PadButton::ALL
+            .iter()
+            .map(|&b| (PadInput::Button(b), format!("Pad {b:?}")))
+            .collect();
+        for &stick in Stick::ALL {
+            for &dir in StickDir::ALL {
+                cases.push((
+                    PadInput::Stick(stick, dir),
+                    format!("Pad {stick:?} {dir:?}"),
+                ));
+            }
+        }
+        assert_eq!(cases.len(), 17 + 8);
+
+        for (input, name) in cases {
+            let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+            bindings.set(
+                TestAction::Jump,
+                vec![Binding::Key(Key::F), Binding::Pad(input)],
+            );
+
+            let written = bindings.to_section();
+            let (restored, warnings) = ActionBindings::<TestAction>::load(&written);
+
+            assert_eq!(written["jump"], format!("F, {name}"));
+            assert_eq!(warnings, vec![], "{name}");
+            assert_eq!(
+                restored.get(TestAction::Jump),
+                [Binding::Key(Key::F), Binding::Pad(input)],
+                "{name}"
+            );
+            assert_eq!(Binding::Pad(input).name(), name);
+        }
+    }
+
+    #[test]
+    fn pad_names_are_pinned_and_unknown_pad_names_warn() {
+        let (bindings, warnings) = ActionBindings::<TestAction>::load(&section(&[
+            ("jump", "Pad South, Pad DPadUp"),
+            ("move_forward", "Pad LeftStick Up"),
+        ]));
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(
+            bindings.get(TestAction::Jump),
+            [
+                Binding::Pad(PadInput::Button(PadButton::South)),
+                Binding::Pad(PadInput::Button(PadButton::DPadUp)),
+            ]
+        );
+        assert_eq!(
+            bindings.get(TestAction::MoveForward),
+            [Binding::Pad(PadInput::Stick(
+                Stick::LeftStick,
+                StickDir::Up
+            ))]
+        );
+        for bad in [
+            "Pad Banana",
+            "Pad LeftStick",
+            "Pad LeftStick Sideways",
+            "Pad",
+        ] {
+            let (_, warnings) = ActionBindings::<TestAction>::load(&section(&[("jump", bad)]));
+            assert_eq!(warnings.len(), 1, "{bad}");
         }
     }
 
