@@ -1,6 +1,6 @@
 # Frame loop
 
-**Source:** `moho_app/src/` (`runner.rs`, `lib.rs`, `headless.rs`, `fixed_step.rs`), `src/app/game.rs`
+**Source:** `moho_app/src/` (`runner.rs`, `lib.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `src/app/game.rs`
 (`impl moho_app::Game for App`), `src/app/event_loop/`.
 **Related:** [ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md) (fixed tick).
 
@@ -16,7 +16,7 @@ flowchart TD
     RES["resumed"] --> mk["create window, renderer,<br/>AudioSystem if enabled"] --> init["Game::init"]
 
     NE["new_events"] --> acc["FixedStep accumulates<br/>time since last wake"]
-    acc --> tk["per due tick:<br/>Game::command then Game::tick"]
+    acc --> tk["per due tick:<br/>Game::command, Game::tick,<br/>then GameClock advance"]
     tk --> rr["request_redraw if ticks ran"]
     rr --> cf["control flow: wait until next tick"]
 
@@ -46,6 +46,7 @@ sequenceDiagram
     participant Bus as EventBus
     participant Sim as Simulation + Physics
     participant LS as LightSystem
+    T->>T: clock time scale = 1 if Playing, else 0
     T->>Bus: SystemEvent::FrameStart
     T->>Sim: apply command, update_game_state (Playing only)
     Note over Sim: controller input → camera,<br/>KCC or free-fly, step rigid bodies
@@ -56,6 +57,10 @@ sequenceDiagram
     T->>T: drain event channels
     T->>T: check_generation_cancel, poll_generation
 ```
+
+Scene load and the console `time` command reset the clock (`reset_to`) while the events
+drain. The loop advances the clock after `tick` returns, so a reset made in a Playing tick
+gets that tick's advance on top.
 
 All gameplay steps early-return unless `GameState::Playing`. `dt` is the fixed tick length.
 
