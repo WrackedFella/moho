@@ -2,8 +2,9 @@
 
 How features reach a merged PR: the flow, who does each step, and the switches that
 change how it runs. Humans decide what to build and merge the result; agents write specs,
-tests and code behind deterministic gates. Full description:
-[`wiki/process/agentic-workflow.md`](../wiki/process/agentic-workflow.md). Update this file
+tests and code behind deterministic gates. Moho specifics:
+[`wiki/process/agentic-workflow.md`](../wiki/process/agentic-workflow.md). How the workflow
+works in general: the [devflow wiki](https://github.com/WrackedFella/claude-skills/blob/main/wiki/README.md). Update this file
 when a switch or a todo changes.
 
 ```
