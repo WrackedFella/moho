@@ -68,7 +68,6 @@ The 2026-10 test-critic audit judged 498 existing tests (252 keep, 110 strengthe
 | #185 [ENG-F22-18](https://github.com/WrackedFella/moho/issues/185): voxel code nothing calls is gone |
 | #186 [ENG-F22-19](ENG-F22-19-compass-debug-view-world-name-menu-music.md): compass, debug view, world name, menu music and volume sliders behave as decided |
 | #187 [ENG-F22-20](ENG-F22-20-hotbar-slot-range-config-defaults-and-missing.md): hotbar slot range, config defaults and missing-character moves behave as decided |
-| [ENG-F22-21](ENG-F22-21-character-movement-tests-step-the-world.md): character movement tests run on a stepped world and fail when the character leaves the floor |
 
 ## Notes
 
