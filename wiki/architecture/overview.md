@@ -22,7 +22,7 @@ flowchart TD
 
     renderer["moho_renderer<br/>wgpu backend"]:::engine
     rapi["moho_render_api<br/>Renderable, RenderMaterial,<br/>GPU-layout data"]:::engine
-    core["moho_core<br/>event bus, materials,<br/>prefs"]:::engine
+    core["moho_core<br/>event bus, persist,<br/>prefs"]:::engine
     audio["moho_audio<br/>rodio"]:::engine
     physics["moho_physics<br/>rapier3d"]:::engine
     input["moho_input<br/>Key, Action, ActionBindings,<br/>ActionMap, mouse filtering"]:::engine
@@ -57,7 +57,7 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 | Domain crates (`moho_core`, `moho_voxel`, `moho_game`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
 
 Voxels live in the strategy-line `moho_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));
-the engine sees world geometry only as meshes. Known debt: `MaterialType` still sits in `moho_core`.
+the engine sees world geometry only as meshes.
 
 ## Target crate graph (M2)
 

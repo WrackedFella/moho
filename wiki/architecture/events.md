@@ -57,7 +57,7 @@ inside a handler. Drain order is fixed: [frame-loop](frame-loop.md#event-drain).
 
 ## Event families
 
-All live in `moho_core::events` (`types/`). Variant lists: `cargo doc -p moho_core`.
+Engine families live in `moho_core::events` (`types/`); `WorldEvent` lives in `moho_voxel`. Variant lists: `cargo doc -p moho_core`.
 
 | Family | Typical producers | Drained by |
 |---|---|---|
@@ -66,7 +66,7 @@ All live in `moho_core::events` (`types/`). Variant lists: `cargo doc -p moho_co
 | `AudioEvent` | game, UI | `process_audio_events` |
 | `InputEvent` | input layer | not drained by the loop (see note) |
 | `GraphicsEvent` | console, settings, game clock | `process_graphics_events` |
-| `WorldEvent` | streaming, light system, block edits | `process_world_events` |
+| `WorldEvent` (defined in `moho_voxel`) | streaming, light system, block edits | `process_world_events` |
 | `DebugEvent` | console | `process_debug_events` |
 
 Note: `process_input_events` does not drain the bus. It drains the binary's own
