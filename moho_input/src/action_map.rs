@@ -140,6 +140,7 @@ impl<A: Action> ActionMap<A> {
 
     /// Releases every held action, e.g. when the window loses focus.
     pub fn release_all(&mut self) {
+        self.sticks = [(0.0, 0.0); 2];
         self.down.clear();
         self.refresh_held();
     }
@@ -499,6 +500,21 @@ mod tests {
         let look = map.end_tick().look();
 
         assert_close(look, (0.8 + PAD_LOOK_PER_TICK, 0.0));
+    }
+
+    #[test]
+    fn release_all_stops_stick_look() {
+        let mut map = pad_map(1.0);
+        map.set_filtering(false);
+        map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+        assert_close(map.end_tick().look(), (PAD_LOOK_PER_TICK, 0.0));
+
+        map.release_all();
+        let frame = map.end_tick();
+        let next = map.end_tick();
+
+        assert_eq!(frame.look(), (0.0, 0.0));
+        assert_eq!(next.look(), (0.0, 0.0));
     }
 
     #[test]
