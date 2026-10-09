@@ -45,9 +45,6 @@ cargo test --workspace
 
 # Run specific crate tests
 cargo test --package moho_core
-
-# Run integration tests
-cargo test --test event_bus_integration
 ```
 
 ### Performance Benchmarks

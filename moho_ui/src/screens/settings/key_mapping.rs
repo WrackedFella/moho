@@ -78,7 +78,7 @@ pub fn binding_label(bindings: &[Binding]) -> String {
     }
     bindings
         .iter()
-        .map(|Binding::Key(key)| key.label())
+        .map(|binding| binding.label())
         .collect::<Vec<_>>()
         .join(", ")
 }

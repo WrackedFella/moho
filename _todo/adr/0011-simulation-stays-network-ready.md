@@ -16,7 +16,7 @@ costs little now.
 - Input reaches the simulation as live device state, not as a per-tick value.
 - Nothing says simulation state must be free of renderer, audio and UI handles.
 - Some ids in the simulation depend on process history (process-wide counters
-  for voxel jobs and state, noted in [ENG-F6](../engine/ENG-F6-headless-deterministic-logic/_feature.md)). Renderer light ids are outside
+  for voxel jobs and state, noted in [ENG-F6](https://github.com/WrackedFella/moho/issues/233)). Renderer light ids are outside
   the simulation and unaffected.
 - The event bus carries both notifications and requests, and nothing says
   whether a bus event may change simulation state.
@@ -49,10 +49,10 @@ No netcode, transport, prediction or rollback is built or chosen here.
   sequence.
 - A later netcode ADR starts from a compliant simulation and picks the model
   (lockstep, snapshots or rollback) on a named consumer.
-- Scripted mods ([ENG-F19](../engine/ENG-F19-data-and-mod-content/_feature.md)'s deferred ADR) can change state only by emitting
+- Scripted mods ([ENG-F19](https://github.com/WrackedFella/moho/issues/231)'s deferred ADR) can change state only by emitting
   commands, so a mod can't break determinism by reaching around the tick.
-- The shared loop ([ENG-F11](../engine/ENG-F11-shared-app-loop/_feature.md)) must expose commands as the tick's input, and the
-  input feature ([ENG-F12](../engine/ENG-F12-input-actions/_feature.md)) must be able to produce them.
+- The shared loop ([ENG-F11](https://github.com/WrackedFella/moho/issues/81)) must expose commands as the tick's input, and the
+  input feature ([ENG-F12](https://github.com/WrackedFella/moho/issues/82)) must be able to produce them.
 - Existing code that breaks rule 3 or 5 (process-wide id counters in voxel
   state; bus events that load worlds or change simulation state directly) is
   fixed when its owning feature next reworks it, not in a sweep.

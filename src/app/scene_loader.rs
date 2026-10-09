@@ -53,16 +53,15 @@ pub fn load_scene(
         );
 
         // Re-add persisted lights to the renderer
-        if let Some(ref mut wr) = app.window_renderer {
-            for desc in &lights {
-                if desc.enabled {
-                    wr.renderer.add_point_light(
-                        glam::Vec3::from_array(desc.position),
-                        glam::Vec3::from_array(desc.color),
-                        desc.intensity,
-                        desc.range,
-                    );
-                }
+        if app.window.is_some() {
+            for desc in lights.iter().filter(|desc| desc.enabled) {
+                app.pending_render
+                    .push(crate::RenderRequest::AddPointLight {
+                        position: glam::Vec3::from_array(desc.position),
+                        color: glam::Vec3::from_array(desc.color),
+                        intensity: desc.intensity,
+                        range: desc.range,
+                    });
             }
         }
 
@@ -114,7 +113,7 @@ pub fn load_scene(
             // Clear any pending input so the restored camera
             // orientation isn't immediately overridden by
             // accumulated mouse deltas or smoothing state.
-            app.input.system.clear_pending_input();
+            app.input.actions.reset_look();
             tracing::info!(pos = ?position, yaw, pitch, "Restored camera position");
         } else {
             tracing::info!("No camera data found in scene file, keeping current position");
@@ -125,8 +124,8 @@ pub fn load_scene(
     app.setup_physics_for_loaded_world();
 
     // Request a redraw to show the loaded scene
-    if let Some(ref wr) = app.window_renderer {
-        wr.window.request_redraw();
+    if let Some(window) = &app.window {
+        window.request_redraw();
     }
 
     // Switch to game mode and hide menu

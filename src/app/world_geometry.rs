@@ -365,7 +365,8 @@ pub(crate) mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut saved = App::headless();
         saved.entities.chunks.insert(chunk_at(IVec3::new(7, 0, 7)));
-        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path()).expect("autosave");
+        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path(), &[])
+            .expect("autosave");
         let mut app = App::headless();
         insert_chunk(&mut app, chunk_at(IVec3::new(1, 0, 1)));
         let mut backend = RecordingBackend::default();

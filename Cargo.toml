@@ -78,6 +78,9 @@ features = ["derive"]
 [dependencies.glam]
 workspace = true
 
+[dependencies.moho_app]
+path = "moho_app"
+
 [dependencies.moho_audio]
 path = "moho_audio"
 

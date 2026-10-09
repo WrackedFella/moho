@@ -176,26 +176,6 @@ pub enum ResourceType {
 }
 ```
 
-### Input System
-
-Low-level input accumulation and sensitivity scaling.
-
-**Usage:**
-```rust
-use moho_core::input::InputState;
-
-let mut input = InputState::new();
-
-// Accumulate input each frame
-input.add_movement(delta_x, delta_y);
-
-// Apply sensitivity and reset
-if input.has_pending_input() {
-    let (scaled_x, scaled_y) = input.take_movement(sensitivity);
-    camera.process_mouse(scaled_x, scaled_y);
-}
-```
-
 ## Testing
 
 ```bash

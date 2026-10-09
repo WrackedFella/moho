@@ -1,6 +1,7 @@
 # moho_input
 
-Engine input vocabulary: the keys the engine names, and bindings a game declares as data.
+Engine input: the keys and mouse buttons the engine names, bindings a game declares as data,
+and the action map that hands the game one frame of actions per tick.
 
 ## Pieces
 
@@ -9,13 +10,19 @@ Engine input vocabulary: the keys the engine names, and bindings a game declares
   aliases such as `Up`, `Esc`, `Return`, `Space`, `Control` and punctuation glyphs;
   prefs files need the word names, since `;`, `#`, `[` and `,` are special there),
   `label` is the player-facing text.
-- `Binding`: one physical input that triggers an action (`Binding::Key` today).
+- `MouseButton`: `Left`, `Right`, `Middle`; persisted as `Mouse Left` etc.
+- `Binding`: one physical input that triggers an action (`Binding::Key` or `Binding::Mouse`).
 - `Action`: trait a game implements on its own action enum: `ALL`, a stable lowercase `snake_case`
   `name` used as the persisted id, and `default_bindings`.
 - `ActionBindings<A>`: every action's current bindings. `load` reads a raw
   `[bindings]` section (action name → comma-separated key names, `Unbound` or
   empty for none) and returns warnings for unusable lines, which keep their
   defaults; `to_section` writes every action back.
+- `ActionMap<A>`: owns the bindings, which bindings are down, this tick's edges and
+  the mouse-look accumulator and filter. Feed it with `key`, `mouse_button`,
+  `mouse_motion` and `release_all`, or from winit through `action_map::handle_window_event`
+  / `handle_device_event`. `end_tick` is the only read: it returns an `ActionFrame`
+  (`held`, `pressed`, `released` masks and `look`; plain `Copy` data, at most 64 actions).
 
 ```rust
 use moho_input::Action;

@@ -87,6 +87,20 @@ mod tests {
     }
 
     #[test]
+    fn hud_default_visibility() {
+        let cases: [(&str, Box<dyn Overlay>, bool); 4] = [
+            ("debug", Box::new(DebugHud::new()), false),
+            ("fps", Box::new(FpsHud::new()), true),
+            ("rts", Box::new(RtsHud::new()), true),
+            ("gameplay", Box::new(GameplayHud::new()), true),
+        ];
+
+        for (case, hud, expected) in cases {
+            assert_eq!(hud.is_visible(), expected, "{case} hud default visibility");
+        }
+    }
+
+    #[test]
     fn hud_draws_only_in_its_mode() {
         assert!(draws(&mut FpsHud::new(), true), "fps hud in fps mode");
         assert!(

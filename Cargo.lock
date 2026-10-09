@@ -1535,6 +1535,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "glam 0.33.12",
+ "moho_app",
  "moho_audio",
  "moho_core",
  "moho_game",
@@ -1557,7 +1558,13 @@ dependencies = [
 name = "moho_app"
 version = "0.1.0"
 dependencies = [
+ "glam 0.33.12",
+ "moho_audio",
+ "moho_renderer",
  "proptest",
+ "thiserror 2.0.20",
+ "tracing",
+ "winit",
 ]
 
 [[package]]
@@ -1566,6 +1573,7 @@ version = "0.1.0"
 dependencies = [
  "moho_core",
  "rodio",
+ "tempfile",
  "thiserror 2.0.20",
  "tracing",
 ]

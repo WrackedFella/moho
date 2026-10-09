@@ -99,14 +99,3 @@ fn render_time_of_day(ctx: &egui::Context, time: f32) {
                 });
         });
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn starts_visible() {
-        let hud = FpsHud::new();
-        assert!(hud.is_visible());
-    }
-}

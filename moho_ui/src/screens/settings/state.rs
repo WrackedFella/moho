@@ -170,40 +170,6 @@ mod tests {
     }
 
     #[test]
-    fn new_state_has_no_dirty_fields() {
-        let state = SettingsState::new();
-        assert!(!state.is_dirty());
-    }
-
-    #[test]
-    fn mark_dirty_sets_dirty_flag() {
-        let mut state = SettingsState::new();
-        let forward = SettingsField::Binding(StrategyAction::MoveForward);
-        let left = SettingsField::Binding(StrategyAction::MoveLeft);
-        assert!(!state.is_dirty());
-
-        state.mark_dirty(forward);
-        assert!(state.is_dirty());
-        assert!(state.is_field_dirty(forward));
-        assert!(!state.is_field_dirty(left));
-    }
-
-    #[test]
-    fn revert_changes_clears_dirty_fields() {
-        let mut state = SettingsState::from_prefs(Prefs::default());
-        state.set_staged_binding(StrategyAction::MoveForward, key(Key::Q));
-        assert!(state.is_dirty());
-
-        state.revert_changes();
-
-        assert!(!state.is_dirty());
-        assert_eq!(
-            state.get_staged_binding(StrategyAction::MoveForward),
-            key(Key::W)
-        );
-    }
-
-    #[test]
     fn apply_changes_clears_dirty_fields() {
         let mut state = SettingsState::from_prefs(Prefs::default());
         state.set_staged_binding(StrategyAction::MoveForward, key(Key::Q));
@@ -225,13 +191,14 @@ mod tests {
     }
 
     #[test]
-    fn set_staged_binding_marks_dirty() {
+    fn set_staged_binding_marks_only_that_field_dirty() {
         let mut state = SettingsState::from_prefs(Prefs::default());
 
         state.set_staged_binding(StrategyAction::MoveForward, key(Key::Q));
 
         assert!(state.is_dirty());
         assert!(state.is_field_dirty(SettingsField::Binding(StrategyAction::MoveForward)));
+        assert!(!state.is_field_dirty(SettingsField::Binding(StrategyAction::MoveLeft)));
         assert_eq!(
             state.get_staged_binding(StrategyAction::MoveForward),
             key(Key::Q)
