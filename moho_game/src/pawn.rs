@@ -168,6 +168,16 @@ mod tests {
     }
 
     #[test]
+    fn select_slot_accepts_last_hotbar_slot() {
+        let mut pawn = Pawn::default();
+
+        pawn.select_slot(HOTBAR_SLOT_COUNT - 1);
+
+        assert_eq!(pawn.selected_slot, HOTBAR_SLOT_COUNT - 1);
+        assert_eq!(pawn.equipped_tool, None);
+    }
+
+    #[test]
     fn select_slot_out_of_range_keeps_equipped_tool() {
         let mut pawn = Pawn::default();
 
