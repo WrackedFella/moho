@@ -597,6 +597,36 @@ mod tests {
     }
 
     #[test]
+    fn spawn_torch_publishes_torch_placement_at_the_spawn_block() {
+        let mut app = App::headless();
+        let placed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&placed);
+        app.event_bus.subscribe(move |e: &WorldEvent| {
+            if let WorldEvent::BlockPlaced {
+                position,
+                material_id,
+                reason,
+            } = e
+            {
+                sink.lock()
+                    .unwrap()
+                    .push((*position, *material_id, reason.clone()));
+            }
+        });
+        publish_spawn(&app, "torch");
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        let expected = fallback_spawn_pos(&app).floor().as_ivec3();
+        assert_eq!(
+            *placed.lock().unwrap(),
+            vec![(expected, TORCH_MATERIAL_ID, BlockChangeReason::Player)]
+        );
+        assert!(app.entities.actors.spheres().is_empty());
+        assert!(app.entities.actors.cubes().is_empty());
+    }
+
+    #[test]
     fn chunk_mesh_dirty_event_stores_meshed_chunk_with_collider() {
         let mut app = App::headless();
         let chunk_pos = glam::IVec3::new(0, 4, 0);
