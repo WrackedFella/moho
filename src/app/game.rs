@@ -197,12 +197,9 @@ impl moho_app::Game for App {
 
     fn tick(&mut self, ctx: &mut moho_app::TickContext<'_>, command: &StrategyCommand) {
         let dt = ctx.tick_length.as_secs_f32();
+        // The world's time runs only while playing.
         ctx.clock
-            .set_time_scale(if self.game_state == GameState::Playing {
-                1.0
-            } else {
-                0.0
-            });
+            .set_time_scale(f32::from(self.game_state == GameState::Playing));
         let frame_processor = FrameProcessor::new();
         let event_processor = EventProcessor::new();
 

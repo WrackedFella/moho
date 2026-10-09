@@ -124,7 +124,6 @@ impl EventProcessor {
         while let Ok(event) = app.graphics_event_rx.try_recv() {
             match event {
                 GraphicsEvent::TimeOfDayChanged { time, .. } => {
-                    // Set the game clock time directly (time is in hours 0-24)
                     clock.reset_to(time);
                     tracing::info!(
                         time,
