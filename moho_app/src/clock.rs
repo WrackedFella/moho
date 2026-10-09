@@ -74,8 +74,8 @@ impl GameClock {
     /// Set the multiplier applied to every advance. Negative or non-finite
     /// values are stored as 0.0 (frozen).
     pub fn set_time_scale(&mut self, scale: f32) {
-        self.time_scale = if scale.is_finite() && scale > 0.0 {
-            scale
+        self.time_scale = if scale.is_finite() {
+            scale.max(0.0)
         } else {
             0.0
         };
