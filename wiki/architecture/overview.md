@@ -109,7 +109,7 @@ An FPS line would sit beside the strategy line and depend only on engine crates.
 
 ### Engine seams
 
-The public APIs the [ENG-F5](../../_todo/engine/ENG-F5-physical-repo-split/_feature.md)
+The public APIs the [ENG-F5](https://github.com/WrackedFella/moho/issues/232)
 gate holds fixed: game plug-in interface, world-geometry contract, action map, physics
 queries, spatial audio, content roots, save envelope, scene import. Adding or changing
 one is an ADR-level change.

@@ -4,10 +4,10 @@
 
 ## Context
 
-The end state is three repos: engine, strategy and FPS ([ENG-F5](../engine/ENG-F5-physical-repo-split/_feature.md)). Until the
+The end state is three repos: engine, strategy and FPS ([ENG-F5](https://github.com/WrackedFella/moho/issues/232)). Until the
 split, only convention keeps the lines apart. [ADR-0001](0001-render-api-boundary.md) forbids
 renderer/audio/core → `moho_game`, but nothing checks it. The 2026-10 graph
-already has two drifts. `moho_sim`, listed as engine in [ENG-F5](../engine/ENG-F5-physical-repo-split/_feature.md), depends on
+already has two drifts. `moho_sim`, listed as engine in [ENG-F5](https://github.com/WrackedFella/moho/issues/232), depends on
 `moho_game`. And `moho_core` declares an unused `winit`, which drags a
 platform crate into every domain crate (`moho_game`, `moho_sim`,
 `moho_physics`, `moho_audio`).
@@ -52,6 +52,6 @@ request adds a row to this table.
   moves to an engine crate. It is not split before that consumer exists.
 - Engine-line crates still carry strategy vocabulary: `voxel/` and
   `MaterialType` ([ADR-0002](0002-voxel-and-materials-stay-in-core.md)), and voxel `WorldEvent`s ([ADR-0003](0003-core-owns-event-types.md)). This table
-  doesn't move them. Their placement is decided as [ENG-F5](../engine/ENG-F5-physical-repo-split/_feature.md) preparation, and the
+  doesn't move them. Their placement is decided as [ENG-F5](https://github.com/WrackedFella/moho/issues/232) preparation, and the
   check keeps the lines from coupling further in the meantime.
 - At the physical split, the table is the `filter-repo` path list.

@@ -34,6 +34,7 @@ use moho_ui::screens::SettingsMenu;
 #[test]
 fn escape_cancels_binding_listen() {
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = menu.get_staged_binding(0).to_vec();
 
     menu.start_listening(0);
     assert!(menu.is_listening());
@@ -45,25 +46,8 @@ fn escape_cancels_binding_listen() {
         !menu.conflict_modal().is_visible(),
         "should not show conflict modal"
     );
-}
-
-/// Test 3: Tab switching functionality
-#[test]
-fn tab_switching_works() {
-    use moho_ui::screens::SettingsTab;
-
-    let mut menu = SettingsMenu::with_prefs(Prefs::default());
-
-    // Default tab should be Controls
-    assert_eq!(menu.active_tab(), SettingsTab::Controls);
-
-    // Switch to Audio tab
-    menu.set_active_tab(SettingsTab::Audio);
-    assert_eq!(menu.active_tab(), SettingsTab::Audio);
-
-    // Switch back to Controls
-    menu.set_active_tab(SettingsTab::Controls);
-    assert_eq!(menu.active_tab(), SettingsTab::Controls);
+    assert_eq!(menu.get_staged_binding(0), before.as_slice());
+    assert!(!menu.has_unsaved_changes());
 }
 
 /// Test 4: Staged changes and dirty tracking

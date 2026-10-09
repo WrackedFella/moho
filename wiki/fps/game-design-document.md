@@ -243,7 +243,7 @@ loader or generator is FPS-line work. The FPS line never depends on strategy cra
 
 What the game must be able to do (needs, not solutions). Generic needs belong in the engine; FPS-specific ones go in FPS crates.
 
-1. **Load a static level from a file:** render meshes, build colliders, and expose named markers (spawns, loot points, boundaries, safe spots). Meshes and colliders are covered by [ENG-F10](../../_todo/engine/ENG-F10-world-geometry-from-any-source/_feature.md); the file format and markers are not. *(Phase 1)*
+1. **Load a static level from a file:** render meshes, build colliders, and expose named markers (spawns, loot points, boundaries, safe spots). Meshes and colliders are covered by [ENG-F10](https://github.com/WrackedFella/moho/issues/80); the file format and markers are not. *(Phase 1)*
 2. **Hit a specific body part:** raycast against world geometry and against named hit volumes attached to a character, returning which part was hit. *(Phase 1)*
 3. **Render characters:** at minimum rigid segmented bodies (Phase 1); skeletal animation later. *(Phase 1 / later)*
 4. **AI navigation on non-voxel maps:** compute walkable paths and cover points over an arbitrary static level. *(Phase 1)*

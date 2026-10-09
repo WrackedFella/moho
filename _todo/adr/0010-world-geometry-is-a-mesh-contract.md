@@ -53,7 +53,7 @@ chunks.
 
 ## Consequences
 
-- [ADR-0002](0002-voxel-and-materials-stay-in-core.md) is superseded, and the placement question it left for [ENG-F5](../engine/ENG-F5-physical-repo-split/_feature.md)
+- [ADR-0002](0002-voxel-and-materials-stay-in-core.md) is superseded, and the placement question it left for [ENG-F5](https://github.com/WrackedFella/moho/issues/232)
   is settled: voxels go to the strategy repo at the split. If another game
   wants voxels, the crate is promoted to the engine line by a new ADR.
 - [ENG-F1-05](../engine/ENG-F1-engine-hygiene/ENG-F1-05-material-model-revisit.md) (rethink the material model) no longer decides any crate's
@@ -67,4 +67,4 @@ chunks.
   its own line, or proposes a contract change.
 - Costs: one more crate, and baked-lighting channels that a game may fill with
   neutral values.
-- Delivered by [ENG-F10](../engine/ENG-F10-world-geometry-from-any-source/_feature.md).
+- Delivered by [ENG-F10](https://github.com/WrackedFella/moho/issues/80).

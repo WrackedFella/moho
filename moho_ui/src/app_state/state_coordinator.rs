@@ -170,11 +170,18 @@ mod tests {
 
     #[test]
     fn test_enter_console() {
-        let actions = StateTransitionCoordinator::enter_console(GameState::Playing).unwrap();
-        assert_eq!(actions.new_state, GameState::ConsoleOpen);
-        assert!(actions.ui_visible);
-        assert!(!actions.cursor_grabbed);
-        assert!(actions.cursor_visible);
+        let actions = StateTransitionCoordinator::enter_console(GameState::Playing);
+
+        assert_eq!(
+            actions,
+            Ok(StateTransitionActions {
+                new_state: GameState::ConsoleOpen,
+                ui_visible: true,
+                cursor_grabbed: false,
+                cursor_visible: true,
+                show_menu: None,
+            })
+        );
     }
 
     #[test]

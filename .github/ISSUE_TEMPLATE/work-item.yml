@@ -50,7 +50,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        This issue is the accepted spec; the card in _todo/ is a working copy. Add a
+        This issue is the record of the work item: edit this body when scope changes and put
+        deviations and decisions in comments; no card in _todo/ copies it. Add a
         `line:engine|strategy|fps` label, link this issue as a sub-issue of its feature's
         parent issue, add it to the Moho project board, and set Status there (Ready plus
         Agent-eligible Yes makes it available to the orchestrator).

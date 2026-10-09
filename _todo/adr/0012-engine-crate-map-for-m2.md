@@ -4,9 +4,9 @@
 
 ## Context
 
-M1 and M2 add six engine capabilities: the shared loop ([ENG-F11](../engine/ENG-F11-shared-app-loop/_feature.md)), the UI
-shell ([ENG-F18](../engine/ENG-F18-shared-ui-shell/_feature.md)), scene import ([ENG-F14](../engine/ENG-F14-scene-import/_feature.md)), navigation ([ENG-F17](../engine/ENG-F17-navigation/_feature.md)), content
-roots ([ENG-F19](../engine/ENG-F19-data-and-mod-content/_feature.md)) and the save envelope ([ADR-0006](0006-save-format-contract.md)). [ADR-0005](0005-crate-lines-and-dependency-direction.md)'s table
+M1 and M2 add six engine capabilities: the shared loop ([ENG-F11](https://github.com/WrackedFella/moho/issues/81)), the UI
+shell ([ENG-F18](https://github.com/WrackedFella/moho/issues/230)), scene import ([ENG-F14](https://github.com/WrackedFella/moho/issues/226)), navigation ([ENG-F17](https://github.com/WrackedFella/moho/issues/229)), content
+roots ([ENG-F19](https://github.com/WrackedFella/moho/issues/231)) and the save envelope ([ADR-0006](0006-save-format-contract.md)). [ADR-0005](0005-crate-lines-and-dependency-direction.md)'s table
 assigns today's crates to lines but has no home for any of them. Without a map,
 each spec places its own crate, and the likely outcomes are a dumping-ground
 `moho_core` or one crate per feature.
@@ -14,13 +14,13 @@ each spec places its own crate, and the likely outcomes are a dumping-ground
 Two existing gaps make that worse:
 
 - `moho_core` has no stated end state. Once voxels leave ([ADR-0010](0010-world-geometry-is-a-mesh-contract.md),
-  [ENG-F10](../engine/ENG-F10-world-geometry-from-any-source/_feature.md)), it holds the event bus, engine-wide events, prefs and input filters.
+  [ENG-F10](https://github.com/WrackedFella/moho/issues/80)), it holds the event bus, engine-wide events, prefs and input filters.
 - Input is split three ways: mouse-delta filtering in `moho_core::input`, the
   key-to-binding-code map in `moho_input`, and state handling in the binary.
   `moho_types` holds only the strategy game's `GameState` and its transition
   coordinator.
 
-[ENG-F5](../engine/ENG-F5-physical-repo-split/_feature.md)'s gate asks that FPS work needs "no engine API change", which has no
+[ENG-F5](https://github.com/WrackedFella/moho/issues/232)'s gate asks that FPS work needs "no engine API change", which has no
 list of APIs to check against.
 
 ## Decision
@@ -60,8 +60,8 @@ engine API change" criterion refers to:
 1. the game plug-in interface (`moho_app`)
 2. the world-geometry contract ([ADR-0010](0010-world-geometry-is-a-mesh-contract.md))
 3. the action map (`moho_input`)
-4. physics queries ([ENG-F15](../engine/ENG-F15-physics-queries-and-bodies/_feature.md))
-5. spatial audio ([ENG-F16](../engine/ENG-F16-positional-audio/_feature.md))
+4. physics queries ([ENG-F15](https://github.com/WrackedFella/moho/issues/227))
+5. spatial audio ([ENG-F16](https://github.com/WrackedFella/moho/issues/228))
 6. content roots (ENG-F19)
 7. the save envelope ([ADR-0006](0006-save-format-contract.md))
 8. scene import (ENG-F14)
