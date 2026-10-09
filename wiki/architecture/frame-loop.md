@@ -46,6 +46,7 @@ sequenceDiagram
     participant Bus as EventBus
     participant Sim as Simulation + Physics
     participant LS as LightSystem
+    T->>T: clock time scale = 1 if Playing, else 0
     T->>Bus: SystemEvent::FrameStart
     T->>Sim: apply command, update_game_state (Playing only)
     Note over Sim: controller input → camera,<br/>KCC or free-fly, step rigid bodies
@@ -56,6 +57,10 @@ sequenceDiagram
     T->>T: drain event channels
     T->>T: check_generation_cancel, poll_generation
 ```
+
+Scene load and the console `time` command reset the clock (`reset_to`) while the events
+drain. The loop advances the clock after `tick` returns, so a reset made in a Playing tick
+gets that tick's advance on top.
 
 All gameplay steps early-return unless `GameState::Playing`. `dt` is the fixed tick length.
 
