@@ -20,7 +20,6 @@ pub const STICK_DIRECTION_THRESHOLD: f32 = 0.5;
 /// `26 * 0.002 * 60` is about `pi`.
 pub const PAD_LOOK_PER_TICK: f32 = 26.0;
 
-/// Right-stick deflection below this radius turns nothing.
 const STICK_LOOK_DEAD_ZONE: f32 = 0.15;
 
 /// What the actions did over one tick.
@@ -350,7 +349,6 @@ mod tests {
 
     #[test]
     fn stick_direction_held_past_threshold() {
-        // (y, held)
         let cases = [
             (0.0, false),
             (0.3, false),

@@ -525,7 +525,6 @@ fn confirm_pending_binding_moves_the_key() {
     assert_eq!(menu.get_staged_binding(0), [pad_stick(StickDir::Up)]);
 }
 
-/// Rebinding a row's key keeps the action's pad bindings.
 #[test]
 fn rebinding_ascend_to_f_keeps_its_pad_binding() {
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
@@ -542,7 +541,6 @@ fn rebinding_ascend_to_f_keeps_its_pad_binding() {
     );
 }
 
-/// The holder of a contested key keeps its pad bindings, and the taker keeps its own.
 #[test]
 fn conflict_confirm_keeps_pad_bindings_on_both_actions() {
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
@@ -564,7 +562,6 @@ fn conflict_confirm_keeps_pad_bindings_on_both_actions() {
     );
 }
 
-/// A row never shows pad bindings.
 #[test]
 fn rows_never_show_pad_labels() {
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
@@ -575,7 +572,6 @@ fn rows_never_show_pad_labels() {
     assert!(text.lines().any(|l| l == "W"), "W row missing in:\n{text}");
 }
 
-/// An action whose only binding is a pad binding reads Unbound in the keyboard rows.
 #[test]
 fn pad_only_action_row_shows_unbound() {
     let (prefs, issues) = Prefs::parse("[bindings]\nmove_forward = Pad LeftStick Up\n");

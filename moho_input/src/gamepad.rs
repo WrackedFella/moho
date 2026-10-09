@@ -10,12 +10,11 @@ pub struct Gamepads {
 }
 
 impl Gamepads {
-    /// Starts the backend; `None` plus one warning when it cannot start.
+    /// `None` plus one warning when the backend cannot start.
     pub fn new() -> Option<Self> {
         Self::from_backend(gilrs::Gilrs::new())
     }
 
-    /// `None` plus exactly one warning when the backend failed to start.
     pub(crate) fn from_backend(backend: Result<gilrs::Gilrs, gilrs::Error>) -> Option<Self> {
         match backend {
             Ok(gilrs) => Some(Self { gilrs }),
@@ -26,7 +25,6 @@ impl Gamepads {
         }
     }
 
-    /// Drains pending events into the map.
     pub fn poll<A: Action>(&mut self, map: &mut ActionMap<A>) {
         while let Some(gilrs::Event { event, .. }) = self.gilrs.next_event() {
             apply_event(event, map);
