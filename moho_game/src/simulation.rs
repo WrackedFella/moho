@@ -1,13 +1,11 @@
 use crate::controller::{CameraMode, ControllerInput, PlayerController, controller_to_camera};
-use crate::game_clock::GameClock;
 use glam::{Mat4, Vec3};
 
-/// Owns the player controller, its pending input and the game clock, and steps them together.
+/// Owns the player controller and its pending input, and steps them together.
 #[derive(Debug, Clone)]
 pub struct SimulationController {
     pub player_controller: PlayerController,
     pub controller_input: ControllerInput,
-    pub game_clock: GameClock,
 }
 
 impl SimulationController {
@@ -15,20 +13,6 @@ impl SimulationController {
         Self {
             player_controller: PlayerController::new(position),
             controller_input: ControllerInput::default(),
-            game_clock: GameClock::default(),
-        }
-    }
-
-    pub fn with_clock(
-        position: Vec3,
-        day_length: f32,
-        night_length: f32,
-        initial_time: f32,
-    ) -> Self {
-        Self {
-            player_controller: PlayerController::new(position),
-            controller_input: ControllerInput::default(),
-            game_clock: GameClock::new(initial_time, day_length, night_length),
         }
     }
 
@@ -36,13 +20,10 @@ impl SimulationController {
         &mut self.controller_input
     }
 
-    /// Applies the pending input, advances the game clock by `dt`, and returns
-    /// the resulting camera `(view, proj, cam_pos)`.
+    /// Applies the pending input and returns the resulting camera `(view, proj, cam_pos)`.
     pub fn apply_input(&mut self, dt: f32) -> (Mat4, Mat4, Vec3) {
         self.player_controller
             .apply_input(&self.controller_input, dt);
-
-        self.game_clock.tick(dt);
 
         controller_to_camera(&self.player_controller)
     }
@@ -67,28 +48,6 @@ impl SimulationController {
 
     pub fn camera_mode(&self) -> CameraMode {
         self.player_controller.camera_mode
-    }
-
-    pub fn game_clock(&self) -> &GameClock {
-        &self.game_clock
-    }
-
-    pub fn game_clock_mut(&mut self) -> &mut GameClock {
-        &mut self.game_clock
-    }
-
-    pub fn celestial_directions(&self) -> (Vec3, Vec3) {
-        self.game_clock.celestial_directions()
-    }
-
-    /// Current time of day in hours, `0.0..24.0`.
-    pub fn time_of_day(&self) -> f32 {
-        self.game_clock.time_of_day()
-    }
-
-    /// Sets the time of day in hours; values outside `0.0..24.0` wrap.
-    pub fn set_time_of_day(&mut self, time: f32) {
-        self.game_clock.set_time(time);
     }
 
     /// Points the camera at `target`: FPS mode recomputes yaw/pitch, isometric

@@ -1,3 +1,201 @@
+//! In-game clock and celestial mechanics for day/night cycles.
+//!
+//! This module provides a configurable game clock that tracks time on a 24-hour cycle
+//! and calculates sun and moon positions for realistic day/night transitions.
+
+use glam::Vec3;
+use std::f32::consts::PI;
+
+/// In-game clock tracking time of day and celestial mechanics.
+///
+/// The clock operates on a 24-hour cycle (0.0 - 24.0) with configurable
+/// day and night lengths. It automatically calculates sun and moon positions
+/// based on the current time.
+#[derive(Debug, Clone)]
+pub struct GameClock {
+    /// Current time of day in hours (0.0 = midnight, 12.0 = noon, 24.0 wraps to 0.0)
+    time_of_day: f32,
+
+    /// Length of daytime in real-world seconds
+    day_length_seconds: f32,
+
+    /// Length of nighttime in real-world seconds
+    night_length_seconds: f32,
+
+    /// Total simulated time in seconds (for debugging/stats)
+    elapsed_seconds: f64,
+
+    /// Multiplier applied to every advance; 0.0 freezes the clock
+    time_scale: f32,
+}
+
+impl GameClock {
+    /// Create a new game clock with specified configuration.
+    ///
+    /// # Arguments
+    /// * `initial_time` - Starting time in hours (0.0-24.0)
+    /// * `day_length` - Length of daytime in real seconds
+    /// * `night_length` - Length of nighttime in real seconds
+    ///
+    /// # Example
+    /// ```
+    /// use moho_app::GameClock;
+    ///
+    /// // 10 minute days, 7 minute nights, starting at dawn
+    /// let clock = GameClock::new(6.0, 600.0, 420.0);
+    /// ```
+    pub fn new(initial_time: f32, day_length: f32, night_length: f32) -> Self {
+        Self {
+            time_of_day: initial_time.rem_euclid(24.0),
+            day_length_seconds: day_length,
+            night_length_seconds: night_length,
+            elapsed_seconds: 0.0,
+            time_scale: 1.0,
+        }
+    }
+
+    /// Advance the clock by `dt` seconds of simulated time, scaled by the time scale.
+    ///
+    /// The speed of time progression depends on whether it's currently day or night.
+    /// This allows for asymmetric day/night cycles.
+    pub(crate) fn advance(&mut self, dt: f32) {
+        let dt = dt * self.time_scale;
+        self.elapsed_seconds += f64::from(dt);
+
+        let time_speed = if self.is_daytime() {
+            12.0 / self.day_length_seconds
+        } else {
+            12.0 / self.night_length_seconds
+        };
+
+        self.time_of_day = (self.time_of_day + dt * time_speed).rem_euclid(24.0);
+    }
+
+    /// Set the multiplier applied to every advance. Negative or non-finite
+    /// values are stored as 0.0 (frozen).
+    pub fn set_time_scale(&mut self, scale: f32) {
+        self.time_scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            0.0
+        };
+    }
+
+    /// The multiplier applied to every advance (default 1.0).
+    pub fn time_scale(&self) -> f32 {
+        self.time_scale
+    }
+
+    /// Get the current time of day in hours (0.0-24.0).
+    pub fn time_of_day(&self) -> f32 {
+        self.time_of_day
+    }
+
+    /// Get the total elapsed real-world time in seconds.
+    pub fn elapsed_seconds(&self) -> f64 {
+        self.elapsed_seconds
+    }
+
+    /// Jump to `time` hours, wrapped into 0.0-24.0. Keeps the time scale and
+    /// the elapsed total.
+    pub fn reset_to(&mut self, time: f32) {
+        self.time_of_day = time.rem_euclid(24.0);
+    }
+
+    /// Check if it's currently daytime (6:00 - 18:00).
+    pub fn is_daytime(&self) -> bool {
+        self.time_of_day >= 6.0 && self.time_of_day < 18.0
+    }
+
+    /// Check if it's currently nighttime (18:00 - 6:00).
+    pub fn is_nighttime(&self) -> bool {
+        !self.is_daytime()
+    }
+
+    /// Calculate the sun's direction vector based on current time.
+    ///
+    /// The sun:
+    /// - Rises in the east (6:00 AM)
+    /// - Reaches zenith in the south (12:00 PM)
+    /// - Sets in the west (6:00 PM)
+    /// - Is below horizon at night
+    ///
+    /// # Returns
+    /// Normalized direction vector pointing toward the sun, or downward vector if sun is below horizon.
+    pub fn sun_direction(&self) -> Vec3 {
+        self.calculate_celestial_direction(self.time_of_day)
+    }
+
+    /// Calculate the moon's direction vector based on current time.
+    ///
+    /// The moon is always opposite the sun (+12 hours offset).
+    ///
+    /// # Returns
+    /// Normalized direction vector pointing toward the moon, or downward vector if moon is below horizon.
+    pub fn moon_direction(&self) -> Vec3 {
+        let moon_time = (self.time_of_day + 12.0).rem_euclid(24.0);
+        self.calculate_celestial_direction(moon_time)
+    }
+
+    /// Internal method to calculate celestial body direction for a given time.
+    ///
+    /// Uses a simplified celestial sphere model:
+    /// - Azimuth: East (90°) -> South (0°) -> West (-90°)
+    /// - Elevation: 0° at horizon, max 60° at zenith
+    ///
+    /// # Arguments
+    /// * `time` - Time in hours (0.0-24.0)
+    ///
+    /// # Returns
+    /// Normalized direction vector, or Vec3::NEG_Y if below horizon
+    fn calculate_celestial_direction(&self, time: f32) -> Vec3 {
+        // Early out if body is below horizon
+        if !(6.0..18.0).contains(&time) {
+            return Vec3::NEG_Y; // Point down when below horizon
+        }
+
+        // Map time to angle: 6:00 = -90° (east), 12:00 = 0° (south), 18:00 = 90° (west)
+        // Time range 6-18 maps to angle range -90° to +90° (π/2 to -π/2)
+        let hours_since_dawn = time - 6.0; // 0.0 to 12.0
+        let progress = hours_since_dawn / 12.0; // 0.0 to 1.0
+
+        // Azimuth: sweep from east (-π/2) through south (0) to west (π/2)
+        let azimuth = (progress - 0.5) * PI; // -π/2 to π/2
+
+        // Elevation: parabolic arc, max elevation at noon
+        // Use sine curve for smooth arc: 0° at horizon, max 60° at zenith
+        let elevation = (progress * PI).sin() * (PI / 3.0); // 0 to 60° and back to 0
+
+        // Convert spherical coordinates to Cartesian (x=east, y=up, z=north)
+        let x = azimuth.sin() * elevation.cos(); // East-west component
+        let y = elevation.sin(); // Elevation component
+        let z = azimuth.cos() * elevation.cos(); // North-south component
+
+        Vec3::new(x, y, z).normalize()
+    }
+
+    /// Get both sun and moon directions in one call for efficiency.
+    ///
+    /// # Returns
+    /// Tuple of (sun_direction, moon_direction)
+    pub fn celestial_directions(&self) -> (Vec3, Vec3) {
+        (self.sun_direction(), self.moon_direction())
+    }
+
+    /// Get a human-readable time string (HH:MM format).
+    pub fn time_string(&self) -> String {
+        let hours = self.time_of_day.floor() as u32;
+        let minutes = ((self.time_of_day.fract() * 60.0).floor() as u32).min(59);
+        format!("{hours:02}:{minutes:02}")
+    }
+}
+
+impl Default for GameClock {
+    fn default() -> Self {
+        Self::new(6.0, 600.0, 420.0) // Start at dawn, 10min days, 7min nights
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;

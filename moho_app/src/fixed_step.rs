@@ -2,12 +2,16 @@
 
 use std::time::Duration;
 
+use crate::clock::GameClock;
+
 /// Tick rate and catch-up limit for a loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct LoopConfig {
     pub tick_hz: u32,
     /// Cap on ticks run for one frame; excess time is dropped.
     pub max_catch_up_ticks: u32,
+    /// The clock the loop starts from.
+    pub clock: GameClock,
 }
 
 impl LoopConfig {
@@ -16,7 +20,14 @@ impl LoopConfig {
         Self {
             tick_hz,
             max_catch_up_ticks: 5,
+            clock: GameClock::default(),
         }
+    }
+
+    /// This config with `clock` as the loop's starting clock.
+    pub fn with_clock(mut self, clock: GameClock) -> Self {
+        self.clock = clock;
+        self
     }
 
     /// Simulated time one tick covers.
@@ -149,7 +160,7 @@ mod tests {
             cuts.push(0);
             cuts.push(1_000_000_000);
             cuts.sort_unstable();
-            let mut step = FixedStep::new(LoopConfig { tick_hz: 60, max_catch_up_ticks: 100 });
+            let mut step = FixedStep::new(LoopConfig { tick_hz: 60, max_catch_up_ticks: 100, ..LoopConfig::new(60) });
 
             let total: u32 = cuts
                 .windows(2)

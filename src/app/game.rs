@@ -109,12 +109,16 @@ impl App {
     }
 
     /// Autosaves with the renderer's lights, queued ones included, logging a failure.
-    fn autosave(&mut self, renderer: Option<&mut (dyn moho_renderer::RendererBackend + 'static)>) {
+    fn autosave(
+        &mut self,
+        clock: &moho_app::GameClock,
+        renderer: Option<&mut (dyn moho_renderer::RendererBackend + 'static)>,
+    ) {
         let lights = renderer.map_or_else(Vec::new, |r| {
             self.apply_pending_render(r);
             r.all_lights_as_descs()
         });
-        if let Err(e) = self.auto_save_on_shutdown(&lights) {
+        if let Err(e) = self.auto_save_on_shutdown(clock, &lights) {
             tracing::warn!(error = %e, "Failed to auto-save on exit");
         }
     }
@@ -149,7 +153,7 @@ impl App {
         let was_playing = self.game_state == GameState::Playing;
         match &event {
             WindowEvent::CloseRequested => {
-                self.autosave(ctx.renderer());
+                self.autosave(ctx.clock(), ctx.renderer());
                 ctx.request_exit();
             }
             WindowEvent::KeyboardInput {
@@ -191,8 +195,14 @@ impl moho_app::Game for App {
         self.sample_command()
     }
 
-    fn tick(&mut self, ctx: &mut moho_app::TickContext, command: &StrategyCommand) {
+    fn tick(&mut self, ctx: &mut moho_app::TickContext<'_>, command: &StrategyCommand) {
         let dt = ctx.tick_length.as_secs_f32();
+        ctx.clock
+            .set_time_scale(if self.game_state == GameState::Playing {
+                1.0
+            } else {
+                0.0
+            });
         let frame_processor = FrameProcessor::new();
         let event_processor = EventProcessor::new();
 
@@ -206,8 +216,8 @@ impl moho_app::Game for App {
         frame_processor.update_light_system(self);
         frame_processor.publish_frame_end(self, frame_number);
 
-        event_processor.process_ui_events(self);
-        event_processor.process_graphics_events(self);
+        event_processor.process_ui_events(self, ctx.clock);
+        event_processor.process_graphics_events(self, ctx.clock);
         event_processor.process_world_events(self);
         event_processor.process_input_events(self);
         event_processor.process_debug_events(self);
@@ -240,14 +250,15 @@ impl moho_app::Game for App {
 
         if self.exit_requested {
             self.exit_requested = false;
-            self.autosave(ctx.renderer());
+            self.autosave(ctx.clock(), ctx.renderer());
             ctx.request_exit();
             return;
         }
 
-        frame_processor.update_hud_data(self, ctx.tick_length);
+        let clock = ctx.clock();
+        frame_processor.update_hud_data(self, clock, ctx.tick_length);
         if let Some(renderer) = ctx.renderer() {
-            frame_processor.update_lighting(self, &mut *renderer);
+            frame_processor.update_lighting(self, clock, &mut *renderer);
             self.render_scene(renderer);
         }
 

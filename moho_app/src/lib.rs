@@ -13,21 +13,25 @@ use moho_renderer::RendererBackend;
 use winit::event::{DeviceEvent, WindowEvent};
 use winit::window::Window;
 
+pub use clock::GameClock;
 pub use fixed_step::{FixedStep, LoopConfig};
 pub use headless::HeadlessLoop;
 pub use runner::run;
 
 /// Per-tick context handed to [`Game::tick`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TickContext {
+#[derive(Debug)]
+pub struct TickContext<'a> {
     /// Index of this tick, starting at 0.
     pub tick: u64,
     pub tick_length: Duration,
+    /// The simulation clock; the loop advances it after the game's tick.
+    pub clock: &'a mut GameClock,
 }
 
 /// Per-frame context handed to [`Game::frame`].
 pub struct FrameContext<'a> {
     pub tick_length: Duration,
+    clock: &'a GameClock,
     renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
     audio: Option<&'a mut AudioSystem>,
     exit_requested: bool,
@@ -38,19 +42,26 @@ impl<'a> FrameContext<'a> {
     /// with a fake renderer.
     pub fn new(
         tick_length: Duration,
+        clock: &'a GameClock,
         renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
         audio: Option<&'a mut AudioSystem>,
     ) -> Self {
         Self {
             tick_length,
+            clock,
             renderer,
             audio,
             exit_requested: false,
         }
     }
 
-    pub(crate) fn headless(tick_length: Duration) -> Self {
-        Self::new(tick_length, None, None)
+    pub(crate) fn headless(tick_length: Duration, clock: &'a GameClock) -> Self {
+        Self::new(tick_length, clock, None, None)
+    }
+
+    /// The simulation clock.
+    pub fn clock(&self) -> &'a GameClock {
+        self.clock
     }
 
     /// The renderer, absent when running headless.
@@ -83,6 +94,7 @@ pub struct InitContext<'a> {
 
 /// Context handed to [`Game::event`].
 pub struct EventContext<'a> {
+    clock: &'a GameClock,
     renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
     audio: Option<&'a mut AudioSystem>,
     exit_requested: bool,
@@ -92,14 +104,21 @@ impl<'a> EventContext<'a> {
     /// A context for driving [`Game::event`] directly; a game's tests use it
     /// with a fake renderer.
     pub fn new(
+        clock: &'a GameClock,
         renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
         audio: Option<&'a mut AudioSystem>,
     ) -> Self {
         Self {
+            clock,
             renderer,
             audio,
             exit_requested: false,
         }
+    }
+
+    /// The simulation clock.
+    pub fn clock(&self) -> &'a GameClock {
+        self.clock
     }
 
     /// The renderer, absent before the window exists.
@@ -160,7 +179,7 @@ pub trait Game {
     /// Samples the command for the next tick.
     fn command(&mut self) -> Self::Command;
 
-    fn tick(&mut self, ctx: &mut TickContext, command: &Self::Command);
+    fn tick(&mut self, ctx: &mut TickContext<'_>, command: &Self::Command);
 
     /// Called once the window and renderer exist; never called headless.
     fn init(&mut self, _ctx: &mut InitContext<'_>) {}

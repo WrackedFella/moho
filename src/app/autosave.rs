@@ -2,6 +2,7 @@
 /// if needed.
 pub fn auto_save_on_shutdown(
     app: &mut crate::App,
+    clock: &moho_app::GameClock,
     saves_dir: &std::path::Path,
     lights: &[moho_render_api::LightDesc],
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -27,7 +28,7 @@ pub fn auto_save_on_shutdown(
                 night_length_seconds: 420.0,
                 initial_time_of_day: 6.0,
             });
-    spec.initial_time_of_day = app.simulation.time_of_day();
+    spec.initial_time_of_day = clock.time_of_day();
     let block_records: Vec<crate::save::BlockRecord> = app
         .light_system
         .as_ref()
