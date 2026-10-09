@@ -9,8 +9,8 @@ mod paletted;
 
 use self::paletted::PalettedChunk;
 use super::light_storage::{self, CHUNK_SIZE as LIGHT_CHUNK_SIZE, CHUNK_USIZE, ChunkLight};
-use crate::materials::MaterialType;
 use glam::{IVec3, Vec3};
+use moho_core::materials::MaterialType;
 use std::collections::HashMap;
 
 /// Integer vector for grid coordinates
@@ -143,7 +143,7 @@ impl Default for MaterialRegistry {
 /// # Examples
 ///
 /// ```ignore
-/// use moho_core::voxel::{VoxelGrid, BlockPos};
+/// use moho_voxel::{VoxelGrid, BlockPos};
 ///
 /// let mut grid = VoxelGrid::new(16);
 /// let pos = BlockPos::new(0, 0, 0);
@@ -384,7 +384,7 @@ impl VoxelGrid {
         &mut self,
         pos: IVec3,
         data: &[u8],
-    ) -> Result<(), crate::persist::PersistError> {
+    ) -> Result<(), moho_core::persist::PersistError> {
         let chunk = PalettedChunk::from_bytes(data)?;
         self.chunks.insert(pos, chunk);
         // Ensure a ChunkLight entry exists for the lighting pipeline.
@@ -603,7 +603,7 @@ mod tests {
         let other = grid.deserialize_chunk_into(IVec3::new(5, 0, 0), &bytes);
 
         assert!(
-            matches!(err, crate::persist::PersistError::Corrupt),
+            matches!(err, moho_core::persist::PersistError::Corrupt),
             "{err:?}"
         );
         assert!(other.is_err());

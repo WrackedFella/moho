@@ -1,5 +1,5 @@
 use glam::Vec3;
-use moho_core::voxel::{BlockPos, VoxelGrid};
+use moho_voxel::{BlockPos, VoxelGrid};
 
 use crate::inventory::{Inventory, ResourceYield};
 use crate::raycast;

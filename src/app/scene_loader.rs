@@ -67,7 +67,7 @@ pub fn load_scene(
         }
 
         // Reconstruct VoxelGrid from persisted block records, then initialize LightSystem.
-        let mut grid = moho_core::voxel::VoxelGrid::new(16);
+        let mut grid = moho_voxel::VoxelGrid::new(16);
         if block_records.is_empty() {
             // Without block records there is nothing to light; the light system stays off.
             tracing::warn!(
@@ -77,7 +77,7 @@ pub fn load_scene(
             );
         } else {
             for record in &block_records {
-                let pos = moho_core::voxel::BlockPos::new(record.x, record.y, record.z);
+                let pos = moho_voxel::BlockPos::new(record.x, record.y, record.z);
                 grid.mutator()
                     .place(pos, record.material_id, record.resource_id);
             }
@@ -86,7 +86,7 @@ pub fn load_scene(
                 "Reconstructed VoxelGrid blocks for LightSystem"
             );
         }
-        app.light_system = Some(moho_core::voxel::LightSystem::with_default_budget(
+        app.light_system = Some(moho_voxel::LightSystem::with_default_budget(
             grid,
             app.event_bus.clone(),
         ));
@@ -97,7 +97,7 @@ pub fn load_scene(
             terrain_config.seed = s as u32;
         }
         terrain_config.world_size = spec.size_xz;
-        let streaming = moho_core::voxel::StreamingConfig {
+        let streaming = moho_voxel::StreamingConfig {
             load_radius_chunks: app.prefs.world_load_radius(),
             unload_radius_chunks: app.prefs.world_unload_radius(),
             chunks_per_frame: app.prefs.world_chunks_per_frame(),

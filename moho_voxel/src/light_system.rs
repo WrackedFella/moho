@@ -15,7 +15,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use moho_core::voxel::{LightSystem, VoxelGrid, LightFrameBudget};
+//! use moho_voxel::{LightSystem, VoxelGrid, LightFrameBudget};
 //! use moho_core::events::EventBus;
 //!
 //! let grid = VoxelGrid::new(16);
@@ -33,8 +33,8 @@ use super::grid::VoxelGrid;
 use super::light_jobs::{
     LightFrameBudget, LightJobQueue, LightJobStats, LightUpdateJob, LightUpdateResult,
 };
-use crate::events::{BlockChangeReason, EventBus, WorldEvent};
 use glam::{IVec3, Vec3};
+use moho_core::events::{BlockChangeReason, EventBus, WorldEvent};
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
@@ -351,7 +351,7 @@ mod tests {
 
     #[test]
     fn test_block_placed_light_source() {
-        use crate::voxel::grid::MaterialLighting;
+        use crate::grid::MaterialLighting;
         let mut grid = VoxelGrid::new(16);
         // Material 1: warm torch emission.
         grid.material_registry.set_lighting(
@@ -373,7 +373,7 @@ mod tests {
     /// The first call drains the pending set, so a second emits nothing.
     #[test]
     fn emit_dirty_events_publishes_one_event_per_affected_chunk() {
-        use crate::voxel::grid::MaterialLighting;
+        use crate::grid::MaterialLighting;
         use std::sync::Mutex;
 
         let mut grid = VoxelGrid::new(16);

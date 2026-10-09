@@ -486,8 +486,8 @@ impl LightJobStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel::grid::MaterialLighting;
-    use crate::voxel::light_storage;
+    use crate::grid::MaterialLighting;
+    use crate::light_storage;
 
     #[test]
     fn test_job_id_uniqueness() {

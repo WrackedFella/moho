@@ -158,7 +158,7 @@ fn populate_entities(
     }
     for chunk_desc in voxel_chunks {
         let vertex_count = chunk_desc.vertices.len();
-        let chunk = moho_core::voxel::VoxelChunk::new(
+        let chunk = moho_voxel::VoxelChunk::new(
             glam::IVec3::new(
                 chunk_desc.chunk_pos[0],
                 chunk_desc.chunk_pos[1],
@@ -303,7 +303,7 @@ mod tests {
     use crate::actors::{Cube, Sphere};
     use crate::scene::SceneEntities;
     use moho_core::materials::MaterialType;
-    use moho_core::voxel::VoxelChunk;
+    use moho_voxel::VoxelChunk;
 
     #[test]
     fn camera_and_lights_round_trip_through_encode_decode() {
@@ -551,7 +551,7 @@ mod tests {
         let positions: Vec<glam::IVec3> = loaded
             .chunks
             .iter()
-            .map(moho_core::voxel::VoxelChunk::chunk_pos)
+            .map(moho_voxel::VoxelChunk::chunk_pos)
             .collect();
         assert_eq!(positions, vec![glam::IVec3::new(4, 0, -2)]);
     }

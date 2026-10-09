@@ -47,14 +47,14 @@ pub struct AppConfig {
     pub init_audio: bool,
 
     /// Chunk streaming radii and per-frame budget, sourced from `[world]` in prefs.ini.
-    pub streaming: moho_core::voxel::StreamingConfig,
+    pub streaming: moho_voxel::StreamingConfig,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         let prefs = Prefs::default();
 
-        let streaming = moho_core::voxel::StreamingConfig {
+        let streaming = moho_voxel::StreamingConfig {
             load_radius_chunks: prefs.world_load_radius(),
             unload_radius_chunks: prefs.world_unload_radius(),
             chunks_per_frame: prefs.world_chunks_per_frame(),
@@ -95,7 +95,7 @@ impl AppConfig {
         let mouse_sensitivity = prefs.mouse_sensitivity() * 0.002;
         let input_filtering_enabled = prefs.input_filtering_enabled();
 
-        let streaming = moho_core::voxel::StreamingConfig {
+        let streaming = moho_voxel::StreamingConfig {
             load_radius_chunks: prefs.world_load_radius(),
             unload_radius_chunks: prefs.world_unload_radius(),
             chunks_per_frame: prefs.world_chunks_per_frame(),

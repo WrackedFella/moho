@@ -456,7 +456,7 @@ mod tests {
     use super::*;
     use crate::game_state::GameState;
     use moho_core::events::WorldEvent;
-    use moho_core::voxel::VoxelChunk;
+    use moho_voxel::VoxelChunk;
 
     const DT: f32 = 1.0 / 60.0;
 
@@ -541,7 +541,7 @@ mod tests {
             .set_position_yaw_pitch(glam::Vec3::new(8.0, 80.0, 8.0), 0.0, 0.0);
         app.chunk_streamer = Some(crate::app::chunk_streamer::ChunkStreamer::new(
             moho_game::scene_builders::TerrainConfig::default(),
-            moho_core::voxel::StreamingConfig {
+            moho_voxel::StreamingConfig {
                 load_radius_chunks: 0,
                 unload_radius_chunks: 1,
                 chunks_per_frame: 1,
@@ -555,7 +555,7 @@ mod tests {
             .expect("App starts with a light system")
             .grid_mut();
         grid.mutator()
-            .place(moho_core::voxel::BlockPos::new(165, 70, 165), 1, None);
+            .place(moho_voxel::BlockPos::new(165, 70, 165), 1, None);
         // Unmodified, so eviction doesn't write a chunk file to the working directory.
         grid.clear_chunk_modified(far);
         app.entities.chunks.insert(VoxelChunk::empty(far));

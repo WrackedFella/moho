@@ -5,8 +5,8 @@
 //! the occupancy of its 4 neighboring corner blocks.
 
 use super::VoxelMesh;
-use crate::voxel::face::FaceDirection;
-use crate::voxel::grid::{BlockPos, VoxelGrid};
+use crate::face::FaceDirection;
+use crate::grid::{BlockPos, VoxelGrid};
 use glam::IVec3;
 
 /// Generates cube meshes with per-vertex ambient occlusion for blocky materials

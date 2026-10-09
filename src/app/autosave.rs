@@ -85,7 +85,7 @@ mod tests {
             .expect("App starts with a light system")
             .grid_mut()
             .mutator()
-            .place(moho_core::voxel::BlockPos::new(3, 70, 3), 1, None);
+            .place(moho_voxel::BlockPos::new(3, 70, 3), 1, None);
 
         auto_save_on_shutdown(&mut saved, &saves).expect("autosave");
         let mut loaded = App::headless();

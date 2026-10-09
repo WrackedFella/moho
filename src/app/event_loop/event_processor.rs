@@ -9,7 +9,7 @@
 use crate::App;
 use crate::input_event::InputEvent;
 use moho_core::events::{GraphicsEvent, UiEvent, WorldEvent};
-use moho_core::voxel::VoxelChunk;
+use moho_voxel::VoxelChunk;
 use winit::event_loop::ActiveEventLoop;
 
 // ── Spawn / interaction constants ──────────────────────────────────────
@@ -239,8 +239,7 @@ impl EventProcessor {
             return;
         };
 
-        let chunk_pos =
-            moho_core::voxel::VoxelGrid::get_chunk_pos(outcome.block_pos, grid.chunk_size());
+        let chunk_pos = moho_voxel::VoxelGrid::get_chunk_pos(outcome.block_pos, grid.chunk_size());
 
         app.event_bus.publish(WorldEvent::BlockRemoved {
             position: outcome.block_pos,
@@ -333,7 +332,7 @@ impl EventProcessor {
                 let grid_opt = app
                     .light_system
                     .as_mut()
-                    .map(moho_core::voxel::LightSystem::grid_mut);
+                    .map(moho_voxel::LightSystem::grid_mut);
 
                 if let Some(grid) = grid_opt {
                     // Use raycast utility
@@ -606,7 +605,7 @@ mod tests {
             .expect("App starts with a light system")
             .grid_mut()
             .mutator()
-            .place(moho_core::voxel::BlockPos::new(3, 70, 3), 1, None);
+            .place(moho_voxel::BlockPos::new(3, 70, 3), 1, None);
         app.event_bus.publish(WorldEvent::ChunkMeshDirty {
             chunk_pos,
             terrain_dirty: true,
@@ -620,6 +619,54 @@ mod tests {
         let id = crate::app::world_geometry::chunk_mesh_id(chunk_pos);
         let pw = app.physics.world.as_ref().expect("physics world");
         assert!(pw.world_mesh_collider(id).is_some());
+    }
+
+    #[test]
+    fn mine_request_in_first_person_removes_aimed_block_and_publishes_removal() {
+        let mut app = App::headless();
+        app.game_state = crate::game_state::GameState::Playing;
+        app.simulation
+            .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
+        app.pawn.select_slot(moho_game::pawn::TOOL_SLOT);
+        // Identity rotation: the camera looks down -Z from just in front of the wall.
+        app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
+        let aimed = moho_voxel::BlockPos::new(4, 70, 3);
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for x in 2..=6 {
+            for y in 68..=72 {
+                for z in 1..=3 {
+                    grid.mutator()
+                        .place(moho_voxel::BlockPos::new(x, y, z), 1, None);
+                }
+            }
+        }
+        assert!(grid.is_solid_at(aimed));
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&removed);
+        app.event_bus.subscribe(move |e: &WorldEvent| {
+            if let WorldEvent::BlockRemoved { position, .. } = e {
+                sink.lock().unwrap().push(*position);
+            }
+        });
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+
+        let removed = removed.lock().unwrap();
+        assert_eq!(removed.len(), 1, "exactly one block is mined");
+        let mined = removed[0];
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        assert!(
+            !grid.is_solid_at(mined),
+            "the mined block is gone from the grid"
+        );
+        assert!(
+            mined.z == 3 && mined.x == 4,
+            "the block facing the camera is mined: {mined:?}"
+        );
     }
 
     #[test]
