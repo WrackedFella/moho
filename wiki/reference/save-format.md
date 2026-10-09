@@ -1,7 +1,7 @@
 # Save file format
 
 **Source:** `moho_core/src/persist.rs` (envelope), `src/save.rs` (world and chunk files),
-`moho_game/src/scene_persistence.rs` (scene payload), `moho_core/src/voxel/grid/paletted.rs`
+`moho_game/src/scene_persistence.rs` (scene payload), `moho_voxel/src/grid/paletted.rs`
 (chunk payload). Rationale: [ADR-0006](../../_todo/adr/0006-save-format-contract.md).
 
 Every persisted file is one envelope around a [postcard](https://docs.rs/postcard) payload.

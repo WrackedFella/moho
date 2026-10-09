@@ -35,7 +35,7 @@ enum GenerationMsg {
         terrain_config: moho_game::scene_builders::TerrainConfig,
         // Empty grid — streaming populates it on demand. Boxed to reduce enum
         // variant size (VoxelGrid is large; the other variants are cheap).
-        grid: Box<moho_core::voxel::VoxelGrid>,
+        grid: Box<moho_voxel::VoxelGrid>,
     },
     Canceled,
     Failed(String),
@@ -79,7 +79,7 @@ struct App {
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
 
     // Light propagation system (owns the voxel grid internally)
-    light_system: Option<moho_core::voxel::LightSystem>,
+    light_system: Option<moho_voxel::LightSystem>,
 
     // Game state management
     game_state: crate::game_state::GameState,
@@ -104,7 +104,7 @@ struct App {
     ui_event_rx: std::sync::mpsc::Receiver<moho_core::events::UiEvent>,
     audio_event_rx: std::sync::mpsc::Receiver<moho_core::events::AudioEvent>,
     graphics_event_rx: std::sync::mpsc::Receiver<moho_core::events::GraphicsEvent>,
-    world_event_rx: std::sync::mpsc::Receiver<moho_core::events::WorldEvent>,
+    world_event_rx: std::sync::mpsc::Receiver<moho_voxel::WorldEvent>,
     debug_event_rx: std::sync::mpsc::Receiver<moho_core::events::DebugEvent>,
 
     // UI adapter
@@ -151,11 +151,9 @@ impl App {
 
         // Create a minimal voxel grid and light system for testing frame loop integration
         // TODO: Replace with actual terrain grid when scene generation is integrated
-        let voxel_grid = moho_core::voxel::VoxelGrid::new(16);
-        let light_system = moho_core::voxel::LightSystem::with_default_budget(
-            voxel_grid,
-            initialized.event_bus.clone(),
-        );
+        let voxel_grid = moho_voxel::VoxelGrid::new(16);
+        let light_system =
+            moho_voxel::LightSystem::with_default_budget(voxel_grid, initialized.event_bus.clone());
         tracing::info!("Created LightSystem for frame loop integration");
 
         Self {

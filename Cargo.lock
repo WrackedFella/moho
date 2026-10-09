@@ -1614,6 +1614,7 @@ dependencies = [
  "moho_render_api",
  "moho_renderer",
  "moho_ui",
+ "moho_voxel",
  "proptest",
  "serde",
  "tempfile",
@@ -1654,7 +1655,6 @@ dependencies = [
  "crc32fast",
  "glam 0.33.12",
  "ini",
- "moho_render_api",
  "postcard",
  "proptest",
  "serde",
@@ -1670,6 +1670,7 @@ dependencies = [
  "glam 0.33.12",
  "moho_core",
  "moho_render_api",
+ "moho_voxel",
  "noise",
  "serde",
  "tracing",
@@ -1735,6 +1736,18 @@ dependencies = [
  "tracing",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "moho_voxel"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "moho_core",
+ "moho_render_api",
+ "proptest",
+ "serde",
+ "tracing",
 ]
 
 [[package]]

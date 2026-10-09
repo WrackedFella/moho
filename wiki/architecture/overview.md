@@ -18,22 +18,23 @@ The `moho` binary depends on all of them and is omitted from the edges.
 flowchart TD
     ui["moho_ui<br/>egui menus, console, HUD"]:::strategy
     game["moho_game<br/>pawn, tools, controller,<br/>scenes"]:::strategy
+    voxel["moho_voxel<br/>voxel grid, meshing, lighting"]:::strategy
 
     renderer["moho_renderer<br/>wgpu backend"]:::engine
     rapi["moho_render_api<br/>Renderable, RenderMaterial,<br/>GPU-layout data"]:::engine
-    core["moho_core<br/>event bus, voxel, materials,<br/>prefs"]:::engine
+    core["moho_core<br/>event bus, persist,<br/>prefs"]:::engine
     audio["moho_audio<br/>rodio"]:::engine
     physics["moho_physics<br/>rapier3d"]:::engine
     input["moho_input<br/>Key, Action, ActionBindings,<br/>ActionMap, mouse filtering"]:::engine
     app["moho_app<br/>window, fixed-step loop, Game trait"]:::engine
 
     ui --> renderer & input & core & game
-    game --> core & rapi
+    game --> core & rapi & voxel
+    voxel --> core & rapi
     renderer --> rapi
     app --> renderer & audio
     audio --> core
     physics --> rapi
-    core --> rapi
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
     classDef strategy fill:#dcfce7,stroke:#16a34a,color:#111
@@ -52,11 +53,10 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 |---|---|
 | Engine crates never depend on a game-line crate (dev-dependencies allowed) | The engine ships to both games and, after the split, from its own repo |
 | A game line never depends on another game line | Strategy and FPS must separate cleanly |
-| Domain crates (`moho_core`, `moho_game`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
+| Domain crates (`moho_core`, `moho_voxel`, `moho_game`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
 
-Known debt: `voxel/` and `MaterialType` still sit in the engine line.
-[ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md) moves them to the
-strategy-line `moho_voxel`; ENG-F10 delivers the move.
+Voxels live in the strategy-line `moho_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));
+the engine sees world geometry only as meshes.
 
 ## Target crate graph (M2)
 
@@ -70,7 +70,7 @@ flowchart TD
     sbin["moho binary<br/>strategy wiring"]:::strategy
     ui["moho_ui<br/>strategy HUD, menus"]:::strategy
     game["moho_game<br/>pawn, tools, scenes"]:::strategy
-    voxel["moho_voxel<br/>voxel terrain, materials"]:::strategyNew
+    voxel["moho_voxel<br/>voxel terrain"]:::strategy
 
     app["moho_app<br/>window, loop, accumulator,<br/>GameClock, Game interface"]:::engineNew
     shell["moho_ui_shell<br/>egui, console, settings,<br/>modal stack"]:::engineNew
@@ -101,7 +101,6 @@ flowchart TD
 
 Changes from today:
 
-- Voxels leave `moho_core` for `moho_voxel` (ENG-F10).
 - Scene import (ENG-F14), navigation (ENG-F17) and the character controller and camera
   (ENG-F21) are modules of an engine crate unless their specs name a boundary.
 
@@ -151,8 +150,8 @@ flowchart LR
 
 | State | Owner |
 |---|---|
-| Voxel grid, light | `moho_core::voxel::LightSystem` (owns the grid) |
-| Chunk meshes | `ChunkStore` in `moho_core`; the renderer holds its own copy as `WorldMeshes` ([rendering](rendering.md#world-geometry)) |
+| Voxel grid, light | `moho_voxel::LightSystem` (owns the grid) |
+| Chunk meshes | `ChunkStore` in `moho_voxel`; the renderer holds its own copy as `WorldMeshes` ([rendering](rendering.md#world-geometry)) |
 | Actors (spheres, cubes) | `ActorStore` in `moho_game` |
 | Time of day | `moho_app::GameClock`, owned by the loop and advanced after each `Game::tick` |
 | App mode | `moho_ui::GameState` ([input-and-state](input-and-state.md#gamestate)) |

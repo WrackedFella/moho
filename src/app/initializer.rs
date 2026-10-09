@@ -66,7 +66,7 @@ pub struct InitializedApp {
     pub ui_event_rx: std::sync::mpsc::Receiver<moho_core::events::UiEvent>,
     pub audio_event_rx: std::sync::mpsc::Receiver<moho_core::events::AudioEvent>,
     pub graphics_event_rx: std::sync::mpsc::Receiver<moho_core::events::GraphicsEvent>,
-    pub world_event_rx: std::sync::mpsc::Receiver<moho_core::events::WorldEvent>,
+    pub world_event_rx: std::sync::mpsc::Receiver<moho_voxel::WorldEvent>,
     pub debug_event_rx: std::sync::mpsc::Receiver<moho_core::events::DebugEvent>,
 
     pub simulation: SimulationController,

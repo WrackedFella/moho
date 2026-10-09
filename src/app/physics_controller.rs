@@ -87,8 +87,8 @@ impl Default for PhysicsController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use moho_core::materials::MaterialType;
     use moho_game::actors::{ActorStore, Cube, Sphere};
+    use moho_voxel::MaterialType;
 
     #[test]
     fn step_reports_bodies_by_actor_id() {

@@ -56,7 +56,7 @@ flowchart LR
 - [Event bus best practices](reference/event-bus-best-practices.md)
 - [Event bus performance](reference/event-bus-performance.md): benchmarks.
 
-**Crate READMEs** (API-level detail): [`moho_core`](../moho_core/README.md), [`moho_renderer`](../moho_renderer/README.md), [`moho_audio`](../moho_audio/README.md), [`moho_ui`](../moho_ui/README.md), [`moho_input`](../moho_input/README.md). API docs: `cargo doc --open --no-deps`.
+**Crate READMEs** (API-level detail): [`moho_core`](../moho_core/README.md), [`moho_voxel`](../moho_voxel/README.md), [`moho_renderer`](../moho_renderer/README.md), [`moho_audio`](../moho_audio/README.md), [`moho_ui`](../moho_ui/README.md), [`moho_input`](../moho_input/README.md). API docs: `cargo doc --open --no-deps`.
 
 **Guides, design, process**
 

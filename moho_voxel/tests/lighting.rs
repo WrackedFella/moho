@@ -4,7 +4,7 @@
 //! property. Failing tests identify exactly which guarantee broke.
 
 use glam::IVec3;
-use moho_core::voxel::{
+use moho_voxel::{
     LightPropagator, MaterialLighting, VoxelGrid, dirty_chunks_below, ensure_chunk_sky_ready,
     recompute_sky_exposure,
 };

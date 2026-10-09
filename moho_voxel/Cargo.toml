@@ -1,17 +1,19 @@
 [package]
-name = "moho_game"
+name = "moho_voxel"
 version = "0.1.0"
+authors = ["Justin Moore <jmoore5268@gmail.com>"]
 edition = "2024"
 publish = false
 
 [dependencies]
 moho_core = { path = "../moho_core" }
-moho_voxel = { path = "../moho_voxel" }
 moho_render_api = { path = "../moho_render_api" }
 glam = { workspace = true }
 tracing = { workspace = true }
-noise = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+proptest = { workspace = true }
 
 [lints]
 workspace = true

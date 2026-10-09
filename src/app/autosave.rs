@@ -69,7 +69,7 @@ mod tests {
             .spawn_sphere(moho_game::actors::Sphere::new(
                 sphere_center,
                 0.5,
-                moho_core::materials::MaterialType::Lambertian {
+                moho_voxel::MaterialType::Lambertian {
                     albedo: glam::Vec3::ONE,
                 },
             ));
@@ -84,7 +84,7 @@ mod tests {
             .expect("App starts with a light system")
             .grid_mut()
             .mutator()
-            .place(moho_core::voxel::BlockPos::new(3, 70, 3), 1, None);
+            .place(moho_voxel::BlockPos::new(3, 70, 3), 1, None);
 
         auto_save_on_shutdown(&mut saved, &saved_clock, &saves, &[]).expect("autosave");
         let mut loaded = App::headless();

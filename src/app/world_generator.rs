@@ -61,7 +61,7 @@ pub fn generate_new_world(
 
             // With streaming, we no longer pre-generate the full world here.
             // An empty grid is returned; ChunkStreamer fills it on demand.
-            let grid = moho_core::voxel::VoxelGrid::new(16);
+            let grid = moho_voxel::VoxelGrid::new(16);
             let _ = sender.send(crate::GenerationMsg::Progress(0.6));
 
             if cancel_clone.load(Ordering::Relaxed) {

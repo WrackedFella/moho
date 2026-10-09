@@ -2,8 +2,8 @@
 
 **Source:** `src/app/chunk_streamer.rs`, `src/app/event_loop/frame_processor.rs`
 (`update_chunk_streaming`, `update_light_system`), `event_processor.rs` (`process_world_events`),
-`src/app/world_geometry.rs`, `moho_core/src/voxel/` (`light_system.rs`, `streaming.rs`, `jobs.rs`, `light_jobs.rs`).
-Voxels sit in `moho_core` today and move to the strategy-line `moho_voxel` per [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md).
+`src/app/world_geometry.rs`, `moho_voxel/src/` (`light_system.rs`, `streaming.rs`, `light_jobs.rs`).
+Voxels live in the strategy-line `moho_voxel` per [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md).
 
 ## Chunk lifecycle
 
