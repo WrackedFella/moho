@@ -55,9 +55,10 @@ default bindings), `ActionBindings<A>`, and `ActionMap<A>`
 mouse-motion events into the map. Gamepads feed it too: `Gamepads::poll`
 (`moho_input/src/gamepad.rs`, the only module that names `gilrs`) drains backend events
 into `pad_button` / `pad_axis` once per frame from `App::poll_gamepads`
-(`InputState::gamepads`, `None` when the backend fails to start). Outside `Playing` the
-events are discarded and `pad_disconnected` releases pad bindings, so nothing stays held
-across a menu. Once per tick `App::command` (`src/app/game.rs`) calls `end_tick`,
+(`InputState::gamepads`, `None` when the backend fails to start). Outside `Playing`, or
+while the window lacks focus (`InputState::focused`), the events are discarded unapplied
+and `pad_disconnected` releases pad bindings, so nothing stays held across a menu and no
+press made there lands on resume. Once per tick `App::command` (`src/app/game.rs`) calls `end_tick`,
 which returns an `ActionFrame` and resets the per-tick state:
 
 - `held`: down at the end of the tick; `pressed` / `released`: edges at any point in the

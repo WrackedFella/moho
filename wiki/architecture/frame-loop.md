@@ -80,11 +80,13 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
 (`RenderRequest`: point lights, shadow and SSAO quality) and `Game::frame` applies them.
 `App::frame`, in order:
 
-1. apply queued `RenderRequest`s and drain audio events;
-2. if the UI asked to quit: auto-save, `request_exit`, stop;
-3. `update_hud_data`, then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
+1. `poll_gamepads`: apply pad events while playing with focus, otherwise discard them
+   and release pad actions;
+2. apply queued `RenderRequest`s and drain audio events;
+3. if the UI asked to quit: auto-save, `request_exit`, stop;
+4. `update_hud_data`, then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
    with actors, the sphere and cube mesh handles and the camera;
-4. recall the egui staging belt.
+5. recall the egui staging belt.
 
 A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
 [rendering](rendering.md#pass-order). `alpha` (tick interpolation) is not used yet.

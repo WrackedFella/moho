@@ -12,6 +12,9 @@ pub struct InputState {
     /// Connected pads; `None` when the backend is unavailable or not started.
     pub gamepads: Option<Gamepads>,
 
+    /// Whether the window has focus; pads drive the game only while it does.
+    pub focused: bool,
+
     /// Sender side of the channel for input events not consumed by the UI.
     /// `None` before the UI is set up.
     pub unconsumed_tx: Option<std::sync::mpsc::Sender<crate::input_event::InputEvent>>,
@@ -25,6 +28,7 @@ impl InputState {
         Self {
             actions,
             gamepads: None,
+            focused: true,
             unconsumed_tx: None,
             unconsumed_rx: None,
         }

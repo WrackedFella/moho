@@ -30,6 +30,11 @@ impl Gamepads {
             apply_event(event, map);
         }
     }
+
+    /// Drains pending events without applying them.
+    pub fn discard(&mut self) {
+        while self.gilrs.next_event().is_some() {}
+    }
 }
 
 /// Feeds one backend event to the map; events the engine has no use for are ignored.

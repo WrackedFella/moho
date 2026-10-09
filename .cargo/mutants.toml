@@ -62,6 +62,5 @@ exclude_re = [
     'delete match arm gilrs::EventType::AxisChanged\(axis, value, _\) in apply_event',
     # Polling needs a live gilrs backend; headless tests and the headless App have none.
     'replace Gamepads::poll with \(\)',
-    'replace App::poll_gamepads with \(\)',
-    'replace != with == in App::poll_gamepads',
+    'replace Gamepads::discard with \(\)',
 ]
