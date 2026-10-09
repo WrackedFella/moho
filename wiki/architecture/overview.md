@@ -30,12 +30,11 @@ flowchart TD
 
     ui --> renderer & input & core & game
     game --> core & rapi & voxel
-    voxel --> core
+    voxel --> core & rapi
     renderer --> rapi
     app --> renderer & audio
     audio --> core
     physics --> rapi
-    core --> rapi
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
     classDef strategy fill:#dcfce7,stroke:#16a34a,color:#111
