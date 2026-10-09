@@ -161,6 +161,7 @@ impl<G: Game> ApplicationHandler for Runner<G> {
             Route::Frame => {
                 let mut ctx = FrameContext::new(
                     self.sim.tick_length(),
+                    self.sim.clock(),
                     self.renderer.as_deref_mut(),
                     self.audio.as_mut(),
                 );
@@ -178,7 +179,11 @@ impl<G: Game> ApplicationHandler for Runner<G> {
             Route::Close | Route::Forward => {}
         }
 
-        let mut ctx = EventContext::new(self.renderer.as_deref_mut(), self.audio.as_mut());
+        let mut ctx = EventContext::new(
+            self.sim.clock(),
+            self.renderer.as_deref_mut(),
+            self.audio.as_mut(),
+        );
         self.game.event(&mut ctx, Event::Window(event));
         if ctx.exit_requested() || route == Route::Close {
             event_loop.exit();
@@ -191,7 +196,11 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         _device_id: DeviceId,
         event: DeviceEvent,
     ) {
-        let mut ctx = EventContext::new(self.renderer.as_deref_mut(), self.audio.as_mut());
+        let mut ctx = EventContext::new(
+            self.sim.clock(),
+            self.renderer.as_deref_mut(),
+            self.audio.as_mut(),
+        );
         self.game.event(&mut ctx, Event::Device(event));
         if ctx.exit_requested() {
             event_loop.exit();

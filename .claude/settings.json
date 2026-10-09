@@ -38,7 +38,7 @@
       "source": {
         "source": "github",
         "repo": "WrackedFella/claude-skills",
-        "ref": "v0.17.0"
+        "ref": "v0.18.0"
       }
     }
   },

@@ -17,7 +17,7 @@ The `moho` binary depends on all of them and is omitted from the edges.
 ```mermaid
 flowchart TD
     ui["moho_ui<br/>egui menus, console, HUD"]:::strategy
-    game["moho_game<br/>pawn, tools, controller,<br/>GameClock, scenes"]:::strategy
+    game["moho_game<br/>pawn, tools, controller,<br/>scenes"]:::strategy
     voxel["moho_voxel<br/>voxel grid, meshing, lighting"]:::strategy
 
     renderer["moho_renderer<br/>wgpu backend"]:::engine
@@ -62,7 +62,7 @@ the engine sees world geometry only as meshes.
 
 Where the M1–M2 engine work lands, from [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md)
 (Proposed). Capabilities land as modules of an existing crate first; a new crate needs a
-deployable, reuse or compile-time boundary. Dashed boxes are crates that don't exist yet, or (`moho_app`) exist with only part of the listed scope: today the window and event loop, accumulator and `Game` trait.
+deployable, reuse or compile-time boundary. Dashed boxes are crates that don't exist yet, or (`moho_app`) exist with only part of the listed scope: today the window and event loop, accumulator, `GameClock` and `Game` trait.
 Edges are the intended direction, not a list each crate must have.
 
 ```mermaid
@@ -121,7 +121,8 @@ Window-free scheduling for any game line ([ADR-0009](../../_todo/adr/0009-simula
 |---|---|
 | `Game` trait (`lib.rs`) | `command()` sampled once per tick, `tick()` applies it, `frame()` presents with an interpolation `alpha`; optional `init()` (window and renderer exist) and `event()` (winit window/device events) |
 | `run`, `AppConfig` (`runner.rs`) | Creates the window, renderer and optional `AudioSystem`, drives the `Game` from the winit loop; `AppError` on startup failure |
-| `InitContext` / `EventContext` / `FrameContext` (`lib.rs`) | What a game may touch: window, renderer, audio, `request_exit`. Renderer and audio are `Option` (absent headless) |
+| `InitContext` / `EventContext` / `FrameContext` (`lib.rs`) | What a game may touch: window, renderer, audio, `request_exit`, and a read-only `clock()` (`EventContext`, `FrameContext`). Renderer and audio are `Option` (absent headless) |
+| `GameClock` (`clock.rs`) | Time of day, day/night lengths, time scale and sun/moon directions. Seeded from `LoopConfig::clock`, owned by the loop (`run` and `HeadlessLoop`); `TickContext::clock` is `&mut` for the tick, and the loop advances it by one tick length times its time scale after `Game::tick` returns |
 | `LoopConfig` / `FixedStep` (`fixed_step.rs`) | Integer accumulator (`nanoseconds * tick_hz`), so no drift; returns whole ticks due per frame |
 | `HeadlessLoop` (`headless.rs`) | Drives a `Game` without a window: `advance(game, frame_dt)` runs due ticks then one frame; `step(game, n)` runs ticks only |
 
@@ -152,7 +153,7 @@ flowchart LR
 | Voxel grid, light | `moho_voxel::LightSystem` (owns the grid) |
 | Chunk meshes | `ChunkStore` in `moho_voxel`; the renderer holds its own copy as `WorldMeshes` ([rendering](rendering.md#world-geometry)) |
 | Actors (spheres, cubes) | `ActorStore` in `moho_game` |
-| Time of day | `moho_game::GameClock`, advanced by the simulation step |
+| Time of day | `moho_app::GameClock`, owned by the loop and advanced after each `Game::tick` |
 | App mode | `moho_ui::GameState` ([input-and-state](input-and-state.md#gamestate)) |
 | GPU resources | `moho_renderer`; game types reach it only through `moho_render_api` ([rendering](rendering.md)) |
 | Prefs | `moho_core::prefs::Prefs` ([format](../reference/prefs-format.md)) |
