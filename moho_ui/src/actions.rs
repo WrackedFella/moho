@@ -4,6 +4,24 @@ use moho_core::prefs::Prefs;
 use moho_input::Action;
 use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::Key;
+use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
+
+const fn stick(dir: StickDir) -> Binding {
+    Binding::Pad(PadInput::Stick(Stick::LeftStick, dir))
+}
+
+const fn button(button: PadButton) -> Binding {
+    Binding::Pad(PadInput::Button(button))
+}
+
+const FORWARD: [Binding; 2] = [Binding::Key(Key::W), stick(StickDir::Up)];
+const BACK: [Binding; 2] = [Binding::Key(Key::S), stick(StickDir::Down)];
+const LEFT: [Binding; 2] = [Binding::Key(Key::A), stick(StickDir::Left)];
+const RIGHT: [Binding; 2] = [Binding::Key(Key::D), stick(StickDir::Right)];
+const ASCEND: [Binding; 2] = [Binding::Key(Key::Space), button(PadButton::RightTrigger)];
+const JUMP: [Binding; 2] = [Binding::Key(Key::Space), button(PadButton::South)];
+const DESCEND: [Binding; 2] = [Binding::Key(Key::Ctrl), button(PadButton::LeftTrigger)];
+const SPRINT: [Binding; 2] = [Binding::Key(Key::Shift), button(PadButton::LeftThumb)];
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StrategyAction {
@@ -44,13 +62,14 @@ impl Action for StrategyAction {
 
     fn default_bindings(self) -> &'static [Binding] {
         match self {
-            StrategyAction::MoveForward => &[Binding::Key(Key::W)],
-            StrategyAction::MoveBack => &[Binding::Key(Key::S)],
-            StrategyAction::MoveLeft => &[Binding::Key(Key::A)],
-            StrategyAction::MoveRight => &[Binding::Key(Key::D)],
-            StrategyAction::Ascend | StrategyAction::Jump => &[Binding::Key(Key::Space)],
-            StrategyAction::Descend => &[Binding::Key(Key::Ctrl)],
-            StrategyAction::Sprint => &[Binding::Key(Key::Shift)],
+            StrategyAction::MoveForward => &FORWARD,
+            StrategyAction::MoveBack => &BACK,
+            StrategyAction::MoveLeft => &LEFT,
+            StrategyAction::MoveRight => &RIGHT,
+            StrategyAction::Ascend => &ASCEND,
+            StrategyAction::Jump => &JUMP,
+            StrategyAction::Descend => &DESCEND,
+            StrategyAction::Sprint => &SPRINT,
         }
     }
 }
@@ -145,7 +164,7 @@ mod tests {
 
         assert_eq!(
             bindings.get(StrategyAction::MoveForward),
-            [Binding::Key(Key::W)]
+            [Binding::Key(Key::W), stick(StickDir::Up)]
         );
     }
 }

@@ -16,23 +16,74 @@ impl Gamepads {
     }
 
     /// `None` plus exactly one warning when the backend failed to start.
-    pub fn from_backend(_backend: Result<gilrs::Gilrs, gilrs::Error>) -> Option<Self> {
-        todo!()
+    pub fn from_backend(backend: Result<gilrs::Gilrs, gilrs::Error>) -> Option<Self> {
+        match backend {
+            Ok(gilrs) => Some(Self { gilrs }),
+            Err(error) => {
+                tracing::warn!(%error, "gamepad support unavailable");
+                None
+            }
+        }
     }
 
     /// Drains pending events into the map.
-    pub fn poll<A: Action>(&mut self, _map: &mut ActionMap<A>) {
-        let _ = &self.gilrs;
-        todo!()
+    pub fn poll<A: Action>(&mut self, map: &mut ActionMap<A>) {
+        while let Some(gilrs::Event { event, .. }) = self.gilrs.next_event() {
+            match event {
+                gilrs::EventType::ButtonPressed(button, _) => {
+                    if let Some(button) = map_button(button) {
+                        map.pad_button(button, true);
+                    }
+                }
+                gilrs::EventType::ButtonReleased(button, _) => {
+                    if let Some(button) = map_button(button) {
+                        map.pad_button(button, false);
+                    }
+                }
+                gilrs::EventType::AxisChanged(axis, value, _) => {
+                    if let Some((stick, axis)) = map_axis(axis) {
+                        map.pad_axis(stick, axis, value);
+                    }
+                }
+                gilrs::EventType::Disconnected => map.pad_disconnected(),
+                _ => {}
+            }
+        }
     }
 }
 
-pub(crate) fn map_button(_button: gilrs::Button) -> Option<PadButton> {
-    todo!()
+pub(crate) fn map_button(button: gilrs::Button) -> Option<PadButton> {
+    use gilrs::Button as B;
+    Some(match button {
+        B::South => PadButton::South,
+        B::East => PadButton::East,
+        B::North => PadButton::North,
+        B::West => PadButton::West,
+        B::LeftTrigger => PadButton::LeftBumper,
+        B::LeftTrigger2 => PadButton::LeftTrigger,
+        B::RightTrigger => PadButton::RightBumper,
+        B::RightTrigger2 => PadButton::RightTrigger,
+        B::Select => PadButton::Select,
+        B::Start => PadButton::Start,
+        B::Mode => PadButton::Mode,
+        B::LeftThumb => PadButton::LeftThumb,
+        B::RightThumb => PadButton::RightThumb,
+        B::DPadUp => PadButton::DPadUp,
+        B::DPadDown => PadButton::DPadDown,
+        B::DPadLeft => PadButton::DPadLeft,
+        B::DPadRight => PadButton::DPadRight,
+        B::C | B::Z | B::Unknown => return None,
+    })
 }
 
-pub(crate) fn map_axis(_axis: gilrs::Axis) -> Option<(Stick, StickAxis)> {
-    todo!()
+pub(crate) fn map_axis(axis: gilrs::Axis) -> Option<(Stick, StickAxis)> {
+    match axis {
+        gilrs::Axis::LeftStickX => Some((Stick::LeftStick, StickAxis::X)),
+        gilrs::Axis::LeftStickY => Some((Stick::LeftStick, StickAxis::Y)),
+        gilrs::Axis::RightStickX => Some((Stick::RightStick, StickAxis::X)),
+        gilrs::Axis::RightStickY => Some((Stick::RightStick, StickAxis::Y)),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

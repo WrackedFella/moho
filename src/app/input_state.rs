@@ -2,11 +2,15 @@
 //! forward events to the game loop.
 
 use moho_input::action_map::ActionMap;
+use moho_input::gamepad::Gamepads;
 use moho_ui::actions::StrategyAction;
 
 pub struct InputState {
     /// Bindings, held actions and mouse look, read once per update.
     pub actions: ActionMap<StrategyAction>,
+
+    /// Connected pads; `None` when the backend is unavailable or not started.
+    pub gamepads: Option<Gamepads>,
 
     /// Sender side of the channel for input events not consumed by the UI.
     /// `None` before the UI is set up.
@@ -20,6 +24,7 @@ impl InputState {
     pub fn new(actions: ActionMap<StrategyAction>) -> Self {
         Self {
             actions,
+            gamepads: None,
             unconsumed_tx: None,
             unconsumed_rx: None,
         }

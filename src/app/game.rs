@@ -56,6 +56,18 @@ impl App {
         }
     }
 
+    /// Feeds pad events to the action map while playing. Elsewhere the events are
+    /// discarded and pad actions released, so nothing stays held across a menu.
+    fn poll_gamepads(&mut self) {
+        let Some(gamepads) = self.input.gamepads.as_mut() else {
+            return;
+        };
+        gamepads.poll(&mut self.input.actions);
+        if self.game_state != GameState::Playing {
+            self.input.actions.pad_disconnected();
+        }
+    }
+
     fn apply_command(&mut self, command: &StrategyCommand) {
         *self.simulation.controller_input_mut() = command.input;
         self.physics.jump_pressed = command.jump;
@@ -233,6 +245,7 @@ impl moho_app::Game for App {
     fn frame(&mut self, ctx: &mut moho_app::FrameContext<'_>, _alpha: f32) {
         let frame_processor = FrameProcessor::new();
 
+        self.poll_gamepads();
         if let Some(renderer) = ctx.renderer() {
             self.apply_pending_render(renderer);
         }

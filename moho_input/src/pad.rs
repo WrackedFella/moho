@@ -87,10 +87,48 @@ pub enum PadInput {
 impl PadInput {
     /// Persisted name, e.g. `Pad South` or `Pad LeftStick Up`.
     pub fn name(self) -> &'static str {
-        todo!()
+        match self {
+            PadInput::Button(button) => match button {
+                PadButton::South => "Pad South",
+                PadButton::East => "Pad East",
+                PadButton::North => "Pad North",
+                PadButton::West => "Pad West",
+                PadButton::LeftBumper => "Pad LeftBumper",
+                PadButton::RightBumper => "Pad RightBumper",
+                PadButton::LeftTrigger => "Pad LeftTrigger",
+                PadButton::RightTrigger => "Pad RightTrigger",
+                PadButton::Select => "Pad Select",
+                PadButton::Start => "Pad Start",
+                PadButton::Mode => "Pad Mode",
+                PadButton::LeftThumb => "Pad LeftThumb",
+                PadButton::RightThumb => "Pad RightThumb",
+                PadButton::DPadUp => "Pad DPadUp",
+                PadButton::DPadDown => "Pad DPadDown",
+                PadButton::DPadLeft => "Pad DPadLeft",
+                PadButton::DPadRight => "Pad DPadRight",
+            },
+            PadInput::Stick(Stick::LeftStick, dir) => match dir {
+                StickDir::Up => "Pad LeftStick Up",
+                StickDir::Down => "Pad LeftStick Down",
+                StickDir::Left => "Pad LeftStick Left",
+                StickDir::Right => "Pad LeftStick Right",
+            },
+            PadInput::Stick(Stick::RightStick, dir) => match dir {
+                StickDir::Up => "Pad RightStick Up",
+                StickDir::Down => "Pad RightStick Down",
+                StickDir::Left => "Pad RightStick Left",
+                StickDir::Right => "Pad RightStick Right",
+            },
+        }
     }
 
-    pub fn parse(_s: &str) -> Option<PadInput> {
-        todo!()
+    pub fn parse(s: &str) -> Option<PadInput> {
+        let buttons = PadButton::ALL.iter().map(|&b| PadInput::Button(b));
+        let sticks = Stick::ALL.iter().flat_map(|&stick| {
+            StickDir::ALL
+                .iter()
+                .map(move |&dir| PadInput::Stick(stick, dir))
+        });
+        buttons.chain(sticks).find(|input| input.name() == s)
     }
 }

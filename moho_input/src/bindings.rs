@@ -16,6 +16,11 @@ pub enum Binding {
 }
 
 impl Binding {
+    /// Whether this is a gamepad binding.
+    pub fn is_pad(self) -> bool {
+        matches!(self, Binding::Pad(_))
+    }
+
     /// Persisted name, e.g. `W` or `Mouse Left`.
     pub fn name(self) -> &'static str {
         match self {

@@ -8,13 +8,20 @@ use winit::event::{DeviceEvent, ElementState, WindowEvent};
 use crate::bindings::{Action, ActionBindings, Binding};
 use crate::filter::FilterPipeline;
 use crate::key::{Key, MouseButton};
-use crate::pad::{PadButton, Stick, StickAxis};
+use crate::pad::{PadButton, PadInput, Stick, StickAxis, StickDir};
 
 /// An axis reading at or past this magnitude holds its stick direction.
 pub const STICK_DIRECTION_THRESHOLD: f32 = 0.5;
 
 /// Look units a fully deflected right stick adds per tick, before sensitivity.
-pub const PAD_LOOK_PER_TICK: f32 = 10.0;
+///
+/// 26 turns about 180 degrees per second at the 60 Hz tick with default
+/// sensitivity: the binary scales look by `0.002` radians per unit, and
+/// `26 * 0.002 * 60` is about `pi`.
+pub const PAD_LOOK_PER_TICK: f32 = 26.0;
+
+/// Right-stick deflection below this radius turns nothing.
+const STICK_LOOK_DEAD_ZONE: f32 = 0.15;
 
 /// What the actions did over one tick.
 ///
@@ -66,6 +73,8 @@ pub struct ActionMap<A: Action> {
     pressed: u64,
     released: u64,
     look_accumulator: (f64, f64),
+    /// Left and right stick `(x, y)`, Y up.
+    sticks: [(f32, f32); 2],
     sensitivity: f32,
     filter: FilterPipeline,
 }
@@ -80,6 +89,7 @@ impl<A: Action> ActionMap<A> {
             pressed: 0,
             released: 0,
             look_accumulator: (0.0, 0.0),
+            sticks: [(0.0, 0.0); 2],
             sensitivity,
             filter: FilterPipeline::new(),
         }
@@ -103,18 +113,29 @@ impl<A: Action> ActionMap<A> {
         self.look_accumulator.1 += dy;
     }
 
-    pub fn pad_button(&mut self, _button: PadButton, _down: bool) {
-        todo!()
+    pub fn pad_button(&mut self, button: PadButton, down: bool) {
+        self.set_down(Binding::Pad(PadInput::Button(button)), down);
     }
 
     /// `value` is in `-1.0..=1.0` with positive Y up.
-    pub fn pad_axis(&mut self, _stick: Stick, _axis: StickAxis, _value: f32) {
-        todo!()
+    pub fn pad_axis(&mut self, stick: Stick, axis: StickAxis, value: f32) {
+        let slot = match stick {
+            Stick::LeftStick => &mut self.sticks[0],
+            Stick::RightStick => &mut self.sticks[1],
+        };
+        match axis {
+            StickAxis::X => slot.0 = value,
+            StickAxis::Y => slot.1 = value,
+        }
+        self.sync_stick_directions(stick);
     }
 
     /// Releases pad bindings only and zeroes stored stick axes.
     pub fn pad_disconnected(&mut self) {
-        todo!()
+        self.sticks = [(0.0, 0.0); 2];
+        self.down
+            .retain(|binding| !matches!(binding, Binding::Pad(_)));
+        self.refresh_held();
     }
 
     /// Releases every held action, e.g. when the window loses focus.
@@ -179,14 +200,49 @@ impl<A: Action> ActionMap<A> {
         self.held = held;
     }
 
+    fn sync_stick_directions(&mut self, stick: Stick) {
+        let (x, y) = self.sticks[stick as usize];
+        let directions = [
+            (StickDir::Up, y >= STICK_DIRECTION_THRESHOLD),
+            (StickDir::Down, y <= -STICK_DIRECTION_THRESHOLD),
+            (StickDir::Left, x <= -STICK_DIRECTION_THRESHOLD),
+            (StickDir::Right, x >= STICK_DIRECTION_THRESHOLD),
+        ];
+        let mut changed = false;
+        for (dir, active) in directions {
+            let binding = Binding::Pad(PadInput::Stick(stick, dir));
+            changed |= if active {
+                self.down.insert(binding)
+            } else {
+                self.down.remove(&binding)
+            };
+        }
+        if changed {
+            self.refresh_held();
+        }
+    }
+
     fn sample_look(&mut self) -> (f32, f32) {
         let (dx, dy) = std::mem::take(&mut self.look_accumulator);
-        if dx.abs() < f64::EPSILON && dy.abs() < f64::EPSILON {
+        let mouse = if dx.abs() < f64::EPSILON && dy.abs() < f64::EPSILON {
             self.filter.reset();
+            (0.0, 0.0)
+        } else {
+            self.filter
+                .apply((dx as f32 * self.sensitivity, dy as f32 * self.sensitivity))
+        };
+        let (stick_x, stick_y) = self.stick_look();
+        (mouse.0 + stick_x, mouse.1 + stick_y)
+    }
+
+    /// Right-stick look for one tick; stick up looks up, and mouse dy is down-positive.
+    fn stick_look(&self) -> (f32, f32) {
+        let (x, y) = self.sticks[Stick::RightStick as usize];
+        if x.hypot(y) < STICK_LOOK_DEAD_ZONE {
             return (0.0, 0.0);
         }
-        self.filter
-            .apply((dx as f32 * self.sensitivity, dy as f32 * self.sensitivity))
+        let scale = PAD_LOOK_PER_TICK * self.sensitivity;
+        (x * scale, -y * scale)
     }
 }
 
