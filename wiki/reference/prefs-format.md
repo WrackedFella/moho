@@ -1,6 +1,6 @@
 # Preferences file
 
-**Source:** `moho_core/src/prefs/` (`mod.rs`, `reader.rs`), `moho_input/src/bindings.rs`, `moho_input/src/key.rs`,
+**Source:** `moho_core/src/prefs/` (`mod.rs`, `reader.rs`), `moho_input/src/bindings.rs`, `moho_input/src/key.rs`, `moho_input/src/pad.rs`,
 `moho_ui/src/actions.rs`. Path: `config/prefs.ini`,
 relative to the working directory.
 
@@ -72,14 +72,23 @@ words: the INI reader cuts a line at `;` or `#`, reads a line with `[` as a sect
 header, and `,` separates list items. There is no modifier syntax such as `Ctrl+W`
 and no numeric key codes.
 
+Gamepad bindings are written `Pad <name>` and mix freely with keys in one list
+(`jump=Spacebar, Pad South`). Buttons (`PadButton`): `South` `East` `North` `West`
+`LeftBumper` `RightBumper` `LeftTrigger` `RightTrigger` `Select` `Start` `Mode`
+`LeftThumb` `RightThumb` `DPadUp` `DPadDown` `DPadLeft` `DPadRight`. Stick directions
+are `Pad <Stick> <Dir>` with `LeftStick` or `RightStick` and `Up` `Down` `Left` `Right`
+(`Pad LeftStick Up`). A malformed pad name is an unrecognised key and warns. The right
+stick's analog look is not a binding.
+
 Strategy actions (`StrategyAction`, `moho_ui/src/actions.rs`) and defaults:
 
 | Id | Default |
 |---|---|
-| `move_forward` `move_back` `move_left` `move_right` | `W` `S` `A` `D` |
-| `ascend` `jump` | `Spacebar` |
-| `descend` | `Ctrl` |
-| `sprint` | `Shift` |
+| `move_forward` `move_back` `move_left` `move_right` | `W` `S` `A` `D`; `Pad LeftStick` `Up` `Down` `Left` `Right` |
+| `ascend` | `Spacebar`, `Pad RightTrigger` |
+| `jump` | `Spacebar`, `Pad South` |
+| `descend` | `Ctrl`, `Pad LeftTrigger` |
+| `sprint` | `Shift`, `Pad LeftThumb` |
 
 Action ids are persisted and never renamed.
 
