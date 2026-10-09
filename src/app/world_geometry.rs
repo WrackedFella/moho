@@ -2,10 +2,10 @@
 
 use crate::App;
 use glam::IVec3;
-use moho_core::materials::MaterialType;
 use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshError, WorldMeshId};
 use moho_renderer::Scene;
+use moho_voxel::MaterialType;
 use moho_voxel::VoxelChunk;
 
 const AXIS_BITS: u32 = 21;
@@ -124,9 +124,9 @@ pub(crate) mod tests {
     use crate::app::event_loop::event_processor::EventProcessor;
     use crate::app::event_loop::frame_processor::FrameProcessor;
     use crate::game_state::GameState;
-    use moho_core::events::WorldEvent;
     use moho_render_api::RenderMaterial;
     use moho_renderer::RendererBackend;
+    use moho_voxel::WorldEvent;
     use proptest::prelude::*;
     use std::collections::HashSet;
 

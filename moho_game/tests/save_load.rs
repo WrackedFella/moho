@@ -1,8 +1,8 @@
 use glam::Vec3;
-use moho_core::materials::MaterialType;
 use moho_game::actors::Sphere;
 use moho_game::scene::SceneEntities;
 use moho_game::scene_persistence;
+use moho_voxel::MaterialType;
 
 #[test]
 fn scene_encode_decode_roundtrip_in_memory() {

@@ -67,7 +67,7 @@ mod tests {
             .spawn_sphere(moho_game::actors::Sphere::new(
                 sphere_center,
                 0.5,
-                moho_core::materials::MaterialType::Lambertian {
+                moho_voxel::MaterialType::Lambertian {
                     albedo: glam::Vec3::ONE,
                 },
             ));

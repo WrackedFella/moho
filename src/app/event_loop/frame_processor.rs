@@ -165,7 +165,7 @@ impl FrameProcessor {
             // the density field to close the seam.
             for pos in loaded {
                 app.event_bus
-                    .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                    .publish(moho_voxel::WorldEvent::ChunkMeshDirty {
                         chunk_pos: pos,
                         terrain_dirty: true,
                         structure_dirty: false,
@@ -174,7 +174,7 @@ impl FrameProcessor {
                     let neighbor = pos + dir;
                     if ls.grid().has_chunk(neighbor) {
                         app.event_bus
-                            .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                            .publish(moho_voxel::WorldEvent::ChunkMeshDirty {
                                 chunk_pos: neighbor,
                                 terrain_dirty: true,
                                 structure_dirty: false,
@@ -214,7 +214,7 @@ impl FrameProcessor {
 
         for pos in dirty {
             app.event_bus
-                .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                .publish(moho_voxel::WorldEvent::ChunkMeshDirty {
                     chunk_pos: pos,
                     terrain_dirty: true,
                     structure_dirty: false,
@@ -403,8 +403,8 @@ impl Default for FrameProcessor {
 mod tests {
     use super::*;
     use crate::game_state::GameState;
-    use moho_core::events::WorldEvent;
     use moho_voxel::VoxelChunk;
+    use moho_voxel::WorldEvent;
 
     const DT: f32 = 1.0 / 60.0;
 
@@ -422,7 +422,7 @@ mod tests {
         let sphere = moho_game::actors::Sphere::new(
             center,
             0.5,
-            moho_core::materials::MaterialType::Lambertian {
+            moho_voxel::MaterialType::Lambertian {
                 albedo: glam::Vec3::ONE,
             },
         );

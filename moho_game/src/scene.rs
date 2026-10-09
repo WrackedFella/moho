@@ -21,7 +21,7 @@ impl SceneEntities {
 mod tests {
     use super::*;
     use crate::actors::Sphere;
-    use moho_core::materials::MaterialType;
+    use moho_voxel::MaterialType;
     use moho_voxel::VoxelChunk;
 
     #[test]

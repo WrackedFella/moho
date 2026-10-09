@@ -9,8 +9,8 @@ mod paletted;
 
 use self::paletted::PalettedChunk;
 use super::light_storage::{self, CHUNK_SIZE as LIGHT_CHUNK_SIZE, CHUNK_USIZE, ChunkLight};
+use crate::materials::MaterialType;
 use glam::{IVec3, Vec3};
-use moho_core::materials::MaterialType;
 use std::collections::HashMap;
 
 /// Integer vector for grid coordinates

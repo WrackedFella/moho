@@ -104,7 +104,7 @@ struct App {
     ui_event_rx: std::sync::mpsc::Receiver<moho_core::events::UiEvent>,
     audio_event_rx: std::sync::mpsc::Receiver<moho_core::events::AudioEvent>,
     graphics_event_rx: std::sync::mpsc::Receiver<moho_core::events::GraphicsEvent>,
-    world_event_rx: std::sync::mpsc::Receiver<moho_core::events::WorldEvent>,
+    world_event_rx: std::sync::mpsc::Receiver<moho_voxel::WorldEvent>,
     debug_event_rx: std::sync::mpsc::Receiver<moho_core::events::DebugEvent>,
 
     // UI adapter

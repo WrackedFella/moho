@@ -1,7 +1,6 @@
-//! Core engine primitives: event bus, materials, preferences, persistence.
+//! Core engine primitives: event bus, preferences, persistence.
 
 pub mod events;
-pub mod materials;
 pub mod persist;
 pub mod prefs;
 

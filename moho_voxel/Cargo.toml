@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 moho_core = { path = "../moho_core" }
+moho_render_api = { path = "../moho_render_api" }
 glam = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

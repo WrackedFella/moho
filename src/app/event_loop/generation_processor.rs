@@ -94,7 +94,7 @@ impl GenerationProcessor {
         // Also publish events so the streaming pipeline keeps them in sync.
         for pos in &preloaded {
             app.event_bus
-                .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                .publish(moho_voxel::WorldEvent::ChunkMeshDirty {
                     chunk_pos: *pos,
                     terrain_dirty: true,
                     structure_dirty: false,
@@ -280,8 +280,8 @@ impl GenerationProcessor {
                 .map(|pw| pw.add_dynamic_sphere(sphere_pos, 0.5));
 
             if let Some(handle) = body_handle {
-                use moho_core::materials::MaterialType;
                 use moho_game::actors::Sphere;
+                use moho_voxel::MaterialType;
                 let sphere = Sphere::new(
                     sphere_pos,
                     0.5,

@@ -68,8 +68,6 @@ pub use types::{
     AntiAliasingMode,
     // Audio events
     AudioEvent,
-    // World events
-    BlockChangeReason,
     // Debug events
     ConsoleLevel,
     DebugEvent,
@@ -84,7 +82,6 @@ pub use types::{
     // UI events
     UiEvent,
     WindowMode,
-    WorldEvent,
 };
 
 #[cfg(test)]

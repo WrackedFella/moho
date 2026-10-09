@@ -8,8 +8,9 @@
 
 use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
-use moho_core::events::{GraphicsEvent, UiEvent, WorldEvent};
+use moho_core::events::{GraphicsEvent, UiEvent};
 use moho_voxel::VoxelChunk;
+use moho_voxel::WorldEvent;
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
@@ -230,7 +231,7 @@ impl EventProcessor {
         app.event_bus.publish(WorldEvent::BlockRemoved {
             position: outcome.block_pos,
             old_material_id: outcome.old_material_id,
-            reason: moho_core::events::BlockChangeReason::Player,
+            reason: moho_voxel::BlockChangeReason::Player,
         });
         app.event_bus.publish(WorldEvent::ChunkMeshDirty {
             chunk_pos,
@@ -373,7 +374,7 @@ impl EventProcessor {
                             app.event_bus.publish(WorldEvent::BlockPlaced {
                                 position: block_pos,
                                 material_id: torch_id,
-                                reason: moho_core::events::BlockChangeReason::Player,
+                                reason: moho_voxel::BlockChangeReason::Player,
                             });
                         }
                         "light" => {
@@ -411,7 +412,7 @@ impl EventProcessor {
                                 let gizmo = moho_game::actors::Sphere::new(
                                     spawn_pos,
                                     0.15,
-                                    moho_core::materials::MaterialType::Emissive {
+                                    moho_voxel::MaterialType::Emissive {
                                         color,
                                         intensity: 1.5,
                                     },
@@ -421,8 +422,8 @@ impl EventProcessor {
                         }
                         "cube" => {
                             // Spawn cube actor
-                            use moho_core::materials::MaterialType;
                             use moho_game::actors::Cube;
+                            use moho_voxel::MaterialType;
 
                             let cube = Cube::new(
                                 spawn_pos,
@@ -442,8 +443,8 @@ impl EventProcessor {
                         }
                         "sphere" => {
                             // Spawn sphere actor
-                            use moho_core::materials::MaterialType;
                             use moho_game::actors::Sphere;
+                            use moho_voxel::MaterialType;
 
                             let sphere = Sphere::new(
                                 spawn_pos,

@@ -42,7 +42,7 @@ cargo run                          # RUST_LOG=debug for logging
 - **Environment setup command:** `bash scripts/cloud-tools.sh` (cloud threads only;
   text-only threads skip it).
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
-- **Domain-logic paths** (gate class `domain`): rules in `moho_game`, `moho_core`.
+- **Domain-logic paths** (gate class `domain`): rules in `moho_game`, `moho_core`, `moho_voxel`.
   Adapters, UI wiring and config are glue.
 - **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
   `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing
@@ -61,8 +61,8 @@ cargo run                          # RUST_LOG=debug for logging
 
 ```
 src/            binary: winit event loop, wiring
-moho_core       event bus, materials, input, prefs, persistence
-moho_voxel      strategy line: voxel grid, meshing, LOD, lighting, chunk store, streaming
+moho_core       event bus, engine-wide events, prefs, persistence
+moho_voxel      strategy line: voxel grid, meshing, LOD, lighting, chunk store, terrain materials, world events
 moho_game       game domain: pawn, tools, controller, GameClock, scenes, raycast
 moho_render_api engine/game contract: Renderable, RenderMaterial, GPU-layout data
 moho_renderer   wgpu backend: meshes, CSM shadows, SSAO, skybox
