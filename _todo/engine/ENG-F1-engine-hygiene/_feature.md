@@ -29,7 +29,7 @@ engine repo once the split ([ENG-F5](https://github.com/WrackedFella/moho/issues
 | [ENG-F1-07 lint-ratchet](ENG-F1-07-lint-ratchet.md) |
 | [ENG-F1-08 headless-app-tests](ENG-F1-08-headless-app-tests.md) |
 | [ENG-F1-09 malformed-prefs-are-reported](https://github.com/WrackedFella/moho/issues/91) |
-| [ENG-F1-10 key-capture-disarms-on-conflict](ENG-F1-10-key-capture-disarms-on-conflict.md) |
+| [ENG-F1-10 key-capture-disarms-on-conflict](https://github.com/WrackedFella/moho/issues/246) |
 
 ## Notes
 
