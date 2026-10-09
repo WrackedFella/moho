@@ -1,7 +1,8 @@
 # ENG-F6 — Game logic runs and is tested headless and deterministically
 
 **Note:** No current defect; reopen when a feature's rules need it, see Notes
-**Status:** Draft
+**Issue:** [#233](https://github.com/WrackedFella/moho/issues/233)
+**Status:** Backlog
 **Labels:** feature, line:engine
 
 ## Summary

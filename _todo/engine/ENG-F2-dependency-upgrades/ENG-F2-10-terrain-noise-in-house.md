@@ -2,8 +2,8 @@
 
 **Feature:** [ENG-F2](_feature.md)
 **Issue:** [#105](https://github.com/WrackedFella/moho/issues/105)
-**Status:** unknown
-**Gate class:** unset
+**Status:** Ready
+**Gate class:** domain
 **Labels:** line:engine
 
 ## Summary

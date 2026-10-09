@@ -1,6 +1,7 @@
 # ENG-F16 — Sounds play from positions
 
-**Status:** Draft
+**Issue:** [#228](https://github.com/WrackedFella/moho/issues/228)
+**Status:** Backlog
 **Labels:** feature, line:engine
 
 ## Summary

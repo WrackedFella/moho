@@ -1,7 +1,7 @@
 # ENG-F12 — Input is game-defined actions bound as data
 
 **Issue:** [#82](https://github.com/WrackedFella/moho/issues/82)
-**Status:** unknown
+**Status:** Backlog
 **Labels:** feature, line:engine
 
 ## End state
@@ -68,7 +68,7 @@ copying strategy code.
 
 | Item |
 |---|
-| #148 [ENG-F12-01](ENG-F12-01-strategy-app-state-on-strategy-line.md): the strategy game's app state lives on the strategy line |
+| #148 [ENG-F12-01](https://github.com/WrackedFella/moho/issues/148): the strategy game's app state lives on the strategy line |
 | #149 [ENG-F12-02](ENG-F12-02-bindings-are-data-keyed-by-action.md): bindings are data keyed by action name |
 | #150 [ENG-F12-03](ENG-F12-03-actions-arrive-once-per-tick.md): the game reads its actions once per tick |
 | #151 [ENG-F12-04](ENG-F12-04-gamepad-drives-actions.md): a gamepad drives the same actions |

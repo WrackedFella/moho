@@ -1,6 +1,7 @@
 # ENG-F19 — Games load definitions and content from layered roots
 
-**Status:** Draft
+**Issue:** [#231](https://github.com/WrackedFella/moho/issues/231)
+**Status:** Backlog
 **Labels:** feature, line:engine
 
 ## Summary

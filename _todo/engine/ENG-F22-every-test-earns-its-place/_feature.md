@@ -52,13 +52,13 @@ The 2026-10 test-critic audit judged 498 existing tests (252 keep, 110 strengthe
 | #169 [ENG-F22-02](https://github.com/WrackedFella/moho/issues/169): voxel and lighting tests carry no duplicates or tests of uncalled code |
 | #170 [ENG-F22-03](https://github.com/WrackedFella/moho/issues/170): game, audio and renderer tests carry no duplicates or tests of uncalled code |
 | #171 [ENG-F22-04](ENG-F22-04-ui-tests-carry-no-duplicates-placeholders.md): UI tests carry no duplicates, placeholders or tests of uncalled code |
-| #172 [ENG-F22-05](ENG-F22-05-binary-input-camera-and-day-night-tests.md): binary input, camera and day-night tests fail for wrong implementations |
-| #173 [ENG-F22-06](ENG-F22-06-voxel-grid-and-meshing-tests.md): voxel grid and meshing tests fail for wrong implementations |
-| #174 [ENG-F22-07](ENG-F22-07-lighting-tests-fail-for-wrong-implementations.md): lighting tests fail for wrong implementations |
+| #172 [ENG-F22-05](https://github.com/WrackedFella/moho/issues/172): binary input, camera and day-night tests fail for wrong implementations |
+| #173 [ENG-F22-06](https://github.com/WrackedFella/moho/issues/173): voxel grid and meshing tests fail for wrong implementations |
+| #174 [ENG-F22-07](https://github.com/WrackedFella/moho/issues/174): lighting tests fail for wrong implementations |
 | #175 [ENG-F22-08](ENG-F22-08-event-bus-input-and-state-tests-pin.md): event bus, input and state tests pin their contracts |
-| #176 [ENG-F22-09](ENG-F22-09-game-rule-tests-fail-for-wrong-implementations.md): game rule tests fail for wrong implementations |
+| #176 [ENG-F22-09](https://github.com/WrackedFella/moho/issues/176): game rule tests fail for wrong implementations |
 | #177 [ENG-F22-10](ENG-F22-10-physics-and-audio-tests.md): physics and audio tests fail for wrong implementations |
-| #178 [ENG-F22-11](ENG-F22-11-renderer-tests-fail-for-wrong-implementations.md): renderer tests fail for wrong implementations and every loaded shader is validated |
+| #178 [ENG-F22-11](https://github.com/WrackedFella/moho/issues/178): renderer tests fail for wrong implementations and every loaded shader is validated |
 | #179 [ENG-F22-12](ENG-F22-12-settings-tests-stay-off-the-real-prefs-file.md): settings tests stay off the real prefs file and pin every binding |
 | #180 [ENG-F22-13](https://github.com/WrackedFella/moho/issues/180): HUD, console and UI routing tests fail for wrong implementations |
 | #181 [ENG-F22-14](https://github.com/WrackedFella/moho/issues/181): confirming a keybind conflict moves the key, Sprint included |

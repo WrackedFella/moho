@@ -1,6 +1,7 @@
 # ENG-F14 — A game loads a static scene from a file
 
-**Status:** Draft
+**Issue:** [#226](https://github.com/WrackedFella/moho/issues/226)
+**Status:** Backlog
 **Labels:** feature, line:engine
 
 ## Summary

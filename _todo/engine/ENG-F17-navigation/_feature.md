@@ -1,6 +1,7 @@
 # ENG-F17 — Agents path over any static level
 
-**Status:** Draft
+**Issue:** [#229](https://github.com/WrackedFella/moho/issues/229)
+**Status:** Backlog
 **Labels:** feature, line:engine
 
 ## Summary

@@ -1,6 +1,7 @@
 # ENG-F18 — Both games share the UI shell
 
-**Status:** Draft
+**Issue:** [#230](https://github.com/WrackedFella/moho/issues/230)
+**Status:** Backlog
 **Labels:** feature, line:engine
 
 ## Summary

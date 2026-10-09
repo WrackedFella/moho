@@ -1,6 +1,7 @@
 # ENG-F15 — Games query physics and run many bodies
 
-**Status:** Draft
+**Issue:** [#227](https://github.com/WrackedFella/moho/issues/227)
+**Status:** Backlog
 **Labels:** feature, line:engine
 
 ## Summary

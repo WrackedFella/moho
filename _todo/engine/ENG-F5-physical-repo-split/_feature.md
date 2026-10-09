@@ -1,7 +1,8 @@
 # ENG-F5 — Engine and games live in separate repos
 
 **Note:** Phase 3; gate agreed 2026-08-21, amended 2026-10-05 and 2026-10-07
-**Status:** Draft
+**Issue:** [#232](https://github.com/WrackedFella/moho/issues/232)
+**Status:** Backlog
 **Labels:** feature, line:engine
 
 ## Summary
