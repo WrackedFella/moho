@@ -35,18 +35,18 @@ impl EventProcessor {
     }
 
     /// Process all pending UI events from the event bus
-    pub fn process_ui_events(&self, app: &mut App) {
+    pub fn process_ui_events(&self, app: &mut App, clock: &mut moho_app::GameClock) {
         while let Ok(event) = app.ui_event_rx.try_recv() {
-            self.handle_ui_event(app, event);
+            self.handle_ui_event(app, clock, event);
         }
     }
 
     /// Process a single UI event
-    fn handle_ui_event(&self, app: &mut App, event: UiEvent) {
+    fn handle_ui_event(&self, app: &mut App, clock: &mut moho_app::GameClock, event: UiEvent) {
         match event {
             UiEvent::LoadSceneRequested { path } => {
                 tracing::info!(path = %path.display(), "UI requested load scene");
-                if let Err(e) = app.load_scene(&path) {
+                if let Err(e) = app.load_scene(clock, &path) {
                     tracing::error!(path = %path.display(), error = %e, "Failed to load scene");
                 }
             }
@@ -120,15 +120,14 @@ impl EventProcessor {
     }
 
     /// Process all pending graphics events from the event bus
-    pub fn process_graphics_events(&self, app: &mut App) {
+    pub fn process_graphics_events(&self, app: &mut App, clock: &mut moho_app::GameClock) {
         while let Ok(event) = app.graphics_event_rx.try_recv() {
             match event {
                 GraphicsEvent::TimeOfDayChanged { time, .. } => {
-                    // Set the game clock time directly (time is in hours 0-24)
-                    app.simulation.set_time_of_day(time);
+                    clock.reset_to(time);
                     tracing::info!(
                         time,
-                        time_string = %app.simulation.game_clock().time_string(),
+                        time_string = %clock.time_string(),
                         "Time set"
                     );
                 }
@@ -544,7 +543,7 @@ mod tests {
         app.event_bus.process_deferred();
         assert!(!app.exit_requested, "nothing processed yet");
 
-        EventProcessor::new().process_ui_events(&mut app);
+        EventProcessor::new().process_ui_events(&mut app, &mut moho_app::GameClock::default());
 
         assert!(app.exit_requested);
     }
