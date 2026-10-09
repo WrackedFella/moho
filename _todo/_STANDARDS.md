@@ -178,6 +178,12 @@ be asserted, so those go under Verification instead.
 ### Tech spec (Tech Lead)
 
 - Crates/modules and public interfaces touched; anything out of scope.
+- Footprint: the files and modules the implementation edits, one line each, tests
+  included. Where the test map splits into groups whose footprints do not overlap, mark
+  them as parts (`A`, `B`, ...) and tag each test-map entry with its part; the
+  orchestrator implements parts in parallel. Overlap in one file means one part. Cards
+  of one feature are sliced along files and modules so their footprints are disjoint;
+  cards that must share a file are ordered by dependency.
 - Test map: each scenario → the test that proves it
   (`crate::module::tests::scenario_expected_result`), and its gate class:
   **domain** (the paths `CLAUDE.md` lists under Domain-logic paths: tests reviewed
