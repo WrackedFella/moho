@@ -31,8 +31,8 @@ cargo run                          # RUST_LOG=debug for logging
   `MOHO_BASE=origin/feature/<ID>-<slug>` for `just check`/`just mutants`), takes `dev`
   by merge commit, never squash (squash drops the merge base and re-creates resolved
   conflicts), and its PR into `dev` lists `Closes #…` for each card, since card PRs
-  don't auto-close issues there. The feature's issue names its integration branch.
-  Current: none.
+  don't auto-close issues there. The feature's issue names its integration branch,
+  which is deleted once that PR merges. Current: none.
 - **Project board:** WrackedFella, project 1 (https://github.com/users/WrackedFella/projects/1).
   The board and issue are the only record of item state; nothing in `_todo/` mirrors
   them. Agents change the board only through devflow's `scripts/board`.
