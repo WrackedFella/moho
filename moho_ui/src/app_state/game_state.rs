@@ -146,3 +146,34 @@ impl fmt::Display for GameState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::GameState::{self, ConsoleOpen, Menu, Paused, Playing};
+
+    #[test]
+    fn can_transition_to_matrix() {
+        let rows: [(GameState, GameState, bool); 16] = [
+            (Menu, Menu, true),
+            (Menu, Playing, true),
+            (Menu, ConsoleOpen, false),
+            (Menu, Paused, false),
+            (Playing, Menu, true),
+            (Playing, Playing, true),
+            (Playing, ConsoleOpen, true),
+            (Playing, Paused, true),
+            (ConsoleOpen, Menu, true),
+            (ConsoleOpen, Playing, true),
+            (ConsoleOpen, ConsoleOpen, true),
+            (ConsoleOpen, Paused, false),
+            (Paused, Menu, true),
+            (Paused, Playing, true),
+            (Paused, ConsoleOpen, false),
+            (Paused, Paused, true),
+        ];
+
+        for (from, to, expected) in rows {
+            assert_eq!(from.can_transition_to(to), expected, "{from:?} -> {to:?}");
+        }
+    }
+}
