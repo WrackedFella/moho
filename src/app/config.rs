@@ -27,7 +27,7 @@ use moho_core::prefs::Prefs;
 /// ```
 #[derive(Debug, Clone)]
 pub struct AppConfig {
-    /// Mouse sensitivity multiplier (applied as: sensitivity * 0.002)
+    /// Per-pixel look factor: the prefs mouse sensitivity scaled by 0.002.
     pub mouse_sensitivity: f32,
 
     /// Whether input filtering is enabled in the input system
