@@ -39,13 +39,7 @@ pub struct AppConfig {
 
 impl Default for AppConfig {
     fn default() -> Self {
-        let prefs = Prefs::default();
-
-        Self {
-            mouse_sensitivity: prefs.mouse_sensitivity() * 0.002,
-            input_filtering_enabled: prefs.input_filtering_enabled(),
-            prefs,
-        }
+        Self::from_prefs_struct(Prefs::default())
     }
 }
 
@@ -71,12 +65,9 @@ impl AppConfig {
     ///
     /// This is useful for testing or when you already have a Prefs instance.
     pub fn from_prefs_struct(prefs: Prefs) -> Self {
-        let mouse_sensitivity = prefs.mouse_sensitivity() * 0.002;
-        let input_filtering_enabled = prefs.input_filtering_enabled();
-
         Self {
-            mouse_sensitivity,
-            input_filtering_enabled,
+            mouse_sensitivity: prefs.mouse_sensitivity() * 0.002,
+            input_filtering_enabled: prefs.input_filtering_enabled(),
             prefs,
         }
     }
