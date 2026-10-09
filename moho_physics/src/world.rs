@@ -307,6 +307,15 @@ mod tests {
     use proptest::prelude::*;
 
     #[test]
+    fn move_character_without_character_returns_none() {
+        let mut world = PhysicsWorld::new();
+
+        let moved = world.move_character(Vec3::ZERO, 1.0 / 60.0);
+
+        assert_eq!(moved, None);
+    }
+
+    #[test]
     fn test_gravity_drops_rigid_body() {
         let mut world = PhysicsWorld::new();
         let sphere = world.add_dynamic_sphere(Vec3::new(0.0, 10.0, 0.0), 0.5);

@@ -212,6 +212,18 @@ mod tests {
     }
 
     #[test]
+    fn builder_with_prefs_derives_unset_fields_from_them() {
+        let prefs = Prefs::default()
+            .with_mouse_sensitivity(2.5)
+            .with_input_filtering_enabled(false);
+
+        let config = AppConfig::builder().prefs(prefs).build();
+
+        assert_eq!(config.mouse_sensitivity, 2.5 * 0.002);
+        assert!(!config.input_filtering_enabled);
+    }
+
+    #[test]
     fn test_builder_with_prefs() {
         let prefs = Prefs::default().with_mouse_sensitivity(3.0);
 

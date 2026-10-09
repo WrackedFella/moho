@@ -152,6 +152,28 @@ mod tests {
     }
 
     #[test]
+    fn select_slot_out_of_range_is_ignored() {
+        let mut pawn = Pawn::default();
+        pawn.select_slot(2);
+
+        pawn.select_slot(HOTBAR_SLOT_COUNT);
+        pawn.select_slot(usize::MAX);
+
+        assert_eq!(pawn.selected_slot, 2);
+        assert_eq!(pawn.equipped_tool, None);
+    }
+
+    #[test]
+    fn select_slot_out_of_range_keeps_equipped_tool() {
+        let mut pawn = Pawn::default();
+
+        pawn.select_slot(8);
+
+        assert_eq!(pawn.selected_slot, TOOL_SLOT);
+        assert_eq!(pawn.equipped_tool, Some(STARTING_TOOL));
+    }
+
+    #[test]
     fn reselecting_tool_slot_reequips_tool() {
         let mut pawn = Pawn::default();
         pawn.select_slot(3);
