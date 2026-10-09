@@ -224,6 +224,34 @@ mod tests {
     }
 
     #[test]
+    fn builder_with_prefs_and_explicit_sensitivity_takes_filtering_from_prefs() {
+        let prefs = Prefs::default().with_input_filtering_enabled(false);
+
+        let config = AppConfig::builder()
+            .prefs(prefs)
+            .mouse_sensitivity(0.5)
+            .build();
+
+        assert_eq!(config.mouse_sensitivity, 0.5);
+        assert!(!config.input_filtering_enabled);
+    }
+
+    #[test]
+    fn builder_with_prefs_and_explicit_filtering_takes_sensitivity_from_prefs() {
+        let prefs = Prefs::default()
+            .with_mouse_sensitivity(2.5)
+            .with_input_filtering_enabled(false);
+
+        let config = AppConfig::builder()
+            .prefs(prefs)
+            .input_filtering(true)
+            .build();
+
+        assert_eq!(config.mouse_sensitivity, 2.5 * 0.002);
+        assert!(config.input_filtering_enabled);
+    }
+
+    #[test]
     fn test_builder_with_prefs() {
         let prefs = Prefs::default().with_mouse_sensitivity(3.0);
 

@@ -316,6 +316,17 @@ mod tests {
     }
 
     #[test]
+    fn move_character_with_character_returns_its_new_position() {
+        let mut world = PhysicsWorld::new();
+        world.add_character(Vec3::new(0.0, 10.0, 0.0));
+
+        let moved = world.move_character(Vec3::ZERO, 1.0 / 60.0);
+
+        assert!(moved.is_some());
+        assert_eq!(moved, world.character_position());
+    }
+
+    #[test]
     fn test_gravity_drops_rigid_body() {
         let mut world = PhysicsWorld::new();
         let sphere = world.add_dynamic_sphere(Vec3::new(0.0, 10.0, 0.0), 0.5);
