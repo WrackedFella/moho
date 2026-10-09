@@ -277,8 +277,12 @@ mod tests {
     }
 
     fn hold(app: &mut App, action: StrategyAction) {
-        let key = app
-            .input
+        let key = default_key(app, action);
+        app.input.actions.key(key, true);
+    }
+
+    fn default_key(app: &App, action: StrategyAction) -> moho_input::key::Key {
+        app.input
             .actions
             .bindings()
             .get(action)
@@ -287,8 +291,7 @@ mod tests {
                 Binding::Key(key) => Some(*key),
                 Binding::Mouse(_) => None,
             })
-            .expect("the action has a default key binding");
-        app.input.actions.key(key, true);
+            .expect("the action has a default key binding")
     }
 
     fn tick_context() -> TickContext {
@@ -348,6 +351,18 @@ mod tests {
 
         assert!(cmd.jump);
         assert_eq!(cmd.input.forward, 0.0);
+    }
+
+    #[test]
+    fn jump_tapped_within_one_tick_sets_the_command_jump_flag() {
+        let mut app = playing_app();
+        let key = default_key(&app, StrategyAction::Jump);
+        app.input.actions.key(key, true);
+        app.input.actions.key(key, false);
+
+        let cmd = Game::command(&mut app);
+
+        assert!(cmd.jump);
     }
 
     #[test]

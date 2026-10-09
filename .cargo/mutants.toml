@@ -38,6 +38,8 @@ exclude_re = [
     'replace <impl Screen for SettingsMenu>::handle_raw_input -> bool with false',
     'replace == with != in App::handle_window_event',
     'delete match arm WindowEvent::KeyboardInput\{event:key_event, \.\.\} in App::handle_window_event',
+    # Only a key press (Escape, backquote) changes the play state inside this handler.
+    'replace && with \|\| in App::handle_window_event',
     # A non-empty audio accessor needs an `AudioSystem`, which needs an audio device.
     'replace FrameContext<.a>::audio -> Option<&mut AudioSystem> with None',
     'replace EventContext<.a>::audio -> Option<&mut AudioSystem> with None',
