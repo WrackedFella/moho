@@ -33,9 +33,6 @@ pub struct AppConfig {
     /// Whether input filtering is enabled in the input system
     pub input_filtering_enabled: bool,
 
-    /// The filter preset to use for input processing
-    pub filter_preset: moho_core::input::FilterPreset,
-
     /// Preferences object (contains keybindings and other settings)
     pub prefs: Prefs,
 
@@ -62,7 +59,6 @@ impl Default for AppConfig {
         Self {
             mouse_sensitivity: prefs.mouse_sensitivity() * 0.002,
             input_filtering_enabled: prefs.input_filtering_enabled(),
-            filter_preset: moho_core::input::FilterPreset::Default,
             prefs,
             init_audio: true,
             streaming,
@@ -103,7 +99,6 @@ impl AppConfig {
         Self {
             mouse_sensitivity,
             input_filtering_enabled,
-            filter_preset: moho_core::input::FilterPreset::Default,
             prefs,
             init_audio: true,
             streaming,
@@ -139,7 +134,6 @@ impl AppConfig {
 pub struct AppConfigBuilder {
     mouse_sensitivity: Option<f32>,
     input_filtering_enabled: Option<bool>,
-    filter_preset: Option<moho_core::input::FilterPreset>,
     prefs: Option<Prefs>,
     init_audio: Option<bool>,
 }
@@ -155,12 +149,6 @@ impl AppConfigBuilder {
     /// Set whether input filtering is enabled.
     pub fn input_filtering(mut self, enabled: bool) -> Self {
         self.input_filtering_enabled = Some(enabled);
-        self
-    }
-
-    /// Set the input filter preset.
-    pub fn filter_preset(mut self, preset: moho_core::input::FilterPreset) -> Self {
-        self.filter_preset = Some(preset);
         self
     }
 
@@ -190,7 +178,6 @@ impl AppConfigBuilder {
             input_filtering_enabled: self
                 .input_filtering_enabled
                 .unwrap_or(defaults.input_filtering_enabled),
-            filter_preset: self.filter_preset.unwrap_or(defaults.filter_preset),
             prefs,
             init_audio: self.init_audio.unwrap_or(defaults.init_audio),
             streaming: defaults.streaming,
@@ -207,10 +194,6 @@ mod tests {
         let config = AppConfig::default();
         assert!(config.mouse_sensitivity > 0.0);
         assert!(config.input_filtering_enabled);
-        assert!(matches!(
-            config.filter_preset,
-            moho_core::input::FilterPreset::Default
-        ));
     }
 
     #[test]
@@ -218,7 +201,6 @@ mod tests {
         let config = AppConfig::builder()
             .mouse_sensitivity(0.5)
             .input_filtering(false)
-            .filter_preset(moho_core::input::FilterPreset::Default)
             .build();
 
         assert_eq!(config.mouse_sensitivity, 0.5);

@@ -6,9 +6,8 @@
 
 use moho_core::prefs::Prefs;
 use moho_game::scene::SceneEntities;
-use moho_input::bindings::{ActionBindings, Binding};
-use moho_input::key::Key;
-use moho_ui::actions::{StrategyAction, load_bindings};
+use moho_input::action_map::{self, ActionFrame};
+use moho_ui::actions::StrategyAction;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -114,7 +113,6 @@ struct App {
 
     // Keybinds and preferences
     prefs: Prefs,
-    bindings: ActionBindings<StrategyAction>,
 
     // Frame timing
     frame_duration: Duration,
@@ -137,7 +135,8 @@ struct App {
 impl App {
     /// Saves prefs together with the current bindings.
     fn save_prefs(&mut self) -> std::io::Result<()> {
-        self.prefs.set_bindings(self.bindings.to_section());
+        self.prefs
+            .set_bindings(self.input.actions.bindings().to_section());
         self.prefs.save()
     }
 
@@ -183,7 +182,6 @@ impl App {
 
             simulation: initialized.simulation,
 
-            bindings: load_bindings(&initialized.prefs),
             prefs: initialized.prefs,
 
             frame_duration: initialized.frame_duration,
@@ -191,7 +189,7 @@ impl App {
 
             physics: app::physics_controller::PhysicsController::new(),
             generation: app::generation_job::WorldGenerationJob::new(),
-            input: app::input_state::InputState::new(initialized.input_system),
+            input: app::input_state::InputState::new(initialized.actions),
             chunk_streamer: None,
             lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
 
@@ -267,15 +265,8 @@ impl App {
         );
     }
 
-    /// Update controller input from keyboard state
-    fn update_controller_input(&mut self) {
-        // An action is active when any of its bindings is held
-        let is_active = |action: StrategyAction| -> bool {
-            self.bindings
-                .get(action)
-                .iter()
-                .any(|Binding::Key(key)| self.input.active_keys.contains(key))
-        };
+    fn update_controller_input(&mut self, frame: &ActionFrame<StrategyAction>) {
+        let is_active = |action: StrategyAction| frame.held(action);
 
         // Calculate forward/backward
         let forward = if is_active(StrategyAction::MoveForward) {
@@ -326,15 +317,15 @@ impl App {
         self.simulation.controller_input.zoom_delta = 0.0;
 
         // Track jump key for physics KCC
-        self.physics.jump_pressed = is_active(StrategyAction::Jump);
+        // A tap shorter than one tick still jumps.
+        self.physics.jump_pressed =
+            frame.held(StrategyAction::Jump) || frame.pressed(StrategyAction::Jump);
     }
 
-    /// Handle keyboard input for camera controls
     fn handle_keyboard_input(&mut self, event: &KeyEvent) {
         let pressed = event.state == ElementState::Pressed;
 
         if let PhysicalKey::Code(keycode) = event.physical_key {
-            // Handle global hotkeys first (work in any state)
             match keycode {
                 KeyCode::Backquote => {
                     // Backtick (`) toggles console
@@ -346,7 +337,6 @@ impl App {
                             _ => {}
                         }
                     }
-                    return; // Don't process further
                 }
                 KeyCode::F3 => {
                     // F3 toggles the debug HUD overlay
@@ -356,7 +346,6 @@ impl App {
                     {
                         adapter.toggle_debug_hud();
                     }
-                    return;
                 }
                 KeyCode::F4 => {
                     // F4 toggles the chunk-boundary debug minimap
@@ -366,16 +355,12 @@ impl App {
                     {
                         adapter.toggle_overlay("chunk_debug");
                     }
-                    return;
                 }
                 // Escape closes console if open, otherwise opens menu
                 KeyCode::Escape if pressed => {
                     use crate::game_state::GameState;
                     match self.game_state {
-                        GameState::ConsoleOpen => {
-                            self.exit_console();
-                            return;
-                        }
+                        GameState::ConsoleOpen => self.exit_console(),
                         GameState::Playing => {
                             // ESC to show menu
                             self.show_menu();
@@ -386,38 +371,23 @@ impl App {
                             {
                                 adapter.show_menu("start");
                             }
-                            return;
                         }
                         _ => {}
                     }
                 }
                 _ => {}
             }
-
-            // Only process game input in Playing mode
-            if self.game_state != crate::game_state::GameState::Playing {
-                return;
-            }
-
-            if let Some(key) = Key::from_winit(event.physical_key) {
-                if pressed {
-                    self.input.active_keys.insert(key);
-                } else {
-                    self.input.active_keys.remove(&key);
-                }
-            }
         }
     }
 
-    /// Handle mouse motion for camera look
-    fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
+    fn handle_device_input(&mut self, event: &DeviceEvent) {
         // Only process input in game mode and first person camera mode
         if self.game_state != crate::game_state::GameState::Playing
             || self.simulation.camera_mode() != moho_game::controller::CameraMode::FirstPerson
         {
             return;
         }
-        self.input.system.collect_mouse_delta((-delta.0, -delta.1));
+        action_map::handle_device_event(&mut self.input.actions, event);
     }
 
     /// Grab and hide the cursor for game mode
@@ -626,14 +596,24 @@ impl ApplicationHandler for App {
             return; // Don't dispatch Tab further
         }
 
+        // Focus loss must release held actions whatever the UI or game state does.
+        if matches!(event, WindowEvent::Focused(false)) {
+            action_map::handle_window_event(&mut self.input.actions, &event);
+        }
+
         // Dispatch the event to registered subscribers (UI first). If consumed,
         // skip further application-level handling.
         if self.dispatcher.dispatch(&event) {
             return;
         }
 
+        // Hotkeys run first; an event that leaves or enters play does not reach the action map.
+        let was_playing = self.game_state == crate::game_state::GameState::Playing;
         let window_event_handler = app::event_loop::WindowEventHandler::new();
-        window_event_handler.handle_window_event(self, event_loop, event);
+        window_event_handler.handle_window_event(self, event_loop, &event);
+        if was_playing && self.game_state == crate::game_state::GameState::Playing {
+            action_map::handle_window_event(&mut self.input.actions, &event);
+        }
     }
 
     fn device_event(
@@ -643,7 +623,7 @@ impl ApplicationHandler for App {
         event: DeviceEvent,
     ) {
         let window_event_handler = app::event_loop::WindowEventHandler::new();
-        window_event_handler.handle_device_event(self, event);
+        window_event_handler.handle_device_event(self, &event);
     }
 }
 

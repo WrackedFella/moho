@@ -1,4 +1,4 @@
-//! Platform-free key identity and its canonical text names.
+//! Platform-free key and mouse-button identity and their canonical text names.
 
 use winit::keyboard::{KeyCode, PhysicalKey};
 
@@ -318,6 +318,47 @@ impl Key {
     }
 }
 
+/// A mouse button that can be bound to an action.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+impl MouseButton {
+    /// Every variant, once.
+    pub const ALL: &'static [MouseButton] =
+        &[MouseButton::Left, MouseButton::Right, MouseButton::Middle];
+
+    /// `None` for buttons the engine does not name.
+    pub fn from_winit(button: winit::event::MouseButton) -> Option<MouseButton> {
+        match button {
+            winit::event::MouseButton::Left => Some(MouseButton::Left),
+            winit::event::MouseButton::Right => Some(MouseButton::Right),
+            winit::event::MouseButton::Middle => Some(MouseButton::Middle),
+            _ => None,
+        }
+    }
+
+    /// Persisted name, e.g. `Mouse Left`.
+    pub fn name(self) -> &'static str {
+        match self {
+            MouseButton::Left => "Mouse Left",
+            MouseButton::Right => "Mouse Right",
+            MouseButton::Middle => "Mouse Middle",
+        }
+    }
+
+    /// `None` unless `s` is a `Mouse …` name, ignoring case.
+    pub fn parse(s: &str) -> Option<MouseButton> {
+        MouseButton::ALL
+            .iter()
+            .copied()
+            .find(|b| b.name().eq_ignore_ascii_case(s))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,6 +428,22 @@ mod tests {
             Key::Shift => 56,
             Key::Ctrl => 57,
             Key::Alt => 58,
+        }
+    }
+
+    #[test]
+    fn from_winit_maps_the_three_named_mouse_buttons() {
+        use winit::event::MouseButton as WinitButton;
+        let cases = [
+            (WinitButton::Left, Some(MouseButton::Left)),
+            (WinitButton::Right, Some(MouseButton::Right)),
+            (WinitButton::Middle, Some(MouseButton::Middle)),
+            (WinitButton::Back, None),
+            (WinitButton::Other(7), None),
+        ];
+
+        for (button, expected) in cases {
+            assert_eq!(MouseButton::from_winit(button), expected, "{button:?}");
         }
     }
 

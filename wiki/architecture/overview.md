@@ -21,10 +21,10 @@ flowchart TD
 
     renderer["moho_renderer<br/>wgpu backend"]:::engine
     rapi["moho_render_api<br/>Renderable, RenderMaterial,<br/>GPU-layout data"]:::engine
-    core["moho_core<br/>event bus, voxel, materials,<br/>input, prefs"]:::engine
+    core["moho_core<br/>event bus, voxel, materials,<br/>prefs"]:::engine
     audio["moho_audio<br/>rodio"]:::engine
     physics["moho_physics<br/>rapier3d"]:::engine
-    input["moho_input<br/>Key, Action, ActionBindings"]:::engine
+    input["moho_input<br/>Key, Action, ActionBindings,<br/>ActionMap, mouse filtering"]:::engine
     app["moho_app<br/>fixed-step loop, Game trait"]:::engine
 
     ui --> renderer & input & core & game
@@ -100,7 +100,7 @@ flowchart TD
 
 Changes from today:
 
-- `moho_core::input` folds into `moho_input`; voxels leave `moho_core` for `moho_voxel` (ENG-F10).
+- Voxels leave `moho_core` for `moho_voxel` (ENG-F10).
 - Scene import (ENG-F14), navigation (ENG-F17) and the character controller and camera
   (ENG-F21) are modules of an engine crate unless their specs name a boundary.
 

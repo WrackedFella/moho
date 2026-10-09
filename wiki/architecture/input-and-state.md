@@ -44,12 +44,26 @@ Global hotkeys in `handle_keyboard_input`, checked before game keys:
 | `F4` | Toggle chunk-boundary minimap |
 | `Tab` | Toggle camera mode (handled before the dispatcher) |
 
-Gameplay keys are action-keyed. `moho_input` holds the platform-free `Key`
-(`Key::from_winit` maps `PhysicalKey`), the `Action` trait (stable id plus default
-bindings) and `ActionBindings<A>`; each game declares its own action enum
-(`StrategyAction` in `moho_ui/src/actions.rs`). The binary tracks held `Key`s and an
-action is active when any of its bindings is held. Bindings persist in the `[bindings]`
-section of [prefs](../reference/prefs-format.md).
+Gameplay input is action-keyed. `moho_input` holds the platform-free `Key` and
+`MouseButton` (`Key::from_winit` maps `PhysicalKey`), the `Action` trait (stable id plus
+default bindings), `ActionBindings<A>`, and `ActionMap<A>`
+(`moho_input/src/action_map.rs`). Each game declares its own action enum
+(`StrategyAction` in `moho_ui/src/actions.rs`); the binary owns one `ActionMap` in
+`InputState` (`src/app/input_state.rs`).
+
+`handle_window_event` and `handle_device_event` feed key, mouse-button and raw
+mouse-motion events into the map. Once per update the frame processor calls `end_tick`,
+which returns an `ActionFrame` and resets the per-tick state:
+
+- `held`: down at the end of the tick; `pressed` / `released`: edges at any point in the
+  tick, so a tap shorter than a tick is not lost.
+- `look`: the tick's accumulated mouse motion scaled by sensitivity, then, when
+  filtering is on, deadzone, exponential smoothing and the linear response curve
+  (`moho_input/src/filter.rs`). Motion is unnegated; the frame processor inverts it for
+  yaw and pitch.
+
+An action is held when any of its bindings is down. A frame holds at most 64 actions.
+Bindings persist in the `[bindings]` section of [prefs](../reference/prefs-format.md).
 
 ## GameState
 

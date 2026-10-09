@@ -24,11 +24,21 @@ exclude_re = [
     'replace \| with \^ in chunk_mesh_id',
     # Equivalent: ctrl, shift and alt occupy disjoint bits, so OR and XOR agree.
     'replace \| with \^ in modifier_bits',
+    # Equivalent: each action owns a distinct bit, so OR and XOR agree.
+    'replace \| with \^ in ActionMap<A>::refresh_held',
     # winit 0.30's `KeyEvent` has a crate-private field, so no test can build the key
     # press these paths need to return true.
     'replace KeybindCaptureHandler::handle_winit_event -> bool with false',
     'replace != with == in KeybindCaptureHandler::handle_winit_event',
     'replace <impl Screen for SettingsMenu>::handle_raw_input -> bool with false',
+    # Same `KeyEvent` limit; and a `MouseInput` event needs `DeviceId::dummy()`, which is
+    # unsafe (`unsafe_code` is denied). The `ActionMap` calls these arms make are tested.
+    'delete match arm WindowEvent::KeyboardInput\{event, \.\.\} in handle_window_event',
+    'delete match arm WindowEvent::MouseInput\{state, button, \.\.\} in handle_window_event',
+    'replace == with != in handle_window_event',
+    # Needs an `ActiveEventLoop`, which tests cannot build; its key arm also needs a `KeyEvent`.
+    'replace WindowEventHandler::handle_window_event with \(\)',
+    'delete match arm WindowEvent::KeyboardInput\{event:key_event, \.\.\} in WindowEventHandler::handle_window_event',
     # Equivalent: the settings menu's spec is always `ScreenSpec::default()`.
     'replace <impl Screen for SettingsMenu>::spec -> &ScreenSpec with Box::leak',
     # `Default` calls `new`, which calls `from_prefs`: this mutant recurses until the

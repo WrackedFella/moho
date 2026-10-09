@@ -20,7 +20,7 @@ impl WindowEventHandler {
         &self,
         app: &mut App,
         event_loop: &ActiveEventLoop,
-        event: WindowEvent,
+        event: &WindowEvent,
     ) {
         match event {
             WindowEvent::CloseRequested => {
@@ -32,7 +32,7 @@ impl WindowEventHandler {
             WindowEvent::KeyboardInput {
                 event: key_event, ..
             } => {
-                self.handle_keyboard_input(app, &key_event);
+                self.handle_keyboard_input(app, key_event);
             }
             WindowEvent::RedrawRequested => {
                 self.handle_redraw_requested(app);
@@ -87,16 +87,48 @@ impl WindowEventHandler {
     }
 
     /// Handle device event (raw input)
-    pub fn handle_device_event(&self, app: &mut App, event: DeviceEvent) {
-        // Handle raw mouse motion for camera look
-        if let DeviceEvent::MouseMotion { delta } = event {
-            app.handle_mouse_motion(delta);
-        }
+    pub fn handle_device_event(&self, app: &mut App, event: &DeviceEvent) {
+        app.handle_device_input(event);
     }
 }
 
 impl Default for WindowEventHandler {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game_state::GameState;
+    use moho_game::controller::CameraMode;
+
+    fn first_person_app(state: GameState) -> App {
+        let mut app = App::headless();
+        app.game_state = state;
+        app.simulation.set_camera_mode(CameraMode::FirstPerson);
+        app.input.actions.set_filtering(false);
+        app
+    }
+
+    #[test]
+    fn mouse_motion_feeds_look_while_playing_first_person() {
+        let mut app = first_person_app(GameState::Playing);
+
+        WindowEventHandler::new()
+            .handle_device_event(&mut app, &DeviceEvent::MouseMotion { delta: (5.0, 0.0) });
+
+        assert_ne!(app.input.actions.end_tick().look(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn mouse_motion_is_ignored_outside_play() {
+        let mut app = first_person_app(GameState::Menu);
+
+        WindowEventHandler::new()
+            .handle_device_event(&mut app, &DeviceEvent::MouseMotion { delta: (5.0, 0.0) });
+
+        assert_eq!(app.input.actions.end_tick().look(), (0.0, 0.0));
     }
 }

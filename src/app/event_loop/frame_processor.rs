@@ -41,14 +41,15 @@ impl FrameProcessor {
             return;
         }
 
-        // Update controller input from keyboard state
-        app.update_controller_input();
+        let frame = app.input.actions.end_tick();
+        app.update_controller_input(&frame);
 
-        let (yaw_delta, pitch_delta) = app.input.system.sample_frame_input();
+        // Mouse motion is fed unnegated; look is inverted here.
+        let (look_x, look_y) = frame.look();
         {
             let ci = app.simulation.controller_input_mut();
-            ci.yaw_delta = yaw_delta;
-            ci.pitch_delta = pitch_delta;
+            ci.yaw_delta = -look_x;
+            ci.pitch_delta = -look_y;
         }
 
         // --- Physics KCC path (FPS only) ---
@@ -650,5 +651,23 @@ mod tests {
                 "intensity at {time}: expected {expected_intensity}, got {intensity}"
             );
         }
+    }
+
+    #[test]
+    fn positive_mouse_motion_turns_first_person_yaw_and_pitch_negative() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
+        app.simulation
+            .set_position_yaw_pitch(glam::Vec3::new(100.0, 100.0, 100.0), 0.0, 0.0);
+        app.input.actions.set_filtering(false);
+        app.input.actions.mouse_motion(5.0, 5.0);
+
+        FrameProcessor::new().update_game_state(&mut app, DT);
+
+        let (yaw, pitch) = app.simulation.yaw_pitch();
+        assert!(yaw < 0.0, "yaw = {yaw}");
+        assert!(pitch < 0.0, "pitch = {pitch}");
     }
 }
