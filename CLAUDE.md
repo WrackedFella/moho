@@ -24,12 +24,15 @@ cargo run                          # RUST_LOG=debug for logging
 
 - **Base branch:** `dev`. Branch `<type>/<ID>-<slug>`, PR into `dev`. `main` only
   receives promotions from `dev`. Never merge; a human does.
-- **Feature integration branches:** a feature whose cards only make sense together
-  gets `feature/<ID>-<slug>` off `dev`; it is the base branch for that feature's
-  cards (branch from it, PR into it, `MOHO_BASE=origin/feature/<ID>-<slug>` for
-  `just check`/`just mutants`). Card PRs don't auto-close issues there; the
-  feature's PR into `dev` lists `Closes #…` for each card. The feature's issue names
-  its integration branch. Current: none.
+- **Feature integration branches:** until v1, card PRs go straight into `dev`. A
+  feature gets `feature/<ID>-<slug>` off `dev` only when its cards can't land on
+  their own (one would leave `dev` broken or half-moved without the others). That
+  branch is the base for the feature's cards (branch from it, PR into it,
+  `MOHO_BASE=origin/feature/<ID>-<slug>` for `just check`/`just mutants`), takes `dev`
+  by merge commit, never squash (squash drops the merge base and re-creates resolved
+  conflicts), and its PR into `dev` lists `Closes #…` for each card, since card PRs
+  don't auto-close issues there. The feature's issue names its integration branch.
+  Current: none.
 - **Project board:** WrackedFella, project 1 (https://github.com/users/WrackedFella/projects/1).
   The board and issue are the only record of item state; nothing in `_todo/` mirrors
   them. Agents change the board only through devflow's `scripts/board`.
@@ -63,14 +66,14 @@ cargo run                          # RUST_LOG=debug for logging
 src/            binary: winit event loop, wiring
 moho_core       event bus, engine-wide events, prefs, persistence
 moho_voxel      strategy line: voxel grid, meshing, LOD, lighting, chunk store, terrain materials, world events
-moho_game       game domain: pawn, tools, controller, GameClock, scenes, raycast
+moho_game       game domain: pawn, tools, controller, scenes, raycast
 moho_render_api engine/game contract: Renderable, RenderMaterial, GPU-layout data
 moho_renderer   wgpu backend: meshes, CSM shadows, SSAO, skybox
 moho_ui         egui: menus, settings, console, HUD
 moho_audio      rodio playback, event-driven
 moho_physics    rapier3d character controller and colliders
 moho_input      key → binding-code mapping
-moho_app        fixed-tick loop shared by the games: Game trait, headless loop
+moho_app        fixed-tick loop shared by the games: Game trait, headless loop, GameClock
 ```
 
 - Engine crates never depend on `moho_game` (ADR-0001). World geometry reaches
