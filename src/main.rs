@@ -218,17 +218,19 @@ impl App {
 
     fn auto_save_on_shutdown(
         &mut self,
+        clock: &moho_app::GameClock,
         lights: &[moho_render_api::LightDesc],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let saves_dir = self.saves_dir.clone();
-        crate::app::autosave::auto_save_on_shutdown(self, &saves_dir, lights)
+        crate::app::autosave::auto_save_on_shutdown(self, clock, &saves_dir, lights)
     }
 
     fn load_scene<P: AsRef<std::path::Path>>(
         &mut self,
+        clock: &mut moho_app::GameClock,
         path: P,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        crate::app::scene_loader::load_scene(self, path.as_ref())
+        crate::app::scene_loader::load_scene(self, clock, path.as_ref())
     }
 
     /// Place the character after a scene is loaded.

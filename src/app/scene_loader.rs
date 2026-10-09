@@ -16,6 +16,7 @@
 #[allow(dead_code)]
 pub fn load_scene(
     app: &mut crate::App,
+    clock: &mut moho_app::GameClock,
     path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(path = %path.display(), "Loading scene");
@@ -45,7 +46,7 @@ pub fn load_scene(
         app.generation.last_spec = Some(spec.clone());
         tracing::info!(spec = ?spec, "Loaded WorldSpec from save");
         // Restore time of day from the persisted WorldSpec.
-        app.simulation.set_time_of_day(spec.initial_time_of_day);
+        clock.reset_to(spec.initial_time_of_day);
         tracing::info!(
             path = %path.display(),
             count = lights.len(),

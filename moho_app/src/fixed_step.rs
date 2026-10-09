@@ -2,12 +2,15 @@
 
 use std::time::Duration;
 
+use crate::clock::GameClock;
+
 /// Tick rate and catch-up limit for a loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LoopConfig {
     pub tick_hz: u32,
     /// Cap on ticks run for one frame; excess time is dropped.
     pub max_catch_up_ticks: u32,
+    pub clock: GameClock,
 }
 
 impl LoopConfig {
@@ -16,7 +19,13 @@ impl LoopConfig {
         Self {
             tick_hz,
             max_catch_up_ticks: 5,
+            clock: GameClock::default(),
         }
+    }
+
+    pub fn with_clock(mut self, clock: GameClock) -> Self {
+        self.clock = clock;
+        self
     }
 
     /// Simulated time one tick covers.
@@ -37,7 +46,8 @@ const UNITS_PER_TICK: u128 = 1_000_000_000;
 /// due every [`UNITS_PER_TICK`] units and no rounding error builds up.
 #[derive(Debug, Clone)]
 pub struct FixedStep {
-    config: LoopConfig,
+    tick_hz: u32,
+    max_catch_up_ticks: u32,
     accumulator: u128,
 }
 
@@ -48,7 +58,8 @@ impl FixedStep {
     pub fn new(config: LoopConfig) -> Self {
         assert!(config.tick_hz > 0, "tick_hz must be non-zero");
         Self {
-            config,
+            tick_hz: config.tick_hz,
+            max_catch_up_ticks: config.max_catch_up_ticks,
             accumulator: 0,
         }
     }
@@ -58,11 +69,11 @@ impl FixedStep {
     /// At most `max_catch_up_ticks` are returned; time beyond that is dropped
     /// so a stall cannot trigger a spiral of ever-longer catch-up frames.
     pub fn advance(&mut self, frame_dt: Duration) -> u32 {
-        let added = frame_dt.as_nanos() * u128::from(self.config.tick_hz);
+        let added = frame_dt.as_nanos() * u128::from(self.tick_hz);
         self.accumulator = self.accumulator.saturating_add(added);
         let due = self.accumulator / UNITS_PER_TICK;
         self.accumulator %= UNITS_PER_TICK;
-        due.min(u128::from(self.config.max_catch_up_ticks)) as u32
+        due.min(u128::from(self.max_catch_up_ticks)) as u32
     }
 
     /// Fraction of a tick left over after the last `advance`.
@@ -149,7 +160,7 @@ mod tests {
             cuts.push(0);
             cuts.push(1_000_000_000);
             cuts.sort_unstable();
-            let mut step = FixedStep::new(LoopConfig { tick_hz: 60, max_catch_up_ticks: 100 });
+            let mut step = FixedStep::new(LoopConfig { tick_hz: 60, max_catch_up_ticks: 100, ..LoopConfig::new(60) });
 
             let total: u32 = cuts
                 .windows(2)

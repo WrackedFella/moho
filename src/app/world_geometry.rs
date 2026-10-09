@@ -365,8 +365,13 @@ pub(crate) mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut saved = App::headless();
         saved.entities.chunks.insert(chunk_at(IVec3::new(7, 0, 7)));
-        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path(), &[])
-            .expect("autosave");
+        crate::app::autosave::auto_save_on_shutdown(
+            &mut saved,
+            &moho_app::GameClock::default(),
+            temp.path(),
+            &[],
+        )
+        .expect("autosave");
         let mut app = App::headless();
         insert_chunk(&mut app, chunk_at(IVec3::new(1, 0, 1)));
         let mut backend = RecordingBackend::default();
@@ -374,8 +379,12 @@ pub(crate) mod tests {
         let old = backend.registered[0];
         assert_eq!(drawn_handles(&mut app), vec![old], "drawn before the load");
 
-        crate::app::scene_loader::load_scene(&mut app, &temp.path().join("scene.bin"))
-            .expect("load");
+        crate::app::scene_loader::load_scene(
+            &mut app,
+            &mut moho_app::GameClock::default(),
+            &temp.path().join("scene.bin"),
+        )
+        .expect("load");
         app.scene.world_meshes_mut().flush(&mut backend);
 
         assert_eq!(backend.unregistered, vec![old], "the old chunk was freed");

@@ -1,5 +1,6 @@
 //! Fixed-timestep application loop shared by every game line.
 
+pub mod clock;
 pub mod fixed_step;
 pub mod headless;
 pub mod runner;
@@ -12,21 +13,25 @@ use moho_renderer::RendererBackend;
 use winit::event::{DeviceEvent, WindowEvent};
 use winit::window::Window;
 
+pub use clock::GameClock;
 pub use fixed_step::{FixedStep, LoopConfig};
 pub use headless::HeadlessLoop;
 pub use runner::run;
 
 /// Per-tick context handed to [`Game::tick`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TickContext {
+#[derive(Debug)]
+pub struct TickContext<'a> {
     /// Index of this tick, starting at 0.
     pub tick: u64,
     pub tick_length: Duration,
+    /// Advanced by the loop after the game's tick.
+    pub clock: &'a mut GameClock,
 }
 
 /// Per-frame context handed to [`Game::frame`].
 pub struct FrameContext<'a> {
     pub tick_length: Duration,
+    clock: &'a GameClock,
     renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
     audio: Option<&'a mut AudioSystem>,
     exit_requested: bool,
@@ -37,19 +42,25 @@ impl<'a> FrameContext<'a> {
     /// with a fake renderer.
     pub fn new(
         tick_length: Duration,
+        clock: &'a GameClock,
         renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
         audio: Option<&'a mut AudioSystem>,
     ) -> Self {
         Self {
             tick_length,
+            clock,
             renderer,
             audio,
             exit_requested: false,
         }
     }
 
-    pub(crate) fn headless(tick_length: Duration) -> Self {
-        Self::new(tick_length, None, None)
+    pub(crate) fn headless(tick_length: Duration, clock: &'a GameClock) -> Self {
+        Self::new(tick_length, clock, None, None)
+    }
+
+    pub fn clock(&self) -> &'a GameClock {
+        self.clock
     }
 
     /// The renderer, absent when running headless.
@@ -82,6 +93,7 @@ pub struct InitContext<'a> {
 
 /// Context handed to [`Game::event`].
 pub struct EventContext<'a> {
+    clock: &'a GameClock,
     renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
     audio: Option<&'a mut AudioSystem>,
     exit_requested: bool,
@@ -91,14 +103,20 @@ impl<'a> EventContext<'a> {
     /// A context for driving [`Game::event`] directly; a game's tests use it
     /// with a fake renderer.
     pub fn new(
+        clock: &'a GameClock,
         renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
         audio: Option<&'a mut AudioSystem>,
     ) -> Self {
         Self {
+            clock,
             renderer,
             audio,
             exit_requested: false,
         }
+    }
+
+    pub fn clock(&self) -> &'a GameClock {
+        self.clock
     }
 
     /// The renderer, absent before the window exists.
@@ -159,7 +177,7 @@ pub trait Game {
     /// Samples the command for the next tick.
     fn command(&mut self) -> Self::Command;
 
-    fn tick(&mut self, ctx: &mut TickContext, command: &Self::Command);
+    fn tick(&mut self, ctx: &mut TickContext<'_>, command: &Self::Command);
 
     /// Called once the window and renderer exist; never called headless.
     fn init(&mut self, _ctx: &mut InitContext<'_>) {}
@@ -175,6 +193,7 @@ pub trait Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::GameClock;
     use moho_renderer::{FrameError, InstanceGpu, LightingGpu, MaterialGpu};
 
     /// Records the point lights it is given; everything else is a no-op.
@@ -249,8 +268,9 @@ mod tests {
 
     #[test]
     fn frame_context_hands_out_the_renderer_it_was_built_with() {
+        let clock = GameClock::default();
         let mut fake = FakeRenderer::default();
-        let mut ctx = FrameContext::new(TICK, Some(&mut fake), None);
+        let mut ctx = FrameContext::new(TICK, &clock, Some(&mut fake), None);
 
         light(ctx.renderer(), 3.0);
 
@@ -260,7 +280,8 @@ mod tests {
 
     #[test]
     fn frame_context_without_renderer_or_audio_has_neither() {
-        let mut ctx = FrameContext::new(TICK, None, None);
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
 
         assert!(ctx.renderer().is_none());
         assert!(ctx.audio().is_none());
@@ -268,7 +289,8 @@ mod tests {
 
     #[test]
     fn frame_context_exit_is_not_requested_until_asked() {
-        let mut ctx = FrameContext::new(TICK, None, None);
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
         assert!(!ctx.exit_requested());
 
         ctx.request_exit();
@@ -278,8 +300,9 @@ mod tests {
 
     #[test]
     fn event_context_hands_out_the_renderer_it_was_built_with() {
+        let clock = GameClock::default();
         let mut fake = FakeRenderer::default();
-        let mut ctx = EventContext::new(Some(&mut fake), None);
+        let mut ctx = EventContext::new(&clock, Some(&mut fake), None);
 
         light(ctx.renderer(), 5.0);
 
@@ -288,7 +311,8 @@ mod tests {
 
     #[test]
     fn event_context_without_renderer_or_audio_has_neither() {
-        let mut ctx = EventContext::new(None, None);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
 
         assert!(ctx.renderer().is_none());
         assert!(ctx.audio().is_none());
@@ -296,11 +320,32 @@ mod tests {
 
     #[test]
     fn event_context_exit_is_not_requested_until_asked() {
-        let mut ctx = EventContext::new(None, None);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
         assert!(!ctx.exit_requested());
 
         ctx.request_exit();
 
         assert!(ctx.exit_requested());
+    }
+
+    #[test]
+    fn frame_context_exposes_the_clock_it_was_built_with() {
+        let mut clock = GameClock::default();
+        clock.reset_to(15.25);
+
+        let ctx = FrameContext::new(TICK, &clock, None, None);
+
+        assert_eq!(ctx.clock().time_of_day(), 15.25);
+    }
+
+    #[test]
+    fn event_context_exposes_the_clock_it_was_built_with() {
+        let mut clock = GameClock::default();
+        clock.reset_to(15.25);
+
+        let ctx = EventContext::new(&clock, None, None);
+
+        assert_eq!(ctx.clock().time_of_day(), 15.25);
     }
 }

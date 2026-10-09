@@ -199,12 +199,21 @@ mod tests {
         for pos in positions {
             saved.entities.chunks.insert(chunk_at(pos));
         }
-        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path(), &[])
-            .expect("autosave");
+        crate::app::autosave::auto_save_on_shutdown(
+            &mut saved,
+            &moho_app::GameClock::default(),
+            temp.path(),
+            &[],
+        )
+        .expect("autosave");
         let mut app = crate::App::headless();
 
-        crate::app::scene_loader::load_scene(&mut app, &temp.path().join("scene.bin"))
-            .expect("load");
+        crate::app::scene_loader::load_scene(
+            &mut app,
+            &mut moho_app::GameClock::default(),
+            &temp.path().join("scene.bin"),
+        )
+        .expect("load");
 
         let pw = app.physics.world.as_ref().expect("physics world");
         for pos in positions {
@@ -229,8 +238,13 @@ mod tests {
         for pos in positions {
             saved.entities.chunks.insert(chunk_at(pos));
         }
-        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path(), &[])
-            .expect("autosave");
+        crate::app::autosave::auto_save_on_shutdown(
+            &mut saved,
+            &moho_app::GameClock::default(),
+            temp.path(),
+            &[],
+        )
+        .expect("autosave");
         let mut app = crate::App::headless();
         let mut actors = ActorStore::new();
         let material = MaterialType::Lambertian {
@@ -245,8 +259,12 @@ mod tests {
         pw.collider_set.insert(unowned);
         app.physics.test_bodies.push((stale_body, stale_actor));
 
-        crate::app::scene_loader::load_scene(&mut app, &temp.path().join("scene.bin"))
-            .expect("load");
+        crate::app::scene_loader::load_scene(
+            &mut app,
+            &mut moho_app::GameClock::default(),
+            &temp.path().join("scene.bin"),
+        )
+        .expect("load");
 
         let pw = app.physics.world.as_ref().expect("physics world");
         let with_geometry = app

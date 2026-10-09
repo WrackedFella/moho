@@ -1,13 +1,10 @@
 use crate::controller::{CameraMode, ControllerInput, PlayerController, controller_to_camera};
-use crate::game_clock::GameClock;
 use glam::{Mat4, Vec3};
 
-/// Owns the player controller, its pending input and the game clock, and steps them together.
 #[derive(Debug, Clone)]
 pub struct SimulationController {
     pub player_controller: PlayerController,
     pub controller_input: ControllerInput,
-    pub game_clock: GameClock,
 }
 
 impl SimulationController {
@@ -15,20 +12,6 @@ impl SimulationController {
         Self {
             player_controller: PlayerController::new(position),
             controller_input: ControllerInput::default(),
-            game_clock: GameClock::default(),
-        }
-    }
-
-    pub fn with_clock(
-        position: Vec3,
-        day_length: f32,
-        night_length: f32,
-        initial_time: f32,
-    ) -> Self {
-        Self {
-            player_controller: PlayerController::new(position),
-            controller_input: ControllerInput::default(),
-            game_clock: GameClock::new(initial_time, day_length, night_length),
         }
     }
 
@@ -36,13 +19,10 @@ impl SimulationController {
         &mut self.controller_input
     }
 
-    /// Applies the pending input, advances the game clock by `dt`, and returns
-    /// the resulting camera `(view, proj, cam_pos)`.
+    /// Applies the pending input and returns the resulting camera `(view, proj, cam_pos)`.
     pub fn apply_input(&mut self, dt: f32) -> (Mat4, Mat4, Vec3) {
         self.player_controller
             .apply_input(&self.controller_input, dt);
-
-        self.game_clock.tick(dt);
 
         controller_to_camera(&self.player_controller)
     }
@@ -67,28 +47,6 @@ impl SimulationController {
 
     pub fn camera_mode(&self) -> CameraMode {
         self.player_controller.camera_mode
-    }
-
-    pub fn game_clock(&self) -> &GameClock {
-        &self.game_clock
-    }
-
-    pub fn game_clock_mut(&mut self) -> &mut GameClock {
-        &mut self.game_clock
-    }
-
-    pub fn celestial_directions(&self) -> (Vec3, Vec3) {
-        self.game_clock.celestial_directions()
-    }
-
-    /// Current time of day in hours, `0.0..24.0`.
-    pub fn time_of_day(&self) -> f32 {
-        self.game_clock.time_of_day()
-    }
-
-    /// Sets the time of day in hours; values outside `0.0..24.0` wrap.
-    pub fn set_time_of_day(&mut self, time: f32) {
-        self.game_clock.set_time(time);
     }
 
     /// Points the camera at `target`: FPS mode recomputes yaw/pitch, isometric
@@ -129,16 +87,6 @@ mod tests {
             assert_eq!(proj, expected_proj);
             assert_eq!(cam_pos, expected_pos);
         }
-
-        #[test]
-        fn apply_input_when_ticked_advances_game_clock() {
-            let mut sim = SimulationController::with_clock(Vec3::ZERO, 120.0, 120.0, 12.0);
-
-            sim.apply_input(1.0);
-
-            assert!((sim.time_of_day() - 12.1).abs() < EPS);
-            assert_eq!(sim.game_clock().elapsed_seconds(), 1.0);
-        }
     }
 
     mod pose {
@@ -178,48 +126,6 @@ mod tests {
                 Vec3::new(7.0, 0.0, -3.0)
             );
             assert_eq!(sim.yaw_pitch(), (0.0, 0.0));
-        }
-    }
-
-    mod clock {
-        use super::*;
-
-        #[test]
-        fn with_clock_when_given_initial_time_starts_at_that_time() {
-            let sim = SimulationController::with_clock(Vec3::ZERO, 100.0, 50.0, 9.25);
-
-            assert_eq!(sim.time_of_day(), 9.25);
-            assert_eq!(sim.game_clock().time_of_day(), 9.25);
-        }
-
-        #[test]
-        fn game_clock_mut_when_time_set_is_observed_through_accessors() {
-            let mut sim = SimulationController::new(Vec3::ZERO);
-
-            sim.game_clock_mut().set_time(15.5);
-
-            assert_eq!(sim.game_clock().time_of_day(), 15.5);
-            assert_eq!(sim.time_of_day(), 15.5);
-        }
-
-        #[test]
-        fn set_time_of_day_when_out_of_range_wraps() {
-            let mut sim = SimulationController::new(Vec3::ZERO);
-
-            sim.set_time_of_day(30.5);
-
-            assert!((sim.time_of_day() - 6.5).abs() < EPS);
-        }
-
-        #[test]
-        fn celestial_directions_when_noon_matches_clock_and_has_high_sun() {
-            let sim = SimulationController::with_clock(Vec3::ZERO, 600.0, 420.0, 12.0);
-
-            let (sun, moon) = sim.celestial_directions();
-
-            assert_eq!((sun, moon), sim.game_clock().celestial_directions());
-            assert!(sun.y > 0.7);
-            assert_eq!(moon, Vec3::NEG_Y);
         }
     }
 }
