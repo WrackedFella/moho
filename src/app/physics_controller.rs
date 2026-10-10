@@ -302,6 +302,105 @@ mod tests {
         assert!(!controller.is_kcc_active());
     }
 
+    const DT: f32 = 1.0 / 60.0;
+
+    fn big_floor_mesh() -> moho_render_api::WorldMesh {
+        moho_render_api::WorldMesh::new(
+            vec![
+                [-20.0, 0.0, -20.0],
+                [20.0, 0.0, -20.0],
+                [-20.0, 0.0, 20.0],
+                [20.0, 0.0, 20.0],
+            ],
+            vec![[0.0, 1.0, 0.0]; 4],
+            vec![1.0; 4],
+            vec![[0.0; 3]; 4],
+            vec![1.0; 4],
+            vec![0; 4],
+            vec![0, 2, 1, 1, 2, 3],
+        )
+        .expect("valid floor mesh")
+    }
+
+    fn grounded_player_on_floor() -> PhysicsController {
+        let mut controller = PhysicsController::new();
+        controller
+            .world
+            .as_mut()
+            .expect("new controller has a world")
+            .set_world_mesh(moho_render_api::WorldMeshId(1), &big_floor_mesh());
+        controller.spawn_player(glam::Vec3::new(0.0, 1.5, 0.0));
+        for _ in 0..300 {
+            controller.move_character(glam::Vec3::ZERO, DT);
+            controller.step(DT);
+        }
+        controller
+    }
+
+    fn player_state(controller: &PhysicsController) -> moho_physics::CharacterState {
+        controller
+            .world
+            .as_ref()
+            .expect("physics world")
+            .character(controller.player.expect("player"))
+            .expect("player resolves")
+    }
+
+    #[test]
+    fn jump_without_the_button_on_the_ground_does_not_rise() {
+        let mut controller = grounded_player_on_floor();
+        assert!(player_state(&controller).grounded, "settled on the floor");
+        controller.jump_pressed = false;
+
+        controller.move_character(glam::Vec3::ZERO, DT);
+
+        let state = player_state(&controller);
+        assert!(state.vertical_velocity <= 0.0, "{state:?}");
+    }
+
+    #[test]
+    fn jump_button_on_the_ground_launches_upward() {
+        let mut controller = grounded_player_on_floor();
+        let before = player_state(&controller).position.y;
+        controller.jump_pressed = true;
+
+        controller.move_character(glam::Vec3::ZERO, DT);
+
+        let state = player_state(&controller);
+        assert!(state.position.y > before, "{state:?}");
+        assert!(state.vertical_velocity > 0.0, "{state:?}");
+    }
+
+    #[test]
+    fn jump_button_in_the_air_does_not_launch() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        controller.jump_pressed = true;
+
+        controller.move_character(glam::Vec3::ZERO, DT);
+
+        let state = player_state(&controller);
+        assert!(!state.grounded);
+        assert!(state.vertical_velocity < 0.0, "{state:?}");
+    }
+
+    #[test]
+    fn teleport_moves_the_player_and_zeroes_vertical_velocity() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        for _ in 0..10 {
+            controller.move_character(glam::Vec3::ZERO, DT);
+        }
+        assert!(player_state(&controller).vertical_velocity < 0.0);
+        let target = glam::Vec3::new(3.0, 20.0, -4.0);
+
+        controller.teleport_character(target);
+
+        let state = player_state(&controller);
+        assert!(state.position.distance(target) < 1e-4, "{state:?}");
+        assert_eq!(state.vertical_velocity, 0.0);
+    }
+
     #[test]
     fn load_replaces_the_previous_physics_world() {
         use crate::app::world_geometry::tests::{chunk_at, terrain_collider_count};

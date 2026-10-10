@@ -566,6 +566,29 @@ mod tests {
     }
 
     #[test]
+    fn toggle_collision_off_enables_noclip() {
+        let mut app = App::headless();
+        app.event_bus
+            .publish(DebugEvent::ToggleCollision { enabled: false });
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert!(app.physics.noclip);
+    }
+
+    #[test]
+    fn toggle_collision_on_disables_noclip() {
+        let mut app = App::headless();
+        app.physics.noclip = true;
+        app.event_bus
+            .publish(DebugEvent::ToggleCollision { enabled: true });
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert!(!app.physics.noclip);
+    }
+
+    #[test]
     fn spawn_sphere_adds_actor_with_physics_body() {
         let mut app = App::headless();
         publish_spawn(&app, "sphere");
