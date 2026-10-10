@@ -23,3 +23,4 @@ Format: **Status** (Proposed | Accepted | Superseded by NNNN), **Context**,
 | [0011](0011-simulation-stays-network-ready.md) | The simulation advances only from per-tick commands over plain data, so replay and later netcode stay possible | Accepted |
 | [0012](0012-engine-crate-map-for-m2.md) | Engine capabilities land as modules first; crate map and seam list for M1–M2 | Accepted |
 | [0013](0013-ui-reaches-the-renderer-as-paint-data.md) | UI reaches the renderer as plain paint data; the renderer owns UI drawing | Accepted |
+| [0014](0014-characters-move-by-velocity.md) | Characters move by velocity; a movement step owns the rules and reports impacts, physics only resolves contact | Proposed |
