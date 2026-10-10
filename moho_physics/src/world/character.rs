@@ -459,6 +459,18 @@ mod tests {
     }
 
     #[test]
+    fn debug_output_counts_live_characters() {
+        let mut world = PhysicsWorld::new();
+        let first = world.add_character(Vec3::new(-4.0, 10.0, 0.0));
+        world.add_character(Vec3::new(4.0, 10.0, 0.0));
+        world.remove_character(first).unwrap();
+
+        let shown = format!("{world:?}");
+
+        assert_eq!(shown, "PhysicsWorld { characters: 1, .. }");
+    }
+
+    #[test]
     fn set_vertical_velocity_on_a_removed_handle_is_refused() {
         let mut world = PhysicsWorld::new();
         let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
