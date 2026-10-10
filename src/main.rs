@@ -35,7 +35,7 @@ enum GenerationMsg {
         terrain_config: moho_game::scene_builders::TerrainConfig,
         // Empty grid — streaming populates it on demand. Boxed to reduce enum
         // variant size (VoxelGrid is large; the other variants are cheap).
-        grid: Box<moho_core::voxel::VoxelGrid>,
+        grid: Box<moho_voxel::VoxelGrid>,
     },
     Canceled,
     Failed(String),
@@ -79,7 +79,7 @@ struct App {
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
 
     // Light propagation system (owns the voxel grid internally)
-    light_system: Option<moho_core::voxel::LightSystem>,
+    light_system: Option<moho_voxel::LightSystem>,
 
     // Game state management
     game_state: crate::game_state::GameState,
@@ -104,7 +104,7 @@ struct App {
     ui_event_rx: std::sync::mpsc::Receiver<moho_core::events::UiEvent>,
     audio_event_rx: std::sync::mpsc::Receiver<moho_core::events::AudioEvent>,
     graphics_event_rx: std::sync::mpsc::Receiver<moho_core::events::GraphicsEvent>,
-    world_event_rx: std::sync::mpsc::Receiver<moho_core::events::WorldEvent>,
+    world_event_rx: std::sync::mpsc::Receiver<moho_voxel::WorldEvent>,
     debug_event_rx: std::sync::mpsc::Receiver<moho_core::events::DebugEvent>,
 
     // UI adapter
@@ -151,11 +151,9 @@ impl App {
 
         // Create a minimal voxel grid and light system for testing frame loop integration
         // TODO: Replace with actual terrain grid when scene generation is integrated
-        let voxel_grid = moho_core::voxel::VoxelGrid::new(16);
-        let light_system = moho_core::voxel::LightSystem::with_default_budget(
-            voxel_grid,
-            initialized.event_bus.clone(),
-        );
+        let voxel_grid = moho_voxel::VoxelGrid::new(16);
+        let light_system =
+            moho_voxel::LightSystem::with_default_budget(voxel_grid, initialized.event_bus.clone());
         tracing::info!("Created LightSystem for frame loop integration");
 
         Self {
@@ -218,17 +216,19 @@ impl App {
 
     fn auto_save_on_shutdown(
         &mut self,
+        clock: &moho_app::GameClock,
         lights: &[moho_render_api::LightDesc],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let saves_dir = self.saves_dir.clone();
-        crate::app::autosave::auto_save_on_shutdown(self, &saves_dir, lights)
+        crate::app::autosave::auto_save_on_shutdown(self, clock, &saves_dir, lights)
     }
 
     fn load_scene<P: AsRef<std::path::Path>>(
         &mut self,
+        clock: &mut moho_app::GameClock,
         path: P,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        crate::app::scene_loader::load_scene(self, path.as_ref())
+        crate::app::scene_loader::load_scene(self, clock, path.as_ref())
     }
 
     /// Place the character after a scene is loaded.
@@ -405,6 +405,7 @@ impl App {
     ///
     /// This method centralizes all the boilerplate for state transitions:
     /// - Update game_state
+    /// - Release every held input action
     /// - Update UI visibility and state
     /// - Handle cursor grab/release
     /// - Show specific menu if requested
@@ -417,6 +418,9 @@ impl App {
 
         // Update core state
         self.game_state = actions.new_state;
+
+        // Input stops reaching the action map outside play; held actions would stick.
+        self.input.actions.release_all();
 
         // Update UI visibility and state
         if let Some(ui_adapter) = &self.ui_adapter
@@ -480,7 +484,8 @@ fn app_config() -> moho_app::AppConfig {
 
 fn main() {
     init_logging();
-    let app = App::from_config(crate::app::config::AppConfig::from_prefs());
+    let mut app = App::from_config(crate::app::config::AppConfig::from_prefs());
+    app.input.gamepads = moho_input::gamepad::Gamepads::new();
 
     if let Err(e) = moho_app::run(app, app_config()) {
         tracing::error!(error = %e, "Application failed");

@@ -1,5 +1,5 @@
 use glam::Vec3;
-use moho_core::voxel::{BlockPos, VoxelGrid};
+use moho_voxel::{BlockPos, VoxelGrid};
 
 use crate::inventory::{Inventory, ResourceYield};
 use crate::raycast;
@@ -64,7 +64,11 @@ impl Pawn {
 
     /// Select a hotbar slot (`0..HOTBAR_SLOT_COUNT`). Selecting `TOOL_SLOT`
     /// equips `STARTING_TOOL`; selecting any other slot un-equips the tool.
+    /// Out-of-range slots are ignored.
     pub fn select_slot(&mut self, slot: usize) {
+        if slot >= HOTBAR_SLOT_COUNT {
+            return;
+        }
         self.selected_slot = slot;
         self.equipped_tool = if slot == TOOL_SLOT {
             Some(STARTING_TOOL)
@@ -149,6 +153,38 @@ mod tests {
 
         assert_eq!(pawn.equipped_tool, None);
         assert_eq!(pawn.selected_slot, 3);
+    }
+
+    #[test]
+    fn select_slot_out_of_range_is_ignored() {
+        let mut pawn = Pawn::default();
+        pawn.select_slot(2);
+
+        pawn.select_slot(HOTBAR_SLOT_COUNT);
+        pawn.select_slot(usize::MAX);
+
+        assert_eq!(pawn.selected_slot, 2);
+        assert_eq!(pawn.equipped_tool, None);
+    }
+
+    #[test]
+    fn select_slot_accepts_last_hotbar_slot() {
+        let mut pawn = Pawn::default();
+
+        pawn.select_slot(HOTBAR_SLOT_COUNT - 1);
+
+        assert_eq!(pawn.selected_slot, HOTBAR_SLOT_COUNT - 1);
+        assert_eq!(pawn.equipped_tool, None);
+    }
+
+    #[test]
+    fn select_slot_out_of_range_keeps_equipped_tool() {
+        let mut pawn = Pawn::default();
+
+        pawn.select_slot(8);
+
+        assert_eq!(pawn.selected_slot, TOOL_SLOT);
+        assert_eq!(pawn.equipped_tool, Some(STARTING_TOOL));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use glam::IVec3;
-use moho_core::voxel::{VoxelChunk, VoxelGrid};
+use moho_voxel::{VoxelChunk, VoxelGrid};
 
 /// Removing one voxel must change the mesh, and only locally. The change is
 /// easy to lose because a single-voxel edit to smooth (marching-cubes) terrain

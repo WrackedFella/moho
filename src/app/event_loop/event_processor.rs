@@ -8,8 +8,8 @@
 
 use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
-use moho_core::events::{GraphicsEvent, UiEvent, WorldEvent};
-use moho_core::voxel::VoxelChunk;
+use moho_core::events::{GraphicsEvent, UiEvent};
+use moho_voxel::{BlockChangeReason, VoxelChunk, WorldEvent};
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
@@ -35,18 +35,18 @@ impl EventProcessor {
     }
 
     /// Process all pending UI events from the event bus
-    pub fn process_ui_events(&self, app: &mut App) {
+    pub fn process_ui_events(&self, app: &mut App, clock: &mut moho_app::GameClock) {
         while let Ok(event) = app.ui_event_rx.try_recv() {
-            self.handle_ui_event(app, event);
+            self.handle_ui_event(app, clock, event);
         }
     }
 
     /// Process a single UI event
-    fn handle_ui_event(&self, app: &mut App, event: UiEvent) {
+    fn handle_ui_event(&self, app: &mut App, clock: &mut moho_app::GameClock, event: UiEvent) {
         match event {
             UiEvent::LoadSceneRequested { path } => {
                 tracing::info!(path = %path.display(), "UI requested load scene");
-                if let Err(e) = app.load_scene(&path) {
+                if let Err(e) = app.load_scene(clock, &path) {
                     tracing::error!(path = %path.display(), error = %e, "Failed to load scene");
                 }
             }
@@ -120,15 +120,14 @@ impl EventProcessor {
     }
 
     /// Process all pending graphics events from the event bus
-    pub fn process_graphics_events(&self, app: &mut App) {
+    pub fn process_graphics_events(&self, app: &mut App, clock: &mut moho_app::GameClock) {
         while let Ok(event) = app.graphics_event_rx.try_recv() {
             match event {
                 GraphicsEvent::TimeOfDayChanged { time, .. } => {
-                    // Set the game clock time directly (time is in hours 0-24)
-                    app.simulation.set_time_of_day(time);
+                    clock.reset_to(time);
                     tracing::info!(
                         time,
-                        time_string = %app.simulation.game_clock().time_string(),
+                        time_string = %clock.time_string(),
                         "Time set"
                     );
                 }
@@ -225,13 +224,12 @@ impl EventProcessor {
             return;
         };
 
-        let chunk_pos =
-            moho_core::voxel::VoxelGrid::get_chunk_pos(outcome.block_pos, grid.chunk_size());
+        let chunk_pos = moho_voxel::VoxelGrid::get_chunk_pos(outcome.block_pos, grid.chunk_size());
 
         app.event_bus.publish(WorldEvent::BlockRemoved {
             position: outcome.block_pos,
             old_material_id: outcome.old_material_id,
-            reason: moho_core::events::BlockChangeReason::Player,
+            reason: BlockChangeReason::Player,
         });
         app.event_bus.publish(WorldEvent::ChunkMeshDirty {
             chunk_pos,
@@ -319,7 +317,7 @@ impl EventProcessor {
                 let grid_opt = app
                     .light_system
                     .as_mut()
-                    .map(moho_core::voxel::LightSystem::grid_mut);
+                    .map(moho_voxel::LightSystem::grid_mut);
 
                 if let Some(grid) = grid_opt {
                     // Use raycast utility
@@ -374,7 +372,7 @@ impl EventProcessor {
                             app.event_bus.publish(WorldEvent::BlockPlaced {
                                 position: block_pos,
                                 material_id: torch_id,
-                                reason: moho_core::events::BlockChangeReason::Player,
+                                reason: BlockChangeReason::Player,
                             });
                         }
                         "light" => {
@@ -412,7 +410,7 @@ impl EventProcessor {
                                 let gizmo = moho_game::actors::Sphere::new(
                                     spawn_pos,
                                     0.15,
-                                    moho_core::materials::MaterialType::Emissive {
+                                    moho_voxel::MaterialType::Emissive {
                                         color,
                                         intensity: 1.5,
                                     },
@@ -422,8 +420,8 @@ impl EventProcessor {
                         }
                         "cube" => {
                             // Spawn cube actor
-                            use moho_core::materials::MaterialType;
                             use moho_game::actors::Cube;
+                            use moho_voxel::MaterialType;
 
                             let cube = Cube::new(
                                 spawn_pos,
@@ -443,8 +441,8 @@ impl EventProcessor {
                         }
                         "sphere" => {
                             // Spawn sphere actor
-                            use moho_core::materials::MaterialType;
                             use moho_game::actors::Sphere;
+                            use moho_voxel::MaterialType;
 
                             let sphere = Sphere::new(
                                 spawn_pos,
@@ -545,7 +543,7 @@ mod tests {
         app.event_bus.process_deferred();
         assert!(!app.exit_requested, "nothing processed yet");
 
-        EventProcessor::new().process_ui_events(&mut app);
+        EventProcessor::new().process_ui_events(&mut app, &mut moho_app::GameClock::default());
 
         assert!(app.exit_requested);
     }
@@ -598,6 +596,36 @@ mod tests {
     }
 
     #[test]
+    fn spawn_torch_publishes_torch_placement_at_the_spawn_block() {
+        let mut app = App::headless();
+        let placed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&placed);
+        app.event_bus.subscribe(move |e: &WorldEvent| {
+            if let WorldEvent::BlockPlaced {
+                position,
+                material_id,
+                reason,
+            } = e
+            {
+                sink.lock()
+                    .unwrap()
+                    .push((*position, *material_id, reason.clone()));
+            }
+        });
+        publish_spawn(&app, "torch");
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        let expected = fallback_spawn_pos(&app).floor().as_ivec3();
+        assert_eq!(
+            *placed.lock().unwrap(),
+            vec![(expected, TORCH_MATERIAL_ID, BlockChangeReason::Player)]
+        );
+        assert!(app.entities.actors.spheres().is_empty());
+        assert!(app.entities.actors.cubes().is_empty());
+    }
+
+    #[test]
     fn chunk_mesh_dirty_event_stores_meshed_chunk_with_collider() {
         let mut app = App::headless();
         let chunk_pos = glam::IVec3::new(0, 4, 0);
@@ -606,7 +634,7 @@ mod tests {
             .expect("App starts with a light system")
             .grid_mut()
             .mutator()
-            .place(moho_core::voxel::BlockPos::new(3, 70, 3), 1, None);
+            .place(moho_voxel::BlockPos::new(3, 70, 3), 1, None);
         app.event_bus.publish(WorldEvent::ChunkMeshDirty {
             chunk_pos,
             terrain_dirty: true,
@@ -620,6 +648,54 @@ mod tests {
         let id = crate::app::world_geometry::chunk_mesh_id(chunk_pos);
         let pw = app.physics.world.as_ref().expect("physics world");
         assert!(pw.world_mesh_collider(id).is_some());
+    }
+
+    #[test]
+    fn mine_request_in_first_person_removes_aimed_block_and_publishes_removal() {
+        let mut app = App::headless();
+        app.game_state = crate::game_state::GameState::Playing;
+        app.simulation
+            .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
+        app.pawn.select_slot(moho_game::pawn::TOOL_SLOT);
+        // Identity rotation: the camera looks down -Z from just in front of the wall.
+        app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
+        let aimed = moho_voxel::BlockPos::new(4, 70, 3);
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for x in 2..=6 {
+            for y in 68..=72 {
+                for z in 1..=3 {
+                    grid.mutator()
+                        .place(moho_voxel::BlockPos::new(x, y, z), 1, None);
+                }
+            }
+        }
+        assert!(grid.is_solid_at(aimed));
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&removed);
+        app.event_bus.subscribe(move |e: &WorldEvent| {
+            if let WorldEvent::BlockRemoved { position, .. } = e {
+                sink.lock().unwrap().push(*position);
+            }
+        });
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+
+        let removed = removed.lock().unwrap();
+        assert_eq!(removed.len(), 1, "exactly one block is mined");
+        let mined = removed[0];
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        assert!(
+            !grid.is_solid_at(mined),
+            "the mined block is gone from the grid"
+        );
+        assert!(
+            mined.z == 3 && mined.x == 4,
+            "the block facing the camera is mined: {mined:?}"
+        );
     }
 
     #[test]
@@ -641,24 +717,33 @@ mod tests {
     }
 
     #[test]
-    fn lod_for_chunk_tiers_by_chebyshev_xz_distance() {
+    fn lod_for_chunk_tiers_by_chebyshev_xz_distance_from_the_player() {
+        let origin = glam::IVec3::ZERO;
+        let off_origin = glam::IVec3::new(10, 0, -7);
+        let mixed_sign = glam::IVec3::new(-5, 2, 5);
         let cases = [
-            (glam::IVec3::new(0, 0, 0), 0),
-            (glam::IVec3::new(3, 0, 0), 0),
-            (glam::IVec3::new(-3, 0, 0), 0),
-            (glam::IVec3::new(3, 0, 3), 0),
-            (glam::IVec3::new(0, 10, 0), 0),
-            (glam::IVec3::new(4, 0, 0), 1),
-            (glam::IVec3::new(0, 0, 4), 1),
-            (glam::IVec3::new(3, 0, 4), 1),
-            (glam::IVec3::new(16, 0, 0), 1),
+            (origin, glam::IVec3::new(0, 0, 0), 0),
+            (origin, glam::IVec3::new(3, 0, 0), 0),
+            (origin, glam::IVec3::new(-3, 0, 0), 0),
+            (origin, glam::IVec3::new(3, 0, 3), 0),
+            (origin, glam::IVec3::new(0, 10, 0), 0),
+            (origin, glam::IVec3::new(4, 0, 0), 1),
+            (origin, glam::IVec3::new(-4, 0, 0), 1),
+            (origin, glam::IVec3::new(0, 0, 4), 1),
+            (origin, glam::IVec3::new(3, 0, 4), 1),
+            (origin, glam::IVec3::new(16, 0, 0), 1),
+            (off_origin, glam::IVec3::new(13, 0, -7), 0),
+            (off_origin, glam::IVec3::new(14, 0, -7), 1),
+            (off_origin, glam::IVec3::new(10, 0, -11), 1),
+            (mixed_sign, glam::IVec3::new(-2, 0, 8), 0),
+            (mixed_sign, glam::IVec3::new(-5, 9, 1), 1),
         ];
 
-        for (chunk, expected) in cases {
+        for (player, chunk, expected) in cases {
             assert_eq!(
-                lod_for_chunk(chunk, glam::IVec3::ZERO),
+                lod_for_chunk(chunk, player),
                 expected,
-                "row {chunk:?}"
+                "player {player:?}, chunk {chunk:?}"
             );
         }
     }

@@ -4,6 +4,24 @@ use moho_core::prefs::Prefs;
 use moho_input::Action;
 use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::Key;
+use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
+
+const fn stick(dir: StickDir) -> Binding {
+    Binding::Pad(PadInput::Stick(Stick::LeftStick, dir))
+}
+
+const fn button(button: PadButton) -> Binding {
+    Binding::Pad(PadInput::Button(button))
+}
+
+const FORWARD: [Binding; 2] = [Binding::Key(Key::W), stick(StickDir::Up)];
+const BACK: [Binding; 2] = [Binding::Key(Key::S), stick(StickDir::Down)];
+const LEFT: [Binding; 2] = [Binding::Key(Key::A), stick(StickDir::Left)];
+const RIGHT: [Binding; 2] = [Binding::Key(Key::D), stick(StickDir::Right)];
+const ASCEND: [Binding; 2] = [Binding::Key(Key::Space), button(PadButton::RightTrigger)];
+const JUMP: [Binding; 2] = [Binding::Key(Key::Space), button(PadButton::South)];
+const DESCEND: [Binding; 2] = [Binding::Key(Key::Ctrl), button(PadButton::LeftTrigger)];
+const SPRINT: [Binding; 2] = [Binding::Key(Key::Shift), button(PadButton::LeftThumb)];
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StrategyAction {
@@ -44,13 +62,14 @@ impl Action for StrategyAction {
 
     fn default_bindings(self) -> &'static [Binding] {
         match self {
-            StrategyAction::MoveForward => &[Binding::Key(Key::W)],
-            StrategyAction::MoveBack => &[Binding::Key(Key::S)],
-            StrategyAction::MoveLeft => &[Binding::Key(Key::A)],
-            StrategyAction::MoveRight => &[Binding::Key(Key::D)],
-            StrategyAction::Ascend | StrategyAction::Jump => &[Binding::Key(Key::Space)],
-            StrategyAction::Descend => &[Binding::Key(Key::Ctrl)],
-            StrategyAction::Sprint => &[Binding::Key(Key::Shift)],
+            StrategyAction::MoveForward => &FORWARD,
+            StrategyAction::MoveBack => &BACK,
+            StrategyAction::MoveLeft => &LEFT,
+            StrategyAction::MoveRight => &RIGHT,
+            StrategyAction::Ascend => &ASCEND,
+            StrategyAction::Jump => &JUMP,
+            StrategyAction::Descend => &DESCEND,
+            StrategyAction::Sprint => &SPRINT,
         }
     }
 }
@@ -68,18 +87,61 @@ pub fn load_bindings(prefs: &Prefs) -> ActionBindings<StrategyAction> {
 mod tests {
     use super::*;
     use moho_input::key::Key;
+    use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
 
     #[test]
     fn strategy_actions_keep_their_ids_and_defaults() {
+        let stick = |dir| Binding::Pad(PadInput::Stick(Stick::LeftStick, dir));
+        let button = |b| Binding::Pad(PadInput::Button(b));
         let expected = [
-            (StrategyAction::MoveForward, "move_forward", Key::W),
-            (StrategyAction::MoveBack, "move_back", Key::S),
-            (StrategyAction::MoveLeft, "move_left", Key::A),
-            (StrategyAction::MoveRight, "move_right", Key::D),
-            (StrategyAction::Ascend, "ascend", Key::Space),
-            (StrategyAction::Descend, "descend", Key::Ctrl),
-            (StrategyAction::Sprint, "sprint", Key::Shift),
-            (StrategyAction::Jump, "jump", Key::Space),
+            (
+                StrategyAction::MoveForward,
+                "move_forward",
+                Key::W,
+                stick(StickDir::Up),
+            ),
+            (
+                StrategyAction::MoveBack,
+                "move_back",
+                Key::S,
+                stick(StickDir::Down),
+            ),
+            (
+                StrategyAction::MoveLeft,
+                "move_left",
+                Key::A,
+                stick(StickDir::Left),
+            ),
+            (
+                StrategyAction::MoveRight,
+                "move_right",
+                Key::D,
+                stick(StickDir::Right),
+            ),
+            (
+                StrategyAction::Ascend,
+                "ascend",
+                Key::Space,
+                button(PadButton::RightTrigger),
+            ),
+            (
+                StrategyAction::Descend,
+                "descend",
+                Key::Ctrl,
+                button(PadButton::LeftTrigger),
+            ),
+            (
+                StrategyAction::Sprint,
+                "sprint",
+                Key::Shift,
+                button(PadButton::LeftThumb),
+            ),
+            (
+                StrategyAction::Jump,
+                "jump",
+                Key::Space,
+                button(PadButton::South),
+            ),
         ];
 
         let actual: Vec<_> = StrategyAction::ALL
@@ -89,7 +151,7 @@ mod tests {
 
         let want: Vec<_> = expected
             .iter()
-            .map(|&(a, n, k)| (a, n, vec![Binding::Key(k)]))
+            .map(|&(a, n, k, p)| (a, n, vec![Binding::Key(k), p]))
             .collect();
         assert_eq!(actual, want);
     }
@@ -102,7 +164,7 @@ mod tests {
 
         assert_eq!(
             bindings.get(StrategyAction::MoveForward),
-            [Binding::Key(Key::W)]
+            [Binding::Key(Key::W), stick(StickDir::Up)]
         );
     }
 }

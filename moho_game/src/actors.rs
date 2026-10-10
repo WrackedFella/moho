@@ -1,6 +1,6 @@
 use glam::Vec3;
-use moho_core::materials::MaterialType;
 use moho_render_api::{InstanceGpu, Renderable};
+use moho_voxel::MaterialType;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Sphere {

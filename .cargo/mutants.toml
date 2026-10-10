@@ -56,4 +56,11 @@ exclude_re = [
     # `Default` calls `new`, which calls `from_prefs`: this mutant recurses until the
     # stack runs out and reads as a timeout, not a survivor.
     'replace SettingsState::from_prefs -> Self with Default::default\(\)',
+    # gilrs::ev::Code has no public constructor, so no test can build a button or axis
+    # event; the ActionMap calls these arms make are tested.
+    'delete match arm gilrs::EventType::ButtonPressed\(button, _\) \| gilrs::EventType::ButtonReleased\(button, _\) in apply_event',
+    'delete match arm gilrs::EventType::AxisChanged\(axis, value, _\) in apply_event',
+    # Polling needs a live gilrs backend; headless tests and the headless App have none.
+    'replace Gamepads::poll with \(\)',
+    'replace Gamepads::discard with \(\)',
 ]

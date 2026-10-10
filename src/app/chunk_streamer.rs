@@ -14,9 +14,9 @@
 use crate::app::event_loop::event_processor::lod_player_chunk;
 use crate::save;
 use glam::{IVec3, Vec3};
-use moho_core::voxel::{StreamingConfig, VoxelGrid};
 use moho_game::scene_builders::TerrainConfig;
 use moho_game::scene_builders::generate_chunk;
+use moho_voxel::{StreamingConfig, VoxelGrid};
 
 /// Inclusive Y-chunk range to generate per XZ column.
 ///

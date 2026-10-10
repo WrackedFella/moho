@@ -1,5 +1,5 @@
 use crate::biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
-use moho_core::voxel::{BlockPos, ChunkStore, LightPropagator, VoxelChunk, VoxelGrid};
+use moho_voxel::{BlockPos, ChunkStore, LightPropagator, VoxelChunk, VoxelGrid};
 use noise::{NoiseFn, Perlin};
 use serde::{Deserialize, Serialize};
 

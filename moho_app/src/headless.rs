@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use crate::clock::GameClock;
 use crate::fixed_step::{FixedStep, LoopConfig};
 use crate::{FrameContext, Game, TickContext};
 
@@ -11,6 +12,7 @@ pub struct HeadlessLoop<G> {
     step: FixedStep,
     tick_length: Duration,
     next_tick: u64,
+    clock: GameClock,
     game: std::marker::PhantomData<fn(&mut G)>,
 }
 
@@ -21,10 +23,12 @@ impl<G: Game> HeadlessLoop<G> {
     ///
     /// Panics if `config.tick_hz` is 0.
     pub fn new(config: LoopConfig) -> Self {
+        let step = FixedStep::new(config);
         Self {
-            step: FixedStep::new(config),
+            step,
             tick_length: config.tick_length(),
             next_tick: 0,
+            clock: config.clock,
             game: std::marker::PhantomData,
         }
     }
@@ -32,7 +36,7 @@ impl<G: Game> HeadlessLoop<G> {
     /// Runs the ticks due for `frame_dt`, then one frame. Returns ticks run.
     pub fn advance(&mut self, game: &mut G, frame_dt: Duration) -> u32 {
         let n = self.run_ticks(game, frame_dt);
-        let mut ctx = FrameContext::headless(self.tick_length);
+        let mut ctx = FrameContext::headless(self.tick_length, &self.clock);
         game.frame(&mut ctx, self.step.alpha());
         n
     }
@@ -51,6 +55,10 @@ impl<G: Game> HeadlessLoop<G> {
         self.step.alpha()
     }
 
+    pub fn clock(&self) -> &GameClock {
+        &self.clock
+    }
+
     pub(crate) fn tick_length(&self) -> Duration {
         self.tick_length
     }
@@ -67,8 +75,10 @@ impl<G: Game> HeadlessLoop<G> {
         let mut ctx = TickContext {
             tick: self.next_tick,
             tick_length: self.tick_length,
+            clock: &mut self.clock,
         };
         game.tick(&mut ctx, &command);
+        self.clock.advance(self.tick_length.as_secs_f32());
         self.next_tick += 1;
     }
 }
@@ -97,7 +107,7 @@ mod tests {
             (i * 7 + 3) % 11 - 5
         }
 
-        fn tick(&mut self, ctx: &mut TickContext, command: &i64) {
+        fn tick(&mut self, ctx: &mut TickContext<'_>, command: &i64) {
             self.state = self
                 .state
                 .wrapping_mul(31)
@@ -160,7 +170,7 @@ mod tests {
             self.next_command
         }
 
-        fn tick(&mut self, ctx: &mut TickContext, command: &i32) {
+        fn tick(&mut self, ctx: &mut TickContext<'_>, command: &i32) {
             self.commands.push(*command);
             self.ticks.push(ctx.tick);
             self.tick_lengths.push(ctx.tick_length);
@@ -241,7 +251,7 @@ mod tests {
 
         fn command(&mut self) {}
 
-        fn tick(&mut self, _ctx: &mut TickContext, _command: &()) {}
+        fn tick(&mut self, _ctx: &mut TickContext<'_>, _command: &()) {}
 
         fn frame(&mut self, ctx: &mut FrameContext<'_>, _alpha: f32) {
             self.renderer_absent = Some(ctx.renderer().is_none());

@@ -17,11 +17,12 @@ The `moho` binary depends on all of them and is omitted from the edges.
 ```mermaid
 flowchart TD
     ui["moho_ui<br/>egui menus, console, HUD"]:::strategy
-    game["moho_game<br/>pawn, tools, controller,<br/>GameClock, scenes"]:::strategy
+    game["moho_game<br/>pawn, tools, controller,<br/>scenes"]:::strategy
+    voxel["moho_voxel<br/>voxel grid, meshing, lighting"]:::strategy
 
     renderer["moho_renderer<br/>wgpu backend"]:::engine
     rapi["moho_render_api<br/>Renderable, RenderMaterial,<br/>GPU-layout data"]:::engine
-    core["moho_core<br/>event bus, voxel, materials,<br/>prefs"]:::engine
+    core["moho_core<br/>event bus, persist,<br/>prefs"]:::engine
     audio["moho_audio<br/>rodio"]:::engine
     physics["moho_physics<br/>rapier3d"]:::engine
     input["moho_input<br/>Key, Action, ActionBindings,<br/>ActionMap, mouse filtering"]:::engine
@@ -29,12 +30,12 @@ flowchart TD
     level["moho_level<br/>glTF level loader"]:::engine
 
     ui --> renderer & input & core & game
-    game --> core & rapi
+    game --> core & rapi & voxel
+    voxel --> core & rapi
     renderer --> rapi
     app --> renderer & audio
     audio --> core
     physics --> rapi
-    core --> rapi
     level --> rapi
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
@@ -54,17 +55,16 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 |---|---|
 | Engine crates never depend on a game-line crate (dev-dependencies allowed) | The engine ships to both games and, after the split, from its own repo |
 | A game line never depends on another game line | Strategy and FPS must separate cleanly |
-| Domain crates (`moho_core`, `moho_game`, `moho_level`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
+| Domain crates (`moho_core`, `moho_voxel`, `moho_game`, `moho_level`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
 
-Known debt: `voxel/` and `MaterialType` still sit in the engine line.
-[ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md) moves them to the
-strategy-line `moho_voxel`; ENG-F10 delivers the move.
+Voxels live in the strategy-line `moho_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));
+the engine sees world geometry only as meshes.
 
 ## Target crate graph (M2)
 
 Where the M1–M2 engine work lands, from [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md)
 (Proposed). Capabilities land as modules of an existing crate first; a new crate needs a
-deployable, reuse or compile-time boundary. Dashed boxes are crates that don't exist yet, or (`moho_app`) exist with only part of the listed scope: today the window and event loop, accumulator and `Game` trait.
+deployable, reuse or compile-time boundary. Dashed boxes are crates that don't exist yet, or (`moho_app`) exist with only part of the listed scope: today the window and event loop, accumulator, `GameClock` and `Game` trait.
 Edges are the intended direction, not a list each crate must have.
 
 ```mermaid
@@ -72,7 +72,7 @@ flowchart TD
     sbin["moho binary<br/>strategy wiring"]:::strategy
     ui["moho_ui<br/>strategy HUD, menus"]:::strategy
     game["moho_game<br/>pawn, tools, scenes"]:::strategy
-    voxel["moho_voxel<br/>voxel terrain, materials"]:::strategyNew
+    voxel["moho_voxel<br/>voxel terrain"]:::strategy
 
     app["moho_app<br/>window, loop, accumulator,<br/>GameClock, Game interface"]:::engineNew
     shell["moho_ui_shell<br/>egui, console, settings,<br/>modal stack"]:::engineNew
@@ -105,7 +105,6 @@ flowchart TD
 
 Changes from today:
 
-- Voxels leave `moho_core` for `moho_voxel` (ENG-F10).
 - Scene import (ENG-F14) is its own crate, `moho_level`: a headless server needs level
   collision without linking `wgpu` or `winit`.
 - Navigation (ENG-F17) and the character controller and camera (ENG-F21) are modules of
@@ -128,7 +127,8 @@ Window-free scheduling for any game line ([ADR-0009](../../_todo/adr/0009-simula
 |---|---|
 | `Game` trait (`lib.rs`) | `command()` sampled once per tick, `tick()` applies it, `frame()` presents with an interpolation `alpha`; optional `init()` (window and renderer exist) and `event()` (winit window/device events) |
 | `run`, `AppConfig` (`runner.rs`) | Creates the window, renderer and optional `AudioSystem`, drives the `Game` from the winit loop; `AppError` on startup failure |
-| `InitContext` / `EventContext` / `FrameContext` (`lib.rs`) | What a game may touch: window, renderer, audio, `request_exit`. Renderer and audio are `Option` (absent headless) |
+| `InitContext` / `EventContext` / `FrameContext` (`lib.rs`) | What a game may touch: window, renderer, audio, `request_exit`, and a read-only `clock()` (`EventContext`, `FrameContext`). Renderer and audio are `Option` (absent headless) |
+| `GameClock` (`clock.rs`) | Time of day, day/night lengths, time scale and sun/moon directions. Seeded from `LoopConfig::clock`, owned by the loop (`run` and `HeadlessLoop`); `TickContext::clock` is `&mut` for the tick, and the loop advances it by one tick length times its time scale after `Game::tick` returns |
 | `LoopConfig` / `FixedStep` (`fixed_step.rs`) | Integer accumulator (`nanoseconds * tick_hz`), so no drift; returns whole ticks due per frame |
 | `HeadlessLoop` (`headless.rs`) | Drives a `Game` without a window: `advance(game, frame_dt)` runs due ticks then one frame; `step(game, n)` runs ticks only |
 
@@ -156,10 +156,10 @@ flowchart LR
 
 | State | Owner |
 |---|---|
-| Voxel grid, light | `moho_core::voxel::LightSystem` (owns the grid) |
-| Chunk meshes | `ChunkStore` in `moho_core`; the renderer holds its own copy as `WorldMeshes` ([rendering](rendering.md#world-geometry)) |
+| Voxel grid, light | `moho_voxel::LightSystem` (owns the grid) |
+| Chunk meshes | `ChunkStore` in `moho_voxel`; the renderer holds its own copy as `WorldMeshes` ([rendering](rendering.md#world-geometry)) |
 | Actors (spheres, cubes) | `ActorStore` in `moho_game` |
-| Time of day | `moho_game::GameClock`, advanced by the simulation step |
+| Time of day | `moho_app::GameClock`, owned by the loop and advanced after each `Game::tick` |
 | App mode | `moho_ui::GameState` ([input-and-state](input-and-state.md#gamestate)) |
 | GPU resources | `moho_renderer`; game types reach it only through `moho_render_api` ([rendering](rendering.md)) |
 | Prefs | `moho_core::prefs::Prefs` ([format](../reference/prefs-format.md)) |

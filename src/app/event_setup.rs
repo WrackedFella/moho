@@ -35,7 +35,7 @@ pub struct EventBusSetup {
     pub graphics_event_rx: Receiver<moho_core::events::GraphicsEvent>,
 
     /// Receiver for world events (chunk updates, block changes)
-    pub world_event_rx: Receiver<moho_core::events::WorldEvent>,
+    pub world_event_rx: Receiver<moho_voxel::WorldEvent>,
 
     /// Receiver for debug events (console commands, spawning)
     pub debug_event_rx: Receiver<moho_core::events::DebugEvent>,
@@ -75,7 +75,7 @@ pub fn setup_event_bus() -> EventBusSetup {
     let (ui_event_tx, ui_event_rx) = channel::<moho_core::events::UiEvent>();
     let (audio_event_tx, audio_event_rx) = channel::<moho_core::events::AudioEvent>();
     let (graphics_event_tx, graphics_event_rx) = channel::<moho_core::events::GraphicsEvent>();
-    let (world_event_tx, world_event_rx) = channel::<moho_core::events::WorldEvent>();
+    let (world_event_tx, world_event_rx) = channel::<moho_voxel::WorldEvent>();
     let (debug_event_tx, debug_event_rx) = channel::<moho_core::events::DebugEvent>();
 
     // Subscribe to UI events
@@ -106,7 +106,7 @@ pub fn setup_event_bus() -> EventBusSetup {
     // Subscribe to World events
     {
         let bus = event_bus.clone();
-        bus.subscribe(move |event: &moho_core::events::WorldEvent| {
+        bus.subscribe(move |event: &moho_voxel::WorldEvent| {
             let _ = world_event_tx.send(event.clone());
         });
     }

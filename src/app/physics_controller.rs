@@ -36,14 +36,14 @@ impl PhysicsController {
     /// Move character for one frame, applying jump if grounded.
     ///
     /// Returns the new world-space position, or `None` if the physics world
-    /// is not initialised.
+    /// is not initialised or has no character.
     pub fn move_character(&mut self, horizontal: glam::Vec3, dt: f32) -> Option<glam::Vec3> {
         const JUMP_VELOCITY: f32 = 8.0;
         let pw = self.world.as_mut()?;
         if self.jump_pressed && pw.is_grounded {
             pw.vertical_velocity = JUMP_VELOCITY;
         }
-        Some(pw.move_character(horizontal, dt))
+        pw.move_character(horizontal, dt)
     }
 
     /// Teleport the character (e.g. respawn after falling off the map).
@@ -87,8 +87,8 @@ impl Default for PhysicsController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use moho_core::materials::MaterialType;
     use moho_game::actors::{ActorStore, Cube, Sphere};
+    use moho_voxel::MaterialType;
 
     #[test]
     fn step_reports_bodies_by_actor_id() {
@@ -199,12 +199,21 @@ mod tests {
         for pos in positions {
             saved.entities.chunks.insert(chunk_at(pos));
         }
-        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path(), &[])
-            .expect("autosave");
+        crate::app::autosave::auto_save_on_shutdown(
+            &mut saved,
+            &moho_app::GameClock::default(),
+            temp.path(),
+            &[],
+        )
+        .expect("autosave");
         let mut app = crate::App::headless();
 
-        crate::app::scene_loader::load_scene(&mut app, &temp.path().join("scene.bin"))
-            .expect("load");
+        crate::app::scene_loader::load_scene(
+            &mut app,
+            &mut moho_app::GameClock::default(),
+            &temp.path().join("scene.bin"),
+        )
+        .expect("load");
 
         let pw = app.physics.world.as_ref().expect("physics world");
         for pos in positions {
@@ -229,8 +238,13 @@ mod tests {
         for pos in positions {
             saved.entities.chunks.insert(chunk_at(pos));
         }
-        crate::app::autosave::auto_save_on_shutdown(&mut saved, temp.path(), &[])
-            .expect("autosave");
+        crate::app::autosave::auto_save_on_shutdown(
+            &mut saved,
+            &moho_app::GameClock::default(),
+            temp.path(),
+            &[],
+        )
+        .expect("autosave");
         let mut app = crate::App::headless();
         let mut actors = ActorStore::new();
         let material = MaterialType::Lambertian {
@@ -245,8 +259,12 @@ mod tests {
         pw.collider_set.insert(unowned);
         app.physics.test_bodies.push((stale_body, stale_actor));
 
-        crate::app::scene_loader::load_scene(&mut app, &temp.path().join("scene.bin"))
-            .expect("load");
+        crate::app::scene_loader::load_scene(
+            &mut app,
+            &mut moho_app::GameClock::default(),
+            &temp.path().join("scene.bin"),
+        )
+        .expect("load");
 
         let pw = app.physics.world.as_ref().expect("physics world");
         let with_geometry = app

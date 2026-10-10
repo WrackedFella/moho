@@ -7,10 +7,12 @@
 | `moho_renderer/src/gpu_types.rs` | `shaders/common.wgsl` |
 | `moho_render_api/src/material.rs` (`MaterialGpu`) | `Material` in `common.wgsl` |
 | `moho_render_api/src/instance.rs` (`InstanceGpu`) | `InstanceIn` vertex inputs |
+| `moho_render_api/src/ui_paint.rs` (`UiVertex`) | vertex inputs in `shaders/ui.wgsl` |
 
 All structs are `#[repr(C)]`, `bytemuck::{Pod, Zeroable}`, and built from `vec4`-sized
 fields so std140/std430 padding never differs between the two sides. Size matches
-`size_of::<T>()`.
+`size_of::<T>()`. `UiVertex` is the exception: it is only read as a vertex buffer
+(`Float32x2`, `Float32x2`, `Uint32`), so it is packed to 20 B with no padding.
 
 ## Sizes
 
@@ -24,6 +26,7 @@ fields so std140/std430 padding never differs between the two sides. Size matche
 | `PointLightGpu` | 32 B (2 × vec4) | element of `DynamicLightsGpu` |
 | `ShadowMatrixGpu` | 64 B | legacy single shadow map |
 | `InstanceGpu` | 80 B (mat4 + 4 × u32) | per-instance vertex buffer |
+| `UiVertex` | 20 B (f32×2 pos, f32×2 uv, u8×4 colour) | UI pass vertex buffer |
 
 Group 0 also binds the SSAO texture and sampler (bindings 3, 4). Group 1 binds the
 shadow map array (`texture_depth_2d_array`, binding 1), a comparison sampler (2), and a

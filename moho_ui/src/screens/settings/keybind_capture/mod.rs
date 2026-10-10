@@ -15,6 +15,7 @@ use moho_input::key::Key;
 
 use super::binding_registry::BindingRegistry;
 use super::conflict_modal::ConflictModalState;
+use super::key_mapping::rebind_key;
 use super::types::display_name;
 use crate::actions::StrategyAction;
 
@@ -138,7 +139,10 @@ impl KeybindCaptureHandler {
                 on_binding_changed(conflicting, remaining);
             }
 
-            on_binding_changed(pending.target, vec![Binding::Key(pending.key)]);
+            on_binding_changed(
+                pending.target,
+                rebind_key(bindings.get_binding(pending.target), pending.key),
+            );
         }
         self.conflict_modal.hide();
     }
@@ -171,6 +175,11 @@ impl KeybindCaptureHandler {
 mod tests {
     use super::*;
     use crate::prefs::Prefs;
+    use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
+
+    const THUMB: Binding = Binding::Pad(PadInput::Button(PadButton::LeftThumb));
+    const LEFT_PAD: Binding = Binding::Pad(PadInput::Stick(Stick::LeftStick, StickDir::Left));
+    const DESCEND_PAD: Binding = Binding::Pad(PadInput::Button(PadButton::LeftTrigger));
 
     fn registry() -> BindingRegistry {
         BindingRegistry::from_prefs(&Prefs::default())
@@ -193,7 +202,13 @@ mod tests {
         assert!(!handler.is_listening());
         assert_eq!(
             bindings_changed,
-            vec![(StrategyAction::MoveForward, vec![Binding::Key(Key::Alt)])]
+            vec![(
+                StrategyAction::MoveForward,
+                vec![
+                    Binding::Key(Key::Alt),
+                    Binding::Pad(PadInput::Stick(Stick::LeftStick, StickDir::Up))
+                ]
+            )]
         );
     }
 
@@ -245,8 +260,11 @@ mod tests {
         let changes = resolve_conflict(5, Key::Shift);
 
         assert_eq!(changes.len(), 2);
-        assert!(changes.contains(&(StrategyAction::Sprint, vec![])));
-        assert!(changes.contains(&(StrategyAction::Descend, vec![Binding::Key(Key::Shift)])));
+        assert!(changes.contains(&(StrategyAction::Sprint, vec![THUMB])));
+        assert!(changes.contains(&(
+            StrategyAction::Descend,
+            vec![Binding::Key(Key::Shift), DESCEND_PAD]
+        )));
     }
 
     #[test]
@@ -254,8 +272,8 @@ mod tests {
         let changes = resolve_conflict(6, Key::A);
 
         assert_eq!(changes.len(), 2);
-        assert!(changes.contains(&(StrategyAction::MoveLeft, vec![])));
-        assert!(changes.contains(&(StrategyAction::Sprint, vec![Binding::Key(Key::A)])));
+        assert!(changes.contains(&(StrategyAction::MoveLeft, vec![LEFT_PAD])));
+        assert!(changes.contains(&(StrategyAction::Sprint, vec![Binding::Key(Key::A), THUMB])));
     }
 
     #[test]

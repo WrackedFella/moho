@@ -69,7 +69,7 @@ impl GenerationProcessor {
         scene_bytes: Vec<u8>,
         spec: moho_game::scene_builders::WorldSpec,
         terrain_config: moho_game::scene_builders::TerrainConfig,
-        grid: moho_core::voxel::VoxelGrid,
+        grid: moho_voxel::VoxelGrid,
     ) {
         tracing::info!(spec = ?spec.name, "Generation completed");
 
@@ -77,7 +77,7 @@ impl GenerationProcessor {
 
         // Initialize LightSystem with the generated grid
         tracing::info!("Initializing LightSystem with generated grid");
-        app.light_system = Some(moho_core::voxel::LightSystem::with_default_budget(
+        app.light_system = Some(moho_voxel::LightSystem::with_default_budget(
             grid,
             app.event_bus.clone(),
         ));
@@ -94,7 +94,7 @@ impl GenerationProcessor {
         // Also publish events so the streaming pipeline keeps them in sync.
         for pos in &preloaded {
             app.event_bus
-                .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                .publish(moho_voxel::WorldEvent::ChunkMeshDirty {
                     chunk_pos: *pos,
                     terrain_dirty: true,
                     structure_dirty: false,
@@ -102,7 +102,7 @@ impl GenerationProcessor {
         }
 
         // Initialize ChunkStreamer for on-demand terrain loading
-        let streaming = moho_core::voxel::StreamingConfig {
+        let streaming = moho_voxel::StreamingConfig {
             load_radius_chunks: app.prefs.world_load_radius(),
             unload_radius_chunks: app.prefs.world_unload_radius(),
             chunks_per_frame: app.prefs.world_chunks_per_frame(),
@@ -227,7 +227,7 @@ impl GenerationProcessor {
             let grid = ls.grid();
             let chunks: Vec<_> = preloaded_chunks
                 .iter()
-                .map(|&pos| moho_core::voxel::VoxelChunk::from_grid_hybrid(grid, pos))
+                .map(|&pos| moho_voxel::VoxelChunk::from_grid_hybrid(grid, pos))
                 .collect();
             for chunk in chunks {
                 crate::app::world_geometry::insert_chunk(app, chunk);
@@ -280,8 +280,8 @@ impl GenerationProcessor {
                 .map(|pw| pw.add_dynamic_sphere(sphere_pos, 0.5));
 
             if let Some(handle) = body_handle {
-                use moho_core::materials::MaterialType;
                 use moho_game::actors::Sphere;
+                use moho_voxel::MaterialType;
                 let sphere = Sphere::new(
                     sphere_pos,
                     0.5,
@@ -352,7 +352,7 @@ mod tests {
             scene_bytes,
             spec,
             moho_game::scene_builders::TerrainConfig::default(),
-            moho_core::voxel::VoxelGrid::new(16),
+            moho_voxel::VoxelGrid::new(16),
         );
 
         assert_eq!(app.game_state, GameState::Playing);
@@ -406,7 +406,7 @@ mod tests {
                 scene_bytes,
                 spec,
                 moho_game::scene_builders::TerrainConfig::default(),
-                moho_core::voxel::VoxelGrid::new(16),
+                moho_voxel::VoxelGrid::new(16),
             );
         };
         complete(&mut app, "headless-test-twice-first");
@@ -469,7 +469,7 @@ mod tests {
             scene_bytes,
             spec,
             moho_game::scene_builders::TerrainConfig::default(),
-            moho_core::voxel::VoxelGrid::new(16),
+            moho_voxel::VoxelGrid::new(16),
         );
         app.scene.world_meshes_mut().flush(&mut backend);
 

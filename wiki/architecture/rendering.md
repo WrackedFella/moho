@@ -1,9 +1,10 @@
 # Rendering
 
 **Source:** `moho_render_api/src/` (`world_geometry.rs`), `moho_renderer/src/` (`scene.rs`,
-`world_meshes.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`), `src/app/world_geometry.rs`,
+`world_meshes.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `src/app/world_geometry.rs`,
 `shaders/`, `moho_level/src/`.
-**Decision:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md).
+**Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
+[ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md).
 
 ## Boundary
 
@@ -108,12 +109,29 @@ flowchart LR
     A["flatten instances<br/>upload to instance buffer"] --> B["shadow passes<br/>shadow_ops"]
     B --> C["main pass<br/>skybox, then geometry<br/>main_pass_ops"]
     C --> D["SSAO compute<br/>from depth"]
-    D --> E["finish_frame<br/>frame callback (egui),<br/>submit, present"]
+    D --> U["UI pass<br/>draw_ui"]
+    U --> E["finish_frame<br/>frame callback (egui),<br/>submit, present"]
 ```
 
-The egui UI is drawn by the `FrameCallback` the UI adapter registers on the renderer,
-inside `finish_frame`. Shader sources are `shaders/*.wgsl` (`common`, `vertex`,
-`fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`).
+The egui UI is currently drawn by the `FrameCallback` the UI adapter registers on the
+renderer, inside `finish_frame`. Shader sources are `shaders/*.wgsl` (`common`, `vertex`,
+`fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`).
+
+## UI paint data
+
+UI reaches the renderer as plain data ([ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md)),
+not as wgpu or egui types. `moho_render_api::UiFrame` holds `pixels_per_point`, texture
+deltas (`UiTextureSet` before drawing, `UiTextureId` frees after) and `UiMesh`es
+(clipped, textured triangle lists of `UiVertex`, in points). A game implements
+`UiFrameSource` and registers a `UiSource` with `RendererBackend::set_ui_source`; the
+renderer pulls `Option<UiFrame>` once per frame with the surface size.
+
+`moho_renderer::ui_pass` draws it over the finished scene, before `finish_frame`. The pure
+logic (`scissor`, `build_draws`, texture bookkeeping) is separate from the wgpu half
+(`ui_pass/gpu.rs`). Meshes with an empty scissor, no indices or an unknown texture are
+skipped; a non-finite or non-positive `pixels_per_point` skips the whole frame. The
+painter and `shaders/ui.wgsl` are a port of `egui-wgpu` 0.34: premultiplied-alpha
+blending, sRGB vertex colours, no custom paint callbacks.
 
 ## Tunables
 

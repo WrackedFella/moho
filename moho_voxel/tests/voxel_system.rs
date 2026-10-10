@@ -1,6 +1,6 @@
 // Clean, focused unit tests for voxel utilities and grid behavior.
 use glam::IVec3;
-use moho_core::voxel::VoxelGrid;
+use moho_voxel::VoxelGrid;
 
 #[test]
 fn test_voxel_grid_get_chunk_pos() {

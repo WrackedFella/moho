@@ -6,8 +6,21 @@ use std::marker::PhantomData;
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 
 use crate::bindings::{Action, ActionBindings, Binding};
-use crate::filter::FilterPipeline;
+use crate::filter::{DeadzoneFilter, FilterPipeline};
 use crate::key::{Key, MouseButton};
+use crate::pad::{PadButton, PadInput, Stick, StickAxis, StickDir};
+
+/// An axis reading at or past this magnitude holds its stick direction.
+pub const STICK_DIRECTION_THRESHOLD: f32 = 0.5;
+
+/// Look units a fully deflected right stick adds per tick, before sensitivity.
+///
+/// 26 turns about 180 degrees per second at the 60 Hz tick with default
+/// sensitivity: the binary scales look by `0.002` radians per unit, and
+/// `26 * 0.002 * 60` is about `pi`.
+pub const PAD_LOOK_PER_TICK: f32 = 26.0;
+
+const STICK_LOOK_DEAD_ZONE: f32 = 0.15;
 
 /// What the actions did over one tick.
 ///
@@ -59,6 +72,8 @@ pub struct ActionMap<A: Action> {
     pressed: u64,
     released: u64,
     look_accumulator: (f64, f64),
+    /// Left and right stick `(x, y)`, Y up.
+    sticks: [(f32, f32); 2],
     sensitivity: f32,
     filter: FilterPipeline,
 }
@@ -73,6 +88,7 @@ impl<A: Action> ActionMap<A> {
             pressed: 0,
             released: 0,
             look_accumulator: (0.0, 0.0),
+            sticks: [(0.0, 0.0); 2],
             sensitivity,
             filter: FilterPipeline::new(),
         }
@@ -96,8 +112,30 @@ impl<A: Action> ActionMap<A> {
         self.look_accumulator.1 += dy;
     }
 
+    pub fn pad_button(&mut self, button: PadButton, down: bool) {
+        self.set_down(Binding::Pad(PadInput::Button(button)), down);
+    }
+
+    /// `value` is in `-1.0..=1.0` with positive Y up.
+    pub fn pad_axis(&mut self, stick: Stick, axis: StickAxis, value: f32) {
+        let slot = &mut self.sticks[stick as usize];
+        match axis {
+            StickAxis::X => slot.0 = value,
+            StickAxis::Y => slot.1 = value,
+        }
+        self.sync_stick_directions(stick);
+    }
+
+    /// Releases pad bindings only and zeroes stored stick axes.
+    pub fn pad_disconnected(&mut self) {
+        self.sticks = [(0.0, 0.0); 2];
+        self.down.retain(|binding| !binding.is_pad());
+        self.refresh_held();
+    }
+
     /// Releases every held action, e.g. when the window loses focus.
     pub fn release_all(&mut self) {
+        self.sticks = [(0.0, 0.0); 2];
         self.down.clear();
         self.refresh_held();
     }
@@ -158,14 +196,47 @@ impl<A: Action> ActionMap<A> {
         self.held = held;
     }
 
+    fn sync_stick_directions(&mut self, stick: Stick) {
+        let (x, y) = self.sticks[stick as usize];
+        let directions = [
+            (StickDir::Up, y >= STICK_DIRECTION_THRESHOLD),
+            (StickDir::Down, y <= -STICK_DIRECTION_THRESHOLD),
+            (StickDir::Left, x <= -STICK_DIRECTION_THRESHOLD),
+            (StickDir::Right, x >= STICK_DIRECTION_THRESHOLD),
+        ];
+        let mut changed = false;
+        for (dir, active) in directions {
+            let binding = Binding::Pad(PadInput::Stick(stick, dir));
+            changed |= if active {
+                self.down.insert(binding)
+            } else {
+                self.down.remove(&binding)
+            };
+        }
+        if changed {
+            self.refresh_held();
+        }
+    }
+
     fn sample_look(&mut self) -> (f32, f32) {
         let (dx, dy) = std::mem::take(&mut self.look_accumulator);
-        if dx.abs() < f64::EPSILON && dy.abs() < f64::EPSILON {
+        let mouse = if dx.abs() < f64::EPSILON && dy.abs() < f64::EPSILON {
             self.filter.reset();
-            return (0.0, 0.0);
-        }
-        self.filter
-            .apply((dx as f32 * self.sensitivity, dy as f32 * self.sensitivity))
+            (0.0, 0.0)
+        } else {
+            self.filter
+                .apply((dx as f32 * self.sensitivity, dy as f32 * self.sensitivity))
+        };
+        let (stick_x, stick_y) = self.stick_look();
+        (mouse.0 + stick_x, mouse.1 + stick_y)
+    }
+
+    /// Right-stick look for one tick; stick up looks up, and mouse dy is down-positive.
+    fn stick_look(&self) -> (f32, f32) {
+        let (x, y) = DeadzoneFilter::new(STICK_LOOK_DEAD_ZONE)
+            .apply(self.sticks[Stick::RightStick as usize]);
+        let scale = PAD_LOOK_PER_TICK * self.sensitivity;
+        (x * scale, -y * scale)
     }
 }
 
@@ -224,6 +295,301 @@ mod tests {
                 TestAction::Fire => &[Binding::Mouse(MouseButton::Left)],
             }
         }
+    }
+
+    use crate::pad::{PadInput, StickDir};
+
+    fn pad_map(sensitivity: f32) -> ActionMap<TestAction> {
+        let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+        bindings.set(
+            TestAction::Jump,
+            vec![Binding::Pad(PadInput::Button(PadButton::South))],
+        );
+        bindings.set(
+            TestAction::MoveForward,
+            vec![Binding::Pad(PadInput::Stick(
+                Stick::LeftStick,
+                StickDir::Up,
+            ))],
+        );
+        ActionMap::new(bindings, sensitivity)
+    }
+
+    #[test]
+    fn pad_button_drives_bound_action() {
+        let mut map = pad_map(1.0);
+
+        map.pad_button(PadButton::South, true);
+        let frame = map.end_tick();
+        let next = map.end_tick();
+
+        assert!(frame.pressed(TestAction::Jump));
+        assert!(frame.held(TestAction::Jump));
+        assert!(next.held(TestAction::Jump));
+        assert!(!next.pressed(TestAction::Jump));
+        assert!(!frame.held(TestAction::MoveForward));
+
+        map.pad_button(PadButton::South, false);
+        let up = map.end_tick();
+        assert!(up.released(TestAction::Jump));
+        assert!(!up.held(TestAction::Jump));
+    }
+
+    #[test]
+    fn unbound_pad_button_changes_nothing() {
+        let mut map = pad_map(1.0);
+
+        map.pad_button(PadButton::East, true);
+        let frame = map.end_tick();
+
+        for &a in TestAction::ALL {
+            assert!(!frame.held(a) && !frame.pressed(a), "{a:?}");
+        }
+    }
+
+    #[test]
+    fn stick_direction_held_past_threshold() {
+        let cases = [
+            (0.0, false),
+            (0.3, false),
+            (0.49, false),
+            (0.5, true),
+            (0.6, true),
+            (1.0, true),
+            (-0.9, false),
+        ];
+
+        for (y, held) in cases {
+            let mut map = pad_map(1.0);
+
+            map.pad_axis(Stick::LeftStick, StickAxis::Y, y);
+            let frame = map.end_tick();
+
+            assert_eq!(frame.held(TestAction::MoveForward), held, "y = {y}");
+            assert_eq!(frame.pressed(TestAction::MoveForward), held, "y = {y}");
+        }
+    }
+
+    #[test]
+    fn stick_direction_releases_when_axis_returns_inside_threshold() {
+        let mut map = pad_map(1.0);
+        map.pad_axis(Stick::LeftStick, StickAxis::Y, 0.8);
+        map.end_tick();
+
+        map.pad_axis(Stick::LeftStick, StickAxis::Y, 0.1);
+        let frame = map.end_tick();
+
+        assert!(frame.released(TestAction::MoveForward));
+        assert!(!frame.held(TestAction::MoveForward));
+    }
+
+    #[test]
+    fn each_stick_direction_reads_its_own_axis_and_sign() {
+        let cases = [
+            (StickDir::Up, StickAxis::Y, 0.8),
+            (StickDir::Down, StickAxis::Y, -0.8),
+            (StickDir::Left, StickAxis::X, -0.8),
+            (StickDir::Right, StickAxis::X, 0.8),
+        ];
+        let wrong = [
+            (StickDir::Up, StickAxis::Y, -0.8),
+            (StickDir::Down, StickAxis::Y, 0.8),
+            (StickDir::Left, StickAxis::X, 0.8),
+            (StickDir::Right, StickAxis::X, -0.8),
+            (StickDir::Up, StickAxis::X, 0.8),
+            (StickDir::Right, StickAxis::Y, 0.8),
+        ];
+
+        for (cases, expected) in [(&cases[..], true), (&wrong[..], false)] {
+            for &(dir, axis, value) in cases {
+                for stick in [Stick::LeftStick, Stick::RightStick] {
+                    let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+                    bindings.set(
+                        TestAction::Fire,
+                        vec![Binding::Pad(PadInput::Stick(stick, dir))],
+                    );
+                    let mut map = ActionMap::new(bindings, 1.0);
+
+                    map.pad_axis(stick, axis, value);
+                    let frame = map.end_tick();
+
+                    assert_eq!(
+                        frame.held(TestAction::Fire),
+                        expected,
+                        "{stick:?} {dir:?} {axis:?} {value}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn right_stick_adds_per_tick_look() {
+        for filtering in [true, false] {
+            let mut map = pad_map(2.0);
+            map.set_filtering(filtering);
+
+            map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+            let first = map.end_tick().look();
+            let second = map.end_tick().look();
+
+            let expected = PAD_LOOK_PER_TICK * 2.0;
+            assert_close(first, (expected, 0.0));
+            assert_close(second, (expected, 0.0));
+        }
+    }
+
+    #[test]
+    fn right_stick_up_looks_up_and_scales_with_deflection() {
+        let mut map = pad_map(1.0);
+        map.set_filtering(false);
+
+        map.pad_axis(Stick::RightStick, StickAxis::Y, 0.5);
+        let look = map.end_tick().look();
+
+        assert_close(look, (0.0, -0.5 * PAD_LOOK_PER_TICK));
+    }
+
+    #[test]
+    fn right_stick_inside_dead_zone_adds_no_look() {
+        let mut map = pad_map(1.0);
+        map.set_filtering(false);
+
+        map.pad_axis(Stick::RightStick, StickAxis::X, 0.1);
+        map.pad_axis(Stick::RightStick, StickAxis::Y, 0.1);
+
+        assert_eq!(map.end_tick().look(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn right_stick_dead_zone_is_radial_not_per_axis() {
+        let mut map = pad_map(1.0);
+        map.set_filtering(false);
+
+        map.pad_axis(Stick::RightStick, StickAxis::X, 0.12);
+        map.pad_axis(Stick::RightStick, StickAxis::Y, 0.12);
+        let look = map.end_tick().look();
+
+        assert_close(look, (0.12 * PAD_LOOK_PER_TICK, -0.12 * PAD_LOOK_PER_TICK));
+    }
+
+    #[test]
+    fn left_stick_does_not_add_look() {
+        let mut map = pad_map(1.0);
+        map.set_filtering(false);
+
+        map.pad_axis(Stick::LeftStick, StickAxis::X, 1.0);
+
+        assert_eq!(map.end_tick().look(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn stick_look_is_added_after_the_mouse_filter() {
+        let mut map = pad_map(1.0);
+        map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+        map.mouse_motion(1.0, 0.0);
+
+        let look = map.end_tick().look();
+
+        assert_close(look, (0.8 + PAD_LOOK_PER_TICK, 0.0));
+    }
+
+    #[test]
+    fn release_all_stops_stick_look() {
+        let mut map = pad_map(1.0);
+        map.set_filtering(false);
+        map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+        assert_close(map.end_tick().look(), (PAD_LOOK_PER_TICK, 0.0));
+
+        map.release_all();
+        let frame = map.end_tick();
+        let next = map.end_tick();
+
+        assert_eq!(frame.look(), (0.0, 0.0));
+        assert_eq!(next.look(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn resting_or_slightly_deflected_stick_holds_no_direction() {
+        for stick in [Stick::LeftStick, Stick::RightStick] {
+            for value in [0.0, 0.3, -0.3] {
+                let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+                let actions = [TestAction::MoveForward, TestAction::Jump, TestAction::Fire];
+                bindings.set(
+                    TestAction::MoveForward,
+                    vec![Binding::Pad(PadInput::Stick(stick, StickDir::Up))],
+                );
+                bindings.set(
+                    TestAction::Jump,
+                    vec![
+                        Binding::Pad(PadInput::Stick(stick, StickDir::Down)),
+                        Binding::Pad(PadInput::Stick(stick, StickDir::Left)),
+                    ],
+                );
+                bindings.set(
+                    TestAction::Fire,
+                    vec![Binding::Pad(PadInput::Stick(stick, StickDir::Right))],
+                );
+                let mut map = ActionMap::new(bindings, 1.0);
+
+                map.pad_axis(stick, StickAxis::X, value);
+                map.pad_axis(stick, StickAxis::Y, value);
+                let frame = map.end_tick();
+
+                for action in actions {
+                    assert!(!frame.held(action), "{stick:?} at {value}: {action:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pad_disconnect_releases_pad_bindings() {
+        let mut map = pad_map(1.0);
+        map.set_filtering(false);
+        map.pad_button(PadButton::South, true);
+        map.pad_axis(Stick::LeftStick, StickAxis::Y, 1.0);
+        map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+        map.end_tick();
+
+        map.pad_disconnected();
+        let frame = map.end_tick();
+        let next = map.end_tick();
+
+        assert!(frame.released(TestAction::Jump));
+        assert!(frame.released(TestAction::MoveForward));
+        assert!(!frame.held(TestAction::Jump));
+        assert!(!frame.held(TestAction::MoveForward));
+        assert_eq!(frame.look(), (0.0, 0.0));
+        assert_eq!(next.look(), (0.0, 0.0));
+        assert!(!next.released(TestAction::Jump));
+    }
+
+    #[test]
+    fn pad_disconnect_leaves_a_held_key_on_the_same_action() {
+        let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+        bindings.set(
+            TestAction::Jump,
+            vec![
+                Binding::Key(Key::Space),
+                Binding::Pad(PadInput::Button(PadButton::South)),
+            ],
+        );
+        let mut map = ActionMap::new(bindings, 1.0);
+        map.key(Key::Space, true);
+        map.pad_button(PadButton::South, true);
+        map.end_tick();
+
+        map.pad_disconnected();
+        let frame = map.end_tick();
+
+        assert!(frame.held(TestAction::Jump));
+        assert!(!frame.released(TestAction::Jump));
+
+        map.key(Key::Space, false);
+        let done = map.end_tick();
+        assert!(!done.held(TestAction::Jump));
+        assert!(done.released(TestAction::Jump));
     }
 
     fn map(sensitivity: f32) -> ActionMap<TestAction> {

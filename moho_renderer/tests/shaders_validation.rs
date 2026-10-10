@@ -62,3 +62,28 @@ fn gtao_shader_parses_and_validates() {
 fn ssao_blur_shader_parses_and_validates() {
     validate_file("ssao_blur.wgsl", Capabilities::empty());
 }
+
+#[test]
+fn ui_shader_parses_and_validates() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../shaders/ui.wgsl");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read shader {}: {e}", path.display()));
+
+    let module = validate("ui.wgsl", &source, Capabilities::empty());
+
+    let entry_points: Vec<&str> = module
+        .entry_points
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    for expected in [
+        "vs_main",
+        "fs_main_linear_framebuffer",
+        "fs_main_gamma_framebuffer",
+    ] {
+        assert!(
+            entry_points.contains(&expected),
+            "{expected} missing: {entry_points:?}"
+        );
+    }
+}

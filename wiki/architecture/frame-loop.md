@@ -1,6 +1,6 @@
 # Frame loop
 
-**Source:** `moho_app/src/` (`runner.rs`, `lib.rs`, `headless.rs`, `fixed_step.rs`), `src/app/game.rs`
+**Source:** `moho_app/src/` (`runner.rs`, `lib.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `src/app/game.rs`
 (`impl moho_app::Game for App`), `src/app/event_loop/`.
 **Related:** [ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md) (fixed tick).
 
@@ -16,7 +16,7 @@ flowchart TD
     RES["resumed"] --> mk["create window, renderer,<br/>AudioSystem if enabled"] --> init["Game::init"]
 
     NE["new_events"] --> acc["FixedStep accumulates<br/>time since last wake"]
-    acc --> tk["per due tick:<br/>Game::command then Game::tick"]
+    acc --> tk["per due tick:<br/>Game::command, Game::tick,<br/>then GameClock advance"]
     tk --> rr["request_redraw if ticks ran"]
     rr --> cf["control flow: wait until next tick"]
 
@@ -46,6 +46,7 @@ sequenceDiagram
     participant Bus as EventBus
     participant Sim as Simulation + Physics
     participant LS as LightSystem
+    T->>T: clock time scale = 1 if Playing, else 0
     T->>Bus: SystemEvent::FrameStart
     T->>Sim: apply command, update_game_state (Playing only)
     Note over Sim: controller input → camera,<br/>KCC or free-fly, step rigid bodies
@@ -56,6 +57,10 @@ sequenceDiagram
     T->>T: drain event channels
     T->>T: check_generation_cancel, poll_generation
 ```
+
+Scene load and the console `time` command reset the clock (`reset_to`) while the events
+drain. The loop advances the clock after `tick` returns, so a reset made in a Playing tick
+gets that tick's advance on top.
 
 All gameplay steps early-return unless `GameState::Playing`. `dt` is the fixed tick length.
 
@@ -80,11 +85,13 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
 (`RenderRequest`: point lights, shadow and SSAO quality) and `Game::frame` applies them.
 `App::frame`, in order:
 
-1. apply queued `RenderRequest`s and drain audio events;
-2. if the UI asked to quit: auto-save, `request_exit`, stop;
-3. `update_hud_data`, then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
+1. `poll_gamepads`: apply pad events while playing with focus, otherwise discard them
+   and release pad actions;
+2. apply queued `RenderRequest`s and drain audio events;
+3. if the UI asked to quit: auto-save, `request_exit`, stop;
+4. `update_hud_data`, then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
    with actors, the sphere and cube mesh handles and the camera;
-4. recall the egui staging belt.
+5. recall the egui staging belt.
 
 A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
 [rendering](rendering.md#pass-order). `alpha` (tick interpolation) is not used yet.

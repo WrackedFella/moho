@@ -34,6 +34,8 @@ pub struct Renderer<'a> {
     depth_sampler: wgpu::Sampler,
     light_manager: crate::lights::LightManager,
     dynamic_lights_buffer: wgpu::Buffer,
+    ui_pass: crate::ui_pass::UiPass,
+    ui_source: Option<crate::UiSource>,
 }
 
 impl<'a> Renderer<'a> {
@@ -82,6 +84,8 @@ impl<'a> Renderer<'a> {
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 });
 
+        let ui_pass = crate::ui_pass::UiPass::new(&device_setup.device, device_setup.config.format);
+
         let mut renderer = Self {
             window,
             surface: device_setup.surface,
@@ -112,6 +116,8 @@ impl<'a> Renderer<'a> {
             depth_sampler,
             light_manager,
             dynamic_lights_buffer,
+            ui_pass,
+            ui_source: None,
         };
 
         // Recreate camera bind group with SSAO textures if available
@@ -526,6 +532,28 @@ impl<'a> Renderer<'a> {
         }
     }
 
+    /// Set the provider of UI paint data; `None` clears it.
+    pub fn set_ui_source(&mut self, source: Option<crate::UiSource>) {
+        self.ui_source = source;
+    }
+
+    fn draw_ui(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        let (Some(source), Some(view)) = (&self.ui_source, &self.pending_frame_view) else {
+            return;
+        };
+        let target = [self.config.width, self.config.height];
+        let Ok(mut source) = source.lock() else {
+            tracing::error!("UI source mutex poisoned; skipping UI pass");
+            return;
+        };
+        let frame = source.ui_frame(target);
+        drop(source);
+        if let Some(frame) = frame {
+            self.ui_pass
+                .render(&self.device, &self.queue, encoder, view, target, &frame);
+        }
+    }
+
     /// Flush all queued draws (shadow passes, main pass, SSAO) and present
     /// the frame. No-op if `begin_frame` wasn't called or didn't acquire a
     /// surface texture.
@@ -589,6 +617,8 @@ impl<'a> Renderer<'a> {
                 &self.depth_sampler,
             );
         }
+
+        self.draw_ui(&mut encoder);
 
         let draw_count = self.pending_draws.len();
         crate::render_ops::frame_ops::finish_frame(

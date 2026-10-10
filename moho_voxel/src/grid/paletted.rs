@@ -1,4 +1,4 @@
-use crate::persist::PersistError;
+use moho_core::persist::PersistError;
 use std::collections::HashMap;
 
 pub const CHUNK_VOL: usize = 4096; // 16³
@@ -127,7 +127,7 @@ impl PalettedChunk {
             indices: self.indices.to_vec(),
             resources,
         };
-        crate::persist::encode(crate::persist::FileKind::Chunk, &snap)
+        moho_core::persist::encode(moho_core::persist::FileKind::Chunk, &snap)
             .expect("PalettedChunk serialization must not fail")
     }
 
@@ -135,7 +135,8 @@ impl PalettedChunk {
     /// Fails if the data is malformed, the index count is wrong, or an index
     /// points outside the palette.
     pub fn from_bytes(data: &[u8]) -> Result<Self, PersistError> {
-        let snap: ChunkSnapshot = crate::persist::decode(crate::persist::FileKind::Chunk, data)?;
+        let snap: ChunkSnapshot =
+            moho_core::persist::decode(moho_core::persist::FileKind::Chunk, data)?;
         if snap.indices.len() != CHUNK_VOL
             || snap.palette.is_empty()
             || snap
@@ -223,8 +224,8 @@ mod tests {
     #[test]
     fn wrong_index_count_returns_corrupt() {
         let short = (vec![u32::MAX], vec![0u16; 3], Vec::<(u16, u32)>::new());
-        let bytes =
-            crate::persist::encode(crate::persist::FileKind::Chunk, &short).expect("encode");
+        let bytes = moho_core::persist::encode(moho_core::persist::FileKind::Chunk, &short)
+            .expect("encode");
 
         let err = PalettedChunk::from_bytes(&bytes).expect_err("must reject");
 
@@ -240,8 +241,8 @@ mod tests {
             (Vec::new(), vec![0u16; CHUNK_VOL]),
         ] {
             let snap = (palette, indices, Vec::<(u16, u32)>::new());
-            let bytes =
-                crate::persist::encode(crate::persist::FileKind::Chunk, &snap).expect("encode");
+            let bytes = moho_core::persist::encode(moho_core::persist::FileKind::Chunk, &snap)
+                .expect("encode");
 
             let err = PalettedChunk::from_bytes(&bytes).expect_err("must reject");
 

@@ -67,14 +67,14 @@ impl FrameProcessor {
         let right_input = app.simulation.controller_input.right;
         let sprint = app.simulation.controller_input.sprint;
 
-        // Zero translational input so apply_input only updates yaw/pitch and clock
+        // Zero translational input so apply_input only updates yaw/pitch
         {
             let ci = app.simulation.controller_input_mut();
             ci.forward = 0.0;
             ci.right = 0.0;
             ci.up = 0.0;
         }
-        // apply_input updates yaw/pitch from deltas, advances the game clock, returns camera
+        // apply_input updates yaw/pitch from deltas, returns camera
         app.simulation.apply_input(dt);
 
         // Read the now-updated yaw/pitch for horizontal movement calculation
@@ -165,7 +165,7 @@ impl FrameProcessor {
             // the density field to close the seam.
             for pos in loaded {
                 app.event_bus
-                    .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                    .publish(moho_voxel::WorldEvent::ChunkMeshDirty {
                         chunk_pos: pos,
                         terrain_dirty: true,
                         structure_dirty: false,
@@ -174,7 +174,7 @@ impl FrameProcessor {
                     let neighbor = pos + dir;
                     if ls.grid().has_chunk(neighbor) {
                         app.event_bus
-                            .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                            .publish(moho_voxel::WorldEvent::ChunkMeshDirty {
                                 chunk_pos: neighbor,
                                 terrain_dirty: true,
                                 structure_dirty: false,
@@ -214,7 +214,7 @@ impl FrameProcessor {
 
         for pos in dirty {
             app.event_bus
-                .publish(moho_core::events::WorldEvent::ChunkMeshDirty {
+                .publish(moho_voxel::WorldEvent::ChunkMeshDirty {
                     chunk_pos: pos,
                     terrain_dirty: true,
                     structure_dirty: false,
@@ -247,13 +247,18 @@ impl FrameProcessor {
         }
     }
 
-    pub fn update_lighting(&self, app: &App, renderer: &mut dyn moho_renderer::RendererBackend) {
+    pub fn update_lighting(
+        &self,
+        app: &App,
+        clock: &moho_app::GameClock,
+        renderer: &mut dyn moho_renderer::RendererBackend,
+    ) {
         if app.game_state != crate::game_state::GameState::Playing {
             return;
         }
 
-        let (sun_dir, moon_dir) = app.simulation.celestial_directions();
-        let time = app.simulation.time_of_day();
+        let (sun_dir, moon_dir) = clock.celestial_directions();
+        let time = clock.time_of_day();
 
         let sun_intensity = if sun_dir.y > 0.0 { 1.0 } else { 0.0 };
 
@@ -335,7 +340,7 @@ impl FrameProcessor {
     }
 
     /// Push current world state into the overlay HUD data.
-    pub fn update_hud_data(&self, app: &App, tick_length: Duration) {
+    pub fn update_hud_data(&self, app: &App, clock: &moho_app::GameClock, tick_length: Duration) {
         let Some(ui_adapter) = &app.ui_adapter else {
             return;
         };
@@ -376,7 +381,7 @@ impl FrameProcessor {
             camera_mode: format!("{mode:?}"),
             is_fps_mode: is_fps,
             frame_time_secs: tick_length.as_secs_f32(),
-            time_of_day: app.simulation.time_of_day(),
+            time_of_day: clock.time_of_day(),
             material_under_crosshair: None,
             camera_yaw: yaw,
             player_health: 1.0,
@@ -403,8 +408,7 @@ impl Default for FrameProcessor {
 mod tests {
     use super::*;
     use crate::game_state::GameState;
-    use moho_core::events::WorldEvent;
-    use moho_core::voxel::VoxelChunk;
+    use moho_voxel::{VoxelChunk, WorldEvent};
 
     const DT: f32 = 1.0 / 60.0;
 
@@ -422,7 +426,7 @@ mod tests {
         let sphere = moho_game::actors::Sphere::new(
             center,
             0.5,
-            moho_core::materials::MaterialType::Lambertian {
+            moho_voxel::MaterialType::Lambertian {
                 albedo: glam::Vec3::ONE,
             },
         );
@@ -488,7 +492,7 @@ mod tests {
             .set_position_yaw_pitch(glam::Vec3::new(8.0, 80.0, 8.0), 0.0, 0.0);
         app.chunk_streamer = Some(crate::app::chunk_streamer::ChunkStreamer::new(
             moho_game::scene_builders::TerrainConfig::default(),
-            moho_core::voxel::StreamingConfig {
+            moho_voxel::StreamingConfig {
                 load_radius_chunks: 0,
                 unload_radius_chunks: 1,
                 chunks_per_frame: 1,
@@ -502,7 +506,7 @@ mod tests {
             .expect("App starts with a light system")
             .grid_mut();
         grid.mutator()
-            .place(moho_core::voxel::BlockPos::new(165, 70, 165), 1, None);
+            .place(moho_voxel::BlockPos::new(165, 70, 165), 1, None);
         // Unmodified, so eviction doesn't write a chunk file to the working directory.
         grid.clear_chunk_modified(far);
         app.entities.chunks.insert(VoxelChunk::empty(far));

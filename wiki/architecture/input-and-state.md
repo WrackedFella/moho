@@ -1,7 +1,7 @@
 # Input and state
 
 **Source:** `src/input_dispatcher.rs`, `moho_input/src/`, `moho_ui/src/actions.rs`, `src/app/renderer_setup.rs` (registrations),
-`src/app/game.rs` (`Game::event`), `src/main.rs` (`handle_keyboard_input`), `moho_ui/src/app_state/game_state.rs`,
+`src/app/game.rs` (`Game::event`, `poll_gamepads`), `src/main.rs` (`handle_keyboard_input`), `moho_ui/src/app_state/game_state.rs`,
 `moho_ui/src/app_state/state_coordinator.rs`.
 
 ## Input routing
@@ -52,16 +52,26 @@ default bindings), `ActionBindings<A>`, and `ActionMap<A>`
 `InputState` (`src/app/input_state.rs`).
 
 `handle_window_event` and `handle_device_event` feed key, mouse-button and raw
-mouse-motion events into the map. Once per tick `App::command` (`src/app/game.rs`) calls `end_tick`,
+mouse-motion events into the map. Gamepads feed it too: `Gamepads::poll`
+(`moho_input/src/gamepad.rs`, the only module that names `gilrs`) drains backend events
+into `pad_button` / `pad_axis` once per frame from `App::poll_gamepads`
+(`InputState::gamepads`, `None` when the backend fails to start). Outside `Playing`, or
+while the window lacks focus (`InputState::focused`), the events are discarded unapplied
+and `pad_disconnected` releases pad bindings. Every menu and console transition (`App::apply_transition`,
+`src/main.rs`) also calls `ActionMap::release_all`, so nothing stays held across a menu or the
+console and no press made there lands on resume; a key still down on resume acts only after it
+is pressed again. Once per tick `App::command` (`src/app/game.rs`) calls `end_tick`,
 which returns an `ActionFrame` and resets the per-tick state:
 
 - `held`: down at the end of the tick; `pressed` / `released`: edges at any point in the
   tick, so a tap shorter than a tick is not lost.
-- `look`: the tick's accumulated mouse motion scaled by sensitivity, then, when
+- `look`: the right stick adds `PAD_LOOK_PER_TICK` times its deflection per tick (after a
+  small dead zone), on top of the mouse input below. The mouse part is the tick's accumulated mouse motion scaled by sensitivity, then, when
   filtering is on, deadzone, exponential smoothing and the linear response curve
   (`moho_input/src/filter.rs`). Motion is unnegated; `App::command` inverts it for
   yaw and pitch.
 
+A stick direction binding is down while its axis is at or past `STICK_DIRECTION_THRESHOLD`.
 An action is held when any of its bindings is down. A frame holds at most 64 actions.
 Bindings persist in the `[bindings]` section of [prefs](../reference/prefs-format.md).
 

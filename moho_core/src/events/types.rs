@@ -8,7 +8,6 @@ pub mod graphics;
 pub mod input;
 pub mod system;
 pub mod ui;
-pub mod world;
 
 // Re-export all event types for convenience
 pub use audio::*;
@@ -17,7 +16,6 @@ pub use graphics::*;
 pub use input::*;
 pub use system::*;
 pub use ui::*;
-pub use world::*;
 
 /// Base trait for all events in the system.
 ///

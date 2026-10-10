@@ -4,7 +4,6 @@
 //! and calculates sun and moon positions for realistic day/night transitions.
 
 use glam::Vec3;
-use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
 
 /// In-game clock tracking time of day and celestial mechanics.
@@ -12,19 +11,22 @@ use std::f32::consts::PI;
 /// The clock operates on a 24-hour cycle (0.0 - 24.0) with configurable
 /// day and night lengths. It automatically calculates sun and moon positions
 /// based on the current time.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GameClock {
     /// Current time of day in hours (0.0 = midnight, 12.0 = noon, 24.0 wraps to 0.0)
     time_of_day: f32,
 
-    /// Length of daytime in real-world seconds
+    /// Length of daytime in simulated seconds at time scale 1.0
     day_length_seconds: f32,
 
-    /// Length of nighttime in real-world seconds
+    /// Length of nighttime in simulated seconds at time scale 1.0
     night_length_seconds: f32,
 
-    /// Total elapsed time in seconds (for debugging/stats)
+    /// Total simulated time in seconds (for debugging/stats)
     elapsed_seconds: f64,
+
+    /// Multiplier applied to every advance; 0.0 freezes the clock
+    time_scale: f32,
 }
 
 impl GameClock {
@@ -32,12 +34,12 @@ impl GameClock {
     ///
     /// # Arguments
     /// * `initial_time` - Starting time in hours (0.0-24.0)
-    /// * `day_length` - Length of daytime in real seconds
-    /// * `night_length` - Length of nighttime in real seconds
+    /// * `day_length` - Length of daytime in simulated seconds at time scale 1.0
+    /// * `night_length` - Length of nighttime in simulated seconds at time scale 1.0
     ///
     /// # Example
     /// ```
-    /// use moho_game::game_clock::GameClock;
+    /// use moho_app::GameClock;
     ///
     /// // 10 minute days, 7 minute nights, starting at dawn
     /// let clock = GameClock::new(6.0, 600.0, 420.0);
@@ -48,31 +50,40 @@ impl GameClock {
             day_length_seconds: day_length,
             night_length_seconds: night_length,
             elapsed_seconds: 0.0,
+            time_scale: 1.0,
         }
     }
 
-    /// Advance the clock by the given delta time (in seconds).
+    /// Advance the clock by `dt` seconds of simulated time, scaled by the time scale.
     ///
     /// The speed of time progression depends on whether it's currently day or night.
     /// This allows for asymmetric day/night cycles.
-    ///
-    /// # Arguments
-    /// * `dt` - Delta time in real-world seconds
-    pub fn tick(&mut self, dt: f32) {
+    pub(crate) fn advance(&mut self, dt: f32) {
+        let dt = dt * self.time_scale;
         self.elapsed_seconds += f64::from(dt);
 
-        // Determine current phase and corresponding speed
         let time_speed = if self.is_daytime() {
-            // Day phase: 6:00 - 18:00 (12 hours)
             12.0 / self.day_length_seconds
         } else {
-            // Night phase: 18:00 - 6:00 (12 hours)
             12.0 / self.night_length_seconds
         };
 
-        // Advance time and wrap at 24 hours
-        self.time_of_day += dt * time_speed;
-        self.time_of_day = self.time_of_day.rem_euclid(24.0);
+        self.time_of_day = (self.time_of_day + dt * time_speed).rem_euclid(24.0);
+    }
+
+    /// Set the multiplier applied to every advance. Negative or non-finite
+    /// values are stored as 0.0 (frozen).
+    pub fn set_time_scale(&mut self, scale: f32) {
+        self.time_scale = if scale.is_finite() {
+            scale.max(0.0)
+        } else {
+            0.0
+        };
+    }
+
+    /// The multiplier applied to every advance (default 1.0).
+    pub fn time_scale(&self) -> f32 {
+        self.time_scale
     }
 
     /// Get the current time of day in hours (0.0-24.0).
@@ -80,16 +91,14 @@ impl GameClock {
         self.time_of_day
     }
 
-    /// Get the total elapsed real-world time in seconds.
+    /// Get the total elapsed simulated time in seconds (scaled by the time scale).
     pub fn elapsed_seconds(&self) -> f64 {
         self.elapsed_seconds
     }
 
-    /// Set the time of day directly (useful for testing/debugging).
-    ///
-    /// # Arguments
-    /// * `time` - Time in hours (0.0-24.0), will be wrapped to valid range
-    pub fn set_time(&mut self, time: f32) {
+    /// Jump to `time` hours, wrapped into 0.0-24.0. Keeps the time scale and
+    /// the elapsed total.
+    pub fn reset_to(&mut self, time: f32) {
         self.time_of_day = time.rem_euclid(24.0);
     }
 
@@ -189,17 +198,179 @@ impl Default for GameClock {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use glam::Vec3;
+
     use super::*;
+    use crate::{FrameContext, Game, HeadlessLoop, LoopConfig, TickContext};
+
+    const TOLERANCE: f32 = 1e-4;
+
+    struct ScaledGame {
+        scale: f32,
+        seen_in_tick: Vec<f32>,
+        seen_in_frame: Vec<f32>,
+    }
+
+    impl ScaledGame {
+        fn new(scale: f32) -> Self {
+            Self {
+                scale,
+                seen_in_tick: Vec::new(),
+                seen_in_frame: Vec::new(),
+            }
+        }
+    }
+
+    impl Game for ScaledGame {
+        type Command = ();
+
+        fn command(&mut self) {}
+
+        fn tick(&mut self, ctx: &mut TickContext<'_>, _command: &()) {
+            ctx.clock.set_time_scale(self.scale);
+            self.seen_in_tick.push(ctx.clock.time_of_day());
+        }
+
+        fn frame(&mut self, ctx: &mut FrameContext<'_>, _alpha: f32) {
+            self.seen_in_frame.push(ctx.clock().time_of_day());
+        }
+    }
+
+    /// Day runs 12 h per 120 s, so one second of simulated time is 0.1 h.
+    fn noon_loop() -> HeadlessLoop<ScaledGame> {
+        let clock = GameClock::new(12.0, 120.0, 60.0);
+        HeadlessLoop::new(LoopConfig::new(60).with_clock(clock))
+    }
+
+    fn hours_advanced_in_60_ticks(scale: f32) -> f32 {
+        let mut game = ScaledGame::new(scale);
+        let mut sim = noon_loop();
+
+        sim.step(&mut game, 60);
+
+        sim.clock().time_of_day() - 12.0
+    }
+
+    #[test]
+    fn frame_without_tick_leaves_clock_unchanged() {
+        // A frame shorter than a tick leaves the clock alone; a 1 s frame runs
+        // 60 ticks, which is 0.1 h on a 120 s day.
+        let cases = [(1_000_000_000_u64 / 144, 12.0_f32), (1_000_000_000, 12.1)];
+
+        for (frame_ns, expected_hours) in cases {
+            let mut game = ScaledGame::new(1.0);
+            let mut sim = HeadlessLoop::new(
+                LoopConfig {
+                    max_catch_up_ticks: 100,
+                    ..LoopConfig::new(60)
+                }
+                .with_clock(GameClock::new(12.0, 120.0, 60.0)),
+            );
+
+            sim.advance(&mut game, Duration::from_nanos(frame_ns));
+
+            assert!(
+                (sim.clock().time_of_day() - expected_hours).abs() < TOLERANCE,
+                "frame {frame_ns} ns: got {}",
+                sim.clock().time_of_day()
+            );
+            assert_eq!(game.seen_in_frame, vec![sim.clock().time_of_day()]);
+        }
+    }
+
+    #[test]
+    fn time_scale_scales_the_advance() {
+        let baseline = hours_advanced_in_60_ticks(1.0);
+
+        let frozen = hours_advanced_in_60_ticks(0.0);
+        let doubled = hours_advanced_in_60_ticks(2.0);
+
+        assert!((baseline - 0.1).abs() < TOLERANCE, "baseline {baseline}");
+        assert_eq!(frozen, 0.0);
+        assert!(
+            (doubled - 2.0 * baseline).abs() < TOLERANCE,
+            "doubled {doubled}"
+        );
+    }
+
+    #[test]
+    fn a_tick_advances_the_clock_after_the_game_tick_has_run() {
+        let mut game = ScaledGame::new(1.0);
+        let mut sim = noon_loop();
+
+        sim.step(&mut game, 2);
+
+        assert_eq!(game.seen_in_tick[0], 12.0);
+        assert!(game.seen_in_tick[1] > 12.0, "first tick must have advanced");
+        assert!(sim.clock().time_of_day() > game.seen_in_tick[1]);
+    }
+
+    #[test]
+    fn loop_starts_from_the_clock_in_its_config() {
+        let sim = HeadlessLoop::<ScaledGame>::new(
+            LoopConfig::new(60).with_clock(GameClock::new(17.5, 120.0, 60.0)),
+        );
+
+        assert_eq!(sim.clock().time_of_day(), 17.5);
+    }
+
+    #[test]
+    fn reset_to_sets_time_without_a_tick() {
+        let mut clock = GameClock::new(12.0, 120.0, 60.0);
+
+        clock.reset_to(18.5);
+
+        assert_eq!(clock.time_of_day(), 18.5);
+        assert_eq!(clock.elapsed_seconds(), 0.0);
+    }
+
+    #[test]
+    fn reset_to_keeps_the_time_scale() {
+        let mut clock = GameClock::new(12.0, 120.0, 60.0);
+        clock.set_time_scale(3.0);
+
+        clock.reset_to(1.0);
+
+        assert_eq!(clock.time_scale(), 3.0);
+    }
+
+    #[test]
+    fn time_scale_defaults_to_one() {
+        assert_eq!(GameClock::default().time_scale(), 1.0);
+        assert_eq!(GameClock::new(3.0, 120.0, 60.0).time_scale(), 1.0);
+    }
+
+    #[test]
+    fn negative_or_nan_time_scale_clamps_to_zero() {
+        let cases = [
+            (2.5, 2.5),
+            (0.0, 0.0),
+            (-1.0, 0.0),
+            (f32::NEG_INFINITY, 0.0),
+            (f32::NAN, 0.0),
+            (f32::INFINITY, 0.0),
+        ];
+
+        for (set, stored) in cases {
+            let mut clock = GameClock::default();
+
+            clock.set_time_scale(set);
+
+            assert_eq!(clock.time_scale(), stored, "set {set}");
+        }
+    }
 
     #[test]
     fn test_time_wrapping() {
         let mut clock = GameClock::new(23.5, 600.0, 300.0);
         assert_eq!(clock.time_of_day(), 23.5);
 
-        clock.set_time(25.0);
+        clock.reset_to(25.0);
         assert_eq!(clock.time_of_day(), 1.0);
 
-        clock.set_time(-1.0);
+        clock.reset_to(-1.0);
         assert_eq!(clock.time_of_day(), 23.0);
 
         assert_eq!(GameClock::new(30.0, 600.0, 300.0).time_of_day(), 6.0);
@@ -212,15 +383,15 @@ mod tests {
         assert!(clock.is_daytime());
         assert!(!clock.is_nighttime());
 
-        clock.set_time(22.0);
+        clock.reset_to(22.0);
         assert!(!clock.is_daytime());
         assert!(clock.is_nighttime());
 
-        clock.set_time(6.0);
+        clock.reset_to(6.0);
         assert!(clock.is_daytime(), "6.0 is the first daytime instant");
         assert!(!clock.is_nighttime());
 
-        clock.set_time(18.0);
+        clock.reset_to(18.0);
         assert!(clock.is_nighttime(), "18.0 is the first nighttime instant");
         assert!(!clock.is_daytime());
     }
@@ -270,8 +441,17 @@ mod tests {
     }
 
     #[test]
-    fn test_clock_tick() {
-        const TOLERANCE: f32 = 1e-4;
+    fn celestial_directions_pairs_sun_and_moon() {
+        let clock = GameClock::new(9.0, 600.0, 300.0);
+
+        assert_eq!(
+            clock.celestial_directions(),
+            (clock.sun_direction(), clock.moon_direction())
+        );
+    }
+
+    #[test]
+    fn test_clock_advance() {
         // (start hour, hour after 1 s): day runs 12 h per 120 s, night 12 h
         // per 60 s; 23.95 wraps past midnight.
         let cases = [(12.0, 12.1), (0.0, 0.2), (23.95, 0.15)];
@@ -279,7 +459,7 @@ mod tests {
         for (start, expected) in cases {
             let mut clock = GameClock::new(start, 120.0, 60.0);
 
-            clock.tick(1.0);
+            clock.advance(1.0);
 
             assert!(
                 (clock.time_of_day() - expected).abs() < TOLERANCE,
