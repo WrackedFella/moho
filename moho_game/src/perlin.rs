@@ -208,8 +208,11 @@ mod tests {
             .flat_map(|k| [f64::from(k) * 1e-7, f64::from(k) * 1e-3])
             .collect();
 
+        // About 25 cells qualify; the cap keeps a broken `sample` that makes every
+        // cell extreme from running the dense scan everywhere.
+        const MAX_EXTREME_CELLS: usize = 64;
         let mut extreme_cells = 0;
-        for seed in 0..64 {
+        'scan: for seed in 0..64 {
             let noise = Perlin::new(seed);
 
             for i in -16..16 {
@@ -217,6 +220,9 @@ mod tests {
                     let (cx, cz) = (f64::from(i) + 0.5, f64::from(j) + 0.5);
                     if noise.sample(cx, cz).abs() < 0.999_999 {
                         continue;
+                    }
+                    if extreme_cells == MAX_EXTREME_CELLS {
+                        break 'scan;
                     }
                     extreme_cells += 1;
 

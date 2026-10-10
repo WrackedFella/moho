@@ -31,6 +31,8 @@ exclude_re = [
     'replace \| with \^ in modifier_bits',
     # Equivalent: each action owns a distinct bit, so OR and XOR agree.
     'replace \| with \^ in ActionMap<A>::refresh_held',
+    # Equivalent: the seed fills the low 32 bits and the x cell the high 32, so OR and XOR agree.
+    'replace \| with \^ in Perlin::gradient',
     # winit 0.30's `KeyEvent` has a crate-private field, so no test can build the key
     # press these paths need to return true.
     'replace KeybindCaptureHandler::handle_winit_event -> bool with false',
