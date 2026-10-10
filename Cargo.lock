@@ -1731,6 +1731,7 @@ dependencies = [
  "moho_core",
  "moho_game",
  "moho_input",
+ "moho_render_api",
  "moho_renderer",
  "rand 0.10.2",
  "tracing",

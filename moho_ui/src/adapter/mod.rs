@@ -4,6 +4,7 @@
 //! allowing easy addition of new menus and menu types.
 mod event_routing;
 mod gpu_ops;
+mod paint_map;
 mod rendering;
 
 pub use crate::app_state::GameState;
@@ -444,10 +445,49 @@ impl FrameCallback for EguiAdapter {
     }
 }
 
+impl moho_render_api::UiFrameSource for EguiAdapter {
+    fn ui_frame(&mut self, _size_in_pixels: [u32; 2]) -> Option<moho_render_api::UiFrame> {
+        todo!("run egui and map the output to paint data")
+    }
+}
+
 /// Build adapter function
 pub fn build_adapter(
     window: Option<Arc<Window>>,
     event_bus: Arc<moho_core::EventBus>,
 ) -> EguiAdapter {
     EguiAdapter::new(window, event_bus)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use moho_render_api::UiFrameSource;
+
+    fn adapter() -> EguiAdapter {
+        EguiAdapter::new(None, Arc::new(moho_core::EventBus::new()))
+    }
+
+    #[test]
+    fn hidden_menu_state_returns_no_paint_data() {
+        let mut adapter = adapter();
+        adapter.set_game_state(GameState::Menu);
+        adapter.hide_menus();
+        adapter.set_visible(false);
+
+        let frame = adapter.ui_frame([800, 600]);
+
+        assert!(frame.is_none());
+    }
+
+    #[test]
+    fn visible_menu_state_returns_paint_data() {
+        let mut adapter = adapter();
+        adapter.set_game_state(GameState::Menu);
+        adapter.set_visible(true);
+
+        let frame = adapter.ui_frame([800, 600]);
+
+        assert!(frame.is_some());
+    }
 }
