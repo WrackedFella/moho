@@ -1,81 +1,24 @@
-//! Scene walk and primitive conversion.
+//! One glTF primitive to one world mesh.
+
+use std::borrow::Cow;
 
 use glam::{Mat3, Mat4, Vec3};
 use moho_render_api::WorldMesh;
 
 use crate::{LevelMesh, error::LevelErrorKind};
 
-/// Convert every triangle primitive reachable from the default scene.
-pub(crate) fn build(
-    document: &gltf::Document,
-    buffers: &[Vec<u8>],
-) -> Result<Vec<LevelMesh>, LevelErrorKind> {
-    let mut out = Vec::new();
-    let mut walk = Walk {
-        buffers,
-        seen: vec![false; document.nodes().len()],
-        out: &mut out,
-    };
-    if let Some(scene) = document
-        .default_scene()
-        .or_else(|| document.scenes().next())
-    {
-        for node in scene.nodes() {
-            walk.node(&node, Mat4::IDENTITY)?;
-        }
-    }
-    Ok(out)
-}
-
-/// Depth-first scene walk; `seen` refuses a node reached twice, since glTF node
-/// graphs must be trees and a cycle would otherwise recurse forever.
-struct Walk<'a> {
-    buffers: &'a [Vec<u8>],
-    seen: Vec<bool>,
-    out: &'a mut Vec<LevelMesh>,
-}
-
-impl Walk<'_> {
-    fn node(&mut self, node: &gltf::Node<'_>, parent: Mat4) -> Result<(), LevelErrorKind> {
-        if std::mem::replace(&mut self.seen[node.index()], true) {
-            return Err(LevelErrorKind::NotGltf(
-                format!("node {} has more than one parent", node.index()).into(),
-            ));
-        }
-        let world = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
-        if let Some(mesh) = node.mesh() {
-            for primitive in mesh.primitives() {
-                if primitive.mode() != gltf::mesh::Mode::Triangles {
-                    tracing::warn!(
-                        mesh = mesh.name().unwrap_or_default(),
-                        index = mesh.index(),
-                        mode = ?primitive.mode(),
-                        "skipping non-triangle primitive"
-                    );
-                    continue;
-                }
-                self.out
-                    .push(convert(&mesh, &primitive, world, self.buffers)?);
-            }
-        }
-        for child in node.children() {
-            self.node(&child, world)?;
-        }
-        Ok(())
-    }
-}
-
-fn convert(
+/// Convert one triangle primitive, placed by `world`.
+pub(crate) fn convert(
     mesh: &gltf::Mesh<'_>,
     primitive: &gltf::Primitive<'_>,
     world: Mat4,
-    buffers: &[Vec<u8>],
+    buffers: &[Cow<'_, [u8]>],
 ) -> Result<LevelMesh, LevelErrorKind> {
     let bad = |reason: String| LevelErrorKind::BadMesh {
         mesh: mesh.index(),
         reason,
     };
-    let reader = primitive.reader(|b| buffers.get(b.index()).map(Vec::as_slice));
+    let reader = primitive.reader(|b| buffers.get(b.index()).map(|data| &**data));
     let raw_positions = reader
         .read_positions()
         .ok_or_else(|| bad("primitive has no positions".into()))?;

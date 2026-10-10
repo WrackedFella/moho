@@ -13,8 +13,6 @@ gltf = { workspace = true }
 
 [dev-dependencies]
 moho_physics = { workspace = true }
-glam = { workspace = true }
-moho_render_api = { path = "../moho_render_api" }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 
