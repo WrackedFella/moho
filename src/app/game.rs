@@ -776,6 +776,72 @@ mod tests {
         }
     }
 
+    mod play_stop_release {
+        use super::*;
+
+        fn app_holding_forward() -> (App, moho_input::key::Key) {
+            let mut app = playing_app();
+            let key = default_key(&app, StrategyAction::MoveForward);
+            hold(&mut app, StrategyAction::MoveForward);
+            assert!(
+                app.input
+                    .actions
+                    .end_tick()
+                    .held(StrategyAction::MoveForward)
+            );
+            assert_eq!(app.game_state, GameState::Playing);
+            (app, key)
+        }
+
+        fn assert_forward_not_held_on_resume(app: &mut App) {
+            assert_eq!(app.game_state, GameState::Playing);
+            let frame = app.input.actions.end_tick();
+            assert!(!frame.held(StrategyAction::MoveForward));
+            assert!(!frame.pressed(StrategyAction::MoveForward));
+            let command = Game::command(app);
+            assert_eq!(command.input.forward, 0.0);
+        }
+
+        #[test]
+        fn forward_held_when_the_menu_opens_is_not_held_on_resume() {
+            let (mut app, _key) = app_holding_forward();
+
+            app.show_menu();
+            assert_eq!(app.game_state, GameState::Menu);
+            app.hide_menu();
+
+            assert_forward_not_held_on_resume(&mut app);
+        }
+
+        #[test]
+        fn forward_held_when_the_console_opens_is_not_held_on_resume() {
+            let (mut app, _key) = app_holding_forward();
+
+            app.enter_console();
+            assert_eq!(app.game_state, GameState::ConsoleOpen);
+            app.exit_console();
+
+            assert_forward_not_held_on_resume(&mut app);
+        }
+
+        #[test]
+        fn key_still_down_on_resume_acts_only_after_it_is_pressed_again() {
+            let (mut app, key) = app_holding_forward();
+
+            app.show_menu();
+            assert_eq!(app.game_state, GameState::Menu);
+            app.hide_menu();
+            assert_eq!(app.game_state, GameState::Playing);
+            let before = app.input.actions.end_tick();
+            assert!(!before.held(StrategyAction::MoveForward));
+            app.input.actions.key(key, true);
+            let after = app.input.actions.end_tick();
+
+            assert!(after.held(StrategyAction::MoveForward));
+            assert!(after.pressed(StrategyAction::MoveForward));
+        }
+    }
+
     mod events {
         use super::*;
         use winit::event::DeviceEvent;

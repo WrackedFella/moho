@@ -57,8 +57,10 @@ mouse-motion events into the map. Gamepads feed it too: `Gamepads::poll`
 into `pad_button` / `pad_axis` once per frame from `App::poll_gamepads`
 (`InputState::gamepads`, `None` when the backend fails to start). Outside `Playing`, or
 while the window lacks focus (`InputState::focused`), the events are discarded unapplied
-and `pad_disconnected` releases pad bindings, so nothing stays held across a menu and no
-press made there lands on resume. Once per tick `App::command` (`src/app/game.rs`) calls `end_tick`,
+and `pad_disconnected` releases pad bindings. Every menu and console transition (`App::apply_transition`,
+`src/main.rs`) also calls `ActionMap::release_all`, so nothing stays held across a menu or the
+console and no press made there lands on resume; a key still down on resume acts only after it
+is pressed again. Once per tick `App::command` (`src/app/game.rs`) calls `end_tick`,
 which returns an `ActionFrame` and resets the per-tick state:
 
 - `held`: down at the end of the tick; `pressed` / `released`: edges at any point in the
