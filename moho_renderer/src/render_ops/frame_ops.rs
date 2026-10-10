@@ -4,11 +4,7 @@
 
 use wgpu::{CommandEncoder, Queue, SurfaceTexture};
 
-/// Finish rendering and present the frame.
-///
-/// This handles:
-/// 1. Submitting the command buffer to the GPU
-/// 2. Presenting the surface texture
+/// Submits the command buffer and presents the frame.
 ///
 /// # Arguments
 /// * `encoder` - Command encoder with recorded commands
