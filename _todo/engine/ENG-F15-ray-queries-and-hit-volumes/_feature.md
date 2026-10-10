@@ -45,6 +45,7 @@ the character handles ENG-F21's controller builds on.
 | Who gives hits a meaning? | The game: it tags volumes and world meshes; the engine returns the tag | Body parts are FPS rules (GDD §4.7) |
 | How do volumes move? | Fixed offset from the character's position and facing, updated each tick | Pose-driven volumes need animation, which doesn't exist |
 | Projectiles | Out; hitscan only (GDD §9 Q7) | Physics projectiles are a long-term FPS goal |
+| Can a later weapon hit several things along one ray (penetration)? | Must stay possible: one hit's data (point, normal, distance, tag) is shaped so a later "every hit along the ray, nearest first" query returns a list of the same thing | Penetration would otherwise change the seam ENG-F5 freezes; adding a second query is additive |
 
 ## Deferred
 
@@ -53,7 +54,7 @@ the character handles ENG-F21's controller builds on.
 | "Run many bodies" beyond characters (old title) | No consumer needs more dynamic bodies | A game spawns many props |
 | Shape casts and overlap queries (grenades, melee) | No Phase 1 weapon needs them | FPS adds grenades |
 | Volumes on an animated pose | No animation yet | Skeletal or segmented animation lands |
-| Penetration through thin walls | Ballistics depth, GDD "Later" | FPS asks |
+| Penetration through walls and targets (all hits along a ray) | Ballistics depth, GDD "Later"; the first-hit query keeps it open | FPS asks |
 
 ## Items
 
