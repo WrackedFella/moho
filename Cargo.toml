@@ -17,7 +17,6 @@ bytemuck = "1.24"
 gilrs = "0.11"
 glam = "0.33"
 naga = "29.0.1"
-noise = "0.9"
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 crc32fast = "1"
 proptest = { version = "1.11", default-features = false, features = ["std"] }

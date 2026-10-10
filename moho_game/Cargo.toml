@@ -10,7 +10,6 @@ moho_voxel = { path = "../moho_voxel" }
 moho_render_api = { path = "../moho_render_api" }
 glam = { workspace = true }
 tracing = { workspace = true }
-noise = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 
 [lints]
