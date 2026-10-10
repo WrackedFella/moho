@@ -12,7 +12,6 @@ pub struct LevelError {
 }
 
 impl LevelError {
-    #[expect(dead_code, reason = "used once load is implemented")]
     pub(crate) fn new(path: &Path, kind: LevelErrorKind) -> Self {
         Self {
             path: path.to_path_buf(),

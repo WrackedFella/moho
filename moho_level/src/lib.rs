@@ -28,7 +28,13 @@ pub struct LevelMesh {
 /// # Errors
 /// Returns a [`LevelError`] naming `path` when the file cannot be read, is not
 /// glTF, references an unreadable buffer, or holds a malformed mesh.
-#[expect(clippy::todo, reason = "stub until implemented")]
-pub fn load(_path: &Path) -> Result<Level, LevelError> {
-    todo!("load glTF level")
+pub fn load(path: &Path) -> Result<Level, LevelError> {
+    let fail = |kind| LevelError::new(path, kind);
+    let bytes = std::fs::read(path).map_err(|e| fail(LevelErrorKind::Read(e)))?;
+    let gltf =
+        gltf::Gltf::from_slice(&bytes).map_err(|e| fail(LevelErrorKind::NotGltf(Box::new(e))))?;
+    let dir = path.parent().unwrap_or_else(|| Path::new(""));
+    let buffers = buffers::resolve(&gltf, dir).map_err(fail)?;
+    let meshes = mesh::build(&gltf, &buffers).map_err(fail)?;
+    Ok(Level { meshes })
 }
