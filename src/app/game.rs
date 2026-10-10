@@ -783,6 +783,12 @@ mod tests {
             let mut app = playing_app();
             let key = default_key(&app, StrategyAction::MoveForward);
             hold(&mut app, StrategyAction::MoveForward);
+            assert!(
+                app.input
+                    .actions
+                    .end_tick()
+                    .held(StrategyAction::MoveForward)
+            );
             assert_eq!(app.game_state, GameState::Playing);
             (app, key)
         }
