@@ -405,8 +405,14 @@ mod tests {
         adapter.set_game_state(GameState::Menu);
         adapter.set_visible(true);
 
-        let frame = adapter.ui_frame([800, 600]);
+        let frame = adapter
+            .ui_frame([800, 600])
+            .expect("a visible menu paints");
 
-        assert!(frame.is_some());
+        assert!(frame.pixels_per_point > 0.0);
+        assert!(
+            !frame.textures_set.is_empty(),
+            "the first frame uploads egui's font atlas"
+        );
     }
 }
