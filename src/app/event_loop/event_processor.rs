@@ -717,24 +717,33 @@ mod tests {
     }
 
     #[test]
-    fn lod_for_chunk_tiers_by_chebyshev_xz_distance() {
+    fn lod_for_chunk_tiers_by_chebyshev_xz_distance_from_the_player() {
+        let origin = glam::IVec3::ZERO;
+        let off_origin = glam::IVec3::new(10, 0, -7);
+        let mixed_sign = glam::IVec3::new(-5, 2, 5);
         let cases = [
-            (glam::IVec3::new(0, 0, 0), 0),
-            (glam::IVec3::new(3, 0, 0), 0),
-            (glam::IVec3::new(-3, 0, 0), 0),
-            (glam::IVec3::new(3, 0, 3), 0),
-            (glam::IVec3::new(0, 10, 0), 0),
-            (glam::IVec3::new(4, 0, 0), 1),
-            (glam::IVec3::new(0, 0, 4), 1),
-            (glam::IVec3::new(3, 0, 4), 1),
-            (glam::IVec3::new(16, 0, 0), 1),
+            (origin, glam::IVec3::new(0, 0, 0), 0),
+            (origin, glam::IVec3::new(3, 0, 0), 0),
+            (origin, glam::IVec3::new(-3, 0, 0), 0),
+            (origin, glam::IVec3::new(3, 0, 3), 0),
+            (origin, glam::IVec3::new(0, 10, 0), 0),
+            (origin, glam::IVec3::new(4, 0, 0), 1),
+            (origin, glam::IVec3::new(-4, 0, 0), 1),
+            (origin, glam::IVec3::new(0, 0, 4), 1),
+            (origin, glam::IVec3::new(3, 0, 4), 1),
+            (origin, glam::IVec3::new(16, 0, 0), 1),
+            (off_origin, glam::IVec3::new(13, 0, -7), 0),
+            (off_origin, glam::IVec3::new(14, 0, -7), 1),
+            (off_origin, glam::IVec3::new(10, 0, -11), 1),
+            (mixed_sign, glam::IVec3::new(-2, 0, 8), 0),
+            (mixed_sign, glam::IVec3::new(-5, 9, 1), 1),
         ];
 
-        for (chunk, expected) in cases {
+        for (player, chunk, expected) in cases {
             assert_eq!(
-                lod_for_chunk(chunk, glam::IVec3::ZERO),
+                lod_for_chunk(chunk, player),
                 expected,
-                "row {chunk:?}"
+                "player {player:?}, chunk {chunk:?}"
             );
         }
     }
