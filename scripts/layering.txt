@@ -2,7 +2,7 @@
 # _todo/adr/0005-crate-lines-and-dependency-direction.md.
 # Format: <line>: <crate> ...  (lines: engine, strategy, fps; domain = platform-free set)
 
-engine: moho_app moho_core moho_render_api moho_renderer moho_audio moho_physics moho_input
+engine: moho_app moho_core moho_render_api moho_renderer moho_audio moho_physics moho_input moho_level
 strategy: moho_game moho_ui moho
 fps:
-domain: moho_core moho_game
+domain: moho_core moho_game moho_level
