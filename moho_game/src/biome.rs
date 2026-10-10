@@ -255,4 +255,30 @@ mod tests {
 
         assert!(differs, "seeds 7 and 8 must not yield the same biome map");
     }
+
+    #[test]
+    fn neighbouring_columns_mostly_share_a_biome() {
+        // Biomes cover regions spanning many chunks, so a step of one column
+        // along either axis rarely crosses a biome boundary.
+        let map = BiomeMap::new(7);
+        let enabled = [BiomeType::Plains, BiomeType::Mountains];
+        let (mut pairs, mut same) = (0, 0);
+        for x in (-400..400).step_by(8) {
+            for z in (-400..400).step_by(8) {
+                let here = map.biome_at(x, z, &enabled);
+                for neighbour in [
+                    map.biome_at(x + 1, z, &enabled),
+                    map.biome_at(x, z + 1, &enabled),
+                ] {
+                    pairs += 1;
+                    same += usize::from(neighbour == here);
+                }
+            }
+        }
+
+        assert!(
+            same * 100 >= pairs * 95,
+            "only {same}/{pairs} neighbour pairs match"
+        );
+    }
 }
