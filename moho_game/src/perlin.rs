@@ -204,13 +204,13 @@ mod tests {
 
     #[test]
     fn bound_holds_near_extreme_cell_centres() {
+        // About 25 cells qualify; the cap keeps a broken `sample` that makes every
+        // cell extreme from running the dense scan everywhere.
+        const MAX_EXTREME_CELLS: usize = 64;
         let offsets: Vec<f64> = (-20..=20)
             .flat_map(|k| [f64::from(k) * 1e-7, f64::from(k) * 1e-3])
             .collect();
 
-        // About 25 cells qualify; the cap keeps a broken `sample` that makes every
-        // cell extreme from running the dense scan everywhere.
-        const MAX_EXTREME_CELLS: usize = 64;
         let mut extreme_cells = 0;
         'scan: for seed in 0..64 {
             let noise = Perlin::new(seed);
