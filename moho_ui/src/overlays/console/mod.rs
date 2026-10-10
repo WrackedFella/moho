@@ -63,7 +63,7 @@ impl Console {
     pub fn render(&mut self, ui: &mut egui::Ui) -> ConsoleAction {
         const CONSOLE_HEIGHT: f32 = 300.0;
         const CONSOLE_MARGIN: f32 = 8.0;
-        let ctx = ui.ctx().clone();
+        let ctx = ui.ctx();
         let mut action = ConsoleAction::None;
 
         // Check for backtick key press BEFORE egui processes input
@@ -88,7 +88,7 @@ impl Console {
         egui::Area::new("console_panel".into())
             .order(egui::Order::Foreground)
             .fixed_pos(egui::pos2(screen_rect.min.x, y_pos))
-            .show(&ctx, |ui| {
+            .show(ctx, |ui| {
                 frame.show(ui, |ui| {
                     let inner_height = CONSOLE_HEIGHT - CONSOLE_MARGIN * 2.0;
                     ui.set_min_width(screen_rect.width() - CONSOLE_MARGIN * 2.0);

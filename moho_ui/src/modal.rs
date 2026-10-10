@@ -66,13 +66,13 @@ impl ModalManager {
 
     /// Render the active modal (call this in your UI code)
     pub fn render(&mut self, ui: &mut egui::Ui) -> ModalResult {
-        let ctx = ui.ctx().clone();
+        let ctx = ui.ctx();
         if let Some(ref mut modal) = self.active_modal {
             // Draw backdrop
             egui::Area::new(egui::Id::new("modal_backdrop"))
                 .fixed_pos(egui::pos2(0.0, 0.0))
                 .order(egui::Order::Foreground)
-                .show(&ctx, |ui| {
+                .show(ctx, |ui| {
                     let screen_rect = ctx.input(egui::InputState::viewport_rect);
                     ui.painter()
                         .rect_filled(screen_rect, 0.0, self.backdrop_color);
@@ -85,7 +85,7 @@ impl ModalManager {
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .order(egui::Order::Foreground)
-                .show(&ctx, |ui| {
+                .show(ctx, |ui| {
                     result = modal.render(ui);
                 });
 
