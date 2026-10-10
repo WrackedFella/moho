@@ -143,9 +143,8 @@ pub trait RendererBackend {
         &mut self,
         cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
     );
-    /// Set the provider of UI paint data. The renderer pulls a frame from it
-    /// in `submit_frame` and draws it over the scene. Passing `None` clears.
-    /// Default is a no-op; only the real renderer overrides this.
+    /// Set the provider of UI paint data, pulled in `submit_frame` and drawn
+    /// over the scene; `None` clears it. No-op by default.
     fn set_ui_source(&mut self, _source: Option<UiSource>) {}
 }
 

@@ -1,5 +1,4 @@
 // Ported from egui-wgpu 0.34 (MIT OR Apache-2.0), minus predictable texture filtering.
-// Vertex shader bindings
 
 struct VertexOutput {
     @location(0) tex_coord: vec2<f32>,
@@ -13,16 +12,10 @@ struct Locals {
 };
 @group(0) @binding(0) var<uniform> r_locals: Locals;
 
-
-// -----------------------------------------------
 // Adapted from
 // https://www.shadertoy.com/view/llVGzG
 // Originally presented in:
 // Jimenez 2014, "Next Generation Post-Processing in Call of Duty"
-//
-// A good overview can be found in
-// https://blog.demofox.org/2022/01/01/interleaved-gradient-noise-a-different-kind-of-low-discrepancy-sequence/
-// via https://github.com/rerun-io/rerun/
 fn interleaved_gradient_noise(n: vec2<f32>) -> f32 {
     let f = 0.06711056 * n.x + 0.00583715 * n.y;
     return fract(52.9829189 * fract(f));
@@ -74,8 +67,6 @@ fn vs_main(
     out.position = position_from_screen(a_pos);
     return out;
 }
-
-// Fragment shader bindings
 
 @group(1) @binding(0) var r_tex_color: texture_2d<f32>;
 @group(1) @binding(1) var r_tex_sampler: sampler;

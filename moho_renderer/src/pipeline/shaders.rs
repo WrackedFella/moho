@@ -16,7 +16,7 @@ pub fn main_shader_source() -> String {
     .join("\n\n")
 }
 
-/// The UI pass shader's WGSL.
+/// WGSL source of the UI pass shader.
 pub fn ui_shader_source() -> &'static str {
     include_str!("../../../shaders/ui.wgsl")
 }
