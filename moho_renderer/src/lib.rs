@@ -27,6 +27,7 @@ pub use gpu_types::{
 };
 pub use moho_render_api::{InstanceGpu, MaterialGpu};
 mod block_on;
+mod ui_pass;
 mod world_meshes;
 pub use world_meshes::WorldMeshes;
 mod instance_collector;
@@ -142,7 +143,12 @@ pub trait RendererBackend {
         &mut self,
         cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
     );
+    /// Set the provider of UI paint data, pulled in `submit_frame` and drawn
+    /// over the scene; `None` clears it. No-op by default.
+    fn set_ui_source(&mut self, _source: Option<UiSource>) {}
 }
+
+pub use moho_render_api::UiSource;
 
 impl RendererBackend for Renderer<'_> {
     fn resize(&mut self, width: u32, height: u32) {
@@ -202,6 +208,9 @@ impl RendererBackend for Renderer<'_> {
         cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
     ) {
         self.set_frame_callback_arc_inherent(cb);
+    }
+    fn set_ui_source(&mut self, source: Option<UiSource>) {
+        self.set_ui_source(source);
     }
     fn add_point_light(
         &mut self,
