@@ -69,7 +69,6 @@ pub struct Node {
 pub struct Scene {
     pub nodes: Vec<Node>,
     pub roots: Vec<usize>,
-    /// Each mesh is a list of primitives.
     pub meshes: Vec<Vec<Prim>>,
     pub materials: Vec<Option<String>>,
     /// Put positions and normals of a primitive in one strided buffer view.

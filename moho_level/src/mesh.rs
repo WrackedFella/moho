@@ -7,7 +7,6 @@ use moho_render_api::WorldMesh;
 
 use crate::{LevelMesh, error::LevelErrorKind};
 
-/// Convert one triangle primitive, placed by `world`.
 pub(crate) fn convert(
     mesh: &gltf::Mesh<'_>,
     primitive: &gltf::Primitive<'_>,

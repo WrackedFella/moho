@@ -43,7 +43,6 @@ pub fn load(path: &Path) -> Result<Level, LevelError> {
     Ok(Level { meshes })
 }
 
-/// Convert every triangle primitive reachable from the default scene.
 fn build(
     document: &gltf::Document,
     buffers: &[Cow<'_, [u8]>],
