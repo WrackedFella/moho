@@ -128,8 +128,8 @@ mod tests {
 
     fn render_menu(menu: &mut SettingsMenu) -> egui::FullOutput {
         let ctx = egui::Context::default();
-        ctx.run(egui::RawInput::default(), |ctx| {
-            menu.render(ctx);
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            menu.render(ui);
         })
     }
 

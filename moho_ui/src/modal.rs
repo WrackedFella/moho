@@ -65,7 +65,8 @@ impl ModalManager {
     }
 
     /// Render the active modal (call this in your UI code)
-    pub fn render(&mut self, ctx: &egui::Context) -> ModalResult {
+    pub fn render(&mut self, ui: &mut egui::Ui) -> ModalResult {
+        let ctx = ui.ctx();
         if let Some(ref mut modal) = self.active_modal {
             // Draw backdrop
             egui::Area::new(egui::Id::new("modal_backdrop"))

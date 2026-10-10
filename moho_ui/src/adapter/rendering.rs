@@ -23,31 +23,31 @@ pub struct MenuRenderResult {
 ///
 /// Returns menu actions that were clicked during rendering, plus hover state.
 pub fn render_game_state(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     ui_state: &mut UiStateManager,
     game_state: GameState,
     event_bus: &EventBus,
 ) -> MenuRenderResult {
     match game_state {
-        GameState::Menu => render_menu(ctx, ui_state),
+        GameState::Menu => render_menu(ui, ui_state),
         GameState::ConsoleOpen => {
-            render_overlays(ctx, ui_state);
-            render_console(ctx, ui_state, event_bus);
+            render_overlays(ui, ui_state);
+            render_console(ui, ui_state, event_bus);
             MenuRenderResult {
                 actions: Vec::new(),
                 hovered_key: None,
             }
         }
         GameState::Paused => {
-            render_overlays(ctx, ui_state);
-            render_pause_overlay(ctx);
+            render_overlays(ui, ui_state);
+            render_pause_overlay(ui);
             MenuRenderResult {
                 actions: Vec::new(),
                 hovered_key: None,
             }
         }
         GameState::Playing => {
-            render_overlays(ctx, ui_state);
+            render_overlays(ui, ui_state);
             MenuRenderResult {
                 actions: Vec::new(),
                 hovered_key: None,
@@ -57,17 +57,17 @@ pub fn render_game_state(
 }
 
 /// Render all active overlay layers (HUDs, debug info)
-fn render_overlays(ctx: &egui::Context, ui_state: &mut UiStateManager) {
-    ui_state.overlay_manager.render_all(ctx);
+fn render_overlays(ui: &mut egui::Ui, ui_state: &mut UiStateManager) {
+    ui_state.overlay_manager.render_all(ui);
 }
 
 /// Render active menu screen and collect clicked actions and hover state
-fn render_menu(ctx: &egui::Context, ui_state: &mut UiStateManager) -> MenuRenderResult {
+fn render_menu(ui: &mut egui::Ui, ui_state: &mut UiStateManager) -> MenuRenderResult {
     let mut actions = Vec::new();
     let mut hovered_key: Option<String> = None;
 
     if let Some(screen) = ui_state.active_screen_mut() {
-        let items = screen.render(ctx);
+        let items = screen.render(ui);
 
         for item in items {
             if item.hovered && item.enabled {
@@ -87,16 +87,16 @@ fn render_menu(ctx: &egui::Context, ui_state: &mut UiStateManager) -> MenuRender
 }
 
 /// Render console overlay and process console actions
-fn render_console(ctx: &egui::Context, ui_state: &mut UiStateManager, event_bus: &EventBus) {
-    let console_action = ui_state.console.render(ctx);
+fn render_console(ui: &mut egui::Ui, ui_state: &mut UiStateManager, event_bus: &EventBus) {
+    let console_action = ui_state.console.render(ui);
 
     // Process console action through event routing
     super::event_routing::process_console_action(console_action, event_bus);
 }
 
 /// Render pause overlay (simple centered message)
-fn render_pause_overlay(ctx: &egui::Context) {
-    egui::CentralPanel::default().show(ctx, |ui| {
+fn render_pause_overlay(ui: &mut egui::Ui) {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         ui.centered_and_justified(|ui| {
             ui.heading("Paused");
             ui.label("Press ESC to resume");
@@ -108,12 +108,12 @@ fn render_pause_overlay(ctx: &egui::Context) {
 ///
 /// This renders a centered modal progress bar with optional cancel button.
 /// Updates the progress.canceled flag if user clicks cancel.
-pub fn render_progress_overlay(ctx: &egui::Context, progress: &mut ProgressState) {
+pub fn render_progress_overlay(ui: &mut egui::Ui, progress: &mut ProgressState) {
     use egui::{Align2, RichText};
 
     egui::Area::new("progress_overlay_area".into())
         .anchor(Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-        .show(ctx, |ui| {
+        .show(ui.ctx(), |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
                 ui.label(RichText::new(&progress.title).heading());
@@ -145,11 +145,11 @@ mod tests {
             "button_screen"
         }
 
-        fn render(&mut self, ctx: &egui::Context) -> Vec<MenuItem> {
+        fn render(&mut self, ui: &mut egui::Ui) -> Vec<MenuItem> {
             let mut items = Vec::new();
             egui::Area::new("button_screen_area".into())
                 .fixed_pos(egui::pos2(10.0, 10.0))
-                .show(ctx, |ui| {
+                .show(ui.ctx(), |ui| {
                     let response = ui.button("Go");
                     items.push(MenuItem {
                         action: self.action.clone(),
@@ -194,8 +194,8 @@ mod tests {
             hovered_key: None,
         };
 
-        let output = ctx.run(input, |ctx| {
-            result = render_game_state(ctx, ui_state, game_state, &bus);
+        let output = ctx.run_ui(input, |ui| {
+            result = render_game_state(ui, ui_state, game_state, &bus);
         });
 
         (output, result)

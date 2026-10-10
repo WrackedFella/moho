@@ -88,8 +88,8 @@ pub trait Overlay: std::fmt::Debug + Send + Sync {
     /// Unique name used for lookup (e.g. `"debug"`, `"fps_hud"`).
     fn name(&self) -> &str;
 
-    /// Render the overlay into the egui context.
-    fn render(&mut self, ctx: &egui::Context, data: &HudData);
+    /// Render the overlay; `ui` is the frame's root ui, and `ui.ctx()` reaches windows and areas.
+    fn render(&mut self, ui: &mut egui::Ui, data: &HudData);
 
     /// Whether this overlay is currently enabled (user toggle).
     fn is_visible(&self) -> bool;
@@ -141,9 +141,9 @@ impl OverlayManager {
     }
 
     /// Render every registered overlay (each self-filters on visibility/mode).
-    pub fn render_all(&mut self, ctx: &egui::Context) {
+    pub fn render_all(&mut self, ui: &mut egui::Ui) {
         for overlay in &mut self.overlays {
-            overlay.render(ctx, &self.hud_data);
+            overlay.render(ui, &self.hud_data);
         }
     }
 
@@ -198,7 +198,7 @@ mod tests {
         fn name(&self) -> &'static str {
             self.name
         }
-        fn render(&mut self, _ctx: &egui::Context, _data: &HudData) {}
+        fn render(&mut self, _ui: &mut egui::Ui, _data: &HudData) {}
         fn is_visible(&self) -> bool {
             self.visible
         }
@@ -233,5 +233,24 @@ mod tests {
         mgr.toggle("nonexistent");
 
         assert_eq!(visibility(&mgr), [true, false]);
+    }
+
+    #[test]
+    fn render_all_renders_each_overlay_with_current_data() {
+        use crate::overlays::test_support::{second_frame, texts};
+
+        let ctx = egui::Context::default();
+        let mut mgr = OverlayManager::new();
+        let mut debug = crate::overlays::DebugHud::new();
+        debug.set_visible(true);
+        mgr.register(Box::new(debug));
+        mgr.update_data(HudData {
+            player_position: [9.0, 8.0, 7.0],
+            ..Default::default()
+        });
+
+        let output = second_frame(&ctx, |ui| mgr.render_all(ui));
+
+        assert!(texts(&output).contains(&"Pos: (9.0, 8.0, 7.0)".to_string()));
     }
 }

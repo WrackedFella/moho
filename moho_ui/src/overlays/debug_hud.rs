@@ -43,7 +43,7 @@ impl Overlay for DebugHud {
         self.visible = visible;
     }
 
-    fn render(&mut self, ctx: &egui::Context, data: &HudData) {
+    fn render(&mut self, ui: &mut egui::Ui, data: &HudData) {
         if !self.visible {
             return;
         }
@@ -60,7 +60,7 @@ impl Overlay for DebugHud {
 
         egui::Area::new("debug_hud".into())
             .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 8.0))
-            .show(ctx, |ui| {
+            .show(ui.ctx(), |ui| {
                 frame.show(ui, |ui| {
                     let mono = egui::FontId::monospace(13.0);
                     let color = egui::Color32::from_rgb(200, 220, 200);
@@ -116,6 +116,28 @@ impl Overlay for DebugHud {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::overlays::test_support::{second_frame, texts};
+
+    #[test]
+    fn render_when_visible_lists_diagnostics() {
+        let ctx = egui::Context::default();
+        let mut hud = DebugHud::new();
+        hud.set_visible(true);
+        let data = HudData {
+            player_position: [1.0, 2.0, 3.0],
+            material_under_crosshair: Some(4),
+            ..Default::default()
+        };
+
+        let output = second_frame(&ctx, |ui| hud.render(ui, &data));
+        let shown = texts(&output);
+
+        assert!(
+            shown.contains(&"Pos: (1.0, 2.0, 3.0)".to_string()),
+            "{shown:?}"
+        );
+        assert!(shown.contains(&"Material: 4".to_string()), "{shown:?}");
+    }
 
     #[test]
     fn toggle_visibility() {

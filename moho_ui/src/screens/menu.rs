@@ -78,7 +78,7 @@ pub trait UiComponent: Send {
     fn name(&self) -> &str;
 
     /// Render the component and return any actions triggered during rendering
-    fn render(&mut self, ctx: &egui::Context) -> Vec<MenuItem>;
+    fn render(&mut self, ui: &mut egui::Ui) -> Vec<MenuItem>;
 
     /// Called when the component is shown
     fn on_show(&mut self) {}
