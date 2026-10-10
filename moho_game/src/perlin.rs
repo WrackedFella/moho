@@ -28,14 +28,13 @@ impl Perlin {
         lerp(bottom, top, v)
     }
 
-    /// Gradient of length sqrt(2) chosen by hashing the lattice corner and seed.
+    /// Gradient of length sqrt(2) chosen by the top 3 bits of a hash of the lattice corner and seed.
     fn gradient(&self, ix: i32, iz: i32) -> (f64, f64) {
         let mut h = u64::from(self.seed) | (u64::from(ix as u32) << 32);
         h = h.wrapping_add((u64::from(iz as u32)).wrapping_mul(0x9e37_79b9_7f4a_7c15));
         h = h.wrapping_add(0x9e37_79b9_7f4a_7c15);
         h = (h ^ (h >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
         h = (h ^ (h >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        h ^= h >> 31;
         GRADIENTS[(h >> 61) as usize]
     }
 }
