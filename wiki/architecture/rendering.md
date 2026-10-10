@@ -91,11 +91,11 @@ flowchart LR
     B --> C["main pass<br/>skybox, then geometry<br/>main_pass_ops"]
     C --> D["SSAO compute<br/>from depth"]
     D --> U["UI pass<br/>draw_ui"]
-    U --> E["finish_frame<br/>frame callback (egui),<br/>submit, present"]
+    U --> E["finish_frame<br/>submit, present"]
 ```
 
-The egui UI is currently drawn by the `FrameCallback` the UI adapter registers on the
-renderer, inside `finish_frame`. Shader sources are `shaders/*.wgsl` (`common`, `vertex`,
+The egui UI is drawn by the UI pass from paint data (below); `finish_frame` only submits
+and presents. Shader sources are `shaders/*.wgsl` (`common`, `vertex`,
 `fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`).
 
 ## UI paint data
@@ -104,7 +104,8 @@ UI reaches the renderer as plain data ([ADR-0013](../../_todo/adr/0013-ui-reache
 not as wgpu or egui types. `moho_render_api::UiFrame` holds `pixels_per_point`, texture
 deltas (`UiTextureSet` before drawing, `UiTextureId` frees after) and `UiMesh`es
 (clipped, textured triangle lists of `UiVertex`, in points). A game implements
-`UiFrameSource` and registers a `UiSource` with `RendererBackend::set_ui_source`; the
+`UiFrameSource` (`moho_ui`'s `EguiAdapter` maps egui tessellation in `adapter/paint_map.rs`)
+and registers a `UiSource` with `RendererBackend::set_ui_source`; the
 renderer pulls `Option<UiFrame>` once per frame with the surface size.
 
 `moho_renderer::ui_pass` draws it over the finished scene, before `finish_frame`. The pure

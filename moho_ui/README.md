@@ -38,7 +38,7 @@ egui-based UI system for the Moho engine. Provides menus, settings screens, over
 
 
 
-- **`EguiAdapter`** - Integrates egui with wgpu/winit, handles rendering lifecycle
+- **`EguiAdapter`** - Integrates egui with winit and hands the renderer plain paint data each frame (`UiFrameSource`)
 
 - **`UiStateManager`** - Manages which screen/overlay is currently active
 
@@ -240,15 +240,13 @@ impl ScreenSpec for MyCustomScreen {     geometry definitions and makes the fall
 
 }
 
-```- Keep `recall_staging_belt()` usage in your submit path. It's easy to
-
-  forget and will silently leak staging memory.
+```
 
 ## Creating Overlays
 
-- If you port or update egui/egui-winit/egui-wgpu versions, re-check the
+- If you port or update egui/egui-winit versions, re-check the
 
-Implement the `Overlay` trait for in-game overlays:  `egui_winit::State` constructor and any `egui_wgpu::Renderer` API â€” egui
+Implement the `Overlay` trait for in-game overlays:  `egui_winit::State` constructor â€” egui
 
   and friends have historically changed their initialization signatures
 
@@ -509,22 +507,13 @@ hud.render(ctx, clock, fps);
 
 ## Important Integration Notes
 
-### Staging Belt Lifecycle
+### Painting
 
-The egui adapter uses `wgpu::util::StagingBelt` for GPU uploads. **You must call `recall_staging_belt()` after `queue.submit()`**:
-
-```rust
-// Render frame
-adapter.render_frame(&mut ui_manager, &game_state)?;
-
-// Submit GPU work
-queue.submit(commands);
-
-// IMPORTANT: Recall staging belt to prevent memory leak
-adapter.recall_staging_belt();
-```
-
-Failing to call `recall_staging_belt()` causes GPU memory to accumulate.
+The adapter never touches the GPU. It implements `moho_render_api::UiFrameSource`: each frame the renderer
+asks for a `UiFrame` (tessellated meshes, texture set/free deltas, pixels per point) and draws it in its own
+UI pass ([ADR-0013](../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md)). The binary registers the
+adapter with `RendererBackend::set_ui_source`. When the menu is hidden in the menu state, the adapter returns
+`None` and nothing is painted.
 
 ### Coordinate Spaces
 
@@ -542,9 +531,8 @@ The adapter handles this automatically for winit events.
 ### egui Version Compatibility
 
 This crate uses:
-- `egui = "0.29"`
-- `egui-wgpu = "0.29"`
-- `egui-winit = "0.29"`
+- `egui = "0.34"`
+- `egui-winit = "0.34"`
 
 If updating egui versions, verify initialization APIs haven't changed. egui historically changes constructor signatures between minor versions.
 

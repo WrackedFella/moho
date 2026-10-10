@@ -3,7 +3,7 @@
 
 use glam::Vec3;
 use moho_render_api::{InstanceGpu, MaterialGpu, MaterialKey, RenderMaterial, Renderable};
-use moho_renderer::{FrameCallback, FrameError, LightingGpu, RendererBackend, Scene};
+use moho_renderer::{FrameError, LightingGpu, RendererBackend, Scene};
 
 const SPHERE_MESH: u32 = 1;
 const CUBE_MESH: u32 = 2;
@@ -147,11 +147,6 @@ impl RendererBackend for RecordingRenderer {
     fn submit_frame(&mut self) {}
     fn set_materials(&mut self, materials: &[MaterialGpu]) {
         self.material_uploads.push(materials.len());
-    }
-    fn set_frame_callback_arc(
-        &mut self,
-        _cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
-    ) {
     }
 }
 

@@ -70,13 +70,7 @@ pub fn init_renderer_and_ui(
         let adapter = moho_ui::build_adapter(Some(window.clone()), app.event_bus.clone());
         let ui_adapter = Arc::new(Mutex::new(adapter));
 
-        if let Ok(mut a) = ui_adapter.lock() {
-            a.set_surface_format(wgpu::TextureFormat::Bgra8UnormSrgb);
-        }
-
-        renderer.set_frame_callback_arc(Some(
-            ui_adapter.clone() as Arc<Mutex<dyn moho_renderer::FrameCallback>>
-        ));
+        renderer.set_ui_source(Some(ui_adapter.clone() as moho_renderer::UiSource));
 
         // Store adapter
         app.ui_adapter = Some(ui_adapter.clone());
