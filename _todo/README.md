@@ -41,8 +41,8 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 | [ENG-F11 A game runs on the engine without copying the app loop](https://github.com/WrackedFella/moho/issues/81) |
 | [ENG-F12 Input is game-defined actions bound as data](https://github.com/WrackedFella/moho/issues/82) |
 | [ENG-F13 Every dependency has a reasoned verdict](https://github.com/WrackedFella/moho/issues/83) |
-| [ENG-F14 A game loads a static scene from a file](https://github.com/WrackedFella/moho/issues/226) |
-| [ENG-F15 Games query physics and run many bodies](https://github.com/WrackedFella/moho/issues/227) |
+| [ENG-F14 A game loads a static level from a file](https://github.com/WrackedFella/moho/issues/226) |
+| [ENG-F15 A ray finds the surface or body part it hits](https://github.com/WrackedFella/moho/issues/227) |
 | [ENG-F16 Sounds play from positions](https://github.com/WrackedFella/moho/issues/228) |
 | [ENG-F17 Agents path over any static level](https://github.com/WrackedFella/moho/issues/229) |
 | [ENG-F18 Both games share the UI shell](https://github.com/WrackedFella/moho/issues/230) |
