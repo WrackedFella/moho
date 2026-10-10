@@ -10,6 +10,7 @@ mod character;
 #[cfg(test)]
 mod test_support;
 
+use character::Character;
 pub use character::{CharacterHandle, CharacterState, UnknownCharacter};
 
 pub struct PhysicsWorld {
@@ -27,11 +28,14 @@ pub struct PhysicsWorld {
     ccd_solver: CCDSolver,
     world_mesh_colliders: HashMap<WorldMeshId, ColliderHandle>,
     character_controller: KinematicCharacterController,
+    characters: HashMap<CharacterHandle, Character>,
 }
 
 impl std::fmt::Debug for PhysicsWorld {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PhysicsWorld").finish_non_exhaustive()
+        f.debug_struct("PhysicsWorld")
+            .field("characters", &self.characters.len())
+            .finish_non_exhaustive()
     }
 }
 
@@ -75,6 +79,7 @@ impl PhysicsWorld {
             ccd_solver,
             world_mesh_colliders: HashMap::new(),
             character_controller,
+            characters: HashMap::new(),
         }
     }
 

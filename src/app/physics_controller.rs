@@ -5,6 +5,8 @@
 
 use moho_game::actors::ActorId;
 
+const JUMP_VELOCITY: f32 = 8.0;
+
 pub struct PhysicsController {
     pub world: Option<moho_physics::PhysicsWorld>,
     pub test_bodies: Vec<(moho_physics::RigidBodyHandle, ActorId)>,
@@ -26,30 +28,48 @@ impl PhysicsController {
 
     /// Clear and recreate the physics world, removing all colliders and bodies.
     pub fn reset(&mut self) {
-        todo!()
+        self.world = Some(moho_physics::PhysicsWorld::new());
+        self.test_bodies.clear();
+        self.player = None;
+        self.noclip = false;
     }
 
     /// Place the player character at `position`, replacing any previous one.
-    pub fn spawn_player(&mut self, _position: glam::Vec3) {
-        todo!()
+    pub fn spawn_player(&mut self, position: glam::Vec3) {
+        let Some(pw) = self.world.as_mut() else {
+            return;
+        };
+        if let Some(previous) = self.player.take() {
+            // Already gone after a world reset; nothing to remove then.
+            let _ = pw.remove_character(previous);
+        }
+        self.player = Some(pw.add_character(position));
     }
 
     /// Whether a kinematic character controller is active (and not in noclip).
     pub fn is_kcc_active(&self) -> bool {
-        todo!()
+        !self.noclip && self.world.is_some() && self.player.is_some()
     }
 
     /// Move the player for one frame, applying jump if grounded.
     ///
     /// Returns the new world-space position, or `None` if the physics world
     /// is not initialised or there is no player.
-    pub fn move_character(&mut self, _horizontal: glam::Vec3, _dt: f32) -> Option<glam::Vec3> {
-        todo!()
+    pub fn move_character(&mut self, horizontal: glam::Vec3, dt: f32) -> Option<glam::Vec3> {
+        let handle = self.player?;
+        let pw = self.world.as_mut()?;
+        if self.jump_pressed && pw.character(handle).is_some_and(|c| c.grounded) {
+            pw.set_vertical_velocity(handle, JUMP_VELOCITY).ok()?;
+        }
+        pw.move_character(handle, horizontal, dt).ok()
     }
 
     /// Teleport the player (e.g. respawn after falling off the map).
-    pub fn teleport_character(&mut self, _pos: glam::Vec3) {
-        todo!()
+    pub fn teleport_character(&mut self, pos: glam::Vec3) {
+        if let (Some(pw), Some(handle)) = (self.world.as_mut(), self.player) {
+            // An unknown handle means the player is gone; nothing to teleport.
+            let _ = pw.set_character_position(handle, pos);
+        }
     }
 
     /// Step dynamic rigid bodies and return (actor, new_position) pairs.

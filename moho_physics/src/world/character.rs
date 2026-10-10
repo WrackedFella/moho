@@ -1,6 +1,9 @@
 use super::PhysicsWorld;
+use super::GRAVITY;
 use glam::Vec3;
-use rapier3d::prelude::RigidBodyHandle;
+use rapier3d::prelude::{
+    ColliderBuilder, ColliderHandle, Pose, QueryFilter, RigidBodyBuilder, RigidBodyHandle,
+};
 
 /// Opaque identity of one character in a [`PhysicsWorld`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -19,18 +22,59 @@ pub struct CharacterState {
 #[error("unknown character")]
 pub struct UnknownCharacter;
 
+/// Per-character state; the capsule's body handle is the map key.
+pub(super) struct Character {
+    collider: ColliderHandle,
+    vertical_velocity: f32,
+    grounded: bool,
+}
+
 impl PhysicsWorld {
     /// Add a kinematic character (capsule) to the world.
-    pub fn add_character(&mut self, _position: Vec3) -> CharacterHandle {
-        todo!()
+    pub fn add_character(&mut self, position: Vec3) -> CharacterHandle {
+        let body = RigidBodyBuilder::kinematic_position_based()
+            .translation(position)
+            .build();
+        let body_handle = self.rigid_body_set.insert(body);
+
+        // Capsule: half-height 0.85, radius 0.3 -> total height ~2m
+        let collider = ColliderBuilder::capsule_y(0.85, 0.3)
+            .friction(0.0) // No friction on character capsule itself
+            .build();
+        let collider =
+            self.collider_set
+                .insert_with_parent(collider, body_handle, &mut self.rigid_body_set);
+
+        let handle = CharacterHandle(body_handle);
+        self.characters.insert(
+            handle,
+            Character {
+                collider,
+                vertical_velocity: 0.0,
+                grounded: false,
+            },
+        );
+
+        tracing::info!(pos = ?position, "Character controller spawned");
+        handle
     }
 
     /// Remove the character's body and capsule.
     ///
     /// # Errors
     /// [`UnknownCharacter`] if `handle` was already removed or came from another world.
-    pub fn remove_character(&mut self, _handle: CharacterHandle) -> Result<(), UnknownCharacter> {
-        todo!()
+    pub fn remove_character(&mut self, handle: CharacterHandle) -> Result<(), UnknownCharacter> {
+        self.characters.remove(&handle).ok_or(UnknownCharacter)?;
+        self.rigid_body_set.remove(
+            handle.0,
+            &mut self.island_manager,
+            &mut self.collider_set,
+            &mut self.impulse_joint_set,
+            &mut self.multibody_joint_set,
+            &mut self.soft_body_set,
+            true,
+        );
+        Ok(())
     }
 
     /// Move the character by `desired_horizontal` with gravity applied, returning its new position.
@@ -39,11 +83,57 @@ impl PhysicsWorld {
     /// [`UnknownCharacter`] if `handle` is not a live character of this world.
     pub fn move_character(
         &mut self,
-        _handle: CharacterHandle,
-        _desired_horizontal: Vec3,
-        _dt: f32,
+        handle: CharacterHandle,
+        desired_horizontal: Vec3,
+        dt: f32,
     ) -> Result<Vec3, UnknownCharacter> {
-        todo!()
+        let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
+        let body_handle = handle.0;
+        let collider_handle = character.collider;
+
+        if !character.grounded {
+            character.vertical_velocity += GRAVITY * dt;
+        }
+
+        let desired = Vec3::new(
+            desired_horizontal.x,
+            character.vertical_velocity * dt,
+            desired_horizontal.z,
+        );
+
+        let shape = self.collider_set[collider_handle].shape();
+        let current_pos = *self.rigid_body_set[body_handle].position();
+
+        // Transient QueryPipeline view that excludes only this character's capsule.
+        let filter = QueryFilter::default().exclude_collider(collider_handle);
+        let queries = self.broad_phase.as_query_pipeline(
+            self.narrow_phase.query_dispatcher(),
+            &self.rigid_body_set,
+            &self.collider_set,
+            filter,
+        );
+
+        let movement = self.character_controller.move_shape(
+            dt,
+            &queries,
+            shape,
+            &current_pos,
+            desired,
+            |_| {},
+        );
+
+        character.grounded = movement.grounded;
+        if character.grounded && character.vertical_velocity < 0.0 {
+            character.vertical_velocity = 0.0;
+        }
+
+        // Set both the "next" and "current" position so the value is available immediately.
+        let new_translation = current_pos.translation + movement.translation;
+        let new_pose = Pose::from_parts(new_translation, current_pos.rotation);
+        self.rigid_body_set[body_handle].set_next_kinematic_position(new_pose);
+        self.rigid_body_set[body_handle].set_position(new_pose, false);
+
+        Ok(new_translation)
     }
 
     /// Teleport the character to `position` and zero its vertical velocity.
@@ -52,10 +142,16 @@ impl PhysicsWorld {
     /// [`UnknownCharacter`] if `handle` is not a live character of this world.
     pub fn set_character_position(
         &mut self,
-        _handle: CharacterHandle,
-        _position: Vec3,
+        handle: CharacterHandle,
+        position: Vec3,
     ) -> Result<(), UnknownCharacter> {
-        todo!()
+        let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
+        let body = &mut self.rigid_body_set[handle.0];
+        let new_pose = Pose::from_parts(position, body.position().rotation);
+        body.set_next_kinematic_position(new_pose);
+        body.set_position(new_pose, false);
+        character.vertical_velocity = 0.0;
+        Ok(())
     }
 
     /// Set the character's vertical velocity.
@@ -64,15 +160,24 @@ impl PhysicsWorld {
     /// [`UnknownCharacter`] if `handle` is not a live character of this world.
     pub fn set_vertical_velocity(
         &mut self,
-        _handle: CharacterHandle,
-        _velocity: f32,
+        handle: CharacterHandle,
+        velocity: f32,
     ) -> Result<(), UnknownCharacter> {
-        todo!()
+        self.characters
+            .get_mut(&handle)
+            .ok_or(UnknownCharacter)?
+            .vertical_velocity = velocity;
+        Ok(())
     }
 
     /// The character's current state, or `None` for an unknown handle.
-    pub fn character(&self, _handle: CharacterHandle) -> Option<CharacterState> {
-        todo!()
+    pub fn character(&self, handle: CharacterHandle) -> Option<CharacterState> {
+        let character = self.characters.get(&handle)?;
+        Some(CharacterState {
+            position: self.rigid_body_set[handle.0].position().translation,
+            vertical_velocity: character.vertical_velocity,
+            grounded: character.grounded,
+        })
     }
 }
 
