@@ -26,6 +26,7 @@ flowchart TD
     physics["moho_physics<br/>rapier3d"]:::engine
     input["moho_input<br/>Key, Action, ActionBindings,<br/>ActionMap, mouse filtering"]:::engine
     app["moho_app<br/>window, fixed-step loop, Game trait"]:::engine
+    level["moho_level<br/>glTF level loader"]:::engine
 
     ui --> renderer & input & core & game
     game --> core & rapi
@@ -34,6 +35,7 @@ flowchart TD
     audio --> core
     physics --> rapi
     core --> rapi
+    level --> rapi
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
     classDef strategy fill:#dcfce7,stroke:#16a34a,color:#111
@@ -52,7 +54,7 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 |---|---|
 | Engine crates never depend on a game-line crate (dev-dependencies allowed) | The engine ships to both games and, after the split, from its own repo |
 | A game line never depends on another game line | Strategy and FPS must separate cleanly |
-| Domain crates (`moho_core`, `moho_game`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
+| Domain crates (`moho_core`, `moho_game`, `moho_level`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
 
 Known debt: `voxel/` and `MaterialType` still sit in the engine line.
 [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md) moves them to the
