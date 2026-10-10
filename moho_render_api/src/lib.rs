@@ -33,4 +33,10 @@ mod tests {
         assert_eq!(std::mem::size_of::<InstanceGpu>() % 16, 0);
         assert_eq!(std::mem::size_of::<InstanceGpu>(), 80);
     }
+
+    #[test]
+    fn ui_vertex_size_matches_ui_shader_vertex_layout() {
+        // pos (8) + uv (8) + packed rgba (4), read as Float32x2, Float32x2, Uint32.
+        assert_eq!(std::mem::size_of::<UiVertex>(), 20);
+    }
 }
