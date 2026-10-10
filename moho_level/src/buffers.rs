@@ -54,22 +54,19 @@ fn is_relative_file(file: &str) -> bool {
 }
 
 fn percent_decode(uri: &str) -> String {
-    let bytes = uri.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let hex = (bytes[i] == b'%')
-            .then(|| bytes.get(i + 1..i + 3))
+    let mut out = Vec::with_capacity(uri.len());
+    let mut rest = uri.as_bytes();
+    while let Some((&byte, tail)) = rest.split_first() {
+        let escaped = (byte == b'%')
+            .then(|| tail.split_first_chunk::<2>())
             .flatten()
-            .and_then(|h| std::str::from_utf8(h).ok())
-            .and_then(|h| u8::from_str_radix(h, 16).ok());
-        if let Some(byte) = hex {
-            out.push(byte);
-            i += 3;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
+            .and_then(|(hex, after)| {
+                let hex = std::str::from_utf8(hex).ok()?;
+                Some((u8::from_str_radix(hex, 16).ok()?, after))
+            });
+        let (decoded, after) = escaped.unwrap_or((byte, tail));
+        out.push(decoded);
+        rest = after;
     }
     String::from_utf8_lossy(&out).into_owned()
 }
