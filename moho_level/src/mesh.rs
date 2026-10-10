@@ -11,42 +11,58 @@ pub(crate) fn build(
     buffers: &[Vec<u8>],
 ) -> Result<Vec<LevelMesh>, LevelErrorKind> {
     let mut out = Vec::new();
+    let mut walk = Walk {
+        buffers,
+        seen: vec![false; document.nodes().len()],
+        out: &mut out,
+    };
     if let Some(scene) = document
         .default_scene()
         .or_else(|| document.scenes().next())
     {
         for node in scene.nodes() {
-            walk(&node, Mat4::IDENTITY, buffers, &mut out)?;
+            walk.node(&node, Mat4::IDENTITY)?;
         }
     }
     Ok(out)
 }
 
-fn walk(
-    node: &gltf::Node<'_>,
-    parent: Mat4,
-    buffers: &[Vec<u8>],
-    out: &mut Vec<LevelMesh>,
-) -> Result<(), LevelErrorKind> {
-    let world = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
-    if let Some(mesh) = node.mesh() {
-        for primitive in mesh.primitives() {
-            if primitive.mode() != gltf::mesh::Mode::Triangles {
-                tracing::warn!(
-                    mesh = mesh.name().unwrap_or_default(),
-                    index = mesh.index(),
-                    mode = ?primitive.mode(),
-                    "skipping non-triangle primitive"
-                );
-                continue;
-            }
-            out.push(convert(&mesh, &primitive, world, buffers)?);
+/// Depth-first scene walk; `seen` refuses a node reached twice, since glTF node
+/// graphs must be trees and a cycle would otherwise recurse forever.
+struct Walk<'a> {
+    buffers: &'a [Vec<u8>],
+    seen: Vec<bool>,
+    out: &'a mut Vec<LevelMesh>,
+}
+
+impl Walk<'_> {
+    fn node(&mut self, node: &gltf::Node<'_>, parent: Mat4) -> Result<(), LevelErrorKind> {
+        if std::mem::replace(&mut self.seen[node.index()], true) {
+            return Err(LevelErrorKind::NotGltf(
+                format!("node {} has more than one parent", node.index()).into(),
+            ));
         }
+        let world = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
+        if let Some(mesh) = node.mesh() {
+            for primitive in mesh.primitives() {
+                if primitive.mode() != gltf::mesh::Mode::Triangles {
+                    tracing::warn!(
+                        mesh = mesh.name().unwrap_or_default(),
+                        index = mesh.index(),
+                        mode = ?primitive.mode(),
+                        "skipping non-triangle primitive"
+                    );
+                    continue;
+                }
+                self.out
+                    .push(convert(&mesh, &primitive, world, self.buffers)?);
+            }
+        }
+        for child in node.children() {
+            self.node(&child, world)?;
+        }
+        Ok(())
     }
-    for child in node.children() {
-        walk(&child, world, buffers, out)?;
-    }
-    Ok(())
 }
 
 fn convert(
