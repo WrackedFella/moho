@@ -472,10 +472,8 @@ impl EventProcessor {
             DebugEvent::ToggleCollision { enabled } => {
                 tracing::info!(enabled, "Collision toggled");
                 // enabled=false means noclip ON (collision disabled)
-                if let Some(ref mut pw) = app.physics.world {
-                    pw.noclip = !enabled;
-                    tracing::info!(noclip = pw.noclip, "Noclip toggled");
-                }
+                app.physics.noclip = !enabled;
+                tracing::info!(noclip = app.physics.noclip, "Noclip toggled");
             }
             DebugEvent::SetShadowQuality { quality } => {
                 tracing::info!(quality, "Setting shadow quality");

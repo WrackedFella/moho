@@ -248,9 +248,7 @@ impl App {
             .unwrap_or(10) as f32;
 
         let spawn_pos = glam::Vec3::new(saved_pos.x, terrain_y + 3.0, saved_pos.z);
-        if let Some(ref mut pw) = self.physics.world {
-            pw.add_character(spawn_pos);
-        }
+        self.physics.spawn_player(spawn_pos);
 
         // Align the simulation Y to match physics spawn (avoids terrain clipping).
         let (yaw, pitch) = self.simulation.yaw_pitch();

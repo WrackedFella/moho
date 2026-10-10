@@ -523,7 +523,7 @@ pub(crate) mod tests {
 
     pub(crate) fn terrain_collider_count(app: &App) -> usize {
         let pw = app.physics.world.as_ref().expect("physics world");
-        pw.collider_set.len() - usize::from(pw.character_collider.is_some())
+        pw.collider_set.len() - usize::from(app.physics.player.is_some())
     }
 
     /// Places `block`, then drains stale events and meshes `chunk` from the dirty event.
