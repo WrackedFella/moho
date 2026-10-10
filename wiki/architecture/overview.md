@@ -157,6 +157,7 @@ flowchart LR
 | App mode | `moho_ui::GameState` ([input-and-state](input-and-state.md#gamestate)) |
 | GPU resources | `moho_renderer`; game types reach it only through `moho_render_api` ([rendering](rendering.md)) |
 | Prefs | `moho_core::prefs::Prefs` ([format](../reference/prefs-format.md)) |
+| Player character, noclip | `PhysicsController` (`src/app/physics_controller.rs`): `player` is a `CharacterHandle` into `moho_physics::PhysicsWorld`, which holds each character's grounded flag and vertical velocity (`moho_physics/src/world/character.rs`); `reset` clears both |
 
 Entities live in typed stores; there is no general ECS (ADR-0004).
 
