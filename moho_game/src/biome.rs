@@ -8,7 +8,7 @@
 //! so worlds can contain multiple biomes arranged in regions. Generation is a
 //! pure function of `(x, z, seed, enabled_biomes)`.
 
-use noise::{NoiseFn, Perlin};
+use crate::perlin::Perlin;
 use serde::{Deserialize, Serialize};
 
 /// Named biome. Each variant has a distinct terrain shape realized by
@@ -155,7 +155,7 @@ impl BiomeMap {
         }
         let n = self
             .noise
-            .get([f64::from(x) * self.frequency, f64::from(z) * self.frequency]);
+            .sample(f64::from(x) * self.frequency, f64::from(z) * self.frequency);
         // Perlin returns roughly [-1.0, 1.0]; map into [0.0, 1.0).
         let t = ((n + 1.0) * 0.5).clamp(0.0, 0.999_999);
         let idx = (t * enabled.len() as f64) as usize;

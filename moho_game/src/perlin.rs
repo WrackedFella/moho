@@ -10,10 +10,52 @@ impl Perlin {
         Self { seed }
     }
 
+    /// Gradient noise at `(x, z)`: zero at integer lattice points, within `[-1, 1]`.
     pub(crate) fn sample(&self, x: f64, z: f64) -> f64 {
-        let _ = (self.seed, x, z);
-        todo!()
+        let x0 = x.floor();
+        let z0 = z.floor();
+        let (fx, fz) = (x - x0, z - z0);
+        let (ix, iz) = (x0 as i32, z0 as i32);
+
+        let corner = |dx: i32, dz: i32| {
+            let (gx, gz) = self.gradient(ix.wrapping_add(dx), iz.wrapping_add(dz));
+            gx * (fx - f64::from(dx)) + gz * (fz - f64::from(dz))
+        };
+        let (u, v) = (fade(fx), fade(fz));
+
+        let bottom = lerp(corner(0, 0), corner(1, 0), u);
+        let top = lerp(corner(0, 1), corner(1, 1), u);
+        lerp(bottom, top, v)
     }
+
+    /// Gradient of length sqrt(2) chosen by hashing the lattice corner and seed.
+    fn gradient(&self, ix: i32, iz: i32) -> (f64, f64) {
+        const R: f64 = std::f64::consts::SQRT_2;
+        let mut h = u64::from(self.seed) | (u64::from(ix as u32) << 32);
+        h = h.wrapping_add((u64::from(iz as u32)).wrapping_mul(0x9e37_79b9_7f4a_7c15));
+        h = h.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        h = (h ^ (h >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        h = (h ^ (h >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        h ^= h >> 31;
+        match h >> 61 {
+            0 => (1.0, 1.0),
+            1 => (-1.0, 1.0),
+            2 => (1.0, -1.0),
+            3 => (-1.0, -1.0),
+            4 => (R, 0.0),
+            5 => (-R, 0.0),
+            6 => (0.0, R),
+            _ => (0.0, -R),
+        }
+    }
+}
+
+fn fade(t: f64) -> f64 {
+    t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+}
+
+fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    a + t * (b - a)
 }
 
 #[cfg(test)]
@@ -154,6 +196,92 @@ mod tests {
                 assert!(dx <= 3e-6, "x step at ({x}, {z}): {dx}");
                 assert!(dz <= 3e-6, "z step at ({x}, {z}): {dz}");
             }
+        }
+    }
+
+    #[test]
+    fn bound_holds_near_extreme_cell_centres() {
+        let offsets: Vec<f64> = (-20..=20)
+            .flat_map(|k| [f64::from(k) * 1e-7, f64::from(k) * 1e-3])
+            .collect();
+
+        let mut extreme_cells = 0;
+        for seed in 0..64 {
+            let noise = Perlin::new(seed);
+
+            for i in -16..16 {
+                for j in -16..16 {
+                    let (cx, cz) = (f64::from(i) + 0.5, f64::from(j) + 0.5);
+                    if noise.sample(cx, cz).abs() < 0.999_999 {
+                        continue;
+                    }
+                    extreme_cells += 1;
+
+                    for &a in &offsets {
+                        for &b in &offsets {
+                            let v = noise.sample(cx + a, cz + b);
+                            assert!(
+                                v.abs() <= 1.0,
+                                "seed {seed} cell ({i}, {j}) offset ({a}, {b}) = {v}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(extreme_cells > 0, "no extreme cell centres found");
+    }
+
+    #[test]
+    fn continuous_when_approaching_lattice_from_below() {
+        let noise = Perlin::new(42);
+
+        for ix in -5..=5 {
+            let lattice = f64::from(ix);
+            for off in [0.3, -0.7] {
+                for eps in [1e-9, 1e-12] {
+                    let limit = 3.0 * eps + 1e-15;
+
+                    let dx = (noise.sample(lattice, off) - noise.sample(lattice - eps, off)).abs();
+                    let dz = (noise.sample(off, lattice) - noise.sample(off, lattice - eps)).abs();
+
+                    assert!(dx <= limit, "x at {ix}, z {off}, eps {eps}: {dx}");
+                    assert!(dz <= limit, "z at {ix}, x {off}, eps {eps}: {dz}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tiny_and_signed_zero_offsets_stay_at_origin_value() {
+        let noise = Perlin::new(42);
+
+        for (x, z) in [(-1e-300, 0.0), (-0.0, 0.0), (0.0, 0.0), (-0.0, -0.0)] {
+            let v = noise.sample(x, z);
+
+            assert!(v.abs() <= 1e-12, "({x:?}, {z:?}) = {v}");
+        }
+    }
+
+    #[test]
+    fn golden_samples_are_pinned() {
+        let noise = Perlin::new(42);
+        let pinned = [
+            ((0.5, 0.5), -0.5),
+            ((1.25, -3.75), 0.413_207_605_066_412),
+            ((-7.3, 2.9), 0.472_080_000_000_000_5),
+            ((10.1, 10.6), 0.426_318_174_765_844_1),
+            ((-0.4, -12.2), -0.478_796_143_677_034_2),
+            ((123.456, -654.321), 0.232_055_541_287_439_83),
+        ];
+
+        for ((x, z), expected) in pinned {
+            let v = noise.sample(x, z);
+            assert!(
+                (v - expected).abs() < 1e-12,
+                "({x}, {z}) = {v}, pinned {expected}"
+            );
         }
     }
 }

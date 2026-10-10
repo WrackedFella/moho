@@ -1,6 +1,6 @@
 use crate::biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
+use crate::perlin::Perlin;
 use moho_voxel::{BlockPos, ChunkStore, LightPropagator, VoxelChunk, VoxelGrid};
-use noise::{NoiseFn, Perlin};
 use serde::{Deserialize, Serialize};
 
 /// Parameters describing a new world request coming from the UI or other
@@ -170,7 +170,7 @@ pub(crate) fn sample_surface_height(
 
     for _ in 0..params.octaves {
         value +=
-            noise.get([f64::from(x) * frequency, f64::from(z) * frequency]) * f64::from(amplitude);
+            noise.sample(f64::from(x) * frequency, f64::from(z) * frequency) * f64::from(amplitude);
         amplitude *= 0.5;
         frequency *= 2.0;
     }
@@ -488,5 +488,26 @@ mod tests {
         }
         assert!(ore_at_bottom, "expected ore somewhere at y=6");
         assert!(ore_at_top, "expected ore somewhere at y=66");
+    }
+
+    #[test]
+    fn golden_surface_heights_are_pinned() {
+        let noise = Perlin::new(42);
+        let biome = BiomeType::GentleHills;
+        let params = biome.params();
+        let pinned = [
+            ((-33, 19), 1.372_482_3),
+            ((-19, 12), 3.875_477_3),
+            ((-12, 9), 5.168_122_3),
+            ((23, -8), 1.547_490_2),
+        ];
+
+        for ((x, z), expected) in pinned {
+            let h = sample_surface_height(&noise, x, z, &biome, &params);
+            assert!(
+                (h - expected).abs() < 1e-6,
+                "({x}, {z}) = {h}, pinned {expected}"
+            );
+        }
     }
 }
