@@ -64,7 +64,7 @@ otherwise copy, and adding the controller to the seam list that ENG-F5's gate fr
 |---|---|---|
 | Third-person camera modes | No consumer yet | A game line asks for one |
 | Game feel (head bob, sway, weapon handling) | Game-specific; belongs to each line | Never in the engine |
-| Crouch and prone (capsule and eye height change) | Open question for Justin; GDD lists crouch, prone is a cut candidate | FPS Phase 1 playtest, or now if Justin says so |
+| Crouch and prone (capsule and eye height change) | Deferred (Justin, 2026-10-10): Phase 1 can judge weighty gunplay standing; adding it later doesn't change the controller's shape | FPS Phase 1 playtest asks for it |
 | Mantle, ladders, swimming | GDD: no mantle in Phase 1 | FPS asks |
 
 ## Items
