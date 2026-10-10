@@ -6,6 +6,9 @@ use rapier3d::prelude::{
 };
 
 /// Opaque identity of one character in a [`PhysicsWorld`].
+///
+/// Only meaningful to the world that issued it: another world may resolve it to
+/// one of its own characters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CharacterHandle(RigidBodyHandle);
 
@@ -17,7 +20,7 @@ pub struct CharacterState {
     pub grounded: bool,
 }
 
-/// The handle names a character that was removed or belongs to another world.
+/// The handle names a character that was removed.
 #[derive(Debug, PartialEq, thiserror::Error)]
 #[error("unknown character")]
 pub struct UnknownCharacter;
@@ -62,7 +65,7 @@ impl PhysicsWorld {
     /// Remove the character's body and capsule.
     ///
     /// # Errors
-    /// [`UnknownCharacter`] if `handle` was already removed or came from another world.
+    /// [`UnknownCharacter`] if `handle` was already removed.
     pub fn remove_character(&mut self, handle: CharacterHandle) -> Result<(), UnknownCharacter> {
         self.characters.remove(&handle).ok_or(UnknownCharacter)?;
         self.rigid_body_set.remove(
@@ -80,7 +83,7 @@ impl PhysicsWorld {
     /// Move the character by `desired_horizontal` with gravity applied, returning its new position.
     ///
     /// # Errors
-    /// [`UnknownCharacter`] if `handle` is not a live character of this world.
+    /// [`UnknownCharacter`] if `handle` was removed.
     pub fn move_character(
         &mut self,
         handle: CharacterHandle,
@@ -139,7 +142,7 @@ impl PhysicsWorld {
     /// Teleport the character to `position` and zero its vertical velocity.
     ///
     /// # Errors
-    /// [`UnknownCharacter`] if `handle` is not a live character of this world.
+    /// [`UnknownCharacter`] if `handle` was removed.
     pub fn set_character_position(
         &mut self,
         handle: CharacterHandle,
@@ -157,7 +160,7 @@ impl PhysicsWorld {
     /// Set the character's vertical velocity.
     ///
     /// # Errors
-    /// [`UnknownCharacter`] if `handle` is not a live character of this world.
+    /// [`UnknownCharacter`] if `handle` was removed.
     pub fn set_vertical_velocity(
         &mut self,
         handle: CharacterHandle,
