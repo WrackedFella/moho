@@ -20,10 +20,10 @@ pub(crate) fn convert(
     let reader = primitive.reader(|b| buffers.get(b.index()).map(|data| &**data));
     let raw_positions = reader
         .read_positions()
-        .ok_or_else(|| bad("primitive has no positions".into()))?;
+        .ok_or_else(|| bad("positions missing or out of buffer range".into()))?;
     let raw_normals = reader
         .read_normals()
-        .ok_or_else(|| bad("primitive has no normals".into()))?;
+        .ok_or_else(|| bad("normals missing or out of buffer range".into()))?;
 
     let normal_matrix = Mat3::from_mat4(world).inverse().transpose();
     let positions: Vec<[f32; 3]> = raw_positions
@@ -38,10 +38,15 @@ pub(crate) fn convert(
         .collect();
     let count = positions.len();
 
-    let mut indices: Vec<u32> = reader.read_indices().map_or_else(
-        || (0..u32::try_from(count).unwrap_or(u32::MAX)).collect(),
-        |i| i.into_u32().collect(),
-    );
+    let mut indices: Vec<u32> = if primitive.indices().is_some() {
+        reader
+            .read_indices()
+            .ok_or_else(|| bad("indices out of buffer range".into()))?
+            .into_u32()
+            .collect()
+    } else {
+        (0..u32::try_from(count).unwrap_or(u32::MAX)).collect()
+    };
     if world.determinant() < 0.0 {
         for tri in indices.as_chunks_mut::<3>().0 {
             tri.swap(1, 2);

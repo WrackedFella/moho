@@ -1,7 +1,7 @@
 //! Buffer resolution: GLB blob or relative file URIs.
 
 use std::borrow::Cow;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use crate::error::LevelErrorKind;
 
@@ -14,16 +14,23 @@ pub(crate) fn resolve<'b>(
     document
         .buffers()
         .map(|buffer| match buffer.source() {
-            gltf::buffer::Source::Bin => blob
-                .map(Cow::Borrowed)
-                .ok_or_else(|| LevelErrorKind::UnsupportedBufferUri { uri: String::new() }),
+            gltf::buffer::Source::Bin => blob.map(Cow::Borrowed).ok_or_else(|| {
+                LevelErrorKind::NotGltf(
+                    format!(
+                        "buffer {} has no uri and the file has no GLB blob",
+                        buffer.index()
+                    )
+                    .into(),
+                )
+            }),
             gltf::buffer::Source::Uri(uri) => {
-                if is_absolute_or_scheme(uri) {
+                let file = percent_decode(uri);
+                if !is_relative_file(&file) {
                     return Err(LevelErrorKind::UnsupportedBufferUri {
                         uri: uri.to_owned(),
                     });
                 }
-                std::fs::read(dir.join(percent_decode(uri)))
+                std::fs::read(dir.join(file))
                     .map(Cow::Owned)
                     .map_err(|source| LevelErrorKind::MissingBuffer {
                         uri: uri.to_owned(),
@@ -34,12 +41,16 @@ pub(crate) fn resolve<'b>(
         .collect()
 }
 
-fn is_absolute_or_scheme(uri: &str) -> bool {
-    uri.starts_with('/')
-        || uri
-            .split('/')
-            .next()
-            .is_some_and(|first| first.contains(':'))
+/// Checked after decoding, so an escaped `/` or scheme cannot slip past.
+fn is_relative_file(file: &str) -> bool {
+    let has_scheme = file
+        .split('/')
+        .next()
+        .is_some_and(|first| first.contains(':'));
+    let rooted = Path::new(file)
+        .components()
+        .any(|c| matches!(c, Component::Prefix(_) | Component::RootDir));
+    !has_scheme && !rooted
 }
 
 fn percent_decode(uri: &str) -> String {
