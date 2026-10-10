@@ -284,7 +284,7 @@ impl Overlay for MyOverlay {8) egui Slider width control quirk
 
   spacing property.
 
-    fn render(&mut self, ui: &mut egui::Ui, event_bus: &EventBus) {
+    fn render(&mut self, ui: &mut egui::Ui, data: &HudData) {
 
         egui::Window::new("My Overlay")- **Solution**: To make a slider wider than the default, you must set
 
@@ -476,7 +476,7 @@ let mut console = Console::new();
 // Render console
 let action = console.render(ui);
 
-// Console publishes ConsoleAction events:
+// render returns a ConsoleAction for the caller to route:
 // - SetTimeOfDay(f32)
 // - SaveRequested
 // - LoadRequested
