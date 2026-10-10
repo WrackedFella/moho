@@ -6,6 +6,13 @@ use std::collections::HashMap;
 
 const GRAVITY: f32 = -18.0;
 
+mod character;
+#[cfg(test)]
+mod test_support;
+
+use character::Character;
+pub use character::{CharacterHandle, CharacterState, UnknownCharacter};
+
 pub struct PhysicsWorld {
     gravity: Vector,
     integration_parameters: IntegrationParameters,
@@ -21,19 +28,13 @@ pub struct PhysicsWorld {
     ccd_solver: CCDSolver,
     world_mesh_colliders: HashMap<WorldMeshId, ColliderHandle>,
     character_controller: KinematicCharacterController,
-    pub character_body: Option<RigidBodyHandle>,
-    pub character_collider: Option<ColliderHandle>,
-    pub vertical_velocity: f32,
-    pub is_grounded: bool,
-    pub noclip: bool,
+    characters: HashMap<CharacterHandle, Character>,
 }
 
 impl std::fmt::Debug for PhysicsWorld {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PhysicsWorld")
-            .field("noclip", &self.noclip)
-            .field("is_grounded", &self.is_grounded)
-            .field("vertical_velocity", &self.vertical_velocity)
+            .field("characters", &self.characters.len())
             .finish_non_exhaustive()
     }
 }
@@ -78,11 +79,7 @@ impl PhysicsWorld {
             ccd_solver,
             world_mesh_colliders: HashMap::new(),
             character_controller,
-            character_body: None,
-            character_collider: None,
-            vertical_velocity: 0.0,
-            is_grounded: false,
-            noclip: false,
+            characters: HashMap::new(),
         }
     }
 
@@ -154,105 +151,6 @@ impl PhysicsWorld {
         );
     }
 
-    /// Add the kinematic character (capsule) to the world.
-    pub fn add_character(&mut self, position: Vec3) -> (RigidBodyHandle, ColliderHandle) {
-        let body = RigidBodyBuilder::kinematic_position_based()
-            .translation(position)
-            .build();
-        let body_handle = self.rigid_body_set.insert(body);
-
-        // Capsule: half-height 0.85, radius 0.3 → total height ~2m
-        let collider = ColliderBuilder::capsule_y(0.85, 0.3)
-            .friction(0.0) // No friction on character capsule itself
-            .build();
-        let collider_handle =
-            self.collider_set
-                .insert_with_parent(collider, body_handle, &mut self.rigid_body_set);
-
-        self.character_body = Some(body_handle);
-        self.character_collider = Some(collider_handle);
-        self.vertical_velocity = 0.0;
-        self.is_grounded = false;
-
-        tracing::info!(pos = ?position, "Character controller spawned");
-        (body_handle, collider_handle)
-    }
-
-    /// Move the character by the desired translation (horizontal only).
-    /// Gravity is applied internally via `vertical_velocity`.
-    /// Returns the new world position after movement, or `None` if there is
-    /// no character.
-    pub fn move_character(&mut self, desired_horizontal: Vec3, dt: f32) -> Option<Vec3> {
-        let (Some(body_handle), Some(collider_handle)) =
-            (self.character_body, self.character_collider)
-        else {
-            return None;
-        };
-
-        // Integrate gravity into vertical velocity
-        if !self.is_grounded {
-            self.vertical_velocity += GRAVITY * dt;
-        }
-
-        let desired = Vec3::new(
-            desired_horizontal.x,
-            self.vertical_velocity * dt,
-            desired_horizontal.z,
-        );
-
-        let shape = self.collider_set[collider_handle].shape();
-        let current_pos = *self.rigid_body_set[body_handle].position();
-
-        // Build a transient QueryPipeline view filtered to exclude the character itself.
-        let filter = QueryFilter::default().exclude_collider(collider_handle);
-        let queries = self.broad_phase.as_query_pipeline(
-            self.narrow_phase.query_dispatcher(),
-            &self.rigid_body_set,
-            &self.collider_set,
-            filter,
-        );
-
-        let movement = self.character_controller.move_shape(
-            dt,
-            &queries,
-            shape,
-            &current_pos,
-            desired,
-            |_| {},
-        );
-
-        self.is_grounded = movement.grounded;
-        if self.is_grounded && self.vertical_velocity < 0.0 {
-            self.vertical_velocity = 0.0;
-        }
-
-        // Apply effective movement directly so character_position() reflects it immediately.
-        let new_translation = current_pos.translation + movement.translation;
-        let new_pose = Pose::from_parts(new_translation, current_pos.rotation);
-        // Set both the "next" and "current" position so the value is available immediately.
-        self.rigid_body_set[body_handle].set_next_kinematic_position(new_pose);
-        self.rigid_body_set[body_handle].set_position(new_pose, false);
-
-        Some(new_translation)
-    }
-
-    /// Teleport the character to `position` and zero out vertical velocity.
-    pub fn set_character_position(&mut self, position: Vec3) {
-        if let Some(handle) = self.character_body {
-            let current = *self.rigid_body_set[handle].position();
-            let new_pose = Pose::from_parts(position, current.rotation);
-            self.rigid_body_set[handle].set_next_kinematic_position(new_pose);
-            self.rigid_body_set[handle].set_position(new_pose, false);
-            self.vertical_velocity = 0.0;
-        }
-    }
-
-    /// Get the character's current world position.
-    pub fn character_position(&self) -> Option<Vec3> {
-        let handle = self.character_body?;
-        Some(self.rigid_body_set[handle].position().translation)
-    }
-
     /// Spawn a dynamic sphere rigid body. Returns the body handle.
     pub fn add_dynamic_sphere(&mut self, position: Vec3, radius: f32) -> RigidBodyHandle {
         let body = RigidBodyBuilder::dynamic().translation(position).build();
@@ -304,28 +202,9 @@ impl Default for PhysicsWorld {
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::{floor_mesh, quad_mesh};
     use super::*;
     use proptest::prelude::*;
-
-    #[test]
-    fn move_character_without_character_returns_none() {
-        let mut world = PhysicsWorld::new();
-
-        let moved = world.move_character(Vec3::ZERO, 1.0 / 60.0);
-
-        assert_eq!(moved, None);
-    }
-
-    #[test]
-    fn move_character_with_character_returns_its_new_position() {
-        let mut world = PhysicsWorld::new();
-        world.add_character(Vec3::new(0.0, 10.0, 0.0));
-
-        let moved = world.move_character(Vec3::ZERO, 1.0 / 60.0);
-
-        assert!(moved.is_some());
-        assert_eq!(moved, world.character_position());
-    }
 
     #[test]
     fn test_gravity_drops_rigid_body() {
@@ -398,110 +277,6 @@ mod tests {
     }
 
     #[test]
-    fn test_character_controller_falls_to_floor() {
-        let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
-        world.add_character(Vec3::new(0.0, 10.0, 0.0));
-
-        for _ in 0..120 {
-            world.move_character(Vec3::ZERO, 1.0 / 60.0);
-            world.step(1.0 / 60.0);
-        }
-
-        let pos = world.character_position().unwrap();
-        assert!(
-            (1.1..1.3).contains(&pos.y),
-            "Capsule centre should rest at half-height plus radius, y={}",
-            pos.y
-        );
-        assert!(world.is_grounded);
-    }
-
-    #[test]
-    fn set_character_position_teleports_and_stops_falling() {
-        let mut world = PhysicsWorld::new();
-        world.add_character(Vec3::new(0.0, 10.0, 0.0));
-        for _ in 0..10 {
-            world.move_character(Vec3::ZERO, 1.0 / 60.0);
-        }
-        assert!(
-            (world.vertical_velocity + 3.0).abs() < 1e-4,
-            "10 airborne frames at -18 should give -3.0, v={}",
-            world.vertical_velocity
-        );
-
-        let target = Vec3::new(3.0, 20.0, -4.0);
-        world.set_character_position(target);
-
-        assert_eq!(world.character_position(), Some(target));
-        assert_eq!(world.vertical_velocity, 0.0);
-    }
-
-    #[test]
-    fn test_character_horizontal_movement() {
-        let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
-        world.add_character(Vec3::new(0.0, 1.0, 0.0));
-        for _ in 0..60 {
-            world.move_character(Vec3::ZERO, 1.0 / 60.0);
-            world.step(1.0 / 60.0);
-        }
-        let start = world.character_position().unwrap();
-
-        for _ in 0..30 {
-            world.move_character(Vec3::new(4.0 * (1.0 / 60.0), 0.0, 0.0), 1.0 / 60.0);
-            world.step(1.0 / 60.0);
-
-            let y = world.character_position().unwrap().y;
-            assert!(
-                (1.1..1.3).contains(&y),
-                "capsule centre left the floor, y={y}"
-            );
-            assert!(world.is_grounded, "character lost ground contact");
-        }
-
-        let end = world.character_position().unwrap();
-        assert!(
-            (end.x - start.x - 2.0).abs() < 0.05,
-            "30 frames at 4 m/s should move 2.0 m, start={}, end={}",
-            start.x,
-            end.x
-        );
-    }
-
-    #[test]
-    fn landing_character_stops_vertical_velocity() {
-        let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
-        world.add_character(Vec3::new(0.0, 3.0, 0.0));
-
-        for _ in 0..60 {
-            world.move_character(Vec3::ZERO, 1.0 / 60.0);
-            world.step(1.0 / 60.0);
-        }
-
-        assert!(world.is_grounded);
-        assert_eq!(world.vertical_velocity, 0.0);
-    }
-
-    #[test]
-    fn airborne_character_falls_by_integrated_gravity() {
-        let mut world = PhysicsWorld::new();
-        world.add_character(Vec3::new(0.0, 10.0, 0.0));
-
-        for _ in 0..10 {
-            world.move_character(Vec3::ZERO, 1.0 / 60.0);
-            world.step(1.0 / 60.0);
-        }
-
-        let y = world.character_position().unwrap().y;
-        assert!(
-            (y - 9.725).abs() < 1e-4,
-            "10 frames of -18 m/s^2 should drop 0.275 m, y={y}"
-        );
-    }
-
-    #[test]
     fn dynamic_cuboid_rests_on_its_half_height() {
         let mut world = PhysicsWorld::new();
         world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
@@ -516,32 +291,6 @@ mod tests {
             (0.2..0.3).contains(&y),
             "cuboid should rest at half height 0.25, y={y}"
         );
-    }
-
-    fn quad_mesh(verts: &[[f32; 3]], idxs: &[u32]) -> WorldMesh {
-        let n = verts.len();
-        WorldMesh::new(
-            verts.to_vec(),
-            vec![[0.0, 1.0, 0.0]; n],
-            vec![1.0; n],
-            vec![[0.0; 3]; n],
-            vec![1.0; n],
-            vec![0; n],
-            idxs.to_vec(),
-        )
-        .expect("valid quad mesh")
-    }
-
-    fn floor_mesh(y: f32) -> WorldMesh {
-        quad_mesh(
-            &[
-                [-10.0, y, -10.0],
-                [10.0, y, -10.0],
-                [10.0, y, 10.0],
-                [-10.0, y, 10.0],
-            ],
-            &[0, 2, 1, 0, 3, 2],
-        )
     }
 
     fn empty_mesh() -> WorldMesh {

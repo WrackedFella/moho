@@ -462,11 +462,7 @@ mod tests {
             .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
         app.simulation
             .set_position_yaw_pitch(glam::Vec3::new(100.0, 100.0, 100.0), 0.0, 0.0);
-        app.physics
-            .world
-            .as_mut()
-            .expect("a new PhysicsController has a world")
-            .add_character(glam::Vec3::new(0.0, 50.0, 0.0));
+        app.physics.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
         assert!(app.physics.is_kcc_active());
 
         for _ in 0..30 {

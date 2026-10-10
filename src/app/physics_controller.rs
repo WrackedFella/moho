@@ -5,10 +5,14 @@
 
 use moho_game::actors::ActorId;
 
+const JUMP_VELOCITY: f32 = 8.0;
+
 pub struct PhysicsController {
     pub world: Option<moho_physics::PhysicsWorld>,
     pub test_bodies: Vec<(moho_physics::RigidBodyHandle, ActorId)>,
     pub jump_pressed: bool,
+    pub player: Option<moho_physics::CharacterHandle>,
+    pub noclip: bool,
 }
 
 impl PhysicsController {
@@ -17,6 +21,8 @@ impl PhysicsController {
             world: Some(moho_physics::PhysicsWorld::new()),
             test_bodies: Vec::new(),
             jump_pressed: false,
+            player: None,
+            noclip: false,
         }
     }
 
@@ -24,32 +30,45 @@ impl PhysicsController {
     pub fn reset(&mut self) {
         self.world = Some(moho_physics::PhysicsWorld::new());
         self.test_bodies.clear();
+        self.player = None;
+        self.noclip = false;
+    }
+
+    /// Place the player character at `position`, replacing any previous one.
+    pub fn spawn_player(&mut self, position: glam::Vec3) {
+        let Some(pw) = self.world.as_mut() else {
+            return;
+        };
+        if let Some(previous) = self.player.take() {
+            pw.remove_character(previous)
+                .expect("the player handle belongs to the current world");
+        }
+        self.player = Some(pw.add_character(position));
     }
 
     /// Whether a kinematic character controller is active (and not in noclip).
     pub fn is_kcc_active(&self) -> bool {
-        self.world
-            .as_ref()
-            .is_some_and(|pw| !pw.noclip && pw.character_body.is_some())
+        !self.noclip && self.world.is_some() && self.player.is_some()
     }
 
-    /// Move character for one frame, applying jump if grounded.
+    /// Move the player for one frame, applying jump if grounded.
     ///
     /// Returns the new world-space position, or `None` if the physics world
-    /// is not initialised or has no character.
+    /// is not initialised or there is no player.
     pub fn move_character(&mut self, horizontal: glam::Vec3, dt: f32) -> Option<glam::Vec3> {
-        const JUMP_VELOCITY: f32 = 8.0;
+        let handle = self.player?;
         let pw = self.world.as_mut()?;
-        if self.jump_pressed && pw.is_grounded {
-            pw.vertical_velocity = JUMP_VELOCITY;
+        if self.jump_pressed && pw.character(handle).is_some_and(|c| c.grounded) {
+            pw.set_vertical_velocity(handle, JUMP_VELOCITY).ok()?;
         }
-        pw.move_character(horizontal, dt)
+        pw.move_character(handle, horizontal, dt).ok()
     }
 
-    /// Teleport the character (e.g. respawn after falling off the map).
+    /// Teleport the player (e.g. respawn after falling off the map).
     pub fn teleport_character(&mut self, pos: glam::Vec3) {
-        if let Some(pw) = &mut self.world {
-            pw.set_character_position(pos);
+        if let (Some(pw), Some(handle)) = (self.world.as_mut(), self.player) {
+            pw.set_character_position(handle, pos)
+                .expect("the player handle belongs to the current world");
         }
     }
 
@@ -229,6 +248,159 @@ mod tests {
         );
     }
 
+    fn stale_floor_mesh() -> moho_render_api::WorldMesh {
+        moho_render_api::WorldMesh::new(
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            vec![[0.0, 1.0, 0.0]; 3],
+            vec![1.0; 3],
+            vec![[0.0; 3]; 3],
+            vec![1.0; 3],
+            vec![0; 3],
+            vec![0, 2, 1],
+        )
+        .expect("valid triangle mesh")
+    }
+
+    #[test]
+    fn spawning_the_player_twice_keeps_one_character() {
+        let mut controller = PhysicsController::new();
+
+        controller.spawn_player(glam::Vec3::new(0.0, 10.0, 0.0));
+        let first = controller.player.expect("first player");
+        controller.spawn_player(glam::Vec3::new(5.0, 10.0, 0.0));
+
+        let pw = controller.world.as_ref().expect("physics world");
+        let second = controller.player.expect("second player");
+        assert_ne!(first, second);
+        assert!(pw.character(first).is_none(), "first character is gone");
+        assert!(pw.character(second).is_some());
+        assert_eq!(pw.rigid_body_set.len(), 1, "one character body");
+        assert_eq!(pw.collider_set.len(), 1, "one character collider");
+    }
+
+    #[test]
+    fn reset_clears_the_player_and_noclip() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 10.0, 0.0));
+        controller.noclip = true;
+
+        controller.reset();
+
+        assert_eq!(controller.player, None);
+        assert!(!controller.noclip);
+        assert!(!controller.is_kcc_active());
+    }
+
+    #[test]
+    fn noclip_turns_the_kcc_off() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 10.0, 0.0));
+        assert!(controller.is_kcc_active());
+
+        controller.noclip = true;
+
+        assert!(!controller.is_kcc_active());
+    }
+
+    const DT: f32 = 1.0 / 60.0;
+
+    fn big_floor_mesh() -> moho_render_api::WorldMesh {
+        moho_render_api::WorldMesh::new(
+            vec![
+                [-20.0, 0.0, -20.0],
+                [20.0, 0.0, -20.0],
+                [-20.0, 0.0, 20.0],
+                [20.0, 0.0, 20.0],
+            ],
+            vec![[0.0, 1.0, 0.0]; 4],
+            vec![1.0; 4],
+            vec![[0.0; 3]; 4],
+            vec![1.0; 4],
+            vec![0; 4],
+            vec![0, 2, 1, 1, 2, 3],
+        )
+        .expect("valid floor mesh")
+    }
+
+    fn grounded_player_on_floor() -> PhysicsController {
+        let mut controller = PhysicsController::new();
+        controller
+            .world
+            .as_mut()
+            .expect("new controller has a world")
+            .set_world_mesh(moho_render_api::WorldMeshId(1), &big_floor_mesh());
+        controller.spawn_player(glam::Vec3::new(0.0, 1.5, 0.0));
+        for _ in 0..300 {
+            controller.move_character(glam::Vec3::ZERO, DT);
+            controller.step(DT);
+        }
+        controller
+    }
+
+    fn player_state(controller: &PhysicsController) -> moho_physics::CharacterState {
+        controller
+            .world
+            .as_ref()
+            .expect("physics world")
+            .character(controller.player.expect("player"))
+            .expect("player resolves")
+    }
+
+    #[test]
+    fn jump_without_the_button_on_the_ground_does_not_rise() {
+        let mut controller = grounded_player_on_floor();
+        assert!(player_state(&controller).grounded, "settled on the floor");
+        controller.jump_pressed = false;
+
+        controller.move_character(glam::Vec3::ZERO, DT);
+
+        let state = player_state(&controller);
+        assert!(state.vertical_velocity <= 0.0, "{state:?}");
+    }
+
+    #[test]
+    fn jump_button_on_the_ground_launches_upward() {
+        let mut controller = grounded_player_on_floor();
+        let before = player_state(&controller).position.y;
+        controller.jump_pressed = true;
+
+        controller.move_character(glam::Vec3::ZERO, DT);
+
+        let state = player_state(&controller);
+        assert!(state.position.y > before, "{state:?}");
+        assert!(state.vertical_velocity > 0.0, "{state:?}");
+    }
+
+    #[test]
+    fn jump_button_in_the_air_does_not_launch() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        controller.jump_pressed = true;
+
+        controller.move_character(glam::Vec3::ZERO, DT);
+
+        let state = player_state(&controller);
+        assert!(!state.grounded);
+        assert!(state.vertical_velocity < 0.0, "{state:?}");
+    }
+
+    #[test]
+    fn teleport_moves_the_player_and_zeroes_vertical_velocity() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        for _ in 0..10 {
+            controller.move_character(glam::Vec3::ZERO, DT);
+        }
+        assert!(player_state(&controller).vertical_velocity < 0.0);
+        let target = glam::Vec3::new(3.0, 20.0, -4.0);
+
+        controller.teleport_character(target);
+
+        let state = player_state(&controller);
+        assert!(state.position.distance(target) < 1e-4, "{state:?}");
+        assert_eq!(state.vertical_velocity, 0.0);
+    }
+
     #[test]
     fn load_replaces_the_previous_physics_world() {
         use crate::app::world_geometry::tests::{chunk_at, terrain_collider_count};
@@ -253,10 +425,10 @@ mod tests {
         let stale_actor =
             actors.spawn_sphere(Sphere::new(glam::Vec3::new(0.0, 9.0, 0.0), 0.5, material));
         let pw = app.physics.world.as_mut().expect("physics world");
-        let (_, old_character) = pw.add_character(glam::Vec3::new(50.0, 50.0, 50.0));
         let stale_body = pw.add_dynamic_sphere(glam::Vec3::new(0.0, 9.0, 0.0), 0.5);
-        let unowned = pw.collider_set[old_character].clone();
-        pw.collider_set.insert(unowned);
+        let unowned = moho_render_api::WorldMeshId(u64::MAX);
+        pw.set_world_mesh(unowned, &stale_floor_mesh());
+        app.physics.spawn_player(glam::Vec3::new(50.0, 50.0, 50.0));
         app.physics.test_bodies.push((stale_body, stale_actor));
 
         crate::app::scene_loader::load_scene(
@@ -275,7 +447,9 @@ mod tests {
             .count();
         assert!(with_geometry > 0, "the save holds chunks with geometry");
         assert!(app.physics.test_bodies.is_empty(), "no stale test bodies");
-        assert!(pw.character_collider.is_some(), "a new character is placed");
+        let player = app.physics.player.expect("a new player is placed");
+        assert!(pw.character(player).is_some(), "the player handle resolves");
+        assert!(pw.world_mesh_collider(unowned).is_none(), "stale mesh gone");
         assert_eq!(terrain_collider_count(&app), with_geometry);
         assert_eq!(pw.collider_set.len(), with_geometry + 1);
         assert_eq!(pw.rigid_body_set.len(), 1, "only the character body");

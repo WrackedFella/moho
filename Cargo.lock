@@ -1676,6 +1676,7 @@ dependencies = [
  "moho_render_api",
  "proptest",
  "rapier3d",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
