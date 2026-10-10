@@ -197,11 +197,6 @@ mod tests {
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
         fn set_shadow_quality(&mut self, _quality: u8) {}
         fn set_ssao_quality(&mut self, _quality: u8) {}
-        fn set_frame_callback_arc(
-            &mut self,
-            _cb: Option<std::sync::Arc<std::sync::Mutex<dyn crate::FrameCallback>>>,
-        ) {
-        }
     }
 
     /// A mesh of `triangles` triangles over three shared vertices. The index

@@ -1,20 +1,101 @@
 //! Pure mapping from egui tessellation output to the render-api UI paint contract.
 
-use moho_render_api::{UiFrame, UiTextureId};
+use egui::epaint::Primitive;
+use moho_render_api::{
+    UiFilter, UiFrame, UiImage, UiMesh, UiRect, UiSampler, UiTextureId, UiTextureSet, UiVertex,
+    UiWrap,
+};
+
+/// Tag bit set on `User` ids so they never collide with `Managed` ids.
+const USER_TEXTURE_TAG: u64 = 1 << 63;
 
 /// Maps an egui texture id to a game-assigned id. Injective: `Managed(n)` and
 /// `User(n)` never collide.
-pub(crate) fn to_ui_texture_id(_id: egui::TextureId) -> UiTextureId {
-    todo!("tag User ids so they cannot collide with Managed ids")
+pub(crate) fn to_ui_texture_id(id: egui::TextureId) -> UiTextureId {
+    match id {
+        egui::TextureId::Managed(n) => UiTextureId(n),
+        egui::TextureId::User(n) => UiTextureId(n | USER_TEXTURE_TAG),
+    }
+}
+
+fn to_filter(filter: egui::TextureFilter) -> UiFilter {
+    match filter {
+        egui::TextureFilter::Nearest => UiFilter::Nearest,
+        egui::TextureFilter::Linear => UiFilter::Linear,
+    }
+}
+
+fn to_wrap(wrap: egui::TextureWrapMode) -> UiWrap {
+    match wrap {
+        egui::TextureWrapMode::ClampToEdge => UiWrap::ClampToEdge,
+        egui::TextureWrapMode::Repeat => UiWrap::Repeat,
+        egui::TextureWrapMode::MirroredRepeat => UiWrap::MirroredRepeat,
+    }
+}
+
+fn to_texture_set(id: egui::TextureId, delta: &egui::epaint::ImageDelta) -> UiTextureSet {
+    let egui::ImageData::Color(image) = &delta.image;
+    UiTextureSet {
+        id: to_ui_texture_id(id),
+        pos: delta.pos.map(|[x, y]| [x as u32, y as u32]),
+        image: UiImage {
+            size: [image.size[0] as u32, image.size[1] as u32],
+            pixels: image.pixels.iter().map(egui::Color32::to_array).collect(),
+        },
+        sampler: UiSampler {
+            magnification: to_filter(delta.options.magnification),
+            minification: to_filter(delta.options.minification),
+            wrap: to_wrap(delta.options.wrap_mode),
+        },
+    }
+}
+
+fn to_mesh(clip_rect: egui::Rect, mesh: &egui::epaint::Mesh) -> UiMesh {
+    UiMesh {
+        clip_rect: UiRect {
+            min: [clip_rect.min.x, clip_rect.min.y],
+            max: [clip_rect.max.x, clip_rect.max.y],
+        },
+        texture: to_ui_texture_id(mesh.texture_id),
+        vertices: mesh
+            .vertices
+            .iter()
+            .map(|v| UiVertex {
+                pos: [v.pos.x, v.pos.y],
+                uv: [v.uv.x, v.uv.y],
+                color: v.color.to_array(),
+            })
+            .collect(),
+        indices: mesh.indices.clone(),
+    }
 }
 
 /// Maps tessellated egui output to a [`UiFrame`]. Paint callbacks are skipped.
 pub(crate) fn to_ui_frame(
-    _primitives: &[egui::ClippedPrimitive],
-    _textures_delta: &egui::TexturesDelta,
-    _pixels_per_point: f32,
+    primitives: &[egui::ClippedPrimitive],
+    textures_delta: &egui::TexturesDelta,
+    pixels_per_point: f32,
 ) -> UiFrame {
-    todo!("map egui primitives and texture deltas to UiFrame")
+    UiFrame {
+        pixels_per_point,
+        textures_set: textures_delta
+            .set
+            .iter()
+            .map(|(id, delta)| to_texture_set(*id, delta))
+            .collect(),
+        meshes: primitives
+            .iter()
+            .filter_map(|p| match &p.primitive {
+                Primitive::Mesh(mesh) => Some(to_mesh(p.clip_rect, mesh)),
+                Primitive::Callback(_) => None,
+            })
+            .collect(),
+        textures_free: textures_delta
+            .free
+            .iter()
+            .map(|id| to_ui_texture_id(*id))
+            .collect(),
+    }
 }
 
 #[cfg(test)]
@@ -25,11 +106,11 @@ mod tests {
     use moho_render_api::{UiFilter, UiRect, UiVertex, UiWrap};
     use std::sync::Arc;
 
-    fn vertex(x: f32, y: f32, u: f32, v: f32, c: Color32) -> Vertex {
+    fn vertex(pos: [f32; 2], uv: [f32; 2], color: Color32) -> Vertex {
         Vertex {
-            pos: egui::pos2(x, y),
-            uv: egui::pos2(u, v),
-            color: c,
+            pos: egui::pos2(pos[0], pos[1]),
+            uv: egui::pos2(uv[0], uv[1]),
+            color,
         }
     }
 
@@ -40,31 +121,23 @@ mod tests {
                 indices: vec![0, 1, 2, 2, 1, 3],
                 vertices: vec![
                     vertex(
-                        0.5,
-                        1.5,
-                        0.0,
-                        0.0,
+                        [0.5, 1.5],
+                        [0.0, 0.0],
                         Color32::from_rgba_premultiplied(10, 20, 30, 40),
                     ),
                     vertex(
-                        9.0,
-                        1.5,
-                        1.0,
-                        0.0,
+                        [9.0, 1.5],
+                        [1.0, 0.0],
                         Color32::from_rgba_premultiplied(1, 2, 3, 4),
                     ),
                     vertex(
-                        0.5,
-                        7.0,
-                        0.0,
-                        1.0,
+                        [0.5, 7.0],
+                        [0.0, 1.0],
                         Color32::from_rgba_premultiplied(5, 6, 7, 8),
                     ),
                     vertex(
-                        9.0,
-                        7.0,
-                        1.0,
-                        1.0,
+                        [9.0, 7.0],
+                        [1.0, 1.0],
                         Color32::from_rgba_premultiplied(250, 251, 252, 255),
                     ),
                 ],
