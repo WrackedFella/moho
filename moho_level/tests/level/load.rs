@@ -3,6 +3,7 @@ use std::path::Path;
 
 use crate::support::{
     MODE_LINES, Node, Scene, Xform, cube_prim, floor_prim, line_prim, write_glb, write_gltf,
+    write_gltf_edited,
 };
 use moho_level::{Level, LevelErrorKind, load};
 
@@ -336,6 +337,150 @@ fn triangle_without_normals_is_a_bad_mesh() {
         "{err}"
     );
     assert!(err.to_string().starts_with(&path.display().to_string()));
+}
+
+fn assert_names_file(err: &moho_level::LevelError, path: &Path) {
+    assert_eq!(err.path(), path);
+    assert!(
+        err.to_string().starts_with(&path.display().to_string()),
+        "{err}"
+    );
+}
+
+#[test]
+fn node_cycle_is_an_error_not_a_stack_overflow() {
+    let mut scene = Scene::new();
+    scene.meshes = vec![vec![cube_prim()]];
+    scene.nodes = vec![
+        Node {
+            mesh: Some(0),
+            children: vec![1],
+            ..Node::default()
+        },
+        Node {
+            children: vec![0],
+            ..Node::default()
+        },
+    ];
+    scene.roots = vec![0];
+    let (_dir, path) = write_gltf(&scene);
+
+    let err = load(&path).expect_err("cycle refused");
+
+    assert_names_file(&err, &path);
+}
+
+#[test]
+fn self_referencing_node_is_an_error_not_a_stack_overflow() {
+    let mut scene = Scene::new();
+    scene.meshes = vec![vec![cube_prim()]];
+    scene.nodes = vec![Node {
+        mesh: Some(0),
+        children: vec![0],
+        ..Node::default()
+    }];
+    scene.roots = vec![0];
+    let (_dir, path) = write_gltf(&scene);
+
+    let err = load(&path).expect_err("cycle refused");
+
+    assert_names_file(&err, &path);
+}
+
+#[test]
+fn truncated_buffer_is_a_bad_mesh() {
+    let scene = Scene::with_meshes(vec![vec![floor_prim(0.0)]]);
+    let (dir, path) = write_gltf(&scene);
+    let bin = dir.path().join("level.bin");
+    let full = fs::metadata(&bin).expect("bin exists").len();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&bin)
+        .expect("open bin")
+        .set_len(full / 2)
+        .expect("truncate");
+
+    let err = load(&path).expect_err("short buffer refused");
+
+    assert!(
+        matches!(err.kind(), LevelErrorKind::BadMesh { .. }),
+        "{err}"
+    );
+    assert_names_file(&err, &path);
+}
+
+#[test]
+fn index_past_last_vertex_is_a_bad_mesh() {
+    let mut prim = floor_prim(0.0);
+    prim.positions.truncate(3);
+    prim.normals.truncate(3);
+    prim.indices = Some(vec![0, 1, 5]);
+    let scene = Scene::with_meshes(vec![vec![prim]]);
+    let (_dir, path) = write_gltf(&scene);
+
+    let err = load(&path).expect_err("out-of-range index refused");
+
+    assert!(
+        matches!(err.kind(), LevelErrorKind::BadMesh { .. }),
+        "{err}"
+    );
+    assert_names_file(&err, &path);
+}
+
+#[test]
+fn normal_count_mismatch_is_a_bad_mesh() {
+    let mut prim = floor_prim(0.0);
+    prim.positions.truncate(3);
+    prim.normals.truncate(3);
+    prim.indices = None;
+    let scene = Scene::with_meshes(vec![vec![prim]]);
+    let (_dir, path) = write_gltf_edited(&scene, |doc| {
+        // accessor 0 is POSITION, accessor 1 is NORMAL for the first primitive
+        doc["accessors"][1]["count"] = serde_json::json!(2);
+    });
+
+    let err = load(&path).expect_err("count mismatch refused");
+
+    assert!(
+        matches!(err.kind(), LevelErrorKind::BadMesh { .. }),
+        "{err}"
+    );
+    assert_names_file(&err, &path);
+}
+
+#[test]
+fn nested_three_levels_compose_in_order() {
+    let mut scene = Scene::new();
+    scene.meshes = vec![vec![cube_prim()]];
+    scene.nodes = vec![
+        Node {
+            xform: Xform::translate([10.0, 0.0, 0.0]),
+            children: vec![1],
+            ..Node::default()
+        },
+        Node {
+            xform: Xform::scale([2.0, 2.0, 2.0]),
+            children: vec![2],
+            ..Node::default()
+        },
+        Node {
+            xform: Xform::translate([1.0, 0.0, 0.0]),
+            mesh: Some(0),
+            children: vec![],
+        },
+    ];
+    scene.roots = vec![0];
+    let (_dir, path) = write_gltf(&scene);
+
+    let level = load(&path).expect("level loads");
+
+    // parent * local: T(10) * S(2) * T(1) puts the cube at 10 + 2 * (1 +- 0.5).
+    // Local * parent order would give T(1) * S(2) * T(10): 1 + 2 * (10 +- 0.5) = 20..22.
+    let (min, max) = x_range(&level, 0);
+    assert!(
+        (min - 11.0).abs() < 1e-4 && (max - 13.0).abs() < 1e-4,
+        "{min}..{max}"
+    );
 }
 
 #[test]

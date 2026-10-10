@@ -316,9 +316,15 @@ fn build(scene: &Scene) -> (Value, Vec<u8>) {
 
 /// Write `level.gltf` plus its `.bin` into a fresh temp dir.
 pub fn write_gltf(scene: &Scene) -> (TempDir, PathBuf) {
+    write_gltf_edited(scene, |_| {})
+}
+
+/// Like [`write_gltf`], but `edit` may rewrite the JSON document before it is saved.
+pub fn write_gltf_edited(scene: &Scene, edit: impl FnOnce(&mut Value)) -> (TempDir, PathBuf) {
     let dir = tempfile::tempdir().expect("temp dir");
     let (mut doc, blob) = build(scene);
     doc["buffers"][0]["uri"] = json!(scene.bin_uri);
+    edit(&mut doc);
     let path = dir.path().join("level.gltf");
     fs::write(&path, serde_json::to_vec_pretty(&doc).expect("json")).expect("write gltf");
     if let Some(file) = &scene.bin_file {
