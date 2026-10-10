@@ -215,6 +215,23 @@ fn mirrored_node_keeps_triangles_facing_out() {
 }
 
 #[test]
+fn flattened_node_keeps_source_triangle_order() {
+    // Zero scale gives a zero determinant: not a mirror, so no winding flip.
+    let mut scene = Scene::with_meshes(vec![vec![cube_prim()]]);
+    scene.nodes[0].xform = Xform::scale([1.0, 0.0, 1.0]);
+    let (_dir, path) = write_gltf(&scene);
+    let unflattened =
+        load(&write_gltf(&Scene::with_meshes(vec![vec![cube_prim()]])).1).expect("reference loads");
+
+    let level = load(&path).expect("level loads");
+
+    assert_eq!(
+        level.meshes[0].mesh.indices(),
+        unflattened.meshes[0].mesh.indices()
+    );
+}
+
+#[test]
 fn rotated_node_rotates_normals() {
     let half = std::f32::consts::FRAC_1_SQRT_2;
     let mut scene = Scene::with_meshes(vec![vec![floor_prim(0.0)]]);
