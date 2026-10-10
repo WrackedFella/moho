@@ -59,8 +59,8 @@ just before the work that needs them, not sooner.
 | 1.15 | [ENG-F22](https://github.com/WrackedFella/moho/issues/167): every test can fail and earns its place (part of 1.3) | now, in the waves below; moho_core voxel and lighting cards before [ENG-F10-03](https://github.com/WrackedFella/moho/issues/140) branches |
 | 1.16 | [ENG-F2-02](https://github.com/WrackedFella/moho/issues/95) then [ENG-F2-08](https://github.com/WrackedFella/moho/issues/101): egui's current entry points, then wgpu and egui upgraded | at M1 close (once-per-milestone upgrade); ENG-F2-08 doesn't compile before ENG-F2-02 |
 | 1.17 | [ENG-F2-10](https://github.com/WrackedFella/moho/issues/105): terrain noise in-house; `noise` leaves | after 1.8 |
-| 1.18 | [ENG-F14](https://github.com/WrackedFella/moho/issues/226): a game loads a static scene from a file | after 1.8, 1.11 |
-| 1.19 | [ENG-F15](https://github.com/WrackedFella/moho/issues/227): games query physics and run many bodies | after 1.11; alongside 1.18 |
+| 1.18 | [ENG-F14](https://github.com/WrackedFella/moho/issues/226): a game loads a static level from a file | after 1.8, 1.11 |
+| 1.19 | [ENG-F15](https://github.com/WrackedFella/moho/issues/227): a ray finds the surface or body part it hits | after 1.11; alongside 1.18 |
 | 1.20 | [ENG-F21](https://github.com/WrackedFella/moho/issues/123): a game gets a character controller and camera from the engine | after 1.9, 1.10, 1.19 |
 
 1.1 and 1.3 are triggered by later work, not gate items. 1.13 and 1.15–1.17 are not gate
@@ -82,6 +82,16 @@ files and can run together; a later wave waits on the cards named in its row.
 | 5 | [ENG-F22-12](https://github.com/WrackedFella/moho/issues/179), [ENG-F22-20](https://github.com/WrackedFella/moho/issues/187), [ENG-F22-21](https://github.com/WrackedFella/moho/issues/245), [ENG-F22-22](https://github.com/WrackedFella/moho/issues/261), [ENG-F22-24](https://github.com/WrackedFella/moho/issues/263) | 12 after 04 and 14; 20 after 09 and 10; 21 after 10 (same physics test module as 20); 22 and 24 have no dependency |
 | 6 | [ENG-F22-19](https://github.com/WrackedFella/moho/issues/186) | After 13, 04 and 12 (shared `moho_ui` files) |
 | 7 | [ENG-F22-23](https://github.com/WrackedFella/moho/issues/262) | After 19 (shared `moho_ui` settings and overlay files) |
+
+### 1.18–1.20 card order
+
+Two lanes run side by side, and alongside [ENG-F20](https://github.com/WrackedFella/moho/issues/104).
+Cards in one lane share files, so each waits on the one before it.
+
+| Lane | Cards in order | Why |
+|---|---|---|
+| Level | ENG-F14-01 level meshes load and collide → ENG-F14-02 named markers | One importer; touches no physics, renderer or binary code |
+| Physics and controller | ENG-F15-01 characters by handle → ENG-F21-01 walking from commands → ENG-F15-02 ray first hit → ENG-F15-03 hit volumes → ENG-F21-02 first-person camera | 01 changes the character API everything else builds on; the controller goes next so the strategy game's walking moves once. ENG-F21-02 changes the binary's camera wiring, so it also waits on [ENG-F20-02](https://github.com/WrackedFella/moho/issues/156) if their footprints meet |
 
 ## M2 — Engine MVP
 
