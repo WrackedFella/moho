@@ -82,6 +82,7 @@ flowchart TD
     audio["moho_audio<br/>rodio"]:::engine
     core["moho_core<br/>event bus, engine events, prefs,<br/>content roots, save envelope"]:::engine
     rapi["moho_render_api<br/>engine/game contract"]:::engine
+    level["moho_level<br/>glTF level loader"]:::engine
 
     sbin --> app & ui & game & voxel
     ui --> shell & game
@@ -94,6 +95,7 @@ flowchart TD
     physics --> rapi
     audio --> core
     core --> rapi
+    level --> rapi
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
     classDef engineNew fill:#dbeafe,stroke:#2563eb,stroke-dasharray:5 5,color:#111
@@ -104,8 +106,10 @@ flowchart TD
 Changes from today:
 
 - Voxels leave `moho_core` for `moho_voxel` (ENG-F10).
-- Scene import (ENG-F14), navigation (ENG-F17) and the character controller and camera
-  (ENG-F21) are modules of an engine crate unless their specs name a boundary.
+- Scene import (ENG-F14) is its own crate, `moho_level`: a headless server needs level
+  collision without linking `wgpu` or `winit`.
+- Navigation (ENG-F17) and the character controller and camera (ENG-F21) are modules of
+  an engine crate unless their specs name a boundary.
 
 An FPS line would sit beside the strategy line and depend only on engine crates.
 
