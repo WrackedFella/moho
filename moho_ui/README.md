@@ -284,11 +284,11 @@ impl Overlay for MyOverlay {8) egui Slider width control quirk
 
   spacing property.
 
-    fn render(&mut self, ctx: &egui::Context, event_bus: &EventBus) {
+    fn render(&mut self, ui: &mut egui::Ui, event_bus: &EventBus) {
 
         egui::Window::new("My Overlay")- **Solution**: To make a slider wider than the default, you must set
 
-            .show(ctx, |ui| {  `ui.spacing_mut().slider_width` to the desired width (minus space for the
+            .show(ui.ctx(), |ui| {  `ui.spacing_mut().slider_width` to the desired width (minus space for the
 
                 ui.label("Overlay content");  value display and padding, typically ~60px) before adding the slider:
 
@@ -474,7 +474,7 @@ use moho_ui::Console;
 let mut console = Console::new();
 
 // Render console
-console.render(ctx, event_bus);
+let action = console.render(ui);
 
 // Console publishes ConsoleAction events:
 // - SetTimeOfDay(f32)
@@ -500,7 +500,7 @@ use moho_ui::Hud;
 let mut hud = Hud::new();
 
 // Render HUD
-hud.render(ctx, clock, fps);
+hud.render(ui, clock, fps);
 
 // Displays:
 // - Current time of day (HH:MM)
