@@ -30,25 +30,29 @@ impl Perlin {
 
     /// Gradient of length sqrt(2) chosen by hashing the lattice corner and seed.
     fn gradient(&self, ix: i32, iz: i32) -> (f64, f64) {
-        const R: f64 = std::f64::consts::SQRT_2;
         let mut h = u64::from(self.seed) | (u64::from(ix as u32) << 32);
         h = h.wrapping_add((u64::from(iz as u32)).wrapping_mul(0x9e37_79b9_7f4a_7c15));
         h = h.wrapping_add(0x9e37_79b9_7f4a_7c15);
         h = (h ^ (h >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
         h = (h ^ (h >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
         h ^= h >> 31;
-        match h >> 61 {
-            0 => (1.0, 1.0),
-            1 => (-1.0, 1.0),
-            2 => (1.0, -1.0),
-            3 => (-1.0, -1.0),
-            4 => (R, 0.0),
-            5 => (-R, 0.0),
-            6 => (0.0, R),
-            _ => (0.0, -R),
-        }
+        GRADIENTS[(h >> 61) as usize]
     }
 }
+
+const R: f64 = std::f64::consts::SQRT_2;
+
+/// Eight directions of equal length sqrt(2), so the output bound is exactly `[-1, 1]`.
+const GRADIENTS: [(f64, f64); 8] = [
+    (1.0, 1.0),
+    (-1.0, 1.0),
+    (1.0, -1.0),
+    (-1.0, -1.0),
+    (R, 0.0),
+    (-R, 0.0),
+    (0.0, R),
+    (0.0, -R),
+];
 
 fn fade(t: f64) -> f64 {
     t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
