@@ -419,7 +419,7 @@ impl App {
         // Update core state
         self.game_state = actions.new_state;
 
-        // Outside play no input reaches the action map, so a held action would stick.
+        // Input stops reaching the action map outside play; held actions would stick.
         self.input.actions.release_all();
 
         // Update UI visibility and state
