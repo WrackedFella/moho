@@ -522,3 +522,129 @@ fn gltf_with_missing_bin_error_names_it() {
     assert_eq!(err.path(), path);
     assert!(err.to_string().starts_with(&path.display().to_string()));
 }
+
+#[test]
+fn truncated_index_data_is_a_bad_mesh() {
+    // 24 vertices: a 0..n fallback would make whole triangles and load silently.
+    let scene = Scene::with_meshes(vec![vec![cube_prim()]]);
+    let (dir, path) = write_gltf(&scene);
+    // Layout: positions (24 * 12 bytes), normals (24 * 12 bytes), then indices last.
+    let positions_and_normals = 2 * 24 * 12;
+    fs::OpenOptions::new()
+        .write(true)
+        .open(dir.path().join("level.bin"))
+        .expect("open bin")
+        .set_len(positions_and_normals)
+        .expect("truncate");
+
+    let err = load(&path).expect_err("lost index bytes refused");
+
+    assert!(
+        matches!(err.kind(), LevelErrorKind::BadMesh { .. }),
+        "{err}"
+    );
+    assert_names_file(&err, &path);
+}
+
+fn valid_bin_elsewhere() -> (tempfile::TempDir, std::path::PathBuf) {
+    let scene = Scene::with_meshes(vec![vec![floor_prim(0.0)]]);
+    let (dir, _) = write_gltf(&scene);
+    let bin = dir.path().join("level.bin");
+    (dir, bin)
+}
+
+#[test]
+fn percent_escaped_absolute_buffer_uri_is_refused() {
+    let (_other, bin) = valid_bin_elsewhere();
+    let mut scene = Scene::with_meshes(vec![vec![floor_prim(0.0)]]);
+    scene.bin_uri = bin.display().to_string().replace('/', "%2F");
+    scene.bin_file = None;
+    let (_dir, path) = write_gltf(&scene);
+
+    let err = load(&path).expect_err("escaped absolute uri refused");
+
+    assert!(
+        matches!(err.kind(), LevelErrorKind::UnsupportedBufferUri { .. }),
+        "{err}"
+    );
+    assert_names_file(&err, &path);
+}
+
+#[test]
+fn rooted_buffer_uri_is_refused() {
+    let (_other, bin) = valid_bin_elsewhere();
+    let mut scene = Scene::with_meshes(vec![vec![floor_prim(0.0)]]);
+    scene.bin_uri = bin.display().to_string();
+    scene.bin_file = None;
+    let (_dir, path) = write_gltf(&scene);
+
+    let err = load(&path).expect_err("rooted uri refused");
+
+    assert!(
+        matches!(err.kind(), LevelErrorKind::UnsupportedBufferUri { .. }),
+        "{err}"
+    );
+    assert_names_file(&err, &path);
+}
+
+#[test]
+fn first_scene_is_used_when_none_is_marked() {
+    let scene = Scene::with_meshes(vec![vec![floor_prim(0.0)], vec![cube_prim()]]);
+    let (_dir, path) = write_gltf_edited(&scene, |doc| {
+        let obj = doc.as_object_mut().expect("object");
+        obj.remove("scene");
+        obj.insert(
+            "scenes".into(),
+            serde_json::json!([{ "nodes": [0] }, { "nodes": [1] }]),
+        );
+    });
+
+    let level = load(&path).expect("level loads");
+
+    assert_eq!(level.meshes.len(), 1);
+    assert_eq!(level.meshes[0].mesh.positions().len(), 4);
+}
+
+#[test]
+fn file_without_scenes_loads_as_empty_level() {
+    let scene = Scene::with_meshes(vec![vec![floor_prim(0.0)]]);
+    let (_dir, path) = write_gltf_edited(&scene, |doc| {
+        let obj = doc.as_object_mut().expect("object");
+        obj.remove("scene");
+        obj.remove("scenes");
+    });
+
+    let level = load(&path).expect("level loads");
+
+    assert!(level.meshes.is_empty());
+}
+
+#[test]
+fn glb_buffer_without_blob_is_not_gltf() {
+    let mut scene = Scene::with_meshes(vec![vec![floor_prim(0.0)]]);
+    scene.bin_file = None;
+    let (_dir, path) = write_gltf_edited(&scene, |doc| {
+        doc["buffers"][0]
+            .as_object_mut()
+            .expect("buffer object")
+            .remove("uri");
+    });
+
+    let err = load(&path).expect_err("missing blob refused");
+
+    assert!(matches!(err.kind(), LevelErrorKind::NotGltf(_)), "{err}");
+    assert_names_file(&err, &path);
+}
+
+#[test]
+fn error_keeps_the_underlying_cause_as_source() {
+    let path = Path::new("/definitely/not/here/level.gltf");
+
+    let err = load(path).expect_err("no such file");
+
+    let source = std::error::Error::source(&err).expect("read error has a cause");
+    assert!(
+        source.downcast_ref::<std::io::Error>().is_some(),
+        "{source}"
+    );
+}
