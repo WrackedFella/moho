@@ -43,7 +43,7 @@ impl Overlay for DebugHud {
         self.visible = visible;
     }
 
-    fn render(&mut self, ctx: &egui::Context, data: &HudData) {
+    fn render(&mut self, ui: &mut egui::Ui, data: &HudData) {
         if !self.visible {
             return;
         }
@@ -60,7 +60,7 @@ impl Overlay for DebugHud {
 
         egui::Area::new("debug_hud".into())
             .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 8.0))
-            .show(ctx, |ui| {
+            .show(ui.ctx(), |ui| {
                 frame.show(ui, |ui| {
                     let mono = egui::FontId::monospace(13.0);
                     let color = egui::Color32::from_rgb(200, 220, 200);

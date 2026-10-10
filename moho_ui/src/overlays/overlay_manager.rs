@@ -88,8 +88,8 @@ pub trait Overlay: std::fmt::Debug + Send + Sync {
     /// Unique name used for lookup (e.g. `"debug"`, `"fps_hud"`).
     fn name(&self) -> &str;
 
-    /// Render the overlay into the egui context.
-    fn render(&mut self, ctx: &egui::Context, data: &HudData);
+    /// Render the overlay; `ui` is the frame's root ui, and `ui.ctx()` reaches windows and areas.
+    fn render(&mut self, ui: &mut egui::Ui, data: &HudData);
 
     /// Whether this overlay is currently enabled (user toggle).
     fn is_visible(&self) -> bool;
@@ -141,9 +141,9 @@ impl OverlayManager {
     }
 
     /// Render every registered overlay (each self-filters on visibility/mode).
-    pub fn render_all(&mut self, ctx: &egui::Context) {
+    pub fn render_all(&mut self, ui: &mut egui::Ui) {
         for overlay in &mut self.overlays {
-            overlay.render(ctx, &self.hud_data);
+            overlay.render(ui, &self.hud_data);
         }
     }
 
@@ -198,7 +198,7 @@ mod tests {
         fn name(&self) -> &'static str {
             self.name
         }
-        fn render(&mut self, _ctx: &egui::Context, _data: &HudData) {}
+        fn render(&mut self, _ui: &mut egui::Ui, _data: &HudData) {}
         fn is_visible(&self) -> bool {
             self.visible
         }

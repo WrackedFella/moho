@@ -36,18 +36,19 @@ impl Overlay for FpsHud {
         self.visible = visible;
     }
 
-    fn render(&mut self, ctx: &egui::Context, data: &HudData) {
+    fn render(&mut self, ui: &mut egui::Ui, data: &HudData) {
         if !self.visible || !data.is_fps_mode {
             return;
         }
 
-        render_crosshair(ctx);
-        render_time_of_day(ctx, data.time_of_day);
+        render_crosshair(ui);
+        render_time_of_day(ui, data.time_of_day);
     }
 }
 
 /// Draw a small crosshair at screen center.
-fn render_crosshair(ctx: &egui::Context) {
+fn render_crosshair(ui: &mut egui::Ui) {
+    let ctx = ui.ctx();
     let center = ctx.input(egui::InputState::viewport_rect).center();
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
@@ -79,14 +80,14 @@ fn render_crosshair(ctx: &egui::Context) {
 }
 
 /// Time-of-day badge in the top-right corner.
-fn render_time_of_day(ctx: &egui::Context, time: f32) {
+fn render_time_of_day(ui: &mut egui::Ui, time: f32) {
     let hours = time.floor() as u32 % 24;
     let minutes = ((time - time.floor()) * 60.0).floor() as u32;
     let label = format!("{hours:02}:{minutes:02}");
 
     egui::Area::new("fps_time_display".into())
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 8.0))
-        .show(ctx, |ui| {
+        .show(ui.ctx(), |ui| {
             egui::Frame::new()
                 .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 120))
                 .inner_margin(egui::Margin::same(6))

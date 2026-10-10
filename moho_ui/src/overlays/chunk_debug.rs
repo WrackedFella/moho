@@ -38,7 +38,7 @@ impl Overlay for ChunkDebugOverlay {
         self.visible = visible;
     }
 
-    fn render(&mut self, ctx: &egui::Context, data: &HudData) {
+    fn render(&mut self, ui: &mut egui::Ui, data: &HudData) {
         let pcx = data.chunk_position[0];
         let pcz = data.chunk_position[2];
 
@@ -48,7 +48,7 @@ impl Overlay for ChunkDebugOverlay {
         egui::Area::new("chunk_debug_map".into())
             .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 12.0))
             .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
+            .show(ui.ctx(), |ui| {
                 let (rect, _) = ui.allocate_exact_size(map_size, egui::Sense::hover());
                 let painter = ui.painter_at(rect);
 

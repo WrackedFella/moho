@@ -18,7 +18,7 @@ use output::ConsoleOutput;
 /// # Example (usage sketch)
 ///
 /// ```rust,ignore
-/// // The adapter receives `GameState::ConsoleOpen` and calls `console.render(&ctx)` each frame.
+/// // The adapter receives `GameState::ConsoleOpen` and calls `console.render(ui)` each frame.
 /// let mut console = moho_ui::overlays::console::Console::new();
 /// // User types 'god' and presses Enter — the adapter receives a ConsoleAction::ToggleGodMode
 /// // and publishes `DebugEvent::ToggleGodMode` on the EventBus for subscribers to handle.
@@ -59,10 +59,11 @@ impl Console {
     ///
     /// # Arguments
     ///
-    /// * `ctx` - The egui context to render into
-    pub fn render(&mut self, ctx: &egui::Context) -> ConsoleAction {
+    /// * `ui` - The root ui for the frame; `ui.ctx()` hosts the console area
+    pub fn render(&mut self, ui: &mut egui::Ui) -> ConsoleAction {
         const CONSOLE_HEIGHT: f32 = 300.0;
         const CONSOLE_MARGIN: f32 = 8.0;
+        let ctx = ui.ctx().clone();
         let mut action = ConsoleAction::None;
 
         // Check for backtick key press BEFORE egui processes input
@@ -87,7 +88,7 @@ impl Console {
         egui::Area::new("console_panel".into())
             .order(egui::Order::Foreground)
             .fixed_pos(egui::pos2(screen_rect.min.x, y_pos))
-            .show(ctx, |ui| {
+            .show(&ctx, |ui| {
                 frame.show(ui, |ui| {
                     let inner_height = CONSOLE_HEIGHT - CONSOLE_MARGIN * 2.0;
                     ui.set_min_width(screen_rect.width() - CONSOLE_MARGIN * 2.0);
@@ -323,7 +324,7 @@ mod tests {
         };
         let mut action = ConsoleAction::None;
 
-        let _ = ctx.run(input, |ctx| action = console.render(ctx));
+        let _ = ctx.run_ui(input, |ui| action = console.render(ui));
 
         action
     }
@@ -331,8 +332,8 @@ mod tests {
     #[test]
     fn backtick_closes_console_except_first_frame() {
         let mut console = Console::new();
-        let _ = egui::Context::default().run(egui::RawInput::default(), |ctx| {
-            let _ = console.render(ctx);
+        let _ = egui::Context::default().run_ui(egui::RawInput::default(), |ui| {
+            let _ = console.render(ui);
         });
         console.reset_on_open();
 

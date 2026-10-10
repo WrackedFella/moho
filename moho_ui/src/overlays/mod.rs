@@ -54,10 +54,10 @@ pub(crate) mod test_support {
     /// Returns the second frame's output; egui sizes areas on the first.
     pub(crate) fn second_frame(
         ctx: &egui::Context,
-        mut add_contents: impl FnMut(&egui::Context),
+        mut add_contents: impl FnMut(&mut egui::Ui),
     ) -> egui::FullOutput {
-        let _ = ctx.run(input(Vec::new()), &mut add_contents);
-        ctx.run(input(Vec::new()), &mut add_contents)
+        let _ = ctx.run_ui(input(Vec::new()), &mut add_contents);
+        ctx.run_ui(input(Vec::new()), &mut add_contents)
     }
 
     pub(crate) fn texts(output: &egui::FullOutput) -> Vec<String> {
@@ -81,7 +81,7 @@ mod tests {
             ..Default::default()
         };
 
-        !second_frame(&ctx, |ctx| overlay.render(ctx, &data))
+        !second_frame(&ctx, |ui| overlay.render(ui, &data))
             .shapes
             .is_empty()
     }

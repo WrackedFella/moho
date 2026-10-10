@@ -26,15 +26,15 @@ impl Overlay for GameplayHud {
         "gameplay_hud"
     }
 
-    fn render(&mut self, ctx: &egui::Context, data: &HudData) {
+    fn render(&mut self, ui: &mut egui::Ui, data: &HudData) {
         if !self.visible || !data.is_fps_mode {
             return;
         }
 
-        render_compass(ctx, data.camera_yaw);
-        render_status_bars(ctx, data.player_health, data.player_stamina);
+        render_compass(ui, data.camera_yaw);
+        render_status_bars(ui, data.player_health, data.player_stamina);
         render_hotbar(
-            ctx,
+            ui,
             data.equipped_tool_label.as_deref(),
             &data.hotbar,
             data.selected_slot,
@@ -67,10 +67,10 @@ const COMPASS_LABELS: &[(&str, f32)] = &[
 /// Labels within this angular range of forward are visible.
 const COMPASS_HALF_FOV: f32 = std::f32::consts::FRAC_PI_3; // 60°
 
-fn render_compass(ctx: &egui::Context, camera_yaw: f32) {
+fn render_compass(ui: &mut egui::Ui, camera_yaw: f32) {
     egui::Area::new("gameplay_hud_compass".into())
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 8.0))
-        .show(ctx, |ui| {
+        .show(ui.ctx(), |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
 
@@ -114,10 +114,10 @@ const BAR_HEIGHT: f32 = 14.0;
 const BAR_ROUNDING: f32 = 3.0;
 const BAR_SPACING: f32 = 4.0;
 
-fn render_status_bars(ctx: &egui::Context, health: f32, stamina: f32) {
+fn render_status_bars(ui: &mut egui::Ui, health: f32, stamina: f32) {
     egui::Area::new("gameplay_hud_status".into())
         .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(12.0, -12.0))
-        .show(ctx, |ui| {
+        .show(ui.ctx(), |ui| {
             ui.vertical(|ui| {
                 paint_bar(
                     ui,
@@ -188,7 +188,7 @@ const SLOT_GAP: f32 = 4.0;
 const SLOT_ROUNDING: f32 = 6.0;
 
 fn render_hotbar(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     tool_label: Option<&str>,
     hotbar: &[(u32, u32)],
     selected_slot: usize,
@@ -197,7 +197,7 @@ fn render_hotbar(
 
     egui::Area::new("gameplay_hud_hotbar".into())
         .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -12.0))
-        .show(ctx, |ui| {
+        .show(ui.ctx(), |ui| {
             let (rect, _) =
                 ui.allocate_exact_size(egui::vec2(total_width, SLOT_SIZE), egui::Sense::hover());
 
@@ -346,7 +346,7 @@ mod tests {
         for (case, tool, hotbar, selected_slot) in cases {
             let ctx = egui::Context::default();
 
-            let output = second_frame(&ctx, |ctx| render_hotbar(ctx, tool, hotbar, selected_slot));
+            let output = second_frame(&ctx, |ui| render_hotbar(ui, tool, hotbar, selected_slot));
 
             assert!(!output.shapes.is_empty(), "{case}: nothing drawn");
         }
@@ -358,8 +358,8 @@ mod tests {
 
         let ctx = egui::Context::default();
 
-        let output = second_frame(&ctx, |ctx| {
-            render_hotbar(ctx, Some("Pickaxe"), &[(7, 3)], 0);
+        let output = second_frame(&ctx, |ui| {
+            render_hotbar(ui, Some("Pickaxe"), &[(7, 3)], 0);
         });
         let expected = ["1", "Pickaxe", "2", "R7", "3", "3", "4", "5", "6", "7", "8"];
 
