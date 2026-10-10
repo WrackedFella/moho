@@ -66,3 +66,25 @@ fn render_time_of_day(ui: &mut egui::Ui, time: f32) {
                 });
         });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::overlays::test_support::{rect_of, second_frame, texts};
+
+    #[test]
+    fn render_time_of_day_shows_clock_in_top_right() {
+        let ctx = egui::Context::default();
+
+        let output = second_frame(&ctx, |ui| render_time_of_day(ui, 7.25));
+        let bounds = rect_of(&output, "07:15");
+
+        assert_eq!(texts(&output), ["07:15"]);
+        assert!(bounds.center().x > 400.0, "not on the right: {bounds:?}");
+        assert!(
+            bounds.max.x <= 800.0 - 12.0 + 0.5,
+            "past margin: {bounds:?}"
+        );
+        assert!(bounds.min.y < 100.0, "not at top: {bounds:?}");
+    }
+}

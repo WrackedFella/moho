@@ -100,3 +100,36 @@ fn render_time_of_day(ui: &mut egui::Ui, time: f32) {
                 });
         });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::overlays::test_support::{line_segments, rect_of, second_frame, texts};
+
+    #[test]
+    fn render_draws_crosshair_centered_on_screen() {
+        let ctx = egui::Context::default();
+
+        let output = second_frame(&ctx, |ui| FpsHud::new().render(ui, &HudData::default()));
+        let lines = line_segments(&output);
+
+        assert!(lines.contains(&[egui::pos2(390.0, 300.0), egui::pos2(410.0, 300.0)]));
+        assert!(lines.contains(&[egui::pos2(400.0, 290.0), egui::pos2(400.0, 310.0)]));
+    }
+
+    #[test]
+    fn render_time_of_day_shows_clock_in_top_right() {
+        let ctx = egui::Context::default();
+
+        let output = second_frame(&ctx, |ui| render_time_of_day(ui, 13.5));
+        let bounds = rect_of(&output, "13:30");
+
+        assert_eq!(texts(&output), ["13:30"]);
+        assert!(bounds.center().x > 400.0, "not on the right: {bounds:?}");
+        assert!(
+            bounds.max.x <= 800.0 - 12.0 + 0.5,
+            "past margin: {bounds:?}"
+        );
+        assert!(bounds.min.y < 100.0, "not at top: {bounds:?}");
+    }
+}

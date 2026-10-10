@@ -280,6 +280,44 @@ fn render_hotbar(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::overlays::test_support::{rect_of, second_frame, texts};
+
+    #[test]
+    fn render_compass_shows_labels_within_view_arc() {
+        let ctx = egui::Context::default();
+
+        let output = second_frame(&ctx, |ui| render_compass(ui, 0.0));
+        let bounds = rect_of(&output, "N");
+
+        assert_eq!(texts(&output), ["N", "NE", "NW"]);
+        assert!(bounds.min.y < 100.0, "not at top: {bounds:?}");
+    }
+
+    #[test]
+    fn render_status_bars_labels_sit_bottom_left() {
+        let ctx = egui::Context::default();
+
+        let output = second_frame(&ctx, |ui| render_status_bars(ui, 0.5, 0.25));
+        let hp = rect_of(&output, "HP");
+        let sp = rect_of(&output, "SP");
+
+        assert!(hp.min.x >= 0.0 && hp.min.x < 100.0, "{hp:?}");
+        assert!(hp.min.y < sp.min.y, "HP above SP");
+        assert!(sp.max.y <= 600.0 - 4.0, "past bottom margin: {sp:?}");
+    }
+
+    #[test]
+    fn render_hotbar_sits_above_bottom_margin() {
+        let ctx = egui::Context::default();
+
+        let output = second_frame(&ctx, |ui| render_hotbar(ui, None, &[], 0));
+        let one = rect_of(&output, "1");
+
+        assert!(
+            one.max.y <= 600.0 - 12.0 + 0.5,
+            "past bottom margin: {one:?}"
+        );
+    }
 
     #[test]
     fn compass_facing_north_at_yaw_zero() {

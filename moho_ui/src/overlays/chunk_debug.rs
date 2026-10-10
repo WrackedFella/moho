@@ -92,3 +92,22 @@ impl Overlay for ChunkDebugOverlay {
             });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::overlays::test_support::{second_frame, texts};
+
+    #[test]
+    fn render_labels_map_with_player_chunk() {
+        let ctx = egui::Context::default();
+        let data = HudData {
+            chunk_position: [5, 0, -2],
+            ..Default::default()
+        };
+
+        let output = second_frame(&ctx, |ui| ChunkDebugOverlay::new().render(ui, &data));
+
+        assert_eq!(texts(&output), ["chunks (5,-2)"]);
+    }
+}

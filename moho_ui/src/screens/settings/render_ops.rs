@@ -154,3 +154,38 @@ pub fn render_content_area(ui: &mut egui::Ui, menu: &mut SettingsMenu) {
             });
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::overlays::test_support::{click_at, input, rect_of};
+
+    fn run(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        tab: SettingsTab,
+    ) -> (SettingsTab, egui::FullOutput) {
+        let mut result = tab;
+        let output = ctx.run_ui(input(events), |ui| {
+            result = render_top_panel(ui, tab);
+        });
+        (result, output)
+    }
+
+    #[test]
+    fn render_top_panel_returns_clicked_tab() {
+        let ctx = egui::Context::default();
+        let _ = run(&ctx, Vec::new(), SettingsTab::Controls);
+        let (idle, output) = run(&ctx, Vec::new(), SettingsTab::Video);
+        let audio = rect_of(&output, "Audio").center();
+        let video = rect_of(&output, "Video").center();
+
+        let (clicked_audio, _) = run(&ctx, click_at(audio), SettingsTab::Controls);
+        let _ = run(&ctx, Vec::new(), SettingsTab::Controls);
+        let (clicked_video, _) = run(&ctx, click_at(video), SettingsTab::Controls);
+
+        assert_eq!(idle, SettingsTab::Video);
+        assert_eq!(clicked_audio, SettingsTab::Audio);
+        assert_eq!(clicked_video, SettingsTab::Video);
+    }
+}

@@ -234,4 +234,23 @@ mod tests {
 
         assert_eq!(visibility(&mgr), [true, false]);
     }
+
+    #[test]
+    fn render_all_renders_each_overlay_with_current_data() {
+        use crate::overlays::test_support::{second_frame, texts};
+
+        let ctx = egui::Context::default();
+        let mut mgr = OverlayManager::new();
+        let mut debug = crate::overlays::DebugHud::new();
+        debug.set_visible(true);
+        mgr.register(Box::new(debug));
+        mgr.update_data(HudData {
+            player_position: [9.0, 8.0, 7.0],
+            ..Default::default()
+        });
+
+        let output = second_frame(&ctx, |ui| mgr.render_all(ui));
+
+        assert!(texts(&output).contains(&"Pos: (9.0, 8.0, 7.0)".to_string()));
+    }
 }

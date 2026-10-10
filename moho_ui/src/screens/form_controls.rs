@@ -361,6 +361,45 @@ impl FormControls {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::overlays::test_support::{click_at, input, rect_of};
+
+    fn layout_result(
+        events: Vec<egui::Event>,
+        ctx: &egui::Context,
+    ) -> ((bool, bool), egui::FullOutput) {
+        let mut result = (false, false);
+        let output = ctx.run_ui(input(events), |ui| {
+            result = FormControls::standard_screen_layout(
+                ui,
+                "Title",
+                "t",
+                |ui| {
+                    let primary = ui.button("Primary");
+                    let secondary = ui.button("Secondary");
+                    (primary.clicked(), secondary.clicked())
+                },
+                |_| {},
+            );
+        });
+        (result, output)
+    }
+
+    #[test]
+    fn standard_screen_layout_reports_which_button_was_clicked() {
+        let ctx = egui::Context::default();
+        let _ = layout_result(Vec::new(), &ctx);
+        let (idle, output) = layout_result(Vec::new(), &ctx);
+        let primary = rect_of(&output, "Primary").center();
+        let secondary = rect_of(&output, "Secondary").center();
+
+        let (clicked_primary, _) = layout_result(click_at(primary), &ctx);
+        let _ = layout_result(Vec::new(), &ctx);
+        let (clicked_secondary, _) = layout_result(click_at(secondary), &ctx);
+
+        assert_eq!(idle, (false, false));
+        assert_eq!(clicked_primary, (true, false));
+        assert_eq!(clicked_secondary, (false, true));
+    }
 
     #[test]
     fn menu_button_smoke_enabled() {

@@ -60,6 +60,62 @@ pub(crate) mod test_support {
         ctx.run_ui(input(Vec::new()), &mut add_contents)
     }
 
+    fn collect_text_rects(shape: &Shape, out: &mut Vec<(String, egui::Rect)>) {
+        match shape {
+            Shape::Text(text) => out.push((
+                text.galley.text().to_string(),
+                text.galley.rect.translate(text.pos.to_vec2()),
+            )),
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_text_rects(s, out)),
+            _ => {}
+        }
+    }
+
+    fn collect_lines(shape: &Shape, out: &mut Vec<[egui::Pos2; 2]>) {
+        match shape {
+            Shape::LineSegment { points, .. } => out.push(*points),
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_lines(s, out)),
+            _ => {}
+        }
+    }
+
+    /// Every drawn text paired with its on-screen bounds.
+    pub(crate) fn text_rects(output: &egui::FullOutput) -> Vec<(String, egui::Rect)> {
+        let mut out = Vec::new();
+        for clipped in &output.shapes {
+            collect_text_rects(&clipped.shape, &mut out);
+        }
+        out
+    }
+
+    /// Bounds of the first drawn text equal to `text`.
+    pub(crate) fn rect_of(output: &egui::FullOutput, text: &str) -> egui::Rect {
+        text_rects(output)
+            .into_iter()
+            .find(|(t, _)| t == text)
+            .unwrap_or_else(|| panic!("text {text:?} not drawn"))
+            .1
+    }
+
+    pub(crate) fn line_segments(output: &egui::FullOutput) -> Vec<[egui::Pos2; 2]> {
+        let mut out = Vec::new();
+        for clipped in &output.shapes {
+            collect_lines(&clipped.shape, &mut out);
+        }
+        out
+    }
+
+    /// Press and release the primary button at `pos` within one frame.
+    pub(crate) fn click_at(pos: egui::Pos2) -> Vec<egui::Event> {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        vec![egui::Event::PointerMoved(pos), button(true), button(false)]
+    }
+
     pub(crate) fn texts(output: &egui::FullOutput) -> Vec<String> {
         let mut out = Vec::new();
         for clipped in &output.shapes {

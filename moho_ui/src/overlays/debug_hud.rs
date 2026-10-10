@@ -116,6 +116,28 @@ impl Overlay for DebugHud {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::overlays::test_support::{second_frame, texts};
+
+    #[test]
+    fn render_when_visible_lists_diagnostics() {
+        let ctx = egui::Context::default();
+        let mut hud = DebugHud::new();
+        hud.set_visible(true);
+        let data = HudData {
+            player_position: [1.0, 2.0, 3.0],
+            material_under_crosshair: Some(4),
+            ..Default::default()
+        };
+
+        let output = second_frame(&ctx, |ui| hud.render(ui, &data));
+        let shown = texts(&output);
+
+        assert!(
+            shown.contains(&"Pos: (1.0, 2.0, 3.0)".to_string()),
+            "{shown:?}"
+        );
+        assert!(shown.contains(&"Material: 4".to_string()), "{shown:?}");
+    }
 
     #[test]
     fn toggle_visibility() {
