@@ -405,6 +405,7 @@ impl App {
     ///
     /// This method centralizes all the boilerplate for state transitions:
     /// - Update game_state
+    /// - Release every held input action
     /// - Update UI visibility and state
     /// - Handle cursor grab/release
     /// - Show specific menu if requested
@@ -417,6 +418,9 @@ impl App {
 
         // Update core state
         self.game_state = actions.new_state;
+
+        // Outside play no input reaches the action map, so a held action would stick.
+        self.input.actions.release_all();
 
         // Update UI visibility and state
         if let Some(ui_adapter) = &self.ui_adapter
