@@ -5,6 +5,9 @@ use moho_render_api::{UiFrame, UiRect, UiTextureId, UiTextureSet};
 use std::collections::HashMap;
 use std::ops::Range;
 
+mod gpu;
+pub(crate) use gpu::UiPass;
+
 /// Scissor rect in physical pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Scissor {
@@ -16,8 +19,20 @@ pub(crate) struct Scissor {
 
 /// Clip rect (points) to physical pixels: scale by `pixels_per_point`, round,
 /// clamp to `target`. `None` when the result has zero width or height.
-pub(crate) fn scissor(_clip: UiRect, _pixels_per_point: f32, _target: [u32; 2]) -> Option<Scissor> {
-    None
+pub(crate) fn scissor(clip: UiRect, pixels_per_point: f32, target: [u32; 2]) -> Option<Scissor> {
+    // `as u32` saturates, so negative and NaN coordinates become 0.
+    let px = |v: f32| (v * pixels_per_point).round() as u32;
+    let min_x = px(clip.min[0]).min(target[0]);
+    let min_y = px(clip.min[1]).min(target[1]);
+    let max_x = px(clip.max[0]).clamp(min_x, target[0]);
+    let max_y = px(clip.max[1]).clamp(min_y, target[1]);
+    let (width, height) = (max_x - min_x, max_y - min_y);
+    (width > 0 && height > 0).then_some(Scissor {
+        x: min_x,
+        y: min_y,
+        width,
+        height,
+    })
 }
 
 /// One indexed draw into the frame's concatenated vertex/index buffers.
@@ -34,8 +49,28 @@ pub(crate) struct UiDraw {
 /// and vertices in order; skipped meshes keep their slot so offsets are
 /// stable. Skips meshes with an empty scissor, no indices, or a texture
 /// `book` does not hold.
-pub(crate) fn build_draws(_frame: &UiFrame, _target: [u32; 2], _book: &TextureBook) -> Vec<UiDraw> {
-    Vec::new()
+pub(crate) fn build_draws(frame: &UiFrame, target: [u32; 2], book: &TextureBook) -> Vec<UiDraw> {
+    let mut draws = Vec::with_capacity(frame.meshes.len());
+    let mut index_start = 0u32;
+    let mut base_vertex = 0i32;
+    for mesh in &frame.meshes {
+        let index_count = u32::try_from(mesh.indices.len()).expect("mesh index count fits in u32");
+        let index_end = index_start + index_count;
+        if index_count > 0
+            && book.contains(mesh.texture)
+            && let Some(scissor) = scissor(mesh.clip_rect, frame.pixels_per_point, target)
+        {
+            draws.push(UiDraw {
+                texture: mesh.texture,
+                indices: index_start..index_end,
+                base_vertex,
+                scissor,
+            });
+        }
+        index_start = index_end;
+        base_vertex += i32::try_from(mesh.vertices.len()).expect("mesh vertex count fits in i32");
+    }
+    draws
 }
 
 /// Which textures exist and their sizes; the GPU store follows its decisions.
@@ -58,6 +93,8 @@ pub(crate) struct TextureWrite {
 pub(crate) enum UiTextureError {
     #[error("texture {0:?}: pixel count does not match size")]
     PixelCount(UiTextureId),
+    #[error("texture {0:?}: a full set needs a non-zero size")]
+    Empty(UiTextureId),
     #[error("texture {0:?}: partial update of a texture that does not exist")]
     Missing(UiTextureId),
     #[error("texture {0:?}: partial update outside the texture")]
@@ -65,21 +102,48 @@ pub(crate) enum UiTextureError {
 }
 
 impl TextureBook {
-    /// Full set (`pos` None): records size, returns `allocate = Some(size)`,
-    /// origin `[0, 0]`. Partial: the texture must exist and `pos + size` must
+    /// Full set (`pos` None): size must be non-zero; records size, returns
+    /// `allocate = Some(size)`, origin `[0, 0]`. Partial: the texture must exist and `pos + size` must
     /// fit; `allocate` is `None`. On error the book is unchanged.
     pub(crate) fn apply_set(&mut self, set: &UiTextureSet) -> Result<TextureWrite, UiTextureError> {
-        Ok(TextureWrite {
-            id: set.id,
-            allocate: None,
-            origin: [0, 0],
-            size: [0, 0],
-        })
+        let id = set.id;
+        let size = set.image.size;
+        let texels = u64::from(size[0]) * u64::from(size[1]);
+        if texels != set.image.pixels.len() as u64 {
+            return Err(UiTextureError::PixelCount(id));
+        }
+        match set.pos {
+            None if size.contains(&0) => Err(UiTextureError::Empty(id)),
+            None => {
+                self.sizes.insert(id, size);
+                Ok(TextureWrite {
+                    id,
+                    allocate: Some(size),
+                    origin: [0, 0],
+                    size,
+                })
+            }
+            Some(origin) => {
+                let existing = self.sizes.get(&id).ok_or(UiTextureError::Missing(id))?;
+                let fits = |axis: usize| {
+                    u64::from(origin[axis]) + u64::from(size[axis]) <= u64::from(existing[axis])
+                };
+                if !(fits(0) && fits(1)) {
+                    return Err(UiTextureError::OutOfBounds(id));
+                }
+                Ok(TextureWrite {
+                    id,
+                    allocate: None,
+                    origin,
+                    size,
+                })
+            }
+        }
     }
 
     /// Returns whether the texture existed.
-    pub(crate) fn free(&mut self, _id: UiTextureId) -> bool {
-        false
+    pub(crate) fn free(&mut self, id: UiTextureId) -> bool {
+        self.sizes.remove(&id).is_some()
     }
 
     pub(crate) fn contains(&self, id: UiTextureId) -> bool {
@@ -331,5 +395,18 @@ mod tests {
                 size: [4, 2]
             })
         );
+    }
+    #[test]
+    fn empty_full_set_is_rejected_and_leaves_book_unchanged() {
+        let mut book = book_with(&[TEX_A]);
+
+        let empty_new = book.apply_set(&set(TEX_B, None, [0, 4]));
+        let empty_replace = book.apply_set(&set(TEX_A, None, [4, 0]));
+
+        assert_eq!(empty_new, Err(UiTextureError::Empty(TEX_B)));
+        assert_eq!(empty_replace, Err(UiTextureError::Empty(TEX_A)));
+        assert!(!book.contains(TEX_B));
+        let still_fits = book.apply_set(&set(TEX_A, Some([7, 7]), [1, 1]));
+        assert!(still_fits.is_ok(), "{still_fits:?}");
     }
 }

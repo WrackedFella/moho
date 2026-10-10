@@ -16,6 +16,11 @@ pub fn main_shader_source() -> String {
     .join("\n\n")
 }
 
+/// The UI pass shader's WGSL.
+pub fn ui_shader_source() -> &'static str {
+    include_str!("../../../shaders/ui.wgsl")
+}
+
 /// Load and compile all shader modules.
 ///
 /// The main shader is composed of three WGSL files concatenated together:

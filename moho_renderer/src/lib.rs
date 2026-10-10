@@ -143,7 +143,14 @@ pub trait RendererBackend {
         &mut self,
         cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
     );
+    /// Set the provider of UI paint data. The renderer pulls a frame from it
+    /// in `submit_frame` and draws it over the scene. Passing `None` clears.
+    /// Default is a no-op; only the real renderer overrides this.
+    fn set_ui_source(&mut self, _source: Option<UiSource>) {}
 }
+
+/// Shared handle to a game's UI paint-data provider.
+pub type UiSource = std::sync::Arc<std::sync::Mutex<dyn moho_render_api::UiFrameSource>>;
 
 impl RendererBackend for Renderer<'_> {
     fn resize(&mut self, width: u32, height: u32) {
@@ -203,6 +210,9 @@ impl RendererBackend for Renderer<'_> {
         cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
     ) {
         self.set_frame_callback_arc_inherent(cb);
+    }
+    fn set_ui_source(&mut self, source: Option<UiSource>) {
+        self.set_ui_source(source);
     }
     fn add_point_light(
         &mut self,

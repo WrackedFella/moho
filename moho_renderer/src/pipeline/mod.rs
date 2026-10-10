@@ -36,7 +36,7 @@
 mod layouts;
 mod shaders;
 
-pub use shaders::main_shader_source;
+pub use shaders::{main_shader_source, ui_shader_source};
 
 use crate::types::{GpuInstance, Vertex};
 
