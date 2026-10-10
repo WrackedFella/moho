@@ -40,8 +40,8 @@ impl PhysicsController {
             return;
         };
         if let Some(previous) = self.player.take() {
-            // Already gone after a world reset; nothing to remove then.
-            let _ = pw.remove_character(previous);
+            pw.remove_character(previous)
+                .expect("the player handle belongs to the current world");
         }
         self.player = Some(pw.add_character(position));
     }
@@ -67,8 +67,8 @@ impl PhysicsController {
     /// Teleport the player (e.g. respawn after falling off the map).
     pub fn teleport_character(&mut self, pos: glam::Vec3) {
         if let (Some(pw), Some(handle)) = (self.world.as_mut(), self.player) {
-            // An unknown handle means the player is gone; nothing to teleport.
-            let _ = pw.set_character_position(handle, pos);
+            pw.set_character_position(handle, pos)
+                .expect("the player handle belongs to the current world");
         }
     }
 
