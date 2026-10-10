@@ -269,6 +269,10 @@ mod tests {
         assert_ne!(managed, user);
         assert_eq!(managed, to_ui_texture_id(egui::TextureId::Managed(5)));
         assert_ne!(managed, to_ui_texture_id(egui::TextureId::Managed(6)));
+        assert_ne!(
+            to_ui_texture_id(egui::TextureId::Managed(0)),
+            to_ui_texture_id(egui::TextureId::User(0))
+        );
     }
 
     #[test]

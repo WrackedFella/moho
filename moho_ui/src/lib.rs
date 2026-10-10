@@ -76,3 +76,14 @@ pub use modal::{Modal, ModalManager, ModalResult};
 pub use modals::KeybindConflictModal;
 
 pub use moho_core::prefs;
+
+#[cfg(test)]
+mod tests {
+    use super::StubUi;
+    use moho_render_api::UiFrameSource;
+
+    #[test]
+    fn stub_ui_paints_nothing() {
+        assert!(StubUi::new().ui_frame([800, 600]).is_none());
+    }
+}
