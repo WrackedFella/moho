@@ -352,6 +352,36 @@ mod tests {
     }
 
     #[test]
+    fn scissor_with_zero_width_or_zero_height_clip_yields_none() {
+        let target = [100, 80];
+
+        let zero_width = scissor(rect([10.0, 5.0], [10.0, 20.0]), 1.0, target);
+        let zero_height = scissor(rect([10.0, 5.0], [30.0, 5.0]), 1.0, target);
+
+        assert_eq!(zero_width, None);
+        assert_eq!(zero_height, None);
+    }
+
+    #[test]
+    fn mesh_without_indices_is_skipped_and_later_mesh_keeps_offsets() {
+        let frame = UiFrame {
+            pixels_per_point: 1.0,
+            meshes: vec![
+                mesh(TEX_A, rect([0.0, 0.0], [5.0, 5.0]), 4, Vec::new()),
+                mesh(TEX_A, rect([0.0, 0.0], [5.0, 5.0]), 3, vec![0, 1, 2]),
+            ],
+            ..UiFrame::default()
+        };
+        let book = book_with(&[TEX_A]);
+
+        let draws = build_draws(&frame, [10, 10], &book);
+
+        assert_eq!(draws.len(), 1);
+        assert_eq!(draws[0].indices, 0..3);
+        assert_eq!(draws[0].base_vertex, 4);
+    }
+
+    #[test]
     fn deltas_apply_in_order_partial_update_and_free() {
         let mut book = TextureBook::default();
 
