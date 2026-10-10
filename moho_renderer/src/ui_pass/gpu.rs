@@ -413,6 +413,10 @@ fn write_concatenated<'a>(
         return;
     };
     let Some(mut view) = queue.write_buffer_with(buffer, 0, size) else {
+        tracing::error!(
+            bytes = total,
+            "UI buffer upload failed; this frame's UI may be stale"
+        );
         return;
     };
     let mut offset = 0;

@@ -11,7 +11,8 @@
 
 All structs are `#[repr(C)]`, `bytemuck::{Pod, Zeroable}`, and built from `vec4`-sized
 fields so std140/std430 padding never differs between the two sides. Size matches
-`size_of::<T>()`.
+`size_of::<T>()`. `UiVertex` is the exception: it is only read as a vertex buffer
+(`Float32x2`, `Float32x2`, `Uint32`), so it is packed to 20 B with no padding.
 
 ## Sizes
 
