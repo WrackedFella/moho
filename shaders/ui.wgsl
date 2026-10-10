@@ -9,10 +9,7 @@ struct VertexOutput {
 
 struct Locals {
     screen_size: vec2<f32>,
-
-    /// 1 if dithering is enabled, 0 otherwise
-    dithering: u32,
-    _padding: u32,
+    _padding: vec2<u32>,
 };
 @group(0) @binding(0) var<uniform> r_locals: Locals;
 
@@ -44,19 +41,6 @@ fn linear_from_gamma_rgb(srgb: vec3<f32>) -> vec3<f32> {
     let lower = srgb / vec3<f32>(12.92);
     let higher = pow((srgb + vec3<f32>(0.055)) / vec3<f32>(1.055), vec3<f32>(2.4));
     return select(higher, lower, cutoff);
-}
-
-// 0-1 sRGB gamma  from  0-1 linear
-fn gamma_from_linear_rgb(rgb: vec3<f32>) -> vec3<f32> {
-    let cutoff = rgb < vec3<f32>(0.0031308);
-    let lower = rgb * vec3<f32>(12.92);
-    let higher = vec3<f32>(1.055) * pow(rgb, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
-    return select(higher, lower, cutoff);
-}
-
-// 0-1 sRGBA gamma  from  0-1 linear
-fn gamma_from_linear_rgba(linear_rgba: vec4<f32>) -> vec4<f32> {
-    return vec4<f32>(gamma_from_linear_rgb(linear_rgba.rgb), linear_rgba.a);
 }
 
 // [u8; 4] SRGB as u32 -> [r, g, b, a] in 0.-1
@@ -100,33 +84,23 @@ fn sample_texture(in: VertexOutput) -> vec4<f32> {
     return textureSample(r_tex_color, r_tex_sampler, in.tex_coord);
 }
 
-@fragment
-fn fs_main_linear_framebuffer(in: VertexOutput) -> @location(0) vec4<f32> {
+// Gamma-space colour with the texture applied, dithered down to eight bits
+// to reduce banding. Dithering runs on gamma encoded values.
+fn shade(in: VertexOutput) -> vec4<f32> {
     // We expect "normal" textures that are NOT sRGB-aware.
     let tex_gamma = sample_texture(in);
-    var out_color_gamma = in.color * tex_gamma;
-    // Dither the float color down to eight bits to reduce banding.
-    // This step is optional for egui backends.
-    // Note that dithering is performed on the gamma encoded values,
-    // because this function is used together with a srgb converting target.
-    if r_locals.dithering == 1 {
-        let out_color_gamma_rgb = dither_interleaved(out_color_gamma.rgb, 256.0, in.position);
-        out_color_gamma = vec4<f32>(out_color_gamma_rgb, out_color_gamma.a);
-    }
-    let out_color_linear = linear_from_gamma_rgb(out_color_gamma.rgb);
-    return vec4<f32>(out_color_linear, out_color_gamma.a);
+    let out_color_gamma = in.color * tex_gamma;
+    let dithered = dither_interleaved(out_color_gamma.rgb, 256.0, in.position);
+    return vec4<f32>(dithered, out_color_gamma.a);
+}
+
+@fragment
+fn fs_main_linear_framebuffer(in: VertexOutput) -> @location(0) vec4<f32> {
+    let gamma = shade(in);
+    return vec4<f32>(linear_from_gamma_rgb(gamma.rgb), gamma.a);
 }
 
 @fragment
 fn fs_main_gamma_framebuffer(in: VertexOutput) -> @location(0) vec4<f32> {
-    // We expect "normal" textures that are NOT sRGB-aware.
-    let tex_gamma = sample_texture(in);
-    var out_color_gamma = in.color * tex_gamma;
-    // Dither the float color down to eight bits to reduce banding.
-    // This step is optional for egui backends.
-    if r_locals.dithering == 1 {
-        let out_color_gamma_rgb = dither_interleaved(out_color_gamma.rgb, 256.0, in.position);
-        out_color_gamma = vec4<f32>(out_color_gamma_rgb, out_color_gamma.a);
-    }
-    return out_color_gamma;
+    return shade(in);
 }

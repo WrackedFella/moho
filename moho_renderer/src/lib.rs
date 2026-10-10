@@ -149,8 +149,7 @@ pub trait RendererBackend {
     fn set_ui_source(&mut self, _source: Option<UiSource>) {}
 }
 
-/// Shared handle to a game's UI paint-data provider.
-pub type UiSource = std::sync::Arc<std::sync::Mutex<dyn moho_render_api::UiFrameSource>>;
+pub use moho_render_api::UiSource;
 
 impl RendererBackend for Renderer<'_> {
     fn resize(&mut self, width: u32, height: u32) {

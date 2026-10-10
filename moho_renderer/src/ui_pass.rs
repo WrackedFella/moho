@@ -48,8 +48,15 @@ pub(crate) struct UiDraw {
 /// the mesh's slice in buffers formed by concatenating every mesh's indices
 /// and vertices in order; skipped meshes keep their slot so offsets are
 /// stable. Skips meshes with an empty scissor, no indices, or a texture
-/// `book` does not hold.
+/// `book` does not hold. Empty when `pixels_per_point` is not finite and positive.
 pub(crate) fn build_draws(frame: &UiFrame, target: [u32; 2], book: &TextureBook) -> Vec<UiDraw> {
+    if !(frame.pixels_per_point.is_finite() && frame.pixels_per_point > 0.0) {
+        tracing::warn!(
+            pixels_per_point = frame.pixels_per_point,
+            "skipping UI draw: invalid pixels_per_point"
+        );
+        return Vec::new();
+    }
     let mut draws = Vec::with_capacity(frame.meshes.len());
     let mut index_start = 0u32;
     let mut base_vertex = 0i32;
@@ -198,6 +205,26 @@ mod tests {
             book.apply_set(&set(*id, None, [8, 8])).expect("full set");
         }
         book
+    }
+
+    #[test]
+    fn invalid_pixels_per_point_yields_no_draws() {
+        let book = book_with(&[TEX_A]);
+
+        for ppp in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            let frame = UiFrame {
+                pixels_per_point: ppp,
+                meshes: vec![mesh(
+                    TEX_A,
+                    rect([0.0, 0.0], [10.0, 10.0]),
+                    3,
+                    vec![0, 1, 2],
+                )],
+                ..UiFrame::default()
+            };
+
+            assert!(build_draws(&frame, [100, 100], &book).is_empty(), "{ppp}");
+        }
     }
 
     #[test]

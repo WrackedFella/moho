@@ -13,7 +13,7 @@ pub use instance::{InstanceGpu, Renderable};
 pub use material::{MaterialGpu, MaterialKey, RenderMaterial};
 pub use persistence::{CameraDesc, LightDesc};
 pub use ui_paint::{
-    UiFilter, UiFrame, UiFrameSource, UiImage, UiMesh, UiRect, UiSampler, UiTextureId,
+    UiFilter, UiFrame, UiFrameSource, UiImage, UiMesh, UiRect, UiSampler, UiSource, UiTextureId,
     UiTextureSet, UiVertex, UiWrap,
 };
 pub use world_geometry::{WorldMesh, WorldMeshError, WorldMeshId};

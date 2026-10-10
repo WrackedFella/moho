@@ -14,8 +14,7 @@ const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Locals {
     screen_size_in_points: [f32; 2],
-    dithering: u32,
-    _padding: u32,
+    _padding: [u32; 2],
 }
 
 struct GpuTexture {
@@ -59,7 +58,8 @@ impl GrowBuffer {
 
     fn reserve(&mut self, device: &wgpu::Device, size: u64) {
         if size > self.capacity {
-            self.capacity = size.next_power_of_two();
+            self.capacity =
+                crate::MeshRenderer::next_capacity(self.capacity as usize, size as usize) as u64;
             self.buffer = Self::create(device, self.label, self.usage, self.capacity);
         }
     }
@@ -89,8 +89,7 @@ impl UiPass {
             label: Some("ui-uniform-buffer"),
             contents: bytemuck::bytes_of(&Locals {
                 screen_size_in_points: [0.0, 0.0],
-                dithering: 1,
-                _padding: 0,
+                _padding: [0; 2],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -311,13 +310,6 @@ impl UiPass {
         target: [u32; 2],
         frame: &UiFrame,
     ) {
-        if !(frame.pixels_per_point.is_finite() && frame.pixels_per_point > 0.0) {
-            tracing::warn!(
-                pixels_per_point = frame.pixels_per_point,
-                "skipping UI draw: invalid pixels_per_point"
-            );
-            return;
-        }
         let draws = build_draws(frame, target, &self.book);
         if draws.is_empty() {
             return;
@@ -331,8 +323,7 @@ impl UiPass {
                     target[0] as f32 / frame.pixels_per_point,
                     target[1] as f32 / frame.pixels_per_point,
                 ],
-                dithering: 1,
-                _padding: 0,
+                _padding: [0; 2],
             }),
         );
         self.upload(device, queue, frame);
@@ -382,23 +373,53 @@ impl UiPass {
             .iter()
             .map(|m| m.vertices.len() * size_of::<UiVertex>())
             .sum();
-        let index_bytes: usize = frame.meshes.iter().map(|m| m.indices.len() * 4).sum();
+        let index_bytes: usize = frame
+            .meshes
+            .iter()
+            .map(|m| m.indices.len() * size_of::<u32>())
+            .sum();
         self.vertices.reserve(device, vertex_bytes as u64);
         self.indices.reserve(device, index_bytes as u64);
 
-        let (mut vertex_offset, mut index_offset) = (0u64, 0u64);
-        for mesh in &frame.meshes {
-            let vertices: &[u8] = bytemuck::cast_slice(&mesh.vertices);
-            let indices: &[u8] = bytemuck::cast_slice(&mesh.indices);
-            if !vertices.is_empty() {
-                queue.write_buffer(&self.vertices.buffer, vertex_offset, vertices);
-            }
-            if !indices.is_empty() {
-                queue.write_buffer(&self.indices.buffer, index_offset, indices);
-            }
-            vertex_offset += vertices.len() as u64;
-            index_offset += indices.len() as u64;
-        }
+        write_concatenated(
+            queue,
+            &self.vertices.buffer,
+            vertex_bytes,
+            frame
+                .meshes
+                .iter()
+                .map(|m| bytemuck::cast_slice(&m.vertices)),
+        );
+        write_concatenated(
+            queue,
+            &self.indices.buffer,
+            index_bytes,
+            frame
+                .meshes
+                .iter()
+                .map(|m| bytemuck::cast_slice(&m.indices)),
+        );
+    }
+}
+
+/// Writes `chunks` back to back from offset 0 through one staging buffer.
+fn write_concatenated<'a>(
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+    total: usize,
+    chunks: impl Iterator<Item = &'a [u8]>,
+) {
+    let Some(size) = NonZeroU64::new(total as u64) else {
+        return;
+    };
+    let Some(mut view) = queue.write_buffer_with(buffer, 0, size) else {
+        return;
+    };
+    let mut offset = 0;
+    for bytes in chunks {
+        view.slice(offset..offset + bytes.len())
+            .copy_from_slice(bytes);
+        offset += bytes.len();
     }
 }
 

@@ -87,3 +87,6 @@ pub struct UiFrame {
 pub trait UiFrameSource {
     fn ui_frame(&mut self, size_in_pixels: [u32; 2]) -> Option<UiFrame>;
 }
+
+/// Shared handle to a game's UI paint-data provider.
+pub type UiSource = std::sync::Arc<std::sync::Mutex<dyn UiFrameSource>>;
