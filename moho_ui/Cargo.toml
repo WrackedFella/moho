@@ -5,7 +5,6 @@ edition = "2024"
 publish = false
 
 [dependencies]
-moho_renderer = { path = "../moho_renderer" }
 moho_render_api = { path = "../moho_render_api" }
 winit = { workspace = true }
 egui = "0.34.3"
