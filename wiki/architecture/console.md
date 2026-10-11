@@ -44,7 +44,7 @@ from `process_console_action`; the console never touches `App`.
 | `Quit` | `UiEvent::ExitRequested` | `process_ui_events` (auto-saves, then exits) |
 | `Close` | `UiEvent::MenuHidden { "console" }` | `process_ui_events` |
 | `ToggleGodMode` | `DebugEvent::ToggleGodMode { enabled: true }` | `process_debug_events` (logs only; not implemented) |
-| `ToggleNoclip` | `DebugEvent::ToggleCollision { enabled: false }` | sets `physics.world.noclip` |
+| `ToggleNoclip` | `DebugEvent::ToggleCollision { enabled: false }` | sets `physics.noclip` (`PhysicsController`) |
 | `SetSunDirection(yaw, pitch)` | `GraphicsEvent::SunDirectionChanged` (radians) | `process_graphics_events` |
 | `SetTimeOfDay(h)` | `GraphicsEvent::TimeOfDayChanged` | `process_graphics_events` |
 | `SetDebugView(m)` | `GraphicsEvent::DebugViewChanged` | `process_graphics_events` |

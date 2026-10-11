@@ -2,7 +2,6 @@ use glam::Vec3;
 use moho_render_api::{
     InstanceGpu, MaterialGpu, MaterialKey, RenderMaterial, Renderable, WorldMesh, WorldMeshId,
 };
-use moho_renderer::FrameCallback;
 use moho_renderer::RendererBackend;
 
 /// Flat-colour material stand-in; the renderer must not name game material types.
@@ -121,11 +120,6 @@ impl RendererBackend for MockRenderer {
     }
     fn submit_frame(&mut self) {}
     fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
-    fn set_frame_callback_arc(
-        &mut self,
-        _cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
-    ) {
-    }
 }
 
 fn camera() -> (glam::Mat4, glam::Mat4, Vec3) {

@@ -472,10 +472,8 @@ impl EventProcessor {
             DebugEvent::ToggleCollision { enabled } => {
                 tracing::info!(enabled, "Collision toggled");
                 // enabled=false means noclip ON (collision disabled)
-                if let Some(ref mut pw) = app.physics.world {
-                    pw.noclip = !enabled;
-                    tracing::info!(noclip = pw.noclip, "Noclip toggled");
-                }
+                app.physics.noclip = !enabled;
+                tracing::info!(noclip = app.physics.noclip, "Noclip toggled");
             }
             DebugEvent::SetShadowQuality { quality } => {
                 tracing::info!(quality, "Setting shadow quality");
@@ -565,6 +563,29 @@ mod tests {
         let camera_pos = camera_to_world.col(3).truncate();
         let forward = -camera_to_world.col(2).truncate().normalize();
         camera_pos + forward * SPAWN_FALLBACK_DISTANCE
+    }
+
+    #[test]
+    fn toggle_collision_off_enables_noclip() {
+        let mut app = App::headless();
+        app.event_bus
+            .publish(DebugEvent::ToggleCollision { enabled: false });
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert!(app.physics.noclip);
+    }
+
+    #[test]
+    fn toggle_collision_on_disables_noclip() {
+        let mut app = App::headless();
+        app.physics.noclip = true;
+        app.event_bus
+            .publish(DebugEvent::ToggleCollision { enabled: true });
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert!(!app.physics.noclip);
     }
 
     #[test]

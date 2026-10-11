@@ -91,7 +91,7 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
 4. `update_hud_data`, then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
    with actors, the sphere and cube mesh handles and the camera;
-5. recall the egui staging belt.
+5. recall the UI adapter's staging belt (currently a no-op).
 
 A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
 [rendering](rendering.md#pass-order). `alpha` (tick interpolation) is not used yet.

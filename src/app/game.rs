@@ -476,11 +476,6 @@ mod tests {
         fn set_ssao_quality(&mut self, quality: u8) {
             self.ssao_qualities.push(quality);
         }
-        fn set_frame_callback_arc(
-            &mut self,
-            _cb: Option<std::sync::Arc<std::sync::Mutex<dyn moho_renderer::FrameCallback>>>,
-        ) {
-        }
     }
 
     fn tick() -> std::time::Duration {

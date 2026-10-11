@@ -136,13 +136,6 @@ pub trait RendererBackend {
     fn surface_format(&self) -> Option<TextureFormatRepr> {
         None
     }
-    /// Set an optional `Arc<Mutex<dyn FrameCallback>>`. The renderer calls it during
-    /// finalization so the application can record UI commands into the frame encoder.
-    /// Passing `None` clears.
-    fn set_frame_callback_arc(
-        &mut self,
-        cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
-    );
     /// Set the provider of UI paint data, pulled in `submit_frame` and drawn
     /// over the scene; `None` clears it. No-op by default.
     fn set_ui_source(&mut self, _source: Option<UiSource>) {}
@@ -203,12 +196,6 @@ impl RendererBackend for Renderer<'_> {
     fn surface_format(&self) -> Option<TextureFormatRepr> {
         Some(self.surface_format())
     }
-    fn set_frame_callback_arc(
-        &mut self,
-        cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
-    ) {
-        self.set_frame_callback_arc_inherent(cb);
-    }
     fn set_ui_source(&mut self, source: Option<UiSource>) {
         self.set_ui_source(source);
     }
@@ -253,20 +240,6 @@ pub fn create_renderer<'a>(
         Box::new(RendererInitError::WgpuInit(msg)) as Box<dyn std::error::Error>
     })?;
     Ok(Box::new(r))
-}
-
-/// Callback trait for UI rendering. Implement this to composite UI elements
-/// into the renderer's command encoder.
-pub trait FrameCallback {
-    fn call(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        view: &wgpu::TextureView,
-        encoder: &mut wgpu::CommandEncoder,
-        surface_width: u32,
-        surface_height: u32,
-    );
 }
 
 /// Errors that can occur during renderer initialization.

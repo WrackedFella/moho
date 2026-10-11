@@ -1,6 +1,6 @@
 # 0013 — UI reaches the renderer as plain paint data; the renderer owns UI drawing
 
-**Status:** Proposed (2026-10-10)
+**Status:** Accepted (2026-10-10)
 
 ## Context
 

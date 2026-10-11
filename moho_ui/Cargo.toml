@@ -5,12 +5,10 @@ edition = "2024"
 publish = false
 
 [dependencies]
-wgpu = { workspace = true }
-moho_renderer = { path = "../moho_renderer" }
+moho_render_api = { path = "../moho_render_api" }
 winit = { workspace = true }
 egui = "0.34.3"
 egui-winit = { version = "0.34.3", default-features = false, features = ["clipboard", "wayland", "x11"] }
-egui-wgpu = "0.34.3"
 tracing = { workspace = true }
 moho_input = { path = "../moho_input" }
 moho_core = { path = "../moho_core" }

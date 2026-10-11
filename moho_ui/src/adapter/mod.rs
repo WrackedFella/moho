@@ -3,14 +3,13 @@
 //! This adapter manages menus and UI state in a scalable way,
 //! allowing easy addition of new menus and menu types.
 mod event_routing;
-mod gpu_ops;
+mod paint_map;
 mod rendering;
 
 pub use crate::app_state::GameState;
 use crate::prefs::Prefs;
 use crate::screens::{Menu, MenuAction};
 use crate::ui_state::UiStateManager;
-use moho_renderer::FrameCallback;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -50,7 +49,6 @@ pub struct EguiAdapter {
     // egui integration
     context: egui::Context,
     winit_state: Option<egui_winit::State>,
-    renderer: Option<egui_wgpu::Renderer>,
 
     // UI state management (extracted from adapter)
     ui_state: UiStateManager,
@@ -70,9 +68,6 @@ pub struct EguiAdapter {
     // cancel button. The main application can control this by locking the
     // adapter and calling the helper methods below.
     pub progress: Option<ProgressState>,
-
-    // Rendering
-    surface_config: Option<wgpu::SurfaceConfiguration>,
 
     // Hover SFX tracking: stores the action key of the last-hovered menu item
     // so we only fire MenuNavigate once per new hover, not every frame.
@@ -121,12 +116,10 @@ impl EguiAdapter {
         Self {
             context,
             winit_state,
-            renderer: None,
             ui_state: UiStateManager::new(),
             event_bus,
             window,
             current_game_state: GameState::Menu,
-            surface_config: None,
             progress: None,
             last_hovered_key: None,
             menu_music_playing: false,
@@ -193,30 +186,6 @@ impl EguiAdapter {
     /// Sets the UI visibility
     pub fn set_visible(&mut self, visible: bool) {
         self.ui_state.visible = visible;
-    }
-
-    /// Set surface format for renderer initialization
-    pub fn set_surface_format(&mut self, format: wgpu::TextureFormat) {
-        self.surface_config = Some(wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: 800,
-            height: 600,
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: wgpu::CompositeAlphaMode::Auto,
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        });
-    }
-
-    /// Initialize the wgpu renderer
-    fn init_renderer(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat) {
-        if self.renderer.is_none() {
-            let renderer =
-                egui_wgpu::Renderer::new(device, format, egui_wgpu::RendererOptions::default());
-            self.renderer = Some(renderer);
-            tracing::info!(format = ?format, "Initializing egui_wgpu::Renderer");
-        }
     }
 
     /// Start showing a progress overlay with the given title. This will
@@ -294,16 +263,8 @@ impl EguiAdapter {
     }
 }
 
-impl FrameCallback for EguiAdapter {
-    fn call(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        view: &wgpu::TextureView,
-        encoder: &mut wgpu::CommandEncoder,
-        surface_width: u32,
-        surface_height: u32,
-    ) {
+impl moho_render_api::UiFrameSource for EguiAdapter {
+    fn ui_frame(&mut self, _size_in_pixels: [u32; 2]) -> Option<moho_render_api::UiFrame> {
         use crate::modal::ModalResult;
         // Update global visibility flag (tracks menu visibility for input routing)
         UI_OVERLAY_VISIBLE.store(self.ui_state.visible, Ordering::SeqCst);
@@ -311,15 +272,8 @@ impl FrameCallback for EguiAdapter {
         // Render when menus are visible OR during any gameplay state (for overlays)
         let needs_render = self.ui_state.visible || self.current_game_state != GameState::Menu;
         if !needs_render {
-            return;
+            return None;
         }
-
-        // Initialize renderer if needed
-        let format = self
-            .surface_config
-            .as_ref()
-            .map_or(wgpu::TextureFormat::Bgra8UnormSrgb, |c| c.format);
-        self.init_renderer(device, format);
 
         // Take input from winit integration
         let raw_input = self.take_egui_input();
@@ -405,42 +359,14 @@ impl FrameCallback for EguiAdapter {
         // Handle platform output
         self.handle_platform_output(full_output.platform_output);
 
-        // Render to GPU (delegates to gpu_ops module)
-        if let Some(renderer) = &mut self.renderer {
-            let screen_descriptor = egui_wgpu::ScreenDescriptor {
-                size_in_pixels: [surface_width, surface_height],
-                pixels_per_point: self.context.pixels_per_point(),
-            };
-
-            let clipped_primitives = self
-                .context
-                .tessellate(full_output.shapes, full_output.pixels_per_point);
-
-            // Update textures (delegate)
-            gpu_ops::update_textures(renderer, device, queue, &full_output.textures_delta);
-
-            // Update buffers (delegate)
-            gpu_ops::update_buffers(
-                renderer,
-                device,
-                queue,
-                encoder,
-                &clipped_primitives,
-                &screen_descriptor,
-            );
-
-            // Execute render pass (delegate)
-            gpu_ops::execute_render_pass(
-                renderer,
-                encoder,
-                view,
-                &clipped_primitives,
-                &screen_descriptor,
-            );
-
-            // Free textures (delegate)
-            gpu_ops::free_textures(renderer, &full_output.textures_delta.free);
-        }
+        let clipped_primitives = self
+            .context
+            .tessellate(full_output.shapes, full_output.pixels_per_point);
+        Some(paint_map::to_ui_frame(
+            &clipped_primitives,
+            &full_output.textures_delta,
+            full_output.pixels_per_point,
+        ))
     }
 }
 
@@ -450,4 +376,41 @@ pub fn build_adapter(
     event_bus: Arc<moho_core::EventBus>,
 ) -> EguiAdapter {
     EguiAdapter::new(window, event_bus)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use moho_render_api::UiFrameSource;
+
+    fn adapter() -> EguiAdapter {
+        EguiAdapter::new(None, Arc::new(moho_core::EventBus::new()))
+    }
+
+    #[test]
+    fn hidden_menu_state_returns_no_paint_data() {
+        let mut adapter = adapter();
+        adapter.set_game_state(GameState::Menu);
+        adapter.hide_menus();
+        adapter.set_visible(false);
+
+        let frame = adapter.ui_frame([800, 600]);
+
+        assert!(frame.is_none());
+    }
+
+    #[test]
+    fn visible_menu_state_returns_paint_data() {
+        let mut adapter = adapter();
+        adapter.set_game_state(GameState::Menu);
+        adapter.set_visible(true);
+
+        let frame = adapter.ui_frame([800, 600]).expect("a visible menu paints");
+
+        assert!(frame.pixels_per_point > 0.0);
+        assert!(
+            !frame.textures_set.is_empty(),
+            "the first frame uploads egui's font atlas"
+        );
+    }
 }

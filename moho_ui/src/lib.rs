@@ -3,8 +3,6 @@
 //! This crate provides a flexible, scalable UI system based on egui with support
 //! for multiple menu types and easy extensibility for new UI components.
 
-use moho_renderer::FrameCallback;
-
 /// Stub UI implementation for when no UI features are enabled
 #[derive(Debug)]
 pub struct StubUi;
@@ -21,17 +19,9 @@ impl Default for StubUi {
     }
 }
 
-impl FrameCallback for StubUi {
-    fn call(
-        &mut self,
-        _device: &wgpu::Device,
-        _queue: &wgpu::Queue,
-        _view: &wgpu::TextureView,
-        _encoder: &mut wgpu::CommandEncoder,
-        _surface_width: u32,
-        _surface_height: u32,
-    ) {
-        // no-op when no UI is available
+impl moho_render_api::UiFrameSource for StubUi {
+    fn ui_frame(&mut self, _size_in_pixels: [u32; 2]) -> Option<moho_render_api::UiFrame> {
+        None
     }
 }
 
@@ -77,3 +67,14 @@ pub use modal::{Modal, ModalManager, ModalResult};
 pub use modals::KeybindConflictModal;
 
 pub use moho_core::prefs;
+
+#[cfg(test)]
+mod tests {
+    use super::StubUi;
+    use moho_render_api::UiFrameSource;
+
+    #[test]
+    fn stub_ui_paints_nothing() {
+        assert!(StubUi::new().ui_frame([800, 600]).is_none());
+    }
+}

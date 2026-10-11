@@ -66,7 +66,7 @@ layering:
     rejects layering-engine-fps 'engine-reaches-game: moho_renderer → moho_render_api'
     rejects layering-unassigned 'unassigned: moho_input'
     rejects layering-platform 'domain-reaches-platform: moho_ui → egui'
-    rejects layering-platform 'domain-reaches-platform: moho_ui → wgpu'
+    rejects layering-platform 'domain-reaches-platform: moho → wgpu'
     rejects layering-platform 'domain-reaches-platform: moho_ui → winit'
     rejects layering-cross-line 'cross-game-line: moho_ui → moho_game'
     rejects layering-cross-line 'cross-game-line: moho → moho_ui'

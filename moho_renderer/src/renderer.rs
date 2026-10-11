@@ -25,7 +25,6 @@ pub struct Renderer<'a> {
     pending_frame: Option<wgpu::SurfaceTexture>,
     pending_draws: Vec<(u32, Vec<GpuInstance>)>,
     pending_frame_view: Option<wgpu::TextureView>,
-    frame_callback_arc: Option<std::sync::Arc<std::sync::Mutex<dyn crate::FrameCallback>>>,
     skybox_pipeline: wgpu::RenderPipeline,
     skybox_vertex_buffer: wgpu::Buffer,
     skybox_vertex_count: u32,
@@ -107,7 +106,6 @@ impl<'a> Renderer<'a> {
             pending_frame: None,
             pending_draws: Vec::new(),
             pending_frame_view: None,
-            frame_callback_arc: None,
             skybox_pipeline: pipeline_setup.skybox_pipeline().clone(),
             skybox_vertex_buffer: resources.skybox_vertex_buffer,
             skybox_vertex_count: resources.skybox_vertex_count,
@@ -221,13 +219,6 @@ impl<'a> Renderer<'a> {
             });
         self.material_buffer = Some(mat_buf);
         self.recreate_camera_bind_group();
-    }
-
-    pub fn set_frame_callback_arc_inherent(
-        &mut self,
-        cb: Option<std::sync::Arc<std::sync::Mutex<dyn crate::FrameCallback>>>,
-    ) {
-        self.frame_callback_arc = cb;
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -625,11 +616,6 @@ impl<'a> Renderer<'a> {
             encoder,
             &self.queue,
             self.pending_frame.take(),
-            self.pending_frame_view.as_ref(),
-            self.frame_callback_arc.as_ref(),
-            self.config.width,
-            self.config.height,
-            &self.device,
             draw_count,
         );
 

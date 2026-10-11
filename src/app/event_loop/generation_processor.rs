@@ -261,9 +261,7 @@ impl GenerationProcessor {
         let spawn_pos = glam::Vec3::new(0.0, terrain_y + 3.0, 0.0);
 
         // Spawn character controller
-        if let Some(ref mut pw) = app.physics.world {
-            pw.add_character(spawn_pos);
-        }
+        app.physics.spawn_player(spawn_pos);
 
         // Sync simulation camera to spawn position
         let (yaw, pitch) = app.simulation.yaw_pitch();

@@ -221,11 +221,6 @@ pub(crate) mod tests {
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
         fn set_shadow_quality(&mut self, _quality: u8) {}
         fn set_ssao_quality(&mut self, _quality: u8) {}
-        fn set_frame_callback_arc(
-            &mut self,
-            _cb: Option<std::sync::Arc<std::sync::Mutex<dyn moho_renderer::FrameCallback>>>,
-        ) {
-        }
     }
 
     fn drawn_handles(app: &mut App) -> Vec<u32> {
@@ -523,7 +518,7 @@ pub(crate) mod tests {
 
     pub(crate) fn terrain_collider_count(app: &App) -> usize {
         let pw = app.physics.world.as_ref().expect("physics world");
-        pw.collider_set.len() - usize::from(pw.character_collider.is_some())
+        pw.collider_set.len() - usize::from(app.physics.player.is_some())
     }
 
     /// Places `block`, then drains stale events and meshes `chunk` from the dirty event.
