@@ -54,6 +54,7 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 | Engine crates never depend on a game-line crate (dev-dependencies allowed) | The engine ships to both games and, after the split, from its own repo |
 | A game line never depends on another game line | Strategy and FPS must separate cleanly |
 | Domain crates (`moho_core`, `moho_voxel`, `moho_game`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
+| Only `moho_renderer` (the `gpu` row of `scripts/layering.txt`) depends directly on `wgpu`, `egui-wgpu` or `naga` | GPU code stays behind the renderer boundary |
 
 Voxels live in the strategy-line `moho_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));
 the engine sees world geometry only as meshes.
