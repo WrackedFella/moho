@@ -7,7 +7,8 @@
 # count; a path through another workspace member does not). Keeps
 # engine reuse and platform-free domain code from eroding silently. If
 # MOHO_LAYERING_GRAPH names a file, the crate graph is read from it when non-empty and
-# written to it otherwise, so repeated runs skip the cargo calls.
+# written to it otherwise, so repeated runs skip the cargo calls. MOHO_LAYERING_CARGO
+# overrides the cargo command (the self-tests point it at a stub).
 set -euo pipefail
 
 table="${1:-scripts/layering.txt}"
@@ -49,19 +50,20 @@ in_line() { [[ "$rows" == *" $2:$1 "* ]]; }
 # Command substitution drops errexit, so each cargo failure returns explicitly; a crate
 # with a silently empty dependency list would pass every rule.
 collect_graph() {
+    local cargo="${MOHO_LAYERING_CARGO:-cargo}"
     local crates crate other tree own_tree deps own prune
     local flags=(-e normal,build,dev --all-features --target all --prefix depth --format '{p}')
     local names_awk='{sub(/^[0-9]+/, "", $1)} NF && $1 != self {print $1}'
-    crates="$(cargo tree --workspace --depth 0 -e normal --target all --prefix none --format '{p}' \
+    crates="$("$cargo" tree --workspace --depth 0 -e normal --target all --prefix none --format '{p}' \
         | awk 'NF{print $1}')" || return 1
     for crate in $crates; do
-        tree="$(cargo tree -p "$crate" "${flags[@]}")" || return 1
+        tree="$("$cargo" tree -p "$crate" "${flags[@]}")" || return 1
         # --prune rejects a spec absent from the crate's tree, so prune only the members in it.
         prune=()
         for other in $(awk -v self="$crate" "$names_awk" <<<"$tree" | sort -u); do
             [[ " $crates " == *[[:space:]]"$other"[[:space:]]* && "$other" != "$crate" ]] && prune+=(--prune "$other")
         done
-        own_tree="$(cargo tree -p "$crate" "${flags[@]}" ${prune[@]+"${prune[@]}"})" || return 1
+        own_tree="$("$cargo" tree -p "$crate" "${flags[@]}" ${prune[@]+"${prune[@]}"})" || return 1
         deps="$(awk -v self="$crate" "$names_awk" <<<"$tree" | sort -u | tr '\n' ' ')"
         own="$(awk -v self="$crate" "$names_awk" <<<"$own_tree" | sort -u | tr '\n' ' ')"
         echo "$crate: $deps| $own"

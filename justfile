@@ -140,7 +140,7 @@ _layering-accepts-graph fixture graph:
 _layering-collects ui expected:
     #!/usr/bin/env bash
     set -uo pipefail
-    out=$(PATH="$PWD/scripts/fixtures/stub-cargo:$PATH" STUB_CARGO_UI={{ui}} MOHO_LAYERING_GRAPH= scripts/check-layering.sh scripts/fixtures/layering-collect.txt 2>&1)
+    out=$(MOHO_LAYERING_CARGO=scripts/fixtures/stub-cargo/cargo STUB_CARGO_UI={{ui}} MOHO_LAYERING_GRAPH= scripts/check-layering.sh scripts/fixtures/layering-collect.txt 2>&1)
     status=$?
     if [ '{{expected}}' = 'layering: OK' ]; then
         [ "$status" -eq 0 ] && grep -qF -- '{{expected}}' <<<"$out" && exit 0
