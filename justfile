@@ -74,6 +74,7 @@ layering:
     rejects layering-unknown 'unknown: moho_gmae'
     rejects layering-repeated-row 'repeated row: engine'
     rejects layering-gpu 'gpu-outside-renderer: moho_renderer → wgpu'
+    rejects layering-gpu 'gpu-outside-renderer: moho_renderer → naga'
 
 # Fails unless the layering check exits non-zero on the fixture and prints the expected line.
 [private]
