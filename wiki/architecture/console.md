@@ -22,7 +22,7 @@ sequenceDiagram
     U->>App: Backquote
     App->>App: enter_console() → GameState::ConsoleOpen
     loop each frame while ConsoleOpen
-        App->>C: render(ctx)
+        App->>C: render(ui)
         U->>C: types command, Enter
         C->>CP: execute("time 6")
         CP-->>C: CommandResult { messages, action }

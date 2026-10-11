@@ -283,10 +283,10 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
         let mut new_hovered_key: Option<String> = None;
         let mut modal_result = crate::modal::ModalResult::None;
 
-        let full_output = self.context.run(raw_input, |ctx| {
+        let full_output = self.context.run_ui(raw_input, |ui| {
             // Render based on current game state (delegates to rendering module)
             let result = rendering::render_game_state(
-                ctx,
+                ui,
                 &mut self.ui_state,
                 self.current_game_state,
                 &self.event_bus,
@@ -303,12 +303,12 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
 
             // Render modal on top of menu (if active)
             if self.current_game_state == GameState::Menu {
-                modal_result = self.ui_state.modal_manager.render(ctx);
+                modal_result = self.ui_state.modal_manager.render(ui);
             }
 
             // Render progress overlay (if present)
             if let Some(progress) = self.progress.as_mut() {
-                rendering::render_progress_overlay(ctx, progress);
+                rendering::render_progress_overlay(ui, progress);
             }
         });
 

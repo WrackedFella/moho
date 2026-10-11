@@ -13,10 +13,10 @@ type MenuItem = super::super::MenuItem;
 /// Render the top panel with title and tab selector
 ///
 /// Returns the newly selected tab (may be different from current if user clicked a tab)
-pub fn render_top_panel(ctx: &egui::Context, current_tab: SettingsTab) -> SettingsTab {
+pub fn render_top_panel(ui: &mut egui::Ui, current_tab: SettingsTab) -> SettingsTab {
     let mut new_tab = current_tab;
 
-    egui::TopBottomPanel::top("settings_top").show(ctx, |ui| {
+    egui::Panel::top("settings_top").show_inside(ui, |ui| {
         // Use same gutter percentage as content area (30%)
         let avail = ui.available_width();
         let gutter = FormControls::calculate_gutter(avail, 0.30);
@@ -49,10 +49,10 @@ pub fn render_top_panel(ctx: &egui::Context, current_tab: SettingsTab) -> Settin
 /// Render the bottom panel with action buttons
 ///
 /// Returns menu items representing the button interactions
-pub fn render_bottom_panel(ctx: &egui::Context, menu: &mut SettingsMenu) -> Vec<MenuItem> {
+pub fn render_bottom_panel(ui: &mut egui::Ui, menu: &mut SettingsMenu) -> Vec<MenuItem> {
     let mut items = Vec::new();
 
-    egui::TopBottomPanel::bottom("settings_bottom").show(ctx, |ui| {
+    egui::Panel::bottom("settings_bottom").show_inside(ui, |ui| {
         // Use same gutter percentage as content area (30%)
         let avail = ui.available_width();
         let gutter = FormControls::calculate_gutter(avail, 0.30);
@@ -126,8 +126,8 @@ pub fn render_bottom_panel(ctx: &egui::Context, menu: &mut SettingsMenu) -> Vec<
 }
 
 /// Render the central content area with scrollable form
-pub fn render_content_area(ctx: &egui::Context, menu: &mut SettingsMenu) {
-    egui::CentralPanel::default().show(ctx, |ui| {
+pub fn render_content_area(ui: &mut egui::Ui, menu: &mut SettingsMenu) {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -153,4 +153,39 @@ pub fn render_content_area(ctx: &egui::Context, menu: &mut SettingsMenu) {
                 });
             });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::overlays::test_support::{click_at, input, rect_of};
+
+    fn run(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        tab: SettingsTab,
+    ) -> (SettingsTab, egui::FullOutput) {
+        let mut result = tab;
+        let output = ctx.run_ui(input(events), |ui| {
+            result = render_top_panel(ui, tab);
+        });
+        (result, output)
+    }
+
+    #[test]
+    fn render_top_panel_returns_clicked_tab() {
+        let ctx = egui::Context::default();
+        let _ = run(&ctx, Vec::new(), SettingsTab::Controls);
+        let (idle, output) = run(&ctx, Vec::new(), SettingsTab::Video);
+        let audio = rect_of(&output, "Audio").center();
+        let video = rect_of(&output, "Video").center();
+
+        let (clicked_audio, _) = run(&ctx, click_at(audio), SettingsTab::Controls);
+        let _ = run(&ctx, Vec::new(), SettingsTab::Controls);
+        let (clicked_video, _) = run(&ctx, click_at(video), SettingsTab::Controls);
+
+        assert_eq!(idle, SettingsTab::Video);
+        assert_eq!(clicked_audio, SettingsTab::Audio);
+        assert_eq!(clicked_video, SettingsTab::Video);
+    }
 }

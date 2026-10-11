@@ -14,14 +14,17 @@ fn character_dropped_on_loaded_floor_stands_on_it() {
         world.set_world_mesh(WorldMeshId(id as u64), &level_mesh.mesh);
     }
     let capsule_centre_above_base = 0.85 + 0.3;
-    world.add_character(Vec3::new(0.0, 2.0 + capsule_centre_above_base, 0.0));
+    let handle = world.add_character(Vec3::new(0.0, 2.0 + capsule_centre_above_base, 0.0));
 
     for _ in 0..120 {
-        world.move_character(Vec3::ZERO, 1.0 / 60.0);
+        world
+            .move_character(handle, Vec3::ZERO, 1.0 / 60.0)
+            .expect("character exists");
         world.step(1.0 / 60.0);
     }
 
-    let base = world.character_position().expect("character exists").y - capsule_centre_above_base;
-    assert!(world.is_grounded, "character should be grounded");
+    let character = world.character(handle).expect("character exists");
+    let base = character.position.y - capsule_centre_above_base;
+    assert!(character.grounded, "character should be grounded");
     assert!(base.abs() < 0.1, "capsule base at {base}, expected 0");
 }

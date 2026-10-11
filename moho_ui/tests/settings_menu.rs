@@ -20,10 +20,6 @@
 //! This pattern ensures tests are deterministic, parallelizable, and won't fail
 //! due to leftover state from previous test runs or other tests in the suite.
 
-// See moho_ui/src/lib.rs's crate-level `#![allow(deprecated)]` for why
-// `Context::run` (egui 0.34 deprecation) is still used here.
-#![allow(deprecated)]
-
 use moho_input::bindings::Binding;
 use moho_input::key::Key;
 use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
@@ -246,15 +242,15 @@ fn render_doesnt_crash() {
     let ctx = egui::Context::default();
 
     // Render in both tabs
-    let _ = ctx.run(egui::RawInput::default(), |ctx| {
-        menu.render(ctx);
+    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        menu.render(ui);
     });
 
     // Switch tab and render again
     menu.set_active_tab(SettingsTab::Audio);
 
-    let _ = ctx.run(egui::RawInput::default(), |ctx| {
-        menu.render(ctx);
+    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        menu.render(ui);
     });
 
     // Should not panic
@@ -316,8 +312,8 @@ fn render_frame(menu: &mut SettingsMenu, events: Vec<egui::Event>) -> egui::Full
         events,
         ..Default::default()
     };
-    ctx.run(input, |ctx| {
-        menu.render(ctx);
+    ctx.run_ui(input, |ui| {
+        menu.render(ui);
     })
 }
 

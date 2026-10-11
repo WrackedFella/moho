@@ -1,9 +1,5 @@
 //! Tests for the menu system functionality
 
-// See moho_ui/src/lib.rs's crate-level `#![allow(deprecated)]` for why
-// `Context::run` (egui 0.34 deprecation) is still used here.
-#![allow(deprecated)]
-
 use moho_ui::UiComponent;
 use moho_ui::prefs::Prefs;
 use moho_ui::{MenuItem, SettingsMenu};
@@ -13,10 +9,10 @@ fn settings_menu_structure() {
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
     let ctx = egui::Context::default();
 
-    // Call render() inside `ctx.run` so egui's internal state is initialized
+    // Call render() inside `ctx.run_ui` so egui's internal state is initialized
     let mut items: Vec<MenuItem> = Vec::new();
-    let _ = ctx.run(egui::RawInput::default(), |ctx| {
-        items = menu.render(ctx);
+    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        items = menu.render(ui);
     });
 
     assert_eq!(items.len(), 2, "SettingsMenu should return 2 menu items");
