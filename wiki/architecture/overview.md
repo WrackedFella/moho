@@ -27,6 +27,7 @@ flowchart TD
     physics["moho_physics<br/>rapier3d"]:::engine
     input["moho_input<br/>Key, Action, ActionBindings,<br/>ActionMap, mouse filtering"]:::engine
     app["moho_app<br/>window, fixed-step loop, Game trait"]:::engine
+    level["moho_level<br/>glTF level loader"]:::engine
 
     ui --> renderer & input & core & game
     game --> core & rapi & voxel
@@ -35,6 +36,7 @@ flowchart TD
     app --> renderer & audio
     audio --> core
     physics --> rapi
+    level --> rapi
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
     classDef strategy fill:#dcfce7,stroke:#16a34a,color:#111
@@ -53,7 +55,7 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 |---|---|
 | Engine crates never depend on a game-line crate (dev-dependencies allowed) | The engine ships to both games and, after the split, from its own repo |
 | A game line never depends on another game line | Strategy and FPS must separate cleanly |
-| Domain crates (`moho_core`, `moho_voxel`, `moho_game`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
+| Domain crates (`moho_core`, `moho_voxel`, `moho_game`, `moho_level`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
 
 Voxels live in the strategy-line `moho_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));
 the engine sees world geometry only as meshes.
@@ -80,6 +82,7 @@ flowchart TD
     audio["moho_audio<br/>rodio"]:::engine
     core["moho_core<br/>event bus, engine events, prefs,<br/>content roots, save envelope"]:::engine
     rapi["moho_render_api<br/>engine/game contract"]:::engine
+    level["moho_level<br/>glTF level loader"]:::engine
 
     sbin --> app & ui & game & voxel
     ui --> shell & game
@@ -92,6 +95,7 @@ flowchart TD
     physics --> rapi
     audio --> core
     core --> rapi
+    level --> rapi
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
     classDef engineNew fill:#dbeafe,stroke:#2563eb,stroke-dasharray:5 5,color:#111
@@ -101,8 +105,10 @@ flowchart TD
 
 Changes from today:
 
-- Scene import (ENG-F14), navigation (ENG-F17) and the character controller and camera
-  (ENG-F21) are modules of an engine crate unless their specs name a boundary.
+- Scene import (ENG-F14) is its own crate, `moho_level`: a headless server needs level
+  collision without linking `wgpu` or `winit`.
+- Navigation (ENG-F17) and the character controller and camera (ENG-F21) are modules of
+  an engine crate unless their specs name a boundary.
 
 An FPS line would sit beside the strategy line and depend only on engine crates.
 
