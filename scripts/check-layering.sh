@@ -3,7 +3,8 @@
 # scripts/layering.txt): every member belongs to exactly one line, the table names only
 # members and each line once, engine crates never reach game crates, strategy and fps
 # never reach each other, domain crates never reach winit, wgpu or egui, and only crates
-# in the table's gpu row depend directly on wgpu, egui-wgpu or naga. Keeps
+# in the table's gpu row reach wgpu, egui-wgpu or naga themselves (dev-dependencies
+# count; a path through another workspace member does not). Keeps
 # engine reuse and platform-free domain code from eroding silently. If
 # MOHO_LAYERING_GRAPH names a file, the crate graph is read from it when non-empty and
 # written to it otherwise, so repeated runs skip the cargo calls.
@@ -39,22 +40,31 @@ done <"$table"
 
 in_line() { [[ "$rows" == *" $2:$1 "* ]]; }
 
-# One line per workspace member: "<crate>: <crates it reaches> | <crates it names directly>".
+# One line per workspace member: "<crate>: <crates it reaches> | <crates it reaches itself>".
+# A crate's own reach is every crate reachable without passing through another workspace
+# member, so a third-party wrapper that pulls in wgpu counts against the crate that
+# names it, while a path through moho_renderer does not. Two cargo calls per crate: the
+# full tree, and a tree with every other member pruned (pruned subtrees are not printed,
+# so deduplication cannot hide a path). Dev-dependencies count in both.
 # Command substitution drops errexit, so each cargo failure returns explicitly; a crate
 # with a silently empty dependency list would pass every rule.
 collect_graph() {
-    local crates crate tree deps direct
+    local crates crate other tree own_tree deps own prune
+    local flags=(-e normal,build,dev --all-features --target all --prefix depth --format '{p}')
+    local names_awk='{sub(/^[0-9]+/, "", $1)} NF && $1 != self {print $1}'
     crates="$(cargo tree --workspace --depth 0 -e normal --target all --prefix none --format '{p}' \
         | awk 'NF{print $1}')" || return 1
     for crate in $crates; do
-        # Each line is "<depth><package> <version>"; depth 1 is a direct dependency.
-        tree="$(cargo tree -p "$crate" -e normal,build,dev --all-features --target all --prefix depth --format '{p}')" \
-            || return 1
-        deps="$(awk -v self="$crate" '{d = $1; sub(/^[0-9]+/, "", $1)} NF && d !~ /^0/ && $1 != self {print $1}' <<<"$tree" \
-            | sort -u | tr '\n' ' ')"
-        direct="$(awk -v self="$crate" '/^1[^0-9]/ {sub(/^1/, "", $1); if ($1 != self) print $1}' <<<"$tree" \
-            | sort -u | tr '\n' ' ')"
-        echo "$crate: $deps| $direct"
+        tree="$(cargo tree -p "$crate" "${flags[@]}")" || return 1
+        # --prune rejects a spec absent from the crate's tree, so prune only the members in it.
+        prune=()
+        for other in $(awk -v self="$crate" "$names_awk" <<<"$tree" | sort -u); do
+            [[ " $crates " == *[[:space:]]"$other"[[:space:]]* && "$other" != "$crate" ]] && prune+=(--prune "$other")
+        done
+        own_tree="$(cargo tree -p "$crate" "${flags[@]}" ${prune[@]+"${prune[@]}"})" || return 1
+        deps="$(awk -v self="$crate" "$names_awk" <<<"$tree" | sort -u | tr '\n' ' ')"
+        own="$(awk -v self="$crate" "$names_awk" <<<"$own_tree" | sort -u | tr '\n' ' ')"
+        echo "$crate: $deps| $own"
     done
 }
 
