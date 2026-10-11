@@ -1,2 +1,0 @@
-moho_renderer: wgpu naga | wgpu naga
-moho_ui: moho_renderer glyphon wgpu | glyphon wgpu
