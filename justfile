@@ -73,6 +73,7 @@ layering:
     rejects layering-duplicate 'duplicate: moho_input'
     rejects layering-unknown 'unknown: moho_gmae'
     rejects layering-repeated-row 'repeated row: engine'
+    rejects layering-gpu 'gpu-outside-renderer: moho_renderer → wgpu'
 
 # Fails unless the layering check exits non-zero on the fixture and prints the expected line.
 [private]
