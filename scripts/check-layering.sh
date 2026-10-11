@@ -6,8 +6,7 @@
 # in the table's gpu row depend directly on wgpu, egui-wgpu or naga. Keeps
 # engine reuse and platform-free domain code from eroding silently. If
 # MOHO_LAYERING_GRAPH names a file, the crate graph is read from it when non-empty and
-# written to it otherwise, so repeated runs skip the cargo calls. Each graph line is
-# "<crate>: <transitive deps> | <direct deps>".
+# written to it otherwise, so repeated runs skip the cargo calls.
 set -euo pipefail
 
 table="${1:-scripts/layering.txt}"
