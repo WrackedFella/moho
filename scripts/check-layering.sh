@@ -44,14 +44,17 @@ in_line() { [[ "$rows" == *" $2:$1 "* ]]; }
 # Command substitution drops errexit, so each cargo failure returns explicitly; a crate
 # with a silently empty dependency list would pass every rule.
 collect_graph() {
-    local crates crate deps direct
+    local crates crate tree deps direct
     crates="$(cargo tree --workspace --depth 0 -e normal --target all --prefix none --format '{p}' \
         | awk 'NF{print $1}')" || return 1
     for crate in $crates; do
-        deps="$(cargo tree -p "$crate" -e normal,build,dev --all-features --target all --prefix none --format '{p}' \
-            | awk -v self="$crate" 'NF && $1 != self {print $1}' | sort -u | tr '\n' ' ')" || return 1
-        direct="$(cargo tree -p "$crate" --depth 1 -e normal,build,dev --all-features --target all --prefix none --format '{p}' \
-            | awk -v self="$crate" 'NF && $1 != self {print $1}' | sort -u | tr '\n' ' ')" || return 1
+        # Each line is "<depth><package> <version>"; depth 1 is a direct dependency.
+        tree="$(cargo tree -p "$crate" -e normal,build,dev --all-features --target all --prefix depth --format '{p}')" \
+            || return 1
+        deps="$(awk -v self="$crate" '{d = $1; sub(/^[0-9]+/, "", $1)} NF && d !~ /^0/ && $1 != self {print $1}' <<<"$tree" \
+            | sort -u | tr '\n' ' ')"
+        direct="$(awk -v self="$crate" '/^1[^0-9]/ {sub(/^1/, "", $1); if ($1 != self) print $1}' <<<"$tree" \
+            | sort -u | tr '\n' ' ')"
         echo "$crate: $deps| $direct"
     done
 }
