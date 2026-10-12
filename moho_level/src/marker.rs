@@ -19,7 +19,10 @@ pub struct LevelMarker {
 
 /// The marker for `node` at `world`, or `None` if it has a mesh or no name.
 pub(crate) fn from_node(node: &gltf::Node<'_>, world: Mat4) -> Option<LevelMarker> {
-    let name = node.name().filter(|_| node.mesh().is_none())?;
+    if node.mesh().is_some() {
+        return None;
+    }
+    let name = node.name()?;
     let (_, rotation, position) = world.to_scale_rotation_translation();
     Some(LevelMarker {
         name: name.to_owned(),

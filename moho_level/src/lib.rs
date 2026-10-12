@@ -56,7 +56,7 @@ fn build(
     let mut walk = Walk {
         buffers,
         seen: vec![false; document.nodes().len()],
-        out: Vec::new(),
+        meshes: Vec::new(),
         markers: Vec::new(),
     };
     if let Some(scene) = document
@@ -67,7 +67,7 @@ fn build(
             walk.node(&node, Mat4::IDENTITY)?;
         }
     }
-    Ok((walk.out, walk.markers))
+    Ok((walk.meshes, walk.markers))
 }
 
 /// Depth-first scene walk; `seen` refuses a node reached twice, since glTF node
@@ -75,7 +75,7 @@ fn build(
 struct Walk<'a> {
     buffers: &'a [Cow<'a, [u8]>],
     seen: Vec<bool>,
-    out: Vec<LevelMesh>,
+    meshes: Vec<LevelMesh>,
     markers: Vec<LevelMarker>,
 }
 
@@ -99,7 +99,7 @@ impl Walk<'_> {
                     );
                     continue;
                 }
-                self.out
+                self.meshes
                     .push(mesh::convert(&mesh, &primitive, world, self.buffers)?);
             }
         }
