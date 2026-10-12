@@ -38,7 +38,7 @@ impl Overlay for ChunkDebugOverlay {
         self.visible = visible;
     }
 
-    fn render(&mut self, ctx: &egui::Context, data: &HudData) {
+    fn render(&mut self, ui: &mut egui::Ui, data: &HudData) {
         let pcx = data.chunk_position[0];
         let pcz = data.chunk_position[2];
 
@@ -48,7 +48,7 @@ impl Overlay for ChunkDebugOverlay {
         egui::Area::new("chunk_debug_map".into())
             .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 12.0))
             .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
+            .show(ui.ctx(), |ui| {
                 let (rect, _) = ui.allocate_exact_size(map_size, egui::Sense::hover());
                 let painter = ui.painter_at(rect);
 
@@ -90,5 +90,24 @@ impl Overlay for ChunkDebugOverlay {
                     egui::Color32::from_gray(180),
                 );
             });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::overlays::test_support::{second_frame, texts};
+
+    #[test]
+    fn render_labels_map_with_player_chunk() {
+        let ctx = egui::Context::default();
+        let data = HudData {
+            chunk_position: [5, 0, -2],
+            ..Default::default()
+        };
+
+        let output = second_frame(&ctx, |ui| ChunkDebugOverlay::new().render(ui, &data));
+
+        assert_eq!(texts(&output), ["chunks (5,-2)"]);
     }
 }

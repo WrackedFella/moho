@@ -230,22 +230,22 @@ impl UiComponent for SettingsMenu {
         "settings"
     }
 
-    fn render(&mut self, ctx: &egui::Context) -> Vec<super::MenuItem> {
+    fn render(&mut self, ui: &mut egui::Ui) -> Vec<super::MenuItem> {
         let mut items: Vec<super::MenuItem> = Vec::new();
 
         // Top panel for title and tab bar - delegates to render_ops
-        self.active_tab = render_ops::render_top_panel(ctx, self.active_tab);
+        self.active_tab = render_ops::render_top_panel(ui, self.active_tab);
 
         // Bottom panel for buttons - delegates to render_ops
-        items.extend(render_ops::render_bottom_panel(ctx, self));
+        items.extend(render_ops::render_bottom_panel(ui, self));
 
         // Central panel contains only the scrollable form content - delegates to render_ops
-        render_ops::render_content_area(ctx, self);
+        render_ops::render_content_area(ui, self);
 
         // Handle key capture when listening for a binding - delegates to keybind_capture
         if self.is_listening() {
             self.capture(|handler, staged, on_change| {
-                handler.handle_key_capture(ctx, staged, on_change);
+                handler.handle_key_capture(ui.ctx(), staged, on_change);
             });
         }
 
@@ -406,8 +406,8 @@ mod tests {
         let mut raw = egui::RawInput::default();
         raw.modifiers.ctrl = true;
 
-        let _full = ctx.run(raw, |ctx| {
-            menu.render(ctx);
+        let _full = ctx.run_ui(raw, |ui| {
+            menu.render(ui);
         });
 
         assert_eq!(

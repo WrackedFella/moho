@@ -2,7 +2,7 @@
 
 **Source:** `moho_render_api/src/` (`world_geometry.rs`), `moho_renderer/src/` (`scene.rs`,
 `world_meshes.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `src/app/world_geometry.rs`,
-`shaders/`.
+`shaders/`, `moho_level/src/`.
 **Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
 [ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md).
 
@@ -60,6 +60,25 @@ renderer and the physics colliders in step. The same `WorldMesh` and `WorldMeshI
 `PhysicsWorld::set_world_mesh` / `remove_world_mesh` (`moho_physics/src/world.rs`), which
 holds one static trimesh collider per id; an empty mesh holds none. A refused mesh is
 logged and the chunk is neither drawn nor solid.
+
+### Level files
+
+`moho_level::load(path)` reads a `.gltf` or `.glb` file into a `Level`: one `LevelMesh`
+(a `WorldMesh` plus the glTF material name) per triangle primitive reachable from the
+default scene (`moho_level/src/lib.rs`). Rules:
+
+- node transforms are baked into positions and normals; a mirroring transform flips
+  triangle winding;
+- positions and normals are required; ao, light, sky exposure and surface take neutral
+  values (1, 0, 1, 0);
+- buffers come from the GLB blob or a relative file URI beside the level; absolute
+  paths and URL schemes are refused;
+- non-triangle primitives are skipped with a warning; a node reached twice is an error;
+- every failure is a `LevelError` naming the file, with a `LevelErrorKind`; no `gltf`
+  type appears in the API.
+
+The loader does not register meshes: the caller assigns `WorldMeshId`s and sends each
+mesh to `WorldMeshes` and `PhysicsWorld` as above.
 
 ## Submission
 

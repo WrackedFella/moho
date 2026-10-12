@@ -25,14 +25,14 @@ impl UiComponent for StartMenu {
         "start"
     }
 
-    fn render(&mut self, ctx: &egui::Context) -> Vec<super::MenuItem> {
+    fn render(&mut self, ui: &mut egui::Ui) -> Vec<super::MenuItem> {
         let mut items: Vec<super::MenuItem> = Vec::new();
 
         // Determine whether a saved scene exists
         let save_path = PathBuf::from("saves/scene.bin");
         let save_exists = std::path::Path::new(&save_path).exists();
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(16.0);
                 ui.heading("Moho");

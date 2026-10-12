@@ -177,7 +177,7 @@ impl FormControls {
     /// - Central panel: scrollable content area with horizontal margins
     ///
     /// # Arguments
-    /// * `ctx` - The egui context
+    /// * `ui` - The root ui the three panels are shown inside
     /// * `title` - The screen title text
     /// * `panel_id_prefix` - Unique prefix for panel IDs (e.g., "settings", "new_world")
     /// * `render_buttons` - Closure to render bottom panel buttons, returns (primary_clicked, secondary_clicked)
@@ -189,7 +189,7 @@ impl FormControls {
     /// # Example
     /// ```ignore
     /// let (save_clicked, back_clicked) = FormControls::standard_screen_layout(
-    ///     ctx,
+    ///     ui,
     ///     "Settings",
     ///     "settings",
     ///     |ui| {
@@ -204,7 +204,7 @@ impl FormControls {
     /// );
     /// ```
     pub fn standard_screen_layout<FB, FC>(
-        ctx: &egui::Context,
+        ui: &mut egui::Ui,
         title: &str,
         panel_id_prefix: &str,
         mut render_buttons: FB,
@@ -217,7 +217,7 @@ impl FormControls {
         let mut button_results = (false, false);
 
         // Top panel: title area
-        egui::TopBottomPanel::top(format!("{panel_id_prefix}_top")).show(ctx, |ui| {
+        egui::Panel::top(format!("{panel_id_prefix}_top")).show_inside(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(16.0);
                 ui.heading(title);
@@ -226,7 +226,7 @@ impl FormControls {
         });
 
         // Bottom panel: action buttons
-        egui::TopBottomPanel::bottom(format!("{panel_id_prefix}_bottom")).show(ctx, |ui| {
+        egui::Panel::bottom(format!("{panel_id_prefix}_bottom")).show_inside(ui, |ui| {
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -237,7 +237,7 @@ impl FormControls {
         });
 
         // Central panel: scrollable content
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -361,12 +361,51 @@ impl FormControls {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::overlays::test_support::{click_at, input, rect_of};
+
+    fn layout_result(
+        events: Vec<egui::Event>,
+        ctx: &egui::Context,
+    ) -> ((bool, bool), egui::FullOutput) {
+        let mut result = (false, false);
+        let output = ctx.run_ui(input(events), |ui| {
+            result = FormControls::standard_screen_layout(
+                ui,
+                "Title",
+                "t",
+                |ui| {
+                    let primary = ui.button("Primary");
+                    let secondary = ui.button("Secondary");
+                    (primary.clicked(), secondary.clicked())
+                },
+                |_| {},
+            );
+        });
+        (result, output)
+    }
+
+    #[test]
+    fn standard_screen_layout_reports_which_button_was_clicked() {
+        let ctx = egui::Context::default();
+        let _ = layout_result(Vec::new(), &ctx);
+        let (idle, output) = layout_result(Vec::new(), &ctx);
+        let primary = rect_of(&output, "Primary").center();
+        let secondary = rect_of(&output, "Secondary").center();
+
+        let (clicked_primary, _) = layout_result(click_at(primary), &ctx);
+        let _ = layout_result(Vec::new(), &ctx);
+        let (clicked_secondary, _) = layout_result(click_at(secondary), &ctx);
+
+        assert_eq!(idle, (false, false));
+        assert_eq!(clicked_primary, (true, false));
+        assert_eq!(clicked_secondary, (false, true));
+    }
 
     #[test]
     fn menu_button_smoke_enabled() {
         let ctx = egui::Context::default();
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show_inside(ui, |ui| {
                 let resp = FormControls::menu_button(ui, "Play", true);
                 assert!(resp.rect.width() >= 160.0);
             });

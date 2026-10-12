@@ -1,7 +1,3 @@
-// See moho_ui/src/lib.rs's crate-level `#![allow(deprecated)]` for why
-// `Context::run` (egui 0.34 deprecation) is still used here.
-#![allow(deprecated)]
-
 use moho_ui::StartMenu;
 use moho_ui::UiComponent;
 use std::path::PathBuf;
@@ -11,11 +7,11 @@ fn start_menu_returns_expected_action_and_rects() {
     let mut menu = StartMenu::new();
     let ctx = egui::Context::default();
 
-    // Call render() inside `ctx.run` so egui's internal state (available_rect, etc)
+    // Call render() inside `ctx.run_ui` so egui's internal state (available_rect, etc)
     // is initialized properly. Capture the returned menu items.
     let mut items: Vec<moho_ui::MenuItem> = Vec::new();
-    let _ = ctx.run(egui::RawInput::default(), |ctx| {
-        items = menu.render(ctx);
+    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        items = menu.render(ui);
     });
 
     // No click simulated, so none of the items should have been triggered;
