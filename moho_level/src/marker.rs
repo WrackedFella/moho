@@ -49,7 +49,7 @@ fn properties(node: &gltf::Node<'_>, name: &str) -> BTreeMap<String, String> {
             BTreeMap::new()
         }
         Err(error) => {
-            tracing::warn!(marker = name, %error, "marker extras are not valid JSON; ignoring");
+            tracing::warn!(marker = name, %error, "marker extras are unreadable; ignoring");
             BTreeMap::new()
         }
     }
