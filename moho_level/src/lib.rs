@@ -1,7 +1,9 @@
-//! Level loading: glTF files become world meshes the engine can draw and collide with.
+//! Level loading: glTF files become world meshes the engine can draw and collide with,
+//! plus named markers (empty nodes) for game code to interpret.
 
 mod buffers;
 mod error;
+mod marker;
 mod mesh;
 
 use std::borrow::Cow;
@@ -10,12 +12,16 @@ use std::path::Path;
 use glam::Mat4;
 
 pub use error::{LevelError, LevelErrorKind};
+pub use marker::LevelMarker;
 use moho_render_api::WorldMesh;
 
-/// A loaded level: one entry per triangle primitive reached from the default scene.
+/// A loaded level: one mesh per triangle primitive and one marker per named,
+/// mesh-less node reached from the default scene.
 #[derive(Debug)]
 pub struct Level {
     pub meshes: Vec<LevelMesh>,
+    /// In scene-walk order: depth-first, parents before children, siblings in file order.
+    pub markers: Vec<LevelMarker>,
 }
 
 /// One world mesh with node transforms already applied.
@@ -39,18 +45,19 @@ pub fn load(path: &Path) -> Result<Level, LevelError> {
     };
     let dir = path.parent().unwrap_or_else(|| Path::new(""));
     let buffers = buffers::resolve(&gltf.document, gltf.blob.as_deref(), dir).map_err(fail)?;
-    let meshes = build(&gltf.document, &buffers).map_err(fail)?;
-    Ok(Level { meshes })
+    let (meshes, markers) = build(&gltf.document, &buffers).map_err(fail)?;
+    Ok(Level { meshes, markers })
 }
 
 fn build(
     document: &gltf::Document,
     buffers: &[Cow<'_, [u8]>],
-) -> Result<Vec<LevelMesh>, LevelErrorKind> {
+) -> Result<(Vec<LevelMesh>, Vec<LevelMarker>), LevelErrorKind> {
     let mut walk = Walk {
         buffers,
         seen: vec![false; document.nodes().len()],
         out: Vec::new(),
+        markers: Vec::new(),
     };
     if let Some(scene) = document
         .default_scene()
@@ -60,7 +67,7 @@ fn build(
             walk.node(&node, Mat4::IDENTITY)?;
         }
     }
-    Ok(walk.out)
+    Ok((walk.out, walk.markers))
 }
 
 /// Depth-first scene walk; `seen` refuses a node reached twice, since glTF node
@@ -69,6 +76,7 @@ struct Walk<'a> {
     buffers: &'a [Cow<'a, [u8]>],
     seen: Vec<bool>,
     out: Vec<LevelMesh>,
+    markers: Vec<LevelMarker>,
 }
 
 impl Walk<'_> {
@@ -79,6 +87,7 @@ impl Walk<'_> {
             ));
         }
         let world = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
+        self.markers.extend(marker::from_node(node, world));
         if let Some(mesh) = node.mesh() {
             for primitive in mesh.primitives() {
                 if primitive.mode() != gltf::mesh::Mode::Triangles {
