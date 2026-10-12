@@ -1,0 +1,6 @@
+# Table for the collect_graph self-test, which runs check-layering.sh against stub-cargo.
+engine: moho_renderer
+strategy: moho moho_ui
+fps:
+domain:
+gpu: moho_renderer
