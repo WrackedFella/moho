@@ -37,9 +37,11 @@ fn assert_at(actual: Vec3, expected: Vec3) {
     );
 }
 
+/// Compares components rather than `angle_between`: its `acos` near 1 turns a one-ulp
+/// difference into ~3e-4 rad. `q` and `-q` are the same rotation.
 fn assert_facing(actual: Quat, expected: Quat) {
     assert!(
-        actual.angle_between(expected) < EPS,
+        actual.abs_diff_eq(expected, EPS) || actual.abs_diff_eq(-expected, EPS),
         "{actual:?} != {expected:?}"
     );
 }
