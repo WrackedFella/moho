@@ -109,6 +109,17 @@ mod tests {
     }
 
     #[test]
+    fn forward_tilts_a_turned_look_up_by_pitch() {
+        let pitch = 30.0_f32.to_radians();
+        let facing_x = state_at(Vec3::ZERO, 90.0_f32.to_radians(), pitch);
+
+        let view = first_person_view(&facing_x, &facing_x, 0.0, 1.0);
+
+        let expected = Vec3::new(pitch.cos(), pitch.sin(), 0.0);
+        assert!(view.forward.distance(expected) < EPS, "{view:?}");
+    }
+
+    #[test]
     fn look_ignores_previous_tick() {
         let previous = state_at(Vec3::ZERO, 1.0, -0.4);
         let current = state_at(Vec3::new(1.0, 0.0, 0.0), 0.0, 0.0);
