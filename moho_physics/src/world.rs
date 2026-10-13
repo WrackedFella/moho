@@ -8,8 +8,9 @@ const GRAVITY: f32 = -18.0;
 
 mod character;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
+pub use crate::movement::{CharacterCommand, Impact, MoveSettings, Slide};
 use character::Character;
 pub use character::{CharacterHandle, CharacterState, UnknownCharacter};
 

@@ -1,7 +1,7 @@
 use crate::support::{Scene, floor_prim, write_gltf};
 use glam::Vec3;
 use moho_level::load;
-use moho_physics::PhysicsWorld;
+use moho_physics::{CharacterCommand, MoveSettings, PhysicsWorld};
 use moho_render_api::WorldMeshId;
 
 #[test]
@@ -14,11 +14,21 @@ fn character_dropped_on_loaded_floor_stands_on_it() {
         world.set_world_mesh(WorldMeshId(id as u64), &level_mesh.mesh);
     }
     let capsule_centre_above_base = 0.85 + 0.3;
+    let settings = MoveSettings {
+        max_speed: 4.0,
+        ground_accel: 40.0,
+        friction: 4.0,
+        stop_speed: 1.0,
+        air_accel: 10.0,
+        air_speed_cap: 0.8,
+        gravity: 18.0,
+        jump_speed: 8.0,
+    };
     let handle = world.add_character(Vec3::new(0.0, 2.0 + capsule_centre_above_base, 0.0));
 
     for _ in 0..120 {
         world
-            .move_character(handle, Vec3::ZERO, 1.0 / 60.0)
+            .move_character(handle, &CharacterCommand::default(), &settings, 1.0 / 60.0)
             .expect("character exists");
         world.step(1.0 / 60.0);
     }

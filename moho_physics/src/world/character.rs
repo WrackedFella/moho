@@ -1,9 +1,7 @@
 use super::PhysicsWorld;
-use super::GRAVITY;
+use crate::movement::{CharacterCommand, Impact, MoveSettings};
 use glam::Vec3;
-use rapier3d::prelude::{
-    ColliderBuilder, ColliderHandle, Pose, QueryFilter, RigidBodyBuilder, RigidBodyHandle,
-};
+use rapier3d::prelude::{ColliderBuilder, ColliderHandle, Pose, RigidBodyBuilder, RigidBodyHandle};
 
 /// Opaque identity of one character in a [`PhysicsWorld`].
 ///
@@ -16,7 +14,9 @@ pub struct CharacterHandle(RigidBodyHandle);
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CharacterState {
     pub position: Vec3,
-    pub vertical_velocity: f32,
+    pub velocity: Vec3,
+    pub yaw: f32,
+    pub pitch: f32,
     pub grounded: bool,
 }
 
@@ -28,7 +28,9 @@ pub struct UnknownCharacter;
 /// Per-character state; the capsule's body handle is the map key.
 pub(super) struct Character {
     collider: ColliderHandle,
-    vertical_velocity: f32,
+    velocity: Vec3,
+    yaw: f32,
+    pitch: f32,
     grounded: bool,
 }
 
@@ -53,7 +55,9 @@ impl PhysicsWorld {
             handle,
             Character {
                 collider,
-                vertical_velocity: 0.0,
+                velocity: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
                 grounded: false,
             },
         );
@@ -80,66 +84,29 @@ impl PhysicsWorld {
         Ok(())
     }
 
-    /// Move the character by `desired_horizontal` with gravity applied, returning its new position.
+    /// Run one tick of movement for the character and return the impacts it took.
     ///
     /// # Errors
     /// [`UnknownCharacter`] if `handle` was removed.
     pub fn move_character(
         &mut self,
         handle: CharacterHandle,
-        desired_horizontal: Vec3,
+        command: &CharacterCommand,
+        settings: &MoveSettings,
         dt: f32,
-    ) -> Result<Vec3, UnknownCharacter> {
-        let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
-        let body_handle = handle.0;
-        let collider_handle = character.collider;
-
-        if !character.grounded {
-            character.vertical_velocity += GRAVITY * dt;
-        }
-
-        let desired = Vec3::new(
-            desired_horizontal.x,
-            character.vertical_velocity * dt,
-            desired_horizontal.z,
-        );
-
-        let shape = self.collider_set[collider_handle].shape();
-        let current_pos = *self.rigid_body_set[body_handle].position();
-
-        // Transient QueryPipeline view that excludes only this character's capsule.
-        let filter = QueryFilter::default().exclude_collider(collider_handle);
-        let queries = self.broad_phase.as_query_pipeline(
-            self.narrow_phase.query_dispatcher(),
-            &self.rigid_body_set,
-            &self.collider_set,
-            filter,
-        );
-
-        let movement = self.character_controller.move_shape(
+    ) -> Result<Vec<Impact>, UnknownCharacter> {
+        let character = self.characters.get(&handle).ok_or(UnknownCharacter)?;
+        let _ = (
+            command,
+            settings,
             dt,
-            &queries,
-            shape,
-            &current_pos,
-            desired,
-            |_| {},
+            character.collider,
+            &self.character_controller,
         );
-
-        character.grounded = movement.grounded;
-        if character.grounded && character.vertical_velocity < 0.0 {
-            character.vertical_velocity = 0.0;
-        }
-
-        // Set both the "next" and "current" position so the value is available immediately.
-        let new_translation = current_pos.translation + movement.translation;
-        let new_pose = Pose::from_parts(new_translation, current_pos.rotation);
-        self.rigid_body_set[body_handle].set_next_kinematic_position(new_pose);
-        self.rigid_body_set[body_handle].set_position(new_pose, false);
-
-        Ok(new_translation)
+        todo!()
     }
 
-    /// Teleport the character to `position` and zero its vertical velocity.
+    /// Teleport the character to `position` and zero its velocity.
     ///
     /// # Errors
     /// [`UnknownCharacter`] if `handle` was removed.
@@ -153,24 +120,37 @@ impl PhysicsWorld {
         let new_pose = Pose::from_parts(position, body.position().rotation);
         body.set_next_kinematic_position(new_pose);
         body.set_position(new_pose, false);
-        character.vertical_velocity = 0.0;
+        character.velocity = Vec3::ZERO;
         Ok(())
     }
 
-    /// Set the character's vertical velocity.
+    /// Add `velocity` to the character's current velocity (knockback).
     ///
     /// # Errors
     /// [`UnknownCharacter`] if `handle` was removed.
-    pub fn set_vertical_velocity(
+    pub fn add_character_velocity(
         &mut self,
         handle: CharacterHandle,
-        velocity: f32,
+        velocity: Vec3,
     ) -> Result<(), UnknownCharacter> {
-        self.characters
-            .get_mut(&handle)
-            .ok_or(UnknownCharacter)?
-            .vertical_velocity = velocity;
-        Ok(())
+        let _ = velocity;
+        self.characters.get(&handle).ok_or(UnknownCharacter)?;
+        todo!()
+    }
+
+    /// Set the character's facing without moving it.
+    ///
+    /// # Errors
+    /// [`UnknownCharacter`] if `handle` was removed.
+    pub fn set_character_look(
+        &mut self,
+        handle: CharacterHandle,
+        yaw: f32,
+        pitch: f32,
+    ) -> Result<(), UnknownCharacter> {
+        let _ = (yaw, pitch);
+        self.characters.get(&handle).ok_or(UnknownCharacter)?;
+        todo!()
     }
 
     /// The character's current state, or `None` for an unknown handle.
@@ -178,7 +158,9 @@ impl PhysicsWorld {
         let character = self.characters.get(&handle)?;
         Some(CharacterState {
             position: self.rigid_body_set[handle.0].position().translation,
-            vertical_velocity: character.vertical_velocity,
+            velocity: character.velocity,
+            yaw: character.yaw,
+            pitch: character.pitch,
             grounded: character.grounded,
         })
     }
@@ -186,7 +168,7 @@ impl PhysicsWorld {
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_support::floor_mesh;
+    use super::super::test_support::{floor_mesh, step_box_mesh, test_settings, wall_mesh};
     use super::*;
     use moho_render_api::WorldMeshId;
 
@@ -196,25 +178,68 @@ mod tests {
         world.character(handle).expect("character is live")
     }
 
+    fn idle() -> CharacterCommand {
+        CharacterCommand::default()
+    }
+
+    fn frictionless() -> MoveSettings {
+        MoveSettings {
+            friction: 0.0,
+            ..test_settings()
+        }
+    }
+
+    fn move_idle(world: &mut PhysicsWorld, handle: CharacterHandle) -> Vec<Impact> {
+        world
+            .move_character(handle, &idle(), &test_settings(), DT)
+            .expect("character is live")
+    }
+
     fn settle_on_floor(world: &mut PhysicsWorld, handles: &[CharacterHandle]) {
         for _ in 0..60 {
             for &handle in handles {
-                world
-                    .move_character(handle, Vec3::ZERO, DT)
-                    .expect("character is live");
+                move_idle(world, handle);
             }
             world.step(DT);
         }
     }
 
+    /// Floor at y = 0 and a character standing on it at the origin.
+    fn standing_on_floor() -> (PhysicsWorld, CharacterHandle) {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
+        let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
+        settle_on_floor(&mut world, &[h]);
+        (world, h)
+    }
+
+    /// Idles for `ticks`, collecting every impact with a speed above numeric noise.
+    fn run(
+        world: &mut PhysicsWorld,
+        handle: CharacterHandle,
+        settings: &MoveSettings,
+        ticks: usize,
+    ) -> Vec<Impact> {
+        let mut impacts = Vec::new();
+        for _ in 0..ticks {
+            let tick = world
+                .move_character(handle, &idle(), settings, DT)
+                .expect("character is live");
+            impacts.extend(tick.into_iter().filter(|i| i.speed > 1e-3));
+            world.step(DT);
+        }
+        impacts
+    }
+
     #[test]
-    fn move_character_with_character_returns_its_new_position() {
+    fn move_character_in_open_air_reports_no_impacts_and_falls() {
         let mut world = PhysicsWorld::new();
         let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
 
-        let moved = world.move_character(h, Vec3::ZERO, DT);
+        let moved = world.move_character(h, &idle(), &test_settings(), DT);
 
-        assert_eq!(moved, Ok(state(&world, h).position));
+        assert_eq!(moved, Ok(Vec::new()));
+        assert!(state(&world, h).position.y < 10.0);
     }
 
     #[test]
@@ -224,7 +249,7 @@ mod tests {
         let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
 
         for _ in 0..120 {
-            world.move_character(h, Vec3::ZERO, DT).unwrap();
+            move_idle(&mut world, h);
             world.step(DT);
         }
 
@@ -242,9 +267,9 @@ mod tests {
         let mut world = PhysicsWorld::new();
         let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
         for _ in 0..10 {
-            world.move_character(h, Vec3::ZERO, DT).unwrap();
+            move_idle(&mut world, h);
         }
-        let speed = state(&world, h).vertical_velocity;
+        let speed = state(&world, h).velocity.y;
         assert!(
             (speed + 3.0).abs() < 1e-4,
             "10 airborne frames at -18 should give -3.0, v={speed}"
@@ -255,20 +280,42 @@ mod tests {
 
         assert_eq!(teleported, Ok(()));
         assert_eq!(state(&world, h).position, target);
-        assert_eq!(state(&world, h).vertical_velocity, 0.0);
+        assert_eq!(state(&world, h).velocity.y, 0.0);
+    }
+
+    #[test]
+    fn teleport_zeroes_velocity() {
+        let mut world = PhysicsWorld::new();
+        let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
+        world
+            .add_character_velocity(h, Vec3::new(3.0, 4.0, 5.0))
+            .unwrap();
+
+        world
+            .set_character_position(h, Vec3::new(1.0, 20.0, 1.0))
+            .unwrap();
+
+        assert_eq!(state(&world, h).velocity, Vec3::ZERO);
     }
 
     #[test]
     fn test_character_horizontal_movement() {
-        let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
-        let h = world.add_character(Vec3::new(0.0, 1.0, 0.0));
-        settle_on_floor(&mut world, &[h]);
+        let (mut world, h) = standing_on_floor();
+        world
+            .set_character_look(h, std::f32::consts::FRAC_PI_2, 0.0)
+            .unwrap();
+        world
+            .add_character_velocity(h, Vec3::new(4.0, 0.0, 0.0))
+            .unwrap();
         let start = state(&world, h).position;
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..idle()
+        };
 
         for _ in 0..30 {
             world
-                .move_character(h, Vec3::new(4.0 * DT, 0.0, 0.0), DT)
+                .move_character(h, &forward, &test_settings(), DT)
                 .unwrap();
             world.step(DT);
 
@@ -296,12 +343,12 @@ mod tests {
         let h = world.add_character(Vec3::new(0.0, 3.0, 0.0));
 
         for _ in 0..60 {
-            world.move_character(h, Vec3::ZERO, DT).unwrap();
+            move_idle(&mut world, h);
             world.step(DT);
         }
 
         assert!(state(&world, h).grounded);
-        assert_eq!(state(&world, h).vertical_velocity, 0.0);
+        assert_eq!(state(&world, h).velocity.y, 0.0);
     }
 
     #[test]
@@ -310,7 +357,7 @@ mod tests {
         let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
 
         for _ in 0..10 {
-            world.move_character(h, Vec3::ZERO, DT).unwrap();
+            move_idle(&mut world, h);
             world.step(DT);
         }
 
@@ -330,18 +377,23 @@ mod tests {
         settle_on_floor(&mut world, &[first, second]);
         let first_before = state(&world, first).position;
         let second_before = state(&world, second);
+        world
+            .add_character_velocity(first, Vec3::new(3.0, 0.0, 0.0))
+            .unwrap();
+        let second_before_move = state(&world, second);
 
         world
-            .move_character(first, Vec3::new(1.0, 0.0, 0.0), DT)
+            .move_character(first, &idle(), &frictionless(), DT)
             .unwrap();
         world.step(DT);
 
         let first_after = state(&world, first).position;
         assert!(
-            (first_after.x - first_before.x - 1.0).abs() < 1e-3,
-            "first should move 1 m along X, before={first_before}, after={first_after}"
+            (first_after.x - first_before.x - 3.0 * DT).abs() < 1e-3,
+            "first should move 0.05 m along X, before={first_before}, after={first_after}"
         );
         assert_eq!(state(&world, second), second_before);
+        assert_eq!(second_before_move, second_before);
     }
 
     #[test]
@@ -352,8 +404,8 @@ mod tests {
         settle_on_floor(&mut world, &[standing]);
         let airborne = world.add_character(Vec3::new(4.0, 8.0, 0.0));
 
-        world.move_character(standing, Vec3::ZERO, DT).unwrap();
-        world.move_character(airborne, Vec3::ZERO, DT).unwrap();
+        move_idle(&mut world, standing);
+        move_idle(&mut world, airborne);
         world.step(DT);
 
         assert!(state(&world, standing).grounded);
@@ -367,12 +419,15 @@ mod tests {
         let second = world.add_character(Vec3::new(4.0, 10.0, 0.0));
 
         let removed = world.remove_character(first);
-        let moved_second = world.move_character(second, Vec3::ZERO, DT);
-        let moved_first = world.move_character(first, Vec3::ZERO, DT);
+        let moved_second = world.move_character(second, &idle(), &test_settings(), DT);
+        let moved_first = world.move_character(first, &idle(), &test_settings(), DT);
 
         assert_eq!(removed, Ok(()));
-        assert_eq!(moved_second, Ok(state(&world, second).position));
-        assert!(moved_second.unwrap().y < 10.0, "second still falls");
+        assert!(moved_second.is_ok());
+        assert!(
+            state(&world, second).position.y < 10.0,
+            "second still falls"
+        );
         assert_eq!(moved_first, Err(UnknownCharacter));
         assert_eq!(world.character(first), None);
     }
@@ -385,7 +440,15 @@ mod tests {
         let new_position = Vec3::new(5.0, 10.0, 0.0);
         let new = world.add_character(new_position);
 
-        let moved = world.move_character(old, Vec3::new(1.0, 0.0, 0.0), DT);
+        let moved = world.move_character(
+            old,
+            &CharacterCommand {
+                forward: 1.0,
+                ..idle()
+            },
+            &test_settings(),
+            DT,
+        );
         world.step(DT);
 
         assert_ne!(old, new);
@@ -394,7 +457,9 @@ mod tests {
             world.character(new),
             Some(CharacterState {
                 position: new_position,
-                vertical_velocity: 0.0,
+                velocity: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
                 grounded: false,
             })
         );
@@ -432,30 +497,45 @@ mod tests {
         let first = world.add_character(Vec3::new(-4.0, 10.0, 0.0));
         let second = world.add_character(Vec3::new(4.0, 10.0, 0.0));
         for _ in 0..10 {
-            world.move_character(first, Vec3::ZERO, DT).unwrap();
-            world.move_character(second, Vec3::ZERO, DT).unwrap();
+            move_idle(&mut world, first);
+            move_idle(&mut world, second);
         }
 
         world
             .set_character_position(first, Vec3::new(0.0, 20.0, 0.0))
             .unwrap();
 
-        let kept = state(&world, second).vertical_velocity;
+        let kept = state(&world, second).velocity.y;
         assert!((kept + 3.0).abs() < 1e-4, "second keeps -3.0, v={kept}");
-        assert_eq!(state(&world, first).vertical_velocity, 0.0);
+        assert_eq!(state(&world, first).velocity, Vec3::ZERO);
     }
 
     #[test]
-    fn set_vertical_velocity_changes_only_that_character() {
+    fn add_character_velocity_changes_only_that_character() {
         let mut world = PhysicsWorld::new();
         let first = world.add_character(Vec3::new(-4.0, 10.0, 0.0));
         let second = world.add_character(Vec3::new(4.0, 10.0, 0.0));
 
-        let set = world.set_vertical_velocity(first, 8.0);
+        let set = world.add_character_velocity(first, Vec3::new(0.0, 8.0, 0.0));
 
         assert_eq!(set, Ok(()));
-        assert_eq!(state(&world, first).vertical_velocity, 8.0);
-        assert_eq!(state(&world, second).vertical_velocity, 0.0);
+        assert_eq!(state(&world, first).velocity, Vec3::new(0.0, 8.0, 0.0));
+        assert_eq!(state(&world, second).velocity, Vec3::ZERO);
+    }
+
+    #[test]
+    fn added_velocities_accumulate() {
+        let mut world = PhysicsWorld::new();
+        let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
+
+        world
+            .add_character_velocity(h, Vec3::new(1.0, 2.0, 3.0))
+            .unwrap();
+        world
+            .add_character_velocity(h, Vec3::new(1.0, 0.0, -1.0))
+            .unwrap();
+
+        assert_eq!(state(&world, h).velocity, Vec3::new(2.0, 2.0, 2.0));
     }
 
     #[test]
@@ -471,13 +551,190 @@ mod tests {
     }
 
     #[test]
-    fn set_vertical_velocity_on_a_removed_handle_is_refused() {
+    fn add_velocity_on_removed_handle_is_refused() {
         let mut world = PhysicsWorld::new();
         let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
         world.remove_character(h).unwrap();
 
-        let set = world.set_vertical_velocity(h, 8.0);
+        let set = world.add_character_velocity(h, Vec3::new(0.0, 8.0, 0.0));
 
         assert_eq!(set, Err(UnknownCharacter));
+    }
+
+    #[test]
+    fn set_character_look_sets_facing_and_leaves_position_and_velocity() {
+        let mut world = PhysicsWorld::new();
+        let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
+        world
+            .add_character_velocity(h, Vec3::new(1.0, 0.0, 0.0))
+            .unwrap();
+        let before = state(&world, h);
+
+        let set = world.set_character_look(h, 0.7, -0.3);
+
+        let after = state(&world, h);
+        assert_eq!(set, Ok(()));
+        assert_eq!((after.yaw, after.pitch), (0.7, -0.3));
+        assert_eq!(after.position, before.position);
+        assert_eq!(after.velocity, before.velocity);
+    }
+
+    #[test]
+    fn set_character_look_on_removed_handle_is_refused() {
+        let mut world = PhysicsWorld::new();
+        let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
+        world.remove_character(h).unwrap();
+
+        let set = world.set_character_look(h, 0.7, -0.3);
+
+        assert_eq!(set, Err(UnknownCharacter));
+    }
+
+    #[test]
+    fn move_character_applies_look_delta_to_the_stored_facing() {
+        let mut world = PhysicsWorld::new();
+        let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
+        let turn = CharacterCommand {
+            yaw_delta: 0.4,
+            pitch_delta: 0.2,
+            ..idle()
+        };
+
+        world
+            .move_character(h, &turn, &test_settings(), DT)
+            .unwrap();
+
+        let after = state(&world, h);
+        assert!((after.yaw - 0.4).abs() < 1e-6, "{after:?}");
+        assert!((after.pitch - 0.2).abs() < 1e-6, "{after:?}");
+    }
+
+    #[test]
+    fn running_into_a_wall_clears_speed_into_it_and_reports_one_impact() {
+        let (mut world, h) = standing_on_floor();
+        world.set_world_mesh(WorldMeshId(1), &wall_mesh(5.0));
+        let wall = world
+            .world_mesh_collider(WorldMeshId(1))
+            .expect("wall registered");
+        world
+            .add_character_velocity(h, Vec3::new(0.0, 0.0, 10.0))
+            .unwrap();
+
+        let impacts = run(&mut world, h, &frictionless(), 40);
+
+        assert_eq!(impacts.len(), 1, "{impacts:?}");
+        assert_eq!(impacts[0].collider, wall);
+        assert!((impacts[0].speed - 10.0).abs() < 1e-2, "{:?}", impacts[0]);
+        assert!(impacts[0].normal.distance(Vec3::new(0.0, 0.0, -1.0)) < 1e-2);
+        let after = state(&world, h);
+        assert!(after.velocity.z <= 1e-3, "{:?}", after.velocity);
+        assert!(after.position.z < 5.0, "{:?}", after.position);
+    }
+
+    #[test]
+    fn running_at_45_degrees_keeps_speed_along_the_wall() {
+        let (mut world, h) = standing_on_floor();
+        world.set_world_mesh(WorldMeshId(1), &wall_mesh(5.0));
+        let along = 4.0 * std::f32::consts::FRAC_1_SQRT_2;
+        world
+            .add_character_velocity(h, Vec3::new(along, 0.0, along))
+            .unwrap();
+
+        let impacts = run(&mut world, h, &frictionless(), 60);
+
+        assert_eq!(impacts.len(), 1, "{impacts:?}");
+        assert!((impacts[0].speed - 2.83).abs() < 1e-2, "{:?}", impacts[0]);
+        let after = state(&world, h);
+        assert!(
+            (after.velocity.x - 2.83).abs() < 1e-2,
+            "{:?}",
+            after.velocity
+        );
+        assert!(after.velocity.z.abs() < 1e-2, "{:?}", after.velocity);
+        assert!(after.position.x > 2.0, "kept sliding: {:?}", after.position);
+    }
+
+    #[test]
+    fn landing_reports_fall_speed_and_zeroes_vertical_velocity() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
+        let floor = world
+            .world_mesh_collider(WorldMeshId(0))
+            .expect("floor registered");
+        let h = world.add_character(Vec3::new(0.0, 3.0, 0.0));
+        world
+            .add_character_velocity(h, Vec3::new(0.0, -12.0, 0.0))
+            .unwrap();
+        let no_gravity = MoveSettings {
+            gravity: 0.0,
+            ..test_settings()
+        };
+
+        let impacts = run(&mut world, h, &no_gravity, 30);
+
+        assert_eq!(impacts.len(), 1, "{impacts:?}");
+        assert_eq!(impacts[0].collider, floor);
+        assert!((impacts[0].speed - 12.0).abs() < 1e-2, "{:?}", impacts[0]);
+        assert!(impacts[0].normal.distance(Vec3::Y) < 1e-2);
+        let after = state(&world, h);
+        assert_eq!(after.velocity.y, 0.0);
+        assert!(after.grounded);
+    }
+
+    #[test]
+    fn added_velocity_moves_then_friction_stops() {
+        let (mut world, h) = standing_on_floor();
+        let start = state(&world, h).position;
+        world
+            .add_character_velocity(h, Vec3::new(5.0, 0.0, 0.0))
+            .unwrap();
+
+        move_idle(&mut world, h);
+        world.step(DT);
+        let after_one = state(&world, h);
+        let impacts = run(&mut world, h, &test_settings(), 150);
+
+        let end = state(&world, h);
+        assert!(
+            (after_one.velocity.x - (5.0 - 5.0 * 4.0 * DT)).abs() < 1e-2,
+            "{:?}",
+            after_one.velocity
+        );
+        assert!(after_one.position.x > start.x, "moves along +X");
+        assert!(end.velocity.length() < 1e-3, "{:?}", end.velocity);
+        let travelled = end.position.x - start.x;
+        assert!((0.8..1.6).contains(&travelled), "travelled {travelled}");
+        assert!(end.position.z.abs() < 1e-2 && (end.position.y - start.y).abs() < 0.05);
+        assert!(impacts.is_empty(), "{impacts:?}");
+    }
+
+    #[test]
+    fn stepping_up_a_half_metre_step_keeps_speed_and_reports_no_impact() {
+        let (mut world, h) = standing_on_floor();
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45));
+        world
+            .add_character_velocity(h, Vec3::new(0.0, 0.0, 3.0))
+            .unwrap();
+
+        let impacts = run(&mut world, h, &frictionless(), 60);
+
+        assert!(impacts.is_empty(), "{impacts:?}");
+        let after = state(&world, h);
+        assert!(
+            after.position.z > 2.5,
+            "climbed onto the step: {:?}",
+            after.position
+        );
+        assert!(
+            (after.position.y - (0.45 + 1.15)).abs() < 0.1,
+            "standing on the step: {:?}",
+            after.position
+        );
+        assert!(
+            (after.velocity.z - 3.0).abs() < 1e-2,
+            "{:?}",
+            after.velocity
+        );
+        assert!(after.grounded);
     }
 }

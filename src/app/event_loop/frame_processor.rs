@@ -80,25 +80,28 @@ impl FrameProcessor {
         // Read the now-updated yaw/pitch for horizontal movement calculation
         let (yaw, pitch) = app.simulation.yaw_pitch();
 
-        let speed = if sprint { SPRINT_SPEED } else { MOVE_SPEED };
-
-        // Build horizontal movement in world space from yaw + input.
-        // Right vector matches controller.rs convention: (-cos(yaw), 0, sin(yaw))
-        let sy = yaw.sin();
-        let cy = yaw.cos();
-        let fwd_world = glam::Vec3::new(sy, 0.0, cy);
-        let right_world = glam::Vec3::new(-cy, 0.0, sy);
-
-        let horizontal = (fwd_world * forward_input + right_world * right_input)
-            .normalize_or_zero()
-            * speed
-            * dt;
-
-        // Physics character movement + jump (JUMP_VELOCITY lives in PhysicsController)
+        // Placeholder until the strategy walking path builds its command from look deltas.
+        let command = moho_physics::CharacterCommand {
+            forward: forward_input,
+            right: right_input,
+            jump: app.physics.jump_pressed,
+            ..moho_physics::CharacterCommand::default()
+        };
+        let settings = moho_physics::MoveSettings {
+            max_speed: if sprint { SPRINT_SPEED } else { MOVE_SPEED },
+            ground_accel: 360.0,
+            friction: 60.0,
+            stop_speed: 1.0,
+            air_accel: 360.0,
+            air_speed_cap: 6.0,
+            gravity: 18.0,
+            jump_speed: 8.0,
+        };
         let mut new_pos = app
             .physics
-            .move_character(horizontal, dt)
-            .expect("KCC active but move_character returned None");
+            .move_character(&command, &settings, dt)
+            .expect("KCC active but move_character returned None")
+            .position;
 
         if new_pos.y < KILL_PLANE_Y {
             let respawn_y = app
