@@ -63,6 +63,7 @@ impl PhysicsWorld {
                 include_dynamic_bodies: false,
             }),
             snap_to_ground: Some(CharacterLength::Absolute(0.1)),
+            max_slope_climb_angle: crate::movement::WALKABLE_NORMAL_Y.acos(),
             ..Default::default()
         };
 

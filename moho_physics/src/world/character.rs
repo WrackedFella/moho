@@ -1,4 +1,5 @@
-use super::{slide, PhysicsWorld};
+use super::slide::Slider;
+use super::PhysicsWorld;
 use crate::movement::{self, CharacterCommand, Impact, MoveSettings};
 use glam::Vec3;
 use rapier3d::prelude::{
@@ -36,7 +37,37 @@ pub(super) struct Character {
     grounded: bool,
 }
 
+impl Character {
+    /// This character's state with the body at `position`.
+    fn state(&self, position: Vec3) -> CharacterState {
+        CharacterState {
+            position,
+            velocity: self.velocity,
+            yaw: self.yaw,
+            pitch: self.pitch,
+            grounded: self.grounded,
+        }
+    }
+
+    /// Keep everything of `state` except the position, which lives on the body.
+    fn store(&mut self, state: &CharacterState) {
+        self.velocity = state.velocity;
+        self.yaw = state.yaw;
+        self.pitch = state.pitch;
+        self.grounded = state.grounded;
+    }
+}
+
 impl PhysicsWorld {
+    /// Move the character's body to `position`, as both the next and the current pose so the
+    /// value is available immediately.
+    fn place_body(&mut self, handle: CharacterHandle, position: Vec3) {
+        let body = &mut self.rigid_body_set[handle.0];
+        let pose = Pose::from_parts(position, body.position().rotation);
+        body.set_next_kinematic_position(pose);
+        body.set_position(pose, false);
+    }
+
     /// Add a kinematic character (capsule) to the world.
     pub fn add_character(&mut self, position: Vec3) -> CharacterHandle {
         let body = RigidBodyBuilder::kinematic_position_based()
@@ -97,18 +128,11 @@ impl PhysicsWorld {
         settings: &MoveSettings,
         dt: f32,
     ) -> Result<Vec<Impact>, UnknownCharacter> {
-        let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
-        let body_handle = handle.0;
+        let character = self.characters.get(&handle).ok_or(UnknownCharacter)?;
         let collider_handle = character.collider;
-        let mut state = CharacterState {
-            position: self.rigid_body_set[body_handle].position().translation,
-            velocity: character.velocity,
-            yaw: character.yaw,
-            pitch: character.pitch,
-            grounded: character.grounded,
-        };
-        let current_pos = *self.rigid_body_set[body_handle].position();
-        let shape = self.collider_set[collider_handle].shape();
+        let pose = *self.rigid_body_set[handle.0].position();
+        let mut state = character.state(pose.translation);
+        let was_grounded = state.grounded;
 
         // Transient QueryPipeline view that excludes only this character's capsule.
         let filter = QueryFilter::default().exclude_collider(collider_handle);
@@ -118,31 +142,22 @@ impl PhysicsWorld {
             &self.collider_set,
             filter,
         );
-        let controller = &self.character_controller;
-        let was_grounded = state.grounded;
+        let slider = Slider {
+            controller: &self.character_controller,
+            queries: &queries,
+            shape: self.collider_set[collider_handle].shape(),
+            dt,
+        };
 
         let impacts = movement::step(&mut state, command, settings, dt, |asked| {
-            slide::slide(
-                controller,
-                &queries,
-                shape,
-                &current_pos,
-                asked,
-                was_grounded,
-                dt,
-            )
+            slider.slide(&pose, asked, was_grounded)
         });
 
-        character.velocity = state.velocity;
-        character.yaw = state.yaw;
-        character.pitch = state.pitch;
-        character.grounded = state.grounded;
-
-        // Set both the "next" and "current" position so the value is available immediately.
-        let new_pose = Pose::from_parts(state.position, current_pos.rotation);
-        self.rigid_body_set[body_handle].set_next_kinematic_position(new_pose);
-        self.rigid_body_set[body_handle].set_position(new_pose, false);
-
+        self.characters
+            .get_mut(&handle)
+            .ok_or(UnknownCharacter)?
+            .store(&state);
+        self.place_body(handle, state.position);
         Ok(impacts)
     }
 
@@ -156,11 +171,8 @@ impl PhysicsWorld {
         position: Vec3,
     ) -> Result<(), UnknownCharacter> {
         let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
-        let body = &mut self.rigid_body_set[handle.0];
-        let new_pose = Pose::from_parts(position, body.position().rotation);
-        body.set_next_kinematic_position(new_pose);
-        body.set_position(new_pose, false);
         character.velocity = Vec3::ZERO;
+        self.place_body(handle, position);
         Ok(())
     }
 
@@ -199,13 +211,7 @@ impl PhysicsWorld {
     /// The character's current state, or `None` for an unknown handle.
     pub fn character(&self, handle: CharacterHandle) -> Option<CharacterState> {
         let character = self.characters.get(&handle)?;
-        Some(CharacterState {
-            position: self.rigid_body_set[handle.0].position().translation,
-            velocity: character.velocity,
-            yaw: character.yaw,
-            pitch: character.pitch,
-            grounded: character.grounded,
-        })
+        Some(character.state(self.rigid_body_set[handle.0].position().translation))
     }
 }
 

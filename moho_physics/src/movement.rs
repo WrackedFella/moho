@@ -50,20 +50,14 @@ pub struct Slide {
     pub hits: Vec<(ColliderHandle, Vec3)>,
 }
 
-/// How much less a slide must move into a surface than asked to count as blocked.
+/// Tolerance, in metres, on "the slide moved less into a surface than asked".
 ///
-/// Absorbs float rounding on step-ups, where the riser is reported but not blocking.
+/// Absorbs float noise in the controller's translation so a grazed surface is not blocking.
 const BLOCKED_EPSILON: f32 = 1e-4;
 
-/// How squarely the asked motion must face a surface (cosine, against its normal) for it to
-/// count as blocking.
+/// Smallest `normal.y` of a surface a character can walk on (cos 45 degrees).
 ///
-/// Rapier's contact normals on a flat floor tilt by about 0.02 where triangles meet, which
-/// would otherwise read as a character pushing into the floor while walking along it.
-const MIN_OPPOSING: f32 = 0.1;
-
-/// Smallest `normal.y` of a surface a character can walk on, the cosine of rapier's default
-/// 45 degree `max_slope_climb_angle`.
+/// The controller's `max_slope_climb_angle` is built from it, so both agree.
 pub(crate) const WALKABLE_NORMAL_Y: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
 /// Vertical speed below which a character counts as resting rather than rising.
@@ -82,7 +76,7 @@ fn accelerate(velocity: &mut Vec3, wish: Vec3, limit: f32, accel: f32, dt: f32) 
 
 /// Friction on the horizontal speed, then acceleration toward the wished ground velocity.
 fn ground_move(velocity: &mut Vec3, wish: Vec3, magnitude: f32, settings: &MoveSettings, dt: f32) {
-    let speed = Vec3::new(velocity.x, 0.0, velocity.z).length();
+    let speed = velocity.with_y(0.0).length();
     if speed > 0.0 {
         let drop = speed.max(settings.stop_speed) * settings.friction * dt;
         let scale = (speed - drop).max(0.0) / speed;
@@ -91,7 +85,7 @@ fn ground_move(velocity: &mut Vec3, wish: Vec3, magnitude: f32, settings: &MoveS
     }
     if magnitude > 0.0 {
         let target = wish * settings.max_speed * magnitude;
-        let to_target = Vec3::new(target.x - velocity.x, 0.0, target.z - velocity.z);
+        let to_target = (target - *velocity).with_y(0.0);
         let distance = to_target.length();
         if distance > 0.0 {
             let gain = distance.min(settings.ground_accel * dt);
@@ -118,7 +112,7 @@ fn clip(
             continue;
         }
         let lands_on = airborne_before && slid.grounded && normal.y > 0.0;
-        let blocked = asked.dot(normal) < -MIN_OPPOSING * asked.length()
+        let blocked = asked.dot(normal) < 0.0
             && (lands_on || slid.translation.dot(normal) > asked.dot(normal) + BLOCKED_EPSILON);
         let into = velocity.dot(normal);
         if blocked && into < 0.0 {
@@ -157,7 +151,9 @@ pub fn step(
         state.velocity.y = settings.jump_speed;
     }
 
-    if state.grounded && state.velocity.y <= REST_SPEED {
+    let airborne_before = !state.grounded;
+    let walking = state.grounded && state.velocity.y <= REST_SPEED;
+    if walking {
         ground_move(&mut state.velocity, wish, magnitude, settings, dt);
     } else {
         accelerate(
@@ -170,8 +166,6 @@ pub fn step(
         state.velocity.y -= settings.gravity * dt;
     }
 
-    let airborne_before = !state.grounded;
-    let walking = state.grounded && state.velocity.y <= REST_SPEED;
     let asked = state.velocity * dt;
     let slid = slide(asked);
     state.position += slid.translation;

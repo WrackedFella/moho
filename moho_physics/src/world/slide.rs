@@ -2,9 +2,11 @@
 
 use crate::movement::{Slide, WALKABLE_NORMAL_Y};
 use glam::Vec3;
-use rapier3d::control::{CharacterLength, KinematicCharacterController};
+use rapier3d::control::{
+    CharacterLength, EffectiveCharacterMovement, KinematicCharacterController,
+};
 use rapier3d::parry::query::ShapeCastOptions;
-use rapier3d::prelude::{Pose, QueryPipeline, Shape};
+use rapier3d::prelude::{ColliderHandle, Pose, QueryPipeline, Shape};
 
 /// How far below a grounded landing to look for the surface it landed on, in metres.
 const GROUND_PROBE: f32 = 0.1;
@@ -34,135 +36,118 @@ fn cast_within(distance: f32) -> ShapeCastOptions {
     }
 }
 
-fn flat(v: Vec3) -> Vec3 {
-    Vec3::new(v.x, 0.0, v.z)
+/// The world as one character's collide-and-slide sees it.
+pub(super) struct Slider<'a> {
+    pub controller: &'a KinematicCharacterController,
+    pub queries: &'a QueryPipeline<'a>,
+    pub shape: &'a dyn Shape,
+    pub dt: f32,
 }
 
-/// Move the capsule from `start` by `asked` and report what it touched.
-///
-/// A grounded character blocked by a riser retries from on top of it, and a landing the
-/// controller detected without a hit gets the surface it landed on.
-pub(super) fn slide(
-    controller: &KinematicCharacterController,
-    queries: &QueryPipeline,
-    shape: &dyn Shape,
-    start: &Pose,
-    asked: Vec3,
-    was_grounded: bool,
-    dt: f32,
-) -> Slide {
-    let mut hits = Vec::new();
-    let plain = controller.move_shape(dt, queries, shape, start, asked, |collision| {
-        hits.push((collision.handle, collision.hit.normal1));
-    });
-
-    let against_riser = hits
-        .iter()
-        .any(|(_, normal)| normal.y < WALKABLE_NORMAL_Y && normal.y > -CEILING_NORMAL_Y);
-    if was_grounded && against_riser {
-        if let Some(translation) = step_up(
-            controller,
-            queries,
-            shape,
+impl Slider<'_> {
+    /// Move the capsule from `start` by `asked` and report what it touched.
+    ///
+    /// A grounded character blocked by a riser retries from on top of it, and a landing the
+    /// controller detected without a hit gets the surface it landed on.
+    pub(super) fn slide(&self, start: &Pose, asked: Vec3, was_grounded: bool) -> Slide {
+        let mut hits = Vec::new();
+        let plain = self.controller.move_shape(
+            self.dt,
+            self.queries,
+            self.shape,
             start,
             asked,
-            plain.translation,
-            dt,
-        ) {
-            return Slide {
-                translation,
-                grounded: true,
-                hits,
-            };
+            |collision| {
+                hits.push((collision.handle, collision.hit.normal1));
+            },
+        );
+
+        let against_riser = hits
+            .iter()
+            .any(|(_, normal)| normal.y < WALKABLE_NORMAL_Y && normal.y > -CEILING_NORMAL_Y);
+        if was_grounded && against_riser {
+            if let Some(translation) = self.step_up(start, asked, plain.translation) {
+                return Slide {
+                    translation,
+                    grounded: true,
+                    hits,
+                };
+            }
+        }
+
+        if plain.grounded && asked.y < 0.0 && hits.is_empty() {
+            hits.extend(self.probe_landing(start, plain.translation));
+        }
+        Slide {
+            translation: plain.translation,
+            grounded: plain.grounded,
+            hits,
         }
     }
 
-    if plain.grounded && asked.y < 0.0 && hits.is_empty() {
-        hits.extend(probe_landing(queries, shape, start, plain.translation));
-    }
-    Slide {
-        translation: plain.translation,
-        grounded: plain.grounded,
-        hits,
-    }
-}
-
-/// The surface under a character the controller grounded without reporting a hit.
-///
-/// The controller detects ground a few centimetres early, so a landing there would carry
-/// no impact.
-fn probe_landing(
-    queries: &QueryPipeline,
-    shape: &dyn Shape,
-    start: &Pose,
-    translation: Vec3,
-) -> Option<(rapier3d::prelude::ColliderHandle, Vec3)> {
-    let landed_at = Pose::from_parts(start.translation + translation, start.rotation);
-    let (handle, hit) =
-        queries.cast_shape(&landed_at, -Vec3::Y, shape, cast_within(GROUND_PROBE))?;
-    Some((handle, hit.normal1))
-}
-
-/// Retry a blocked slide from on top of the obstacle (Source's `StepMove`).
-///
-/// The controller's own autostep fails on float noise when the capsule stops exactly its
-/// skin offset from a riser, so this lifts the capsule, carries the remaining horizontal
-/// motion across, and settles it down. Returns the whole tick's translation, or `None`
-/// when that does not end grounded and further along than the plain slide's `blocked`.
-fn step_up(
-    controller: &KinematicCharacterController,
-    queries: &QueryPipeline,
-    shape: &dyn Shape,
-    start: &Pose,
-    asked: Vec3,
-    blocked: Vec3,
-    dt: f32,
-) -> Option<Vec3> {
-    let CharacterLength::Absolute(max_height) = controller.autostep?.max_height else {
-        return None;
-    };
-    let remaining = flat(asked - blocked);
-    if remaining.length() < STEP_MIN_PROGRESS {
-        return None;
+    /// The surface under a character the controller grounded without reporting a hit.
+    ///
+    /// The controller detects ground a few centimetres early, so a landing there would carry
+    /// no impact.
+    fn probe_landing(&self, start: &Pose, translation: Vec3) -> Option<(ColliderHandle, Vec3)> {
+        let landed_at = Pose::from_parts(start.translation + translation, start.rotation);
+        let (handle, hit) =
+            self.queries
+                .cast_shape(&landed_at, -Vec3::Y, self.shape, cast_within(GROUND_PROBE))?;
+        Some((handle, hit.normal1))
     }
 
-    let stopped = Pose::from_parts(start.translation + blocked, start.rotation);
-    let lift = queries
-        .cast_shape(&stopped, Vec3::Y, shape, cast_within(max_height))
-        .map_or(max_height, |(_, hit)| hit.time_of_impact);
-    if lift <= 0.0 {
-        return None;
+    /// Retry a blocked slide from on top of the obstacle (Source's `StepMove`).
+    ///
+    /// The controller's own autostep fails on float noise when the capsule stops exactly its
+    /// skin offset from a riser, so this lifts the capsule, carries the remaining horizontal
+    /// motion across, and settles it down. Returns the whole tick's translation, or `None`
+    /// when that does not end grounded and further along than the plain slide's `blocked`.
+    fn step_up(&self, start: &Pose, asked: Vec3, blocked: Vec3) -> Option<Vec3> {
+        let CharacterLength::Absolute(max_height) = self.controller.autostep?.max_height else {
+            return None;
+        };
+        let remaining = (asked - blocked).with_y(0.0);
+        if remaining.length() < STEP_MIN_PROGRESS {
+            return None;
+        }
+
+        let stopped = Pose::from_parts(start.translation + blocked, start.rotation);
+        let lift = self
+            .queries
+            .cast_shape(&stopped, Vec3::Y, self.shape, cast_within(max_height))
+            .map_or(max_height, |(_, hit)| hit.time_of_impact);
+        if lift <= 0.0 {
+            return None;
+        }
+
+        let lifted = Pose::from_parts(stopped.translation + Vec3::Y * lift, stopped.rotation);
+        let dir = remaining.normalize();
+        let len = remaining.length().max(STEP_REACH);
+        // Like rapier's own stair check: the lifted capsule must clear the whole reach, so a
+        // riser taller than the lift is not climbed by riding up its rounded edge.
+        if self
+            .queries
+            .cast_shape(&lifted, dir, self.shape, cast_within(len))
+            .is_some()
+        {
+            return None;
+        }
+        let across = self.shift(&lifted, dir * len);
+        let over = Pose::from_parts(lifted.translation + across.translation, lifted.rotation);
+        let down = self.shift(&over, -Vec3::Y * (lift + STEP_SNAP));
+        if !down.grounded {
+            return None;
+        }
+
+        let total = blocked + Vec3::Y * lift + across.translation + down.translation;
+        (total.with_y(0.0).length() > blocked.with_y(0.0).length() + STEP_MIN_PROGRESS)
+            .then_some(total)
     }
 
-    let lifted = Pose::from_parts(stopped.translation + Vec3::Y * lift, stopped.rotation);
-    let reach = remaining.normalize() * remaining.length().max(STEP_REACH);
-    // Like rapier's own stair check: the lifted capsule must clear the whole reach, so a
-    // riser taller than the lift is not climbed by riding up its rounded edge.
-    if queries
-        .cast_shape(
-            &lifted,
-            reach.normalize(),
-            shape,
-            cast_within(reach.length()),
-        )
-        .is_some()
-    {
-        return None;
+    /// Collide-and-slide from `from` without recording hits.
+    fn shift(&self, from: &Pose, by: Vec3) -> EffectiveCharacterMovement {
+        self.controller
+            .move_shape(self.dt, self.queries, self.shape, from, by, |_| {})
     }
-    let across = controller.move_shape(dt, queries, shape, &lifted, reach, |_| {});
-    let over = Pose::from_parts(lifted.translation + across.translation, lifted.rotation);
-    let down = controller.move_shape(
-        dt,
-        queries,
-        shape,
-        &over,
-        -Vec3::Y * (lift + STEP_SNAP),
-        |_| {},
-    );
-    if !down.grounded {
-        return None;
-    }
-
-    let total = blocked + Vec3::Y * lift + across.translation + down.translation;
-    (flat(total).length() > flat(blocked).length() + STEP_MIN_PROGRESS).then_some(total)
 }
