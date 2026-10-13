@@ -113,3 +113,25 @@ pub(crate) fn stairs_mesh(
     }
     quad_mesh(&verts, &idxs)
 }
+
+/// The tag tests give a mesh whose tag they do not inspect.
+pub(crate) const TEST_TAG: super::HitTag = super::HitTag(1);
+
+/// A wall in the plane `x`, spanning y and z in [-10, 10], wound so its front faces -X.
+pub(crate) fn x_wall_mesh(x: f32) -> WorldMesh {
+    quad_mesh(&x_wall_verts(x), &[0, 2, 1, 0, 3, 2])
+}
+
+/// The same wall as [`x_wall_mesh`] with the opposite winding, so its front faces +X.
+pub(crate) fn x_wall_mesh_reversed(x: f32) -> WorldMesh {
+    quad_mesh(&x_wall_verts(x), &[0, 1, 2, 0, 2, 3])
+}
+
+fn x_wall_verts(x: f32) -> [[f32; 3]; 4] {
+    [
+        [x, -10.0, -10.0],
+        [x, 10.0, -10.0],
+        [x, 10.0, 10.0],
+        [x, -10.0, 10.0],
+    ]
+}

@@ -324,6 +324,7 @@ mod tests {
     use moho_app::{Game, GameClock, HeadlessLoop, LoopConfig, TickContext};
     use moho_game::TICK_HZ;
     use moho_input::bindings::Binding;
+    use moho_physics::HitTag;
     use moho_ui::actions::StrategyAction;
 
     fn playing_app() -> App {
@@ -471,7 +472,7 @@ mod tests {
             .world
             .as_mut()
             .expect("physics world")
-            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor());
+            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor(), HitTag(0));
         app.physics.spawn_player(glam::Vec3::new(0.0, 1.2, 0.0));
         hold(&mut app, StrategyAction::MoveForward);
         hold(&mut app, StrategyAction::Jump);

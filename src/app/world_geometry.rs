@@ -2,7 +2,7 @@
 
 use crate::App;
 use glam::IVec3;
-use moho_physics::PhysicsWorld;
+use moho_physics::{HitTag, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshError, WorldMeshId};
 use moho_renderer::Scene;
 use moho_voxel::{MaterialType, VoxelChunk};
@@ -34,6 +34,10 @@ pub fn chunk_world_mesh(chunk: &VoxelChunk) -> Result<WorldMesh, WorldMeshError>
     )
 }
 
+/// The strategy game's terrain tag; it has no ray consumer yet, so the value only satisfies
+/// the registration signature.
+const TERRAIN_TAG: HitTag = HitTag(0);
+
 /// Register the terrain material once and return its table index; idempotent.
 pub fn register_terrain_material(scene: &mut Scene) -> u32 {
     let terrain = MaterialType::VoxelTerrain {
@@ -55,7 +59,7 @@ fn upsert_chunk_mesh(
     match chunk_world_mesh(chunk) {
         Ok(mesh) => {
             if let Some(pw) = physics {
-                pw.set_world_mesh(id, &mesh);
+                pw.set_world_mesh(id, &mesh, TERRAIN_TAG);
             }
             scene.world_meshes_mut().upsert(id, mesh, material_idx);
         }
