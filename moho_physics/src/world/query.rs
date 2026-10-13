@@ -414,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn ray_reports_the_nearest_surface_in_any_direction() {
+    fn ray_reports_the_nearest_surface_whatever_the_registration_order() {
         let mut world = PhysicsWorld::new();
         world.set_world_mesh(WorldMeshId(1), &x_wall_mesh(10.0), HitTag(9));
         world.set_world_mesh(WorldMeshId(2), &x_wall_mesh(5.0), HitTag(7));

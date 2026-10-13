@@ -66,7 +66,8 @@ team, body part), which the engine stores and never interprets. `PhysicsWorld::c
 (`moho_physics/src/world/query.rs`) takes a `RayQuery` and returns the nearest tagged
 surface as a `RayHit` (point, normal facing back against the ray, distance, tag). Untagged
 colliders, such as movement capsules and props, never stop a ray; `RayQuery::ignore` skips
-one character. It reads the world as the last `step` left it. The adapter tags chunks with
+one character. It reads the world as the last `step` left it. `PhysicsWorld::collider_tag`
+turns a collider handle, such as the one a movement `Impact` reports, into its tag. The adapter tags chunks with
 `TERRAIN_TAG` in `world_geometry.rs`.
 
 ### Level files
