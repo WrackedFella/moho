@@ -338,4 +338,95 @@ mod tests {
         assert_eq!(world.collider_tag(capsule), None);
         assert_eq!(world.collider_tag(removed), None);
     }
+
+    #[test]
+    fn nan_max_distance_hits_nothing() {
+        let world = world_with_wall(5.0, HitTag(7));
+
+        let hit = world.cast_ray(&along_x(f32::NAN));
+
+        assert_eq!(hit, None);
+    }
+
+    #[test]
+    fn infinite_max_distance_reaches_the_wall() {
+        let world = world_with_wall(5.0, HitTag(7));
+
+        let hit = world
+            .cast_ray(&along_x(f32::INFINITY))
+            .expect("an unbounded ray reaches the wall");
+
+        assert_eq!(hit.tag, HitTag(7));
+        assert!(
+            (hit.distance - 5.0).abs() < EPS,
+            "distance {}",
+            hit.distance
+        );
+    }
+
+    #[test]
+    fn non_finite_origin_hits_nothing() {
+        let world = world_with_wall(5.0, HitTag(7));
+        let origins = [
+            Vec3::new(f32::NAN, 0.0, 0.0),
+            Vec3::new(0.0, f32::NAN, 0.0),
+            Vec3::new(f32::INFINITY, 0.0, 0.0),
+            Vec3::new(0.0, f32::INFINITY, 0.0),
+            Vec3::new(f32::NEG_INFINITY, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, f32::NEG_INFINITY),
+        ];
+
+        for origin in origins {
+            let hit = world.cast_ray(&RayQuery {
+                origin,
+                ..along_x(20.0)
+            });
+
+            assert_eq!(hit, None, "origin {origin:?}");
+        }
+    }
+
+    #[test]
+    fn normal_faces_a_ray_from_the_far_side() {
+        let meshes = [x_wall_mesh(5.0), x_wall_mesh_reversed(5.0)];
+
+        for mesh in meshes {
+            let mut world = PhysicsWorld::new();
+            world.set_world_mesh(WorldMeshId(1), &mesh, HitTag(1));
+            world.step(DT);
+
+            let hit = world
+                .cast_ray(&RayQuery {
+                    origin: Vec3::new(10.0, 0.0, 0.0),
+                    direction: Vec3::NEG_X,
+                    ..along_x(20.0)
+                })
+                .expect("wall in range");
+
+            assert!(
+                (hit.distance - 5.0).abs() < EPS,
+                "distance {}",
+                hit.distance
+            );
+            assert_vec_near(hit.normal, Vec3::new(1.0, 0.0, 0.0));
+            assert_vec_near(hit.point, Vec3::new(5.0, 0.0, 0.0));
+        }
+    }
+
+    #[test]
+    fn ray_reports_the_nearest_surface_in_any_direction() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(1), &x_wall_mesh(10.0), HitTag(9));
+        world.set_world_mesh(WorldMeshId(2), &x_wall_mesh(5.0), HitTag(7));
+        world.step(DT);
+
+        let hit = world.cast_ray(&along_x(20.0)).expect("a wall is in range");
+
+        assert_eq!(hit.tag, HitTag(7));
+        assert!(
+            (hit.distance - 5.0).abs() < EPS,
+            "distance {}",
+            hit.distance
+        );
+    }
 }
