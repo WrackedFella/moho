@@ -17,12 +17,6 @@ const CEILING_NORMAL_Y: f32 = 0.3;
 /// Extra downward distance when settling onto a step top, in metres.
 const STEP_SNAP: f32 = 0.05;
 
-/// Least horizontal travel across a step top, in metres.
-///
-/// The capsule stops a radius short of the riser, so anything less leaves its rounded base
-/// balanced on the step's edge, where the next slide would read it as a slope to climb.
-const STEP_REACH: f32 = 0.4;
-
 /// Horizontal motion left over, or gained, below this many metres does not count.
 const STEP_MIN_PROGRESS: f32 = 1e-3;
 
@@ -75,7 +69,8 @@ impl Slider<'_> {
             }
         }
 
-        if plain.grounded && asked.y < 0.0 && hits.is_empty() {
+        let lands_on_ground = hits.iter().any(|(_, normal)| normal.y >= WALKABLE_NORMAL_Y);
+        if plain.grounded && asked.y < 0.0 && !lands_on_ground {
             hits.extend(self.probe_landing(start, plain.translation));
         }
         Slide {
@@ -101,10 +96,14 @@ impl Slider<'_> {
     ///
     /// The controller's own autostep fails on float noise when the capsule stops exactly its
     /// skin offset from a riser, so this lifts the capsule, carries the remaining horizontal
-    /// motion across, and settles it down. Returns the whole tick's translation, or `None`
+    /// motion across (at least the autostep's minimum width, so the capsule's rounded base ends
+    /// over the step top), and settles it down. Returns the whole tick's translation, or `None`
     /// when that does not end grounded and further along than the plain slide's `blocked`.
     fn step_up(&self, start: &Pose, asked: Vec3, blocked: Vec3) -> Option<Vec3> {
-        let CharacterLength::Absolute(max_height) = self.controller.autostep?.max_height else {
+        let autostep = self.controller.autostep?;
+        let (CharacterLength::Absolute(max_height), CharacterLength::Absolute(min_width)) =
+            (autostep.max_height, autostep.min_width)
+        else {
             return None;
         };
         let remaining = (asked - blocked).with_y(0.0);
@@ -123,7 +122,7 @@ impl Slider<'_> {
 
         let lifted = Pose::from_parts(stopped.translation + Vec3::Y * lift, stopped.rotation);
         let dir = remaining.normalize();
-        let len = remaining.length().max(STEP_REACH);
+        let len = remaining.length().max(min_width);
         // Like rapier's own stair check: the lifted capsule must clear the whole reach, so a
         // riser taller than the lift is not climbed by riding up its rounded edge.
         if self

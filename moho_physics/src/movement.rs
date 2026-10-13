@@ -13,31 +13,48 @@ pub const PITCH_LIMIT: f32 = 1.54;
 /// One tick's movement intent for a character.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CharacterCommand {
+    /// Move axis along the facing, -1 (back) to 1 (forward); yaw 0 faces +Z. Combined with
+    /// `right`, input longer than 1 is scaled down to 1.
     pub forward: f32,
+    /// Move axis across the facing, -1 (left) to 1 (right).
     pub right: f32,
+    /// Turn this tick, in radians; positive yaw turns from +Z toward +X.
     pub yaw_delta: f32,
+    /// Look change this tick, in radians; positive looks up.
     pub pitch_delta: f32,
+    /// Jump if grounded.
     pub jump: bool,
 }
 
 /// Game-supplied movement tuning; may change between ticks. Units: m/s, m/s², 1/s.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MoveSettings {
+    /// Ground speed at full input, m/s.
     pub max_speed: f32,
+    /// Most speed ground input adds per second, m/s².
     pub ground_accel: f32,
+    /// Ground speed lost per second as a fraction of speed, 1/s.
     pub friction: f32,
+    /// Speed below which friction acts as if moving this fast, m/s, so slow characters stop.
     pub stop_speed: f32,
+    /// Most speed air input adds per second, m/s².
     pub air_accel: f32,
+    /// Speed along the wish direction air input can build up to, m/s.
     pub air_speed_cap: f32,
+    /// Downward acceleration while airborne, m/s².
     pub gravity: f32,
+    /// Upward speed a jump sets, m/s.
     pub jump_speed: f32,
 }
 
 /// One surface the character lost speed into this tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Impact {
+    /// The collider that was hit.
     pub collider: ColliderHandle,
+    /// The surface normal, pointing toward the character.
     pub normal: Vec3,
+    /// The speed lost into the surface, m/s.
     pub speed: f32,
 }
 
@@ -75,6 +92,8 @@ fn accelerate(velocity: &mut Vec3, wish: Vec3, limit: f32, accel: f32, dt: f32) 
 }
 
 /// Friction on the horizontal speed, then acceleration toward the wished ground velocity.
+///
+/// Held input also pulls an overspeed back toward `max_speed`, by up to `ground_accel * dt`.
 fn ground_move(velocity: &mut Vec3, wish: Vec3, magnitude: f32, settings: &MoveSettings, dt: f32) {
     let speed = velocity.with_y(0.0).length();
     if speed > 0.0 {

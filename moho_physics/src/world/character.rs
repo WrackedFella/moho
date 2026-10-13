@@ -16,10 +16,15 @@ pub struct CharacterHandle(RigidBodyHandle);
 /// Snapshot of one character's simulation state.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CharacterState {
+    /// Capsule centre, world space.
     pub position: Vec3,
+    /// Velocity in m/s; zero vertically while grounded.
     pub velocity: Vec3,
+    /// Facing in radians; 0 faces +Z.
     pub yaw: f32,
+    /// Look angle in radians, positive up, within `PITCH_LIMIT`.
     pub pitch: f32,
+    /// Standing on walkable ground after the last tick.
     pub grounded: bool,
 }
 
@@ -155,7 +160,7 @@ impl PhysicsWorld {
 
         self.characters
             .get_mut(&handle)
-            .ok_or(UnknownCharacter)?
+            .expect("the handle was found at the start of this call")
             .store(&state);
         self.place_body(handle, state.position);
         Ok(impacts)

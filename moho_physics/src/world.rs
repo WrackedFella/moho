@@ -4,6 +4,7 @@ use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterCo
 use rapier3d::prelude::*;
 use std::collections::HashMap;
 
+/// Gravity of the rigid-body world only; characters use [`MoveSettings::gravity`].
 const GRAVITY: f32 = -18.0;
 
 mod character;
@@ -11,7 +12,6 @@ mod slide;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-pub use crate::movement::{CharacterCommand, Impact, MoveSettings, Slide};
 use character::Character;
 pub use character::{CharacterHandle, CharacterState, UnknownCharacter};
 
