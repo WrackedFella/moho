@@ -726,4 +726,51 @@ mod tests {
         assert!(state.grounded, "{state:?}");
         assert!((speed - 6.0).abs() < 1e-2, "ground speed {speed}");
     }
+
+    #[test]
+    fn sprint_jump_from_standing_reaches_sprint_speed_in_the_air() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
+        app.physics
+            .world
+            .as_mut()
+            .expect("physics world")
+            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor_mesh());
+        app.physics.spawn_player(glam::Vec3::new(0.0, 1.2, 0.0));
+        let frame_processor = FrameProcessor::new();
+        for _ in 0..120 {
+            frame_processor.update_game_state(&mut app, DT);
+        }
+        let input = app.simulation.controller_input_mut();
+        input.forward = 1.0;
+        input.sprint = true;
+        app.physics.jump_pressed = true;
+        let player = app.physics.player.expect("player");
+        let mut airborne_speeds = Vec::new();
+
+        for _ in 0..20 {
+            frame_processor.update_game_state(&mut app, DT);
+            app.physics.jump_pressed = false;
+            let state = app
+                .physics
+                .world
+                .as_ref()
+                .expect("physics world")
+                .character(player)
+                .expect("player resolves");
+            if !state.grounded {
+                airborne_speeds.push(glam::Vec2::new(state.velocity.x, state.velocity.z).length());
+            }
+        }
+
+        assert!(airborne_speeds.len() > 10, "{airborne_speeds:?}");
+        let last = *airborne_speeds.last().unwrap();
+        assert!((last - 6.0).abs() < 1e-2, "{airborne_speeds:?}");
+        assert!(
+            airborne_speeds.iter().all(|s| *s <= 6.0 + 1e-2),
+            "{airborne_speeds:?}"
+        );
+    }
 }
