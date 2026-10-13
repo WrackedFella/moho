@@ -12,7 +12,7 @@ pub struct PhysicsController {
     pub player: Option<moho_physics::CharacterHandle>,
     pub noclip: bool,
     /// The player's state before the latest tick, for blending the view.
-    pub previous: Option<moho_physics::CharacterState>,
+    previous: Option<moho_physics::CharacterState>,
 }
 
 impl PhysicsController {
@@ -48,6 +48,14 @@ impl PhysicsController {
         let handle = pw.add_character(position);
         self.player = Some(handle);
         self.previous = pw.character(handle);
+    }
+
+    /// The player's state before and after the latest tick, if there is a player.
+    pub fn player_states(
+        &self,
+    ) -> Option<(moho_physics::CharacterState, moho_physics::CharacterState)> {
+        let current = self.world.as_ref()?.character(self.player?)?;
+        Some((self.previous?, current))
     }
 
     /// Whether a kinematic character controller is active (and not in noclip).

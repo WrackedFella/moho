@@ -109,23 +109,25 @@ impl App {
     /// The camera to draw this frame: the player's eye blended between the last two
     /// ticks while walking, the tick camera otherwise.
     fn render_camera(&self, alpha: f32) -> (glam::Mat4, glam::Mat4, glam::Vec3) {
-        let walking = self.game_state == GameState::Playing
-            && self.simulation.camera_mode() == CameraMode::FirstPerson
-            && self.physics.is_kcc_active();
-        let states = self.physics.previous.zip(
-            self.physics
-                .world
-                .as_ref()
-                .zip(self.physics.player)
-                .and_then(|(world, player)| world.character(player)),
-        );
-        match states {
-            Some((previous, current)) if walking => {
+        let walking_states = self
+            .is_kcc_walking()
+            .then(|| self.physics.player_states())
+            .flatten();
+        match walking_states {
+            Some((previous, current)) => {
                 let view = moho_physics::first_person_view(&previous, &current, 0.0, alpha);
                 (view.view_matrix(), self.camera.1, view.eye)
             }
-            _ => self.camera,
+            None => self.camera,
         }
+    }
+
+    /// Whether ticks move the player through the character controller: playing,
+    /// first person, collision on.
+    pub(crate) fn is_kcc_walking(&self) -> bool {
+        self.game_state == GameState::Playing
+            && self.simulation.camera_mode() == CameraMode::FirstPerson
+            && self.physics.is_kcc_active()
     }
 
     fn render_scene(
