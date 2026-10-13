@@ -419,6 +419,26 @@ mod tests {
     }
 
     #[test]
+    fn set_player_look_turns_the_player_character() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+
+        controller.set_player_look(0.7, -0.3);
+
+        let state = player_state(&controller);
+        assert_eq!((state.yaw, state.pitch), (0.7, -0.3));
+    }
+
+    #[test]
+    fn set_player_look_without_a_player_does_nothing() {
+        let mut controller = PhysicsController::new();
+
+        controller.set_player_look(0.7, -0.3);
+
+        assert_eq!(controller.player, None);
+    }
+
+    #[test]
     fn move_character_without_a_player_returns_none() {
         let mut controller = PhysicsController::new();
 

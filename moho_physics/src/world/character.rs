@@ -282,6 +282,50 @@ mod tests {
         impacts
     }
 
+    /// Like [`run`] with `command`, also returning the position after every tick.
+    fn trace(
+        world: &mut PhysicsWorld,
+        handle: CharacterHandle,
+        command: &CharacterCommand,
+        settings: &MoveSettings,
+        ticks: usize,
+    ) -> (Vec<Impact>, Vec<Vec3>) {
+        let mut impacts = Vec::new();
+        let mut path = Vec::new();
+        for _ in 0..ticks {
+            let tick = world
+                .move_character(handle, command, settings, DT)
+                .expect("character is live");
+            impacts.extend(tick.into_iter().filter(|i| i.speed > 1e-3));
+            world.step(DT);
+            path.push(state(world, handle).position);
+        }
+        (impacts, path)
+    }
+
+    /// A straight climb of a 0.45 m step: no sideways drift, no backward step, no tick
+    /// that jumps further than the walk or the step-up reach, never above the step top.
+    fn assert_clean_climb(start: Vec3, path: &[Vec3], speed: f32) {
+        let mut previous = start;
+        for (tick, position) in path.iter().enumerate() {
+            let advance = position.z - previous.z;
+            assert!(position.x.abs() < 1e-3, "tick {tick}: {position:?}");
+            assert!(
+                advance >= -1e-4,
+                "tick {tick} went back: {previous:?} -> {position:?}"
+            );
+            assert!(
+                advance <= speed * DT + 0.4 + 1e-3,
+                "tick {tick} advanced {advance}: {previous:?} -> {position:?}"
+            );
+            assert!(
+                position.y <= 0.45 + 1.15 + 0.05,
+                "tick {tick} rose above the step top: {position:?}"
+            );
+            previous = *position;
+        }
+    }
+
     #[test]
     fn move_character_in_open_air_reports_no_impacts_and_falls() {
         let mut world = PhysicsWorld::new();
@@ -767,9 +811,12 @@ mod tests {
             .add_character_velocity(h, Vec3::new(0.0, 0.0, 3.0))
             .unwrap();
 
-        let impacts = run(&mut world, h, &frictionless(), 60);
+        let start = state(&world, h).position;
+
+        let (impacts, path) = trace(&mut world, h, &idle(), &frictionless(), 60);
 
         assert!(impacts.is_empty(), "{impacts:?}");
+        assert_clean_climb(start, &path, 3.0);
         let after = state(&world, h);
         assert!(
             after.position.z > 2.5,
@@ -1078,18 +1125,19 @@ mod tests {
             forward: 1.0,
             ..idle()
         };
-        let mut impacts = Vec::new();
+        let start = state(&world, h).position;
         let mut fastest: f32 = 0.0;
+        let mut path = Vec::new();
+        let mut impacts = Vec::new();
 
         for _ in 0..60 {
-            let tick = world
-                .move_character(h, &forward, &strategy_settings(), DT)
-                .unwrap();
-            world.step(DT);
-            impacts.extend(tick.into_iter().filter(|i| i.speed > 0.5));
+            let (tick_impacts, tick_path) = trace(&mut world, h, &forward, &strategy_settings(), 1);
+            impacts.extend(tick_impacts.into_iter().filter(|i| i.speed > 0.5));
+            path.extend(tick_path);
             let v = state(&world, h).velocity;
             fastest = fastest.max(Vec3::new(v.x, 0.0, v.z).length());
         }
+        assert_clean_climb(start, &path, 4.0);
 
         let after = state(&world, h);
         assert!(impacts.is_empty(), "{impacts:?}");
@@ -1100,5 +1148,35 @@ mod tests {
             after.position
         );
         assert!(after.grounded, "{after:?}");
+    }
+
+    #[test]
+    fn airborne_character_is_not_stepped_onto_a_ledge() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45));
+        let step = world
+            .world_mesh_collider(WorldMeshId(1))
+            .expect("step registered");
+        let h = world.add_character(Vec3::new(0.0, 1.15 + 0.1, 2.0 - 0.3 - 0.03));
+        world
+            .add_character_velocity(h, Vec3::new(0.0, -1.0, 3.0))
+            .unwrap();
+        world.step(DT);
+        assert!(!state(&world, h).grounded);
+
+        let (impacts, path) = trace(&mut world, h, &idle(), &frictionless(), 1);
+
+        assert!(
+            path[0].y < 0.45 + 1.15 - 0.2,
+            "not lifted onto the step: {:?}",
+            path[0]
+        );
+        assert!(
+            impacts
+                .iter()
+                .any(|i| i.collider == step && i.normal.z < -0.5),
+            "riser impact expected: {impacts:?}"
+        );
     }
 }

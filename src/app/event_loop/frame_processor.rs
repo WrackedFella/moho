@@ -689,4 +689,41 @@ mod tests {
             "air speeds {speeds:?}"
         );
     }
+
+    #[test]
+    fn sprinting_on_the_ground_reaches_sprint_speed() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
+        app.physics
+            .world
+            .as_mut()
+            .expect("physics world")
+            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor_mesh());
+        app.physics.spawn_player(glam::Vec3::new(0.0, 1.2, 0.0));
+        let frame_processor = FrameProcessor::new();
+        for _ in 0..120 {
+            frame_processor.update_game_state(&mut app, DT);
+        }
+        let input = app.simulation.controller_input_mut();
+        input.forward = 1.0;
+        input.sprint = true;
+
+        for _ in 0..30 {
+            frame_processor.update_game_state(&mut app, DT);
+        }
+
+        let player = app.physics.player.expect("player");
+        let state = app
+            .physics
+            .world
+            .as_ref()
+            .expect("physics world")
+            .character(player)
+            .expect("player resolves");
+        let speed = glam::Vec2::new(state.velocity.x, state.velocity.z).length();
+        assert!(state.grounded, "{state:?}");
+        assert!((speed - 6.0).abs() < 1e-2, "ground speed {speed}");
+    }
 }
