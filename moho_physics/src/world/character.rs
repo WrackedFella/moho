@@ -1016,4 +1016,57 @@ mod tests {
         );
         assert!(after.grounded, "{after:?}");
     }
+
+    /// Stands the character against the riser of a step of `height`, jumps with forward
+    /// held, and returns the state before and after that one tick.
+    fn jump_pressed_against_step(height: f32) -> (CharacterState, CharacterState) {
+        let (mut world, h) = standing_on_floor();
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, height));
+        let rest_y = state(&world, h).position.y;
+        world
+            .set_character_position(h, Vec3::new(0.0, rest_y, 2.0 - 0.3 - 0.03))
+            .unwrap();
+        for _ in 0..10 {
+            world
+                .move_character(h, &idle(), &strategy_settings(), DT)
+                .unwrap();
+            world.step(DT);
+        }
+        let before = state(&world, h);
+        let jump = CharacterCommand {
+            forward: 1.0,
+            jump: true,
+            ..idle()
+        };
+
+        world
+            .move_character(h, &jump, &strategy_settings(), DT)
+            .unwrap();
+        world.step(DT);
+
+        (before, state(&world, h))
+    }
+
+    fn assert_rose_by_jump_velocity(before: &CharacterState, after: &CharacterState) {
+        assert!(before.grounded, "pressed against the riser: {before:?}");
+        assert!(
+            (after.velocity.y - (8.0 - 18.0 / 60.0)).abs() < 1e-3,
+            "{:?}",
+            after.velocity
+        );
+        assert!(!after.grounded, "{after:?}");
+        assert!(
+            ((after.position.y - before.position.y) - (8.0 - 18.0 / 60.0) / 60.0).abs() < 1e-2,
+            "before {:?}, after {:?}",
+            before.position,
+            after.position
+        );
+    }
+
+    #[test]
+    fn jumping_while_pressed_against_a_step_rises_on_the_first_tick() {
+        let (before, after) = jump_pressed_against_step(0.7);
+
+        assert_rose_by_jump_velocity(&before, &after);
+    }
 }
