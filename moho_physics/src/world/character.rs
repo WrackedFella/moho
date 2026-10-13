@@ -11,7 +11,7 @@ use rapier3d::prelude::{
 /// Only meaningful to the world that issued it: another world may resolve it to
 /// one of its own characters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct CharacterHandle(RigidBodyHandle);
+pub struct CharacterHandle(pub(super) RigidBodyHandle);
 
 /// Snapshot of one character's simulation state.
 #[derive(Clone, Copy, Debug, PartialEq)]

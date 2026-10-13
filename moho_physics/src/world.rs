@@ -110,8 +110,10 @@ impl PhysicsWorld {
 
     /// Register `mesh` as the static collider for `id`, replacing any previous one.
     ///
+    /// Rays that hit the mesh report `tag`; an untagged collider never stops a ray.
+    ///
     /// An empty mesh, or one rapier rejects (warned), leaves `id` without a collider.
-    pub fn set_world_mesh(&mut self, id: WorldMeshId, mesh: &WorldMesh, _tag: HitTag) {
+    pub fn set_world_mesh(&mut self, id: WorldMeshId, mesh: &WorldMesh, tag: HitTag) {
         self.remove_world_mesh(id);
         if mesh.is_empty() {
             return;
@@ -124,7 +126,12 @@ impl PhysicsWorld {
         let tris: Vec<[u32; 3]> = mesh.indices().as_chunks::<3>().0.to_vec();
         match ColliderBuilder::trimesh(points, tris) {
             Ok(builder) => {
-                let handle = self.collider_set.insert(builder.friction(0.6).build());
+                let handle = self.collider_set.insert(
+                    builder
+                        .friction(0.6)
+                        .user_data(query::encode_tag(tag))
+                        .build(),
+                );
                 self.world_mesh_colliders.insert(id, handle);
             }
             Err(error) => {

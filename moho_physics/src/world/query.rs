@@ -1,6 +1,6 @@
 use super::{CharacterHandle, PhysicsWorld};
 use glam::Vec3;
-use rapier3d::prelude::ColliderHandle;
+use rapier3d::prelude::{Collider, ColliderHandle, QueryFilter, Ray};
 
 /// The game's meaning for a surface (material, team, body part); the engine never interprets it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -24,15 +24,68 @@ pub struct RayHit {
     pub tag: HitTag,
 }
 
+/// Set on every tagged collider's `user_data`, so tag 0 differs from an untagged collider (0).
+const TAGGED_BIT: u128 = 1 << 32;
+
+pub(super) fn encode_tag(tag: HitTag) -> u128 {
+    TAGGED_BIT | u128::from(tag.0)
+}
+
+fn decode_tag(user_data: u128) -> Option<HitTag> {
+    if user_data & TAGGED_BIT == 0 {
+        return None;
+    }
+    u32::try_from(user_data & u128::from(u32::MAX))
+        .ok()
+        .map(HitTag)
+}
+
 impl PhysicsWorld {
     /// The nearest tagged surface along `query`, as of the last `step`.
-    pub fn cast_ray(&self, _query: &RayQuery) -> Option<RayHit> {
-        todo!("cast_ray")
+    ///
+    /// Reads the world as the last `step` left it, so a tick runs in this order: move
+    /// characters, step, then cast rays. Untagged colliders (movement capsules, props)
+    /// never stop a ray. The direction is normalised, so its length does not matter; the
+    /// normal faces back against the ray. A zero or non-finite direction, or a
+    /// `max_distance` that is not positive, hits nothing.
+    pub fn cast_ray(&self, query: &RayQuery) -> Option<RayHit> {
+        let direction = query.direction.try_normalize()?;
+        if query.max_distance.is_nan() || query.max_distance <= 0.0 {
+            return None;
+        }
+        let ray = Ray::new(query.origin, direction);
+        let tagged =
+            |_: ColliderHandle, collider: &Collider| decode_tag(collider.user_data).is_some();
+        let mut filter = QueryFilter::default().predicate(&tagged);
+        if let Some(ignore) = query.ignore {
+            filter = filter.exclude_rigid_body(ignore.0);
+        }
+        let queries = self.broad_phase.as_query_pipeline(
+            self.narrow_phase.query_dispatcher(),
+            &self.rigid_body_set,
+            &self.collider_set,
+            filter,
+        );
+
+        let (collider, hit) = queries.cast_ray_and_get_normal(&ray, query.max_distance, true)?;
+        let tag = self.collider_tag(collider)?;
+        // A trimesh reports its triangle's geometric normal whichever side the ray came from.
+        let normal = if hit.normal.dot(direction) > 0.0 {
+            -hit.normal
+        } else {
+            hit.normal
+        };
+        Some(RayHit {
+            point: query.origin + direction * hit.time_of_impact,
+            normal,
+            distance: hit.time_of_impact,
+            tag,
+        })
     }
 
     /// The tag of `collider`; `None` for an untagged or removed collider.
-    pub fn collider_tag(&self, _collider: ColliderHandle) -> Option<HitTag> {
-        todo!("collider_tag")
+    pub fn collider_tag(&self, collider: ColliderHandle) -> Option<HitTag> {
+        decode_tag(self.collider_set.get(collider)?.user_data)
     }
 }
 
