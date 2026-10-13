@@ -28,7 +28,7 @@ pub struct RayHit {
 const TAGGED_BIT: u128 = 1 << 32;
 
 pub(super) fn encode_tag(tag: HitTag) -> u128 {
-    TAGGED_BIT | u128::from(tag.0)
+    TAGGED_BIT + u128::from(tag.0)
 }
 
 fn decode_tag(user_data: u128) -> Option<HitTag> {
@@ -50,9 +50,6 @@ impl PhysicsWorld {
     /// nothing.
     pub fn cast_ray(&self, query: &RayQuery) -> Option<RayHit> {
         let direction = query.direction.try_normalize()?;
-        if query.max_distance.is_nan() || query.max_distance <= 0.0 {
-            return None;
-        }
         let ray = Ray::new(query.origin, direction);
         let tagged =
             |_: ColliderHandle, collider: &Collider| decode_tag(collider.user_data).is_some();
