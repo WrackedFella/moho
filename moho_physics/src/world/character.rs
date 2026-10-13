@@ -78,10 +78,9 @@ impl Character {
 }
 
 impl PhysicsWorld {
-    /// Move the character's body to `position`, facing its stored yaw, as both the next and
-    /// the current pose so the value is available immediately.
-    fn place_body(&mut self, handle: CharacterHandle, position: Vec3) {
-        let yaw = self.characters[&handle].yaw;
+    /// Move the character's body to `position`, facing `yaw`, as both the next and the current
+    /// pose so the value is available immediately.
+    fn place_body(&mut self, handle: CharacterHandle, position: Vec3, yaw: f32) {
         let body = &mut self.rigid_body_set[handle.0];
         let pose = Pose::from_parts(position, Quat::from_rotation_y(yaw));
         body.set_next_kinematic_position(pose);
@@ -210,7 +209,7 @@ impl PhysicsWorld {
             .get_mut(&handle)
             .expect("the handle was found at the start of this call")
             .store(&state);
-        self.place_body(handle, state.position);
+        self.place_body(handle, state.position, state.yaw);
         Ok(impacts)
     }
 
@@ -225,7 +224,8 @@ impl PhysicsWorld {
     ) -> Result<(), UnknownCharacter> {
         let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
         character.velocity = Vec3::ZERO;
-        self.place_body(handle, position);
+        let yaw = character.yaw;
+        self.place_body(handle, position, yaw);
         Ok(())
     }
 
@@ -259,7 +259,7 @@ impl PhysicsWorld {
         character.yaw = yaw;
         character.pitch = pitch;
         let position = self.rigid_body_set[handle.0].position().translation;
-        self.place_body(handle, position);
+        self.place_body(handle, position, yaw);
         Ok(())
     }
 
