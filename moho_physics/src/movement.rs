@@ -904,6 +904,25 @@ mod tests {
     }
 
     #[test]
+    fn zero_dt_changes_nothing_but_look_and_the_jump_launch() {
+        let mut state = state_at(Vec3::new(1.0, 0.0, 2.0), Vec3::new(2.0, 0.0, 1.0), true);
+        let command = CharacterCommand {
+            forward: 1.0,
+            yaw_delta: 0.3,
+            jump: true,
+            ..CharacterCommand::default()
+        };
+
+        let impacts = step(&mut state, &command, &test_settings(), 0.0, flat_floor(0.0));
+
+        assert!(impacts.is_empty(), "{impacts:?}");
+        assert_eq!(state.position, Vec3::new(1.0, 0.0, 2.0));
+        assert_eq!(state.velocity, Vec3::new(2.0, 8.0, 1.0));
+        assert!((state.yaw - 0.3).abs() < 1e-6, "{}", state.yaw);
+        assert!(!state.grounded, "a launched character is airborne");
+    }
+
+    #[test]
     fn step_writes_only_the_given_state() {
         let start = state_at(Vec3::new(1.0, 0.0, 2.0), Vec3::new(0.0, 0.0, 3.0), true);
         let command = CharacterCommand {

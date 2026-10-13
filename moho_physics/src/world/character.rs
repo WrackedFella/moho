@@ -71,6 +71,20 @@ fn step_up(
 
     let lifted = Pose::from_parts(stopped.translation + Vec3::Y * lift, stopped.rotation);
     let reach = remaining.normalize() * remaining.length().max(STEP_REACH);
+    let clear_across = ShapeCastOptions {
+        max_time_of_impact: reach.length(),
+        target_distance: 0.0,
+        stop_at_penetration: false,
+        compute_impact_geometry_on_penetration: true,
+    };
+    // Like rapier's own stair check: the lifted capsule must clear the whole reach, so a
+    // riser taller than the lift is not climbed by riding up its rounded edge.
+    if queries
+        .cast_shape(&lifted, reach.normalize(), shape, clear_across)
+        .is_some()
+    {
+        return None;
+    }
     let across = controller.move_shape(dt, queries, shape, &lifted, reach, |_| {});
     let over = Pose::from_parts(lifted.translation + across.translation, lifted.rotation);
     let down = controller.move_shape(
@@ -336,7 +350,9 @@ impl PhysicsWorld {
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_support::{floor_mesh, step_box_mesh, test_settings, wall_mesh};
+    use super::super::test_support::{
+        floor_mesh, quad_mesh, step_box_mesh, test_settings, wall_mesh,
+    };
     use super::*;
     use moho_render_api::WorldMeshId;
 
@@ -904,5 +920,156 @@ mod tests {
             after.velocity
         );
         assert!(after.grounded);
+    }
+
+    #[test]
+    fn step_taller_than_the_autostep_blocks_and_reports_one_impact() {
+        let (mut world, h) = standing_on_floor();
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.7));
+        let step = world
+            .world_mesh_collider(WorldMeshId(1))
+            .expect("step registered");
+        world
+            .add_character_velocity(h, Vec3::new(0.0, 0.0, 3.0))
+            .unwrap();
+
+        let impacts = run(&mut world, h, &frictionless(), 60);
+
+        let after = state(&world, h);
+        assert!(
+            after.position.y < 1.5,
+            "did not climb: {:?}",
+            after.position
+        );
+        assert!(after.position.z < 2.0, "{:?}", after.position);
+        assert!(after.velocity.z.abs() < 1e-2, "{:?}", after.velocity);
+        assert_eq!(impacts.len(), 1, "{impacts:?}");
+        assert_eq!(impacts[0].collider, step);
+        assert!((impacts[0].speed - 3.0).abs() < 0.05, "{:?}", impacts[0]);
+    }
+
+    #[test]
+    fn jumping_into_a_low_ceiling_reports_the_hit_and_stops_rising() {
+        let (mut world, h) = standing_on_floor();
+        let ceiling = quad_mesh(
+            &[
+                [-10.0, 2.8, -10.0],
+                [10.0, 2.8, -10.0],
+                [10.0, 2.8, 10.0],
+                [-10.0, 2.8, 10.0],
+            ],
+            &[0, 1, 2, 0, 2, 3],
+        );
+        world.set_world_mesh(WorldMeshId(1), &ceiling);
+        let ceiling_collider = world
+            .world_mesh_collider(WorldMeshId(1))
+            .expect("ceiling registered");
+        let jump = CharacterCommand {
+            jump: true,
+            ..idle()
+        };
+        let mut hits: Vec<(usize, Impact)> = Vec::new();
+        let mut vy_after_hit = None;
+
+        for tick in 0..120 {
+            let command = if tick == 0 { jump } else { idle() };
+            let impacts = world
+                .move_character(h, &command, &test_settings(), DT)
+                .unwrap();
+            world.step(DT);
+            if vy_after_hit.is_none() && !hits.is_empty() {
+                vy_after_hit = Some(state(&world, h).velocity.y);
+            }
+            hits.extend(
+                impacts
+                    .into_iter()
+                    .filter(|i| i.speed > 1e-3)
+                    .map(|i| (tick, i)),
+            );
+        }
+
+        let ceiling_hits: Vec<_> = hits
+            .iter()
+            .filter(|(_, i)| i.collider == ceiling_collider)
+            .collect();
+        assert_eq!(ceiling_hits.len(), 1, "{hits:?}");
+        assert!(ceiling_hits[0].1.normal.y < -0.9, "{:?}", ceiling_hits[0]);
+        assert!(ceiling_hits[0].1.speed > 0.0);
+        let vy = vy_after_hit.expect("a hit was recorded before the last tick");
+        assert!(vy <= 0.0, "no longer rising after the hit: {vy}");
+        let end = state(&world, h);
+        assert!(end.grounded, "{end:?}");
+        assert!((1.1..1.3).contains(&end.position.y), "{:?}", end.position);
+    }
+
+    #[test]
+    fn walking_off_a_ledge_falls_without_an_impact_and_keeps_horizontal_speed() {
+        let mut world = PhysicsWorld::new();
+        let ledge = quad_mesh(
+            &[
+                [-10.0, 0.0, -10.0],
+                [10.0, 0.0, -10.0],
+                [10.0, 0.0, 1.0],
+                [-10.0, 0.0, 1.0],
+            ],
+            &[0, 2, 1, 0, 3, 2],
+        );
+        world.set_world_mesh(WorldMeshId(0), &ledge);
+        let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
+        settle_on_floor(&mut world, &[h]);
+        assert!(state(&world, h).grounded);
+        world
+            .add_character_velocity(h, Vec3::new(0.0, 0.0, 3.0))
+            .unwrap();
+        let mut impacts = Vec::new();
+        let mut left_ground = false;
+
+        for _ in 0..40 {
+            let tick = world
+                .move_character(h, &idle(), &frictionless(), DT)
+                .unwrap();
+            world.step(DT);
+            impacts.extend(tick.into_iter().filter(|i| i.speed > 1e-3));
+            left_ground |= !state(&world, h).grounded;
+        }
+
+        let after = state(&world, h);
+        assert!(left_ground, "walked off the edge: {after:?}");
+        assert!(!after.grounded, "{after:?}");
+        assert!(after.velocity.y < 0.0, "{:?}", after.velocity);
+        assert!(
+            (after.velocity.z - 3.0).abs() < 1e-2,
+            "{:?}",
+            after.velocity
+        );
+        assert!(impacts.is_empty(), "{impacts:?}");
+    }
+
+    #[test]
+    fn upward_knockback_lifts_a_grounded_character_and_landing_reports_it() {
+        let (mut world, h) = standing_on_floor();
+        let floor = world
+            .world_mesh_collider(WorldMeshId(0))
+            .expect("floor registered");
+        let start_y = state(&world, h).position.y;
+        world
+            .add_character_velocity(h, Vec3::new(0.0, 5.0, 0.0))
+            .unwrap();
+
+        let first = world
+            .move_character(h, &idle(), &test_settings(), DT)
+            .unwrap();
+        world.step(DT);
+
+        let lifted = state(&world, h);
+        assert!(first.iter().all(|i| i.speed <= 1e-3), "{first:?}");
+        assert!(!lifted.grounded, "{lifted:?}");
+        assert!(lifted.position.y > start_y, "{lifted:?}");
+        let impacts = run(&mut world, h, &test_settings(), 119);
+        let end = state(&world, h);
+        assert_eq!(impacts.len(), 1, "{impacts:?}");
+        assert_eq!(impacts[0].collider, floor);
+        assert!((impacts[0].speed - 5.0).abs() < 0.5, "{:?}", impacts[0]);
+        assert!(end.grounded, "{end:?}");
     }
 }
