@@ -315,7 +315,7 @@ mod tests {
                 "tick {tick} went back: {previous:?} -> {position:?}"
             );
             assert!(
-                advance <= speed * DT + 0.4 + 1e-3,
+                advance <= speed * DT + 0.25,
                 "tick {tick} advanced {advance}: {previous:?} -> {position:?}"
             );
             assert!(
@@ -1178,5 +1178,41 @@ mod tests {
                 .any(|i| i.collider == step && i.normal.z < -0.5),
             "riser impact expected: {impacts:?}"
         );
+    }
+
+    #[test]
+    fn landing_while_pressed_into_a_wall_reports_the_fall_speed() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(1), &wall_mesh(0.35));
+        let floor = world
+            .world_mesh_collider(WorldMeshId(0))
+            .expect("floor registered");
+        let h = world.add_character(Vec3::new(0.0, 3.0, 0.0));
+        world
+            .add_character_velocity(h, Vec3::new(0.0, -12.0, 0.0))
+            .unwrap();
+        world.step(DT);
+        let no_gravity = MoveSettings {
+            gravity: 0.0,
+            ..test_settings()
+        };
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..idle()
+        };
+
+        let (impacts, _) = trace(&mut world, h, &forward, &no_gravity, 30);
+
+        let floor_hits: Vec<_> = impacts.iter().filter(|i| i.collider == floor).collect();
+        assert_eq!(floor_hits.len(), 1, "{impacts:?}");
+        assert!(
+            (floor_hits[0].speed - 12.0).abs() < 1e-2,
+            "{:?}",
+            floor_hits[0]
+        );
+        let after = state(&world, h);
+        assert_eq!(after.velocity.y, 0.0);
+        assert!(after.grounded, "{after:?}");
     }
 }
