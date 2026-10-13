@@ -1349,7 +1349,14 @@ mod tests {
             .unwrap();
         world.step(DT);
 
-        let after_original = cast(&world, from_original_side, -Vec3::X, None);
+        // Reaches only to the capsule centre: the capsule never stops a ray, so a longer ray
+        // would go on to the arm on the far side.
+        let after_original = world.cast_ray(&RayQuery {
+            origin: from_original_side,
+            direction: -Vec3::X,
+            max_distance: 3.0,
+            ignore: None,
+        });
         let after_opposite = cast(&world, from_opposite_side, Vec3::X, None)
             .expect("the arm is now on the opposite side");
         assert_eq!(after_opposite.tag, ARM);
