@@ -1598,4 +1598,80 @@ mod tests {
         assert_eq!(hit.tag, HEAD);
         assert!(hit.distance.abs() < 1e-4, "{hit:?}");
     }
+
+    /// An arm at +X before any turn, with the rays that find it on either side.
+    fn arm_on_plus_x() -> (PhysicsWorld, CharacterHandle) {
+        let (mut world, h) = standing_on_floor();
+        attach(
+            &mut world,
+            h,
+            volume(Vec3::new(0.4, 0.0, 0.0), Vec3::new(0.1, 0.3, 0.1), ARM),
+        );
+        world.step(DT);
+        (world, h)
+    }
+
+    /// The x of the arm's face seen from -X, or `None` when no arm is on that side.
+    fn arm_face_from_minus_x(world: &PhysicsWorld, h: CharacterHandle) -> Option<f32> {
+        let at = state(world, h).position;
+        let hit = world.cast_ray(&RayQuery {
+            origin: at + Vec3::new(-3.0, 0.0, 0.0),
+            direction: Vec3::X,
+            max_distance: 3.0,
+            ignore: None,
+        })?;
+        (hit.tag == ARM).then_some(hit.point.x - at.x)
+    }
+
+    #[test]
+    fn setting_the_look_turns_the_volumes() {
+        let (mut world, h) = arm_on_plus_x();
+
+        world
+            .set_character_look(h, std::f32::consts::PI, 0.0)
+            .unwrap();
+        world.step(DT);
+
+        let face = arm_face_from_minus_x(&world, h).expect("the arm turned to -X");
+        assert!((face + 0.5).abs() < 0.02, "face at {face}");
+    }
+
+    #[test]
+    fn teleporting_keeps_the_volumes_facing() {
+        let (mut world, h) = arm_on_plus_x();
+        world
+            .set_character_look(h, std::f32::consts::PI, 0.0)
+            .unwrap();
+
+        world
+            .set_character_position(h, Vec3::new(2.0, 1.2, 0.0))
+            .unwrap();
+        world.step(DT);
+
+        let face = arm_face_from_minus_x(&world, h).expect("the arm stays at -X");
+        assert!((face + 0.5).abs() < 0.02, "face at {face}");
+    }
+
+    #[test]
+    fn looking_up_does_not_tilt_the_volumes() {
+        let (mut world, h) = standing_on_floor();
+        attach_head_and_torso(&mut world, h);
+        world.step(DT);
+        let look_up = CharacterCommand {
+            pitch_delta: 1.0,
+            ..idle()
+        };
+
+        world
+            .move_character(h, &look_up, &test_settings(), DT)
+            .unwrap();
+        world.step(DT);
+
+        assert!(state(&world, h).pitch > 0.5, "{:?}", state(&world, h));
+        let at = state(&world, h).position;
+        let head = cast(&world, at + Vec3::new(-3.0, 0.7, 0.0), Vec3::X, None);
+        let head = head.expect("the head stays level with where it was");
+        assert_eq!(head.tag, HEAD);
+        assert!((head.distance - 2.8).abs() < 0.02, "{head:?}");
+    }
 }
