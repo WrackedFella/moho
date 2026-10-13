@@ -50,7 +50,36 @@ pub struct Slide {
     pub hits: Vec<(ColliderHandle, Vec3)>,
 }
 
+/// How much less a slide must move into a surface than asked to count as blocked.
+///
+/// Absorbs float rounding on step-ups, where the riser is reported but not blocking.
+const BLOCKED_EPSILON: f32 = 1e-4;
+
+/// How squarely the asked motion must face a surface (cosine, against its normal) for it to
+/// count as blocking.
+///
+/// Rapier's contact normals on a flat floor tilt by about 0.02 where triangles meet, which
+/// would otherwise read as a character pushing into the floor while walking along it.
+const MIN_OPPOSING: f32 = 0.1;
+
+/// Vertical speed below which a character counts as resting rather than rising.
+///
+/// Clipping against a wall normal with a 1e-5 vertical tilt would otherwise lift a runner
+/// off the ground for a tick.
+const REST_SPEED: f32 = 1e-3;
+
+/// Add up to `accel * dt` of speed along `wish`, never pushing the speed along it past `limit`.
+fn accelerate(velocity: &mut Vec3, wish: Vec3, limit: f32, accel: f32, dt: f32) {
+    let gap = limit - velocity.dot(wish);
+    if gap > 0.0 {
+        *velocity += wish * gap.min(accel * dt);
+    }
+}
+
 /// Advance `state` by one tick of `dt` seconds and report the impacts.
+///
+/// `slide` receives the displacement the tick asks for and reports what the world
+/// allowed. The look turns first, so a turn and a move in one command face the new way.
 pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
@@ -58,8 +87,78 @@ pub fn step(
     dt: f32,
     slide: impl FnOnce(Vec3) -> Slide,
 ) -> Vec<Impact> {
-    let _ = (state, command, settings, dt, slide);
-    todo!()
+    state.yaw += command.yaw_delta;
+    state.pitch = (state.pitch + command.pitch_delta).clamp(-PITCH_LIMIT, PITCH_LIMIT);
+
+    let (sin, cos) = state.yaw.sin_cos();
+    let wish_vector =
+        Vec3::new(sin, 0.0, cos) * command.forward + Vec3::new(-cos, 0.0, sin) * command.right;
+    let wish = wish_vector.normalize_or_zero();
+    let magnitude = wish_vector.length().min(1.0);
+
+    if state.grounded && command.jump {
+        state.velocity.y = settings.jump_speed;
+    }
+
+    if state.grounded && state.velocity.y <= REST_SPEED {
+        let horizontal = Vec3::new(state.velocity.x, 0.0, state.velocity.z);
+        let speed = horizontal.length();
+        if speed > 0.0 {
+            let drop = speed.max(settings.stop_speed) * settings.friction * dt;
+            let scale = (speed - drop).max(0.0) / speed;
+            state.velocity.x *= scale;
+            state.velocity.z *= scale;
+        }
+        if magnitude > 0.0 {
+            let target = wish * settings.max_speed * magnitude;
+            let to_target = Vec3::new(
+                target.x - state.velocity.x,
+                0.0,
+                target.z - state.velocity.z,
+            );
+            let distance = to_target.length();
+            if distance > 0.0 {
+                let gain = distance.min(settings.ground_accel * dt);
+                state.velocity += to_target * (gain / distance);
+            }
+        }
+    } else {
+        accelerate(
+            &mut state.velocity,
+            wish,
+            settings.air_speed_cap * magnitude,
+            settings.air_accel,
+            dt,
+        );
+        state.velocity.y -= settings.gravity * dt;
+    }
+
+    let airborne_before = !state.grounded;
+    let asked = state.velocity * dt;
+    let slid = slide(asked);
+    state.position += slid.translation;
+
+    let mut impacts = Vec::new();
+    for (collider, normal) in slid.hits {
+        let landing = airborne_before && slid.grounded && normal.y > 0.0;
+        let blocked = asked.dot(normal) < -MIN_OPPOSING * asked.length()
+            && (landing || slid.translation.dot(normal) > asked.dot(normal) + BLOCKED_EPSILON);
+        let into = state.velocity.dot(normal);
+        if blocked && into < 0.0 {
+            impacts.push(Impact {
+                collider,
+                normal,
+                speed: -into,
+            });
+            state.velocity -= normal * into;
+        }
+    }
+
+    state.grounded = slid.grounded && state.velocity.y <= REST_SPEED;
+    if state.grounded {
+        state.velocity.y = 0.0;
+    }
+    impacts
 }
 
 #[cfg(test)]

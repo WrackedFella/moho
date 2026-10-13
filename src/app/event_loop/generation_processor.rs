@@ -265,6 +265,7 @@ impl GenerationProcessor {
 
         // Sync simulation camera to spawn position
         let (yaw, pitch) = app.simulation.yaw_pitch();
+        app.physics.set_player_look(yaw, pitch);
         app.simulation.set_position_yaw_pitch(spawn_pos, yaw, pitch);
 
         // Spawn 3 test spheres above the center

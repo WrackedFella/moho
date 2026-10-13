@@ -10,6 +10,24 @@ use std::time::Duration;
 /// Frame counter for tracking frame numbers
 static FRAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Walking speed in m/s.
+const MOVE_SPEED: f32 = 4.0;
+/// Sprinting speed in m/s.
+const SPRINT_SPEED: f32 = 6.0;
+
+/// Strategy-line walking feel: acceleration and friction high enough to reach speed, or
+/// stop, within a tick. `max_speed` is set per tick from sprint.
+const STRATEGY_MOVE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSettings {
+    max_speed: MOVE_SPEED,
+    ground_accel: 360.0,
+    friction: 60.0,
+    stop_speed: 1.0,
+    air_accel: 360.0,
+    air_speed_cap: 6.0,
+    gravity: 18.0,
+    jump_speed: 8.0,
+};
+
 /// Handles frame timing and game state updates
 pub struct FrameProcessor;
 
@@ -59,49 +77,28 @@ impl FrameProcessor {
     fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
         // Kill plane: anything below this Y is considered "off the map"
         const KILL_PLANE_Y: f32 = -30.0;
-        const MOVE_SPEED: f32 = 4.0;
-        const SPRINT_SPEED: f32 = 6.0;
 
-        // Capture movement intent before zeroing it
-        let forward_input = app.simulation.controller_input.forward;
-        let right_input = app.simulation.controller_input.right;
-        let sprint = app.simulation.controller_input.sprint;
-
-        // Zero translational input so apply_input only updates yaw/pitch
-        {
-            let ci = app.simulation.controller_input_mut();
-            ci.forward = 0.0;
-            ci.right = 0.0;
-            ci.up = 0.0;
-        }
-        // apply_input updates yaw/pitch from deltas, returns camera
-        app.simulation.apply_input(dt);
-
-        // Read the now-updated yaw/pitch for horizontal movement calculation
-        let (yaw, pitch) = app.simulation.yaw_pitch();
-
-        // Placeholder until the strategy walking path builds its command from look deltas.
+        let input = app.simulation.controller_input;
         let command = moho_physics::CharacterCommand {
-            forward: forward_input,
-            right: right_input,
+            forward: input.forward,
+            right: input.right,
+            yaw_delta: input.yaw_delta,
+            pitch_delta: input.pitch_delta,
             jump: app.physics.jump_pressed,
-            ..moho_physics::CharacterCommand::default()
         };
         let settings = moho_physics::MoveSettings {
-            max_speed: if sprint { SPRINT_SPEED } else { MOVE_SPEED },
-            ground_accel: 360.0,
-            friction: 60.0,
-            stop_speed: 1.0,
-            air_accel: 360.0,
-            air_speed_cap: 6.0,
-            gravity: 18.0,
-            jump_speed: 8.0,
+            max_speed: if input.sprint {
+                SPRINT_SPEED
+            } else {
+                MOVE_SPEED
+            },
+            ..STRATEGY_MOVE_SETTINGS
         };
-        let mut new_pos = app
+        let state = app
             .physics
             .move_character(&command, &settings, dt)
-            .expect("KCC active but move_character returned None")
-            .position;
+            .expect("KCC active but move_character returned None");
+        let mut new_pos = state.position;
 
         if new_pos.y < KILL_PLANE_Y {
             let respawn_y = app
@@ -116,7 +113,8 @@ impl FrameProcessor {
         }
 
         // Override simulation position with physics result (or respawn position)
-        app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
+        app.simulation
+            .set_position_yaw_pitch(new_pos, state.yaw, state.pitch);
 
         // Rebuild camera from the updated simulation state
         app.camera = moho_game::controller::controller_to_camera(&app.simulation.player_controller);

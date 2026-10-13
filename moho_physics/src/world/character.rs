@@ -1,7 +1,94 @@
 use super::PhysicsWorld;
-use crate::movement::{CharacterCommand, Impact, MoveSettings};
+use crate::movement::{self, CharacterCommand, Impact, MoveSettings, Slide};
 use glam::Vec3;
-use rapier3d::prelude::{ColliderBuilder, ColliderHandle, Pose, RigidBodyBuilder, RigidBodyHandle};
+use rapier3d::control::{
+    CharacterLength, EffectiveCharacterMovement, KinematicCharacterController,
+};
+use rapier3d::parry::query::ShapeCastOptions;
+use rapier3d::prelude::{
+    ColliderBuilder, ColliderHandle, Pose, QueryFilter, RigidBodyBuilder, RigidBodyHandle,
+};
+use rapier3d::prelude::{QueryPipeline, Shape};
+
+/// How far below a grounded landing to look for the surface it landed on, in metres.
+const GROUND_PROBE: f32 = 0.1;
+
+/// Largest `|normal.y|` for a hit to count as a wall that may be a step riser.
+const WALL_NORMAL_Y: f32 = 0.3;
+
+/// Extra downward distance when settling onto a step top, in metres.
+const STEP_SNAP: f32 = 0.05;
+
+/// Least horizontal travel across a step top, in metres.
+///
+/// The capsule stops a radius short of the riser, so anything less leaves its rounded base
+/// balanced on the step's edge, where the next slide would read it as a slope to climb.
+const STEP_REACH: f32 = 0.4;
+
+/// Horizontal motion left over, or gained, below this many metres does not count.
+const STEP_MIN_PROGRESS: f32 = 1e-3;
+
+/// Retry a blocked slide from on top of the obstacle (Source's `StepMove`).
+///
+/// The controller's own autostep fails on float noise when the capsule stops exactly its
+/// skin offset from a riser, so this lifts the capsule, carries the remaining horizontal
+/// motion across, and settles it down. Returns the whole tick's translation, or `None`
+/// when that does not end grounded and further along than `plain`.
+fn step_up(
+    controller: &KinematicCharacterController,
+    queries: &QueryPipeline,
+    shape: &dyn Shape,
+    start: &Pose,
+    asked: Vec3,
+    plain: &EffectiveCharacterMovement,
+    dt: f32,
+) -> Option<Vec3> {
+    let CharacterLength::Absolute(max_height) = controller.autostep?.max_height else {
+        return None;
+    };
+    let remaining = Vec3::new(
+        asked.x - plain.translation.x,
+        0.0,
+        asked.z - plain.translation.z,
+    );
+    if remaining.length() < STEP_MIN_PROGRESS {
+        return None;
+    }
+
+    let stopped = Pose::from_parts(start.translation + plain.translation, start.rotation);
+    let up = ShapeCastOptions {
+        max_time_of_impact: max_height,
+        target_distance: 0.0,
+        stop_at_penetration: false,
+        compute_impact_geometry_on_penetration: true,
+    };
+    let lift = queries
+        .cast_shape(&stopped, Vec3::Y, shape, up)
+        .map_or(max_height, |(_, hit)| hit.time_of_impact);
+    if lift <= 0.0 {
+        return None;
+    }
+
+    let lifted = Pose::from_parts(stopped.translation + Vec3::Y * lift, stopped.rotation);
+    let reach = remaining.normalize() * remaining.length().max(STEP_REACH);
+    let across = controller.move_shape(dt, queries, shape, &lifted, reach, |_| {});
+    let over = Pose::from_parts(lifted.translation + across.translation, lifted.rotation);
+    let down = controller.move_shape(
+        dt,
+        queries,
+        shape,
+        &over,
+        -Vec3::Y * (lift + STEP_SNAP),
+        |_| {},
+    );
+    if !down.grounded {
+        return None;
+    }
+
+    let total = plain.translation + Vec3::Y * lift + across.translation + down.translation;
+    let horizontal = |v: Vec3| Vec3::new(v.x, 0.0, v.z).length();
+    (horizontal(total) > horizontal(plain.translation) + STEP_MIN_PROGRESS).then_some(total)
+}
 
 /// Opaque identity of one character in a [`PhysicsWorld`].
 ///
@@ -95,15 +182,93 @@ impl PhysicsWorld {
         settings: &MoveSettings,
         dt: f32,
     ) -> Result<Vec<Impact>, UnknownCharacter> {
-        let character = self.characters.get(&handle).ok_or(UnknownCharacter)?;
-        let _ = (
-            command,
-            settings,
-            dt,
-            character.collider,
-            &self.character_controller,
+        let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
+        let body_handle = handle.0;
+        let collider_handle = character.collider;
+        let mut state = CharacterState {
+            position: self.rigid_body_set[body_handle].position().translation,
+            velocity: character.velocity,
+            yaw: character.yaw,
+            pitch: character.pitch,
+            grounded: character.grounded,
+        };
+        let current_pos = *self.rigid_body_set[body_handle].position();
+        let shape = self.collider_set[collider_handle].shape();
+
+        // Transient QueryPipeline view that excludes only this character's capsule.
+        let filter = QueryFilter::default().exclude_collider(collider_handle);
+        let queries = self.broad_phase.as_query_pipeline(
+            self.narrow_phase.query_dispatcher(),
+            &self.rigid_body_set,
+            &self.collider_set,
+            filter,
         );
-        todo!()
+        let controller = &self.character_controller;
+        let was_grounded = state.grounded;
+
+        let impacts = movement::step(&mut state, command, settings, dt, |asked| {
+            let mut hits = Vec::new();
+            let movement =
+                controller.move_shape(dt, &queries, shape, &current_pos, asked, |collision| {
+                    hits.push((collision.handle, collision.hit.normal1));
+                });
+            if was_grounded
+                && hits
+                    .iter()
+                    .any(|(_, normal)| normal.y.abs() < WALL_NORMAL_Y)
+            {
+                if let Some(stepped) = step_up(
+                    controller,
+                    &queries,
+                    shape,
+                    &current_pos,
+                    asked,
+                    &movement,
+                    dt,
+                ) {
+                    return Slide {
+                        translation: stepped,
+                        grounded: true,
+                        hits,
+                    };
+                }
+            }
+            if movement.grounded && asked.y < 0.0 && hits.is_empty() {
+                // The controller detects ground a few centimetres early and reports no
+                // hit, so a landing there would carry no impact; probe for the surface.
+                let landed_at = Pose::from_parts(
+                    current_pos.translation + movement.translation,
+                    current_pos.rotation,
+                );
+                let probe = ShapeCastOptions {
+                    max_time_of_impact: GROUND_PROBE,
+                    target_distance: 0.0,
+                    stop_at_penetration: false,
+                    compute_impact_geometry_on_penetration: true,
+                };
+                if let Some((handle, hit)) = queries.cast_shape(&landed_at, -Vec3::Y, shape, probe)
+                {
+                    hits.push((handle, hit.normal1));
+                }
+            }
+            Slide {
+                translation: movement.translation,
+                grounded: movement.grounded,
+                hits,
+            }
+        });
+
+        character.velocity = state.velocity;
+        character.yaw = state.yaw;
+        character.pitch = state.pitch;
+        character.grounded = state.grounded;
+
+        // Set both the "next" and "current" position so the value is available immediately.
+        let new_pose = Pose::from_parts(state.position, current_pos.rotation);
+        self.rigid_body_set[body_handle].set_next_kinematic_position(new_pose);
+        self.rigid_body_set[body_handle].set_position(new_pose, false);
+
+        Ok(impacts)
     }
 
     /// Teleport the character to `position` and zero its velocity.
@@ -133,9 +298,11 @@ impl PhysicsWorld {
         handle: CharacterHandle,
         velocity: Vec3,
     ) -> Result<(), UnknownCharacter> {
-        let _ = velocity;
-        self.characters.get(&handle).ok_or(UnknownCharacter)?;
-        todo!()
+        self.characters
+            .get_mut(&handle)
+            .ok_or(UnknownCharacter)?
+            .velocity += velocity;
+        Ok(())
     }
 
     /// Set the character's facing without moving it.
@@ -148,9 +315,10 @@ impl PhysicsWorld {
         yaw: f32,
         pitch: f32,
     ) -> Result<(), UnknownCharacter> {
-        let _ = (yaw, pitch);
-        self.characters.get(&handle).ok_or(UnknownCharacter)?;
-        todo!()
+        let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
+        character.yaw = yaw;
+        character.pitch = pitch;
+        Ok(())
     }
 
     /// The character's current state, or `None` for an unknown handle.

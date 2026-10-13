@@ -65,6 +65,14 @@ impl PhysicsController {
         pw.character(handle)
     }
 
+    /// Face the player character `yaw`/`pitch`, so the next tick turns from the view on screen.
+    pub fn set_player_look(&mut self, yaw: f32, pitch: f32) {
+        if let (Some(pw), Some(handle)) = (self.world.as_mut(), self.player) {
+            pw.set_character_look(handle, yaw, pitch)
+                .expect("the player handle belongs to the current world");
+        }
+    }
+
     /// Teleport the player (e.g. respawn after falling off the map).
     pub fn teleport_character(&mut self, pos: glam::Vec3) {
         if let (Some(pw), Some(handle)) = (self.world.as_mut(), self.player) {

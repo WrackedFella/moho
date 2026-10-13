@@ -252,6 +252,7 @@ impl App {
 
         // Align the simulation Y to match physics spawn (avoids terrain clipping).
         let (yaw, pitch) = self.simulation.yaw_pitch();
+        self.physics.set_player_look(yaw, pitch);
         self.simulation
             .set_position_yaw_pitch(spawn_pos, yaw, pitch);
 
