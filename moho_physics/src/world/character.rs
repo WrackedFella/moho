@@ -168,6 +168,8 @@ impl PhysicsWorld {
 
     /// Run one tick of movement for the character and return the impacts it took.
     ///
+    /// Sensors, hit volumes among them, never block the slide.
+    ///
     /// # Errors
     /// [`UnknownCharacter`] if `handle` was removed.
     pub fn move_character(
@@ -1673,5 +1675,26 @@ mod tests {
         let head = head.expect("the head stays level with where it was");
         assert_eq!(head.tag, HEAD);
         assert!((head.distance - 2.8).abs() < 0.02, "{head:?}");
+    }
+
+    #[test]
+    fn a_quarter_turn_swings_a_forward_volume_toward_plus_x() {
+        let (mut world, h) = standing_on_floor();
+        attach(
+            &mut world,
+            h,
+            volume(Vec3::new(0.0, 0.0, 0.4), Vec3::new(0.1, 0.3, 0.1), ARM),
+        );
+
+        world
+            .set_character_look(h, std::f32::consts::FRAC_PI_2, 0.0)
+            .unwrap();
+        world.step(DT);
+
+        let at = state(&world, h).position;
+        let hit = cast(&world, at + Vec3::new(3.0, 0.0, 0.0), -Vec3::X, None)
+            .expect("yaw pi/2 faces +X, so the forward arm is there");
+        assert_eq!(hit.tag, ARM);
+        assert!((hit.point.x - (at.x + 0.5)).abs() < 0.02, "{hit:?}");
     }
 }
