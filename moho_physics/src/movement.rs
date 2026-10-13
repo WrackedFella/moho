@@ -80,6 +80,59 @@ fn accelerate(velocity: &mut Vec3, wish: Vec3, limit: f32, accel: f32, dt: f32) 
     }
 }
 
+/// Friction on the horizontal speed, then acceleration toward the wished ground velocity.
+fn ground_move(velocity: &mut Vec3, wish: Vec3, magnitude: f32, settings: &MoveSettings, dt: f32) {
+    let speed = Vec3::new(velocity.x, 0.0, velocity.z).length();
+    if speed > 0.0 {
+        let drop = speed.max(settings.stop_speed) * settings.friction * dt;
+        let scale = (speed - drop).max(0.0) / speed;
+        velocity.x *= scale;
+        velocity.z *= scale;
+    }
+    if magnitude > 0.0 {
+        let target = wish * settings.max_speed * magnitude;
+        let to_target = Vec3::new(target.x - velocity.x, 0.0, target.z - velocity.z);
+        let distance = to_target.length();
+        if distance > 0.0 {
+            let gain = distance.min(settings.ground_accel * dt);
+            *velocity += to_target * (gain / distance);
+        }
+    }
+}
+
+/// Remove the velocity into every surface that blocked the slide, reporting each as an impact.
+///
+/// A hit blocks when the asked motion faces it and the slide moved less into it than asked,
+/// or when it is the surface an airborne character just landed on. A walker (`walking`) is
+/// never blocked by walkable ground it ends the slide standing on: slopes and the rounded edges of steps neither stop nor clip it.
+fn clip(
+    velocity: &mut Vec3,
+    asked: Vec3,
+    slid: &Slide,
+    walking: bool,
+    airborne_before: bool,
+) -> Vec<Impact> {
+    let mut impacts = Vec::new();
+    for &(collider, normal) in &slid.hits {
+        if walking && slid.grounded && normal.y >= WALKABLE_NORMAL_Y {
+            continue;
+        }
+        let lands_on = airborne_before && slid.grounded && normal.y > 0.0;
+        let blocked = asked.dot(normal) < -MIN_OPPOSING * asked.length()
+            && (lands_on || slid.translation.dot(normal) > asked.dot(normal) + BLOCKED_EPSILON);
+        let into = velocity.dot(normal);
+        if blocked && into < 0.0 {
+            impacts.push(Impact {
+                collider,
+                normal,
+                speed: -into,
+            });
+            *velocity -= normal * into;
+        }
+    }
+    impacts
+}
+
 /// Advance `state` by one tick of `dt` seconds and report the impacts.
 ///
 /// `slide` receives the displacement the tick asks for and reports what the world
@@ -105,27 +158,7 @@ pub fn step(
     }
 
     if state.grounded && state.velocity.y <= REST_SPEED {
-        let horizontal = Vec3::new(state.velocity.x, 0.0, state.velocity.z);
-        let speed = horizontal.length();
-        if speed > 0.0 {
-            let drop = speed.max(settings.stop_speed) * settings.friction * dt;
-            let scale = (speed - drop).max(0.0) / speed;
-            state.velocity.x *= scale;
-            state.velocity.z *= scale;
-        }
-        if magnitude > 0.0 {
-            let target = wish * settings.max_speed * magnitude;
-            let to_target = Vec3::new(
-                target.x - state.velocity.x,
-                0.0,
-                target.z - state.velocity.z,
-            );
-            let distance = to_target.length();
-            if distance > 0.0 {
-                let gain = distance.min(settings.ground_accel * dt);
-                state.velocity += to_target * (gain / distance);
-            }
-        }
+        ground_move(&mut state.velocity, wish, magnitude, settings, dt);
     } else {
         accelerate(
             &mut state.velocity,
@@ -143,26 +176,7 @@ pub fn step(
     let slid = slide(asked);
     state.position += slid.translation;
 
-    let mut impacts = Vec::new();
-    for (collider, normal) in slid.hits {
-        // Ground walking follows the floor (Source): walkable surfaces underfoot, slopes
-        // and the rounded edges of steps included, neither stop nor clip the walker.
-        if walking && slid.grounded && normal.y >= WALKABLE_NORMAL_Y {
-            continue;
-        }
-        let landing = airborne_before && slid.grounded && normal.y > 0.0;
-        let blocked = asked.dot(normal) < -MIN_OPPOSING * asked.length()
-            && (landing || slid.translation.dot(normal) > asked.dot(normal) + BLOCKED_EPSILON);
-        let into = state.velocity.dot(normal);
-        if blocked && into < 0.0 {
-            impacts.push(Impact {
-                collider,
-                normal,
-                speed: -into,
-            });
-            state.velocity -= normal * into;
-        }
-    }
+    let impacts = clip(&mut state.velocity, asked, &slid, walking, airborne_before);
 
     state.grounded = slid.grounded && state.velocity.y <= REST_SPEED;
     if state.grounded {

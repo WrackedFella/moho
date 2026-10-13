@@ -7,6 +7,7 @@ use std::collections::HashMap;
 const GRAVITY: f32 = -18.0;
 
 mod character;
+mod slide;
 #[cfg(test)]
 pub(crate) mod test_support;
 
