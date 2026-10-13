@@ -41,13 +41,13 @@ fn decode_tag(user_data: u128) -> Option<HitTag> {
 }
 
 impl PhysicsWorld {
-    /// The nearest tagged surface along `query`, as of the last `step`.
+    /// The nearest tagged surface along `query`.
     ///
-    /// Reads the world as the last `step` left it, so a tick runs in this order: move
-    /// characters, step, then cast rays. Untagged colliders (movement capsules, props)
-    /// never stop a ray. The direction is normalised, so its length does not matter; the
-    /// normal faces back against the ray. A zero or non-finite direction, or a
-    /// `max_distance` that is not positive, hits nothing.
+    /// Reads the world as the last `step` left it, so a tick moves characters, steps, then
+    /// casts rays. Untagged colliders (movement capsules, props) never stop a ray. The
+    /// direction is normalised, so its length does not matter; the normal faces back against
+    /// the ray. A zero or non-finite direction, or a `max_distance` that is not positive, hits
+    /// nothing.
     pub fn cast_ray(&self, query: &RayQuery) -> Option<RayHit> {
         let direction = query.direction.try_normalize()?;
         if query.max_distance.is_nan() || query.max_distance <= 0.0 {
