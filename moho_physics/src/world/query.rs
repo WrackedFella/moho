@@ -69,15 +69,9 @@ impl PhysicsWorld {
 
         let (collider, hit) = queries.cast_ray_and_get_normal(&ray, query.max_distance, true)?;
         let tag = self.collider_tag(collider)?;
-        // A trimesh reports its triangle's geometric normal whichever side the ray came from.
-        let normal = if hit.normal.dot(direction) > 0.0 {
-            -hit.normal
-        } else {
-            hit.normal
-        };
         Some(RayHit {
             point: query.origin + direction * hit.time_of_impact,
-            normal,
+            normal: hit.normal,
             distance: hit.time_of_impact,
             tag,
         })
