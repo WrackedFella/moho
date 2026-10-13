@@ -90,8 +90,18 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
 2. apply queued `RenderRequest`s and drain audio events;
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
 4. `update_hud_data`, then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
-   with actors, the sphere and cube mesh handles and the camera;
+   with actors, the sphere and cube mesh handles and the frame camera (below);
 5. recall the UI adapter's staging belt (currently a no-op).
 
 A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
-[rendering](rendering.md#pass-order). `alpha` (tick interpolation) is not used yet.
+[rendering](rendering.md#pass-order).
+
+### Frame camera
+
+`App::render_camera(alpha)` picks the camera per frame. While `App::is_kcc_walking`
+(Playing, first person, character controller active and not noclip) the eye is blended
+between the player's last two tick states by `alpha` (0 = previous tick, 1 = current) via
+`moho_physics::first_person_view` (`moho_physics/src/camera.rs`); look comes from the
+current tick. `PhysicsController` keeps the pre-tick state (`previous`) for this and
+resets it on spawn, teleport and `reset`. In every other case the tick camera is drawn
+unchanged.

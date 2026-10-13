@@ -11,6 +11,8 @@ pub struct PhysicsController {
     pub jump_pressed: bool,
     pub player: Option<moho_physics::CharacterHandle>,
     pub noclip: bool,
+    /// The player's state before the latest tick, for blending the view.
+    previous: Option<moho_physics::CharacterState>,
 }
 
 impl PhysicsController {
@@ -21,6 +23,7 @@ impl PhysicsController {
             jump_pressed: false,
             player: None,
             noclip: false,
+            previous: None,
         }
     }
 
@@ -29,6 +32,7 @@ impl PhysicsController {
         self.world = Some(moho_physics::PhysicsWorld::new());
         self.test_bodies.clear();
         self.player = None;
+        self.previous = None;
         self.noclip = false;
     }
 
@@ -41,7 +45,17 @@ impl PhysicsController {
             pw.remove_character(previous)
                 .expect("the player handle belongs to the current world");
         }
-        self.player = Some(pw.add_character(position));
+        let handle = pw.add_character(position);
+        self.player = Some(handle);
+        self.previous = pw.character(handle);
+    }
+
+    /// The player's state before and after the latest tick, if there is a player.
+    pub fn player_states(
+        &self,
+    ) -> Option<(moho_physics::CharacterState, moho_physics::CharacterState)> {
+        let current = self.world.as_ref()?.character(self.player?)?;
+        Some((self.previous?, current))
     }
 
     /// Whether a kinematic character controller is active (and not in noclip).
@@ -61,6 +75,7 @@ impl PhysicsController {
     ) -> Option<moho_physics::CharacterState> {
         let handle = self.player?;
         let pw = self.world.as_mut()?;
+        self.previous = pw.character(handle);
         pw.move_character(handle, command, settings, dt).ok()?;
         pw.character(handle)
     }
@@ -78,6 +93,7 @@ impl PhysicsController {
         if let (Some(pw), Some(handle)) = (self.world.as_mut(), self.player) {
             pw.set_character_position(handle, pos)
                 .expect("the player handle belongs to the current world");
+            self.previous = pw.character(handle);
         }
     }
 
@@ -462,6 +478,60 @@ mod tests {
         let state = player_state(&controller);
         assert!(state.position.distance(target) < 1e-4, "{state:?}");
         assert_eq!(state.velocity, glam::Vec3::ZERO);
+    }
+
+    #[test]
+    fn teleport_resets_previous_state() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        for _ in 0..10 {
+            controller.move_character(&idle(), &strategy_settings(), DT);
+        }
+
+        controller.teleport_character(glam::Vec3::new(3.0, 20.0, -4.0));
+
+        assert_eq!(controller.previous, Some(player_state(&controller)));
+    }
+
+    #[test]
+    fn respawn_resets_previous_state() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        for _ in 0..10 {
+            controller.move_character(&idle(), &strategy_settings(), DT);
+        }
+
+        controller.spawn_player(glam::Vec3::new(5.0, 60.0, 5.0));
+
+        assert_eq!(controller.previous, Some(player_state(&controller)));
+    }
+
+    #[test]
+    fn reset_clears_previous_state() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        for _ in 0..10 {
+            controller.move_character(&idle(), &strategy_settings(), DT);
+        }
+
+        controller.reset();
+
+        assert_eq!(controller.previous, None);
+    }
+
+    #[test]
+    fn move_character_keeps_the_state_before_the_tick() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        for _ in 0..10 {
+            controller.move_character(&idle(), &strategy_settings(), DT);
+        }
+        let before_tick = player_state(&controller);
+
+        controller.move_character(&idle(), &strategy_settings(), DT);
+
+        assert_eq!(controller.previous, Some(before_tick));
+        assert_ne!(controller.previous, Some(player_state(&controller)));
     }
 
     #[test]

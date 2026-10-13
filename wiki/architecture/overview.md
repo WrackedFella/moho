@@ -164,7 +164,7 @@ flowchart LR
 | App mode | `moho_ui::GameState` ([input-and-state](input-and-state.md#gamestate)) |
 | GPU resources | `moho_renderer`; game types reach it only through `moho_render_api` ([rendering](rendering.md)) |
 | Prefs | `moho_core::prefs::Prefs` ([format](../reference/prefs-format.md)) |
-| Player character, noclip | `PhysicsController` (`src/app/physics_controller.rs`): `player` is a `CharacterHandle` into `moho_physics::PhysicsWorld`, which holds each character's `CharacterState` (position, velocity, yaw, pitch, grounded; `moho_physics/src/world/character.rs`). Per-tick movement rules are the pure `moho_physics::step` (`moho_physics/src/movement.rs`), driven by a `CharacterCommand` and game-supplied `MoveSettings`; the game owns the tuning (`STRATEGY_MOVE_SETTINGS` in `src/app/event_loop/frame_processor.rs`). `reset` clears the handle |
+| Player character, noclip | `PhysicsController` (`src/app/physics_controller.rs`): `player` is a `CharacterHandle` into `moho_physics::PhysicsWorld`, which holds each character's `CharacterState` (position, velocity, yaw, pitch, grounded; `moho_physics/src/world/character.rs`). Per-tick movement rules are the pure `moho_physics::step` (`moho_physics/src/movement.rs`), driven by a `CharacterCommand` and game-supplied `MoveSettings`; the game owns the tuning (`STRATEGY_MOVE_SETTINGS` in `src/app/event_loop/frame_processor.rs`). It also keeps the player's pre-tick state for the [frame camera](frame-loop.md#frame-camera) (`moho_physics::first_person_view`, `moho_physics/src/camera.rs`), reset on spawn and teleport. `reset` clears the handle and that state |
 
 Entities live in typed stores; there is no general ECS (ADR-0004).
 

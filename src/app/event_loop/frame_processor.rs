@@ -53,9 +53,7 @@ impl FrameProcessor {
             return;
         }
 
-        // --- Physics KCC path (FPS only) ---
-        let is_fps = app.simulation.camera_mode() == moho_game::controller::CameraMode::FirstPerson;
-        let use_kcc = is_fps && app.physics.is_kcc_active();
+        let use_kcc = app.is_kcc_walking();
 
         if use_kcc {
             self.update_game_state_fps_kcc(app, dt);

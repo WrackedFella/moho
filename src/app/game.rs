@@ -106,14 +106,42 @@ impl App {
         }
     }
 
-    fn render_scene(&mut self, renderer: &mut dyn moho_renderer::RendererBackend) {
+    /// The camera to draw this frame: the player's eye blended between the last two
+    /// ticks while walking, the tick camera otherwise.
+    fn render_camera(&self, alpha: f32) -> (glam::Mat4, glam::Mat4, glam::Vec3) {
+        let walking_states = self
+            .is_kcc_walking()
+            .then(|| self.physics.player_states())
+            .flatten();
+        match walking_states {
+            Some((previous, current)) => {
+                let view = moho_physics::first_person_view(&previous, &current, 0.0, alpha);
+                (view.view_matrix(), self.camera.1, view.eye)
+            }
+            None => self.camera,
+        }
+    }
+
+    /// Whether ticks move the player through the character controller: playing,
+    /// first person, collision on.
+    pub(crate) fn is_kcc_walking(&self) -> bool {
+        self.game_state == GameState::Playing
+            && self.simulation.camera_mode() == CameraMode::FirstPerson
+            && self.physics.is_kcc_active()
+    }
+
+    fn render_scene(
+        &mut self,
+        renderer: &mut dyn moho_renderer::RendererBackend,
+        camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+    ) {
         if let Err(e) = self.scene.render(
             renderer,
             self.entities.actors.spheres(),
             self.entities.actors.cubes(),
             self.mesh_handle,
             self.cube_mesh_handle,
-            self.camera,
+            camera,
         ) {
             tracing::warn!(error = %e, "Skipped frame");
         }
@@ -121,7 +149,7 @@ impl App {
 
     fn initial_render(&mut self, ctx: &mut moho_app::InitContext<'_>) {
         tracing::info!("Initial render");
-        self.render_scene(&mut *ctx.renderer);
+        self.render_scene(&mut *ctx.renderer, self.camera);
         ctx.window.request_redraw();
     }
 
@@ -257,7 +285,7 @@ impl moho_app::Game for App {
         }
     }
 
-    fn frame(&mut self, ctx: &mut moho_app::FrameContext<'_>, _alpha: f32) {
+    fn frame(&mut self, ctx: &mut moho_app::FrameContext<'_>, alpha: f32) {
         let frame_processor = FrameProcessor::new();
 
         self.poll_gamepads();
@@ -277,7 +305,8 @@ impl moho_app::Game for App {
         frame_processor.update_hud_data(self, clock, ctx.tick_length);
         if let Some(renderer) = ctx.renderer() {
             frame_processor.update_lighting(self, clock, &mut *renderer);
-            self.render_scene(renderer);
+            let camera = self.render_camera(alpha);
+            self.render_scene(renderer, camera);
         }
 
         if let Some(ui_adapter) = &self.ui_adapter
@@ -497,6 +526,7 @@ mod tests {
         ssao_qualities: Vec<u8>,
         lightings: Vec<LightingGpu>,
         frames_begun: u32,
+        cameras: Vec<(glam::Mat4, glam::Mat4, glam::Vec3)>,
     }
 
     impl RendererBackend for FakeRenderer {
@@ -520,9 +550,10 @@ mod tests {
         fn unregister_mesh(&mut self, _mesh: u32) {}
         fn begin_frame(
             &mut self,
-            _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+            camera: (glam::Mat4, glam::Mat4, glam::Vec3),
         ) -> Result<(), FrameError> {
             self.frames_begun += 1;
+            self.cameras.push(camera);
             Ok(())
         }
         fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
@@ -576,6 +607,118 @@ mod tests {
         let mut ctx = FrameContext::new(tick(), &clock, Some(fake), None);
         Game::frame(app, &mut ctx, 0.5);
         ctx.exit_requested()
+    }
+
+    fn walker_state(app: &App) -> moho_physics::CharacterState {
+        app.physics
+            .world
+            .as_ref()
+            .expect("physics world")
+            .character(app.physics.player.expect("player"))
+            .expect("player resolves")
+    }
+
+    /// Walks `TICKS` ticks, rendering `frames_per_tick` frames after each, and returns the final state.
+    fn walk_rendering(
+        frames_per_tick: u32,
+        fake: &mut FakeRenderer,
+    ) -> moho_physics::CharacterState {
+        let mut app = walking_app();
+        let mut clock = GameClock::default();
+        for n in 0..TICKS {
+            let command = Game::command(&mut app);
+            let mut ctx = TickContext {
+                tick: u64::from(n),
+                tick_length: tick(),
+                clock: &mut clock,
+            };
+            Game::tick(&mut app, &mut ctx, &command);
+            for f in 0..frames_per_tick {
+                let alpha = f as f32 / frames_per_tick as f32;
+                let mut ctx = FrameContext::new(tick(), &clock, Some(&mut *fake), None);
+                Game::frame(&mut app, &mut ctx, alpha);
+            }
+        }
+        walker_state(&app)
+    }
+
+    #[test]
+    fn rendering_many_frames_between_ticks_leaves_the_walk_unchanged() {
+        let mut silent = FakeRenderer::default();
+        let mut rendering = FakeRenderer::default();
+
+        let without_frames = walk_rendering(0, &mut silent);
+        let with_frames = walk_rendering(10, &mut rendering);
+
+        assert_eq!(silent.frames_begun, 0);
+        assert_eq!(rendering.frames_begun, 10 * TICKS, "frames were rendered");
+        assert!(without_frames.position.z > 2.0, "the player walked");
+        assert_eq!(with_frames, without_frames);
+    }
+
+    #[test]
+    fn walking_frame_uses_the_blended_eye() {
+        let mut app = walking_app();
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        let before = walker_state(&app).position;
+        sim.step(&mut app, 1);
+        let after = walker_state(&app).position;
+        assert!(before.distance(after) > 1e-3, "the tick moved the player");
+        let mut fake = FakeRenderer::default();
+
+        run_frame(&mut app, &mut fake);
+
+        let (view, _projection, eye) = *fake.cameras.last().expect("a frame began");
+        let expected = before.lerp(after, 0.5);
+        assert!(eye.distance(expected) < 1e-4, "eye {eye:?} vs {expected:?}");
+        assert!(
+            view.transform_point3(eye).length() < 1e-4,
+            "the view matrix is centred on the eye"
+        );
+    }
+
+    /// Walks one tick, then returns the app with a renderer that has seen no frame.
+    fn app_after_a_moving_tick() -> App {
+        let mut app = walking_app();
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        let before = walker_state(&app).position;
+        sim.step(&mut app, 1);
+        let after = walker_state(&app).position;
+        assert!(before.distance(after) > 1e-3, "the tick moved the player");
+        app
+    }
+
+    #[test]
+    fn paused_frame_renders_the_tick_camera() {
+        let mut app = app_after_a_moving_tick();
+        app.game_state = GameState::Menu;
+        let mut fake = FakeRenderer::default();
+
+        run_frame(&mut app, &mut fake);
+
+        assert_eq!(fake.cameras.last().copied(), Some(app.camera));
+    }
+
+    #[test]
+    fn isometric_frame_renders_the_tick_camera() {
+        let mut app = app_after_a_moving_tick();
+        app.simulation.set_camera_mode(CameraMode::Isometric);
+        let mut fake = FakeRenderer::default();
+
+        run_frame(&mut app, &mut fake);
+
+        assert_eq!(fake.cameras.last().copied(), Some(app.camera));
+    }
+
+    #[test]
+    fn noclip_frame_renders_the_tick_camera() {
+        let mut app = app_after_a_moving_tick();
+        app.physics.noclip = true;
+        let mut fake = FakeRenderer::default();
+
+        run_frame(&mut app, &mut fake);
+
+        assert_eq!(fake.cameras.last().copied(), Some(app.camera));
     }
 
     mod command_axes {
