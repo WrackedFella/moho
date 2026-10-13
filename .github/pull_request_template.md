@@ -2,7 +2,11 @@
 Closes #
 
 ## Summary
-<!-- What changed and why, in a few lines. -->
+**Before:** <!-- the behavior or gap a reader would have seen -->
+
+**After:** <!-- what a reader sees now, in observable terms -->
+
+**How:** <!-- the mechanism and non-obvious choices; spec deviations as a closing paragraph -->
 
 ## Test evidence
 - [ ] `just check` passes
