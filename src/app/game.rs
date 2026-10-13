@@ -410,83 +410,80 @@ mod tests {
         assert!(!cmd.jump);
     }
 
-    mod walking {
-        use super::*;
-        use std::time::Duration;
+    use std::time::Duration;
 
-        const TICKS: u32 = 120;
+    const TICKS: u32 = 120;
 
-        fn floor() -> moho_render_api::WorldMesh {
-            moho_render_api::WorldMesh::new(
-                vec![
-                    [-50.0, 0.0, -50.0],
-                    [50.0, 0.0, -50.0],
-                    [-50.0, 0.0, 50.0],
-                    [50.0, 0.0, 50.0],
-                ],
-                vec![[0.0, 1.0, 0.0]; 4],
-                vec![1.0; 4],
-                vec![[0.0; 3]; 4],
-                vec![1.0; 4],
-                vec![0; 4],
-                vec![0, 2, 1, 1, 2, 3],
-            )
-            .expect("valid floor mesh")
+    fn floor() -> moho_render_api::WorldMesh {
+        moho_render_api::WorldMesh::new(
+            vec![
+                [-50.0, 0.0, -50.0],
+                [50.0, 0.0, -50.0],
+                [-50.0, 0.0, 50.0],
+                [50.0, 0.0, 50.0],
+            ],
+            vec![[0.0, 1.0, 0.0]; 4],
+            vec![1.0; 4],
+            vec![[0.0; 3]; 4],
+            vec![1.0; 4],
+            vec![0; 4],
+            vec![0, 2, 1, 1, 2, 3],
+        )
+        .expect("valid floor mesh")
+    }
+
+    /// A first-person player standing on a floor, facing +Z, holding forward and jump.
+    fn walking_app() -> App {
+        let mut app = playing_app();
+        app.simulation.set_camera_mode(CameraMode::FirstPerson);
+        app.simulation
+            .set_position_yaw_pitch(glam::Vec3::new(0.0, 1.2, 0.0), 0.0, 0.0);
+        app.physics
+            .world
+            .as_mut()
+            .expect("physics world")
+            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor());
+        app.physics.spawn_player(glam::Vec3::new(0.0, 1.2, 0.0));
+        hold(&mut app, StrategyAction::MoveForward);
+        hold(&mut app, StrategyAction::Jump);
+        app
+    }
+
+    /// Position after `TICKS` ticks delivered in frames of `1 / fps` s, and the highest point reached.
+    fn drive_at(fps: u64) -> (glam::Vec3, f32) {
+        let mut app = walking_app();
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        // Rounded up so the integer accumulator never lands one tick short.
+        let frame = Duration::from_nanos(1_000_000_000u64.div_ceil(fps));
+        let mut ticks = 0;
+        let mut highest = f32::MIN;
+
+        while ticks < TICKS {
+            ticks += sim.advance(&mut app, frame);
+            highest = highest.max(app.simulation.position().y);
         }
 
-        /// A first-person player standing on a floor, facing +Z, holding forward and jump.
-        fn walking_app() -> App {
-            let mut app = playing_app();
-            app.simulation.set_camera_mode(CameraMode::FirstPerson);
-            app.simulation
-                .set_position_yaw_pitch(glam::Vec3::new(0.0, 1.2, 0.0), 0.0, 0.0);
-            app.physics
-                .world
-                .as_mut()
-                .expect("physics world")
-                .set_world_mesh(moho_render_api::WorldMeshId(1), &floor());
-            app.physics.spawn_player(glam::Vec3::new(0.0, 1.2, 0.0));
-            hold(&mut app, StrategyAction::MoveForward);
-            hold(&mut app, StrategyAction::Jump);
-            app
-        }
+        assert_eq!(ticks, TICKS, "frames deliver exactly the requested ticks");
+        (app.simulation.position(), highest)
+    }
 
-        /// Position after `TICKS` ticks delivered in frames of `1 / fps` s, and the highest point reached.
-        fn drive_at(fps: u64) -> (glam::Vec3, f32) {
-            let mut app = walking_app();
-            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
-            // Rounded up so the integer accumulator never lands one tick short.
-            let frame = Duration::from_nanos(1_000_000_000u64.div_ceil(fps));
-            let mut ticks = 0;
-            let mut highest = f32::MIN;
+    #[test]
+    fn walking_and_jumping_end_at_the_same_position_at_30_60_and_144_fps() {
+        let (at_60, highest) = drive_at(60);
 
-            while ticks < TICKS {
-                ticks += sim.advance(&mut app, frame);
-                highest = highest.max(app.simulation.position().y);
-            }
+        let (at_30, _) = drive_at(30);
+        let (at_144, _) = drive_at(144);
 
-            assert_eq!(ticks, TICKS, "frames deliver exactly the requested ticks");
-            (app.simulation.position(), highest)
-        }
-
-        #[test]
-        fn walking_and_jumping_end_at_the_same_position_at_30_60_and_144_fps() {
-            let (at_60, highest) = drive_at(60);
-
-            let (at_30, _) = drive_at(30);
-            let (at_144, _) = drive_at(144);
-
-            assert!(at_60.z > 2.0, "the player walked forward: {at_60:?}");
-            assert!(highest > 1.5, "the player jumped: highest {highest}");
-            assert!(
-                at_30.distance(at_60) < 1e-4,
-                "30 fps {at_30:?} vs 60 fps {at_60:?}"
-            );
-            assert!(
-                at_144.distance(at_60) < 1e-4,
-                "144 fps {at_144:?} vs 60 fps {at_60:?}"
-            );
-        }
+        assert!(at_60.z > 2.0, "the player walked forward: {at_60:?}");
+        assert!(highest > 1.5, "the player jumped: highest {highest}");
+        assert!(
+            at_30.distance(at_60) < 1e-4,
+            "30 fps {at_30:?} vs 60 fps {at_60:?}"
+        );
+        assert!(
+            at_144.distance(at_60) < 1e-4,
+            "144 fps {at_144:?} vs 60 fps {at_60:?}"
+        );
     }
 
     use moho_app::{EventContext, FrameContext};

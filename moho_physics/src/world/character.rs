@@ -634,13 +634,13 @@ mod tests {
     #[test]
     fn running_at_45_degrees_keeps_speed_along_the_wall() {
         let (mut world, h) = standing_on_floor();
-        world.set_world_mesh(WorldMeshId(1), &wall_mesh(5.0));
+        world.set_world_mesh(WorldMeshId(1), &wall_mesh(2.0));
         let along = 4.0 * std::f32::consts::FRAC_1_SQRT_2;
         world
             .add_character_velocity(h, Vec3::new(along, 0.0, along))
             .unwrap();
 
-        let impacts = run(&mut world, h, &frictionless(), 60);
+        let impacts = run(&mut world, h, &frictionless(), 90);
 
         assert_eq!(impacts.len(), 1, "{impacts:?}");
         assert!((impacts[0].speed - 2.83).abs() < 1e-2, "{:?}", impacts[0]);

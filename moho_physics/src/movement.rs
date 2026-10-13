@@ -170,21 +170,29 @@ mod tests {
 
         #[test]
         fn right_input_moves_along_the_strategy_right_vector() {
-            let mut state = state_at(Vec3::ZERO, Vec3::new(-4.0, 0.0, 0.0), true);
+            let cases = [
+                (0.0, Vec3::new(-4.0, 0.0, 0.0)),
+                (std::f32::consts::FRAC_PI_2, Vec3::new(0.0, 0.0, 4.0)),
+            ];
             let command = CharacterCommand {
                 right: 1.0,
                 ..CharacterCommand::default()
             };
 
-            for _ in 0..60 {
-                walk(&mut state, &command, &test_settings());
-            }
+            for (yaw, right) in cases {
+                let mut state = state_at(Vec3::ZERO, right, true);
+                state.yaw = yaw;
 
-            assert!(
-                (state.position - Vec3::new(-4.0, 0.0, 0.0)).length() < 1e-3,
-                "yaw 0 has right = -X, {:?}",
-                state.position
-            );
+                for _ in 0..60 {
+                    walk(&mut state, &command, &test_settings());
+                }
+
+                assert!(
+                    (state.position - right).length() < 1e-3,
+                    "yaw {yaw} has right = {right:?}, got {:?}",
+                    state.position
+                );
+            }
         }
 
         #[test]
@@ -385,10 +393,11 @@ mod tests {
                 ..CharacterCommand::default()
             };
             let wish = Vec3::new(-1.0, 0.0, 0.0);
-            let mut previous = 0.0;
-            let mut largest_gain: f32 = 0.0;
-
-            for _ in 0..120 {
+            drift(&mut state, &command);
+            let first_gain = state.velocity.dot(wish);
+            let mut previous = first_gain;
+            let mut largest_gain = first_gain;
+            for _ in 1..120 {
                 drift(&mut state, &command);
                 let along = state.velocity.dot(wish);
                 largest_gain = largest_gain.max(along - previous);
@@ -396,9 +405,37 @@ mod tests {
                 assert!(along <= 0.8 + 1e-4, "along-wish speed {along}");
             }
 
+            assert!(
+                (first_gain - 10.0 / 60.0).abs() < 1e-4,
+                "air accel adds air_accel * dt from rest: {first_gain}"
+            );
             assert!(largest_gain > 0.0, "air control does something");
             assert!(largest_gain <= 0.8 + 1e-4, "gain {largest_gain}");
             assert!((previous - 0.8).abs() < 1e-3, "reaches the cap: {previous}");
+        }
+
+        #[test]
+        fn air_cap_limits_speed_along_the_wish_not_total_speed() {
+            let mut state = state_at(Vec3::new(0.0, 50.0, 0.0), Vec3::new(0.0, 0.0, 6.0), false);
+            let command = CharacterCommand {
+                right: 1.0,
+                ..CharacterCommand::default()
+            };
+
+            for _ in 0..120 {
+                drift(&mut state, &command);
+            }
+
+            assert!(
+                (state.velocity.x + 0.8).abs() < 1e-3,
+                "{:?}",
+                state.velocity
+            );
+            assert!(
+                (state.velocity.z - 6.0).abs() < 1e-4,
+                "{:?}",
+                state.velocity
+            );
         }
 
         #[test]
@@ -471,8 +508,9 @@ mod tests {
         fn grounded_without_jump_command_stays_on_the_ground() {
             let mut state = standing();
 
-            walk(&mut state, &CharacterCommand::default(), &test_settings());
+            let impacts = walk(&mut state, &CharacterCommand::default(), &test_settings());
 
+            assert!(impacts.is_empty(), "{impacts:?}");
             assert!(state.grounded);
             assert_eq!(state.velocity.y, 0.0);
             assert_eq!(state.position.y, 0.0);
@@ -663,6 +701,61 @@ mod tests {
             assert!(impacts.is_empty(), "{impacts:?}");
             assert!(
                 (state.velocity.z - 3.0).abs() < 1e-6,
+                "{:?}",
+                state.velocity
+            );
+        }
+
+        #[test]
+        fn step_up_lift_with_a_riser_hit_reports_nothing_and_keeps_velocity() {
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 3.0), true);
+
+            let impacts = step(
+                &mut state,
+                &CharacterCommand::default(),
+                &frictionless(),
+                DT,
+                |asked| Slide {
+                    translation: asked + Vec3::new(0.0, 0.45, 0.0),
+                    grounded: true,
+                    hits: vec![(collider(), wall_normal())],
+                },
+            );
+
+            assert!(impacts.is_empty(), "{impacts:?}");
+            assert!(
+                (state.velocity.z - 3.0).abs() < 1e-6,
+                "{:?}",
+                state.velocity
+            );
+        }
+
+        #[test]
+        fn corner_with_two_blocking_normals_on_one_collider_reports_both() {
+            let mut state = state_at(Vec3::ZERO, Vec3::new(3.0, 0.0, 3.0), true);
+
+            let impacts = step(
+                &mut state,
+                &CharacterCommand::default(),
+                &frictionless(),
+                DT,
+                |_| Slide {
+                    translation: Vec3::ZERO,
+                    grounded: true,
+                    hits: vec![
+                        (collider(), Vec3::new(0.0, 0.0, -1.0)),
+                        (collider(), Vec3::new(-1.0, 0.0, 0.0)),
+                    ],
+                },
+            );
+
+            assert_eq!(impacts.len(), 2, "{impacts:?}");
+            assert!(
+                impacts.iter().all(|i| (i.speed - 3.0).abs() < 1e-4),
+                "{impacts:?}"
+            );
+            assert!(
+                horizontal(state.velocity).length() < 1e-4,
                 "{:?}",
                 state.velocity
             );
