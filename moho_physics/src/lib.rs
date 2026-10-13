@@ -7,5 +7,6 @@ pub use movement::{step, CharacterCommand, Impact, MoveSettings, Slide, PITCH_LI
 pub use rapier3d::dynamics::RigidBodyHandle;
 pub use rapier3d::geometry::ColliderHandle;
 pub use world::{
-    CharacterHandle, CharacterState, HitTag, PhysicsWorld, RayHit, RayQuery, UnknownCharacter,
+    CharacterHandle, CharacterState, HitTag, HitVolume, PhysicsWorld, RayHit, RayQuery,
+    UnknownCharacter,
 };

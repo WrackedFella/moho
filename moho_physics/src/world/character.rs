@@ -1,9 +1,11 @@
+use super::query::{encode_tag, HitTag};
 use super::slide::Slider;
 use super::PhysicsWorld;
 use crate::movement::{self, CharacterCommand, Impact, MoveSettings};
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use rapier3d::prelude::{
-    ColliderBuilder, ColliderHandle, Pose, QueryFilter, RigidBodyBuilder, RigidBodyHandle,
+    ColliderBuilder, ColliderHandle, InteractionGroups, Pose, QueryFilter, RigidBodyBuilder,
+    RigidBodyHandle,
 };
 
 /// Opaque identity of one character in a [`PhysicsWorld`].
@@ -26,6 +28,18 @@ pub struct CharacterState {
     pub pitch: f32,
     /// Standing on walkable ground after the last tick.
     pub grounded: bool,
+}
+
+/// A box in the character's body frame, rotated by its facing about +Y, offset from the
+/// capsule centre.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HitVolume {
+    /// Box centre relative to the capsule centre, in the body frame.
+    pub offset: Vec3,
+    /// Box half-sizes along the body frame's axes.
+    pub half_extents: Vec3,
+    /// Tag reported when a ray hits this volume.
+    pub tag: HitTag,
 }
 
 /// The handle names a character that was removed.
@@ -64,11 +78,11 @@ impl Character {
 }
 
 impl PhysicsWorld {
-    /// Move the character's body to `position`, as both the next and the current pose so the
-    /// value is available immediately.
-    fn place_body(&mut self, handle: CharacterHandle, position: Vec3) {
+    /// Move the character's body to `position`, facing `yaw`, as both the next and the current
+    /// pose so the value is available immediately.
+    fn place_body(&mut self, handle: CharacterHandle, position: Vec3, yaw: f32) {
         let body = &mut self.rigid_body_set[handle.0];
-        let pose = Pose::from_parts(position, body.position().rotation);
+        let pose = Pose::from_parts(position, Quat::from_rotation_y(yaw));
         body.set_next_kinematic_position(pose);
         body.set_position(pose, false);
     }
@@ -104,6 +118,36 @@ impl PhysicsWorld {
         handle
     }
 
+    /// Attach a hit volume to the character's body.
+    ///
+    /// The volume follows the body when the world steps, never blocks movement or props, and
+    /// is removed with the character.
+    ///
+    /// # Errors
+    /// [`UnknownCharacter`] if `handle` was removed.
+    pub fn add_hit_volume(
+        &mut self,
+        handle: CharacterHandle,
+        volume: HitVolume,
+    ) -> Result<(), UnknownCharacter> {
+        if !self.characters.contains_key(&handle) {
+            return Err(UnknownCharacter);
+        }
+        let collider = ColliderBuilder::cuboid(
+            volume.half_extents.x,
+            volume.half_extents.y,
+            volume.half_extents.z,
+        )
+        .translation(volume.offset)
+        .sensor(true)
+        .collision_groups(InteractionGroups::none())
+        .user_data(encode_tag(volume.tag))
+        .build();
+        self.collider_set
+            .insert_with_parent(collider, handle.0, &mut self.rigid_body_set);
+        Ok(())
+    }
+
     /// Remove the character's body and capsule.
     ///
     /// # Errors
@@ -124,6 +168,8 @@ impl PhysicsWorld {
 
     /// Run one tick of movement for the character and return the impacts it took.
     ///
+    /// Sensors, hit volumes among them, never block the slide.
+    ///
     /// # Errors
     /// [`UnknownCharacter`] if `handle` was removed.
     pub fn move_character(
@@ -139,8 +185,11 @@ impl PhysicsWorld {
         let mut state = character.state(pose.translation);
         let was_grounded = state.grounded;
 
-        // Transient QueryPipeline view that excludes only this character's capsule.
-        let filter = QueryFilter::default().exclude_collider(collider_handle);
+        // Transient QueryPipeline view without this character's capsule and hit volumes, nor
+        // any other character's hit volumes; capsules still meet capsules.
+        let filter = QueryFilter::default()
+            .exclude_rigid_body(handle.0)
+            .exclude_sensors();
         let queries = self.broad_phase.as_query_pipeline(
             self.narrow_phase.query_dispatcher(),
             &self.rigid_body_set,
@@ -162,7 +211,7 @@ impl PhysicsWorld {
             .get_mut(&handle)
             .expect("the handle was found at the start of this call")
             .store(&state);
-        self.place_body(handle, state.position);
+        self.place_body(handle, state.position, state.yaw);
         Ok(impacts)
     }
 
@@ -177,7 +226,8 @@ impl PhysicsWorld {
     ) -> Result<(), UnknownCharacter> {
         let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
         character.velocity = Vec3::ZERO;
-        self.place_body(handle, position);
+        let yaw = character.yaw;
+        self.place_body(handle, position, yaw);
         Ok(())
     }
 
@@ -210,6 +260,8 @@ impl PhysicsWorld {
         let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
         character.yaw = yaw;
         character.pitch = pitch;
+        let position = self.rigid_body_set[handle.0].position().translation;
+        self.place_body(handle, position, yaw);
         Ok(())
     }
 
@@ -226,6 +278,7 @@ mod tests {
     use super::super::test_support::{
         floor_mesh, quad_mesh, stairs_mesh, step_box_mesh, test_settings, wall_mesh,
     };
+    use super::super::{HitTag, RayHit, RayQuery};
     use super::*;
     use moho_render_api::WorldMeshId;
 
@@ -1224,5 +1277,424 @@ mod tests {
         let after = state(&world, h);
         assert_eq!(after.velocity.y, 0.0);
         assert!(after.grounded, "{after:?}");
+    }
+
+    const HEAD: HitTag = HitTag(10);
+    const TORSO: HitTag = HitTag(11);
+    const ARM: HitTag = HitTag(12);
+
+    fn volume(offset: Vec3, half_extents: Vec3, tag: HitTag) -> HitVolume {
+        HitVolume {
+            offset,
+            half_extents,
+            tag,
+        }
+    }
+
+    fn attach(world: &mut PhysicsWorld, handle: CharacterHandle, volume: HitVolume) {
+        world
+            .add_hit_volume(handle, volume)
+            .expect("character is live");
+    }
+
+    fn cast(
+        world: &PhysicsWorld,
+        origin: Vec3,
+        direction: Vec3,
+        ignore: Option<CharacterHandle>,
+    ) -> Option<RayHit> {
+        world.cast_ray(&RayQuery {
+            origin,
+            direction,
+            max_distance: 20.0,
+            ignore,
+        })
+    }
+
+    /// A head above a torso, both centred on the character.
+    fn attach_head_and_torso(world: &mut PhysicsWorld, handle: CharacterHandle) {
+        attach(
+            world,
+            handle,
+            volume(Vec3::new(0.0, 0.7, 0.0), Vec3::new(0.2, 0.15, 0.2), HEAD),
+        );
+        attach(
+            world,
+            handle,
+            volume(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.25, 0.4, 0.15), TORSO),
+        );
+    }
+
+    #[test]
+    fn ray_at_head_height_hits_the_head_volume() {
+        let (mut world, h) = standing_on_floor();
+        attach_head_and_torso(&mut world, h);
+        world.step(DT);
+        let at = state(&world, h).position;
+
+        let head = cast(&world, at + Vec3::new(-3.0, 0.7, 0.0), Vec3::X, None);
+        let torso = cast(&world, at + Vec3::new(-3.0, 0.1, 0.0), Vec3::X, None);
+
+        let head = head.expect("a ray level with the head hits it");
+        assert_eq!(head.tag, HEAD);
+        assert!((head.distance - 2.8).abs() < 0.02, "{head:?}");
+        assert_eq!(torso.map(|hit| hit.tag), Some(TORSO));
+    }
+
+    #[test]
+    fn volumes_follow_the_character_when_it_moves() {
+        let (mut world, h) = standing_on_floor();
+        attach_head_and_torso(&mut world, h);
+        world.step(DT);
+        let start = state(&world, h).position;
+        let walk_east = CharacterCommand {
+            forward: 1.0,
+            yaw_delta: std::f32::consts::FRAC_PI_2,
+            ..idle()
+        };
+        let forward = CharacterCommand {
+            yaw_delta: 0.0,
+            ..walk_east
+        };
+
+        let mut command = walk_east;
+        for _ in 0..200 {
+            if state(&world, h).position.x >= start.x + 3.0 {
+                break;
+            }
+            world
+                .move_character(h, &command, &test_settings(), DT)
+                .unwrap();
+            world.step(DT);
+            command = forward;
+        }
+
+        let at = state(&world, h).position;
+        assert!(at.x >= start.x + 3.0, "walked 3 m along X: {at:?}");
+        let new_head = cast(&world, at + Vec3::new(0.0, 0.7, -3.0), Vec3::Z, None);
+        let old_head = cast(&world, start + Vec3::new(0.0, 0.7, -3.0), Vec3::Z, None);
+        assert_eq!(new_head.map(|hit| hit.tag), Some(HEAD), "at {at:?}");
+        assert_eq!(old_head, None, "nothing is left where the head was");
+    }
+
+    #[test]
+    fn volumes_turn_with_the_character() {
+        let (mut world, h) = standing_on_floor();
+        attach(
+            &mut world,
+            h,
+            volume(Vec3::new(0.4, 0.0, 0.0), Vec3::new(0.1, 0.3, 0.1), ARM),
+        );
+        world.step(DT);
+        let at = state(&world, h).position;
+        let from_original_side = at + Vec3::new(3.0, 0.0, 0.0);
+        let from_opposite_side = at + Vec3::new(-3.0, 0.0, 0.0);
+        let before = cast(&world, from_original_side, -Vec3::X, None);
+        assert_eq!(before.map(|hit| hit.tag), Some(ARM), "arm starts at +X");
+
+        let turn = CharacterCommand {
+            yaw_delta: std::f32::consts::PI,
+            ..idle()
+        };
+        world
+            .move_character(h, &turn, &test_settings(), DT)
+            .unwrap();
+        world.step(DT);
+
+        // Reaches only to the capsule centre: the capsule never stops a ray, so a longer ray
+        // would go on to the arm on the far side.
+        let after_original = world.cast_ray(&RayQuery {
+            origin: from_original_side,
+            direction: -Vec3::X,
+            max_distance: 3.0,
+            ignore: None,
+        });
+        let after_opposite = cast(&world, from_opposite_side, Vec3::X, None)
+            .expect("the arm is now on the opposite side");
+        assert_eq!(after_opposite.tag, ARM);
+        assert!(
+            (after_opposite.point.x - (at.x - 0.5)).abs() < 0.02,
+            "{after_opposite:?}"
+        );
+        assert_eq!(after_original, None, "the arm left its original side");
+    }
+
+    #[test]
+    fn ray_through_a_gap_between_volumes_hits_the_wall() {
+        let (mut world, h) = standing_on_floor();
+        world.set_world_mesh(WorldMeshId(1), &wall_mesh(3.0), TEST_TAG);
+        attach(
+            &mut world,
+            h,
+            volume(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.25, 0.4, 0.15), TORSO),
+        );
+        attach(
+            &mut world,
+            h,
+            volume(Vec3::new(0.7, 0.1, 0.0), Vec3::new(0.1, 0.4, 0.15), ARM),
+        );
+        world.step(DT);
+        let at = state(&world, h).position;
+
+        let through_gap = cast(&world, at + Vec3::new(0.45, 0.1, -3.0), Vec3::Z, None);
+        let through_arm = cast(&world, at + Vec3::new(0.7, 0.1, -3.0), Vec3::Z, None);
+
+        let through_gap = through_gap.expect("the wall is behind the gap");
+        assert_eq!(through_gap.tag, TEST_TAG);
+        assert!((through_gap.point.z - 3.0).abs() < 1e-3, "{through_gap:?}");
+        assert_eq!(through_arm.map(|hit| hit.tag), Some(ARM));
+    }
+
+    #[test]
+    fn ray_ignoring_the_shooter_hits_the_other_characters_torso() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        let shooter = world.add_character(Vec3::new(0.0, 1.2, -2.0));
+        let target = world.add_character(Vec3::new(0.0, 1.2, 2.0));
+        settle_on_floor(&mut world, &[shooter, target]);
+        attach(
+            &mut world,
+            shooter,
+            volume(Vec3::new(0.0, 0.7, 0.0), Vec3::new(0.2, 0.3, 0.2), HEAD),
+        );
+        attach(
+            &mut world,
+            target,
+            volume(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.25, 0.4, 0.15), TORSO),
+        );
+        attach(
+            &mut world,
+            target,
+            volume(Vec3::new(0.0, 0.95, 0.0), Vec3::new(0.2, 0.2, 0.2), ARM),
+        );
+        world.step(DT);
+        let muzzle = state(&world, shooter).position + Vec3::new(0.0, 0.45, 0.0);
+
+        let ignoring = cast(&world, muzzle, Vec3::Z, Some(shooter));
+
+        let ignoring = ignoring.expect("the target's torso is in line");
+        assert_eq!(ignoring.tag, TORSO);
+        assert!((ignoring.distance - 3.85).abs() < 0.02, "{ignoring:?}");
+    }
+
+    #[test]
+    fn overlapping_volumes_do_not_stop_a_walking_character() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        let walker = world.add_character(Vec3::new(0.0, 1.2, -1.5));
+        let standing = world.add_character(Vec3::new(0.0, 1.2, 1.5));
+        settle_on_floor(&mut world, &[walker, standing]);
+        let reach = Vec3::new(0.3, 0.4, 0.3);
+        attach(
+            &mut world,
+            walker,
+            volume(Vec3::new(0.0, 0.0, 0.8), reach, ARM),
+        );
+        attach(
+            &mut world,
+            standing,
+            volume(Vec3::new(0.0, 0.0, -0.8), reach, ARM),
+        );
+        world.step(DT);
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..idle()
+        };
+
+        trace(&mut world, walker, &forward, &test_settings(), 150);
+
+        let gap = state(&world, standing).position.z - state(&world, walker).position.z;
+        assert!(
+            (gap - 0.6).abs() < 0.08,
+            "capsules of radius 0.3 meet with centres 0.6 apart, gap={gap}"
+        );
+    }
+
+    #[test]
+    fn removing_a_character_removes_its_volumes() {
+        let mut world = PhysicsWorld::new();
+        let colliders = world.collider_set.len();
+        let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
+        attach_head_and_torso(&mut world, h);
+        world.step(DT);
+        let head_ray = |world: &PhysicsWorld| cast(world, Vec3::new(-3.0, 1.9, 0.0), Vec3::X, None);
+        assert_eq!(head_ray(&world).map(|hit| hit.tag), Some(HEAD));
+
+        world.remove_character(h).unwrap();
+        world.step(DT);
+
+        assert_eq!(head_ray(&world), None);
+        assert_eq!(world.collider_set.len(), colliders);
+    }
+
+    #[test]
+    fn adding_a_volume_to_a_removed_character_is_refused() {
+        let mut world = PhysicsWorld::new();
+        let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
+        world.remove_character(h).unwrap();
+        let colliders = world.collider_set.len();
+
+        let added = world.add_hit_volume(h, volume(Vec3::ZERO, Vec3::splat(0.2), HEAD));
+
+        assert_eq!(added, Err(UnknownCharacter));
+        assert_eq!(world.collider_set.len(), colliders);
+    }
+
+    #[test]
+    fn a_characters_own_volumes_do_not_block_its_movement() {
+        let (mut world, h) = standing_on_floor();
+        let start = state(&world, h).position;
+        attach(
+            &mut world,
+            h,
+            volume(Vec3::new(0.0, 0.0, 0.52), Vec3::new(0.2, 0.3, 0.2), ARM),
+        );
+        world.step(DT);
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..idle()
+        };
+
+        trace(&mut world, h, &forward, &test_settings(), 30);
+
+        let advanced = state(&world, h).position.z - start.z;
+        assert!(
+            advanced > 1.5,
+            "30 ticks at 4 m/s covers about 1.9 m, advanced={advanced}"
+        );
+    }
+
+    #[test]
+    fn a_falling_prop_passes_through_a_hit_volume() {
+        let mut world = PhysicsWorld::new();
+        let h = world.add_character(Vec3::new(0.0, 5.0, 0.0));
+        attach(
+            &mut world,
+            h,
+            volume(Vec3::new(2.0, 0.0, 0.0), Vec3::new(1.0, 0.5, 1.0), TORSO),
+        );
+        // Beside the capsule, so only the volume is under the prop.
+        let prop = world.add_dynamic_sphere(Vec3::new(2.0, 8.0, 0.0), 0.2);
+
+        for _ in 0..90 {
+            world.step(DT);
+        }
+
+        let y = world.body_position(prop).expect("prop is live").y;
+        assert!(
+            y < 4.0,
+            "the prop fell through the volume (4.5..5.5), y={y}"
+        );
+    }
+
+    #[test]
+    fn ray_starting_inside_an_unignored_volume_hits_it_at_zero_distance() {
+        let (mut world, h) = standing_on_floor();
+        attach_head_and_torso(&mut world, h);
+        world.step(DT);
+        let inside = state(&world, h).position + Vec3::new(0.0, 0.7, 0.0);
+
+        let hit = cast(&world, inside, Vec3::X, None);
+
+        let hit = hit.expect("a muzzle inside a volume hits it");
+        assert_eq!(hit.tag, HEAD);
+        assert!(hit.distance.abs() < 1e-4, "{hit:?}");
+    }
+
+    /// An arm at +X before any turn, with the rays that find it on either side.
+    fn arm_on_plus_x() -> (PhysicsWorld, CharacterHandle) {
+        let (mut world, h) = standing_on_floor();
+        attach(
+            &mut world,
+            h,
+            volume(Vec3::new(0.4, 0.0, 0.0), Vec3::new(0.1, 0.3, 0.1), ARM),
+        );
+        world.step(DT);
+        (world, h)
+    }
+
+    /// The x of the arm's face seen from -X, or `None` when no arm is on that side.
+    fn arm_face_from_minus_x(world: &PhysicsWorld, h: CharacterHandle) -> Option<f32> {
+        let at = state(world, h).position;
+        let hit = world.cast_ray(&RayQuery {
+            origin: at + Vec3::new(-3.0, 0.0, 0.0),
+            direction: Vec3::X,
+            max_distance: 3.0,
+            ignore: None,
+        })?;
+        (hit.tag == ARM).then_some(hit.point.x - at.x)
+    }
+
+    #[test]
+    fn setting_the_look_turns_the_volumes() {
+        let (mut world, h) = arm_on_plus_x();
+
+        world
+            .set_character_look(h, std::f32::consts::PI, 0.0)
+            .unwrap();
+        world.step(DT);
+
+        let face = arm_face_from_minus_x(&world, h).expect("the arm turned to -X");
+        assert!((face + 0.5).abs() < 0.02, "face at {face}");
+    }
+
+    #[test]
+    fn teleporting_keeps_the_volumes_facing() {
+        let (mut world, h) = arm_on_plus_x();
+        world
+            .set_character_look(h, std::f32::consts::PI, 0.0)
+            .unwrap();
+
+        world
+            .set_character_position(h, Vec3::new(2.0, 1.2, 0.0))
+            .unwrap();
+        world.step(DT);
+
+        let face = arm_face_from_minus_x(&world, h).expect("the arm stays at -X");
+        assert!((face + 0.5).abs() < 0.02, "face at {face}");
+    }
+
+    #[test]
+    fn looking_up_does_not_tilt_the_volumes() {
+        let (mut world, h) = standing_on_floor();
+        attach_head_and_torso(&mut world, h);
+        world.step(DT);
+        let look_up = CharacterCommand {
+            pitch_delta: 1.0,
+            ..idle()
+        };
+
+        world
+            .move_character(h, &look_up, &test_settings(), DT)
+            .unwrap();
+        world.step(DT);
+
+        assert!(state(&world, h).pitch > 0.5, "{:?}", state(&world, h));
+        let at = state(&world, h).position;
+        let head = cast(&world, at + Vec3::new(-3.0, 0.7, 0.0), Vec3::X, None);
+        let head = head.expect("the head stays level with where it was");
+        assert_eq!(head.tag, HEAD);
+        assert!((head.distance - 2.8).abs() < 0.02, "{head:?}");
+    }
+
+    #[test]
+    fn a_quarter_turn_swings_a_forward_volume_toward_plus_x() {
+        let (mut world, h) = standing_on_floor();
+        attach(
+            &mut world,
+            h,
+            volume(Vec3::new(0.0, 0.0, 0.4), Vec3::new(0.1, 0.3, 0.1), ARM),
+        );
+
+        world
+            .set_character_look(h, std::f32::consts::FRAC_PI_2, 0.0)
+            .unwrap();
+        world.step(DT);
+
+        let at = state(&world, h).position;
+        let hit = cast(&world, at + Vec3::new(3.0, 0.0, 0.0), -Vec3::X, None)
+            .expect("yaw pi/2 faces +X, so the forward arm is there");
+        assert_eq!(hit.tag, ARM);
+        assert!((hit.point.x - (at.x + 0.5)).abs() < 0.02, "{hit:?}");
     }
 }

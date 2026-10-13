@@ -14,7 +14,7 @@ mod slide;
 pub(crate) mod test_support;
 
 use character::Character;
-pub use character::{CharacterHandle, CharacterState, UnknownCharacter};
+pub use character::{CharacterHandle, CharacterState, HitVolume, UnknownCharacter};
 pub use query::{HitTag, RayHit, RayQuery};
 
 pub struct PhysicsWorld {
