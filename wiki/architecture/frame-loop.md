@@ -49,7 +49,7 @@ sequenceDiagram
     T->>T: clock time scale = 1 if Playing, else 0
     T->>Bus: SystemEvent::FrameStart
     T->>Sim: apply command, update_game_state (Playing only)
-    Note over Sim: controller input → camera,<br/>KCC or free-fly, step rigid bodies
+    Note over Sim: KCC: command → physics character (look + move) → camera;<br/>free-fly: controller input → camera;<br/>step rigid bodies
     T->>LS: update_chunk_streaming
     Note over LS: evict / load chunks,<br/>publish WorldEvent::ChunkMeshDirty
     T->>LS: update_light_system (budgeted)
