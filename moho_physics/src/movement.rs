@@ -86,9 +86,7 @@ const REST_SPEED: f32 = 1e-3;
 /// Add up to `accel * dt` of speed along `wish`, never pushing the speed along it past `limit`.
 fn accelerate(velocity: &mut Vec3, wish: Vec3, limit: f32, accel: f32, dt: f32) {
     let gap = limit - velocity.dot(wish);
-    if gap > 0.0 {
-        *velocity += wish * gap.min(accel * dt);
-    }
+    *velocity += wish * gap.min(accel * dt).max(0.0);
 }
 
 /// Friction on the horizontal speed, then acceleration toward the wished ground velocity.
@@ -926,6 +924,61 @@ mod tests {
             );
 
             assert_eq!(impacts.len(), 1, "{impacts:?}");
+        }
+
+        #[test]
+        fn landing_beside_a_wall_the_slide_was_not_stopped_by_reports_no_wall_impact() {
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, -2.0, 3.0), false);
+
+            let impacts = step(
+                &mut state,
+                &CharacterCommand::default(),
+                &frictionless(),
+                DT,
+                |asked| Slide {
+                    translation: asked,
+                    grounded: true,
+                    hits: vec![(collider(), wall_normal())],
+                },
+            );
+
+            assert!(impacts.is_empty(), "{impacts:?}");
+            assert_eq!(state.velocity.z, 3.0);
+        }
+
+        #[test]
+        fn moving_short_by_exactly_the_tolerance_is_not_blocked() {
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 30.0), false);
+
+            let impacts = step(
+                &mut state,
+                &CharacterCommand::default(),
+                &frictionless(),
+                DT,
+                |asked| Slide {
+                    translation: asked.with_z(-(asked.dot(wall_normal()) + BLOCKED_EPSILON)),
+                    grounded: false,
+                    hits: vec![(collider(), wall_normal())],
+                },
+            );
+
+            assert!(impacts.is_empty(), "{impacts:?}");
+            assert_eq!(state.velocity.z, 30.0);
+        }
+
+        #[test]
+        fn surface_the_asked_motion_runs_along_does_not_block_velocity_turned_into_it() {
+            let mut velocity = Vec3::new(1.0, 0.0, -1.0);
+            let slid = Slide {
+                translation: Vec3::new(0.1, 0.0, 0.01),
+                grounded: true,
+                hits: vec![(collider(), Vec3::Z)],
+            };
+
+            let impacts = clip(&mut velocity, Vec3::new(0.1, 0.0, 0.0), &slid, false, false);
+
+            assert!(impacts.is_empty(), "{impacts:?}");
+            assert_eq!(velocity, Vec3::new(1.0, 0.0, -1.0));
         }
 
         #[test]
