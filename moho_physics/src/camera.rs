@@ -1,3 +1,5 @@
+//! First-person camera built from a character's eye and look direction.
+
 use crate::world::CharacterState;
 use glam::{Mat4, Vec3};
 
@@ -11,7 +13,7 @@ pub struct FirstPersonView {
 impl FirstPersonView {
     /// Right-handed view matrix, +Y up.
     pub fn view_matrix(&self) -> Mat4 {
-        todo!("look_at from the eye along forward")
+        glam::camera::rh::view::look_at_mat4(self.eye, self.eye + self.forward, Vec3::Y)
     }
 }
 
@@ -23,8 +25,12 @@ pub fn first_person_view(
     eye_height: f32,
     alpha: f32,
 ) -> FirstPersonView {
-    let _ = (previous, current, eye_height, alpha);
-    todo!("blend the eye and read the look from the current tick")
+    let (yaw_sin, yaw_cos) = current.yaw.sin_cos();
+    let (pitch_sin, pitch_cos) = current.pitch.sin_cos();
+    FirstPersonView {
+        eye: previous.position.lerp(current.position, alpha) + Vec3::Y * eye_height,
+        forward: Vec3::new(yaw_sin * pitch_cos, pitch_sin, yaw_cos * pitch_cos),
+    }
 }
 
 #[cfg(test)]
@@ -85,6 +91,19 @@ mod tests {
 
         assert!(
             view.eye.distance(Vec3::new(0.5, 1.6, 0.0)) < EPS,
+            "{view:?}"
+        );
+    }
+
+    #[test]
+    fn zero_alpha_puts_eye_at_previous_tick() {
+        let previous = state_at(Vec3::ZERO, 0.0, 0.0);
+        let current = state_at(Vec3::new(1.0, 0.0, 0.0), 0.0, 0.0);
+
+        let view = first_person_view(&previous, &current, 1.6, 0.0);
+
+        assert!(
+            view.eye.distance(Vec3::new(0.0, 1.6, 0.0)) < EPS,
             "{view:?}"
         );
     }
