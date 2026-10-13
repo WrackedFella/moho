@@ -599,4 +599,92 @@ mod tests {
             );
         }
     }
+
+    fn floor_mesh() -> moho_render_api::WorldMesh {
+        moho_render_api::WorldMesh::new(
+            vec![
+                [-50.0, 0.0, -50.0],
+                [50.0, 0.0, -50.0],
+                [-50.0, 0.0, 50.0],
+                [50.0, 0.0, 50.0],
+            ],
+            vec![[0.0, 1.0, 0.0]; 4],
+            vec![1.0; 4],
+            vec![[0.0; 3]; 4],
+            vec![1.0; 4],
+            vec![0; 4],
+            vec![0, 2, 1, 1, 2, 3],
+        )
+        .expect("valid floor mesh")
+    }
+
+    /// Walks forward on a floor until at speed, jumps for one tick, and returns the
+    /// horizontal speed on every airborne tick that follows.
+    fn airborne_speeds_after_jumping_while_walking(sprint: bool) -> Vec<f32> {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
+        app.physics
+            .world
+            .as_mut()
+            .expect("physics world")
+            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor_mesh());
+        app.physics.spawn_player(glam::Vec3::new(0.0, 1.2, 0.0));
+        let frame_processor = FrameProcessor::new();
+        for _ in 0..120 {
+            frame_processor.update_game_state(&mut app, DT);
+        }
+        let input = app.simulation.controller_input_mut();
+        input.forward = 1.0;
+        input.sprint = sprint;
+        for _ in 0..30 {
+            frame_processor.update_game_state(&mut app, DT);
+        }
+        app.physics.jump_pressed = true;
+        let player = app.physics.player.expect("player");
+        let mut speeds = Vec::new();
+
+        for tick in 0..20 {
+            frame_processor.update_game_state(&mut app, DT);
+            app.physics.jump_pressed = false;
+            let state = app
+                .physics
+                .world
+                .as_ref()
+                .expect("physics world")
+                .character(player)
+                .expect("player resolves");
+            if !state.grounded {
+                speeds.push(glam::Vec2::new(state.velocity.x, state.velocity.z).length());
+            }
+            assert!(
+                tick > 0 || !state.grounded,
+                "the jump tick leaves the ground"
+            );
+        }
+        speeds
+    }
+
+    #[test]
+    fn jumping_while_walking_keeps_walking_speed_in_the_air() {
+        let speeds = airborne_speeds_after_jumping_while_walking(false);
+
+        assert!(speeds.len() > 10, "stayed airborne: {speeds:?}");
+        assert!(
+            speeds.iter().all(|s| *s <= 4.0 + 1e-3),
+            "air speeds {speeds:?}"
+        );
+    }
+
+    #[test]
+    fn jumping_while_sprinting_keeps_sprint_speed_in_the_air() {
+        let speeds = airborne_speeds_after_jumping_while_walking(true);
+
+        assert!(speeds.len() > 10, "stayed airborne: {speeds:?}");
+        assert!(
+            speeds.iter().all(|s| (*s - 6.0).abs() <= 1e-2),
+            "air speeds {speeds:?}"
+        );
+    }
 }

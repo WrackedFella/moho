@@ -1069,4 +1069,36 @@ mod tests {
 
         assert_rose_by_jump_velocity(&before, &after);
     }
+
+    #[test]
+    fn walking_onto_a_half_metre_step_reports_no_impact_and_keeps_walking_speed() {
+        let (mut world, h) = standing_on_floor();
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45));
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..idle()
+        };
+        let mut impacts = Vec::new();
+        let mut fastest: f32 = 0.0;
+
+        for _ in 0..60 {
+            let tick = world
+                .move_character(h, &forward, &strategy_settings(), DT)
+                .unwrap();
+            world.step(DT);
+            impacts.extend(tick.into_iter().filter(|i| i.speed > 0.5));
+            let v = state(&world, h).velocity;
+            fastest = fastest.max(Vec3::new(v.x, 0.0, v.z).length());
+        }
+
+        let after = state(&world, h);
+        assert!(impacts.is_empty(), "{impacts:?}");
+        assert!(fastest <= 4.0 + 1e-3, "fastest horizontal speed {fastest}");
+        assert!(
+            (after.position.y - (0.45 + 1.15)).abs() < 0.1,
+            "{:?}",
+            after.position
+        );
+        assert!(after.grounded, "{after:?}");
+    }
 }
