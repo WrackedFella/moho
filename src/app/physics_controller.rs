@@ -11,6 +11,8 @@ pub struct PhysicsController {
     pub jump_pressed: bool,
     pub player: Option<moho_physics::CharacterHandle>,
     pub noclip: bool,
+    /// The player's state before the latest tick, for blending the view.
+    pub previous: Option<moho_physics::CharacterState>,
 }
 
 impl PhysicsController {
@@ -21,6 +23,7 @@ impl PhysicsController {
             jump_pressed: false,
             player: None,
             noclip: false,
+            previous: None,
         }
     }
 
@@ -462,6 +465,19 @@ mod tests {
         let state = player_state(&controller);
         assert!(state.position.distance(target) < 1e-4, "{state:?}");
         assert_eq!(state.velocity, glam::Vec3::ZERO);
+    }
+
+    #[test]
+    fn teleport_resets_previous_state() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        for _ in 0..10 {
+            controller.move_character(&idle(), &strategy_settings(), DT);
+        }
+
+        controller.teleport_character(glam::Vec3::new(3.0, 20.0, -4.0));
+
+        assert_eq!(controller.previous, Some(player_state(&controller)));
     }
 
     #[test]

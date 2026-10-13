@@ -497,6 +497,7 @@ mod tests {
         ssao_qualities: Vec<u8>,
         lightings: Vec<LightingGpu>,
         frames_begun: u32,
+        cameras: Vec<(glam::Mat4, glam::Mat4, glam::Vec3)>,
     }
 
     impl RendererBackend for FakeRenderer {
@@ -520,9 +521,10 @@ mod tests {
         fn unregister_mesh(&mut self, _mesh: u32) {}
         fn begin_frame(
             &mut self,
-            _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+            camera: (glam::Mat4, glam::Mat4, glam::Vec3),
         ) -> Result<(), FrameError> {
             self.frames_begun += 1;
+            self.cameras.push(camera);
             Ok(())
         }
         fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
@@ -576,6 +578,74 @@ mod tests {
         let mut ctx = FrameContext::new(tick(), &clock, Some(fake), None);
         Game::frame(app, &mut ctx, 0.5);
         ctx.exit_requested()
+    }
+
+    fn walker_state(app: &App) -> moho_physics::CharacterState {
+        app.physics
+            .world
+            .as_ref()
+            .expect("physics world")
+            .character(app.physics.player.expect("player"))
+            .expect("player resolves")
+    }
+
+    /// Walks `TICKS` ticks, rendering `frames_per_tick` frames after each, and returns the final state.
+    fn walk_rendering(
+        frames_per_tick: u32,
+        fake: &mut FakeRenderer,
+    ) -> moho_physics::CharacterState {
+        let mut app = walking_app();
+        let mut clock = GameClock::default();
+        for n in 0..TICKS {
+            let command = Game::command(&mut app);
+            let mut ctx = TickContext {
+                tick: u64::from(n),
+                tick_length: tick(),
+                clock: &mut clock,
+            };
+            Game::tick(&mut app, &mut ctx, &command);
+            for f in 0..frames_per_tick {
+                let alpha = f as f32 / frames_per_tick as f32;
+                let mut ctx = FrameContext::new(tick(), &clock, Some(&mut *fake), None);
+                Game::frame(&mut app, &mut ctx, alpha);
+            }
+        }
+        walker_state(&app)
+    }
+
+    #[test]
+    fn rendering_many_frames_between_ticks_leaves_the_walk_unchanged() {
+        let mut silent = FakeRenderer::default();
+        let mut rendering = FakeRenderer::default();
+
+        let without_frames = walk_rendering(0, &mut silent);
+        let with_frames = walk_rendering(10, &mut rendering);
+
+        assert_eq!(silent.frames_begun, 0);
+        assert_eq!(rendering.frames_begun, 10 * TICKS, "frames were rendered");
+        assert!(without_frames.position.z > 2.0, "the player walked");
+        assert_eq!(with_frames, without_frames);
+    }
+
+    #[test]
+    fn walking_frame_uses_the_blended_eye() {
+        let mut app = walking_app();
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        let before = walker_state(&app).position;
+        sim.step(&mut app, 1);
+        let after = walker_state(&app).position;
+        assert!(before.distance(after) > 1e-3, "the tick moved the player");
+        let mut fake = FakeRenderer::default();
+
+        run_frame(&mut app, &mut fake);
+
+        let (view, _projection, eye) = *fake.cameras.last().expect("a frame began");
+        let expected = before.lerp(after, 0.5);
+        assert!(eye.distance(expected) < 1e-4, "eye {eye:?} vs {expected:?}");
+        assert!(
+            view.transform_point3(eye).length() < 1e-4,
+            "the view matrix is centred on the eye"
+        );
     }
 
     mod command_axes {
