@@ -1,5 +1,5 @@
 use super::PhysicsWorld;
-use crate::movement::{self, CharacterCommand, Impact, MoveSettings, Slide};
+use crate::movement::{self, CharacterCommand, Impact, MoveSettings, Slide, WALKABLE_NORMAL_Y};
 use glam::Vec3;
 use rapier3d::control::{
     CharacterLength, EffectiveCharacterMovement, KinematicCharacterController,
@@ -13,8 +13,8 @@ use rapier3d::prelude::{QueryPipeline, Shape};
 /// How far below a grounded landing to look for the surface it landed on, in metres.
 const GROUND_PROBE: f32 = 0.1;
 
-/// Largest `|normal.y|` for a hit to count as a wall that may be a step riser.
-const WALL_NORMAL_Y: f32 = 0.3;
+/// Surfaces facing down at least this much (`normal.y` below its negative) are ceilings, not risers.
+const CEILING_NORMAL_Y: f32 = 0.3;
 
 /// Extra downward distance when settling onto a step top, in metres.
 const STEP_SNAP: f32 = 0.05;
@@ -229,7 +229,7 @@ impl PhysicsWorld {
             if was_grounded
                 && hits
                     .iter()
-                    .any(|(_, normal)| normal.y.abs() < WALL_NORMAL_Y)
+                    .any(|(_, normal)| normal.y < WALKABLE_NORMAL_Y && normal.y > -CEILING_NORMAL_Y)
             {
                 if let Some(stepped) = step_up(
                     controller,
@@ -351,7 +351,7 @@ impl PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::super::test_support::{
-        floor_mesh, quad_mesh, step_box_mesh, test_settings, wall_mesh,
+        floor_mesh, quad_mesh, stairs_mesh, step_box_mesh, test_settings, wall_mesh,
     };
     use super::*;
     use moho_render_api::WorldMeshId;
@@ -1071,5 +1071,82 @@ mod tests {
         assert_eq!(impacts[0].collider, floor);
         assert!((impacts[0].speed - 5.0).abs() < 0.5, "{:?}", impacts[0]);
         assert!(end.grounded, "{end:?}");
+    }
+
+    fn strategy_settings() -> MoveSettings {
+        MoveSettings {
+            max_speed: 4.0,
+            ground_accel: 360.0,
+            friction: 60.0,
+            stop_speed: 1.0,
+            air_accel: 360.0,
+            air_speed_cap: 6.0,
+            gravity: 18.0,
+            jump_speed: 8.0,
+        }
+    }
+
+    /// Holds `command` for `ticks`, collecting impacts faster than 1 m/s.
+    fn hold(
+        world: &mut PhysicsWorld,
+        handle: CharacterHandle,
+        command: &CharacterCommand,
+        ticks: usize,
+    ) -> Vec<Impact> {
+        let mut impacts = Vec::new();
+        for _ in 0..ticks {
+            let tick = world
+                .move_character(handle, command, &strategy_settings(), DT)
+                .expect("character is live");
+            impacts.extend(tick.into_iter().filter(|i| i.speed > 1.0));
+            world.step(DT);
+        }
+        impacts
+    }
+
+    #[test]
+    fn walking_up_stairs_reaches_the_top_without_impacts() {
+        let (mut world, h) = standing_on_floor();
+        world.set_world_mesh(WorldMeshId(1), &stairs_mesh(5, 0.2, 0.3, 2.0, 4.0));
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..idle()
+        };
+
+        let impacts = hold(&mut world, h, &forward, 75);
+
+        let after = state(&world, h);
+        assert!(impacts.is_empty(), "{impacts:?}");
+        assert!(
+            (after.position.y - (1.0 + 1.15)).abs() < 0.1,
+            "{:?}",
+            after.position
+        );
+        assert!(after.position.z > 2.0 + 4.0 * 0.3, "{:?}", after.position);
+        assert!(after.grounded, "{after:?}");
+    }
+
+    #[test]
+    fn walking_into_a_step_at_45_degrees_climbs_it() {
+        let (mut world, h) = standing_on_floor();
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45));
+        world
+            .set_character_look(h, std::f32::consts::FRAC_PI_4, 0.0)
+            .unwrap();
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..idle()
+        };
+
+        let impacts = hold(&mut world, h, &forward, 120);
+
+        let after = state(&world, h);
+        assert!(impacts.is_empty(), "{impacts:?}");
+        assert!(
+            (after.position.y - (0.45 + 1.15)).abs() < 0.1,
+            "{:?}",
+            after.position
+        );
+        assert!(after.grounded, "{after:?}");
     }
 }

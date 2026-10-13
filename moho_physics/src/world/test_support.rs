@@ -78,3 +78,38 @@ pub(crate) fn step_box_mesh(z_front: f32, depth: f32, height: f32) -> WorldMesh 
         ],
     )
 }
+
+/// `steps` solid boxes spanning x in [-10, 10]; step `i` has its riser at
+/// `z_start + i * tread`, top at `(i + 1) * rise`, and runs `landing` m past the last riser.
+pub(crate) fn stairs_mesh(
+    steps: u32,
+    rise: f32,
+    tread: f32,
+    z_start: f32,
+    landing: f32,
+) -> WorldMesh {
+    let z_end = z_start + (steps - 1) as f32 * tread + landing;
+    let mut verts: Vec<[f32; 3]> = Vec::new();
+    let mut idxs: Vec<u32> = Vec::new();
+    for i in 0..steps {
+        let z_front = z_start + i as f32 * tread;
+        let height = (i + 1) as f32 * rise;
+        let base = verts.len() as u32;
+        verts.extend([
+            [-10.0, 0.0, z_front],
+            [10.0, 0.0, z_front],
+            [10.0, height, z_front],
+            [-10.0, height, z_front],
+            [-10.0, 0.0, z_end],
+            [10.0, 0.0, z_end],
+            [10.0, height, z_end],
+            [-10.0, height, z_end],
+        ]);
+        let faces: [u32; 36] = [
+            0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 3, 7, 6, 3, 6, 2, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6,
+            5, 0, 1, 5, 0, 5, 4,
+        ];
+        idxs.extend(faces.iter().map(|f| base + f));
+    }
+    quad_mesh(&verts, &idxs)
+}

@@ -62,6 +62,10 @@ const BLOCKED_EPSILON: f32 = 1e-4;
 /// would otherwise read as a character pushing into the floor while walking along it.
 const MIN_OPPOSING: f32 = 0.1;
 
+/// Smallest `normal.y` of a surface a character can walk on, the cosine of rapier's default
+/// 45 degree `max_slope_climb_angle`.
+pub(crate) const WALKABLE_NORMAL_Y: f32 = std::f32::consts::FRAC_1_SQRT_2;
+
 /// Vertical speed below which a character counts as resting rather than rising.
 ///
 /// Clipping against a wall normal with a 1e-5 vertical tilt would otherwise lift a runner
@@ -134,12 +138,18 @@ pub fn step(
     }
 
     let airborne_before = !state.grounded;
+    let walking = state.grounded && state.velocity.y <= REST_SPEED;
     let asked = state.velocity * dt;
     let slid = slide(asked);
     state.position += slid.translation;
 
     let mut impacts = Vec::new();
     for (collider, normal) in slid.hits {
+        // Ground walking follows the floor (Source): walkable surfaces underfoot, slopes
+        // and the rounded edges of steps included, neither stop nor clip the walker.
+        if walking && slid.grounded && normal.y >= WALKABLE_NORMAL_Y {
+            continue;
+        }
         let landing = airborne_before && slid.grounded && normal.y > 0.0;
         let blocked = asked.dot(normal) < -MIN_OPPOSING * asked.length()
             && (landing || slid.translation.dot(normal) > asked.dot(normal) + BLOCKED_EPSILON);
