@@ -4,11 +4,13 @@ use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterCo
 use rapier3d::prelude::*;
 use std::collections::HashMap;
 
+/// Gravity of the rigid-body world only; characters use [`MoveSettings::gravity`].
 const GRAVITY: f32 = -18.0;
 
 mod character;
+mod slide;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
 use character::Character;
 pub use character::{CharacterHandle, CharacterState, UnknownCharacter};
@@ -61,6 +63,7 @@ impl PhysicsWorld {
                 include_dynamic_bodies: false,
             }),
             snap_to_ground: Some(CharacterLength::Absolute(0.1)),
+            max_slope_climb_angle: crate::movement::WALKABLE_NORMAL_Y.acos(),
             ..Default::default()
         };
 

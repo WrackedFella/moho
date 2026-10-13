@@ -1,0 +1,290 @@
+//! The rapier collide-and-slide behind [`crate::movement::step`].
+
+use crate::movement::{Slide, WALKABLE_NORMAL_Y};
+use glam::Vec3;
+use rapier3d::control::{
+    CharacterLength, EffectiveCharacterMovement, KinematicCharacterController,
+};
+use rapier3d::parry::query::ShapeCastOptions;
+use rapier3d::prelude::{ColliderHandle, Pose, QueryPipeline, Shape};
+
+/// How far below a grounded landing to look for the surface it landed on, in metres.
+const GROUND_PROBE: f32 = 0.1;
+
+/// Surfaces facing down at least this much (`normal.y` below its negative) are ceilings, not risers.
+const CEILING_NORMAL_Y: f32 = 0.3;
+
+/// Extra downward distance when settling onto a step top, in metres.
+const STEP_SNAP: f32 = 0.05;
+
+/// Horizontal motion left over below this many metres is not stepped up.
+const STEP_MIN_PROGRESS: f32 = 1e-3;
+
+/// A shape cast that reports any contact within `distance`, measured from surface to surface.
+fn cast_within(distance: f32) -> ShapeCastOptions {
+    ShapeCastOptions {
+        max_time_of_impact: distance,
+        target_distance: 0.0,
+        stop_at_penetration: false,
+        compute_impact_geometry_on_penetration: true,
+    }
+}
+
+/// A surface a grounded character may step up onto: too steep to walk on, not a ceiling.
+fn is_riser(normal: Vec3) -> bool {
+    normal.y < WALKABLE_NORMAL_Y && normal.y > -CEILING_NORMAL_Y
+}
+
+/// Whether the controller grounded a falling slide without reporting the walkable ground.
+fn landed_without_ground_hit(grounded: bool, asked: Vec3, hits: &[(ColliderHandle, Vec3)]) -> bool {
+    grounded
+        && asked.y < 0.0
+        && !hits
+            .iter()
+            .any(|&(_, normal)| normal.y >= WALKABLE_NORMAL_Y)
+}
+
+/// The direction and length of a step-up's reach across, at least `min_width`, or `None` when
+/// too little horizontal motion is `remaining` to step.
+fn step_reach(remaining: Vec3, min_width: f32) -> Option<(Vec3, f32)> {
+    let length = remaining.length();
+    (length >= STEP_MIN_PROGRESS).then(|| (remaining / length, length.max(min_width)))
+}
+
+/// The world as one character's collide-and-slide sees it.
+pub(super) struct Slider<'a> {
+    pub controller: &'a KinematicCharacterController,
+    pub queries: &'a QueryPipeline<'a>,
+    pub shape: &'a dyn Shape,
+    pub dt: f32,
+}
+
+impl Slider<'_> {
+    /// Move the capsule from `start` by `asked` and report what it touched.
+    ///
+    /// A grounded character blocked by a riser retries from on top of it, and a landing the
+    /// controller detected without a hit gets the surface it landed on.
+    pub(super) fn slide(&self, start: &Pose, asked: Vec3, was_grounded: bool) -> Slide {
+        let mut hits = Vec::new();
+        let plain = self.controller.move_shape(
+            self.dt,
+            self.queries,
+            self.shape,
+            start,
+            asked,
+            |collision| {
+                hits.push((collision.handle, collision.hit.normal1));
+            },
+        );
+
+        if was_grounded && hits.iter().any(|&(_, normal)| is_riser(normal)) {
+            if let Some(translation) = self.step_up(start, asked, plain.translation) {
+                return Slide {
+                    translation,
+                    grounded: true,
+                    hits,
+                };
+            }
+        }
+
+        if landed_without_ground_hit(plain.grounded, asked, &hits) {
+            hits.extend(self.probe_landing(start, plain.translation));
+        }
+        Slide {
+            translation: plain.translation,
+            grounded: plain.grounded,
+            hits,
+        }
+    }
+
+    /// The surface under a character the controller grounded without reporting a hit.
+    ///
+    /// The controller detects ground a few centimetres early, so a landing there would carry
+    /// no impact.
+    fn probe_landing(&self, start: &Pose, translation: Vec3) -> Option<(ColliderHandle, Vec3)> {
+        let landed_at = Pose::from_parts(start.translation + translation, start.rotation);
+        let (handle, hit) =
+            self.queries
+                .cast_shape(&landed_at, -Vec3::Y, self.shape, cast_within(GROUND_PROBE))?;
+        Some((handle, hit.normal1))
+    }
+
+    /// Retry a blocked slide from on top of the obstacle (Source's `StepMove`).
+    ///
+    /// The controller's own autostep fails on float noise when the capsule stops exactly its
+    /// skin offset from a riser, so this lifts the capsule, carries the remaining horizontal
+    /// motion across (at least the autostep's minimum width, so the capsule's rounded base ends
+    /// over the step top), and settles it down. Returns the whole tick's translation, or `None`
+    /// when that does not end grounded.
+    fn step_up(&self, start: &Pose, asked: Vec3, blocked: Vec3) -> Option<Vec3> {
+        let autostep = self.controller.autostep?;
+        let (CharacterLength::Absolute(max_height), CharacterLength::Absolute(min_width)) =
+            (autostep.max_height, autostep.min_width)
+        else {
+            return None;
+        };
+        let (dir, len) = step_reach((asked - blocked).with_y(0.0), min_width)?;
+
+        let stopped = Pose::from_parts(start.translation + blocked, start.rotation);
+        let lift = self
+            .queries
+            .cast_shape(&stopped, Vec3::Y, self.shape, cast_within(max_height))
+            .map_or(max_height, |(_, hit)| hit.time_of_impact);
+        if lift <= 0.0 {
+            return None;
+        }
+
+        let lifted = Pose::from_parts(stopped.translation + Vec3::Y * lift, stopped.rotation);
+        // Like rapier's own stair check: the lifted capsule must clear the whole reach, so a
+        // riser taller than the lift is not climbed by riding up its rounded edge.
+        if self
+            .queries
+            .cast_shape(&lifted, dir, self.shape, cast_within(len))
+            .is_some()
+        {
+            return None;
+        }
+        let across = self.shift(&lifted, dir * len);
+        let over = Pose::from_parts(lifted.translation + across.translation, lifted.rotation);
+        let down = self.shift(&over, -Vec3::Y * (lift + STEP_SNAP));
+        if !down.grounded {
+            return None;
+        }
+
+        Some(blocked + Vec3::Y * lift + across.translation + down.translation)
+    }
+
+    /// Collide-and-slide from `from` without recording hits.
+    fn shift(&self, from: &Pose, by: Vec3) -> EffectiveCharacterMovement {
+        self.controller
+            .move_shape(self.dt, self.queries, self.shape, from, by, |_| {})
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::test_support::{quad_mesh, step_box_mesh};
+    use super::super::PhysicsWorld;
+    use super::*;
+    use moho_render_api::{WorldMesh, WorldMeshId};
+    use rapier3d::prelude::{QueryFilter, SharedShape};
+
+    fn hit(normal: Vec3) -> (ColliderHandle, Vec3) {
+        (ColliderHandle::invalid(), normal)
+    }
+
+    #[test]
+    fn walls_and_steep_slopes_are_risers() {
+        assert!(is_riser(Vec3::NEG_Z));
+        assert!(is_riser(Vec3::new(0.0, WALKABLE_NORMAL_Y - 1e-3, -0.7)));
+        assert!(is_riser(Vec3::new(0.0, -CEILING_NORMAL_Y + 1e-3, -0.95)));
+    }
+
+    #[test]
+    fn walkable_ground_and_ceilings_are_not_risers() {
+        assert!(!is_riser(Vec3::Y));
+        assert!(!is_riser(Vec3::new(
+            0.0,
+            WALKABLE_NORMAL_Y,
+            -WALKABLE_NORMAL_Y
+        )));
+        assert!(!is_riser(Vec3::new(0.0, -CEILING_NORMAL_Y, -0.95)));
+        assert!(!is_riser(Vec3::NEG_Y));
+    }
+
+    #[test]
+    fn a_grounded_fall_without_a_ground_hit_needs_the_probe() {
+        let falling = Vec3::new(0.0, -0.1, 0.0);
+        assert!(landed_without_ground_hit(true, falling, &[]));
+        assert!(landed_without_ground_hit(
+            true,
+            falling,
+            &[hit(Vec3::NEG_Z)]
+        ));
+    }
+
+    #[test]
+    fn a_reported_ground_hit_a_level_move_or_staying_airborne_needs_no_probe() {
+        let falling = Vec3::new(0.0, -0.1, 0.0);
+        assert!(!landed_without_ground_hit(true, falling, &[hit(Vec3::Y)]));
+        assert!(!landed_without_ground_hit(true, Vec3::Z, &[]));
+        assert!(!landed_without_ground_hit(false, falling, &[]));
+        assert!(!landed_without_ground_hit(false, Vec3::Z, &[]));
+    }
+
+    #[test]
+    fn step_reach_is_at_least_the_minimum_width_along_the_remaining_motion() {
+        assert_eq!(
+            step_reach(Vec3::new(0.0, 0.0, 0.1), 0.2),
+            Some((Vec3::Z, 0.2))
+        );
+        assert_eq!(
+            step_reach(Vec3::new(0.5, 0.0, 0.0), 0.2),
+            Some((Vec3::X, 0.5))
+        );
+    }
+
+    #[test]
+    fn step_reach_needs_the_minimum_progress() {
+        assert_eq!(
+            step_reach(Vec3::X * STEP_MIN_PROGRESS, 0.2),
+            Some((Vec3::X, 0.2))
+        );
+        assert_eq!(step_reach(Vec3::X * (STEP_MIN_PROGRESS * 0.99), 0.2), None);
+        assert_eq!(step_reach(Vec3::ZERO, 0.2), None);
+    }
+
+    /// Level ground at height `y` for z in [`z_from`, `z_to`].
+    fn ground(y: f32, z_from: f32, z_to: f32) -> WorldMesh {
+        quad_mesh(
+            &[
+                [-10.0, y, z_from],
+                [10.0, y, z_from],
+                [10.0, y, z_to],
+                [-10.0, y, z_to],
+            ],
+            &[0, 2, 1, 0, 3, 2],
+        )
+    }
+
+    /// A 0.3 m high, 5 cm thin wall at z = 2 over `beyond`, stepped up from a standing capsule
+    /// touching it, with 1 m of motion left.
+    fn step_up_over_thin_wall(beyond: &WorldMesh) -> Option<Vec3> {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &ground(0.0, -10.0, 2.05));
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 0.05, 0.3));
+        world.set_world_mesh(WorldMeshId(2), beyond);
+        world.step(1.0 / 60.0);
+        let queries = world.broad_phase.as_query_pipeline(
+            world.narrow_phase.query_dispatcher(),
+            &world.rigid_body_set,
+            &world.collider_set,
+            QueryFilter::default(),
+        );
+        let capsule = SharedShape::capsule_y(0.85, 0.3);
+        let slider = Slider {
+            controller: &world.character_controller,
+            queries: &queries,
+            shape: capsule.as_ref(),
+            dt: 1.0 / 60.0,
+        };
+        let touching = Pose::from_translation(Vec3::new(0.0, 1.16, 1.69));
+        slider.step_up(&touching, Vec3::Z, Vec3::ZERO)
+    }
+
+    #[test]
+    fn step_up_carries_over_a_thin_low_wall_onto_the_floor_behind() {
+        let moved = step_up_over_thin_wall(&ground(0.0, 2.05, 10.0)).expect("stepped over");
+
+        assert!(moved.z > 0.7, "{moved:?}");
+        assert!(
+            moved.y.abs() < 0.02,
+            "settled back to floor height: {moved:?}"
+        );
+    }
+
+    #[test]
+    fn step_up_over_a_thin_wall_onto_a_drop_is_refused() {
+        assert_eq!(step_up_over_thin_wall(&ground(-1.0, 2.05, 10.0)), None);
+    }
+}

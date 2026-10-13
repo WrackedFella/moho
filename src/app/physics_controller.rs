@@ -5,8 +5,6 @@
 
 use moho_game::actors::ActorId;
 
-const JUMP_VELOCITY: f32 = 8.0;
-
 pub struct PhysicsController {
     pub world: Option<moho_physics::PhysicsWorld>,
     pub test_bodies: Vec<(moho_physics::RigidBodyHandle, ActorId)>,
@@ -51,17 +49,28 @@ impl PhysicsController {
         !self.noclip && self.world.is_some() && self.player.is_some()
     }
 
-    /// Move the player for one frame, applying jump if grounded.
+    /// Move the player for one tick of `command` under `settings`.
     ///
-    /// Returns the new world-space position, or `None` if the physics world
+    /// Returns the player's state afterwards, or `None` if the physics world
     /// is not initialised or there is no player.
-    pub fn move_character(&mut self, horizontal: glam::Vec3, dt: f32) -> Option<glam::Vec3> {
+    pub fn move_character(
+        &mut self,
+        command: &moho_physics::CharacterCommand,
+        settings: &moho_physics::MoveSettings,
+        dt: f32,
+    ) -> Option<moho_physics::CharacterState> {
         let handle = self.player?;
         let pw = self.world.as_mut()?;
-        if self.jump_pressed && pw.character(handle).is_some_and(|c| c.grounded) {
-            pw.set_vertical_velocity(handle, JUMP_VELOCITY).ok()?;
+        pw.move_character(handle, command, settings, dt).ok()?;
+        pw.character(handle)
+    }
+
+    /// Face the player character `yaw`/`pitch`, so the next tick turns from the view on screen.
+    pub fn set_player_look(&mut self, yaw: f32, pitch: f32) {
+        if let (Some(pw), Some(handle)) = (self.world.as_mut(), self.player) {
+            pw.set_character_look(handle, yaw, pitch)
+                .expect("the player handle belongs to the current world");
         }
-        pw.move_character(handle, horizontal, dt).ok()
     }
 
     /// Teleport the player (e.g. respawn after falling off the map).
@@ -322,6 +331,30 @@ mod tests {
         .expect("valid floor mesh")
     }
 
+    fn strategy_settings() -> moho_physics::MoveSettings {
+        moho_physics::MoveSettings {
+            max_speed: 4.0,
+            ground_accel: 360.0,
+            friction: 60.0,
+            stop_speed: 1.0,
+            air_accel: 360.0,
+            air_speed_cap: 6.0,
+            gravity: 18.0,
+            jump_speed: 8.0,
+        }
+    }
+
+    fn idle() -> moho_physics::CharacterCommand {
+        moho_physics::CharacterCommand::default()
+    }
+
+    fn jumping() -> moho_physics::CharacterCommand {
+        moho_physics::CharacterCommand {
+            jump: true,
+            ..idle()
+        }
+    }
+
     fn grounded_player_on_floor() -> PhysicsController {
         let mut controller = PhysicsController::new();
         controller
@@ -331,7 +364,7 @@ mod tests {
             .set_world_mesh(moho_render_api::WorldMeshId(1), &big_floor_mesh());
         controller.spawn_player(glam::Vec3::new(0.0, 1.5, 0.0));
         for _ in 0..300 {
-            controller.move_character(glam::Vec3::ZERO, DT);
+            controller.move_character(&idle(), &strategy_settings(), DT);
             controller.step(DT);
         }
         controller
@@ -347,58 +380,88 @@ mod tests {
     }
 
     #[test]
-    fn jump_without_the_button_on_the_ground_does_not_rise() {
+    fn move_character_without_a_jump_command_on_the_ground_does_not_rise() {
         let mut controller = grounded_player_on_floor();
         assert!(player_state(&controller).grounded, "settled on the floor");
-        controller.jump_pressed = false;
 
-        controller.move_character(glam::Vec3::ZERO, DT);
+        let state = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
 
-        let state = player_state(&controller);
-        assert!(state.vertical_velocity <= 0.0, "{state:?}");
+        assert!(state.velocity.y <= 0.0, "{state:?}");
     }
 
     #[test]
-    fn jump_button_on_the_ground_launches_upward() {
+    fn jump_command_on_the_ground_launches_upward() {
         let mut controller = grounded_player_on_floor();
         let before = player_state(&controller).position.y;
-        controller.jump_pressed = true;
 
-        controller.move_character(glam::Vec3::ZERO, DT);
+        let returned = controller
+            .move_character(&jumping(), &strategy_settings(), DT)
+            .expect("player is live");
 
         let state = player_state(&controller);
+        assert_eq!(returned, state, "returns the state it left the player in");
         assert!(state.position.y > before, "{state:?}");
-        assert!(state.vertical_velocity > 0.0, "{state:?}");
+        assert!(state.velocity.y > 0.0, "{state:?}");
     }
 
     #[test]
-    fn jump_button_in_the_air_does_not_launch() {
+    fn jump_command_in_the_air_does_not_launch() {
         let mut controller = PhysicsController::new();
         controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
-        controller.jump_pressed = true;
 
-        controller.move_character(glam::Vec3::ZERO, DT);
+        controller.move_character(&jumping(), &strategy_settings(), DT);
 
         let state = player_state(&controller);
         assert!(!state.grounded);
-        assert!(state.vertical_velocity < 0.0, "{state:?}");
+        assert!(state.velocity.y < 0.0, "{state:?}");
     }
 
     #[test]
-    fn teleport_moves_the_player_and_zeroes_vertical_velocity() {
+    fn set_player_look_turns_the_player_character() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+
+        controller.set_player_look(0.7, -0.3);
+
+        let state = player_state(&controller);
+        assert_eq!((state.yaw, state.pitch), (0.7, -0.3));
+    }
+
+    #[test]
+    fn set_player_look_without_a_player_does_nothing() {
+        let mut controller = PhysicsController::new();
+
+        controller.set_player_look(0.7, -0.3);
+
+        assert_eq!(controller.player, None);
+    }
+
+    #[test]
+    fn move_character_without_a_player_returns_none() {
+        let mut controller = PhysicsController::new();
+
+        let moved = controller.move_character(&idle(), &strategy_settings(), DT);
+
+        assert_eq!(moved, None);
+    }
+
+    #[test]
+    fn teleport_moves_the_player_and_zeroes_velocity() {
         let mut controller = PhysicsController::new();
         controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
         for _ in 0..10 {
-            controller.move_character(glam::Vec3::ZERO, DT);
+            controller.move_character(&idle(), &strategy_settings(), DT);
         }
-        assert!(player_state(&controller).vertical_velocity < 0.0);
+        assert!(player_state(&controller).velocity.y < 0.0);
         let target = glam::Vec3::new(3.0, 20.0, -4.0);
 
         controller.teleport_character(target);
 
         let state = player_state(&controller);
         assert!(state.position.distance(target) < 1e-4, "{state:?}");
-        assert_eq!(state.vertical_velocity, 0.0);
+        assert_eq!(state.velocity, glam::Vec3::ZERO);
     }
 
     #[test]

@@ -10,6 +10,24 @@ use std::time::Duration;
 /// Frame counter for tracking frame numbers
 static FRAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Walking speed in m/s.
+const MOVE_SPEED: f32 = 4.0;
+/// Sprinting speed in m/s.
+const SPRINT_SPEED: f32 = 6.0;
+
+/// Strategy-line walking feel: acceleration and friction high enough to reach speed, or
+/// stop, within a tick. `max_speed` and `air_speed_cap` are set per tick from sprint.
+const STRATEGY_MOVE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSettings {
+    max_speed: MOVE_SPEED,
+    ground_accel: 360.0,
+    friction: 60.0,
+    stop_speed: 1.0,
+    air_accel: 360.0,
+    air_speed_cap: MOVE_SPEED,
+    gravity: 18.0,
+    jump_speed: 8.0,
+};
+
 /// Handles frame timing and game state updates
 pub struct FrameProcessor;
 
@@ -59,46 +77,30 @@ impl FrameProcessor {
     fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
         // Kill plane: anything below this Y is considered "off the map"
         const KILL_PLANE_Y: f32 = -30.0;
-        const MOVE_SPEED: f32 = 4.0;
-        const SPRINT_SPEED: f32 = 6.0;
 
-        // Capture movement intent before zeroing it
-        let forward_input = app.simulation.controller_input.forward;
-        let right_input = app.simulation.controller_input.right;
-        let sprint = app.simulation.controller_input.sprint;
-
-        // Zero translational input so apply_input only updates yaw/pitch
-        {
-            let ci = app.simulation.controller_input_mut();
-            ci.forward = 0.0;
-            ci.right = 0.0;
-            ci.up = 0.0;
-        }
-        // apply_input updates yaw/pitch from deltas, returns camera
-        app.simulation.apply_input(dt);
-
-        // Read the now-updated yaw/pitch for horizontal movement calculation
-        let (yaw, pitch) = app.simulation.yaw_pitch();
-
-        let speed = if sprint { SPRINT_SPEED } else { MOVE_SPEED };
-
-        // Build horizontal movement in world space from yaw + input.
-        // Right vector matches controller.rs convention: (-cos(yaw), 0, sin(yaw))
-        let sy = yaw.sin();
-        let cy = yaw.cos();
-        let fwd_world = glam::Vec3::new(sy, 0.0, cy);
-        let right_world = glam::Vec3::new(-cy, 0.0, sy);
-
-        let horizontal = (fwd_world * forward_input + right_world * right_input)
-            .normalize_or_zero()
-            * speed
-            * dt;
-
-        // Physics character movement + jump (JUMP_VELOCITY lives in PhysicsController)
-        let mut new_pos = app
+        let input = app.simulation.controller_input;
+        let command = moho_physics::CharacterCommand {
+            forward: input.forward,
+            right: input.right,
+            yaw_delta: input.yaw_delta,
+            pitch_delta: input.pitch_delta,
+            jump: app.physics.jump_pressed,
+        };
+        let speed = if input.sprint {
+            SPRINT_SPEED
+        } else {
+            MOVE_SPEED
+        };
+        let settings = moho_physics::MoveSettings {
+            max_speed: speed,
+            air_speed_cap: speed,
+            ..STRATEGY_MOVE_SETTINGS
+        };
+        let state = app
             .physics
-            .move_character(horizontal, dt)
+            .move_character(&command, &settings, dt)
             .expect("KCC active but move_character returned None");
+        let mut new_pos = state.position;
 
         if new_pos.y < KILL_PLANE_Y {
             let respawn_y = app
@@ -113,7 +115,8 @@ impl FrameProcessor {
         }
 
         // Override simulation position with physics result (or respawn position)
-        app.simulation.set_position_yaw_pitch(new_pos, yaw, pitch);
+        app.simulation
+            .set_position_yaw_pitch(new_pos, state.yaw, state.pitch);
 
         // Rebuild camera from the updated simulation state
         app.camera = moho_game::controller::controller_to_camera(&app.simulation.player_controller);
@@ -597,5 +600,177 @@ mod tests {
                 "intensity at {time}: expected {expected_intensity}, got {intensity}"
             );
         }
+    }
+
+    fn floor_mesh() -> moho_render_api::WorldMesh {
+        moho_render_api::WorldMesh::new(
+            vec![
+                [-50.0, 0.0, -50.0],
+                [50.0, 0.0, -50.0],
+                [-50.0, 0.0, 50.0],
+                [50.0, 0.0, 50.0],
+            ],
+            vec![[0.0, 1.0, 0.0]; 4],
+            vec![1.0; 4],
+            vec![[0.0; 3]; 4],
+            vec![1.0; 4],
+            vec![0; 4],
+            vec![0, 2, 1, 1, 2, 3],
+        )
+        .expect("valid floor mesh")
+    }
+
+    /// Walks forward on a floor until at speed, jumps for one tick, and returns the
+    /// horizontal speed on every airborne tick that follows.
+    fn airborne_speeds_after_jumping_while_walking(sprint: bool) -> Vec<f32> {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
+        app.physics
+            .world
+            .as_mut()
+            .expect("physics world")
+            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor_mesh());
+        app.physics.spawn_player(glam::Vec3::new(0.0, 1.2, 0.0));
+        let frame_processor = FrameProcessor::new();
+        for _ in 0..120 {
+            frame_processor.update_game_state(&mut app, DT);
+        }
+        let input = app.simulation.controller_input_mut();
+        input.forward = 1.0;
+        input.sprint = sprint;
+        for _ in 0..30 {
+            frame_processor.update_game_state(&mut app, DT);
+        }
+        app.physics.jump_pressed = true;
+        let player = app.physics.player.expect("player");
+        let mut speeds = Vec::new();
+
+        for tick in 0..20 {
+            frame_processor.update_game_state(&mut app, DT);
+            app.physics.jump_pressed = false;
+            let state = app
+                .physics
+                .world
+                .as_ref()
+                .expect("physics world")
+                .character(player)
+                .expect("player resolves");
+            if !state.grounded {
+                speeds.push(glam::Vec2::new(state.velocity.x, state.velocity.z).length());
+            }
+            assert!(
+                tick > 0 || !state.grounded,
+                "the jump tick leaves the ground"
+            );
+        }
+        speeds
+    }
+
+    #[test]
+    fn jumping_while_walking_keeps_walking_speed_in_the_air() {
+        let speeds = airborne_speeds_after_jumping_while_walking(false);
+
+        assert!(speeds.len() > 10, "stayed airborne: {speeds:?}");
+        assert!(
+            speeds.iter().all(|s| *s <= 4.0 + 1e-3),
+            "air speeds {speeds:?}"
+        );
+    }
+
+    #[test]
+    fn jumping_while_sprinting_keeps_sprint_speed_in_the_air() {
+        let speeds = airborne_speeds_after_jumping_while_walking(true);
+
+        assert!(speeds.len() > 10, "stayed airborne: {speeds:?}");
+        assert!(
+            speeds.iter().all(|s| (*s - 6.0).abs() <= 1e-2),
+            "air speeds {speeds:?}"
+        );
+    }
+
+    #[test]
+    fn sprinting_on_the_ground_reaches_sprint_speed() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
+        app.physics
+            .world
+            .as_mut()
+            .expect("physics world")
+            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor_mesh());
+        app.physics.spawn_player(glam::Vec3::new(0.0, 1.2, 0.0));
+        let frame_processor = FrameProcessor::new();
+        for _ in 0..120 {
+            frame_processor.update_game_state(&mut app, DT);
+        }
+        let input = app.simulation.controller_input_mut();
+        input.forward = 1.0;
+        input.sprint = true;
+
+        for _ in 0..30 {
+            frame_processor.update_game_state(&mut app, DT);
+        }
+
+        let player = app.physics.player.expect("player");
+        let state = app
+            .physics
+            .world
+            .as_ref()
+            .expect("physics world")
+            .character(player)
+            .expect("player resolves");
+        let speed = glam::Vec2::new(state.velocity.x, state.velocity.z).length();
+        assert!(state.grounded, "{state:?}");
+        assert!((speed - 6.0).abs() < 1e-2, "ground speed {speed}");
+    }
+
+    #[test]
+    fn sprint_jump_from_standing_reaches_sprint_speed_in_the_air() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_camera_mode(moho_game::controller::CameraMode::FirstPerson);
+        app.physics
+            .world
+            .as_mut()
+            .expect("physics world")
+            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor_mesh());
+        app.physics.spawn_player(glam::Vec3::new(0.0, 1.2, 0.0));
+        let frame_processor = FrameProcessor::new();
+        for _ in 0..120 {
+            frame_processor.update_game_state(&mut app, DT);
+        }
+        let input = app.simulation.controller_input_mut();
+        input.forward = 1.0;
+        input.sprint = true;
+        app.physics.jump_pressed = true;
+        let player = app.physics.player.expect("player");
+        let mut airborne_speeds = Vec::new();
+
+        for _ in 0..20 {
+            frame_processor.update_game_state(&mut app, DT);
+            app.physics.jump_pressed = false;
+            let state = app
+                .physics
+                .world
+                .as_ref()
+                .expect("physics world")
+                .character(player)
+                .expect("player resolves");
+            if !state.grounded {
+                airborne_speeds.push(glam::Vec2::new(state.velocity.x, state.velocity.z).length());
+            }
+        }
+
+        assert!(airborne_speeds.len() > 10, "{airborne_speeds:?}");
+        let last = *airborne_speeds.last().unwrap();
+        assert!((last - 6.0).abs() < 1e-2, "{airborne_speeds:?}");
+        assert!(
+            airborne_speeds.iter().all(|s| *s <= 6.0 + 1e-2),
+            "{airborne_speeds:?}"
+        );
     }
 }

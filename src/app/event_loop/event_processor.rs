@@ -473,6 +473,10 @@ impl EventProcessor {
                 tracing::info!(enabled, "Collision toggled");
                 // enabled=false means noclip ON (collision disabled)
                 app.physics.noclip = !enabled;
+                if enabled {
+                    let (yaw, pitch) = app.simulation.yaw_pitch();
+                    app.physics.set_player_look(yaw, pitch);
+                }
                 tracing::info!(noclip = app.physics.noclip, "Noclip toggled");
             }
             DebugEvent::SetShadowQuality { quality } => {

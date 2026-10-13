@@ -1,4 +1,19 @@
+use crate::movement::MoveSettings;
 use moho_render_api::WorldMesh;
+
+/// Tuning where ground accel x dt exceeds the friction drop, so "at speed" means 4 m/s.
+pub(crate) fn test_settings() -> MoveSettings {
+    MoveSettings {
+        max_speed: 4.0,
+        ground_accel: 40.0,
+        friction: 4.0,
+        stop_speed: 1.0,
+        air_accel: 10.0,
+        air_speed_cap: 0.8,
+        gravity: 18.0,
+        jump_speed: 8.0,
+    }
+}
 
 pub(crate) fn quad_mesh(verts: &[[f32; 3]], idxs: &[u32]) -> WorldMesh {
     let n = verts.len();
@@ -24,4 +39,77 @@ pub(crate) fn floor_mesh(y: f32) -> WorldMesh {
         ],
         &[0, 2, 1, 0, 3, 2],
     )
+}
+
+/// A wall in the plane `z`, spanning x in [-10, 10] and y in [0, 10], facing -Z.
+pub(crate) fn wall_mesh(z: f32) -> WorldMesh {
+    quad_mesh(
+        &[
+            [-10.0, 0.0, z],
+            [10.0, 0.0, z],
+            [10.0, 10.0, z],
+            [-10.0, 10.0, z],
+        ],
+        &[0, 2, 1, 0, 3, 2],
+    )
+}
+
+/// A closed box spanning x in [-10, 10], y in [0, `height`] and z in [`z_front`, `z_front + depth`].
+pub(crate) fn step_box_mesh(z_front: f32, depth: f32, height: f32) -> WorldMesh {
+    let z_back = z_front + depth;
+    quad_mesh(
+        &[
+            [-10.0, 0.0, z_front],
+            [10.0, 0.0, z_front],
+            [10.0, height, z_front],
+            [-10.0, height, z_front],
+            [-10.0, 0.0, z_back],
+            [10.0, 0.0, z_back],
+            [10.0, height, z_back],
+            [-10.0, height, z_back],
+        ],
+        &[
+            0, 2, 1, 0, 3, 2, // front riser
+            4, 5, 6, 4, 6, 7, // back
+            3, 7, 6, 3, 6, 2, // top
+            0, 4, 7, 0, 7, 3, // left
+            1, 2, 6, 1, 6, 5, // right
+            0, 1, 5, 0, 5, 4, // bottom
+        ],
+    )
+}
+
+/// `steps` solid boxes spanning x in [-10, 10]; step `i` has its riser at
+/// `z_start + i * tread`, top at `(i + 1) * rise`, and runs `landing` m past the last riser.
+pub(crate) fn stairs_mesh(
+    steps: u32,
+    rise: f32,
+    tread: f32,
+    z_start: f32,
+    landing: f32,
+) -> WorldMesh {
+    let z_end = z_start + (steps - 1) as f32 * tread + landing;
+    let mut verts: Vec<[f32; 3]> = Vec::new();
+    let mut idxs: Vec<u32> = Vec::new();
+    for i in 0..steps {
+        let z_front = z_start + i as f32 * tread;
+        let height = (i + 1) as f32 * rise;
+        let base = verts.len() as u32;
+        verts.extend([
+            [-10.0, 0.0, z_front],
+            [10.0, 0.0, z_front],
+            [10.0, height, z_front],
+            [-10.0, height, z_front],
+            [-10.0, 0.0, z_end],
+            [10.0, 0.0, z_end],
+            [10.0, height, z_end],
+            [-10.0, height, z_end],
+        ]);
+        let faces: [u32; 36] = [
+            0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 3, 7, 6, 3, 6, 2, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6,
+            5, 0, 1, 5, 0, 5, 4,
+        ];
+        idxs.extend(faces.iter().map(|f| base + f));
+    }
+    quad_mesh(&verts, &idxs)
 }
