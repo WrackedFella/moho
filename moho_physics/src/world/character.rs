@@ -1,9 +1,11 @@
+use super::query::{encode_tag, HitTag};
 use super::slide::Slider;
 use super::PhysicsWorld;
 use crate::movement::{self, CharacterCommand, Impact, MoveSettings};
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use rapier3d::prelude::{
-    ColliderBuilder, ColliderHandle, Pose, QueryFilter, RigidBodyBuilder, RigidBodyHandle,
+    ColliderBuilder, ColliderHandle, InteractionGroups, Pose, QueryFilter, RigidBodyBuilder,
+    RigidBodyHandle,
 };
 
 /// Opaque identity of one character in a [`PhysicsWorld`].
@@ -26,6 +28,18 @@ pub struct CharacterState {
     pub pitch: f32,
     /// Standing on walkable ground after the last tick.
     pub grounded: bool,
+}
+
+/// A box in the character's body frame, rotated by its facing about +Y, offset from the
+/// capsule centre.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HitVolume {
+    /// Box centre relative to the capsule centre, in the body frame.
+    pub offset: Vec3,
+    /// Box half-sizes along the body frame's axes.
+    pub half_extents: Vec3,
+    /// Tag reported when a ray hits this volume.
+    pub tag: HitTag,
 }
 
 /// The handle names a character that was removed.
@@ -64,11 +78,12 @@ impl Character {
 }
 
 impl PhysicsWorld {
-    /// Move the character's body to `position`, as both the next and the current pose so the
-    /// value is available immediately.
+    /// Move the character's body to `position`, facing its stored yaw, as both the next and
+    /// the current pose so the value is available immediately.
     fn place_body(&mut self, handle: CharacterHandle, position: Vec3) {
+        let yaw = self.characters[&handle].yaw;
         let body = &mut self.rigid_body_set[handle.0];
-        let pose = Pose::from_parts(position, body.position().rotation);
+        let pose = Pose::from_parts(position, Quat::from_rotation_y(yaw));
         body.set_next_kinematic_position(pose);
         body.set_position(pose, false);
     }
@@ -102,6 +117,36 @@ impl PhysicsWorld {
 
         tracing::info!(pos = ?position, "Character controller spawned");
         handle
+    }
+
+    /// Attach a hit volume to the character's body.
+    ///
+    /// The volume follows the body when the world steps, never blocks movement or props, and
+    /// is removed with the character.
+    ///
+    /// # Errors
+    /// [`UnknownCharacter`] if `handle` was removed.
+    pub fn add_hit_volume(
+        &mut self,
+        handle: CharacterHandle,
+        volume: HitVolume,
+    ) -> Result<(), UnknownCharacter> {
+        if !self.characters.contains_key(&handle) {
+            return Err(UnknownCharacter);
+        }
+        let collider = ColliderBuilder::cuboid(
+            volume.half_extents.x,
+            volume.half_extents.y,
+            volume.half_extents.z,
+        )
+        .translation(volume.offset)
+        .sensor(true)
+        .collision_groups(InteractionGroups::none())
+        .user_data(encode_tag(volume.tag))
+        .build();
+        self.collider_set
+            .insert_with_parent(collider, handle.0, &mut self.rigid_body_set);
+        Ok(())
     }
 
     /// Remove the character's body and capsule.
@@ -139,8 +184,11 @@ impl PhysicsWorld {
         let mut state = character.state(pose.translation);
         let was_grounded = state.grounded;
 
-        // Transient QueryPipeline view that excludes only this character's capsule.
-        let filter = QueryFilter::default().exclude_collider(collider_handle);
+        // Transient QueryPipeline view without this character's capsule and hit volumes, nor
+        // any other character's hit volumes; capsules still meet capsules.
+        let filter = QueryFilter::default()
+            .exclude_rigid_body(handle.0)
+            .exclude_sensors();
         let queries = self.broad_phase.as_query_pipeline(
             self.narrow_phase.query_dispatcher(),
             &self.rigid_body_set,
@@ -210,6 +258,8 @@ impl PhysicsWorld {
         let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
         character.yaw = yaw;
         character.pitch = pitch;
+        let position = self.rigid_body_set[handle.0].position().translation;
+        self.place_body(handle, position);
         Ok(())
     }
 
