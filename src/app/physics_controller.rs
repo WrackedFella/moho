@@ -116,6 +116,7 @@ impl Default for PhysicsController {
 mod tests {
     use super::*;
     use moho_game::actors::{ActorStore, Cube, Sphere};
+    use moho_physics::HitTag;
     use moho_voxel::MaterialType;
 
     #[test]
@@ -361,7 +362,11 @@ mod tests {
             .world
             .as_mut()
             .expect("new controller has a world")
-            .set_world_mesh(moho_render_api::WorldMeshId(1), &big_floor_mesh());
+            .set_world_mesh(
+                moho_render_api::WorldMeshId(1),
+                &big_floor_mesh(),
+                HitTag(0),
+            );
         controller.spawn_player(glam::Vec3::new(0.0, 1.5, 0.0));
         for _ in 0..300 {
             controller.move_character(&idle(), &strategy_settings(), DT);
@@ -490,7 +495,7 @@ mod tests {
         let pw = app.physics.world.as_mut().expect("physics world");
         let stale_body = pw.add_dynamic_sphere(glam::Vec3::new(0.0, 9.0, 0.0), 0.5);
         let unowned = moho_render_api::WorldMeshId(u64::MAX);
-        pw.set_world_mesh(unowned, &stale_floor_mesh());
+        pw.set_world_mesh(unowned, &stale_floor_mesh(), HitTag(0));
         app.physics.spawn_player(glam::Vec3::new(50.0, 50.0, 50.0));
         app.physics.test_bodies.push((stale_body, stale_actor));
 

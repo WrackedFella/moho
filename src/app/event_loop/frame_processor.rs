@@ -411,6 +411,7 @@ impl Default for FrameProcessor {
 mod tests {
     use super::*;
     use crate::game_state::GameState;
+    use moho_physics::HitTag;
     use moho_voxel::{VoxelChunk, WorldEvent};
 
     const DT: f32 = 1.0 / 60.0;
@@ -631,7 +632,7 @@ mod tests {
             .world
             .as_mut()
             .expect("physics world")
-            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor_mesh());
+            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor_mesh(), HitTag(0));
         app.physics.spawn_player(glam::Vec3::new(0.0, 1.2, 0.0));
         let frame_processor = FrameProcessor::new();
         for _ in 0..120 {
@@ -700,7 +701,7 @@ mod tests {
             .world
             .as_mut()
             .expect("physics world")
-            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor_mesh());
+            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor_mesh(), HitTag(0));
         app.physics.spawn_player(glam::Vec3::new(0.0, 1.2, 0.0));
         let frame_processor = FrameProcessor::new();
         for _ in 0..120 {
@@ -737,7 +738,7 @@ mod tests {
             .world
             .as_mut()
             .expect("physics world")
-            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor_mesh());
+            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor_mesh(), HitTag(0));
         app.physics.spawn_player(glam::Vec3::new(0.0, 1.2, 0.0));
         let frame_processor = FrameProcessor::new();
         for _ in 0..120 {

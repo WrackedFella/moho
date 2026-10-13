@@ -222,6 +222,7 @@ impl PhysicsWorld {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::TEST_TAG;
     use super::super::test_support::{
         floor_mesh, quad_mesh, stairs_mesh, step_box_mesh, test_settings, wall_mesh,
     };
@@ -263,7 +264,7 @@ mod tests {
     /// Floor at y = 0 and a character standing on it at the origin.
     fn standing_on_floor() -> (PhysicsWorld, CharacterHandle) {
         let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
         let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
         settle_on_floor(&mut world, &[h]);
         (world, h)
@@ -345,7 +346,7 @@ mod tests {
     #[test]
     fn test_character_controller_falls_to_floor() {
         let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
         let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
 
         for _ in 0..120 {
@@ -439,7 +440,7 @@ mod tests {
     #[test]
     fn landing_character_stops_vertical_velocity() {
         let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
         let h = world.add_character(Vec3::new(0.0, 3.0, 0.0));
 
         for _ in 0..60 {
@@ -471,7 +472,7 @@ mod tests {
     #[test]
     fn moving_one_character_leaves_the_other_in_place() {
         let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
         let first = world.add_character(Vec3::new(-4.0, 1.2, 0.0));
         let second = world.add_character(Vec3::new(4.0, 1.2, 0.0));
         settle_on_floor(&mut world, &[first, second]);
@@ -499,7 +500,7 @@ mod tests {
     #[test]
     fn each_character_keeps_its_own_grounded_state() {
         let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
         let standing = world.add_character(Vec3::new(-4.0, 1.2, 0.0));
         settle_on_floor(&mut world, &[standing]);
         let airborne = world.add_character(Vec3::new(4.0, 8.0, 0.0));
@@ -712,7 +713,7 @@ mod tests {
     #[test]
     fn running_into_a_wall_clears_speed_into_it_and_reports_one_impact() {
         let (mut world, h) = standing_on_floor();
-        world.set_world_mesh(WorldMeshId(1), &wall_mesh(5.0));
+        world.set_world_mesh(WorldMeshId(1), &wall_mesh(5.0), TEST_TAG);
         let wall = world
             .world_mesh_collider(WorldMeshId(1))
             .expect("wall registered");
@@ -734,7 +735,7 @@ mod tests {
     #[test]
     fn running_at_45_degrees_keeps_speed_along_the_wall() {
         let (mut world, h) = standing_on_floor();
-        world.set_world_mesh(WorldMeshId(1), &wall_mesh(2.0));
+        world.set_world_mesh(WorldMeshId(1), &wall_mesh(2.0), TEST_TAG);
         let along = 4.0 * std::f32::consts::FRAC_1_SQRT_2;
         world
             .add_character_velocity(h, Vec3::new(along, 0.0, along))
@@ -757,7 +758,7 @@ mod tests {
     #[test]
     fn landing_reports_fall_speed_and_zeroes_vertical_velocity() {
         let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
         let floor = world
             .world_mesh_collider(WorldMeshId(0))
             .expect("floor registered");
@@ -811,7 +812,7 @@ mod tests {
     #[test]
     fn stepping_up_a_half_metre_step_keeps_speed_and_reports_no_impact() {
         let (mut world, h) = standing_on_floor();
-        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45));
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45), TEST_TAG);
         world
             .add_character_velocity(h, Vec3::new(0.0, 0.0, 3.0))
             .unwrap();
@@ -844,7 +845,7 @@ mod tests {
     #[test]
     fn step_taller_than_the_autostep_blocks_and_reports_one_impact() {
         let (mut world, h) = standing_on_floor();
-        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.7));
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.7), TEST_TAG);
         let step = world
             .world_mesh_collider(WorldMeshId(1))
             .expect("step registered");
@@ -879,7 +880,7 @@ mod tests {
             ],
             &[0, 1, 2, 0, 2, 3],
         );
-        world.set_world_mesh(WorldMeshId(1), &ceiling);
+        world.set_world_mesh(WorldMeshId(1), &ceiling, TEST_TAG);
         let ceiling_collider = world
             .world_mesh_collider(WorldMeshId(1))
             .expect("ceiling registered");
@@ -933,7 +934,7 @@ mod tests {
             ],
             &[0, 2, 1, 0, 3, 2],
         );
-        world.set_world_mesh(WorldMeshId(0), &ledge);
+        world.set_world_mesh(WorldMeshId(0), &ledge, TEST_TAG);
         let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
         settle_on_floor(&mut world, &[h]);
         assert!(state(&world, h).grounded);
@@ -1026,7 +1027,11 @@ mod tests {
     #[test]
     fn walking_up_stairs_reaches_the_top_without_impacts() {
         let (mut world, h) = standing_on_floor();
-        world.set_world_mesh(WorldMeshId(1), &stairs_mesh(5, 0.2, 0.3, 2.0, 4.0));
+        world.set_world_mesh(
+            WorldMeshId(1),
+            &stairs_mesh(5, 0.2, 0.3, 2.0, 4.0),
+            TEST_TAG,
+        );
         let forward = CharacterCommand {
             forward: 1.0,
             ..idle()
@@ -1048,7 +1053,7 @@ mod tests {
     #[test]
     fn walking_into_a_step_at_45_degrees_climbs_it() {
         let (mut world, h) = standing_on_floor();
-        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45));
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45), TEST_TAG);
         world
             .set_character_look(h, std::f32::consts::FRAC_PI_4, 0.0)
             .unwrap();
@@ -1073,7 +1078,7 @@ mod tests {
     /// held, and returns the state before and after that one tick.
     fn jump_pressed_against_step(height: f32) -> (CharacterState, CharacterState) {
         let (mut world, h) = standing_on_floor();
-        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, height));
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, height), TEST_TAG);
         let rest_y = state(&world, h).position.y;
         world
             .set_character_position(h, Vec3::new(0.0, rest_y, 2.0 - 0.3 - 0.03))
@@ -1125,7 +1130,7 @@ mod tests {
     #[test]
     fn walking_onto_a_half_metre_step_reports_no_impact_and_keeps_walking_speed() {
         let (mut world, h) = standing_on_floor();
-        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45));
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45), TEST_TAG);
         let forward = CharacterCommand {
             forward: 1.0,
             ..idle()
@@ -1158,8 +1163,8 @@ mod tests {
     #[test]
     fn airborne_character_is_not_stepped_onto_a_ledge() {
         let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
-        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45), TEST_TAG);
         let step = world
             .world_mesh_collider(WorldMeshId(1))
             .expect("step registered");
@@ -1188,8 +1193,8 @@ mod tests {
     #[test]
     fn landing_while_pressed_into_a_wall_reports_the_fall_speed() {
         let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
-        world.set_world_mesh(WorldMeshId(1), &wall_mesh(0.35));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(1), &wall_mesh(0.35), TEST_TAG);
         let floor = world
             .world_mesh_collider(WorldMeshId(0))
             .expect("floor registered");

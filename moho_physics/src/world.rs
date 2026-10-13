@@ -8,12 +8,14 @@ use std::collections::HashMap;
 const GRAVITY: f32 = -18.0;
 
 mod character;
+mod query;
 mod slide;
 #[cfg(test)]
 pub(crate) mod test_support;
 
 use character::Character;
 pub use character::{CharacterHandle, CharacterState, UnknownCharacter};
+pub use query::{HitTag, RayHit, RayQuery};
 
 pub struct PhysicsWorld {
     gravity: Vector,
@@ -109,7 +111,7 @@ impl PhysicsWorld {
     /// Register `mesh` as the static collider for `id`, replacing any previous one.
     ///
     /// An empty mesh, or one rapier rejects (warned), leaves `id` without a collider.
-    pub fn set_world_mesh(&mut self, id: WorldMeshId, mesh: &WorldMesh) {
+    pub fn set_world_mesh(&mut self, id: WorldMeshId, mesh: &WorldMesh, _tag: HitTag) {
         self.remove_world_mesh(id);
         if mesh.is_empty() {
             return;
@@ -205,6 +207,7 @@ impl Default for PhysicsWorld {
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::TEST_TAG;
     use super::test_support::{floor_mesh, quad_mesh};
     use super::*;
     use proptest::prelude::*;
@@ -238,7 +241,7 @@ mod tests {
             [-10.0, 0.0, 10.0],
         ];
         let idxs: Vec<u32> = vec![0, 1, 2, 0, 2, 3];
-        world.set_world_mesh(WorldMeshId(0), &quad_mesh(&verts, &idxs));
+        world.set_world_mesh(WorldMeshId(0), &quad_mesh(&verts, &idxs), TEST_TAG);
 
         let sphere = world.add_dynamic_sphere(Vec3::new(0.0, 5.0, 0.0), 0.5);
 
@@ -265,7 +268,7 @@ mod tests {
         ];
         let idxs: Vec<u32> = vec![0, 1, 2, 0, 2, 3];
         let floor_id = WorldMeshId(0);
-        world.set_world_mesh(floor_id, &quad_mesh(&verts, &idxs));
+        world.set_world_mesh(floor_id, &quad_mesh(&verts, &idxs), TEST_TAG);
         let floor = world.world_mesh_collider(floor_id).expect("floor collider");
         world.remove_world_mesh(floor_id);
 
@@ -282,7 +285,7 @@ mod tests {
     #[test]
     fn dynamic_cuboid_rests_on_its_half_height() {
         let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
         let body = world.add_dynamic_cuboid(Vec3::new(0.0, 3.0, 0.0), 0.5, 0.25, 0.5);
 
         for _ in 0..180 {
@@ -311,7 +314,7 @@ mod tests {
     #[test]
     fn body_rests_on_registered_world_mesh() {
         let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0), TEST_TAG);
 
         let y = fall_for_one_second(&mut world, 3.0);
 
@@ -322,8 +325,8 @@ mod tests {
     fn replacing_world_mesh_moves_the_floor() {
         let mut world = PhysicsWorld::new();
         let id = WorldMeshId(1);
-        world.set_world_mesh(id, &floor_mesh(0.0));
-        world.set_world_mesh(id, &floor_mesh(2.0));
+        world.set_world_mesh(id, &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(id, &floor_mesh(2.0), TEST_TAG);
 
         let y = fall_for_one_second(&mut world, 5.0);
 
@@ -336,7 +339,7 @@ mod tests {
     fn removed_world_mesh_lets_body_fall() {
         let mut world = PhysicsWorld::new();
         let id = WorldMeshId(1);
-        world.set_world_mesh(id, &floor_mesh(0.0));
+        world.set_world_mesh(id, &floor_mesh(0.0), TEST_TAG);
         world.remove_world_mesh(id);
 
         let y = fall_for_one_second(&mut world, 3.0);
@@ -350,8 +353,8 @@ mod tests {
     fn empty_world_mesh_holds_no_collider() {
         let mut world = PhysicsWorld::new();
         let id = WorldMeshId(1);
-        world.set_world_mesh(id, &floor_mesh(0.0));
-        world.set_world_mesh(id, &empty_mesh());
+        world.set_world_mesh(id, &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(id, &empty_mesh(), TEST_TAG);
 
         assert!(world.world_mesh_collider(id).is_none());
         assert_eq!(world.collider_set.len(), 0);
@@ -361,7 +364,7 @@ mod tests {
     fn empty_world_mesh_on_fresh_id_adds_nothing() {
         let mut world = PhysicsWorld::new();
 
-        world.set_world_mesh(WorldMeshId(9), &empty_mesh());
+        world.set_world_mesh(WorldMeshId(9), &empty_mesh(), TEST_TAG);
 
         assert!(world.world_mesh_collider(WorldMeshId(9)).is_none());
         assert_eq!(world.collider_set.len(), 0);
@@ -370,7 +373,7 @@ mod tests {
     #[test]
     fn removing_unknown_world_mesh_is_a_no_op() {
         let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0), TEST_TAG);
 
         world.remove_world_mesh(WorldMeshId(2));
 
@@ -381,8 +384,8 @@ mod tests {
     #[test]
     fn distinct_ids_hold_distinct_colliders() {
         let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0));
-        world.set_world_mesh(WorldMeshId(2), &floor_mesh(1.0));
+        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(2), &floor_mesh(1.0), TEST_TAG);
 
         let a = world.world_mesh_collider(WorldMeshId(1)).unwrap();
         let b = world.world_mesh_collider(WorldMeshId(2)).unwrap();
@@ -415,11 +418,11 @@ mod tests {
             for op in ops {
                 match op {
                     Op::Set(id, true) => {
-                        world.set_world_mesh(WorldMeshId(id), &empty_mesh());
+                        world.set_world_mesh(WorldMeshId(id), &empty_mesh(), TEST_TAG);
                         live.remove(&id);
                     }
                     Op::Set(id, false) => {
-                        world.set_world_mesh(WorldMeshId(id), &floor_mesh(id as f32));
+                        world.set_world_mesh(WorldMeshId(id), &floor_mesh(id as f32), TEST_TAG);
                         live.insert(id);
                     }
                     Op::Remove(id) => {

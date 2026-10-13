@@ -163,6 +163,7 @@ impl Slider<'_> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::TEST_TAG;
     use super::super::test_support::{quad_mesh, step_box_mesh};
     use super::super::PhysicsWorld;
     use super::*;
@@ -251,9 +252,9 @@ mod tests {
     /// touching it, with 1 m of motion left.
     fn step_up_over_thin_wall(beyond: &WorldMesh) -> Option<Vec3> {
         let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &ground(0.0, -10.0, 2.05));
-        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 0.05, 0.3));
-        world.set_world_mesh(WorldMeshId(2), beyond);
+        world.set_world_mesh(WorldMeshId(0), &ground(0.0, -10.0, 2.05), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 0.05, 0.3), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(2), beyond, TEST_TAG);
         world.step(1.0 / 60.0);
         let queries = world.broad_phase.as_query_pipeline(
             world.narrow_phase.query_dispatcher(),
