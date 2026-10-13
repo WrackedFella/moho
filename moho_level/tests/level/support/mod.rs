@@ -63,6 +63,9 @@ pub struct Node {
     pub xform: Xform,
     pub mesh: Option<usize>,
     pub children: Vec<usize>,
+    pub name: Option<String>,
+    /// Written as the node's glTF `extras`.
+    pub extras: Option<Value>,
 }
 
 #[derive(Clone)]
@@ -281,6 +284,12 @@ fn build(scene: &Scene) -> (Value, Vec<u8>) {
             }
             if let Some(mesh) = node.mesh {
                 n["mesh"] = json!(mesh);
+            }
+            if let Some(name) = &node.name {
+                n["name"] = json!(name);
+            }
+            if let Some(extras) = &node.extras {
+                n["extras"] = extras.clone();
             }
             if !node.children.is_empty() {
                 n["children"] = json!(node.children);

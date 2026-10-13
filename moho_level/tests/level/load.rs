@@ -62,6 +62,7 @@ fn child_cube_under_moved_parent_lies_near_x_10() {
             xform: Xform::translate([10.0, 0.0, 0.0]),
             mesh: None,
             children: vec![1],
+            ..Node::default()
         },
         Node {
             mesh: Some(0),
@@ -160,11 +161,13 @@ fn mesh_used_by_two_nodes_loads_twice_at_each_transform() {
             xform: Xform::translate([5.0, 0.0, 0.0]),
             mesh: Some(0),
             children: vec![],
+            ..Node::default()
         },
         Node {
             xform: Xform::translate([-5.0, 0.0, 0.0]),
             mesh: Some(0),
             children: vec![],
+            ..Node::default()
         },
     ];
     scene.roots = vec![0, 1];
@@ -484,6 +487,7 @@ fn nested_three_levels_compose_in_order() {
             xform: Xform::translate([1.0, 0.0, 0.0]),
             mesh: Some(0),
             children: vec![],
+            ..Node::default()
         },
     ];
     scene.roots = vec![0];
