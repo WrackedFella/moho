@@ -98,7 +98,10 @@ fn ground_move(velocity: &mut Vec3, wish: Vec3, magnitude: f32, settings: &MoveS
 ///
 /// A hit blocks when the asked motion faces it and the slide moved less into it than asked,
 /// or when it is the surface an airborne character just landed on. A walker (`walking`) is
-/// never blocked by walkable ground it ends the slide standing on: slopes and the rounded edges of steps neither stop nor clip it.
+/// never blocked by walkable ground it ends the slide standing on: slopes and the rounded
+/// edges of steps neither stop nor clip it. Every other surface is judged on the horizontal
+/// plane for a walker, as in Source's `WalkMove`, so a lift over a step never reads as
+/// blocking and clipping never gives a walker vertical velocity.
 fn clip(
     velocity: &mut Vec3,
     asked: Vec3,
@@ -107,18 +110,27 @@ fn clip(
     airborne_before: bool,
 ) -> Vec<Impact> {
     let mut impacts = Vec::new();
-    for &(collider, normal) in &slid.hits {
-        if walking && slid.grounded && normal.y >= WALKABLE_NORMAL_Y {
+    for &(collider, surface) in &slid.hits {
+        if walking && slid.grounded && surface.y >= WALKABLE_NORMAL_Y {
             continue;
         }
-        let lands_on = airborne_before && slid.grounded && normal.y > 0.0;
+        let (normal, asked, moved) = if walking {
+            (
+                surface.with_y(0.0).normalize_or_zero(),
+                asked.with_y(0.0),
+                slid.translation.with_y(0.0),
+            )
+        } else {
+            (surface, asked, slid.translation)
+        };
+        let lands_on = airborne_before && slid.grounded && surface.y > 0.0;
         let blocked = asked.dot(normal) < 0.0
-            && (lands_on || slid.translation.dot(normal) > asked.dot(normal) + BLOCKED_EPSILON);
+            && (lands_on || moved.dot(normal) > asked.dot(normal) + BLOCKED_EPSILON);
         let into = velocity.dot(normal);
         if blocked && into < 0.0 {
             impacts.push(Impact {
                 collider,
-                normal,
+                normal: surface,
                 speed: -into,
             });
             *velocity -= normal * into;

@@ -16,14 +16,14 @@ const MOVE_SPEED: f32 = 4.0;
 const SPRINT_SPEED: f32 = 6.0;
 
 /// Strategy-line walking feel: acceleration and friction high enough to reach speed, or
-/// stop, within a tick. `max_speed` is set per tick from sprint.
+/// stop, within a tick. `max_speed` and `air_speed_cap` are set per tick from sprint.
 const STRATEGY_MOVE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSettings {
     max_speed: MOVE_SPEED,
     ground_accel: 360.0,
     friction: 60.0,
     stop_speed: 1.0,
     air_accel: 360.0,
-    air_speed_cap: 6.0,
+    air_speed_cap: MOVE_SPEED,
     gravity: 18.0,
     jump_speed: 8.0,
 };
@@ -86,12 +86,14 @@ impl FrameProcessor {
             pitch_delta: input.pitch_delta,
             jump: app.physics.jump_pressed,
         };
+        let speed = if input.sprint {
+            SPRINT_SPEED
+        } else {
+            MOVE_SPEED
+        };
         let settings = moho_physics::MoveSettings {
-            max_speed: if input.sprint {
-                SPRINT_SPEED
-            } else {
-                MOVE_SPEED
-            },
+            max_speed: speed,
+            air_speed_cap: speed,
             ..STRATEGY_MOVE_SETTINGS
         };
         let state = app
