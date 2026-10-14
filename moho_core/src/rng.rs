@@ -13,11 +13,21 @@ pub struct StreamId(u64);
 impl StreamId {
     /// Derives the stream key for `name` with 64-bit FNV-1a.
     pub const fn named(_name: &str) -> StreamId {
-        panic!("not implemented")
+        StreamId(0)
     }
 }
 
 /// One stream's SplitMix64 generator.
+///
+/// Not `Copy`, so a stream cannot be duplicated by accident and replay values twice.
+///
+/// ```compile_fail
+/// use moho_core::rng::{SimRng, StreamId};
+///
+/// let rng = SimRng::new(1, StreamId::named("x"));
+/// let a = rng;
+/// let b = rng;
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SimRng {
     state: u64,
@@ -117,10 +127,10 @@ mod tests {
         #[test]
         fn distinct_seeds_give_distinct_first_value(
             a in any::<u64>(),
-            b in any::<u64>(),
+            bit in 0u32..64,
             name in name_strategy(),
         ) {
-            prop_assume!(a != b);
+            let b = a ^ (1u64 << bit);
             let stream = StreamId::named(&name);
 
             let first_a = SimRng::new(a, stream).next_u64();
@@ -192,6 +202,7 @@ mod tests {
 
     #[test]
     fn stream_id_named_matches_fnv1a_known_value() {
+        const KNOWN: StreamId = StreamId::named("test.known");
         let empty = StreamId::named("");
         let a = StreamId::named("a");
         let test_known = StreamId::named("test.known");
@@ -199,19 +210,18 @@ mod tests {
         assert_eq!(empty, StreamId(0xcbf2_9ce4_8422_2325));
         assert_eq!(a, StreamId(0xaf63_dc4c_8601_ec8c));
         assert_eq!(test_known, StreamId(0x3106_ca11_9262_65d0));
+        assert_eq!(KNOWN, test_known);
     }
 
     #[test]
     fn serialized_bytes_are_pinned() {
-        let rng = SimRng {
-            state: 0x0123_4567_89ab_cdef,
-        };
         let expected = [0xef, 0x9b, 0xaf, 0xcd, 0xf8, 0xac, 0xd1, 0x91, 0x01];
 
-        let bytes = postcard::to_allocvec(&rng).unwrap();
-        let restored: SimRng = postcard::from_bytes(&expected).unwrap();
+        let mut restored: SimRng = postcard::from_bytes(&expected).unwrap();
+        let reserialized = postcard::to_allocvec(&restored).unwrap();
+        let next = restored.next_u64();
 
-        assert_eq!(bytes, expected);
-        assert_eq!(restored, rng);
+        assert_eq!(reserialized, expected);
+        assert_eq!(next, 0x157a_3807_a48f_aa9d);
     }
 }
