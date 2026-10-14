@@ -132,7 +132,11 @@ impl FormControls {
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.spacing_mut().slider_width = 120.0;
-                        let slider = ui.add(egui::Slider::new(value, 1.0..=10.0).show_value(false));
+                        let slider = ui.add(
+                            egui::Slider::new(value, 1.0..=10.0)
+                                .step_by(0.1)
+                                .show_value(false),
+                        );
                         if is_dirty {
                             Self::paint_dirty_decor(ui, &slider);
                         }
@@ -279,19 +283,6 @@ impl FormControls {
     /// ```
     pub fn calculate_gutter(available_width: f32, gutter_percent: f32) -> f32 {
         (available_width * gutter_percent).max(20.0)
-    }
-
-    /// Calculate content width from available width and gutter percentage.
-    ///
-    /// # Arguments
-    /// * `available_width` - The total available width
-    /// * `gutter_percent` - Percentage for each side gutter (0.0 to 1.0)
-    ///
-    /// # Returns
-    /// The calculated content width (total - 2*gutters)
-    pub fn calculate_content_width(available_width: f32, gutter_percent: f32) -> f32 {
-        let gutter = Self::calculate_gutter(available_width, gutter_percent);
-        (available_width - 2.0 * gutter).max(100.0)
     }
 
     /// Renders a horizontal tab bar and returns the index of the selected tab.

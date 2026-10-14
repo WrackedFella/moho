@@ -28,7 +28,7 @@ pub fn process_menu_action(action: &MenuAction, event_bus: &EventBus) {
         MenuAction::GenerateWorld(spec) => {
             emit_audio_event(event_bus, UiAudioEvent::Confirm);
             event_bus.publish(CoreUiEvent::NewWorldRequested {
-                name: "New World".to_string(),
+                name: spec.name.clone(),
                 seed: spec.seed,
                 size: spec.size_xz,
             });
@@ -116,6 +116,8 @@ pub fn update_menu_music(
                 event_bus.publish(AudioEvent::MusicStop);
                 *music_playing = false;
             }
+            // Re-entering the start menu leaves the music running.
+            MenuAction::ShowMenu(name) if name == "start" => {}
             // Navigating to any screen other than start also stops music
             MenuAction::ShowMenu(_) if *music_playing => {
                 event_bus.publish(AudioEvent::MusicStop);

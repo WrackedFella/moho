@@ -67,11 +67,10 @@ const COMPASS_LABELS: &[(&str, f32)] = &[
 /// Labels within this angular range of forward are visible.
 const COMPASS_HALF_FOV: f32 = std::f32::consts::FRAC_PI_3; // 60°
 
-/// STUB (test-first): reproduces the current table-order behavior. The
-/// implementer must sort by signed angle from forward, left to right, and
-/// draw `render_compass` from this function.
+/// Labels within the compass arc for `yaw`, ordered left to right (ascending
+/// signed angle from forward). The flag marks the label the camera is facing.
 fn visible_labels(yaw: f32) -> Vec<(&'static str, bool)> {
-    COMPASS_LABELS
+    let mut visible: Vec<(f32, &'static str, bool)> = COMPASS_LABELS
         .iter()
         .filter_map(|&(label, angle)| {
             let mut diff = angle - yaw;
@@ -81,9 +80,17 @@ fn visible_labels(yaw: f32) -> Vec<(&'static str, bool)> {
             while diff < -std::f32::consts::PI {
                 diff += std::f32::consts::TAU;
             }
-            (diff.abs() <= COMPASS_HALF_FOV)
-                .then_some((label, diff.abs() < std::f32::consts::FRAC_PI_8))
+            (diff.abs() <= COMPASS_HALF_FOV).then_some((
+                diff,
+                label,
+                diff.abs() < std::f32::consts::FRAC_PI_8,
+            ))
         })
+        .collect();
+    visible.sort_by(|a, b| a.0.total_cmp(&b.0));
+    visible
+        .into_iter()
+        .map(|(_, label, facing)| (label, facing))
         .collect()
 }
 

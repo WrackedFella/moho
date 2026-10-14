@@ -199,6 +199,11 @@ impl CommandProcessor {
 
         match parts[1].parse::<u32>() {
             Ok(mode) => {
+                if mode > 5 {
+                    return CommandResult::message(
+                        "Debug view must be between 0 and 5".to_string(),
+                    );
+                }
                 let mode_name = match mode {
                     0 => "None",
                     1 => "Normals",
