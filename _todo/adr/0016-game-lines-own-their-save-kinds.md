@@ -1,6 +1,6 @@
 # 0016 — Game lines own their save kinds and versions; the envelope stays content-blind
 
-**Status:** Proposed (extends [0006](0006-save-format-contract.md))
+**Status:** Accepted (2026-10-14; extends [0006](0006-save-format-contract.md))
 
 ## Context
 
