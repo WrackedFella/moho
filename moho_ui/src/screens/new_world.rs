@@ -35,7 +35,7 @@ impl UiComponent for NewWorldMenu {
         let mut items: Vec<MenuItem> = Vec::new();
 
         // Top panel: title area
-        egui::Panel::top("new_world_top").show_inside(ui, |ui| {
+        egui::Panel::top("new_world_top").show(ui, |ui| {
             // Use same gutter percentage as content area (30%)
             let avail = ui.available_width();
             let gutter = FormControls::calculate_gutter(avail, 0.30);
@@ -56,7 +56,7 @@ impl UiComponent for NewWorldMenu {
         });
 
         // Bottom panel: buttons reserved at the bottom
-        egui::Panel::bottom("new_world_bottom").show_inside(ui, |ui| {
+        egui::Panel::bottom("new_world_bottom").show(ui, |ui| {
             // Use same gutter percentage as content area (30%)
             let avail = ui.available_width();
             let gutter = FormControls::calculate_gutter(avail, 0.30);
@@ -119,7 +119,7 @@ impl UiComponent for NewWorldMenu {
         });
 
         // Central panel: form fields inside a scroll area
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {

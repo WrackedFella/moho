@@ -146,13 +146,15 @@ deltas (`UiTextureSet` before drawing, `UiTextureId` frees after) and `UiMesh`es
 (clipped, textured triangle lists of `UiVertex`, in points). A game implements
 `UiFrameSource` (`moho_ui`'s `EguiAdapter` maps egui tessellation in `adapter/paint_map.rs`)
 and registers a `UiSource` with `RendererBackend::set_ui_source`; the
-renderer pulls `Option<UiFrame>` once per frame with the surface size.
+renderer pulls `Option<UiFrame>` once per frame with the surface size. The adapter
+consumes egui's `TexturesDelta`; `textures_set` keeps the order of partial updates
+to one texture, so patches apply after the full upload they follow.
 
 `moho_renderer::ui_pass` draws it over the finished scene, before `finish_frame`. The pure
 logic (`scissor`, `build_draws`, texture bookkeeping) is separate from the wgpu half
 (`ui_pass/gpu.rs`). Meshes with an empty scissor, no indices or an unknown texture are
 skipped; a non-finite or non-positive `pixels_per_point` skips the whole frame. The
-painter and `shaders/ui.wgsl` are a port of `egui-wgpu` 0.34: premultiplied-alpha
+painter and `shaders/ui.wgsl` are a port of `egui-wgpu` 0.34 (unchanged through 0.36): premultiplied-alpha
 blending, sRGB vertex colours, no custom paint callbacks.
 
 ## Tunables

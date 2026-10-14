@@ -7,8 +7,8 @@ publish = false
 [dependencies]
 moho_render_api = { path = "../moho_render_api" }
 winit = { workspace = true }
-egui = "0.34.3"
-egui-winit = { version = "0.34.3", default-features = false, features = ["clipboard", "wayland", "x11"] }
+egui = "0.36.2"
+egui-winit = { version = "0.36.2", default-features = false, features = ["clipboard", "wayland", "x11"] }
 tracing = { workspace = true }
 moho_input = { path = "../moho_input" }
 moho_core = { path = "../moho_core" }

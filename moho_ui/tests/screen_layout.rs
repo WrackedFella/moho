@@ -1,5 +1,5 @@
 //! Layout regression tests: panel order decides placement because
-//! `show_inside` consumes the root Ui's remaining space.
+//! `show` consumes the root Ui's remaining space.
 
 use moho_ui::MenuItem;
 use moho_ui::UiComponent;
@@ -45,7 +45,7 @@ fn settings_menu_bottom_buttons_sit_in_lower_half_of_screen() {
 
     let mut items = Vec::new();
     for _ in 0..2 {
-        let _ = ctx.run_ui(screen_input(Vec::new()), |ui| {
+        let _ = run_ui(&ctx, screen_input(Vec::new()), |ui| {
             items = menu.render(ui);
         });
     }
@@ -68,7 +68,7 @@ fn new_world_items_after_click(at: egui::Pos2) -> Vec<MenuItem> {
         vec![pointer_button(at, false)],
     ];
     for events in frames {
-        let _ = ctx.run_ui(screen_input(events), |ui| {
+        let _ = run_ui(&ctx, screen_input(events), |ui| {
             items = menu.render(ui);
         });
     }
@@ -87,4 +87,16 @@ fn new_world_back_button_sits_in_lower_half_of_screen() {
     let items = new_world_items_after_click(egui::pos2(370.0, 566.0));
 
     assert_in_lower_half(&items);
+}
+
+/// Runs one frame and clears its texture delta; egui asserts in debug builds
+/// that a non-empty delta is not dropped, and these tests never paint it.
+fn run_ui(
+    ctx: &egui::Context,
+    input: egui::RawInput,
+    add_contents: impl FnMut(&mut egui::Ui),
+) -> egui::FullOutput {
+    let mut output = ctx.run_ui(input, add_contents);
+    output.textures_delta.clear();
+    output
 }

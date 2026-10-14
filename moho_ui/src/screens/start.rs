@@ -32,7 +32,7 @@ impl UiComponent for StartMenu {
         let save_path = PathBuf::from("saves/scene.bin");
         let save_exists = std::path::Path::new(&save_path).exists();
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(16.0);
                 ui.heading("Moho");

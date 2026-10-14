@@ -480,13 +480,13 @@ impl ShadowSystem {
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[
-                    wgpu::VertexBufferLayout {
+                    Some(wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<crate::types::Vertex>()
                             as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-                    },
-                    wgpu::VertexBufferLayout {
+                    }),
+                    Some(wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<crate::types::GpuInstance>()
                             as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Instance,
@@ -498,7 +498,7 @@ impl ShadowSystem {
                             6 => Uint32,
                             7 => Uint32,
                         ],
-                    },
+                    }),
                 ],
             },
             fragment: None,

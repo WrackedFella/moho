@@ -71,17 +71,23 @@ fn to_mesh(clip_rect: egui::Rect, mesh: &egui::epaint::Mesh) -> UiMesh {
 }
 
 /// Maps tessellated egui output to a [`UiFrame`]. Paint callbacks are skipped.
+///
+/// Consumes the texture delta: egui asserts in debug builds that a non-empty
+/// delta is not dropped. Deltas of one texture keep their order.
 pub(crate) fn to_ui_frame(
     primitives: &[egui::ClippedPrimitive],
-    textures_delta: &egui::TexturesDelta,
+    mut textures_delta: egui::TexturesDelta,
     pixels_per_point: f32,
 ) -> UiFrame {
     UiFrame {
         pixels_per_point,
-        textures_set: textures_delta
-            .set
-            .iter()
-            .map(|(id, delta)| to_texture_set(*id, delta))
+        textures_set: std::mem::take(&mut textures_delta.set)
+            .into_iter()
+            .flat_map(|(id, deltas)| {
+                deltas
+                    .into_iter()
+                    .map(move |delta| to_texture_set(id, &delta))
+            })
             .collect(),
         meshes: primitives
             .iter()
@@ -90,10 +96,9 @@ pub(crate) fn to_ui_frame(
                 Primitive::Callback(_) => None,
             })
             .collect(),
-        textures_free: textures_delta
-            .free
-            .iter()
-            .map(|id| to_ui_texture_id(*id))
+        textures_free: std::mem::take(&mut textures_delta.free)
+            .into_iter()
+            .map(to_ui_texture_id)
             .collect(),
     }
 }
@@ -169,14 +174,16 @@ mod tests {
         ];
         let patch_px = vec![Color32::from_rgba_premultiplied(9, 10, 11, 12)];
         let textures_delta = egui::TexturesDelta {
-            set: vec![
+            set: [
                 (
                     egui::TextureId::Managed(7),
-                    delta(None, [2, 1], full_px, egui::TextureOptions::LINEAR),
+                    [delta(None, [2, 1], full_px, egui::TextureOptions::LINEAR)]
+                        .into_iter()
+                        .collect(),
                 ),
                 (
                     egui::TextureId::Managed(8),
-                    delta(
+                    [delta(
                         Some([3, 4]),
                         [1, 1],
                         patch_px,
@@ -186,13 +193,19 @@ mod tests {
                             wrap_mode: TextureWrapMode::Repeat,
                             mipmap_mode: None,
                         },
-                    ),
+                    )]
+                    .into_iter()
+                    .collect(),
                 ),
-            ],
-            free: vec![egui::TextureId::Managed(3), egui::TextureId::User(3)],
+            ]
+            .into_iter()
+            .collect(),
+            free: [egui::TextureId::Managed(3), egui::TextureId::User(3)]
+                .into_iter()
+                .collect(),
         };
 
-        let frame = to_ui_frame(&primitives, &textures_delta, 1.5);
+        let frame = to_ui_frame(&primitives, textures_delta, 1.5);
 
         assert_eq!(frame.pixels_per_point, 1.5);
         assert_eq!(frame.meshes.len(), 1);
@@ -233,8 +246,14 @@ mod tests {
         );
 
         assert_eq!(frame.textures_set.len(), 2);
-        let full = &frame.textures_set[0];
-        assert_eq!(full.id, to_ui_texture_id(egui::TextureId::Managed(7)));
+        let set_for = |id| {
+            frame
+                .textures_set
+                .iter()
+                .find(|s| s.id == to_ui_texture_id(id))
+                .expect("texture set present")
+        };
+        let full = set_for(egui::TextureId::Managed(7));
         assert_eq!(full.id, mesh.texture);
         assert_eq!(full.pos, None);
         assert_eq!(full.image.size, [2, 1]);
@@ -243,8 +262,7 @@ mod tests {
         assert_eq!(full.sampler.minification, UiFilter::Linear);
         assert_eq!(full.sampler.wrap, UiWrap::ClampToEdge);
 
-        let patch = &frame.textures_set[1];
-        assert_eq!(patch.id, to_ui_texture_id(egui::TextureId::Managed(8)));
+        let patch = set_for(egui::TextureId::Managed(8));
         assert_eq!(patch.pos, Some([3, 4]));
         assert_eq!(patch.image.size, [1, 1]);
         assert_eq!(patch.image.pixels, vec![[9, 10, 11, 12]]);
@@ -252,12 +270,16 @@ mod tests {
         assert_eq!(patch.sampler.minification, UiFilter::Linear);
         assert_eq!(patch.sampler.wrap, UiWrap::Repeat);
 
+        let freed: std::collections::HashSet<_> = frame.textures_free.iter().copied().collect();
+        assert_eq!(frame.textures_free.len(), 2);
         assert_eq!(
-            frame.textures_free,
-            vec![
+            freed,
+            [
                 to_ui_texture_id(egui::TextureId::Managed(3)),
                 to_ui_texture_id(egui::TextureId::User(3)),
             ]
+            .into_iter()
+            .collect()
         );
     }
 
@@ -278,9 +300,9 @@ mod tests {
     #[test]
     fn mirrored_repeat_wrap_maps_to_mirrored_repeat() {
         let textures_delta = egui::TexturesDelta {
-            set: vec![(
+            set: [(
                 egui::TextureId::Managed(1),
-                delta(
+                [delta(
                     None,
                     [1, 1],
                     vec![Color32::WHITE],
@@ -290,17 +312,73 @@ mod tests {
                         wrap_mode: TextureWrapMode::MirroredRepeat,
                         mipmap_mode: None,
                     },
-                ),
-            )],
-            free: vec![],
+                )]
+                .into_iter()
+                .collect(),
+            )]
+            .into_iter()
+            .collect(),
+            free: [].into_iter().collect(),
         };
 
-        let frame = to_ui_frame(&[], &textures_delta, 1.0);
+        let frame = to_ui_frame(&[], textures_delta, 1.0);
 
         let sampler = frame.textures_set[0].sampler;
         assert_eq!(sampler.wrap, UiWrap::MirroredRepeat);
         assert_eq!(sampler.magnification, UiFilter::Linear);
         assert_eq!(sampler.minification, UiFilter::Nearest);
+    }
+
+    #[test]
+    fn partial_deltas_for_one_texture_map_in_order() {
+        let id = egui::TextureId::Managed(4);
+        let mut textures_delta = egui::TexturesDelta::default();
+        textures_delta.set.insert(
+            id,
+            [
+                delta(
+                    None,
+                    [2, 2],
+                    vec![Color32::from_rgba_premultiplied(1, 1, 1, 1); 4],
+                    egui::TextureOptions::LINEAR,
+                ),
+                delta(
+                    Some([1, 0]),
+                    [1, 2],
+                    vec![
+                        Color32::from_rgba_premultiplied(2, 2, 2, 2),
+                        Color32::from_rgba_premultiplied(3, 3, 3, 3),
+                    ],
+                    egui::TextureOptions::LINEAR,
+                ),
+                delta(
+                    Some([0, 1]),
+                    [1, 1],
+                    vec![Color32::from_rgba_premultiplied(4, 4, 4, 4)],
+                    egui::TextureOptions::LINEAR,
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        let frame = to_ui_frame(&[], textures_delta, 1.0);
+
+        let sets = &frame.textures_set;
+        assert_eq!(sets.len(), 3);
+        assert!(
+            sets.iter()
+                .all(|s| s.id == to_ui_texture_id(egui::TextureId::Managed(4)))
+        );
+        assert_eq!(sets[0].pos, None);
+        assert_eq!(sets[0].image.size, [2, 2]);
+        assert_eq!(sets[0].image.pixels, vec![[1, 1, 1, 1]; 4]);
+        assert_eq!(sets[1].pos, Some([1, 0]));
+        assert_eq!(sets[1].image.size, [1, 2]);
+        assert_eq!(sets[1].image.pixels, vec![[2, 2, 2, 2], [3, 3, 3, 3]]);
+        assert_eq!(sets[2].pos, Some([0, 1]));
+        assert_eq!(sets[2].image.size, [1, 1]);
+        assert_eq!(sets[2].image.pixels, vec![[4, 4, 4, 4]]);
     }
 
     #[test]
@@ -314,7 +392,7 @@ mod tests {
         };
         let primitives = vec![callback, mesh_primitive(egui::TextureId::Managed(0))];
 
-        let frame = to_ui_frame(&primitives, &egui::TexturesDelta::default(), 1.0);
+        let frame = to_ui_frame(&primitives, egui::TexturesDelta::default(), 1.0);
 
         assert_eq!(frame.meshes.len(), 1);
         assert_eq!(frame.meshes[0].indices.len(), 6);

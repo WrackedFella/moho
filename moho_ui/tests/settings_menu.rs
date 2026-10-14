@@ -242,14 +242,14 @@ fn render_doesnt_crash() {
     let ctx = egui::Context::default();
 
     // Render in both tabs
-    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+    let _ = run_ui(&ctx, egui::RawInput::default(), |ui| {
         menu.render(ui);
     });
 
     // Switch tab and render again
     menu.set_active_tab(SettingsTab::Audio);
 
-    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+    let _ = run_ui(&ctx, egui::RawInput::default(), |ui| {
         menu.render(ui);
     });
 
@@ -312,7 +312,7 @@ fn render_frame(menu: &mut SettingsMenu, events: Vec<egui::Event>) -> egui::Full
         events,
         ..Default::default()
     };
-    ctx.run_ui(input, |ui| {
+    run_ui(&ctx, input, |ui| {
         menu.render(ui);
     })
 }
@@ -578,4 +578,16 @@ fn pad_only_action_row_shows_unbound() {
 
     assert_eq!(text.lines().filter(|l| *l == "Unbound").count(), 1);
     assert!(!text.contains("Pad"), "pad label shown in:\n{text}");
+}
+
+/// Runs one frame and clears its texture delta; egui asserts in debug builds
+/// that a non-empty delta is not dropped, and these tests never paint it.
+fn run_ui(
+    ctx: &egui::Context,
+    input: egui::RawInput,
+    add_contents: impl FnMut(&mut egui::Ui),
+) -> egui::FullOutput {
+    let mut output = ctx.run_ui(input, add_contents);
+    output.textures_delta.clear();
+    output
 }

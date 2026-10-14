@@ -531,8 +531,8 @@ The adapter handles this automatically for winit events.
 ### egui Version Compatibility
 
 This crate uses:
-- `egui = "0.34"`
-- `egui-winit = "0.34"`
+- `egui = "0.36"`
+- `egui-winit = "0.36"`
 
 If updating egui versions, verify initialization APIs haven't changed. egui historically changes constructor signatures between minor versions.
 
