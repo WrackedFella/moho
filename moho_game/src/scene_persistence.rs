@@ -16,6 +16,9 @@ use std::path::Path;
 /// Type alias for camera data: (position, yaw, pitch)
 pub type CameraData = (glam::Vec3, f32, f32);
 
+/// Scene file kind. Payload field changes bump `version` (ADR-0016).
+pub const SCENE_FILE: FileKind = FileKind { tag: 2, version: 1 };
+
 /// Save a compact binary snapshot of the scene in a `Scene` envelope.
 /// This writes a serialized SceneDesc containing all Spheres, Cubes, VoxelChunks,
 /// Materials, and camera position/orientation. Reloadable into fresh [`SceneEntities`]
@@ -88,7 +91,7 @@ pub fn encode_to_bytes(
         lights: lights.to_vec(),
     };
 
-    persist::encode(FileKind::Scene, &desc)
+    persist::encode(SCENE_FILE, &desc)
 }
 
 /// Load a SceneDesc from a file and populate the provided `entities`.
@@ -121,7 +124,7 @@ pub fn load_from_bytes(
         voxel_chunks,
         camera,
         lights,
-    } = persist::decode(FileKind::Scene, bytes)?;
+    } = persist::decode(SCENE_FILE, bytes)?;
     Ok(populate_entities(
         spheres,
         cubes,

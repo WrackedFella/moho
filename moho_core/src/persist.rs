@@ -2,31 +2,13 @@
 
 use serde::{Serialize, de::DeserializeOwned};
 
-/// Which kind of file an envelope holds. The discriminant is the on-disk `u8`.
+/// Which kind of file an envelope holds, as declared by the code that writes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum FileKind {
-    World = 1,
-    Scene = 2,
-    Chunk = 3,
-}
-
-impl FileKind {
-    /// Newest format version this build writes and reads for the kind.
-    pub fn current_version(self) -> u16 {
-        match self {
-            Self::World | Self::Scene | Self::Chunk => 1,
-        }
-    }
-
-    fn from_byte(byte: u8) -> Option<Self> {
-        match byte {
-            1 => Some(Self::World),
-            2 => Some(Self::Scene),
-            3 => Some(Self::Chunk),
-            _ => None,
-        }
-    }
+pub struct FileKind {
+    /// On-disk kind byte.
+    pub tag: u8,
+    /// Newest format version this build writes and reads.
+    pub version: u16,
 }
 
 const MAGIC: &[u8; 4] = b"MOHO";
@@ -38,10 +20,10 @@ const HEADER_LEN: usize = 19;
 pub enum PersistError {
     #[error("not a save file")]
     NotASaveFile,
-    #[error("unsupported format: {kind:?} version {version}")]
-    UnsupportedFormat { kind: FileKind, version: u16 },
-    #[error("wrong file kind: expected {expected:?}, found {found:?}")]
-    WrongKind { expected: FileKind, found: FileKind },
+    #[error("unsupported format: kind {tag} version {version}")]
+    UnsupportedFormat { tag: u8, version: u16 },
+    #[error("wrong file kind: expected {expected}, found {found}")]
+    WrongKind { expected: u8, found: u8 },
     #[error("corrupt file")]
     Corrupt,
     #[error("encode failed: {0}")]
@@ -55,8 +37,8 @@ pub fn encode<T: Serialize>(kind: FileKind, value: &T) -> Result<Vec<u8>, Persis
     let payload = postcard::to_allocvec(value).map_err(|e| PersistError::Encode(e.to_string()))?;
     let mut out = Vec::with_capacity(HEADER_LEN + payload.len());
     out.extend_from_slice(MAGIC);
-    out.push(kind as u8);
-    out.extend_from_slice(&kind.current_version().to_le_bytes());
+    out.push(kind.tag);
+    out.extend_from_slice(&kind.version.to_le_bytes());
     out.extend_from_slice(&(payload.len() as u64).to_le_bytes());
     out.extend_from_slice(&crc32fast::hash(&payload).to_le_bytes());
     out.extend_from_slice(&payload);
@@ -68,15 +50,24 @@ pub fn decode<T: DeserializeOwned>(expected: FileKind, bytes: &[u8]) -> Result<T
     if bytes.len() < HEADER_LEN || &bytes[..4] != MAGIC {
         return Err(PersistError::NotASaveFile);
     }
-    let kind = FileKind::from_byte(bytes[4]).ok_or(PersistError::NotASaveFile)?;
+    let found = bytes[4];
     let version = u16::from_le_bytes([bytes[5], bytes[6]]);
-    if version == 0 || version > kind.current_version() {
-        return Err(PersistError::UnsupportedFormat { kind, version });
+    if version == 0 {
+        return Err(PersistError::UnsupportedFormat {
+            tag: found,
+            version,
+        });
     }
-    if kind != expected {
+    if found != expected.tag {
         return Err(PersistError::WrongKind {
-            expected,
-            found: kind,
+            expected: expected.tag,
+            found,
+        });
+    }
+    if version > expected.version {
+        return Err(PersistError::UnsupportedFormat {
+            tag: found,
+            version,
         });
     }
     let declared = u64::from_le_bytes(bytes[7..15].try_into().expect("8-byte slice"));

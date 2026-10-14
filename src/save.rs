@@ -39,6 +39,9 @@ struct WorldFile {
     blocks: Vec<BlockRecord>,
 }
 
+/// World file kind. Payload field changes bump `version` (ADR-0016).
+pub const WORLD_FILE: FileKind = FileKind { tag: 1, version: 1 };
+
 /// Atomically write a world save that bundles the scene bytes together with
 /// the UI-provided `WorldSpec` metadata and voxel block records.
 pub fn write_scene_with_metadata<P: AsRef<Path>>(
@@ -51,7 +54,7 @@ pub fn write_scene_with_metadata<P: AsRef<Path>>(
     let tmp_path = path.with_extension("tmp");
 
     let bytes = persist::encode(
-        FileKind::World,
+        WORLD_FILE,
         &WorldFile {
             spec: world_spec.clone(),
             scene: scene_bytes.to_vec(),
@@ -78,7 +81,7 @@ pub type SavePayload = (WorldSpec, Vec<u8>, Vec<BlockRecord>);
 /// the block records.
 pub fn read_scene_and_metadata<P: AsRef<Path>>(path: P) -> Result<SavePayload, PersistError> {
     let bytes = fs::read(path.as_ref())?;
-    let file: WorldFile = persist::decode(FileKind::World, &bytes)?;
+    let file: WorldFile = persist::decode(WORLD_FILE, &bytes)?;
     Ok((file.spec, file.scene, file.blocks))
 }
 

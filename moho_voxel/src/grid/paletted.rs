@@ -1,5 +1,8 @@
-use moho_core::persist::PersistError;
+use moho_core::persist::{FileKind, PersistError};
 use std::collections::HashMap;
+
+/// Chunk file kind. Payload field changes bump `version` (ADR-0016).
+pub const CHUNK_FILE: FileKind = FileKind { tag: 3, version: 1 };
 
 pub const CHUNK_VOL: usize = 4096; // 16³
 
@@ -127,7 +130,7 @@ impl PalettedChunk {
             indices: self.indices.to_vec(),
             resources,
         };
-        moho_core::persist::encode(moho_core::persist::FileKind::Chunk, &snap)
+        moho_core::persist::encode(CHUNK_FILE, &snap)
             .expect("PalettedChunk serialization must not fail")
     }
 
@@ -135,8 +138,7 @@ impl PalettedChunk {
     /// Fails if the data is malformed, the index count is wrong, or an index
     /// points outside the palette.
     pub fn from_bytes(data: &[u8]) -> Result<Self, PersistError> {
-        let snap: ChunkSnapshot =
-            moho_core::persist::decode(moho_core::persist::FileKind::Chunk, data)?;
+        let snap: ChunkSnapshot = moho_core::persist::decode(CHUNK_FILE, data)?;
         if snap.indices.len() != CHUNK_VOL
             || snap.palette.is_empty()
             || snap
