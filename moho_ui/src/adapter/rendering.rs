@@ -212,7 +212,7 @@ mod tests {
     }
 
     fn menu_with_button(enabled: bool) -> UiStateManager {
-        let mut ui_state = UiStateManager::new();
+        let mut ui_state = UiStateManager::new(moho_core::prefs::Prefs::default());
         ui_state.add_screen(
             "button_screen".to_string(),
             Box::new(ButtonScreen {
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn render_game_state_by_state() {
         let ctx = egui::Context::default();
-        let mut ui_state = UiStateManager::new();
+        let mut ui_state = UiStateManager::new(moho_core::prefs::Prefs::default());
 
         let (playing, playing_result) =
             run_frame(&ctx, &mut ui_state, GameState::Playing, Vec::new());

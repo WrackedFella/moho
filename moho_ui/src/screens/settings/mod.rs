@@ -344,7 +344,9 @@ mod tests {
     #[test]
     fn modifier_only_conflict_shows_modal() {
         let mut menu = SettingsMenu::with_prefs(crate::prefs::Prefs::default());
-        // set staged Move Left to Ctrl so Ctrl will conflict with listening target 0
+        // Free Ctrl from Descend so Move Left is the only row holding it.
+        menu.state
+            .set_staged_binding(StrategyAction::Descend, key(Key::Z));
         menu.state
             .set_staged_binding(StrategyAction::MoveLeft, key(Key::Ctrl));
         menu.keybind_capture.start_listening(0);
@@ -422,46 +424,4 @@ mod tests {
     // depends on the egui version's RawInput/Event API. We keep focused
     // integration coverage on modifiers here; other cases are covered by
     // unit tests and adapter-level behavior.
-
-    #[test]
-    fn window_mode_dirty_tracking() {
-        use crate::prefs::WindowMode;
-        let prefs = crate::prefs::Prefs::default(); // Windowed
-        let mut menu = SettingsMenu::with_prefs(prefs);
-
-        // Initially clean
-        assert!(!menu.has_unsaved_changes());
-
-        // Change window mode
-        menu.state
-            .staged_mut()
-            .set_window_mode(WindowMode::Fullscreen);
-        menu.state.mark_dirty(SettingsField::WindowMode);
-
-        assert!(menu.has_unsaved_changes());
-        assert!(menu.state.is_field_dirty(SettingsField::WindowMode));
-
-        // Revert
-        menu.state.revert_changes();
-        assert!(!menu.has_unsaved_changes());
-        assert_eq!(menu.state.staged().window_mode(), WindowMode::Windowed);
-    }
-
-    #[test]
-    fn window_resolution_dirty_tracking() {
-        let prefs = crate::prefs::Prefs::default(); // (1920, 1080)
-        let mut menu = SettingsMenu::with_prefs(prefs);
-
-        assert!(!menu.has_unsaved_changes());
-
-        menu.state.staged_mut().set_window_resolution(2560, 1440);
-        menu.state.mark_dirty(SettingsField::WindowResolution);
-
-        assert!(menu.has_unsaved_changes());
-        assert!(menu.state.is_field_dirty(SettingsField::WindowResolution));
-
-        // Revert restores saved value
-        menu.state.revert_changes();
-        assert_eq!(menu.state.staged().window_resolution(), (1920, 1080));
-    }
 }

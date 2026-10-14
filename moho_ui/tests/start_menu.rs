@@ -14,24 +14,25 @@ fn start_menu_returns_expected_action_and_rects() {
         items = menu.render(ui);
     });
 
-    // No click simulated, so none of the items should have been triggered;
-    // but the items vector should contain our 4 menu entries.
     assert_eq!(items.len(), 4, "expected 4 menu items from StartMenu");
-    // Check rects exist and are positive
     for item in &items {
         assert!(item.rect.is_some(), "expected item.rect to be present");
         assert!(item.rect.unwrap().is_positive());
+        assert!(!item.clicked, "nothing was clicked");
     }
+    let actions: Vec<_> = items.iter().map(|i| i.action.clone()).collect();
+    assert_eq!(
+        actions,
+        [
+            moho_ui::MenuAction::LoadScene(PathBuf::from("saves/scene.bin")),
+            moho_ui::MenuAction::NewWorld,
+            moho_ui::MenuAction::ShowMenu("settings".to_string()),
+            moho_ui::MenuAction::Exit,
+        ]
+    );
 
     // Verify menu metadata
     assert_eq!(menu.name(), "start");
-
-    // As an extra: ensure the expected LoadScene path when Start is pressed
-    // (simulate the logical fallback by checking the known saved path string)
-    let expected = PathBuf::from("saves/scene.bin");
-    // We won't simulate a UI click here; instead assert the value used by StartMenu
-    // is as documented in the code.
-    assert_eq!(expected, PathBuf::from("saves/scene.bin"));
 }
 
 #[test]

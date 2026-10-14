@@ -2,23 +2,13 @@
 //!
 //! # Test Isolation
 //!
-//! These tests use `SettingsMenu::with_prefs(Prefs::default())` instead of
-//! `SettingsMenu::new()` to ensure test isolation. This approach:
+//! Menus are built from `Prefs::default()` so no test depends on the contents of
+//! `config/prefs.ini`.
 //!
-//! 1. **Avoids shared state**: Each test starts with a clean default Prefs instance
-//!    rather than loading from the potentially-modified config/prefs.ini file.
-//!
-//! 2. **Prevents test interference**: Tests that call `apply_staged_changes()`
-//!    (which saves to disk) won't affect other tests because each test initializes
-//!    with `Prefs::default()` regardless of disk state.
-//!
-//! 3. **Maintains realistic behavior**: Tests that need to verify save/revert
-//!    functionality can still call `apply_staged_changes()` and `revert_staged_changes()`
-//!    because the underlying Prefs instance behaves identically whether loaded from
-//!    disk or created as default.
-//!
-//! This pattern ensures tests are deterministic, parallelizable, and won't fail
-//! due to leftover state from previous test runs or other tests in the suite.
+//! Saving writes to the menu's save path. `SettingsMenu::with_prefs_at` points it at a
+//! temporary directory, and the one test that saves uses it. `SettingsMenu::with_prefs`
+//! saves to `Prefs::config_path()`, the real prefs file, so no test here calls
+//! `apply_staged_changes` on a menu built that way.
 
 use moho_input::bindings::Binding;
 use moho_input::key::Key;
@@ -62,66 +52,59 @@ fn escape_cancels_binding_listen() {
     assert!(!menu.has_unsaved_changes());
 }
 
-/// Test 4: Staged changes and dirty tracking
+/// Saving clears the dirty state and persists the staged binding with its pad binding.
 #[test]
-fn staged_changes_tracked_correctly() {
-    let mut menu = SettingsMenu::with_prefs(Prefs::default());
-
-    // Initially no dirty fields
+fn staged_changes_tracked_and_cleared_on_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("prefs.ini");
+    let mut menu = SettingsMenu::with_prefs_at(Prefs::default(), path.clone());
     assert!(!menu.has_unsaved_changes());
 
-    // Make a change by binding a key
-    menu.start_listening(0);
-    menu.apply_key_while_listening(Key::W);
-
-    // Should now have dirty fields
-    assert!(menu.has_unsaved_changes());
-
-    // Apply changes (save)
-    menu.apply_staged_changes();
-
-    // Should no longer have dirty fields
-    assert!(!menu.has_unsaved_changes());
-}
-
-/// Test 5: Reverting staged changes
-#[test]
-fn revert_changes_works() {
-    let mut menu = SettingsMenu::with_prefs(Prefs::default());
-
-    // First, explicitly set a known binding so we're not dependent on defaults
-    menu.start_listening(0);
-    menu.apply_key_while_listening(Key::W);
-    menu.apply_staged_changes(); // Save it
-
-    // Get the saved binding
-    let original_binding = menu.get_staged_binding(0).to_vec();
-    assert_eq!(
-        original_binding,
-        [Binding::Key(Key::W), pad_stick(StickDir::Up)],
-        "Expected original binding to be 'W' plus its pad binding"
-    );
-
-    // Now make a change - use 'Q' which is different
     menu.start_listening(0);
     menu.apply_key_while_listening(Key::Q);
 
-    // If there was a conflict, confirm it
-    if menu.conflict_modal().is_visible() {
-        menu.confirm_pending_binding();
-    }
-
-    // Staged binding should be different
-    let new_binding = menu.get_staged_binding(0).to_vec();
-    assert_ne!(original_binding, new_binding);
-    assert_eq!(new_binding, [Binding::Key(Key::Q), pad_stick(StickDir::Up)]);
     assert!(menu.has_unsaved_changes());
 
-    // Revert changes
+    menu.apply_staged_changes().unwrap();
+
+    assert!(!menu.has_unsaved_changes());
+    let (saved, issues) = Prefs::load_from(&path);
+    assert_eq!(issues, vec![]);
+    let reloaded = SettingsMenu::with_prefs(saved);
+    assert_eq!(
+        reloaded.get_staged_binding(0),
+        [Binding::Key(Key::Q), pad_stick(StickDir::Up)]
+    );
+}
+
+/// Reverting discards a staged binding and returns the row to its saved keys.
+#[test]
+fn revert_changes_works() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::Key(Key::W), pad_stick(StickDir::Up)]
+    );
+
+    menu.start_listening(0);
+    menu.apply_key_while_listening(Key::Q);
+
+    assert!(
+        !menu.conflict_modal().is_visible(),
+        "Q is unbound by default"
+    );
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::Key(Key::Q), pad_stick(StickDir::Up)]
+    );
+    assert!(menu.has_unsaved_changes());
+
     menu.revert_staged_changes();
 
-    // Should be back to original
-    assert_eq!(menu.get_staged_binding(0), original_binding.as_slice());
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::Key(Key::W), pad_stick(StickDir::Up)]
+    );
     assert!(!menu.has_unsaved_changes());
 }
 
@@ -210,7 +193,8 @@ fn canceling_conflict_preserves_original() {
 fn multiple_unique_bindings_work() {
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
 
-    let bindings = [Key::W, Key::A, Key::S, Key::D, Key::ArrowUp, Key::ArrowDown];
+    // None of these is any row's default key, and none repeats, so no step conflicts.
+    let bindings = [Key::Q, Key::E, Key::R, Key::T, Key::Y, Key::U, Key::I];
 
     for (id, &key) in bindings.iter().enumerate() {
         menu.start_listening(id);
@@ -221,7 +205,6 @@ fn multiple_unique_bindings_work() {
         );
     }
 
-    // Verify all bindings are set correctly
     for (id, &key) in bindings.iter().enumerate() {
         let binding = menu.get_staged_binding(id);
         let pads: Vec<Binding> = moho_input::Action::default_bindings(ROW_ACTIONS[id])
@@ -241,19 +224,17 @@ fn render_doesnt_crash() {
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
     let ctx = egui::Context::default();
 
-    // Render in both tabs
-    let _ = run_ui(&ctx, egui::RawInput::default(), |ui| {
-        menu.render(ui);
-    });
+    for tab in [
+        SettingsTab::Controls,
+        SettingsTab::Audio,
+        SettingsTab::Video,
+    ] {
+        menu.set_active_tab(tab);
 
-    // Switch tab and render again
-    menu.set_active_tab(SettingsTab::Audio);
-
-    let _ = run_ui(&ctx, egui::RawInput::default(), |ui| {
-        menu.render(ui);
-    });
-
-    // Should not panic
+        let _ = run_ui(&ctx, egui::RawInput::default(), |ui| {
+            menu.render(ui);
+        });
+    }
 }
 
 /// A lone modifier key can be captured as a binding

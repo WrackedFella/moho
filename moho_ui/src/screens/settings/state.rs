@@ -170,27 +170,6 @@ mod tests {
     }
 
     #[test]
-    fn apply_changes_clears_dirty_fields() {
-        let mut state = SettingsState::from_prefs(Prefs::default());
-        state.set_staged_binding(StrategyAction::MoveForward, key(Key::Q));
-        assert!(state.is_dirty());
-
-        let result = state.apply_changes();
-        assert!(result.is_ok());
-
-        assert!(!state.is_dirty());
-        assert!(!state.is_binding_modified(StrategyAction::MoveForward));
-        assert_eq!(
-            state
-                .prefs()
-                .bindings()
-                .get("move_forward")
-                .map(String::as_str),
-            Some("Q")
-        );
-    }
-
-    #[test]
     fn set_staged_binding_marks_only_that_field_dirty() {
         let mut state = SettingsState::from_prefs(Prefs::default());
 
@@ -206,15 +185,27 @@ mod tests {
     }
 
     #[test]
-    fn get_staged_binding_returns_correct_value() {
+    fn video_setting_change_marks_dirty_and_reverts() {
+        use crate::prefs::WindowMode;
         let mut state = SettingsState::from_prefs(Prefs::default());
+        assert!(!state.is_dirty());
 
-        state.set_staged_binding(StrategyAction::MoveLeft, key(Key::Q));
+        state.set_window_mode(WindowMode::Fullscreen);
 
-        assert_eq!(
-            state.get_staged_binding(StrategyAction::MoveLeft),
-            key(Key::Q)
-        );
+        assert!(state.is_field_dirty(SettingsField::WindowMode));
+        assert!(!state.is_field_dirty(SettingsField::WindowResolution));
+        assert_eq!(state.staged().window_mode(), WindowMode::Fullscreen);
+
+        state.set_window_resolution(2560, 1440);
+
+        assert!(state.is_field_dirty(SettingsField::WindowResolution));
+        assert_eq!(state.staged().window_resolution(), (2560, 1440));
+
+        state.revert_changes();
+
+        assert!(!state.is_dirty());
+        assert_eq!(state.staged().window_mode(), WindowMode::Windowed);
+        assert_eq!(state.staged().window_resolution(), (1920, 1080));
     }
 
     #[test]

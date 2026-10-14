@@ -15,6 +15,9 @@ moho_core = { path = "../moho_core" }
 moho_game = { path = "../moho_game" }
 rand = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [features]
 default = []
 # Test-only helpers for the egui adapter. Enable when running integration

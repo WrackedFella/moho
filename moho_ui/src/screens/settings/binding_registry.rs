@@ -80,16 +80,36 @@ mod tests {
     }
 
     #[test]
-    fn find_conflict_detects_duplicate_bindings() {
+    fn find_conflict_covers_every_listed_row() {
         let registry = registry();
 
-        assert_eq!(
-            registry.find_conflict(Key::W, StrategyAction::MoveBack),
-            Some(StrategyAction::MoveForward)
+        for row in BINDING_ROWS {
+            let asker = BINDING_ROWS.into_iter().find(|&r| r != row).unwrap();
+            let keys: Vec<Key> = moho_input::Action::default_bindings(row)
+                .iter()
+                .filter_map(|b| match b {
+                    Binding::Key(key) => Some(*key),
+                    Binding::Mouse(_) | Binding::Pad(_) => None,
+                })
+                .collect();
+            assert!(!keys.is_empty(), "{row:?} has a default key");
+            for key in keys {
+                assert_eq!(registry.find_conflict(key, asker), Some(row), "{row:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn find_conflict_matches_any_key_of_a_multi_key_row() {
+        let mut registry = registry();
+        registry.set_binding(
+            StrategyAction::MoveForward,
+            vec![Binding::Key(Key::W), Binding::Key(Key::ArrowUp)],
         );
+
         assert_eq!(
-            registry.find_conflict(Key::A, StrategyAction::MoveBack),
-            Some(StrategyAction::MoveLeft)
+            registry.find_conflict(Key::ArrowUp, StrategyAction::MoveLeft),
+            Some(StrategyAction::MoveForward)
         );
     }
 

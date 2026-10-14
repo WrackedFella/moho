@@ -384,7 +384,11 @@ mod tests {
     use moho_render_api::UiFrameSource;
 
     fn adapter() -> EguiAdapter {
-        EguiAdapter::new(None, Arc::new(moho_core::EventBus::new()))
+        EguiAdapter::new(
+            None,
+            Arc::new(moho_core::EventBus::new()),
+            moho_core::prefs::Prefs::default(),
+        )
     }
 
     #[test]
