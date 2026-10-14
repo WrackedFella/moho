@@ -34,9 +34,25 @@ pub enum MagazineLevel {
 
 /// A magazine holding up to `capacity` rounds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawMagazine")]
 pub struct Magazine {
     pub(crate) capacity: u32,
     pub(crate) rounds: u32,
+}
+
+/// Unvalidated wire form of a [`Magazine`], checked by [`Magazine::new`] on deserialize.
+#[derive(Deserialize)]
+struct RawMagazine {
+    capacity: u32,
+    rounds: u32,
+}
+
+impl TryFrom<RawMagazine> for Magazine {
+    type Error = MagazineError;
+
+    fn try_from(raw: RawMagazine) -> Result<Self, Self::Error> {
+        Self::new(raw.capacity, raw.rounds)
+    }
 }
 
 impl Magazine {
@@ -170,7 +186,10 @@ mod tests {
 
         let result = serde_json::from_str::<Magazine>(json);
 
-        assert!(result.is_err(), "over-capacity data deserialized: {result:?}");
+        assert!(
+            result.is_err(),
+            "over-capacity data deserialized: {result:?}"
+        );
     }
 
     #[test]
