@@ -3,7 +3,7 @@
 //! A [`SimRng`] is one named stream's SplitMix64 generator, held by value in the
 //! owning system's state. The sequence is integer-only and pinned by tests, so the same
 //! seed and stream replay the same numbers on every platform and dependency version.
-//! Changing the sequence breaks saved games and replays, so treat it as a compatibility break.
+//! Changing the sequence is a compatibility break for saved games and replays.
 
 use serde::{Deserialize, Serialize};
 
@@ -31,7 +31,8 @@ impl StreamId {
 
 /// One stream's SplitMix64 generator.
 ///
-/// Not `Copy`, so a stream cannot be duplicated by accident and replay values twice.
+/// Not `Copy`, so a stream is duplicated only by an explicit `clone`, never by accident,
+/// which would replay its values twice.
 ///
 /// ```compile_fail
 /// use moho_core::rng::{SimRng, StreamId};
@@ -67,7 +68,7 @@ impl SimRng {
 
 /// Maps the top 24 bits of `bits` to `[0, 1)`.
 fn unit_f32(bits: u64) -> f32 {
-    (bits >> 40) as f32 * (1.0 / (1u32 << 24) as f32)
+    (bits >> 40) as f32 / (1u32 << 24) as f32
 }
 
 /// SplitMix64's golden-ratio increment, `2^64 / phi` rounded to odd.
