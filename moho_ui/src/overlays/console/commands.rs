@@ -480,6 +480,32 @@ mod tests {
     }
 
     #[test]
+    fn debug_view_rejects_unknown_mode() {
+        let processor = CommandProcessor::new();
+
+        let result = processor.execute("r_debug_view 9");
+
+        assert_eq!(result.action, ConsoleAction::None);
+        assert!(
+            result
+                .messages
+                .iter()
+                .any(|m| m == "Debug view must be between 0 and 5"),
+            "messages: {:?}",
+            result.messages
+        );
+    }
+
+    #[test]
+    fn debug_view_accepts_mode_5() {
+        let processor = CommandProcessor::new();
+
+        let result = processor.execute("r_debug_view 5");
+
+        assert_eq!(result.action, ConsoleAction::SetDebugView(5));
+    }
+
+    #[test]
     fn quality_commands() {
         let processor = CommandProcessor::new();
         let cases: [(&str, QualityAction); 2] = [

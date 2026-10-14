@@ -411,4 +411,58 @@ mod tests {
             });
         });
     }
+
+    #[test]
+    fn gutter_is_percent_with_min_20() {
+        assert_eq!(FormControls::calculate_gutter(1000.0, 0.3), 300.0);
+        assert_eq!(FormControls::calculate_gutter(50.0, 0.3), 20.0);
+    }
+
+    fn volume_frame(ctx: &egui::Context, events: Vec<egui::Event>, value: &mut f32) {
+        let _ = crate::overlays::test_support::run_ui(ctx, input(events), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                FormControls::volume_slider(ui, "Vol", value, 5.0, 60.0);
+            });
+        });
+    }
+
+    #[test]
+    fn volume_slider_steps_by_tenths() {
+        for press_x in [661.0_f32, 700.3, 733.7, 751.9, 777.1] {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(4.0);
+            let mut value = 5.0_f32;
+            volume_frame(&ctx, Vec::new(), &mut value);
+            volume_frame(&ctx, Vec::new(), &mut value);
+            let at = |x: f32| egui::pos2(x, 20.0);
+            let button = |x: f32, pressed| egui::Event::PointerButton {
+                pos: at(x),
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+
+            volume_frame(
+                &ctx,
+                vec![egui::Event::PointerMoved(at(press_x))],
+                &mut value,
+            );
+            volume_frame(&ctx, vec![button(press_x, true)], &mut value);
+            for step in 1..=4 {
+                let x = press_x + 3.3 * step as f32;
+                volume_frame(&ctx, vec![egui::Event::PointerMoved(at(x))], &mut value);
+                let tenths = value * 10.0;
+                assert!(
+                    (tenths - tenths.round()).abs() < 1e-3,
+                    "press {press_x}, step {step}: value {value} is not a tenth"
+                );
+            }
+            volume_frame(&ctx, vec![button(press_x + 13.2, false)], &mut value);
+
+            assert!(
+                (value - 5.0).abs() > 0.05,
+                "press {press_x}: slider did not move"
+            );
+        }
+    }
 }

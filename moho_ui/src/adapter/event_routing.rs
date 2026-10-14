@@ -277,6 +277,32 @@ mod tests {
     }
 
     #[test]
+    fn generate_world_carries_the_typed_name() {
+        use moho_core::events::UiEvent as CoreUiEvent;
+        let bus = EventBus::new();
+        let rx = record::<CoreUiEvent>(&bus);
+        let spec = WorldSpec {
+            name: "Highlands".to_string(),
+            seed: Some(7),
+            size_xz: 16,
+            day_length_seconds: 1200.0,
+            night_length_seconds: 600.0,
+            initial_time_of_day: 6.0,
+        };
+
+        process_menu_action(&MenuAction::GenerateWorld(spec), &bus);
+
+        let names: Vec<_> = rx
+            .try_iter()
+            .filter_map(|e| match e {
+                CoreUiEvent::NewWorldRequested { name, .. } => Some(name),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(names, ["Highlands"]);
+    }
+
+    #[test]
     fn test_emit_audio_events() {
         use moho_core::events::AudioEvent;
 
@@ -387,6 +413,16 @@ mod tests {
                     events[0]
                 );
             }
+        }
+
+        #[test]
+        fn menu_music_keeps_playing_when_start_is_shown_again() {
+            let actions = [MenuAction::ShowMenu("start".to_string())];
+
+            let (playing, events) = run(&actions, true, true);
+
+            assert!(playing, "flag should stay set");
+            assert!(events.is_empty(), "events: {events:?}");
         }
 
         #[test]
