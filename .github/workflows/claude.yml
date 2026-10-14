@@ -108,3 +108,16 @@ jobs:
             --max-turns 200
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running."
             --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Edit,Write,Task,Skill"
+      # PRs opened with the default token start no workflow, so start the review loop here.
+      - name: Start PR review
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+        run: |
+          gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "\"Closes #$ISSUE\" in:body" --json number --jq '.[].number' |
+          while read -r pr; do
+            gh workflow run pr-review.yml --repo "$GITHUB_REPOSITORY" \
+              --ref "${{ github.event.repository.default_branch }}" -f pr="$pr" -f round=1
+          done

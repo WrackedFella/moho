@@ -28,6 +28,7 @@ Where it runs:
 |---|---|---|
 | GitHub Actions (`claude.yml`) | Label `agent-ready`, or manual dispatch with an issue number | Unattended. Default Claude App token only, no board access. One run per issue at a time; refine 30 min / 100 turns, orchestrate 60 min / 200 turns. devflow follows the marketplace's default branch, not the repo pin. Edits to workflow files need a human merge |
 | `@claude` comment (`claude-comment.yml`) | A comment by an owner, member or collaborator on an issue or PR | For small jobs such as resolving a PR's merge conflict |
+| PR review (`pr-review.yml`) | Dispatched after an orchestrate run opens a PR, or a PR marked ready for review | `/devflow:pr-review` posts a verdict as a comment (`PR approval` unset, so no approval). On `changes`, `/devflow:respond` fixes the findings and the review runs again: two fix rounds, then a human. Comment `@claude /devflow:pr-review` to run it by hand |
 | Project thread | `/devflow:orchestrate <issue>` or a planning skill | Cloud session on its own branch. Run `bash scripts/cloud-tools.sh` first when it must build. Cannot reach the board. Files an approved card as an issue with `gh` and deletes its draft; the Board sync workflow moves Status |
 | Local terminal | Same slash commands | The repo pin in `.claude/settings.json` applies; the Stop hook runs the gate |
 
@@ -43,11 +44,7 @@ and Agent-eligible are set by a human.
 
 ## Todo
 
-- **PR agent:** a dedicated review step or agent that can approve PRs with confidence, so
-  a human merges on its verdict instead of reading every diff. Today `devflow:reviewer`
-  runs before the PR and its verdict goes in the PR body. Decide what the approver
-  checks, what evidence it needs (gates, mutants, test review) and what still needs a
-  person.
+- **PR agent:** `pr-review.yml` reviews and hardens each PR before a human sees it (comment-only; a human approves and merges). Open: an approving identity separate from the PR author, so `PR approval: agent` can submit approvals; check how often the loop converges within two fix rounds before widening it.
 - Confirm in Actions and threads that the Skill-tool calls inside `orchestrate`
   (`/simplify`, `/devflow:comment-audit`, `/devflow:wiki`) succeed.
 - Verify refine on a real feature: questions land as a comment, a re-run adds no

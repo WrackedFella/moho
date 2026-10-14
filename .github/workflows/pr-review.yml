@@ -1,0 +1,120 @@
+name: PR review
+
+# Reviews an open PR with devflow:pr-review and hardens it before a human looks: when
+# the verdict is `changes`, devflow:respond fixes the findings and the workflow
+# re-dispatches itself for another review. At most two fix rounds, then a third review
+# with no fixes. The review is posted as a comment (`PR approval` is unset); a human
+# approves and merges. Pushes and PRs made with the default token start no workflow, so
+# the orchestrate job in claude.yml dispatches round 1 itself and this workflow
+# dispatches each later round.
+on:
+  pull_request:
+    types: [ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+      round:
+        description: Review round (1 to 3)
+        default: "1"
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+  id-token: write
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    name: Review and fix
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number || inputs.pr }}
+      ROUND: ${{ inputs.round || '1' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check out the PR head
+        run: |
+          gh pr checkout "$PR"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "HEAD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      # Installs the pinned Rust toolchain and the gate's tools (just, nextest, ...).
+      - name: Install toolchain
+        run: |
+          bash scripts/cloud-tools.sh --force
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        env:
+          CARGO_TERM_COLOR: always
+          CARGO_INCREMENTAL: 0
+          RUST_BACKTRACE: 1
+        with:
+          shared-key: gate-ubuntu-latest
+          save-if: false
+      - name: Review
+        uses: anthropics/claude-code-action@v1
+        env:
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
+          plugins: devflow@claude-skills
+          display_report: true
+          prompt: /devflow:pr-review ${{ env.PR }}
+          claude_args: |
+            --max-turns 100
+            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never push, merge or resolve a thread."
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh api:*),Task,Skill"
+      # The verdict is the first line of the review the skill posted for this head SHA.
+      - name: Read verdict
+        id: verdict
+        run: |
+          verdict=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --paginate \
+            --jq "[.[] | select(.commit_id == \"$HEAD_SHA\" and (.body | startswith(\"Verdict:\")))] | last | .body // \"\"" \
+            | head -n1 | sed -E 's/^Verdict: *([a-z]+).*/\1/')
+          echo "verdict=${verdict:-none}" >> "$GITHUB_OUTPUT"
+      - name: Fix findings
+        id: respond
+        if: steps.verdict.outputs.verdict == 'changes' && env.ROUND != '3'
+        uses: anthropics/claude-code-action@v1
+        env:
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
+          plugins: devflow@claude-skills
+          display_report: true
+          prompt: /devflow:respond ${{ env.PR }}
+          claude_args: |
+            --max-turns 200
+            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Merge the base branch into the PR branch; never rebase or force-push. Address the findings in the latest review whose first line starts with 'Verdict:'."
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh api:*),Edit,Write,Task,Skill"
+      - name: Review again
+        if: steps.respond.outcome == 'success'
+        run: |
+          next=$((ROUND + 1))
+          gh workflow run pr-review.yml --repo "$GITHUB_REPOSITORY" \
+            --ref "${{ github.event.repository.default_branch }}" -f pr="$PR" -f round="$next"
+      - name: Hand over to a human
+        if: steps.verdict.outputs.verdict == 'changes' && env.ROUND == '3'
+        run: |
+          gh pr comment "$PR" --body "Review round 3 still has findings. The fix loop stops here; a human decides.
+
+          ---
+          _Generated by [Claude Code](https://claude.ai/code)_"
