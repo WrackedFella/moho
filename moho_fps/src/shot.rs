@@ -1,7 +1,7 @@
 //! Hitscan shot resolution against the physics world's tagged surfaces.
 
 use glam::Vec3;
-use moho_physics::{CharacterHandle, PhysicsWorld};
+use moho_physics::{CharacterHandle, PhysicsWorld, RayQuery};
 
 use crate::tag::SurfaceTag;
 
@@ -30,8 +30,25 @@ pub struct Strike {
 ///
 /// Reads the world as the last `step` left it. Hits on level geometry come back as
 /// [`SurfaceTag::World`]; a surface whose engine tag is not a [`SurfaceTag`] counts as a miss.
-pub fn resolve_shot(_world: &PhysicsWorld, _ray: ShotRay) -> Option<Strike> {
-    unimplemented!("cast the ray and convert the engine tag to a surface tag")
+pub fn resolve_shot(world: &PhysicsWorld, ray: ShotRay) -> Option<Strike> {
+    let hit = world.cast_ray(&RayQuery {
+        origin: ray.origin,
+        direction: ray.direction,
+        max_distance: ray.range,
+        ignore: ray.ignore,
+    })?;
+    let tag = match SurfaceTag::try_from(hit.tag) {
+        Ok(tag) => tag,
+        Err(error) => {
+            tracing::warn!(%error, "shot reached a surface with an unknown tag, counted as a miss");
+            return None;
+        }
+    };
+    Some(Strike {
+        tag,
+        point: hit.point,
+        distance: hit.distance,
+    })
 }
 
 #[cfg(test)]

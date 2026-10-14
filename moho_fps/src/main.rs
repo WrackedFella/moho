@@ -1,3 +1,88 @@
-//! The FPS prototype binary.
+//! The FPS prototype binary: loads the arena and runs the fixed-tick loop.
 
-fn main() {}
+use std::collections::BTreeMap;
+use std::error::Error;
+use std::path::PathBuf;
+
+use moho_app::{AppConfig, LoopConfig};
+use moho_fps::arena;
+use moho_fps::game::{FpsGame, TICK_HZ};
+use moho_fps::sim::{FpsSim, SimConfig};
+use moho_fps_rules::{BodyProfile, Magazine, Rifle};
+use moho_input::action_map::ActionMap;
+use moho_input::bindings::ActionBindings;
+use moho_physics::MoveSettings;
+
+/// Radians of turn per pixel of mouse motion.
+const LOOK_PER_PIXEL: f32 = 0.002;
+const MAGAZINE_CAPACITY: u32 = 30;
+const SPARE_MAGAZINES: usize = 3;
+
+fn tuning() -> Result<SimConfig, Box<dyn Error>> {
+    let full = Magazine::new(MAGAZINE_CAPACITY, MAGAZINE_CAPACITY)?;
+    Ok(SimConfig {
+        move_settings: MoveSettings {
+            max_speed: 6.0,
+            ground_accel: 80.0,
+            friction: 10.0,
+            stop_speed: 1.0,
+            air_accel: 20.0,
+            air_speed_cap: 1.0,
+            gravity: 18.0,
+            jump_speed: 6.5,
+        },
+        eye_height: 0.7,
+        range: 100.0,
+        damage: 30,
+        cooldown_ticks: 6,
+        reload_ticks: 120,
+        body: BodyProfile {
+            max_health: 100,
+            head_status: 30,
+            arm_status: 60,
+            leg_status: 60,
+        },
+        rifle: Rifle::loaded(full.clone()),
+        spares: vec![full; SPARE_MAGAZINES],
+    })
+}
+
+fn assets() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
+    let arena_path = std::env::args_os()
+        .nth(1)
+        .map_or_else(|| assets().join("arena.glb"), PathBuf::from);
+    let (level, markers) = arena::load(&arena_path)?;
+    let dummy_spawns: Vec<_> = markers.dummies.iter().map(|m| m.position).collect();
+    let sim = FpsSim::new(
+        arena::physics_world(&level),
+        markers.player_spawn.position,
+        &dummy_spawns,
+        tuning()?,
+    );
+    let (bindings, warnings) = ActionBindings::load(&BTreeMap::new());
+    for warning in warnings {
+        tracing::warn!(?warning, "default bindings");
+    }
+    let meshes = level.meshes.into_iter().map(|m| m.mesh).collect();
+    let game = FpsGame::new(sim, ActionMap::new(bindings, LOOK_PER_PIXEL))
+        .with_arena(meshes, &dummy_spawns)
+        .with_shot_sound(&assets().join("rifle_shot.wav"));
+
+    moho_app::run(
+        game,
+        AppConfig {
+            window_title: "moho_fps".to_owned(),
+            loop_config: LoopConfig::new(TICK_HZ),
+            init_audio: true,
+        },
+    )?;
+    Ok(())
+}

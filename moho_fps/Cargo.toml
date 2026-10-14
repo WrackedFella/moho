@@ -12,6 +12,7 @@ path = "src/main.rs"
 glam = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 winit = { workspace = true }
 moho_app = { path = "../moho_app" }
 moho_audio = { path = "../moho_audio" }

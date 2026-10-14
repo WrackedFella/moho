@@ -2,10 +2,16 @@
 //! It holds no renderer, audio or UI handle.
 
 use glam::Vec3;
-use moho_fps_rules::{Body, BodyPart, BodyProfile, HitReport, Magazine, MagazineLevel, Rifle};
-use moho_physics::{CharacterState, HitVolume, MoveSettings, PhysicsWorld};
+use moho_fps_rules::{
+    Body, BodyPart, BodyProfile, HitReport, Magazine, MagazineLevel, Rifle, Shot,
+};
+use moho_physics::{
+    CharacterHandle, CharacterState, HitVolume, MoveSettings, PhysicsWorld, first_person_view,
+};
 
 use crate::input::FpsCommand;
+use crate::shot::{ShotRay, Strike, resolve_shot};
+use crate::tag::SurfaceTag;
 
 /// Height of a character's capsule centre above its feet, in metres.
 pub const STAND_HEIGHT: f32 = 1.15;
@@ -54,62 +60,238 @@ pub enum Feedback {
 
 /// The six hit volumes of a dummy numbered `target`, one per body part, in the body frame
 /// around the capsule centre. Each volume's tag is `SurfaceTag::Part` for that part.
-pub fn dummy_hit_volumes(_target: u16) -> [HitVolume; 6] {
-    unimplemented!("one box per body part around the capsule centre")
+///
+/// The body faces +Z at yaw 0, so its left side is +X. The boxes stand inside the capsule's
+/// height and sit edge to edge, so a ray at any height inside the body meets a part.
+pub fn dummy_hit_volumes(target: u16) -> [HitVolume; 6] {
+    let volume = |part, offset: Vec3, half_extents: Vec3| HitVolume {
+        offset,
+        half_extents,
+        tag: SurfaceTag::Part { target, part }.into(),
+    };
+    let arm = Vec3::new(0.1, 0.3, 0.1);
+    let leg = Vec3::new(0.1, 0.525, 0.1);
+    [
+        volume(
+            BodyPart::Head,
+            Vec3::new(0.0, 0.85, 0.0),
+            Vec3::new(0.12, 0.12, 0.12),
+        ),
+        volume(
+            BodyPart::Torso,
+            Vec3::new(0.0, 0.25, 0.0),
+            Vec3::new(0.2, 0.35, 0.12),
+        ),
+        volume(BodyPart::LeftArm, Vec3::new(0.3, 0.25, 0.0), arm),
+        volume(BodyPart::RightArm, Vec3::new(-0.3, 0.25, 0.0), arm),
+        volume(BodyPart::LeftLeg, Vec3::new(0.12, -0.625, 0.0), leg),
+        volume(BodyPart::RightLeg, Vec3::new(-0.12, -0.625, 0.0), leg),
+    ]
+}
+
+/// What the rifle is doing; one thing at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Weapon {
+    Ready,
+    /// A shot was just fired; ready again when the count of ticks left runs out.
+    Cooling(u32),
+    /// A magazine swap is under way; done when the count of ticks left runs out.
+    Reloading(u32),
 }
 
 /// The world, the player, the rifle and the dummies.
 #[derive(Debug)]
 pub struct FpsSim {
-    _private: (),
+    world: PhysicsWorld,
+    player: CharacterHandle,
+    move_settings: MoveSettings,
+    eye_height: f32,
+    range: f32,
+    damage: u32,
+    cooldown_ticks: u32,
+    reload_ticks: u32,
+    rifle: Rifle,
+    spares: Vec<Magazine>,
+    /// Indexed by target number.
+    dummies: Vec<Body>,
+    weapon: Weapon,
+    outbox: Vec<Feedback>,
 }
 
 impl FpsSim {
     /// A sim over `world` (static geometry already in), the player standing at
     /// `player_spawn` and one dummy at each of `dummy_spawns`, numbered by position in the
     /// slice. Spawns are floor points: capsule centres sit [`STAND_HEIGHT`] above them.
+    ///
+    /// # Panics
+    /// If `dummy_spawns` holds more dummies than a `u16` target number can name.
     pub fn new(
-        _world: PhysicsWorld,
-        _player_spawn: Vec3,
-        _dummy_spawns: &[Vec3],
-        _config: SimConfig,
+        mut world: PhysicsWorld,
+        player_spawn: Vec3,
+        dummy_spawns: &[Vec3],
+        config: SimConfig,
     ) -> Self {
-        unimplemented!("place the player and dummies, give each dummy its hit volumes")
+        let player = world.add_character(player_spawn + Vec3::Y * STAND_HEIGHT);
+        for (index, &spawn) in dummy_spawns.iter().enumerate() {
+            let target = u16::try_from(index).expect("an arena has fewer than 65536 dummies");
+            let dummy = world.add_character(spawn + Vec3::Y * STAND_HEIGHT);
+            for volume in dummy_hit_volumes(target) {
+                world
+                    .add_hit_volume(dummy, volume)
+                    .expect("the dummy was added a moment ago");
+            }
+        }
+        Self {
+            world,
+            player,
+            move_settings: config.move_settings,
+            eye_height: config.eye_height,
+            range: config.range,
+            damage: config.damage,
+            cooldown_ticks: config.cooldown_ticks,
+            reload_ticks: config.reload_ticks,
+            rifle: config.rifle,
+            spares: config.spares,
+            dummies: dummy_spawns
+                .iter()
+                .map(|_| Body::new(config.body))
+                .collect(),
+            weapon: Weapon::Ready,
+            outbox: Vec::new(),
+        }
     }
 
     /// Runs one tick of `dt` seconds: moves the player, steps the world, then applies the
     /// weapon actions in `command`.
-    pub fn tick(&mut self, _command: &FpsCommand, _dt: f32) {
-        unimplemented!("move, step, then weapon actions")
+    pub fn tick(&mut self, command: &FpsCommand, dt: f32) {
+        self.world
+            .move_character(self.player, &command.movement, &self.move_settings, dt)
+            .expect("the sim never removes the player");
+        self.world.step(dt);
+
+        self.advance_weapon();
+        if command.fire {
+            self.pull_trigger();
+        }
+        if command.reload {
+            self.begin_reload();
+        }
+        if command.check {
+            self.outbox
+                .push(Feedback::MagazineLevel(self.rifle.magazine().level()));
+        }
+    }
+
+    fn advance_weapon(&mut self) {
+        self.weapon = match self.weapon {
+            Weapon::Ready => Weapon::Ready,
+            Weapon::Cooling(left) if left > 1 => Weapon::Cooling(left - 1),
+            Weapon::Cooling(_) => Weapon::Ready,
+            Weapon::Reloading(left) if left > 1 => Weapon::Reloading(left - 1),
+            Weapon::Reloading(_) => {
+                self.finish_reload();
+                Weapon::Ready
+            }
+        };
+    }
+
+    fn pull_trigger(&mut self) {
+        if self.weapon != Weapon::Ready {
+            return;
+        }
+        match self.rifle.fire() {
+            Shot::Dry => self.outbox.push(Feedback::Dry),
+            Shot::Fired => {
+                self.outbox.push(Feedback::Fired);
+                if self.cooldown_ticks > 0 {
+                    self.weapon = Weapon::Cooling(self.cooldown_ticks);
+                }
+                self.resolve_player_shot();
+            }
+        }
+    }
+
+    fn resolve_player_shot(&mut self) {
+        let state = self.player();
+        let view = first_person_view(&state, &state, self.eye_height, 1.0);
+        let strike = resolve_shot(
+            &self.world,
+            ShotRay {
+                origin: view.eye,
+                direction: view.forward,
+                range: self.range,
+                ignore: Some(self.player),
+            },
+        );
+        if let Some(Strike {
+            tag: SurfaceTag::Part { target, part },
+            ..
+        }) = strike
+            && let Some(body) = self.dummies.get_mut(usize::from(target))
+        {
+            let report = body.hit(part, self.damage);
+            self.outbox.push(Feedback::Hit {
+                target,
+                part,
+                report,
+            });
+        }
+    }
+
+    fn begin_reload(&mut self) {
+        if matches!(self.weapon, Weapon::Reloading(_)) || self.spares.is_empty() {
+            return;
+        }
+        if self.reload_ticks == 0 {
+            self.finish_reload();
+        } else {
+            self.weapon = Weapon::Reloading(self.reload_ticks);
+        }
+    }
+
+    /// Swaps in the first spare magazine; the ejected one goes to the back of the line.
+    fn finish_reload(&mut self) {
+        let spare = (!self.spares.is_empty()).then(|| self.spares.remove(0));
+        if let Some(ejected) = self.rifle.reload(spare) {
+            self.spares.push(ejected);
+            self.outbox.push(Feedback::ReloadDone);
+        }
     }
 
     /// The player's state after the last tick.
     pub fn player(&self) -> CharacterState {
-        unimplemented!("read the player character")
+        self.world
+            .character(self.player)
+            .expect("the sim never removes the player")
+    }
+
+    /// Height of the player's eye above the capsule centre, in metres.
+    pub fn eye_height(&self) -> f32 {
+        self.eye_height
     }
 
     pub fn rifle(&self) -> &Rifle {
-        unimplemented!("the player's rifle")
+        &self.rifle
     }
 
     /// Magazines left to reload from.
     pub fn spares(&self) -> &[Magazine] {
-        unimplemented!("the spare magazines")
+        &self.spares
     }
 
     /// The body of dummy `target`, or `None` if there is no such dummy.
-    pub fn dummy_body(&self, _target: u16) -> Option<&Body> {
-        unimplemented!("the dummy's body")
+    pub fn dummy_body(&self, target: u16) -> Option<&Body> {
+        self.dummies.get(usize::from(target))
     }
 
     /// Feedback produced and not yet drained.
     pub fn pending_feedback(&self) -> &[Feedback] {
-        unimplemented!("the outbox")
+        &self.outbox
     }
 
     /// Takes all pending feedback, oldest first.
     pub fn drain_feedback(&mut self) -> Vec<Feedback> {
-        unimplemented!("empty the outbox")
+        std::mem::take(&mut self.outbox)
     }
 }
 
@@ -497,5 +679,46 @@ mod tests {
         assert_eq!(pending, [Feedback::Fired]);
         assert_eq!(drained, pending);
         assert!(sim.pending_feedback().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod dummy_pose_tests {
+    use moho_fps_rules::BodyPart;
+
+    use super::*;
+    use crate::test_support::{DT, flat_floor, mag, test_config};
+
+    #[test]
+    fn a_dummy_still_takes_hits_where_it_stood_after_many_ticks() {
+        let torso = SurfaceTag::Part {
+            target: 0,
+            part: BodyPart::Torso,
+        };
+        let volume = dummy_hit_volumes(0)
+            .into_iter()
+            .find(|v| v.tag == torso.into())
+            .expect("a torso volume");
+        let mut config = test_config(Rifle::loaded(mag(30, 5)), vec![]);
+        config.eye_height = volume.offset.y;
+        let mut sim = FpsSim::new(
+            flat_floor(),
+            Vec3::ZERO,
+            &[Vec3::new(0.0, 0.0, 8.0)],
+            config,
+        );
+        for _ in 0..600 {
+            sim.tick(&FpsCommand::default(), DT);
+        }
+
+        sim.tick(
+            &FpsCommand {
+                fire: true,
+                ..FpsCommand::default()
+            },
+            DT,
+        );
+
+        assert_eq!(sim.dummy_body(0).expect("dummy 0 exists").health(), 70);
     }
 }

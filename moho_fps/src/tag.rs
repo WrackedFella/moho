@@ -17,17 +17,56 @@ pub enum SurfaceTag {
 #[error("tag {0} is not a surface tag")]
 pub struct UnknownTag(pub u32);
 
+/// Engine tag of [`SurfaceTag::World`].
+const WORLD: u32 = 0;
+/// Engine tag of the first part; every part tag is at or above it.
+const PART_BASE: u32 = WORLD + 1;
+/// Bits of a part tag that hold the part's index; the target number sits above them.
+const PART_BITS: u32 = 3;
+
+/// Every part, at the index its tag stores.
+const PARTS: [BodyPart; 6] = [
+    BodyPart::Head,
+    BodyPart::Torso,
+    BodyPart::LeftArm,
+    BodyPart::RightArm,
+    BodyPart::LeftLeg,
+    BodyPart::RightLeg,
+];
+
+fn part_index(part: BodyPart) -> u32 {
+    PARTS
+        .iter()
+        .position(|&p| p == part)
+        .map(|index| index as u32)
+        .expect("PARTS lists every BodyPart")
+}
+
 impl From<SurfaceTag> for HitTag {
-    fn from(_tag: SurfaceTag) -> Self {
-        unimplemented!("encode the surface tag as an engine tag")
+    fn from(tag: SurfaceTag) -> Self {
+        match tag {
+            SurfaceTag::World => HitTag(WORLD),
+            SurfaceTag::Part { target, part } => {
+                HitTag(PART_BASE + ((u32::from(target) << PART_BITS) | part_index(part)))
+            }
+        }
     }
 }
 
 impl TryFrom<HitTag> for SurfaceTag {
     type Error = UnknownTag;
 
-    fn try_from(_tag: HitTag) -> Result<Self, Self::Error> {
-        unimplemented!("decode an engine tag into a surface tag")
+    fn try_from(tag: HitTag) -> Result<Self, Self::Error> {
+        if tag.0 == WORLD {
+            return Ok(SurfaceTag::World);
+        }
+        let packed = tag.0 - PART_BASE;
+        let part = PARTS.get((packed & ((1 << PART_BITS) - 1)) as usize);
+        let target = u16::try_from(packed >> PART_BITS);
+        match (part, target) {
+            (Some(&part), Ok(target)) => Ok(SurfaceTag::Part { target, part }),
+            _ => Err(UnknownTag(tag.0)),
+        }
     }
 }
 

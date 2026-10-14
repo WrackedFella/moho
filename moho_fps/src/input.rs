@@ -81,8 +81,26 @@ pub struct FpsCommand {
 
 impl FpsCommand {
     /// The command for the tick `frame` describes.
-    pub fn from_frame(_frame: &ActionFrame<FpsAction>) -> Self {
-        unimplemented!("axes from held moves, look from the frame, weapon edges from presses")
+    pub fn from_frame(frame: &ActionFrame<FpsAction>) -> Self {
+        let axis = |positive, negative| {
+            f32::from(u8::from(frame.held(positive))) - f32::from(u8::from(frame.held(negative)))
+        };
+        // Mouse motion is right- and down-positive; positive yaw turns left and positive pitch
+        // looks up.
+        let (look_x, look_y) = frame.look();
+        Self {
+            movement: CharacterCommand {
+                forward: axis(FpsAction::MoveForward, FpsAction::MoveBack),
+                right: axis(FpsAction::MoveRight, FpsAction::MoveLeft),
+                yaw_delta: -look_x,
+                pitch_delta: -look_y,
+                // A tap shorter than one tick still jumps.
+                jump: frame.held(FpsAction::Jump) || frame.pressed(FpsAction::Jump),
+            },
+            fire: frame.pressed(FpsAction::Fire),
+            reload: frame.pressed(FpsAction::Reload),
+            check: frame.pressed(FpsAction::CheckMagazine),
+        }
     }
 }
 
@@ -199,6 +217,7 @@ mod tests {
     #[test]
     fn mouse_motion_turns_and_pitches_with_up_positive() {
         let mut map = fresh_map();
+        map.set_filtering(false);
         map.mouse_motion(0.0, 10.0);
 
         let down = FpsCommand::from_frame(&map.end_tick());

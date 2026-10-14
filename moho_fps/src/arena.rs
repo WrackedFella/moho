@@ -5,6 +5,18 @@ use std::path::Path;
 
 use moho_level::{Level, LevelError, LevelMarker};
 use moho_physics::PhysicsWorld;
+use moho_render_api::WorldMeshId;
+
+use crate::tag::SurfaceTag;
+
+/// One nominal tick, enough for a step to index freshly added colliders.
+const SETTLE_DT: f32 = 1.0 / 60.0;
+
+const PLAYER_SPAWN: &str = "player_spawn";
+const DUMMY_PREFIX: &str = "dummy_";
+const ENEMY_SPAWN_PREFIX: &str = "enemy_spawn_";
+const WAYPOINT_PREFIX: &str = "waypoint_";
+const COVER_PREFIX: &str = "cover_";
 
 /// Why an arena level cannot be used.
 #[derive(Debug, thiserror::Error)]
@@ -42,8 +54,49 @@ impl ArenaMarkers {
     /// # Errors
     /// [`ArenaError::MissingMarker`] naming `player_spawn` or `dummy_NN`;
     /// [`ArenaError::DuplicateMarker`] naming `player_spawn`.
-    pub fn from_level(_level: &Level) -> Result<Self, ArenaError> {
-        unimplemented!("sort the level's markers by kind and validate the required ones")
+    pub fn from_level(level: &Level) -> Result<Self, ArenaError> {
+        let mut spawns = Vec::new();
+        let mut dummies = Vec::new();
+        let mut enemy_spawns = Vec::new();
+        let mut waypoints = Vec::new();
+        let mut covers = Vec::new();
+        for marker in &level.markers {
+            let name = marker.name.as_str();
+            let kind = if name == PLAYER_SPAWN {
+                &mut spawns
+            } else if name.starts_with(DUMMY_PREFIX) {
+                &mut dummies
+            } else if name.starts_with(ENEMY_SPAWN_PREFIX) {
+                &mut enemy_spawns
+            } else if name.starts_with(WAYPOINT_PREFIX) {
+                &mut waypoints
+            } else if name.starts_with(COVER_PREFIX) {
+                &mut covers
+            } else {
+                continue;
+            };
+            kind.push(marker.clone());
+        }
+        let marker = PLAYER_SPAWN.to_owned();
+        let mut spawns = spawns.into_iter();
+        let player_spawn = spawns.next().ok_or(ArenaError::MissingMarker {
+            marker: marker.clone(),
+        })?;
+        if spawns.next().is_some() {
+            return Err(ArenaError::DuplicateMarker { marker });
+        }
+        if dummies.is_empty() {
+            return Err(ArenaError::MissingMarker {
+                marker: format!("{DUMMY_PREFIX}NN"),
+            });
+        }
+        Ok(Self {
+            player_spawn,
+            dummies,
+            enemy_spawns,
+            waypoints,
+            covers,
+        })
     }
 }
 
@@ -59,8 +112,24 @@ pub fn load(path: &Path) -> Result<(Level, ArenaMarkers), ArenaError> {
 
 /// A physics world whose static colliders are `level`'s meshes, all tagged
 /// [`SurfaceTag::World`](crate::tag::SurfaceTag::World).
-pub fn physics_world(_level: &Level) -> PhysicsWorld {
-    unimplemented!("register each level mesh as a world-tagged collider")
+///
+/// The world is stepped once so the colliders are queryable before the first tick.
+pub fn physics_world(level: &Level) -> PhysicsWorld {
+    let mut world = PhysicsWorld::new();
+    for (index, level_mesh) in level.meshes.iter().enumerate() {
+        world.set_world_mesh(
+            arena_mesh_id(index),
+            &level_mesh.mesh,
+            SurfaceTag::World.into(),
+        );
+    }
+    world.step(SETTLE_DT);
+    world
+}
+
+/// The id under which the physics world and the renderer both know `level.meshes[index]`.
+pub fn arena_mesh_id(index: usize) -> WorldMeshId {
+    WorldMeshId(index as u64)
 }
 
 #[cfg(test)]
@@ -201,5 +270,101 @@ mod tests {
         let hit = hit.expect("the box stops the ray");
         assert_eq!(SurfaceTag::try_from(hit.tag), Ok(SurfaceTag::World));
         assert!((hit.distance - 4.0).abs() < 1e-3, "{hit:?}");
+    }
+}
+
+#[cfg(test)]
+mod shipped_cover_tests {
+    use std::path::PathBuf;
+
+    use glam::Vec3;
+    use moho_physics::RayQuery;
+
+    use super::*;
+
+    /// A standing body's centre, and the eye of a 2.3 m tall character.
+    const BODY_HEIGHT: f32 = 1.15;
+    const EYE_HEIGHT: f32 = 1.85;
+    /// How far out on the shielded side the test rays start.
+    const REACH: f32 = 7.0;
+
+    fn shielded_from(marker: &LevelMarker) -> Vec3 {
+        let direction = marker
+            .properties
+            .get("shielded_from")
+            .unwrap_or_else(|| panic!("{} has no `shielded_from`", marker.name));
+        match direction.as_str() {
+            "+x" => Vec3::X,
+            "-x" => Vec3::NEG_X,
+            "+z" => Vec3::Z,
+            "-z" => Vec3::NEG_Z,
+            other => panic!("{}: unknown direction `{other}`", marker.name),
+        }
+    }
+
+    /// The distance at which a ray from `height` above the point `REACH` out on the shielded
+    /// side of `cover` first meets geometry on its way to `cover`.
+    fn first_obstacle(world: &PhysicsWorld, cover: &LevelMarker, height: f32) -> Option<f32> {
+        let toward = shielded_from(cover);
+        let origin = cover.position + toward * REACH + Vec3::Y * height;
+        world
+            .cast_ray(&RayQuery {
+                origin,
+                direction: -toward,
+                max_distance: REACH,
+                ignore: None,
+            })
+            .map(|hit| hit.distance)
+    }
+
+    fn shipped() -> (PhysicsWorld, ArenaMarkers) {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/arena.glb");
+        let (level, markers) = load(&path).expect("the shipped arena loads");
+        (physics_world(&level), markers)
+    }
+
+    #[test]
+    fn a_cover_point_stops_a_body_height_ray_and_lets_an_eye_height_ray_over() {
+        let (world, markers) = shipped();
+
+        for cover in &markers.covers {
+            let at_body = first_obstacle(&world, cover, BODY_HEIGHT);
+            let at_eye = first_obstacle(&world, cover, EYE_HEIGHT);
+
+            assert!(
+                at_body.is_some(),
+                "{}: body height ray is not stopped",
+                cover.name
+            );
+            assert_eq!(at_eye, None, "{}: eye height ray is stopped", cover.name);
+        }
+    }
+
+    #[test]
+    fn every_marker_stands_on_the_floor() {
+        let (world, markers) = shipped();
+        let all = markers
+            .dummies
+            .iter()
+            .chain(&markers.enemy_spawns)
+            .chain(&markers.waypoints)
+            .chain(&markers.covers)
+            .chain(std::iter::once(&markers.player_spawn));
+
+        for marker in all {
+            let down = world.cast_ray(&RayQuery {
+                origin: marker.position + Vec3::Y,
+                direction: Vec3::NEG_Y,
+                max_distance: 2.0,
+                ignore: None,
+            });
+
+            let hit = down.unwrap_or_else(|| panic!("{}: no floor below", marker.name));
+            assert!(
+                (hit.distance - 1.0).abs() < 1e-3,
+                "{}: {hit:?}",
+                marker.name
+            );
+        }
     }
 }
