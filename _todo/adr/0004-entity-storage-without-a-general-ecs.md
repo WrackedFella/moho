@@ -18,7 +18,7 @@ and about eight duplicate crate versions (`parking_lot` 0.11, `uuid` 0.8,
 `syn` 1, `bit-set` 0.5, `getrandom` 0.2, and others).
 
 No current consumer needs an ECS. The likely future consumers are worker
-pawns ([SG-F4](../strategy-game/SG-F4-worker-pawns/_feature.md): many entities sharing position, stats and jobs) and FPS
+pawns ([SG-F4](https://github.com/WrackedFella/moho/issues/310): many entities sharing position, stats and jobs) and FPS
 enemies and projectiles ([FPS-F1](../fps-game/FPS-F1-game-design-document/_feature.md) has no GDD yet).
 
 Candidates, as of 2026-10:
