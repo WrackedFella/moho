@@ -139,7 +139,6 @@ fn chunk_path(world_name: &str, pos: IVec3) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use moho_core::persist::FileKind;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_path(suffix: &str) -> std::path::PathBuf {
@@ -160,6 +159,34 @@ mod tests {
             day_length_seconds: 600.0,
             night_length_seconds: 420.0,
             initial_time_of_day: 6.0,
+        }
+    }
+
+    const PINNED_WORLD: [u8; 53] = [
+        77, 79, 72, 79, 1, 1, 0, 34, 0, 0, 0, 0, 0, 0, 0, 72, 135, 40, 49, 1, 119, 1, 210, 9, 64,
+        0, 0, 22, 68, 0, 0, 210, 67, 0, 0, 192, 64, 3, 1, 2, 3, 2, 2, 3, 6, 4, 1, 5, 0, 0, 0, 6, 0,
+    ];
+
+    fn world_fixture() -> WorldFile {
+        WorldFile {
+            spec: spec("w"),
+            scene: vec![1, 2, 3],
+            blocks: vec![
+                BlockRecord {
+                    x: 1,
+                    y: -2,
+                    z: 3,
+                    material_id: 4,
+                    resource_id: Some(5),
+                },
+                BlockRecord {
+                    x: 0,
+                    y: 0,
+                    z: 0,
+                    material_id: 6,
+                    resource_id: None,
+                },
+            ],
         }
     }
 
@@ -300,18 +327,12 @@ mod tests {
         write_scene_with_metadata(&path, &[], &spec("w"), &[]).expect("write ok");
         let mut bytes = std::fs::read(&path).expect("read back");
         let _ = std::fs::remove_file(&path);
-        bytes[5..7].copy_from_slice(&(FileKind::World.current_version() + 1).to_le_bytes());
+        bytes[5..7].copy_from_slice(&(WORLD_FILE.version + 1).to_le_bytes());
 
         let err = read_error(&bytes, "future_bumped");
 
         assert!(
-            matches!(
-                err,
-                PersistError::UnsupportedFormat {
-                    kind: FileKind::World,
-                    version: 2
-                }
-            ),
+            matches!(err, PersistError::UnsupportedFormat { tag: 1, version: 2 }),
             "{err:?}"
         );
     }
@@ -341,28 +362,49 @@ mod tests {
     }
 
     #[test]
+    fn world_payload_bytes_are_pinned() {
+        let bytes = persist::encode(WORLD_FILE, &world_fixture()).expect("encode");
+
+        assert_eq!(
+            bytes, PINNED_WORLD,
+            "the WorldFile payload shape changed; bump WORLD_FILE.version and update PINNED_WORLD with the new bytes"
+        );
+
+        let back: WorldFile = persist::decode(WORLD_FILE, &PINNED_WORLD).expect("decode pinned");
+        let expected = world_fixture();
+        assert_eq!(back.spec, expected.spec);
+        assert_eq!(back.scene, expected.scene);
+        assert_eq!(back.blocks.len(), expected.blocks.len());
+        for (got, want) in back.blocks.iter().zip(&expected.blocks) {
+            assert_eq!(
+                (got.x, got.y, got.z, got.material_id, got.resource_id),
+                (want.x, want.y, want.z, want.material_id, want.resource_id)
+            );
+        }
+    }
+
+    #[test]
+    fn strategy_file_tags_are_distinct() {
+        let tags = [
+            WORLD_FILE.tag,
+            moho_game::scene_persistence::SCENE_FILE.tag,
+            moho_voxel::CHUNK_FILE.tag,
+        ];
+
+        assert_eq!(tags, [1, 2, 3]);
+    }
+
+    #[test]
     fn pre_migration_world_save_returns_unsupported_format() {
         let v1 = read_error(&pre_migration_save(1), "old_v1");
         let v2 = read_error(&pre_migration_save(2), "old_v2");
 
         assert!(
-            matches!(
-                v1,
-                PersistError::UnsupportedFormat {
-                    kind: FileKind::World,
-                    version: 0
-                }
-            ),
+            matches!(v1, PersistError::UnsupportedFormat { tag: 1, version: 0 }),
             "{v1:?}"
         );
         assert!(
-            matches!(
-                v2,
-                PersistError::UnsupportedFormat {
-                    kind: FileKind::Scene,
-                    version: 0
-                }
-            ),
+            matches!(v2, PersistError::UnsupportedFormat { tag: 2, version: 0 }),
             "{v2:?}"
         );
     }

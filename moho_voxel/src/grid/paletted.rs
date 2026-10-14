@@ -182,6 +182,18 @@ impl PalettedChunk {
 mod tests {
     use super::*;
 
+    const PINNED_CHUNK: [u8; 39] = [
+        77, 79, 72, 79, 3, 1, 0, 20, 0, 0, 0, 0, 0, 0, 0, 124, 79, 9, 123, 3, 255, 255, 255, 255,
+        15, 5, 9, 5, 0, 1, 2, 2, 0, 2, 1, 100, 3, 200, 1,
+    ];
+
+    fn snapshot_fixture() -> ChunkSnapshot {
+        ChunkSnapshot {
+            palette: vec![u32::MAX, 5, 9],
+            indices: vec![0, 1, 2, 2, 0],
+            resources: vec![(1, 100), (3, 200)],
+        }
+    }
     fn edited_chunk() -> PalettedChunk {
         let mut c = PalettedChunk::new();
         c.set_block(0, 5, None);
@@ -208,6 +220,23 @@ mod tests {
     }
 
     #[test]
+    fn chunk_payload_bytes_are_pinned() {
+        let bytes = moho_core::persist::encode(CHUNK_FILE, &snapshot_fixture()).expect("encode");
+
+        assert_eq!(
+            bytes, PINNED_CHUNK,
+            "the ChunkSnapshot payload shape changed; bump CHUNK_FILE.version and update PINNED_CHUNK with the new bytes"
+        );
+
+        let back: ChunkSnapshot =
+            moho_core::persist::decode(CHUNK_FILE, &PINNED_CHUNK).expect("decode pinned");
+        let expected = snapshot_fixture();
+        assert_eq!(back.palette, expected.palette);
+        assert_eq!(back.indices, expected.indices);
+        assert_eq!(back.resources, expected.resources);
+    }
+
+    #[test]
     fn bytes_ignore_resource_insertion_order() {
         let mut ascending = PalettedChunk::new();
         let mut descending = PalettedChunk::new();
@@ -224,8 +253,7 @@ mod tests {
     #[test]
     fn wrong_index_count_returns_corrupt() {
         let short = (vec![u32::MAX], vec![0u16; 3], Vec::<(u16, u32)>::new());
-        let bytes = moho_core::persist::encode(moho_core::persist::FileKind::Chunk, &short)
-            .expect("encode");
+        let bytes = moho_core::persist::encode(CHUNK_FILE, &short).expect("encode");
 
         let err = PalettedChunk::from_bytes(&bytes).expect_err("must reject");
 
@@ -241,8 +269,7 @@ mod tests {
             (Vec::new(), vec![0u16; CHUNK_VOL]),
         ] {
             let snap = (palette, indices, Vec::<(u16, u32)>::new());
-            let bytes = moho_core::persist::encode(moho_core::persist::FileKind::Chunk, &snap)
-                .expect("encode");
+            let bytes = moho_core::persist::encode(CHUNK_FILE, &snap).expect("encode");
 
             let err = PalettedChunk::from_bytes(&bytes).expect_err("must reject");
 
