@@ -1,6 +1,6 @@
 # Architecture overview
 
-**Source:** crate `Cargo.toml`s, `scripts/layering.txt`, `moho_app/src/`, `src/app/`, `src/main.rs`.
+**Source:** crate `Cargo.toml`s, `scripts/layering.txt`, `moho_app/src/`, `moho_fps_rules/src/`, `src/app/`, `src/main.rs`.
 **Decisions:** ADRs
 [0001](../../_todo/adr/0001-render-api-boundary.md),
 [0003](../../_todo/adr/0003-core-owns-event-types.md),
@@ -28,6 +28,7 @@ flowchart TD
     input["moho_input<br/>Key, Action, ActionBindings,<br/>ActionMap, mouse filtering"]:::engine
     app["moho_app<br/>window, fixed-step loop, Game trait"]:::engine
     level["moho_level<br/>glTF level loader"]:::engine
+    fps["moho_fps_rules<br/>rifle, magazine, body damage"]:::fps
 
     ui --> renderer & input & core & game
     game --> core & rapi & voxel
@@ -40,9 +41,14 @@ flowchart TD
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
     classDef strategy fill:#dcfce7,stroke:#16a34a,color:#111
+    classDef fps fill:#ffedd5,stroke:#ea580c,color:#111
 ```
 
-Blue is the engine line, green is the strategy line. The FPS line has no crates yet.
+Blue is the engine line, green is the strategy line, orange is the FPS line.
+`moho_fps_rules` is the FPS line's only crate so far: plain serialisable weapon and body rules
+(`Rifle`, `Magazine`, `Body`) with no engine dependency. The planned `moho_fps` adapter is the
+only FPS crate that will reach the engine, and every shot resolves through one path (ray, surface
+tag, part, rule call) for player and enemy alike ([ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md)).
 `moho_app` owns the window and winit event loop; the binary implements its `Game` trait and hands it
 to `moho_app::run` ([frame loop](frame-loop.md)).
 
@@ -55,7 +61,7 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 |---|---|
 | Engine crates never depend on a game-line crate (dev-dependencies allowed) | The engine ships to both games and, after the split, from its own repo |
 | A game line never depends on another game line | Strategy and FPS must separate cleanly |
-| Domain crates (`moho_core`, `moho_voxel`, `moho_game`, `moho_level`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
+| Domain crates (`moho_core`, `moho_voxel`, `moho_game`, `moho_level`, `moho_fps_rules`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
 | Only `moho_renderer` (the `gpu` row of `scripts/layering.txt`) reaches `wgpu`, `egui-wgpu` or `naga` without going through another workspace member, dev-dependencies included | GPU code stays behind the renderer boundary |
 
 Voxels live in the strategy-line `moho_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));
