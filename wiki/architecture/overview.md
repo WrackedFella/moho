@@ -1,6 +1,6 @@
 # Architecture overview
 
-**Source:** crate `Cargo.toml`s, `scripts/layering.txt`, `moho_app/src/`, `moho_fps_rules/src/`, `src/app/`, `src/main.rs`.
+**Source:** crate `Cargo.toml`s, `moho_core/src/rng.rs`, `scripts/layering.txt`, `moho_app/src/`, `moho_fps_rules/src/`, `src/app/`, `src/main.rs`.
 **Decisions:** ADRs
 [0001](../../_todo/adr/0001-render-api-boundary.md),
 [0003](../../_todo/adr/0003-core-owns-event-types.md),
@@ -22,7 +22,7 @@ flowchart TD
 
     renderer["moho_renderer<br/>wgpu backend"]:::engine
     rapi["moho_render_api<br/>Renderable, RenderMaterial,<br/>GPU-layout data"]:::engine
-    core["moho_core<br/>event bus, persist,<br/>prefs"]:::engine
+    core["moho_core<br/>event bus, persist,<br/>prefs, seeded RNG"]:::engine
     audio["moho_audio<br/>rodio"]:::engine
     physics["moho_physics<br/>rapier3d"]:::engine
     input["moho_input<br/>Key, Action, ActionBindings,<br/>ActionMap, mouse filtering"]:::engine
@@ -87,7 +87,7 @@ flowchart TD
     renderer["moho_renderer<br/>wgpu backend"]:::engine
     physics["moho_physics<br/>rapier3d"]:::engine
     audio["moho_audio<br/>rodio"]:::engine
-    core["moho_core<br/>event bus, engine events, prefs,<br/>content roots, save envelope"]:::engine
+    core["moho_core<br/>event bus, engine events, prefs,<br/>content roots, save envelope,<br/>seeded RNG"]:::engine
     rapi["moho_render_api<br/>engine/game contract"]:::engine
     level["moho_level<br/>glTF level loader"]:::engine
 
@@ -170,6 +170,7 @@ flowchart LR
 | App mode | `moho_ui::GameState` ([input-and-state](input-and-state.md#gamestate)) |
 | GPU resources | `moho_renderer`; game types reach it only through `moho_render_api` ([rendering](rendering.md)) |
 | Prefs | `moho_core::prefs::Prefs` ([format](../reference/prefs-format.md)) |
+| Simulation randomness | `moho_core::rng::SimRng`, one per system, held by value in that system's state and keyed by `StreamId::named(<system name>)`. Integer-only SplitMix64, so a seed and stream replay identically on every platform; the sequence is pinned by tests, and changing it breaks saved games and replays. Not `Copy`: duplicate only with an explicit `clone` |
 | Player character, noclip | `PhysicsController` (`src/app/physics_controller.rs`): `player` is a `CharacterHandle` into `moho_physics::PhysicsWorld`, which holds each character's `CharacterState` (position, velocity, yaw, pitch, grounded; `moho_physics/src/world/character.rs`). Per-tick movement rules are the pure `moho_physics::step` (`moho_physics/src/movement.rs`), driven by a `CharacterCommand` and game-supplied `MoveSettings`; the game owns the tuning (`STRATEGY_MOVE_SETTINGS` in `src/app/event_loop/frame_processor.rs`). It also keeps the player's pre-tick state for the [frame camera](frame-loop.md#frame-camera) (`moho_physics::first_person_view`, `moho_physics/src/camera.rs`), reset on spawn and teleport. `reset` clears the handle and that state |
 
 Entities live in typed stores; there is no general ECS (ADR-0004).
