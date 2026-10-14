@@ -3,6 +3,7 @@
 //! A [`SimRng`] is one named stream's SplitMix64 generator, held by value in the
 //! owning system's state. The sequence is integer-only and pinned by tests, so the same
 //! seed and stream replay the same numbers on every platform and dependency version.
+//! Changing the sequence breaks saved games and replays, so treat it as a compatibility break.
 
 use serde::{Deserialize, Serialize};
 
@@ -12,8 +13,19 @@ pub struct StreamId(u64);
 
 impl StreamId {
     /// Derives the stream key for `name` with 64-bit FNV-1a.
-    pub const fn named(_name: &str) -> StreamId {
-        StreamId(0)
+    pub const fn named(name: &str) -> StreamId {
+        const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+        let bytes = name.as_bytes();
+        let mut hash = OFFSET_BASIS;
+        let mut i = 0;
+        while i < bytes.len() {
+            hash ^= bytes[i] as u64;
+            hash = hash.wrapping_mul(PRIME);
+            i += 1;
+        }
+        StreamId(hash)
     }
 }
 
@@ -35,13 +47,16 @@ pub struct SimRng {
 
 impl SimRng {
     /// Starts `stream` from `seed`; calling it again restarts the sequence.
-    pub fn new(_seed: u64, _stream: StreamId) -> SimRng {
-        panic!("not implemented")
+    pub fn new(seed: u64, stream: StreamId) -> SimRng {
+        SimRng {
+            state: mix64(seed ^ mix64(stream.0)),
+        }
     }
 
     /// Next 64 uniformly distributed bits.
     pub fn next_u64(&mut self) -> u64 {
-        panic!("not implemented")
+        self.state = self.state.wrapping_add(GAMMA);
+        mix64(self.state)
     }
 
     /// Next value in `[0, 1)`, the top 24 bits times `2^-24`.
@@ -51,8 +66,18 @@ impl SimRng {
 }
 
 /// Maps the top 24 bits of `bits` to `[0, 1)`.
-fn unit_f32(_bits: u64) -> f32 {
-    panic!("not implemented")
+fn unit_f32(bits: u64) -> f32 {
+    (bits >> 40) as f32 * (1.0 / (1u32 << 24) as f32)
+}
+
+/// SplitMix64's golden-ratio increment, `2^64 / phi` rounded to odd.
+const GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;
+
+/// SplitMix64's output finalizer; a bijection on `u64`.
+const fn mix64(x: u64) -> u64 {
+    let z = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    let z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
 }
 
 #[cfg(test)]
