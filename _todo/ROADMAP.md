@@ -152,7 +152,7 @@ its consumers near, not when the earlier wave fully closes.
 | # | Feature | Engine items it needs | Notes |
 |---|---|---|---|
 | S.1 | [SG-F1](https://github.com/WrackedFella/moho/issues/311) possessing a pawn feels right | 2.1 for feel | — |
-| S.2 | [SG-F2](https://github.com/WrackedFella/moho/issues/308) a saved world comes back as I left it: [SG-F2-01](strategy-game/SG-F2-saved-world-comes-back/SG-F2-01-load-puts-the-pawn-on-solid-ground.md), [SG-F2-03](strategy-game/SG-F2-saved-world-comes-back/SG-F2-03-mined-blocks-survive-quit-and-crash.md), [SG-F2-02](strategy-game/SG-F2-saved-world-comes-back/SG-F2-02-mining-leaves-no-gaps.md) | none | its load-path card covers the #264 gap (scene load skips releasing held keys) |
+| S.2 | [SG-F2](https://github.com/WrackedFella/moho/issues/308) a saved world comes back as I left it: [SG-F2-01](https://github.com/WrackedFella/moho/issues/341), [SG-F2-03](https://github.com/WrackedFella/moho/issues/343), [SG-F2-02](https://github.com/WrackedFella/moho/issues/342) | none | its load-path card covers the #264 gap (scene load skips releasing held keys) |
 | S.3 | [SG-F5](https://github.com/WrackedFella/moho/issues/309) run the colony from above, step into a pawn | 2.6, 2.7 | block and pawn picking are strategy-line |
 | S.4 | [SG-F4](https://github.com/WrackedFella/moho/issues/310) pawns dig what I mark | 2.7, 2.8; then 2.9, 2.10 | first new persisted type; #303 voxel routing is its card. Before SG-F3 |
 | S.5 | [SG-F3](https://github.com/WrackedFella/moho/issues/312) buildings and construction (not a gate item) | 2.7 (placement preview) | after SG-F4 |
@@ -219,7 +219,7 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-02 | Closed-source commercial sale; licence policy | [ADR-0007](adr/0007-third-party-licence-policy.md) |
 | 2026-10-02 | Keep winit; drop Wayland title bar to clear `ttf-parser` | [ADR-0008](adr/0008-keep-winit-for-windowing-and-input.md) |
 | 2026-10-04 | [ENG-F6](https://github.com/WrackedFella/moho/issues/233) parked: simulation already steps at a fixed 1/60 s; no determinism defect found | [ENG-F6](https://github.com/WrackedFella/moho/issues/233) Notes |
-| 2026-10-04 | [SG-F2-03](strategy-game/SG-F2-saved-world-comes-back/SG-F2-03-mined-blocks-survive-quit-and-crash.md) is reproduce-first and no longer waits on the save-format migration | [SG-F2-03](strategy-game/SG-F2-saved-world-comes-back/SG-F2-03-mined-blocks-survive-quit-and-crash.md) |
+| 2026-10-04 | [SG-F2-03](https://github.com/WrackedFella/moho/issues/343) is reproduce-first and no longer waits on the save-format migration | [SG-F2-03](https://github.com/WrackedFella/moho/issues/343) |
 | 2026-10-04 | Simulation time comes from one fixed tick; no separate clock | [ADR-0009](adr/0009-simulation-time-is-one-fixed-tick.md) |
 | 2026-10-05 | G1 amended: `paste` also arrives via `rapier3d`, so its ignore moves to ENG-F2-04 (G3 covers it); gate verified and closed | [ENG-F8](https://github.com/WrackedFella/moho/issues/61) |
 | 2026-10-05 | The engine sees world geometry as meshes; voxels move to a strategy-line crate | [ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md) |
