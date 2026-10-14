@@ -32,13 +32,16 @@ pub struct UiStateManager {
 
 impl UiStateManager {
     /// Create a new UI state manager with default screens
-    pub fn new() -> Self {
+    pub fn new(prefs: moho_core::prefs::Prefs) -> Self {
         // Register default screens
         use crate::screens::{NewWorldMenu, SettingsMenu, StartMenu};
         let mut screens: HashMap<String, Box<dyn Menu>> = HashMap::new();
 
         screens.insert("start".to_string(), Box::new(StartMenu::new()));
-        screens.insert("settings".to_string(), Box::new(SettingsMenu::new()));
+        screens.insert(
+            "settings".to_string(),
+            Box::new(SettingsMenu::with_prefs(prefs)),
+        );
         screens.insert("new_world".to_string(), Box::new(NewWorldMenu::new()));
 
         // Register default overlay layers
@@ -137,8 +140,33 @@ impl UiStateManager {
     }
 }
 
-impl Default for UiStateManager {
-    fn default() -> Self {
-        Self::new()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::screens::SettingsMenu;
+    use moho_core::prefs::Prefs;
+    use moho_input::bindings::Binding;
+    use moho_input::key::Key;
+
+    #[test]
+    fn injected_prefs_reach_the_settings_screen() {
+        let mut prefs = Prefs::default();
+        prefs.set_bindings(
+            [("move_forward".to_string(), "Q".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let mut manager = UiStateManager::new(prefs);
+
+        assert!(manager.show_screen("settings"));
+
+        let menu = manager
+            .active_screen()
+            .and_then(|screen| screen.as_any().downcast_ref::<SettingsMenu>())
+            .expect("settings screen is a SettingsMenu");
+        assert_eq!(
+            menu.get_staged_binding(0).first(),
+            Some(&Binding::Key(Key::Q))
+        );
     }
 }

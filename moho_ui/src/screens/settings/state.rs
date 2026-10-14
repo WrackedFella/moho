@@ -6,9 +6,10 @@
 use super::SettingsField;
 use super::binding_registry::BindingRegistry;
 use crate::actions::StrategyAction;
-use crate::prefs::Prefs;
+use crate::prefs::{Prefs, WindowMode};
 use moho_input::bindings::Binding;
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 /// Manages the state of the settings menu including saved prefs, staged changes,
 /// and dirty field tracking.
@@ -29,25 +30,20 @@ pub struct SettingsState {
     staged_bindings: BindingRegistry,
     /// Fields that have been modified (differ from prefs)
     dirty_fields: HashSet<SettingsField>,
+    /// Where `apply_changes` writes the preferences
+    path: PathBuf,
 }
 
 impl SettingsState {
-    /// Create a new settings state by loading preferences from disk.
-    ///
-    /// # Returns
-    /// A new SettingsState with prefs loaded and no dirty fields.
-    pub fn new() -> Self {
-        Self::from_prefs(Prefs::load())
+    /// Create a settings state from existing preferences, saved to the
+    /// default config path.
+    pub fn from_prefs(prefs: Prefs) -> Self {
+        Self::from_prefs_at(prefs, Prefs::config_path())
     }
 
-    /// Create a settings state from existing preferences.
-    ///
-    /// # Arguments
-    /// * `prefs` - The preferences to initialize with
-    ///
-    /// # Returns
-    /// A new SettingsState with the given prefs and no dirty fields.
-    pub fn from_prefs(prefs: Prefs) -> Self {
+    /// Create a settings state from existing preferences that `apply_changes`
+    /// saves to `path`.
+    pub(super) fn from_prefs_at(prefs: Prefs, path: PathBuf) -> Self {
         let bindings = BindingRegistry::from_prefs(&prefs);
         Self {
             prefs: prefs.clone(),
@@ -55,6 +51,7 @@ impl SettingsState {
             saved_bindings: bindings.clone(),
             staged_bindings: bindings,
             dirty_fields: HashSet::new(),
+            path,
         }
     }
 
@@ -116,7 +113,7 @@ impl SettingsState {
     /// Result indicating success or failure of save operation
     pub fn apply_changes(&mut self) -> Result<(), std::io::Error> {
         self.staged_bindings.write_to_prefs(&mut self.staged);
-        self.staged.save()?;
+        self.staged.save_to(&self.path)?;
         self.prefs = self.staged.clone();
         self.saved_bindings = self.staged_bindings.clone();
         self.dirty_fields.clear();
@@ -148,15 +145,21 @@ impl SettingsState {
         self.mark_dirty(SettingsField::Binding(action));
     }
 
+    /// Stage a window mode and mark it dirty.
+    pub fn set_window_mode(&mut self, mode: WindowMode) {
+        self.staged.set_window_mode(mode);
+        self.mark_dirty(SettingsField::WindowMode);
+    }
+
+    /// Stage a window resolution and mark it dirty.
+    pub fn set_window_resolution(&mut self, width: u32, height: u32) {
+        self.staged.set_window_resolution(width, height);
+        self.mark_dirty(SettingsField::WindowResolution);
+    }
+
     /// Whether the staged bindings of `action` differ from the saved ones.
     pub fn is_binding_modified(&self, action: StrategyAction) -> bool {
         self.staged_bindings.get_binding(action) != self.saved_bindings.get_binding(action)
-    }
-}
-
-impl Default for SettingsState {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -167,27 +170,6 @@ mod tests {
 
     fn key(k: Key) -> Vec<Binding> {
         vec![Binding::Key(k)]
-    }
-
-    #[test]
-    fn apply_changes_clears_dirty_fields() {
-        let mut state = SettingsState::from_prefs(Prefs::default());
-        state.set_staged_binding(StrategyAction::MoveForward, key(Key::Q));
-        assert!(state.is_dirty());
-
-        let result = state.apply_changes();
-        assert!(result.is_ok());
-
-        assert!(!state.is_dirty());
-        assert!(!state.is_binding_modified(StrategyAction::MoveForward));
-        assert_eq!(
-            state
-                .prefs()
-                .bindings()
-                .get("move_forward")
-                .map(String::as_str),
-            Some("Q")
-        );
     }
 
     #[test]
@@ -206,15 +188,41 @@ mod tests {
     }
 
     #[test]
-    fn get_staged_binding_returns_correct_value() {
+    fn apply_changes_updates_saved_prefs() {
+        use crate::prefs::WindowMode;
+        let dir = tempfile::tempdir().unwrap();
+        let mut state =
+            SettingsState::from_prefs_at(Prefs::default(), dir.path().join("prefs.ini"));
+        state.set_window_mode(WindowMode::Fullscreen);
+
+        let result = state.apply_changes();
+
+        assert!(result.is_ok());
+        assert_eq!(state.prefs().window_mode(), WindowMode::Fullscreen);
+    }
+
+    #[test]
+    fn video_setting_change_marks_dirty_and_reverts() {
+        use crate::prefs::WindowMode;
         let mut state = SettingsState::from_prefs(Prefs::default());
+        assert!(!state.is_dirty());
 
-        state.set_staged_binding(StrategyAction::MoveLeft, key(Key::Q));
+        state.set_window_mode(WindowMode::Fullscreen);
 
-        assert_eq!(
-            state.get_staged_binding(StrategyAction::MoveLeft),
-            key(Key::Q)
-        );
+        assert!(state.is_field_dirty(SettingsField::WindowMode));
+        assert!(!state.is_field_dirty(SettingsField::WindowResolution));
+        assert_eq!(state.staged().window_mode(), WindowMode::Fullscreen);
+
+        state.set_window_resolution(2560, 1440);
+
+        assert!(state.is_field_dirty(SettingsField::WindowResolution));
+        assert_eq!(state.staged().window_resolution(), (2560, 1440));
+
+        state.revert_changes();
+
+        assert!(!state.is_dirty());
+        assert_eq!(state.staged().window_mode(), WindowMode::Windowed);
+        assert_eq!(state.staged().window_resolution(), (1920, 1080));
     }
 
     #[test]

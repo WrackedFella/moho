@@ -90,8 +90,7 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
 2. apply queued `RenderRequest`s and drain audio events;
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
 4. `update_hud_data`, then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
-   with actors, the sphere and cube mesh handles and the frame camera (below);
-5. recall the UI adapter's staging belt (currently a no-op).
+   with actors, the sphere and cube mesh handles and the frame camera (below).
 
 A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
 [rendering](rendering.md#pass-order).

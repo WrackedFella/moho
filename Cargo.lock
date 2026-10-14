@@ -1776,6 +1776,7 @@ dependencies = [
  "moho_input",
  "moho_render_api",
  "rand 0.10.2",
+ "tempfile",
  "tracing",
  "winit",
 ]

@@ -67,7 +67,11 @@ pub fn init_renderer_and_ui(
 
     // UI setup
     {
-        let adapter = moho_ui::build_adapter(Some(window.clone()), app.event_bus.clone());
+        let adapter = moho_ui::build_adapter(
+            Some(window.clone()),
+            app.event_bus.clone(),
+            app.prefs.clone(),
+        );
         let ui_adapter = Arc::new(Mutex::new(adapter));
 
         renderer.set_ui_source(Some(ui_adapter.clone() as moho_renderer::UiSource));

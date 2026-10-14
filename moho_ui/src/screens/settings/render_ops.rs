@@ -70,7 +70,6 @@ pub fn render_bottom_panel(ui: &mut egui::Ui, menu: &mut SettingsMenu) -> Vec<Me
                     let save_clicked = save.clicked();
                     if save_clicked {
                         let _ = menu.state.apply_changes();
-                        let _ = menu.state.prefs().save();
                     }
                     items.push(MenuItem {
                         action: if save_clicked {

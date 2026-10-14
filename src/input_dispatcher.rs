@@ -116,7 +116,8 @@ mod tests {
 
     fn ui_adapter(visible: bool) -> Arc<Mutex<moho_ui::EguiAdapter>> {
         let event_bus = Arc::new(moho_core::events::EventBus::new());
-        let mut adapter = moho_ui::build_adapter(None, event_bus);
+        let mut adapter =
+            moho_ui::build_adapter(None, event_bus, moho_core::prefs::Prefs::default());
         adapter.set_visible(visible);
         Arc::new(Mutex::new(adapter))
     }

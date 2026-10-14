@@ -1,7 +1,7 @@
 /// Renders the Video tab content.
 ///
 /// Provides window mode and resolution settings.
-use super::{SettingsField, SettingsMenu};
+use super::SettingsMenu;
 use crate::prefs::{RESOLUTION_PRESETS, WindowMode};
 
 pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
@@ -51,8 +51,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                         });
 
                     if current != staged_mode {
-                        menu.state.staged_mut().set_window_mode(current);
-                        menu.state.mark_dirty(SettingsField::WindowMode);
+                        menu.state.set_window_mode(current);
                     }
 
                     if is_dirty {
@@ -60,10 +59,6 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                     }
                 });
             });
-
-            if is_dirty {
-                menu.state.mark_dirty(SettingsField::WindowMode);
-            }
         }
 
         ui.add_space(8.0);
@@ -105,9 +100,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
 
                     if resolution_enabled && current_res != staged_res {
                         menu.state
-                            .staged_mut()
                             .set_window_resolution(current_res.0, current_res.1);
-                        menu.state.mark_dirty(SettingsField::WindowResolution);
                     }
 
                     if is_dirty {
@@ -115,10 +108,6 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                     }
                 });
             });
-
-            if is_dirty {
-                menu.state.mark_dirty(SettingsField::WindowResolution);
-            }
         }
     });
 }

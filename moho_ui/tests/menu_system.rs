@@ -2,7 +2,7 @@
 
 use moho_ui::UiComponent;
 use moho_ui::prefs::Prefs;
-use moho_ui::{MenuItem, SettingsMenu};
+use moho_ui::{MenuAction, MenuItem, SettingsMenu};
 
 #[test]
 fn settings_menu_structure() {
@@ -16,13 +16,18 @@ fn settings_menu_structure() {
     });
 
     assert_eq!(items.len(), 2, "SettingsMenu should return 2 menu items");
-
-    // Check that items have proper structure
     for item in &items {
         assert!(item.rect.is_some(), "Menu items should have rects");
         assert!(item.rect.unwrap().is_positive());
         assert!(item.enabled, "Menu items should be enabled by default");
+        assert!(!item.clicked, "nothing was clicked");
     }
+    assert_eq!(
+        items[0].action,
+        MenuAction::None,
+        "Save emits nothing unclicked"
+    );
+    assert_eq!(items[1].action, MenuAction::ShowMenu("start".to_string()));
 
     // Verify menu metadata
     assert_eq!(menu.name(), "settings");
