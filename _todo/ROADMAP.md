@@ -80,8 +80,8 @@ files and can run together; a later wave waits on the cards named in its row.
 | 3 | [ENG-F22-06](https://github.com/WrackedFella/moho/issues/173), [ENG-F22-07](https://github.com/WrackedFella/moho/issues/174) | After ENG-F22-02 (same voxel and lighting files); ENG-F22-06 also after ENG-F22-16, which moved the blocky vertices it pins. Both before ENG-F10-03 branches |
 | 4 | [ENG-F22-05](https://github.com/WrackedFella/moho/issues/172), [ENG-F22-08](https://github.com/WrackedFella/moho/issues/175), [ENG-F22-04](https://github.com/WrackedFella/moho/issues/171), [ENG-F22-09](https://github.com/WrackedFella/moho/issues/176), [ENG-F22-10](https://github.com/WrackedFella/moho/issues/177), [ENG-F22-11](https://github.com/WrackedFella/moho/issues/178) | 05 and 08 after 01; 04 after 13; 09, 10 and 11 after 03. 09 before ENG-F21 moves the controller |
 | 5 | [ENG-F22-12](https://github.com/WrackedFella/moho/issues/179), [ENG-F22-20](https://github.com/WrackedFella/moho/issues/187), [ENG-F22-21](https://github.com/WrackedFella/moho/issues/245), [ENG-F22-22](https://github.com/WrackedFella/moho/issues/261), [ENG-F22-24](https://github.com/WrackedFella/moho/issues/263) | 12 after 04 and 14; 20 after 09 and 10; 21 after 10 (same physics test module as 20); 22 and 24 have no dependency |
-| 6 | [ENG-F22-19](https://github.com/WrackedFella/moho/issues/186) | After 13, 04 and 12 (shared `moho_ui` files) |
-| 7 | [ENG-F22-23](https://github.com/WrackedFella/moho/issues/262) | After 19 (shared `moho_ui` settings and overlay files) |
+| 6 | [ENG-F22-19](https://github.com/WrackedFella/moho/issues/186) | After 13 and 04; re-specced 2026-10-14 with no file shared with 12 or 23, so 12, 19 and 23 run in parallel |
+| 7 | [ENG-F22-23](https://github.com/WrackedFella/moho/issues/262) | No dependency since the 2026-10-14 re-spec (disjoint files from 12 and 19) |
 
 ### 1.18–1.20 card order
 
@@ -114,7 +114,7 @@ and the FPS rules crate are greenlit.
 | 2.9 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation (Phase 1 AI may use waypoints meanwhile) | 1.8, 1.11 |
 | 2.10 | [ENG-F19](https://github.com/WrackedFella/moho/issues/231) data and mod content | 1.11; before FPS Phase 2 |
 | 2.11 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234) domain tests catch behaviour changes (from M1's 1.3; not a gate item) | before [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) |
-| 2.12 | [ENG-F22](https://github.com/WrackedFella/moho/issues/167) remaining cards (from M1's 1.15; part of 2.11, not a gate item): [ENG-F22-12](https://github.com/WrackedFella/moho/issues/179) (shelved) → [ENG-F22-19](https://github.com/WrackedFella/moho/issues/186) → [ENG-F22-23](https://github.com/WrackedFella/moho/issues/262) | waves 5–7 of the order under M1, unchanged |
+| 2.12 | [ENG-F22](https://github.com/WrackedFella/moho/issues/167) remaining cards (from M1's 1.15; part of 2.11, not a gate item): [ENG-F22-12](https://github.com/WrackedFella/moho/issues/179), [ENG-F22-19](https://github.com/WrackedFella/moho/issues/186), [ENG-F22-23](https://github.com/WrackedFella/moho/issues/262) | in parallel: re-specced 2026-10-14 with disjoint files |
 
 ### Strategy
 
