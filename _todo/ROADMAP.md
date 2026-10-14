@@ -52,7 +52,7 @@ just before the work that needs them, not sooner.
 | 1.9 | [ENG-F11](https://github.com/WrackedFella/moho/issues/81): shared app loop, headless tick, engine `GameClock` | before P.2 |
 | 1.10 | [ENG-F12](https://github.com/WrackedFella/moho/issues/82): game-defined input actions; replaces the former 1.5 | before P.2; after 1.11 |
 | 1.12 | [ADR-0011](adr/0011-simulation-stays-network-ready.md): simulation stays network-ready | now (session B) |
-| 1.1 | Save-format migration to [ADR-0006](adr/0006-save-format-contract.md) ([ENG-F2-01](https://github.com/WrackedFella/moho/issues/94)), envelope in the engine | before [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) (first new persisted type); an [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) fix only if it changes the save format |
+| 1.1 | Save-format migration to [ADR-0006](adr/0006-save-format-contract.md) ([ENG-F2-01](https://github.com/WrackedFella/moho/issues/94)), envelope in the engine | before [SG-F3](https://github.com/WrackedFella/moho/issues/312) (first new persisted type); an [SG-F2-03](strategy-game/SG-F2-saved-world-comes-back/SG-F2-03-mined-blocks-survive-quit-and-crash.md) fix only if it changes the save format |
 | 1.13 | [ENG-F20](https://github.com/WrackedFella/moho/issues/104): a wgpu or egui upgrade touches one crate | after 1.9; before 1.16 and [ENG-F18](https://github.com/WrackedFella/moho/issues/230) |
 | 1.14 | [ADR-0012](adr/0012-engine-crate-map-for-m2.md): engine crate map, modules first; names the seam list | before ENG-F11 is specced |
 | 1.3 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234): domain tests catch behaviour changes | carried to M2 (2.11) |
@@ -99,7 +99,7 @@ Cards in one lane share files, so each waits on the one before it.
 **Gate (all must hold):**
 - [FPS GDD](../wiki/fps/game-design-document.md) §7 Phase 1–2 playable on engine-line crates:
   ENG-F16–F19 done (ENG-F14, F15 and F21 close in M1).
-- Strategy v1 slice done: SG-F1-04, SG-F2-03, SG-F2-02.
+- Strategy v1 slice done: [SG-F2](https://github.com/WrackedFella/moho/issues/308) and [SG-F1](https://github.com/WrackedFella/moho/issues/311).
 - Save envelope on [ADR-0006](adr/0006-save-format-contract.md) (1.1).
 
 M1's gate closed 2026-10-14; ENG-F16–F19 are carded next. The strategy slice
@@ -113,17 +113,23 @@ and the FPS rules crate are greenlit.
 | 2.8 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) shared UI shell (until then the arena's HUD is FPS-line egui; it never copies strategy UI) | 1.11, 1.13 |
 | 2.9 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation (Phase 1 AI may use waypoints meanwhile) | 1.8, 1.11 |
 | 2.10 | [ENG-F19](https://github.com/WrackedFella/moho/issues/231) data and mod content | 1.11; before FPS Phase 2 |
-| 2.11 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234) domain tests catch behaviour changes (from M1's 1.3; not a gate item) | before [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) |
+| 2.11 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234) domain tests catch behaviour changes (from M1's 1.3; not a gate item) | before [SG-F4](https://github.com/WrackedFella/moho/issues/310) |
 | 2.12 | [ENG-F22](https://github.com/WrackedFella/moho/issues/167) remaining cards (from M1's 1.15; part of 2.11, not a gate item): [ENG-F22-12](https://github.com/WrackedFella/moho/issues/179), [ENG-F22-19](https://github.com/WrackedFella/moho/issues/186), [ENG-F22-23](https://github.com/WrackedFella/moho/issues/262) | in parallel: re-specced 2026-10-14 with disjoint files |
 
 ### Strategy
 
+Strategy mode is the primary game and first person is possession of one pawn. Order: SG-F2, SG-F5, SG-F4, SG-F3; SG-F1 any time; SG-F6 in parallel once its exit criteria exist. Pawns come before buildings because construction is pawn work.
+
 | # | Feature | Depends on |
 |---|---|---|
-| 2.1 | [SG-F1-04](strategy-game/SG-F1-core-interaction-loop/SG-F1-04-pickup-feedback.md) pickup feedback | M0; independent of ENG-F10; if the voxel move ([ENG-F10-03](https://github.com/WrackedFella/moho/issues/140)) lands first, edits `moho_voxel` |
-| 2.2 | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) mining not persisted (reproduce first), then [SG-F2-02](strategy-game/SG-F2-known-bugs/SG-F2-02-mining-mesh-gaps.md) mesh gaps | M0; independent of ENG-F10; if the voxel move ([ENG-F10-03](https://github.com/WrackedFella/moho/issues/140)) lands first, edits `moho_voxel` |
-| 2.3 | [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) buildings and construction (not in the v1 slice) | 1.1 |
-| 2.4 | [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) worker pawns (first possible ECS consumer, [ADR-0004](adr/0004-entity-storage-without-a-general-ecs.md)) | 1.3, 2.3 |
+| 2.1 | [SG-F1](https://github.com/WrackedFella/moho/issues/311) possessing a pawn feels right (pickup popup, then one interactive playtest) | M0; independent |
+| 2.2 | [SG-F2](https://github.com/WrackedFella/moho/issues/308) a saved world comes back as I left it: [SG-F2-01](strategy-game/SG-F2-saved-world-comes-back/SG-F2-01-load-puts-the-pawn-on-solid-ground.md), then [SG-F2-03](strategy-game/SG-F2-saved-world-comes-back/SG-F2-03-mined-blocks-survive-quit-and-crash.md) (reproduce first), [SG-F2-02](strategy-game/SG-F2-saved-world-comes-back/SG-F2-02-mining-leaves-no-gaps.md) independent | M0; the voxel move ([ENG-F10-03](https://github.com/WrackedFella/moho/issues/140)) is done, so cards edit `moho_voxel` |
+| 2.3 | [SG-F3](https://github.com/WrackedFella/moho/issues/312) buildings and construction | 1.1, 2.4 |
+| 2.4 | [SG-F4](https://github.com/WrackedFella/moho/issues/310) pawns dig what I mark (first possible ECS consumer, [ADR-0004](adr/0004-entity-storage-without-a-general-ecs.md)) | 2.5, 2.11 (ENG-F9), engine requests below |
+| 2.5 | [SG-F5](https://github.com/WrackedFella/moho/issues/309) I run the colony from above and step into a pawn | none for its camera and possess cards; click-select waits on #304 and #305 |
+| 2.6 | SG-F6 new worlds look intentional ([draft](strategy-game/SG-F6-world-generation/_feature.md), not filed) | the user ranks the world-generation problems |
+
+Engine requests the strategy line waits on, unscheduled (the Engine lane orders them): [#302](https://github.com/WrackedFella/moho/issues/302) momentum after leaving the ground (a defect, blocks nothing), [#303](https://github.com/WrackedFella/moho/issues/303) navigation over changing terrain (SG-F4 walking; ENG-F17 covers static levels only), [#304](https://github.com/WrackedFella/moho/issues/304) pointer picking and [#305](https://github.com/WrackedFella/moho/issues/305) world markers (SG-F5 select, SG-F4 mark), [#306](https://github.com/WrackedFella/moho/issues/306) height clip (SG-F4 underground view), [#307](https://github.com/WrackedFella/moho/issues/307) pause and speed (after SG-F4's first cards).
 
 ### FPS line
 
@@ -179,7 +185,7 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-02 | Closed-source commercial sale; licence policy | [ADR-0007](adr/0007-third-party-licence-policy.md) |
 | 2026-10-02 | Keep winit; drop Wayland title bar to clear `ttf-parser` | [ADR-0008](adr/0008-keep-winit-for-windowing-and-input.md) |
 | 2026-10-04 | [ENG-F6](https://github.com/WrackedFella/moho/issues/233) parked: simulation already steps at a fixed 1/60 s; no determinism defect found | [ENG-F6](https://github.com/WrackedFella/moho/issues/233) Notes |
-| 2026-10-04 | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) is reproduce-first and no longer waits on the save-format migration | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) |
+| 2026-10-04 | [SG-F2-03](strategy-game/SG-F2-saved-world-comes-back/SG-F2-03-mined-blocks-survive-quit-and-crash.md) is reproduce-first and no longer waits on the save-format migration | [SG-F2-03](strategy-game/SG-F2-saved-world-comes-back/SG-F2-03-mined-blocks-survive-quit-and-crash.md) |
 | 2026-10-04 | Simulation time comes from one fixed tick; no separate clock | [ADR-0009](adr/0009-simulation-time-is-one-fixed-tick.md) |
 | 2026-10-05 | G1 amended: `paste` also arrives via `rapier3d`, so its ignore moves to ENG-F2-04 (G3 covers it); gate verified and closed | [ENG-F8](https://github.com/WrackedFella/moho/issues/61) |
 | 2026-10-05 | The engine sees world geometry as meshes; voxels move to a strategy-line crate | [ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md) |
@@ -200,3 +206,4 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-08 | ENG-F10's voxel move no longer waits on SG-F1-04, SG-F2-03 and SG-F2-02 (unfiled, Strategy lane planning-only); it waits on the ENG-F22 voxel cards instead | [ENG-F10](https://github.com/WrackedFella/moho/issues/80) Notes |
 | 2026-10-09 | M1 means both game lines can start: ENG-F14, F15 and F21 (what the FPS arena prototype needs and would otherwise copy) join its gate from M2; ENG-F20 moves before ENG-F18 and the M1-close upgrade instead of before all engine features | M1 section |
 | 2026-10-14 | M1 gate verified and closed; ENG-F9 and ENG-F22's remaining cards carried to M2 | M1 and M2 sections |
+| 2026-10-14 | Strategy mode is the primary game; first person is possession of one pawn. Strategy order is SG-F2, SG-F5, SG-F4, SG-F3 (pawns before buildings); the M2 strategy slice becomes SG-F2 and SG-F1; gameplay UI and sound ride inside each feature | [SG-F5](https://github.com/WrackedFella/moho/issues/309), [SG-F4](https://github.com/WrackedFella/moho/issues/310), [SG-F3](https://github.com/WrackedFella/moho/issues/312) |

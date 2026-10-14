@@ -1,17 +1,19 @@
 # Strategy game — vision
 
-The design intent behind the strategy line. Features and their order live in
-[`_todo/strategy-game/`](../../_todo/strategy-game/) and the
-[roadmap](../../_todo/ROADMAP.md). This page holds what stays true across features.
+The design intent behind the strategy line. Features and their order live in the
+[roadmap](../../_todo/ROADMAP.md) and the GitHub issues. This page holds what stays true across features.
 
 ## The game
 
-A base-builder and mining game:
+A base-builder and mining game played from above:
 
+- **Strategy mode is the game.** The player runs a colony like RimWorld or Dwarf
+  Fortress: marks ground to dig, places buildings, and watches pawns do the work.
+- **First person is possession.** The player can take over one pawn and act through
+  its eyes, Minecraft-style. While possessed, that pawn's own work pauses; today it is
+  the single player pawn, later every pawn is AI-driven when not possessed.
 - **Core loop:** mine → build → automate → progress, in the style of Satisfactory or
   Factorio.
-- **Colony control:** direct units and jobs, as in Dwarf Fortress.
-- **Optional direct control:** take over a single unit in first person, Minecraft-style.
 
 ## Design principles
 
@@ -30,15 +32,17 @@ A base-builder and mining game:
   block-destruction step inside `Pawn::mine` may assume whole blocks. Its signature and
   the deposit contract (`ResourceYield { resource_id, amount }`) must not.
 - **Build for a named consumer.** Systems arrive with the feature that needs them.
-  An example is SG-F4, the worker pawns, which is the first possible ECS consumer
+  An example is SG-F4, pawns that dig what the player marks, which is the first possible ECS consumer
   ([ADR-0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md)).
 
 ## Feature arc
 
-1. Core interaction loop: aim, mine, inventory, hotbar, tool gating, pickup feedback
-   ([SG-F1](../../_todo/strategy-game/SG-F1-core-interaction-loop/_feature.md)).
-2. Buildings placed from a context-sensitive build menu
-   ([SG-F3](../../_todo/strategy-game/SG-F3-buildings-and-construction/_feature.md)).
-3. Worker pawns that gather on their own: go, act, return
-   ([SG-F4](../../_todo/strategy-game/SG-F4-worker-pawns/_feature.md)).
-4. Automation and progression (not yet planned).
+Features and their order live in the [roadmap](../../_todo/ROADMAP.md); the issues are the record.
+
+1. A saved world comes back as left ([SG-F2](https://github.com/WrackedFella/moho/issues/308)).
+2. Strategy view and possession: pan, select, step into a pawn ([SG-F5](https://github.com/WrackedFella/moho/issues/309)).
+3. Pawns dig what the player marks ([SG-F4](https://github.com/WrackedFella/moho/issues/310)).
+4. Buildings placed from a build menu and constructed by pawns ([SG-F3](https://github.com/WrackedFella/moho/issues/312)).
+5. Possession polish: pickup feedback ([SG-F1](https://github.com/WrackedFella/moho/issues/311)).
+6. World generation polish ([SG-F6](../../_todo/strategy-game/SG-F6-world-generation/_feature.md), draft).
+7. Automation and progression (not yet planned).
