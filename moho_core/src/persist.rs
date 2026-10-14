@@ -217,6 +217,24 @@ mod tests {
     }
 
     #[test]
+    fn other_tag_is_reported_before_newer_version() {
+        let bytes = envelope_around(7, 3, &PAYLOAD);
+
+        let err = reject(KIND, &bytes);
+
+        assert!(
+            matches!(
+                err,
+                PersistError::WrongKind {
+                    expected: 1,
+                    found: 7
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
     fn version_zero_is_reported_before_wrong_kind() {
         let bytes = envelope_around(7, 0, &PAYLOAD);
 
