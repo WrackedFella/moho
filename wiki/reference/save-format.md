@@ -26,9 +26,10 @@ Little-endian, 19-byte header followed by the payload.
 by `moho_core`: `WORLD_FILE` in `src/save.rs`, `SCENE_FILE` in `moho_game`, `CHUNK_FILE`
 in `moho_voxel`. Errors report the raw tag byte.
 
-`decode` checks in this order: magic and kind byte (`NotASaveFile`), version
-(`UnsupportedFormat` for 0 or newer than the build), expected kind (`WrongKind`), then
-length, CRC and trailing bytes (`Corrupt`). The version lives only in the envelope; payload
+`decode` checks in this order: magic (`NotASaveFile`), version 0 (`UnsupportedFormat`,
+so pre-envelope saves keep that error), tag against the caller's kind (`WrongKind`),
+version newer than the caller's kind (`UnsupportedFormat`), then length, CRC and trailing
+bytes (`Corrupt`). The version lives only in the envelope; payload
 structs carry no version field. Older versions are not read unless a migration is added
 for that kind.
 
