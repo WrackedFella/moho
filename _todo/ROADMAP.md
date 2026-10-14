@@ -152,10 +152,11 @@ its consumers near, not when the earlier wave fully closes.
 | # | Feature | Engine items it needs | Notes |
 |---|---|---|---|
 | S.1 | [SG-F1](https://github.com/WrackedFella/moho/issues/311) possessing a pawn feels right | 2.1 for feel | — |
-| S.2 | [SG-F2](https://github.com/WrackedFella/moho/issues/308) a saved world comes back as I left it | none | its load-path card covers the #264 gap (scene load skips releasing held keys) |
+| S.2 | [SG-F2](https://github.com/WrackedFella/moho/issues/308) a saved world comes back as I left it: [SG-F2-01](https://github.com/WrackedFella/moho/issues/341), [SG-F2-03](https://github.com/WrackedFella/moho/issues/343), [SG-F2-02](https://github.com/WrackedFella/moho/issues/342) | none | its load-path card covers the #264 gap (scene load skips releasing held keys) |
 | S.3 | [SG-F5](https://github.com/WrackedFella/moho/issues/309) run the colony from above, step into a pawn | 2.6, 2.7 | block and pawn picking are strategy-line |
 | S.4 | [SG-F4](https://github.com/WrackedFella/moho/issues/310) pawns dig what I mark | 2.7, 2.8; then 2.9, 2.10 | first new persisted type; #303 voxel routing is its card. Before SG-F3 |
 | S.5 | [SG-F3](https://github.com/WrackedFella/moho/issues/312) buildings and construction (not a gate item) | 2.7 (placement preview) | after SG-F4 |
+| S.6 | SG-F6 new worlds look intentional ([draft](strategy-game/SG-F6-world-generation/_feature.md), not filed; not a gate item) | none | waits for the user to rank the world-generation problems |
 
 ### FPS line
 
@@ -218,7 +219,7 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-02 | Closed-source commercial sale; licence policy | [ADR-0007](adr/0007-third-party-licence-policy.md) |
 | 2026-10-02 | Keep winit; drop Wayland title bar to clear `ttf-parser` | [ADR-0008](adr/0008-keep-winit-for-windowing-and-input.md) |
 | 2026-10-04 | [ENG-F6](https://github.com/WrackedFella/moho/issues/233) parked: simulation already steps at a fixed 1/60 s; no determinism defect found | [ENG-F6](https://github.com/WrackedFella/moho/issues/233) Notes |
-| 2026-10-04 | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) is reproduce-first and no longer waits on the save-format migration | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) |
+| 2026-10-04 | [SG-F2-03](https://github.com/WrackedFella/moho/issues/343) is reproduce-first and no longer waits on the save-format migration | [SG-F2-03](https://github.com/WrackedFella/moho/issues/343) |
 | 2026-10-04 | Simulation time comes from one fixed tick; no separate clock | [ADR-0009](adr/0009-simulation-time-is-one-fixed-tick.md) |
 | 2026-10-05 | G1 amended: `paste` also arrives via `rapier3d`, so its ignore moves to ENG-F2-04 (G3 covers it); gate verified and closed | [ENG-F8](https://github.com/WrackedFella/moho/issues/61) |
 | 2026-10-05 | The engine sees world geometry as meshes; voxels move to a strategy-line crate | [ADR-0010](adr/0010-world-geometry-is-a-mesh-contract.md) |
@@ -241,3 +242,4 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-14 | M1 gate verified and closed; ENG-F9 and ENG-F22's remaining cards carried to M2 | M1 and M2 sections |
 | 2026-10-14 | M2 is ranked by the game lines' engine requests and runs in waves; its gate is what the games need for V1, declared met by Justin. ENG-F16 is the priority; SG-F5 and SG-F4 join the gate; SG-F4 comes before SG-F3; #303 routing is strategy-line | M2 section |
 | 2026-10-14 | New ENG-F23 (pointer to world ray, #304) and ENG-F24 (world markers and height slice, #305, #306); ENG-F18 gains on-screen text (#315) and one prefs owner; ENG-F6 reopened for seeded RNG (#316) | M2 section; [ENG-F18](https://github.com/WrackedFella/moho/issues/230), [ENG-F6](https://github.com/WrackedFella/moho/issues/233) |
+| 2026-10-14 | Strategy mode is the primary game; first person is possession of one pawn. Strategy order is SG-F2, SG-F5, SG-F4, SG-F3 (pawns before buildings); SG-F1 any time, SG-F6 once ranked; gameplay UI and sound ride inside each feature | [SG-F5](https://github.com/WrackedFella/moho/issues/309), [SG-F4](https://github.com/WrackedFella/moho/issues/310), [SG-F3](https://github.com/WrackedFella/moho/issues/312) |

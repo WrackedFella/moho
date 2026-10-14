@@ -58,10 +58,12 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 
 | Feature |
 |---|
-| [SG-F1 Core interaction & resource loop](strategy-game/SG-F1-core-interaction-loop/_feature.md) |
-| [SG-F2 Known bugs](strategy-game/SG-F2-known-bugs/_feature.md) |
-| [SG-F3 Buildings & construction](strategy-game/SG-F3-buildings-and-construction/_feature.md) |
-| [SG-F4 Worker pawns](strategy-game/SG-F4-worker-pawns/_feature.md) |
+| [SG-F1 Possessing a pawn feels right](https://github.com/WrackedFella/moho/issues/311) |
+| [SG-F2 A saved world comes back as I left it](https://github.com/WrackedFella/moho/issues/308) |
+| [SG-F3 I place a building and pawns construct it](https://github.com/WrackedFella/moho/issues/312) |
+| [SG-F4 Pawns dig what I mark](https://github.com/WrackedFella/moho/issues/310) |
+| [SG-F5 I run the colony from above and step into a pawn](https://github.com/WrackedFella/moho/issues/309) |
+| [SG-F6 New worlds look intentional and ore is findable](strategy-game/SG-F6-world-generation/_feature.md) |
 
 ## fps-game/
 

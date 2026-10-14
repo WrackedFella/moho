@@ -15,8 +15,8 @@ There are four on-disk layouts with separate headers: the world save (`MOHO`
 magic, u32 version), the scene file, chunk files, and the snapshot (magic,
 u16 version, length, CRC32). Only the snapshot detects corruption.
 
-No long-lived saves exist yet. Every feature that persists new state ([SG-F3](../strategy-game/SG-F3-buildings-and-construction/_feature.md)
-buildings, [SG-F4](../strategy-game/SG-F4-worker-pawns/_feature.md) pawns, inventory) adds types to this format.
+No long-lived saves exist yet. Every feature that persists new state ([SG-F3](https://github.com/WrackedFella/moho/issues/312)
+buildings, [SG-F4](https://github.com/WrackedFella/moho/issues/310) pawns, inventory) adds types to this format.
 
 ## Decision
 
