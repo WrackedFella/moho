@@ -29,6 +29,7 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 wgpu = "30.0.1"
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 moho_physics = { path = "moho_physics" }
+moho_fps_rules = { path = "moho_fps_rules" }
 rapier3d = "0.36"
 tempfile = "3.5"
 gltf = { version = "1.4.1", default-features = false, features = ["utils", "names", "extras"] }

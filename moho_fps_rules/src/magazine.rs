@@ -164,6 +164,25 @@ mod tests {
         assert_eq!(magazine.capacity(), 0);
     }
 
+    #[test]
+    fn deserialize_rejects_rounds_over_capacity() {
+        let json = r#"{"capacity":30,"rounds":40}"#;
+
+        let result = serde_json::from_str::<Magazine>(json);
+
+        assert!(result.is_err(), "over-capacity data deserialized: {result:?}");
+    }
+
+    #[test]
+    fn serialized_magazine_round_trips_equal() {
+        let original = Magazine::new(30, 7).expect("rounds fit the capacity");
+
+        let json = serde_json::to_string(&original).expect("magazine serializes");
+        let restored: Magazine = serde_json::from_str(&json).expect("valid data deserializes");
+
+        assert_eq!(restored, original);
+    }
+
     proptest! {
         #[test]
         fn level_never_drops_as_rounds_rise(capacity in 1u32..500, a in 0u32..500, b in 0u32..500) {
