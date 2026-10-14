@@ -206,7 +206,11 @@ impl CommandProcessor {
                     3 => "Shadows",
                     4 => "Light Level",
                     5 => "Point Lights",
-                    _ => "Unknown",
+                    _ => {
+                        return CommandResult::message(
+                            "Debug view must be between 0 and 5".to_string(),
+                        );
+                    }
                 };
                 CommandResult::with_action(
                     format!("Debug view set to: {mode_name} ({mode})"),
@@ -477,6 +481,34 @@ mod tests {
 
         assert!(result.messages.iter().any(|m| m.contains("Spawning 123")));
         assert_eq!(result.action, ConsoleAction::Spawn("123".to_string(), None));
+    }
+
+    #[test]
+    fn debug_view_rejects_unknown_mode() {
+        let processor = CommandProcessor::new();
+
+        for input in ["r_debug_view 6", "r_debug_view 9"] {
+            let result = processor.execute(input);
+
+            assert_eq!(result.action, ConsoleAction::None, "{input}");
+            assert!(
+                result
+                    .messages
+                    .iter()
+                    .any(|m| m == "Debug view must be between 0 and 5"),
+                "{input}: {:?}",
+                result.messages
+            );
+        }
+    }
+
+    #[test]
+    fn debug_view_accepts_mode_5() {
+        let processor = CommandProcessor::new();
+
+        let result = processor.execute("r_debug_view 5");
+
+        assert_eq!(result.action, ConsoleAction::SetDebugView(5));
     }
 
     #[test]

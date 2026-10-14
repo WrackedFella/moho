@@ -52,7 +52,8 @@ impl Overlay for GameplayHud {
 
 // ── Compass ──────────────────────────────────────────────────────────────────
 
-/// Cardinal and inter-cardinal direction labels with their angular offsets (radians).
+/// Cardinal and inter-cardinal direction labels with their bearings (radians,
+/// clockwise from north).
 const COMPASS_LABELS: &[(&str, f32)] = &[
     ("N", 0.0),
     ("NE", std::f32::consts::FRAC_PI_4),
@@ -67,6 +68,30 @@ const COMPASS_LABELS: &[(&str, f32)] = &[
 /// Labels within this angular range of forward are visible.
 const COMPASS_HALF_FOV: f32 = std::f32::consts::FRAC_PI_3; // 60°
 
+/// Labels within the compass arc for `yaw`, ordered left to right. The flag
+/// marks the label the camera is facing.
+///
+/// Camera yaw grows counter-clockwise (turning right lowers it), so the
+/// heading is `-yaw` and a label's bearing relative to it is `bearing + yaw`.
+fn visible_labels(yaw: f32) -> Vec<(&'static str, bool)> {
+    let mut visible: Vec<(f32, &'static str, bool)> = COMPASS_LABELS
+        .iter()
+        .filter_map(|&(label, bearing)| {
+            let diff = egui::emath::normalized_angle(bearing + yaw);
+            (diff.abs() <= COMPASS_HALF_FOV).then_some((
+                diff,
+                label,
+                diff.abs() < std::f32::consts::FRAC_PI_8,
+            ))
+        })
+        .collect();
+    visible.sort_by(|a, b| a.0.total_cmp(&b.0));
+    visible
+        .into_iter()
+        .map(|(_, label, facing)| (label, facing))
+        .collect()
+}
+
 fn render_compass(ui: &mut egui::Ui, camera_yaw: f32) {
     egui::Area::new("gameplay_hud_compass".into())
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 8.0))
@@ -74,23 +99,7 @@ fn render_compass(ui: &mut egui::Ui, camera_yaw: f32) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
 
-                for &(label, angle) in COMPASS_LABELS {
-                    // Angular difference: how far this label is from forward direction.
-                    // camera_yaw = 0 means facing North (angle 0).
-                    let mut diff = angle - camera_yaw;
-                    // Wrap to [-π, π]
-                    while diff > std::f32::consts::PI {
-                        diff -= std::f32::consts::TAU;
-                    }
-                    while diff < -std::f32::consts::PI {
-                        diff += std::f32::consts::TAU;
-                    }
-
-                    if diff.abs() > COMPASS_HALF_FOV {
-                        continue; // outside visible arc
-                    }
-
-                    let is_facing = diff.abs() < std::f32::consts::FRAC_PI_8;
+                for (label, is_facing) in visible_labels(camera_yaw) {
                     let text = if is_facing {
                         egui::RichText::new(label)
                             .strong()
@@ -289,7 +298,7 @@ mod tests {
         let output = second_frame(&ctx, |ui| render_compass(ui, 0.0));
         let bounds = rect_of(&output, "N");
 
-        assert_eq!(texts(&output), ["N", "NE", "NW"]);
+        assert_eq!(texts(&output), ["NW", "N", "NE"]);
         assert!(bounds.min.y < 100.0, "not at top: {bounds:?}");
     }
 
@@ -320,45 +329,23 @@ mod tests {
     }
 
     #[test]
-    fn compass_facing_north_at_yaw_zero() {
-        // At yaw=0, the "N" label has diff=0 → is_facing=true
-        let yaw = 0.0_f32;
-        let (label, angle) = COMPASS_LABELS[0]; // ("N", 0.0)
-        let diff = angle - yaw;
-        assert_eq!(label, "N");
-        assert!(
-            diff.abs() < std::f32::consts::FRAC_PI_8,
-            "N should be centered at yaw=0"
-        );
-    }
+    fn compass_visible_labels_by_yaw() {
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, FRAC_PI_8, PI, TAU};
+        let cases = [
+            (0.0_f32, vec![("NW", false), ("N", true), ("NE", false)]),
+            (-FRAC_PI_2, vec![("NE", false), ("E", true), ("SE", false)]),
+            (-FRAC_PI_4, vec![("N", false), ("NE", true), ("E", false)]),
+            (
+                -FRAC_PI_2 - TAU,
+                vec![("NE", false), ("E", true), ("SE", false)],
+            ),
+            (-FRAC_PI_8, vec![("N", false), ("NE", false)]),
+            (PI, vec![("SE", false), ("S", true), ("SW", false)]),
+        ];
 
-    #[test]
-    fn compass_facing_east_at_yaw_pi_over_2() {
-        let yaw = std::f32::consts::FRAC_PI_2;
-        // E is at angle π/2, diff = π/2 - π/2 = 0
-        let east = COMPASS_LABELS.iter().find(|(l, _)| *l == "E").unwrap();
-        let diff = east.1 - yaw;
-        assert!(
-            diff.abs() < std::f32::consts::FRAC_PI_8,
-            "E should be centered at yaw=π/2"
-        );
-    }
-
-    #[test]
-    fn compass_facing_south_at_yaw_pi() {
-        let yaw = std::f32::consts::PI;
-        let south = COMPASS_LABELS.iter().find(|(l, _)| *l == "S").unwrap();
-        let mut diff = south.1 - yaw;
-        while diff > std::f32::consts::PI {
-            diff -= std::f32::consts::TAU;
+        for (yaw, expected) in cases {
+            assert_eq!(visible_labels(yaw), expected, "yaw {yaw}");
         }
-        while diff < -std::f32::consts::PI {
-            diff += std::f32::consts::TAU;
-        }
-        assert!(
-            diff.abs() < std::f32::consts::FRAC_PI_8,
-            "S should be centered at yaw=π"
-        );
     }
 
     #[test]

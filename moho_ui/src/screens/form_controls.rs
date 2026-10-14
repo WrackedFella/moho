@@ -132,7 +132,11 @@ impl FormControls {
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.spacing_mut().slider_width = 120.0;
-                        let slider = ui.add(egui::Slider::new(value, 1.0..=10.0).show_value(false));
+                        let slider = ui.add(
+                            egui::Slider::new(value, 1.0..=10.0)
+                                .step_by(0.1)
+                                .show_value(false),
+                        );
                         if is_dirty {
                             Self::paint_dirty_decor(ui, &slider);
                         }
@@ -281,19 +285,6 @@ impl FormControls {
         (available_width * gutter_percent).max(20.0)
     }
 
-    /// Calculate content width from available width and gutter percentage.
-    ///
-    /// # Arguments
-    /// * `available_width` - The total available width
-    /// * `gutter_percent` - Percentage for each side gutter (0.0 to 1.0)
-    ///
-    /// # Returns
-    /// The calculated content width (total - 2*gutters)
-    pub fn calculate_content_width(available_width: f32, gutter_percent: f32) -> f32 {
-        let gutter = Self::calculate_gutter(available_width, gutter_percent);
-        (available_width - 2.0 * gutter).max(100.0)
-    }
-
     /// Renders a horizontal tab bar and returns the index of the selected tab.
     ///
     /// This creates a row of tab buttons styled to indicate active/inactive state.
@@ -410,5 +401,74 @@ mod tests {
                 assert!(resp.rect.width() >= 160.0);
             });
         });
+    }
+
+    #[test]
+    fn gutter_is_percent_with_min_20() {
+        assert_eq!(FormControls::calculate_gutter(1000.0, 0.3), 300.0);
+        assert_eq!(FormControls::calculate_gutter(50.0, 0.3), 20.0);
+    }
+
+    fn volume_frame(ctx: &egui::Context, events: Vec<egui::Event>, value: &mut f32) {
+        let _ = crate::overlays::test_support::run_ui(ctx, input(events), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                FormControls::volume_slider(ui, "Vol", value, 5.0, 60.0);
+            });
+        });
+    }
+
+    #[test]
+    fn volume_slider_steps_by_tenths() {
+        for press_x in [688.4_f32, 700.3, 765.2, 777.1] {
+            let ctx = egui::Context::default();
+            // smart_aim snaps within 1/ppp points, so only HiDPI exposes non-tenth values.
+            ctx.set_pixels_per_point(4.0);
+            let mut value = 5.0_f32;
+            volume_frame(&ctx, Vec::new(), &mut value);
+            volume_frame(&ctx, Vec::new(), &mut value);
+            let at = |x: f32| egui::pos2(x, 20.0);
+            let button = |x: f32, pressed| egui::Event::PointerButton {
+                pos: at(x),
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+
+            volume_frame(
+                &ctx,
+                vec![egui::Event::PointerMoved(at(press_x))],
+                &mut value,
+            );
+            volume_frame(&ctx, vec![button(press_x, true)], &mut value);
+            // A DragValue does not jump on press; the slider does.
+            assert!(
+                (value - 5.0).abs() > 0.05,
+                "press {press_x}: press did not hit the slider"
+            );
+            let mut samples = vec![value];
+            for step in 1..=4 {
+                let x = press_x + 3.3 * step as f32;
+                volume_frame(&ctx, vec![egui::Event::PointerMoved(at(x))], &mut value);
+                samples.push(value);
+                let tenths = value * 10.0;
+                assert!(
+                    (tenths - tenths.round()).abs() < 1e-3,
+                    "press {press_x}, step {step}: value {value} is not a tenth"
+                );
+            }
+            volume_frame(&ctx, vec![button(press_x + 13.2, false)], &mut value);
+
+            assert!(
+                samples
+                    .iter()
+                    .any(|v| (v * 2.0 - (v * 2.0).round()).abs() > 1e-3),
+                "press {press_x}: every sample {samples:?} is on a coarser grid than 0.1"
+            );
+
+            assert!(
+                (value - 5.0).abs() > 0.05,
+                "press {press_x}: slider did not move"
+            );
+        }
     }
 }
