@@ -96,7 +96,7 @@ fn render_console(ui: &mut egui::Ui, ui_state: &mut UiStateManager, event_bus: &
 
 /// Render pause overlay (simple centered message)
 fn render_pause_overlay(ui: &mut egui::Ui) {
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         ui.centered_and_justified(|ui| {
             ui.heading("Paused");
             ui.label("Press ESC to resume");
@@ -194,7 +194,7 @@ mod tests {
             hovered_key: None,
         };
 
-        let output = ctx.run_ui(input, |ui| {
+        let output = crate::overlays::test_support::run_ui(ctx, input, |ui| {
             result = render_game_state(ui, ui_state, game_state, &bus);
         });
 

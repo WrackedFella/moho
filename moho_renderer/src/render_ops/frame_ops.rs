@@ -22,6 +22,6 @@ pub fn finish_frame(
     tracing::debug!(count = draw_count, "[frame_ops] submitting draws");
     if let Some(frame) = pending_frame {
         queue.submit(Some(finished));
-        frame.present();
+        queue.present(frame);
     }
 }

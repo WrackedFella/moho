@@ -16,7 +16,7 @@ type MenuItem = super::super::MenuItem;
 pub fn render_top_panel(ui: &mut egui::Ui, current_tab: SettingsTab) -> SettingsTab {
     let mut new_tab = current_tab;
 
-    egui::Panel::top("settings_top").show_inside(ui, |ui| {
+    egui::Panel::top("settings_top").show(ui, |ui| {
         // Use same gutter percentage as content area (30%)
         let avail = ui.available_width();
         let gutter = FormControls::calculate_gutter(avail, 0.30);
@@ -52,7 +52,7 @@ pub fn render_top_panel(ui: &mut egui::Ui, current_tab: SettingsTab) -> Settings
 pub fn render_bottom_panel(ui: &mut egui::Ui, menu: &mut SettingsMenu) -> Vec<MenuItem> {
     let mut items = Vec::new();
 
-    egui::Panel::bottom("settings_bottom").show_inside(ui, |ui| {
+    egui::Panel::bottom("settings_bottom").show(ui, |ui| {
         // Use same gutter percentage as content area (30%)
         let avail = ui.available_width();
         let gutter = FormControls::calculate_gutter(avail, 0.30);
@@ -127,7 +127,7 @@ pub fn render_bottom_panel(ui: &mut egui::Ui, menu: &mut SettingsMenu) -> Vec<Me
 
 /// Render the central content area with scrollable form
 pub fn render_content_area(ui: &mut egui::Ui, menu: &mut SettingsMenu) {
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -166,7 +166,7 @@ mod tests {
         tab: SettingsTab,
     ) -> (SettingsTab, egui::FullOutput) {
         let mut result = tab;
-        let output = ctx.run_ui(input(events), |ui| {
+        let output = crate::overlays::test_support::run_ui(ctx, input(events), |ui| {
             result = render_top_panel(ui, tab);
         });
         (result, output)

@@ -217,7 +217,7 @@ impl FormControls {
         let mut button_results = (false, false);
 
         // Top panel: title area
-        egui::Panel::top(format!("{panel_id_prefix}_top")).show_inside(ui, |ui| {
+        egui::Panel::top(format!("{panel_id_prefix}_top")).show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(16.0);
                 ui.heading(title);
@@ -226,7 +226,7 @@ impl FormControls {
         });
 
         // Bottom panel: action buttons
-        egui::Panel::bottom(format!("{panel_id_prefix}_bottom")).show_inside(ui, |ui| {
+        egui::Panel::bottom(format!("{panel_id_prefix}_bottom")).show(ui, |ui| {
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -237,7 +237,7 @@ impl FormControls {
         });
 
         // Central panel: scrollable content
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -368,7 +368,7 @@ mod tests {
         ctx: &egui::Context,
     ) -> ((bool, bool), egui::FullOutput) {
         let mut result = (false, false);
-        let output = ctx.run_ui(input(events), |ui| {
+        let output = crate::overlays::test_support::run_ui(ctx, input(events), |ui| {
             result = FormControls::standard_screen_layout(
                 ui,
                 "Title",
@@ -404,8 +404,8 @@ mod tests {
     #[test]
     fn menu_button_smoke_enabled() {
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
-            egui::CentralPanel::default().show_inside(ui, |ui| {
+        let _ = crate::overlays::test_support::run_ui(&ctx, egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 let resp = FormControls::menu_button(ui, "Play", true);
                 assert!(resp.rect.width() >= 160.0);
             });

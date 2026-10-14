@@ -404,9 +404,10 @@ mod tests {
         menu.keybind_capture.start_listening(0);
 
         let mut raw = egui::RawInput::default();
-        raw.modifiers.ctrl = true;
+        raw.events
+            .push(egui::Event::ModifiersChanged(egui::Modifiers::CTRL));
 
-        let _full = ctx.run_ui(raw, |ui| {
+        let _full = crate::overlays::test_support::run_ui(&ctx, raw, |ui| {
             menu.render(ui);
         });
 

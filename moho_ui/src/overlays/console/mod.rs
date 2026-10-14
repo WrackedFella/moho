@@ -324,7 +324,8 @@ mod tests {
         };
         let mut action = ConsoleAction::None;
 
-        let _ = ctx.run_ui(input, |ui| action = console.render(ui));
+        let _ =
+            crate::overlays::test_support::run_ui(&ctx, input, |ui| action = console.render(ui));
 
         action
     }
@@ -332,9 +333,13 @@ mod tests {
     #[test]
     fn backtick_closes_console_except_first_frame() {
         let mut console = Console::new();
-        let _ = egui::Context::default().run_ui(egui::RawInput::default(), |ui| {
-            let _ = console.render(ui);
-        });
+        let _ = crate::overlays::test_support::run_ui(
+            &egui::Context::default(),
+            egui::RawInput::default(),
+            |ui| {
+                let _ = console.render(ui);
+            },
+        );
         console.reset_on_open();
 
         let first = render_frame_with_backtick(&mut console);

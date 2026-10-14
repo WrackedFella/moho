@@ -128,7 +128,7 @@ mod tests {
 
     fn render_menu(menu: &mut SettingsMenu) -> egui::FullOutput {
         let ctx = egui::Context::default();
-        ctx.run_ui(egui::RawInput::default(), |ui| {
+        crate::overlays::test_support::run_ui(&ctx, egui::RawInput::default(), |ui| {
             menu.render(ui);
         })
     }

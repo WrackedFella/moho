@@ -10,7 +10,7 @@ fn start_menu_returns_expected_action_and_rects() {
     // Call render() inside `ctx.run_ui` so egui's internal state (available_rect, etc)
     // is initialized properly. Capture the returned menu items.
     let mut items: Vec<moho_ui::MenuItem> = Vec::new();
-    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+    let _ = run_ui(&ctx, egui::RawInput::default(), |ui| {
         items = menu.render(ui);
     });
 
@@ -97,4 +97,16 @@ fn hit_test_helper_press_release_and_release_only() {
         MenuAction::LoadScene(p) => assert_eq!(p, PathBuf::from("saves/scene.bin")),
         other => panic!("unexpected action: {other:?}"),
     }
+}
+
+/// Runs one frame and clears its texture delta; egui asserts in debug builds
+/// that a non-empty delta is not dropped, and these tests never paint it.
+fn run_ui(
+    ctx: &egui::Context,
+    input: egui::RawInput,
+    add_contents: impl FnMut(&mut egui::Ui),
+) -> egui::FullOutput {
+    let mut output = ctx.run_ui(input, add_contents);
+    output.textures_delta.clear();
+    output
 }

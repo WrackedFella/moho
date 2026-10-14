@@ -364,7 +364,7 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
             .tessellate(full_output.shapes, full_output.pixels_per_point);
         Some(paint_map::to_ui_frame(
             &clipped_primitives,
-            &full_output.textures_delta,
+            full_output.textures_delta,
             full_output.pixels_per_point,
         ))
     }

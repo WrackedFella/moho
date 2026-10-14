@@ -40,6 +40,18 @@ pub(crate) mod test_support {
         }
     }
 
+    /// Runs one frame and clears its texture delta: egui asserts in debug builds
+    /// that a non-empty delta is not dropped, and tests never paint it.
+    pub(crate) fn run_ui(
+        ctx: &egui::Context,
+        input: egui::RawInput,
+        add_contents: impl FnMut(&mut egui::Ui),
+    ) -> egui::FullOutput {
+        let mut output = ctx.run_ui(input, add_contents);
+        output.textures_delta.clear();
+        output
+    }
+
     pub(crate) fn input(events: Vec<egui::Event>) -> egui::RawInput {
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -56,8 +68,8 @@ pub(crate) mod test_support {
         ctx: &egui::Context,
         mut add_contents: impl FnMut(&mut egui::Ui),
     ) -> egui::FullOutput {
-        let _ = ctx.run_ui(input(Vec::new()), &mut add_contents);
-        ctx.run_ui(input(Vec::new()), &mut add_contents)
+        let _ = run_ui(ctx, input(Vec::new()), &mut add_contents);
+        run_ui(ctx, input(Vec::new()), &mut add_contents)
     }
 
     fn collect_text_rects(shape: &Shape, out: &mut Vec<(String, egui::Rect)>) {

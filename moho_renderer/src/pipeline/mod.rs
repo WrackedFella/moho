@@ -209,7 +209,7 @@ impl PipelineSetup {
                     // block light RGB + sky exposure. Attribute order below must match
                     // `types::Vertex`'s field order exactly — `vertex_attr_array!`
                     // computes each offset by summing the preceding attributes' sizes.
-                    wgpu::VertexBufferLayout {
+                    Some(wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![
@@ -221,9 +221,9 @@ impl PipelineSetup {
                             11 => Float32x3, // block_light_rgb
                             12 => Float32,   // sky_exposed
                         ],
-                    },
+                    }),
                     // Per-instance data: model matrix (4x vec4) + material(u32) + object_type(u32)
-                    wgpu::VertexBufferLayout {
+                    Some(wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &wgpu::vertex_attr_array![
@@ -234,7 +234,7 @@ impl PipelineSetup {
                             8 => Uint32,
                             9 => Uint32,
                         ],
-                    },
+                    }),
                 ],
             },
             fragment: Some(wgpu::FragmentState {
@@ -301,11 +301,11 @@ impl PipelineSetup {
                 module: shader,
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[wgpu::VertexBufferLayout {
+                buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                }],
+                })],
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader,

@@ -100,6 +100,7 @@ impl<'a> DeviceSetup<'a> {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))
         .map_err(|e| DeviceInitError::AdapterRequest(format!("{e:?}")))?;
 
@@ -151,6 +152,7 @@ impl<'a> DeviceSetup<'a> {
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 0,
+            color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &config);
 
