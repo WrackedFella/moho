@@ -1,0 +1,177 @@
+//! Hitscan shot resolution against the physics world's tagged surfaces.
+
+use glam::Vec3;
+use moho_physics::{CharacterHandle, PhysicsWorld};
+
+use crate::tag::SurfaceTag;
+
+/// A shot leaving `origin` along `direction`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShotRay {
+    pub origin: Vec3,
+    /// Need not be normalised.
+    pub direction: Vec3,
+    /// How far the shot reaches, in metres.
+    pub range: f32,
+    /// The shooter, whose own volumes never stop the shot.
+    pub ignore: Option<CharacterHandle>,
+}
+
+/// The first surface a shot reached.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Strike {
+    pub tag: SurfaceTag,
+    pub point: Vec3,
+    /// Metres from the shot's origin.
+    pub distance: f32,
+}
+
+/// The first tagged surface along `ray`, or `None` if nothing is within its range.
+///
+/// Reads the world as the last `step` left it. Hits on level geometry come back as
+/// [`SurfaceTag::World`]; a surface whose engine tag is not a [`SurfaceTag`] counts as a miss.
+pub fn resolve_shot(_world: &PhysicsWorld, _ray: ShotRay) -> Option<Strike> {
+    unimplemented!("cast the ray and convert the engine tag to a surface tag")
+}
+
+#[cfg(test)]
+mod tests {
+    use moho_fps_rules::BodyPart;
+
+    use super::*;
+    use crate::sim::dummy_hit_volumes;
+    use crate::test_support::{DT, world_with};
+
+    const DUMMY_CENTRE: Vec3 = Vec3::new(0.0, 1.15, 8.0);
+
+    fn add_dummy(world: &mut PhysicsWorld, centre: Vec3) -> CharacterHandle {
+        let dummy = world.add_character(centre);
+        for volume in dummy_hit_volumes(0) {
+            world
+                .add_hit_volume(dummy, volume)
+                .expect("the dummy was just added");
+        }
+        world.step(DT);
+        dummy
+    }
+
+    fn part_centre(part: BodyPart) -> Vec3 {
+        let tag = SurfaceTag::Part { target: 0, part };
+        let volume = dummy_hit_volumes(0)
+            .into_iter()
+            .find(|v| v.tag == tag.into())
+            .expect("the dummy has a volume for every part");
+        DUMMY_CENTRE + volume.offset
+    }
+
+    fn straight_at(target: Vec3) -> ShotRay {
+        ShotRay {
+            origin: target - Vec3::Z * 6.0,
+            direction: Vec3::Z,
+            range: 50.0,
+            ignore: None,
+        }
+    }
+
+    #[test]
+    fn a_shot_at_a_dummy_part_reports_that_part() {
+        for part in [BodyPart::Head, BodyPart::Torso, BodyPart::LeftLeg] {
+            let mut world = world_with(&[]);
+            add_dummy(&mut world, DUMMY_CENTRE);
+
+            let strike = resolve_shot(&world, straight_at(part_centre(part)));
+
+            let strike = strike.unwrap_or_else(|| panic!("{part:?}: the shot hit nothing"));
+            assert_eq!(strike.tag, SurfaceTag::Part { target: 0, part }, "{part:?}");
+        }
+    }
+
+    #[test]
+    fn a_shot_at_a_wall_reports_no_part() {
+        let world = world_with(&[(Vec3::new(-5.0, 0.0, 6.0), Vec3::new(5.0, 4.0, 6.5))]);
+        let ray = ShotRay {
+            origin: Vec3::new(0.0, 1.5, 0.0),
+            direction: Vec3::Z,
+            range: 50.0,
+            ignore: None,
+        };
+
+        let strike = resolve_shot(&world, ray).expect("the wall stops the shot");
+
+        assert_eq!(strike.tag, SurfaceTag::World);
+        assert!((strike.distance - 6.0).abs() < 1e-3, "{strike:?}");
+        assert!(
+            (strike.point - Vec3::new(0.0, 1.5, 6.0)).length() < 1e-3,
+            "{strike:?}"
+        );
+    }
+
+    #[test]
+    fn cover_in_front_of_a_dummy_takes_the_shot() {
+        let aim = part_centre(BodyPart::Torso);
+        let mut open = world_with(&[]);
+        add_dummy(&mut open, DUMMY_CENTRE);
+        let mut covered = world_with(&[(Vec3::new(-3.0, 0.0, 4.0), Vec3::new(3.0, 3.0, 4.2))]);
+        add_dummy(&mut covered, DUMMY_CENTRE);
+
+        let without_cover = resolve_shot(&open, straight_at(aim)).expect("the dummy is hit");
+        let with_cover = resolve_shot(&covered, straight_at(aim)).expect("the cover is hit");
+
+        assert!(matches!(without_cover.tag, SurfaceTag::Part { .. }));
+        assert_eq!(with_cover.tag, SurfaceTag::World);
+        assert!(
+            (with_cover.distance - (4.0 - (aim.z - 6.0))).abs() < 1e-3,
+            "{with_cover:?}"
+        );
+    }
+
+    #[test]
+    fn a_shot_ignores_the_shooter() {
+        let aim = part_centre(BodyPart::Torso);
+        let mut world = world_with(&[(Vec3::new(-5.0, 0.0, 12.0), Vec3::new(5.0, 4.0, 12.5))]);
+        let dummy = add_dummy(&mut world, DUMMY_CENTRE);
+        let mut ray = straight_at(aim);
+
+        let blocked = resolve_shot(&world, ray).expect("the dummy is hit");
+        ray.ignore = Some(dummy);
+        let passed = resolve_shot(&world, ray).expect("the wall behind is hit");
+
+        assert!(matches!(blocked.tag, SurfaceTag::Part { .. }));
+        assert_eq!(passed.tag, SurfaceTag::World);
+    }
+
+    #[test]
+    fn a_shot_reaches_exactly_as_far_as_its_range() {
+        let world = world_with(&[(Vec3::new(-5.0, 0.0, 5.0), Vec3::new(5.0, 4.0, 5.5))]);
+        let at_range = |range| {
+            resolve_shot(
+                &world,
+                ShotRay {
+                    origin: Vec3::new(0.0, 1.5, 0.0),
+                    direction: Vec3::Z,
+                    range,
+                    ignore: None,
+                },
+            )
+        };
+
+        let short = at_range(4.9);
+        let long = at_range(5.1);
+
+        assert_eq!(short, None);
+        assert!(long.is_some());
+    }
+
+    #[test]
+    fn a_shot_into_the_open_hits_nothing() {
+        let world = world_with(&[]);
+        let ray = ShotRay {
+            origin: Vec3::new(0.0, 1.5, 0.0),
+            direction: Vec3::Y,
+            range: 50.0,
+            ignore: None,
+        };
+
+        assert_eq!(resolve_shot(&world, ray), None);
+    }
+}

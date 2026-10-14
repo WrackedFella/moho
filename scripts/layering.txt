@@ -6,6 +6,6 @@
 
 engine: moho_app moho_core moho_render_api moho_renderer moho_audio moho_physics moho_input moho_level
 strategy: moho_voxel moho_game moho_ui moho
-fps: moho_fps_rules
+fps: moho_fps_rules moho_fps
 domain: moho_core moho_voxel moho_game moho_level moho_fps_rules
 gpu: moho_renderer
