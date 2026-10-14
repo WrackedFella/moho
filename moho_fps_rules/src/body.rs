@@ -37,9 +37,11 @@ pub struct BodyProfile {
 pub struct HitReport {
     /// Part that was struck.
     pub part: BodyPart,
-    /// Damage dealt to the hit.
+    /// Full damage requested by the hit, not clamped to what health or the
+    /// part's status pool had left.
     pub damage: u32,
-    /// Whether the struck part's status is now at zero.
+    /// Whether the struck part's status pool is now at zero. Always false for
+    /// the torso, which has no status pool, even when the hit kills the body.
     pub part_down: bool,
     /// Whether the body is dead after the hit.
     pub body_dead: bool,
@@ -142,32 +144,39 @@ mod tests {
 
     #[test]
     fn a_hit_drains_health_and_only_the_struck_parts_status() {
-        let mut body = Body::new(PROFILE);
+        let cases = [
+            (BodyPart::Head, 10, Some(20)),
+            (BodyPart::Torso, 15, None),
+            (BodyPart::LeftLeg, 20, Some(30)),
+        ];
 
-        let head = body.hit(BodyPart::Head, 10);
-        let torso = body.hit(BodyPart::Torso, 15);
-        let leg = body.hit(BodyPart::LeftLeg, 20);
+        for (part, damage, expected_status) in cases {
+            let mut body = Body::new(PROFILE);
 
-        assert_eq!(body.health(), 55);
-        assert_eq!(body.status(BodyPart::Head), Some(20));
-        assert_eq!(body.status(BodyPart::Torso), None);
-        assert_eq!(body.status(BodyPart::LeftLeg), Some(30));
-        assert_eq!(body.status(BodyPart::RightLeg), Some(50));
-        assert_eq!(body.status(BodyPart::LeftArm), Some(40));
-        assert_eq!(body.status(BodyPart::RightArm), Some(40));
-        assert_eq!(
-            (head.part, head.damage, head.part_down, head.body_dead),
-            (BodyPart::Head, 10, false, false)
-        );
-        assert_eq!(
-            (torso.part, torso.damage, torso.part_down, torso.body_dead),
-            (BodyPart::Torso, 15, false, false)
-        );
-        assert_eq!(
-            (leg.part, leg.damage, leg.part_down, leg.body_dead),
-            (BodyPart::LeftLeg, 20, false, false)
-        );
-        assert!(!body.is_dead());
+            let report = body.hit(part, damage);
+
+            assert_eq!(body.health(), 100 - damage, "{part:?}");
+            assert_eq!(body.status(part), expected_status, "{part:?}");
+            for other in ALL.into_iter().filter(|p| *p != part) {
+                assert_eq!(
+                    body.status(other),
+                    initial(&PROFILE, other),
+                    "{part:?} touched {other:?}"
+                );
+            }
+            assert_eq!(
+                (
+                    report.part,
+                    report.damage,
+                    report.part_down,
+                    report.body_dead
+                ),
+                (part, damage, false, false),
+                "{part:?}"
+            );
+            assert!(!body.is_dead(), "{part:?}");
+            assert!(!body.is_disabled(part), "{part:?}");
+        }
     }
 
     #[test]
@@ -185,16 +194,28 @@ mod tests {
 
     #[test]
     fn limb_status_at_zero_disables_and_the_body_lives() {
-        for limb in LIMBS {
-            let mut body = Body::new(PROFILE);
-            let pool = body.status(limb).expect("limbs have a status pool");
+        let profile = BodyProfile {
+            max_health: 100,
+            head_status: 30,
+            arm_status: 40,
+            leg_status: 50,
+        };
+        let cases = [
+            (BodyPart::LeftArm, 40, 60),
+            (BodyPart::RightArm, 40, 60),
+            (BodyPart::LeftLeg, 50, 50),
+            (BodyPart::RightLeg, 50, 50),
+        ];
 
-            let report = body.hit(limb, pool);
+        for (limb, damage, expected_health) in cases {
+            let mut body = Body::new(profile);
+
+            let report = body.hit(limb, damage);
 
             assert!(body.is_disabled(limb), "{limb:?}");
             assert!(!body.is_dead(), "{limb:?}");
             assert_eq!(body.status(limb), Some(0), "{limb:?}");
-            assert_eq!(body.health(), 100 - pool, "{limb:?}");
+            assert_eq!(body.health(), expected_health, "{limb:?}");
             assert!(report.part_down, "{limb:?}");
             assert!(!report.body_dead, "{limb:?}");
             for other in LIMBS.into_iter().filter(|p| *p != limb) {
@@ -213,7 +234,22 @@ mod tests {
             assert_eq!(body.health(), 0, "{part:?}");
             assert!(body.is_dead(), "{part:?}");
             assert!(report.body_dead, "{part:?}");
+            if part == BodyPart::Torso {
+                assert!(!report.part_down, "torso has no status pool");
+            }
         }
+    }
+
+    #[test]
+    fn a_hit_beyond_remaining_health_reports_the_full_damage() {
+        let mut body = Body::new(PROFILE);
+
+        let report = body.hit(BodyPart::Torso, 150);
+
+        assert_eq!(report.damage, 150);
+        assert_eq!(body.health(), 0);
+        assert!(report.body_dead);
+        assert!(body.is_dead());
     }
 
     #[test]
@@ -250,18 +286,25 @@ mod tests {
                 ALL.iter().map(|p| (*p, initial(&profile, *p))).collect();
 
             for (part, damage) in hits {
-                body.hit(part, damage);
+                let report = body.hit(part, damage);
                 health = health.saturating_sub(damage);
                 for (p, pool) in &mut statuses {
                     if *p == part {
                         *pool = pool.map(|v| v.saturating_sub(damage));
                     }
                 }
+                let struck = statuses.iter().find(|(p, _)| *p == part).and_then(|(_, s)| *s);
+                prop_assert_eq!(report.body_dead, body.is_dead());
+                prop_assert_eq!(report.part_down, struck == Some(0));
+                prop_assert_eq!(body.status(part), struck);
             }
 
             prop_assert_eq!(body.health(), health);
             for (part, pool) in statuses {
                 prop_assert_eq!(body.status(part), pool);
+                if LIMBS.contains(&part) {
+                    prop_assert_eq!(body.is_disabled(part), pool == Some(0));
+                }
             }
             let head_down = body.status(BodyPart::Head) == Some(0);
             prop_assert_eq!(body.is_dead(), health == 0 || head_down);

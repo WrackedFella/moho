@@ -68,13 +68,18 @@ mod tests {
     #[test]
     fn firing_consumes_the_chamber_then_feeds_from_the_magazine() {
         let mut rifle = Rifle::loaded(mag(30, 3));
+        assert!(rifle.is_chambered());
+        assert_eq!(rifle.magazine().rounds(), 2);
 
-        let shots: Vec<Shot> = (0..4).map(|_| rifle.fire()).collect();
+        let first = rifle.fire();
 
-        assert_eq!(
-            shots,
-            [Shot::Fired, Shot::Fired, Shot::Fired, Shot::Dry]
-        );
+        assert_eq!(first, Shot::Fired);
+        assert!(rifle.is_chambered());
+        assert_eq!(rifle.magazine().rounds(), 1);
+
+        let rest: Vec<Shot> = (0..3).map(|_| rifle.fire()).collect();
+
+        assert_eq!(rest, [Shot::Fired, Shot::Fired, Shot::Dry]);
         assert!(!rifle.is_chambered());
         assert_eq!(rifle.magazine().rounds(), 0);
     }
@@ -126,6 +131,7 @@ mod tests {
             let mut fired = 0u32;
             let mut ejected_rounds = 0u32;
 
+            let bound = capacity + 2;
             for _ in 0..before_reload {
                 if rifle.fire() == Shot::Fired { fired += 1; }
             }
@@ -136,9 +142,18 @@ mod tests {
                 ejected_rounds = ejected.map_or(0, |m| m.rounds());
                 loaded += spare;
             }
-            while rifle.fire() == Shot::Fired { fired += 1; }
+            let mut drained = false;
+            for _ in 0..bound {
+                if rifle.fire() == Shot::Fired {
+                    fired += 1;
+                } else {
+                    drained = true;
+                    break;
+                }
+            }
 
-            prop_assert!(fired <= loaded);
+            prop_assert!(drained, "rifle still firing after {} extra shots", bound);
+            prop_assert_eq!(rifle.fire(), Shot::Dry);
             prop_assert_eq!(fired + ejected_rounds, loaded);
         }
     }

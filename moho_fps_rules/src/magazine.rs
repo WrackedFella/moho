@@ -102,6 +102,8 @@ mod tests {
             (30, 8, AboutHalf),
             (30, 22, AboutHalf),
             (30, 23, MostlyFull),
+            (101, 26, AboutHalf),
+            (101, 76, MostlyFull),
             (1, 0, Empty),
             (1, 1, Full),
         ];
