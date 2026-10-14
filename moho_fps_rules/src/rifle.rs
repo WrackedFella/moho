@@ -134,6 +134,29 @@ mod tests {
         assert_eq!(rifle.magazine().rounds(), 4);
     }
 
+    #[test]
+    fn reload_keeps_capacity_of_the_inserted_and_ejected_magazines() {
+        let mut rifle = Rifle::loaded(mag(30, 10));
+
+        let ejected = rifle
+            .reload(Some(mag(12, 5)))
+            .expect("a spare was supplied");
+
+        assert_eq!(ejected.capacity(), 30);
+        assert_eq!(rifle.magazine().capacity(), 12);
+    }
+
+    #[test]
+    fn loaded_with_an_empty_magazine_has_nothing_chambered_and_fires_dry() {
+        let mut rifle = Rifle::loaded(mag(30, 0));
+
+        let shot = rifle.fire();
+
+        assert!(!rifle.is_chambered());
+        assert_eq!(shot, Shot::Dry);
+        assert_eq!(rifle.magazine().rounds(), 0);
+    }
+
     proptest! {
         #[test]
         fn rounds_fired_never_exceed_rounds_loaded(

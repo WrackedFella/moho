@@ -148,6 +148,22 @@ mod tests {
         assert!(exact.is_ok());
     }
 
+    #[test]
+    fn capacity_returns_the_constructed_capacity() {
+        let magazine = Magazine::new(30, 7).expect("rounds fit the capacity");
+
+        assert_eq!(magazine.capacity(), 30);
+        assert_eq!(magazine.rounds(), 7);
+    }
+
+    #[test]
+    fn zero_capacity_magazine_is_empty_without_dividing_by_zero() {
+        let magazine = Magazine::new(0, 0).expect("zero rounds fit zero capacity");
+
+        assert_eq!(magazine.level(), MagazineLevel::Empty);
+        assert_eq!(magazine.capacity(), 0);
+    }
+
     proptest! {
         #[test]
         fn level_never_drops_as_rounds_rise(capacity in 1u32..500, a in 0u32..500, b in 0u32..500) {

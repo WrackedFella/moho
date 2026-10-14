@@ -295,6 +295,28 @@ mod tests {
         proptest::sample::select(ALL.to_vec())
     }
 
+    #[test]
+    fn head_at_zero_is_dead_but_not_disabled() {
+        let mut body = Body::new(PROFILE);
+
+        body.hit(BodyPart::Head, 30);
+
+        assert_eq!(body.status(BodyPart::Head), Some(0));
+        assert!(body.is_dead());
+        assert!(!body.is_disabled(BodyPart::Head));
+    }
+
+    #[test]
+    fn torso_hits_to_death_never_disable_the_torso() {
+        let mut body = Body::new(PROFILE);
+
+        let report = body.hit(BodyPart::Torso, 100);
+
+        assert!(report.body_dead);
+        assert!(body.is_dead());
+        assert!(!body.is_disabled(BodyPart::Torso));
+    }
+
     proptest! {
         #[test]
         fn pools_stop_at_zero_and_hits_never_touch_other_parts(
