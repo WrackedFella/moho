@@ -4,7 +4,7 @@ The order in which features are tackled, and why, as milestones with gates. [`RE
 indexes what exists; this file sequences it. Item status is not tracked here; it lives on the
 [project board](https://github.com/users/WrackedFella/projects/1). Update this file when a milestone gate closes, an item moves between phases, or a decision is made.
 
-**Now:** M0 is done. M1 is open: the only milestone planned to card level
+**Now:** M0 and M1 are done. M2 is open: the only milestone planned to card level
 (rolling wave, [`_STANDARDS.md`](_STANDARDS.md#milestones)).
 
 ## M0 — Foundation (done 2026-10-05)
@@ -26,7 +26,7 @@ and can run alongside 0.2–0.3.
 | 0.6 | [ENG-F2-01](https://github.com/WrackedFella/moho/issues/94) rewritten to [ADR-0006](adr/0006-save-format-contract.md) (decision only) | G4 | — |
 
 
-## M1 — Both game lines can start
+## M1 — Both game lines can start (done 2026-10-14)
 
 **Intent:** Each game line builds on the engine on its own, without forking it: the
 strategy game on the shared loop, and the FPS as a prototype arena shooter
@@ -55,8 +55,8 @@ just before the work that needs them, not sooner.
 | 1.1 | Save-format migration to [ADR-0006](adr/0006-save-format-contract.md) ([ENG-F2-01](https://github.com/WrackedFella/moho/issues/94)), envelope in the engine | before [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) (first new persisted type); an [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) fix only if it changes the save format |
 | 1.13 | [ENG-F20](https://github.com/WrackedFella/moho/issues/104): a wgpu or egui upgrade touches one crate | after 1.9; before 1.16 and [ENG-F18](https://github.com/WrackedFella/moho/issues/230) |
 | 1.14 | [ADR-0012](adr/0012-engine-crate-map-for-m2.md): engine crate map, modules first; names the seam list | before ENG-F11 is specced |
-| 1.3 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234): domain tests catch behaviour changes | before [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) |
-| 1.15 | [ENG-F22](https://github.com/WrackedFella/moho/issues/167): every test can fail and earns its place (part of 1.3) | now, in the waves below; moho_core voxel and lighting cards before [ENG-F10-03](https://github.com/WrackedFella/moho/issues/140) branches |
+| 1.3 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234): domain tests catch behaviour changes | carried to M2 (2.11) |
+| 1.15 | [ENG-F22](https://github.com/WrackedFella/moho/issues/167): every test can fail and earns its place (part of 1.3) | waves 1–4 done in M1; the rest carried to M2 (2.12) |
 | 1.16 | [ENG-F2-02](https://github.com/WrackedFella/moho/issues/95) then [ENG-F2-08](https://github.com/WrackedFella/moho/issues/101): egui's current entry points, then wgpu and egui upgraded | at M1 close (once-per-milestone upgrade); ENG-F2-08 doesn't compile before ENG-F2-02 |
 | 1.17 | [ENG-F2-10](https://github.com/WrackedFella/moho/issues/105): terrain noise in-house; `noise` leaves | after 1.8 |
 | 1.18 | [ENG-F14](https://github.com/WrackedFella/moho/issues/226): a game loads a static level from a file | after 1.8, 1.11 |
@@ -102,8 +102,8 @@ Cards in one lane share files, so each waits on the one before it.
 - Strategy v1 slice done: SG-F1-04, SG-F2-03, SG-F2-02.
 - Save envelope on [ADR-0006](adr/0006-save-format-contract.md) (1.1).
 
-Features named, not carded until M1's gate closes. The strategy slice and
-the FPS rules crate are greenlit now (they don't wait on M1).
+M1's gate closed 2026-10-14; ENG-F16–F19 are carded next. The strategy slice
+and the FPS rules crate are greenlit.
 
 ### Engine (order: F16 → F18 → F17; F19 before FPS Phase 2; F18 after ENG-F20)
 
@@ -113,6 +113,8 @@ the FPS rules crate are greenlit now (they don't wait on M1).
 | 2.8 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) shared UI shell (until then the arena's HUD is FPS-line egui; it never copies strategy UI) | 1.11, 1.13 |
 | 2.9 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation (Phase 1 AI may use waypoints meanwhile) | 1.8, 1.11 |
 | 2.10 | [ENG-F19](https://github.com/WrackedFella/moho/issues/231) data and mod content | 1.11; before FPS Phase 2 |
+| 2.11 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234) domain tests catch behaviour changes (from M1's 1.3; not a gate item) | before [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) |
+| 2.12 | [ENG-F22](https://github.com/WrackedFella/moho/issues/167) remaining cards (from M1's 1.15; part of 2.11, not a gate item): [ENG-F22-12](https://github.com/WrackedFella/moho/issues/179) (shelved) → [ENG-F22-19](https://github.com/WrackedFella/moho/issues/186) → [ENG-F22-23](https://github.com/WrackedFella/moho/issues/262) | waves 5–7 of the order under M1, unchanged |
 
 ### Strategy
 
@@ -197,3 +199,4 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-07 | Fast-moving stacks (wgpu/egui, rapier/glam) upgrade once per milestone close; ENG-F20 (containment) approved and placed in M1, before engine features build on the renderer | [ENG-F2](https://github.com/WrackedFella/moho/issues/93) |
 | 2026-10-08 | ENG-F10's voxel move no longer waits on SG-F1-04, SG-F2-03 and SG-F2-02 (unfiled, Strategy lane planning-only); it waits on the ENG-F22 voxel cards instead | [ENG-F10](https://github.com/WrackedFella/moho/issues/80) Notes |
 | 2026-10-09 | M1 means both game lines can start: ENG-F14, F15 and F21 (what the FPS arena prototype needs and would otherwise copy) join its gate from M2; ENG-F20 moves before ENG-F18 and the M1-close upgrade instead of before all engine features | M1 section |
+| 2026-10-14 | M1 gate verified and closed; ENG-F9 and ENG-F22's remaining cards carried to M2 | M1 and M2 sections |
