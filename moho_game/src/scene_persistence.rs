@@ -304,37 +304,68 @@ mod tests {
     use crate::scene::SceneEntities;
     use moho_voxel::{MaterialType, VoxelChunk};
 
-    const PINNED_SCENE: [u8; 229] = [
-        77, 79, 72, 79, 2, 1, 0, 210, 0, 0, 0, 0, 0, 0, 0, 7, 244, 107, 50, 1, 0, 0, 128, 63, 0, 0,
+    const PINNED_SCENE: [u8; 332] = [
+        77, 79, 72, 79, 2, 1, 0, 57, 1, 0, 0, 0, 0, 0, 0, 154, 3, 80, 174, 3, 0, 0, 128, 63, 0, 0,
         0, 64, 0, 0, 64, 64, 0, 0, 0, 63, 1, 0, 0, 128, 62, 0, 0, 0, 63, 0, 0, 64, 63, 0, 0, 0, 62,
-        1, 0, 0, 128, 191, 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 64, 0, 0, 64, 64, 0, 0, 128, 64, 0,
-        0, 0, 128, 63, 0, 0, 0, 0, 0, 0, 0, 63, 1, 6, 0, 1, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 128, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0, 3, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 128, 63, 3, 0, 1, 2, 7, 1, 0, 0, 192, 63, 0, 0, 32, 64, 0, 0, 96, 64, 0, 0, 0, 63,
-        0, 0, 128, 190, 1, 0, 0, 0, 0, 0, 0, 32, 65, 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 63, 0, 0,
+        0, 0, 0, 192, 0, 0, 0, 63, 0, 0, 128, 64, 0, 0, 192, 63, 2, 0, 0, 192, 63, 0, 0, 0, 0, 0,
+        0, 0, 65, 0, 0, 0, 0, 0, 0, 0, 64, 3, 0, 0, 128, 63, 0, 0, 64, 63, 0, 0, 0, 63, 0, 0, 128,
+        64, 2, 0, 0, 128, 191, 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 64, 0, 0, 64, 64, 0, 0, 128, 64,
+        0, 0, 0, 128, 63, 0, 0, 0, 0, 0, 0, 0, 63, 0, 0, 160, 64, 0, 0, 128, 63, 0, 0, 64, 192, 0,
+        0, 128, 63, 0, 0, 192, 63, 0, 0, 32, 64, 4, 0, 0, 128, 62, 0, 0, 64, 63, 0, 0, 0, 62, 0, 0,
+        0, 63, 0, 0, 192, 62, 0, 0, 128, 62, 1, 6, 0, 1, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 128, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0, 3, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 128, 63, 3, 0, 1, 2, 7, 1, 0, 0, 192, 63, 0, 0, 32, 64, 0, 0, 96, 64, 0, 0, 0, 63, 0,
+        0, 128, 190, 1, 0, 0, 0, 0, 0, 0, 32, 65, 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 63, 0, 0,
         128, 62, 0, 0, 0, 64, 0, 0, 240, 65, 1,
     ];
 
     fn scene_fixture() -> SceneDesc {
         SceneDesc {
-            spheres: vec![SphereDesc {
-                center: [1.0, 2.0, 3.0],
-                radius: 0.5,
-                material: MaterialDesc::Metal {
-                    albedo: [0.25, 0.5, 0.75],
-                    fuzz: 0.125,
+            spheres: vec![
+                SphereDesc {
+                    center: [1.0, 2.0, 3.0],
+                    radius: 0.5,
+                    material: MaterialDesc::Metal {
+                        albedo: [0.25, 0.5, 0.75],
+                        fuzz: 0.125,
+                    },
                 },
-            }],
-            cubes: vec![CubeDesc {
-                center: [-1.0, 0.0, 1.0],
-                length: 2.0,
-                width: 3.0,
-                height: 4.0,
-                material: MaterialDesc::Lambertian {
-                    albedo: [1.0, 0.0, 0.5],
+                SphereDesc {
+                    center: [-2.0, 0.5, 4.0],
+                    radius: 1.5,
+                    material: MaterialDesc::Dielectric { ref_indx: 1.5 },
                 },
-            }],
+                SphereDesc {
+                    center: [0.0, 8.0, 0.0],
+                    radius: 2.0,
+                    material: MaterialDesc::Emissive {
+                        color: [1.0, 0.75, 0.5],
+                        intensity: 4.0,
+                    },
+                },
+            ],
+            cubes: vec![
+                CubeDesc {
+                    center: [-1.0, 0.0, 1.0],
+                    length: 2.0,
+                    width: 3.0,
+                    height: 4.0,
+                    material: MaterialDesc::Lambertian {
+                        albedo: [1.0, 0.0, 0.5],
+                    },
+                },
+                CubeDesc {
+                    center: [5.0, 1.0, -3.0],
+                    length: 1.0,
+                    width: 1.5,
+                    height: 2.5,
+                    material: MaterialDesc::VoxelTerrain {
+                        top_albedo: [0.25, 0.75, 0.125],
+                        side_albedo: [0.5, 0.375, 0.25],
+                    },
+                },
+            ],
             voxel_chunks: vec![VoxelChunkDesc {
                 chunk_pos: [3, 0, -1],
                 vertices: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -368,8 +399,8 @@ mod tests {
         let back: SceneDesc = persist::decode(SCENE_FILE, &PINNED_SCENE).expect("decode pinned");
         let reencoded = persist::encode(SCENE_FILE, &back).expect("re-encode");
         assert_eq!(reencoded, PINNED_SCENE);
-        assert_eq!(back.spheres.len(), 1);
-        assert_eq!(back.cubes.len(), 1);
+        assert_eq!(back.spheres.len(), 3);
+        assert_eq!(back.cubes.len(), 2);
         assert_eq!(back.voxel_chunks[0].chunk_pos, [3, 0, -1]);
         assert_eq!(back.camera.expect("camera").yaw, 0.5);
         assert_eq!(back.lights.len(), 1);
