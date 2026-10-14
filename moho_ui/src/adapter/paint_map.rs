@@ -304,6 +304,58 @@ mod tests {
     }
 
     #[test]
+    fn partial_deltas_for_one_texture_map_in_order() {
+        let id = egui::TextureId::Managed(4);
+        let mut textures_delta = egui::TexturesDelta::default();
+        textures_delta.set.insert(
+            id,
+            [
+                delta(
+                    None,
+                    [2, 2],
+                    vec![Color32::from_rgba_premultiplied(1, 1, 1, 1); 4],
+                    egui::TextureOptions::LINEAR,
+                ),
+                delta(
+                    Some([1, 0]),
+                    [1, 2],
+                    vec![
+                        Color32::from_rgba_premultiplied(2, 2, 2, 2),
+                        Color32::from_rgba_premultiplied(3, 3, 3, 3),
+                    ],
+                    egui::TextureOptions::LINEAR,
+                ),
+                delta(
+                    Some([0, 1]),
+                    [1, 1],
+                    vec![Color32::from_rgba_premultiplied(4, 4, 4, 4)],
+                    egui::TextureOptions::LINEAR,
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        let frame = to_ui_frame(&[], textures_delta, 1.0);
+
+        let sets = &frame.textures_set;
+        assert_eq!(sets.len(), 3);
+        assert!(
+            sets.iter()
+                .all(|s| s.id == to_ui_texture_id(egui::TextureId::Managed(4)))
+        );
+        assert_eq!(sets[0].pos, None);
+        assert_eq!(sets[0].image.size, [2, 2]);
+        assert_eq!(sets[0].image.pixels, vec![[1, 1, 1, 1]; 4]);
+        assert_eq!(sets[1].pos, Some([1, 0]));
+        assert_eq!(sets[1].image.size, [1, 2]);
+        assert_eq!(sets[1].image.pixels, vec![[2, 2, 2, 2], [3, 3, 3, 3]]);
+        assert_eq!(sets[2].pos, Some([0, 1]));
+        assert_eq!(sets[2].image.size, [1, 1]);
+        assert_eq!(sets[2].image.pixels, vec![[4, 4, 4, 4]]);
+    }
+
+    #[test]
     fn paint_callbacks_are_skipped() {
         let callback = egui::ClippedPrimitive {
             clip_rect: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(5.0, 5.0)),

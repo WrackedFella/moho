@@ -16,7 +16,7 @@ members = ["moho_app", "moho_core", "moho_game", "moho_voxel", "moho_render_api"
 bytemuck = "1.24"
 gilrs = "0.11"
 glam = "0.33"
-naga = "29.0.1"
+naga = "30.0.1"
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 crc32fast = "1"
 proptest = { version = "1.11", default-features = false, features = ["std"] }
@@ -26,7 +26,7 @@ serde = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
-wgpu = "29.0.4"
+wgpu = "30.0.1"
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 moho_physics = { path = "moho_physics" }
 rapier3d = "0.36"
