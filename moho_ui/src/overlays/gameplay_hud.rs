@@ -332,12 +332,16 @@ mod tests {
 
     #[test]
     fn compass_visible_labels_by_yaw() {
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
         let cases = [
             (0.0_f32, vec![("NW", false), ("N", true), ("NE", false)]),
+            (-FRAC_PI_2, vec![("NE", false), ("E", true), ("SE", false)]),
+            (-FRAC_PI_4, vec![("N", false), ("NE", true), ("E", false)]),
             (
-                std::f32::consts::FRAC_PI_2,
+                -FRAC_PI_2 - TAU,
                 vec![("NE", false), ("E", true), ("SE", false)],
             ),
+            (PI, vec![("SE", false), ("S", true), ("SW", false)]),
         ];
 
         for (yaw, expected) in cases {
