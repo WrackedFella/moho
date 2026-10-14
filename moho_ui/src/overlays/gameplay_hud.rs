@@ -52,7 +52,8 @@ impl Overlay for GameplayHud {
 
 // ── Compass ──────────────────────────────────────────────────────────────────
 
-/// Cardinal and inter-cardinal direction labels with their angular offsets (radians).
+/// Cardinal and inter-cardinal direction labels with their bearings (radians,
+/// clockwise from north).
 const COMPASS_LABELS: &[(&str, f32)] = &[
     ("N", 0.0),
     ("NE", std::f32::consts::FRAC_PI_4),
@@ -67,19 +68,16 @@ const COMPASS_LABELS: &[(&str, f32)] = &[
 /// Labels within this angular range of forward are visible.
 const COMPASS_HALF_FOV: f32 = std::f32::consts::FRAC_PI_3; // 60°
 
-/// Labels within the compass arc for `yaw`, ordered left to right (ascending
-/// signed angle from forward). The flag marks the label the camera is facing.
+/// Labels within the compass arc for `yaw`, ordered left to right. The flag
+/// marks the label the camera is facing.
+///
+/// Camera yaw grows counter-clockwise (turning right lowers it), so the
+/// heading is `-yaw` and a label's bearing relative to it is `bearing + yaw`.
 fn visible_labels(yaw: f32) -> Vec<(&'static str, bool)> {
     let mut visible: Vec<(f32, &'static str, bool)> = COMPASS_LABELS
         .iter()
-        .filter_map(|&(label, angle)| {
-            let mut diff = angle - yaw;
-            while diff > std::f32::consts::PI {
-                diff -= std::f32::consts::TAU;
-            }
-            while diff < -std::f32::consts::PI {
-                diff += std::f32::consts::TAU;
-            }
+        .filter_map(|&(label, bearing)| {
+            let diff = egui::emath::normalized_angle(bearing + yaw);
             (diff.abs() <= COMPASS_HALF_FOV).then_some((
                 diff,
                 label,
