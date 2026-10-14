@@ -1694,6 +1694,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "moho_fps_rules"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "moho_game"
 version = "0.1.0"
 dependencies = [

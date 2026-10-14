@@ -1,0 +1,16 @@
+[package]
+name = "moho_fps_rules"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

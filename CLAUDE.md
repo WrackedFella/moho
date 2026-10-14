@@ -45,7 +45,7 @@ cargo run                          # RUST_LOG=debug for logging
 - **Environment setup command:** `bash scripts/cloud-tools.sh` (cloud threads only;
   text-only threads skip it).
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
-- **Domain-logic paths** (gate class `domain`): rules in `moho_game`, `moho_core`, `moho_voxel`.
+- **Domain-logic paths** (gate class `domain`): rules in `moho_game`, `moho_core`, `moho_voxel`, `moho_fps_rules`.
   Adapters, UI wiring and config are glue.
 - **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
   `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing
@@ -74,6 +74,7 @@ moho_audio      rodio playback, event-driven
 moho_physics    rapier3d character controller and colliders
 moho_input      key → binding-code mapping
 moho_app        fixed-tick loop shared by the games: Game trait, headless loop, GameClock
+moho_fps_rules  FPS line: rifle, magazine and body-part damage rules, platform-free (ADR-0015)
 ```
 
 - Engine crates never depend on `moho_game` (ADR-0001). World geometry reaches
