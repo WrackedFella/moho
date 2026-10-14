@@ -34,7 +34,7 @@ impl StreamId {
 /// Not `Copy`, so a stream is duplicated only by an explicit `clone`, never by accident,
 /// which would replay its values twice.
 ///
-/// ```compile_fail
+/// ```compile_fail,E0382
 /// use moho_core::rng::{SimRng, StreamId};
 ///
 /// let rng = SimRng::new(1, StreamId::named("x"));
