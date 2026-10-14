@@ -116,10 +116,8 @@ pub fn update_menu_music(
                 event_bus.publish(AudioEvent::MusicStop);
                 *music_playing = false;
             }
-            // Re-entering the start menu leaves the music running.
-            MenuAction::ShowMenu(name) if name == "start" => {}
             // Navigating to any screen other than start also stops music
-            MenuAction::ShowMenu(_) if *music_playing => {
+            MenuAction::ShowMenu(name) if name != "start" && *music_playing => {
                 event_bus.publish(AudioEvent::MusicStop);
                 *music_playing = false;
             }

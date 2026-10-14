@@ -199,11 +199,6 @@ impl CommandProcessor {
 
         match parts[1].parse::<u32>() {
             Ok(mode) => {
-                if mode > 5 {
-                    return CommandResult::message(
-                        "Debug view must be between 0 and 5".to_string(),
-                    );
-                }
                 let mode_name = match mode {
                     0 => "None",
                     1 => "Normals",
@@ -211,7 +206,11 @@ impl CommandProcessor {
                     3 => "Shadows",
                     4 => "Light Level",
                     5 => "Point Lights",
-                    _ => "Unknown",
+                    _ => {
+                        return CommandResult::message(
+                            "Debug view must be between 0 and 5".to_string(),
+                        );
+                    }
                 };
                 CommandResult::with_action(
                     format!("Debug view set to: {mode_name} ({mode})"),
