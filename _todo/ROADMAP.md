@@ -127,16 +127,17 @@ its consumers near, not when the earlier wave fully closes.
 
 | # | Item | Requests | Consumer | Wave | Depends on |
 |---|---|---|---|---|---|
-| 2.1 | ENG-F21-03: a character that leaves the ground keeps its momentum (`moho_physics`, reproduce first) | #302 | possession, FPS movement | 1 | — |
-| 2.2 | ENG-F18-01: saved settings survive a later console command (binary, `moho_ui`) | #179 comment | strategy settings; FPS via ENG-F18 | 1 | — |
-| 2.3 | ENG-F18-02: menu music plays from `assets/` (`moho_ui`) | #186 check | strategy start menu | 1 | — |
+| 2.1 | [ENG-F21-03](https://github.com/WrackedFella/moho/issues/330): a character that leaves the ground keeps its momentum (`moho_physics`, reproduce first) | #302 | possession, FPS movement | 1 | — |
+| 2.2 | [ENG-F18-01](https://github.com/WrackedFella/moho/issues/331): saved settings survive a later console command (binary, `moho_ui`) | #179 comment | strategy settings; FPS via ENG-F18 | 1 | — |
+| 2.3 | [ENG-F18-02](https://github.com/WrackedFella/moho/issues/332): menu music plays from `assets/` (`moho_ui`) | #186 check | strategy start menu | 1 | — |
+| 2.3a | [ENG-F18-03](https://github.com/WrackedFella/moho/issues/333): Escape pauses the game in place instead of reloading the world (binary, `moho_ui`) | Justin, 2026-10-14 | strategy play; FPS via ENG-F18 | 1 | — |
 | 2.4 | [ENG-F16](https://github.com/WrackedFella/moho/issues/228) positional audio, with the `moho_audio` system tests deferred from ENG-F22 (priority) | — | FPS GDD §10; strategy cues | 1 | — |
-| 2.5 | [ENG-F6](https://github.com/WrackedFella/moho/issues/233) seeded RNG (reopened) | #316 | FPS-F2-02 (#299); strategy world gen | 1 | — |
-| 2.6 | ENG-F23: the game knows what is under the pointer (new) | #304 | SG-F5 select; SG-F4 mark; SG-F3 place | 2 | — |
-| 2.7 | ENG-F24: the game marks places in the world (new): markers first | #305 | SG-F5, SG-F4, SG-F3 | 2 | — |
+| 2.5 | [ENG-F6](https://github.com/WrackedFella/moho/issues/233) seeded RNG (reopened): [ENG-F6-01](https://github.com/WrackedFella/moho/issues/335) | #316 | FPS-F2-02 (#299); strategy world gen | 1 | — |
+| 2.6 | [ENG-F23](https://github.com/WrackedFella/moho/issues/327): the game knows what is under the pointer (new) | #304 | SG-F5 select; SG-F4 mark; SG-F3 place | 2 | — |
+| 2.7 | [ENG-F24](https://github.com/WrackedFella/moho/issues/328): the game marks places in the world (new): markers first | #305 | SG-F5, SG-F4, SG-F3 | 2 | — |
 | 2.8 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234) domain tests catch behaviour changes (from M1's 1.3) | — | SG-F4 | 2–3 | before SG-F4 |
-| 2.9 | ENG-F11-04: the simulation pauses and runs at 1x, 2x or 3x (`moho_app`) | #307 | SG-F4 follow-up; FPS pause | 3 | SG-F4's skeleton |
-| 2.10 | ENG-F24-03: the game hides the world above a chosen height (renderer) | #306 | SG-F4 underground marks | 3 | ENG-F24's first card |
+| 2.9 | [ENG-F11-04](https://github.com/WrackedFella/moho/issues/334): the simulation pauses and runs at 1x, 2x or 3x (`moho_app`) | #307 | SG-F4 follow-up; FPS pause | 3 | SG-F4's skeleton |
+| 2.10 | [ENG-F24-03](https://github.com/WrackedFella/moho/issues/329): the game hides the world above a chosen height (renderer) | #306 | SG-F4 underground marks | 3 | ENG-F24's first card |
 | 2.11 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) shared UI shell, widened with on-screen text | #315 | FPS Phase 2 | 4 | 2.2 |
 | 2.12 | [ENG-F19](https://github.com/WrackedFella/moho/issues/231) layered content | — | FPS Phase 2 | 4 | — |
 | 2.13 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation over static levels (FPS uses waypoints until then) | — | FPS | 4 | — |

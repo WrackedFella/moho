@@ -38,6 +38,3 @@ Scenario: Running up a ramp and off its top launches the character
 ## Verification
 1. Possess a pawn, run across a hillside and off its edge: the pawn continues in the direction it was running.
 2. Run up a ramp or steep hill and off its crest: the pawn carries over the crest rather than dropping straight down.
-
-## Notes
-- The full-velocity rule above is pending Justin's choice (2026-10-14); on "horizontal only", vertical velocity resets at take-off and the ramp scenario is dropped.
