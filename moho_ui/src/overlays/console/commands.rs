@@ -483,17 +483,19 @@ mod tests {
     fn debug_view_rejects_unknown_mode() {
         let processor = CommandProcessor::new();
 
-        let result = processor.execute("r_debug_view 9");
+        for input in ["r_debug_view 6", "r_debug_view 9"] {
+            let result = processor.execute(input);
 
-        assert_eq!(result.action, ConsoleAction::None);
-        assert!(
-            result
-                .messages
-                .iter()
-                .any(|m| m == "Debug view must be between 0 and 5"),
-            "messages: {:?}",
-            result.messages
-        );
+            assert_eq!(result.action, ConsoleAction::None, "{input}");
+            assert!(
+                result
+                    .messages
+                    .iter()
+                    .any(|m| m == "Debug view must be between 0 and 5"),
+                "{input}: {:?}",
+                result.messages
+            );
+        }
     }
 
     #[test]

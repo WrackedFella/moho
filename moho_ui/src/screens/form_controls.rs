@@ -428,8 +428,9 @@ mod tests {
 
     #[test]
     fn volume_slider_steps_by_tenths() {
-        for press_x in [661.0_f32, 700.3, 733.7, 751.9, 777.1] {
+        for press_x in [688.4_f32, 700.3, 765.2, 777.1] {
             let ctx = egui::Context::default();
+            // smart_aim snaps within 1/ppp points, so only HiDPI exposes non-tenth values.
             ctx.set_pixels_per_point(4.0);
             let mut value = 5.0_f32;
             volume_frame(&ctx, Vec::new(), &mut value);
@@ -448,9 +449,16 @@ mod tests {
                 &mut value,
             );
             volume_frame(&ctx, vec![button(press_x, true)], &mut value);
+            // A DragValue does not jump on press; the slider does.
+            assert!(
+                (value - 5.0).abs() > 0.05,
+                "press {press_x}: press did not hit the slider"
+            );
+            let mut samples = vec![value];
             for step in 1..=4 {
                 let x = press_x + 3.3 * step as f32;
                 volume_frame(&ctx, vec![egui::Event::PointerMoved(at(x))], &mut value);
+                samples.push(value);
                 let tenths = value * 10.0;
                 assert!(
                     (tenths - tenths.round()).abs() < 1e-3,
@@ -458,6 +466,13 @@ mod tests {
                 );
             }
             volume_frame(&ctx, vec![button(press_x + 13.2, false)], &mut value);
+
+            assert!(
+                samples
+                    .iter()
+                    .any(|v| (v * 2.0 - (v * 2.0).round()).abs() > 1e-3),
+                "press {press_x}: every sample {samples:?} is on a coarser grid than 0.1"
+            );
 
             assert!(
                 (value - 5.0).abs() > 0.05,
