@@ -435,6 +435,36 @@ fn controls_tab_draws_binding_rows_and_input_options() {
     }
 }
 
+/// The Video tab draws its window mode and resolution rows.
+#[test]
+fn video_tab_draws_window_mode_and_resolution_rows() {
+    use moho_ui::screens::SettingsTab;
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.set_active_tab(SettingsTab::Video);
+
+    let text = rendered_text(&render_frame(&mut menu, vec![]));
+
+    for expected in ["Video", "Window Mode:", "Resolution:"] {
+        assert!(
+            text.contains(expected),
+            "{expected:?} missing from:\n{text}"
+        );
+    }
+}
+
+/// Rendering the Video tab with no input leaves a clean form clean.
+#[test]
+fn idle_video_tab_frames_leave_the_form_clean() {
+    use moho_ui::screens::SettingsTab;
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.set_active_tab(SettingsTab::Video);
+
+    render_frame(&mut menu, vec![]);
+    render_frame(&mut menu, vec![]);
+
+    assert!(!menu.has_unsaved_changes());
+}
+
 /// Non-keyboard window events are not consumed by the keybind capture, listening or not.
 #[test]
 fn non_keyboard_window_events_are_not_consumed() {
