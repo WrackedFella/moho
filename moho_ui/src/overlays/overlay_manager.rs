@@ -160,16 +160,6 @@ impl OverlayManager {
             overlay.set_visible(visible);
         }
     }
-
-    /// Read-only access to the current HUD data.
-    pub fn hud_data(&self) -> &HudData {
-        &self.hud_data
-    }
-
-    /// Mutable access to the current HUD data.
-    pub fn hud_data_mut(&mut self) -> &mut HudData {
-        &mut self.hud_data
-    }
 }
 
 impl Default for OverlayManager {

@@ -210,25 +210,9 @@ impl Default for LightFrameBudget {
 }
 
 impl LightFrameBudget {
-    /// Conservative budget for maintaining 60 FPS
-    pub fn conservative() -> Self {
-        Self {
-            max_blocks_per_frame: 50,
-            max_time_us: 1000,
-        }
-    }
-
     /// Balanced budget for typical gameplay
     pub fn balanced() -> Self {
         Self::default()
-    }
-
-    /// Aggressive budget for high-end hardware
-    pub fn aggressive() -> Self {
-        Self {
-            max_blocks_per_frame: 200,
-            max_time_us: 3000,
-        }
     }
 }
 

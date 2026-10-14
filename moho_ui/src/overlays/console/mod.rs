@@ -212,11 +212,6 @@ impl Console {
         self.output.add_line(message);
     }
 
-    /// Clear all output.
-    pub fn clear(&mut self) {
-        self.output.clear_output();
-    }
-
     /// Reset the console state when reopening (prevents immediate close).
     pub fn reset_on_open(&mut self) {
         self.just_opened = true;
@@ -244,16 +239,6 @@ mod tests {
             console.output.lines().back(),
             Some(&"Test message".to_string())
         );
-    }
-
-    #[test]
-    fn test_clear() {
-        let mut console = Console::new();
-        console.log("Test 1".to_string());
-        console.log("Test 2".to_string());
-
-        console.clear();
-        assert_eq!(console.output.lines().len(), 0);
     }
 
     #[test]
