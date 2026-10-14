@@ -308,12 +308,6 @@ impl moho_app::Game for App {
             let camera = self.render_camera(alpha);
             self.render_scene(renderer, camera);
         }
-
-        if let Some(ui_adapter) = &self.ui_adapter
-            && let Ok(mut a) = ui_adapter.lock()
-        {
-            a.recall_staging_belt();
-        }
     }
 }
 

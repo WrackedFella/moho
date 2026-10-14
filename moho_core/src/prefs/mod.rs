@@ -275,7 +275,11 @@ impl Prefs {
         self.save_to(&Self::config_path())
     }
 
-    fn save_to(&self, path: &Path) -> Result<(), std::io::Error> {
+    /// Write the preferences to `path`, creating its parent directory.
+    ///
+    /// # Errors
+    /// Returns the I/O error if the directory or file cannot be written.
+    pub fn save_to(&self, path: &Path) -> Result<(), std::io::Error> {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }

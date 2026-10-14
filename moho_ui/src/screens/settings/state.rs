@@ -6,9 +6,10 @@
 use super::SettingsField;
 use super::binding_registry::BindingRegistry;
 use crate::actions::StrategyAction;
-use crate::prefs::Prefs;
+use crate::prefs::{Prefs, WindowMode};
 use moho_input::bindings::Binding;
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 /// Manages the state of the settings menu including saved prefs, staged changes,
 /// and dirty field tracking.
@@ -29,25 +30,20 @@ pub struct SettingsState {
     staged_bindings: BindingRegistry,
     /// Fields that have been modified (differ from prefs)
     dirty_fields: HashSet<SettingsField>,
+    /// Where `apply_changes` writes the preferences
+    path: PathBuf,
 }
 
 impl SettingsState {
-    /// Create a new settings state by loading preferences from disk.
-    ///
-    /// # Returns
-    /// A new SettingsState with prefs loaded and no dirty fields.
-    pub fn new() -> Self {
-        Self::from_prefs(Prefs::load())
+    /// Create a settings state from existing preferences, saved to the
+    /// default config path.
+    pub fn from_prefs(prefs: Prefs) -> Self {
+        Self::from_prefs_at(prefs, Prefs::config_path())
     }
 
-    /// Create a settings state from existing preferences.
-    ///
-    /// # Arguments
-    /// * `prefs` - The preferences to initialize with
-    ///
-    /// # Returns
-    /// A new SettingsState with the given prefs and no dirty fields.
-    pub fn from_prefs(prefs: Prefs) -> Self {
+    /// Create a settings state from existing preferences that `apply_changes`
+    /// saves to `path`.
+    pub(super) fn from_prefs_at(prefs: Prefs, path: PathBuf) -> Self {
         let bindings = BindingRegistry::from_prefs(&prefs);
         Self {
             prefs: prefs.clone(),
@@ -55,6 +51,7 @@ impl SettingsState {
             saved_bindings: bindings.clone(),
             staged_bindings: bindings,
             dirty_fields: HashSet::new(),
+            path,
         }
     }
 
@@ -116,7 +113,7 @@ impl SettingsState {
     /// Result indicating success or failure of save operation
     pub fn apply_changes(&mut self) -> Result<(), std::io::Error> {
         self.staged_bindings.write_to_prefs(&mut self.staged);
-        self.staged.save()?;
+        self.staged.save_to(&self.path)?;
         self.prefs = self.staged.clone();
         self.saved_bindings = self.staged_bindings.clone();
         self.dirty_fields.clear();
@@ -148,15 +145,21 @@ impl SettingsState {
         self.mark_dirty(SettingsField::Binding(action));
     }
 
+    /// Stage a window mode and mark it dirty.
+    pub fn set_window_mode(&mut self, mode: WindowMode) {
+        self.staged.set_window_mode(mode);
+        self.mark_dirty(SettingsField::WindowMode);
+    }
+
+    /// Stage a window resolution and mark it dirty.
+    pub fn set_window_resolution(&mut self, width: u32, height: u32) {
+        self.staged.set_window_resolution(width, height);
+        self.mark_dirty(SettingsField::WindowResolution);
+    }
+
     /// Whether the staged bindings of `action` differ from the saved ones.
     pub fn is_binding_modified(&self, action: StrategyAction) -> bool {
         self.staged_bindings.get_binding(action) != self.saved_bindings.get_binding(action)
-    }
-}
-
-impl Default for SettingsState {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

@@ -114,13 +114,15 @@ let adapter = EguiAdapter::new(
 
     event_bus.clone(),
 
+    prefs.clone(),
+
 );
 
 
 
 // Create UI state manager
 
-let mut ui_manager = UiStateManager::new();
+let mut ui_manager = UiStateManager::new(prefs);
 
 
 

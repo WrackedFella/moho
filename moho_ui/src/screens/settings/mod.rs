@@ -41,26 +41,10 @@ pub struct SettingsMenu {
 }
 
 impl SettingsMenu {
-    pub fn new() -> Self {
-        Self {
-            spec: ScreenSpec::default(),
-            active_tab: SettingsTab::default(),
-            state: SettingsState::new(),
-            keybind_capture: KeybindCaptureHandler::new(),
-        }
-    }
-
-    /// Create a SettingsMenu with specific preferences (for testing).
+    /// Create a SettingsMenu from the app's loaded preferences.
     ///
-    /// This constructor allows tests to use isolated prefs instances without
-    /// reading from or writing to the shared config/prefs.ini file.
-    ///
-    /// # Test Isolation
-    ///
-    /// Use this in tests instead of `new()` to ensure each test starts with a
-    /// known, clean state. Even if tests call `apply_staged_changes()` (which
-    /// saves to disk), other tests using `with_prefs()` won't be affected because
-    /// they initialize with their own Prefs instance.
+    /// Saving (`apply_staged_changes` or the Save button) writes to
+    /// `Prefs::config_path()`. Use `with_prefs_at` to save elsewhere.
     ///
     /// # Example
     ///
@@ -68,24 +52,23 @@ impl SettingsMenu {
     /// use moho_ui::screens::SettingsMenu;
     /// use moho_ui::prefs::Prefs;
     ///
-    /// // Create menu with default prefs (no disk I/O)
     /// let menu = SettingsMenu::with_prefs(Prefs::default());
-    ///
-    /// // Or create with custom prefs for specific test scenarios
-    /// let custom_prefs = Prefs::default().with_mouse_sensitivity(2.5);
-    /// let menu = SettingsMenu::with_prefs(custom_prefs);
     /// ```
-    ///
-    /// # Arguments
-    /// * `prefs` - The preferences to initialize with
-    ///
-    /// # Returns
-    /// A new SettingsMenu with the given preferences
     pub fn with_prefs(prefs: crate::prefs::Prefs) -> Self {
         Self {
             spec: ScreenSpec::default(),
             active_tab: SettingsTab::default(),
             state: SettingsState::from_prefs(prefs),
+            keybind_capture: KeybindCaptureHandler::new(),
+        }
+    }
+
+    /// Create a SettingsMenu whose saves are written to `path`.
+    pub fn with_prefs_at(prefs: crate::prefs::Prefs, path: std::path::PathBuf) -> Self {
+        Self {
+            spec: ScreenSpec::default(),
+            active_tab: SettingsTab::default(),
+            state: SettingsState::from_prefs_at(prefs, path),
             keybind_capture: KeybindCaptureHandler::new(),
         }
     }
@@ -173,12 +156,6 @@ impl SettingsMenu {
         })
     }
 
-    /// Get the currently active tab.
-    /// For testing purposes only - allows tests to verify tab state.
-    pub fn active_tab(&self) -> SettingsTab {
-        self.active_tab
-    }
-
     /// Set the active tab directly.
     /// For testing purposes only - allows tests to simulate tab switching.
     pub fn set_active_tab(&mut self, tab: SettingsTab) {
@@ -198,11 +175,13 @@ impl SettingsMenu {
         types::row_action(binding_id).map_or(&[], |action| self.state.get_staged_binding(action))
     }
 
-    /// Apply and save staged changes.
+    /// Apply and save staged changes to the menu's save path.
     /// For testing purposes only - allows tests to simulate clicking "Save Changes".
-    pub fn apply_staged_changes(&mut self) {
-        let _ = self.state.apply_changes();
-        let _ = self.state.prefs().save();
+    ///
+    /// # Errors
+    /// Returns the I/O error if the preferences cannot be written.
+    pub fn apply_staged_changes(&mut self) -> std::io::Result<()> {
+        self.state.apply_changes()
     }
 
     /// Revert staged changes to last saved state.
@@ -215,12 +194,6 @@ impl SettingsMenu {
     /// For testing purposes only - allows tests to simulate clicking "Confirm" on conflict modal.
     pub fn confirm_pending_binding(&mut self) {
         self.apply_pending_binding();
-    }
-}
-
-impl Default for SettingsMenu {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

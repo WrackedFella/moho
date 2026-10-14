@@ -97,7 +97,11 @@ const _: () = {
 
 impl EguiAdapter {
     /// Create a new adapter with event bus
-    pub fn new(window: Option<Arc<Window>>, event_bus: Arc<moho_core::EventBus>) -> Self {
+    pub fn new(
+        window: Option<Arc<Window>>,
+        event_bus: Arc<moho_core::EventBus>,
+        prefs: moho_core::prefs::Prefs,
+    ) -> Self {
         let context = egui::Context::default();
         context.set_visuals(egui::Visuals::dark());
 
@@ -116,7 +120,7 @@ impl EguiAdapter {
         Self {
             context,
             winit_state,
-            ui_state: UiStateManager::new(),
+            ui_state: UiStateManager::new(prefs),
             event_bus,
             window,
             current_game_state: GameState::Menu,
@@ -241,10 +245,9 @@ impl EguiAdapter {
         }
     }
 
-    /// Recall staging belt for memory management
-    pub fn recall_staging_belt(&mut self) {
-        // This is called by the main application after rendering
-        // No-op for now, but could be used for cleanup
+    /// Name of the screen currently shown, if any.
+    pub fn active_screen_name(&self) -> Option<&str> {
+        self.ui_state.active_screen_name()
     }
 
     /// Update overlay HUD data for the current frame.
@@ -374,8 +377,9 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
 pub fn build_adapter(
     window: Option<Arc<Window>>,
     event_bus: Arc<moho_core::EventBus>,
+    prefs: moho_core::prefs::Prefs,
 ) -> EguiAdapter {
-    EguiAdapter::new(window, event_bus)
+    EguiAdapter::new(window, event_bus, prefs)
 }
 
 #[cfg(test)]

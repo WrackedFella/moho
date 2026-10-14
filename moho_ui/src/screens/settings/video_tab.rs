@@ -51,8 +51,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                         });
 
                     if current != staged_mode {
-                        menu.state.staged_mut().set_window_mode(current);
-                        menu.state.mark_dirty(SettingsField::WindowMode);
+                        menu.state.set_window_mode(current);
                     }
 
                     if is_dirty {
@@ -105,9 +104,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
 
                     if resolution_enabled && current_res != staged_res {
                         menu.state
-                            .staged_mut()
                             .set_window_resolution(current_res.0, current_res.1);
-                        menu.state.mark_dirty(SettingsField::WindowResolution);
                     }
 
                     if is_dirty {

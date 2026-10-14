@@ -32,13 +32,16 @@ pub struct UiStateManager {
 
 impl UiStateManager {
     /// Create a new UI state manager with default screens
-    pub fn new() -> Self {
+    pub fn new(prefs: moho_core::prefs::Prefs) -> Self {
         // Register default screens
         use crate::screens::{NewWorldMenu, SettingsMenu, StartMenu};
         let mut screens: HashMap<String, Box<dyn Menu>> = HashMap::new();
 
         screens.insert("start".to_string(), Box::new(StartMenu::new()));
-        screens.insert("settings".to_string(), Box::new(SettingsMenu::new()));
+        screens.insert(
+            "settings".to_string(),
+            Box::new(SettingsMenu::with_prefs(prefs)),
+        );
         screens.insert("new_world".to_string(), Box::new(NewWorldMenu::new()));
 
         // Register default overlay layers
@@ -134,12 +137,6 @@ impl UiStateManager {
     /// Get a specific screen by name (immutable)
     pub fn get_screen(&self, name: &str) -> Option<&dyn Menu> {
         self.screens.get(name).map(std::convert::AsRef::as_ref)
-    }
-}
-
-impl Default for UiStateManager {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
