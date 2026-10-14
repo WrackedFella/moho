@@ -1,5 +1,5 @@
 //! Layout regression tests: panel order decides placement because
-//! `show_inside` consumes the root Ui's remaining space.
+//! `show` consumes the root Ui's remaining space.
 
 use moho_ui::MenuItem;
 use moho_ui::UiComponent;
