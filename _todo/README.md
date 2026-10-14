@@ -50,6 +50,8 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 | [ENG-F20 A wgpu or egui upgrade touches one crate](https://github.com/WrackedFella/moho/issues/104) |
 | [ENG-F21 A game gets a character controller and camera from the engine](https://github.com/WrackedFella/moho/issues/123) |
 | [ENG-F22 Every test can fail and earns its place](https://github.com/WrackedFella/moho/issues/167) |
+| [ENG-F23 The game knows what is under the pointer](engine/ENG-F23-pointer-world-ray/_feature.md) (proposed) |
+| [ENG-F24 The game marks places in the world and keeps them in view](engine/ENG-F24-world-markers/_feature.md) (proposed) |
 
 ## strategy-game/
 

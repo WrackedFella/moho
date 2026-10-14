@@ -4,8 +4,8 @@ The order in which features are tackled, and why, as milestones with gates. [`RE
 indexes what exists; this file sequences it. Item status is not tracked here; it lives on the
 [project board](https://github.com/users/WrackedFella/projects/1). Update this file when a milestone gate closes, an item moves between phases, or a decision is made.
 
-**Now:** M0 and M1 are done. M2 is open: the only milestone planned to card level
-(rolling wave, [`_STANDARDS.md`](_STANDARDS.md#milestones)).
+**Now:** M0 and M1 are done. M2 is open, in waves (wave 1 started 2026-10-14): the only
+milestone planned to card level (rolling wave, [`_STANDARDS.md`](_STANDARDS.md#milestones)).
 
 ## M0 — Foundation (done 2026-10-05)
 
@@ -52,7 +52,7 @@ just before the work that needs them, not sooner.
 | 1.9 | [ENG-F11](https://github.com/WrackedFella/moho/issues/81): shared app loop, headless tick, engine `GameClock` | before P.2 |
 | 1.10 | [ENG-F12](https://github.com/WrackedFella/moho/issues/82): game-defined input actions; replaces the former 1.5 | before P.2; after 1.11 |
 | 1.12 | [ADR-0011](adr/0011-simulation-stays-network-ready.md): simulation stays network-ready | now (session B) |
-| 1.1 | Save-format migration to [ADR-0006](adr/0006-save-format-contract.md) ([ENG-F2-01](https://github.com/WrackedFella/moho/issues/94)), envelope in the engine | before [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) (first new persisted type); an [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) fix only if it changes the save format |
+| 1.1 | Save-format migration to [ADR-0006](adr/0006-save-format-contract.md) ([ENG-F2-01](https://github.com/WrackedFella/moho/issues/94)), envelope in the engine | done 2026-10-08; SG-F4's mark persistence is the first new persisted type |
 | 1.13 | [ENG-F20](https://github.com/WrackedFella/moho/issues/104): a wgpu or egui upgrade touches one crate | after 1.9; before 1.16 and [ENG-F18](https://github.com/WrackedFella/moho/issues/230) |
 | 1.14 | [ADR-0012](adr/0012-engine-crate-map-for-m2.md): engine crate map, modules first; names the seam list | before ENG-F11 is specced |
 | 1.3 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234): domain tests catch behaviour changes | carried to M2 (2.11) |
@@ -95,47 +95,85 @@ Cards in one lane share files, so each waits on the one before it.
 
 ## M2 — Engine MVP
 
-**Intent:** The engine carries both games' current scopes.
-**Gate (all must hold):**
-- [FPS GDD](../wiki/fps/game-design-document.md) §7 Phase 1–2 playable on engine-line crates:
-  ENG-F16–F19 done (ENG-F14, F15 and F21 close in M1).
-- Strategy v1 slice done: SG-F1-04, SG-F2-03, SG-F2-02.
-- Save envelope on [ADR-0006](adr/0006-save-format-contract.md) (1.1).
+**Intent:** The engine carries both games' current scopes, ranked by what the game
+lines ask for.
+**Gate:** whatever the games need for a V1 release. M2 runs in waves; Justin declares it
+done when the games' requirements are adequately met. Each wave is planned from the
+open engine requests (label `engine-request`) when the one before it nears its end.
+Engine requests answered here: #302, #304–#307, #315, #316 (#303 goes to the strategy
+line, as an [SG-F4](https://github.com/WrackedFella/moho/issues/310) card).
 
-M1's gate closed 2026-10-14; ENG-F16–F19 are carded next. The strategy slice
-and the FPS rules crate are greenlit.
+**Current wave set (decided 2026-10-14), all must hold:**
+- **FPS:** [GDD](../wiki/fps/game-design-document.md) §7 Phase 1–2 playable on
+  engine-line crates: [ENG-F16](https://github.com/WrackedFella/moho/issues/228),
+  [ENG-F17](https://github.com/WrackedFella/moho/issues/229),
+  [ENG-F18](https://github.com/WrackedFella/moho/issues/230) and
+  [ENG-F19](https://github.com/WrackedFella/moho/issues/231) done.
+- **Strategy:** [SG-F1](https://github.com/WrackedFella/moho/issues/311),
+  [SG-F2](https://github.com/WrackedFella/moho/issues/308),
+  [SG-F5](https://github.com/WrackedFella/moho/issues/309) and
+  [SG-F4](https://github.com/WrackedFella/moho/issues/310) done.
+- **Save:** saves use the [ADR-0006](adr/0006-save-format-contract.md) envelope
+  ([ENG-F2-01](https://github.com/WrackedFella/moho/issues/94), done 2026-10-08).
+  SG-F4's "marked block survives save and load" card adds the first new persisted type.
 
-### Engine (order: F16 → F18 → F17; F19 before FPS Phase 2; F18 after ENG-F20)
+Not gate items, but in M2: ENG-F23, ENG-F24, [ENG-F9](https://github.com/WrackedFella/moho/issues/234),
+[ENG-F6](https://github.com/WrackedFella/moho/issues/233) seeded RNG, pause and speed, and the bug cards.
 
-| # | Feature | Depends on |
-|---|---|---|
-| 2.7 | [ENG-F16](https://github.com/WrackedFella/moho/issues/228) positional audio | 1.11 |
-| 2.8 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) shared UI shell (until then the arena's HUD is FPS-line egui; it never copies strategy UI) | 1.11, 1.13 |
-| 2.9 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation (Phase 1 AI may use waypoints meanwhile) | 1.8, 1.11 |
-| 2.10 | [ENG-F19](https://github.com/WrackedFella/moho/issues/231) data and mod content | 1.11; before FPS Phase 2 |
-| 2.11 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234) domain tests catch behaviour changes (from M1's 1.3; not a gate item) | before [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) |
-| 2.12 | [ENG-F22](https://github.com/WrackedFella/moho/issues/167) remaining cards (from M1's 1.15; part of 2.11, not a gate item): [ENG-F22-12](https://github.com/WrackedFella/moho/issues/179), [ENG-F22-19](https://github.com/WrackedFella/moho/issues/186), [ENG-F22-23](https://github.com/WrackedFella/moho/issues/262) | in parallel: re-specced 2026-10-14 with disjoint files |
+### Engine waves
+
+Items in one wave touch disjoint crates and run in parallel. A later wave starts as
+its consumers near, not when the earlier wave fully closes.
+
+| # | Item | Requests | Consumer | Wave | Depends on |
+|---|---|---|---|---|---|
+| 2.1 | ENG-F21-03: a character that leaves the ground keeps its momentum (`moho_physics`, reproduce first) | #302 | possession, FPS movement | 1 | — |
+| 2.2 | ENG-F18-01: saved settings survive a later console command (binary, `moho_ui`) | #179 comment | strategy settings; FPS via ENG-F18 | 1 | — |
+| 2.3 | ENG-F18-02: menu music plays from `assets/` (`moho_ui`) | #186 check | strategy start menu | 1 | — |
+| 2.4 | [ENG-F16](https://github.com/WrackedFella/moho/issues/228) positional audio, with the `moho_audio` system tests deferred from ENG-F22 (priority) | — | FPS GDD §10; strategy cues | 1 | — |
+| 2.5 | [ENG-F6](https://github.com/WrackedFella/moho/issues/233) seeded RNG (reopened) | #316 | FPS-F2-02 (#299); strategy world gen | 1 | — |
+| 2.6 | ENG-F23: the game knows what is under the pointer (new) | #304 | SG-F5 select; SG-F4 mark; SG-F3 place | 2 | — |
+| 2.7 | ENG-F24: the game marks places in the world (new): markers first | #305 | SG-F5, SG-F4, SG-F3 | 2 | — |
+| 2.8 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234) domain tests catch behaviour changes (from M1's 1.3) | — | SG-F4 | 2–3 | before SG-F4 |
+| 2.9 | ENG-F11-04: the simulation pauses and runs at 1x, 2x or 3x (`moho_app`) | #307 | SG-F4 follow-up; FPS pause | 3 | SG-F4's skeleton |
+| 2.10 | ENG-F24-03: the game hides the world above a chosen height (renderer) | #306 | SG-F4 underground marks | 3 | ENG-F24's first card |
+| 2.11 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) shared UI shell, widened with on-screen text | #315 | FPS Phase 2 | 4 | 2.2 |
+| 2.12 | [ENG-F19](https://github.com/WrackedFella/moho/issues/231) layered content | — | FPS Phase 2 | 4 | — |
+| 2.13 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation over static levels (FPS uses waypoints until then) | — | FPS | 4 | — |
+
+- **Wave 1, start now:** the bugs, ENG-F16 and ENG-F6. They need no other M2 work.
+- **Wave 2, before SG-F5 and SG-F4:** ENG-F23 and ENG-F24 unblock SG-F5; ENG-F9 comes before SG-F4.
+- **Wave 3, SG-F4 follow-ups:** pause and speed, then the height slice, once SG-F4's walking skeleton exists.
+- **Wave 4, before FPS Phase 2:** ENG-F18 (after 2.2), ENG-F19 and ENG-F17.
 
 ### Strategy
 
-| # | Feature | Depends on |
-|---|---|---|
-| 2.1 | [SG-F1-04](strategy-game/SG-F1-core-interaction-loop/SG-F1-04-pickup-feedback.md) pickup feedback | M0; independent of ENG-F10; if the voxel move ([ENG-F10-03](https://github.com/WrackedFella/moho/issues/140)) lands first, edits `moho_voxel` |
-| 2.2 | [SG-F2-03](strategy-game/SG-F2-known-bugs/SG-F2-03-mining-not-persisted.md) mining not persisted (reproduce first), then [SG-F2-02](strategy-game/SG-F2-known-bugs/SG-F2-02-mining-mesh-gaps.md) mesh gaps | M0; independent of ENG-F10; if the voxel move ([ENG-F10-03](https://github.com/WrackedFella/moho/issues/140)) lands first, edits `moho_voxel` |
-| 2.3 | [SG-F3](strategy-game/SG-F3-buildings-and-construction/_feature.md) buildings and construction (not in the v1 slice) | 1.1 |
-| 2.4 | [SG-F4](strategy-game/SG-F4-worker-pawns/_feature.md) worker pawns (first possible ECS consumer, [ADR-0004](adr/0004-entity-storage-without-a-general-ecs.md)) | 1.3, 2.3 |
+| # | Feature | Engine items it needs | Notes |
+|---|---|---|---|
+| S.1 | [SG-F1](https://github.com/WrackedFella/moho/issues/311) possessing a pawn feels right | 2.1 for feel | — |
+| S.2 | [SG-F2](https://github.com/WrackedFella/moho/issues/308) a saved world comes back as I left it | none | its load-path card covers the #264 gap (scene load skips releasing held keys) |
+| S.3 | [SG-F5](https://github.com/WrackedFella/moho/issues/309) run the colony from above, step into a pawn | 2.6, 2.7 | block and pawn picking are strategy-line |
+| S.4 | [SG-F4](https://github.com/WrackedFella/moho/issues/310) pawns dig what I mark | 2.7, 2.8; then 2.9, 2.10 | first new persisted type; #303 voxel routing is its card. Before SG-F3 |
+| S.5 | [SG-F3](https://github.com/WrackedFella/moho/issues/312) buildings and construction (not a gate item) | 2.7 (placement preview) | after SG-F4 |
 
 ### FPS line
 
-| # | Feature | Depends on |
+| # | Feature | Engine items it needs |
 |---|---|---|
 | P.1 | [FPS-F1](fps-game/FPS-F1-game-design-document/_feature.md) [GDD](../wiki/fps/game-design-document.md) v0.2 | — |
-| P.3 | FPS rules crate (magazine, body-part damage): platform-free, fps + domain rows in the layering check; needs its own feature first | P.1 |
-| P.2 | FPS prototype crate in the monorepo, held apart by the layering check; loads a non-voxel map. Scope: GDD §7 Phase 1 (arena baseline) | P.1, 1.8–1.10, 1.18–1.20; positional audio (2.7) and navigation (2.9) join when ready (non-positional sound and waypoints meanwhile) |
+| P.2 | [FPS-F2](https://github.com/WrackedFella/moho/issues/297) arena baseline (GDD §7 Phase 1), with the rules crate `moho_fps_rules` ([ADR-0015](adr/0015-fps-rules-are-a-platform-free-crate.md)) | none; stopgaps until then: non-positional sound, waypoints, rectangle HUD, a local seeded generator |
+| P.3 | GDD §7 Phase 2 (items and loadout) | 2.11 with text, 2.12 |
 
-FPS phases after P.2 follow GDD §7 (items, weapon wear, wounds, survival, hub
-and jobs, Director). Each becomes a feature only after the previous one is
-approved.
+FPS phases after Phase 2 follow GDD §7. Each becomes a feature only after the previous
+one is approved.
+
+### Out of M2
+
+| Idea | Why it waits | Revisit when |
+|---|---|---|
+| A wall impact every tick (damage needs a threshold) | No consumer | The first impact-damage rule |
+| Gamepad limits and turn speed (#151) | Closed, no request | A gamepad request |
+| Shared A* between strategy routes and ENG-F17 | Neither exists yet | Both exist |
 
 ## M3 — v1.0 and split
 
@@ -200,3 +238,5 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-08 | ENG-F10's voxel move no longer waits on SG-F1-04, SG-F2-03 and SG-F2-02 (unfiled, Strategy lane planning-only); it waits on the ENG-F22 voxel cards instead | [ENG-F10](https://github.com/WrackedFella/moho/issues/80) Notes |
 | 2026-10-09 | M1 means both game lines can start: ENG-F14, F15 and F21 (what the FPS arena prototype needs and would otherwise copy) join its gate from M2; ENG-F20 moves before ENG-F18 and the M1-close upgrade instead of before all engine features | M1 section |
 | 2026-10-14 | M1 gate verified and closed; ENG-F9 and ENG-F22's remaining cards carried to M2 | M1 and M2 sections |
+| 2026-10-14 | M2 is ranked by the game lines' engine requests and runs in waves; its gate is what the games need for V1, declared met by Justin. ENG-F16 is the priority; SG-F5 and SG-F4 join the gate; SG-F4 comes before SG-F3; #303 routing is strategy-line | M2 section |
+| 2026-10-14 | New ENG-F23 (pointer to world ray, #304) and ENG-F24 (world markers and height slice, #305, #306); ENG-F18 gains on-screen text (#315) and one prefs owner; ENG-F6 reopened for seeded RNG (#316) | M2 section; [ENG-F18](https://github.com/WrackedFella/moho/issues/230), [ENG-F6](https://github.com/WrackedFella/moho/issues/233) |
