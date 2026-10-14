@@ -68,6 +68,12 @@ fn staged_changes_tracked_and_cleared_on_save() {
     menu.apply_staged_changes().unwrap();
 
     assert!(!menu.has_unsaved_changes());
+    menu.revert_staged_changes();
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::Key(Key::Q), pad_stick(StickDir::Up)],
+        "save updates the saved snapshot, so revert keeps it"
+    );
     let (saved, issues) = Prefs::load_from(&path);
     assert_eq!(issues, vec![]);
     let reloaded = SettingsMenu::with_prefs(saved);
@@ -75,6 +81,21 @@ fn staged_changes_tracked_and_cleared_on_save() {
         reloaded.get_staged_binding(0),
         [Binding::Key(Key::Q), pad_stick(StickDir::Up)]
     );
+}
+
+/// A failed write is reported to the caller, not swallowed.
+#[test]
+fn save_error_propagates() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("a_file");
+    std::fs::write(&blocker, "not a directory").unwrap();
+    let mut menu = SettingsMenu::with_prefs_at(Prefs::default(), blocker.join("prefs.ini"));
+    menu.start_listening(0);
+    menu.apply_key_while_listening(Key::Q);
+
+    let result = menu.apply_staged_changes();
+
+    assert!(result.is_err());
 }
 
 /// Reverting discards a staged binding and returns the row to its saved keys.

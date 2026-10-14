@@ -142,3 +142,34 @@ impl Default for UiStateManager {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::screens::SettingsMenu;
+    use moho_core::prefs::Prefs;
+    use moho_input::bindings::Binding;
+    use moho_input::key::Key;
+
+    #[test]
+    fn injected_prefs_reach_the_settings_screen() {
+        let mut prefs = Prefs::default();
+        prefs.set_bindings(
+            [("move_forward".to_string(), "Q".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let mut manager = UiStateManager::new(prefs);
+
+        assert!(manager.show_screen("settings"));
+
+        let menu = manager
+            .active_screen()
+            .and_then(|screen| screen.as_any().downcast_ref::<SettingsMenu>())
+            .expect("settings screen is a SettingsMenu");
+        assert_eq!(
+            menu.get_staged_binding(0).first(),
+            Some(&Binding::Key(Key::Q))
+        );
+    }
+}

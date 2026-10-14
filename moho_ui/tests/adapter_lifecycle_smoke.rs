@@ -16,7 +16,10 @@ fn adapter_lifecycle_smoke() {
     assert!(adapter.is_visible());
 
     adapter.hide_menus();
+    assert!(!adapter.is_visible());
+
     adapter.show_menu("settings");
 
+    assert!(adapter.is_visible());
     assert_eq!(adapter.active_screen_name(), Some("settings"));
 }

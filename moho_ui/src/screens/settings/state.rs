@@ -185,6 +185,20 @@ mod tests {
     }
 
     #[test]
+    fn apply_changes_updates_saved_prefs() {
+        use crate::prefs::WindowMode;
+        let dir = tempfile::tempdir().unwrap();
+        let mut state =
+            SettingsState::from_prefs_at(Prefs::default(), dir.path().join("prefs.ini"));
+        state.set_window_mode(WindowMode::Fullscreen);
+
+        let result = state.apply_changes();
+
+        assert!(result.is_ok());
+        assert_eq!(state.prefs().window_mode(), WindowMode::Fullscreen);
+    }
+
+    #[test]
     fn video_setting_change_marks_dirty_and_reverts() {
         use crate::prefs::WindowMode;
         let mut state = SettingsState::from_prefs(Prefs::default());
