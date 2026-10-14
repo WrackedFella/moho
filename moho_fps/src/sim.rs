@@ -722,3 +722,330 @@ mod dummy_pose_tests {
         assert_eq!(sim.dummy_body(0).expect("dummy 0 exists").health(), 70);
     }
 }
+
+#[cfg(test)]
+mod adversarial_tests {
+    use moho_fps_rules::{BodyPart, MagazineLevel};
+    use moho_physics::{CharacterCommand, PITCH_LIMIT};
+
+    use super::*;
+    use crate::test_support::{DT, flat_floor, mag, test_config};
+
+    fn rifle_with(rounds: u32) -> Rifle {
+        Rifle::loaded(mag(30, rounds))
+    }
+
+    fn idle() -> FpsCommand {
+        FpsCommand::default()
+    }
+
+    fn pull() -> FpsCommand {
+        FpsCommand {
+            fire: true,
+            ..FpsCommand::default()
+        }
+    }
+
+    fn reload() -> FpsCommand {
+        FpsCommand {
+            reload: true,
+            ..FpsCommand::default()
+        }
+    }
+
+    fn volume_of(target: u16, part: BodyPart) -> HitVolume {
+        let tag = SurfaceTag::Part { target, part };
+        dummy_hit_volumes(target)
+            .into_iter()
+            .find(|v| v.tag == tag.into())
+            .expect("a volume per part")
+    }
+
+    fn run(sim: &mut FpsSim, script: &[FpsCommand]) -> Vec<Vec<Feedback>> {
+        script
+            .iter()
+            .map(|command| {
+                sim.tick(command, DT);
+                sim.drain_feedback()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_shot_at_the_second_dummys_head_damages_only_that_dummy() {
+        let head = volume_of(1, BodyPart::Head);
+        let mut config = test_config(rifle_with(5), vec![]);
+        config.eye_height = head.offset.y;
+        let mut sim = FpsSim::new(
+            flat_floor(),
+            Vec3::new(3.0, 0.0, 0.0),
+            &[Vec3::new(0.0, 0.0, 8.0), Vec3::new(3.0, 0.0, 8.0)],
+            config,
+        );
+
+        sim.tick(&pull(), DT);
+
+        let feedback = sim.drain_feedback();
+        let hits: Vec<_> = feedback
+            .iter()
+            .filter_map(|fb| match fb {
+                Feedback::Hit { target, part, .. } => Some((*target, *part)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(hits, [(1, BodyPart::Head)], "{feedback:?}");
+        let untouched = sim.dummy_body(0).expect("dummy 0 exists");
+        assert_eq!(untouched.health(), 100);
+        assert_eq!(untouched.status(BodyPart::Head), Some(50));
+        let struck = sim.dummy_body(1).expect("dummy 1 exists");
+        assert_eq!(struck.health(), 70);
+        assert_eq!(struck.status(BodyPart::Head), Some(20));
+    }
+
+    #[test]
+    fn extreme_target_numbers_round_trip_and_never_collide() {
+        let parts = [
+            BodyPart::Head,
+            BodyPart::Torso,
+            BodyPart::LeftArm,
+            BodyPart::RightArm,
+            BodyPart::LeftLeg,
+            BodyPart::RightLeg,
+        ];
+        let mut seen = std::collections::HashMap::new();
+        seen.insert(
+            moho_physics::HitTag::from(SurfaceTag::World),
+            SurfaceTag::World,
+        );
+        for target in [0, 1, u16::MAX - 1, u16::MAX] {
+            for part in parts {
+                let tag = SurfaceTag::Part { target, part };
+
+                let engine = moho_physics::HitTag::from(tag);
+
+                assert_eq!(SurfaceTag::try_from(engine), Ok(tag));
+                let previous = seen.insert(engine, tag);
+                assert_eq!(previous, None, "{tag:?} collides with {previous:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn pitch_extremes_keep_the_shot_finite_and_a_downward_shot_strikes_the_floor() {
+        for pitch_delta in [-10.0_f32, 10.0] {
+            let mut sim = FpsSim::new(
+                flat_floor(),
+                Vec3::ZERO,
+                &[],
+                test_config(rifle_with(5), vec![]),
+            );
+            let look = FpsCommand {
+                movement: CharacterCommand {
+                    pitch_delta,
+                    ..CharacterCommand::default()
+                },
+                ..FpsCommand::default()
+            };
+
+            sim.tick(&look, DT);
+
+            let state = sim.player();
+            assert_eq!(state.pitch.abs(), PITCH_LIMIT);
+            let view = first_person_view(&state, &state, sim.eye_height(), 1.0);
+            assert!(view.eye.is_finite() && view.forward.is_finite(), "{view:?}");
+            assert!((view.forward.length() - 1.0).abs() < 1e-3);
+            let strike = resolve_shot(
+                &flat_floor(),
+                ShotRay {
+                    origin: view.eye,
+                    direction: view.forward,
+                    range: 100.0,
+                    ignore: None,
+                },
+            );
+            if pitch_delta < 0.0 {
+                let strike = strike.expect("a downward shot reaches the floor");
+                assert_eq!(strike.tag, SurfaceTag::World);
+                assert!(strike.point.is_finite() && strike.point.y.abs() < 1e-3);
+            } else {
+                assert!(strike.is_none(), "{strike:?}");
+            }
+            sim.tick(&pull(), DT);
+            assert_eq!(sim.drain_feedback(), [Feedback::Fired]);
+        }
+    }
+
+    #[test]
+    fn a_reload_begun_in_a_cooldown_blocks_pulls_until_it_ends_and_leaves_no_cooldown() {
+        for cooldown_ticks in [3, 30] {
+            let mut config = test_config(rifle_with(10), vec![mag(30, 30)]);
+            config.cooldown_ticks = cooldown_ticks;
+            let mut sim = FpsSim::new(flat_floor(), Vec3::ZERO, &[], config);
+            let mut script = vec![pull(), reload()];
+            script.extend([pull(); 9]);
+            script.push(pull());
+            script.push(pull());
+
+            let ticks = run(&mut sim, &script);
+
+            for (i, fb) in ticks.iter().enumerate().take(11).skip(1) {
+                assert!(
+                    !fb.contains(&Feedback::Fired) && !fb.contains(&Feedback::Dry),
+                    "cooldown {cooldown_ticks}: tick {i} acted during the reload: {fb:?}"
+                );
+            }
+            assert_eq!(ticks[0], [Feedback::Fired]);
+            assert_eq!(ticks[11], [Feedback::ReloadDone, Feedback::Fired]);
+            assert_eq!(
+                ticks[12],
+                [],
+                "the ordinary cooldown still applies after a shot"
+            );
+        }
+    }
+
+    #[test]
+    fn pull_reload_and_check_in_one_tick_report_in_order_and_start_the_reload() {
+        let mut reference = FpsSim::new(
+            flat_floor(),
+            Vec3::ZERO,
+            &[],
+            test_config(rifle_with(10), vec![mag(30, 30)]),
+        );
+        reference.tick(&pull(), DT);
+        reference.drain_feedback();
+        reference.tick(
+            &FpsCommand {
+                check: true,
+                ..idle()
+            },
+            DT,
+        );
+        let Some(Feedback::MagazineLevel(before)) = reference.drain_feedback().pop() else {
+            panic!("the reference check reported no level");
+        };
+        assert_ne!(
+            before,
+            MagazineLevel::Full,
+            "the test needs a non-full pre-reload magazine"
+        );
+        let mut sim = FpsSim::new(
+            flat_floor(),
+            Vec3::ZERO,
+            &[],
+            test_config(rifle_with(10), vec![mag(30, 30)]),
+        );
+        let all = FpsCommand {
+            fire: true,
+            reload: true,
+            check: true,
+            ..idle()
+        };
+
+        let ticks = run(
+            &mut sim,
+            &[
+                all,
+                idle(),
+                idle(),
+                idle(),
+                idle(),
+                idle(),
+                idle(),
+                idle(),
+                idle(),
+                idle(),
+                idle(),
+            ],
+        );
+
+        assert_eq!(ticks[0], [Feedback::Fired, Feedback::MagazineLevel(before)]);
+        assert!(ticks[1..10].iter().all(Vec::is_empty), "{ticks:?}");
+        assert_eq!(ticks[10], [Feedback::ReloadDone]);
+        assert_eq!(sim.rifle().magazine(), &mag(30, 30));
+    }
+
+    #[test]
+    fn an_instant_reload_completes_before_the_check_reads_the_level() {
+        let mut config = test_config(rifle_with(10), vec![mag(30, 30)]);
+        config.reload_ticks = 0;
+        let mut sim = FpsSim::new(flat_floor(), Vec3::ZERO, &[], config);
+        let all = FpsCommand {
+            fire: true,
+            reload: true,
+            check: true,
+            ..idle()
+        };
+
+        let ticks = run(&mut sim, &[all]);
+
+        assert_eq!(
+            ticks[0],
+            vec![
+                Feedback::Fired,
+                Feedback::ReloadDone,
+                Feedback::MagazineLevel(MagazineLevel::Full),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_dead_dummy_keeps_reporting_hits_with_health_at_zero() {
+        let torso = volume_of(0, BodyPart::Torso);
+        let mut config = test_config(rifle_with(20), vec![]);
+        config.eye_height = torso.offset.y;
+        config.cooldown_ticks = 0;
+        let mut sim = FpsSim::new(
+            flat_floor(),
+            Vec3::new(torso.offset.x, 0.0, 0.0),
+            &[Vec3::new(0.0, 0.0, 8.0)],
+            config,
+        );
+
+        let ticks = run(&mut sim, &[pull(); 7]);
+
+        let hits = ticks
+            .iter()
+            .flatten()
+            .filter(|fb| {
+                matches!(
+                    fb,
+                    Feedback::Hit {
+                        target: 0,
+                        part: BodyPart::Torso,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(hits, 7, "{ticks:?}");
+        let body = sim.dummy_body(0).expect("dummy 0 exists");
+        assert_eq!(body.health(), 0);
+        assert!(body.is_dead());
+    }
+
+    #[test]
+    fn a_second_reload_request_neither_restarts_nor_extends_the_reload() {
+        let mut sim = FpsSim::new(
+            flat_floor(),
+            Vec3::ZERO,
+            &[],
+            test_config(rifle_with(10), vec![mag(30, 30), mag(30, 20)]),
+        );
+        let mut script = vec![reload(), idle(), idle(), idle(), reload()];
+        script.extend([reload(), idle()].iter().cycle().take(5).copied());
+        script.extend([idle(); 6]);
+
+        let ticks = run(&mut sim, &script);
+
+        let done: Vec<usize> = ticks
+            .iter()
+            .enumerate()
+            .filter(|(_, fb)| fb.contains(&Feedback::ReloadDone))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(done, [10], "{ticks:?}");
+        assert_eq!(sim.rifle().magazine(), &mag(30, 30));
+        assert_eq!(sim.spares().len(), 2);
+    }
+}
