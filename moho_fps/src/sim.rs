@@ -16,6 +16,16 @@ use crate::tag::SurfaceTag;
 /// Height of a character's capsule centre above its feet, in metres.
 pub const STAND_HEIGHT: f32 = 1.15;
 
+/// The target number and capsule centre of the dummy at `index` in a spawn list, for a dummy
+/// standing on the floor point `spawn`.
+///
+/// # Panics
+/// If `index` is more than a `u16` target number can name.
+pub(crate) fn dummy_at(index: usize, spawn: Vec3) -> (u16, Vec3) {
+    let target = u16::try_from(index).expect("an arena has fewer than 65536 dummies");
+    (target, spawn + Vec3::Y * STAND_HEIGHT)
+}
+
 /// Tuning the simulation is built with.
 #[derive(Clone, Debug)]
 pub struct SimConfig {
@@ -133,8 +143,8 @@ impl FpsSim {
     ) -> Self {
         let player = world.add_character(player_spawn + Vec3::Y * STAND_HEIGHT);
         for (index, &spawn) in dummy_spawns.iter().enumerate() {
-            let target = u16::try_from(index).expect("an arena has fewer than 65536 dummies");
-            let dummy = world.add_character(spawn + Vec3::Y * STAND_HEIGHT);
+            let (target, centre) = dummy_at(index, spawn);
+            let dummy = world.add_character(centre);
             for volume in dummy_hit_volumes(target) {
                 world
                     .add_hit_volume(dummy, volume)

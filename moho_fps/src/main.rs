@@ -5,8 +5,9 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use moho_app::{AppConfig, LoopConfig};
+use moho_fps::TICK_HZ;
 use moho_fps::arena;
-use moho_fps::game::{FpsGame, TICK_HZ};
+use moho_fps::game::{FpsGame, WINDOW_TITLE};
 use moho_fps::sim::{FpsSim, SimConfig};
 use moho_fps_rules::{BodyProfile, Magazine, Rifle};
 use moho_input::action_map::ActionMap;
@@ -79,7 +80,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     moho_app::run(
         game,
         AppConfig {
-            window_title: "moho_fps".to_owned(),
+            window_title: WINDOW_TITLE.to_owned(),
             loop_config: LoopConfig::new(TICK_HZ),
             init_audio: true,
         },

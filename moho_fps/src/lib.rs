@@ -9,5 +9,8 @@ pub mod shot;
 pub mod sim;
 pub mod tag;
 
+/// Ticks per second the prototype runs at.
+pub const TICK_HZ: u32 = 60;
+
 #[cfg(test)]
 pub(crate) mod test_support;

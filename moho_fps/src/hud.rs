@@ -2,6 +2,8 @@
 
 use moho_fps_rules::{BodyPart, MagazineLevel};
 
+use crate::sim::Feedback;
+
 /// The words that tell the player how full a magazine is, without a count.
 pub fn magazine_level_text(level: MagazineLevel) -> &'static str {
     match level {
@@ -22,6 +24,23 @@ pub fn part_text(part: BodyPart) -> &'static str {
         BodyPart::RightArm => "right arm",
         BodyPart::LeftLeg => "left leg",
         BodyPart::RightLeg => "right leg",
+    }
+}
+
+/// The status line a piece of feedback puts in the window title, if it changes it.
+pub fn status_text(feedback: &Feedback) -> Option<String> {
+    match feedback {
+        Feedback::Fired => None,
+        Feedback::Dry => Some("click, the rifle is empty".to_owned()),
+        Feedback::Hit { part, report, .. } => Some(format!(
+            "hit the {} for {}",
+            part_text(*part),
+            report.damage
+        )),
+        Feedback::MagazineLevel(level) => {
+            Some(format!("magazine is {}", magazine_level_text(*level)))
+        }
+        Feedback::ReloadDone => Some("reloaded".to_owned()),
     }
 }
 

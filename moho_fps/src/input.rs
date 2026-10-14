@@ -6,15 +6,6 @@ use moho_input::bindings::Binding;
 use moho_input::key::{Key, MouseButton};
 use moho_physics::CharacterCommand;
 
-const FORWARD: [Binding; 1] = [Binding::Key(Key::W)];
-const BACK: [Binding; 1] = [Binding::Key(Key::S)];
-const LEFT: [Binding; 1] = [Binding::Key(Key::A)];
-const RIGHT: [Binding; 1] = [Binding::Key(Key::D)];
-const JUMP: [Binding; 1] = [Binding::Key(Key::Space)];
-const FIRE: [Binding; 1] = [Binding::Mouse(MouseButton::Left)];
-const RELOAD: [Binding; 1] = [Binding::Key(Key::R)];
-const CHECK_MAGAZINE: [Binding; 1] = [Binding::Key(Key::C)];
-
 /// Everything the player can ask of the prototype.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FpsAction {
@@ -55,14 +46,14 @@ impl Action for FpsAction {
 
     fn default_bindings(self) -> &'static [Binding] {
         match self {
-            FpsAction::MoveForward => &FORWARD,
-            FpsAction::MoveBack => &BACK,
-            FpsAction::MoveLeft => &LEFT,
-            FpsAction::MoveRight => &RIGHT,
-            FpsAction::Jump => &JUMP,
-            FpsAction::Fire => &FIRE,
-            FpsAction::Reload => &RELOAD,
-            FpsAction::CheckMagazine => &CHECK_MAGAZINE,
+            FpsAction::MoveForward => &[Binding::Key(Key::W)],
+            FpsAction::MoveBack => &[Binding::Key(Key::S)],
+            FpsAction::MoveLeft => &[Binding::Key(Key::A)],
+            FpsAction::MoveRight => &[Binding::Key(Key::D)],
+            FpsAction::Jump => &[Binding::Key(Key::Space)],
+            FpsAction::Fire => &[Binding::Mouse(MouseButton::Left)],
+            FpsAction::Reload => &[Binding::Key(Key::R)],
+            FpsAction::CheckMagazine => &[Binding::Key(Key::C)],
         }
     }
 }

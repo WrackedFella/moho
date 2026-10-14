@@ -19,13 +19,10 @@ use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window};
 
-use crate::hud;
 use crate::input::{FpsAction, FpsCommand};
-use crate::sim::{Feedback, FpsSim, STAND_HEIGHT, dummy_hit_volumes};
+use crate::sim::{Feedback, FpsSim, dummy_at, dummy_hit_volumes};
 use crate::tag::SurfaceTag;
-
-/// Ticks per second the prototype runs at.
-pub const TICK_HZ: u32 = 60;
+use crate::{TICK_HZ, hud};
 
 /// Ticks a struck dummy segment stays lit.
 const FLASH_TICKS: u32 = TICK_HZ / 6;
@@ -33,7 +30,8 @@ const FLASH_TICKS: u32 = TICK_HZ / 6;
 const DUMMY_MESH_BASE: u64 = 1 << 32;
 /// A mesh handle the renderer never issues, so the empty actor draws are skipped.
 const NO_MESH: u32 = u32::MAX;
-const WINDOW_TITLE: &str = "moho_fps";
+/// The window title before any status line is appended.
+pub const WINDOW_TITLE: &str = "moho_fps";
 const FOV_DEGREES: f32 = 75.0;
 const NEAR: f32 = 0.05;
 const FAR: f32 = 500.0;
@@ -133,22 +131,19 @@ struct Segment {
     id: WorldMeshId,
     mesh: WorldMesh,
     flash_left: u32,
-    shown_struck: bool,
 }
 
 /// The dummies' segments, in the frame the world draws them in.
 fn dummy_segments(spawns: &[Vec3]) -> Vec<Segment> {
     let mut segments = Vec::new();
     for (index, &spawn) in spawns.iter().enumerate() {
-        let target = u16::try_from(index).expect("an arena has fewer than 65536 dummies");
-        let centre = spawn + Vec3::Y * STAND_HEIGHT;
+        let (target, centre) = dummy_at(index, spawn);
         for volume in dummy_hit_volumes(target) {
             segments.push(Segment {
                 tag: SurfaceTag::try_from(volume.tag).expect("dummy volumes carry part tags"),
                 id: WorldMeshId(DUMMY_MESH_BASE + segments.len() as u64),
                 mesh: box_mesh(centre + volume.offset, volume.half_extents),
                 flash_left: 0,
-                shown_struck: false,
             });
         }
     }
@@ -228,28 +223,10 @@ fn lighting() -> LightingGpu {
     let sun = Vec3::new(0.4, 0.8, 0.45).normalize();
     LightingGpu {
         sun_direction: [sun.x, sun.y, sun.z, 1.0],
-        sun_color: [1.0, 0.95, 0.8, 0.0],
         moon_direction: [0.0, -1.0, 0.0, 0.0],
-        moon_color: [0.7, 0.8, 0.9, 0.0],
         ambient: [0.4, 0.5, 0.6, 0.15],
         params: [12.0, 0.0, 0.0, 0.0],
-    }
-}
-
-/// The status line a piece of feedback puts in the window title, if it changes it.
-fn status_text(feedback: &Feedback) -> Option<String> {
-    match feedback {
-        Feedback::Fired => None,
-        Feedback::Dry => Some("click, the rifle is empty".to_owned()),
-        Feedback::Hit { part, report, .. } => Some(format!(
-            "hit the {} for {}",
-            hud::part_text(*part),
-            report.damage
-        )),
-        Feedback::MagazineLevel(level) => {
-            Some(format!("magazine is {}", hud::magazine_level_text(*level)))
-        }
-        Feedback::ReloadDone => Some("reloaded".to_owned()),
+        ..LightingGpu::default()
     }
 }
 
@@ -318,7 +295,7 @@ impl Stage {
 
     /// Reacts to one piece of feedback: sound, status line and flash.
     fn react(&mut self, feedback: &Feedback, audio: Option<&mut AudioSystem>) {
-        if let Some(text) = status_text(feedback) {
+        if let Some(text) = hud::status_text(feedback) {
             self.status = text;
         }
         match feedback {
@@ -330,6 +307,11 @@ impl Stage {
                 };
                 if let Some(segment) = self.segments.iter_mut().find(|s| s.tag == tag) {
                     segment.flash_left = FLASH_TICKS;
+                    self.scene.world_meshes_mut().upsert(
+                        segment.id,
+                        segment.mesh.clone(),
+                        self.struck_material,
+                    );
                 }
             }
             _ => {}
@@ -347,7 +329,17 @@ impl Stage {
 
     fn tick_flashes(&mut self) {
         for segment in &mut self.segments {
-            segment.flash_left = segment.flash_left.saturating_sub(1);
+            if segment.flash_left == 0 {
+                continue;
+            }
+            segment.flash_left -= 1;
+            if segment.flash_left == 0 {
+                self.scene.world_meshes_mut().upsert(
+                    segment.id,
+                    segment.mesh.clone(),
+                    self.dummy_material,
+                );
+            }
         }
     }
 
@@ -366,24 +358,6 @@ impl Stage {
         }
     }
 
-    /// Re-queues the segments whose lit state changed since they were last queued.
-    fn queue_flashes(&mut self) {
-        for segment in &mut self.segments {
-            let struck = segment.flash_left > 0;
-            if struck != segment.shown_struck {
-                segment.shown_struck = struck;
-                let material = if struck {
-                    self.struck_material
-                } else {
-                    self.dummy_material
-                };
-                self.scene
-                    .world_meshes_mut()
-                    .upsert(segment.id, segment.mesh.clone(), material);
-            }
-        }
-    }
-
     fn aspect(&self) -> f32 {
         self.window.as_ref().map_or(16.0 / 9.0, |window| {
             let size = window.inner_size();
@@ -392,7 +366,6 @@ impl Stage {
     }
 
     fn draw(&mut self, renderer: &mut dyn RendererBackend, eye: (Mat4, Vec3)) {
-        self.queue_flashes();
         renderer.update_lighting(lighting());
         let (view, eye) = eye;
         let projection = glam::camera::rh::proj::directx::perspective(

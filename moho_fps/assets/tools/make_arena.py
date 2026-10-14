@@ -105,16 +105,15 @@ def solids():
     wall_centre = HALF_SIZE + WALL_THICKNESS / 2
     wall_long = HALF_SIZE + WALL_THICKNESS
     wall_half_y = WALL_HEIGHT / 2
-    out += [
-        ("wall_east", "wall", (wall_centre, wall_half_y, 0.0),
-         (WALL_THICKNESS / 2, wall_half_y, wall_long)),
-        ("wall_west", "wall", (-wall_centre, wall_half_y, 0.0),
-         (WALL_THICKNESS / 2, wall_half_y, wall_long)),
-        ("wall_north", "wall", (0.0, wall_half_y, wall_centre),
-         (wall_long, wall_half_y, WALL_THICKNESS / 2)),
-        ("wall_south", "wall", (0.0, wall_half_y, -wall_centre),
-         (wall_long, wall_half_y, WALL_THICKNESS / 2)),
-    ]
+    thin = WALL_THICKNESS / 2
+    for name, sign, along_x in (("east", 1, True), ("west", -1, True),
+                                ("north", 1, False), ("south", -1, False)):
+        side = sign * wall_centre
+        if along_x:
+            centre, half = (side, wall_half_y, 0.0), (thin, wall_half_y, wall_long)
+        else:
+            centre, half = (0.0, wall_half_y, side), (wall_long, wall_half_y, thin)
+        out.append((f"wall_{name}", "wall", centre, half))
     for index, (x, z, size_x, size_z, _) in enumerate(COVER, start=1):
         out.append(
             (f"crate_{index:02d}", "cover", (x, COVER_HEIGHT / 2, z),
