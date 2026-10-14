@@ -66,12 +66,11 @@ impl SimRng {
     }
 }
 
-/// Maps the top 24 bits of `bits` to `[0, 1)`.
 fn unit_f32(bits: u64) -> f32 {
     (bits >> 40) as f32 / (1u32 << 24) as f32
 }
 
-/// SplitMix64's golden-ratio increment, `2^64 / phi` rounded to odd.
+/// SplitMix64's increment: `2^64 / phi`, rounded to odd.
 const GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;
 
 /// SplitMix64's output finalizer; a bijection on `u64`.
