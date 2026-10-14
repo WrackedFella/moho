@@ -23,9 +23,19 @@ impl Rifle {
     /// A rifle with `magazine` inserted and one round chambered from it, if it has any.
     #[must_use]
     pub fn loaded(magazine: Magazine) -> Self {
-        Self {
+        let mut rifle = Self {
             chambered: false,
             magazine,
+        };
+        rifle.feed();
+        rifle
+    }
+
+    /// Chambers a round from the magazine when the chamber is empty.
+    fn feed(&mut self) {
+        if !self.chambered && self.magazine.rounds > 0 {
+            self.magazine.rounds -= 1;
+            self.chambered = true;
         }
     }
 
@@ -43,7 +53,12 @@ impl Rifle {
 
     /// Spends the chambered round, then chambers the next from the magazine.
     pub fn fire(&mut self) -> Shot {
-        Shot::Dry
+        if !self.chambered {
+            return Shot::Dry;
+        }
+        self.chambered = false;
+        self.feed();
+        Shot::Fired
     }
 
     /// Swaps in `spare` and returns the ejected magazine.
@@ -51,8 +66,10 @@ impl Rifle {
     /// The chambered round stays; an empty chamber is fed from the new magazine.
     /// With no spare nothing changes and `None` is returned.
     pub fn reload(&mut self, spare: Option<Magazine>) -> Option<Magazine> {
-        let _ = spare;
-        None
+        let spare = spare?;
+        let ejected = std::mem::replace(&mut self.magazine, spare);
+        self.feed();
+        Some(ejected)
     }
 }
 

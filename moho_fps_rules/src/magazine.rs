@@ -46,6 +46,9 @@ impl Magazine {
     ///
     /// [`MagazineError::OverCapacity`] when `rounds` exceeds `capacity`.
     pub fn new(capacity: u32, rounds: u32) -> Result<Self, MagazineError> {
+        if rounds > capacity {
+            return Err(MagazineError::OverCapacity { rounds, capacity });
+        }
         Ok(Self { capacity, rounds })
     }
 
@@ -64,7 +67,20 @@ impl Magazine {
     /// Approximate fill, for HUD display without exact counts.
     #[must_use]
     pub fn level(&self) -> MagazineLevel {
-        MagazineLevel::Empty
+        // Widened so the comparisons against quarters of capacity cannot overflow.
+        let scaled = u64::from(self.rounds) * 4;
+        let capacity = u64::from(self.capacity);
+        if self.rounds == 0 {
+            MagazineLevel::Empty
+        } else if self.rounds == self.capacity {
+            MagazineLevel::Full
+        } else if scaled <= capacity {
+            MagazineLevel::NearlyEmpty
+        } else if scaled <= capacity * 3 {
+            MagazineLevel::AboutHalf
+        } else {
+            MagazineLevel::MostlyFull
+        }
     }
 }
 

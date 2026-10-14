@@ -51,7 +51,11 @@ pub struct HitReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Body {
     health: u32,
-    profile: BodyProfile,
+    head: u32,
+    left_arm: u32,
+    right_arm: u32,
+    left_leg: u32,
+    right_leg: u32,
 }
 
 impl Body {
@@ -60,7 +64,22 @@ impl Body {
     pub fn new(profile: BodyProfile) -> Self {
         Self {
             health: profile.max_health,
-            profile,
+            head: profile.head_status,
+            left_arm: profile.arm_status,
+            right_arm: profile.arm_status,
+            left_leg: profile.leg_status,
+            right_leg: profile.leg_status,
+        }
+    }
+
+    fn pool_mut(&mut self, part: BodyPart) -> Option<&mut u32> {
+        match part {
+            BodyPart::Head => Some(&mut self.head),
+            BodyPart::Torso => None,
+            BodyPart::LeftArm => Some(&mut self.left_arm),
+            BodyPart::RightArm => Some(&mut self.right_arm),
+            BodyPart::LeftLeg => Some(&mut self.left_leg),
+            BodyPart::RightLeg => Some(&mut self.right_leg),
         }
     }
 
@@ -68,11 +87,16 @@ impl Body {
     ///
     /// Pools saturate at zero and no other part's status changes.
     pub fn hit(&mut self, part: BodyPart, damage: u32) -> HitReport {
+        self.health = self.health.saturating_sub(damage);
+        let part_down = self.pool_mut(part).is_some_and(|pool| {
+            *pool = pool.saturating_sub(damage);
+            *pool == 0
+        });
         HitReport {
             part,
             damage,
-            part_down: false,
-            body_dead: false,
+            part_down,
+            body_dead: self.is_dead(),
         }
     }
 
@@ -86,24 +110,25 @@ impl Body {
     #[must_use]
     pub fn status(&self, part: BodyPart) -> Option<u32> {
         match part {
-            BodyPart::Head => Some(self.profile.head_status),
+            BodyPart::Head => Some(self.head),
             BodyPart::Torso => None,
-            BodyPart::LeftArm | BodyPart::RightArm => Some(self.profile.arm_status),
-            BodyPart::LeftLeg | BodyPart::RightLeg => Some(self.profile.leg_status),
+            BodyPart::LeftArm => Some(self.left_arm),
+            BodyPart::RightArm => Some(self.right_arm),
+            BodyPart::LeftLeg => Some(self.left_leg),
+            BodyPart::RightLeg => Some(self.right_leg),
         }
     }
 
     /// Whether the body is dead.
     #[must_use]
     pub fn is_dead(&self) -> bool {
-        false
+        self.health == 0 || self.head == 0
     }
 
     /// Whether `part` is a limb whose status has reached zero.
     #[must_use]
     pub fn is_disabled(&self, part: BodyPart) -> bool {
-        let _ = part;
-        false
+        part != BodyPart::Head && self.status(part) == Some(0)
     }
 }
 
