@@ -3,7 +3,7 @@
 **Feature:** [ENG-F25](_feature.md)
 **Status:** Draft
 **Gate class:** domain
-**Labels:** line:engine
+**Labels:** line:engine, M2
 
 ## Summary
 
