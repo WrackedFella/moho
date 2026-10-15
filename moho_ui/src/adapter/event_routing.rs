@@ -83,8 +83,7 @@ pub fn emit_audio_event(event_bus: &EventBus, audio_event: UiAudioEvent) {
     event_bus.publish(core_event);
 }
 
-/// Menu background music, relative to the working directory, beside the UI
-/// sounds in `assets/audio/ui/`.
+/// Menu background music, relative to the working directory.
 pub const MENU_MUSIC_PATH: &str = "assets/audio/music/menu.ogg";
 
 /// The music event that moves menu music from `playing` to `want`: a looped

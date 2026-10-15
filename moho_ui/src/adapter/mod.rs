@@ -76,7 +76,7 @@ pub struct EguiAdapter {
     // Whether menu music is currently playing (to avoid redundant start/stop)
     menu_music_playing: bool,
 
-    // Whether the menu music file was found at construction
+    // Checked once at construction.
     menu_music_exists: bool,
 }
 
