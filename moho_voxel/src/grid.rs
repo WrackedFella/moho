@@ -7,6 +7,7 @@
 
 mod paletted;
 
+pub use self::paletted::CHUNK_FILE;
 use self::paletted::PalettedChunk;
 use super::light_storage::{self, CHUNK_SIZE as LIGHT_CHUNK_SIZE, CHUNK_USIZE, ChunkLight};
 use crate::materials::MaterialType;
