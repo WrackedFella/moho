@@ -7,7 +7,7 @@ use crate::error::AudioError;
 use crate::error::AudioResult;
 use crate::output::{AudioOutput, Playback};
 use crate::rodio_output::RodioOutput;
-use crate::spatial::{Listener, distance_gain};
+use crate::spatial::{Listener, distance_gain, stereo_pan};
 use glam::Vec3;
 use std::path::Path;
 use tracing::{debug, warn};
@@ -117,7 +117,7 @@ impl<O: AudioOutput> AudioSystem<O> {
             bytes,
             volume: effective_volume,
             looped: source.looped(),
-            pan: None,
+            pan: Self::world_position(source).map(|position| stereo_pan(&self.listener, position)),
         })?;
 
         if *source.category() == AudioCategory::Music && source.looped() {
@@ -138,11 +138,19 @@ impl<O: AudioOutput> AudioSystem<O> {
     }
 
     fn distance_gain_for(&self, source: &AudioSource) -> Option<f32> {
+        match Self::world_position(source) {
+            Some(position) => distance_gain(self.listener.position.distance(position)),
+            None => Some(1.0),
+        }
+    }
+
+    /// The position of a sound that is heard in space, i.e. a positioned sound effect or voice.
+    fn world_position(source: &AudioSource) -> Option<Vec3> {
         match (source.category(), source.position()) {
             (AudioCategory::SoundEffect | AudioCategory::Voice, Some(position)) => {
-                distance_gain(self.listener.position.distance(Vec3::from_array(position)))
+                Some(Vec3::from_array(position))
             }
-            _ => Some(1.0),
+            _ => None,
         }
     }
 

@@ -36,7 +36,7 @@ impl Listener {
 
     /// The listener's right-hand direction in world space.
     pub fn right(&self) -> Vec3 {
-        todo!()
+        self.orientation * Vec3::X
     }
 }
 
@@ -49,8 +49,14 @@ pub struct StereoGain {
 
 /// Constant-power pan of a sound at `source` as heard by `listener`.
 pub fn stereo_pan(listener: &Listener, source: Vec3) -> StereoGain {
-    let _ = (listener, source);
-    todo!()
+    let side = (source - listener.position)
+        .normalize_or_zero()
+        .dot(listener.right());
+    let angle = (side + 1.0) * std::f32::consts::FRAC_PI_4;
+    StereoGain {
+        left: angle.cos(),
+        right: angle.sin(),
+    }
 }
 
 /// Volume multiplier for a sound `distance` metres from the listener, or `None` past

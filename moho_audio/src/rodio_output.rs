@@ -2,6 +2,7 @@
 
 use crate::error::{AudioError, AudioResult};
 use crate::output::{AudioOutput, Playback};
+use crate::stereo_gain_source::StereoGainSource;
 use rodio::Source;
 use rodio::mixer::Mixer;
 
@@ -55,10 +56,13 @@ impl AudioOutput for RodioOutput {
 
         let player = rodio::Player::connect_new(&self.mixer);
         player.set_volume(playback.volume);
-        if playback.looped {
-            player.append(decoder.repeat_infinite());
-        } else {
-            player.append(decoder);
+        match (playback.looped, playback.pan) {
+            (true, Some(pan)) => {
+                player.append(StereoGainSource::new(decoder.repeat_infinite(), pan));
+            }
+            (true, None) => player.append(decoder.repeat_infinite()),
+            (false, Some(pan)) => player.append(StereoGainSource::new(decoder, pan)),
+            (false, None) => player.append(decoder),
         }
         player.play();
         Ok(player)

@@ -8,11 +8,18 @@ use std::time::Duration;
 pub struct StereoGainSource<I> {
     input: I,
     gain: StereoGain,
+    /// The right-ear half of the frame whose left half was just emitted.
+    pending_right: Option<Sample>,
 }
 
 impl<I: Source> StereoGainSource<I> {
+    /// Wraps `input`, scaling its mono mix-down by `gain` per ear.
     pub fn new(input: I, gain: StereoGain) -> Self {
-        Self { input, gain }
+        Self {
+            input,
+            gain,
+            pending_right: None,
+        }
     }
 }
 
@@ -20,26 +27,46 @@ impl<I: Source> Iterator for StereoGainSource<I> {
     type Item = Sample;
 
     fn next(&mut self) -> Option<Sample> {
-        let _ = (&mut self.input, self.gain);
-        todo!()
+        if let Some(right) = self.pending_right.take() {
+            return Some(right);
+        }
+
+        let channels = self.input.channels().get();
+        let mut sum = 0.0;
+        let mut count = 0u16;
+        while count < channels {
+            let Some(sample) = self.input.next() else {
+                break;
+            };
+            sum += sample;
+            count += 1;
+        }
+        if count == 0 {
+            return None;
+        }
+
+        let mono = sum / f32::from(count);
+        self.pending_right = Some(mono * self.gain.right);
+        Some(mono * self.gain.left)
     }
 }
 
 impl<I: Source> Source for StereoGainSource<I> {
     fn current_span_len(&self) -> Option<usize> {
-        todo!()
+        let frames = self.input.current_span_len()? / usize::from(self.input.channels().get());
+        Some(frames * 2)
     }
 
     fn channels(&self) -> ChannelCount {
-        todo!()
+        ChannelCount::new(2).expect("2 is non-zero")
     }
 
     fn sample_rate(&self) -> SampleRate {
-        todo!()
+        self.input.sample_rate()
     }
 
     fn total_duration(&self) -> Option<Duration> {
-        todo!()
+        self.input.total_duration()
     }
 }
 
