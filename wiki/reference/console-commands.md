@@ -1,6 +1,6 @@
 # Console commands
 
-**Source:** `moho_ui/src/overlays/console/commands.rs` (`CommandProcessor::execute`).
+**Source:** `flagstone_ui/src/overlays/console/commands.rs` (`CommandProcessor::execute`).
 The in-game `help` command is the authority; this page mirrors it.
 Open the console with `` ` ``. Flow: [console](../architecture/console.md).
 

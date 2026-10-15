@@ -1,6 +1,6 @@
 # Architecture overview
 
-**Source:** crate `Cargo.toml`s, `moho_core/src/rng.rs`, `scripts/layering.txt`, `moho_app/src/`, `moho_fps_rules/src/`, `moho_fps/src/`, `src/app/`, `src/main.rs`.
+**Source:** crate `Cargo.toml`s, `moho_core/src/rng.rs`, `scripts/layering.txt`, `moho_app/src/`, `moho_fps_rules/src/`, `moho_fps/src/`, `flagstone/src/app/`, `flagstone/src/main.rs`.
 **Decisions:** ADRs
 [0001](../../_todo/adr/0001-render-api-boundary.md),
 [0003](../../_todo/adr/0003-core-owns-event-types.md),
@@ -12,13 +12,13 @@
 ## Crate graph
 
 Arrows run from dependent to dependency; colour is the line from `scripts/layering.txt`.
-The `moho` binary depends on all of them and is omitted from the edges.
+The `flagstone` binary depends on all of them and is omitted from the edges.
 
 ```mermaid
 flowchart TD
-    ui["moho_ui<br/>egui menus, console, HUD"]:::strategy
-    game["moho_game<br/>pawn, tools, controller,<br/>scenes"]:::strategy
-    voxel["moho_voxel<br/>voxel grid, meshing, lighting"]:::strategy
+    ui["flagstone_ui<br/>egui menus, console, HUD"]:::strategy
+    game["flagstone_game<br/>pawn, tools, controller,<br/>scenes"]:::strategy
+    voxel["flagstone_voxel<br/>voxel grid, meshing, lighting"]:::strategy
 
     renderer["moho_renderer<br/>wgpu backend"]:::engine
     rapi["moho_render_api<br/>Renderable, RenderMaterial,<br/>GPU-layout data"]:::engine
@@ -46,7 +46,7 @@ flowchart TD
     classDef fps fill:#ffedd5,stroke:#ea580c,color:#111
 ```
 
-Blue is the engine line, green is the strategy line, orange is the FPS line.
+Blue is the engine line, green is the flagstone line, orange is the FPS line.
 `moho_fps_rules` holds plain serialisable weapon and body rules (`Rifle`, `Magazine`, `Body`)
 with no engine dependency. `moho_fps` is the only FPS crate that reaches the engine: a library
 plus the `moho_fps` binary, described in [FPS prototype](fps-prototype.md). Every shot resolves
@@ -64,10 +64,10 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 |---|---|
 | Engine crates never depend on a game-line crate (dev-dependencies allowed) | The engine ships to both games and, after the split, from its own repo |
 | A game line never depends on another game line | Strategy and FPS must separate cleanly |
-| Domain crates (`moho_core`, `moho_voxel`, `moho_game`, `moho_level`, `moho_fps_rules`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
+| Domain crates (`moho_core`, `flagstone_voxel`, `flagstone_game`, `moho_level`, `moho_fps_rules`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
 | Only `moho_renderer` (the `gpu` row of `scripts/layering.txt`) reaches `wgpu`, `egui-wgpu` or `naga` without going through another workspace member, dev-dependencies included | GPU code stays behind the renderer boundary |
 
-Voxels live in the strategy-line `moho_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));
+Voxels live in the flagstone-line `flagstone_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));
 the engine sees world geometry only as meshes.
 
 ## Target crate graph (M2)
@@ -79,10 +79,10 @@ Edges are the intended direction, not a list each crate must have.
 
 ```mermaid
 flowchart TD
-    sbin["moho binary<br/>strategy wiring"]:::strategy
-    ui["moho_ui<br/>strategy HUD, menus"]:::strategy
-    game["moho_game<br/>pawn, tools, scenes"]:::strategy
-    voxel["moho_voxel<br/>voxel terrain"]:::strategy
+    sbin["flagstone binary<br/>strategy wiring"]:::strategy
+    ui["flagstone_ui<br/>strategy HUD, menus"]:::strategy
+    game["flagstone_game<br/>pawn, tools, scenes"]:::strategy
+    voxel["flagstone_voxel<br/>voxel terrain"]:::strategy
 
     app["moho_app<br/>window, loop, accumulator,<br/>GameClock, Game interface"]:::engineNew
     shell["moho_ui_shell<br/>egui, console, settings,<br/>modal stack"]:::engineNew
@@ -120,7 +120,7 @@ Changes from today:
 - Navigation (ENG-F17) and the character controller and camera (ENG-F21) are modules of
   an engine crate unless their specs name a boundary.
 
-The FPS line sits beside the strategy line and depends only on engine crates.
+The FPS line sits beside the flagstone line and depends only on engine crates.
 
 ### Engine seams
 
@@ -147,7 +147,7 @@ dropped except the sub-tick remainder; `tick_hz` must be non-zero (`FixedStep::n
 
 ## Runtime composition
 
-`App::from_config` (`src/app/initializer.rs`) builds each subsystem and passes dependencies
+`App::from_config` (`flagstone/src/app/initializer.rs`) builds each subsystem and passes dependencies
 explicitly. There is no service locator. The window, renderer and `AudioSystem` are created by
 `moho_app::run` and passed to the game through its contexts.
 
@@ -156,7 +156,7 @@ flowchart LR
     init["App::from_config<br/>initializer.rs"] --> bus["EventBus (Arc)<br/>event_setup.rs"]
     init --> rend["Renderer + egui adapter<br/>renderer_setup.rs"]
     init --> phys["PhysicsController<br/>physics_controller.rs"]
-    init --> sim["Simulation<br/>moho_game"]
+    init --> sim["Simulation<br/>flagstone_game"]
     init --> disp["InputDispatcher<br/>handlers registered in<br/>renderer_setup.rs"]
     bus -->|"subscribers forward into<br/>mpsc channels"| chans["ui · audio · graphics ·<br/>world · debug receivers"]
     chans --> loop["Game::tick / Game::frame<br/>drain receivers"]
@@ -166,15 +166,15 @@ flowchart LR
 
 | State | Owner |
 |---|---|
-| Voxel grid, light | `moho_voxel::LightSystem` (owns the grid) |
-| Chunk meshes | `ChunkStore` in `moho_voxel`; the renderer holds its own copy as `WorldMeshes` ([rendering](rendering.md#world-geometry)) |
-| Actors (spheres, cubes) | `ActorStore` in `moho_game` |
+| Voxel grid, light | `flagstone_voxel::LightSystem` (owns the grid) |
+| Chunk meshes | `ChunkStore` in `flagstone_voxel`; the renderer holds its own copy as `WorldMeshes` ([rendering](rendering.md#world-geometry)) |
+| Actors (spheres, cubes) | `ActorStore` in `flagstone_game` |
 | Time of day | `moho_app::GameClock`, owned by the loop and advanced after each `Game::tick` |
-| App mode | `moho_ui::GameState` ([input-and-state](input-and-state.md#gamestate)) |
+| App mode | `flagstone_ui::GameState` ([input-and-state](input-and-state.md#gamestate)) |
 | GPU resources | `moho_renderer`; game types reach it only through `moho_render_api` ([rendering](rendering.md)) |
 | Prefs | `moho_core::prefs::Prefs` ([format](../reference/prefs-format.md)) |
 | Simulation randomness | `moho_core::rng::SimRng`, one per system, held by value in that system's state and keyed by `StreamId::named(<system name>)`. Integer-only SplitMix64, so a seed and stream replay identically on every platform; the sequence is pinned by tests, and changing it breaks saved games and replays. Not `Copy`: duplicate only with an explicit `clone` |
-| Player character, noclip | `PhysicsController` (`src/app/physics_controller.rs`): `player` is a `CharacterHandle` into `moho_physics::PhysicsWorld`, which holds each character's `CharacterState` (position, velocity, yaw, pitch, grounded; `moho_physics/src/world/character.rs`). Per-tick movement rules are the pure `moho_physics::step` (`moho_physics/src/movement.rs`), driven by a `CharacterCommand` and game-supplied `MoveSettings`; the game owns the tuning (`STRATEGY_MOVE_SETTINGS` in `src/app/event_loop/frame_processor.rs`). A grounded walker follows walkable slopes (vertical speed tracks the ground, horizontal speed is kept) and is snapped down onto ground within `GROUND_SNAP`, so it stays on ground that levels out (a ramp onto a plateau) but leaves with its momentum where the ground falls away; the slide reports the surface under the capsule as `Slide::ground` (`moho_physics/src/movement.rs`). It also keeps the player's pre-tick state for the [frame camera](frame-loop.md#frame-camera) (`moho_physics::first_person_view`, `moho_physics/src/camera.rs`), reset on spawn and teleport. `reset` clears the handle and that state |
+| Player character, noclip | `PhysicsController` (`flagstone/src/app/physics_controller.rs`): `player` is a `CharacterHandle` into `moho_physics::PhysicsWorld`, which holds each character's `CharacterState` (position, velocity, yaw, pitch, grounded; `moho_physics/src/world/character.rs`). Per-tick movement rules are the pure `moho_physics::step` (`moho_physics/src/movement.rs`), driven by a `CharacterCommand` and game-supplied `MoveSettings`; the game owns the tuning (`STRATEGY_MOVE_SETTINGS` in `flagstone/src/app/event_loop/frame_processor.rs`). A grounded walker follows walkable slopes (vertical speed tracks the ground, horizontal speed is kept) and is snapped down onto ground within `GROUND_SNAP`, so it stays on ground that levels out (a ramp onto a plateau) but leaves with its momentum where the ground falls away; the slide reports the surface under the capsule as `Slide::ground` (`moho_physics/src/movement.rs`). It also keeps the player's pre-tick state for the [frame camera](frame-loop.md#frame-camera) (`moho_physics::first_person_view`, `moho_physics/src/camera.rs`), reset on spawn and teleport. `reset` clears the handle and that state |
 
 Entities live in typed stores; there is no general ECS (ADR-0004).
 
@@ -182,7 +182,7 @@ Entities live in typed stores; there is no general ECS (ADR-0004).
 
 All crates emit `tracing` events (`tracing::info!(count = n, "message")`, structured
 fields over interpolated text); the `log` facade is not a workspace dependency.
-`init_logging` in `src/main.rs` installs the only subscriber, filtered by `RUST_LOG`
+`init_logging` in `flagstone/src/main.rs` installs the only subscriber, filtered by `RUST_LOG`
 (default `info`), and also receives `log` records from third-party dependencies.
 Library crates never install a subscriber.
 

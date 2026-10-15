@@ -10,7 +10,7 @@ pub use preparation::ScenePreparation;
 /// `render` API to submit actors and world meshes for drawing. This centralizes
 /// material deduplication, instance collection, and transparent sorting.
 ///
-/// Scene *persistence* (save/load) lives in `moho_game::scene_persistence` —
+/// Scene *persistence* (save/load) lives in `flagstone_game::scene_persistence` —
 /// it constructs/reads game-domain types this crate must not name.
 #[derive(Debug)]
 pub struct Scene {

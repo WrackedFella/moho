@@ -8,7 +8,7 @@ body:
     attributes:
       label: Requesting line
       options:
-        - strategy
+        - flagstone
         - fps
     validations:
       required: true

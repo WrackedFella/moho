@@ -1,8 +1,8 @@
 # Input and state
 
-**Source:** `src/input_dispatcher.rs`, `moho_input/src/`, `moho_ui/src/actions.rs`, `src/app/renderer_setup.rs` (registrations),
-`src/app/game.rs` (`Game::event`, `poll_gamepads`), `src/main.rs` (`handle_keyboard_input`), `moho_ui/src/app_state/game_state.rs`,
-`moho_ui/src/app_state/state_coordinator.rs`.
+**Source:** `flagstone/src/input_dispatcher.rs`, `moho_input/src/`, `flagstone_ui/src/actions.rs`, `flagstone/src/app/renderer_setup.rs` (registrations),
+`flagstone/src/app/game.rs` (`Game::event`, `poll_gamepads`), `flagstone/src/main.rs` (`handle_keyboard_input`), `flagstone_ui/src/app_state/game_state.rs`,
+`flagstone_ui/src/app_state/state_coordinator.rs`.
 
 ## Input routing
 
@@ -48,8 +48,8 @@ Gameplay input is action-keyed. `moho_input` holds the platform-free `Key` and
 `MouseButton` (`Key::from_winit` maps `PhysicalKey`), the `Action` trait (stable id plus
 default bindings), `ActionBindings<A>`, and `ActionMap<A>`
 (`moho_input/src/action_map.rs`). Each game declares its own action enum
-(`StrategyAction` in `moho_ui/src/actions.rs`); the binary owns one `ActionMap` in
-`InputState` (`src/app/input_state.rs`).
+(`StrategyAction` in `flagstone_ui/src/actions.rs`); the binary owns one `ActionMap` in
+`InputState` (`flagstone/src/app/input_state.rs`).
 
 `handle_window_event` and `handle_device_event` feed key, mouse-button and raw
 mouse-motion events into the map. Gamepads feed it too: `Gamepads::poll`
@@ -58,9 +58,9 @@ into `pad_button` / `pad_axis` once per frame from `App::poll_gamepads`
 (`InputState::gamepads`, `None` when the backend fails to start). Outside `Playing`, or
 while the window lacks focus (`InputState::focused`), the events are discarded unapplied
 and `pad_disconnected` releases pad bindings. Every menu and console transition (`App::apply_transition`,
-`src/main.rs`) also calls `ActionMap::release_all`, so nothing stays held across a menu or the
+`flagstone/src/main.rs`) also calls `ActionMap::release_all`, so nothing stays held across a menu or the
 console and no press made there lands on resume; a key still down on resume acts only after it
-is pressed again. Once per tick `App::command` (`src/app/game.rs`) calls `end_tick`,
+is pressed again. Once per tick `App::command` (`flagstone/src/app/game.rs`) calls `end_tick`,
 which returns an `ActionFrame` and resets the per-tick state:
 
 - `held`: down at the end of the tick; `pressed` / `released`: edges at any point in the
@@ -77,7 +77,7 @@ Bindings persist in the `[bindings]` section of [prefs](../reference/prefs-forma
 
 ## GameState
 
-`moho_ui::GameState` decides input routing, rendering, cursor and whether the
+`flagstone_ui::GameState` decides input routing, rendering, cursor and whether the
 simulation runs. `can_transition_to` is the legality table; `StateTransitionCoordinator`
 returns the side effects (UI visibility, cursor grab) for a legal transition.
 
@@ -104,4 +104,4 @@ Same-state transitions are allowed (no-op). Everything else is rejected, includi
 | `ConsoleOpen` | console text | world (frozen) + console | free | paused |
 | `Paused` | pause menu | world (frozen) + menu | free | paused |
 
-`src/game_state.rs` re-exports `moho_ui::GameState`; the UI adapter takes the same type. Per-frame gameplay steps check `== Playing` ([frame-loop](frame-loop.md)).
+`flagstone/src/game_state.rs` re-exports `flagstone_ui::GameState`; the UI adapter takes the same type. Per-frame gameplay steps check `== Playing` ([frame-loop](frame-loop.md)).

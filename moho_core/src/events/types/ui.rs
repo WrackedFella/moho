@@ -2,7 +2,7 @@ use crate::events::Event;
 use std::any::Any;
 use std::path::PathBuf;
 
-/// Window display mode — mirrors `moho_ui::prefs::WindowMode` without a dependency.
+/// Window display mode — mirrors `flagstone_ui::prefs::WindowMode` without a dependency.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowMode {
     Windowed,

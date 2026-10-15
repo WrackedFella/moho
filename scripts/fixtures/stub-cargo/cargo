@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stand-in for cargo in the collect_graph self-test: answers only the `cargo tree` calls
 # check-layering.sh makes, from canned trees. STUB_CARGO_UI=clean|dirty picks whether
-# moho_ui's third-party wrapper (glyphon) pulls in wgpu. Anything else fails loudly.
+# flagstone_ui's third-party wrapper (glyphon) pulls in wgpu. Anything else fails loudly.
 set -euo pipefail
 
 fail() { echo "stub-cargo: unexpected call: cargo $*" >&2; exit 97; }
@@ -11,7 +11,7 @@ all="$*"
 shift
 
 if [[ "$*" == "--workspace --depth 0 -e normal --target all --prefix none --format {p}" ]]; then
-    printf '%s\n' 'moho v0.1.0 (/ws)' 'moho_renderer v0.1.0 (/ws)' 'moho_ui v0.1.0 (/ws)'
+    printf '%s\n' 'flagstone v0.1.0 (/ws)' 'moho_renderer v0.1.0 (/ws)' 'flagstone_ui v0.1.0 (/ws)'
     exit 0
 fi
 
@@ -35,13 +35,13 @@ pruned="${prune[*]-}"
 case "$crate:$pruned" in
     moho_renderer:)
         printf '%s\n' '0moho_renderer v0.1.0' '1wgpu v29.0.0' '1naga v29.0.0' ;;
-    moho_ui:)
-        printf '%s\n' '0moho_ui v0.1.0' '1glyphon v0.1.0'
+    flagstone_ui:)
+        printf '%s\n' '0flagstone_ui v0.1.0' '1glyphon v0.1.0'
         if [[ "${STUB_CARGO_UI:-}" == dirty ]]; then echo '2wgpu v29.0.0'; fi
         ;;
-    moho:)
-        printf '%s\n' '0moho v0.1.0' '1moho_renderer v0.1.0' '2wgpu v29.0.0' ;;
-    moho:moho_renderer)
-        echo '0moho v0.1.0' ;;
+    flagstone:)
+        printf '%s\n' '0flagstone v0.1.0' '1moho_renderer v0.1.0' '2wgpu v29.0.0' ;;
+    flagstone:moho_renderer)
+        echo '0flagstone v0.1.0' ;;
     *) fail "$all" ;;
 esac

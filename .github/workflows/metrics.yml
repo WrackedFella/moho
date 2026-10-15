@@ -77,12 +77,12 @@ jobs:
           rm -rf "$METRICS_OUTPUT_DIR" "$METRICS_SUMMARY_DIR"
           mkdir -p "$METRICS_OUTPUT_DIR" "$METRICS_SUMMARY_DIR"
           # Run metrics on all Rust source directories
-          ./rust-code-analysis-cli -m -p src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+          ./rust-code-analysis-cli -m -p flagstone/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
           ./rust-code-analysis-cli -m -p moho_core/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
           ./rust-code-analysis-cli -m -p moho_audio/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
           ./rust-code-analysis-cli -m -p moho_input/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
           ./rust-code-analysis-cli -m -p moho_renderer/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
-          ./rust-code-analysis-cli -m -p moho_ui/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
+          ./rust-code-analysis-cli -m -p flagstone_ui/src -l rust -O json -o "$METRICS_OUTPUT_DIR" --pr || true
 
       - name: Install PowerShell (if needed)
         run: |

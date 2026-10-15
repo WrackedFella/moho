@@ -1,8 +1,8 @@
 # Save file format
 
-**Source:** `moho_core/src/persist.rs` (envelope), `src/save.rs` (world and chunk files, `WORLD_FILE`),
-`moho_game/src/scene_persistence.rs` (scene payload, `SCENE_FILE`),
-`moho_voxel/src/grid/paletted.rs` (chunk payload, `CHUNK_FILE`). Rationale:
+**Source:** `moho_core/src/persist.rs` (envelope), `flagstone/src/save.rs` (world and chunk files, `WORLD_FILE`),
+`flagstone_game/src/scene_persistence.rs` (scene payload, `SCENE_FILE`),
+`flagstone_voxel/src/grid/paletted.rs` (chunk payload, `CHUNK_FILE`). Rationale:
 [ADR-0006](../../_todo/adr/0006-save-format-contract.md),
 [ADR-0016](../../_todo/adr/0016-game-lines-own-their-save-kinds.md).
 
@@ -23,8 +23,8 @@ Little-endian, 19-byte header followed by the payload.
 | 19 | n | postcard payload; must be consumed exactly |
 
 `FileKind` is a `{ tag, version }` pair declared by the crate that owns the payload, not
-by `moho_core`: `WORLD_FILE` in `src/save.rs`, `SCENE_FILE` in `moho_game`, `CHUNK_FILE`
-in `moho_voxel`. Errors report the raw tag byte.
+by `moho_core`: `WORLD_FILE` in `flagstone/src/save.rs`, `SCENE_FILE` in `flagstone_game`, `CHUNK_FILE`
+in `flagstone_voxel`. Errors report the raw tag byte.
 
 `decode` checks in this order: magic (`NotASaveFile`), version 0 (`UnsupportedFormat`,
 so pre-envelope saves keep that error), tag against the caller's kind (`WrongKind`),

@@ -1,12 +1,12 @@
 # Frame loop
 
-**Source:** `moho_app/src/` (`runner.rs`, `lib.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `src/app/game.rs`
-(`impl moho_app::Game for App`), `src/app/event_loop/`.
+**Source:** `moho_app/src/` (`runner.rs`, `lib.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `flagstone/src/app/game.rs`
+(`impl moho_app::Game for App`), `flagstone/src/app/event_loop/`.
 **Related:** [ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md) (fixed tick).
 
 `moho_app::run` owns the window, the winit `ApplicationHandler` (`runner.rs`) and the
 renderer and audio handles. A game implements the `Game` trait; the binary's `App`
-implements it in `src/app/game.rs`. Simulation runs in fixed ticks from `new_events`,
+implements it in `flagstone/src/app/game.rs`. Simulation runs in fixed ticks from `new_events`,
 window and device input go to `Game::event`, drawing is `Game::frame` on `RedrawRequested`.
 
 ## Callbacks

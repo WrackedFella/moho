@@ -1,0 +1,16 @@
+[package]
+name = "flagstone_game"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+moho_core = { path = "../moho_core" }
+flagstone_voxel = { path = "../flagstone_voxel" }
+moho_render_api = { path = "../moho_render_api" }
+glam = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+
+[lints]
+workspace = true

@@ -11,7 +11,7 @@ labels() {
     gh label create agent-ready --force --color 0E8A16 --description "Starts an orchestrator run on this issue; apply only to Ready, Agent-eligible items"
     gh label create feature --force --color 5319E7 --description "Parent issue for an approved feature"
     gh label create line:engine --force --color 1D76DB --description "Engine crates"
-    gh label create line:strategy --force --color D93F0B --description "Strategy/base-builder game"
+    gh label create line:flagstone --force --color D93F0B --description "Strategy/base-builder game"
     gh label create line:fps --force --color FBCA04 --description "FPS prototype"
 }
 

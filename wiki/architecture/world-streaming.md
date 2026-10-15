@@ -1,9 +1,9 @@
 # World streaming
 
-**Source:** `src/app/chunk_streamer.rs`, `src/app/event_loop/frame_processor.rs`
+**Source:** `flagstone/src/app/chunk_streamer.rs`, `flagstone/src/app/event_loop/frame_processor.rs`
 (`update_chunk_streaming`, `update_light_system`), `event_processor.rs` (`process_world_events`),
-`src/app/world_geometry.rs`, `moho_voxel/src/` (`light_system.rs`, `streaming.rs`, `light_jobs.rs`).
-Voxels live in the strategy-line `moho_voxel` per [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md).
+`flagstone/src/app/world_geometry.rs`, `flagstone_voxel/src/` (`light_system.rs`, `streaming.rs`, `light_jobs.rs`).
+Voxels live in the flagstone-line `flagstone_voxel` per [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md).
 
 ## Chunk lifecycle
 

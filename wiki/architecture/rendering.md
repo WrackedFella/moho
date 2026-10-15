@@ -1,7 +1,7 @@
 # Rendering
 
 **Source:** `moho_render_api/src/` (`world_geometry.rs`), `moho_renderer/src/` (`scene.rs`,
-`world_meshes.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `src/app/world_geometry.rs`,
+`world_meshes.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `flagstone/src/app/world_geometry.rs`,
 `shaders/`, `moho_level/src/`.
 **Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
 [ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md).
@@ -14,7 +14,7 @@ The renderer never names a game type. Game types implement `Renderable` and
 
 ```mermaid
 flowchart LR
-    subgraph game["moho_game (strategy line)"]
+    subgraph game["flagstone_game (flagstone line)"]
         sph["Sphere, Cube"]
     end
     subgraph api["moho_render_api (engine)"]
@@ -37,7 +37,7 @@ flowchart LR
 ```
 
 `Scene::render` is generic over the actor types, so `moho_renderer` compiles without
-`moho_game`.
+`flagstone_game`.
 
 ## World geometry
 
@@ -53,7 +53,7 @@ first: replaced or removed meshes are unregistered from the backend, new ones ar
 registered, and an empty mesh counts as a remove. Opaque world meshes are drawn one
 draw per mesh in id order.
 
-The binary adapts voxel chunks in `src/app/world_geometry.rs`: `chunk_mesh_id` packs
+The binary adapts voxel chunks in `flagstone/src/app/world_geometry.rs`: `chunk_mesh_id` packs
 the chunk position at 21 bits per signed axis, `chunk_world_mesh` converts a
 `VoxelChunk`, and `insert_chunk` / `remove_chunk` keep the `ChunkStore`, the
 renderer and the physics colliders in step. The same `WorldMesh` and `WorldMeshId` go to
@@ -144,7 +144,7 @@ UI reaches the renderer as plain data ([ADR-0013](../../_todo/adr/0013-ui-reache
 not as wgpu or egui types. `moho_render_api::UiFrame` holds `pixels_per_point`, texture
 deltas (`UiTextureSet` before drawing, `UiTextureId` frees after) and `UiMesh`es
 (clipped, textured triangle lists of `UiVertex`, in points). A game implements
-`UiFrameSource` (`moho_ui`'s `EguiAdapter` maps egui tessellation in `adapter/paint_map.rs`)
+`UiFrameSource` (`flagstone_ui`'s `EguiAdapter` maps egui tessellation in `adapter/paint_map.rs`)
 and registers a `UiSource` with `RendererBackend::set_ui_source`; the
 renderer pulls `Option<UiFrame>` once per frame with the surface size. The adapter
 consumes egui's `TexturesDelta`; `textures_set` keeps the order of partial updates

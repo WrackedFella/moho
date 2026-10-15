@@ -248,7 +248,7 @@ What the game must be able to do (needs, not solutions). Generic needs belong in
 3. **Render characters:** at minimum rigid segmented bodies (Phase 1); skeletal animation later. *(Phase 1 / later)*
 4. **AI navigation on non-voxel maps:** compute walkable paths and cover points over an arbitrary static level. *(Phase 1)*
 5. **Positional 3D audio:** gunshots and footsteps located and attenuated in space. *(Phase 1)*
-6. **FPS-owned UI:** HUD, inventory, and menus that don't depend on strategy-game UI; the generic parts move to the engine. *(Phase 1–2)*
+6. **FPS-owned UI:** HUD, inventory, and menus that don't depend on the strategy game's UI; the generic parts move to the engine. *(Phase 1–2)*
 7. **Data-driven definitions from files:** load item, weapon, med and faction definitions from data, so mods can add or override them. *(Phase 2)*
 8. **Game time separate from the sim tick:** a game clock that can scale and skip (sleep fast-forward) on top of the fixed 60 Hz tick (ADR-0009). *(Phase 5)*
 9. **Save and load world state:** player, inventory, zone and actor state (ADR-0006 contract). *(Phase 5–6)*

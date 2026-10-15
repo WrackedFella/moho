@@ -915,6 +915,69 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
 
 [[package]]
+name = "flagstone"
+version = "0.1.0"
+dependencies = [
+ "flagstone_game",
+ "flagstone_ui",
+ "flagstone_voxel",
+ "glam 0.33.12",
+ "moho_app",
+ "moho_audio",
+ "moho_core",
+ "moho_input",
+ "moho_physics",
+ "moho_render_api",
+ "moho_renderer",
+ "proptest",
+ "serde",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+ "winit",
+]
+
+[[package]]
+name = "flagstone_game"
+version = "0.1.0"
+dependencies = [
+ "flagstone_voxel",
+ "glam 0.33.12",
+ "moho_core",
+ "moho_render_api",
+ "serde",
+ "tracing",
+]
+
+[[package]]
+name = "flagstone_ui"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "egui-winit",
+ "flagstone_game",
+ "moho_core",
+ "moho_input",
+ "moho_render_api",
+ "rand 0.10.2",
+ "tempfile",
+ "tracing",
+ "winit",
+]
+
+[[package]]
+name = "flagstone_voxel"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "moho_core",
+ "moho_render_api",
+ "proptest",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "flate2"
 version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1631,30 +1694,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "moho"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "glam 0.33.12",
- "moho_app",
- "moho_audio",
- "moho_core",
- "moho_game",
- "moho_input",
- "moho_physics",
- "moho_render_api",
- "moho_renderer",
- "moho_ui",
- "moho_voxel",
- "proptest",
- "serde",
- "tempfile",
- "tracing",
- "tracing-subscriber",
- "winit",
-]
-
-[[package]]
 name = "moho_app"
 version = "0.1.0"
 dependencies = [
@@ -1683,6 +1722,7 @@ name = "moho_core"
 version = "0.1.0"
 dependencies = [
  "crc32fast",
+ "criterion",
  "glam 0.33.12",
  "ini",
  "postcard",
@@ -1721,18 +1761,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "moho_game"
-version = "0.1.0"
-dependencies = [
- "glam 0.33.12",
- "moho_core",
- "moho_render_api",
- "moho_voxel",
- "serde",
- "tracing",
 ]
 
 [[package]]
@@ -1793,34 +1821,6 @@ dependencies = [
  "tracing",
  "wgpu",
  "winit",
-]
-
-[[package]]
-name = "moho_ui"
-version = "0.1.0"
-dependencies = [
- "egui",
- "egui-winit",
- "moho_core",
- "moho_game",
- "moho_input",
- "moho_render_api",
- "rand 0.10.2",
- "tempfile",
- "tracing",
- "winit",
-]
-
-[[package]]
-name = "moho_voxel"
-version = "0.1.0"
-dependencies = [
- "glam 0.33.12",
- "moho_core",
- "moho_render_api",
- "proptest",
- "serde",
- "tracing",
 ]
 
 [[package]]

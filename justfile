@@ -65,23 +65,23 @@ layering:
     accepts-graph() { "{{replace(just_executable(), '\', '/')}}" _layering-accepts-graph "$@"; }
     collects() { "{{replace(just_executable(), '\', '/')}}" _layering-collects "$@"; }
     scripts/check-layering.sh scripts/layering.txt
-    rejects layering-violation 'engine-reaches-game: moho_ui → moho_game'
+    rejects layering-violation 'engine-reaches-game: flagstone_ui → flagstone_game'
     rejects layering-engine-fps 'engine-reaches-game: moho_renderer → moho_render_api'
     rejects layering-unassigned 'unassigned: moho_input'
-    rejects layering-platform 'domain-reaches-platform: moho_ui → egui'
-    rejects layering-platform 'domain-reaches-platform: moho → wgpu'
-    rejects layering-platform 'domain-reaches-platform: moho_ui → winit'
-    rejects layering-cross-line 'cross-game-line: moho_ui → moho_game'
-    rejects layering-cross-line 'cross-game-line: moho → moho_ui'
+    rejects layering-platform 'domain-reaches-platform: flagstone_ui → egui'
+    rejects layering-platform 'domain-reaches-platform: flagstone → wgpu'
+    rejects layering-platform 'domain-reaches-platform: flagstone_ui → winit'
+    rejects layering-cross-line 'cross-game-line: flagstone_ui → flagstone_game'
+    rejects layering-cross-line 'cross-game-line: flagstone → flagstone_ui'
     rejects layering-duplicate 'duplicate: moho_input'
     rejects layering-unknown 'unknown: moho_gmae'
     rejects layering-repeated-row 'repeated row: engine'
     rejects layering-gpu 'gpu-outside-renderer: moho_renderer → wgpu'
     rejects layering-gpu 'gpu-outside-renderer: moho_renderer → naga'
-    rejects-graph layering-gpu-graph layering-gpu-graph-direct 'gpu-outside-renderer: moho_ui → wgpu'
-    rejects-graph layering-gpu-graph layering-gpu-graph-egui-wgpu 'gpu-outside-renderer: moho_ui → egui-wgpu'
+    rejects-graph layering-gpu-graph layering-gpu-graph-direct 'gpu-outside-renderer: flagstone_ui → wgpu'
+    rejects-graph layering-gpu-graph layering-gpu-graph-egui-wgpu 'gpu-outside-renderer: flagstone_ui → egui-wgpu'
     accepts-graph layering-gpu-graph layering-gpu-graph-renderer-only
-    collects dirty 'gpu-outside-renderer: moho_ui → wgpu'
+    collects dirty 'gpu-outside-renderer: flagstone_ui → wgpu'
     collects clean 'layering: OK'
 
 # Fails unless the layering check exits non-zero on the fixture and prints the expected line.
@@ -133,8 +133,8 @@ _layering-accepts-graph fixture graph:
     exit 1
 
 # Runs the real graph collection against scripts/fixtures/stub-cargo/cargo, so the
-# own-reach pruning in check-layering.sh is exercised. ui=dirty makes moho_ui's wrapper
-# crate pull in wgpu (must be rejected); ui=clean leaves only moho's path through
+# own-reach pruning in check-layering.sh is exercised. ui=dirty makes flagstone_ui's wrapper
+# crate pull in wgpu (must be rejected); ui=clean leaves only flagstone's path through
 # moho_renderer (must pass). Expects 'layering: OK' with exit 0, else non-zero and the line.
 [private]
 _layering-collects ui expected:
@@ -147,7 +147,7 @@ _layering-collects ui expected:
     else
         [ "$status" -ne 0 ] && grep -qF -- '{{expected}}' <<<"$out" && exit 0
     fi
-    echo "layering self-test failed: collect_graph with stub cargo, moho_ui {{ui}}" >&2
+    echo "layering self-test failed: collect_graph with stub cargo, flagstone_ui {{ui}}" >&2
     echo "  expected: {{expected}}" >&2
     echo "  got: exit $status, output:" >&2
     sed 's/^/    /' <<<"$out" >&2

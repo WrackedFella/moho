@@ -1,0 +1,60 @@
+[package]
+name = "flagstone"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+
+[dependencies.serde]
+workspace = true
+features = ["derive"]
+
+[dependencies.glam]
+workspace = true
+
+[dependencies.moho_app]
+path = "../moho_app"
+
+[dependencies.moho_audio]
+path = "../moho_audio"
+
+[dependencies.moho_core]
+path = "../moho_core"
+
+[dependencies.flagstone_voxel]
+path = "../flagstone_voxel"
+
+[dependencies.flagstone_game]
+path = "../flagstone_game"
+
+[dependencies.moho_input]
+path = "../moho_input"
+
+[dependencies.moho_render_api]
+path = "../moho_render_api"
+
+[dependencies.moho_renderer]
+path = "../moho_renderer"
+
+[dependencies.moho_physics]
+workspace = true
+
+[dependencies.flagstone_ui]
+path = "../flagstone_ui"
+
+[dependencies.tracing]
+workspace = true
+
+[dependencies.tracing-subscriber]
+workspace = true
+
+[dependencies.winit]
+workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }
+proptest = { workspace = true }
+
+[lints]
+workspace = true

@@ -101,7 +101,7 @@ mod tests {
     }
 
     /// Minimal sphere-like `Renderable` test fixture. `moho_renderer` must not
-    /// depend on `moho_game`, so tests use local stand-ins instead of the real
+    /// depend on `flagstone_game`, so tests use local stand-ins instead of the real
     /// `Sphere`/`Cube` actor types.
     #[derive(Copy, Clone, Debug)]
     struct TestSphere {

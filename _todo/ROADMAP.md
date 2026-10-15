@@ -19,7 +19,7 @@ and can run alongside 0.2–0.3.
 | # | Item | Criterion | Depends on |
 |---|---|---|---|
 | 0.1 | Accept [ADR-0005](adr/0005-crate-lines-and-dependency-direction.md) (crate lines) and [ENG-F8](https://github.com/WrackedFella/moho/issues/61) | G2 | — |
-| 0.2 | [ENG-F8-01](https://github.com/WrackedFella/moho/issues/63): `moho_sim` merged into `moho_game` | G2 | 0.1 |
+| 0.2 | [ENG-F8-01](https://github.com/WrackedFella/moho/issues/63): `moho_sim` merged into the game crate (now `flagstone_game`) | G2 | 0.1 |
 | 0.3 | [ENG-F8-02](https://github.com/WrackedFella/moho/issues/64): layering check in `just check`; `moho_core` drops `winit` | G2 | 0.2 |
 | 0.4 | [ENG-F7-01](https://github.com/WrackedFella/moho/issues/65): typed chunk and actor stores (domain: tests reviewed first) | G1 | 0.1 |
 | 0.5 | [ENG-F7-02](https://github.com/WrackedFella/moho/issues/66): legion removed; deny ignores name their owning cards | G1, G3 | 0.4 |
@@ -128,9 +128,9 @@ its consumers near, not when the earlier wave fully closes.
 | # | Item | Requests | Consumer | Wave | Depends on |
 |---|---|---|---|---|---|
 | 2.1 | [ENG-F21-03](https://github.com/WrackedFella/moho/issues/330): a character that leaves the ground keeps its momentum (`moho_physics`, reproduce first) | #302 | possession, FPS movement | 1 | — |
-| 2.2 | [ENG-F18-01](https://github.com/WrackedFella/moho/issues/331): saved settings survive a later console command (binary, `moho_ui`) | #179 comment | strategy settings; FPS via ENG-F18 | 1 | — |
-| 2.3 | [ENG-F18-02](https://github.com/WrackedFella/moho/issues/332): menu music plays from `assets/` (`moho_ui`) | #186 check | strategy start menu | 1 | — |
-| 2.3a | [ENG-F18-03](https://github.com/WrackedFella/moho/issues/333): Escape pauses the game in place instead of reloading the world (binary, `moho_ui`) | Justin, 2026-10-14 | strategy play; FPS via ENG-F18 | 1 | — |
+| 2.2 | [ENG-F18-01](https://github.com/WrackedFella/moho/issues/331): saved settings survive a later console command (binary, `flagstone_ui`) | #179 comment | strategy settings; FPS via ENG-F18 | 1 | — |
+| 2.3 | [ENG-F18-02](https://github.com/WrackedFella/moho/issues/332): menu music plays from `assets/` (`flagstone_ui`) | #186 check | strategy start menu | 1 | — |
+| 2.3a | [ENG-F18-03](https://github.com/WrackedFella/moho/issues/333): Escape pauses the game in place instead of reloading the world (binary, `flagstone_ui`) | Justin, 2026-10-14 | strategy play; FPS via ENG-F18 | 1 | — |
 | 2.4 | [ENG-F16](https://github.com/WrackedFella/moho/issues/228) positional audio, with the `moho_audio` system tests deferred from ENG-F22 (priority) | — | FPS GDD §10; strategy cues | 1 | — |
 | 2.5 | [ENG-F6](https://github.com/WrackedFella/moho/issues/233) seeded RNG (reopened): [ENG-F6-01](https://github.com/WrackedFella/moho/issues/335) | #316 | FPS-F2-02 (#299); strategy world gen | 1 | — |
 | 2.5a | [ENG-F25](https://github.com/WrackedFella/moho/issues/346) a game line adds save files without changing the engine ([ADR-0016](adr/0016-game-lines-own-their-save-kinds.md)): [ENG-F25-01](https://github.com/WrackedFella/moho/issues/347) (priority) | — | SG-F4 marks persist; FPS saves | 1 | before SG-F4's marks-persist card |
@@ -162,7 +162,7 @@ its consumers near, not when the earlier wave fully closes.
 | S.3 | [SG-F5](https://github.com/WrackedFella/moho/issues/309) run the colony from above, step into a pawn | 2.6, 2.7 | block and pawn picking are strategy-line |
 | S.4 | [SG-F4](https://github.com/WrackedFella/moho/issues/310) pawns dig what I mark | 2.5a, 2.7, 2.8; then 2.9, 2.10 | first new persisted type; #303 voxel routing is its card. Before SG-F3 |
 | S.5 | [SG-F3](https://github.com/WrackedFella/moho/issues/312) buildings and construction (not a gate item) | 2.7 (placement preview) | after SG-F4 |
-| S.6 | SG-F6 new worlds look intentional ([draft](strategy-game/SG-F6-world-generation/_feature.md), not filed; not a gate item) | none | waits for the user to rank the world-generation problems |
+| S.6 | SG-F6 new worlds look intentional ([draft](flagstone/SG-F6-world-generation/_feature.md), not filed; not a gate item) | none | waits for the user to rank the world-generation problems |
 
 ### FPS line
 
