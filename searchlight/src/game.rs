@@ -620,8 +620,13 @@ impl Game for FpsGame {
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &FpsCommand) {
+        let was_dead = self.sim.player_body().is_dead();
         self.previous = self.sim.player();
         self.sim.tick(command, ctx.tick_length.as_secs_f32());
+        if was_dead && !self.sim.player_body().is_dead() {
+            self.previous = self.sim.player();
+            self.stage.status.clear();
+        }
         self.stage.tick_flashes();
     }
 

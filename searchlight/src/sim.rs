@@ -62,7 +62,7 @@ pub struct SimConfig {
     /// Ticks a reload takes: pressed on tick `t`, it completes on tick `t + reload_ticks`,
     /// where the new magazine is in and the rifle can fire again.
     pub reload_ticks: u32,
-    /// Pools of every dummy's body.
+    /// Pools of the dummies', enemies' and the player's bodies.
     pub body: BodyProfile,
     pub rifle: Rifle,
     /// Magazines the player can reload from, used first to last.
@@ -209,16 +209,17 @@ pub struct FpsSim {
     rng: SplitMix64,
     weapon: Weapon,
     outbox: Vec<Feedback>,
-    /// What a restart rebuilds from; `None` for a sim not built from an arena.
-    origin: Option<(Arc<Arena>, SimConfig)>,
+    /// What a restart rebuilds the characters from, in the same world.
+    origin: (Spawns, SimConfig),
 }
 
-/// Where and how a sim's characters start.
-struct Spawns<'a> {
+/// Where a sim's characters start.
+#[derive(Clone, Debug)]
+struct Spawns {
     player: Vec3,
-    dummies: &'a [Vec3],
-    enemies: &'a [Vec3],
-    route: &'a [Vec3],
+    dummies: Vec<Vec3>,
+    enemies: Vec<Vec3>,
+    route: Vec<Vec3>,
 }
 
 impl FpsSim {
@@ -236,19 +237,14 @@ impl FpsSim {
     ) -> Self {
         let spawns = Spawns {
             player: player_spawn,
-            dummies: dummy_spawns,
-            enemies: &[],
-            route: &[],
+            dummies: dummy_spawns.to_vec(),
+            enemies: Vec::new(),
+            route: Vec::new(),
         };
-        Self::assemble(world, &spawns, config, None)
+        Self::assemble(world, spawns, config)
     }
 
-    fn assemble(
-        mut world: PhysicsWorld,
-        spawns: &Spawns,
-        config: SimConfig,
-        origin: Option<Arc<Arena>>,
-    ) -> Self {
+    fn assemble(mut world: PhysicsWorld, spawns: Spawns, config: SimConfig) -> Self {
         let player = world.add_character(spawns.player + Vec3::Y * STAND_HEIGHT);
         let player_volumes = player_hit_volumes();
         for volume in player_volumes {
@@ -262,7 +258,7 @@ impl FpsSim {
             .expect("the player has a hit volume for every part")
             .offset;
         let mut targets = Vec::new();
-        for (index, &spawn) in spawns.dummies.iter().chain(spawns.enemies).enumerate() {
+        for (index, &spawn) in spawns.dummies.iter().chain(&spawns.enemies).enumerate() {
             let (target, centre) = dummy_at(index, spawn);
             let handle = world.add_character(centre);
             for volume in dummy_hit_volumes(target) {
@@ -271,7 +267,7 @@ impl FpsSim {
                     .expect("the target was added a moment ago");
             }
             let brain = (index >= spawns.dummies.len()).then(|| {
-                let (nearest, yaw) = nearest_waypoint(spawn, spawns.route);
+                let (nearest, yaw) = nearest_waypoint(spawn, &spawns.route);
                 world
                     .set_character_look(handle, yaw, 0.0)
                     .expect("the enemy was added a moment ago");
@@ -300,20 +296,20 @@ impl FpsSim {
             dummy_count: spawns.dummies.len(),
             player_body: Body::new(config.body),
             player_max_health: config.body.max_health,
-            route: spawns.route.to_vec(),
+            route: spawns.route.clone(),
             enemy: config.enemy,
             aim_offset,
             rng: SplitMix64(config.enemy.seed),
             weapon: Weapon::Ready,
             outbox: Vec::new(),
-            origin: origin.map(|arena| (arena, config)),
+            origin: (spawns, config),
         }
     }
 
     /// Runs one tick of `dt` seconds.
     ///
-    /// While the player is dead only `command.restart` is read, and it rebuilds the sim as
-    /// [`FpsSim::start`] would. Otherwise the enemies perceive and move, the player moves, the
+    /// While the player is dead only `command.restart` is read, and it puts every character
+    /// back at its spawn, as a fresh sim over the same world would have them. Otherwise the enemies perceive and move, the player moves, the
     /// world steps, the player's weapon actions apply, then the enemies that decided to fire
     /// do, and enemies that died leave the world.
     pub fn tick(&mut self, command: &FpsCommand, dt: f32) {
@@ -348,12 +344,21 @@ impl FpsSim {
         }
     }
 
+    /// Puts every character back at its spawn in the same world, as a fresh sim would be.
     fn restart(&mut self) {
-        let (arena, config) = self
-            .origin
-            .clone()
-            .expect("only a sim started from an arena has enemies that can kill the player");
-        *self = Self::start(arena, config);
+        let mut world = std::mem::replace(&mut self.world, PhysicsWorld::new());
+        let characters = self
+            .targets
+            .iter()
+            .filter_map(|target| target.handle)
+            .chain([self.player]);
+        for handle in characters {
+            world
+                .remove_character(handle)
+                .expect("the sim removes each of its characters once");
+        }
+        let (spawns, config) = self.origin.clone();
+        *self = Self::assemble(world, spawns, config);
     }
 
     /// Where the enemies aim: the chosen part of the player's body as it stands now.
@@ -590,12 +595,11 @@ impl FpsSim {
     pub fn start(arena: Arc<Arena>, config: SimConfig) -> Self {
         let spawns = Spawns {
             player: arena.player_spawn,
-            dummies: &arena.dummy_spawns,
-            enemies: &arena.enemy_spawns,
-            route: &arena.route,
+            dummies: arena.dummy_spawns.clone(),
+            enemies: arena.enemy_spawns.clone(),
+            route: arena.route.clone(),
         };
-        let world = arena.physics_world();
-        Self::assemble(world, &spawns, config, Some(arena.clone()))
+        Self::assemble(arena.physics_world(), spawns, config)
     }
 
     pub fn player_body(&self) -> &Body {
@@ -1866,8 +1870,8 @@ mod enemy_tests {
 
         // Replay the shooter's spread on a twin sim: the same seed gives the same shots.
         let shooter = probe.targets[0].handle.expect("the shooter spawned");
-        let eye = probe.world.character(shooter).expect("alive").position
-            + Vec3::Y * probe.eye_height;
+        let eye =
+            probe.world.character(shooter).expect("alive").position + Vec3::Y * probe.eye_height;
         let aim = probe.player_aim_point();
         let clipped = (0..count(&ticks, enemy_fired))
             .filter(|_| {

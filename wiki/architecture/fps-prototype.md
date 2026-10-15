@@ -57,8 +57,8 @@ Each tick an enemy casts a sight ray from its eye to the player's aim point (the
 by `SimConfig::enemy_aim_at`) and sets `Percept::target` only when that ray strikes a
 `SurfaceTag::Player`, so walls block sight. `Brain::think` returns an `Intent` (forward
 fraction, yaw delta, fire). `Patrol` walks the route in order, wrapping; a target inside
-`sight_range` and `view_half_angle` starts `Engage`, which keeps chasing while the target
-stays visible, fires after `reaction_ticks` of continuous sight, within `fire_cone` of the
+`sight_range` and `view_half_angle` starts `Engage`, which stands and faces the target while it
+stays visible (it does not chase), fires after `reaction_ticks` of continuous sight, within `fire_cone` of the
 bearing and off cooldown. Aim error comes from a seeded generator (`EnemyTuning::seed`), so
 runs repeat. Enemy shots use the shot path below; a hit on the player emits
 `Feedback::PlayerHit`, and a dead player emits `Feedback::PlayerDied`.

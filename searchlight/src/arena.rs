@@ -32,6 +32,9 @@ pub enum ArenaError {
     /// A marker that must be unique appears more than once.
     #[error("arena has more than one `{marker}` marker")]
     DuplicateMarker { marker: String },
+    /// A waypoint's suffix is not a number, or repeats an earlier waypoint's number.
+    #[error("arena waypoint `{marker}` needs a unique numeric suffix")]
+    BadWaypoint { marker: String },
 }
 
 /// The arena's markers, grouped by kind. Within a kind, markers keep file order.
@@ -56,7 +59,8 @@ impl ArenaMarkers {
     /// [`ArenaError::MissingMarker`] naming `player_spawn` or `dummy_NN`;
     /// [`ArenaError::DuplicateMarker`] naming `player_spawn`;
     /// [`ArenaError::MissingMarker`] naming `waypoint_NN` when there is an enemy spawn and
-    /// no waypoint to patrol.
+    /// no waypoint to patrol; [`ArenaError::BadWaypoint`] naming a waypoint whose suffix is not
+    /// a number or repeats an earlier one's value.
     pub fn from_level(level: &Level) -> Result<Self, ArenaError> {
         let mut spawns = Vec::new();
         let mut dummies = Vec::new();
@@ -98,6 +102,13 @@ impl ArenaMarkers {
                 marker: format!("{WAYPOINT_PREFIX}NN"),
             });
         }
+        let mut numbers = Vec::new();
+        for marker in &waypoints {
+            let number = waypoint_number(marker).filter(|n| !numbers.contains(n));
+            numbers.push(number.ok_or_else(|| ArenaError::BadWaypoint {
+                marker: marker.name.clone(),
+            })?);
+        }
         Ok(Self {
             player_spawn,
             dummies,
@@ -108,15 +119,16 @@ impl ArenaMarkers {
     }
 }
 
+/// The `NN` of a `waypoint_NN` marker, `None` when it is not a number.
+fn waypoint_number(marker: &LevelMarker) -> Option<u32> {
+    marker.name[WAYPOINT_PREFIX.len()..].parse().ok()
+}
+
 impl ArenaMarkers {
     /// The patrol loop: every `waypoint_NN` position, in numeric order of `NN`.
     pub fn patrol_route(&self) -> Vec<Vec3> {
-        let number = |marker: &LevelMarker| {
-            let digits = &marker.name[WAYPOINT_PREFIX.len()..];
-            (digits.len(), digits.to_owned())
-        };
         let mut waypoints: Vec<&LevelMarker> = self.waypoints.iter().collect();
-        waypoints.sort_by_key(|marker| number(marker));
+        waypoints.sort_by_key(|marker| waypoint_number(marker));
         waypoints
             .into_iter()
             .map(|marker| marker.position)

@@ -73,7 +73,7 @@ impl Default for EnemyTuning {
 pub enum Brain {
     /// Walking the route towards waypoint `next`.
     Patrol { next: usize },
-    /// Chasing a seen target; `next` is the route position to resume from.
+    /// Standing and facing a seen target (no chase); `next` is the route position to resume from.
     Engage {
         next: usize,
         /// Consecutive ticks the target has been seen, this one included.
