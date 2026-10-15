@@ -1399,7 +1399,6 @@ mod tests {
             );
             assert_eq!(screen_shown(&adapter).as_deref(), Some("settings"));
             assert_eq!(app.game_state, GameState::Paused);
-            // What Back resolves to in `Paused`.
             publish_ui(
                 &mut app,
                 &mut clock,

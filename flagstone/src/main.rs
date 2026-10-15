@@ -351,7 +351,6 @@ impl App {
         })
     }
 
-    /// Leave the pause and return to play.
     fn resume_game(&mut self) {
         use flagstone_ui::StateTransitionCoordinator;
 
