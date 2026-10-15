@@ -146,6 +146,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn prefs_file_stays_config_prefs_ini() {
+        assert_eq!(
+            Prefs::config_path(),
+            std::path::Path::new("config/prefs.ini")
+        );
+    }
+
+    #[test]
     fn test_default_config() {
         let config = AppConfig::default();
         assert!(config.mouse_sensitivity > 0.0);

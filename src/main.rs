@@ -506,4 +506,9 @@ mod tests {
             std::time::Duration::from_secs(1) / 60
         );
     }
+
+    #[test]
+    fn app_config_window_is_titled_flagstone() {
+        assert_eq!(app_config().window_title, "Flagstone");
+    }
 }
