@@ -8,7 +8,7 @@ mod rendering;
 
 pub use crate::app_state::GameState;
 use crate::prefs::Prefs;
-use crate::screens::{Menu, MenuAction};
+use crate::screens::{Menu, MenuAction, SettingsMenu};
 use crate::ui_state::UiStateManager;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -78,6 +78,9 @@ pub struct EguiAdapter {
 
     // Checked once at construction.
     menu_music_exists: bool,
+
+    // Prefs from the last `SettingsSaved` action, until the app takes them.
+    saved_prefs: Option<Prefs>,
 }
 
 /// Lightweight progress state used by the adapter to render an overlay.
@@ -131,6 +134,7 @@ impl EguiAdapter {
             last_hovered_key: None,
             menu_music_playing: false,
             menu_music_exists: std::path::Path::new(event_routing::MENU_MUSIC_PATH).exists(),
+            saved_prefs: None,
         }
     }
 
@@ -151,6 +155,38 @@ impl EguiAdapter {
     /// Show a specific menu
     pub fn show_menu(&mut self, name: &str) {
         self.ui_state.show_screen(name);
+    }
+
+    /// Replace the settings screen with one seeded from `prefs` (saving to `save_path`)
+    /// and show it, so it starts from the running prefs rather than the file.
+    pub fn open_settings(&mut self, prefs: Prefs, save_path: PathBuf) {
+        self.ui_state.add_screen(
+            "settings".to_string(),
+            Box::new(SettingsMenu::with_prefs_at(prefs, save_path)),
+        );
+        self.ui_state.show_screen("settings");
+    }
+
+    /// The registered settings screen, if it is a `SettingsMenu`.
+    pub fn settings_menu_mut(&mut self) -> Option<&mut SettingsMenu> {
+        self.ui_state
+            .get_screen_mut("settings")?
+            .as_any_mut()
+            .downcast_mut::<SettingsMenu>()
+    }
+
+    /// Hand over the prefs from the last saved Settings screen, once.
+    ///
+    /// Prefs don't ride on the event bus, so the app collects them here after
+    /// `UiEvent::SettingsSaved`.
+    pub fn take_saved_prefs(&mut self) -> Option<Prefs> {
+        self.saved_prefs.take()
+    }
+
+    fn record_menu_action(&mut self, action: &MenuAction) {
+        if let MenuAction::SettingsSaved(prefs) = action {
+            self.saved_prefs = Some(prefs.clone());
+        }
     }
 
     /// Hide all menus
@@ -342,6 +378,7 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
 
         // Process menu actions (delegates to event_routing module)
         for action in &menu_actions {
+            self.record_menu_action(action);
             event_routing::process_menu_action(action, &self.event_bus);
         }
 

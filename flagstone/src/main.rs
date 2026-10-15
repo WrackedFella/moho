@@ -121,6 +121,9 @@ struct App {
 
     // Keybinds and preferences
     prefs: Prefs,
+    /// Where prefs are saved. `None` for a headless `App`, so tests never write the
+    /// user's config file.
+    prefs_path: Option<std::path::PathBuf>,
 
     // Grouped sub-systems
     physics: app::physics_controller::PhysicsController,
@@ -137,11 +140,20 @@ struct App {
 }
 
 impl App {
-    /// Saves prefs together with the current bindings.
-    fn save_prefs(&mut self) -> std::io::Result<()> {
-        self.prefs
-            .set_bindings(self.input.actions.bindings().to_section());
-        self.prefs.save()
+    /// Writes the running prefs to `prefs_path`; does nothing without one.
+    fn save_prefs(&self) -> std::io::Result<()> {
+        match &self.prefs_path {
+            Some(path) => self.prefs.save_to(path),
+            None => Ok(()),
+        }
+    }
+
+    /// Makes `prefs` (just saved by the Settings screen) the running prefs and
+    /// rebinds input from them. Does not save: the screen already wrote the file.
+    fn adopt_settings(&mut self, prefs: Prefs) {
+        let config = crate::app::config::AppConfig::from_prefs_struct(prefs);
+        self.input.actions = crate::app::initializer::build_actions(&config);
+        self.prefs = config.prefs;
     }
 
     fn from_config(config: crate::app::config::AppConfig) -> Self {
@@ -190,6 +202,7 @@ impl App {
             simulation: initialized.simulation,
 
             prefs: initialized.prefs,
+            prefs_path: Some(Prefs::config_path()),
 
             physics: app::physics_controller::PhysicsController::new(),
             generation: app::generation_job::WorldGenerationJob::new(),
@@ -205,7 +218,9 @@ impl App {
     /// prefs so tests never read `config/prefs.ini`.
     #[cfg(test)]
     fn headless() -> Self {
-        Self::from_config(crate::app::config::AppConfig::builder().build())
+        let mut app = Self::from_config(crate::app::config::AppConfig::builder().build());
+        app.prefs_path = None;
+        app
     }
 
     fn generate_new_world(

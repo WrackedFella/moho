@@ -73,7 +73,16 @@ impl EventProcessor {
                 if let Some(ui_adapter) = &app.ui_adapter
                     && let Ok(mut adapter) = ui_adapter.lock()
                 {
-                    adapter.show_menu(&name);
+                    if name == "settings" {
+                        // Seed from the running prefs so a console change isn't overwritten on save.
+                        let path = app
+                            .prefs_path
+                            .clone()
+                            .unwrap_or_else(moho_core::prefs::Prefs::config_path);
+                        adapter.open_settings(app.prefs.clone(), path);
+                    } else {
+                        adapter.show_menu(&name);
+                    }
                 }
             }
             UiEvent::MenuHidden { name } => {
@@ -91,8 +100,15 @@ impl EventProcessor {
             }
             UiEvent::SettingsSaved => {
                 tracing::info!("Settings saved");
-                // Settings are already saved by the UI adapter
-                // Here we could reload/apply them if needed
+                // Prefs never ride on the bus (ADR-0011); the adapter holds the saved copy.
+                let saved = app
+                    .ui_adapter
+                    .as_ref()
+                    .and_then(|adapter| adapter.lock().ok())
+                    .and_then(|mut adapter| adapter.take_saved_prefs());
+                if let Some(prefs) = saved {
+                    app.adopt_settings(prefs);
+                }
             }
             UiEvent::WindowSettingsChanged {
                 mode,
@@ -482,24 +498,24 @@ impl EventProcessor {
             }
             DebugEvent::SetShadowQuality { quality } => {
                 tracing::info!(quality, "Setting shadow quality");
+                app.prefs.set_shadow_quality(quality);
+                if let Err(e) = app.save_prefs() {
+                    tracing::warn!(error = %e, "Failed to save prefs");
+                }
                 if app.window.is_some() {
                     app.pending_render
                         .push(RenderRequest::ShadowQuality(quality as u8));
-
-                    // Update prefs
-                    app.prefs.set_shadow_quality(quality);
-                    let _ = app.save_prefs();
                 }
             }
             DebugEvent::SetSsaoQuality { quality } => {
                 tracing::info!(quality, "Setting SSAO quality");
+                app.prefs.set_ssao_quality(quality);
+                if let Err(e) = app.save_prefs() {
+                    tracing::warn!(error = %e, "Failed to save prefs");
+                }
                 if app.window.is_some() {
                     app.pending_render
                         .push(RenderRequest::SsaoQuality(quality as u8));
-
-                    // Update prefs
-                    app.prefs.set_ssao_quality(quality);
-                    let _ = app.save_prefs();
                 }
             }
             _ => {}
@@ -914,9 +930,14 @@ mod tests {
 
         let on_disk = Prefs::load_from(&path).0;
         assert_eq!(on_disk.shadow_quality(), 1, "the console change was lost");
-        assert_eq!(
-            on_disk.bindings().get("move_forward").map(String::as_str),
-            Some("Q")
+        // Capturing a key keeps the default pad binding, so only the key is checked.
+        assert!(
+            on_disk
+                .bindings()
+                .get("move_forward")
+                .is_some_and(|b| b.split(", ").any(|k| k == "Q")),
+            "the Settings binding was lost: {:?}",
+            on_disk.bindings().get("move_forward")
         );
         assert_eq!(app.prefs.shadow_quality(), 1);
         assert!(forward_keys(&app).contains(&Binding::Key(Key::Q)));
