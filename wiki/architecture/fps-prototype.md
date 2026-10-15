@@ -17,6 +17,7 @@ flowchart LR
     game --> input["input.rs<br/>FpsAction, FpsCommand"]
     game --> hud["hud.rs<br/>status wording"]
     sim --> brain["brain.rs<br/>enemy Brain"]
+    sim --> cover["cover.rs<br/>cover choice"]
     sim --> shot["shot.rs<br/>resolve_shot"]
     shot --> tag["tag.rs<br/>SurfaceTag"]
     main --> arena["arena.rs<br/>markers, Arena"]
@@ -25,11 +26,12 @@ flowchart LR
 
 | Module | Role |
 |---|---|
-| `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes, spawns, route) and builds the world colliders |
+| `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes, spawns, route, cover points) and builds the world colliders |
 | `input` | `FpsAction` set and default bindings; `FpsCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on Enter) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }` or `Player(part)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld` |
-| `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`), pure over `glam` types; `Percept` in, `Intent` out; `EnemyTuning` holds its numbers |
+| `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` in, `Intent` out; `EnemyTuning` holds its numbers |
+| `cover` | `pick` and `offer`: choose the nearest free cover point a hurt enemy should run to, using world-only rays against the player (`Threat`) |
 | `sim` | `FpsSim`: player character and body, rifle, spare magazines, dummies and enemies; emits `Feedback` |
 | `hud` | Text for rifle state, hits, health and death; the hit-edge direction; the death overlay |
 | `game` | `FpsGame`, the `moho_app::Game` implementation: samples input, ticks the sim, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair |
@@ -60,7 +62,18 @@ fraction, yaw delta, fire). `Patrol` walks the route in order, wrapping; a targe
 `sight_range` and `view_half_angle` starts `Engage`, which stands and faces the target while it
 stays visible (it does not chase), fires after `reaction_ticks` of continuous sight, within `fire_cone` of the
 bearing and off cooldown. Aim error comes from a seeded generator (`EnemyTuning::seed`), so
-runs repeat. Enemy shots use the shot path below; a hit on the player emits
+runs repeat.
+
+When the player wounds an enemy (a non-lethal hit), the sim records the player's position on
+that enemy (`Target::hurt`) and, from the `Arena` cover points, asks `cover::offer` for a
+point within `cover_range` that no other enemy holds (`Brain::claim`), that the player cannot
+see at `cover_hide_height`, and from which a standing enemy can still shoot the player.
+The next `Percept` carries `hurt` and `offer`. With an offer a `Patrol`, `Chase` or unheld
+`Engage` brain enters `Cover`: it runs at full speed to the point, then `Engage`s there
+holding the claim. After `cover_ticks` without arriving it fights where it stands. Without an
+offer it turns to `Engage` on the shooter's position. An `Engage` that loses sight falls to
+`Chase`, walking to the last seen position until it arrives or `chase_ticks` pass, then
+resumes `Patrol`; sight during `Chase` re-engages. Enemy shots use the shot path below; a hit on the player emits
 `Feedback::PlayerHit`, and a dead player emits `Feedback::PlayerDied`.
 
 ## Shot path
@@ -81,7 +94,7 @@ same boxes tagged `Player` (`player_hit_volumes`).
 ## Arena contract
 
 Markers are node names in the glTF file. `player_spawn` is required and unique; at least one
-`dummy_NN` is required; `enemy_spawn_NN` and `cover_NN` are optional. `waypoint_NN` is optional
+`dummy_NN` is required; `enemy_spawn_NN` and `cover_NN` are optional (cover points feed `Arena::covers`; without them hurt enemies stand and fight). `waypoint_NN` is optional
 unless an `enemy_spawn_NN` exists, then at least one is required (`ArenaError::MissingMarker`);
 the patrol route follows the waypoint numbers, not file order. Each
 `cover_NN` carries a `shielded_from` extra (`+x`, `-x`, `+z`, `-z`). Spawns are floor points;
