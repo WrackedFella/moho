@@ -1,6 +1,7 @@
 //! The seam between the audio rules and the thing that makes sound.
 
 use crate::error::AudioResult;
+use crate::spatial::StereoGain;
 
 /// One sound to start: its encoded file bytes and how to play them.
 #[derive(Debug, Clone)]
@@ -13,6 +14,8 @@ pub struct Playback {
     pub volume: f32,
     /// Whether the sound repeats until stopped.
     pub looped: bool,
+    /// Per-ear gains for a positioned sound; `None` plays the file's own channels.
+    pub pan: Option<StereoGain>,
 }
 
 /// Plays sounds on behalf of [`AudioSystem`](crate::AudioSystem).

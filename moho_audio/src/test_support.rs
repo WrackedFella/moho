@@ -3,6 +3,7 @@
 
 use crate::error::AudioResult;
 use crate::output::{AudioOutput, Playback};
+use crate::spatial::StereoGain;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -16,6 +17,7 @@ pub struct VoiceRecord {
     pub bytes: Vec<u8>,
     pub volume: f32,
     pub looped: bool,
+    pub pan: Option<StereoGain>,
     pub stopped: bool,
     pub detached: bool,
 }
@@ -46,6 +48,7 @@ impl AudioOutput for RecordingOutput {
             bytes: playback.bytes,
             volume: playback.volume,
             looped: playback.looped,
+            pan: playback.pan,
             stopped: false,
             detached: false,
         });
@@ -87,6 +90,33 @@ pub fn wav_bytes(samples: u32, amplitude: i16) -> Vec<u8> {
     wav.extend_from_slice(&data_len.to_le_bytes());
     for _ in 0..samples {
         wav.extend_from_slice(&amplitude.to_le_bytes());
+    }
+    wav
+}
+
+/// A stereo 16-bit PCM WAV of `frames` frames, every frame `(left, right)`.
+pub fn stereo_wav_bytes(frames: u32, left: i16, right: i16) -> Vec<u8> {
+    const CHANNELS: u16 = 2;
+    const BITS: u16 = 16;
+    let block_align = CHANNELS * BITS / 8;
+    let data_len = frames * u32::from(block_align);
+
+    let mut wav = Vec::with_capacity(44 + data_len as usize);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&CHANNELS.to_le_bytes());
+    wav.extend_from_slice(&WAV_SAMPLE_RATE.to_le_bytes());
+    wav.extend_from_slice(&(WAV_SAMPLE_RATE * u32::from(block_align)).to_le_bytes());
+    wav.extend_from_slice(&block_align.to_le_bytes());
+    wav.extend_from_slice(&BITS.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    for _ in 0..frames {
+        wav.extend_from_slice(&left.to_le_bytes());
+        wav.extend_from_slice(&right.to_le_bytes());
     }
     wav
 }

@@ -82,7 +82,8 @@ mod tests {
     use crate::error::AudioError;
     use crate::output::{AudioOutput, Playback};
     use crate::rodio_output::RodioOutput;
-    use crate::test_support::wav_bytes;
+    use crate::spatial::StereoGain;
+    use crate::test_support::{stereo_wav_bytes, wav_bytes};
     use rodio::mixer::MixerSource;
 
     /// Frames to consume so rodio's ~20 ms fade-in (882 frames) and the 5 ms
@@ -98,6 +99,7 @@ mod tests {
             bytes: wav_bytes(samples, 16_384),
             volume,
             looped,
+            pan: None,
         }
     }
 
@@ -112,6 +114,22 @@ mod tests {
         let left = source.next().unwrap_or(0.0);
         source.next();
         left.abs()
+    }
+
+    /// Left and right levels of the next frame; an ended mixer reads as silence.
+    fn next_frame(source: &mut MixerSource) -> (f32, f32) {
+        let left = source.next().unwrap_or(0.0);
+        let right = source.next().unwrap_or(0.0);
+        (left, right)
+    }
+
+    #[track_caller]
+    fn assert_frame(source: &mut MixerSource, left: f32, right: f32) {
+        let (l, r) = next_frame(source);
+        assert!(
+            (l - left).abs() < TOLERANCE && (r - right).abs() < TOLERANCE,
+            "frame ({l}, {r}) != expected ({left}, {right})"
+        );
     }
 
     #[track_caller]
@@ -203,6 +221,7 @@ mod tests {
             bytes: vec![0xde, 0xad, 0xbe, 0xef, 1, 2, 3, 4],
             volume: 1.0,
             looped: false,
+            pan: None,
         };
 
         let result = output.start(request);
@@ -213,5 +232,78 @@ mod tests {
             }
             other => panic!("expected LoadFailed, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn unpanned_voice_keeps_its_channels() {
+        let (mut output, mut mixer) = RodioOutput::headless();
+        let request = Playback {
+            bytes: stereo_wav_bytes(40_000, 16_384, 8_192),
+            ..playback(0, 1.0, false)
+        };
+
+        let _voice = output.start(request).expect("start");
+
+        skip_frames(&mut mixer, SETTLE_FRAMES);
+        assert_frame(&mut mixer, 0.5, 0.25);
+    }
+
+    #[test]
+    fn panned_voice_is_louder_in_its_ear() {
+        let rows = [
+            (
+                "east",
+                StereoGain {
+                    left: 0.2,
+                    right: 0.8,
+                },
+                0.1,
+                0.4,
+            ),
+            (
+                "west",
+                StereoGain {
+                    left: 0.8,
+                    right: 0.2,
+                },
+                0.4,
+                0.1,
+            ),
+        ];
+
+        for (side, pan, left, right) in rows {
+            let (mut output, mut mixer) = RodioOutput::headless();
+            let request = Playback {
+                pan: Some(pan),
+                ..playback(40_000, 1.0, false)
+            };
+
+            let _voice = output.start(request).expect("start");
+
+            skip_frames(&mut mixer, SETTLE_FRAMES);
+            let (l, r) = next_frame(&mut mixer);
+            assert!(
+                (l - left).abs() < TOLERANCE && (r - right).abs() < TOLERANCE,
+                "{side}: frame ({l}, {r}) != expected ({left}, {right})"
+            );
+        }
+    }
+
+    #[test]
+    fn panned_stereo_voice_is_averaged_before_panning() {
+        let (mut output, mut mixer) = RodioOutput::headless();
+        let request = Playback {
+            bytes: stereo_wav_bytes(40_000, 16_384, 0),
+            pan: Some(StereoGain {
+                left: 1.0,
+                right: 0.5,
+            }),
+            ..playback(0, 1.0, false)
+        };
+
+        let _voice = output.start(request).expect("start");
+
+        skip_frames(&mut mixer, SETTLE_FRAMES);
+        assert_frame(&mut mixer, 0.25, 0.125);
     }
 }

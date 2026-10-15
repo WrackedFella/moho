@@ -117,6 +117,7 @@ impl<O: AudioOutput> AudioSystem<O> {
             bytes,
             volume: effective_volume,
             looped: source.looped(),
+            pan: None,
         })?;
 
         if *source.category() == AudioCategory::Music && source.looped() {
@@ -229,7 +230,7 @@ impl<O: AudioOutput> Drop for AudioSystem<O> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial::{Listener, MAX_AUDIBLE_DISTANCE};
+    use crate::spatial::{Listener, MAX_AUDIBLE_DISTANCE, stereo_pan};
     use crate::test_support::{RecordingOutput, assert_volume_eq, wav_bytes};
     use glam::Vec3;
 
@@ -668,6 +669,54 @@ mod tests {
         let voices = output.voices();
         assert_eq!(voices.len(), 1);
         assert_volume_eq(voices[0].volume, 0.8);
+    }
+
+    #[test]
+    fn positioned_sound_carries_its_pan() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(Listener::default());
+        let east = Vec3::new(10.0, 0.0, 0.0);
+
+        system.handle_event(play_at(SOUND, 1.0, east)).unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 1);
+        assert_eq!(voices[0].pan, Some(stereo_pan(&Listener::default(), east)));
+        let pan = voices[0].pan.expect("a positioned sound is panned");
+        assert!(pan.left.abs() < 1e-5, "{pan:?}");
+        assert!((pan.right - 1.0).abs() < 1e-5, "{pan:?}");
+    }
+
+    #[test]
+    fn unpositioned_sound_has_no_pan() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(listener_at(Vec3::new(100.0, 0.0, 0.0)));
+
+        system.play_sound(SOUND, 0.8).unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 1);
+        assert_eq!(voices[0].pan, None);
+    }
+
+    #[test]
+    fn music_and_ui_with_a_position_have_no_pan() {
+        let east = [10.0, 0.0, 0.0];
+        let sources = [
+            AudioSource::background_music(MENU_MUSIC, 0.8).with_position(east),
+            AudioSource::ui_sound(CLICK, 0.8).with_position(east),
+        ];
+
+        for source in sources {
+            let (mut system, output) = system(full_volume());
+            system.set_listener(Listener::default());
+
+            system.play_audio_source(&source).unwrap();
+
+            let voices = output.voices();
+            assert_eq!(voices.len(), 1, "{:?}", source.category());
+            assert_eq!(voices[0].pan, None, "{:?}", source.category());
+        }
     }
 
     #[test]
