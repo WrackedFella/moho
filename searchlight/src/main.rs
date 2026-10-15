@@ -3,16 +3,18 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use moho_app::{AppConfig, LoopConfig};
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::ActionBindings;
 use moho_physics::MoveSettings;
 use searchlight::TICK_HZ;
-use searchlight::arena;
+use searchlight::arena::{self, Arena};
+use searchlight::brain::EnemyTuning;
 use searchlight::game::{FpsGame, WINDOW_TITLE};
 use searchlight::sim::{FpsSim, SimConfig};
-use searchlight_rules::{BodyProfile, Magazine, Rifle};
+use searchlight_rules::{BodyPart, BodyProfile, Magazine, Rifle};
 
 /// Radians of turn per pixel of mouse motion.
 const LOOK_PER_PIXEL: f32 = 0.002;
@@ -45,6 +47,8 @@ fn tuning() -> Result<SimConfig, Box<dyn Error>> {
         },
         rifle: Rifle::loaded(full.clone()),
         spares: vec![full; SPARE_MAGAZINES],
+        enemy: EnemyTuning::default(),
+        enemy_aim_at: BodyPart::Torso,
     })
 }
 
@@ -61,20 +65,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         .nth(1)
         .map_or_else(|| assets().join("arena.glb"), PathBuf::from);
     let (level, markers) = arena::load(&arena_path)?;
-    let dummy_spawns: Vec<_> = markers.dummies.iter().map(|m| m.position).collect();
-    let sim = FpsSim::new(
-        arena::physics_world(&level),
-        markers.player_spawn.position,
-        &dummy_spawns,
-        tuning()?,
-    );
+    let arena = Arc::new(Arena::from_level(&level, &markers));
+    let sim = FpsSim::start(arena.clone(), tuning()?);
     let (bindings, warnings) = ActionBindings::load(&BTreeMap::new());
     for warning in warnings {
         tracing::warn!(?warning, "default bindings");
     }
-    let meshes = level.meshes.into_iter().map(|m| m.mesh).collect();
     let game = FpsGame::new(sim, ActionMap::new(bindings, LOOK_PER_PIXEL))
-        .with_arena(meshes, &dummy_spawns)
+        .with_arena(arena.meshes.clone(), &arena.dummy_spawns)
         .with_shot_sound(&assets().join("rifle_shot.wav"));
 
     moho_app::run(

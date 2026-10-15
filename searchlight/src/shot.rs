@@ -56,7 +56,7 @@ mod tests {
     use searchlight_rules::BodyPart;
 
     use super::*;
-    use crate::sim::dummy_hit_volumes;
+    use crate::sim::{dummy_hit_volumes, player_hit_volumes};
     use crate::test_support::{DT, world_with};
 
     const DUMMY_CENTRE: Vec3 = Vec3::new(0.0, 1.15, 8.0);
@@ -101,6 +101,53 @@ mod tests {
             let strike = strike.unwrap_or_else(|| panic!("{part:?}: the shot hit nothing"));
             assert_eq!(strike.tag, SurfaceTag::Part { target: 0, part }, "{part:?}");
         }
+    }
+
+    fn add_player(world: &mut PhysicsWorld, centre: Vec3) -> CharacterHandle {
+        let player = world.add_character(centre);
+        for volume in player_hit_volumes() {
+            world
+                .add_hit_volume(player, volume)
+                .expect("the player was just added");
+        }
+        world.step(DT);
+        player
+    }
+
+    fn player_part_centre(part: BodyPart) -> Vec3 {
+        let volume = player_hit_volumes()
+            .into_iter()
+            .find(|v| v.tag == SurfaceTag::Player(part).into())
+            .expect("the player has a volume for every part");
+        DUMMY_CENTRE + volume.offset
+    }
+
+    #[test]
+    fn a_shot_at_the_player_reports_the_part() {
+        for part in [BodyPart::Head, BodyPart::Torso, BodyPart::LeftLeg] {
+            let mut world = world_with(&[]);
+            add_player(&mut world, DUMMY_CENTRE);
+
+            let strike = resolve_shot(&world, straight_at(player_part_centre(part)));
+
+            let strike = strike.unwrap_or_else(|| panic!("{part:?}: the shot hit nothing"));
+            assert_eq!(strike.tag, SurfaceTag::Player(part), "{part:?}");
+        }
+    }
+
+    #[test]
+    fn a_shot_ignores_the_shooting_player() {
+        let aim = player_part_centre(BodyPart::Torso);
+        let mut world = world_with(&[]);
+        let player = add_player(&mut world, DUMMY_CENTRE);
+        let mut ray = straight_at(aim);
+
+        let blocked = resolve_shot(&world, ray).expect("the player is hit");
+        ray.ignore = Some(player);
+        let passed = resolve_shot(&world, ray);
+
+        assert_eq!(blocked.tag, SurfaceTag::Player(BodyPart::Torso));
+        assert_eq!(passed, None);
     }
 
     #[test]

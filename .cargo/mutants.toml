@@ -92,6 +92,12 @@ exclude_re = [
     # Equivalent: the target number is shifted past the three part-index bits, so OR and
     # XOR agree.
     'replace \| with \^ in <impl From<SurfaceTag> for HitTag>::from',
+    # Equivalent: `wrap` only reduces modulo 2 PI, and adding or subtracting PI before that
+    # lands on the same residue.
+    'replace \+ with - in wrap',
+    # Equivalent: `right` can only be 0 when `forward.abs() >= right.abs()` already took the
+    # first branch.
+    'replace > with >= in hit_edge',
     # flagstone_game::raycast. Untested boundary: `3·ceil(L)` already covers every boundary a
     # ray of length L crosses; they differ only at `max_distance` <= 0 from an origin exactly
     # on a cell face, which is unspecified.

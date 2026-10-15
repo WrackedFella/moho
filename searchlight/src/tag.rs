@@ -10,6 +10,8 @@ pub enum SurfaceTag {
     World,
     /// One body part of the target numbered `target`.
     Part { target: u16, part: BodyPart },
+    /// One body part of the player.
+    Player(BodyPart),
 }
 
 /// The engine tag does not encode any [`SurfaceTag`].
@@ -23,6 +25,9 @@ const WORLD: u32 = 0;
 const PART_BASE: u32 = WORLD + 1;
 /// Bits of a part tag that hold the part's index; the target number sits above them.
 const PART_BITS: u32 = 3;
+
+/// Engine tag of the player's first part, above every target part tag.
+const PLAYER_BASE: u32 = PART_BASE + (1 << (16 + PART_BITS));
 
 /// Every part, at the index its tag stores.
 const PARTS: [BodyPart; 6] = [
@@ -46,6 +51,7 @@ impl From<SurfaceTag> for HitTag {
     fn from(tag: SurfaceTag) -> Self {
         match tag {
             SurfaceTag::World => HitTag(WORLD),
+            SurfaceTag::Player(part) => HitTag(PLAYER_BASE + part_index(part)),
             SurfaceTag::Part { target, part } => {
                 HitTag(PART_BASE + ((u32::from(target) << PART_BITS) | part_index(part)))
             }
@@ -59,6 +65,12 @@ impl TryFrom<HitTag> for SurfaceTag {
     fn try_from(tag: HitTag) -> Result<Self, Self::Error> {
         if tag.0 == WORLD {
             return Ok(SurfaceTag::World);
+        }
+        if let Some(index) = tag.0.checked_sub(PLAYER_BASE) {
+            return PARTS
+                .get(index as usize)
+                .map(|&part| SurfaceTag::Player(part))
+                .ok_or(UnknownTag(tag.0));
         }
         let packed = tag.0 - PART_BASE;
         let part = PARTS.get((packed & ((1 << PART_BITS) - 1)) as usize);
@@ -92,9 +104,16 @@ mod tests {
         ]
     }
 
+    fn surface_tags_with_player() -> impl Strategy<Value = SurfaceTag> {
+        prop_oneof![
+            surface_tags(),
+            proptest::sample::select(PARTS.to_vec()).prop_map(SurfaceTag::Player),
+        ]
+    }
+
     proptest! {
         #[test]
-        fn surface_tags_round_trip(tag in surface_tags()) {
+        fn surface_tags_round_trip(tag in surface_tags_with_player()) {
             let engine = HitTag::from(tag);
 
             let back = SurfaceTag::try_from(engine);
@@ -107,6 +126,18 @@ mod tests {
             prop_assume!(a != b);
 
             prop_assert_ne!(HitTag::from(a), HitTag::from(b));
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn player_tags_never_collide_with_target_or_world_tags(
+            part in proptest::sample::select(PARTS.to_vec()),
+            other in surface_tags(),
+        ) {
+            let player = HitTag::from(SurfaceTag::Player(part));
+
+            prop_assert_ne!(player, HitTag::from(other));
         }
     }
 
@@ -145,5 +176,24 @@ mod encoding_tests {
 
             assert_eq!(decoded, Err(UnknownTag(raw)), "tag {raw}");
         }
+    }
+}
+
+#[cfg(test)]
+mod player_encoding_tests {
+    use super::*;
+
+    #[test]
+    fn player_tags_start_one_past_the_world_tag_above_every_target_part() {
+        let head = HitTag::from(SurfaceTag::Player(BodyPart::Head));
+        let right_leg = HitTag::from(SurfaceTag::Player(BodyPart::RightLeg));
+        let last_target_part = HitTag::from(SurfaceTag::Part {
+            target: u16::MAX,
+            part: BodyPart::RightLeg,
+        });
+
+        assert_eq!(head, HitTag(524_289));
+        assert_eq!(right_leg, HitTag(524_294));
+        assert!(last_target_part.0 < head.0);
     }
 }

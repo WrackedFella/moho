@@ -2,9 +2,9 @@
 //! feedback into sound, a title status line, a hit flash and a crosshair.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext};
 use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
@@ -19,6 +19,7 @@ use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window};
 
+use crate::hud::Edge;
 use crate::input::{FpsAction, FpsCommand};
 use crate::sim::{Feedback, FpsSim, dummy_at, dummy_hit_volumes};
 use crate::tag::SurfaceTag;
@@ -28,6 +29,20 @@ use crate::{TICK_HZ, hud};
 const FLASH_TICKS: u32 = TICK_HZ / 6;
 /// Dummy segment mesh ids start here, clear of the arena's (which count up from 0).
 const DUMMY_MESH_BASE: u64 = 1 << 32;
+/// Enemy segment mesh ids start here, clear of the arena's and the dummies'.
+const ENEMY_MESH_BASE: u64 = 2 << 32;
+/// Mesh ids reserved per enemy: six body parts and the gun.
+const ENEMY_MESH_SLOTS: u64 = 8;
+/// Ticks a damage edge bar takes to fade out.
+const EDGE_TICKS: u32 = TICK_HZ / 4;
+/// Width of a damage edge bar, in pixels.
+const EDGE_THICKNESS: f32 = 28.0;
+/// Opacity of a damage edge bar at the moment of the hit.
+const EDGE_ALPHA: u32 = 190;
+const EDGE_RGB: [u8; 3] = [200, 20, 20];
+/// The enemy's gun in its body frame: a long box in the right hand, pointing forward.
+const GUN_OFFSET: Vec3 = Vec3::new(-0.3, 0.25, 0.4);
+const GUN_HALF: Vec3 = Vec3::new(0.04, 0.04, 0.3);
 /// A mesh handle the renderer never issues, so the empty actor draws are skipped.
 const NO_MESH: u32 = u32::MAX;
 /// The window title before any status line is appended.
@@ -55,6 +70,7 @@ fn window_title(status: &str) -> String {
 enum Paint {
     Arena,
     Dummy,
+    Enemy,
     Struck,
 }
 
@@ -65,6 +81,7 @@ impl RenderMaterial for Paint {
         let (top, side, glow) = match self {
             Paint::Arena => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0),
             Paint::Dummy => ([0.85, 0.6, 0.2], [0.7, 0.48, 0.16], 0.0),
+            Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0),
         };
         MaterialGpu {
@@ -101,6 +118,11 @@ impl Renderable for NoActor {
 
 /// A closed box with outward-facing triangles and a normal per face.
 fn box_mesh(centre: Vec3, half: Vec3) -> WorldMesh {
+    oriented_box_mesh(centre, half, Quat::IDENTITY)
+}
+
+/// [`box_mesh`] with its axes turned by `rotation` about its centre.
+fn oriented_box_mesh(centre: Vec3, half: Vec3, rotation: Quat) -> WorldMesh {
     // (normal, u, v) with u x v = normal, so (-u-v, +u-v, +u+v, -u+v) winds counter-clockwise
     // seen from outside.
     const FACES: [(Vec3, Vec3, Vec3); 6] = [
@@ -117,10 +139,10 @@ fn box_mesh(centre: Vec3, half: Vec3) -> WorldMesh {
     for (normal, u, v) in FACES {
         let first = positions.len() as u32;
         let (du, dv) = (u * half, v * half);
-        let face_centre = centre + normal * half;
+        let face_centre = centre + rotation * (normal * half);
         for corner in [-du - dv, du - dv, du + dv, -du + dv] {
-            positions.push((face_centre + corner).to_array());
-            normals.push(normal.to_array());
+            positions.push((face_centre + rotation * corner).to_array());
+            normals.push((rotation * normal).to_array());
         }
         indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
     }
@@ -163,10 +185,57 @@ fn dummy_segments(spawns: &[Vec3]) -> Vec<Segment> {
     segments
 }
 
-/// Four short bars around the screen centre, drawn as solid rects from a 1x1 white texture.
+/// One enemy as box segments: the six body parts and the gun, which flashes when it fires.
+#[derive(Debug)]
+struct EnemyRig {
+    target: u16,
+    /// Whether the segments are in the scene.
+    shown: bool,
+    gun_flash: u32,
+}
+
+impl EnemyRig {
+    fn mesh_id(&self, slot: usize) -> WorldMeshId {
+        WorldMeshId(ENEMY_MESH_BASE + u64::from(self.target) * ENEMY_MESH_SLOTS + slot as u64)
+    }
+}
+
+/// The enemy's segments as `(offset, half extents)` in its body frame, gun last.
+fn enemy_segments() -> [(Vec3, Vec3); 7] {
+    let volumes = dummy_hit_volumes(0);
+    let mut segments = [(GUN_OFFSET, GUN_HALF); 7];
+    for (segment, volume) in segments.iter_mut().zip(volumes) {
+        *segment = (volume.offset, volume.half_extents);
+    }
+    segments
+}
+
+fn push_quad(
+    vertices: &mut Vec<UiVertex>,
+    indices: &mut Vec<u32>,
+    min: [f32; 2],
+    max: [f32; 2],
+    color: [u8; 4],
+) {
+    let first = vertices.len() as u32;
+    for pos in [min, [max[0], min[1]], max, [min[0], max[1]]] {
+        vertices.push(UiVertex {
+            pos,
+            uv: [0.5, 0.5],
+            color,
+        });
+    }
+    indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
+}
+
+/// Four short bars around the screen centre, drawn as solid rects from a 1x1 white texture,
+/// under the damage edge bars and the death tint when they are showing.
 #[derive(Debug, Default)]
 struct Crosshair {
     texture_sent: bool,
+    dead: bool,
+    /// Opacity of the damage bar on each screen edge, indexed front, right, behind, left.
+    edges: [u8; 4],
 }
 
 impl Crosshair {
@@ -189,16 +258,24 @@ impl UiFrameSource for Crosshair {
         ];
         let mut vertices = Vec::with_capacity(16);
         let mut indices = Vec::with_capacity(24);
-        for (min, max) in bars {
-            let first = vertices.len() as u32;
-            for pos in [min, [max[0], min[1]], max, [min[0], max[1]]] {
-                vertices.push(UiVertex {
-                    pos,
-                    uv: [0.5, 0.5],
-                    color: [255; 4],
-                });
+        let thick = EDGE_THICKNESS;
+        let edge_rects = [
+            ([0.0, 0.0], [size[0], thick]),
+            ([size[0] - thick, 0.0], size),
+            ([0.0, size[1] - thick], size),
+            ([0.0, 0.0], [thick, size[1]]),
+        ];
+        for (alpha, (min, max)) in self.edges.into_iter().zip(edge_rects) {
+            if alpha > 0 {
+                let [r, g, b] = EDGE_RGB;
+                push_quad(&mut vertices, &mut indices, min, max, [r, g, b, alpha]);
             }
-            indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
+        }
+        if let Some(tint) = hud::death_overlay(self.dead, size_in_pixels) {
+            push_quad(&mut vertices, &mut indices, tint.min, tint.max, tint.rgba);
+        }
+        for (min, max) in bars {
+            push_quad(&mut vertices, &mut indices, min, max, [255; 4]);
         }
         let textures_set = if self.texture_sent {
             Vec::new()
@@ -262,6 +339,10 @@ struct Stage {
     segments: Vec<Segment>,
     dummy_material: u32,
     struck_material: u32,
+    enemy_material: u32,
+    dummy_count: usize,
+    enemies: Vec<EnemyRig>,
+    edge_left: [u32; 4],
     crosshair: Arc<Mutex<Crosshair>>,
     shot_sound: Option<PathBuf>,
     window: Option<Arc<Window>>,
@@ -274,11 +355,16 @@ impl Stage {
         let mut scene = Scene::new();
         let dummy_material = scene.material_table.find_or_push(&Paint::Dummy);
         let struck_material = scene.material_table.find_or_push(&Paint::Struck);
+        let enemy_material = scene.material_table.find_or_push(&Paint::Enemy);
         Self {
             scene,
             segments: Vec::new(),
             dummy_material,
             struck_material,
+            enemy_material,
+            dummy_count: 0,
+            enemies: Vec::new(),
+            edge_left: [0; 4],
             crosshair: Arc::new(Mutex::new(Crosshair::default())),
             shot_sound: None,
             window: None,
@@ -296,6 +382,7 @@ impl Stage {
                 arena_material,
             );
         }
+        self.dummy_count = dummy_spawns.len();
         self.segments = dummy_segments(dummy_spawns);
         for segment in &self.segments {
             self.scene.world_meshes_mut().upsert(
@@ -312,6 +399,10 @@ impl Stage {
         }
         match feedback {
             Feedback::Fired => self.play_shot(audio),
+            Feedback::EnemyFired { target } => {
+                self.enemy_rig(*target).gun_flash = FLASH_TICKS;
+                self.play_shot(audio);
+            }
             Feedback::Hit { target, part, .. } => {
                 let tag = SurfaceTag::Part {
                     target: *target,
@@ -330,6 +421,74 @@ impl Stage {
         }
     }
 
+    fn enemy_rig(&mut self, target: u16) -> &mut EnemyRig {
+        let index = self
+            .enemies
+            .iter()
+            .position(|rig| rig.target == target)
+            .unwrap_or_else(|| {
+                self.enemies.push(EnemyRig {
+                    target,
+                    shown: false,
+                    gun_flash: 0,
+                });
+                self.enemies.len() - 1
+            });
+        &mut self.enemies[index]
+    }
+
+    /// Lights the damage bar on `edge`; it fades over [`EDGE_TICKS`].
+    fn show_hit_edge(&mut self, edge: Edge) {
+        self.edge_left[edge as usize] = EDGE_TICKS;
+    }
+
+    /// Puts every living enemy's segments where the sim has it, and takes the dead ones out.
+    fn sync_enemies(&mut self, sim: &FpsSim) {
+        for index in 0..sim.enemy_count() {
+            let target = u16::try_from(self.dummy_count + index)
+                .expect("the sim numbers its targets with a u16");
+            let rig = self.enemy_rig(target);
+            let state = sim.enemy_state(index);
+            let (shown, gun_flash) = (rig.shown, rig.gun_flash);
+            let ids: [WorldMeshId; 7] = std::array::from_fn(|slot| rig.mesh_id(slot));
+            rig.shown = state.is_some();
+            let meshes = self.scene.world_meshes_mut();
+            let Some(state) = state else {
+                if shown {
+                    for id in ids {
+                        meshes.remove(id);
+                    }
+                }
+                continue;
+            };
+            let facing = Quat::from_rotation_y(state.yaw);
+            for (slot, (offset, half)) in enemy_segments().into_iter().enumerate() {
+                let material = if slot == 6 && gun_flash > 0 {
+                    self.struck_material
+                } else {
+                    self.enemy_material
+                };
+                meshes.upsert(
+                    ids[slot],
+                    oriented_box_mesh(state.position + facing * offset, half, facing),
+                    material,
+                );
+            }
+        }
+    }
+
+    /// Pushes the death tint and damage bars to the UI.
+    fn refresh_hud(&self, dead: bool) {
+        let mut hud = self
+            .crosshair
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        hud.dead = dead;
+        hud.edges = self
+            .edge_left
+            .map(|left| (EDGE_ALPHA * left / EDGE_TICKS) as u8);
+    }
+
     fn play_shot(&self, audio: Option<&mut AudioSystem>) {
         let (Some(audio), Some(path)) = (audio, &self.shot_sound) else {
             return;
@@ -340,6 +499,12 @@ impl Stage {
     }
 
     fn tick_flashes(&mut self) {
+        for left in &mut self.edge_left {
+            *left = left.saturating_sub(1);
+        }
+        for rig in &mut self.enemies {
+            rig.gun_flash = rig.gun_flash.saturating_sub(1);
+        }
         for segment in &mut self.segments {
             if segment.flash_left == 0 {
                 continue;
@@ -355,11 +520,16 @@ impl Stage {
         }
     }
 
-    fn refresh_title(&mut self) {
+    /// Sets the window title to `vitals` and the latest status line.
+    fn refresh_title(&mut self, vitals: &str) {
         let Some(window) = &self.window else {
             return;
         };
-        let title = window_title(&self.status);
+        let title = if self.status.is_empty() {
+            window_title(vitals)
+        } else {
+            window_title(&format!("{vitals} | {}", self.status))
+        };
         if title != self.title {
             window.set_title(&title);
             self.title = title;
@@ -450,8 +620,13 @@ impl Game for FpsGame {
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &FpsCommand) {
+        let was_dead = self.sim.player_body().is_dead();
         self.previous = self.sim.player();
         self.sim.tick(command, ctx.tick_length.as_secs_f32());
+        if was_dead && !self.sim.player_body().is_dead() {
+            self.previous = self.sim.player();
+            self.stage.status.clear();
+        }
         self.stage.tick_flashes();
     }
 
@@ -485,9 +660,26 @@ impl Game for FpsGame {
 
     fn frame(&mut self, ctx: &mut FrameContext<'_>, alpha: f32) {
         for feedback in self.sim.drain_feedback() {
+            if let Feedback::PlayerHit { from, .. } = feedback {
+                let player = self.sim.player();
+                self.stage
+                    .show_hit_edge(hud::hit_edge(player.position, player.yaw, from));
+            }
             self.stage.react(&feedback, ctx.audio());
         }
-        self.stage.refresh_title();
+        let dead = self.sim.player_body().is_dead();
+        let vitals = hud::death_text(dead).map_or_else(
+            || {
+                hud::health_text(
+                    self.sim.player_body().health(),
+                    self.sim.player_max_health(),
+                )
+            },
+            str::to_owned,
+        );
+        self.stage.refresh_title(&vitals);
+        self.stage.refresh_hud(dead);
+        self.stage.sync_enemies(&self.sim);
         if let Some(renderer) = ctx.renderer() {
             let view = first_person_view(
                 &self.previous,
@@ -506,12 +698,12 @@ mod tests {
     use std::time::Duration;
 
     use glam::Vec3;
-    use moho_app::{HeadlessLoop, LoopConfig};
+    use moho_app::{GameClock, HeadlessLoop, LoopConfig};
     use moho_input::bindings::ActionBindings;
 
     use super::*;
     use crate::sim::Feedback;
-    use crate::test_support::{flat_floor, mag, press, test_config};
+    use crate::test_support::{arena_with, flat_floor, mag, press, test_config};
     use searchlight_rules::Rifle;
 
     fn game() -> FpsGame {
@@ -535,6 +727,116 @@ mod tests {
 
         assert_eq!(game.sim().pending_feedback(), [Feedback::Fired]);
         assert_eq!(game.sim().rifle().magazine().rounds(), 3);
+    }
+
+    fn arena_config() -> crate::sim::SimConfig {
+        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        config.eye_height = 0.72;
+        config.enemy.damage = 100;
+        config.enemy.reaction_ticks = 30;
+        config
+    }
+
+    fn arena_arena() -> Arc<crate::arena::Arena> {
+        arena_with(
+            &[],
+            Vec3::ZERO,
+            &[Vec3::new(0.0, 0.0, 10.0)],
+            &[Vec3::new(0.0, 0.0, 6.0)],
+        )
+    }
+
+    fn tick_with(game: &mut FpsGame, clock: &mut GameClock, command: &FpsCommand) {
+        let mut ctx = TickContext {
+            tick: 0,
+            tick_length: Duration::from_secs_f32(1.0 / 60.0),
+            clock,
+        };
+        game.tick(&mut ctx, command);
+    }
+
+    /// A game whose player walked toward an enemy and was shot dead there, with a status shown.
+    fn game_with_a_player_dead_away_from_the_spawn() -> (FpsGame, GameClock) {
+        let sim = FpsSim::start(arena_arena(), arena_config());
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = FpsGame::new(sim, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let walk = FpsCommand {
+            movement: moho_physics::CharacterCommand {
+                forward: 1.0,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..FpsCommand::default()
+        };
+        for _ in 0..600 {
+            tick_with(&mut game, &mut clock, &walk);
+            if game.sim().player_body().is_dead() {
+                break;
+            }
+        }
+        assert!(game.sim().player_body().is_dead(), "the player never died");
+        assert!(
+            game.sim().player().position.z > 0.5,
+            "the player never left the spawn"
+        );
+        game.stage.react(&Feedback::Dry, None);
+        assert!(!game.stage.status.is_empty());
+        (game, clock)
+    }
+
+    fn restart_command() -> FpsCommand {
+        FpsCommand {
+            restart: true,
+            ..FpsCommand::default()
+        }
+    }
+
+    #[test]
+    fn the_view_does_not_blend_from_the_death_position_on_the_restart_tick() {
+        let (mut game, mut clock) = game_with_a_player_dead_away_from_the_spawn();
+        let spawn = FpsSim::start(arena_arena(), arena_config()).player();
+
+        tick_with(&mut game, &mut clock, &restart_command());
+
+        assert_eq!(game.sim().player(), spawn);
+        assert_eq!(game.previous, spawn);
+    }
+
+    #[test]
+    fn restarting_clears_the_status_line() {
+        let (mut game, mut clock) = game_with_a_player_dead_away_from_the_spawn();
+
+        tick_with(&mut game, &mut clock, &restart_command());
+
+        assert_eq!(game.stage.status, "");
+    }
+
+    #[test]
+    fn an_ordinary_alive_tick_blends_from_the_previous_pose_and_keeps_the_status() {
+        let sim = FpsSim::start(arena_arena(), arena_config());
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = FpsGame::new(sim, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let walk = FpsCommand {
+            movement: moho_physics::CharacterCommand {
+                forward: 1.0,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..FpsCommand::default()
+        };
+        for _ in 0..5 {
+            tick_with(&mut game, &mut clock, &walk);
+        }
+        assert!(!game.sim().player_body().is_dead());
+        game.stage.react(&Feedback::Dry, None);
+        assert!(!game.stage.status.is_empty());
+        let before = game.sim().player();
+
+        tick_with(&mut game, &mut clock, &walk);
+
+        assert_eq!(game.previous, before);
+        assert_ne!(game.previous, game.sim().player());
+        assert!(!game.stage.status.is_empty());
     }
 
     #[test]
@@ -1027,5 +1329,347 @@ mod title_and_aspect_tests {
         let stage = Stage::new();
 
         assert_close(stage.aspect(), 16.0 / 9.0);
+    }
+}
+
+#[cfg(test)]
+mod enemy_and_hud_tests {
+    use std::collections::HashMap;
+
+    use moho_renderer::FrameError;
+    use searchlight_rules::Rifle;
+
+    use super::*;
+    use crate::test_support::{arena_with, mag, test_config};
+
+    /// Keeps the vertices of every mesh uploaded and the draws of the last frame.
+    #[derive(Default)]
+    struct RecordingRenderer {
+        next_handle: u32,
+        uploads: HashMap<u32, Vec<[f32; 3]>>,
+        materials: Vec<MaterialGpu>,
+        draws: Vec<(u32, InstanceGpu)>,
+    }
+
+    impl RecordingRenderer {
+        /// Each draw as its mesh's centre and half extents, then its material, in draw order.
+        fn drawn(&self) -> Vec<(Vec3, Vec3, MaterialGpu)> {
+            self.draws
+                .iter()
+                .map(|(handle, instance)| {
+                    let points: Vec<Vec3> = self.uploads[handle]
+                        .iter()
+                        .map(|&p| Vec3::from(p))
+                        .collect();
+                    let min = points.iter().fold(Vec3::MAX, |a, &p| a.min(p));
+                    let max = points.iter().fold(Vec3::MIN, |a, &p| a.max(p));
+                    (
+                        (min + max) / 2.0,
+                        (max - min) / 2.0,
+                        self.materials[instance.material as usize],
+                    )
+                })
+                .collect()
+        }
+    }
+
+    impl RendererBackend for RecordingRenderer {
+        fn resize(&mut self, _width: u32, _height: u32) {}
+        fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+            unreachable!("world meshes upload indexed meshes")
+        }
+        fn register_indexed_mesh(
+            &mut self,
+            vertices: &[[f32; 3]],
+            _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
+            _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
+            _indices: &[u32],
+        ) -> u32 {
+            self.next_handle += 1;
+            self.uploads.insert(self.next_handle, vertices.to_vec());
+            self.next_handle
+        }
+        fn unregister_mesh(&mut self, _mesh: u32) {}
+        fn begin_frame(&mut self, _camera: (Mat4, Mat4, Vec3)) -> Result<(), FrameError> {
+            self.draws.clear();
+            Ok(())
+        }
+        fn enqueue_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+            self.draws
+                .extend(instances.iter().map(|instance| (mesh, *instance)));
+        }
+        fn submit_frame(&mut self) {}
+        fn set_materials(&mut self, materials: &[MaterialGpu]) {
+            self.materials = materials.to_vec();
+        }
+        fn update_lighting(&mut self, _lighting: LightingGpu) {}
+        fn add_point_light(&mut self, _p: Vec3, _c: Vec3, _intensity: f32, _range: f32) -> u32 {
+            0
+        }
+        fn remove_light(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn set_light_position(&mut self, _id: u32, _position: Vec3) {}
+        fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_ssao_quality(&mut self, _quality: u8) {}
+    }
+
+    fn sim_of(arena: Arc<crate::arena::Arena>) -> FpsSim {
+        FpsSim::start(arena, test_config(Rifle::loaded(mag(30, 30)), vec![]))
+    }
+
+    /// One enemy at (3, 0, 4) whose only waypoint is ten metres to +X, so it faces +X.
+    fn lone_enemy() -> FpsSim {
+        sim_of(arena_with(
+            &[],
+            Vec3::new(0.0, 0.0, -20.0),
+            &[Vec3::new(3.0, 0.0, 4.0)],
+            &[Vec3::new(13.0, 0.0, 4.0)],
+        ))
+    }
+
+    /// The backend keeps its material table between frames, so one renderer serves a whole test.
+    fn drawn_after_sync(
+        stage: &mut Stage,
+        renderer: &mut RecordingRenderer,
+        sim: &FpsSim,
+    ) -> Vec<(Vec3, Vec3, MaterialGpu)> {
+        stage.sync_enemies(sim);
+        stage.draw(renderer, (Mat4::IDENTITY, Vec3::ZERO));
+        renderer.drawn()
+    }
+
+    fn is_paint(material: MaterialGpu, paint: Paint) -> bool {
+        let expected = paint.to_gpu();
+        (material.albedo, material.params) == (expected.albedo, expected.params)
+    }
+
+    #[test]
+    fn the_enemy_segment_table_is_the_six_body_volumes_then_the_gun() {
+        let segments = enemy_segments();
+
+        for (segment, volume) in segments.iter().zip(dummy_hit_volumes(0)) {
+            assert_eq!(*segment, (volume.offset, volume.half_extents));
+        }
+        assert_eq!(
+            segments[6],
+            (Vec3::new(-0.3, 0.25, 0.4), Vec3::new(0.04, 0.04, 0.3))
+        );
+    }
+
+    #[test]
+    fn enemy_mesh_ids_start_at_two_times_two_to_the_32_and_hold_eight_slots_per_enemy() {
+        let rig = EnemyRig {
+            target: 5,
+            shown: false,
+            gun_flash: 0,
+        };
+
+        let ids: Vec<WorldMeshId> = [0, 3, 6]
+            .into_iter()
+            .map(|slot| rig.mesh_id(slot))
+            .collect();
+
+        let base = 2 * (1u64 << 32) + 5 * 8;
+        assert_eq!(
+            ids,
+            [
+                WorldMeshId(base),
+                WorldMeshId(base + 3),
+                WorldMeshId(base + 6)
+            ]
+        );
+    }
+
+    #[test]
+    fn syncing_draws_each_living_enemy_as_seven_boxes_at_its_pose() {
+        let sim = lone_enemy();
+        let state = sim.enemy_state(0).expect("the enemy spawned");
+        let mut stage = Stage::new();
+        let mut renderer = RecordingRenderer::default();
+
+        let drawn = drawn_after_sync(&mut stage, &mut renderer, &sim);
+
+        assert_eq!(drawn.len(), 7);
+        let facing = Quat::from_rotation_y(state.yaw);
+        let mut offsets: Vec<Vec3> = dummy_hit_volumes(0).iter().map(|v| v.offset).collect();
+        offsets.push(Vec3::new(-0.3, 0.25, 0.4));
+        for (slot, (centre, _, material)) in drawn.iter().enumerate() {
+            let want = state.position + facing * offsets[slot];
+            assert!(centre.abs_diff_eq(want, 1e-4), "slot {slot}: {centre:?}");
+            assert!(is_paint(*material, Paint::Enemy), "slot {slot}");
+        }
+        // Facing +X turns the gun's long axis from Z onto X.
+        assert!(drawn[6].1.abs_diff_eq(Vec3::new(0.3, 0.04, 0.04), 1e-4));
+    }
+
+    #[test]
+    fn syncing_numbers_enemy_rigs_after_the_dummies() {
+        let mut arena = (*arena_with(
+            &[],
+            Vec3::new(0.0, 0.0, -20.0),
+            &[Vec3::new(3.0, 0.0, 4.0), Vec3::new(8.0, 0.0, 4.0)],
+            &[Vec3::new(13.0, 0.0, 4.0)],
+        ))
+        .clone();
+        arena.dummy_spawns = vec![Vec3::new(-8.0, 0.0, 4.0), Vec3::new(-4.0, 0.0, 4.0)];
+        let sim = sim_of(Arc::new(arena));
+        let mut stage = Stage::new();
+        let mut renderer = RecordingRenderer::default();
+        stage.add_arena(Vec::new(), &sim_dummy_spawns());
+
+        let drawn = drawn_after_sync(&mut stage, &mut renderer, &sim);
+
+        let targets: Vec<u16> = stage.enemies.iter().map(|rig| rig.target).collect();
+        assert_eq!(targets, [2, 3]);
+        assert_eq!(drawn.len(), 12 + 14);
+    }
+
+    fn sim_dummy_spawns() -> [Vec3; 2] {
+        [Vec3::new(-8.0, 0.0, 4.0), Vec3::new(-4.0, 0.0, 4.0)]
+    }
+
+    #[test]
+    fn an_enemy_shot_lights_only_its_gun_until_the_flash_runs_out() {
+        let sim = lone_enemy();
+        let mut stage = Stage::new();
+        let mut renderer = RecordingRenderer::default();
+
+        stage.react(&Feedback::EnemyFired { target: 0 }, None);
+        let flashing = drawn_after_sync(&mut stage, &mut renderer, &sim);
+        for _ in 0..FLASH_TICKS {
+            stage.tick_flashes();
+        }
+        let settled = drawn_after_sync(&mut stage, &mut renderer, &sim);
+
+        assert_eq!(stage.enemies[0].gun_flash, 0);
+        let lit: Vec<bool> = flashing
+            .iter()
+            .map(|d| is_paint(d.2, Paint::Struck))
+            .collect();
+        assert_eq!(lit, [false, false, false, false, false, false, true]);
+        assert!(settled.iter().all(|d| is_paint(d.2, Paint::Enemy)));
+    }
+
+    #[test]
+    fn an_enemy_shot_starts_a_ten_tick_gun_flash_on_that_enemys_rig() {
+        let mut stage = Stage::new();
+
+        stage.react(&Feedback::EnemyFired { target: 4 }, None);
+        stage.react(&Feedback::EnemyFired { target: 9 }, None);
+
+        let flashes: Vec<(u16, u32)> = stage
+            .enemies
+            .iter()
+            .map(|rig| (rig.target, rig.gun_flash))
+            .collect();
+        assert_eq!(flashes, [(4, 10), (9, 10)]);
+        assert_eq!(stage.status, "");
+    }
+
+    #[test]
+    fn looking_up_a_rig_twice_returns_the_same_rig_and_a_new_target_adds_one() {
+        let mut stage = Stage::new();
+
+        stage.enemy_rig(3).gun_flash = 7;
+        let again = stage.enemy_rig(3).gun_flash;
+        let other = stage.enemy_rig(8).gun_flash;
+
+        assert_eq!((again, other), (7, 0));
+        assert_eq!(stage.enemies.len(), 2);
+        assert_eq!(stage.enemy_rig(8).target, 8);
+        assert_eq!(stage.enemy_rig(3).target, 3);
+    }
+
+    #[test]
+    fn a_hit_edge_lights_its_bar_for_fifteen_ticks_and_fades_one_per_tick() {
+        let mut stage = Stage::new();
+
+        stage.show_hit_edge(Edge::Right);
+        stage.tick_flashes();
+
+        assert_eq!(stage.edge_left, [0, 14, 0, 0]);
+        assert_eq!(EDGE_TICKS, 15);
+    }
+
+    #[test]
+    fn refreshing_the_hud_hands_the_crosshair_the_death_flag_and_scaled_edge_opacity() {
+        let mut stage = Stage::new();
+        stage.edge_left = [15, 5, 0, 1];
+
+        stage.refresh_hud(true);
+
+        let hud = stage.crosshair.lock().expect("not poisoned");
+        assert!(hud.dead);
+        assert_eq!(hud.edges, [190, 63, 0, 12]);
+    }
+
+    #[test]
+    fn edge_bars_hug_their_own_sides_of_the_screen_in_the_edge_colour() {
+        let mut crosshair = Crosshair {
+            edges: [10, 20, 30, 40],
+            ..Crosshair::default()
+        };
+
+        let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+
+        let mesh = &frame.meshes[0];
+        assert_eq!(mesh.vertices.len(), 16 + 16);
+        let quad = |index: usize| -> Vec<([f32; 2], [u8; 4])> {
+            mesh.vertices[index * 4..index * 4 + 4]
+                .iter()
+                .map(|v| (v.pos, v.color))
+                .collect()
+        };
+        let expect = |min: [f32; 2], max: [f32; 2], alpha: u8| {
+            let color = [200, 20, 20, alpha];
+            vec![
+                (min, color),
+                ([max[0], min[1]], color),
+                (max, color),
+                ([min[0], max[1]], color),
+            ]
+        };
+        assert_eq!(quad(0), expect([0.0, 0.0], [800.0, 28.0], 10));
+        assert_eq!(quad(1), expect([772.0, 0.0], [800.0, 600.0], 20));
+        assert_eq!(quad(2), expect([0.0, 572.0], [800.0, 600.0], 30));
+        assert_eq!(quad(3), expect([0.0, 0.0], [28.0, 600.0], 40));
+        assert_eq!(mesh.indices.len(), 48);
+    }
+
+    #[test]
+    fn a_bar_with_no_opacity_is_not_drawn_and_the_rest_keep_their_order() {
+        let mut crosshair = Crosshair {
+            edges: [0, 0, 77, 0],
+            ..Crosshair::default()
+        };
+
+        let frame = crosshair.ui_frame([300, 200]).expect("a frame");
+
+        let mesh = &frame.meshes[0];
+        assert_eq!(mesh.vertices.len(), 4 + 16);
+        assert_eq!(mesh.vertices[0].pos, [0.0, 172.0]);
+        assert_eq!(mesh.vertices[2].pos, [300.0, 200.0]);
+        assert_eq!(mesh.vertices[0].color, [200, 20, 20, 77]);
+    }
+
+    #[test]
+    fn the_death_tint_is_drawn_under_the_crosshair_bars() {
+        let mut crosshair = Crosshair {
+            dead: true,
+            ..Crosshair::default()
+        };
+
+        let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+
+        let mesh = &frame.meshes[0];
+        assert_eq!(mesh.vertices.len(), 4 + 16);
+        assert_eq!(mesh.vertices[0].color, [120, 0, 0, 140]);
+        assert_eq!(mesh.vertices[2].pos, [800.0, 600.0]);
     }
 }
