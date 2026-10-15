@@ -1,6 +1,6 @@
 # Architecture overview
 
-**Source:** crate `Cargo.toml`s, `scripts/layering.txt`, `moho_app/src/`, `moho_fps_rules/src/`, `src/app/`, `src/main.rs`.
+**Source:** crate `Cargo.toml`s, `scripts/layering.txt`, `moho_app/src/`, `moho_fps_rules/src/`, `moho_fps/src/`, `src/app/`, `src/main.rs`.
 **Decisions:** ADRs
 [0001](../../_todo/adr/0001-render-api-boundary.md),
 [0003](../../_todo/adr/0003-core-owns-event-types.md),
@@ -29,6 +29,7 @@ flowchart TD
     app["moho_app<br/>window, fixed-step loop, Game trait"]:::engine
     level["moho_level<br/>glTF level loader"]:::engine
     fps["moho_fps_rules<br/>rifle, magazine, body damage"]:::fps
+    fpsgame["moho_fps<br/>arena, shots, sim, binary"]:::fps
 
     ui --> renderer & input & core & game
     game --> core & rapi & voxel
@@ -38,6 +39,7 @@ flowchart TD
     audio --> core
     physics --> rapi
     level --> rapi
+    fpsgame --> fps & app & physics & level & input & audio & renderer & rapi
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
     classDef strategy fill:#dcfce7,stroke:#16a34a,color:#111
@@ -45,10 +47,11 @@ flowchart TD
 ```
 
 Blue is the engine line, green is the strategy line, orange is the FPS line.
-`moho_fps_rules` is the FPS line's only crate so far: plain serialisable weapon and body rules
-(`Rifle`, `Magazine`, `Body`) with no engine dependency. The planned `moho_fps` adapter is the
-only FPS crate that will reach the engine, and every shot resolves through one path (ray, surface
-tag, part, rule call) for player and enemy alike ([ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md)).
+`moho_fps_rules` holds plain serialisable weapon and body rules (`Rifle`, `Magazine`, `Body`)
+with no engine dependency. `moho_fps` is the only FPS crate that reaches the engine: a library
+plus the `moho_fps` binary, described in [FPS prototype](fps-prototype.md). Every shot resolves
+through one path (ray, surface tag, part, rule call) for player and enemy alike
+([ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md)).
 `moho_app` owns the window and winit event loop; the binary implements its `Game` trait and hands it
 to `moho_app::run` ([frame loop](frame-loop.md)).
 
@@ -117,7 +120,7 @@ Changes from today:
 - Navigation (ENG-F17) and the character controller and camera (ENG-F21) are modules of
   an engine crate unless their specs name a boundary.
 
-An FPS line would sit beside the strategy line and depend only on engine crates.
+The FPS line sits beside the strategy line and depends only on engine crates.
 
 ### Engine seams
 
@@ -184,4 +187,4 @@ Library crates never install a subscriber.
 
 ## Next
 
-[Frame loop](frame-loop.md) · [Events](events.md) · [Rendering](rendering.md)
+[Frame loop](frame-loop.md) · [FPS prototype](fps-prototype.md) · [Events](events.md) · [Rendering](rendering.md)

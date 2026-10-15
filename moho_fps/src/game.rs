@@ -293,7 +293,6 @@ impl Stage {
         }
     }
 
-    /// Reacts to one piece of feedback: sound, status line and flash.
     fn react(&mut self, feedback: &Feedback, audio: Option<&mut AudioSystem>) {
         if let Some(text) = hud::status_text(feedback) {
             self.status = text;
