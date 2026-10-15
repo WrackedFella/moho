@@ -2,6 +2,7 @@
 
 use crate::error::{AudioError, AudioResult};
 use crate::output::{AudioOutput, Playback};
+use crate::spatial::StereoGain;
 use crate::stereo_gain_source::StereoGainSource;
 use rodio::Source;
 use rodio::mixer::Mixer;
@@ -56,14 +57,11 @@ impl AudioOutput for RodioOutput {
 
         let player = rodio::Player::connect_new(&self.mixer);
         player.set_volume(playback.volume);
-        let mut source: Box<dyn Source + Send> = Box::new(decoder);
         if playback.looped {
-            source = Box::new(source.repeat_infinite());
+            append_panned(&player, decoder.repeat_infinite(), playback.pan);
+        } else {
+            append_panned(&player, decoder, playback.pan);
         }
-        if let Some(pan) = playback.pan {
-            source = Box::new(StereoGainSource::new(source, pan));
-        }
-        player.append(source);
         player.play();
         Ok(player)
     }
@@ -78,6 +76,18 @@ impl AudioOutput for RodioOutput {
 
     fn detach(&mut self, voice: rodio::Player) {
         voice.detach();
+    }
+}
+
+/// Queues `source` on `player`, through a [`StereoGainSource`] when it is panned.
+fn append_panned<S: Source + Send + 'static>(
+    player: &rodio::Player,
+    source: S,
+    pan: Option<StereoGain>,
+) {
+    match pan {
+        Some(gain) => player.append(StereoGainSource::new(source, gain)),
+        None => player.append(source),
     }
 }
 

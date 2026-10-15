@@ -112,12 +112,13 @@ impl<O: AudioOutput> AudioSystem<O> {
             self.audio_cache.get_audio(source.path())?
         };
 
+        let pan = Self::world_position(source).map(|position| stereo_pan(&self.listener, position));
         let voice = self.output.start(Playback {
             path: source.path().to_owned(),
             bytes,
             volume: effective_volume,
             looped: source.looped(),
-            pan: Self::world_position(source).map(|position| stereo_pan(&self.listener, position)),
+            pan,
         })?;
 
         if *source.category() == AudioCategory::Music && source.looped() {
@@ -132,6 +133,7 @@ impl<O: AudioOutput> AudioSystem<O> {
         debug!(
             path = source.path(),
             volume = effective_volume,
+            pan = ?pan,
             "Playing audio"
         );
         Ok(())

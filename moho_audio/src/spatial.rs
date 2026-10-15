@@ -34,6 +34,7 @@ impl Listener {
         }
     }
 
+    /// The listener's right-ear direction, `orientation × +X`, so pitch and roll carry over.
     pub fn right(&self) -> Vec3 {
         self.orientation * Vec3::X
     }
@@ -42,7 +43,9 @@ impl Listener {
 /// Per-ear volume multipliers for a panned sound.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StereoGain {
+    /// Linear gain for the left channel, in [0, 1].
     pub left: f32,
+    /// Linear gain for the right channel, in [0, 1].
     pub right: f32,
 }
 
