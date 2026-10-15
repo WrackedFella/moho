@@ -94,9 +94,77 @@ impl Brain {
         tuning: &EnemyTuning,
         dt: f32,
     ) -> Intent {
-        let _ = (route, percept, tuning, dt, PI);
-        todo!()
+        let max_turn = tuning.turn_rate * dt;
+        let seen = percept.target.filter(|&target| {
+            matches!(self, Self::Engage { .. }) || notices(percept, target, tuning)
+        });
+
+        let (next, seen_ticks, cooldown) = match *self {
+            Self::Patrol { next } => (next, 0, 0),
+            Self::Engage {
+                next,
+                seen_ticks,
+                cooldown,
+            } => (next, seen_ticks, cooldown),
+        };
+
+        let Some(target) = seen else {
+            let next = if flat_distance(percept.position, route[next]) <= tuning.arrive_radius {
+                (next + 1) % route.len()
+            } else {
+                next
+            };
+            *self = Self::Patrol { next };
+            return Intent {
+                forward: tuning.patrol_speed,
+                yaw_delta: turn_towards(percept, route[next], max_turn).0,
+                fire: false,
+            };
+        };
+
+        let (yaw_delta, gap) = turn_towards(percept, target, max_turn);
+        let seen_ticks = seen_ticks.saturating_add(1);
+        let cooldown = cooldown.saturating_sub(1);
+        let fire =
+            seen_ticks >= tuning.reaction_ticks && cooldown == 0 && gap.abs() <= tuning.fire_cone;
+        *self = Self::Engage {
+            next,
+            seen_ticks,
+            cooldown: if fire {
+                tuning.cooldown_ticks
+            } else {
+                cooldown
+            },
+        };
+        Intent {
+            forward: 0.0,
+            yaw_delta,
+            fire,
+        }
     }
+}
+
+/// Distance on the ground plane.
+fn flat_distance(a: Vec3, b: Vec3) -> f32 {
+    (b.x - a.x).hypot(b.z - a.z)
+}
+
+/// Wraps an angle into `[-PI, PI)`.
+fn wrap(angle: f32) -> f32 {
+    (angle + PI).rem_euclid(2.0 * PI) - PI
+}
+
+/// The turn this tick towards `point`, clamped to `max_turn`, and the full signed gap.
+fn turn_towards(percept: &Percept, point: Vec3, max_turn: f32) -> (f32, f32) {
+    let offset = point - percept.position;
+    let gap = wrap(offset.x.atan2(offset.z) - percept.yaw);
+    (gap.clamp(-max_turn, max_turn), gap)
+}
+
+/// Whether `target` is within sight range and the view cone.
+fn notices(percept: &Percept, target: Vec3, tuning: &EnemyTuning) -> bool {
+    let (_, gap) = turn_towards(percept, target, 0.0);
+    percept.position.distance(target) <= tuning.sight_range && gap.abs() <= tuning.view_half_angle
 }
 
 #[cfg(test)]
