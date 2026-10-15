@@ -246,6 +246,10 @@ fn along_ground(velocity: Vec3, normal: Vec3) -> f32 {
 /// Source's `StayOnGround`. A walker that ends grounded keeps its horizontal velocity and
 /// follows its ground; any other character ends grounded only if not rising, and a landing
 /// zeroes its vertical speed.
+///
+/// The lowering is not collision-checked: it drops onto the plane of the face under the
+/// centre, so a ledge under the capsule's rim but not its centre can be overlapped by up to
+/// [`GROUND_SNAP`] until the next slide resolves it.
 fn settle(state: &mut CharacterState, slid: &Slide, walking: bool) {
     let hanging = slid
         .ground
