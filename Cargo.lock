@@ -1735,36 +1735,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "moho_fps"
-version = "0.1.0"
-dependencies = [
- "glam 0.33.12",
- "moho_app",
- "moho_audio",
- "moho_fps_rules",
- "moho_input",
- "moho_level",
- "moho_physics",
- "moho_render_api",
- "moho_renderer",
- "proptest",
- "thiserror 2.0.20",
- "tracing",
- "tracing-subscriber",
- "winit",
-]
-
-[[package]]
-name = "moho_fps_rules"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "moho_input"
 version = "0.1.0"
 dependencies = [
@@ -3098,6 +3068,36 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "searchlight"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "moho_app",
+ "moho_audio",
+ "moho_input",
+ "moho_level",
+ "moho_physics",
+ "moho_render_api",
+ "moho_renderer",
+ "proptest",
+ "searchlight_rules",
+ "thiserror 2.0.20",
+ "tracing",
+ "tracing-subscriber",
+ "winit",
+]
+
+[[package]]
+name = "searchlight_rules"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
 
 [[package]]
 name = "self_cell"

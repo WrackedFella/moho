@@ -53,7 +53,7 @@ pub fn resolve_shot(world: &PhysicsWorld, ray: ShotRay) -> Option<Strike> {
 
 #[cfg(test)]
 mod tests {
-    use moho_fps_rules::BodyPart;
+    use searchlight_rules::BodyPart;
 
     use super::*;
     use crate::sim::dummy_hit_volumes;

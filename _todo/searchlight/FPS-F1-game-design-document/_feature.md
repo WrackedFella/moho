@@ -1,7 +1,7 @@
 # FPS-F1 — Game Design Document
 
 **Status:** Draft
-**Labels:** feature, line:fps
+**Labels:** feature, line:searchlight
 
 ## Summary
 
@@ -13,7 +13,7 @@ into item cards once the GDD defines real scope.
 
 ## Deliverables
 
-- [`wiki/fps/game-design-document.md`](../../../wiki/fps/game-design-document.md), covering: core pillars, genre/setting, core loop (movement/combat
+- [`wiki/searchlight/game-design-document.md`](../../../wiki/searchlight/game-design-document.md), covering: core pillars, genre/setting, core loop (movement/combat
   shape), scope boundaries (what this is not), and a rough content/level plan.
 
 ## Notes

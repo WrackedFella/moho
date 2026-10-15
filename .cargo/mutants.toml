@@ -6,7 +6,7 @@ exclude_globs = [
     "flagstone_ui/src/adapter/**",
     "flagstone/src/main.rs",
     "flagstone/src/app/renderer_setup.rs",
-    "moho_fps/src/main.rs",
+    "searchlight/src/main.rs",
 ]
 # These bodies only drive the renderer backend or window, which need a real
 # `Window`; the binary's headless tests (`App::headless`) can't reach them.
@@ -74,7 +74,7 @@ exclude_re = [
     # Polling needs a live gilrs backend; headless tests and the headless App have none.
     'replace Gamepads::poll with \(\)',
     'replace Gamepads::discard with \(\)',
-    # moho_fps: these bodies need a real `Window`, a GPU or an audio device, which tests
+    # searchlight: these bodies need a real `Window`, a GPU or an audio device, which tests
     # don't have; the logic around them (status text, flash timing, geometry) is tested.
     'replace capture_cursor with \(\)',
     'delete match arm Feedback::Fired in Stage::react',
