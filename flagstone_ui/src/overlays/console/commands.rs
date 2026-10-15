@@ -157,7 +157,6 @@ impl CommandProcessor {
         )
     }
 
-    /// Handle positional sound command
     fn snd_play_at_command(&self, parts: &[&str]) -> CommandResult {
         if !(5..=6).contains(&parts.len()) {
             return CommandResult::messages(vec![

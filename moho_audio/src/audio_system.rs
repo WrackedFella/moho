@@ -30,7 +30,6 @@ pub struct AudioSystem<O: AudioOutput = RodioOutput> {
     /// Looping background music voice, kept for live volume changes.
     music_voice: Option<O::Voice>,
 
-    /// Where positioned sounds are heard from.
     listener: Listener,
 }
 
@@ -60,7 +59,8 @@ impl<O: AudioOutput> AudioSystem<O> {
         }
     }
 
-    /// Set where the listener is and which way it faces.
+    /// Moves the listener that positioned sounds are measured from. Sounds already
+    /// playing keep the gain they started with.
     pub fn set_listener(&mut self, listener: Listener) {
         self.listener = listener;
     }
