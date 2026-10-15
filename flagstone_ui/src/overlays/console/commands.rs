@@ -26,6 +26,12 @@ pub enum ConsoleAction {
     SetSsaoQuality(u32),
     /// Spawn an entity or block (type, optional material/args)
     Spawn(String, Option<String>),
+    /// Play a sound file at a world position, in metres
+    PlaySoundAt {
+        path: String,
+        position: glam::Vec3,
+        volume: f32,
+    },
     /// No action
     None,
 }
@@ -106,6 +112,7 @@ impl CommandProcessor {
             "r_shadow_quality" => self.shadow_quality_command(&parts),
             "r_ssao_quality" => self.ssao_quality_command(&parts),
             "spawn" => self.spawn_command(&parts),
+            "snd_play_at" => self.snd_play_at_command(&parts),
             _ => self.unknown_command(parts[0]),
         }
     }
@@ -124,6 +131,8 @@ impl CommandProcessor {
             "  r_debug_view <mode> - Set debug view mode".to_string(),
             "  r_shadow_quality <0-4> - Set shadow quality (Off/Low/Med/High/Ultra)".to_string(),
             "  r_ssao_quality <0-4> - Set SSAO quality (Off/Low/Med/High/Ultra)".to_string(),
+            "  snd_play_at <path> <x> <y> <z> [volume] - Play a sound at a world position (metres)"
+                .to_string(),
         ])
     }
 
@@ -145,6 +154,37 @@ impl CommandProcessor {
         CommandResult::with_action(
             "Toggling noclip mode...".to_string(),
             ConsoleAction::ToggleNoclip,
+        )
+    }
+
+    fn snd_play_at_command(&self, parts: &[&str]) -> CommandResult {
+        if !(5..=6).contains(&parts.len()) {
+            return CommandResult::messages(vec![
+                "Usage: snd_play_at <path> <x> <y> <z> [volume]".to_string(),
+                "  Example: snd_play_at searchlight/assets/rifle_shot.wav 1 0 -5 0.8".to_string(),
+            ]);
+        }
+
+        let finite = |part: &str| part.parse::<f32>().ok().filter(|n| n.is_finite());
+        let (Some(x), Some(y), Some(z), Some(volume)) = (
+            finite(parts[2]),
+            finite(parts[3]),
+            finite(parts[4]),
+            parts.get(5).map_or(Some(1.0), |part| finite(part)),
+        ) else {
+            return CommandResult::message(
+                "Error: position and volume must be finite numbers".to_string(),
+            );
+        };
+
+        let position = glam::Vec3::new(x, y, z);
+        CommandResult::with_action(
+            format!("Playing {} at {position} (volume {volume})", parts[1]),
+            ConsoleAction::PlaySoundAt {
+                path: parts[1].to_string(),
+                position,
+                volume,
+            },
         )
     }
 
@@ -550,5 +590,77 @@ mod tests {
                 missing.messages
             );
         }
+    }
+
+    #[test]
+    fn snd_play_at_parses_path_position_and_volume() {
+        let processor = CommandProcessor::new();
+
+        let result = processor.execute("snd_play_at sounds/boom.wav 1.5 -2 30 0.4");
+
+        assert!(!result.messages.is_empty());
+        assert_eq!(
+            result.action,
+            ConsoleAction::PlaySoundAt {
+                path: "sounds/boom.wav".to_string(),
+                position: glam::Vec3::new(1.5, -2.0, 30.0),
+                volume: 0.4,
+            }
+        );
+    }
+
+    #[test]
+    fn snd_play_at_defaults_volume_to_one() {
+        let processor = CommandProcessor::new();
+
+        let result = processor.execute("snd_play_at sounds/boom.wav 1 2 3");
+
+        assert_eq!(
+            result.action,
+            ConsoleAction::PlaySoundAt {
+                path: "sounds/boom.wav".to_string(),
+                position: glam::Vec3::new(1.0, 2.0, 3.0),
+                volume: 1.0,
+            }
+        );
+    }
+
+    #[test]
+    fn snd_play_at_rejects_bad_numbers() {
+        let processor = CommandProcessor::new();
+        let rows = [
+            ("snd_play_at boom.wav a 2 3", "Error:"),
+            ("snd_play_at boom.wav 1 2 3 loud", "Error:"),
+            ("snd_play_at boom.wav 1 nan 3", "Error:"),
+            ("snd_play_at boom.wav 1 2 3 inf", "Error:"),
+            ("snd_play_at boom.wav 1 2", "Usage:"),
+            ("snd_play_at boom.wav", "Usage:"),
+            ("snd_play_at", "Usage:"),
+            ("snd_play_at boom.wav 1 2 3 0.5 9", "Usage:"),
+        ];
+
+        for (input, expected) in rows {
+            let result = processor.execute(input);
+
+            assert_eq!(result.action, ConsoleAction::None, "{input}");
+            assert!(
+                result.messages.iter().any(|m| m.contains(expected)),
+                "{input}: {:?}",
+                result.messages
+            );
+        }
+    }
+
+    #[test]
+    fn help_lists_snd_play_at() {
+        let processor = CommandProcessor::new();
+
+        let result = processor.execute("help");
+
+        assert!(
+            result.messages.iter().any(|m| m.contains("snd_play_at")),
+            "{:?}",
+            result.messages
+        );
     }
 }

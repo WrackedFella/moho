@@ -17,6 +17,13 @@ pub enum AudioEvent {
         volume: f32,
     },
 
+    /// Play a sound effect at a world position
+    PlaySoundAt {
+        path: String,
+        volume: f32,
+        position: glam::Vec3,
+    },
+
     /// Background music control
     MusicStart {
         path: String,

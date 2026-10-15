@@ -27,6 +27,7 @@ pub mod audio_system;
 pub mod error;
 mod output;
 mod rodio_output;
+pub mod spatial;
 #[cfg(test)]
 mod test_support;
 
@@ -38,3 +39,4 @@ pub use audio_source::{AudioCategory, AudioSource};
 pub use audio_system::AudioSystem;
 pub use error::{AudioError, AudioResult};
 pub use output::{AudioOutput, Playback};
+pub use spatial::Listener;

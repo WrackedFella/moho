@@ -7,6 +7,8 @@ use crate::error::AudioError;
 use crate::error::AudioResult;
 use crate::output::{AudioOutput, Playback};
 use crate::rodio_output::RodioOutput;
+use crate::spatial::{Listener, distance_gain};
+use glam::Vec3;
 use std::path::Path;
 use tracing::{debug, warn};
 
@@ -27,6 +29,8 @@ pub struct AudioSystem<O: AudioOutput = RodioOutput> {
 
     /// Looping background music voice, kept for live volume changes.
     music_voice: Option<O::Voice>,
+
+    listener: Listener,
 }
 
 impl AudioSystem {
@@ -51,7 +55,14 @@ impl<O: AudioOutput> AudioSystem<O> {
             settings: AudioSettings::default(),
             audio_cache,
             music_voice: None,
+            listener: Listener::default(),
         }
+    }
+
+    /// Moves the listener that positioned sounds are measured from. Sounds already
+    /// playing keep the gain they started with.
+    pub fn set_listener(&mut self, listener: Listener) {
+        self.listener = listener;
     }
 
     /// Get current audio settings
@@ -71,8 +82,20 @@ impl<O: AudioOutput> AudioSystem<O> {
     }
 
     /// Play a sound from an AudioSource with optimized loading
+    ///
+    /// Sound-effect and voice sources with a position are attenuated by their distance
+    /// from the listener and not started at all beyond audible range; music and UI
+    /// sources ignore a position.
     pub fn play_audio_source(&mut self, source: &AudioSource) -> AudioResult<()> {
-        let effective_volume = self.settings.effective_volume(source.category()) * source.volume();
+        let Some(distance_gain) = self.distance_gain_for(source) else {
+            debug!(
+                path = source.path(),
+                "Skipping audio playback: out of audible range or non-finite distance"
+            );
+            return Ok(());
+        };
+        let effective_volume =
+            self.settings.effective_volume(source.category()) * source.volume() * distance_gain;
 
         if effective_volume <= 0.0 {
             debug!(
@@ -113,6 +136,15 @@ impl<O: AudioOutput> AudioSystem<O> {
         Ok(())
     }
 
+    fn distance_gain_for(&self, source: &AudioSource) -> Option<f32> {
+        match (source.category(), source.position()) {
+            (AudioCategory::SoundEffect | AudioCategory::Voice, Some(position)) => {
+                distance_gain(self.listener.position.distance(Vec3::from_array(position)))
+            }
+            _ => Some(1.0),
+        }
+    }
+
     /// Play a sound file with specified volume
     pub fn play_sound<P: AsRef<Path>>(&mut self, path: P, volume: f32) -> AudioResult<()> {
         let source = AudioSource::new(path).with_volume(volume);
@@ -128,6 +160,16 @@ impl<O: AudioOutput> AudioSystem<O> {
             AudioEvent::Cancel => self.play_click(0.7),
             AudioEvent::Error => self.play_click(0.9),
             AudioEvent::PlaySound { path, volume } => self.play_sound(&path, volume),
+            AudioEvent::PlaySoundAt {
+                path,
+                volume,
+                position,
+            } => {
+                let source = AudioSource::new(&path)
+                    .with_volume(volume)
+                    .with_position(position.to_array());
+                self.play_audio_source(&source)
+            }
             AudioEvent::MusicStart {
                 path,
                 volume,
@@ -187,7 +229,9 @@ impl<O: AudioOutput> Drop for AudioSystem<O> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::spatial::{Listener, MAX_AUDIBLE_DISTANCE};
     use crate::test_support::{RecordingOutput, assert_volume_eq, wav_bytes};
+    use glam::Vec3;
 
     const CLICK: &str = "assets/audio/ui/button_click.mp3";
     const SOUND: &str = "sounds/boom.wav";
@@ -225,6 +269,21 @@ mod tests {
             path: path.to_owned(),
             volume,
             looped: true,
+        }
+    }
+
+    fn play_at(path: &str, volume: f32, position: Vec3) -> AudioEvent {
+        AudioEvent::PlaySoundAt {
+            path: path.to_owned(),
+            volume,
+            position,
+        }
+    }
+
+    fn listener_at(position: Vec3) -> Listener {
+        Listener {
+            position,
+            ..Listener::default()
         }
     }
 
@@ -459,6 +518,176 @@ mod tests {
             assert!(!output.voices()[0].stopped, "{category:?}");
             system.set_settings(full_volume().with_music_volume(0.25));
             assert_volume_eq(output.voices()[0].volume, 0.25);
+        }
+    }
+
+    #[test]
+    fn nearer_positioned_sound_plays_louder() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(Listener::default());
+
+        system
+            .handle_event(play_at(SOUND, 1.0, Vec3::new(3.0, 0.0, -4.0)))
+            .unwrap();
+        system
+            .handle_event(play_at(SOUND, 1.0, Vec3::new(0.0, 0.0, -20.0)))
+            .unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 2);
+        assert_eq!(voices[0].path, SOUND);
+        assert_eq!(voices[0].bytes, wav_bytes(100, 1000));
+        assert_volume_eq(voices[0].volume, 0.4);
+        assert_volume_eq(voices[1].volume, 0.1);
+        assert!(voices[0].detached && !voices[0].looped, "one-shot");
+    }
+
+    #[test]
+    fn positioned_sound_within_reference_plays_at_its_volume() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(Listener::default());
+
+        system
+            .handle_event(play_at(SOUND, 0.8, Vec3::new(0.0, 0.5, 0.0)))
+            .unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 1);
+        assert_volume_eq(voices[0].volume, 0.8);
+    }
+
+    #[test]
+    fn positioned_sound_beyond_range_starts_nothing_and_succeeds() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(Listener::default());
+        let beyond = Vec3::new(MAX_AUDIBLE_DISTANCE + 1.0, 0.0, 0.0);
+
+        let result = system.handle_event(play_at(SOUND, 1.0, beyond));
+
+        assert!(result.is_ok(), "{result:?}");
+        assert!(output.voices().is_empty());
+    }
+
+    #[test]
+    fn positioned_sound_at_a_non_finite_position_starts_nothing_and_succeeds() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(Listener::default());
+        let nowhere = Vec3::new(f32::NAN, 0.0, 0.0);
+
+        let result = system.handle_event(play_at(SOUND, 1.0, nowhere));
+
+        assert!(result.is_ok(), "{result:?}");
+        assert!(output.voices().is_empty());
+    }
+
+    #[test]
+    fn distance_is_measured_from_the_current_listener() {
+        let (mut system, output) = system(full_volume());
+        let sound = Vec3::new(20.0, 0.0, 0.0);
+        system.set_listener(Listener::default());
+        system.handle_event(play_at(SOUND, 1.0, sound)).unwrap();
+        system.set_listener(listener_at(Vec3::new(18.0, 0.0, 0.0)));
+
+        system.handle_event(play_at(SOUND, 1.0, sound)).unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 2);
+        assert_volume_eq(voices[0].volume, 0.1);
+        assert_volume_eq(voices[1].volume, 1.0);
+    }
+
+    #[test]
+    fn positioned_sound_obeys_category_volume() {
+        let (mut system, output) = system(
+            full_volume()
+                .with_master_volume(1.0)
+                .with_sound_effects_volume(0.5),
+        );
+        let here = Vec3::new(3.0, 4.0, 5.0);
+        system.set_listener(listener_at(here));
+
+        system.handle_event(play_at(SOUND, 1.0, here)).unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 1);
+        assert_volume_eq(voices[0].volume, 0.5);
+    }
+
+    #[test]
+    fn muted_positioned_sound_starts_nothing_and_succeeds() {
+        let (mut system, output) = system(full_volume().set_muted(true));
+        system.set_listener(Listener::default());
+
+        let result = system.handle_event(play_at(SOUND, 1.0, Vec3::ZERO));
+
+        assert!(result.is_ok(), "{result:?}");
+        assert!(output.voices().is_empty());
+    }
+
+    #[test]
+    fn positioned_sound_scales_by_distance_and_category_together() {
+        let (mut system, output) = system(
+            full_volume()
+                .with_master_volume(0.5)
+                .with_sound_effects_volume(0.5),
+        );
+        system.set_listener(Listener::default());
+
+        system
+            .handle_event(play_at(SOUND, 0.8, Vec3::new(0.0, 0.0, 8.0)))
+            .unwrap();
+
+        assert_volume_eq(output.voices()[0].volume, 0.05);
+    }
+
+    #[test]
+    fn positioned_voice_source_is_attenuated() {
+        let (mut system, output) = system(full_volume().with_voice_volume(1.0));
+        system.set_listener(Listener::default());
+        let source = AudioSource::new(SOUND)
+            .with_category(AudioCategory::Voice)
+            .with_position([10.0, 0.0, 0.0]);
+
+        system.play_audio_source(&source).unwrap();
+
+        assert_volume_eq(output.voices()[0].volume, 0.2);
+    }
+
+    #[test]
+    fn unpositioned_sound_ignores_the_listener() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(listener_at(Vec3::new(100.0, 0.0, 0.0)));
+
+        system
+            .handle_event(AudioEvent::PlaySound {
+                path: SOUND.to_owned(),
+                volume: 0.8,
+            })
+            .unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 1);
+        assert_volume_eq(voices[0].volume, 0.8);
+    }
+
+    #[test]
+    fn music_and_ui_ignore_a_position() {
+        let far = [500.0, 0.0, 0.0];
+        let sources = [
+            AudioSource::background_music(MENU_MUSIC, 0.8).with_position(far),
+            AudioSource::ui_sound(CLICK, 0.8).with_position(far),
+        ];
+
+        for source in sources {
+            let (mut system, output) = system(full_volume());
+            system.set_listener(Listener::default());
+
+            let result = system.play_audio_source(&source);
+
+            assert!(result.is_ok(), "{:?}: {result:?}", source.category());
+            let voices = output.voices();
+            assert_eq!(voices.len(), 1, "{:?}", source.category());
+            assert_volume_eq(voices[0].volume, 0.8);
         }
     }
 }
