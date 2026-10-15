@@ -65,22 +65,24 @@ fn build_grid(resources: &[Option<u32>]) -> VoxelGrid {
     grid
 }
 
-fn world_count(grid: &VoxelGrid, resource_id: u32) -> usize {
-    cube_positions()
-        .filter(|&pos| {
-            grid.material_at(pos).is_some() && grid.resource_at(pos) == Some(resource_id)
-        })
-        .count()
+fn world_histogram(grid: &VoxelGrid) -> [usize; RESOURCE_KINDS as usize] {
+    let mut counts = [0; RESOURCE_KINDS as usize];
+    for pos in cube_positions() {
+        if grid.material_at(pos).is_none() {
+            continue;
+        }
+        if let Some(id) = grid.resource_at(pos) {
+            counts[id as usize] += 1;
+        }
+    }
+    counts
 }
 
 fn assert_conserved(pawn: &Pawn, grid: &VoxelGrid, starting: &[usize]) {
-    for (id, &start) in (0u32..).zip(starting) {
+    let in_world = world_histogram(grid);
+    for (id, (&start, &world)) in (0u32..).zip(starting.iter().zip(&in_world)) {
         let held = pawn.inventory.count(id) as usize;
-        assert_eq!(
-            held + world_count(grid, id),
-            start,
-            "resource {id}: {held} held"
-        );
+        assert_eq!(held + world, start, "resource {id}: {held} held");
     }
     assert!(
         pawn.inventory.iter().all(|(id, _)| id < RESOURCE_KINDS),
@@ -95,7 +97,7 @@ proptest! {
         ops in prop::collection::vec(op_strategy(), 0..12),
     ) {
         let mut grid = build_grid(&resources);
-        let starting: Vec<usize> = (0..RESOURCE_KINDS).map(|id| world_count(&grid, id)).collect();
+        let starting = world_histogram(&grid);
         let mut pawn = Pawn::default();
         assert_conserved(&pawn, &grid, &starting);
 

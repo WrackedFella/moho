@@ -587,11 +587,19 @@ mod tests {
 
         let equator = &verts[8 * 17..9 * 17];
 
-        assert!(v3(equator[0]).abs_diff_eq(Vec3::X, GEOMETRY_EPS));
-        assert!(v3(equator[4]).abs_diff_eq(Vec3::Z, GEOMETRY_EPS));
-        assert!(v3(equator[8]).abs_diff_eq(Vec3::NEG_X, GEOMETRY_EPS));
-        assert!(v3(equator[12]).abs_diff_eq(Vec3::NEG_Z, GEOMETRY_EPS));
-        assert!(v3(equator[16]).abs_diff_eq(Vec3::X, GEOMETRY_EPS));
+        for (j, expected) in [
+            (0, Vec3::X),
+            (4, Vec3::Z),
+            (8, Vec3::NEG_X),
+            (12, Vec3::NEG_Z),
+            (16, Vec3::X),
+        ] {
+            assert!(
+                v3(equator[j]).abs_diff_eq(expected, GEOMETRY_EPS),
+                "step {j}: {:?}",
+                equator[j]
+            );
+        }
     }
 
     #[test]

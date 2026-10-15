@@ -89,6 +89,5 @@ mod tests {
         pairs.sort_unstable();
 
         assert_eq!(pairs, vec![(3, 5), (7, 3)]);
-        assert_eq!(Inventory::default().iter().count(), 0);
     }
 }

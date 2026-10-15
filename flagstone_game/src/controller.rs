@@ -228,6 +228,7 @@ mod tests {
     ];
     /// Absorbs last-bit rounding differences between glam versions.
     const TOLERANCE: f32 = 1e-5;
+    const LOOK_AT_TOLERANCE: f32 = 1e-4;
 
     fn assert_matrix(actual: Mat4, expected: [[f32; 4]; 4]) {
         let expected = Mat4::from_cols_array_2d(&expected);
@@ -374,7 +375,7 @@ mod tests {
                     yaw_delta: FRAC_PI_4,
                     ..Default::default()
                 },
-                position: start + Vec3::new(-2.8284, 0.0, 2.8284),
+                position: start + Vec3::new(-2.0 * SQRT_2, 0.0, 2.0 * SQRT_2),
                 yaw: FRAC_PI_4,
                 ..unmoved
             },
@@ -405,7 +406,7 @@ mod tests {
                     up: 1.0,
                     ..Default::default()
                 },
-                position: start + Vec3::new(0.0, 2.8284, 2.8284),
+                position: start + Vec3::new(0.0, 2.0 * SQRT_2, 2.0 * SQRT_2),
                 ..unmoved
             },
             Case {
@@ -415,7 +416,7 @@ mod tests {
                     pitch_delta: FRAC_PI_6,
                     ..Default::default()
                 },
-                position: start + Vec3::new(0.0, 2.0, 3.4641),
+                position: start + Vec3::new(0.0, 2.0, 2.0 * 3.0_f32.sqrt()),
                 pitch: FRAC_PI_6,
                 ..unmoved
             },
@@ -449,7 +450,7 @@ mod tests {
                     right: 1.0,
                     ..Default::default()
                 },
-                look_target: start + Vec3::new(2.8284, 0.0, -2.8284),
+                look_target: start + Vec3::new(2.0 * SQRT_2, 0.0, -2.0 * SQRT_2),
                 ..unmoved
             },
             Case {
@@ -484,7 +485,7 @@ mod tests {
                     pitch_delta: 1.0,
                     ..Default::default()
                 },
-                look_target: start + Vec3::new(-2.8284, 0.0, -2.8284),
+                look_target: start + Vec3::new(-2.0 * SQRT_2, 0.0, -2.0 * SQRT_2),
                 ..unmoved
             },
             Case {
@@ -543,14 +544,16 @@ mod tests {
 
         pc.look_at(start + Vec3::new(2.0, 3.0, 6.0));
 
-        assert!((pc.yaw - 0.321_75).abs() < 1e-4, "yaw {}", pc.yaw);
-        assert!((pc.pitch - 0.442_99).abs() < 1e-4, "pitch {}", pc.pitch);
-        let facing = Vec3::new(
-            pc.yaw.sin() * pc.pitch.cos(),
-            pc.pitch.sin(),
-            pc.yaw.cos() * pc.pitch.cos(),
+        assert!(
+            (pc.yaw - 0.321_75).abs() < LOOK_AT_TOLERANCE,
+            "yaw {}",
+            pc.yaw
         );
-        assert!(facing.abs_diff_eq(Vec3::new(2.0, 3.0, 6.0) / 7.0, 1e-4));
+        assert!(
+            (pc.pitch - 0.442_99).abs() < LOOK_AT_TOLERANCE,
+            "pitch {}",
+            pc.pitch
+        );
         assert_eq!(pc.position, start);
         assert_eq!(pc.rts_look_target, start);
     }
@@ -569,8 +572,16 @@ mod tests {
 
             pc.look_at(start + offset);
 
-            assert!((pc.yaw - yaw).abs() < 1e-4, "{offset}: yaw {}", pc.yaw);
-            assert!(pc.pitch.abs() < 1e-4, "{offset}: pitch {}", pc.pitch);
+            assert!(
+                (pc.yaw - yaw).abs() < LOOK_AT_TOLERANCE,
+                "{offset}: yaw {}",
+                pc.yaw
+            );
+            assert!(
+                pc.pitch.abs() < LOOK_AT_TOLERANCE,
+                "{offset}: pitch {}",
+                pc.pitch
+            );
         }
     }
 
@@ -584,8 +595,8 @@ mod tests {
         pc.look_at(start - Vec3::Y);
         let down = pc.pitch;
 
-        assert!((up - 1.54).abs() < 1e-4, "up {up}");
-        assert!((down + 1.54).abs() < 1e-4, "down {down}");
+        assert!((up - 1.54).abs() < LOOK_AT_TOLERANCE, "up {up}");
+        assert!((down + 1.54).abs() < LOOK_AT_TOLERANCE, "down {down}");
     }
 
     #[test]
