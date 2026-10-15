@@ -36,9 +36,9 @@ impl Listener {
 }
 
 /// Volume multiplier for a sound `distance` metres from the listener, or `None` past
-/// [`MAX_AUDIBLE_DISTANCE`].
+/// [`MAX_AUDIBLE_DISTANCE`] or for a non-finite distance.
 pub fn distance_gain(distance: f32) -> Option<f32> {
-    if distance > MAX_AUDIBLE_DISTANCE {
+    if !distance.is_finite() || distance > MAX_AUDIBLE_DISTANCE {
         None
     } else if distance <= REFERENCE_DISTANCE {
         Some(1.0)
