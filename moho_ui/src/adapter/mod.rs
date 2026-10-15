@@ -130,7 +130,7 @@ impl EguiAdapter {
             progress: None,
             last_hovered_key: None,
             menu_music_playing: false,
-            menu_music_exists: false,
+            menu_music_exists: std::path::Path::new(event_routing::MENU_MUSIC_PATH).exists(),
         }
     }
 
@@ -353,15 +353,14 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
             }
         }
 
-        // Background music: start when entering start menu, stop when leaving
-        event_routing::update_menu_music(
-            &menu_actions,
-            &self.event_bus,
-            &mut self.menu_music_playing,
-            // Only frames with menu actions can start music, so only they touch the disk.
-            !menu_actions.is_empty()
-                && std::path::Path::new(event_routing::MENU_MUSIC_PATH).exists(),
-        );
+        // Menu music follows the game state: playing in the menu, stopped elsewhere.
+        let want_menu_music = self.current_game_state == GameState::Menu && self.menu_music_exists;
+        if let Some(event) =
+            event_routing::menu_music_change(want_menu_music, self.menu_music_playing)
+        {
+            self.event_bus.publish(event);
+            self.menu_music_playing = want_menu_music;
+        }
 
         // Handle platform output
         self.handle_platform_output(full_output.platform_output);

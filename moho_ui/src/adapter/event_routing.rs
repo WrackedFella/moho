@@ -4,7 +4,7 @@
 //! - Menu action to event bus conversion
 //! - Audio event emission
 //! - Console action processing
-//! - Background music lifecycle for the main menu
+//! - Background music start/stop decisions for the main menu
 use crate::UiAudioEvent;
 use crate::screens::MenuAction;
 use moho_core::EventBus;
@@ -83,52 +83,23 @@ pub fn emit_audio_event(event_bus: &EventBus, audio_event: UiAudioEvent) {
     event_bus.publish(core_event);
 }
 
-/// Menu background music, relative to the working directory.
-pub const MENU_MUSIC_PATH: &str = "audio/music/menu.ogg";
-
-/// Manage menu background music lifecycle.
-///
-/// Starts music when the player navigates to the start menu, stops it when
-/// they leave. Never starts when `music_exists` is false.
-pub fn update_menu_music(
-    actions: &[MenuAction],
-    event_bus: &EventBus,
-    music_playing: &mut bool,
-    music_exists: bool,
-) {
-    use moho_core::events::AudioEvent;
-
-    for action in actions {
-        match action {
-            // Entering the start menu — start music
-            MenuAction::ShowMenu(name) if name == "start" && !*music_playing && music_exists => {
-                event_bus.publish(AudioEvent::MusicStart {
-                    path: MENU_MUSIC_PATH.to_string(),
-                    volume: 1.0,
-                    looped: true,
-                });
-                *music_playing = true;
-            }
-            // Leaving the menu (loading, new world, exit, or switching to non-start screen)
-            MenuAction::LoadScene(_) | MenuAction::GenerateWorld(_) | MenuAction::Exit
-                if *music_playing =>
-            {
-                event_bus.publish(AudioEvent::MusicStop);
-                *music_playing = false;
-            }
-            // Navigating to any screen other than start also stops music
-            MenuAction::ShowMenu(name) if name != "start" && *music_playing => {
-                event_bus.publish(AudioEvent::MusicStop);
-                *music_playing = false;
-            }
-            _ => {}
-        }
-    }
-}
+/// Menu background music, relative to the working directory, beside the UI
+/// sounds in `assets/audio/ui/`.
+pub const MENU_MUSIC_PATH: &str = "assets/audio/music/menu.ogg";
 
 /// Decide what menu music needs to happen given what is wanted and what plays.
-pub fn menu_music_change(_want: bool, _playing: bool) -> Option<moho_core::events::AudioEvent> {
-    None
+pub fn menu_music_change(want: bool, playing: bool) -> Option<moho_core::events::AudioEvent> {
+    use moho_core::events::AudioEvent;
+
+    match (want, playing) {
+        (true, false) => Some(AudioEvent::MusicStart {
+            path: MENU_MUSIC_PATH.to_string(),
+            volume: 1.0,
+            looped: true,
+        }),
+        (false, true) => Some(AudioEvent::MusicStop),
+        _ => None,
+    }
 }
 
 /// Process console action and publish corresponding events
