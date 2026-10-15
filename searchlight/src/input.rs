@@ -17,6 +17,7 @@ pub enum FpsAction {
     Fire,
     Reload,
     CheckMagazine,
+    Restart,
 }
 
 impl Action for FpsAction {
@@ -41,6 +42,7 @@ impl Action for FpsAction {
             FpsAction::Fire => "fire",
             FpsAction::Reload => "reload",
             FpsAction::CheckMagazine => "check_magazine",
+            FpsAction::Restart => "restart",
         }
     }
 
@@ -54,6 +56,7 @@ impl Action for FpsAction {
             FpsAction::Fire => &[Binding::Mouse(MouseButton::Left)],
             FpsAction::Reload => &[Binding::Key(Key::R)],
             FpsAction::CheckMagazine => &[Binding::Key(Key::C)],
+            FpsAction::Restart => &[],
         }
     }
 }
@@ -68,6 +71,8 @@ pub struct FpsCommand {
     pub reload: bool,
     /// The check-magazine input went down this tick.
     pub check: bool,
+    /// The restart input went down this tick.
+    pub restart: bool,
 }
 
 impl FpsCommand {
@@ -91,6 +96,7 @@ impl FpsCommand {
             fire: frame.pressed(FpsAction::Fire),
             reload: frame.pressed(FpsAction::Reload),
             check: frame.pressed(FpsAction::CheckMagazine),
+            restart: false,
         }
     }
 }
@@ -219,6 +225,37 @@ mod tests {
         assert_eq!(down.movement.yaw_delta, 0.0);
         assert!(sideways.movement.yaw_delta != 0.0, "{sideways:?}");
         assert_eq!(sideways.movement.pitch_delta, 0.0);
+    }
+
+    #[test]
+    fn enter_is_bound_to_restart() {
+        let (bindings, warnings) = ActionBindings::load(&BTreeMap::new());
+        assert!(warnings.is_empty());
+        let mut map = ActionMap::<FpsAction>::new(bindings, 1.0);
+        map.key(Key::Enter, true);
+
+        let pressed = FpsCommand::from_frame(&map.end_tick());
+        let held = FpsCommand::from_frame(&map.end_tick());
+        map.key(Key::Enter, false);
+        let released = FpsCommand::from_frame(&map.end_tick());
+        map.key(Key::Enter, true);
+        let again = FpsCommand::from_frame(&map.end_tick());
+
+        assert_eq!(
+            FpsAction::Restart.default_bindings(),
+            [Binding::Key(Key::Enter)]
+        );
+        assert!(FpsAction::ALL.contains(&FpsAction::Restart));
+        assert_eq!(
+            [
+                pressed.restart,
+                held.restart,
+                released.restart,
+                again.restart
+            ],
+            [true, false, false, true]
+        );
+        assert!(!pressed.fire && !pressed.reload && !pressed.check);
     }
 
     #[test]

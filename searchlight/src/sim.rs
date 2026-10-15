@@ -1,6 +1,8 @@
 //! The fixed-tick simulation: player, rifle, dummies and the feedback they produce.
 //! It holds no renderer, audio or UI handle.
 
+use std::sync::Arc;
+
 use glam::Vec3;
 use moho_physics::{
     CharacterHandle, CharacterState, HitVolume, MoveSettings, PhysicsWorld, first_person_view,
@@ -9,6 +11,8 @@ use searchlight_rules::{
     Body, BodyPart, BodyProfile, HitReport, Magazine, MagazineLevel, Rifle, Shot,
 };
 
+use crate::arena::Arena;
+use crate::brain::EnemyTuning;
 use crate::input::FpsCommand;
 use crate::shot::{ShotRay, Strike, resolve_shot};
 use crate::tag::SurfaceTag;
@@ -47,6 +51,11 @@ pub struct SimConfig {
     pub rifle: Rifle,
     /// Magazines the player can reload from, used first to last.
     pub spares: Vec<Magazine>,
+    /// How every enemy notices, aims and fires. `damage` and `cooldown_ticks` here are the
+    /// enemies'; the fields above are the player's.
+    pub enemy: EnemyTuning,
+    /// The player's part the enemies aim at.
+    pub enemy_aim_at: BodyPart,
 }
 
 /// Something the player should see, hear or read, in the order it happened.
@@ -66,6 +75,20 @@ pub enum Feedback {
     MagazineLevel(MagazineLevel),
     /// A reload finished.
     ReloadDone,
+    /// The enemy numbered `target` fired a shot.
+    EnemyFired { target: u16 },
+    /// An enemy shot struck `part` of the player; `from` is where the shot began.
+    PlayerHit { part: BodyPart, from: Vec3 },
+    /// The enemy numbered `target` died and left the arena.
+    EnemyDied { target: u16 },
+    /// The player died.
+    PlayerDied,
+}
+
+/// The six hit volumes of the player, the same boxes as a dummy's but tagged
+/// [`SurfaceTag::Player`].
+pub fn player_hit_volumes() -> [HitVolume; 6] {
+    todo!("the player's volumes are the dummy's with player tags")
 }
 
 /// The six hit volumes of a dummy numbered `target`, one per body part, in the body frame
@@ -297,6 +320,36 @@ impl FpsSim {
     /// The body of dummy `target`, or `None` if there is no such dummy.
     pub fn dummy_body(&self, target: u16) -> Option<&Body> {
         self.dummies.get(usize::from(target))
+    }
+
+    /// A sim started from `arena`: the player, one dummy per dummy spawn and one enemy per enemy
+    /// spawn, numbered dummies first. Every enemy starts facing its nearest waypoint.
+    pub fn start(arena: Arc<Arena>, config: SimConfig) -> Self {
+        let _ = (arena, config);
+        todo!("build the sim from the arena")
+    }
+
+    /// The player's body.
+    pub fn player_body(&self) -> &Body {
+        todo!("the player has a body")
+    }
+
+    /// Enemies the arena spawned, dead ones included.
+    pub fn enemy_count(&self) -> usize {
+        todo!("count the enemies")
+    }
+
+    /// The body of enemy `index` (arena order), dead or alive, or `None` if there is no such enemy.
+    pub fn enemy_body(&self, index: usize) -> Option<&Body> {
+        let _ = index;
+        todo!("enemies have bodies")
+    }
+
+    /// Enemy `index`'s character after the last tick, or `None` if there is no such enemy or it
+    /// died and was removed from the world.
+    pub fn enemy_state(&self, index: usize) -> Option<CharacterState> {
+        let _ = index;
+        todo!("enemies have characters")
     }
 
     /// Feedback produced and not yet drained.
@@ -1198,5 +1251,670 @@ mod hit_volume_and_cooldown_tests {
         let sim = FpsSim::new(flat_floor(), Vec3::ZERO, &[], config);
 
         assert_eq!(sim.eye_height(), 1.6);
+    }
+}
+
+#[cfg(test)]
+mod enemy_tests {
+    use std::f32::consts::FRAC_PI_2;
+    use std::path::PathBuf;
+
+    use moho_physics::CharacterCommand;
+
+    use super::*;
+    use crate::arena;
+    use crate::test_support::{DT, arena_with, mag, test_config};
+
+    /// Height of the head volume's centre above the capsule centre: a level shot from here
+    /// strikes a standing body's head.
+    const HEAD_HEIGHT: f32 = 0.72;
+    /// Head status of every body in these tests (see `test_profile`): two 30-damage hits kill.
+    const PLAYER_ONE_SHOT: u32 = 60;
+
+    fn config() -> SimConfig {
+        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        config.eye_height = HEAD_HEIGHT;
+        config
+    }
+
+    fn sturdy(mut config: SimConfig) -> SimConfig {
+        config.body = BodyProfile {
+            max_health: 1_000_000,
+            head_status: 1_000_000,
+            arm_status: 1_000_000,
+            leg_status: 1_000_000,
+        };
+        config
+    }
+
+    fn idle() -> FpsCommand {
+        FpsCommand::default()
+    }
+
+    fn pull() -> FpsCommand {
+        FpsCommand {
+            fire: true,
+            ..FpsCommand::default()
+        }
+    }
+
+    fn restart() -> FpsCommand {
+        FpsCommand {
+            restart: true,
+            ..FpsCommand::default()
+        }
+    }
+
+    /// `len` ticks of nothing, with a trigger pull on each tick in `pulls`.
+    fn script(len: usize, pulls: &[usize]) -> Vec<FpsCommand> {
+        (0..len)
+            .map(|tick| {
+                if pulls.contains(&tick) {
+                    pull()
+                } else {
+                    idle()
+                }
+            })
+            .collect()
+    }
+
+    fn run(sim: &mut FpsSim, script: &[FpsCommand]) -> Vec<Vec<Feedback>> {
+        script
+            .iter()
+            .map(|command| {
+                sim.tick(command, DT);
+                sim.drain_feedback()
+            })
+            .collect()
+    }
+
+    fn ticks_where(ticks: &[Vec<Feedback>], matches: impl Fn(&Feedback) -> bool) -> Vec<usize> {
+        ticks
+            .iter()
+            .enumerate()
+            .filter(|(_, feedback)| feedback.iter().any(&matches))
+            .map(|(tick, _)| tick)
+            .collect()
+    }
+
+    fn count(ticks: &[Vec<Feedback>], matches: impl Fn(&Feedback) -> bool) -> usize {
+        ticks.iter().flatten().filter(|fb| matches(fb)).count()
+    }
+
+    fn enemy_fired(feedback: &Feedback) -> bool {
+        matches!(feedback, Feedback::EnemyFired { .. })
+    }
+
+    fn player_hit(feedback: &Feedback) -> bool {
+        matches!(feedback, Feedback::PlayerHit { .. })
+    }
+
+    fn player_died(feedback: &Feedback) -> bool {
+        matches!(feedback, Feedback::PlayerDied)
+    }
+
+    fn hit_of(feedback: &Feedback) -> Option<(u16, BodyPart)> {
+        match feedback {
+            Feedback::Hit { target, part, .. } => Some((*target, *part)),
+            _ => None,
+        }
+    }
+
+    fn horizontal(a: Vec3, b: Vec3) -> f32 {
+        Vec3::new(a.x - b.x, 0.0, a.z - b.z).length()
+    }
+
+    const ENEMY_SPAWN: Vec3 = Vec3::new(0.0, 0.0, 10.0);
+    /// Between the enemy and the player, so the enemy spawns facing the player.
+    const TOWARD_PLAYER: Vec3 = Vec3::new(0.0, 0.0, 6.0);
+    /// Far behind the enemy as seen from the player, so the enemy spawns facing away.
+    const AWAY_FROM_PLAYER: Vec3 = Vec3::new(0.0, 0.0, 40.0);
+
+    /// The player at the origin facing +Z and one enemy ten metres ahead, facing the player.
+    fn duel(boxes: &[(Vec3, Vec3)]) -> Arc<Arena> {
+        arena_with(boxes, Vec3::ZERO, &[ENEMY_SPAWN], &[TOWARD_PLAYER])
+    }
+
+    #[test]
+    fn an_enemy_walks_a_full_lap_of_the_shipped_arena() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/arena.glb");
+        let (level, markers) = arena::load(&path).expect("the shipped arena loads");
+        let mut arena = Arena::from_level(&level, &markers);
+        arena.enemy_spawns.truncate(1);
+        let route = arena.route.clone();
+        let mut config = config();
+        // Too short to ever notice the player, so only the route moves the enemy.
+        config.enemy.sight_range = 0.5;
+        let speed = config.move_settings.max_speed * config.enemy.patrol_speed;
+        let lap: f32 = route
+            .iter()
+            .zip(route.iter().cycle().skip(1))
+            .map(|(a, b)| horizontal(*a, *b))
+            .sum();
+        let budget = (lap / speed * 60.0 * 2.0) as usize + 600;
+        let mut sim = FpsSim::start(Arc::new(arena), config);
+        let mut closest = vec![f32::MAX; route.len()];
+
+        for _ in 0..budget {
+            sim.tick(&idle(), DT);
+            let at = sim
+                .enemy_state(0)
+                .expect("nothing hurts the enemy")
+                .position;
+            for (best, waypoint) in closest.iter_mut().zip(&route) {
+                *best = best.min(horizontal(at, *waypoint));
+            }
+        }
+
+        for (index, best) in closest.iter().enumerate() {
+            assert!(
+                *best < 1.0,
+                "waypoint {} was never reached, closest {best} m",
+                index + 1
+            );
+        }
+    }
+
+    #[test]
+    fn an_enemy_spawns_facing_its_nearest_waypoint_and_walks_to_it() {
+        let arena = arena_with(
+            &[],
+            Vec3::new(0.0, 0.0, -10.0),
+            &[ENEMY_SPAWN],
+            &[Vec3::new(10.0, 0.0, 10.0), AWAY_FROM_PLAYER],
+        );
+        let mut sim = FpsSim::start(arena, config());
+
+        let spawned = sim.enemy_state(0).expect("the enemy spawned");
+        run(&mut sim, &script(30, &[]));
+
+        let walked = sim.enemy_state(0).expect("the enemy is alive");
+        assert!((spawned.yaw - FRAC_PI_2).abs() < 1e-3, "{spawned:?}");
+        assert!(walked.position.x > 0.5, "{walked:?}");
+        assert!((walked.position.z - 10.0).abs() < 0.2, "{walked:?}");
+    }
+
+    #[test]
+    fn an_enemy_with_sight_fires_at_the_player() {
+        let mut sim = FpsSim::start(duel(&[]), config());
+
+        let ticks = run(&mut sim, &script(12, &[]));
+
+        assert_eq!(ticks_where(&ticks, enemy_fired), [2, 6, 10]);
+        assert_eq!(ticks_where(&ticks, player_hit), [2, 6, 10]);
+        let Some(Feedback::PlayerHit { part, from }) =
+            ticks[2].iter().find(|fb| player_hit(fb)).cloned()
+        else {
+            panic!("no hit on tick 2: {ticks:?}");
+        };
+        assert_eq!(part, BodyPart::Torso);
+        assert!(horizontal(from, ENEMY_SPAWN) < 1.0, "{from:?}");
+        assert_eq!(sim.player_body().health(), 70);
+    }
+
+    #[test]
+    fn an_enemy_beyond_its_sight_range_does_not_fire() {
+        let fired_with_range = |sight_range: f32| {
+            let mut config = config();
+            config.enemy.sight_range = sight_range;
+            let mut sim = FpsSim::start(duel(&[]), config);
+            let ticks = run(&mut sim, &script(30, &[]));
+            count(&ticks, enemy_fired)
+        };
+
+        let short = fired_with_range(9.0);
+        let long = fired_with_range(11.0);
+
+        assert_eq!(short, 0);
+        assert!(long > 0);
+    }
+
+    #[test]
+    fn an_enemy_behind_a_wall_does_not_damage_the_player() {
+        let wall = (Vec3::new(-8.0, 0.0, 5.0), Vec3::new(8.0, 4.0, 5.5));
+        let mut sim = FpsSim::start(duel(&[wall]), config());
+
+        let ticks = run(&mut sim, &script(180, &[]));
+
+        assert_eq!(count(&ticks, player_hit), 0);
+        assert_eq!(count(&ticks, enemy_fired), 0);
+        assert_eq!(sim.player_body().health(), 100);
+    }
+
+    #[test]
+    fn an_enemy_hit_drains_the_players_health_and_the_struck_part() {
+        let cases = [
+            // part, head status, left leg status
+            (BodyPart::Head, 40, 60),
+            (BodyPart::Torso, 50, 60),
+            (BodyPart::LeftLeg, 50, 50),
+        ];
+        for (part, head, left_leg) in cases {
+            let mut config = config();
+            config.enemy_aim_at = part;
+            let mut sim = FpsSim::start(duel(&[]), config);
+
+            let ticks = run(&mut sim, &script(3, &[]));
+
+            let hits: Vec<_> = ticks.iter().flatten().filter(|fb| player_hit(fb)).collect();
+            assert!(
+                matches!(hits[..], [Feedback::PlayerHit { part: struck, .. }] if *struck == part),
+                "{part:?}: {ticks:?}"
+            );
+            let body = sim.player_body();
+            assert_eq!(body.health(), 90, "{part:?}");
+            assert_eq!(body.status(BodyPart::Head), Some(head), "{part:?}");
+            assert_eq!(body.status(BodyPart::LeftLeg), Some(left_leg), "{part:?}");
+            assert_eq!(body.status(BodyPart::RightLeg), Some(60), "{part:?}");
+            assert_eq!(body.status(BodyPart::LeftArm), Some(60), "{part:?}");
+            assert_eq!(body.status(BodyPart::RightArm), Some(60), "{part:?}");
+            assert_eq!(body.status(BodyPart::Torso), None, "{part:?}");
+        }
+    }
+
+    #[test]
+    fn enemy_shots_to_the_head_kill_a_player_with_health_left() {
+        let mut config = config();
+        config.enemy_aim_at = BodyPart::Head;
+        let mut sim = FpsSim::start(duel(&[]), config);
+
+        let ticks = run(&mut sim, &script(60, &[]));
+
+        assert_eq!(ticks_where(&ticks, player_died), [18]);
+        let body = sim.player_body();
+        assert!(body.is_dead());
+        assert_eq!(body.status(BodyPart::Head), Some(0));
+        assert_eq!(body.health(), 50);
+        assert_eq!(count(&ticks, player_hit), 5);
+        assert_eq!(count(&ticks, enemy_fired), 5);
+    }
+
+    #[test]
+    fn enemy_shots_to_the_torso_kill_when_health_is_gone() {
+        let mut sim = FpsSim::start(duel(&[]), config());
+
+        let ticks = run(&mut sim, &script(80, &[]));
+
+        assert_eq!(ticks_where(&ticks, player_died), [38]);
+        let body = sim.player_body();
+        assert!(body.is_dead());
+        assert_eq!(body.health(), 0);
+        assert_eq!(body.status(BodyPart::Head), Some(50));
+        assert_eq!(count(&ticks, player_hit), 10);
+        assert_eq!(count(&ticks, enemy_fired), 10);
+    }
+
+    #[test]
+    fn spread_is_deterministic_for_a_seed() {
+        let hit_pattern = |seed: u64| {
+            let mut config = sturdy(config());
+            config.enemy.aim_error = 0.05;
+            config.enemy.damage = 1;
+            config.enemy.seed = seed;
+            let mut sim = FpsSim::start(duel(&[]), config);
+            let ticks = run(&mut sim, &script(300, &[]));
+            (
+                ticks_where(&ticks, enemy_fired),
+                ticks_where(&ticks, player_hit),
+            )
+        };
+
+        let first = hit_pattern(1);
+        let again = hit_pattern(1);
+        let other = hit_pattern(2);
+
+        assert_eq!(first, again);
+        assert_ne!(first.1, other.1);
+        assert!(first.1.len() < first.0.len(), "no shot was off target");
+        assert!(!first.1.is_empty(), "no shot was on target");
+    }
+
+    #[test]
+    fn a_shot_that_clips_another_enemy_is_absorbed() {
+        let shooter = Vec3::new(0.0, 0.0, 12.0);
+        // Beside the line from the shooter to the player, close enough that a wide spread
+        // sometimes strikes it, and turned away so it never shoots.
+        let bystander = Vec3::new(0.6, 0.0, 6.0);
+        let arena = arena_with(
+            &[],
+            Vec3::ZERO,
+            &[shooter, bystander],
+            &[Vec3::new(0.0, 0.0, 8.0), Vec3::new(0.6, 0.0, 40.0)],
+        );
+        let mut config = sturdy(config());
+        config.enemy.aim_error = 0.2;
+        config.enemy.patrol_speed = 0.0;
+        let untouched = Body::new(config.body);
+        let mut sim = FpsSim::start(arena, config);
+
+        let ticks = run(&mut sim, &script(600, &[]));
+
+        assert!(
+            count(&ticks, enemy_fired) > 100,
+            "{} shots",
+            count(&ticks, enemy_fired)
+        );
+        assert_eq!(sim.enemy_body(1), Some(&untouched));
+    }
+
+    #[test]
+    fn a_killed_enemy_stops_moving_and_firing() {
+        // Walking away from the player, who shoots it in the back of the head.
+        let away = arena_with(&[], Vec3::ZERO, &[ENEMY_SPAWN], &[AWAY_FROM_PLAYER]);
+        let mut config_a = config();
+        config_a.damage = 30;
+        let mut walking = FpsSim::start(away, config_a);
+        // Facing the player, who answers its first shot with a killing one.
+        let mut config_b = config();
+        config_b.damage = PLAYER_ONE_SHOT;
+        let mut firing = FpsSim::start(duel(&[]), config_b);
+
+        let walked = run(&mut walking, &script(3, &[0]));
+        let before = walking
+            .enemy_state(0)
+            .expect("alive after one hit")
+            .position;
+        let killed = run(&mut walking, &script(1, &[0]));
+        let after_death = run(&mut walking, &script(60, &[]));
+        let shooting = run(&mut firing, &script(90, &[3]));
+
+        assert!(before.z > ENEMY_SPAWN.z + 0.02, "never walked: {before:?}");
+        assert!(
+            walked
+                .iter()
+                .flatten()
+                .any(|fb| hit_of(fb) == Some((0, BodyPart::Head)))
+        );
+        assert!(
+            killed[0].contains(&Feedback::EnemyDied { target: 0 }),
+            "{killed:?}"
+        );
+        assert!(walking.enemy_state(0).is_none());
+        assert!(walking.enemy_body(0).is_some_and(Body::is_dead));
+        assert!(after_death.iter().all(Vec::is_empty), "{after_death:?}");
+        assert_eq!(ticks_where(&shooting, enemy_fired), [2]);
+        assert_eq!(
+            ticks_where(&shooting, |fb| *fb == Feedback::EnemyDied { target: 0 }),
+            [3]
+        );
+        assert_eq!(count(&shooting, player_hit), 1);
+        assert_eq!(firing.player_body().health(), 90);
+        assert!(firing.enemy_state(0).is_none());
+    }
+
+    #[test]
+    fn shots_pass_through_where_a_dead_enemy_stood() {
+        let arena = arena_with(
+            &[],
+            Vec3::ZERO,
+            &[ENEMY_SPAWN, Vec3::new(0.0, 0.0, 16.0)],
+            &[AWAY_FROM_PLAYER],
+        );
+        let mut config = config();
+        config.damage = PLAYER_ONE_SHOT;
+        let mut sim = FpsSim::start(arena, config);
+
+        let ticks = run(&mut sim, &script(4, &[0, 3]));
+
+        assert!(
+            ticks[0].contains(&Feedback::EnemyDied { target: 0 }),
+            "{ticks:?}"
+        );
+        let second: Vec<_> = ticks[3].iter().filter_map(hit_of).collect();
+        assert_eq!(second, [(1, BodyPart::Head)], "{ticks:?}");
+    }
+
+    #[test]
+    fn an_enemy_killed_this_tick_does_not_fire() {
+        let mut config = config();
+        config.damage = PLAYER_ONE_SHOT;
+        let mut control = FpsSim::start(duel(&[]), config.clone());
+        let mut contested = FpsSim::start(duel(&[]), config);
+
+        let undisturbed = run(&mut control, &script(60, &[]));
+        let shot_down = run(&mut contested, &script(60, &[2]));
+
+        assert_eq!(ticks_where(&undisturbed, enemy_fired)[0], 2);
+        assert!(
+            shot_down[2].contains(&Feedback::EnemyDied { target: 0 }),
+            "{shot_down:?}"
+        );
+        assert_eq!(count(&shot_down, enemy_fired), 0);
+        assert_eq!(count(&shot_down, player_hit), 0);
+        assert_eq!(contested.player_body().health(), 100);
+    }
+
+    #[test]
+    fn an_enemy_does_not_fire_at_a_player_behind_it() {
+        let arena = arena_with(&[], Vec3::ZERO, &[ENEMY_SPAWN], &[AWAY_FROM_PLAYER]);
+        let mut sim = FpsSim::start(arena, config());
+
+        let ticks = run(&mut sim, &script(180, &[]));
+
+        assert_eq!(count(&ticks, enemy_fired), 0);
+        assert_eq!(count(&ticks, player_hit), 0);
+        let at = sim.enemy_state(0).expect("alive").position;
+        assert!(at.z > ENEMY_SPAWN.z + 3.0, "stopped patrolling: {at:?}");
+    }
+
+    #[test]
+    fn an_enemy_stops_firing_when_the_player_ducks_behind_a_wall() {
+        let wall = (Vec3::new(1.0, 0.0, 5.0), Vec3::new(9.0, 4.0, 5.5));
+        let arena = arena_with(
+            &[wall],
+            Vec3::ZERO,
+            &[ENEMY_SPAWN],
+            &[TOWARD_PLAYER, Vec3::new(0.0, 0.0, 25.0)],
+        );
+        let mut sim = FpsSim::start(arena, sturdy(config()));
+        let turn_and_walk = |first: bool| FpsCommand {
+            movement: CharacterCommand {
+                forward: 1.0,
+                yaw_delta: if first { FRAC_PI_2 } else { 0.0 },
+                ..CharacterCommand::default()
+            },
+            ..FpsCommand::default()
+        };
+
+        let mut exposed = Vec::new();
+        let mut first = true;
+        while sim.player().position.x < 4.5 {
+            sim.tick(&turn_and_walk(first), DT);
+            exposed.push(sim.drain_feedback());
+            first = false;
+            assert!(exposed.len() < 300, "the player never got behind the wall");
+        }
+        let enemy_when_hidden = sim.enemy_state(0).expect("alive").position;
+        let hidden = run(&mut sim, &script(90, &[]));
+
+        assert!(
+            count(&exposed, enemy_fired) > 0,
+            "it never fired in the open"
+        );
+        assert_eq!(count(&hidden, enemy_fired), 0);
+        assert_eq!(count(&hidden, player_hit), 0);
+        let enemy_now = sim.enemy_state(0).expect("alive").position;
+        assert!(
+            horizontal(enemy_now, enemy_when_hidden) > 0.5,
+            "it did not resume its patrol: {enemy_when_hidden:?} -> {enemy_now:?}"
+        );
+    }
+
+    #[test]
+    fn a_dead_player_freezes_the_arena() {
+        // The first enemy kills the player; the second walks away from them unaware.
+        let arena = arena_with(
+            &[],
+            Vec3::ZERO,
+            &[ENEMY_SPAWN, Vec3::new(25.0, 0.0, 5.0)],
+            &[TOWARD_PLAYER, Vec3::new(40.0, 0.0, 5.0)],
+        );
+        let mut config = config();
+        config.enemy.damage = 100;
+        config.enemy.reaction_ticks = 30;
+        let mut sim = FpsSim::start(arena, config);
+        let walker_start = sim.enemy_state(1).expect("spawned").position;
+
+        let mut ticks = Vec::new();
+        while !ticks.iter().flatten().any(player_died) {
+            ticks.extend(run(&mut sim, &script(1, &[])));
+            assert!(ticks.len() < 300, "the player never died");
+        }
+        let walker_at_death = sim.enemy_state(1).expect("alive").position;
+        let player_at_death = sim.player();
+        let rounds = sim.rifle().magazine().rounds();
+        let restless = FpsCommand {
+            movement: CharacterCommand {
+                forward: 1.0,
+                jump: true,
+                ..CharacterCommand::default()
+            },
+            fire: true,
+            reload: true,
+            check: true,
+            ..FpsCommand::default()
+        };
+        let frozen = run(&mut sim, &[restless; 90]);
+
+        assert!(walker_at_death.x > walker_start.x + 0.5, "it never walked");
+        assert!(frozen.iter().all(Vec::is_empty), "{frozen:?}");
+        let walker_after = sim.enemy_state(1).expect("alive").position;
+        assert!(horizontal(walker_after, walker_at_death) < 1e-4);
+        assert!((sim.player().position - player_at_death.position).length() < 1e-4);
+        assert_eq!(sim.rifle().magazine().rounds(), rounds);
+    }
+
+    #[test]
+    fn no_enemy_fires_once_the_player_is_dead() {
+        let arena = arena_with(
+            &[],
+            Vec3::ZERO,
+            &[Vec3::new(-3.0, 0.0, 10.0), Vec3::new(3.0, 0.0, 10.0)],
+            &[TOWARD_PLAYER],
+        );
+        let mut config = config();
+        config.enemy.damage = 100;
+        let mut sim = FpsSim::start(arena, config);
+
+        let ticks = run(&mut sim, &script(120, &[]));
+
+        let death = ticks_where(&ticks, player_died);
+        assert_eq!(death.len(), 1, "{ticks:?}");
+        let fired_that_tick = ticks[death[0]].iter().filter(|fb| enemy_fired(fb)).count();
+        assert_eq!(fired_that_tick, 1, "{:?}", ticks[death[0]]);
+        assert_eq!(count(&ticks, enemy_fired), 1);
+        assert_eq!(count(&ticks, player_hit), 1);
+    }
+
+    /// The player killed by one of two enemies after dropping the other, then restarted.
+    fn dead_player_in_a_busy_arena() -> (FpsSim, Arc<Arena>, SimConfig) {
+        let arena = arena_with(
+            &[],
+            Vec3::ZERO,
+            &[ENEMY_SPAWN, Vec3::new(3.0, 0.0, 10.0)],
+            &[TOWARD_PLAYER],
+        );
+        let mut config = config();
+        config.damage = PLAYER_ONE_SHOT;
+        config.enemy.damage = 100;
+        config.enemy.aim_error = 0.05;
+        let mut sim = FpsSim::start(arena.clone(), config.clone());
+        let mut dead = false;
+        for tick in 0..2000 {
+            sim.tick(&if tick == 0 { pull() } else { idle() }, DT);
+            dead |= sim.drain_feedback().iter().any(player_died);
+            if dead {
+                break;
+            }
+        }
+        assert!(dead, "the player never died");
+        (sim, arena, config)
+    }
+
+    #[test]
+    fn restart_after_death_matches_a_fresh_start() {
+        let (mut restarted, arena, config) = dead_player_in_a_busy_arena();
+        let mut fresh = FpsSim::start(arena, config);
+        assert!(
+            restarted.enemy_state(0).is_none(),
+            "the setup killed the first enemy"
+        );
+
+        restarted.tick(&restart(), DT);
+
+        assert_eq!(restarted.player(), fresh.player());
+        assert_eq!(restarted.player_body(), fresh.player_body());
+        assert!(!restarted.player_body().is_dead());
+        assert_eq!(restarted.rifle(), fresh.rifle());
+        assert_eq!(restarted.spares(), fresh.spares());
+        assert_eq!(restarted.enemy_count(), fresh.enemy_count());
+        for index in 0..fresh.enemy_count() {
+            assert_eq!(
+                restarted.enemy_state(index),
+                fresh.enemy_state(index),
+                "{index}"
+            );
+            assert_eq!(
+                restarted.enemy_body(index),
+                fresh.enemy_body(index),
+                "{index}"
+            );
+        }
+        assert_eq!(restarted.pending_feedback(), fresh.pending_feedback());
+        let commands = script(300, &[0]);
+        assert_eq!(run(&mut restarted, &commands), run(&mut fresh, &commands));
+        assert_eq!(restarted.player(), fresh.player());
+    }
+
+    #[test]
+    fn restart_while_alive_does_nothing() {
+        let arena = duel(&[]);
+        let mut config = config();
+        config.damage = PLAYER_ONE_SHOT;
+        let mut pressed = FpsSim::start(arena.clone(), config.clone());
+        let mut control = FpsSim::start(arena, config);
+        let walk = FpsCommand {
+            movement: CharacterCommand {
+                forward: 1.0,
+                ..CharacterCommand::default()
+            },
+            ..FpsCommand::default()
+        };
+        let lead_in = [walk; 5];
+        let with_restart = FpsCommand {
+            restart: true,
+            ..walk
+        };
+        run(&mut pressed, &lead_in);
+        run(&mut control, &lead_in);
+
+        let after_restart = run(&mut pressed, &[with_restart, pull(), idle(), idle()]);
+        let after_nothing = run(&mut control, &[walk, pull(), idle(), idle()]);
+
+        assert_eq!(after_restart, after_nothing);
+        assert_eq!(pressed.player(), control.player());
+        assert_eq!(pressed.player_body(), control.player_body());
+        assert_eq!(pressed.rifle(), control.rifle());
+        assert_eq!(pressed.enemy_state(0), control.enemy_state(0));
+        assert_eq!(pressed.enemy_body(0), control.enemy_body(0));
+        assert!(pressed.player().position.z > 0.05, "the walk was undone");
+    }
+
+    #[test]
+    fn the_players_hit_volumes_are_a_dummys_tagged_as_the_player() {
+        let player = player_hit_volumes();
+        let dummy = dummy_hit_volumes(0);
+
+        for (own, theirs) in player.iter().zip(&dummy) {
+            assert_eq!(own.offset, theirs.offset);
+            assert_eq!(own.half_extents, theirs.half_extents);
+            let tag = SurfaceTag::try_from(own.tag).expect("a surface tag");
+            let expected = SurfaceTag::try_from(theirs.tag).expect("a surface tag");
+            let (SurfaceTag::Player(part), SurfaceTag::Part { part: same, .. }) = (tag, expected)
+            else {
+                panic!("{tag:?} / {expected:?}");
+            };
+            assert_eq!(part, same);
+        }
     }
 }

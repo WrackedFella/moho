@@ -10,9 +10,10 @@ use moho_input::bindings::ActionBindings;
 use moho_physics::MoveSettings;
 use searchlight::TICK_HZ;
 use searchlight::arena;
+use searchlight::brain::EnemyTuning;
 use searchlight::game::{FpsGame, WINDOW_TITLE};
 use searchlight::sim::{FpsSim, SimConfig};
-use searchlight_rules::{BodyProfile, Magazine, Rifle};
+use searchlight_rules::{BodyPart, BodyProfile, Magazine, Rifle};
 
 /// Radians of turn per pixel of mouse motion.
 const LOOK_PER_PIXEL: f32 = 0.002;
@@ -45,6 +46,8 @@ fn tuning() -> Result<SimConfig, Box<dyn Error>> {
         },
         rifle: Rifle::loaded(full.clone()),
         spares: vec![full; SPARE_MAGAZINES],
+        enemy: EnemyTuning::default(),
+        enemy_aim_at: BodyPart::Torso,
     })
 }
 

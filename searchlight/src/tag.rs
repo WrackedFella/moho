@@ -10,6 +10,8 @@ pub enum SurfaceTag {
     World,
     /// One body part of the target numbered `target`.
     Part { target: u16, part: BodyPart },
+    /// One body part of the player.
+    Player(BodyPart),
 }
 
 /// The engine tag does not encode any [`SurfaceTag`].
@@ -46,6 +48,7 @@ impl From<SurfaceTag> for HitTag {
     fn from(tag: SurfaceTag) -> Self {
         match tag {
             SurfaceTag::World => HitTag(WORLD),
+            SurfaceTag::Player(_) => todo!("encode the player's parts"),
             SurfaceTag::Part { target, part } => {
                 HitTag(PART_BASE + ((u32::from(target) << PART_BITS) | part_index(part)))
             }
@@ -92,9 +95,16 @@ mod tests {
         ]
     }
 
+    fn surface_tags_with_player() -> impl Strategy<Value = SurfaceTag> {
+        prop_oneof![
+            surface_tags(),
+            proptest::sample::select(PARTS.to_vec()).prop_map(SurfaceTag::Player),
+        ]
+    }
+
     proptest! {
         #[test]
-        fn surface_tags_round_trip(tag in surface_tags()) {
+        fn surface_tags_round_trip(tag in surface_tags_with_player()) {
             let engine = HitTag::from(tag);
 
             let back = SurfaceTag::try_from(engine);
@@ -107,6 +117,18 @@ mod tests {
             prop_assume!(a != b);
 
             prop_assert_ne!(HitTag::from(a), HitTag::from(b));
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn player_tags_never_collide_with_target_or_world_tags(
+            part in proptest::sample::select(PARTS.to_vec()),
+            other in surface_tags(),
+        ) {
+            let player = HitTag::from(SurfaceTag::Player(part));
+
+            prop_assert_ne!(player, HitTag::from(other));
         }
     }
 
