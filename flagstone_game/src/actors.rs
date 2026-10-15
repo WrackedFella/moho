@@ -265,13 +265,14 @@ impl Cube {
         ];
 
         // Indices: 2 triangles per face, 6 faces = 36 indices
-        // Vertices are ordered CCW, so indices use standard pattern (0,1,2) and (0,2,3)
+        // Triangles wind CCW from outside. Vertices 12-15 (-Y face) run clockwise from
+        // outside, so that face uses (0,2,1) and (0,3,2) instead of (0,1,2) and (0,2,3).
         let indices: Vec<u32> = vec![
             // +X face (vertices 0-3, ordered CCW from outside)
             0, 1, 2, 0, 2, 3, // -X face (vertices 4-7, ordered CCW from outside)
             4, 5, 6, 4, 6, 7, // +Y face (vertices 8-11, ordered CCW from outside)
             8, 9, 10, 8, 10, 11, // -Y face (vertices 12-15, ordered CCW from outside)
-            12, 13, 14, 12, 14, 15, // +Z face (vertices 16-19, ordered CCW from outside)
+            12, 14, 13, 12, 15, 14, // +Z face (vertices 16-19, ordered CCW from outside)
             16, 17, 18, 16, 18, 19, // -Z face (vertices 20-23, ordered CCW from outside)
             20, 21, 22, 20, 22, 23,
         ];
@@ -300,49 +301,6 @@ impl Sphere {
             object_type: 2u32, // Sphere actor
             padding: [0u32; 2],
         }
-    }
-
-    /// Generate a unit-sphere triangle list (non-indexed) with the given
-    /// latitude/longitude resolution. Returned vertices are positions on the
-    /// unit sphere centered at the origin. Use the `InstanceGpu::model`
-    /// matrix to scale/translate per-instance spheres.
-    pub fn unit_sphere_vertices(lat_segments: usize, lon_segments: usize) -> Vec<[f32; 3]> {
-        let lat = lat_segments.max(2);
-        let lon = lon_segments.max(3);
-        // Precompute the grid of positions (lat+1) x (lon+1)
-        let mut pts: Vec<[f32; 3]> = Vec::with_capacity((lat + 1) * (lon + 1));
-        for i in 0..=lat {
-            let theta = std::f32::consts::PI * (i as f32) / (lat as f32);
-            let sin_theta = theta.sin();
-            let cos_theta = theta.cos();
-            for j in 0..=lon {
-                let phi = 2.0 * std::f32::consts::PI * (j as f32) / (lon as f32);
-                let x = sin_theta * phi.cos();
-                let y = cos_theta;
-                let z = sin_theta * phi.sin();
-                pts.push([x, y, z]);
-            }
-        }
-
-        // Build triangle list (two triangles per quad)
-        let mut verts: Vec<[f32; 3]> = Vec::new();
-        for i in 0..lat {
-            for j in 0..lon {
-                let a = i * (lon + 1) + j;
-                let b = a + 1;
-                let c = a + (lon + 1);
-                let d = c + 1;
-                // triangle 1: a, c, b
-                verts.push(pts[a]);
-                verts.push(pts[c]);
-                verts.push(pts[b]);
-                // triangle 2: b, c, d
-                verts.push(pts[b]);
-                verts.push(pts[c]);
-                verts.push(pts[d]);
-            }
-        }
-        verts
     }
 
     /// Generate a unit-sphere using indexed triangle lists.
@@ -377,14 +335,14 @@ impl Sphere {
                 let b = a + 1;
                 let c = a + (lon + 1) as u32; // careful cast
                 let d = c + 1;
-                // triangle 1: a, c, b
+                // triangle 1: a, b, c (CCW from outside)
                 indices.push(a);
-                indices.push(c);
-                indices.push(b);
-                // triangle 2: b, c, d
                 indices.push(b);
                 indices.push(c);
+                // triangle 2: b, d, c (CCW from outside)
+                indices.push(b);
                 indices.push(d);
+                indices.push(c);
             }
         }
         // For a unit sphere the normal at each vertex equals the position.
