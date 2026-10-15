@@ -31,7 +31,7 @@ const DUMMY_MESH_BASE: u64 = 1 << 32;
 /// A mesh handle the renderer never issues, so the empty actor draws are skipped.
 const NO_MESH: u32 = u32::MAX;
 /// The window title before any status line is appended.
-pub const WINDOW_TITLE: &str = "moho_fps";
+pub const WINDOW_TITLE: &str = "Searchlight";
 const FOV_DEGREES: f32 = 75.0;
 const NEAR: f32 = 0.05;
 const FAR: f32 = 500.0;
@@ -512,7 +512,7 @@ mod tests {
     use super::*;
     use crate::sim::Feedback;
     use crate::test_support::{flat_floor, mag, press, test_config};
-    use moho_fps_rules::Rifle;
+    use searchlight_rules::Rifle;
 
     fn game() -> FpsGame {
         let sim = FpsSim::new(
@@ -552,7 +552,7 @@ mod tests {
 
 #[cfg(test)]
 mod presentation_tests {
-    use moho_fps_rules::BodyPart;
+    use searchlight_rules::BodyPart;
 
     use super::*;
 
@@ -603,7 +603,7 @@ mod presentation_tests {
         let hit = Feedback::Hit {
             target: 0,
             part: BodyPart::Head,
-            report: moho_fps_rules::Body::new(moho_fps_rules::BodyProfile {
+            report: searchlight_rules::Body::new(searchlight_rules::BodyProfile {
                 max_health: 10,
                 head_status: 10,
                 arm_status: 10,
@@ -626,8 +626,8 @@ mod presentation_tests {
 
 #[cfg(test)]
 mod mutation_tests {
-    use moho_fps_rules::{Body, BodyPart, BodyProfile};
     use moho_renderer::FrameError;
+    use searchlight_rules::{Body, BodyPart, BodyProfile};
 
     use crate::sim::STAND_HEIGHT;
 
@@ -1004,8 +1004,13 @@ mod title_and_aspect_tests {
     }
 
     #[test]
+    fn window_title_is_searchlight() {
+        assert_eq!(WINDOW_TITLE, "Searchlight");
+    }
+
+    #[test]
     fn window_title_with_empty_status_is_just_the_base_title() {
-        assert_eq!(window_title(""), "moho_fps");
+        assert_eq!(window_title(""), "Searchlight");
         assert_eq!(window_title(""), WINDOW_TITLE);
     }
 
@@ -1013,7 +1018,7 @@ mod title_and_aspect_tests {
     fn window_title_with_a_status_appends_it_after_a_separator() {
         let title = window_title("Ammo 12/30");
 
-        assert_eq!(title, "moho_fps | Ammo 12/30");
+        assert_eq!(title, "Searchlight | Ammo 12/30");
         assert!(title.starts_with(WINDOW_TITLE));
     }
 

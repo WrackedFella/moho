@@ -1,11 +1,11 @@
 [package]
-name = "moho_fps"
+name = "searchlight"
 version = "0.1.0"
 edition = "2024"
 publish = false
 
 [[bin]]
-name = "moho_fps"
+name = "searchlight"
 path = "src/main.rs"
 
 [dependencies]
@@ -16,7 +16,7 @@ tracing-subscriber = { workspace = true }
 winit = { workspace = true }
 moho_app = { path = "../moho_app" }
 moho_audio = { path = "../moho_audio" }
-moho_fps_rules = { workspace = true }
+searchlight_rules = { workspace = true }
 moho_input = { path = "../moho_input" }
 moho_level = { path = "../moho_level" }
 moho_physics = { workspace = true }

@@ -30,7 +30,7 @@ and can run alongside 0.2–0.3.
 
 **Intent:** Each game line builds on the engine on its own, without forking it: the
 strategy game on the shared loop, and the FPS as a prototype arena shooter
-([GDD](../wiki/fps/game-design-document.md) §7 Phase 1).
+([GDD](../wiki/searchlight/game-design-document.md) §7 Phase 1).
 **Gate (all must hold):**
 - [ENG-F10](https://github.com/WrackedFella/moho/issues/80), [ENG-F11](https://github.com/WrackedFella/moho/issues/81) and [ENG-F12](https://github.com/WrackedFella/moho/issues/82) done.
 - [ENG-F14](https://github.com/WrackedFella/moho/issues/226) (a level loads from a file), [ENG-F15](https://github.com/WrackedFella/moho/issues/227) (ray queries and hit volumes) and [ENG-F21](https://github.com/WrackedFella/moho/issues/123) (character controller and camera) done: what the arena prototype can't start without and would otherwise copy.
@@ -104,7 +104,7 @@ Engine requests answered here: #302, #304–#307, #315, #316 (#303 goes to the s
 line, as an [SG-F4](https://github.com/WrackedFella/moho/issues/310) card).
 
 **Current wave set (decided 2026-10-14), all must hold:**
-- **FPS:** [GDD](../wiki/fps/game-design-document.md) §7 Phase 1–2 playable on
+- **FPS:** [GDD](../wiki/searchlight/game-design-document.md) §7 Phase 1–2 playable on
   engine-line crates: [ENG-F16](https://github.com/WrackedFella/moho/issues/228),
   [ENG-F17](https://github.com/WrackedFella/moho/issues/229),
   [ENG-F18](https://github.com/WrackedFella/moho/issues/230) and
@@ -168,8 +168,8 @@ its consumers near, not when the earlier wave fully closes.
 
 | # | Feature | Engine items it needs |
 |---|---|---|
-| P.1 | [FPS-F1](fps-game/FPS-F1-game-design-document/_feature.md) [GDD](../wiki/fps/game-design-document.md) v0.2 | — |
-| P.2 | [FPS-F2](https://github.com/WrackedFella/moho/issues/297) arena baseline (GDD §7 Phase 1), with the rules crate `moho_fps_rules` ([ADR-0015](adr/0015-fps-rules-are-a-platform-free-crate.md)) | none; stopgaps until then: non-positional sound, waypoints, rectangle HUD, a local seeded generator |
+| P.1 | [FPS-F1](searchlight/FPS-F1-game-design-document/_feature.md) [GDD](../wiki/searchlight/game-design-document.md) v0.2 | — |
+| P.2 | [FPS-F2](https://github.com/WrackedFella/moho/issues/297) arena baseline (GDD §7 Phase 1), with the rules crate `searchlight_rules` ([ADR-0015](adr/0015-fps-rules-are-a-platform-free-crate.md)) | none; stopgaps until then: non-positional sound, waypoints, rectangle HUD, a local seeded generator |
 | P.3 | GDD §7 Phase 2 (items and loadout) | 2.11 with text, 2.12 |
 
 FPS phases after Phase 2 follow GDD §7. Each becomes a feature only after the previous

@@ -1,6 +1,6 @@
 # Architecture overview
 
-**Source:** crate `Cargo.toml`s, `moho_core/src/rng.rs`, `scripts/layering.txt`, `moho_app/src/`, `moho_fps_rules/src/`, `moho_fps/src/`, `flagstone/src/app/`, `flagstone/src/main.rs`.
+**Source:** crate `Cargo.toml`s, `moho_core/src/rng.rs`, `scripts/layering.txt`, `moho_app/src/`, `searchlight_rules/src/`, `searchlight/src/`, `flagstone/src/app/`, `flagstone/src/main.rs`.
 **Decisions:** ADRs
 [0001](../../_todo/adr/0001-render-api-boundary.md),
 [0003](../../_todo/adr/0003-core-owns-event-types.md),
@@ -28,8 +28,8 @@ flowchart TD
     input["moho_input<br/>Key, Action, ActionBindings,<br/>ActionMap, mouse filtering"]:::engine
     app["moho_app<br/>window, fixed-step loop, Game trait"]:::engine
     level["moho_level<br/>glTF level loader"]:::engine
-    fps["moho_fps_rules<br/>rifle, magazine, body damage"]:::fps
-    fpsgame["moho_fps<br/>arena, shots, sim, binary"]:::fps
+    fps["searchlight_rules<br/>rifle, magazine, body damage"]:::fps
+    fpsgame["searchlight<br/>arena, shots, sim, binary"]:::fps
 
     ui --> renderer & input & core & game
     game --> core & rapi & voxel
@@ -47,9 +47,9 @@ flowchart TD
 ```
 
 Blue is the engine line, green is the flagstone line, orange is the FPS line.
-`moho_fps_rules` holds plain serialisable weapon and body rules (`Rifle`, `Magazine`, `Body`)
-with no engine dependency. `moho_fps` is the only FPS crate that reaches the engine: a library
-plus the `moho_fps` binary, described in [FPS prototype](fps-prototype.md). Every shot resolves
+`searchlight_rules` holds plain serialisable weapon and body rules (`Rifle`, `Magazine`, `Body`)
+with no engine dependency. `searchlight` is the only FPS crate that reaches the engine: a library
+plus the `searchlight` binary, described in [FPS prototype](fps-prototype.md). Every shot resolves
 through one path (ray, surface tag, part, rule call) for player and enemy alike
 ([ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md)).
 `moho_app` owns the window and winit event loop; the binary implements its `Game` trait and hands it
@@ -64,7 +64,7 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 |---|---|
 | Engine crates never depend on a game-line crate (dev-dependencies allowed) | The engine ships to both games and, after the split, from its own repo |
 | A game line never depends on another game line | Strategy and FPS must separate cleanly |
-| Domain crates (`moho_core`, `flagstone_voxel`, `flagstone_game`, `moho_level`, `moho_fps_rules`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
+| Domain crates (`moho_core`, `flagstone_voxel`, `flagstone_game`, `moho_level`, `searchlight_rules`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
 | Only `moho_renderer` (the `gpu` row of `scripts/layering.txt`) reaches `wgpu`, `egui-wgpu` or `naga` without going through another workspace member, dev-dependencies included | GPU code stays behind the renderer boundary |
 
 Voxels live in the flagstone-line `flagstone_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));

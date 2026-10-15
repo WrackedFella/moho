@@ -11,8 +11,8 @@ _todo/
   ROADMAP.md                    <- order of work: milestones, gates, decisions
   adr/NNNN-<slug>.md            <- architecture decision records (index: adr/README.md)
   engine/ENG-F<n>-<slug>/       <- engine crates (anything that ships in moho-engine)
-  flagstone/SG-F<n>-<slug>/ <- strategy/base-builder game
-  fps-game/FPS-F<n>-<slug>/     <- FPS prototype
+  flagstone/SG-F<n>-<slug>/     <- strategy/base-builder game
+  searchlight/FPS-F<n>-<slug>/  <- FPS prototype
     _feature.md                 <- draft only, until the feature issue is filed
     <LINE>-F<n>-<NN>-<slug>.md  <- draft card, until its issue is filed
     <reference files>           <- kept, e.g. ENG-F13's audit.md
@@ -44,7 +44,7 @@ the only record of item state. Nothing in the repository mirrors them.
 - **Issue:** the spec (body), labels, and the history of decisions (comments).
 - **Draft files** carry a header for the thread that will file them: `**Status:** Draft`,
   the intended `**Gate class:**` (`domain`, `glue` or `unset`) and `**Labels:**`
-  (`line:engine` | `line:flagstone` | `line:fps`, plus `feature` on features,
+  (`line:engine` | `line:flagstone` | `line:searchlight`, plus `feature` on features,
   `engine-request`). The header is not part of the issue body.
 
 The README index and the roadmap carry no status. Reasons an item is paused or blocked go
@@ -221,7 +221,7 @@ something observable when finished.
 - An approved feature gets a parent issue labeled `feature` (issue types are not
   available on a user-owned repo); each card's issue is a sub-issue of it, so feature
   progress is visible on GitHub.
-- Labels: `line:engine` | `line:flagstone` | `line:fps`; `feature` on feature issues;
+- Labels: `line:engine` | `line:flagstone` | `line:searchlight`; `feature` on feature issues;
   `engine-request` on engine requests; `agent-ready` to start a remote run: on a work item it starts the orchestrator, on a
   `feature` issue it starts refinement into work items. Templates: *Feature*, *Work item*, *Engine
   request*.

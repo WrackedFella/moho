@@ -1,7 +1,7 @@
 # FPS-F1 — Game Design Document (v0.2)
 
 **Status:** draft v0.2, approved for Phase 1. Writing this page is
-[FPS-F1](../../_todo/fps-game/FPS-F1-game-design-document/_feature.md)'s deliverable. Open questions are in §9.
+[FPS-F1](../../_todo/searchlight/FPS-F1-game-design-document/_feature.md)'s deliverable. Open questions are in §9.
 **Working pitch:** a survival-focused looter shooter with realistic gunplay, where your gear is your character and every fight is a line on a ledger.
 **Working target:** single-player first, co-op later, mod support a priority. Pivots (Destiny-like, Arma-like) are open questions, not commitments (§9).
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fails when the workspace crate graph breaks the layering in the table (default
 # scripts/layering.txt): every member belongs to exactly one line, the table names only
-# members and each line once, engine crates never reach game crates, flagstone and fps
+# members and each line once, engine crates never reach game crates, flagstone and searchlight
 # never reach each other, domain crates never reach winit, wgpu or egui, and only crates
 # in the table's gpu row reach wgpu, egui-wgpu or naga themselves (dev-dependencies
 # count; a path through another workspace member does not). Keeps
@@ -28,7 +28,7 @@ while IFS= read -r raw || [[ -n "$raw" ]]; do
     name="${row%%:*}"
     name="${name//[[:space:]]/}"
     case "$name" in
-        engine | flagstone | fps | domain | gpu) ;;
+        engine | flagstone | searchlight | domain | gpu) ;;
         *) echo "check-layering: unknown line '$name' in $table" >&2; exit 1 ;;
     esac
     [[ "$seen" == *" $name "* ]] && add "repeated row: $name"
@@ -89,21 +89,21 @@ done
 
 while IFS= read -r entry; do
     crate="${entry%%:*}"
-    in_engine="" in_flagstone="" in_fps="" in_domain="" count=0
+    in_engine="" in_flagstone="" in_searchlight="" in_domain="" count=0
     in_line "$crate" engine && in_engine=1 && count=$((count + 1))
     in_line "$crate" flagstone && in_flagstone=1 && count=$((count + 1))
-    in_line "$crate" fps && in_fps=1 && count=$((count + 1))
+    in_line "$crate" searchlight && in_searchlight=1 && count=$((count + 1))
     in_line "$crate" domain && in_domain=1
     [[ $count -eq 0 ]] && add "unassigned: $crate"
     [[ $count -gt 1 ]] && add "duplicate: $crate"
 
     reached="${entry#*:}"
     for dep in ${reached%%|*}; do
-        if [[ -n "$in_engine" ]] && { in_line "$dep" flagstone || in_line "$dep" fps; }; then
+        if [[ -n "$in_engine" ]] && { in_line "$dep" flagstone || in_line "$dep" searchlight; }; then
             add "engine-reaches-game: $crate → $dep"
         fi
-        if { [[ -n "$in_flagstone" ]] && in_line "$dep" fps; } \
-            || { [[ -n "$in_fps" ]] && in_line "$dep" flagstone; }; then
+        if { [[ -n "$in_flagstone" ]] && in_line "$dep" searchlight; } \
+            || { [[ -n "$in_searchlight" ]] && in_line "$dep" flagstone; }; then
             add "cross-game-line: $crate → $dep"
         fi
         if [[ -n "$in_domain" ]]; then
