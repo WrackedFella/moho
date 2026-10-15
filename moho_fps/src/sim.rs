@@ -1059,3 +1059,82 @@ mod adversarial_tests {
         assert_eq!(sim.spares().len(), 2);
     }
 }
+
+#[cfg(test)]
+mod hit_volume_and_cooldown_tests {
+    use moho_physics::HitTag;
+
+    use super::*;
+    use crate::test_support::{DT, flat_floor, mag, test_config};
+
+    fn offset_of(volumes: &[HitVolume; 6], part: BodyPart) -> Vec3 {
+        let tag = HitTag::from(SurfaceTag::Part { target: 4, part });
+        volumes
+            .iter()
+            .find(|v| v.tag == tag)
+            .expect("every part has a volume")
+            .offset
+    }
+
+    #[test]
+    fn dummy_volumes_put_left_parts_on_plus_x_right_on_minus_x_and_legs_below_the_torso() {
+        let volumes = dummy_hit_volumes(4);
+
+        let offsets = [
+            BodyPart::Head,
+            BodyPart::Torso,
+            BodyPart::LeftArm,
+            BodyPart::RightArm,
+            BodyPart::LeftLeg,
+            BodyPart::RightLeg,
+        ]
+        .map(|part| offset_of(&volumes, part).to_array());
+
+        assert_eq!(
+            offsets,
+            [
+                [0.0, 0.85, 0.0],
+                [0.0, 0.25, 0.0],
+                [0.3, 0.25, 0.0],
+                [-0.3, 0.25, 0.0],
+                [0.12, -0.625, 0.0],
+                [-0.12, -0.625, 0.0],
+            ]
+        );
+    }
+
+    /// Ticks that fired when the trigger is pulled on each of `ticks` consecutive ticks.
+    fn fired_ticks(cooldown_ticks: u32, ticks: usize) -> Vec<usize> {
+        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        config.cooldown_ticks = cooldown_ticks;
+        let mut sim = FpsSim::new(flat_floor(), Vec3::ZERO, &[], config);
+        let pull = FpsCommand {
+            fire: true,
+            ..FpsCommand::default()
+        };
+        (0..ticks)
+            .filter(|_| {
+                sim.tick(&pull, DT);
+                sim.drain_feedback().contains(&Feedback::Fired)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_next_pull_is_accepted_exactly_cooldown_ticks_after_a_shot() {
+        assert_eq!(fired_ticks(0, 4), [0, 1, 2, 3]);
+        assert_eq!(fired_ticks(1, 4), [0, 1, 2, 3]);
+        assert_eq!(fired_ticks(2, 6), [0, 2, 4]);
+        assert_eq!(fired_ticks(3, 7), [0, 3, 6]);
+    }
+
+    #[test]
+    fn eye_height_reports_the_configured_height() {
+        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        config.eye_height = 1.6;
+
+        let sim = FpsSim::new(flat_floor(), Vec3::ZERO, &[], config);
+
+        assert_eq!(sim.eye_height(), 1.6);
+    }
+}

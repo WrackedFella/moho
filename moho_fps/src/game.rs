@@ -615,3 +615,336 @@ mod presentation_tests {
         assert_eq!(stage.status, "hit the head for 1");
     }
 }
+
+#[cfg(test)]
+mod mutation_tests {
+    use moho_fps_rules::{Body, BodyPart, BodyProfile};
+    use moho_renderer::FrameError;
+
+    use crate::sim::STAND_HEIGHT;
+
+    use super::*;
+
+    /// Records what the stage hands the backend; mesh handles count up from 1.
+    #[derive(Default)]
+    struct FakeRenderer {
+        next_handle: u32,
+        lighting: Option<LightingGpu>,
+        materials: Vec<MaterialGpu>,
+        camera: Option<(Mat4, Mat4, Vec3)>,
+        draws: Vec<(u32, InstanceGpu)>,
+    }
+
+    impl FakeRenderer {
+        /// The material each world draw uses, in draw order.
+        fn drawn_materials(&self) -> Vec<MaterialGpu> {
+            self.draws
+                .iter()
+                .map(|(_, instance)| self.materials[instance.material as usize])
+                .collect()
+        }
+    }
+
+    impl RendererBackend for FakeRenderer {
+        fn resize(&mut self, _width: u32, _height: u32) {}
+        fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+            unreachable!("world meshes upload indexed meshes")
+        }
+        fn register_indexed_mesh(
+            &mut self,
+            _vertices: &[[f32; 3]],
+            _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
+            _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
+            _indices: &[u32],
+        ) -> u32 {
+            self.next_handle += 1;
+            self.next_handle
+        }
+        fn unregister_mesh(&mut self, _mesh: u32) {}
+        fn begin_frame(&mut self, camera: (Mat4, Mat4, Vec3)) -> Result<(), FrameError> {
+            self.camera = Some(camera);
+            self.draws.clear();
+            Ok(())
+        }
+        fn enqueue_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+            self.draws
+                .extend(instances.iter().map(|instance| (mesh, *instance)));
+        }
+        fn submit_frame(&mut self) {}
+        fn set_materials(&mut self, materials: &[MaterialGpu]) {
+            self.materials = materials.to_vec();
+        }
+        fn update_lighting(&mut self, lighting: LightingGpu) {
+            self.lighting = Some(lighting);
+        }
+        fn add_point_light(&mut self, _p: Vec3, _c: Vec3, _intensity: f32, _range: f32) -> u32 {
+            0
+        }
+        fn remove_light(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn set_light_position(&mut self, _id: u32, _position: Vec3) {}
+        fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_ssao_quality(&mut self, _quality: u8) {}
+    }
+
+    fn head_hit() -> Feedback {
+        let report = Body::new(BodyProfile {
+            max_health: 10,
+            head_status: 10,
+            arm_status: 10,
+            leg_status: 10,
+        })
+        .hit(BodyPart::Head, 1);
+        Feedback::Hit {
+            target: 0,
+            part: BodyPart::Head,
+            report,
+        }
+    }
+
+    fn assert_material(actual: MaterialGpu, expected: Paint) {
+        let expected = expected.to_gpu();
+        assert_eq!(
+            (actual.albedo, actual.params),
+            (expected.albedo, expected.params)
+        );
+    }
+
+    fn draw_once(stage: &mut Stage, renderer: &mut FakeRenderer) {
+        stage.draw(renderer, (Mat4::IDENTITY, Vec3::ZERO));
+    }
+
+    #[test]
+    fn box_mesh_emits_exact_corners_normals_and_indices() {
+        let mesh = box_mesh(Vec3::new(1.0, 2.0, 3.0), Vec3::new(0.5, 1.0, 0.25));
+
+        let expected_positions: [[f32; 3]; 24] = [
+            [1.5, 1.0, 2.75],
+            [1.5, 3.0, 2.75],
+            [1.5, 3.0, 3.25],
+            [1.5, 1.0, 3.25],
+            [0.5, 1.0, 2.75],
+            [0.5, 1.0, 3.25],
+            [0.5, 3.0, 3.25],
+            [0.5, 3.0, 2.75],
+            [0.5, 3.0, 2.75],
+            [0.5, 3.0, 3.25],
+            [1.5, 3.0, 3.25],
+            [1.5, 3.0, 2.75],
+            [0.5, 1.0, 2.75],
+            [1.5, 1.0, 2.75],
+            [1.5, 1.0, 3.25],
+            [0.5, 1.0, 3.25],
+            [0.5, 1.0, 3.25],
+            [1.5, 1.0, 3.25],
+            [1.5, 3.0, 3.25],
+            [0.5, 3.0, 3.25],
+            [0.5, 1.0, 2.75],
+            [0.5, 3.0, 2.75],
+            [1.5, 3.0, 2.75],
+            [1.5, 1.0, 2.75],
+        ];
+        let face_normals = [
+            Vec3::X,
+            Vec3::NEG_X,
+            Vec3::Y,
+            Vec3::NEG_Y,
+            Vec3::Z,
+            Vec3::NEG_Z,
+        ];
+        let expected_normals: Vec<[f32; 3]> = face_normals
+            .iter()
+            .flat_map(|n| [n.to_array(); 4])
+            .collect();
+        let expected_indices: Vec<u32> = (0..6)
+            .flat_map(|face| {
+                let f = face * 4;
+                [f, f + 1, f + 2, f, f + 2, f + 3]
+            })
+            .collect();
+        assert_eq!(mesh.positions(), expected_positions);
+        assert_eq!(mesh.normals(), expected_normals);
+        assert_eq!(mesh.indices(), expected_indices);
+    }
+
+    #[test]
+    fn dummy_segments_sit_at_the_standing_centre_plus_each_volume_offset() {
+        let spawns = [Vec3::new(9.0, 0.0, 9.0), Vec3::new(3.0, 0.5, -2.0)];
+
+        let segments = dummy_segments(&spawns);
+
+        assert_eq!(segments.len(), 12);
+        let centre = Vec3::new(3.0, 0.5 + STAND_HEIGHT, -2.0);
+        for (i, segment) in segments[6..].iter().enumerate() {
+            let volume = dummy_hit_volumes(1)[i];
+            let positions: Vec<Vec3> = segment
+                .mesh
+                .positions()
+                .iter()
+                .map(|&p| Vec3::from(p))
+                .collect();
+            let min = positions.iter().fold(Vec3::MAX, |a, &p| a.min(p));
+            let max = positions.iter().fold(Vec3::MIN, |a, &p| a.max(p));
+            let want = centre + volume.offset;
+            assert!(
+                ((min + max) / 2.0).abs_diff_eq(want, 1e-5),
+                "segment {i} centre"
+            );
+            assert!(
+                ((max - min) / 2.0).abs_diff_eq(volume.half_extents, 1e-5),
+                "segment {i} size"
+            );
+            assert_eq!(segment.id, WorldMeshId((1u64 << 32) + 6 + i as u64));
+            assert_eq!(segment.tag, SurfaceTag::try_from(volume.tag).unwrap());
+        }
+    }
+
+    fn expected_bar_vertices(min: [f32; 2], max: [f32; 2]) -> [[f32; 2]; 4] {
+        [min, [max[0], min[1]], max, [min[0], max[1]]]
+    }
+
+    #[test]
+    fn crosshair_bars_leave_a_gap_around_the_centre_of_an_800_by_600_target() {
+        let mut crosshair = Crosshair::default();
+
+        let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+
+        let mesh = &frame.meshes[0];
+        let positions: Vec<[f32; 2]> = mesh.vertices.iter().map(|v| v.pos).collect();
+        let expected: Vec<[f32; 2]> = [
+            ([387.0, 299.0], [396.0, 301.0]),
+            ([404.0, 299.0], [413.0, 301.0]),
+            ([399.0, 287.0], [401.0, 296.0]),
+            ([399.0, 304.0], [401.0, 313.0]),
+        ]
+        .into_iter()
+        .flat_map(|(min, max)| expected_bar_vertices(min, max))
+        .collect();
+        assert_eq!(positions, expected);
+        let expected_indices: Vec<u32> = (0..4)
+            .flat_map(|bar| {
+                let f = bar * 4;
+                [f, f + 1, f + 2, f, f + 2, f + 3]
+            })
+            .collect();
+        assert_eq!(mesh.indices, expected_indices);
+        assert_eq!(frame.pixels_per_point, 1.0);
+        assert_eq!(mesh.clip_rect.min, [0.0, 0.0]);
+        assert_eq!(mesh.clip_rect.max, [800.0, 600.0]);
+        assert!(mesh.vertices.iter().all(|v| v.color == [255; 4]));
+    }
+
+    #[test]
+    fn crosshair_centres_on_each_axis_separately_for_a_tall_odd_target() {
+        let mut crosshair = Crosshair::default();
+
+        let frame = crosshair.ui_frame([101, 333]).expect("a frame");
+
+        let positions: Vec<[f32; 2]> = frame.meshes[0].vertices.iter().map(|v| v.pos).collect();
+        let (cx, cy) = (50.5, 166.5);
+        let expected: Vec<[f32; 2]> = [
+            ([cx - 13.0, cy - 1.0], [cx - 4.0, cy + 1.0]),
+            ([cx + 4.0, cy - 1.0], [cx + 13.0, cy + 1.0]),
+            ([cx - 1.0, cy - 13.0], [cx + 1.0, cy - 4.0]),
+            ([cx - 1.0, cy + 4.0], [cx + 1.0, cy + 13.0]),
+        ]
+        .into_iter()
+        .flat_map(|(min, max)| expected_bar_vertices(min, max))
+        .collect();
+        assert_eq!(positions, expected);
+    }
+
+    #[test]
+    fn lighting_is_a_normalised_sun_overhead_and_a_moon_below_with_fixed_ambient() {
+        let light = lighting();
+
+        let sun = Vec3::new(0.4, 0.8, 0.45).normalize();
+        assert_eq!(light.sun_direction, [sun.x, sun.y, sun.z, 1.0]);
+        assert_eq!(light.moon_direction, [0.0, -1.0, 0.0, 0.0]);
+        assert_eq!(light.ambient, [0.4, 0.5, 0.6, 0.15]);
+        assert_eq!(light.params, [12.0, 0.0, 0.0, 0.0]);
+        assert_eq!(light.sun_color, LightingGpu::default().sun_color);
+        assert_eq!(light.moon_color, LightingGpu::default().moon_color);
+    }
+
+    #[test]
+    fn drawing_without_a_window_sends_lighting_and_a_widescreen_projection() {
+        let mut stage = Stage::new();
+        let mut renderer = FakeRenderer::default();
+        let eye = Vec3::new(1.0, 2.0, 3.0);
+
+        stage.draw(&mut renderer, (Mat4::IDENTITY, eye));
+
+        let sent = renderer.lighting.expect("lighting is sent every draw");
+        assert_eq!(sent.ambient, lighting().ambient);
+        let (view, projection, camera_eye) = renderer.camera.expect("a frame began");
+        assert_eq!(view, Mat4::IDENTITY);
+        assert_eq!(camera_eye, eye);
+        let aspect = projection.y_axis.y / projection.x_axis.x;
+        assert!((aspect - 16.0 / 9.0).abs() < 1e-4, "aspect {aspect}");
+    }
+
+    #[test]
+    fn dummy_segments_do_not_share_mesh_ids_with_arena_meshes() {
+        let mut stage = Stage::new();
+        let arena = box_mesh(Vec3::ZERO, Vec3::ONE);
+        stage.add_arena(vec![arena], &[Vec3::new(5.0, 0.0, 5.0)]);
+        let mut renderer = FakeRenderer::default();
+
+        draw_once(&mut stage, &mut renderer);
+
+        assert_eq!(renderer.draws.len(), 7);
+        assert_material(renderer.drawn_materials()[0], Paint::Arena);
+        assert!(
+            renderer.drawn_materials()[1..]
+                .iter()
+                .all(|m| m.params == Paint::Dummy.to_gpu().params)
+        );
+    }
+
+    #[test]
+    fn a_struck_segment_is_drawn_lit_for_exactly_the_flash_duration() {
+        let mut stage = Stage::new();
+        stage.add_arena(Vec::new(), &[Vec3::ZERO]);
+        let mut renderer = FakeRenderer::default();
+        stage.react(&head_hit(), None);
+
+        draw_once(&mut stage, &mut renderer);
+        let at_hit = renderer.drawn_materials();
+        for _ in 0..9 {
+            stage.tick_flashes();
+        }
+        draw_once(&mut stage, &mut renderer);
+        let one_tick_left = renderer.drawn_materials();
+        stage.tick_flashes();
+        draw_once(&mut stage, &mut renderer);
+        let expired = renderer.drawn_materials();
+
+        assert_material(at_hit[0], Paint::Struck);
+        assert_material(one_tick_left[0], Paint::Struck);
+        assert_material(expired[0], Paint::Dummy);
+        for materials in [&at_hit, &one_tick_left, &expired] {
+            assert_eq!(materials.len(), 6);
+            for &other in &materials[1..] {
+                assert_material(other, Paint::Dummy);
+            }
+        }
+    }
+
+    #[test]
+    fn a_hit_keeps_a_segment_lit_for_ten_ticks_at_the_sixty_hertz_tick() {
+        let mut stage = Stage::new();
+        stage.add_arena(Vec::new(), &[Vec3::ZERO]);
+
+        stage.react(&head_hit(), None);
+
+        assert_eq!(stage.segments[0].flash_left, 10);
+        assert_eq!(FLASH_TICKS, 10);
+    }
+}

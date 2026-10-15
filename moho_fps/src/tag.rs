@@ -119,3 +119,19 @@ mod tests {
         assert_eq!(decoded, Err(UnknownTag(u32::MAX)));
     }
 }
+
+#[cfg(test)]
+mod encoding_tests {
+    use super::*;
+
+    #[test]
+    fn part_tags_pack_the_target_above_three_index_bits_after_the_world_tag() {
+        let tag = |target, part| HitTag::from(SurfaceTag::Part { target, part });
+
+        assert_eq!(HitTag::from(SurfaceTag::World), HitTag(0));
+        assert_eq!(tag(0, BodyPart::Head), HitTag(1));
+        assert_eq!(tag(1, BodyPart::Torso), HitTag(10));
+        assert_eq!(tag(3, BodyPart::LeftArm), HitTag(27));
+        assert_eq!(tag(2, BodyPart::RightLeg), HitTag(22));
+    }
+}

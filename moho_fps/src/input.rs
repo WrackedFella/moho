@@ -230,3 +230,30 @@ mod tests {
         assert_eq!(command, FpsCommand::default());
     }
 }
+
+#[cfg(test)]
+mod look_direction_tests {
+    use std::collections::BTreeMap;
+
+    use moho_input::action_map::ActionMap;
+    use moho_input::bindings::ActionBindings;
+
+    use super::*;
+
+    fn yaw_after_mouse_motion(dx: f64) -> f32 {
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut map = ActionMap::<FpsAction>::new(bindings, 1.0);
+        map.set_filtering(false);
+        map.mouse_motion(dx, 0.0);
+        FpsCommand::from_frame(&map.end_tick()).movement.yaw_delta
+    }
+
+    #[test]
+    fn moving_the_mouse_right_turns_right_and_left_turns_left() {
+        let right = yaw_after_mouse_motion(10.0);
+        let left = yaw_after_mouse_motion(-10.0);
+
+        assert!(right < 0.0, "{right}");
+        assert!(left > 0.0, "{left}");
+    }
+}
