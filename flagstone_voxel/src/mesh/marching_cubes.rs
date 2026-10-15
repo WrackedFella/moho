@@ -10,6 +10,18 @@ use glam::Vec3;
 pub struct MarchingCubes;
 
 impl MarchingCubes {
+    /// Offsets of a cell's eight corners from corner 0, in the order the tables index them.
+    pub const CORNER_OFFSETS: [[usize; 3]; 8] = [
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 0, 1],
+        [0, 0, 1],
+        [0, 1, 0],
+        [1, 1, 0],
+        [1, 1, 1],
+        [0, 1, 1],
+    ];
+
     /// Generate smooth mesh for a chunk using Marching Cubes algorithm.
     ///
     /// # Arguments
@@ -79,10 +91,18 @@ impl MarchingCubes {
     /// Corner `i` is solid when bit `i` of `cube_index` is set, with the corner order and
     /// winding of [`Self::generate_mesh`]. Indices 0 and 255 yield no triangles.
     pub fn cell_triangles(cube_index: u8) -> impl Iterator<Item = [Vec3; 3]> {
-        std::iter::from_fn(move || {
-            let _ = cube_index;
-            todo!("derive the cell's triangles from EDGE_CONNECTIONS and TRI_TABLE")
-        })
+        let corner = |i: usize| Vec3::from_array(Self::CORNER_OFFSETS[i].map(|c| c as f32));
+        // With 0/1 densities and iso level 0.5 every edge vertex is the edge midpoint.
+        let edge_midpoint = move |edge: u8| {
+            let (a, b) = EDGE_CONNECTIONS[usize::from(edge)];
+            (corner(a) + corner(b)) * 0.5
+        };
+        TRI_TABLE[usize::from(cube_index)]
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .take_while(|tri| tri[0] != 255)
+            .map(move |&tri| tri.map(edge_midpoint))
     }
 
     /// Process a single cell in the marching cubes algorithm
@@ -233,17 +253,8 @@ impl MarchingCubes {
     }
 
     fn corner_sample(x: usize, y: usize, z: usize, corner_idx: usize) -> [usize; 3] {
-        match corner_idx {
-            0 => [x, y, z],
-            1 => [x + 1, y, z],
-            2 => [x + 1, y, z + 1],
-            3 => [x, y, z + 1],
-            4 => [x, y + 1, z],
-            5 => [x + 1, y + 1, z],
-            6 => [x + 1, y + 1, z + 1],
-            7 => [x, y + 1, z + 1],
-            _ => unreachable!("a cube has 8 corners, got {corner_idx}"),
-        }
+        let [dx, dy, dz] = Self::CORNER_OFFSETS[corner_idx];
+        [x + dx, y + dy, z + dz]
     }
 
     /// Density gradient at an integer sample: central differences, one-sided at the

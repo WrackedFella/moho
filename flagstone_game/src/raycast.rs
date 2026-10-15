@@ -1,4 +1,4 @@
-use flagstone_voxel::{BlockPos, VoxelGrid};
+use flagstone_voxel::{BlockPos, MarchingCubes, VoxelGrid};
 use glam::{IVec3, Vec3};
 
 /// Result of a raycast operation
@@ -14,161 +14,165 @@ pub struct RaycastResult {
     pub distance: f32,
 }
 
-/// Isosurface threshold. Must match the marching-cubes generator's `iso_level`
-/// (`flagstone_voxel::mesh::marching_cubes`), or aiming and rendering disagree.
-const ISO_LEVEL: f32 = 0.5;
-
-/// Ray-march increment, in world units. Fine enough that a 1-unit voxel is
-/// sampled many times, so thin features aren't stepped over.
-const SURFACE_STEP: f32 = 0.05;
-
-/// Bisection passes used to sharpen the crossing point once a step brackets it.
-const SURFACE_REFINE_STEPS: u32 = 8;
-
-/// Occupancy of `block`, matching how the mesh generator builds its density
-/// field: any present block is solid, air is empty.
-fn occupancy(grid: &VoxelGrid, block: BlockPos) -> f32 {
-    if grid.material_at(block).is_some() {
-        1.0
-    } else {
-        0.0
-    }
+/// Result of [`raycast_surface`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SurfaceHit {
+    /// The solid block responsible for the surface that was hit
+    pub block_pos: BlockPos,
+    /// The exact world position of the intersection
+    pub position: Vec3,
+    /// Distance from ray origin
+    pub distance: f32,
 }
 
-/// The eight blocks whose centres bound world point `p`, as a base index plus
-/// fractional offset (0..1 on each axis) toward the far corner. Shared by
-/// every function that samples the density lattice, so the corner-indexing
-/// math (and the `-0.5` block-centre-to-corner shift) exists in one place.
-fn corner_lattice(p: Vec3) -> (IVec3, Vec3) {
-    let q = p - Vec3::splat(ISO_LEVEL);
-    let base = q.floor();
-    let f = q - base;
-    (IVec3::new(base.x as i32, base.y as i32, base.z as i32), f)
+/// Slack on the barycentric and range tests, so a ray entering exactly on an edge shared
+/// by two triangles or two cells is not missed by rounding.
+const EDGE_EPSILON: f32 = 1e-4;
+
+/// Upper bound on the cell boundaries a ray of `max_distance` can cross: at most one per
+/// axis per unit travelled, plus those of the starting cell. Bounds the walks so a stalled
+/// step terminates instead of looping.
+fn max_boundary_crossings(max_distance: f32) -> usize {
+    3 * (max_distance.max(0.0).ceil() as usize + 1)
 }
 
-/// Trilinearly-interpolated density at a world point, reproducing the field
-/// marching cubes meshes from. Density samples represent whole blocks and sit
-/// at block centres (`block + 0.5`), so the lattice is offset half a unit from
-/// block corners — shifting by `-0.5` puts a block's centre on an integer.
-fn density_at(grid: &VoxelGrid, p: Vec3) -> f32 {
-    let (bi, f) = corner_lattice(p);
-
-    let mut density = 0.0;
-    for dx in 0..2 {
-        for dy in 0..2 {
-            for dz in 0..2 {
-                let w = (if dx == 0 { 1.0 - f.x } else { f.x })
-                    * (if dy == 0 { 1.0 - f.y } else { f.y })
-                    * (if dz == 0 { 1.0 - f.z } else { f.z });
-                density += occupancy(grid, bi + IVec3::new(dx, dy, dz)) * w;
-            }
-        }
-    }
-    density
-}
-
-/// The solid block responsible for the surface at `p`: of the eight blocks
-/// whose centres bound `p`, the nearest one that is actually solid.
-fn owning_block(grid: &VoxelGrid, p: Vec3) -> Option<BlockPos> {
-    let (bi, _) = corner_lattice(p);
-
+/// The solid block responsible for the surface at `p` inside the dual-lattice cell whose
+/// base block is `base`: of the cell's eight corner blocks, the nearest one that is
+/// actually solid.
+fn owning_block(grid: &VoxelGrid, base: IVec3, p: Vec3) -> Option<BlockPos> {
     let mut best: Option<(f32, BlockPos)> = None;
-    for dx in 0..2 {
-        for dy in 0..2 {
-            for dz in 0..2 {
-                let block = bi + IVec3::new(dx, dy, dz);
-                if grid.material_at(block).is_none() {
-                    continue;
-                }
-                let centre = block.as_vec3() + Vec3::splat(ISO_LEVEL);
-                let d = (centre - p).length_squared();
-                if best.is_none_or(|(bd, _)| d < bd) {
-                    best = Some((d, block));
-                }
-            }
+    for offset in MarchingCubes::CORNER_OFFSETS {
+        let block = base + IVec3::from_array(offset.map(|c| c as i32));
+        if grid.material_at(block).is_none() {
+            continue;
+        }
+        let centre = block.as_vec3() + Vec3::splat(0.5);
+        let d = (centre - p).length_squared();
+        if best.is_none_or(|(bd, _)| d < bd) {
+            best = Some((d, block));
         }
     }
     best.map(|(_, block)| block)
 }
 
-/// Dominant-axis face normal derived from the density gradient, so callers that
-/// want a face (e.g. placing a block against the surface) still get one.
-fn surface_normal(grid: &VoxelGrid, p: Vec3) -> IVec3 {
-    const H: f32 = 0.5;
-    let gx = density_at(grid, p + Vec3::X * H) - density_at(grid, p - Vec3::X * H);
-    let gy = density_at(grid, p + Vec3::Y * H) - density_at(grid, p - Vec3::Y * H);
-    let gz = density_at(grid, p + Vec3::Z * H) - density_at(grid, p - Vec3::Z * H);
+/// Which of the eight corner blocks of the cell at `base` are solid, in the corner order
+/// of the mesher (bit `i` set when corner `i` is solid).
+fn cube_index(grid: &VoxelGrid, base: IVec3) -> u8 {
+    MarchingCubes::CORNER_OFFSETS
+        .iter()
+        .enumerate()
+        .filter(|(_, offset)| {
+            grid.material_at(base + IVec3::from_array(offset.map(|c| c as i32)))
+                .is_some()
+        })
+        .fold(0, |index, (i, _)| index | (1 << i))
+}
 
-    // Gradient points into the solid; negate so the normal points outward.
-    let g = Vec3::new(-gx, -gy, -gz);
-    let (ax, ay, az) = (g.x.abs(), g.y.abs(), g.z.abs());
-    if ax >= ay && ax >= az {
-        IVec3::new(g.x.signum() as i32, 0, 0)
-    } else if ay >= az {
-        IVec3::new(0, g.y.signum() as i32, 0)
-    } else {
-        IVec3::new(0, 0, g.z.signum() as i32)
+/// Distance along the ray to triangle `tri` (Moller-Trumbore, inclusive at the edges), and
+/// whether the ray crosses it from the outward side. `None` when the ray misses it or runs
+/// parallel to its plane.
+fn triangle_crossing(origin: Vec3, dir: Vec3, tri: &[Vec3; 3]) -> Option<(f32, bool)> {
+    let e1 = tri[1] - tri[0];
+    let e2 = tri[2] - tri[0];
+    let p = dir.cross(e2);
+    let det = e1.dot(p);
+    if det.abs() < 1e-9 {
+        return None;
     }
+
+    let to_origin = origin - tri[0];
+    let u = to_origin.dot(p) / det;
+    let q = to_origin.cross(e1);
+    let v = dir.dot(q) / det;
+    if u < -EDGE_EPSILON || v < -EDGE_EPSILON || u + v > 1.0 + EDGE_EPSILON {
+        return None;
+    }
+
+    // The mesher winds triangles so the right-hand normal points away from the solid.
+    Some((e2.dot(q) / det, e1.cross(e2).dot(dir) < 0.0))
 }
 
 /// Raycast against the *rendered* smooth (marching-cubes) surface.
 ///
 /// Prefer this over [`raycast`] for anything the player aims at. [`raycast`]
 /// walks binary voxel cubes, but the renderer draws an isosurface on the dual
-/// lattice — roughly two thirds of visible surface geometry lies inside blocks
-/// the grid calls empty, which a cube-stepping ray passes straight through.
-/// That mismatch made mining silently miss most slanted terrain.
+/// lattice, roughly two thirds of whose geometry lies inside blocks the grid calls
+/// empty, which a cube-stepping ray passes straight through.
 ///
-/// Returns the solid block owning the surface that was hit, so the caller can
-/// remove it.
+/// Walks the dual-lattice cells (corners at block centres) the ray passes through and
+/// intersects it with the triangles the mesher draws for each, so the hit is the first
+/// crossing of the visible surface. Returns `None` when the ray starts inside the surface
+/// (its first crossing is a back face), has a zero direction, or reaches nothing within
+/// `max_distance`.
+///
+/// The hit names the solid block, among the eight bounding the crossing cell, nearest the
+/// hit point, so the caller can remove it.
 pub fn raycast_surface(
     grid: &VoxelGrid,
     origin: Vec3,
     direction: Vec3,
     max_distance: f32,
-) -> Option<RaycastResult> {
+) -> Option<SurfaceHit> {
     let dir = direction.normalize_or_zero();
     if dir == Vec3::ZERO {
         return None;
     }
 
-    let mut t = 0.0;
-    let mut prev_t = 0.0;
+    // Cell `c` spans `c + 0.5 .. c + 1.5` in world space; shifting by half a unit puts the
+    // cell boundaries on integers, as in `raycast`.
+    let shifted = origin - Vec3::splat(0.5);
+    let mut cell = shifted.floor().as_ivec3();
+    let step = IVec3::new(
+        if dir.x > 0.0 { 1 } else { -1 },
+        if dir.y > 0.0 { 1 } else { -1 },
+        if dir.z > 0.0 { 1 } else { -1 },
+    );
+    let (mut t_max_x, t_delta_x) = axis_traversal(shifted.x, dir.x, cell.x, step.x);
+    let (mut t_max_y, t_delta_y) = axis_traversal(shifted.y, dir.y, cell.y, step.y);
+    let (mut t_max_z, t_delta_z) = axis_traversal(shifted.z, dir.z, cell.z, step.z);
 
-    // Already inside the surface at the origin — nothing sensible to aim at.
-    if density_at(grid, origin) >= ISO_LEVEL {
-        return None;
-    }
+    let mut t_enter = 0.0f32;
+    for _ in 0..=max_boundary_crossings(max_distance) {
+        if t_enter > max_distance {
+            return None;
+        }
+        let t_exit = t_max_x.min(t_max_y).min(t_max_z);
 
-    while t <= max_distance {
-        t += SURFACE_STEP;
-        let density = density_at(grid, origin + dir * t);
-
-        if density >= ISO_LEVEL {
-            // Bisect the bracketing interval to sharpen the crossing.
-            let (mut lo, mut hi) = (prev_t, t);
-            for _ in 0..SURFACE_REFINE_STEPS {
-                let mid = (lo + hi) * 0.5;
-                if density_at(grid, origin + dir * mid) >= ISO_LEVEL {
-                    hi = mid;
-                } else {
-                    lo = mid;
-                }
+        let index = cube_index(grid, cell);
+        let cell_origin = cell.as_vec3() + Vec3::splat(0.5);
+        let nearest = MarchingCubes::cell_triangles(index)
+            .filter_map(|tri| triangle_crossing(origin, dir, &tri.map(|v| v + cell_origin)))
+            .filter(|&(t, _)| t >= (t_enter - EDGE_EPSILON).max(0.0) && t <= t_exit + EDGE_EPSILON)
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((t, front_facing)) = nearest {
+            if !front_facing || t > max_distance {
+                return None;
             }
-
-            let distance = hi;
-            let position = origin + dir * distance;
-            let block_pos = owning_block(grid, position)?;
-
-            return Some(RaycastResult {
+            let position = origin + dir * t;
+            let block_pos = owning_block(grid, cell, position)?;
+            return Some(SurfaceHit {
                 block_pos,
-                normal: surface_normal(grid, position),
                 position,
-                distance,
+                distance: t,
             });
         }
 
-        prev_t = t;
+        t_enter = t_exit;
+        if t_max_x < t_max_y {
+            if t_max_x < t_max_z {
+                cell.x += step.x;
+                t_max_x += t_delta_x;
+            } else {
+                cell.z += step.z;
+                t_max_z += t_delta_z;
+            }
+        } else if t_max_y < t_max_z {
+            cell.y += step.y;
+            t_max_y += t_delta_y;
+        } else {
+            cell.z += step.z;
+            t_max_z += t_delta_z;
+        }
     }
 
     None
@@ -231,7 +235,11 @@ pub fn raycast(
     // Traversal loop
     let mut distance = 0.0;
 
-    while distance <= max_distance {
+    for _ in 0..=max_boundary_crossings(max_distance) {
+        if distance > max_distance {
+            return None;
+        }
+
         // Check if current voxel is solid
         let pos = IVec3::new(x, y, z);
         if grid.material_at(pos).is_some_and(|id| id != 0) {
