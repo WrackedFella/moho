@@ -1,6 +1,6 @@
 //! Wording the player reads for rifle state.
 
-use moho_fps_rules::{BodyPart, MagazineLevel};
+use searchlight_rules::{BodyPart, MagazineLevel};
 
 use crate::sim::Feedback;
 

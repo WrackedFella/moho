@@ -6,11 +6,11 @@ committed files unchanged unless the layout below changes.
 
     python3 -I make_arena.py [output-directory]
 
-The output directory defaults to the directory above this script (moho_fps/assets).
+The output directory defaults to the directory above this script (searchlight/assets).
 
 Units are metres, Y up, the player stands at the player spawn facing +Z.
 
-Markers are empty, named glTF nodes that the game reads by name (see moho_fps::arena):
+Markers are empty, named glTF nodes that the game reads by name (see searchlight::arena):
 
     player_spawn      exactly one
     dummy_NN          training dummy, a floor point
@@ -151,7 +151,7 @@ def markers():
 
 def build_glb():
     document = {
-        "asset": {"version": "2.0", "generator": "moho_fps/assets/tools/make_arena.py"},
+        "asset": {"version": "2.0", "generator": "searchlight/assets/tools/make_arena.py"},
         "scene": 0,
         "scenes": [{"nodes": []}],
         "nodes": [],

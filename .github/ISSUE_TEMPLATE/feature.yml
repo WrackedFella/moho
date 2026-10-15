@@ -51,5 +51,5 @@ body:
       value: |
         This issue is the record of the feature: edit this body when scope changes and put
         decisions in comments; no `_feature.md` in _todo/ copies it. Add a
-        `line:engine|flagstone|fps` label and add the issue to the Moho project board. Cards
+        `line:engine|flagstone|searchlight` label and add the issue to the Moho project board. Cards
         are filed as sub-issues of this one.

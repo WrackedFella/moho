@@ -9,7 +9,7 @@ body:
       label: Requesting line
       options:
         - flagstone
-        - fps
+        - searchlight
     validations:
       required: true
   - type: textarea
