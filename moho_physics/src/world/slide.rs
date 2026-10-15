@@ -97,7 +97,10 @@ impl Slider<'_> {
         Slide {
             translation: plain.translation,
             grounded: plain.grounded,
-            ground: self.ground_under(start.translation + plain.translation),
+            // Only a walker reads its ground, and only a character that started grounded walks.
+            ground: was_grounded
+                .then(|| self.ground_under(start.translation + plain.translation))
+                .flatten(),
             hits,
         }
     }

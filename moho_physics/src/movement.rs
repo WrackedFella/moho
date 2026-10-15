@@ -64,7 +64,7 @@ pub struct Slide {
     pub translation: Vec3,
     pub grounded: bool,
     /// The walkable surface straight under the capsule's centre after the slide, `None` when
-    /// there is none. A walker that ends ungrounded within [`GROUND_SNAP`] of it still counts
+    /// there is none or the character started the slide airborne. A walker that ends ungrounded within [`GROUND_SNAP`] of it still counts
     /// as standing on it.
     pub ground: Option<Ground>,
     /// Each surface touched, with its normal.
@@ -182,10 +182,9 @@ fn clip(
 /// `slide` receives the displacement the tick asks for and reports what the world
 /// allowed. The look turns first, so a turn and a move in one command face the new way.
 ///
-/// A jump adds `jump_speed` to the vertical velocity. A grounded walker ends the tick moving
-/// along the ground under its centre, keeping its horizontal velocity; a landing zeroes the
-/// vertical velocity. A walker whose slide ends ungrounded but within [`GROUND_SNAP`] of its
-/// ground is lowered onto it and stays grounded, as in Source's `StayOnGround`.
+/// A jump adds `jump_speed` to the vertical velocity. A walker that ends the tick
+/// grounded keeps its horizontal velocity and follows its ground; a landing zeroes the vertical
+/// velocity. One hanging within [`GROUND_SNAP`] of its ground is lowered onto it.
 pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
@@ -232,6 +231,23 @@ pub fn step(
 
     let impacts = clip(&mut state.velocity, asked, &slid, walking, airborne_before);
 
+    settle(state, &slid, walking);
+    impacts
+}
+
+/// Vertical speed that keeps `velocity` tangent to a surface of `normal`, its horizontal part
+/// unchanged.
+fn along_ground(velocity: Vec3, normal: Vec3) -> f32 {
+    -(normal.x * velocity.x + normal.z * velocity.z) / normal.y
+}
+
+/// Settle `state` onto the ground after the slide and clip.
+///
+/// A walker hanging within [`GROUND_SNAP`] above walkable ground is lowered onto it, as in
+/// Source's `StayOnGround`. A walker that ends grounded keeps its horizontal velocity and
+/// follows its ground; any other character ends grounded only if not rising, and a landing
+/// zeroes its vertical speed.
+fn settle(state: &mut CharacterState, slid: &Slide, walking: bool) {
     let hanging = slid
         .ground
         .filter(|ground| walking && !slid.grounded && ground.gap <= GROUND_SNAP);
@@ -240,16 +256,14 @@ pub fn step(
     }
     state.grounded =
         (slid.grounded || hanging.is_some()) && (walking || state.velocity.y <= REST_SPEED);
-    if state.grounded {
-        match (walking, slid.ground) {
-            (true, Some(Ground { normal: n, .. })) => {
-                state.velocity.y = -(n.x * state.velocity.x + n.z * state.velocity.z) / n.y;
-            }
-            (true, None) => {}
-            (false, _) => state.velocity.y = 0.0,
-        }
+    if !state.grounded {
+        return;
     }
-    impacts
+    if !walking {
+        state.velocity.y = 0.0;
+    } else if let Some(ground) = slid.ground {
+        state.velocity.y = along_ground(state.velocity, ground.normal);
+    }
 }
 
 #[cfg(test)]
