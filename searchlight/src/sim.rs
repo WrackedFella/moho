@@ -2193,3 +2193,178 @@ mod enemy_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod pinned_behaviour_tests {
+    use super::*;
+    use crate::test_support::{DT, arena_with, flat_floor, mag, test_config};
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 1e-5,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn splitmix64_from_seed_zero_matches_the_published_reference_outputs() {
+        let mut rng = SplitMix64(0);
+
+        let outputs = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
+
+        assert_eq!(
+            outputs,
+            [
+                0xE220_A839_7B1D_CDAF,
+                0x6E78_9E6A_A1B9_65F4,
+                0x06C4_5D18_8009_454F
+            ]
+        );
+    }
+
+    #[test]
+    fn splitmix64_from_another_seed_matches_its_reference_outputs() {
+        let mut rng = SplitMix64(7);
+
+        let outputs = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
+
+        assert_eq!(
+            outputs,
+            [
+                0x63CB_E1E4_5932_0DD7,
+                0x044C_3CD7_F43C_661C,
+                0xE698_4080_BAB1_2A02
+            ]
+        );
+    }
+
+    #[test]
+    fn next_signed_maps_the_top_24_bits_onto_minus_one_to_one() {
+        let mut rng = SplitMix64(0);
+
+        let values = [rng.next_signed(), rng.next_signed(), rng.next_signed()];
+
+        assert_close(values[0], 0.766_622);
+        assert_close(values[1], -0.136_944);
+        assert_close(values[2], -0.947_132);
+    }
+
+    #[test]
+    fn nearest_waypoint_picks_the_closest_on_the_ground_and_faces_it() {
+        let spawn = Vec3::new(2.0, 0.0, 10.0);
+        let route = [Vec3::new(5.0, 7.0, 14.0), Vec3::new(2.0, 0.0, -10.0)];
+
+        let (index, yaw) = nearest_waypoint(spawn, &route);
+
+        assert_eq!(index, 0);
+        assert_close(yaw, 3.0_f32.atan2(4.0));
+    }
+
+    #[test]
+    fn nearest_waypoint_prefers_a_later_waypoint_when_it_is_closer() {
+        let spawn = Vec3::new(-4.0, 0.0, -6.0);
+        let route = [Vec3::new(20.0, 0.0, 20.0), Vec3::new(-4.0, 0.0, -9.0)];
+
+        let (index, yaw) = nearest_waypoint(spawn, &route);
+
+        assert_eq!(index, 1);
+        assert_close(yaw, std::f32::consts::PI);
+    }
+
+    #[test]
+    fn spread_turns_the_aim_by_the_next_two_draws_across_and_up() {
+        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        config.enemy.aim_error = 0.5;
+        config.enemy.seed = 7;
+        let mut sim = FpsSim::new(flat_floor(), Vec3::ZERO, &[], config);
+        let mut reference = SplitMix64(7);
+        let across = reference.next_signed() * 0.5;
+        let rise = reference.next_signed() * 0.5;
+
+        let aimed = sim.with_spread(Vec3::new(0.0, 0.0, 5.0));
+
+        // Facing +Z the right-hand axis is -X and up is +Y.
+        assert!(
+            aimed.abs_diff_eq(Vec3::new(-across, rise, 1.0), 1e-5),
+            "{aimed:?}"
+        );
+    }
+
+    #[test]
+    fn the_sim_reports_the_configured_maximum_health() {
+        let config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let sim = FpsSim::new(flat_floor(), Vec3::ZERO, &[], config);
+
+        assert_eq!(sim.player_max_health(), 100);
+    }
+
+    #[test]
+    fn enemies_are_counted_and_indexed_after_the_dummies() {
+        let mut arena = (*arena_with(
+            &[],
+            Vec3::new(0.0, 0.0, -10.0),
+            &[Vec3::new(5.0, 0.0, 5.0), Vec3::new(8.0, 0.0, 5.0)],
+            &[Vec3::new(10.0, 0.0, 10.0)],
+        ))
+        .clone();
+        arena.dummy_spawns = vec![Vec3::new(-10.0, 0.0, -10.0)];
+        let config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+
+        let sim = FpsSim::start(Arc::new(arena), config);
+
+        assert_eq!(sim.enemy_count(), 2);
+        assert!(sim.dummy_body(0).is_some());
+        assert!(sim.enemy_body(0).is_some());
+        assert!(sim.enemy_body(1).is_some());
+        assert!(sim.enemy_body(2).is_none());
+        assert!(sim.enemy_state(1).is_some());
+        assert!(sim.enemy_state(2).is_none());
+    }
+
+    #[test]
+    fn a_sim_without_enemies_has_none() {
+        let config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let sim = FpsSim::new(
+            flat_floor(),
+            Vec3::ZERO,
+            &[Vec3::new(3.0, 0.0, 3.0), Vec3::new(6.0, 0.0, 3.0)],
+            config,
+        );
+
+        assert_eq!(sim.enemy_count(), 0);
+    }
+
+    #[test]
+    fn an_enemy_shoots_from_its_eye_through_a_gap_only_that_height_clears() {
+        // A low wall under a lintel leaves a slot from 1.2 m to 1.8 m; the eye ray crosses it
+        // at about 1.65 m, while eyes lower or higher than the configured one are blocked.
+        let low = (Vec3::new(-8.0, 0.0, 5.0), Vec3::new(8.0, 1.2, 5.5));
+        let lintel = (Vec3::new(-8.0, 1.8, 5.0), Vec3::new(8.0, 4.0, 5.5));
+        let arena = arena_with(
+            &[low, lintel],
+            Vec3::ZERO,
+            &[Vec3::new(0.0, 0.0, 10.0)],
+            &[Vec3::new(0.0, 0.0, 6.0)],
+        );
+        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        config.eye_height = 0.72;
+        let mut sim = FpsSim::start(arena, config);
+
+        let mut feedback = Vec::new();
+        for _ in 0..3 {
+            sim.tick(&FpsCommand::default(), DT);
+            feedback.extend(sim.drain_feedback());
+        }
+
+        let hits: Vec<Vec3> = feedback
+            .iter()
+            .filter_map(|fb| match fb {
+                Feedback::PlayerHit { from, .. } => Some(*from),
+                _ => None,
+            })
+            .collect();
+        let eye = sim.enemy_state(0).expect("alive").position + Vec3::Y * 0.72;
+        assert_eq!(hits.len(), 1, "{feedback:?}");
+        assert!(hits[0].abs_diff_eq(eye, 1e-4), "{:?} vs {eye:?}", hits[0]);
+    }
+}

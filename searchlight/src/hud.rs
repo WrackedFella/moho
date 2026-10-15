@@ -182,6 +182,18 @@ mod feedback_tests {
     }
 
     #[test]
+    fn the_hit_edge_mixes_both_axes_when_the_player_faces_sideways() {
+        let player = Vec3::ZERO;
+        let ahead_in_world_z = Vec3::new(0.0, 0.0, 5.0);
+        let behind_in_world_z = Vec3::new(0.0, 0.0, -5.0);
+
+        let right = hit_edge(player, FRAC_PI_2, ahead_in_world_z);
+        let left = hit_edge(player, FRAC_PI_2, behind_in_world_z);
+
+        assert_eq!([right, left], [Edge::Right, Edge::Left]);
+    }
+
+    #[test]
     fn the_status_line_shows_health() {
         assert_eq!(health_text(70, 100), "HP 70/100");
         assert_eq!(health_text(0, 100), "HP 0/100");

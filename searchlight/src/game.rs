@@ -1217,3 +1217,345 @@ mod title_and_aspect_tests {
         assert_close(stage.aspect(), 16.0 / 9.0);
     }
 }
+
+#[cfg(test)]
+mod enemy_and_hud_tests {
+    use std::collections::HashMap;
+
+    use moho_renderer::FrameError;
+    use searchlight_rules::Rifle;
+
+    use super::*;
+    use crate::test_support::{arena_with, mag, test_config};
+
+    /// Keeps the vertices of every mesh uploaded and the draws of the last frame.
+    #[derive(Default)]
+    struct RecordingRenderer {
+        next_handle: u32,
+        uploads: HashMap<u32, Vec<[f32; 3]>>,
+        materials: Vec<MaterialGpu>,
+        draws: Vec<(u32, InstanceGpu)>,
+    }
+
+    impl RecordingRenderer {
+        /// Each draw as its mesh's centre and half extents, then its material, in draw order.
+        fn drawn(&self) -> Vec<(Vec3, Vec3, MaterialGpu)> {
+            self.draws
+                .iter()
+                .map(|(handle, instance)| {
+                    let points: Vec<Vec3> = self.uploads[handle]
+                        .iter()
+                        .map(|&p| Vec3::from(p))
+                        .collect();
+                    let min = points.iter().fold(Vec3::MAX, |a, &p| a.min(p));
+                    let max = points.iter().fold(Vec3::MIN, |a, &p| a.max(p));
+                    (
+                        (min + max) / 2.0,
+                        (max - min) / 2.0,
+                        self.materials[instance.material as usize],
+                    )
+                })
+                .collect()
+        }
+    }
+
+    impl RendererBackend for RecordingRenderer {
+        fn resize(&mut self, _width: u32, _height: u32) {}
+        fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+            unreachable!("world meshes upload indexed meshes")
+        }
+        fn register_indexed_mesh(
+            &mut self,
+            vertices: &[[f32; 3]],
+            _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
+            _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
+            _indices: &[u32],
+        ) -> u32 {
+            self.next_handle += 1;
+            self.uploads.insert(self.next_handle, vertices.to_vec());
+            self.next_handle
+        }
+        fn unregister_mesh(&mut self, _mesh: u32) {}
+        fn begin_frame(&mut self, _camera: (Mat4, Mat4, Vec3)) -> Result<(), FrameError> {
+            self.draws.clear();
+            Ok(())
+        }
+        fn enqueue_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+            self.draws
+                .extend(instances.iter().map(|instance| (mesh, *instance)));
+        }
+        fn submit_frame(&mut self) {}
+        fn set_materials(&mut self, materials: &[MaterialGpu]) {
+            self.materials = materials.to_vec();
+        }
+        fn update_lighting(&mut self, _lighting: LightingGpu) {}
+        fn add_point_light(&mut self, _p: Vec3, _c: Vec3, _intensity: f32, _range: f32) -> u32 {
+            0
+        }
+        fn remove_light(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn set_light_position(&mut self, _id: u32, _position: Vec3) {}
+        fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_ssao_quality(&mut self, _quality: u8) {}
+    }
+
+    fn sim_of(arena: Arc<crate::arena::Arena>) -> FpsSim {
+        FpsSim::start(arena, test_config(Rifle::loaded(mag(30, 30)), vec![]))
+    }
+
+    /// One enemy at (3, 0, 4) whose only waypoint is ten metres to +X, so it faces +X.
+    fn lone_enemy() -> FpsSim {
+        sim_of(arena_with(
+            &[],
+            Vec3::new(0.0, 0.0, -20.0),
+            &[Vec3::new(3.0, 0.0, 4.0)],
+            &[Vec3::new(13.0, 0.0, 4.0)],
+        ))
+    }
+
+    /// The backend keeps its material table between frames, so one renderer serves a whole test.
+    fn drawn_after_sync(
+        stage: &mut Stage,
+        renderer: &mut RecordingRenderer,
+        sim: &FpsSim,
+    ) -> Vec<(Vec3, Vec3, MaterialGpu)> {
+        stage.sync_enemies(sim);
+        stage.draw(renderer, (Mat4::IDENTITY, Vec3::ZERO));
+        renderer.drawn()
+    }
+
+    fn is_paint(material: MaterialGpu, paint: Paint) -> bool {
+        let expected = paint.to_gpu();
+        (material.albedo, material.params) == (expected.albedo, expected.params)
+    }
+
+    #[test]
+    fn the_enemy_segment_table_is_the_six_body_volumes_then_the_gun() {
+        let segments = enemy_segments();
+
+        for (segment, volume) in segments.iter().zip(dummy_hit_volumes(0)) {
+            assert_eq!(*segment, (volume.offset, volume.half_extents));
+        }
+        assert_eq!(
+            segments[6],
+            (Vec3::new(-0.3, 0.25, 0.4), Vec3::new(0.04, 0.04, 0.3))
+        );
+    }
+
+    #[test]
+    fn enemy_mesh_ids_start_at_two_times_two_to_the_32_and_hold_eight_slots_per_enemy() {
+        let rig = EnemyRig {
+            target: 5,
+            shown: false,
+            gun_flash: 0,
+        };
+
+        let ids: Vec<WorldMeshId> = [0, 3, 6]
+            .into_iter()
+            .map(|slot| rig.mesh_id(slot))
+            .collect();
+
+        let base = 2 * (1u64 << 32) + 5 * 8;
+        assert_eq!(
+            ids,
+            [
+                WorldMeshId(base),
+                WorldMeshId(base + 3),
+                WorldMeshId(base + 6)
+            ]
+        );
+    }
+
+    #[test]
+    fn syncing_draws_each_living_enemy_as_seven_boxes_at_its_pose() {
+        let sim = lone_enemy();
+        let state = sim.enemy_state(0).expect("the enemy spawned");
+        let mut stage = Stage::new();
+        let mut renderer = RecordingRenderer::default();
+
+        let drawn = drawn_after_sync(&mut stage, &mut renderer, &sim);
+
+        assert_eq!(drawn.len(), 7);
+        let facing = Quat::from_rotation_y(state.yaw);
+        let mut offsets: Vec<Vec3> = dummy_hit_volumes(0).iter().map(|v| v.offset).collect();
+        offsets.push(Vec3::new(-0.3, 0.25, 0.4));
+        for (slot, (centre, _, material)) in drawn.iter().enumerate() {
+            let want = state.position + facing * offsets[slot];
+            assert!(centre.abs_diff_eq(want, 1e-4), "slot {slot}: {centre:?}");
+            assert!(is_paint(*material, Paint::Enemy), "slot {slot}");
+        }
+        // Facing +X turns the gun's long axis from Z onto X.
+        assert!(drawn[6].1.abs_diff_eq(Vec3::new(0.3, 0.04, 0.04), 1e-4));
+    }
+
+    #[test]
+    fn syncing_numbers_enemy_rigs_after_the_dummies() {
+        let mut arena = (*arena_with(
+            &[],
+            Vec3::new(0.0, 0.0, -20.0),
+            &[Vec3::new(3.0, 0.0, 4.0), Vec3::new(8.0, 0.0, 4.0)],
+            &[Vec3::new(13.0, 0.0, 4.0)],
+        ))
+        .clone();
+        arena.dummy_spawns = vec![Vec3::new(-8.0, 0.0, 4.0), Vec3::new(-4.0, 0.0, 4.0)];
+        let sim = sim_of(Arc::new(arena));
+        let mut stage = Stage::new();
+        let mut renderer = RecordingRenderer::default();
+        stage.add_arena(Vec::new(), &sim_dummy_spawns());
+
+        let drawn = drawn_after_sync(&mut stage, &mut renderer, &sim);
+
+        let targets: Vec<u16> = stage.enemies.iter().map(|rig| rig.target).collect();
+        assert_eq!(targets, [2, 3]);
+        assert_eq!(drawn.len(), 12 + 14);
+    }
+
+    fn sim_dummy_spawns() -> [Vec3; 2] {
+        [Vec3::new(-8.0, 0.0, 4.0), Vec3::new(-4.0, 0.0, 4.0)]
+    }
+
+    #[test]
+    fn an_enemy_shot_lights_only_its_gun_until_the_flash_runs_out() {
+        let sim = lone_enemy();
+        let mut stage = Stage::new();
+        let mut renderer = RecordingRenderer::default();
+
+        stage.react(&Feedback::EnemyFired { target: 0 }, None);
+        let flashing = drawn_after_sync(&mut stage, &mut renderer, &sim);
+        for _ in 0..FLASH_TICKS {
+            stage.tick_flashes();
+        }
+        let settled = drawn_after_sync(&mut stage, &mut renderer, &sim);
+
+        assert_eq!(stage.enemies[0].gun_flash, 0);
+        let lit: Vec<bool> = flashing
+            .iter()
+            .map(|d| is_paint(d.2, Paint::Struck))
+            .collect();
+        assert_eq!(lit, [false, false, false, false, false, false, true]);
+        assert!(settled.iter().all(|d| is_paint(d.2, Paint::Enemy)));
+    }
+
+    #[test]
+    fn an_enemy_shot_starts_a_ten_tick_gun_flash_on_that_enemys_rig() {
+        let mut stage = Stage::new();
+
+        stage.react(&Feedback::EnemyFired { target: 4 }, None);
+        stage.react(&Feedback::EnemyFired { target: 9 }, None);
+
+        let flashes: Vec<(u16, u32)> = stage
+            .enemies
+            .iter()
+            .map(|rig| (rig.target, rig.gun_flash))
+            .collect();
+        assert_eq!(flashes, [(4, 10), (9, 10)]);
+        assert_eq!(stage.status, "");
+    }
+
+    #[test]
+    fn looking_up_a_rig_twice_returns_the_same_rig_and_a_new_target_adds_one() {
+        let mut stage = Stage::new();
+
+        stage.enemy_rig(3).gun_flash = 7;
+        let again = stage.enemy_rig(3).gun_flash;
+        let other = stage.enemy_rig(8).gun_flash;
+
+        assert_eq!((again, other), (7, 0));
+        assert_eq!(stage.enemies.len(), 2);
+        assert_eq!(stage.enemy_rig(8).target, 8);
+        assert_eq!(stage.enemy_rig(3).target, 3);
+    }
+
+    #[test]
+    fn a_hit_edge_lights_its_bar_for_fifteen_ticks_and_fades_one_per_tick() {
+        let mut stage = Stage::new();
+
+        stage.show_hit_edge(Edge::Right);
+        stage.tick_flashes();
+
+        assert_eq!(stage.edge_left, [0, 14, 0, 0]);
+        assert_eq!(EDGE_TICKS, 15);
+    }
+
+    #[test]
+    fn refreshing_the_hud_hands_the_crosshair_the_death_flag_and_scaled_edge_opacity() {
+        let mut stage = Stage::new();
+        stage.edge_left = [15, 5, 0, 1];
+
+        stage.refresh_hud(true);
+
+        let hud = stage.crosshair.lock().expect("not poisoned");
+        assert!(hud.dead);
+        assert_eq!(hud.edges, [190, 63, 0, 12]);
+    }
+
+    #[test]
+    fn edge_bars_hug_their_own_sides_of_the_screen_in_the_edge_colour() {
+        let mut crosshair = Crosshair {
+            edges: [10, 20, 30, 40],
+            ..Crosshair::default()
+        };
+
+        let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+
+        let mesh = &frame.meshes[0];
+        assert_eq!(mesh.vertices.len(), 16 + 16);
+        let quad = |index: usize| -> Vec<([f32; 2], [u8; 4])> {
+            mesh.vertices[index * 4..index * 4 + 4]
+                .iter()
+                .map(|v| (v.pos, v.color))
+                .collect()
+        };
+        let expect = |min: [f32; 2], max: [f32; 2], alpha: u8| {
+            let color = [200, 20, 20, alpha];
+            vec![
+                (min, color),
+                ([max[0], min[1]], color),
+                (max, color),
+                ([min[0], max[1]], color),
+            ]
+        };
+        assert_eq!(quad(0), expect([0.0, 0.0], [800.0, 28.0], 10));
+        assert_eq!(quad(1), expect([772.0, 0.0], [800.0, 600.0], 20));
+        assert_eq!(quad(2), expect([0.0, 572.0], [800.0, 600.0], 30));
+        assert_eq!(quad(3), expect([0.0, 0.0], [28.0, 600.0], 40));
+        assert_eq!(mesh.indices.len(), 48);
+    }
+
+    #[test]
+    fn a_bar_with_no_opacity_is_not_drawn_and_the_rest_keep_their_order() {
+        let mut crosshair = Crosshair {
+            edges: [0, 0, 77, 0],
+            ..Crosshair::default()
+        };
+
+        let frame = crosshair.ui_frame([300, 200]).expect("a frame");
+
+        let mesh = &frame.meshes[0];
+        assert_eq!(mesh.vertices.len(), 4 + 16);
+        assert_eq!(mesh.vertices[0].pos, [0.0, 172.0]);
+        assert_eq!(mesh.vertices[2].pos, [300.0, 200.0]);
+        assert_eq!(mesh.vertices[0].color, [200, 20, 20, 77]);
+    }
+
+    #[test]
+    fn the_death_tint_is_drawn_under_the_crosshair_bars() {
+        let mut crosshair = Crosshair {
+            dead: true,
+            ..Crosshair::default()
+        };
+
+        let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+
+        let mesh = &frame.meshes[0];
+        assert_eq!(mesh.vertices.len(), 4 + 16);
+        assert_eq!(mesh.vertices[0].color, [120, 0, 0, 140]);
+        assert_eq!(mesh.vertices[2].pos, [800.0, 600.0]);
+    }
+}

@@ -178,3 +178,22 @@ mod encoding_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod player_encoding_tests {
+    use super::*;
+
+    #[test]
+    fn player_tags_start_one_past_the_world_tag_above_every_target_part() {
+        let head = HitTag::from(SurfaceTag::Player(BodyPart::Head));
+        let right_leg = HitTag::from(SurfaceTag::Player(BodyPart::RightLeg));
+        let last_target_part = HitTag::from(SurfaceTag::Part {
+            target: u16::MAX,
+            part: BodyPart::RightLeg,
+        });
+
+        assert_eq!(head, HitTag(524_289));
+        assert_eq!(right_leg, HitTag(524_294));
+        assert!(last_target_part.0 < head.0);
+    }
+}
