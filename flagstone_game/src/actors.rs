@@ -333,11 +333,11 @@ impl Sphere {
                 let b = a + 1;
                 let c = a + (lon + 1) as u32; // careful cast
                 let d = c + 1;
-                // triangle 1: a, b, c (CCW from outside)
+                // CCW from outside
                 indices.push(a);
                 indices.push(b);
                 indices.push(c);
-                // triangle 2: b, d, c (CCW from outside)
+                // CCW from outside
                 indices.push(b);
                 indices.push(d);
                 indices.push(c);
