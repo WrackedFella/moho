@@ -14,7 +14,7 @@ const TOLERANCE: f64 = 1e-3;
 /// from is not numerically meaningful.
 const GRAZING_COS: f64 = 1e-3;
 
-/// Floors for the deterministic seed's branch counts (observed: 72, 94, 12, 79, 67).
+/// Floors for the seed's branch counts, so each property's branch is known to have run.
 const MIN_FRONT: u32 = 40;
 const MIN_INSIDE: u32 = 60;
 const MIN_ORIGIN_CELL: u32 = 6;

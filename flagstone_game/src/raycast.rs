@@ -175,7 +175,6 @@ fn axis_traversal(
 
 /// Amanatides & Woo walk over the unit lattice cells a ray passes through.
 struct GridWalk {
-    /// Cell the ray is currently in.
     cell: IVec3,
     step: IVec3,
     /// Ray distance at which each axis next crosses a cell boundary.
