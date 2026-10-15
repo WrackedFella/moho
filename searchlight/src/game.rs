@@ -31,7 +31,7 @@ const DUMMY_MESH_BASE: u64 = 1 << 32;
 /// A mesh handle the renderer never issues, so the empty actor draws are skipped.
 const NO_MESH: u32 = u32::MAX;
 /// The window title before any status line is appended.
-pub const WINDOW_TITLE: &str = "moho_fps";
+pub const WINDOW_TITLE: &str = "Searchlight";
 const FOV_DEGREES: f32 = 75.0;
 const NEAR: f32 = 0.05;
 const FAR: f32 = 500.0;
@@ -512,7 +512,7 @@ mod tests {
     use super::*;
     use crate::sim::Feedback;
     use crate::test_support::{flat_floor, mag, press, test_config};
-    use moho_fps_rules::Rifle;
+    use searchlight_rules::Rifle;
 
     fn game() -> FpsGame {
         let sim = FpsSim::new(
@@ -552,7 +552,7 @@ mod tests {
 
 #[cfg(test)]
 mod presentation_tests {
-    use moho_fps_rules::BodyPart;
+    use searchlight_rules::BodyPart;
 
     use super::*;
 
@@ -603,7 +603,7 @@ mod presentation_tests {
         let hit = Feedback::Hit {
             target: 0,
             part: BodyPart::Head,
-            report: moho_fps_rules::Body::new(moho_fps_rules::BodyProfile {
+            report: searchlight_rules::Body::new(searchlight_rules::BodyProfile {
                 max_health: 10,
                 head_status: 10,
                 arm_status: 10,
@@ -626,7 +626,7 @@ mod presentation_tests {
 
 #[cfg(test)]
 mod mutation_tests {
-    use moho_fps_rules::{Body, BodyPart, BodyProfile};
+    use searchlight_rules::{Body, BodyPart, BodyProfile};
     use moho_renderer::FrameError;
 
     use crate::sim::STAND_HEIGHT;

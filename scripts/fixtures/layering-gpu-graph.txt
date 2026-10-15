@@ -1,6 +1,6 @@
 # Table for the hand-written graph fixtures layering-gpu-graph-*.graph.
 engine: moho_renderer
 flagstone: flagstone_ui
-fps:
+searchlight:
 domain:
 gpu: moho_renderer

@@ -1,7 +1,7 @@
 //! Shared builders for the crate's tests: small hand-made worlds and tuning values.
 
 use glam::Vec3;
-use moho_fps_rules::{BodyProfile, Magazine, Rifle};
+use searchlight_rules::{BodyProfile, Magazine, Rifle};
 use moho_input::Action;
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::Binding;

@@ -12,7 +12,7 @@ labels() {
     gh label create feature --force --color 5319E7 --description "Parent issue for an approved feature"
     gh label create line:engine --force --color 1D76DB --description "Engine crates"
     gh label create line:flagstone --force --color D93F0B --description "Strategy/base-builder game"
-    gh label create line:fps --force --color FBCA04 --description "FPS prototype"
+    gh label create line:searchlight --force --color FBCA04 --description "FPS prototype"
 }
 
 # Solo-owner settings: PR required but no approval count (can't self-approve);

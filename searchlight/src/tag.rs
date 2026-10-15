@@ -1,6 +1,6 @@
 //! What a ray can hit, and its round trip through the engine's opaque [`HitTag`].
 
-use moho_fps_rules::BodyPart;
+use searchlight_rules::BodyPart;
 use moho_physics::HitTag;
 
 /// The game's meaning for a surface a ray reached. Enemies share the `Part` form.

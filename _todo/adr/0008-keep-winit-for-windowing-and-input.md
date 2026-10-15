@@ -31,7 +31,7 @@ or 5.
 ## Decision
 
 - Keep winit 0.30 and follow egui's integration crates for upgrades.
-- Gamepads go through `gilrs` once a feature needs them (likely [FPS-F1](../fps-game/FPS-F1-game-design-document/_feature.md)). The
+- Gamepads go through `gilrs` once a feature needs them (likely [FPS-F1](../searchlight/FPS-F1-game-design-document/_feature.md)). The
   unused optional dependency is removed until then.
 - winit and egui-winit run without default features. Enable `x11`, `wayland`,
   `wayland-dlopen` and `rwh_06` explicitly, plus egui-winit's `clipboard`.

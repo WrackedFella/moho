@@ -14,7 +14,7 @@ flowchart LR
     A["architecture/<br/>how it works"] --> R["reference/<br/>look-up"]
     G["guides/<br/>how-to"] --> R
     A -. decisions .-> ADR["_todo/adr/"]
-    D["flagstone/ · fps/<br/>design intent"] -. scope .-> ADR
+    D["flagstone/ · searchlight/<br/>design intent"] -. scope .-> ADR
     P["process/<br/>workflow"]
 ```
 
@@ -33,7 +33,7 @@ flowchart LR
 | Read or change a save file | [reference/save-format](reference/save-format.md) |
 | Edit `config/prefs.ini` | [reference/prefs-format](reference/prefs-format.md) |
 | Run the agentic workflow | [process/agentic-workflow](process/agentic-workflow.md) |
-| Know what the games should become | [flagstone/vision](flagstone/vision.md), [fps/game-design-document](fps/game-design-document.md) |
+| Know what the games should become | [flagstone/vision](flagstone/vision.md), [searchlight/game-design-document](searchlight/game-design-document.md) |
 | Know why a boundary exists | [ADRs](../_todo/adr/README.md) |
 
 ## Contents
@@ -47,7 +47,7 @@ flowchart LR
 - [World streaming](architecture/world-streaming.md): chunk lifecycle.
 - [Rendering](architecture/rendering.md): render API boundary, pass order.
 - [Console](architecture/console.md): debug console data flow.
-- [FPS prototype](architecture/fps-prototype.md): `moho_fps` arena, shot path, sim, game adapter.
+- [FPS prototype](architecture/fps-prototype.md): `searchlight` arena, shot path, sim, game adapter.
 
 **Reference**
 
@@ -63,7 +63,7 @@ flowchart LR
 **Guides, design, process**
 
 - [Adding console commands](guides/adding-console-commands.md)
-- [Strategy vision](flagstone/vision.md) · [FPS design document](fps/game-design-document.md) (draft)
+- [Strategy vision](flagstone/vision.md) · [FPS design document](searchlight/game-design-document.md) (draft)
 - [Agentic workflow](process/agentic-workflow.md)
 
 ## Known constraints

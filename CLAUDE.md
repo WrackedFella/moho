@@ -18,6 +18,7 @@ just deny                          # licenses, advisories, sources
 bash scripts/cloud-tools.sh        # cloud threads only, before the first build
 gh workflow run CI --ref <branch>  # all three OSes on a branch (PRs into dev run Linux only)
 cargo run -p flagstone             # RUST_LOG=debug for logging
+cargo run -p searchlight           # the FPS prototype
 ```
 
 ## Workflow contract (used by devflow skills and agents)
@@ -45,7 +46,7 @@ cargo run -p flagstone             # RUST_LOG=debug for logging
 - **Environment setup command:** `bash scripts/cloud-tools.sh` (cloud threads only;
   text-only threads skip it).
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
-- **Domain-logic paths** (gate class `domain`): rules in `flagstone_game`, `moho_core`, `flagstone_voxel`, `moho_fps_rules`.
+- **Domain-logic paths** (gate class `domain`): rules in `flagstone_game`, `moho_core`, `flagstone_voxel`, `searchlight_rules`.
   Adapters, UI wiring and config are glue.
 - **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
   `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing
@@ -63,19 +64,19 @@ cargo run -p flagstone             # RUST_LOG=debug for logging
 ## Architecture
 
 ```
-flagstone       binary: winit event loop, wiring
-moho_core       event bus, engine-wide events, prefs, persistence
-flagstone_voxel flagstone line: voxel grid, meshing, LOD, lighting, chunk store, terrain materials, world events
-flagstone_game  game domain: pawn, tools, controller, scenes, raycast
-moho_render_api engine/game contract: Renderable, RenderMaterial, GPU-layout data
-moho_renderer   wgpu backend: meshes, CSM shadows, SSAO, skybox
-flagstone_ui    egui: menus, settings, console, HUD
-moho_audio      rodio playback, event-driven
-moho_physics    rapier3d character controller and colliders
-moho_input      key → binding-code mapping
-moho_app        fixed-tick loop shared by the games: Game trait, headless loop, GameClock
-moho_fps_rules  FPS line: rifle, magazine and body-part damage rules, platform-free (ADR-0015)
-moho_fps        FPS line: arena, shot resolution, sim and binary on the engine and moho_fps_rules
+flagstone         binary: winit event loop, wiring
+moho_core         event bus, engine-wide events, prefs, persistence
+flagstone_voxel   flagstone line: voxel grid, meshing, LOD, lighting, chunk store, terrain materials, world events
+flagstone_game    game domain: pawn, tools, controller, scenes, raycast
+moho_render_api   engine/game contract: Renderable, RenderMaterial, GPU-layout data
+moho_renderer     wgpu backend: meshes, CSM shadows, SSAO, skybox
+flagstone_ui      egui: menus, settings, console, HUD
+moho_audio        rodio playback, event-driven
+moho_physics      rapier3d character controller and colliders
+moho_input        key → binding-code mapping
+moho_app          fixed-tick loop shared by the games: Game trait, headless loop, GameClock
+searchlight_rules FPS line: rifle, magazine and body-part damage rules, platform-free (ADR-0015)
+searchlight       FPS line: arena, shot resolution, sim and binary on the engine and searchlight_rules
 ```
 
 - Engine crates never depend on `flagstone_game` (ADR-0001). World geometry reaches

@@ -1,4 +1,4 @@
-# moho_fps assets
+# searchlight assets
 
 | File | What it is |
 |---|---|
@@ -12,7 +12,7 @@ built from arithmetic in that script: no third-party model, texture, sample or r
 used or derived from. Regenerate them with:
 
 ```bash
-python3 -I moho_fps/assets/tools/make_arena.py
+python3 -I searchlight/assets/tools/make_arena.py
 ```
 
 The output is deterministic, so a rerun with an unchanged script leaves the files unchanged.

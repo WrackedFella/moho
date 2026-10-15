@@ -5,11 +5,11 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use moho_app::{AppConfig, LoopConfig};
-use moho_fps::TICK_HZ;
-use moho_fps::arena;
-use moho_fps::game::{FpsGame, WINDOW_TITLE};
-use moho_fps::sim::{FpsSim, SimConfig};
-use moho_fps_rules::{BodyProfile, Magazine, Rifle};
+use searchlight::TICK_HZ;
+use searchlight::arena;
+use searchlight::game::{FpsGame, WINDOW_TITLE};
+use searchlight::sim::{FpsSim, SimConfig};
+use searchlight_rules::{BodyProfile, Magazine, Rifle};
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::ActionBindings;
 use moho_physics::MoveSettings;
