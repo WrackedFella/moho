@@ -63,9 +63,8 @@ pub struct Impact {
 pub struct Slide {
     pub translation: Vec3,
     pub grounded: bool,
-    /// The walkable surface straight under the capsule's centre after the slide, `None` when
-    /// there is none or the character started the slide airborne. A walker that ends ungrounded within [`GROUND_SNAP`] of it still counts
-    /// as standing on it.
+    /// The walkable surface straight under the capsule's centre after the slide; `None` when
+    /// there is none or the character started the slide airborne.
     pub ground: Option<Ground>,
     /// Each surface touched, with its normal.
     pub hits: Vec<(ColliderHandle, Vec3)>,
@@ -93,9 +92,9 @@ pub(crate) const WALKABLE_NORMAL_Y: f32 = std::f32::consts::FRAC_1_SQRT_2;
 /// Furthest, in metres, a walker is pulled down onto ground, and the largest [`Ground::gap`]
 /// at which a slide ending ungrounded still counts as standing.
 ///
-/// The controller's `snap_to_ground` is built from it, so both agree. Without it, a walker
-/// carrying a ramp's upward speed over a crest onto level ground asks an upward move, which
-/// the controller does not snap, and hops.
+/// The controller's `snap_to_ground` is built from it, so both agree. Otherwise a walker
+/// carrying a ramp's upward speed over a crest asks an upward move, which the controller
+/// does not snap, and hops.
 pub(crate) const GROUND_SNAP: f32 = 0.1;
 
 /// Vertical speed below which a character counts as resting rather than rising.
@@ -182,9 +181,9 @@ fn clip(
 /// `slide` receives the displacement the tick asks for and reports what the world
 /// allowed. The look turns first, so a turn and a move in one command face the new way.
 ///
-/// A jump adds `jump_speed` to the vertical velocity. A walker that ends the tick
-/// grounded keeps its horizontal velocity and follows its ground; a landing zeroes the vertical
-/// velocity. One hanging within [`GROUND_SNAP`] of its ground is lowered onto it.
+/// A jump adds `jump_speed` to the vertical velocity. A walker that ends the tick grounded
+/// moves along its ground, keeping its horizontal velocity; a landing zeroes the vertical
+/// velocity.
 pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
@@ -542,7 +541,6 @@ mod tests {
             assert!(speeds.iter().all(|s| *s >= 0.0), "friction never reverses");
         }
 
-        /// A slope rising toward +Z at `degrees`.
         fn slope_normal(degrees: f32) -> Vec3 {
             let angle = degrees.to_radians();
             Vec3::new(0.0, angle.cos(), -angle.sin())

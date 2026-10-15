@@ -1745,7 +1745,6 @@ mod tests {
             );
         }
 
-        /// Spawns a character at `at`, facing `yaw`, and lets it come to rest on the ground.
         fn rest_at(world: &mut PhysicsWorld, at: Vec3, yaw: f32) -> CharacterHandle {
             let h = world.add_character(at);
             world.set_character_look(h, yaw, 0.0).unwrap();
@@ -1756,7 +1755,6 @@ mod tests {
             h
         }
 
-        /// Runs forward for `ticks` and returns the state after the last one.
         fn run_steadily(
             world: &mut PhysicsWorld,
             h: CharacterHandle,
@@ -1998,7 +1996,6 @@ mod tests {
             );
         }
 
-        /// Runs `command` for `ticks` and returns the state after every tick.
         fn record(
             world: &mut PhysicsWorld,
             h: CharacterHandle,

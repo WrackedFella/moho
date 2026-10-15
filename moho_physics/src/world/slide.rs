@@ -317,7 +317,6 @@ mod tests {
         assert_eq!(step_up_over_thin_wall(&ground(-1.0, 2.05, 10.0)), None);
     }
 
-    /// What `ground_under` reports for a capsule centred at `centre` over `meshes`.
     fn ground_under_centre(meshes: &[WorldMesh], centre: Vec3) -> Option<Vec3> {
         let mut world = PhysicsWorld::new();
         for (id, mesh) in meshes.iter().enumerate() {
@@ -340,7 +339,6 @@ mod tests {
         slider.ground_under(centre).map(|ground| ground.normal)
     }
 
-    /// A plane through the origin rising toward +Z at `degrees`.
     fn slope(degrees: f32) -> WorldMesh {
         let rise = degrees.to_radians().tan();
         slope_mesh(-10.0, -10.0 * rise, 10.0, 10.0 * rise)
