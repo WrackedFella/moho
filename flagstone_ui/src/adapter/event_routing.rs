@@ -165,7 +165,18 @@ pub fn process_console_action(action: crate::overlays::ConsoleAction, event_bus:
                 position: None, // Position will be determined by raycast in the handler
             });
         }
-        ConsoleAction::PlaySoundAt { .. } => todo!("publish AudioEvent::PlaySoundAt"),
+        ConsoleAction::PlaySoundAt {
+            path,
+            position,
+            volume,
+        } => {
+            use moho_core::events::AudioEvent;
+            event_bus.publish(AudioEvent::PlaySoundAt {
+                path,
+                volume,
+                position,
+            });
+        }
         ConsoleAction::None => {
             // No action
         }

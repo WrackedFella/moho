@@ -7,7 +7,8 @@ use crate::error::AudioError;
 use crate::error::AudioResult;
 use crate::output::{AudioOutput, Playback};
 use crate::rodio_output::RodioOutput;
-use crate::spatial::Listener;
+use crate::spatial::{Listener, distance_gain};
+use glam::Vec3;
 use std::path::Path;
 use tracing::{debug, warn};
 
@@ -28,6 +29,9 @@ pub struct AudioSystem<O: AudioOutput = RodioOutput> {
 
     /// Looping background music voice, kept for live volume changes.
     music_voice: Option<O::Voice>,
+
+    /// Where positioned sounds are heard from.
+    listener: Listener,
 }
 
 impl AudioSystem {
@@ -52,13 +56,13 @@ impl<O: AudioOutput> AudioSystem<O> {
             settings: AudioSettings::default(),
             audio_cache,
             music_voice: None,
+            listener: Listener::default(),
         }
     }
 
     /// Set where the listener is and which way it faces.
     pub fn set_listener(&mut self, listener: Listener) {
-        let _ = listener;
-        todo!("store the listener")
+        self.listener = listener;
     }
 
     /// Get current audio settings
@@ -78,8 +82,20 @@ impl<O: AudioOutput> AudioSystem<O> {
     }
 
     /// Play a sound from an AudioSource with optimized loading
+    ///
+    /// Sound-effect and voice sources with a position are attenuated by their distance
+    /// from the listener and not started at all beyond audible range; music and UI
+    /// sources ignore a position.
     pub fn play_audio_source(&mut self, source: &AudioSource) -> AudioResult<()> {
-        let effective_volume = self.settings.effective_volume(source.category()) * source.volume();
+        let Some(distance_gain) = self.distance_gain_for(source) else {
+            debug!(
+                path = source.path(),
+                "Skipping audio playback beyond audible range"
+            );
+            return Ok(());
+        };
+        let effective_volume =
+            self.settings.effective_volume(source.category()) * source.volume() * distance_gain;
 
         if effective_volume <= 0.0 {
             debug!(
@@ -120,6 +136,15 @@ impl<O: AudioOutput> AudioSystem<O> {
         Ok(())
     }
 
+    fn distance_gain_for(&self, source: &AudioSource) -> Option<f32> {
+        match (source.category(), source.position()) {
+            (AudioCategory::SoundEffect | AudioCategory::Voice, Some(position)) => {
+                distance_gain(self.listener.position.distance(Vec3::from_array(position)))
+            }
+            _ => Some(1.0),
+        }
+    }
+
     /// Play a sound file with specified volume
     pub fn play_sound<P: AsRef<Path>>(&mut self, path: P, volume: f32) -> AudioResult<()> {
         let source = AudioSource::new(path).with_volume(volume);
@@ -135,7 +160,16 @@ impl<O: AudioOutput> AudioSystem<O> {
             AudioEvent::Cancel => self.play_click(0.7),
             AudioEvent::Error => self.play_click(0.9),
             AudioEvent::PlaySound { path, volume } => self.play_sound(&path, volume),
-            AudioEvent::PlaySoundAt { .. } => todo!("positional playback"),
+            AudioEvent::PlaySoundAt {
+                path,
+                volume,
+                position,
+            } => {
+                let source = AudioSource::new(&path)
+                    .with_volume(volume)
+                    .with_position(position.to_array());
+                self.play_audio_source(&source)
+            }
             AudioEvent::MusicStart {
                 path,
                 volume,

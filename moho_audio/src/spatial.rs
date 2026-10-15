@@ -17,23 +17,34 @@ pub struct Listener {
 
 impl Default for Listener {
     fn default() -> Self {
-        todo!("origin, facing -Z")
+        Self {
+            position: Vec3::ZERO,
+            orientation: Quat::IDENTITY,
+        }
     }
 }
 
 impl Listener {
     /// Read the listener from a camera view matrix (world to eye space).
     pub fn from_view(view: Mat4) -> Self {
-        let _ = view;
-        todo!("invert the view")
+        let (_, orientation, position) = view.inverse().to_scale_rotation_translation();
+        Self {
+            position,
+            orientation,
+        }
     }
 }
 
 /// Volume multiplier for a sound `distance` metres from the listener, or `None` past
 /// [`MAX_AUDIBLE_DISTANCE`].
 pub fn distance_gain(distance: f32) -> Option<f32> {
-    let _ = distance;
-    todo!("inverse distance, clamped")
+    if distance > MAX_AUDIBLE_DISTANCE {
+        None
+    } else if distance <= REFERENCE_DISTANCE {
+        Some(1.0)
+    } else {
+        Some(REFERENCE_DISTANCE / distance)
+    }
 }
 
 #[cfg(test)]
@@ -100,7 +111,7 @@ mod tests {
     fn listener_from_view_takes_eye_and_facing() {
         let eye = Vec3::new(3.0, 50.0, -7.0);
         let target = Vec3::new(10.0, 20.0, 4.0);
-        let view = Mat4::look_at_rh(eye, target, Vec3::Y);
+        let view = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Y);
 
         let listener = Listener::from_view(view);
 

@@ -292,6 +292,10 @@ impl moho_app::Game for App {
         if let Some(renderer) = ctx.renderer() {
             self.apply_pending_render(renderer);
         }
+        let camera = self.render_camera(alpha);
+        if let Some(audio) = ctx.audio() {
+            audio.set_listener(moho_audio::Listener::from_view(camera.0));
+        }
         self.drain_audio_events(ctx.audio());
 
         if self.exit_requested {
@@ -305,7 +309,6 @@ impl moho_app::Game for App {
         frame_processor.update_hud_data(self, clock, ctx.tick_length);
         if let Some(renderer) = ctx.renderer() {
             frame_processor.update_lighting(self, clock, &mut *renderer);
-            let camera = self.render_camera(alpha);
             self.render_scene(renderer, camera);
         }
     }

@@ -17,7 +17,7 @@ pub struct AudioSource {
     /// Whether this sound should loop when played
     looped: bool,
 
-    /// Optional 3D position for spatial audio (future feature)
+    /// Optional 3D position for spatial audio; sound effects and voices fade with distance from the listener
     position: Option<[f32; 3]>,
 
     /// Category this audio source belongs to
@@ -97,7 +97,7 @@ impl AudioSource {
         self
     }
 
-    /// Set 3D position for spatial audio (future feature)
+    /// Set 3D position for spatial audio; sound effects and voices fade with distance from the listener
     pub fn with_position(mut self, position: [f32; 3]) -> Self {
         self.position = Some(position);
         self

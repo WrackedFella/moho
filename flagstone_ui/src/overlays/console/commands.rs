@@ -112,7 +112,7 @@ impl CommandProcessor {
             "r_shadow_quality" => self.shadow_quality_command(&parts),
             "r_ssao_quality" => self.ssao_quality_command(&parts),
             "spawn" => self.spawn_command(&parts),
-            "snd_play_at" => todo!("snd_play_at <path> <x> <y> <z> [volume]"),
+            "snd_play_at" => self.snd_play_at_command(&parts),
             _ => self.unknown_command(parts[0]),
         }
     }
@@ -131,6 +131,8 @@ impl CommandProcessor {
             "  r_debug_view <mode> - Set debug view mode".to_string(),
             "  r_shadow_quality <0-4> - Set shadow quality (Off/Low/Med/High/Ultra)".to_string(),
             "  r_ssao_quality <0-4> - Set SSAO quality (Off/Low/Med/High/Ultra)".to_string(),
+            "  snd_play_at <path> <x> <y> <z> [volume] - Play a sound at a world position (metres)"
+                .to_string(),
         ])
     }
 
@@ -152,6 +154,37 @@ impl CommandProcessor {
         CommandResult::with_action(
             "Toggling noclip mode...".to_string(),
             ConsoleAction::ToggleNoclip,
+        )
+    }
+
+    /// Handle positional sound command
+    fn snd_play_at_command(&self, parts: &[&str]) -> CommandResult {
+        if !(5..=6).contains(&parts.len()) {
+            return CommandResult::messages(vec![
+                "Usage: snd_play_at <path> <x> <y> <z> [volume]".to_string(),
+                "  Example: snd_play_at assets/audio/boom.wav 1 0 -5 0.8".to_string(),
+            ]);
+        }
+
+        let numbers: Result<Vec<f32>, _> = parts[2..]
+            .iter()
+            .map(|part| part.parse::<f32>().ok().filter(|n| n.is_finite()).ok_or(()))
+            .collect();
+        let Ok(numbers) = numbers else {
+            return CommandResult::message(
+                "Error: position and volume must be finite numbers".to_string(),
+            );
+        };
+
+        let position = glam::Vec3::new(numbers[0], numbers[1], numbers[2]);
+        let volume = numbers.get(3).copied().unwrap_or(1.0);
+        CommandResult::with_action(
+            format!("Playing {} at {position} (volume {volume})", parts[1]),
+            ConsoleAction::PlaySoundAt {
+                path: parts[1].to_string(),
+                position,
+                volume,
+            },
         )
     }
 
