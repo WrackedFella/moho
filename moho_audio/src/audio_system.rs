@@ -144,7 +144,7 @@ impl<O: AudioOutput> AudioSystem<O> {
         }
     }
 
-    /// The position of a sound that is heard in space, i.e. a positioned sound effect or voice.
+    /// Position of a sound heard in space: only positioned sound effects and voices.
     fn world_position(source: &AudioSource) -> Option<Vec3> {
         match (source.category(), source.position()) {
             (AudioCategory::SoundEffect | AudioCategory::Voice, Some(position)) => {

@@ -16,7 +16,6 @@ pub struct StereoGainSource<I> {
 }
 
 impl<I: Source> StereoGainSource<I> {
-    /// Wraps `input`, scaling its mono mix-down by `gain` per ear.
     pub fn new(input: I, gain: StereoGain) -> Self {
         Self {
             input,

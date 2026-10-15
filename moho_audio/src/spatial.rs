@@ -34,7 +34,6 @@ impl Listener {
         }
     }
 
-    /// The listener's right-hand direction in world space.
     pub fn right(&self) -> Vec3 {
         self.orientation * Vec3::X
     }
