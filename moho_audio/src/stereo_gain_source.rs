@@ -53,8 +53,11 @@ impl<I: Source> Iterator for StereoGainSource<I> {
 
 impl<I: Source> Source for StereoGainSource<I> {
     fn current_span_len(&self) -> Option<usize> {
-        let frames = self.input.current_span_len()? / usize::from(self.input.channels().get());
-        Some(frames * 2)
+        match self.input.current_span_len()? {
+            // The input is drained but the last frame's right-ear sample is still to come.
+            0 if self.pending_right.is_some() => Some(1),
+            samples => Some(samples / usize::from(self.input.channels().get()) * 2),
+        }
     }
 
     fn channels(&self) -> ChannelCount {
@@ -139,5 +142,22 @@ mod tests {
 
         assert_eq!(&frames[..4], &[Some(0.5); 4]);
         assert_eq!(&frames[4..], &[None, None]);
+    }
+
+    #[test]
+    fn is_not_exhausted_while_a_sample_remains() {
+        let input = buffer(1, vec![0.5, 0.5]);
+        let mut source = StereoGainSource::new(input, gain(1.0, 1.0));
+
+        let first_three: Vec<Option<f32>> = (0..3).map(|_| source.next()).collect();
+
+        assert_eq!(first_three, vec![Some(0.5); 3]);
+        assert!(
+            !source.is_exhausted(),
+            "one sample remains, span len {:?}",
+            source.current_span_len()
+        );
+        assert_eq!(source.next(), Some(0.5));
+        assert_eq!(source.next(), None);
     }
 }
