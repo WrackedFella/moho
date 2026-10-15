@@ -2,7 +2,7 @@
 
 **Source:** `flagstone/src/input_dispatcher.rs`, `moho_input/src/`, `flagstone_ui/src/actions.rs`, `flagstone/src/app/renderer_setup.rs` (registrations),
 `flagstone/src/app/game.rs` (`Game::event`, `poll_gamepads`), `flagstone/src/main.rs` (`handle_keyboard_input`), `flagstone_ui/src/app_state/game_state.rs`,
-`flagstone_ui/src/app_state/state_coordinator.rs`.
+`flagstone_ui/src/app_state/state_coordinator.rs`, `flagstone_ui/src/screens/pause.rs`, `flagstone_ui/src/adapter/event_routing.rs`.
 
 ## Input routing
 
@@ -39,7 +39,7 @@ Global hotkeys in `handle_keyboard_input`, checked before game keys:
 | Key | Effect |
 |---|---|
 | `` ` `` (Backquote) | Playing → console; ConsoleOpen → Playing |
-| `Esc` | ConsoleOpen → Playing; Playing → pause menu |
+| `Esc` | ConsoleOpen → Playing; Playing → Paused; Paused → Playing while the pause window is the active screen (inert on Settings). Key repeats are ignored |
 | `F3` | Toggle debug HUD |
 | `F4` | Toggle chunk-boundary minimap |
 | `Tab` | Toggle camera mode (handled before the dispatcher) |
@@ -103,5 +103,7 @@ Same-state transitions are allowed (no-op). Everything else is rejected, includi
 | `Playing` | game | world | grabbed | running |
 | `ConsoleOpen` | console text | world (frozen) + console | free | paused |
 | `Paused` | pause menu | world (frozen) + menu | free | paused |
+
+`GameState::home_screen` names the screen a state shows on entry and that Back returns to: `start` for `Menu`, `pause` for `Paused`, none for `Playing` and `ConsoleOpen`. The pause window (`PauseMenu`, screen `pause`) offers Resume, Settings and Exit to main menu. Resume and Exit publish `UiEvent::ResumeRequested` and `UiEvent::MainMenuRequested` from `process_menu_action`; the binary resumes through `StateTransitionCoordinator::resume_game`, and on a main-menu request `App::frame` autosaves, then shows the main menu.
 
 `flagstone/src/game_state.rs` re-exports `flagstone_ui::GameState`; the UI adapter takes the same type. Per-frame gameplay steps check `== Playing` ([frame-loop](frame-loop.md)).
