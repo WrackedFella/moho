@@ -1,4 +1,4 @@
-//! Moho — a voxel game engine and application binary.
+//! Flagstone — the strategy game binary.
 //!
 //! This is the main executable that wires together the engine crates
 //! ([`moho_core`], [`moho_renderer`], [`moho_audio`], [`flagstone_ui`]) into a

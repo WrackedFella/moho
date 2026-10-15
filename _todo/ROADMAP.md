@@ -19,7 +19,7 @@ and can run alongside 0.2–0.3.
 | # | Item | Criterion | Depends on |
 |---|---|---|---|
 | 0.1 | Accept [ADR-0005](adr/0005-crate-lines-and-dependency-direction.md) (crate lines) and [ENG-F8](https://github.com/WrackedFella/moho/issues/61) | G2 | — |
-| 0.2 | [ENG-F8-01](https://github.com/WrackedFella/moho/issues/63): `moho_sim` merged into `flagstone_game` | G2 | 0.1 |
+| 0.2 | [ENG-F8-01](https://github.com/WrackedFella/moho/issues/63): `moho_sim` merged into the game crate (now `flagstone_game`) | G2 | 0.1 |
 | 0.3 | [ENG-F8-02](https://github.com/WrackedFella/moho/issues/64): layering check in `just check`; `moho_core` drops `winit` | G2 | 0.2 |
 | 0.4 | [ENG-F7-01](https://github.com/WrackedFella/moho/issues/65): typed chunk and actor stores (domain: tests reviewed first) | G1 | 0.1 |
 | 0.5 | [ENG-F7-02](https://github.com/WrackedFella/moho/issues/66): legion removed; deny ignores name their owning cards | G1, G3 | 0.4 |

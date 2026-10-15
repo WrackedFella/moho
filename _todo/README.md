@@ -74,6 +74,6 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 
 ## Shipped before this structure
 
-Engine/game crate split: `flagstone_game` created, renderer decoupled behind
+Engine/game crate split: the game crate (now `flagstone_game`) created, renderer decoupled behind
 `moho_render_api`, `AudioEvent` unified, wgpu 27→29.0.4. Lasting decisions are
 in ADRs 0001–0003; the rest is in git history.

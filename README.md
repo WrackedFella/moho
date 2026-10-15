@@ -4,14 +4,19 @@
 
 ## Overview
 
-Moho is a modular Rust workspace containing engine components designed for voxel-based games:
+Moho is a modular Rust workspace containing engine components and the games built on them.
+
+Engine:
 
 - **moho_core** - Event bus, preferences, persistence
-- **flagstone_voxel** - Voxel terrain for the flagstone line: grid, meshing, lighting, streaming
 - **moho_renderer** - WGPU-based rendering backend  
 - **moho_audio** - Audio playback (rodio-based)
-- **flagstone_ui** - egui integration for menus and overlays
 - **moho_input** - Input mapping and state management
+
+Flagstone (the strategy game):
+
+- **flagstone_voxel** - Voxel terrain for the flagstone line: grid, meshing, lighting, streaming
+- **flagstone_ui** - egui integration for menus and overlays
 
 The project emphasizes **separation of concerns** between simulation and rendering, making testing, snapshots, and future multiplayer functionality easier.
 

@@ -13,7 +13,7 @@ use moho_core::prefs::Prefs;
 ///
 /// # Example
 /// ```no_run
-/// use moho::app::config::AppConfig;
+/// use flagstone::app::config::AppConfig;
 ///
 /// // Load configuration from preferences file
 /// let config = AppConfig::from_prefs();
@@ -51,7 +51,7 @@ impl AppConfig {
     ///
     /// # Example
     /// ```no_run
-    /// use moho::app::config::AppConfig;
+    /// use flagstone::app::config::AppConfig;
     ///
     /// let config = AppConfig::from_prefs();
     /// assert!(config.mouse_sensitivity > 0.0);
@@ -76,7 +76,7 @@ impl AppConfig {
     ///
     /// # Example
     /// ```
-    /// use moho::app::config::AppConfig;
+    /// use flagstone::app::config::AppConfig;
     ///
     /// let config = AppConfig::builder()
     ///     .mouse_sensitivity(0.5)

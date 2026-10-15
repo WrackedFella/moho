@@ -56,7 +56,7 @@ pub struct EventBusSetup {
 /// # Examples
 ///
 /// ```no_run
-/// use moho::app::event_setup::setup_event_bus;
+/// use flagstone::app::event_setup::setup_event_bus;
 ///
 /// let setup = setup_event_bus();
 ///

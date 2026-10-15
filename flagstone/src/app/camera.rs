@@ -25,7 +25,7 @@ pub type CameraSetup = (Mat4, Mat4, Vec3);
 /// # Examples
 ///
 /// ```
-/// use moho::app::camera::CameraBuilder;
+/// use flagstone::app::camera::CameraBuilder;
 ///
 /// // Use default camera (good view of voxel terrain)
 /// let camera = CameraBuilder::default().build();

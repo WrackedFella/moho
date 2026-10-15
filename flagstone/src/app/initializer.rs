@@ -6,8 +6,8 @@
 //!
 //! # Example
 //! ```no_run
-//! use moho::app::initializer::AppInitializer;
-//! use moho::app::config::AppConfig;
+//! use flagstone::app::initializer::AppInitializer;
+//! use flagstone::app::config::AppConfig;
 //!
 //! let config = AppConfig::from_prefs();
 //! let app = AppInitializer::new(config)
@@ -82,8 +82,8 @@ pub struct InitializedApp {
 ///
 /// # Example
 /// ```no_run
-/// use moho::app::initializer::AppInitializer;
-/// use moho::app::config::AppConfig;
+/// use flagstone::app::initializer::AppInitializer;
+/// use flagstone::app::config::AppConfig;
 ///
 /// let config = AppConfig::builder()
 ///     .mouse_sensitivity(0.5)
@@ -102,8 +102,8 @@ impl AppInitializer {
     ///
     /// # Example
     /// ```
-    /// use moho::app::initializer::AppInitializer;
-    /// use moho::app::config::AppConfig;
+    /// use flagstone::app::initializer::AppInitializer;
+    /// use flagstone::app::config::AppConfig;
     ///
     /// let config = AppConfig::default();
     /// let initializer = AppInitializer::new(config);
@@ -129,8 +129,8 @@ impl AppInitializer {
     ///
     /// # Example
     /// ```no_run
-    /// use moho::app::initializer::AppInitializer;
-    /// use moho::app::config::AppConfig;
+    /// use flagstone::app::initializer::AppInitializer;
+    /// use flagstone::app::config::AppConfig;
     ///
     /// let config = AppConfig::default();
     /// match AppInitializer::new(config).build() {
