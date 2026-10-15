@@ -871,3 +871,83 @@ fn surface_ray_ignores_triangle_plane_extensions_past_the_triangle_edge() {
         hit.position
     );
 }
+
+fn assert_hit_is_first_front_crossing(grid: &VoxelGrid, origin: Vec3, direction: Vec3) {
+    let tris = mesh_triangles(grid);
+    let first_front = crossings(
+        &tris,
+        origin.as_dvec3(),
+        direction.as_dvec3().normalize(),
+        20.0,
+    )
+    .into_iter()
+    .next()
+    .filter(|c| c.front)
+    .expect("the first mesh crossing is a front face");
+
+    let hit = raycast::raycast_surface(grid, origin, direction, 20.0)
+        .unwrap_or_else(|| panic!("missed the front crossing at {}", first_front.t));
+
+    assert!(
+        (f64::from(hit.distance) - first_front.t).abs() <= TOLERANCE,
+        "distance {} vs mesh {}",
+        hit.distance,
+        first_front.t
+    );
+    assert!(
+        distance_to_mesh(&tris, hit.position.as_dvec3()) <= TOLERANCE,
+        "hit {:?} is off the mesh",
+        hit.position
+    );
+}
+
+#[test]
+fn surface_ray_crossing_on_a_cell_face_is_not_missed() {
+    let mut grid = VoxelGrid::new(16);
+    for block in [IVec3::new(2, 2, 3), IVec3::new(3, 2, 3)] {
+        grid.mutator().place(block, 1, None);
+    }
+    let origin = Vec3::new(5.776_340_5, 3.508_795_7, 1.327_194_8);
+    let direction = Vec3::new(-0.684_142_05, -0.210_835_49, 0.698_210_6);
+
+    assert_hit_is_first_front_crossing(&grid, origin, direction);
+}
+
+#[test]
+fn surface_ray_range_is_inclusive() {
+    let grid = slab_grid();
+    let origin = Vec3::new(6.5, 3.0, 6.5);
+
+    let at_limit = raycast::raycast_surface(&grid, origin, Vec3::NEG_Y, 2.0);
+    let just_short = raycast::raycast_surface(&grid, origin, Vec3::NEG_Y, 1.999);
+
+    assert_eq!(at_limit.map(|h| h.distance), Some(2.0));
+    assert_eq!(just_short, None);
+}
+
+#[test]
+fn surface_ray_crossing_on_a_cell_face_from_the_exit_side_is_not_missed() {
+    let mut grid = VoxelGrid::new(16);
+    for block in [IVec3::new(2, 2, 3), IVec3::new(3, 2, 3)] {
+        grid.mutator().place(block, 1, None);
+    }
+    let origin = Vec3::new(3.654_700_5, 3.154_700_5, 4.654_700_3);
+    let direction = Vec3::new(-0.577_350_26, -0.577_350_26, -0.577_350_26);
+
+    assert_hit_is_first_front_crossing(&grid, origin, direction);
+}
+
+#[test]
+fn surface_ray_starting_just_above_the_surface_hits_it() {
+    let grid = slab_grid();
+    let origin = Vec3::new(6.5, 1.00005, 6.5);
+
+    let hit = raycast::raycast_surface(&grid, origin, Vec3::NEG_Y, 20.0)
+        .expect("the surface lies 5e-5 below the origin");
+
+    assert!(
+        hit.distance > 0.0 && hit.distance <= 1e-4,
+        "{}",
+        hit.distance
+    );
+}
