@@ -391,4 +391,73 @@ mod tests {
             assert_eq!(ground_under_centre(&meshes, centre), None, "{case}");
         }
     }
+
+    /// Runs `check` with a slider for a standard character capsule over `meshes`.
+    fn with_slider<T>(meshes: &[WorldMesh], check: impl FnOnce(&Slider) -> T) -> T {
+        let mut world = PhysicsWorld::new();
+        for (id, mesh) in meshes.iter().enumerate() {
+            world.set_world_mesh(WorldMeshId(id as u64), mesh, TEST_TAG);
+        }
+        world.step(1.0 / 60.0);
+        let queries = world.broad_phase.as_query_pipeline(
+            world.narrow_phase.query_dispatcher(),
+            &world.rigid_body_set,
+            &world.collider_set,
+            QueryFilter::default(),
+        );
+        let capsule = SharedShape::capsule_y(0.85, 0.3);
+        let slider = Slider {
+            controller: &world.character_controller,
+            queries: &queries,
+            shape: capsule.as_ref(),
+            dt: 1.0 / 60.0,
+        };
+        check(&slider)
+    }
+
+    #[test]
+    fn ground_gap_is_the_height_above_the_plane_where_the_capsule_would_rest() {
+        for degrees in [25.0_f32, 40.0] {
+            let resting = 0.85 + 0.3 / degrees.to_radians().cos();
+            for lift in [0.0, 0.05] {
+                let centre = Vec3::new(0.0, resting + lift, 0.0);
+
+                let ground = with_slider(&[slope(degrees)], |slider| slider.ground_under(centre))
+                    .expect("walkable face below");
+
+                assert!(
+                    (ground.gap - lift).abs() < 1e-3,
+                    "{degrees} degrees, held {lift} m up: {ground:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn slide_reports_the_ground_where_the_capsule_ends_not_where_it_started() {
+        let ledge = [ground(0.0, -10.0, 1.0)];
+        let over_the_ledge = Pose::from_translation(Vec3::new(0.0, 1.17, 0.9));
+
+        let slid = with_slider(&ledge, |slider| {
+            slider.slide(&over_the_ledge, Vec3::new(0.0, 0.0, 0.5), true)
+        });
+
+        assert!(slid.translation.z > 0.4, "{slid:?}");
+        assert_eq!(slid.ground, None, "the end is past the ledge: {slid:?}");
+    }
+
+    #[test]
+    fn slide_reports_the_ground_on_top_of_a_step_it_climbed() {
+        let meshes = [ground(0.0, -10.0, 10.0), step_box_mesh(2.0, 6.0, 0.45)];
+        let pressed_against_the_riser = Pose::from_translation(Vec3::new(0.0, 1.17, 1.67));
+
+        let slid = with_slider(&meshes, |slider| {
+            slider.slide(&pressed_against_the_riser, Vec3::new(0.0, 0.0, 0.5), true)
+        });
+
+        assert!(slid.translation.y > 0.4, "climbed the step: {slid:?}");
+        let ground = slid.ground.expect("standing on the step top");
+        assert!(ground.normal.distance(Vec3::Y) < 1e-3, "{ground:?}");
+        assert!(ground.gap.abs() < 0.05, "{ground:?}");
+    }
 }
