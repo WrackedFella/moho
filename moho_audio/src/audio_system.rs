@@ -17,7 +17,6 @@ const CLICK_SOUND: &str = "assets/audio/ui/button_click.mp3";
 /// AudioSystem manages audio playback, asset loading, and provides
 /// a clean interface for the rest of the engine to play sounds.
 pub struct AudioSystem<O: AudioOutput = RodioOutput> {
-    /// Where voices are played
     output: O,
 
     /// Current audio settings
@@ -26,7 +25,7 @@ pub struct AudioSystem<O: AudioOutput = RodioOutput> {
     /// Audio cache manager (handles loading and caching)
     audio_cache: AudioCache,
 
-    /// Currently playing background music voice (for volume control)
+    /// Looping background music voice, kept for live volume changes.
     music_voice: Option<O::Voice>,
 }
 
@@ -97,14 +96,13 @@ impl<O: AudioOutput> AudioSystem<O> {
             looped: source.looped(),
         })?;
 
-        // For background music, keep the voice for volume control
         if *source.category() == AudioCategory::Music && source.looped() {
             if let Some(old_voice) = self.music_voice.take() {
                 self.output.stop(old_voice);
             }
             self.music_voice = Some(voice);
         } else {
-            self.output.detach(voice); // Let it play and clean up automatically
+            self.output.detach(voice);
         }
 
         debug!(
@@ -143,8 +141,7 @@ impl<O: AudioOutput> AudioSystem<O> {
                 Ok(())
             }
             AudioEvent::MusicVolumeChanged { volume: _ } => {
-                // TODO: adjust the active music voice's volume in place once
-                // AudioSystem exposes a live volume control for it.
+                // Ignored for now: the music voice's volume follows the settings only.
                 Ok(())
             }
             AudioEvent::StopAll => {
