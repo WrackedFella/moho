@@ -569,6 +569,18 @@ mod tests {
     }
 
     #[test]
+    fn positioned_sound_at_a_non_finite_position_starts_nothing_and_succeeds() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(Listener::default());
+        let nowhere = Vec3::new(f32::NAN, 0.0, 0.0);
+
+        let result = system.handle_event(play_at(SOUND, 1.0, nowhere));
+
+        assert!(result.is_ok(), "{result:?}");
+        assert!(output.voices().is_empty());
+    }
+
+    #[test]
     fn distance_is_measured_from_the_current_listener() {
         let (mut system, output) = system(full_volume());
         let sound = Vec3::new(20.0, 0.0, 0.0);

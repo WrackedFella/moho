@@ -79,6 +79,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn distance_gain_of_a_non_finite_distance_is_none() {
+        for distance in [f32::NAN, f32::INFINITY] {
+            let gain = distance_gain(distance);
+
+            assert_eq!(gain, None, "at {distance} m");
+        }
+    }
+
     proptest! {
         #[test]
         fn distance_gain_never_rises_with_distance(a in 0.0f32..200.0, b in 0.0f32..200.0) {
