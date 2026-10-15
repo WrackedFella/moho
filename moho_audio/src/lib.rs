@@ -39,4 +39,4 @@ pub use audio_source::{AudioCategory, AudioSource};
 pub use audio_system::AudioSystem;
 pub use error::{AudioError, AudioResult};
 pub use output::{AudioOutput, Playback};
-pub use spatial::{Listener, MAX_AUDIBLE_DISTANCE, REFERENCE_DISTANCE, distance_gain};
+pub use spatial::Listener;

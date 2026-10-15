@@ -166,18 +166,19 @@ impl CommandProcessor {
             ]);
         }
 
-        let numbers: Result<Vec<f32>, _> = parts[2..]
-            .iter()
-            .map(|part| part.parse::<f32>().ok().filter(|n| n.is_finite()).ok_or(()))
-            .collect();
-        let Ok(numbers) = numbers else {
+        let finite = |part: &str| part.parse::<f32>().ok().filter(|n| n.is_finite());
+        let (Some(x), Some(y), Some(z), Some(volume)) = (
+            finite(parts[2]),
+            finite(parts[3]),
+            finite(parts[4]),
+            parts.get(5).map_or(Some(1.0), |part| finite(part)),
+        ) else {
             return CommandResult::message(
                 "Error: position and volume must be finite numbers".to_string(),
             );
         };
 
-        let position = glam::Vec3::new(numbers[0], numbers[1], numbers[2]);
-        let volume = numbers.get(3).copied().unwrap_or(1.0);
+        let position = glam::Vec3::new(x, y, z);
         CommandResult::with_action(
             format!("Playing {} at {position} (volume {volume})", parts[1]),
             ConsoleAction::PlaySoundAt {
