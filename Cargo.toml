@@ -10,7 +10,7 @@ edition = "2024"
 publish = false
 
 [workspace]
-members = ["moho_app", "moho_core", "moho_game", "moho_voxel", "moho_render_api", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_physics", "moho_level", "moho_fps_rules"]
+members = ["moho_app", "moho_core", "moho_game", "moho_voxel", "moho_render_api", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_physics", "moho_level", "moho_fps_rules", "moho_fps"]
 
 [workspace.dependencies]
 bytemuck = "1.24"
