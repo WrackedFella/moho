@@ -7,7 +7,11 @@ pub struct PauseMenu {
 impl PauseMenu {
     pub fn new() -> Self {
         Self {
-            spec: ScreenSpec::default(),
+            spec: ScreenSpec {
+                anchor: egui::Align2::CENTER_CENTER,
+                offset: egui::Vec2::ZERO,
+                modal: false,
+            },
         }
     }
 }
@@ -36,7 +40,7 @@ impl UiComponent for PauseMenu {
             .title_bar(false)
             .resizable(false)
             .collapsible(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .anchor(self.spec.anchor, self.spec.offset)
             .show(ui.ctx(), |ui| {
                 ui.vertical_centered(|ui| {
                     ui.heading("Paused");
@@ -69,5 +73,20 @@ impl UiComponent for PauseMenu {
 impl Screen for PauseMenu {
     fn spec(&self) -> &ScreenSpec {
         &self.spec
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_pause_window_is_centred_and_not_modal() {
+        let menu = PauseMenu::new();
+        let spec = menu.spec();
+
+        assert_eq!(spec.anchor, egui::Align2::CENTER_CENTER);
+        assert_eq!(spec.offset, egui::Vec2::ZERO);
+        assert!(!spec.modal, "the frozen world stays visible");
     }
 }
