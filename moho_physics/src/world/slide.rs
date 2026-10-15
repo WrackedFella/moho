@@ -6,10 +6,13 @@ use rapier3d::control::{
     CharacterLength, EffectiveCharacterMovement, KinematicCharacterController,
 };
 use rapier3d::parry::query::ShapeCastOptions;
-use rapier3d::prelude::{ColliderHandle, Pose, QueryPipeline, Shape};
+use rapier3d::prelude::{ColliderHandle, Pose, QueryPipeline, Ray, Shape};
 
 /// How far below a grounded landing to look for the surface it landed on, in metres.
 const GROUND_PROBE: f32 = 0.1;
+
+/// How far past the capsule's lowest point the ground ray reaches, in metres.
+const GROUND_REACH_MARGIN: f32 = 0.3;
 
 /// Surfaces facing down at least this much (`normal.y` below its negative) are ceilings, not risers.
 const CEILING_NORMAL_Y: f32 = 0.3;
@@ -101,8 +104,18 @@ impl Slider<'_> {
 
     /// The face normal of the walkable surface straight under `centre`, or `None` when a ray
     /// cast down from it finds none within the capsule's half-height plus a margin.
-    pub(super) fn ground_under(&self, _centre: Vec3) -> Option<Vec3> {
-        None
+    ///
+    /// A ray, unlike a shape cast, ignores the capsule's rounded base, so it reads the face the
+    /// centre stands over rather than a ledge edge the base merely overlaps.
+    pub(super) fn ground_under(&self, centre: Vec3) -> Option<Vec3> {
+        let capsule = self
+            .shape
+            .as_capsule()
+            .expect("character colliders are capsules");
+        let reach = capsule.half_height() + capsule.radius + GROUND_REACH_MARGIN;
+        let ray = Ray::new(centre, -Vec3::Y);
+        let (_, hit) = self.queries.cast_ray_and_get_normal(&ray, reach, true)?;
+        (hit.normal.y >= WALKABLE_NORMAL_Y).then_some(hit.normal)
     }
 
     /// The surface under a character the controller grounded without reporting a hit.

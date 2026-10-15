@@ -20,7 +20,7 @@ pub struct CharacterHandle(pub(super) RigidBodyHandle);
 pub struct CharacterState {
     /// Capsule centre, world space.
     pub position: Vec3,
-    /// Velocity in m/s; zero vertically while grounded.
+    /// Velocity in m/s; along the ground while grounded.
     pub velocity: Vec3,
     /// Facing in radians; 0 faces +Z.
     pub yaw: f32,

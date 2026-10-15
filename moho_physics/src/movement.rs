@@ -163,6 +163,10 @@ fn clip(
 ///
 /// `slide` receives the displacement the tick asks for and reports what the world
 /// allowed. The look turns first, so a turn and a move in one command face the new way.
+///
+/// A jump adds `jump_speed` to the vertical velocity. A grounded walker ends the tick moving
+/// along the ground under its centre, keeping its horizontal velocity; a landing zeroes the
+/// vertical velocity.
 pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
@@ -179,12 +183,17 @@ pub fn step(
     let wish = wish_vector.normalize_or_zero();
     let magnitude = wish_vector.length().min(1.0);
 
-    if state.grounded && command.jump {
-        state.velocity.y = settings.jump_speed;
+    let jumped = state.grounded && command.jump;
+    if jumped {
+        state.velocity.y += settings.jump_speed;
     }
 
     let airborne_before = !state.grounded;
-    let walking = state.grounded && state.velocity.y <= REST_SPEED;
+    // A walker may climb a slope, so its upward speed only counts as leaving the ground once
+    // it exceeds what its horizontal speed explains.
+    let walking = state.grounded
+        && !jumped
+        && state.velocity.y <= state.velocity.with_y(0.0).length() + REST_SPEED;
     if walking {
         ground_move(&mut state.velocity, wish, magnitude, settings, dt);
     } else {
@@ -204,9 +213,15 @@ pub fn step(
 
     let impacts = clip(&mut state.velocity, asked, &slid, walking, airborne_before);
 
-    state.grounded = slid.grounded && state.velocity.y <= REST_SPEED;
+    state.grounded = slid.grounded && (walking || state.velocity.y <= REST_SPEED);
     if state.grounded {
-        state.velocity.y = 0.0;
+        match (walking, slid.ground) {
+            (true, Some(n)) => {
+                state.velocity.y = -(n.x * state.velocity.x + n.z * state.velocity.z) / n.y;
+            }
+            (true, None) => {}
+            (false, _) => state.velocity.y = 0.0,
+        }
     }
     impacts
 }
