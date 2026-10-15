@@ -37,6 +37,19 @@ const NEAR: f32 = 0.05;
 const FAR: f32 = 500.0;
 const SHOT_VOLUME: f32 = 0.8;
 
+/// Width over height, treating a zero height as one so a minimised window cannot divide by zero.
+fn aspect_ratio(width: u32, height: u32) -> f32 {
+    width as f32 / height.max(1) as f32
+}
+
+fn window_title(status: &str) -> String {
+    if status.is_empty() {
+        WINDOW_TITLE.to_owned()
+    } else {
+        format!("{WINDOW_TITLE} | {status}")
+    }
+}
+
 /// Surface colours of the greybox world.
 #[derive(Clone, Copy, Debug)]
 enum Paint {
@@ -346,11 +359,7 @@ impl Stage {
         let Some(window) = &self.window else {
             return;
         };
-        let title = if self.status.is_empty() {
-            WINDOW_TITLE.to_owned()
-        } else {
-            format!("{WINDOW_TITLE} | {}", self.status)
-        };
+        let title = window_title(&self.status);
         if title != self.title {
             window.set_title(&title);
             self.title = title;
@@ -360,7 +369,7 @@ impl Stage {
     fn aspect(&self) -> f32 {
         self.window.as_ref().map_or(16.0 / 9.0, |window| {
             let size = window.inner_size();
-            size.width as f32 / size.height.max(1) as f32
+            aspect_ratio(size.width, size.height)
         })
     }
 
@@ -945,5 +954,73 @@ mod mutation_tests {
 
         assert_eq!(stage.segments[0].flash_left, 10);
         assert_eq!(FLASH_TICKS, 10);
+    }
+}
+
+#[cfg(test)]
+mod title_and_aspect_tests {
+    use super::*;
+
+    const EPSILON: f32 = 1e-6;
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < EPSILON,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn aspect_ratio_of_full_hd_is_sixteen_ninths() {
+        assert_close(aspect_ratio(1920, 1080), 16.0 / 9.0);
+    }
+
+    #[test]
+    fn aspect_ratio_of_800_by_600_is_four_thirds() {
+        assert_close(aspect_ratio(800, 600), 4.0 / 3.0);
+    }
+
+    #[test]
+    fn aspect_ratio_of_a_tall_non_square_window_is_below_one() {
+        assert_close(aspect_ratio(101, 333), 101.0 / 333.0);
+    }
+
+    #[test]
+    fn aspect_ratio_with_zero_width_is_zero() {
+        assert_close(aspect_ratio(0, 480), 0.0);
+    }
+
+    #[test]
+    fn aspect_ratio_with_zero_height_is_finite_and_equals_the_width() {
+        let ratio = aspect_ratio(7, 0);
+
+        assert!(ratio.is_finite());
+        assert_close(ratio, 7.0);
+    }
+
+    #[test]
+    fn aspect_ratio_with_height_one_equals_the_width() {
+        assert_close(aspect_ratio(9, 1), 9.0);
+    }
+
+    #[test]
+    fn window_title_with_empty_status_is_just_the_base_title() {
+        assert_eq!(window_title(""), "moho_fps");
+        assert_eq!(window_title(""), WINDOW_TITLE);
+    }
+
+    #[test]
+    fn window_title_with_a_status_appends_it_after_a_separator() {
+        let title = window_title("Ammo 12/30");
+
+        assert_eq!(title, "moho_fps | Ammo 12/30");
+        assert!(title.starts_with(WINDOW_TITLE));
+    }
+
+    #[test]
+    fn stage_without_a_window_reports_the_default_sixteen_ninths_aspect() {
+        let stage = Stage::new();
+
+        assert_close(stage.aspect(), 16.0 / 9.0);
     }
 }
