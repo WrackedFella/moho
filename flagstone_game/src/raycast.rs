@@ -337,4 +337,35 @@ mod tests {
         let inside = Vec3::splat(0.5);
         assert!(raycast_surface(&lone, inside, Vec3::Z, 20.0).is_none());
     }
+
+    #[test]
+    fn walk_stops_after_max_distance_worth_of_cells() {
+        // A diagonal ray crosses about 1.7 cell boundaries per unit of distance, the most
+        // any ray can; the walk's cell budget must still reach a block at the range limit.
+        let mut grid = VoxelGrid::new(16);
+        let block = BlockPos::new(17, 17, 17);
+        grid.mutator().place(block, 1, None);
+        let origin = Vec3::splat(0.5);
+        let diagonal = Vec3::ONE;
+        // The cube walk enters the block at its near corner, (17, 17, 17).
+        let cube_entry = 16.5 * 3.0f32.sqrt();
+        // The drawn surface is an octahedron of radius 0.5 around the block centre.
+        let surface_entry = 50.5 / 3.0f32.sqrt();
+
+        let cube_at_limit = raycast(&grid, origin, diagonal, cube_entry + 0.05);
+        let cube_short = raycast(&grid, origin, diagonal, cube_entry - 0.05);
+        let surface_at_limit = raycast_surface(&grid, origin, diagonal, surface_entry + 0.05);
+        let surface_short = raycast_surface(&grid, origin, diagonal, surface_entry - 0.05);
+
+        assert_eq!(cube_at_limit.map(|h| h.block_pos), Some(block));
+        assert!(cube_short.is_none());
+        let surface_hit = surface_at_limit.expect("surface lies just inside max_distance");
+        assert_eq!(surface_hit.block_pos, block);
+        assert!(
+            (surface_hit.distance - surface_entry).abs() < 0.01,
+            "{}",
+            surface_hit.distance
+        );
+        assert!(surface_short.is_none());
+    }
 }
