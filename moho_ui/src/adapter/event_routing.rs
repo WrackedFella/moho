@@ -87,7 +87,8 @@ pub fn emit_audio_event(event_bus: &EventBus, audio_event: UiAudioEvent) {
 /// sounds in `assets/audio/ui/`.
 pub const MENU_MUSIC_PATH: &str = "assets/audio/music/menu.ogg";
 
-/// Decide what menu music needs to happen given what is wanted and what plays.
+/// The music event that moves menu music from `playing` to `want`: a looped
+/// [`MENU_MUSIC_PATH`] start, a stop, or `None` when they already agree.
 pub fn menu_music_change(want: bool, playing: bool) -> Option<moho_core::events::AudioEvent> {
     use moho_core::events::AudioEvent;
 

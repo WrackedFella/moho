@@ -353,7 +353,8 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
             }
         }
 
-        // Menu music follows the game state: playing in the menu, stopped elsewhere.
+        // Runs only on rendered frames. Every non-`Menu` state renders, so a stop is never missed;
+        // a hidden `Menu` keeps whatever is playing (music carries on through world generation).
         let want_menu_music = self.current_game_state == GameState::Menu && self.menu_music_exists;
         if let Some(event) =
             event_routing::menu_music_change(want_menu_music, self.menu_music_playing)
