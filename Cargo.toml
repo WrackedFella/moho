@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["flagstone", "moho_app", "moho_core", "flagstone_game", "flagstone_voxel", "moho_render_api", "moho_renderer", "moho_audio", "flagstone_ui", "moho_input", "moho_physics", "moho_level", "moho_fps_rules", "moho_fps"]
+members = ["flagstone", "moho_app", "moho_core", "flagstone_game", "flagstone_voxel", "moho_render_api", "moho_renderer", "moho_audio", "flagstone_ui", "moho_input", "moho_physics", "moho_level", "searchlight_rules", "searchlight"]
 
 [workspace.dependencies]
 bytemuck = "1.24"
@@ -19,7 +19,7 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 wgpu = "30.0.1"
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 moho_physics = { path = "moho_physics" }
-moho_fps_rules = { path = "moho_fps_rules" }
+searchlight_rules = { path = "searchlight_rules" }
 rapier3d = "0.36"
 tempfile = "3.5"
 gltf = { version = "1.4.1", default-features = false, features = ["utils", "names", "extras"] }

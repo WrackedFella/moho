@@ -1,7 +1,7 @@
 //! What a ray can hit, and its round trip through the engine's opaque [`HitTag`].
 
-use moho_fps_rules::BodyPart;
 use moho_physics::HitTag;
+use searchlight_rules::BodyPart;
 
 /// The game's meaning for a surface a ray reached. Enemies share the `Part` form.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

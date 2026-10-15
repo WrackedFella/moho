@@ -22,7 +22,7 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 |---|---|---|
 | Engine | [`engine/`](engine/) | Shared crates; hygiene and debt land opportunistically |
 | Strategy/base-builder | [`flagstone/`](flagstone/) | **Primary** |
-| FPS | [`fps-game/`](fps-game/) | GDD only until it defines real scope |
+| FPS | [`searchlight/`](searchlight/) | GDD only until it defines real scope |
 
 ## engine/
 
@@ -66,11 +66,11 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 | [SG-F5 I run the colony from above and step into a pawn](https://github.com/WrackedFella/moho/issues/309) |
 | [SG-F6 New worlds look intentional and ore is findable](flagstone/SG-F6-world-generation/_feature.md) |
 
-## fps-game/
+## searchlight/
 
 | Feature |
 |---|
-| [FPS-F1 Game design document](fps-game/FPS-F1-game-design-document/_feature.md) |
+| [FPS-F1 Game design document](searchlight/FPS-F1-game-design-document/_feature.md) |
 
 ## Shipped before this structure
 

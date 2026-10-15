@@ -66,7 +66,7 @@ layering:
     collects() { "{{replace(just_executable(), '\', '/')}}" _layering-collects "$@"; }
     scripts/check-layering.sh scripts/layering.txt
     rejects layering-violation 'engine-reaches-game: flagstone_ui → flagstone_game'
-    rejects layering-engine-fps 'engine-reaches-game: moho_renderer → moho_render_api'
+    rejects layering-engine-searchlight 'engine-reaches-game: moho_renderer → moho_render_api'
     rejects layering-unassigned 'unassigned: moho_input'
     rejects layering-platform 'domain-reaches-platform: flagstone_ui → egui'
     rejects layering-platform 'domain-reaches-platform: flagstone → wgpu'
