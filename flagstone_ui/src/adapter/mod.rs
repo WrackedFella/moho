@@ -493,4 +493,66 @@ mod tests {
         assert!(matches!(events[0], AudioEvent::MusicStart { .. }));
         assert!(matches!(events[1], AudioEvent::MusicStop));
     }
+
+    fn prefs_forward_on_q() -> Prefs {
+        let mut prefs = Prefs::default();
+        prefs.set_bindings(
+            [("move_forward".to_string(), "Q".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        prefs
+    }
+
+    #[test]
+    fn open_settings_seeds_the_screen_from_the_given_prefs() {
+        use moho_input::bindings::Binding;
+        use moho_input::key::Key;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.ini");
+        let mut adapter = adapter();
+        let mut prefs = prefs_forward_on_q();
+        prefs.set_shadow_quality(1);
+
+        adapter.open_settings(prefs, path.clone());
+
+        assert_eq!(adapter.active_screen_name(), Some("settings"));
+        assert!(adapter.is_visible());
+        let menu = adapter
+            .settings_menu_mut()
+            .expect("the settings screen is registered");
+        assert_eq!(
+            menu.get_staged_binding(0).first(),
+            Some(&Binding::Key(Key::Q))
+        );
+        menu.apply_staged_changes().unwrap();
+        let saved = Prefs::load_from(&path).0;
+        assert_eq!(
+            saved.shadow_quality(),
+            1,
+            "the screen saves what it was seeded with"
+        );
+        assert_eq!(
+            saved.bindings().get("move_forward").map(String::as_str),
+            Some("Q")
+        );
+    }
+
+    #[test]
+    fn saved_prefs_are_handed_over_once() {
+        let mut adapter = adapter();
+        let mut saved = prefs_forward_on_q();
+        saved.set_shadow_quality(1);
+        assert!(adapter.take_saved_prefs().is_none(), "nothing saved yet");
+        adapter.record_menu_action(&MenuAction::Close);
+        assert!(
+            adapter.take_saved_prefs().is_none(),
+            "Close carries no prefs"
+        );
+
+        adapter.record_menu_action(&MenuAction::SettingsSaved(saved.clone()));
+
+        assert_eq!(adapter.take_saved_prefs(), Some(saved));
+        assert!(adapter.take_saved_prefs().is_none(), "handed over once");
+    }
 }
