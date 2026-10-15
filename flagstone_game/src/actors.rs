@@ -302,8 +302,9 @@ impl Sphere {
     }
 
     /// Generate a unit-sphere using indexed triangle lists.
-    /// Returns (vertices, indices) where `vertices` is the unique vertex
+    /// Returns (vertices, normals, indices) where `vertices` is the unique vertex
     /// list and `indices` contains 32-bit triangle indices into `vertices`.
+    /// Triangles wind CCW when viewed from outside the sphere.
     pub fn unit_sphere_indexed(
         lat_segments: usize,
         lon_segments: usize,
@@ -497,6 +498,14 @@ mod tests {
         assert_eq!(normals.len(), 24);
         assert_eq!(indices.len(), 36);
         assert!(indices.iter().all(|&i| (i as usize) < verts.len()));
+        let mut used: Vec<u32> = indices.clone();
+        used.sort_unstable();
+        used.dedup();
+        assert_eq!(
+            used,
+            (0..24).collect::<Vec<u32>>(),
+            "every face vertex is drawn"
+        );
         for [a, b, c] in triangles(&indices) {
             let cross = (v3(verts[b]) - v3(verts[a])).cross(v3(verts[c]) - v3(verts[a]));
             let normal = v3(normals[a]);
