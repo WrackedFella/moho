@@ -172,4 +172,43 @@ mod tests {
         assert!(app.generation.handle.is_some());
         assert!(saves.join("scene.bin").is_file());
     }
+
+    #[test]
+    fn generate_new_world_saves_a_camera_looking_downward() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut app = App::headless();
+        let spec = flagstone_game::scene_builders::WorldSpec {
+            name: "headless-test-camera".to_string(),
+            seed: Some(7),
+            size_xz: 64,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+            initial_time_of_day: 6.0,
+        };
+
+        generate_new_world(&mut app, spec, temp.path()).expect("generation starts");
+        let rx = app
+            .generation
+            .receiver
+            .take()
+            .expect("job receiver is stored");
+        let scene_bytes = loop {
+            match rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("job reports before timeout")
+            {
+                GenerationMsg::Progress(_) => {}
+                GenerationMsg::Completed { scene_bytes, .. } => break scene_bytes,
+                GenerationMsg::Canceled => panic!("job canceled"),
+                GenerationMsg::Failed(reason) => panic!("job failed: {reason}"),
+            }
+        };
+
+        let mut entities = flagstone_game::scene::SceneEntities::default();
+        let (camera, _lights) =
+            flagstone_game::scene_persistence::load_from_bytes(&scene_bytes, &mut entities)
+                .expect("scene decodes");
+        let (_, _, pitch) = camera.expect("scene carries a camera");
+        assert!(pitch < 0.0, "camera looks downward, pitch {pitch}");
+    }
 }

@@ -776,4 +776,68 @@ mod tests {
             "{airborne_speeds:?}"
         );
     }
+
+    fn hud_adapter() -> flagstone_ui::EguiAdapter {
+        let mut adapter = flagstone_ui::build_adapter(
+            None,
+            std::sync::Arc::new(moho_core::events::EventBus::new()),
+            moho_core::prefs::Prefs::default(),
+        );
+        adapter.set_game_state(flagstone_ui::GameState::Playing);
+        adapter
+    }
+
+    /// Whether the overlay frame `update_hud_data` produces for an app in `mode`
+    /// equals the frame painted from `expected_is_fps` HUD data of the same world.
+    fn hud_matches_data_flagged(
+        mode: flagstone_game::controller::CameraMode,
+        expected_is_fps: bool,
+    ) -> bool {
+        use moho_render_api::UiFrameSource;
+        let mut app = App::headless();
+        app.simulation.set_camera_mode(mode);
+        let clock = moho_app::GameClock::default();
+        let adapter = std::sync::Arc::new(std::sync::Mutex::new(hud_adapter()));
+        app.ui_adapter = Some(std::sync::Arc::clone(&adapter));
+        FrameProcessor::new().update_hud_data(&app, &clock, Duration::from_secs_f32(DT));
+        let produced = adapter
+            .lock()
+            .unwrap()
+            .ui_frame([800, 600])
+            .expect("playing paints");
+
+        let pos = app.simulation.position();
+        let cp = lod_player_chunk(pos);
+        let mut reference = hud_adapter();
+        reference.update_hud_data(flagstone_ui::overlays::HudData {
+            player_position: [pos.x, pos.y, pos.z],
+            chunk_position: [cp.x, cp.y, cp.z],
+            camera_mode: format!("{mode:?}"),
+            is_fps_mode: expected_is_fps,
+            frame_time_secs: DT,
+            time_of_day: clock.time_of_day(),
+            camera_yaw: app.simulation.yaw_pitch().0,
+            equipped_tool_label: Some("Pickaxe".to_string()),
+            ..Default::default()
+        });
+        let expected = reference.ui_frame([800, 600]).expect("playing paints");
+
+        produced == expected
+    }
+
+    #[test]
+    fn update_hud_data_flags_first_person_mode_to_the_overlays() {
+        use flagstone_game::controller::CameraMode;
+
+        assert!(hud_matches_data_flagged(CameraMode::FirstPerson, true));
+        assert!(!hud_matches_data_flagged(CameraMode::FirstPerson, false));
+    }
+
+    #[test]
+    fn update_hud_data_flags_non_first_person_mode_to_the_overlays() {
+        use flagstone_game::controller::CameraMode;
+
+        assert!(hud_matches_data_flagged(CameraMode::Isometric, false));
+        assert!(!hud_matches_data_flagged(CameraMode::Isometric, true));
+    }
 }

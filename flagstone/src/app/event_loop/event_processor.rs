@@ -725,6 +725,37 @@ mod tests {
     }
 
     #[test]
+    fn mine_request_while_playing_outside_first_person_leaves_aimed_block() {
+        let mut app = App::headless();
+        app.game_state = crate::game_state::GameState::Playing;
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::Isometric);
+        app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+        // Identity rotation: the camera looks down -Z from just in front of the wall.
+        app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
+        let aimed = flagstone_voxel::BlockPos::new(4, 70, 3);
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for x in 2..=6 {
+            for y in 68..=72 {
+                for z in 1..=3 {
+                    grid.mutator()
+                        .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                }
+            }
+        }
+        assert!(grid.is_solid_at(aimed));
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        assert!(grid.is_solid_at(aimed), "the aimed block is not mined");
+    }
+
+    #[test]
     fn lod_player_chunk_maps_world_pos_to_chunk() {
         let cases = [
             (glam::Vec3::new(0.0, 0.0, 0.0), glam::IVec3::new(0, 0, 0)),
