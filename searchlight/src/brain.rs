@@ -15,6 +15,17 @@ pub struct Percept {
     pub yaw: f32,
     /// The player's aim point, set only when the sight ray reached a player part.
     pub target: Option<Vec3>,
+    /// The player's position when it fired, set the tick after a non-lethal hit.
+    pub hurt: Option<Vec3>,
+    /// A cover point to run to; set by the sim only when `hurt`.
+    pub offer: Option<CoverOffer>,
+}
+
+/// A cover point the sim offers to a hurt enemy.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CoverOffer {
+    pub index: usize,
+    pub position: Vec3,
 }
 
 /// What the enemy wants to do this tick.
@@ -47,6 +58,14 @@ pub struct EnemyTuning {
     pub arrive_radius: f32,
     /// Radians either side of the target bearing within which the enemy may fire.
     pub fire_cone: f32,
+    /// Metres within which a hurt enemy is offered a cover point.
+    pub cover_range: f32,
+    /// Ticks a running-to-cover enemy tries before it gives up and fights where it is.
+    pub cover_ticks: u32,
+    /// Ticks a chasing enemy tries before it returns to its patrol.
+    pub chase_ticks: u32,
+    /// Metres above a cover marker at which the player must be unable to see the enemy.
+    pub cover_hide_height: f32,
     pub seed: u64,
 }
 
@@ -63,6 +82,10 @@ impl Default for EnemyTuning {
             patrol_speed: 0.5,
             arrive_radius: 0.5,
             fire_cone: 0.1,
+            cover_range: 15.0,
+            cover_ticks: 240,
+            chase_ticks: 600,
+            cover_hide_height: 0.9,
             seed: 0,
         }
     }
@@ -80,10 +103,29 @@ pub enum Brain {
         seen_ticks: u32,
         /// Ticks until the enemy may fire again.
         cooldown: u32,
+        /// The cover point it fires from, if any.
+        held: Option<usize>,
+    },
+    /// Running to a cover point without firing.
+    Cover {
+        next: usize,
+        offer: CoverOffer,
+        ticks: u32,
+    },
+    /// Walking to where the target was last seen.
+    Chase {
+        next: usize,
+        last_seen: Vec3,
+        ticks: u32,
     },
 }
 
 impl Brain {
+    /// The cover point this brain holds or is running to.
+    pub fn claim(&self) -> Option<usize> {
+        None
+    }
+
     /// Advance one tick of `dt` seconds and say what the enemy does.
     ///
     /// `route` must not be empty.
@@ -99,13 +141,16 @@ impl Brain {
             matches!(self, Self::Engage { .. }) || notices(percept, target, tuning)
         });
 
-        let (next, seen_ticks, cooldown) = match *self {
-            Self::Patrol { next } => (next, 0, 0),
+        let (next, seen_ticks, cooldown, held) = match *self {
+            Self::Patrol { next } | Self::Cover { next, .. } | Self::Chase { next, .. } => {
+                (next, 0, 0, None)
+            }
             Self::Engage {
                 next,
                 seen_ticks,
                 cooldown,
-            } => (next, seen_ticks, cooldown),
+                held,
+            } => (next, seen_ticks, cooldown, held),
         };
 
         let Some(target) = seen else {
@@ -135,6 +180,7 @@ impl Brain {
             } else {
                 cooldown
             },
+            held,
         };
         Intent {
             forward: 0.0,
@@ -186,6 +232,10 @@ mod tests {
             patrol_speed: 0.5,
             arrive_radius: 2.0,
             fire_cone: 0.1,
+            cover_range: 10.0,
+            cover_ticks: 5,
+            chase_ticks: 7,
+            cover_hide_height: 0.9,
             seed: 7,
         }
     }
@@ -199,6 +249,8 @@ mod tests {
             position: Vec3::ZERO,
             yaw,
             target,
+            hurt: None,
+            offer: None,
         }
     }
 
@@ -236,6 +288,8 @@ mod tests {
             position: waypoint + Vec3::new(0.0, 0.0, gap),
             yaw: 0.0,
             target: None,
+            hurt: None,
+            offer: None,
         };
 
         let mut inside = Brain::Patrol { next: 1 };
@@ -299,6 +353,7 @@ mod tests {
             next: 0,
             seen_ticks: 100,
             cooldown: 0,
+            held: None,
         };
         let fires_at = |off_by: f32| {
             let mut brain = ready;
@@ -352,6 +407,7 @@ mod tests {
             next: 1,
             seen_ticks: 5,
             cooldown: 2,
+            held: None,
         };
 
         let intent = brain.think(&route, &behind, &tuning, DT);
@@ -361,21 +417,355 @@ mod tests {
         assert!(intent.yaw_delta <= tuning.turn_rate * DT + 1e-4);
     }
 
-    #[test]
-    fn losing_sight_returns_to_patrol_and_keeps_the_route_position() {
+    fn offer_at(index: usize, position: Vec3) -> CoverOffer {
+        CoverOffer { index, position }
+    }
+
+    /// A far-off offer, so the enemy never arrives while a test watches it run.
+    fn far_offer() -> CoverOffer {
+        offer_at(4, Vec3::new(0.0, 0.0, -30.0))
+    }
+
+    /// Facing +Z at `position`, with no hurt and no offer.
+    fn at(position: Vec3, target: Option<Vec3>) -> Percept {
+        Percept {
+            position,
+            ..at_origin(0.0, target)
+        }
+    }
+
+    fn hurt_by(shooter: Vec3, offer: Option<CoverOffer>, target: Option<Vec3>) -> Percept {
+        Percept {
+            hurt: Some(shooter),
+            offer,
+            ..at_origin(0.0, target)
+        }
+    }
+
+    fn engaged(held: Option<usize>) -> Brain {
+        Brain::Engage {
+            next: 2,
+            seen_ticks: 100,
+            cooldown: 0,
+            held,
+        }
+    }
+
+    fn chasing(last_seen: Vec3, ticks: u32) -> Brain {
+        Brain::Chase {
+            next: 2,
+            last_seen,
+            ticks,
+        }
+    }
+
+    fn running_to(offer: CoverOffer) -> Brain {
+        Brain::Cover {
+            next: 2,
+            offer,
+            ticks: 0,
+        }
+    }
+
+    fn think_n(brain: &mut Brain, percept: &Percept, ticks: usize) -> Vec<Intent> {
         let route = square();
         let tuning = tuning();
-        let mut brain = Brain::Patrol { next: 2 };
+        (0..ticks)
+            .map(|_| brain.think(&route, percept, &tuning, DT))
+            .collect()
+    }
 
-        brain.think(
-            &route,
-            &at_origin(0.0, Some(bearing(0.0, 10.0))),
-            &tuning,
-            DT,
+    #[test]
+    fn a_hurt_enemy_with_an_offered_cover_point_heads_for_it() {
+        let offer = offer_at(4, Vec3::new(8.0, 0.0, -6.0));
+        let hurt = hurt_by(bearing(0.0, 15.0), Some(offer), None);
+        let starts = [
+            Brain::Patrol { next: 2 },
+            engaged(None),
+            chasing(bearing(0.3, 12.0), 3),
+        ];
+
+        for start in starts {
+            let mut brain = start;
+            let intent = think_n(&mut brain, &hurt, 1)[0];
+
+            assert!(
+                matches!(brain, Brain::Cover { next: 2, offer: o, .. } if o == offer),
+                "from {start:?}: {brain:?}"
+            );
+            assert!(intent.forward > 0.0, "from {start:?}: {intent:?}");
+            assert!(intent.yaw_delta > 0.0, "from {start:?}: {intent:?}");
+            assert!(!intent.fire, "from {start:?}");
+        }
+    }
+
+    #[test]
+    fn an_enemy_runs_to_cover_without_firing() {
+        let hurt = hurt_by(
+            bearing(0.0, 10.0),
+            Some(far_offer()),
+            Some(bearing(0.0, 10.0)),
         );
-        assert!(matches!(brain, Brain::Engage { .. }), "{brain:?}");
-        brain.think(&route, &at_origin(0.0, None), &tuning, DT);
+        let visible = at_origin(0.0, Some(bearing(0.0, 10.0)));
+        let mut brain = engaged(None);
 
-        assert_eq!(brain, Brain::Patrol { next: 2 });
+        let first = think_n(&mut brain, &hurt, 1);
+        let rest = think_n(&mut brain, &visible, 3);
+
+        for intent in first.iter().chain(&rest) {
+            assert!(!intent.fire, "{intent:?}");
+            assert!(intent.forward > 0.0, "{intent:?}");
+        }
+        assert!(matches!(brain, Brain::Cover { .. }), "{brain:?}");
+    }
+
+    #[test]
+    fn a_hurt_enemy_already_holding_cover_stays_put() {
+        let other = offer_at(6, Vec3::new(-8.0, 0.0, 5.0));
+        let hurt = hurt_by(bearing(0.0, 10.0), Some(other), Some(bearing(0.0, 10.0)));
+        let mut holding = engaged(Some(2));
+        let mut running = running_to(far_offer());
+
+        think_n(&mut holding, &hurt, 1);
+        think_n(&mut running, &hurt, 1);
+
+        assert!(
+            matches!(holding, Brain::Engage { held: Some(2), .. }),
+            "{holding:?}"
+        );
+        assert_eq!(holding.claim(), Some(2));
+        assert!(
+            matches!(running, Brain::Cover { offer, .. } if offer == far_offer()),
+            "{running:?}"
+        );
+        assert_eq!(running.claim(), Some(4));
+    }
+
+    #[test]
+    fn an_enemy_at_its_cover_point_fires_on_cooldown_at_a_visible_target() {
+        let spot = offer_at(1, Vec3::ZERO);
+        let visible = at_origin(0.0, Some(bearing(0.0, 10.0)));
+        let mut brain = running_to(spot);
+
+        let fired: Vec<usize> = think_n(&mut brain, &visible, 12)
+            .iter()
+            .enumerate()
+            .filter_map(|(tick, intent)| intent.fire.then_some(tick))
+            .collect();
+
+        assert!(
+            matches!(brain, Brain::Engage { held: Some(1), .. }),
+            "{brain:?}"
+        );
+        assert!(fired.len() >= 2, "{fired:?}");
+        for pair in fired.windows(2) {
+            assert_eq!(pair[1] - pair[0], 4, "{fired:?}");
+        }
+    }
+
+    #[test]
+    fn arriving_within_the_radius_switches_from_running_to_holding() {
+        let spot = offer_at(4, Vec3::new(0.0, 0.0, 10.0));
+        let after_arriving_from = |gap: f32| {
+            let mut brain = running_to(spot);
+            think_n(&mut brain, &at(Vec3::new(0.0, 0.0, 10.0 - gap), None), 1);
+            brain
+        };
+
+        let inside = after_arriving_from(1.5);
+        let on_edge = after_arriving_from(2.0);
+        let outside = after_arriving_from(2.2);
+
+        assert!(
+            matches!(inside, Brain::Engage { held: Some(4), .. }),
+            "{inside:?}"
+        );
+        assert!(
+            matches!(on_edge, Brain::Engage { held: Some(4), .. }),
+            "{on_edge:?}"
+        );
+        assert!(matches!(outside, Brain::Cover { .. }), "{outside:?}");
+    }
+
+    #[test]
+    fn losing_sight_sends_an_engaged_enemy_to_the_last_seen_position() {
+        let seen = bearing(0.5, 10.0);
+        let starts = [Brain::Patrol { next: 2 }, engaged(Some(1))];
+
+        for start in starts {
+            let mut brain = start;
+            think_n(&mut brain, &at_origin(0.0, Some(seen)), 1);
+            let intent = think_n(&mut brain, &at_origin(0.0, None), 1)[0];
+
+            assert!(
+                matches!(brain, Brain::Chase { next: 2, last_seen, .. } if last_seen == seen),
+                "from {start:?}: {brain:?}"
+            );
+            assert!(intent.forward > 0.0, "from {start:?}: {intent:?}");
+            assert!(intent.yaw_delta > 0.0, "from {start:?}: {intent:?}");
+            assert!(!intent.fire, "from {start:?}");
+        }
+    }
+
+    #[test]
+    fn being_hurt_reveals_the_shooters_position() {
+        let shooter = Vec3::new(5.0, 0.0, 5.0);
+        let quiet = at_origin(0.0, None);
+        let without_offer = hurt_by(shooter, None, None);
+        let with_offer = hurt_by(shooter, Some(far_offer()), None);
+
+        let last_seen_after = |first: Percept| {
+            let mut brain = Brain::Patrol { next: 2 };
+            think_n(&mut brain, &first, 1);
+            for _ in 0..20 {
+                think_n(&mut brain, &quiet, 1);
+                if let Brain::Chase { last_seen, .. } = brain {
+                    return Some(last_seen);
+                }
+            }
+            None
+        };
+
+        assert_eq!(last_seen_after(without_offer), Some(shooter));
+        assert_eq!(last_seen_after(with_offer), Some(shooter));
+    }
+
+    #[test]
+    fn a_chasing_enemy_that_sees_the_player_again_engages() {
+        let half = tuning().view_half_angle;
+        let engages = |angle: f32, distance: f32| {
+            let mut brain = chasing(bearing(PI, 20.0), 0);
+            think_n(
+                &mut brain,
+                &at_origin(0.0, Some(bearing(angle, distance))),
+                1,
+            );
+            matches!(brain, Brain::Engage { next: 2, .. })
+        };
+
+        assert!(engages(half - 0.02, 10.0));
+        assert!(engages(-(half - 0.02), 10.0));
+        assert!(!engages(half + 0.02, 10.0));
+        assert!(!engages(-(half + 0.02), 10.0));
+        assert!(engages(0.0, 29.0));
+        assert!(!engages(0.0, 31.0));
+    }
+
+    #[test]
+    fn arriving_at_the_last_seen_position_with_nothing_in_sight_resumes_the_patrol() {
+        let last_seen = Vec3::new(0.0, 0.0, 10.0);
+        let after_arriving_from = |gap: f32| {
+            let mut brain = Brain::Chase {
+                next: 1,
+                last_seen,
+                ticks: 0,
+            };
+            think_n(&mut brain, &at(Vec3::new(0.0, 0.0, 10.0 - gap), None), 1);
+            brain
+        };
+
+        let inside = after_arriving_from(1.5);
+        let on_edge = after_arriving_from(2.0);
+        let outside = after_arriving_from(2.2);
+
+        assert_eq!(inside, Brain::Patrol { next: 1 });
+        assert_eq!(on_edge, Brain::Patrol { next: 1 });
+        assert!(matches!(outside, Brain::Chase { .. }), "{outside:?}");
+    }
+
+    #[test]
+    fn a_hurt_enemy_with_no_offer_keeps_firing() {
+        let target = bearing(0.0, 10.0);
+        let hurt = hurt_by(target, None, Some(target));
+        let visible = at_origin(0.0, Some(target));
+        let starts = [
+            Brain::Patrol { next: 2 },
+            engaged(None),
+            chasing(bearing(0.3, 12.0), 3),
+        ];
+
+        for start in starts {
+            let mut brain = start;
+            let mut intents = think_n(&mut brain, &hurt, 1);
+            intents.extend(think_n(&mut brain, &visible, 8));
+
+            assert!(
+                matches!(brain, Brain::Engage { held: None, .. }),
+                "from {start:?}: {brain:?}"
+            );
+            assert!(
+                intents.iter().any(|intent| intent.fire),
+                "from {start:?}: {intents:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cover_and_chase_give_up_at_their_tick_limit() {
+        let tuning = tuning();
+        let target = bearing(0.0, 20.0);
+        let visible = at_origin(0.0, Some(target));
+        let blind = at_origin(0.0, None);
+        let cover_limit = tuning.cover_ticks as usize;
+        let chase_limit = tuning.chase_ticks as usize;
+
+        let mut running = Brain::Patrol { next: 2 };
+        think_n(
+            &mut running,
+            &hurt_by(target, Some(far_offer()), Some(target)),
+            1,
+        );
+        think_n(&mut running, &visible, cover_limit - 1);
+        let before_cover_limit = running;
+        think_n(&mut running, &visible, 1);
+
+        let mut chasing = Brain::Patrol { next: 2 };
+        think_n(&mut chasing, &visible, 1);
+        think_n(&mut chasing, &blind, 1);
+        think_n(&mut chasing, &blind, chase_limit - 1);
+        let before_chase_limit = chasing;
+        think_n(&mut chasing, &blind, 1);
+
+        assert!(
+            matches!(before_cover_limit, Brain::Cover { .. }),
+            "{before_cover_limit:?}"
+        );
+        assert!(
+            matches!(running, Brain::Engage { held: None, .. }),
+            "{running:?}"
+        );
+        assert!(
+            matches!(before_chase_limit, Brain::Chase { .. }),
+            "{before_chase_limit:?}"
+        );
+        assert_eq!(chasing, Brain::Patrol { next: 2 });
+    }
+
+    #[test]
+    fn the_cover_claim_is_held_from_running_to_cover_until_it_is_left() {
+        let spot = offer_at(3, Vec3::new(0.0, 0.0, 10.0));
+        let target = bearing(0.0, 20.0);
+        let mut brain = Brain::Patrol { next: 2 };
+        let claim_after = |brain: &mut Brain, percept: Percept| {
+            think_n(brain, &percept, 1);
+            brain.claim()
+        };
+
+        let patrolling = brain.claim();
+        let hurt = claim_after(&mut brain, hurt_by(target, Some(spot), Some(target)));
+        let running = claim_after(&mut brain, at(Vec3::ZERO, Some(target)));
+        let arrived = claim_after(&mut brain, at(Vec3::new(0.0, 0.0, 9.0), Some(target)));
+        let holding = claim_after(&mut brain, at(Vec3::new(0.0, 0.0, 9.0), Some(target)));
+        let lost_sight = claim_after(&mut brain, at(Vec3::new(0.0, 0.0, 9.0), None));
+
+        assert_eq!(patrolling, None);
+        assert_eq!(hurt, Some(3));
+        assert_eq!(running, Some(3));
+        assert_eq!(arrived, Some(3));
+        assert_eq!(holding, Some(3));
+        assert_eq!(lost_sight, None);
+        assert!(matches!(brain, Brain::Chase { .. }), "{brain:?}");
+        assert_eq!(engaged(None).claim(), None);
+        assert_eq!(chasing(Vec3::ZERO, 0).claim(), None);
     }
 }

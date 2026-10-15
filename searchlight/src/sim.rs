@@ -395,6 +395,8 @@ impl FpsSim {
                 position: state.position,
                 yaw: state.yaw,
                 target: sees_player.then_some(aim),
+                hurt: None,
+                offer: None,
             };
             let intent = brain.think(&self.route, &percept, &self.enemy, dt);
             let command = CharacterCommand {
