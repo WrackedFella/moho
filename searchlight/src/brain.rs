@@ -105,25 +105,212 @@ pub enum Brain {
         cooldown: u32,
         /// The cover point it fires from, if any.
         held: Option<usize>,
+        /// Where the target was last known to be.
+        last_seen: Vec3,
     },
     /// Running to a cover point without firing.
     Cover {
         next: usize,
         offer: CoverOffer,
+        /// Where the target was last known to be.
+        last_seen: Vec3,
+        /// Ticks spent running, this one included.
         ticks: u32,
     },
     /// Walking to where the target was last seen.
     Chase {
         next: usize,
         last_seen: Vec3,
+        /// Ticks spent chasing, this one included.
         ticks: u32,
     },
+}
+
+/// Everything one call of [`Brain::think`] reads.
+struct Tick<'a> {
+    route: &'a [Vec3],
+    percept: &'a Percept,
+    tuning: &'a EnemyTuning,
+    max_turn: f32,
+}
+
+/// The state [`Tick::engage`] continues from.
+struct Stance {
+    next: usize,
+    seen_ticks: u32,
+    cooldown: u32,
+    held: Option<usize>,
+    last_seen: Vec3,
+}
+
+impl Stance {
+    fn fresh(next: usize, held: Option<usize>, last_seen: Vec3) -> Self {
+        Self {
+            next,
+            seen_ticks: 0,
+            cooldown: 0,
+            held,
+            last_seen,
+        }
+    }
+}
+
+impl Tick<'_> {
+    fn walk_to(&self, point: Vec3, forward: f32) -> Intent {
+        Intent {
+            forward,
+            yaw_delta: turn_towards(self.percept, point, self.max_turn).0,
+            fire: false,
+        }
+    }
+
+    fn patrol(&self, next: usize) -> (Brain, Intent) {
+        let arrived =
+            flat_distance(self.percept.position, self.route[next]) <= self.tuning.arrive_radius;
+        let next = if arrived {
+            (next + 1) % self.route.len()
+        } else {
+            next
+        };
+        (
+            Brain::Patrol { next },
+            self.walk_to(self.route[next], self.tuning.patrol_speed),
+        )
+    }
+
+    /// Faces `target` and fires when ready; without a target, holds still.
+    fn engage(&self, stance: Stance, target: Option<Vec3>) -> (Brain, Intent) {
+        let Stance {
+            next,
+            seen_ticks,
+            cooldown,
+            held,
+            last_seen,
+        } = stance;
+        let Some(target) = target else {
+            let brain = Brain::Engage {
+                next,
+                seen_ticks: 0,
+                cooldown: 0,
+                held,
+                last_seen,
+            };
+            return (
+                brain,
+                Intent {
+                    forward: 0.0,
+                    yaw_delta: 0.0,
+                    fire: false,
+                },
+            );
+        };
+        let (yaw_delta, gap) = turn_towards(self.percept, target, self.max_turn);
+        let seen_ticks = seen_ticks.saturating_add(1);
+        let cooldown = cooldown.saturating_sub(1);
+        let fire = seen_ticks >= self.tuning.reaction_ticks
+            && cooldown == 0
+            && gap.abs() <= self.tuning.fire_cone;
+        let brain = Brain::Engage {
+            next,
+            seen_ticks,
+            cooldown: if fire {
+                self.tuning.cooldown_ticks
+            } else {
+                cooldown
+            },
+            held,
+            last_seen: target,
+        };
+        (
+            brain,
+            Intent {
+                forward: 0.0,
+                yaw_delta,
+                fire,
+            },
+        )
+    }
+
+    fn chase(&self, next: usize, last_seen: Vec3, ticks: u32) -> (Brain, Intent) {
+        let arrived = flat_distance(self.percept.position, last_seen) <= self.tuning.arrive_radius;
+        if arrived || ticks >= self.tuning.chase_ticks {
+            return self.patrol(next);
+        }
+        let brain = Brain::Chase {
+            next,
+            last_seen,
+            ticks: ticks + 1,
+        };
+        (brain, self.walk_to(last_seen, self.tuning.patrol_speed))
+    }
+
+    fn cover(
+        &self,
+        next: usize,
+        offer: CoverOffer,
+        last_seen: Vec3,
+        ticks: u32,
+    ) -> (Brain, Intent) {
+        let target = self.percept.target;
+        if ticks >= self.tuning.cover_ticks {
+            return self.engage(Stance::fresh(next, None, last_seen), target);
+        }
+        if flat_distance(self.percept.position, offer.position) <= self.tuning.arrive_radius {
+            return self.engage(Stance::fresh(next, Some(offer.index), last_seen), target);
+        }
+        let brain = Brain::Cover {
+            next,
+            offer,
+            last_seen,
+            ticks: ticks + 1,
+        };
+        (brain, self.walk_to(offer.position, 1.0))
+    }
 }
 
 impl Brain {
     /// The cover point this brain holds or is running to.
     pub fn claim(&self) -> Option<usize> {
-        None
+        match *self {
+            Self::Cover { offer, .. } => Some(offer.index),
+            Self::Engage { held, .. } => held,
+            Self::Patrol { .. } | Self::Chase { .. } => None,
+        }
+    }
+
+    /// Being hit reveals the shooter; a brain not yet in cover takes an offered point.
+    fn react_to_hurt(&mut self, shooter: Vec3, offer: Option<CoverOffer>) {
+        match (*self, offer) {
+            (
+                Self::Patrol { next }
+                | Self::Chase { next, .. }
+                | Self::Engage {
+                    next, held: None, ..
+                },
+                Some(offer),
+            ) => {
+                *self = Self::Cover {
+                    next,
+                    offer,
+                    last_seen: shooter,
+                    ticks: 0,
+                };
+            }
+            (Self::Patrol { next } | Self::Chase { next, .. }, None) => {
+                *self = Self::Engage {
+                    next,
+                    seen_ticks: 0,
+                    cooldown: 0,
+                    held: None,
+                    last_seen: shooter,
+                };
+            }
+            _ => {
+                if let Self::Engage { last_seen, .. } | Self::Cover { last_seen, .. } = self {
+                    *last_seen = shooter;
+                }
+            }
+        }
     }
 
     /// Advance one tick of `dt` seconds and say what the enemy does.
@@ -136,57 +323,60 @@ impl Brain {
         tuning: &EnemyTuning,
         dt: f32,
     ) -> Intent {
-        let max_turn = tuning.turn_rate * dt;
-        let seen = percept.target.filter(|&target| {
-            matches!(self, Self::Engage { .. }) || notices(percept, target, tuning)
-        });
-
-        let (next, seen_ticks, cooldown, held) = match *self {
-            Self::Patrol { next } | Self::Cover { next, .. } | Self::Chase { next, .. } => {
-                (next, 0, 0, None)
-            }
+        let engaged = matches!(self, Self::Engage { .. });
+        let seen = percept
+            .target
+            .filter(|&target| engaged || notices(percept, target, tuning));
+        if let Some(shooter) = percept.hurt {
+            self.react_to_hurt(shooter, percept.offer);
+        }
+        let tick = Tick {
+            route,
+            percept,
+            tuning,
+            max_turn: tuning.turn_rate * dt,
+        };
+        let (brain, intent) = match *self {
+            Self::Patrol { next } => match seen {
+                Some(target) => tick.engage(Stance::fresh(next, None, target), seen),
+                None => tick.patrol(next),
+            },
+            Self::Chase {
+                next,
+                last_seen,
+                ticks,
+            } => match seen {
+                Some(target) => tick.engage(Stance::fresh(next, None, target), seen),
+                None => tick.chase(next, last_seen, ticks),
+            },
+            Self::Cover {
+                next,
+                offer,
+                last_seen,
+                ticks,
+            } => tick.cover(next, offer, last_seen, ticks),
             Self::Engage {
                 next,
                 seen_ticks,
                 cooldown,
                 held,
-            } => (next, seen_ticks, cooldown, held),
-        };
-
-        let Some(target) = seen else {
-            let next = if flat_distance(percept.position, route[next]) <= tuning.arrive_radius {
-                (next + 1) % route.len()
-            } else {
-                next
-            };
-            *self = Self::Patrol { next };
-            return Intent {
-                forward: tuning.patrol_speed,
-                yaw_delta: turn_towards(percept, route[next], max_turn).0,
-                fire: false,
-            };
-        };
-
-        let (yaw_delta, gap) = turn_towards(percept, target, max_turn);
-        let seen_ticks = seen_ticks.saturating_add(1);
-        let cooldown = cooldown.saturating_sub(1);
-        let fire =
-            seen_ticks >= tuning.reaction_ticks && cooldown == 0 && gap.abs() <= tuning.fire_cone;
-        *self = Self::Engage {
-            next,
-            seen_ticks,
-            cooldown: if fire {
-                tuning.cooldown_ticks
-            } else {
-                cooldown
+                last_seen,
+            } => match seen {
+                Some(_) => tick.engage(
+                    Stance {
+                        next,
+                        seen_ticks,
+                        cooldown,
+                        held,
+                        last_seen,
+                    },
+                    seen,
+                ),
+                None => tick.chase(next, last_seen, 0),
             },
-            held,
         };
-        Intent {
-            forward: 0.0,
-            yaw_delta,
-            fire,
-        }
+        *self = brain;
+        intent
     }
 }
 
@@ -354,6 +544,7 @@ mod tests {
             seen_ticks: 100,
             cooldown: 0,
             held: None,
+            last_seen: Vec3::ZERO,
         };
         let fires_at = |off_by: f32| {
             let mut brain = ready;
@@ -408,6 +599,7 @@ mod tests {
             seen_ticks: 5,
             cooldown: 2,
             held: None,
+            last_seen: Vec3::ZERO,
         };
 
         let intent = brain.think(&route, &behind, &tuning, DT);
@@ -448,6 +640,7 @@ mod tests {
             seen_ticks: 100,
             cooldown: 0,
             held,
+            last_seen: Vec3::ZERO,
         }
     }
 
@@ -463,6 +656,7 @@ mod tests {
         Brain::Cover {
             next: 2,
             offer,
+            last_seen: Vec3::ZERO,
             ticks: 0,
         }
     }

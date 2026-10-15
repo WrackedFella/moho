@@ -5,6 +5,11 @@ use glam::Vec3;
 use moho_physics::PhysicsWorld;
 
 use crate::brain::{CoverOffer, EnemyTuning};
+use crate::shot::{ShotRay, resolve_shot};
+use crate::tag::SurfaceTag;
+
+/// Metres a ray advances past a character it started in or struck.
+const STEP_PAST_CHARACTER: f32 = 0.01;
 
 /// Where the player's eye is and the point on the player's body the enemies aim at.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -16,28 +21,67 @@ pub struct Threat {
 /// The nearest of `points` within `range` metres of `from` that is not in `taken` and that
 /// `accepts`; ties go to the lower index.
 pub fn pick(
-    _points: &[Vec3],
-    _taken: &[usize],
-    _from: Vec3,
-    _range: f32,
-    _accepts: impl Fn(usize) -> bool,
+    points: &[Vec3],
+    taken: &[usize],
+    from: Vec3,
+    range: f32,
+    accepts: impl Fn(usize) -> bool,
 ) -> Option<CoverOffer> {
-    None
+    let flat = |point: Vec3| (point.x - from.x).hypot(point.z - from.z);
+    points
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|&(index, point)| flat(point) <= range && !taken.contains(&index) && accepts(index))
+        .min_by(|a, b| flat(a.1).total_cmp(&flat(b.1)))
+        .map(|(index, position)| CoverOffer { index, position })
 }
 
 /// The nearest free firing position among `points` for an enemy at `from`: a point the
 /// player cannot see an enemy's body at, and from which an enemy whose eye is `enemy_eye`
 /// metres above the point can shoot the player.
 pub fn offer(
-    _world: &PhysicsWorld,
-    _points: &[Vec3],
-    _taken: &[usize],
-    _from: Vec3,
-    _threat: Threat,
-    _enemy_eye: f32,
-    _tuning: &EnemyTuning,
+    world: &PhysicsWorld,
+    points: &[Vec3],
+    taken: &[usize],
+    from: Vec3,
+    threat: Threat,
+    enemy_eye: f32,
+    tuning: &EnemyTuning,
 ) -> Option<CoverOffer> {
-    None
+    pick(points, taken, from, tuning.cover_range, |index| {
+        let point = points[index];
+        let hidden = world_blocks(
+            world,
+            threat.eye,
+            point + Vec3::Y * tuning.cover_hide_height,
+        );
+        let has_shot = !world_blocks(world, point + Vec3::Y * enemy_eye, threat.aim);
+        hidden && has_shot
+    })
+}
+
+/// Whether level geometry lies between `from` and `to`. Characters do not count, and a
+/// ray starting inside one (the player's eye is inside the head volume) passes through it.
+fn world_blocks(world: &PhysicsWorld, from: Vec3, to: Vec3) -> bool {
+    let direction = (to - from).normalize_or_zero();
+    let mut origin = from;
+    loop {
+        let remaining = origin.distance(to);
+        let ray = ShotRay {
+            origin,
+            direction,
+            range: remaining,
+            ignore: None,
+        };
+        let Some(strike) = resolve_shot(world, ray) else {
+            return false;
+        };
+        if strike.tag == SurfaceTag::World {
+            return true;
+        }
+        origin = strike.point + direction * STEP_PAST_CHARACTER;
+    }
 }
 
 #[cfg(test)]

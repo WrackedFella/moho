@@ -14,6 +14,7 @@ use searchlight_rules::{
 
 use crate::arena::{Arena, SETTLE_DT};
 use crate::brain::{Brain, EnemyTuning, Percept};
+use crate::cover::{self, Threat};
 use crate::input::FpsCommand;
 use crate::shot::{ShotRay, Strike, resolve_shot};
 use crate::tag::SurfaceTag;
@@ -161,6 +162,8 @@ struct Target {
     handle: Option<CharacterHandle>,
     body: Body,
     brain: Option<Brain>,
+    /// Where the player stood when it wounded this enemy; read by the next percept step.
+    hurt: Option<Vec3>,
 }
 
 /// SplitMix64: a small seeded generator, so enemy spread repeats for a seed.
@@ -202,6 +205,7 @@ pub struct FpsSim {
     player_body: Body,
     player_max_health: u32,
     route: Vec<Vec3>,
+    covers: Vec<Vec3>,
     enemy: EnemyTuning,
     /// Offset from the player's capsule centre to the part the enemies aim at, before the
     /// player's yaw is applied.
@@ -279,6 +283,7 @@ impl FpsSim {
                 handle: Some(handle),
                 body: Body::new(config.body),
                 brain,
+                hurt: None,
             });
         }
         // Index the new hit volumes so the first tick's rays can strike them.
@@ -299,6 +304,7 @@ impl FpsSim {
             player_body: Body::new(config.body),
             player_max_health: config.body.max_health,
             route: spawns.route.clone(),
+            covers: spawns.covers.clone(),
             enemy: config.enemy,
             aim_offset,
             rng: SplitMix64(config.enemy.seed),
@@ -373,6 +379,20 @@ impl FpsSim {
     /// those that want to fire.
     fn move_enemies(&mut self, dt: f32) -> Vec<usize> {
         let aim = self.player_aim_point();
+        let threat = Threat {
+            eye: self.player().position + Vec3::Y * self.eye_height,
+            aim,
+        };
+        let mut claims: Vec<Option<usize>> = self
+            .targets
+            .iter()
+            .map(|target| {
+                target
+                    .handle
+                    .and(target.brain)
+                    .and_then(|brain| brain.claim())
+            })
+            .collect();
         let mut firing = Vec::new();
         for (index, target) in self.targets.iter_mut().enumerate().skip(self.dummy_count) {
             let (Some(handle), Some(brain)) = (target.handle, target.brain.as_mut()) else {
@@ -393,14 +413,33 @@ impl FpsSim {
                 },
             )
             .is_some_and(|strike| matches!(strike.tag, SurfaceTag::Player(_)));
+            let hurt = target.hurt.take();
+            let offer = hurt.and_then(|_| {
+                let taken: Vec<usize> = claims
+                    .iter()
+                    .enumerate()
+                    .filter(|&(other, _)| other != index)
+                    .filter_map(|(_, claim)| *claim)
+                    .collect();
+                cover::offer(
+                    &self.world,
+                    &self.covers,
+                    &taken,
+                    state.position,
+                    threat,
+                    STAND_HEIGHT + self.eye_height,
+                    &self.enemy,
+                )
+            });
             let percept = Percept {
                 position: state.position,
                 yaw: state.yaw,
                 target: sees_player.then_some(aim),
-                hurt: None,
-                offer: None,
+                hurt,
+                offer,
             };
             let intent = brain.think(&self.route, &percept, &self.enemy, dt);
+            claims[index] = brain.claim();
             let command = CharacterCommand {
                 forward: intent.forward,
                 yaw_delta: intent.yaw_delta,
@@ -536,6 +575,9 @@ impl FpsSim {
             return;
         };
         let report = struck.body.hit(part, self.damage);
+        if struck.brain.is_some() && !struck.body.is_dead() {
+            struck.hurt = Some(state.position);
+        }
         self.outbox.push(Feedback::Hit {
             target,
             part,
@@ -2270,10 +2312,14 @@ mod enemy_tests {
         Arc::new(arena)
     }
 
-    /// Enemy damage low enough that the player outlives these scenarios.
+    /// Behind the enemy at `ENEMY_SPAWN`, off its straight walk to `SHIELDED`.
+    const BYSTANDER_SPAWN: Vec3 = Vec3::new(-3.0, 0.0, 10.0);
+
+    /// A player sturdy enough to outlive these scenarios however long the enemies fire.
     fn cover_config() -> SimConfig {
         let mut config = config();
         config.enemy.damage = 1;
+        config.body.max_health = 1_000_000;
         config
     }
 
@@ -2363,7 +2409,7 @@ mod enemy_tests {
             arena_with(
                 &[LOW_WALL],
                 Vec3::ZERO,
-                &[ENEMY_SPAWN, NEIGHBOUR_SPAWN],
+                &[ENEMY_SPAWN, BYSTANDER_SPAWN],
                 &[TOWARD_PLAYER],
             ),
             &[SHIELDED],
@@ -2391,7 +2437,7 @@ mod enemy_tests {
             enemy_at(&control, 0)
         );
         assert!(
-            horizontal(enemy_at(&killer, 1), NEIGHBOUR_SPAWN) < 1.0,
+            horizontal(enemy_at(&killer, 1), BYSTANDER_SPAWN) < 1.0,
             "the bystander ran for cover: {:?}",
             enemy_at(&killer, 1)
         );
