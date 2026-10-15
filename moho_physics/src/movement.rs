@@ -603,6 +603,135 @@ mod tests {
             );
         }
 
+        /// A slide that moves as asked and ends over `ground` with the controller's `grounded`.
+        fn over(grounded: bool, normal: Vec3, gap: f32) -> impl FnOnce(Vec3) -> Slide {
+            move |asked| Slide {
+                translation: asked,
+                grounded,
+                ground: Some(Ground { normal, gap }),
+                hits: Vec::new(),
+            }
+        }
+
+        fn run_over(
+            mut state: CharacterState,
+            command: &CharacterCommand,
+            slide: impl FnOnce(Vec3) -> Slide,
+        ) -> CharacterState {
+            step(&mut state, command, &frictionless(), DT, slide);
+            state
+        }
+
+        const START_Y: f32 = 3.0;
+
+        fn walker_at_speed(vy: f32) -> CharacterState {
+            state_at(Vec3::new(0.0, START_Y, 0.0), Vec3::new(0.0, vy, 4.0), true)
+        }
+
+        #[test]
+        fn walker_hanging_over_flat_ground_is_lowered_onto_it_and_stays_grounded() {
+            let after = run_over(walker_at_speed(0.0), &forward(), over(false, Vec3::Y, 0.05));
+
+            assert!(after.grounded, "{after:?}");
+            assert!(
+                (after.position.y - (START_Y - 0.05)).abs() < 1e-5,
+                "{after:?}"
+            );
+            assert_eq!(after.velocity.y, 0.0);
+        }
+
+        #[test]
+        fn walker_hanging_over_a_slope_is_lowered_and_follows_it() {
+            let climb = 4.0 * 25.0_f32.to_radians().tan();
+            let after = run_over(
+                walker_at_speed(climb),
+                &forward(),
+                over(false, slope_normal(25.0), 0.05),
+            );
+
+            assert!(after.grounded, "{after:?}");
+            let expected_y = START_Y + climb * DT - 0.05;
+            assert!((after.position.y - expected_y).abs() < 1e-4, "{after:?}");
+            assert!((after.velocity.y - climb).abs() < 1e-3, "{after:?}");
+        }
+
+        #[test]
+        fn walker_hanging_exactly_the_snap_distance_is_still_lowered() {
+            let after = run_over(
+                walker_at_speed(0.0),
+                &forward(),
+                over(false, Vec3::Y, GROUND_SNAP),
+            );
+
+            assert!(after.grounded, "{after:?}");
+            assert!(
+                (after.position.y - (START_Y - GROUND_SNAP)).abs() < 1e-5,
+                "{after:?}"
+            );
+        }
+
+        #[test]
+        fn walker_hanging_beyond_the_snap_distance_is_left_airborne_where_it_is() {
+            let after = run_over(
+                walker_at_speed(0.0),
+                &forward(),
+                over(false, Vec3::Y, GROUND_SNAP + 0.01),
+            );
+
+            assert!(!after.grounded, "{after:?}");
+            assert!((after.position.y - START_Y).abs() < 1e-5, "{after:?}");
+        }
+
+        #[test]
+        fn walker_sunk_below_the_plane_stays_grounded_without_being_raised() {
+            let after = run_over(
+                walker_at_speed(0.0),
+                &forward(),
+                over(false, Vec3::Y, -0.02),
+            );
+
+            assert!(after.grounded, "{after:?}");
+            assert!((after.position.y - START_Y).abs() < 1e-5, "{after:?}");
+        }
+
+        #[test]
+        fn walker_the_slide_already_grounded_is_not_lowered() {
+            let after = run_over(walker_at_speed(0.0), &forward(), over(true, Vec3::Y, 0.05));
+
+            assert!(after.grounded, "{after:?}");
+            assert!((after.position.y - START_Y).abs() < 1e-5, "{after:?}");
+        }
+
+        #[test]
+        fn character_airborne_before_the_tick_is_not_snapped_onto_ground() {
+            let falling = state_at(
+                Vec3::new(0.0, START_Y, 0.0),
+                Vec3::new(0.0, 0.0, 4.0),
+                false,
+            );
+
+            let after = run_over(falling, &forward(), over(false, Vec3::Y, 0.05));
+
+            assert!(!after.grounded, "{after:?}");
+            assert!(
+                (after.position.y - (START_Y - 18.0 * DT * DT)).abs() < 1e-5,
+                "only gravity moved it: {after:?}"
+            );
+        }
+
+        #[test]
+        fn jumping_character_is_not_snapped_back_onto_ground() {
+            let jump = CharacterCommand {
+                jump: true,
+                ..forward()
+            };
+
+            let after = run_over(walker_at_speed(0.0), &jump, over(false, Vec3::Y, 0.05));
+
+            assert!(!after.grounded, "{after:?}");
+            assert!(after.position.y > START_Y, "{after:?}");
+        }
+
         #[test]
         fn upslope_walker_stays_grounded() {
             let normal = slope_normal(25.0);
