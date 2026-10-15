@@ -50,15 +50,20 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 | [ENG-F20 A wgpu or egui upgrade touches one crate](https://github.com/WrackedFella/moho/issues/104) |
 | [ENG-F21 A game gets a character controller and camera from the engine](https://github.com/WrackedFella/moho/issues/123) |
 | [ENG-F22 Every test can fail and earns its place](https://github.com/WrackedFella/moho/issues/167) |
+| [ENG-F23 The game knows what is under the pointer](https://github.com/WrackedFella/moho/issues/327) |
+| [ENG-F24 The game marks places in the world and keeps them in view](https://github.com/WrackedFella/moho/issues/328) |
+| [ENG-F25 A game line adds save files without changing the engine](https://github.com/WrackedFella/moho/issues/346) |
 
 ## strategy-game/
 
 | Feature |
 |---|
-| [SG-F1 Core interaction & resource loop](strategy-game/SG-F1-core-interaction-loop/_feature.md) |
-| [SG-F2 Known bugs](strategy-game/SG-F2-known-bugs/_feature.md) |
-| [SG-F3 Buildings & construction](strategy-game/SG-F3-buildings-and-construction/_feature.md) |
-| [SG-F4 Worker pawns](strategy-game/SG-F4-worker-pawns/_feature.md) |
+| [SG-F1 Possessing a pawn feels right](https://github.com/WrackedFella/moho/issues/311) |
+| [SG-F2 A saved world comes back as I left it](https://github.com/WrackedFella/moho/issues/308) |
+| [SG-F3 I place a building and pawns construct it](https://github.com/WrackedFella/moho/issues/312) |
+| [SG-F4 Pawns dig what I mark](https://github.com/WrackedFella/moho/issues/310) |
+| [SG-F5 I run the colony from above and step into a pawn](https://github.com/WrackedFella/moho/issues/309) |
+| [SG-F6 New worlds look intentional and ore is findable](strategy-game/SG-F6-world-generation/_feature.md) |
 
 ## fps-game/
 

@@ -35,7 +35,9 @@ pub use chunk::VoxelChunk;
 pub use chunk_store::ChunkStore;
 pub use events::{BlockChangeReason, WorldEvent};
 pub use face::FaceDirection;
-pub use grid::{BlockData, BlockPos, MaterialLighting, MaterialRegistry, ResourceData, VoxelGrid};
+pub use grid::{
+    BlockData, BlockPos, CHUNK_FILE, MaterialLighting, MaterialRegistry, ResourceData, VoxelGrid,
+};
 pub use light_jobs::{
     JobId, LightCancellationToken, LightFrameBudget, LightJobQueue, LightJobStats, LightUpdateJob,
     LightUpdateOp, LightUpdateResult,

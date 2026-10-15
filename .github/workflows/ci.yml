@@ -15,6 +15,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -30,12 +31,28 @@ defaults:
 
 jobs:
   # Chooses the OS matrix: Linux for dev and feature branches, all three for main and manual runs.
+  # Also decides whether a PR touches code: docs-only PRs (Markdown, wiki/, _todo/) skip the
+  # gate's and mutants' steps. The jobs still run and pass, since their checks are required.
   plan:
     name: Plan
     runs-on: ubuntu-latest
     outputs:
       os: ${{ steps.os.outputs.os }}
+      code: ${{ steps.code.outputs.code }}
     steps:
+      - id: code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [[ -z $PR ]]; then
+            echo code=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')
+          code=$(grep -Evq '\.md$|^wiki/|^_todo/' <<< "$files" && echo true || echo false)
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "touches code: $code"
       - id: os
         run: |
           target="${GITHUB_BASE_REF:-$GITHUB_REF_NAME}"
@@ -57,29 +74,34 @@ jobs:
     steps:
       # Full history: comment-refs diffs against the merge-base with MOHO_BASE.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.plan.outputs.code == 'true'
         with:
           fetch-depth: 0
 
       - name: Install system deps (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && needs.plan.outputs.code == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config libudev-dev libasound2-dev libssl-dev
 
       - name: Install pinned Rust toolchain
+        if: needs.plan.outputs.code == 'true'
         run: rustup toolchain install
 
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        if: needs.plan.outputs.code == 'true'
         with:
           tool: just,cargo-nextest
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: needs.plan.outputs.code == 'true'
         with:
           shared-key: gate-${{ matrix.os }}
           cache-on-failure: true
 
       - run: just check
+        if: needs.plan.outputs.code == 'true'
 
   # Licenses, advisories, sources. Separate so a new advisory doesn't mask gate results.
   deny:
@@ -98,34 +120,41 @@ jobs:
   # new tests don't prove behavior; not a required check.
   mutants:
     name: Mutants (diff)
+    needs: plan
     if: github.event_name == 'pull_request' && (github.base_ref == 'dev' || startsWith(github.base_ref, 'feature/'))
     runs-on: ubuntu-latest
     timeout-minutes: 90
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.plan.outputs.code == 'true'
         with:
           fetch-depth: 0
 
       - name: Install system deps
+        if: needs.plan.outputs.code == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config libudev-dev libasound2-dev libssl-dev
 
       - name: Install pinned Rust toolchain
+        if: needs.plan.outputs.code == 'true'
         run: rustup toolchain install
 
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        if: needs.plan.outputs.code == 'true'
         with:
           tool: just,cargo-nextest,cargo-mutants
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: needs.plan.outputs.code == 'true'
         with:
           shared-key: mutants
           cache-on-failure: true
 
       - run: just mutants
+        if: needs.plan.outputs.code == 'true'
 
       - name: Summarize
         if: always()

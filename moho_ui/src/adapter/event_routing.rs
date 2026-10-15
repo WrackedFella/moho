@@ -4,7 +4,7 @@
 //! - Menu action to event bus conversion
 //! - Audio event emission
 //! - Console action processing
-//! - Background music lifecycle for the main menu
+//! - Background music start/stop decisions for the main menu
 use crate::UiAudioEvent;
 use crate::screens::MenuAction;
 use moho_core::EventBus;
@@ -84,45 +84,21 @@ pub fn emit_audio_event(event_bus: &EventBus, audio_event: UiAudioEvent) {
 }
 
 /// Menu background music, relative to the working directory.
-pub const MENU_MUSIC_PATH: &str = "audio/music/menu.ogg";
+pub const MENU_MUSIC_PATH: &str = "assets/audio/music/menu.ogg";
 
-/// Manage menu background music lifecycle.
-///
-/// Starts music when the player navigates to the start menu, stops it when
-/// they leave. Never starts when `music_exists` is false.
-pub fn update_menu_music(
-    actions: &[MenuAction],
-    event_bus: &EventBus,
-    music_playing: &mut bool,
-    music_exists: bool,
-) {
+/// The music event that moves menu music from `playing` to `want`: a looped
+/// [`MENU_MUSIC_PATH`] start, a stop, or `None` when they already agree.
+pub fn menu_music_change(want: bool, playing: bool) -> Option<moho_core::events::AudioEvent> {
     use moho_core::events::AudioEvent;
 
-    for action in actions {
-        match action {
-            // Entering the start menu — start music
-            MenuAction::ShowMenu(name) if name == "start" && !*music_playing && music_exists => {
-                event_bus.publish(AudioEvent::MusicStart {
-                    path: MENU_MUSIC_PATH.to_string(),
-                    volume: 1.0,
-                    looped: true,
-                });
-                *music_playing = true;
-            }
-            // Leaving the menu (loading, new world, exit, or switching to non-start screen)
-            MenuAction::LoadScene(_) | MenuAction::GenerateWorld(_) | MenuAction::Exit
-                if *music_playing =>
-            {
-                event_bus.publish(AudioEvent::MusicStop);
-                *music_playing = false;
-            }
-            // Navigating to any screen other than start also stops music
-            MenuAction::ShowMenu(name) if name != "start" && *music_playing => {
-                event_bus.publish(AudioEvent::MusicStop);
-                *music_playing = false;
-            }
-            _ => {}
-        }
+    match (want, playing) {
+        (true, false) => Some(AudioEvent::MusicStart {
+            path: MENU_MUSIC_PATH.to_string(),
+            volume: 1.0,
+            looped: true,
+        }),
+        (false, true) => Some(AudioEvent::MusicStop),
+        _ => None,
     }
 }
 
@@ -340,98 +316,40 @@ mod tests {
         use super::*;
         use moho_core::events::AudioEvent;
 
-        fn run(
-            actions: &[MenuAction],
-            mut playing: bool,
-            music_exists: bool,
-        ) -> (bool, Vec<AudioEvent>) {
-            let bus = EventBus::new();
-            let rx = record::<AudioEvent>(&bus);
-
-            update_menu_music(actions, &bus, &mut playing, music_exists);
-
-            (playing, rx.try_iter().collect())
-        }
-
-        fn leaving_actions() -> Vec<(&'static str, MenuAction)> {
-            vec![
-                (
-                    "load scene",
-                    MenuAction::LoadScene(std::path::PathBuf::from("saves/scene.bin")),
-                ),
-                (
-                    "generate world",
-                    MenuAction::GenerateWorld(WorldSpec {
-                        name: "Test World".to_string(),
-                        seed: Some(1),
-                        size_xz: 16,
-                        day_length_seconds: 1200.0,
-                        night_length_seconds: 600.0,
-                        initial_time_of_day: 6.0,
-                    }),
-                ),
-                ("exit", MenuAction::Exit),
-                ("settings", MenuAction::ShowMenu("settings".to_string())),
-            ]
-        }
-
         #[test]
-        fn menu_music_starts_on_show_start() {
-            let actions = [MenuAction::ShowMenu("start".to_string())];
+        fn starts_from_the_assets_music_path() {
+            let event = menu_music_change(true, false);
 
-            let (playing, events) = run(&actions, false, true);
-
-            assert!(playing);
-            assert_eq!(events.len(), 1, "events: {events:?}");
-            assert!(
-                matches!(&events[0], AudioEvent::MusicStart { looped: true, .. }),
-                "unexpected {:?}",
-                events[0]
-            );
-        }
-
-        #[test]
-        fn menu_music_missing_file_publishes_nothing() {
-            let actions = [MenuAction::ShowMenu("start".to_string())];
-
-            let (playing, events) = run(&actions, false, false);
-
-            assert!(!playing);
-            assert!(events.is_empty(), "events: {events:?}");
-        }
-
-        #[test]
-        fn menu_music_stops_when_leaving_start() {
-            for (label, action) in leaving_actions() {
-                let (playing, events) = run(&[action], true, true);
-
-                assert!(!playing, "{label}: flag should clear");
-                assert_eq!(events.len(), 1, "{label}: events: {events:?}");
-                assert!(
-                    matches!(events[0], AudioEvent::MusicStop),
-                    "{label}: unexpected {:?}",
-                    events[0]
-                );
+            match event {
+                Some(AudioEvent::MusicStart {
+                    path,
+                    volume,
+                    looped,
+                }) => {
+                    assert_eq!(path, "assets/audio/music/menu.ogg");
+                    assert!((volume - 1.0).abs() < f32::EPSILON, "volume {volume}");
+                    assert!(looped, "menu music loops");
+                }
+                other => panic!("expected MusicStart, got {other:?}"),
             }
         }
 
         #[test]
-        fn menu_music_keeps_playing_when_start_is_shown_again() {
-            let actions = [MenuAction::ShowMenu("start".to_string())];
+        fn stops_when_playing_but_no_longer_wanted() {
+            let event = menu_music_change(false, true);
 
-            let (playing, events) = run(&actions, true, true);
-
-            assert!(playing, "flag should stay set");
-            assert!(events.is_empty(), "events: {events:?}");
+            assert!(
+                matches!(event, Some(AudioEvent::MusicStop)),
+                "unexpected {event:?}"
+            );
         }
 
         #[test]
-        fn menu_music_no_double_stop() {
-            for (label, action) in leaving_actions() {
-                let (playing, events) = run(&[action], false, true);
+        fn no_change_when_want_matches_playing() {
+            for state in [true, false] {
+                let event = menu_music_change(state, state);
 
-                assert!(!playing, "{label}");
-                assert!(events.is_empty(), "{label}: events: {events:?}");
+                assert!(event.is_none(), "state {state}: unexpected {event:?}");
             }
         }
     }

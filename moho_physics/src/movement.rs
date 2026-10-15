@@ -63,8 +63,20 @@ pub struct Impact {
 pub struct Slide {
     pub translation: Vec3,
     pub grounded: bool,
+    /// The walkable surface straight under the capsule's centre after the slide; `None` when
+    /// there is none or the character started the slide airborne.
+    pub ground: Option<Ground>,
     /// Each surface touched, with its normal.
     pub hits: Vec<(ColliderHandle, Vec3)>,
+}
+
+/// The walkable surface under a character's centre.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ground {
+    /// The face normal.
+    pub normal: Vec3,
+    /// How far the capsule hangs above the face's plane, in metres, measured straight down.
+    pub gap: f32,
 }
 
 /// Tolerance, in metres, on "the slide moved less into a surface than asked".
@@ -76,6 +88,14 @@ const BLOCKED_EPSILON: f32 = 1e-4;
 ///
 /// The controller's `max_slope_climb_angle` is built from it, so both agree.
 pub(crate) const WALKABLE_NORMAL_Y: f32 = std::f32::consts::FRAC_1_SQRT_2;
+
+/// Furthest, in metres, a walker is pulled down onto ground, and the largest [`Ground::gap`]
+/// at which a slide ending ungrounded still counts as standing.
+///
+/// The controller's `snap_to_ground` is built from it, so both agree. Otherwise a walker
+/// carrying a ramp's upward speed over a crest asks an upward move, which the controller
+/// does not snap, and hops.
+pub(crate) const GROUND_SNAP: f32 = 0.1;
 
 /// Vertical speed below which a character counts as resting rather than rising.
 ///
@@ -160,6 +180,10 @@ fn clip(
 ///
 /// `slide` receives the displacement the tick asks for and reports what the world
 /// allowed. The look turns first, so a turn and a move in one command face the new way.
+///
+/// A jump adds `jump_speed` to the vertical velocity. A walker that ends the tick grounded
+/// moves along its ground, keeping its horizontal velocity; a landing zeroes the vertical
+/// velocity.
 pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
@@ -176,12 +200,17 @@ pub fn step(
     let wish = wish_vector.normalize_or_zero();
     let magnitude = wish_vector.length().min(1.0);
 
-    if state.grounded && command.jump {
-        state.velocity.y = settings.jump_speed;
+    let jumped = state.grounded && command.jump;
+    if jumped {
+        state.velocity.y += settings.jump_speed;
     }
 
     let airborne_before = !state.grounded;
-    let walking = state.grounded && state.velocity.y <= REST_SPEED;
+    // A walker may climb a slope, so its upward speed only counts as leaving the ground once
+    // it exceeds what its horizontal speed explains.
+    let walking = state.grounded
+        && !jumped
+        && state.velocity.y <= state.velocity.with_y(0.0).length() + REST_SPEED;
     if walking {
         ground_move(&mut state.velocity, wish, magnitude, settings, dt);
     } else {
@@ -201,11 +230,43 @@ pub fn step(
 
     let impacts = clip(&mut state.velocity, asked, &slid, walking, airborne_before);
 
-    state.grounded = slid.grounded && state.velocity.y <= REST_SPEED;
-    if state.grounded {
-        state.velocity.y = 0.0;
-    }
+    settle(state, &slid, walking);
     impacts
+}
+
+/// Vertical speed that keeps `velocity` tangent to a surface of `normal`, its horizontal part
+/// unchanged.
+fn along_ground(velocity: Vec3, normal: Vec3) -> f32 {
+    -(normal.x * velocity.x + normal.z * velocity.z) / normal.y
+}
+
+/// Settle `state` onto the ground after the slide and clip.
+///
+/// A walker hanging within [`GROUND_SNAP`] above walkable ground is lowered onto it, as in
+/// Source's `StayOnGround`. A walker that ends grounded keeps its horizontal velocity and
+/// follows its ground; any other character ends grounded only if not rising, and a landing
+/// zeroes its vertical speed.
+///
+/// The lowering is not collision-checked: it drops onto the plane of the face under the
+/// centre, so a ledge under the capsule's rim but not its centre can be overlapped by up to
+/// [`GROUND_SNAP`] until the next slide resolves it.
+fn settle(state: &mut CharacterState, slid: &Slide, walking: bool) {
+    let hanging = slid
+        .ground
+        .filter(|ground| walking && !slid.grounded && ground.gap <= GROUND_SNAP);
+    if let Some(ground) = hanging {
+        state.position.y -= ground.gap.max(0.0);
+    }
+    state.grounded =
+        (slid.grounded || hanging.is_some()) && (walking || state.velocity.y <= REST_SPEED);
+    if !state.grounded {
+        return;
+    }
+    if !walking {
+        state.velocity.y = 0.0;
+    } else if let Some(ground) = slid.ground {
+        state.velocity.y = along_ground(state.velocity, ground.normal);
+    }
 }
 
 #[cfg(test)]
@@ -250,6 +311,7 @@ mod tests {
         Slide {
             translation: asked,
             grounded: false,
+            ground: None,
             hits: Vec::new(),
         }
     }
@@ -267,6 +329,10 @@ mod tests {
             Slide {
                 translation,
                 grounded: landed,
+                ground: landed.then_some(Ground {
+                    normal: Vec3::Y,
+                    gap: 0.0,
+                }),
                 hits,
             }
         }
@@ -479,6 +545,257 @@ mod tests {
             assert!(speeds.iter().all(|s| *s >= 0.0), "friction never reverses");
         }
 
+        fn slope_normal(degrees: f32) -> Vec3 {
+            let angle = degrees.to_radians();
+            Vec3::new(0.0, angle.cos(), -angle.sin())
+        }
+
+        fn on_ground(normal: Option<Vec3>) -> impl FnOnce(Vec3) -> Slide {
+            move |asked| Slide {
+                translation: asked,
+                grounded: true,
+                ground: normal.map(|normal| Ground { normal, gap: 0.0 }),
+                hits: Vec::new(),
+            }
+        }
+
+        fn frictionless() -> MoveSettings {
+            MoveSettings {
+                friction: 0.0,
+                ..test_settings()
+            }
+        }
+
+        #[test]
+        fn walker_without_a_ground_normal_keeps_its_vertical_speed() {
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, -1.87, 4.0), true);
+
+            step(&mut state, &forward(), &frictionless(), DT, on_ground(None));
+
+            assert!(
+                (state.velocity.y + 1.87).abs() < 1e-4,
+                "{:?}",
+                state.velocity
+            );
+            assert!(
+                (state.velocity.z - 4.0).abs() < 1e-4,
+                "{:?}",
+                state.velocity
+            );
+            assert!(state.grounded);
+        }
+
+        #[test]
+        fn walker_whose_slide_ends_airborne_is_not_flattened_onto_the_ground() {
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, -1.0, 4.0), true);
+
+            step(&mut state, &forward(), &frictionless(), DT, |asked| Slide {
+                translation: asked,
+                grounded: false,
+                ground: Some(Ground {
+                    normal: slope_normal(25.0),
+                    gap: 1.0,
+                }),
+                hits: Vec::new(),
+            });
+
+            assert!(!state.grounded, "{state:?}");
+            assert!(
+                (state.velocity.y + 1.0).abs() < 1e-4,
+                "{:?}",
+                state.velocity
+            );
+        }
+
+        /// A slide that moves as asked and ends over `ground` with the controller's `grounded`.
+        fn over(grounded: bool, normal: Vec3, gap: f32) -> impl FnOnce(Vec3) -> Slide {
+            move |asked| Slide {
+                translation: asked,
+                grounded,
+                ground: Some(Ground { normal, gap }),
+                hits: Vec::new(),
+            }
+        }
+
+        fn run_over(
+            mut state: CharacterState,
+            command: &CharacterCommand,
+            slide: impl FnOnce(Vec3) -> Slide,
+        ) -> CharacterState {
+            step(&mut state, command, &frictionless(), DT, slide);
+            state
+        }
+
+        const START_Y: f32 = 3.0;
+
+        fn walker_at_speed(vy: f32) -> CharacterState {
+            state_at(Vec3::new(0.0, START_Y, 0.0), Vec3::new(0.0, vy, 4.0), true)
+        }
+
+        #[test]
+        fn walker_hanging_over_flat_ground_is_lowered_onto_it_and_stays_grounded() {
+            let after = run_over(walker_at_speed(0.0), &forward(), over(false, Vec3::Y, 0.05));
+
+            assert!(after.grounded, "{after:?}");
+            assert!(
+                (after.position.y - (START_Y - 0.05)).abs() < 1e-5,
+                "{after:?}"
+            );
+            assert_eq!(after.velocity.y, 0.0);
+        }
+
+        #[test]
+        fn walker_hanging_over_a_slope_is_lowered_and_follows_it() {
+            let climb = 4.0 * 25.0_f32.to_radians().tan();
+            let after = run_over(
+                walker_at_speed(climb),
+                &forward(),
+                over(false, slope_normal(25.0), 0.05),
+            );
+
+            assert!(after.grounded, "{after:?}");
+            let expected_y = START_Y + climb * DT - 0.05;
+            assert!((after.position.y - expected_y).abs() < 1e-4, "{after:?}");
+            assert!((after.velocity.y - climb).abs() < 1e-3, "{after:?}");
+        }
+
+        #[test]
+        fn walker_hanging_exactly_the_snap_distance_is_still_lowered() {
+            let after = run_over(
+                walker_at_speed(0.0),
+                &forward(),
+                over(false, Vec3::Y, GROUND_SNAP),
+            );
+
+            assert!(after.grounded, "{after:?}");
+            assert!(
+                (after.position.y - (START_Y - GROUND_SNAP)).abs() < 1e-5,
+                "{after:?}"
+            );
+        }
+
+        #[test]
+        fn walker_hanging_beyond_the_snap_distance_is_left_airborne_where_it_is() {
+            let after = run_over(
+                walker_at_speed(0.0),
+                &forward(),
+                over(false, Vec3::Y, GROUND_SNAP + 0.01),
+            );
+
+            assert!(!after.grounded, "{after:?}");
+            assert!((after.position.y - START_Y).abs() < 1e-5, "{after:?}");
+        }
+
+        #[test]
+        fn walker_sunk_below_the_plane_stays_grounded_without_being_raised() {
+            let after = run_over(
+                walker_at_speed(0.0),
+                &forward(),
+                over(false, Vec3::Y, -0.02),
+            );
+
+            assert!(after.grounded, "{after:?}");
+            assert!((after.position.y - START_Y).abs() < 1e-5, "{after:?}");
+        }
+
+        #[test]
+        fn walker_the_slide_already_grounded_is_not_lowered() {
+            let after = run_over(walker_at_speed(0.0), &forward(), over(true, Vec3::Y, 0.05));
+
+            assert!(after.grounded, "{after:?}");
+            assert!((after.position.y - START_Y).abs() < 1e-5, "{after:?}");
+        }
+
+        #[test]
+        fn character_airborne_before_the_tick_is_not_snapped_onto_ground() {
+            let falling = state_at(
+                Vec3::new(0.0, START_Y, 0.0),
+                Vec3::new(0.0, 0.0, 4.0),
+                false,
+            );
+
+            let after = run_over(falling, &forward(), over(false, Vec3::Y, 0.05));
+
+            assert!(!after.grounded, "{after:?}");
+            assert!(
+                (after.position.y - (START_Y - 18.0 * DT * DT)).abs() < 1e-5,
+                "only gravity moved it: {after:?}"
+            );
+        }
+
+        #[test]
+        fn jumping_character_is_not_snapped_back_onto_ground() {
+            let jump = CharacterCommand {
+                jump: true,
+                ..forward()
+            };
+
+            let after = run_over(walker_at_speed(0.0), &jump, over(false, Vec3::Y, 0.05));
+
+            assert!(!after.grounded, "{after:?}");
+            assert!(after.position.y > START_Y, "{after:?}");
+        }
+
+        #[test]
+        fn upslope_walker_stays_grounded() {
+            let normal = slope_normal(25.0);
+            let climb = 4.0 * 25.0_f32.to_radians().tan();
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, climb, 4.0), true);
+
+            step(
+                &mut state,
+                &forward(),
+                &frictionless(),
+                DT,
+                on_ground(Some(normal)),
+            );
+
+            assert!(state.grounded, "{state:?}");
+            assert!(
+                (state.velocity.y - climb).abs() < 1e-3,
+                "keeps climbing along the slope: {:?}",
+                state.velocity
+            );
+            assert!(
+                state.velocity.dot(normal).abs() < 1e-3,
+                "{:?}",
+                state.velocity
+            );
+        }
+
+        proptest! {
+            #[test]
+            fn walker_velocity_follows_the_ground_keeping_horizontal_speed(
+                tilt in 0.1f32..0.75,
+                heading in -3.1f32..3.1,
+                speed in 1.0f32..4.0,
+                travel in -3.1f32..3.1,
+            ) {
+                let settings = test_settings();
+                let normal = Vec3::new(
+                    tilt.sin() * heading.cos(),
+                    tilt.cos(),
+                    tilt.sin() * heading.sin(),
+                );
+                let start = Vec3::new(travel.sin(), 0.0, travel.cos()) * speed;
+                let mut expected = start;
+                ground_move(&mut expected, Vec3::Z, 1.0, &settings, DT);
+                let mut state = state_at(Vec3::ZERO, start, true);
+
+                step(&mut state, &forward(), &settings, DT, on_ground(Some(normal)));
+
+                prop_assert!(state.grounded);
+                prop_assert!(
+                    state.velocity.dot(normal).abs() < 1e-3,
+                    "{:?} is not along {normal:?}", state.velocity
+                );
+                prop_assert!(
+                    (horizontal(state.velocity) - horizontal(expected)).length() < 1e-4,
+                    "{:?} vs {expected:?}", state.velocity
+                );
+            }
+        }
+
         #[test]
         fn slow_character_stops_at_the_stop_speed_rate() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 0.5), true);
@@ -651,6 +968,93 @@ mod tests {
         }
 
         #[test]
+        fn jump_adds_the_impulse_to_the_ground_velocity() {
+            let slope = 25.0_f32.to_radians();
+            let climb = 4.0 * slope.tan();
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, climb, 4.0), true);
+            let jump = CharacterCommand {
+                jump: true,
+                ..forward()
+            };
+
+            step(&mut state, &jump, &test_settings(), DT, |asked| Slide {
+                translation: asked,
+                grounded: false,
+                ground: None,
+                hits: Vec::new(),
+            });
+
+            assert!(
+                (state.velocity.y - (climb + 8.0 - 18.0 * DT)).abs() < 1e-3,
+                "{:?}",
+                state.velocity
+            );
+            assert!(
+                (state.velocity.z - 4.0).abs() < 1e-4,
+                "{:?}",
+                state.velocity
+            );
+            assert!(!state.grounded);
+        }
+
+        fn grounded_slide(ground: Option<Vec3>) -> impl FnOnce(Vec3) -> Slide {
+            move |asked| Slide {
+                translation: asked,
+                grounded: true,
+                ground: ground.map(|normal| Ground { normal, gap: 0.0 }),
+                hits: Vec::new(),
+            }
+        }
+
+        #[test]
+        fn jump_smaller_than_the_horizontal_speed_still_leaves_the_ground() {
+            let settings = MoveSettings {
+                jump_speed: 2.0,
+                ..test_settings()
+            };
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 4.0), true);
+            let jump = CharacterCommand {
+                jump: true,
+                ..forward()
+            };
+
+            step(
+                &mut state,
+                &jump,
+                &settings,
+                DT,
+                grounded_slide(Some(Vec3::Y)),
+            );
+
+            assert!(!state.grounded, "{state:?}");
+            assert!(
+                (state.velocity.y - (2.0 - 18.0 * DT)).abs() < 1e-4,
+                "{:?}",
+                state.velocity
+            );
+        }
+
+        #[test]
+        fn upward_speed_above_the_horizontal_speed_is_airborne_even_on_flat_ground() {
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 2.0, 1.0), true);
+
+            step(
+                &mut state,
+                &CharacterCommand::default(),
+                &test_settings(),
+                DT,
+                grounded_slide(Some(Vec3::Y)),
+            );
+
+            assert!(!state.grounded, "{state:?}");
+            assert!(
+                (state.velocity.y - (2.0 - 18.0 * DT)).abs() < 1e-4,
+                "{:?}",
+                state.velocity
+            );
+        }
+
+        #[test]
         fn grounded_without_jump_command_stays_on_the_ground() {
             let mut state = standing();
 
@@ -674,6 +1078,7 @@ mod tests {
                 |asked| Slide {
                     translation: asked,
                     grounded: true,
+                    ground: None,
                     hits: Vec::new(),
                 },
             );
@@ -698,6 +1103,7 @@ mod tests {
                 |asked| Slide {
                     translation: asked,
                     grounded: true,
+                    ground: None,
                     hits: Vec::new(),
                 },
             );
@@ -790,6 +1196,7 @@ mod tests {
                 |asked| Slide {
                     translation: asked * 0.25,
                     grounded: true,
+                    ground: None,
                     hits: vec![(collider(), wall_normal())],
                 },
             );
@@ -814,6 +1221,7 @@ mod tests {
                 |asked| Slide {
                     translation: Vec3::new(asked.x, 0.0, 0.0),
                     grounded: true,
+                    ground: None,
                     hits: vec![(collider(), wall_normal())],
                 },
             );
@@ -840,6 +1248,7 @@ mod tests {
                 |asked| Slide {
                     translation: asked,
                     grounded: true,
+                    ground: None,
                     hits: vec![(collider(), wall_normal())],
                 },
             );
@@ -864,6 +1273,7 @@ mod tests {
                 |asked| Slide {
                     translation: asked + Vec3::new(0.0, 0.45, 0.0),
                     grounded: true,
+                    ground: None,
                     hits: vec![(collider(), wall_normal())],
                 },
             );
@@ -888,6 +1298,7 @@ mod tests {
                 |_| Slide {
                     translation: Vec3::ZERO,
                     grounded: true,
+                    ground: None,
                     hits: vec![
                         (collider(), Vec3::new(0.0, 0.0, -1.0)),
                         (collider(), Vec3::new(-1.0, 0.0, 0.0)),
@@ -919,6 +1330,7 @@ mod tests {
                 |asked| Slide {
                     translation: asked * 0.25,
                     grounded: true,
+                    ground: None,
                     hits: vec![(collider(), wall_normal()), (collider(), wall_normal())],
                 },
             );
@@ -938,6 +1350,7 @@ mod tests {
                 |asked| Slide {
                     translation: asked,
                     grounded: true,
+                    ground: None,
                     hits: vec![(collider(), wall_normal())],
                 },
             );
@@ -958,6 +1371,7 @@ mod tests {
                 |asked| Slide {
                     translation: asked.with_z(-(asked.dot(wall_normal()) + BLOCKED_EPSILON)),
                     grounded: false,
+                    ground: None,
                     hits: vec![(collider(), wall_normal())],
                 },
             );
@@ -972,6 +1386,7 @@ mod tests {
             let slid = Slide {
                 translation: Vec3::new(0.1, 0.0, 0.01),
                 grounded: true,
+                ground: None,
                 hits: vec![(collider(), Vec3::Z)],
             };
 
