@@ -111,5 +111,11 @@ mod tests {
             (rotated - facing).length() < 1e-4,
             "faces {rotated}, want {facing}"
         );
+        let right = listener.orientation * Vec3::X;
+        let level_right = facing.cross(Vec3::Y).normalize();
+        assert!(
+            (right - level_right).length() < 1e-4,
+            "right is {right}, want {level_right} (no roll)"
+        );
     }
 }

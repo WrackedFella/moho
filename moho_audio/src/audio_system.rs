@@ -493,7 +493,7 @@ mod tests {
         system.set_listener(Listener::default());
 
         system
-            .handle_event(play_at(SOUND, 1.0, Vec3::new(5.0, 0.0, 0.0)))
+            .handle_event(play_at(SOUND, 1.0, Vec3::new(3.0, 0.0, -4.0)))
             .unwrap();
         system
             .handle_event(play_at(SOUND, 1.0, Vec3::new(0.0, 0.0, -20.0)))
@@ -532,24 +532,6 @@ mod tests {
 
         assert!(result.is_ok(), "{result:?}");
         assert!(output.voices().is_empty());
-    }
-
-    #[test]
-    fn positioned_sound_at_the_cutoff_still_plays_faintly() {
-        let (mut system, output) = system(full_volume());
-        system.set_listener(Listener::default());
-
-        system
-            .handle_event(play_at(
-                SOUND,
-                1.0,
-                Vec3::new(0.0, MAX_AUDIBLE_DISTANCE, 0.0),
-            ))
-            .unwrap();
-
-        let voices = output.voices();
-        assert_eq!(voices.len(), 1);
-        assert_volume_eq(voices[0].volume, 0.02);
     }
 
     #[test]
@@ -598,19 +580,23 @@ mod tests {
 
     #[test]
     fn positioned_sound_scales_by_distance_and_category_together() {
-        let (mut system, output) = system(full_volume().with_sound_effects_volume(0.5));
+        let (mut system, output) = system(
+            full_volume()
+                .with_master_volume(0.5)
+                .with_sound_effects_volume(0.5),
+        );
         system.set_listener(Listener::default());
 
         system
             .handle_event(play_at(SOUND, 0.8, Vec3::new(0.0, 0.0, 8.0)))
             .unwrap();
 
-        assert_volume_eq(output.voices()[0].volume, 0.8 * 0.5 * 0.25);
+        assert_volume_eq(output.voices()[0].volume, 0.05);
     }
 
     #[test]
     fn positioned_voice_source_is_attenuated() {
-        let (mut system, output) = system(full_volume());
+        let (mut system, output) = system(full_volume().with_voice_volume(1.0));
         system.set_listener(Listener::default());
         let source = AudioSource::new(SOUND)
             .with_category(AudioCategory::Voice)

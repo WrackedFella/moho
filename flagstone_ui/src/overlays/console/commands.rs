@@ -598,6 +598,8 @@ mod tests {
         let rows = [
             ("snd_play_at boom.wav a 2 3", "Error:"),
             ("snd_play_at boom.wav 1 2 3 loud", "Error:"),
+            ("snd_play_at boom.wav 1 nan 3", "Error:"),
+            ("snd_play_at boom.wav 1 2 3 inf", "Error:"),
             ("snd_play_at boom.wav 1 2", "Usage:"),
             ("snd_play_at boom.wav", "Usage:"),
             ("snd_play_at", "Usage:"),
