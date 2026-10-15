@@ -82,6 +82,7 @@ impl Slider<'_> {
                 return Slide {
                     translation,
                     grounded: true,
+                    ground: self.ground_under(start.translation + translation),
                     hits,
                 };
             }
@@ -93,8 +94,15 @@ impl Slider<'_> {
         Slide {
             translation: plain.translation,
             grounded: plain.grounded,
+            ground: self.ground_under(start.translation + plain.translation),
             hits,
         }
+    }
+
+    /// The face normal of the walkable surface straight under `centre`, or `None` when a ray
+    /// cast down from it finds none within the capsule's half-height plus a margin.
+    pub(super) fn ground_under(&self, _centre: Vec3) -> Option<Vec3> {
+        None
     }
 
     /// The surface under a character the controller grounded without reporting a hit.
@@ -164,7 +172,7 @@ impl Slider<'_> {
 #[cfg(test)]
 mod tests {
     use super::super::test_support::TEST_TAG;
-    use super::super::test_support::{quad_mesh, step_box_mesh};
+    use super::super::test_support::{quad_mesh, slope_mesh, step_box_mesh};
     use super::super::PhysicsWorld;
     use super::*;
     use moho_render_api::{WorldMesh, WorldMeshId};
@@ -287,5 +295,71 @@ mod tests {
     #[test]
     fn step_up_over_a_thin_wall_onto_a_drop_is_refused() {
         assert_eq!(step_up_over_thin_wall(&ground(-1.0, 2.05, 10.0)), None);
+    }
+
+    /// What `ground_under` reports for a capsule centred at `centre` over `meshes`.
+    fn ground_under_centre(meshes: &[WorldMesh], centre: Vec3) -> Option<Vec3> {
+        let mut world = PhysicsWorld::new();
+        for (id, mesh) in meshes.iter().enumerate() {
+            world.set_world_mesh(WorldMeshId(id as u64), mesh, TEST_TAG);
+        }
+        world.step(1.0 / 60.0);
+        let queries = world.broad_phase.as_query_pipeline(
+            world.narrow_phase.query_dispatcher(),
+            &world.rigid_body_set,
+            &world.collider_set,
+            QueryFilter::default(),
+        );
+        let capsule = SharedShape::capsule_y(0.85, 0.3);
+        let slider = Slider {
+            controller: &world.character_controller,
+            queries: &queries,
+            shape: capsule.as_ref(),
+            dt: 1.0 / 60.0,
+        };
+        slider.ground_under(centre)
+    }
+
+    /// A plane through the origin rising toward +Z at `degrees`.
+    fn slope(degrees: f32) -> WorldMesh {
+        let rise = degrees.to_radians().tan();
+        slope_mesh(-10.0, -10.0 * rise, 10.0, 10.0 * rise)
+    }
+
+    #[test]
+    fn ground_under_reports_the_face_below_the_centre() {
+        let angle = 25.0_f32.to_radians();
+        let tilted = Vec3::new(0.0, angle.cos(), -angle.sin());
+
+        let flat = ground_under_centre(&[ground(0.0, -10.0, 10.0)], Vec3::new(0.0, 1.2, 0.0));
+        let on_slope = ground_under_centre(&[slope(25.0)], Vec3::new(0.0, 1.27, 0.0));
+        let at_reach = ground_under_centre(&[slope(40.0)], Vec3::new(1.0, 1.4, 0.0));
+
+        assert!(flat.expect("flat ground below").distance(Vec3::Y) < 1e-3);
+        assert!(
+            on_slope.expect("slope below").distance(tilted) < 1e-3,
+            "{on_slope:?}"
+        );
+        assert!(at_reach.is_some(), "a 40 degree face is walkable");
+    }
+
+    #[test]
+    fn ground_under_is_none_past_a_ledge_and_on_steep_faces() {
+        let ledge = [ground(0.0, -10.0, 1.0)];
+        let over_ledge = ground_under_centre(&ledge, Vec3::new(0.0, 1.2, 0.5));
+        let past_ledge = ground_under_centre(&ledge, Vec3::new(0.0, 1.2, 1.5));
+        let walkable = ground_under_centre(&[slope(40.0)], Vec3::new(0.0, 1.2, 0.0));
+        let in_reach = ground_under_centre(&[ground(0.0, -10.0, 10.0)], Vec3::new(0.0, 1.4, 0.0));
+        let steep = ground_under_centre(&[slope(50.0)], Vec3::new(0.0, 1.2, 0.0));
+        let too_high = ground_under_centre(&[ground(0.0, -10.0, 10.0)], Vec3::new(0.0, 1.6, 0.0));
+        let over_nothing = ground_under_centre(&[], Vec3::new(0.0, 1.2, 0.0));
+
+        assert!(over_ledge.is_some(), "the ray finds the ledge's top");
+        assert!(walkable.is_some(), "a 40 degree face is walkable");
+        assert!(in_reach.is_some(), "ground within the capsule's reach");
+        assert_eq!(past_ledge, None);
+        assert_eq!(steep, None, "a 50 degree face is not walkable");
+        assert_eq!(too_high, None, "ground beyond the capsule's reach");
+        assert_eq!(over_nothing, None);
     }
 }

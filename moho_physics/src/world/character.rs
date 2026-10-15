@@ -1697,4 +1697,289 @@ mod tests {
         assert_eq!(hit.tag, ARM);
         assert!((hit.point.x - (at.x + 0.5)).abs() < 0.02, "{hit:?}");
     }
+
+    mod take_off {
+        use super::*;
+        use crate::world::test_support::slope_mesh;
+
+        const SLOPE_DEGREES: f32 = 25.0;
+        const SPEED: f32 = 4.0;
+        const AIRBORNE_TICKS: usize = 4;
+
+        fn gravity() -> f32 {
+            test_settings().gravity
+        }
+
+        fn rise_per_run() -> f32 {
+            SLOPE_DEGREES.to_radians().tan()
+        }
+
+        /// The vertical speed of a walker moving at `SPEED` along a slope of `SLOPE_DEGREES`.
+        fn slope_climb() -> f32 {
+            SPEED * rise_per_run()
+        }
+
+        fn forward() -> CharacterCommand {
+            CharacterCommand {
+                forward: 1.0,
+                ..idle()
+            }
+        }
+
+        fn tick(
+            world: &mut PhysicsWorld,
+            handle: CharacterHandle,
+            command: &CharacterCommand,
+        ) -> CharacterState {
+            world
+                .move_character(handle, command, &test_settings(), DT)
+                .expect("character is live");
+            world.step(DT);
+            state(world, handle)
+        }
+
+        fn assert_close(actual: Vec3, expected: Vec3, context: &str) {
+            assert!(
+                actual.distance(expected) < 1e-2,
+                "{context}: expected {expected:?}, got {actual:?}"
+            );
+        }
+
+        /// Spawns a character at `at`, facing `yaw`, and lets it come to rest on the ground.
+        fn rest_at(world: &mut PhysicsWorld, at: Vec3, yaw: f32) -> CharacterHandle {
+            let h = world.add_character(at);
+            world.set_character_look(h, yaw, 0.0).unwrap();
+            for _ in 0..60 {
+                tick(world, h, &idle());
+            }
+            assert!(state(world, h).grounded, "resting on the ground");
+            h
+        }
+
+        /// Runs forward for `ticks` and returns the state after the last one.
+        fn run_steadily(
+            world: &mut PhysicsWorld,
+            h: CharacterHandle,
+            ticks: usize,
+        ) -> CharacterState {
+            for _ in 0..ticks {
+                tick(world, h, &forward());
+            }
+            let now = state(world, h);
+            assert!(now.grounded, "{now:?}");
+            assert!(
+                (now.velocity.with_y(0.0).length() - SPEED).abs() < 1e-2,
+                "running at speed: {now:?}"
+            );
+            now
+        }
+
+        /// Runs forward until a tick ends airborne; returns the state after the last tick that
+        /// ended grounded and the state after the tick that left the ground.
+        fn run_off_the_edge(
+            world: &mut PhysicsWorld,
+            h: CharacterHandle,
+        ) -> (CharacterState, CharacterState) {
+            let mut last_grounded = state(world, h);
+            for _ in 0..300 {
+                let now = tick(world, h, &forward());
+                if !now.grounded {
+                    return (last_grounded, now);
+                }
+                last_grounded = now;
+            }
+            panic!("never left the ground: {:?}", state(world, h));
+        }
+
+        /// With no input only gravity changes the velocity, by `gravity * dt` each tick.
+        fn assert_only_gravity_acts(
+            world: &mut PhysicsWorld,
+            h: CharacterHandle,
+            from: CharacterState,
+        ) {
+            let mut previous = from;
+            for n in 0..AIRBORNE_TICKS {
+                let now = tick(world, h, &idle());
+
+                assert!(!now.grounded, "airborne tick {n}: {now:?}");
+                assert_close(
+                    now.velocity,
+                    previous.velocity - Vec3::Y * gravity() * DT,
+                    &format!("airborne tick {n}"),
+                );
+                previous = now;
+            }
+        }
+
+        /// Jumps with forward held from `before` and checks the take-off keeps its velocity.
+        fn assert_jump_keeps_velocity_plus_impulse(
+            world: &mut PhysicsWorld,
+            h: CharacterHandle,
+            before: CharacterState,
+        ) {
+            let jump = CharacterCommand {
+                jump: true,
+                ..forward()
+            };
+
+            let after = tick(world, h, &jump);
+
+            assert!(!after.grounded, "{after:?}");
+            assert_close(
+                after.velocity,
+                before.velocity + Vec3::Y * (test_settings().jump_speed - gravity() * DT),
+                "first airborne tick",
+            );
+            assert_only_gravity_acts(world, h, after);
+        }
+
+        /// Walking off an edge keeps the velocity of the last grounded tick, then gravity acts.
+        fn assert_walk_off_keeps_velocity(
+            world: &mut PhysicsWorld,
+            h: CharacterHandle,
+        ) -> CharacterState {
+            let (last_grounded, left_ground) = run_off_the_edge(world, h);
+
+            assert_close(left_ground.velocity, last_grounded.velocity, "take-off");
+            assert_only_gravity_acts(world, h, left_ground);
+            last_grounded
+        }
+
+        #[test]
+        fn flat_jump_keeps_ground_velocity_plus_impulse() {
+            let mut world = PhysicsWorld::new();
+            world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+            let h = rest_at(&mut world, Vec3::new(0.0, 1.2, 0.0), 0.0);
+            let before = run_steadily(&mut world, h, 30);
+
+            assert_jump_keeps_velocity_plus_impulse(&mut world, h, before);
+
+            assert_close(
+                before.velocity,
+                Vec3::new(0.0, 0.0, SPEED),
+                "ground velocity",
+            );
+        }
+
+        #[test]
+        fn upslope_jump_keeps_slope_velocity_plus_impulse() {
+            let mut world = PhysicsWorld::new();
+            let rise = rise_per_run();
+            world.set_world_mesh(
+                WorldMeshId(0),
+                &slope_mesh(-10.0, -10.0 * rise, 10.0, 10.0 * rise),
+                TEST_TAG,
+            );
+            let h = rest_at(&mut world, Vec3::new(0.0, -5.0 * rise + 1.5, -5.0), 0.0);
+            let before = run_steadily(&mut world, h, 30);
+
+            assert_jump_keeps_velocity_plus_impulse(&mut world, h, before);
+
+            assert!(
+                (before.velocity.y - slope_climb()).abs() < 0.15,
+                "a walker climbing the slope rises with it: {:?}",
+                before.velocity
+            );
+        }
+
+        #[test]
+        fn walking_off_a_slope_side_keeps_velocity() {
+            let mut world = PhysicsWorld::new();
+            let rise = rise_per_run();
+            world.set_world_mesh(
+                WorldMeshId(0),
+                &slope_mesh(-10.0, -10.0 * rise, 10.0, 10.0 * rise),
+                TEST_TAG,
+            );
+            let h = rest_at(
+                &mut world,
+                Vec3::new(7.0, 1.5, 0.0),
+                std::f32::consts::FRAC_PI_2,
+            );
+
+            let last_grounded = assert_walk_off_keeps_velocity(&mut world, h);
+
+            assert_close(
+                last_grounded.velocity,
+                Vec3::new(SPEED, 0.0, 0.0),
+                "contour velocity",
+            );
+        }
+
+        #[test]
+        fn walking_off_a_downhill_edge_keeps_its_descent() {
+            let mut world = PhysicsWorld::new();
+            let rise = rise_per_run();
+            world.set_world_mesh(
+                WorldMeshId(0),
+                &slope_mesh(-8.0, 8.0 * rise, 0.0, 0.0),
+                TEST_TAG,
+            );
+            let h = rest_at(&mut world, Vec3::new(0.0, 6.0 * rise + 1.5, -6.0), 0.0);
+
+            let last_grounded = assert_walk_off_keeps_velocity(&mut world, h);
+
+            assert!(
+                (last_grounded.velocity.y + slope_climb()).abs() < 0.15,
+                "descending with the slope: {:?}",
+                last_grounded.velocity
+            );
+            assert!(
+                (last_grounded.velocity.z - SPEED).abs() < 1e-2,
+                "{:?}",
+                last_grounded.velocity
+            );
+        }
+
+        #[test]
+        fn walking_off_a_ledge_keeps_level_velocity() {
+            let mut world = PhysicsWorld::new();
+            world.set_world_mesh(WorldMeshId(0), &slope_mesh(-10.0, 0.0, 1.0, 0.0), TEST_TAG);
+            let h = rest_at(&mut world, Vec3::new(0.0, 1.2, -4.0), 0.0);
+
+            let last_grounded = assert_walk_off_keeps_velocity(&mut world, h);
+
+            assert_close(
+                last_grounded.velocity,
+                Vec3::new(0.0, 0.0, SPEED),
+                "level velocity",
+            );
+        }
+
+        #[test]
+        fn running_off_a_ramp_top_rises_before_falling() {
+            let mut world = PhysicsWorld::new();
+            let rise = rise_per_run();
+            world.set_world_mesh(WorldMeshId(0), &slope_mesh(-10.0, 0.0, 0.0, 0.0), TEST_TAG);
+            world.set_world_mesh(
+                WorldMeshId(1),
+                &slope_mesh(0.0, 0.0, 6.0, 6.0 * rise),
+                TEST_TAG,
+            );
+            let h = rest_at(&mut world, Vec3::new(0.0, 1.2, -4.0), 0.0);
+            let mut path = Vec::new();
+            for _ in 0..300 {
+                let now = tick(&mut world, h, &forward());
+                path.push((now.grounded, now.position));
+            }
+
+            let take_off = path
+                .iter()
+                .position(|&(grounded, position)| !grounded && position.z > 3.0)
+                .expect("left the ramp's top");
+
+            let after = &path[take_off..];
+            assert!(
+                after.windows(2).take(3).all(|w| w[1].1.y > w[0].1.y),
+                "keeps rising past the crest: {:?}",
+                &after[..4]
+            );
+            let peak = after.iter().map(|&(_, p)| p.y).fold(f32::MIN, f32::max);
+            let end = path.last().unwrap().1.y;
+            assert!(
+                end < peak - 0.5,
+                "then gravity brings it down: peak {peak}, end {end}"
+            );
+        }
+    }
 }
