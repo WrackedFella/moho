@@ -75,6 +75,9 @@ pub struct EguiAdapter {
 
     // Whether menu music is currently playing (to avoid redundant start/stop)
     menu_music_playing: bool,
+
+    // Whether the menu music file was found at construction
+    menu_music_exists: bool,
 }
 
 /// Lightweight progress state used by the adapter to render an overlay.
@@ -127,6 +130,7 @@ impl EguiAdapter {
             progress: None,
             last_hovered_key: None,
             menu_music_playing: false,
+            menu_music_exists: false,
         }
     }
 
@@ -385,6 +389,7 @@ pub fn build_adapter(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moho_core::events::AudioEvent;
     use moho_render_api::UiFrameSource;
 
     fn adapter() -> EguiAdapter {
@@ -420,5 +425,72 @@ mod tests {
             !frame.textures_set.is_empty(),
             "the first frame uploads egui's font atlas"
         );
+    }
+
+    fn audio_adapter() -> (EguiAdapter, std::sync::mpsc::Receiver<AudioEvent>) {
+        let bus = Arc::new(moho_core::EventBus::new());
+        let (tx, rx) = std::sync::mpsc::channel();
+        bus.subscribe(move |e: &AudioEvent| {
+            let _ = tx.send(e.clone());
+        });
+        let adapter = EguiAdapter::new(None, bus, moho_core::prefs::Prefs::default());
+        (adapter, rx)
+    }
+
+    fn music_events(rx: &std::sync::mpsc::Receiver<AudioEvent>) -> Vec<AudioEvent> {
+        rx.try_iter()
+            .filter(|e| matches!(e, AudioEvent::MusicStart { .. } | AudioEvent::MusicStop))
+            .collect()
+    }
+
+    #[test]
+    fn menu_frame_starts_menu_music_once() {
+        let (mut adapter, rx) = audio_adapter();
+        adapter.menu_music_exists = true;
+        adapter.set_game_state(GameState::Menu);
+        adapter.set_visible(true);
+
+        adapter.ui_frame([800, 600]);
+        adapter.ui_frame([800, 600]);
+
+        let events = music_events(&rx);
+        assert_eq!(events.len(), 1, "events: {events:?}");
+        assert!(
+            matches!(&events[0], AudioEvent::MusicStart { path, looped: true, .. }
+                if path == "assets/audio/music/menu.ogg"),
+            "unexpected {:?}",
+            events[0]
+        );
+    }
+
+    #[test]
+    fn menu_without_music_file_publishes_nothing_and_still_paints() {
+        let (mut adapter, rx) = audio_adapter();
+        adapter.menu_music_exists = false;
+        adapter.set_game_state(GameState::Menu);
+        adapter.set_visible(true);
+
+        let frame = adapter.ui_frame([800, 600]);
+
+        assert!(frame.is_some(), "the menu still paints");
+        let events = music_events(&rx);
+        assert!(events.is_empty(), "events: {events:?}");
+    }
+
+    #[test]
+    fn leaving_the_menu_state_stops_menu_music() {
+        let (mut adapter, rx) = audio_adapter();
+        adapter.menu_music_exists = true;
+        adapter.set_game_state(GameState::Menu);
+        adapter.set_visible(true);
+        adapter.ui_frame([800, 600]);
+
+        adapter.set_game_state(GameState::Playing);
+        adapter.ui_frame([800, 600]);
+
+        let events = music_events(&rx);
+        assert_eq!(events.len(), 2, "events: {events:?}");
+        assert!(matches!(events[0], AudioEvent::MusicStart { .. }));
+        assert!(matches!(events[1], AudioEvent::MusicStop));
     }
 }
