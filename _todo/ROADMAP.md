@@ -144,9 +144,11 @@ its consumers near, not when the earlier wave fully closes.
 | 2.13 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation over static levels (FPS uses waypoints until then) | — | FPS | 4 | — |
 | 2.14 | [ENG-F26](https://github.com/WrackedFella/moho/issues/359): one key carries tap, hold, modifier and toggle actions (new; `moho_input`, settings display) | Justin, 2026-10-15 | strategy sprint toggle; FPS reload, check mag, unjam | 4 | before ENG-F18's keybind card |
 | 2.15 | [ENG-F27](https://github.com/WrackedFella/moho/issues/361): the game lines are called flagstone and searchlight; one card per line ([#362](https://github.com/WrackedFella/moho/issues/362) FPS, [#363](https://github.com/WrackedFella/moho/issues/363) strategy) | Justin, 2026-10-15 | ENG-F5 split (M3) | 1–2 gaps | #362 after #358; #363 after #355, before #331 |
+| 2.16 | [ENG-F28](https://github.com/WrackedFella/moho/issues/373): mouse look feels like a Source game (raw, per-frame look; sensitivity, smoothing, acceleration and vsync settings) | Justin, 2026-10-15 | FPS prototype feel; strategy first-person camera | 2 | prefs and settings cards after #331, #333, #354 |
 
 - **Wave 1, start now:** the bugs, ENG-F16, ENG-F6 and ENG-F25. They need no other M2 work.
 - **Wave 2, before SG-F5 and SG-F4:** ENG-F23 and ENG-F24 unblock SG-F5; ENG-F9 comes before SG-F4.
+  ENG-F28 (mouse feel) runs alongside; its settings cards queue behind the wave-1 prefs cards.
 - **Wave 3, SG-F4 follow-ups:** pause and speed, then the height slice, once SG-F4's walking skeleton exists.
 - **Wave 4, before FPS Phase 2:** ENG-F18 (after 2.2), ENG-F19, ENG-F17 and ENG-F26
   (before ENG-F18's keybind card, which builds the hold and chord capture on it).
@@ -250,3 +252,4 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-14 | Game lines own their save kinds; the engine keeps only the envelope framing. ENG-F25 lands in wave 1, before SG-F4's marks-persist card | [ADR-0016](adr/0016-game-lines-own-their-save-kinds.md), [ENG-F25](https://github.com/WrackedFella/moho/issues/346) |
 | 2026-10-15 | New ENG-F26 (tap, hold, modifier and toggle bindings) in M2 wave 4, not a gate item. Brings back the modifier chords ENG-F12 dropped on 2026-10-08, now with a consumer; hold timing counts ticks (ADR-0011) | [ENG-F26](https://github.com/WrackedFella/moho/issues/359) |
 | 2026-10-15 | The strategy line is renamed flagstone and the FPS line searchlight inside the monorepo, ahead of the split; engine crates keep `moho_`, and SG-/FPS- IDs stay | [ENG-F27](https://github.com/WrackedFella/moho/issues/361) |
+| 2026-10-15 | New ENG-F28 (Source-like mouse look) in M2 wave 2, not a gate item: look turns every frame ahead of the tick that consumes it (ADR-0011 holds), raw by default, settings in the same feature | [ENG-F28](https://github.com/WrackedFella/moho/issues/373) |
