@@ -41,6 +41,20 @@ pub(crate) fn floor_mesh(y: f32) -> WorldMesh {
     )
 }
 
+/// A plane spanning x in [-10, 10] that runs from height `y_from` at `z_from` to height
+/// `y_to` at `z_to`, facing up. Equal heights make level ground.
+pub(crate) fn slope_mesh(z_from: f32, y_from: f32, z_to: f32, y_to: f32) -> WorldMesh {
+    quad_mesh(
+        &[
+            [-10.0, y_from, z_from],
+            [10.0, y_from, z_from],
+            [10.0, y_to, z_to],
+            [-10.0, y_to, z_to],
+        ],
+        &[0, 2, 1, 0, 3, 2],
+    )
+}
+
 /// A wall in the plane `z`, spanning x in [-10, 10] and y in [0, 10], facing -Z.
 pub(crate) fn wall_mesh(z: f32) -> WorldMesh {
     quad_mesh(
