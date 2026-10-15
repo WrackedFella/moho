@@ -2296,9 +2296,7 @@ mod enemy_tests {
     /// Low enough that the sight and shot rays at head height pass over it, high enough to
     /// stop a ray to the hide height: behind it, as seen from the player, is cover.
     const LOW_WALL: (Vec3, Vec3) = (Vec3::new(0.5, 0.0, 9.0), Vec3::new(9.0, 1.2, 9.2));
-    /// Behind `LOW_WALL`, on the side away from the player.
     const SHIELDED: Vec3 = Vec3::new(4.0, 0.0, 10.0);
-    /// Open ground nearer to the enemy than `SHIELDED`.
     const DECOY: Vec3 = Vec3::new(-2.0, 0.0, 10.0);
     /// Two shielded points near the enemies spawned at `ENEMY_SPAWN` and `NEIGHBOUR_SPAWN`:
     /// `NEAR_COVER` is the nearer to both.
@@ -2323,7 +2321,6 @@ mod enemy_tests {
         config
     }
 
-    /// A trigger pull at enemy `index`, turning the player to face it first.
     fn shoot_at(sim: &FpsSim, index: usize) -> FpsCommand {
         let at = sim
             .enemy_state(index)
@@ -2552,7 +2549,6 @@ mod enemy_tests {
     /// A wall near the player: walking east past it, the player leaves the sight of an enemy
     /// ten metres ahead at x = 1.1 or so, with the wall far from the enemy's way there.
     const SIDE_WALL: (Vec3, Vec3) = (Vec3::new(1.0, 0.0, 0.8), Vec3::new(9.0, 4.0, 1.0));
-    /// Roughly where the player was when last seen, on the ground plane.
     const LAST_SEEN: Vec3 = Vec3::new(1.1, 0.0, 0.0);
 
     /// The enemy ten metres ahead of the player, a waypoint beside it and a far one behind,

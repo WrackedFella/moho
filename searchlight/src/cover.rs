@@ -8,10 +8,8 @@ use crate::brain::{CoverOffer, EnemyTuning, flat_distance};
 use crate::shot::{ShotRay, resolve_shot};
 use crate::tag::SurfaceTag;
 
-/// Metres a ray advances past a character it started in or struck.
 const STEP_PAST_CHARACTER: f32 = 0.01;
 
-/// Where the player's eye is and the point on the player's body the enemies aim at.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Threat {
     pub eye: Vec3,

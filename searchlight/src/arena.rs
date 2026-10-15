@@ -149,7 +149,6 @@ pub struct Arena {
     pub enemy_spawns: Vec<Vec3>,
     /// The loop every enemy patrols, in order.
     pub route: Vec<Vec3>,
-    /// Floor points an enemy under fire may run to.
     pub covers: Vec<Vec3>,
 }
 

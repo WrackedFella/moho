@@ -103,21 +103,16 @@ pub enum Brain {
         seen_ticks: u32,
         /// Ticks until the enemy may fire again.
         cooldown: u32,
-        /// The cover point it fires from, if any.
         held: Option<usize>,
-        /// Where the target was last known to be.
         last_seen: Vec3,
     },
-    /// Running to a cover point without firing.
     Cover {
         next: usize,
         offer: CoverOffer,
-        /// Where the target was last known to be.
         last_seen: Vec3,
         /// Ticks spent running, this one included.
         ticks: u32,
     },
-    /// Walking to where the target was last seen.
     Chase {
         next: usize,
         last_seen: Vec3,
@@ -126,7 +121,6 @@ pub enum Brain {
     },
 }
 
-/// Everything one call of [`Brain::think`] reads.
 struct Tick<'a> {
     route: &'a [Vec3],
     percept: &'a Percept,
@@ -269,7 +263,6 @@ impl Tick<'_> {
 }
 
 impl Brain {
-    /// The cover point this brain holds or is running to.
     pub fn claim(&self) -> Option<usize> {
         match *self {
             Self::Cover { offer, .. } => Some(offer.index),
@@ -618,7 +611,6 @@ mod tests {
         offer_at(4, Vec3::new(0.0, 0.0, -30.0))
     }
 
-    /// Facing +Z at `position`, with no hurt and no offer.
     fn at(position: Vec3, target: Option<Vec3>) -> Percept {
         Percept {
             position,
