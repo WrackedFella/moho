@@ -156,11 +156,62 @@ mod tests {
 
     #[test]
     fn listener_right_is_the_orientation_x_axis() {
-        let listener = facing_south();
+        use std::f32::consts::{FRAC_PI_2, PI};
+        let rows = [
+            ("facing south", Quat::from_rotation_y(PI), Vec3::NEG_X),
+            ("facing east", Quat::from_rotation_y(-FRAC_PI_2), Vec3::Z),
+            (
+                "pitched straight down",
+                Quat::from_rotation_x(-FRAC_PI_2),
+                Vec3::X,
+            ),
+        ];
 
-        let right = listener.right();
+        for (name, orientation, expected) in rows {
+            let listener = Listener {
+                orientation,
+                ..Listener::default()
+            };
 
-        assert!((right - Vec3::NEG_X).length() < 1e-5, "{right}");
+            let right = listener.right();
+
+            assert!((right - expected).length() < 1e-5, "{name}: {right}");
+        }
+    }
+
+    #[test]
+    fn diagonal_sound_follows_the_cos_sin_law() {
+        use std::f32::consts::FRAC_PI_2;
+        let rows = [
+            (
+                "north-east",
+                Vec3::new(10.0, 0.0, -10.0),
+                Listener::default(),
+            ),
+            (
+                "right and up",
+                Vec3::new(10.0, 10.0, 0.0),
+                Listener::default(),
+            ),
+            (
+                "east, listener pitched straight down",
+                EAST * 10.0,
+                Listener {
+                    orientation: Quat::from_rotation_x(-FRAC_PI_2),
+                    ..Listener::default()
+                },
+            ),
+        ];
+        let expected = [(0.22801, 0.97366), (0.22801, 0.97366), (0.0, 1.0)];
+
+        for ((name, source, listener), (left, right)) in rows.into_iter().zip(expected) {
+            let gain = stereo_pan(&listener, source);
+
+            assert!(
+                (gain.left - left).abs() < 1e-4 && (gain.right - right).abs() < 1e-4,
+                "{name}: {gain:?}, want ({left}, {right})"
+            );
+        }
     }
 
     #[test]

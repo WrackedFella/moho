@@ -49,12 +49,16 @@ mod tests {
     use rodio::buffer::SamplesBuffer;
     use std::num::NonZero;
 
-    fn buffer(channels: u16, samples: Vec<f32>) -> SamplesBuffer {
+    fn buffer_at(channels: u16, rate: u32, samples: Vec<f32>) -> SamplesBuffer {
         SamplesBuffer::new(
             NonZero::new(channels).expect("non-zero channels"),
-            NonZero::new(44_100).expect("non-zero rate"),
+            NonZero::new(rate).expect("non-zero rate"),
             samples,
         )
+    }
+
+    fn buffer(channels: u16, samples: Vec<f32>) -> SamplesBuffer {
+        buffer_at(channels, 44_100, samples)
     }
 
     fn gain(left: f32, right: f32) -> StereoGain {
@@ -74,11 +78,18 @@ mod tests {
         let input = buffer(1, vec![0.5, -0.5, 1.0]);
         let source = StereoGainSource::new(input, gain(0.2, 0.8));
 
-        assert_eq!(source.channels().get(), 2);
-        assert_eq!(source.sample_rate().get(), 44_100);
-        assert_eq!(source.current_span_len(), Some(6));
         let out: Vec<f32> = source.collect();
         assert_samples(&out, &[0.1, 0.4, -0.1, -0.4, 0.2, 0.8]);
+    }
+
+    #[test]
+    fn reports_stereo_format_of_its_input_rate() {
+        let input = buffer_at(1, 48_000, vec![0.5, -0.5, 1.0]);
+        let source = StereoGainSource::new(input, gain(0.2, 0.8));
+
+        assert_eq!(source.channels().get(), 2);
+        assert_eq!(source.sample_rate().get(), 48_000);
+        assert_eq!(source.current_span_len(), Some(6));
     }
 
     #[test]

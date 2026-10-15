@@ -230,9 +230,9 @@ impl<O: AudioOutput> Drop for AudioSystem<O> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial::{Listener, MAX_AUDIBLE_DISTANCE, stereo_pan};
+    use crate::spatial::{Listener, MAX_AUDIBLE_DISTANCE};
     use crate::test_support::{RecordingOutput, assert_volume_eq, wav_bytes};
-    use glam::Vec3;
+    use glam::{Quat, Vec3};
 
     const CLICK: &str = "assets/audio/ui/button_click.mp3";
     const SOUND: &str = "sounds/boom.wav";
@@ -673,18 +673,33 @@ mod tests {
 
     #[test]
     fn positioned_sound_carries_its_pan() {
-        let (mut system, output) = system(full_volume());
-        system.set_listener(Listener::default());
-        let east = Vec3::new(10.0, 0.0, 0.0);
+        let listener = Listener {
+            position: Vec3::new(5.0, 0.0, 5.0),
+            orientation: Quat::from_rotation_y(std::f32::consts::PI),
+        };
+        let east = Vec3::new(15.0, 0.0, 5.0);
+        let voice_source = AudioSource::new(SOUND)
+            .with_category(AudioCategory::Voice)
+            .with_position(east.to_array());
+        let rows = [("play event", None), ("voice source", Some(voice_source))];
 
-        system.handle_event(play_at(SOUND, 1.0, east)).unwrap();
+        for (name, source) in rows {
+            let (mut system, output) = system(full_volume());
+            system.set_listener(listener);
 
-        let voices = output.voices();
-        assert_eq!(voices.len(), 1);
-        assert_eq!(voices[0].pan, Some(stereo_pan(&Listener::default(), east)));
-        let pan = voices[0].pan.expect("a positioned sound is panned");
-        assert!(pan.left.abs() < 1e-5, "{pan:?}");
-        assert!((pan.right - 1.0).abs() < 1e-5, "{pan:?}");
+            match source {
+                Some(source) => system.play_audio_source(&source).unwrap(),
+                None => system.handle_event(play_at(SOUND, 1.0, east)).unwrap(),
+            }
+
+            let voices = output.voices();
+            assert_eq!(voices.len(), 1, "{name}");
+            let pan = voices[0].pan.expect("a positioned sound is panned");
+            assert!(
+                (pan.left - 1.0).abs() < 1e-5 && pan.right.abs() < 1e-5,
+                "{name}: {pan:?}"
+            );
+        }
     }
 
     #[test]
@@ -697,26 +712,6 @@ mod tests {
         let voices = output.voices();
         assert_eq!(voices.len(), 1);
         assert_eq!(voices[0].pan, None);
-    }
-
-    #[test]
-    fn music_and_ui_with_a_position_have_no_pan() {
-        let east = [10.0, 0.0, 0.0];
-        let sources = [
-            AudioSource::background_music(MENU_MUSIC, 0.8).with_position(east),
-            AudioSource::ui_sound(CLICK, 0.8).with_position(east),
-        ];
-
-        for source in sources {
-            let (mut system, output) = system(full_volume());
-            system.set_listener(Listener::default());
-
-            system.play_audio_source(&source).unwrap();
-
-            let voices = output.voices();
-            assert_eq!(voices.len(), 1, "{:?}", source.category());
-            assert_eq!(voices[0].pan, None, "{:?}", source.category());
-        }
     }
 
     #[test]
@@ -737,6 +732,7 @@ mod tests {
             let voices = output.voices();
             assert_eq!(voices.len(), 1, "{:?}", source.category());
             assert_volume_eq(voices[0].volume, 0.8);
+            assert_eq!(voices[0].pan, None, "{:?}", source.category());
         }
     }
 }
