@@ -693,12 +693,12 @@ mod tests {
     use std::time::Duration;
 
     use glam::Vec3;
-    use moho_app::{HeadlessLoop, LoopConfig};
+    use moho_app::{GameClock, HeadlessLoop, LoopConfig};
     use moho_input::bindings::ActionBindings;
 
     use super::*;
     use crate::sim::Feedback;
-    use crate::test_support::{flat_floor, mag, press, test_config};
+    use crate::test_support::{arena_with, flat_floor, mag, press, test_config};
     use searchlight_rules::Rifle;
 
     fn game() -> FpsGame {
@@ -722,6 +722,88 @@ mod tests {
 
         assert_eq!(game.sim().pending_feedback(), [Feedback::Fired]);
         assert_eq!(game.sim().rifle().magazine().rounds(), 3);
+    }
+
+    fn arena_config() -> crate::sim::SimConfig {
+        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        config.eye_height = 0.72;
+        config.enemy.damage = 100;
+        config.enemy.reaction_ticks = 30;
+        config
+    }
+
+    fn arena_arena() -> Arc<crate::arena::Arena> {
+        arena_with(
+            &[],
+            Vec3::ZERO,
+            &[Vec3::new(0.0, 0.0, 10.0)],
+            &[Vec3::new(0.0, 0.0, 6.0)],
+        )
+    }
+
+    fn tick_with(game: &mut FpsGame, clock: &mut GameClock, command: &FpsCommand) {
+        let mut ctx = TickContext {
+            tick: 0,
+            tick_length: Duration::from_secs_f32(1.0 / 60.0),
+            clock,
+        };
+        game.tick(&mut ctx, command);
+    }
+
+    /// A game whose player walked toward an enemy and was shot dead there, with a status shown.
+    fn game_with_a_player_dead_away_from_the_spawn() -> (FpsGame, GameClock) {
+        let sim = FpsSim::start(arena_arena(), arena_config());
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = FpsGame::new(sim, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let walk = FpsCommand {
+            movement: moho_physics::CharacterCommand {
+                forward: 1.0,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..FpsCommand::default()
+        };
+        for _ in 0..600 {
+            tick_with(&mut game, &mut clock, &walk);
+            if game.sim().player_body().is_dead() {
+                break;
+            }
+        }
+        assert!(game.sim().player_body().is_dead(), "the player never died");
+        assert!(
+            game.sim().player().position.z > 0.5,
+            "the player never left the spawn"
+        );
+        game.stage.react(&Feedback::Dry, None);
+        assert!(!game.stage.status.is_empty());
+        (game, clock)
+    }
+
+    fn restart_command() -> FpsCommand {
+        FpsCommand {
+            restart: true,
+            ..FpsCommand::default()
+        }
+    }
+
+    #[test]
+    fn the_view_does_not_blend_from_the_death_position_on_the_restart_tick() {
+        let (mut game, mut clock) = game_with_a_player_dead_away_from_the_spawn();
+        let spawn = FpsSim::start(arena_arena(), arena_config()).player();
+
+        tick_with(&mut game, &mut clock, &restart_command());
+
+        assert_eq!(game.sim().player(), spawn);
+        assert_eq!(game.previous, spawn);
+    }
+
+    #[test]
+    fn restarting_clears_the_status_line() {
+        let (mut game, mut clock) = game_with_a_player_dead_away_from_the_spawn();
+
+        tick_with(&mut game, &mut clock, &restart_command());
+
+        assert_eq!(game.stage.status, "");
     }
 
     #[test]

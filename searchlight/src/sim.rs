@@ -1859,9 +1859,37 @@ mod enemy_tests {
         config.enemy.aim_error = 0.2;
         config.enemy.patrol_speed = 0.0;
         let untouched = Body::new(config.body);
+        let mut probe = FpsSim::start(arena.clone(), config.clone());
         let mut sim = FpsSim::start(arena, config);
 
         let ticks = run(&mut sim, &script(600, &[]));
+
+        // Replay the shooter's spread on a twin sim: the same seed gives the same shots.
+        let shooter = probe.targets[0].handle.expect("the shooter spawned");
+        let eye = probe.world.character(shooter).expect("alive").position
+            + Vec3::Y * probe.eye_height;
+        let aim = probe.player_aim_point();
+        let clipped = (0..count(&ticks, enemy_fired))
+            .filter(|_| {
+                let direction = probe.with_spread(aim - eye);
+                matches!(
+                    resolve_shot(
+                        &probe.world,
+                        ShotRay {
+                            origin: eye,
+                            direction,
+                            range: probe.enemy.sight_range,
+                            ignore: Some(shooter),
+                        },
+                    ),
+                    Some(Strike {
+                        tag: SurfaceTag::Part { target: 1, .. },
+                        ..
+                    })
+                )
+            })
+            .count();
+        assert!(clipped > 0, "no shot struck the bystander");
 
         assert!(
             count(&ticks, enemy_fired) > 100,
@@ -2138,6 +2166,28 @@ mod enemy_tests {
         let commands = script(300, &[0]);
         assert_eq!(run(&mut restarted, &commands), run(&mut fresh, &commands));
         assert_eq!(restarted.player(), fresh.player());
+    }
+
+    #[test]
+    fn a_dead_player_in_an_arena_sim_restarts_to_a_living_one() {
+        let mut sim = FpsSim::start(arena_with(&[], Vec3::ZERO, &[], &[]), config());
+        sim.player_body.hit(BodyPart::Torso, 1_000);
+        assert!(sim.player_body().is_dead());
+
+        sim.tick(&restart(), DT);
+
+        assert!(!sim.player_body().is_dead());
+    }
+
+    #[test]
+    fn a_dead_player_in_a_sim_built_without_an_arena_restarts_to_a_living_one() {
+        let mut sim = FpsSim::new(crate::test_support::flat_floor(), Vec3::ZERO, &[], config());
+        sim.player_body.hit(BodyPart::Torso, 1_000);
+        assert!(sim.player_body().is_dead());
+
+        sim.tick(&restart(), DT);
+
+        assert!(!sim.player_body().is_dead());
     }
 
     #[test]

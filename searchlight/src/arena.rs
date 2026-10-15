@@ -313,6 +313,36 @@ mod tests {
     }
 
     #[test]
+    fn a_waypoint_with_a_non_numeric_suffix_is_an_error_naming_it() {
+        let level = level_of(&[
+            "player_spawn",
+            "dummy_01",
+            "enemy_spawn_01",
+            "waypoint_01",
+            "waypoint_a",
+        ]);
+
+        let error = ArenaMarkers::from_level(&level).unwrap_err();
+
+        assert!(error.to_string().contains("waypoint_a"), "{error}");
+    }
+
+    #[test]
+    fn two_waypoints_with_the_same_number_are_an_error_naming_the_later_one() {
+        let level = level_of(&[
+            "player_spawn",
+            "dummy_01",
+            "enemy_spawn_01",
+            "waypoint_1",
+            "waypoint_01",
+        ]);
+
+        let error = ArenaMarkers::from_level(&level).unwrap_err();
+
+        assert!(error.to_string().contains("waypoint_01"), "{error}");
+    }
+
+    #[test]
     fn missing_or_duplicate_spawn_is_an_error_naming_it() {
         let none = level_of(&["dummy_01"]);
         let twice = level_of(&["player_spawn", "player_spawn", "dummy_01"]);
