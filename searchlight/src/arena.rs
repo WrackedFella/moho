@@ -11,7 +11,7 @@ use moho_render_api::{WorldMesh, WorldMeshId};
 use crate::tag::SurfaceTag;
 
 /// One nominal tick, enough for a step to index freshly added colliders.
-const SETTLE_DT: f32 = 1.0 / 60.0;
+pub(crate) const SETTLE_DT: f32 = 1.0 / 60.0;
 
 const PLAYER_SPAWN: &str = "player_spawn";
 const DUMMY_PREFIX: &str = "dummy_";
@@ -54,7 +54,9 @@ impl ArenaMarkers {
     ///
     /// # Errors
     /// [`ArenaError::MissingMarker`] naming `player_spawn` or `dummy_NN`;
-    /// [`ArenaError::DuplicateMarker`] naming `player_spawn`.
+    /// [`ArenaError::DuplicateMarker`] naming `player_spawn`;
+    /// [`ArenaError::MissingMarker`] naming `waypoint_NN` when there is an enemy spawn and
+    /// no waypoint to patrol.
     pub fn from_level(level: &Level) -> Result<Self, ArenaError> {
         let mut spawns = Vec::new();
         let mut dummies = Vec::new();
@@ -91,6 +93,11 @@ impl ArenaMarkers {
                 marker: format!("{DUMMY_PREFIX}NN"),
             });
         }
+        if !enemy_spawns.is_empty() && waypoints.is_empty() {
+            return Err(ArenaError::MissingMarker {
+                marker: format!("{WAYPOINT_PREFIX}NN"),
+            });
+        }
         Ok(Self {
             player_spawn,
             dummies,
@@ -104,7 +111,16 @@ impl ArenaMarkers {
 impl ArenaMarkers {
     /// The patrol loop: every `waypoint_NN` position, in numeric order of `NN`.
     pub fn patrol_route(&self) -> Vec<Vec3> {
-        todo!("sort the waypoints by their number")
+        let number = |marker: &LevelMarker| {
+            let digits = &marker.name[WAYPOINT_PREFIX.len()..];
+            (digits.len(), digits.to_owned())
+        };
+        let mut waypoints: Vec<&LevelMarker> = self.waypoints.iter().collect();
+        waypoints.sort_by_key(|marker| number(marker));
+        waypoints
+            .into_iter()
+            .map(|marker| marker.position)
+            .collect()
     }
 }
 
@@ -126,8 +142,25 @@ pub struct Arena {
 impl Arena {
     /// The arena `level` and its `markers` describe.
     pub fn from_level(level: &Level, markers: &ArenaMarkers) -> Self {
-        let _ = (level, markers);
-        todo!("collect meshes, spawns and the patrol route")
+        let positions = |list: &[LevelMarker]| list.iter().map(|marker| marker.position).collect();
+        Self {
+            meshes: level.meshes.iter().map(|m| m.mesh.clone()).collect(),
+            player_spawn: markers.player_spawn.position,
+            dummy_spawns: positions(&markers.dummies),
+            enemy_spawns: positions(&markers.enemy_spawns),
+            route: markers.patrol_route(),
+        }
+    }
+
+    /// A physics world whose static colliders are this arena's meshes, tagged
+    /// [`SurfaceTag::World`], stepped once so they are queryable.
+    pub fn physics_world(&self) -> PhysicsWorld {
+        let mut world = PhysicsWorld::new();
+        for (index, mesh) in self.meshes.iter().enumerate() {
+            world.set_world_mesh(arena_mesh_id(index), mesh, SurfaceTag::World.into());
+        }
+        world.step(SETTLE_DT);
+        world
     }
 }
 

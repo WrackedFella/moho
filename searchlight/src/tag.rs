@@ -26,6 +26,9 @@ const PART_BASE: u32 = WORLD + 1;
 /// Bits of a part tag that hold the part's index; the target number sits above them.
 const PART_BITS: u32 = 3;
 
+/// Engine tag of the player's first part, above every target part tag.
+const PLAYER_BASE: u32 = PART_BASE + (1 << (16 + PART_BITS));
+
 /// Every part, at the index its tag stores.
 const PARTS: [BodyPart; 6] = [
     BodyPart::Head,
@@ -48,7 +51,7 @@ impl From<SurfaceTag> for HitTag {
     fn from(tag: SurfaceTag) -> Self {
         match tag {
             SurfaceTag::World => HitTag(WORLD),
-            SurfaceTag::Player(_) => todo!("encode the player's parts"),
+            SurfaceTag::Player(part) => HitTag(PLAYER_BASE + part_index(part)),
             SurfaceTag::Part { target, part } => {
                 HitTag(PART_BASE + ((u32::from(target) << PART_BITS) | part_index(part)))
             }
@@ -62,6 +65,12 @@ impl TryFrom<HitTag> for SurfaceTag {
     fn try_from(tag: HitTag) -> Result<Self, Self::Error> {
         if tag.0 == WORLD {
             return Ok(SurfaceTag::World);
+        }
+        if let Some(index) = tag.0.checked_sub(PLAYER_BASE) {
+            return PARTS
+                .get(index as usize)
+                .map(|&part| SurfaceTag::Player(part))
+                .ok_or(UnknownTag(tag.0));
         }
         let packed = tag.0 - PART_BASE;
         let part = PARTS.get((packed & ((1 << PART_BITS) - 1)) as usize);

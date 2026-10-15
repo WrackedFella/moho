@@ -30,6 +30,7 @@ impl Action for FpsAction {
         FpsAction::Fire,
         FpsAction::Reload,
         FpsAction::CheckMagazine,
+        FpsAction::Restart,
     ];
 
     fn name(self) -> &'static str {
@@ -56,7 +57,7 @@ impl Action for FpsAction {
             FpsAction::Fire => &[Binding::Mouse(MouseButton::Left)],
             FpsAction::Reload => &[Binding::Key(Key::R)],
             FpsAction::CheckMagazine => &[Binding::Key(Key::C)],
-            FpsAction::Restart => &[],
+            FpsAction::Restart => &[Binding::Key(Key::Enter)],
         }
     }
 }
@@ -96,7 +97,7 @@ impl FpsCommand {
             fire: frame.pressed(FpsAction::Fire),
             reload: frame.pressed(FpsAction::Reload),
             check: frame.pressed(FpsAction::CheckMagazine),
-            restart: false,
+            restart: frame.pressed(FpsAction::Restart),
         }
     }
 }

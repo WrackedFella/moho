@@ -61,20 +61,30 @@ pub enum Edge {
 /// The screen edge to flash for a shot that began at `from`, for a player standing at
 /// `player` and facing `yaw` (0 faces +Z; the player's right at yaw 0 is -X).
 pub fn hit_edge(player: Vec3, yaw: f32, from: Vec3) -> Edge {
-    let _ = (player, yaw, from);
-    todo!("pick the quadrant of the bearing to the shooter")
+    let offset = from - player;
+    let forward = offset.x * yaw.sin() + offset.z * yaw.cos();
+    let right = -offset.x * yaw.cos() + offset.z * yaw.sin();
+    if forward.abs() >= right.abs() {
+        if forward >= 0.0 {
+            Edge::Front
+        } else {
+            Edge::Behind
+        }
+    } else if right > 0.0 {
+        Edge::Right
+    } else {
+        Edge::Left
+    }
 }
 
 /// The window-title text for the player's health.
 pub fn health_text(health: u32, max_health: u32) -> String {
-    let _ = (health, max_health);
-    todo!("HP n/max")
+    format!("HP {health}/{max_health}")
 }
 
 /// What the dead player reads in the title, or `None` while alive.
 pub fn death_text(dead: bool) -> Option<&'static str> {
-    let _ = dead;
-    todo!("the restart prompt")
+    dead.then_some("Dead - press Enter to restart")
 }
 
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
@@ -87,8 +97,11 @@ pub struct Overlay {
 
 /// The tint over a `screen`-sized frame while the player is dead, or `None` while alive.
 pub fn death_overlay(dead: bool, screen: [u32; 2]) -> Option<Overlay> {
-    let _ = (dead, screen);
-    todo!("a translucent full-screen rect")
+    dead.then(|| Overlay {
+        min: [0.0, 0.0],
+        max: [screen[0] as f32, screen[1] as f32],
+        rgba: [120, 0, 0, 140],
+    })
 }
 
 #[cfg(test)]
