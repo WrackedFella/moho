@@ -163,6 +163,7 @@ pub(crate) fn arena_with(
         dummy_spawns: Vec::new(),
         enemy_spawns: enemies.to_vec(),
         route: route.to_vec(),
+        covers: Vec::new(),
     })
 }
 
