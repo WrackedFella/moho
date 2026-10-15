@@ -108,8 +108,9 @@ mod tests {
         let input = buffer(1, vec![0.5, -0.5, 1.0]);
         let source = StereoGainSource::new(input, gain(0.2, 0.8));
 
-        let out: Vec<f32> = source.collect();
-        assert_samples(&out, &[0.1, 0.4, -0.1, -0.4, 0.2, 0.8]);
+        let expected = [0.1, 0.4, -0.1, -0.4, 0.2, 0.8];
+        let out: Vec<f32> = source.take(expected.len() + 1).collect();
+        assert_samples(&out, &expected);
     }
 
     #[test]
@@ -123,14 +124,23 @@ mod tests {
     }
 
     #[test]
+    fn total_duration_is_the_inputs_duration() {
+        let input = buffer_at(1, 48_000, vec![0.5, -0.5, 1.0]);
+        let source = StereoGainSource::new(input, gain(0.2, 0.8));
+
+        assert_eq!(source.total_duration(), Some(Duration::from_nanos(62_500)));
+    }
+
+    #[test]
     fn stereo_input_is_averaged_to_mono() {
         let input = buffer(2, vec![0.2, 0.6, 1.0, -1.0]);
         let source = StereoGainSource::new(input, gain(0.5, 1.0));
 
         assert_eq!(source.channels().get(), 2);
         assert_eq!(source.current_span_len(), Some(4));
-        let out: Vec<f32> = source.collect();
-        assert_samples(&out, &[0.2, 0.4, 0.0, 0.0]);
+        let expected = [0.2, 0.4, 0.0, 0.0];
+        let out: Vec<f32> = source.take(expected.len() + 1).collect();
+        assert_samples(&out, &expected);
     }
 
     #[test]
