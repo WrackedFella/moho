@@ -193,6 +193,10 @@ impl App {
             action_map::handle_window_event(&mut self.input.actions, &event);
         }
 
+        if self.take_escape_before_ui(&event) {
+            return;
+        }
+
         if self.dispatcher.dispatch(&event) {
             return;
         }

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
-use winit::event::{DeviceEvent, ElementState, KeyEvent};
+use winit::event::{DeviceEvent, ElementState, KeyEvent, WindowEvent};
 mod input_dispatcher;
 use crate::input_dispatcher::InputDispatcher;
 mod input_event;
@@ -340,8 +340,37 @@ impl App {
         }
     }
 
+    /// Whether Escape pauses or resumes here, so it must reach `escape_pressed` before
+    /// the UI: egui swallows it once a pause-window button has keyboard focus (Tab).
     fn escape_skips_the_ui(&self) -> bool {
-        false
+        use crate::game_state::GameState;
+        match self.game_state {
+            GameState::Playing => true,
+            GameState::Paused => self.home_screen_showing(),
+            GameState::Menu | GameState::ConsoleOpen => false,
+        }
+    }
+
+    /// Runs a pausing or resuming Escape press ahead of the UI; true when it did.
+    fn take_escape_before_ui(&mut self, event: &WindowEvent) -> bool {
+        let WindowEvent::KeyboardInput {
+            event:
+                KeyEvent {
+                    physical_key: PhysicalKey::Code(KeyCode::Escape),
+                    state: ElementState::Pressed,
+                    repeat: false,
+                    ..
+                },
+            ..
+        } = event
+        else {
+            return false;
+        };
+        if !self.escape_skips_the_ui() {
+            return false;
+        }
+        self.escape_pressed();
+        true
     }
 
     /// Whether the current state's home screen (the pause window while paused) is
