@@ -211,11 +211,11 @@ impl Cube {
             [0.5, 0.5, 0.5],   // 10: front-right
             [0.5, 0.5, -0.5],  // 11: back-right
             // -Y face (bottom) - normal [0,-1,0] pointing down
-            // Viewed from -Y (below), CCW order: front-left, front-right, back-right, back-left
+            // Viewed from -Y (below), CCW order: front-left, back-left, back-right, front-right
             [-0.5, -0.5, 0.5],  // 12: front-left
-            [0.5, -0.5, 0.5],   // 13: front-right
+            [-0.5, -0.5, -0.5], // 13: back-left
             [0.5, -0.5, -0.5],  // 14: back-right
-            [-0.5, -0.5, -0.5], // 15: back-left
+            [0.5, -0.5, 0.5],   // 15: front-right
             // +Z face (front) - normal [0,0,1] pointing forward
             // Viewed from +Z (front), CCW order: bottom-left, bottom-right, top-right, top-left
             [-0.5, -0.5, 0.5], // 16: bottom-left
@@ -265,16 +265,14 @@ impl Cube {
         ];
 
         // Indices: 2 triangles per face, 6 faces = 36 indices
-        // Triangles wind CCW from outside. Vertices 12-15 (-Y face) run clockwise from
-        // outside, so that face uses (0,2,1) and (0,3,2) instead of (0,1,2) and (0,2,3).
+        // Vertices are ordered CCW, so indices use standard pattern (0,1,2) and (0,2,3)
         let indices: Vec<u32> = vec![
-            // +X face (vertices 0-3, ordered CCW from outside)
-            0, 1, 2, 0, 2, 3, // -X face (vertices 4-7, ordered CCW from outside)
-            4, 5, 6, 4, 6, 7, // +Y face (vertices 8-11, ordered CCW from outside)
-            8, 9, 10, 8, 10, 11, // -Y face (vertices 12-15, ordered CCW from outside)
-            12, 14, 13, 12, 15, 14, // +Z face (vertices 16-19, ordered CCW from outside)
-            16, 17, 18, 16, 18, 19, // -Z face (vertices 20-23, ordered CCW from outside)
-            20, 21, 22, 20, 22, 23,
+            0, 1, 2, 0, 2, 3, // +X
+            4, 5, 6, 4, 6, 7, // -X
+            8, 9, 10, 8, 10, 11, // +Y
+            12, 13, 14, 12, 14, 15, // -Y
+            16, 17, 18, 16, 18, 19, // +Z
+            20, 21, 22, 20, 22, 23, // -Z
         ];
         (verts, normals, indices)
     }
