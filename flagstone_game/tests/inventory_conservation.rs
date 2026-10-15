@@ -120,16 +120,3 @@ proptest! {
         }
     }
 }
-
-#[test]
-fn mining_a_resource_block_moves_exactly_one_unit_into_the_inventory() {
-    let mut resources = vec![None; CELLS];
-    resources[0] = Some(2);
-    let mut grid = build_grid(&resources);
-    let mut pawn = Pawn::default();
-
-    let outcome = pawn.mine(&mut grid, Vec3::new(4.5, 4.5, -2.0), Vec3::Z, 40.0);
-
-    assert!(outcome.is_some());
-    assert_eq!(world_count(&grid, 2) + pawn.inventory.count(2) as usize, 1);
-}

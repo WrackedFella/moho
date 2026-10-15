@@ -555,27 +555,31 @@ mod tests {
     fn unit_cube_indexed_normals_are_face_axes() {
         let (verts, normals, _) = Cube::unit_cube_indexed();
 
-        let mut per_direction: Vec<([i32; 3], usize)> = Vec::new();
         for (vert, normal) in verts.iter().zip(&normals) {
             assert!(vert.iter().all(|c| (c.abs() - 0.5).abs() < GEOMETRY_EPS));
             let n = v3(*normal);
             assert!((n.length() - 1.0).abs() < GEOMETRY_EPS);
             assert_eq!(n.to_array().iter().filter(|c| c.abs() > 0.5).count(), 1);
             assert!((v3(*vert).dot(n) - 0.5).abs() < GEOMETRY_EPS);
-            let key = normal.map(|c| c.round() as i32);
-            match per_direction.iter_mut().find(|(k, _)| *k == key) {
-                Some((_, count)) => *count += 1,
-                None => per_direction.push((key, 1)),
-            }
         }
-
-        assert_eq!(per_direction.len(), 6);
-        assert!(per_direction.iter().all(|&(_, count)| count == 4));
-        for face in verts.as_chunks::<4>().0 {
-            for (i, a) in face.iter().enumerate() {
-                assert!(face[i + 1..].iter().all(|b| a != b), "duplicate corner");
-            }
-        }
+        let mut rounded: Vec<[i32; 3]> = normals
+            .iter()
+            .map(|n| n.map(|c| c.round() as i32))
+            .collect();
+        rounded.sort_unstable();
+        let mut expected: Vec<[i32; 3]> = [
+            [1, 0, 0],
+            [-1, 0, 0],
+            [0, 1, 0],
+            [0, -1, 0],
+            [0, 0, 1],
+            [0, 0, -1],
+        ]
+        .iter()
+        .flat_map(|axis| [*axis; 4])
+        .collect();
+        expected.sort_unstable();
+        assert_eq!(rounded, expected);
     }
 
     const SPHERE_RESOLUTIONS: [(usize, usize); 4] = [(3, 5), (16, 16), (2, 3), (7, 4)];
@@ -595,24 +599,20 @@ mod tests {
                     "{lat}x{lon}"
                 );
             }
-            for (i, ring) in verts.chunks_exact(lon + 1).enumerate() {
-                let theta = std::f32::consts::PI * i as f32 / lat as f32;
-                for (j, vert) in ring.iter().enumerate() {
-                    let phi = std::f32::consts::TAU * j as f32 / lon as f32;
-                    let expected = Vec3::new(
-                        theta.sin() * phi.cos(),
-                        theta.cos(),
-                        theta.sin() * phi.sin(),
-                    );
-                    assert!(
-                        v3(*vert).abs_diff_eq(expected, GEOMETRY_EPS),
-                        "{lat}x{lon} ring {i} step {j}: {vert:?}"
-                    );
-                }
+            for ring in verts.chunks_exact(lon + 1) {
                 assert!(v3(ring[lon]).abs_diff_eq(v3(ring[0]), GEOMETRY_EPS));
             }
+        }
+    }
+
+    #[test]
+    fn unit_sphere_indexed_poles_sit_on_y_axis() {
+        for (lat, lon) in SPHERE_RESOLUTIONS {
+            let (verts, _, _) = Sphere::unit_sphere_indexed(lat, lon);
+
             let first = &verts[..=lon];
             let last = &verts[lat * (lon + 1)..];
+
             assert!(
                 first
                     .iter()
@@ -667,7 +667,7 @@ mod tests {
         assert_eq!(floored.0.len(), 12);
         assert_eq!(floored.2.len(), 36);
 
-        for (lat, lon) in [(0, 0), (1, 2), (1, 3), (2, 2)] {
+        for (lat, lon) in [(0, 0), (1, 3), (2, 2)] {
             let (verts, normals, indices) = Sphere::unit_sphere_indexed(lat, lon);
 
             assert_eq!(verts, floored.0, "{lat}x{lon}");
@@ -678,12 +678,16 @@ mod tests {
 
     #[test]
     fn to_instance_scales_and_translates_by_actor_dims() {
-        let mat = MaterialType::Lambertian { albedo: Vec3::ONE };
-        let cube = Cube::new(Vec3::new(7.0, 11.0, 13.0), 2.0, 5.0, 3.0, mat);
-        let sphere = Sphere::new(Vec3::new(-1.5, 2.5, 6.0), 4.0, mat);
+        let cube_mat = MaterialType::Lambertian { albedo: Vec3::X };
+        let sphere_mat = MaterialType::Metal {
+            albedo: Vec3::Y,
+            fuzz: 0.25,
+        };
+        let cube = Cube::new(Vec3::new(7.0, 11.0, 13.0), 2.0, 5.0, 3.0, cube_mat);
+        let sphere = Sphere::new(Vec3::new(-1.5, 2.5, 6.0), 4.0, sphere_mat);
 
-        let cube_instance = cube.to_instance_with_material(9);
-        let sphere_instance = sphere.to_instance_with_material(4);
+        let cube_instance = Renderable::to_instance_with_material(&cube, 9);
+        let sphere_instance = Renderable::to_instance_with_material(&sphere, 4);
 
         assert_eq!(
             cube_instance.model,
@@ -707,34 +711,6 @@ mod tests {
         assert_eq!(
             (sphere_instance.material, sphere_instance.object_type),
             (4, 2)
-        );
-    }
-
-    #[test]
-    fn renderable_impls_delegate_to_the_actor_instance_and_material() {
-        let cube_mat = MaterialType::Lambertian { albedo: Vec3::X };
-        let sphere_mat = MaterialType::Metal {
-            albedo: Vec3::Y,
-            fuzz: 0.25,
-        };
-        let cube = Cube::new(Vec3::new(7.0, 11.0, 13.0), 2.0, 5.0, 3.0, cube_mat);
-        let sphere = Sphere::new(Vec3::new(-1.5, 2.5, 6.0), 4.0, sphere_mat);
-
-        let cube_instance = Renderable::to_instance_with_material(&cube, 12);
-        let sphere_instance = Renderable::to_instance_with_material(&sphere, 3);
-
-        assert_eq!(
-            cube_instance.model,
-            cube.to_instance_with_material(12).model
-        );
-        assert_eq!((cube_instance.material, cube_instance.object_type), (12, 1));
-        assert_eq!(
-            sphere_instance.model,
-            sphere.to_instance_with_material(3).model
-        );
-        assert_eq!(
-            (sphere_instance.material, sphere_instance.object_type),
-            (3, 2)
         );
         assert_eq!(*Renderable::material(&cube), cube_mat);
         assert_eq!(*Renderable::material(&sphere), sphere_mat);

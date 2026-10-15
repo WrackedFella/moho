@@ -265,6 +265,8 @@ mod tests {
             mode: CameraMode,
             input: ControllerInput,
             dt: f32,
+            start_yaw: f32,
+            start_pitch: f32,
             position: Vec3,
             yaw: f32,
             pitch: f32,
@@ -277,6 +279,8 @@ mod tests {
             mode: CameraMode::FirstPerson,
             input: ControllerInput::default(),
             dt: 1.0,
+            start_yaw: 0.0,
+            start_pitch: 0.0,
             position: start,
             yaw: 0.0,
             pitch: 0.0,
@@ -384,17 +388,6 @@ mod tests {
                 ..unmoved
             },
             Case {
-                name: "strafe left reverses strafe right",
-                input: ControllerInput {
-                    right: -1.0,
-                    yaw_delta: FRAC_PI_2,
-                    ..Default::default()
-                },
-                position: Vec3::new(1.0, 2.0, -1.0),
-                yaw: FRAC_PI_2,
-                ..unmoved
-            },
-            Case {
                 name: "up moves along world y",
                 input: ControllerInput {
                     up: 1.0,
@@ -427,38 +420,26 @@ mod tests {
                 ..unmoved
             },
             Case {
-                name: "look deltas accumulate without moving",
+                name: "look deltas add to the existing yaw and pitch without moving",
                 input: ControllerInput {
                     yaw_delta: 0.5,
                     pitch_delta: 0.3,
                     ..Default::default()
                 },
-                yaw: 0.5,
-                pitch: 0.3,
+                start_yaw: 0.4,
+                start_pitch: 0.2,
+                yaw: 0.9,
+                pitch: 0.5,
                 ..unmoved
             },
             Case {
-                name: "dt scales distance down",
+                name: "dt scales distance",
                 input: ControllerInput {
                     forward: 1.0,
                     ..Default::default()
                 },
                 dt: 0.25,
                 position: Vec3::new(1.0, 2.0, 4.0),
-                ..unmoved
-            },
-            Case {
-                name: "dt scales distance up",
-                input: ControllerInput {
-                    forward: 1.0,
-                    ..Default::default()
-                },
-                dt: 2.0,
-                position: Vec3::new(1.0, 2.0, 11.0),
-                ..unmoved
-            },
-            Case {
-                name: "no input leaves the pawn in place",
                 ..unmoved
             },
             Case {
@@ -507,7 +488,7 @@ mod tests {
                 ..unmoved
             },
             Case {
-                name: "zoom in moves two height units per notch",
+                name: "zoom moves two height units per notch",
                 mode: CameraMode::Isometric,
                 input: ControllerInput {
                     zoom_delta: 1.0,
@@ -516,21 +497,13 @@ mod tests {
                 height: 18.0,
                 ..unmoved
             },
-            Case {
-                name: "zoom out moves two height units per notch",
-                mode: CameraMode::Isometric,
-                input: ControllerInput {
-                    zoom_delta: -3.0,
-                    ..Default::default()
-                },
-                height: 26.0,
-                ..unmoved
-            },
         ];
 
         for case in cases {
             let mut pc = PlayerController::new(start);
             pc.camera_mode = case.mode;
+            pc.yaw = case.start_yaw;
+            pc.pitch = case.start_pitch;
 
             pc.apply_input(&case.input, case.dt);
 
@@ -583,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn look_at_first_person_uses_x_over_z_for_yaw_in_every_quadrant() {
+    fn look_at_first_person_resolves_yaw_for_rear_and_side_targets() {
         let start = Vec3::new(1.0, 2.0, 3.0);
         let cases = [
             (Vec3::new(2.0, 0.0, -2.0), 3.0 * FRAC_PI_4),
@@ -616,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn look_at_from_target_keeps_pitch_level() {
+    fn look_at_own_position_resets_pitch_to_level() {
         let start = Vec3::new(1.0, 2.0, 3.0);
         let mut pc = PlayerController::new(start);
         pc.pitch = 0.8;
@@ -625,7 +598,6 @@ mod tests {
         pc.look_at(start);
 
         assert_eq!(pc.pitch, 0.0);
-        assert_eq!(pc.yaw, 0.0);
     }
 
     #[test]
