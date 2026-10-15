@@ -4,7 +4,6 @@
 //! - Menu state rendering based on game state
 //! - Console overlay rendering
 //! - Progress overlay rendering
-//! - Pause overlay rendering
 use crate::adapter::ProgressState;
 use crate::app_state::GameState;
 use crate::screens::MenuAction;
@@ -40,11 +39,7 @@ pub fn render_game_state(
         }
         GameState::Paused => {
             render_overlays(ui, ui_state);
-            render_pause_overlay(ui);
-            MenuRenderResult {
-                actions: Vec::new(),
-                hovered_key: None,
-            }
+            render_menu(ui, ui_state)
         }
         GameState::Playing => {
             render_overlays(ui, ui_state);
@@ -92,16 +87,6 @@ fn render_console(ui: &mut egui::Ui, ui_state: &mut UiStateManager, event_bus: &
 
     // Process console action through event routing
     super::event_routing::process_console_action(console_action, event_bus);
-}
-
-/// Render pause overlay (simple centered message)
-fn render_pause_overlay(ui: &mut egui::Ui) {
-    egui::CentralPanel::default().show(ui, |ui| {
-        ui.centered_and_justified(|ui| {
-            ui.heading("Paused");
-            ui.label("Press ESC to resume");
-        });
-    });
 }
 
 /// Render progress overlay if present
@@ -243,12 +228,32 @@ mod tests {
     }
 
     #[test]
+    fn paused_returns_the_actions_of_the_active_screen() {
+        let ctx = egui::Context::default();
+        let mut ui_state = menu_with_button(true);
+        for _ in 0..2 {
+            run_frame(&ctx, &mut ui_state, GameState::Paused, Vec::new());
+        }
+
+        let (_, result) = run_frame(
+            &ctx,
+            &mut ui_state,
+            GameState::Paused,
+            click_at(egui::pos2(18.0, 18.0)),
+        );
+
+        assert_eq!(result.actions, vec![MenuAction::Exit]);
+    }
+
+    #[test]
     fn render_game_state_by_state() {
         let ctx = egui::Context::default();
         let mut ui_state = UiStateManager::new(moho_core::prefs::Prefs::default());
 
         let (playing, playing_result) =
             run_frame(&ctx, &mut ui_state, GameState::Playing, Vec::new());
+        assert!(ui_state.show_screen("pause"));
+        run_frame(&ctx, &mut ui_state, GameState::Paused, Vec::new());
         let (paused, paused_result) = run_frame(&ctx, &mut ui_state, GameState::Paused, Vec::new());
 
         assert!(

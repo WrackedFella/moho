@@ -5,15 +5,32 @@
 //! - Audio event emission
 //! - Console action processing
 //! - Background music start/stop decisions for the main menu
+use crate::GameState;
 use crate::UiAudioEvent;
 use crate::screens::MenuAction;
 use moho_core::EventBus;
 
 /// Process a menu action and publish corresponding events to the event bus
-pub fn process_menu_action(action: &MenuAction, event_bus: &EventBus) {
+pub fn process_menu_action(action: &MenuAction, game_state: GameState, event_bus: &EventBus) {
     use moho_core::events::UiEvent as CoreUiEvent;
 
     match action {
+        MenuAction::Back => {
+            emit_audio_event(event_bus, UiAudioEvent::MenuNavigate);
+            if let Some(home) = game_state.home_screen() {
+                event_bus.publish(CoreUiEvent::MenuShown {
+                    name: home.to_string(),
+                });
+            }
+        }
+        MenuAction::Resume => {
+            emit_audio_event(event_bus, UiAudioEvent::Confirm);
+            event_bus.publish(CoreUiEvent::ResumeRequested);
+        }
+        MenuAction::ExitToMainMenu => {
+            emit_audio_event(event_bus, UiAudioEvent::ButtonClick);
+            event_bus.publish(CoreUiEvent::MainMenuRequested);
+        }
         MenuAction::LoadScene(path) => {
             emit_audio_event(event_bus, UiAudioEvent::Confirm);
             event_bus.publish(CoreUiEvent::LoadSceneRequested { path: path.clone() });
@@ -241,7 +258,7 @@ mod tests {
                 let _ = tx.send(event.clone());
             });
 
-            process_menu_action(&action, &bus);
+            process_menu_action(&action, GameState::Menu, &bus);
 
             let published = rx
                 .recv_timeout(std::time::Duration::from_millis(100))
@@ -265,6 +282,80 @@ mod tests {
     }
 
     #[test]
+    fn back_goes_to_the_home_screen_of_the_state() {
+        use moho_core::events::{AudioEvent, UiEvent};
+
+        let rows = [(GameState::Paused, "pause"), (GameState::Menu, "start")];
+
+        for (state, home) in rows {
+            let bus = EventBus::new();
+            let ui = record::<UiEvent>(&bus);
+            let audio = record::<AudioEvent>(&bus);
+
+            process_menu_action(&MenuAction::Back, state, &bus);
+
+            let shown: Vec<_> = ui.try_iter().collect();
+            assert!(
+                matches!(shown.as_slice(), [UiEvent::MenuShown { name }] if name == home),
+                "{state:?}: expected MenuShown {home:?}, got {shown:?}"
+            );
+            let sounds: Vec<_> = audio.try_iter().collect();
+            assert!(
+                matches!(sounds.as_slice(), [AudioEvent::MenuNavigate]),
+                "{state:?}: audio {sounds:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn back_in_a_state_without_a_home_screen_publishes_no_menu() {
+        use moho_core::events::UiEvent;
+
+        for state in [GameState::Playing, GameState::ConsoleOpen] {
+            let bus = EventBus::new();
+            let ui = record::<UiEvent>(&bus);
+
+            process_menu_action(&MenuAction::Back, state, &bus);
+
+            let shown: Vec<_> = ui.try_iter().collect();
+            assert!(
+                shown
+                    .iter()
+                    .all(|e| !matches!(e, UiEvent::MenuShown { .. })),
+                "{state:?}: unexpected {shown:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn resume_and_exit_to_main_menu_publish_their_events() {
+        use moho_core::events::UiEvent;
+
+        type ExpectedEvent = fn(&UiEvent) -> bool;
+        let rows: [(MenuAction, ExpectedEvent); 2] = [
+            (MenuAction::Resume, |e| {
+                matches!(e, UiEvent::ResumeRequested)
+            }),
+            (MenuAction::ExitToMainMenu, |e| {
+                matches!(e, UiEvent::MainMenuRequested)
+            }),
+        ];
+
+        for (action, matches_expected) in rows {
+            let bus = EventBus::new();
+            let ui = record::<UiEvent>(&bus);
+
+            process_menu_action(&action, GameState::Paused, &bus);
+
+            let published: Vec<_> = ui.try_iter().collect();
+            assert!(
+                matches!(published.as_slice(), [e] if matches_expected(e)),
+                "{action:?}: unexpected {published:?}"
+            );
+        }
+    }
+
+    #[test]
     fn generate_world_carries_the_typed_name() {
         use moho_core::events::UiEvent as CoreUiEvent;
         let bus = EventBus::new();
@@ -278,7 +369,7 @@ mod tests {
             initial_time_of_day: 6.0,
         };
 
-        process_menu_action(&MenuAction::GenerateWorld(spec), &bus);
+        process_menu_action(&MenuAction::GenerateWorld(spec), GameState::Menu, &bus);
 
         let names: Vec<_> = rx
             .try_iter()
@@ -511,7 +602,7 @@ mod tests {
             let bus = EventBus::new();
             let ui = record::<UiEvent>(&bus);
 
-            process_menu_action(&MenuAction::SettingsSaved(prefs), &bus);
+            process_menu_action(&MenuAction::SettingsSaved(prefs), GameState::Menu, &bus);
 
             let published: Vec<_> = ui.try_iter().collect();
             assert_eq!(published.len(), 2, "events: {published:?}");
@@ -536,7 +627,7 @@ mod tests {
             let ui = record::<UiEvent>(&bus);
             let audio = record::<AudioEvent>(&bus);
 
-            process_menu_action(&MenuAction::Close, &bus);
+            process_menu_action(&MenuAction::Close, GameState::Menu, &bus);
 
             let ui_events: Vec<_> = ui.try_iter().collect();
             assert!(ui_events.is_empty(), "events: {ui_events:?}");

@@ -15,6 +15,12 @@ pub enum MenuAction {
     GenerateWorld(WorldSpec),
     Exit,
     ShowMenu(String),
+    /// Return to the current state's home screen
+    Back,
+    /// Resume play from the pause window
+    Resume,
+    /// Leave the world for the main menu
+    ExitToMainMenu,
     Close,
     SettingsSaved(Prefs),
 }

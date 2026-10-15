@@ -193,6 +193,10 @@ impl App {
             action_map::handle_window_event(&mut self.input.actions, &event);
         }
 
+        if self.take_escape_before_ui(&event) {
+            return;
+        }
+
         if self.dispatcher.dispatch(&event) {
             return;
         }
@@ -303,6 +307,12 @@ impl moho_app::Game for App {
             self.autosave(ctx.clock(), ctx.renderer());
             ctx.request_exit();
             return;
+        }
+
+        if self.main_menu_requested {
+            self.main_menu_requested = false;
+            self.autosave(ctx.clock(), ctx.renderer());
+            self.show_menu();
         }
 
         let clock = ctx.clock();
@@ -1263,6 +1273,305 @@ mod tests {
                 crate::save::read_scene_and_metadata(app.saves_dir.join("scene.bin"))
                     .expect("autosave is readable");
             assert_eq!(spec.initial_time_of_day, 17.5);
+        }
+    }
+
+    mod pause {
+        use super::*;
+        use moho_core::events::UiEvent;
+        use std::sync::{Arc, Mutex};
+        use winit::event::DeviceEvent;
+
+        fn noon() -> GameClock {
+            GameClock::new(12.0, 600.0, 420.0)
+        }
+
+        fn attach_adapter(app: &mut App) -> Arc<Mutex<flagstone_ui::EguiAdapter>> {
+            let adapter = Arc::new(Mutex::new(flagstone_ui::EguiAdapter::new(
+                None,
+                app.event_bus.clone(),
+                app.prefs.clone(),
+            )));
+            app.ui_adapter = Some(adapter.clone());
+            adapter
+        }
+
+        fn screen_shown(adapter: &Arc<Mutex<flagstone_ui::EguiAdapter>>) -> Option<String> {
+            adapter
+                .lock()
+                .expect("adapter lock")
+                .active_screen_name()
+                .map(str::to_owned)
+        }
+
+        fn publish_ui(app: &mut App, clock: &mut GameClock, event: UiEvent) {
+            app.event_bus.publish(event);
+            app.event_bus.process_deferred();
+            EventProcessor::new().process_ui_events(app, clock);
+        }
+
+        fn first_person_app() -> App {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            app
+        }
+
+        /// Records every scene load the UI requests on `app`'s bus.
+        fn record_loads(app: &App) -> Arc<Mutex<Vec<std::path::PathBuf>>> {
+            let loads = Arc::new(Mutex::new(Vec::new()));
+            let sink = Arc::clone(&loads);
+            app.event_bus.subscribe(move |e: &UiEvent| {
+                if let UiEvent::LoadSceneRequested { path } = e {
+                    sink.lock().expect("load sink").push(path.clone());
+                }
+            });
+            loads
+        }
+
+        #[test]
+        fn escape_while_playing_pauses_in_place() {
+            let mut app = first_person_app();
+            let adapter = attach_adapter(&mut app);
+
+            app.escape_pressed();
+
+            assert_eq!(app.game_state, GameState::Paused);
+            assert_eq!(screen_shown(&adapter).as_deref(), Some("pause"));
+            let position = app.simulation.position();
+            let look = app.simulation.yaw_pitch();
+            hold(&mut app, StrategyAction::MoveForward);
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ).with_clock(noon()));
+            sim.step(&mut app, 60);
+            assert_eq!(app.simulation.position(), position, "the pawn moved");
+            assert_eq!(app.simulation.yaw_pitch(), look, "the camera turned");
+            assert_eq!(sim.clock().time_of_day(), 12.0, "game time ran");
+            let mut fake = FakeRenderer::default();
+            let exit = run_frame(&mut app, &mut fake);
+            assert_eq!(fake.frames_begun, 1, "the world is still drawn");
+            assert!(!exit);
+        }
+
+        #[test]
+        fn resuming_restores_play_without_a_load() {
+            type Resume = fn(&mut App, &mut GameClock);
+            let rows: [(&str, Resume); 3] = [
+                ("Continue", |app, clock| {
+                    publish_ui(app, clock, UiEvent::ResumeRequested);
+                }),
+                ("Escape without a UI", |app, _| app.escape_pressed()),
+                ("Escape on the pause window", |app, _| {
+                    let adapter = attach_adapter(app);
+                    adapter.lock().expect("adapter lock").show_menu("pause");
+                    app.escape_pressed();
+                }),
+            ];
+
+            for (row, resume) in rows {
+                let mut app = first_person_app();
+                app.game_state = GameState::Paused;
+                let position = app.simulation.position();
+                let look = app.simulation.yaw_pitch();
+                let loads = record_loads(&app);
+                let mut clock = noon();
+
+                resume(&mut app, &mut clock);
+                app.event_bus.process_deferred();
+
+                assert_eq!(app.game_state, GameState::Playing, "row {row}");
+                assert_eq!(app.simulation.position(), position, "row {row}");
+                assert_eq!(app.simulation.yaw_pitch(), look, "row {row}");
+                assert_eq!(clock.time_of_day(), 12.0, "row {row}");
+                let loads = loads.lock().expect("load sink");
+                assert!(loads.is_empty(), "row {row}: loaded {loads:?}");
+            }
+        }
+
+        #[test]
+        fn settings_from_pause_keep_the_game_paused() {
+            let mut app = first_person_app();
+            let adapter = attach_adapter(&mut app);
+            let mut clock = noon();
+            app.escape_pressed();
+            assert_eq!(app.game_state, GameState::Paused);
+
+            publish_ui(
+                &mut app,
+                &mut clock,
+                UiEvent::MenuShown {
+                    name: "settings".to_string(),
+                },
+            );
+            assert_eq!(screen_shown(&adapter).as_deref(), Some("settings"));
+            assert_eq!(app.game_state, GameState::Paused);
+            publish_ui(
+                &mut app,
+                &mut clock,
+                UiEvent::MenuShown {
+                    name: "pause".to_string(),
+                },
+            );
+
+            assert_eq!(screen_shown(&adapter).as_deref(), Some("pause"));
+            assert_eq!(app.game_state, GameState::Paused);
+        }
+
+        #[test]
+        fn exit_to_main_menu_saves_then_shows_the_start_menu() {
+            let (mut app, _temp) = app_with_saves_dir();
+            let mut clock = noon();
+            let at_pause = glam::Vec3::new(3.0, 40.0, 5.0);
+            app.simulation.set_position_yaw_pitch(at_pause, 0.7, 0.1);
+            app.escape_pressed();
+            assert_eq!(app.game_state, GameState::Paused);
+            publish_ui(&mut app, &mut clock, UiEvent::MainMenuRequested);
+            let mut fake = FakeRenderer::default();
+
+            let exit = run_frame_at(&mut app, &mut fake, 17.5);
+
+            assert!(!exit, "leaving for the menu must not quit");
+            assert_eq!(app.game_state, GameState::Menu);
+            assert!(!app.main_menu_requested, "the request is consumed");
+            let (spec, scene_bytes, _) =
+                crate::save::read_scene_and_metadata(app.saves_dir.join("scene.bin"))
+                    .expect("the world is saved before leaving it");
+            assert_eq!(spec.initial_time_of_day, 17.5);
+            let mut entities = flagstone_game::scene::SceneEntities::default();
+            let (camera, _lights) =
+                flagstone_game::scene_persistence::load_from_bytes(&scene_bytes, &mut entities)
+                    .expect("the save decodes");
+            assert_eq!(camera, Some((at_pause, 0.7, 0.1)));
+        }
+
+        #[test]
+        fn play_input_does_not_reach_the_world_while_paused() {
+            let mut app = first_person_app();
+            app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+            // Identity rotation: the camera looks down -Z from just in front of the wall.
+            app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
+            let aimed = flagstone_voxel::BlockPos::new(4, 70, 3);
+            let grid = app
+                .light_system
+                .as_mut()
+                .expect("App starts with a light system")
+                .grid_mut();
+            for x in 2..=6 {
+                for y in 68..=72 {
+                    for z in 1..=3 {
+                        grid.mutator()
+                            .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                    }
+                }
+            }
+            assert!(grid.is_solid_at(aimed));
+            app.escape_pressed();
+            assert_eq!(app.game_state, GameState::Paused);
+            let position = app.simulation.position();
+            let look = app.simulation.yaw_pitch();
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.input.unconsumed_tx = Some(tx.clone());
+            app.input.unconsumed_rx = Some(rx);
+
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Device(DeviceEvent::MouseMotion {
+                    delta: (400.0, 200.0),
+                }),
+            );
+            hold(&mut app, StrategyAction::MoveForward);
+            tx.send(crate::input_event::InputEvent::MineRequested)
+                .expect("channel open");
+            tx.send(crate::input_event::InputEvent::MouseWheel { delta_y: 3.0 })
+                .expect("channel open");
+            EventProcessor::new().process_input_events(&mut app);
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+
+            assert_eq!(command.input.yaw_delta, 0.0);
+            assert_eq!(command.input.pitch_delta, 0.0);
+            assert_eq!(command.input.forward, 0.0);
+            assert_eq!(app.simulation.position(), position, "the pawn moved");
+            assert_eq!(app.simulation.yaw_pitch(), look, "the camera turned");
+            let grid = app.light_system.as_ref().expect("light system").grid();
+            assert!(grid.is_solid_at(aimed), "a block was mined while paused");
+        }
+
+        #[test]
+        fn key_held_at_pause_does_not_stick() {
+            let mut app = playing_app();
+            let key = default_key(&app, StrategyAction::MoveForward);
+            hold(&mut app, StrategyAction::MoveForward);
+            assert!(
+                app.input
+                    .actions
+                    .end_tick()
+                    .held(StrategyAction::MoveForward)
+            );
+            let mut clock = noon();
+
+            app.escape_pressed();
+            assert_eq!(app.game_state, GameState::Paused);
+            app.input.actions.key(key, false);
+            publish_ui(&mut app, &mut clock, UiEvent::ResumeRequested);
+
+            assert_eq!(app.game_state, GameState::Playing);
+            let frame = app.input.actions.end_tick();
+            assert!(!frame.held(StrategyAction::MoveForward));
+            assert!(!frame.pressed(StrategyAction::MoveForward));
+            assert_eq!(Game::command(&mut app).input.forward, 0.0);
+        }
+
+        #[test]
+        fn escape_on_settings_from_pause_changes_nothing() {
+            let mut app = first_person_app();
+            let adapter = attach_adapter(&mut app);
+            let mut clock = noon();
+            app.escape_pressed();
+            assert_eq!(app.game_state, GameState::Paused);
+            publish_ui(
+                &mut app,
+                &mut clock,
+                UiEvent::MenuShown {
+                    name: "settings".to_string(),
+                },
+            );
+            assert_eq!(screen_shown(&adapter).as_deref(), Some("settings"));
+
+            app.escape_pressed();
+
+            assert_eq!(app.game_state, GameState::Paused);
+            assert_eq!(screen_shown(&adapter).as_deref(), Some("settings"));
+        }
+
+        /// egui swallows Escape once a pause-window button has keyboard focus (Tab),
+        /// so an Escape that pauses or resumes must be taken before the UI sees it.
+        #[test]
+        fn escape_skips_the_ui_only_where_it_pauses_or_resumes() {
+            let rows: [(&str, GameState, Option<&str>, bool); 5] = [
+                ("playing", GameState::Playing, None, true),
+                ("pause window", GameState::Paused, Some("pause"), true),
+                (
+                    "settings from pause",
+                    GameState::Paused,
+                    Some("settings"),
+                    false,
+                ),
+                ("console", GameState::ConsoleOpen, None, false),
+                ("start menu", GameState::Menu, Some("start"), false),
+            ];
+
+            for (label, state, screen, expected) in rows {
+                let mut app = first_person_app();
+                let adapter = attach_adapter(&mut app);
+                app.game_state = state;
+                if let Some(screen) = screen {
+                    adapter.lock().expect("adapter lock").show_menu(screen);
+                }
+
+                assert_eq!(app.escape_skips_the_ui(), expected, "row {label}");
+            }
         }
     }
 }

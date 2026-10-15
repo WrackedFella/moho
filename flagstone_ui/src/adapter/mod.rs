@@ -346,8 +346,9 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
                 self.ui_state.modal_manager.show(modal);
             }
 
-            // Render modal on top of menu (if active)
-            if self.current_game_state == GameState::Menu {
+            // Render modal on top of menu (if active); Settings reached from the pause
+            // window can raise one too.
+            if matches!(self.current_game_state, GameState::Menu | GameState::Paused) {
                 modal_result = self.ui_state.modal_manager.render(ui);
             }
 
@@ -381,7 +382,7 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
         // Process menu actions (delegates to event_routing module)
         for action in &menu_actions {
             self.record_menu_action(action);
-            event_routing::process_menu_action(action, &self.event_bus);
+            event_routing::process_menu_action(action, self.current_game_state, &self.event_bus);
         }
 
         // Handle Close action locally (hide menus)
