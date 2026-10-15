@@ -161,7 +161,7 @@ impl CommandProcessor {
         if !(5..=6).contains(&parts.len()) {
             return CommandResult::messages(vec![
                 "Usage: snd_play_at <path> <x> <y> <z> [volume]".to_string(),
-                "  Example: snd_play_at assets/audio/boom.wav 1 0 -5 0.8".to_string(),
+                "  Example: snd_play_at moho_fps/assets/rifle_shot.wav 1 0 -5 0.8".to_string(),
             ]);
         }
 

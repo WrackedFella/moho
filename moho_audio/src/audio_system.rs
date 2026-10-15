@@ -90,7 +90,7 @@ impl<O: AudioOutput> AudioSystem<O> {
         let Some(distance_gain) = self.distance_gain_for(source) else {
             debug!(
                 path = source.path(),
-                "Skipping audio playback beyond audible range"
+                "Skipping audio playback: out of audible range or non-finite distance"
             );
             return Ok(());
         };
