@@ -25,8 +25,8 @@ pub struct SurfaceHit {
     pub distance: f32,
 }
 
-/// Slack on the barycentric and range tests, so a ray entering exactly on an edge shared
-/// by two triangles or two cells is not missed by rounding.
+/// Slack on the barycentric test, so a ray crossing exactly on an edge shared by two
+/// triangles is not missed by rounding.
 const EDGE_EPSILON: f32 = 1e-4;
 
 /// Upper bound on the cell boundaries a ray of `max_distance` can cross: at most one per
@@ -118,9 +118,6 @@ pub fn raycast_surface(
 
     let mut t_enter = 0.0f32;
     for _ in 0..=max_boundary_crossings(max_distance) {
-        if t_enter > max_distance {
-            return None;
-        }
         let t_exit = walk.next_crossing();
         let cell = walk.cell;
 
@@ -128,7 +125,8 @@ pub fn raycast_surface(
         let cell_origin = cell.as_vec3() + Vec3::splat(0.5);
         let nearest = MarchingCubes::cell_triangles(index)
             .filter_map(|tri| triangle_crossing(origin, dir, &tri.map(|v| v + cell_origin)))
-            .filter(|&(t, _)| t >= (t_enter - EDGE_EPSILON).max(0.0) && t <= t_exit + EDGE_EPSILON)
+            // One cell's exit distance is the next one's entry, so the windows tile the ray.
+            .filter(|&(t, _)| (t_enter..=t_exit).contains(&t))
             .min_by(|a, b| a.0.total_cmp(&b.0));
         if let Some((t, front_facing)) = nearest {
             if !front_facing || t > max_distance {
