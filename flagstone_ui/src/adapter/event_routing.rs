@@ -165,6 +165,7 @@ pub fn process_console_action(action: crate::overlays::ConsoleAction, event_bus:
                 position: None, // Position will be determined by raycast in the handler
             });
         }
+        ConsoleAction::PlaySoundAt { .. } => todo!("publish AudioEvent::PlaySoundAt"),
         ConsoleAction::None => {
             // No action
         }
@@ -454,6 +455,37 @@ mod tests {
                 published[0]
             );
         }
+    }
+
+    #[test]
+    fn console_play_sound_at_publishes_positioned_audio_event() {
+        use crate::overlays::ConsoleAction;
+        use moho_core::events::AudioEvent;
+        let bus = EventBus::new();
+        let audio = record::<AudioEvent>(&bus);
+
+        process_console_action(
+            ConsoleAction::PlaySoundAt {
+                path: "sounds/boom.wav".to_string(),
+                position: glam::Vec3::new(1.0, 2.0, 3.0),
+                volume: 0.4,
+            },
+            &bus,
+        );
+
+        let published: Vec<_> = audio.try_iter().collect();
+        assert_eq!(published.len(), 1, "events: {published:?}");
+        assert!(
+            matches!(
+                &published[0],
+                AudioEvent::PlaySoundAt { path, volume, position }
+                    if path == "sounds/boom.wav"
+                        && *volume == 0.4
+                        && *position == glam::Vec3::new(1.0, 2.0, 3.0)
+            ),
+            "unexpected {:?}",
+            published[0]
+        );
     }
 
     mod menu_table {

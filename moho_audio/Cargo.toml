@@ -6,12 +6,14 @@ publish = false
 
 [dependencies]
 moho_core = { path = "../moho_core" }
+glam = { workspace = true }
 rodio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+proptest = { workspace = true }
 
 [lints]
 workspace = true
