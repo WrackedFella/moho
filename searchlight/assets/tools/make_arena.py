@@ -59,6 +59,14 @@ COVER = [
     (0.0, 16.0, 4.0, 0.8, (0, -1)),
 ]
 
+# Full-height walls that break line of sight (the cover blocks are hip-high): (centre x,
+# centre z, size x, size z). They carry no cover marker; an enemy hiding behind one would have
+# no shot.
+SCREENS = [
+    (3.5, 12.0, 6.0, 0.5),
+    (-8.0, 15.0, 0.5, 6.0),
+]
+
 # (normal, u, v) with u x v = normal: corners (-u-v, +u-v, +u+v, -u+v) wind counter-clockwise
 # seen from outside, as glTF front faces do.
 FACES = [
@@ -118,6 +126,11 @@ def solids():
         out.append(
             (f"crate_{index:02d}", "cover", (x, COVER_HEIGHT / 2, z),
              (size_x / 2, COVER_HEIGHT / 2, size_z / 2))
+        )
+    for index, (x, z, size_x, size_z) in enumerate(SCREENS, start=1):
+        out.append(
+            (f"screen_{index:02d}", "wall", (x, WALL_HEIGHT / 2, z),
+             (size_x / 2, WALL_HEIGHT / 2, size_z / 2))
         )
     return out
 
