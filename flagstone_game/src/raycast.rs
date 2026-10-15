@@ -120,23 +120,15 @@ pub fn raycast_surface(
 
     // Cell `c` spans `c + 0.5 .. c + 1.5` in world space; shifting by half a unit puts the
     // cell boundaries on integers, as in `raycast`.
-    let shifted = origin - Vec3::splat(0.5);
-    let mut cell = shifted.floor().as_ivec3();
-    let step = IVec3::new(
-        if dir.x > 0.0 { 1 } else { -1 },
-        if dir.y > 0.0 { 1 } else { -1 },
-        if dir.z > 0.0 { 1 } else { -1 },
-    );
-    let (mut t_max_x, t_delta_x) = axis_traversal(shifted.x, dir.x, cell.x, step.x);
-    let (mut t_max_y, t_delta_y) = axis_traversal(shifted.y, dir.y, cell.y, step.y);
-    let (mut t_max_z, t_delta_z) = axis_traversal(shifted.z, dir.z, cell.z, step.z);
+    let mut walk = GridWalk::new(origin - Vec3::splat(0.5), dir);
 
     let mut t_enter = 0.0f32;
     for _ in 0..=max_boundary_crossings(max_distance) {
         if t_enter > max_distance {
             return None;
         }
-        let t_exit = t_max_x.min(t_max_y).min(t_max_z);
+        let t_exit = walk.next_crossing();
+        let cell = walk.cell;
 
         let index = cube_index(grid, cell);
         let cell_origin = cell.as_vec3() + Vec3::splat(0.5);
@@ -157,22 +149,7 @@ pub fn raycast_surface(
             });
         }
 
-        t_enter = t_exit;
-        if t_max_x < t_max_y {
-            if t_max_x < t_max_z {
-                cell.x += step.x;
-                t_max_x += t_delta_x;
-            } else {
-                cell.z += step.z;
-                t_max_z += t_delta_z;
-            }
-        } else if t_max_y < t_max_z {
-            cell.y += step.y;
-            t_max_y += t_delta_y;
-        } else {
-            cell.z += step.z;
-            t_max_z += t_delta_z;
-        }
+        t_enter = walk.advance().0;
     }
 
     None
@@ -201,6 +178,63 @@ fn axis_traversal(
     (boundary / dir_component, (1.0 / dir_component).abs())
 }
 
+/// Amanatides & Woo walk over the unit lattice cells a ray passes through.
+struct GridWalk {
+    /// Cell the ray is currently in.
+    cell: IVec3,
+    step: IVec3,
+    /// Ray distance at which each axis next crosses a cell boundary.
+    t_max: Vec3,
+    /// Ray distance needed to cross one cell along each axis.
+    t_delta: Vec3,
+}
+
+impl GridWalk {
+    /// Starts a walk at the cell containing `origin`, on a lattice with boundaries at the
+    /// integers. `dir` must be normalized.
+    fn new(origin: Vec3, dir: Vec3) -> Self {
+        let cell = origin.floor().as_ivec3();
+        let step = IVec3::new(
+            if dir.x > 0.0 { 1 } else { -1 },
+            if dir.y > 0.0 { 1 } else { -1 },
+            if dir.z > 0.0 { 1 } else { -1 },
+        );
+        let (t_max_x, t_delta_x) = axis_traversal(origin.x, dir.x, cell.x, step.x);
+        let (t_max_y, t_delta_y) = axis_traversal(origin.y, dir.y, cell.y, step.y);
+        let (t_max_z, t_delta_z) = axis_traversal(origin.z, dir.z, cell.z, step.z);
+        Self {
+            cell,
+            step,
+            t_max: Vec3::new(t_max_x, t_max_y, t_max_z),
+            t_delta: Vec3::new(t_delta_x, t_delta_y, t_delta_z),
+        }
+    }
+
+    /// Ray distance at which the current cell is left.
+    fn next_crossing(&self) -> f32 {
+        self.t_max.x.min(self.t_max.y).min(self.t_max.z)
+    }
+
+    /// Moves to the next cell along the axis with the nearest boundary (x, then y, win
+    /// only when strictly nearer). Returns the ray distance of the boundary crossed and
+    /// the normal of the face the ray entered through.
+    fn advance(&mut self) -> (f32, IVec3) {
+        let axis = if self.t_max.x < self.t_max.y && self.t_max.x < self.t_max.z {
+            0
+        } else if self.t_max.x >= self.t_max.y && self.t_max.y < self.t_max.z {
+            1
+        } else {
+            2
+        };
+        let t = self.t_max[axis];
+        self.cell[axis] += self.step[axis];
+        self.t_max[axis] += self.t_delta[axis];
+        let mut normal = IVec3::ZERO;
+        normal[axis] = -self.step[axis];
+        (t, normal)
+    }
+}
+
 /// Perform a raycast against the voxel grid
 ///
 /// Uses a fast voxel traversal algorithm (Amanatides & Woo)
@@ -210,29 +244,11 @@ pub fn raycast(
     direction: Vec3,
     max_distance: f32,
 ) -> Option<RaycastResult> {
-    // Normalize direction
     let dir = direction.normalize();
-
-    // Current voxel position
-    let mut x = origin.x.floor() as i32;
-    let mut y = origin.y.floor() as i32;
-    let mut z = origin.z.floor() as i32;
-
-    // Step direction
-    let step_x = if dir.x > 0.0 { 1 } else { -1 };
-    let step_y = if dir.y > 0.0 { 1 } else { -1 };
-    let step_z = if dir.z > 0.0 { 1 } else { -1 };
-
-    // Distance to next voxel boundary and distance to traverse one voxel,
-    // per axis.
-    let (mut t_max_x, t_delta_x) = axis_traversal(origin.x, dir.x, x, step_x);
-    let (mut t_max_y, t_delta_y) = axis_traversal(origin.y, dir.y, y, step_y);
-    let (mut t_max_z, t_delta_z) = axis_traversal(origin.z, dir.z, z, step_z);
+    let mut walk = GridWalk::new(origin, dir);
 
     // Face normal of the last entered voxel
     let mut normal = IVec3::ZERO;
-
-    // Traversal loop
     let mut distance = 0.0;
 
     for _ in 0..=max_boundary_crossings(max_distance) {
@@ -240,42 +256,17 @@ pub fn raycast(
             return None;
         }
 
-        // Check if current voxel is solid
-        let pos = IVec3::new(x, y, z);
-        if grid.material_at(pos).is_some_and(|id| id != 0) {
-            // Assuming 0 is air/empty
+        // Assuming 0 is air/empty
+        if grid.material_at(walk.cell).is_some_and(|id| id != 0) {
             return Some(RaycastResult {
-                block_pos: pos,
+                block_pos: walk.cell,
                 normal,
                 position: origin + dir * distance,
                 distance,
             });
         }
 
-        // Move to next voxel
-        if t_max_x < t_max_y {
-            if t_max_x < t_max_z {
-                x += step_x;
-                distance = t_max_x;
-                t_max_x += t_delta_x;
-                normal = IVec3::new(-step_x, 0, 0);
-            } else {
-                z += step_z;
-                distance = t_max_z;
-                t_max_z += t_delta_z;
-                normal = IVec3::new(0, 0, -step_z);
-            }
-        } else if t_max_y < t_max_z {
-            y += step_y;
-            distance = t_max_y;
-            t_max_y += t_delta_y;
-            normal = IVec3::new(0, -step_y, 0);
-        } else {
-            z += step_z;
-            distance = t_max_z;
-            t_max_z += t_delta_z;
-            normal = IVec3::new(0, 0, -step_z);
-        }
+        (distance, normal) = walk.advance();
     }
 
     None
