@@ -2682,6 +2682,48 @@ mod enemy_tests {
         );
         assert!(horizontal(enemy_at(&sim, 0), ENEMY_SPAWN) < 1.0);
     }
+
+    /// A wall halfway between the player and `SHIELDED`'s row of points, `top` metres high.
+    /// The line from the player's eye (1.15 + `HEAD_HEIGHT` up) to the hide height behind it
+    /// crosses the wall at about 1.38 m; level enemy shots at the player's head pass over it.
+    fn midfield_wall(top: f32) -> (Vec3, Vec3) {
+        (Vec3::new(-10.0, 0.0, 5.0), Vec3::new(10.0, top, 5.1))
+    }
+
+    fn head_aiming_cover_config() -> SimConfig {
+        let mut config = cover_config();
+        config.enemy_aim_at = BodyPart::Head;
+        config
+    }
+
+    #[test]
+    fn a_wall_above_the_line_from_the_players_eye_hides_a_cover_point() {
+        let arena = with_covers(duel(&[midfield_wall(1.55)]), &[SHIELDED]);
+        let mut sim = FpsSim::start(arena, head_aiming_cover_config());
+
+        run(&mut sim, &script(300, &[0]));
+
+        let at = enemy_at(&sim, 0);
+        assert!(
+            horizontal(at, SHIELDED) < 1.0,
+            "the enemy did not take the hidden point: {at:?}"
+        );
+    }
+
+    #[test]
+    fn a_wall_below_the_line_from_the_players_eye_leaves_a_cover_point_in_view() {
+        let arena = with_covers(duel(&[midfield_wall(1.2)]), &[SHIELDED]);
+        let mut sim = FpsSim::start(arena, head_aiming_cover_config());
+
+        let ticks = run(&mut sim, &script(300, &[0]));
+
+        let at = enemy_at(&sim, 0);
+        assert!(
+            horizontal(at, ENEMY_SPAWN) < 1.0,
+            "the enemy ran to a point the player can see: {at:?}"
+        );
+        assert!(count(&ticks[1..], enemy_fired) >= 30);
+    }
 }
 
 #[cfg(test)]

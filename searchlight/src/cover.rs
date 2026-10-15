@@ -345,6 +345,78 @@ mod tests {
         assert_eq!(far, None);
     }
 
+    /// `FLOOR` plus a wall across the z axis from `wall_z`, `thickness` metres deep, and the
+    /// player's hit volumes around a body at the origin.
+    fn world_with_player_and_wall(wall_z: f32, thickness: f32) -> PhysicsWorld {
+        let mut world = world_with(&[
+            FLOOR,
+            (
+                Vec3::new(-2.0, 0.0, wall_z),
+                Vec3::new(2.0, 4.0, wall_z + thickness),
+            ),
+        ]);
+        let body = world.add_character(Vec3::new(0.0, 1.15, 0.0));
+        for volume in crate::sim::player_hit_volumes() {
+            world
+                .add_hit_volume(body, volume)
+                .expect("the body was added a moment ago");
+        }
+        world.step(crate::test_support::DT);
+        world
+    }
+
+    const PLAYER_HEAD: Vec3 = Vec3::new(0.0, 1.87, 0.0);
+
+    #[test]
+    fn a_ray_leaving_the_head_it_starts_in_still_sees_a_thin_wall_just_beyond() {
+        let world = world_with_player_and_wall(0.5, 0.02);
+
+        let blocked = world_blocks(&world, PLAYER_HEAD, Vec3::new(0.0, 1.87, 3.0));
+
+        assert!(blocked);
+    }
+
+    #[test]
+    fn a_ray_crossing_a_character_still_sees_a_thin_wall_just_beyond() {
+        let world = world_with_player_and_wall(0.5, 0.02);
+
+        let blocked = world_blocks(
+            &world,
+            Vec3::new(0.0, 1.87, -3.0),
+            Vec3::new(0.0, 1.87, 3.0),
+        );
+
+        assert!(blocked);
+    }
+
+    #[test]
+    fn a_ray_through_a_character_reaches_a_wall_far_behind() {
+        let world = world_with_player_and_wall(8.0, 0.5);
+
+        let blocked = world_blocks(
+            &world,
+            Vec3::new(0.0, 1.87, -3.0),
+            Vec3::new(0.0, 1.87, 12.0),
+        );
+
+        assert!(blocked);
+    }
+
+    #[test]
+    fn a_ray_through_a_character_with_no_wall_in_the_way_is_not_blocked() {
+        let world = world_with_player_and_wall(8.0, 0.5);
+
+        let from_the_head = world_blocks(&world, PLAYER_HEAD, Vec3::new(0.0, 1.87, 6.0));
+        let across_it = world_blocks(
+            &world,
+            Vec3::new(0.0, 1.87, -3.0),
+            Vec3::new(0.0, 1.87, 6.0),
+        );
+
+        assert!(!from_the_head);
+        assert!(!across_it);
+    }
+
     #[test]
     fn the_nearest_of_two_firing_positions_is_offered() {
         let boxes = [FLOOR, wall_of_height(1.2)];
