@@ -2,11 +2,11 @@
 //! It holds no renderer, audio or UI handle.
 
 use glam::Vec3;
-use searchlight_rules::{
-    Body, BodyPart, BodyProfile, HitReport, Magazine, MagazineLevel, Rifle, Shot,
-};
 use moho_physics::{
     CharacterHandle, CharacterState, HitVolume, MoveSettings, PhysicsWorld, first_person_view,
+};
+use searchlight_rules::{
+    Body, BodyPart, BodyProfile, HitReport, Magazine, MagazineLevel, Rifle, Shot,
 };
 
 use crate::input::FpsCommand;
@@ -314,8 +314,8 @@ impl FpsSim {
 mod tests {
     use std::f32::consts::FRAC_PI_2;
 
-    use searchlight_rules::MagazineLevel;
     use moho_physics::CharacterCommand;
+    use searchlight_rules::MagazineLevel;
 
     use super::*;
     use crate::tag::SurfaceTag;
@@ -740,8 +740,8 @@ mod dummy_pose_tests {
 
 #[cfg(test)]
 mod adversarial_tests {
-    use searchlight_rules::{BodyPart, MagazineLevel};
     use moho_physics::{CharacterCommand, PITCH_LIMIT};
+    use searchlight_rules::{BodyPart, MagazineLevel};
 
     use super::*;
     use crate::test_support::{DT, flat_floor, mag, test_config};

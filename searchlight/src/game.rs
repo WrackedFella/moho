@@ -626,8 +626,8 @@ mod presentation_tests {
 
 #[cfg(test)]
 mod mutation_tests {
-    use searchlight_rules::{Body, BodyPart, BodyProfile};
     use moho_renderer::FrameError;
+    use searchlight_rules::{Body, BodyPart, BodyProfile};
 
     use crate::sim::STAND_HEIGHT;
 

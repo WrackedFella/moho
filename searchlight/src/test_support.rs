@@ -1,12 +1,12 @@
 //! Shared builders for the crate's tests: small hand-made worlds and tuning values.
 
 use glam::Vec3;
-use searchlight_rules::{BodyProfile, Magazine, Rifle};
 use moho_input::Action;
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::Binding;
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
+use searchlight_rules::{BodyProfile, Magazine, Rifle};
 
 use crate::input::FpsAction;
 use crate::sim::SimConfig;
