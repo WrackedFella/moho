@@ -98,6 +98,24 @@ impl AudioCache {
     }
 }
 
+#[cfg(test)]
+impl AudioCache {
+    /// Cache holding exactly the given entries and never touching the filesystem for
+    /// them. `general` backs [`Self::get_audio`], `ui` backs [`Self::get_ui_sound`].
+    pub(crate) fn seeded(general: &[(&str, Vec<u8>)], ui: &[(&str, Vec<u8>)]) -> Self {
+        let own = |entries: &[(&str, Vec<u8>)]| {
+            entries
+                .iter()
+                .map(|(path, bytes)| ((*path).to_owned(), bytes.clone()))
+                .collect()
+        };
+        Self {
+            audio_cache: own(general),
+            ui_sound_cache: own(ui),
+        }
+    }
+}
+
 impl Default for AudioCache {
     /// Creates an empty cache without pre-loading sounds.
     fn default() -> Self {

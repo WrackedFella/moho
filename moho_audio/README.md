@@ -4,12 +4,13 @@ Cross-platform audio system for the Moho engine. Provides sound effect playback,
 
 ## Architecture
 
-The audio system is built around four core components:
+The audio system is built around five core components:
 
 - **`AudioSystem`** - Main coordinator for audio playback and asset management
 - **`AudioSource`** - Individual audio file representation with category metadata
 - **`AudioEvent`** - Event types for triggering UI and game sounds
 - **`AudioSettings`** - User-configurable volume controls per category
+- **`AudioOutput`** - The port `AudioSystem` plays through: rodio on the default device in game, a recording fake in tests
 
 ## Quick Start
 
