@@ -1997,5 +1997,147 @@ mod tests {
                 "then gravity brings it down: peak {peak}, end {end:?}"
             );
         }
+
+        /// Runs `command` for `ticks` and returns the state after every tick.
+        fn record(
+            world: &mut PhysicsWorld,
+            h: CharacterHandle,
+            command: &CharacterCommand,
+            ticks: usize,
+        ) -> Vec<CharacterState> {
+            (0..ticks).map(|_| tick(world, h, command)).collect()
+        }
+
+        /// Fails with the ticks around the first one that left the ground.
+        fn assert_grounded_throughout(trace: &[CharacterState]) {
+            if let Some(first) = trace.iter().position(|s| !s.grounded) {
+                let from = first.saturating_sub(3);
+                let window: Vec<_> = trace[from..(first + 4).min(trace.len())]
+                    .iter()
+                    .enumerate()
+                    .map(|(n, s)| (from + n, s.grounded, s.position, s.velocity))
+                    .collect();
+                panic!("left the ground at tick {first}: {window:#?}");
+            }
+        }
+
+        fn assert_velocity_y_where(
+            trace: &[CharacterState],
+            from_z: f32,
+            expected: f32,
+            what: &str,
+        ) {
+            let checked: Vec<_> = trace.iter().filter(|s| s.position.z > from_z).collect();
+            assert!(!checked.is_empty(), "{what}: never got past z = {from_z}");
+            for s in checked {
+                assert!(
+                    (s.velocity.y - expected).abs() < 0.15,
+                    "{what}: expected velocity.y {expected}, got {:?} at {:?}",
+                    s.velocity,
+                    s.position
+                );
+            }
+        }
+
+        #[test]
+        fn running_up_a_ramp_onto_a_plateau_stays_grounded() {
+            let mut world = PhysicsWorld::new();
+            let rise = rise_per_run();
+            world.set_world_mesh(WorldMeshId(0), &slope_mesh(-10.0, 0.0, 0.0, 0.0), TEST_TAG);
+            world.set_world_mesh(
+                WorldMeshId(1),
+                &slope_mesh(0.0, 0.0, 6.0, 6.0 * rise),
+                TEST_TAG,
+            );
+            world.set_world_mesh(
+                WorldMeshId(2),
+                &slope_mesh(6.0, 6.0 * rise, 20.0, 6.0 * rise),
+                TEST_TAG,
+            );
+            let h = rest_at(&mut world, Vec3::new(0.0, 1.2, -4.0), 0.0);
+            let floor_rest = state(&world, h).position.y;
+
+            let trace = record(&mut world, h, &forward(), 240);
+
+            assert_grounded_throughout(&trace);
+            let standing = 6.0 * rise + floor_rest;
+            let on_plateau: Vec<_> = trace.iter().filter(|s| s.position.z > 9.0).collect();
+            assert!(!on_plateau.is_empty(), "never reached the plateau");
+            for s in on_plateau {
+                assert!(s.velocity.y.abs() < 0.05, "{s:?}");
+                assert!(
+                    s.position.y < standing + 0.02,
+                    "hopped at the join: standing {standing}, {s:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn running_over_a_hill_crest_stays_grounded() {
+            let mut world = PhysicsWorld::new();
+            let rise = 20.0_f32.to_radians().tan();
+            world.set_world_mesh(
+                WorldMeshId(0),
+                &slope_mesh(-8.0, 0.0, 0.0, 8.0 * rise),
+                TEST_TAG,
+            );
+            world.set_world_mesh(
+                WorldMeshId(1),
+                &slope_mesh(0.0, 8.0 * rise, 10.0, -2.0 * rise),
+                TEST_TAG,
+            );
+            let h = rest_at(&mut world, Vec3::new(0.0, 2.0 * rise + 1.5, -6.0), 0.0);
+
+            let trace = record(&mut world, h, &forward(), 220);
+
+            assert_grounded_throughout(&trace);
+            assert_velocity_y_where(&trace, 1.5, -SPEED * rise, "down the far side");
+        }
+
+        #[test]
+        fn walking_from_level_ground_onto_a_downslope_stays_grounded() {
+            let mut world = PhysicsWorld::new();
+            let rise = rise_per_run();
+            world.set_world_mesh(WorldMeshId(0), &slope_mesh(-10.0, 0.0, 0.0, 0.0), TEST_TAG);
+            world.set_world_mesh(
+                WorldMeshId(1),
+                &slope_mesh(0.0, 0.0, 12.0, -12.0 * rise),
+                TEST_TAG,
+            );
+            let h = rest_at(&mut world, Vec3::new(0.0, 1.2, -4.0), 0.0);
+
+            let trace = record(&mut world, h, &forward(), 200);
+
+            assert_grounded_throughout(&trace);
+            assert_velocity_y_where(&trace, 1.5, -slope_climb(), "on the downslope");
+        }
+
+        #[test]
+        fn upslope_walker_releasing_input_stops_on_the_slope() {
+            let mut world = PhysicsWorld::new();
+            let rise = rise_per_run();
+            world.set_world_mesh(
+                WorldMeshId(0),
+                &slope_mesh(-10.0, -10.0 * rise, 10.0, 10.0 * rise),
+                TEST_TAG,
+            );
+            let h = rest_at(&mut world, Vec3::new(0.0, -5.0 * rise + 1.5, -5.0), 0.0);
+            run_steadily(&mut world, h, 30);
+
+            let trace = record(&mut world, h, &idle(), 120);
+
+            assert_grounded_throughout(&trace);
+            let end = trace.last().unwrap();
+            assert!(end.velocity.length() < 1e-3, "{end:?}");
+            let settled = &trace[trace.len() - 20..];
+            for s in settled {
+                assert!(
+                    s.position.distance(end.position) < 1e-3,
+                    "drifting: {:?} vs {:?}",
+                    s.position,
+                    end.position
+                );
+            }
+        }
     }
 }
