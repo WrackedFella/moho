@@ -945,6 +945,7 @@ dependencies = [
  "glam 0.33.12",
  "moho_core",
  "moho_render_api",
+ "proptest",
  "serde",
  "tracing",
 ]

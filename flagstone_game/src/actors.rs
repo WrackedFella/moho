@@ -211,11 +211,11 @@ impl Cube {
             [0.5, 0.5, 0.5],   // 10: front-right
             [0.5, 0.5, -0.5],  // 11: back-right
             // -Y face (bottom) - normal [0,-1,0] pointing down
-            // Viewed from -Y (below), CCW order: front-left, front-right, back-right, back-left
+            // Viewed from -Y (below), CCW order: front-left, back-left, back-right, front-right
             [-0.5, -0.5, 0.5],  // 12: front-left
-            [0.5, -0.5, 0.5],   // 13: front-right
+            [-0.5, -0.5, -0.5], // 13: back-left
             [0.5, -0.5, -0.5],  // 14: back-right
-            [-0.5, -0.5, -0.5], // 15: back-left
+            [0.5, -0.5, 0.5],   // 15: front-right
             // +Z face (front) - normal [0,0,1] pointing forward
             // Viewed from +Z (front), CCW order: bottom-left, bottom-right, top-right, top-left
             [-0.5, -0.5, 0.5], // 16: bottom-left
@@ -267,13 +267,12 @@ impl Cube {
         // Indices: 2 triangles per face, 6 faces = 36 indices
         // Vertices are ordered CCW, so indices use standard pattern (0,1,2) and (0,2,3)
         let indices: Vec<u32> = vec![
-            // +X face (vertices 0-3, ordered CCW from outside)
-            0, 1, 2, 0, 2, 3, // -X face (vertices 4-7, ordered CCW from outside)
-            4, 5, 6, 4, 6, 7, // +Y face (vertices 8-11, ordered CCW from outside)
-            8, 9, 10, 8, 10, 11, // -Y face (vertices 12-15, ordered CCW from outside)
-            12, 13, 14, 12, 14, 15, // +Z face (vertices 16-19, ordered CCW from outside)
-            16, 17, 18, 16, 18, 19, // -Z face (vertices 20-23, ordered CCW from outside)
-            20, 21, 22, 20, 22, 23,
+            0, 1, 2, 0, 2, 3, // +X
+            4, 5, 6, 4, 6, 7, // -X
+            8, 9, 10, 8, 10, 11, // +Y
+            12, 13, 14, 12, 14, 15, // -Y
+            16, 17, 18, 16, 18, 19, // +Z
+            20, 21, 22, 20, 22, 23, // -Z
         ];
         (verts, normals, indices)
     }
@@ -302,52 +301,10 @@ impl Sphere {
         }
     }
 
-    /// Generate a unit-sphere triangle list (non-indexed) with the given
-    /// latitude/longitude resolution. Returned vertices are positions on the
-    /// unit sphere centered at the origin. Use the `InstanceGpu::model`
-    /// matrix to scale/translate per-instance spheres.
-    pub fn unit_sphere_vertices(lat_segments: usize, lon_segments: usize) -> Vec<[f32; 3]> {
-        let lat = lat_segments.max(2);
-        let lon = lon_segments.max(3);
-        // Precompute the grid of positions (lat+1) x (lon+1)
-        let mut pts: Vec<[f32; 3]> = Vec::with_capacity((lat + 1) * (lon + 1));
-        for i in 0..=lat {
-            let theta = std::f32::consts::PI * (i as f32) / (lat as f32);
-            let sin_theta = theta.sin();
-            let cos_theta = theta.cos();
-            for j in 0..=lon {
-                let phi = 2.0 * std::f32::consts::PI * (j as f32) / (lon as f32);
-                let x = sin_theta * phi.cos();
-                let y = cos_theta;
-                let z = sin_theta * phi.sin();
-                pts.push([x, y, z]);
-            }
-        }
-
-        // Build triangle list (two triangles per quad)
-        let mut verts: Vec<[f32; 3]> = Vec::new();
-        for i in 0..lat {
-            for j in 0..lon {
-                let a = i * (lon + 1) + j;
-                let b = a + 1;
-                let c = a + (lon + 1);
-                let d = c + 1;
-                // triangle 1: a, c, b
-                verts.push(pts[a]);
-                verts.push(pts[c]);
-                verts.push(pts[b]);
-                // triangle 2: b, c, d
-                verts.push(pts[b]);
-                verts.push(pts[c]);
-                verts.push(pts[d]);
-            }
-        }
-        verts
-    }
-
     /// Generate a unit-sphere using indexed triangle lists.
-    /// Returns (vertices, indices) where `vertices` is the unique vertex
+    /// Returns (vertices, normals, indices) where `vertices` is the unique vertex
     /// list and `indices` contains 32-bit triangle indices into `vertices`.
+    /// Triangles wind CCW when viewed from outside the sphere.
     pub fn unit_sphere_indexed(
         lat_segments: usize,
         lon_segments: usize,
@@ -377,14 +334,14 @@ impl Sphere {
                 let b = a + 1;
                 let c = a + (lon + 1) as u32; // careful cast
                 let d = c + 1;
-                // triangle 1: a, c, b
+                // CCW from outside
                 indices.push(a);
-                indices.push(c);
-                indices.push(b);
-                // triangle 2: b, c, d
                 indices.push(b);
                 indices.push(c);
+                // CCW from outside
+                indices.push(b);
                 indices.push(d);
+                indices.push(c);
             }
         }
         // For a unit sphere the normal at each vertex equals the position.
@@ -516,5 +473,219 @@ mod tests {
         assert_eq!(store.center_mut(h2).map(|c| *c), Some(Vec3::Z));
         assert_ne!(h0, h1);
         assert_ne!(h1, h2);
+    }
+
+    const GEOMETRY_EPS: f32 = 1e-4;
+
+    fn v3(p: [f32; 3]) -> Vec3 {
+        Vec3::from_array(p)
+    }
+
+    fn triangles(indices: &[u32]) -> Vec<[usize; 3]> {
+        indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|t| [t[0] as usize, t[1] as usize, t[2] as usize])
+            .collect()
+    }
+
+    #[test]
+    fn unit_cube_indexed_faces_wind_outward() {
+        let (verts, normals, indices) = Cube::unit_cube_indexed();
+
+        assert_eq!(verts.len(), 24);
+        assert_eq!(normals.len(), 24);
+        assert_eq!(indices.len(), 36);
+        assert!(indices.iter().all(|&i| (i as usize) < verts.len()));
+        let mut used: Vec<u32> = indices.clone();
+        used.sort_unstable();
+        used.dedup();
+        assert_eq!(
+            used,
+            (0..24).collect::<Vec<u32>>(),
+            "every face vertex is drawn"
+        );
+        for [a, b, c] in triangles(&indices) {
+            let cross = (v3(verts[b]) - v3(verts[a])).cross(v3(verts[c]) - v3(verts[a]));
+            let normal = v3(normals[a]);
+            assert_eq!(normals[a], normals[b]);
+            assert_eq!(normals[a], normals[c]);
+            assert!(cross.dot(normal) > 0.0, "triangle {a},{b},{c} faces inward");
+            assert!(cross.cross(normal).length() < GEOMETRY_EPS);
+        }
+    }
+
+    #[test]
+    fn unit_cube_indexed_normals_are_face_axes() {
+        let (verts, normals, _) = Cube::unit_cube_indexed();
+
+        for (vert, normal) in verts.iter().zip(&normals) {
+            assert!(vert.iter().all(|c| (c.abs() - 0.5).abs() < GEOMETRY_EPS));
+            let n = v3(*normal);
+            assert!((n.length() - 1.0).abs() < GEOMETRY_EPS);
+            assert_eq!(n.to_array().iter().filter(|c| c.abs() > 0.5).count(), 1);
+            assert!((v3(*vert).dot(n) - 0.5).abs() < GEOMETRY_EPS);
+        }
+        let mut rounded: Vec<[i32; 3]> = normals
+            .iter()
+            .map(|n| n.map(|c| c.round() as i32))
+            .collect();
+        rounded.sort_unstable();
+        let mut expected: Vec<[i32; 3]> = [
+            [1, 0, 0],
+            [-1, 0, 0],
+            [0, 1, 0],
+            [0, -1, 0],
+            [0, 0, 1],
+            [0, 0, -1],
+        ]
+        .iter()
+        .flat_map(|axis| [*axis; 4])
+        .collect();
+        expected.sort_unstable();
+        assert_eq!(rounded, expected);
+    }
+
+    const SPHERE_RESOLUTIONS: [(usize, usize); 4] = [(3, 5), (16, 16), (2, 3), (7, 4)];
+
+    #[test]
+    fn unit_sphere_indexed_vertices_lie_on_unit_sphere() {
+        for (lat, lon) in SPHERE_RESOLUTIONS {
+            let (verts, normals, indices) = Sphere::unit_sphere_indexed(lat, lon);
+
+            assert_eq!(verts.len(), (lat + 1) * (lon + 1), "{lat}x{lon}");
+            assert_eq!(normals, verts, "{lat}x{lon}");
+            assert_eq!(indices.len(), lat * lon * 6, "{lat}x{lon}");
+            assert!(indices.iter().all(|&i| (i as usize) < verts.len()));
+            for vert in &verts {
+                assert!(
+                    (v3(*vert).length() - 1.0).abs() < GEOMETRY_EPS,
+                    "{lat}x{lon}"
+                );
+            }
+            for ring in verts.chunks_exact(lon + 1) {
+                assert!(v3(ring[lon]).abs_diff_eq(v3(ring[0]), GEOMETRY_EPS));
+            }
+        }
+    }
+
+    #[test]
+    fn unit_sphere_indexed_poles_sit_on_y_axis() {
+        for (lat, lon) in SPHERE_RESOLUTIONS {
+            let (verts, _, _) = Sphere::unit_sphere_indexed(lat, lon);
+
+            let first = &verts[..=lon];
+            let last = &verts[lat * (lon + 1)..];
+
+            assert!(
+                first
+                    .iter()
+                    .all(|v| v3(*v).abs_diff_eq(Vec3::Y, GEOMETRY_EPS))
+            );
+            assert!(
+                last.iter()
+                    .all(|v| v3(*v).abs_diff_eq(Vec3::NEG_Y, GEOMETRY_EPS))
+            );
+        }
+    }
+
+    #[test]
+    fn unit_sphere_indexed_equator_spans_the_full_circle() {
+        let (verts, _, _) = Sphere::unit_sphere_indexed(16, 16);
+
+        let equator = &verts[8 * 17..9 * 17];
+
+        for (j, expected) in [
+            (0, Vec3::X),
+            (4, Vec3::Z),
+            (8, Vec3::NEG_X),
+            (12, Vec3::NEG_Z),
+            (16, Vec3::X),
+        ] {
+            assert!(
+                v3(equator[j]).abs_diff_eq(expected, GEOMETRY_EPS),
+                "step {j}: {:?}",
+                equator[j]
+            );
+        }
+    }
+
+    #[test]
+    fn unit_sphere_indexed_triangles_wind_outward() {
+        for (lat, lon) in SPHERE_RESOLUTIONS {
+            let (verts, _, indices) = Sphere::unit_sphere_indexed(lat, lon);
+
+            let tris = triangles(&indices);
+            let mut outward = 0;
+            for [a, b, c] in &tris {
+                let (pa, pb, pc) = (v3(verts[*a]), v3(verts[*b]), v3(verts[*c]));
+                let cross = (pb - pa).cross(pc - pa);
+                if cross.length() < GEOMETRY_EPS {
+                    continue;
+                }
+                let centroid = (pa + pb + pc) / 3.0;
+                assert!(cross.dot(centroid) > 0.0, "{lat}x{lon}: inward {a},{b},{c}");
+                outward += 1;
+            }
+
+            assert_eq!(tris.len(), lat * lon * 2, "{lat}x{lon}");
+            assert_eq!(outward, lat * lon * 2 - 2 * lon, "{lat}x{lon}");
+        }
+    }
+
+    #[test]
+    fn unit_sphere_indexed_floors_segment_counts() {
+        let floored = Sphere::unit_sphere_indexed(2, 3);
+        assert_eq!(floored.0.len(), 12);
+        assert_eq!(floored.2.len(), 36);
+
+        for (lat, lon) in [(0, 0), (1, 3), (2, 2)] {
+            let (verts, normals, indices) = Sphere::unit_sphere_indexed(lat, lon);
+
+            assert_eq!(verts, floored.0, "{lat}x{lon}");
+            assert_eq!(normals, floored.1, "{lat}x{lon}");
+            assert_eq!(indices, floored.2, "{lat}x{lon}");
+        }
+    }
+
+    #[test]
+    fn to_instance_scales_and_translates_by_actor_dims() {
+        let cube_mat = MaterialType::Lambertian { albedo: Vec3::X };
+        let sphere_mat = MaterialType::Metal {
+            albedo: Vec3::Y,
+            fuzz: 0.25,
+        };
+        let cube = Cube::new(Vec3::new(7.0, 11.0, 13.0), 2.0, 5.0, 3.0, cube_mat);
+        let sphere = Sphere::new(Vec3::new(-1.5, 2.5, 6.0), 4.0, sphere_mat);
+
+        let cube_instance = Renderable::to_instance_with_material(&cube, 9);
+        let sphere_instance = Renderable::to_instance_with_material(&sphere, 4);
+
+        assert_eq!(
+            cube_instance.model,
+            [
+                [2.0, 0.0, 0.0, 0.0],
+                [0.0, 3.0, 0.0, 0.0],
+                [0.0, 0.0, 5.0, 0.0],
+                [7.0, 11.0, 13.0, 1.0],
+            ]
+        );
+        assert_eq!((cube_instance.material, cube_instance.object_type), (9, 1));
+        assert_eq!(
+            sphere_instance.model,
+            [
+                [4.0, 0.0, 0.0, 0.0],
+                [0.0, 4.0, 0.0, 0.0],
+                [0.0, 0.0, 4.0, 0.0],
+                [-1.5, 2.5, 6.0, 1.0],
+            ]
+        );
+        assert_eq!(
+            (sphere_instance.material, sphere_instance.object_type),
+            (4, 2)
+        );
+        assert_eq!(*Renderable::material(&cube), cube_mat);
+        assert_eq!(*Renderable::material(&sphere), sphere_mat);
     }
 }
