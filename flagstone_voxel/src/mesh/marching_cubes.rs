@@ -1103,14 +1103,16 @@ mod tests {
 
     #[test]
     fn cell_triangles_match_generated_mesh_for_every_cube_index() {
-        for cube_index in 1..=254u8 {
+        for cube_index in 0..=255u8 {
             let from_mesh = mesh_triangles_in_cell(cube_index);
 
             let mut unmatched: Vec<[Vec3; 3]> = MarchingCubes::cell_triangles(cube_index).collect();
 
-            assert!(
-                !from_mesh.is_empty(),
-                "index {cube_index}: the mesher drew nothing in the cell"
+            let uniform = cube_index == 0 || cube_index == 255;
+            assert_eq!(
+                from_mesh.is_empty(),
+                uniform,
+                "index {cube_index}: the mesher's triangles in the cell"
             );
             for tri in &from_mesh {
                 let found = unmatched.iter().position(|t| same_triangle(t, tri));
@@ -1126,11 +1128,5 @@ mod tests {
                 "index {cube_index}: cell_triangles has extra triangles {unmatched:?}"
             );
         }
-    }
-
-    #[test]
-    fn cell_triangles_are_empty_for_uniform_cells() {
-        assert_eq!(MarchingCubes::cell_triangles(0).count(), 0);
-        assert_eq!(MarchingCubes::cell_triangles(255).count(), 0);
     }
 }

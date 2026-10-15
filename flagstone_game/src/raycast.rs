@@ -334,38 +334,131 @@ mod tests {
 
         let mut lone = VoxelGrid::new(16);
         lone.mutator().place(BlockPos::new(0, 0, 0), 1, None);
+        lone.mutator().place(BlockPos::new(0, 0, 3), 1, None);
         let inside = Vec3::splat(0.5);
         assert!(raycast_surface(&lone, inside, Vec3::Z, 20.0).is_none());
     }
 
+    /// A ray aimed at a lone block's centre from a slightly off-lattice origin, so no step
+    /// is an exact tie between axes. The far scene's range is long; the near one starts at the
+    /// far corner of its cell, so the walk needs many more cells than `ceil(range)` suggests.
+    struct Diagonal {
+        block: BlockPos,
+        origin: Vec3,
+    }
+
+    const FAR: Diagonal = Diagonal {
+        block: BlockPos::new(17, 17, 17),
+        origin: Vec3::new(0.55, 0.5, 0.45),
+    };
+    const NEAR: Diagonal = Diagonal {
+        block: BlockPos::new(2, 2, 2),
+        origin: Vec3::new(0.99, 0.97, 0.98),
+    };
+
+    impl Diagonal {
+        fn grid(&self) -> VoxelGrid {
+            let mut grid = VoxelGrid::new(16);
+            grid.mutator().place(self.block, 1, None);
+            grid
+        }
+
+        fn direction(&self) -> Vec3 {
+            self.block.as_vec3() + Vec3::splat(0.5) - self.origin
+        }
+
+        /// Distance at which the ray enters the block's cube (slab test).
+        fn cube_entry(&self) -> f32 {
+            let dir = self.direction().normalize();
+            let lo = self.block.as_vec3();
+            let near = (lo - self.origin) / dir;
+            let far = (lo + Vec3::ONE - self.origin) / dir;
+            near.min(far).max_element()
+        }
+
+        /// Distance at which the ray meets the drawn surface: the near face of the
+        /// octahedron of radius 0.5 around the block centre, `|p - c|_1 = 0.5`.
+        fn surface_entry(&self) -> f32 {
+            let dir = self.direction().normalize();
+            let to_centre = self.block.as_vec3() + Vec3::splat(0.5) - self.origin;
+            let t = (to_centre.element_sum() - 0.5) / dir.element_sum();
+            let hit = self.origin + dir * t;
+            assert!(
+                hit.cmplt(self.block.as_vec3() + Vec3::splat(0.5)).all(),
+                "scene must meet the octahedron's (-,-,-) face"
+            );
+            t
+        }
+    }
+
     #[test]
-    fn walk_stops_after_max_distance_worth_of_cells() {
-        // A diagonal ray crosses about 1.7 cell boundaries per unit of distance, the most
-        // any ray can; the walk's cell budget must still reach a block at the range limit.
-        let mut grid = VoxelGrid::new(16);
-        let block = BlockPos::new(17, 17, 17);
-        grid.mutator().place(block, 1, None);
-        let origin = Vec3::splat(0.5);
-        let diagonal = Vec3::ONE;
-        // The cube walk enters the block at its near corner, (17, 17, 17).
-        let cube_entry = 16.5 * 3.0f32.sqrt();
-        // The drawn surface is an octahedron of radius 0.5 around the block centre.
-        let surface_entry = 50.5 / 3.0f32.sqrt();
+    fn cube_diagonal_ray_reaches_block_at_range_limit() {
+        for scene in [FAR, NEAR] {
+            let grid = scene.grid();
 
-        let cube_at_limit = raycast(&grid, origin, diagonal, cube_entry + 0.05);
-        let cube_short = raycast(&grid, origin, diagonal, cube_entry - 0.05);
-        let surface_at_limit = raycast_surface(&grid, origin, diagonal, surface_entry + 0.05);
-        let surface_short = raycast_surface(&grid, origin, diagonal, surface_entry - 0.05);
+            let hit = raycast(
+                &grid,
+                scene.origin,
+                scene.direction(),
+                scene.cube_entry() + 0.05,
+            );
 
-        assert_eq!(cube_at_limit.map(|h| h.block_pos), Some(block));
-        assert!(cube_short.is_none());
-        let surface_hit = surface_at_limit.expect("surface lies just inside max_distance");
-        assert_eq!(surface_hit.block_pos, block);
-        assert!(
-            (surface_hit.distance - surface_entry).abs() < 0.01,
-            "{}",
-            surface_hit.distance
-        );
-        assert!(surface_short.is_none());
+            assert_eq!(
+                hit.map(|h| h.block_pos),
+                Some(scene.block),
+                "{:?}",
+                scene.block
+            );
+        }
+    }
+
+    #[test]
+    fn cube_diagonal_ray_stops_just_short_of_block() {
+        for scene in [FAR, NEAR] {
+            let grid = scene.grid();
+
+            let hit = raycast(
+                &grid,
+                scene.origin,
+                scene.direction(),
+                scene.cube_entry() - 0.05,
+            );
+
+            assert!(hit.is_none(), "{:?}: {hit:?}", scene.block);
+        }
+    }
+
+    #[test]
+    fn surface_diagonal_ray_reaches_block_at_range_limit() {
+        for scene in [FAR, NEAR] {
+            let grid = scene.grid();
+            let entry = scene.surface_entry();
+
+            let hit = raycast_surface(&grid, scene.origin, scene.direction(), entry + 0.05)
+                .unwrap_or_else(|| panic!("{:?}: no hit within {}", scene.block, entry + 0.05));
+
+            assert_eq!(hit.block_pos, scene.block);
+            assert!(
+                (hit.distance - entry).abs() < 0.01,
+                "{} vs {entry}",
+                hit.distance
+            );
+        }
+    }
+
+    #[test]
+    fn surface_diagonal_ray_stops_just_short_of_surface() {
+        for scene in [FAR, NEAR] {
+            let grid = scene.grid();
+
+            let hit = raycast_surface(
+                &grid,
+                scene.origin,
+                scene.direction(),
+                scene.surface_entry() - 0.05,
+            );
+
+            assert!(hit.is_none(), "{:?}: {hit:?}", scene.block);
+        }
     }
 }

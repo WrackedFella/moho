@@ -4,7 +4,7 @@ use flagstone_game::raycast;
 use flagstone_voxel::{VoxelChunk, VoxelGrid};
 use glam::{DVec3, IVec3, Vec3};
 use proptest::prelude::*;
-use proptest::test_runner::{Config, TestRunner};
+use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 
 /// Slack for "the same point on the mesh" and for crossings the f32 raycast and the
 /// f64 reference may resolve differently at an edge.
@@ -14,6 +14,13 @@ const TOLERANCE: f64 = 1e-3;
 /// from is not numerically meaningful.
 const GRAZING_COS: f64 = 1e-3;
 
+/// Floors for the deterministic seed's branch counts (observed: 72, 94, 12, 79, 67).
+const MIN_FRONT: u32 = 40;
+const MIN_INSIDE: u32 = 60;
+const MIN_ORIGIN_CELL: u32 = 6;
+const MIN_NONE: u32 = 40;
+const MIN_EMPTY_BEYOND: u32 = 40;
+
 fn config() -> Config {
     Config {
         cases: 256,
@@ -22,12 +29,26 @@ fn config() -> Config {
     }
 }
 
+/// Where a generated ray starts.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Start {
+    /// Anywhere in `-6..22`^3.
+    Anywhere,
+    /// Inside a solid block's octahedron (L1 distance below 0.5 from its centre), so inside
+    /// the surface whatever the neighbours are.
+    Inside,
+    /// A little short of the aimed-at point, so the first crossing is often in the origin's
+    /// own dual-lattice cell.
+    NearTarget,
+}
+
 #[derive(Debug, Clone)]
 struct Case {
     blocks: Vec<IVec3>,
     origin: Vec3,
     direction: Vec3,
     max_distance: f32,
+    start: Start,
 }
 
 impl Case {
@@ -44,10 +65,14 @@ impl Case {
     }
 }
 
-/// Smooth blocks in `2..14`^3 (the whole surface falls inside chunk 0's mesh), an origin
-/// anywhere in `-6..22`^3, and a direction aimed at a solid block's centre with jitter with
-/// probability `aim`, otherwise random.
-fn cases(max_distance: std::ops::Range<f32>, aim: f64) -> impl Strategy<Value = Case> {
+/// Smooth blocks in `2..14`^3 (the whole surface falls inside chunk 0's mesh), a start per
+/// `start`, and a direction aimed at a solid block's centre with jitter with probability
+/// `aim`, otherwise random.
+fn cases(
+    max_distance: std::ops::Range<f32>,
+    aim: f64,
+    start: Start,
+) -> impl Strategy<Value = Case> {
     let block = (2..14i32, 2..14i32, 2..14i32).prop_map(|(x, y, z)| IVec3::new(x, y, z));
     let point = |range: std::ops::Range<f32>| {
         (range.clone(), range.clone(), range).prop_map(|(x, y, z)| Vec3::new(x, y, z))
@@ -60,20 +85,59 @@ fn cases(max_distance: std::ops::Range<f32>, aim: f64) -> impl Strategy<Value = 
         point(-1.0..1.0),
         prop::bool::weighted(aim),
         max_distance,
+        (any::<prop::sample::Index>(), point(-0.5..0.5), 0.05..1.5f32),
     )
         .prop_filter_map(
             "direction must be non-zero",
-            |(blocks, origin, pick, jitter, random, aimed, max_distance)| {
+            move |(
+                blocks,
+                origin,
+                pick,
+                jitter,
+                random,
+                aimed,
+                max_distance,
+                (start_pick, inner, back),
+            )| {
                 let target = blocks[pick.index(blocks.len())].as_vec3() + Vec3::splat(0.5) + jitter;
-                let direction = if aimed { target - origin } else { random };
+                let (origin, direction) = match start {
+                    Start::Anywhere => (origin, if aimed { target - origin } else { random }),
+                    Start::Inside => {
+                        let l1 = inner.abs().element_sum();
+                        let inner = if l1 > 0.45 {
+                            inner * (0.45 / l1)
+                        } else if l1 < 0.02 {
+                            inner + Vec3::new(0.05, 0.0, 0.0)
+                        } else {
+                            inner
+                        };
+                        let centre = blocks[start_pick.index(blocks.len())].as_vec3() + 0.5;
+                        let origin = centre + inner;
+                        (origin, if aimed { target - origin } else { random })
+                    }
+                    Start::NearTarget => {
+                        let to_target = target - origin;
+                        if to_target.length() > 1e-2 {
+                            (target - to_target.normalize() * back, to_target)
+                        } else {
+                            (origin, random)
+                        }
+                    }
+                };
                 (direction.length() > 1e-2).then_some(Case {
                     blocks,
                     origin,
                     direction,
                     max_distance,
+                    start,
                 })
             },
         )
+}
+
+/// Same seed every run, so the branch counts asserted after a run are stable.
+fn deterministic_runner() -> TestRunner {
+    TestRunner::new_with_rng(config(), TestRng::deterministic_rng(RngAlgorithm::ChaCha))
 }
 
 type Triangle = [DVec3; 3];
@@ -200,7 +264,7 @@ proptest! {
     #![proptest_config(config())]
 
     #[test]
-    fn surface_hit_lies_on_the_chunk_mesh(case in cases(20.0..60.0, 0.9)) {
+    fn surface_hit_lies_on_the_chunk_mesh(case in cases(20.0..60.0, 0.9, Start::Anywhere)) {
         let grid = case.grid();
         let tris = mesh_triangles(&grid);
 
@@ -219,65 +283,8 @@ proptest! {
     }
 
     #[test]
-    fn surface_hit_is_first_front_face_and_owned_by_a_bounding_solid_block(
-        case in cases(20.0..60.0, 0.9)
-    ) {
-        let grid = case.grid();
-        let tris = mesh_triangles(&grid);
-        let origin = case.origin.as_dvec3();
-        let dir = case.unit_direction();
-        let max = f64::from(case.max_distance);
-
-        let hit = raycast::raycast_surface(&grid, case.origin, case.direction, case.max_distance);
-        let crossed = crossings(&tris, origin, dir, max + TOLERANCE);
-
-        if let Some(hit) = hit {
-            let distance = f64::from(hit.distance);
-            let earlier = crossed
-                .iter()
-                .find(|c| c.front && c.t < distance - TOLERANCE);
-            prop_assert!(
-                earlier.is_none(),
-                "front face crossed at {earlier:?} before the hit at {distance}"
-            );
-            prop_assert!(grid.material_at(hit.block_pos).is_some(), "{:?} is not solid", hit.block_pos);
-            let centre = hit.block_pos.as_dvec3() + DVec3::splat(0.5);
-            let offset = (centre - hit.position.as_dvec3()).abs().max_element();
-            prop_assert!(
-                offset <= 1.0 + TOLERANCE,
-                "block {:?} does not bound the hit at {:?}",
-                hit.block_pos,
-                hit.position
-            );
-        }
-
-        if let Some(first) = crossed.first() {
-            let tied = crossed.iter().take_while(|c| c.t - first.t < TOLERANCE);
-            let ambiguous = first.t < TOLERANCE
-                || first.t > max - TOLERANCE
-                || tied.clone().any(|c| c.front != first.front || c.cos < GRAZING_COS);
-            if !ambiguous && first.front {
-                let hit = hit.ok_or_else(|| TestCaseError::fail(format!(
-                    "missed a front face at {} in range {max}", first.t
-                )))?;
-                prop_assert!(
-                    (f64::from(hit.distance) - first.t).abs() <= TOLERANCE,
-                    "hit at {} but the first front face is at {}",
-                    hit.distance,
-                    first.t
-                );
-            } else if !ambiguous {
-                prop_assert!(
-                    hit.is_none(),
-                    "origin is inside the surface (first crossing {first:?}) yet hit {hit:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn cube_raycast_reports_first_solid_block_with_face_toward_origin(
-        case in cases(20.0..60.0, 0.9)
+        case in cases(20.0..60.0, 0.9, Start::Anywhere)
     ) {
         let grid = case.grid();
         let origin = case.origin.as_dvec3();
@@ -338,20 +345,181 @@ proptest! {
     }
 }
 
+/// How often each branch of the first-front-face property ran.
+#[derive(Default)]
+struct Branches {
+    front_face_hit_matched: Cell<u32>,
+    inside_start_reported_none: Cell<u32>,
+    first_crossing_in_origin_cell: Cell<u32>,
+    no_crossing: Cell<u32>,
+}
+
+fn bump(counter: &Cell<u32>) {
+    counter.set(counter.get() + 1);
+}
+
+/// The dual-lattice cell (block-centre corners) containing `p`.
+fn dual_cell(p: DVec3) -> IVec3 {
+    (p - DVec3::splat(0.5)).floor().as_ivec3()
+}
+
+fn check_first_front_face(case: &Case, branches: &Branches) -> Result<(), TestCaseError> {
+    let grid = case.grid();
+    let tris = mesh_triangles(&grid);
+    let origin = case.origin.as_dvec3();
+    let dir = case.unit_direction();
+    let max = f64::from(case.max_distance);
+
+    let hit = raycast::raycast_surface(&grid, case.origin, case.direction, case.max_distance);
+    let crossed = crossings(&tris, origin, dir, max + TOLERANCE);
+
+    if case.start == Start::Inside {
+        prop_assert!(
+            hit.is_none(),
+            "origin {:?} is inside the surface yet hit {hit:?}",
+            case.origin
+        );
+        bump(&branches.inside_start_reported_none);
+    }
+
+    if let Some(hit) = hit {
+        let distance = f64::from(hit.distance);
+        let earlier = crossed
+            .iter()
+            .find(|c| c.front && c.t < distance - TOLERANCE);
+        prop_assert!(
+            earlier.is_none(),
+            "front face crossed at {earlier:?} before the hit at {distance}"
+        );
+        prop_assert!(
+            grid.material_at(hit.block_pos).is_some(),
+            "{:?} is not solid",
+            hit.block_pos
+        );
+        let centre = hit.block_pos.as_dvec3() + DVec3::splat(0.5);
+        let at = hit.position.as_dvec3();
+        let offset = (centre - at).abs().max_element();
+        prop_assert!(
+            offset <= 1.0 + TOLERANCE,
+            "block {:?} does not bound the hit at {:?}",
+            hit.block_pos,
+            hit.position
+        );
+        // Of the cell's eight corner blocks, the solid one nearest the hit owns it.
+        let reported = (centre - at).length();
+        let base = dual_cell(at);
+        for corner in 0..8 {
+            let block = base + IVec3::new(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
+            if grid.material_at(block).is_none() {
+                continue;
+            }
+            let rival = (block.as_dvec3() + DVec3::splat(0.5) - at).length();
+            prop_assert!(
+                rival >= reported - TOLERANCE,
+                "solid block {block:?} ({rival}) is nearer the hit than reported {:?} ({reported})",
+                hit.block_pos
+            );
+        }
+    }
+
+    let Some(first) = crossed.first() else {
+        bump(&branches.no_crossing);
+        return Ok(());
+    };
+    let tied = crossed.iter().take_while(|c| c.t - first.t < TOLERANCE);
+    let ambiguous = first.t < TOLERANCE
+        || first.t > max - TOLERANCE
+        || tied
+            .clone()
+            .any(|c| c.front != first.front || c.cos < GRAZING_COS);
+    if ambiguous {
+        return Ok(());
+    }
+    if first.front {
+        let hit = hit.ok_or_else(|| {
+            TestCaseError::fail(format!("missed a front face at {} in range {max}", first.t))
+        })?;
+        prop_assert!(
+            (f64::from(hit.distance) - first.t).abs() <= TOLERANCE,
+            "hit at {} but the first front face is at {}",
+            hit.distance,
+            first.t
+        );
+        bump(&branches.front_face_hit_matched);
+        if dual_cell(origin + dir * first.t) == dual_cell(origin) {
+            bump(&branches.first_crossing_in_origin_cell);
+        }
+    } else {
+        prop_assert!(
+            hit.is_none(),
+            "origin is inside the surface (first crossing {first:?}) yet hit {hit:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn surface_hit_is_first_front_face_and_owned_by_a_bounding_solid_block() {
+    let strategy = prop_oneof![
+        cases(20.0..60.0, 0.9, Start::Anywhere),
+        cases(20.0..60.0, 0.9, Start::Inside),
+        cases(20.0..60.0, 0.9, Start::NearTarget),
+    ];
+    let branches = Branches::default();
+    let mut runner = deterministic_runner();
+
+    runner
+        .run(&strategy, |case| check_first_front_face(&case, &branches))
+        .unwrap_or_else(|e| panic!("{e}"));
+
+    eprintln!(
+        "branches: front_face_hit_matched={} inside_start_reported_none={} first_crossing_in_origin_cell={} no_crossing={}",
+        branches.front_face_hit_matched.get(),
+        branches.inside_start_reported_none.get(),
+        branches.first_crossing_in_origin_cell.get(),
+        branches.no_crossing.get(),
+    );
+    assert!(
+        branches.front_face_hit_matched.get() >= MIN_FRONT,
+        "front-face hits"
+    );
+    assert!(
+        branches.inside_start_reported_none.get() >= MIN_INSIDE,
+        "inside starts"
+    );
+    assert!(
+        branches.first_crossing_in_origin_cell.get() >= MIN_ORIGIN_CELL,
+        "origin-cell crossings"
+    );
+    assert!(
+        branches.no_crossing.get() >= MIN_NONE,
+        "rays with no crossing"
+    );
+}
+
 #[test]
 fn ray_through_empty_space_reports_no_hit() {
-    let strategy = prop_oneof![cases(1.0..12.0, 0.9), cases(1.0..60.0, 0.2)];
-    let empty_cases = Cell::new(0u32);
-    let mut runner = TestRunner::new(config());
+    let strategy = prop_oneof![
+        cases(1.0..12.0, 0.9, Start::Anywhere),
+        cases(1.0..60.0, 0.2, Start::Anywhere),
+    ];
+    let empty = Cell::new(0u32);
+    let empty_but_mesh_just_beyond = Cell::new(0u32);
+    let mut runner = deterministic_runner();
 
     runner
         .run(&strategy, |case| {
             let grid = case.grid();
             let tris = mesh_triangles(&grid);
+            let origin = case.origin.as_dvec3();
+            let dir = case.unit_direction();
             let length = f64::from(case.max_distance) + TOLERANCE;
-            let touching = crossings(&tris, case.origin.as_dvec3(), case.unit_direction(), length);
-            prop_assume!(touching.is_empty());
-            empty_cases.set(empty_cases.get() + 1);
+            prop_assume!(crossings(&tris, origin, dir, length).is_empty());
+            bump(&empty);
+            // The surface lies on the ray, only past max_distance: a hit here is a broken range check.
+            if !crossings(&tris, origin, dir, 200.0).is_empty() {
+                bump(&empty_but_mesh_just_beyond);
+            }
 
             let hit =
                 raycast::raycast_surface(&grid, case.origin, case.direction, case.max_distance);
@@ -361,10 +529,15 @@ fn ray_through_empty_space_reports_no_hit() {
         })
         .unwrap_or_else(|e| panic!("{e}"));
 
+    eprintln!(
+        "empty segments={} of which the mesh lies beyond max_distance={}",
+        empty.get(),
+        empty_but_mesh_just_beyond.get()
+    );
     assert!(
-        empty_cases.get() >= 100,
-        "only {} generated cases had an empty segment; the strategy is not exercising misses",
-        empty_cases.get()
+        empty_but_mesh_just_beyond.get() >= MIN_EMPTY_BEYOND,
+        "only {} empty segments had the surface just past max_distance",
+        empty_but_mesh_just_beyond.get()
     );
 }
 
