@@ -15,6 +15,8 @@ const TOLERANCE: f64 = 1e-3;
 const GRAZING_COS: f64 = 1e-3;
 
 /// Floors for the seed's branch counts, so each property's branch is known to have run.
+const MIN_HITS: u32 = 40;
+const MIN_CUBE: u32 = 100;
 const MIN_FRONT: u32 = 40;
 const MIN_INSIDE: u32 = 60;
 const MIN_ORIGIN_CELL: u32 = 6;
@@ -265,89 +267,117 @@ fn crossings(tris: &[Triangle], origin: DVec3, dir: DVec3, length: f64) -> Vec<C
     all
 }
 
-proptest! {
-    #![proptest_config(config())]
+#[test]
+fn surface_hit_lies_on_the_chunk_mesh() {
+    let strategy = cases(20.0..60.0, 0.9, Start::Anywhere);
+    let hits = Cell::new(0u32);
+    let mut runner = deterministic_runner();
 
-    #[test]
-    fn surface_hit_lies_on_the_chunk_mesh(case in cases(20.0..60.0, 0.9, Start::Anywhere)) {
-        let grid = case.grid();
-        let tris = mesh_triangles(&grid);
+    runner
+        .run(&strategy, |case| {
+            let grid = case.grid();
+            let tris = mesh_triangles(&grid);
 
-        let hit = raycast::raycast_surface(&grid, case.origin, case.direction, case.max_distance);
+            let hit =
+                raycast::raycast_surface(&grid, case.origin, case.direction, case.max_distance);
 
-        if let Some(hit) = hit {
-            let off_mesh = distance_to_mesh(&tris, hit.position.as_dvec3());
-            prop_assert!(off_mesh <= TOLERANCE, "hit {:?} is {off_mesh} from the mesh", hit.position);
-            let along_ray = case.origin.as_dvec3() + case.unit_direction() * f64::from(hit.distance);
-            prop_assert!(
-                (along_ray - hit.position.as_dvec3()).length() <= TOLERANCE,
-                "position {:?} is not origin + dir * distance ({along_ray:?})",
-                hit.position
-            );
-        }
-    }
-
-    #[test]
-    fn cube_raycast_reports_first_solid_block_with_face_toward_origin(
-        case in cases(20.0..60.0, 0.9, Start::Anywhere)
-    ) {
-        let grid = case.grid();
-        let origin = case.origin.as_dvec3();
-        let dir = case.unit_direction();
-        let max = f64::from(case.max_distance);
-        let origin_block = case.origin.floor().as_ivec3();
-        prop_assume!(grid.material_at(origin_block).is_none());
-
-        let hit = raycast::raycast(&grid, case.origin, case.direction, case.max_distance);
-
-        // Slab test against every solid block: (entry t, entry axis, entry t per axis).
-        let mut entries: Vec<(f64, usize, [f64; 3], IVec3)> = case
-            .blocks
-            .iter()
-            .filter_map(|&block| {
-                let lo = block.as_dvec3();
-                let mut near = [f64::NEG_INFINITY; 3];
-                let mut far = [f64::INFINITY; 3];
-                for axis in 0..3 {
-                    let t0 = (lo[axis] - origin[axis]) / dir[axis];
-                    let t1 = (lo[axis] + 1.0 - origin[axis]) / dir[axis];
-                    near[axis] = t0.min(t1);
-                    far[axis] = t0.max(t1);
-                }
-                let enter = near[0].max(near[1]).max(near[2]);
-                let exit = far[0].min(far[1]).min(far[2]);
-                let axis = (0..3).max_by(|&a, &b| near[a].total_cmp(&near[b])).unwrap();
-                (enter <= exit && enter >= 0.0).then_some((enter, axis, near, block))
-            })
-            .collect();
-        entries.sort_by(|a, b| a.0.total_cmp(&b.0));
-        entries.dedup_by_key(|e| e.3);
-        let first = entries.first().copied();
-
-        let ambiguous = first.is_some_and(|(t, axis, near, _)| {
-            let tied_axis = (0..3).any(|a| a != axis && (near[a] - t).abs() < 1e-6);
-            let tied_block = entries.get(1).is_some_and(|e| e.0 - t < 1e-6);
-            tied_axis || tied_block || (t - max).abs() < 1e-4
-        });
-        prop_assume!(!ambiguous);
-
-        match first.filter(|e| e.0 <= max) {
-            None => prop_assert!(hit.is_none(), "reported {hit:?} but no block lies in range"),
-            Some((t, axis, _, block)) => {
-                let hit = hit.ok_or_else(|| TestCaseError::fail(format!(
-                    "missed block {block:?} entered at {t}"
-                )))?;
-                prop_assert_eq!(hit.block_pos, block);
-                prop_assert!((f64::from(hit.distance) - t).abs() <= 1e-4, "distance {} vs {t}", hit.distance);
-                let mut expected = IVec3::ZERO;
-                expected[axis] = if dir[axis] > 0.0 { -1 } else { 1 };
-                prop_assert_eq!(hit.normal, expected);
-                prop_assert!(hit.normal.as_vec3().dot(case.direction) < 0.0);
-                let along_ray = origin + dir * f64::from(hit.distance);
-                prop_assert!((along_ray - hit.position.as_dvec3()).length() <= TOLERANCE);
+            if let Some(hit) = hit {
+                bump(&hits);
+                let off_mesh = distance_to_mesh(&tris, hit.position.as_dvec3());
+                prop_assert!(
+                    off_mesh <= TOLERANCE,
+                    "hit {:?} is {off_mesh} from the mesh",
+                    hit.position
+                );
+                let along_ray =
+                    case.origin.as_dvec3() + case.unit_direction() * f64::from(hit.distance);
+                prop_assert!(
+                    (along_ray - hit.position.as_dvec3()).length() <= TOLERANCE,
+                    "position {:?} is not origin + dir * distance ({along_ray:?})",
+                    hit.position
+                );
             }
-        }
-    }
+            Ok(())
+        })
+        .unwrap_or_else(|e| panic!("{e}"));
+
+    assert!(hits.get() >= MIN_HITS, "only {} hits", hits.get());
+}
+
+#[test]
+fn cube_raycast_reports_first_solid_block_with_face_toward_origin() {
+    let strategy = cases(20.0..60.0, 0.9, Start::Anywhere);
+    let checked = Cell::new(0u32);
+    let mut runner = deterministic_runner();
+
+    runner
+        .run(&strategy, |case| {
+            let grid = case.grid();
+            let origin = case.origin.as_dvec3();
+            let dir = case.unit_direction();
+            let max = f64::from(case.max_distance);
+            let origin_block = case.origin.floor().as_ivec3();
+            prop_assume!(grid.material_at(origin_block).is_none());
+
+            let hit = raycast::raycast(&grid, case.origin, case.direction, case.max_distance);
+
+            // Slab test against every solid block: (entry t, entry axis, entry t per axis).
+            let mut entries: Vec<(f64, usize, [f64; 3], IVec3)> = case
+                .blocks
+                .iter()
+                .filter_map(|&block| {
+                    let lo = block.as_dvec3();
+                    let mut near = [f64::NEG_INFINITY; 3];
+                    let mut far = [f64::INFINITY; 3];
+                    for axis in 0..3 {
+                        let t0 = (lo[axis] - origin[axis]) / dir[axis];
+                        let t1 = (lo[axis] + 1.0 - origin[axis]) / dir[axis];
+                        near[axis] = t0.min(t1);
+                        far[axis] = t0.max(t1);
+                    }
+                    let enter = near[0].max(near[1]).max(near[2]);
+                    let exit = far[0].min(far[1]).min(far[2]);
+                    let axis = (0..3).max_by(|&a, &b| near[a].total_cmp(&near[b])).unwrap();
+                    (enter <= exit && enter >= 0.0).then_some((enter, axis, near, block))
+                })
+                .collect();
+            entries.sort_by(|a, b| a.0.total_cmp(&b.0));
+            entries.dedup_by_key(|e| e.3);
+            let first = entries.first().copied();
+
+            let ambiguous = first.is_some_and(|(t, axis, near, _)| {
+                let tied_axis = (0..3).any(|a| a != axis && (near[a] - t).abs() < 1e-6);
+                let tied_block = entries.get(1).is_some_and(|e| e.0 - t < 1e-6);
+                tied_axis || tied_block || (t - max).abs() < 1e-4
+            });
+            prop_assume!(!ambiguous);
+
+            match first.filter(|e| e.0 <= max) {
+                None => prop_assert!(hit.is_none(), "reported {hit:?} but no block lies in range"),
+                Some((t, axis, _, block)) => {
+                    let hit = hit.ok_or_else(|| {
+                        TestCaseError::fail(format!("missed block {block:?} entered at {t}"))
+                    })?;
+                    prop_assert_eq!(hit.block_pos, block);
+                    prop_assert!(
+                        (f64::from(hit.distance) - t).abs() <= 1e-4,
+                        "distance {} vs {t}",
+                        hit.distance
+                    );
+                    let mut expected = IVec3::ZERO;
+                    expected[axis] = if dir[axis] > 0.0 { -1 } else { 1 };
+                    prop_assert_eq!(hit.normal, expected);
+                    prop_assert!(hit.normal.as_vec3().dot(case.direction) < 0.0);
+                    let along_ray = origin + dir * f64::from(hit.distance);
+                    prop_assert!((along_ray - hit.position.as_dvec3()).length() <= TOLERANCE);
+                }
+            }
+            bump(&checked);
+            Ok(())
+        })
+        .unwrap_or_else(|e| panic!("{e}"));
+
+    assert!(checked.get() >= MIN_CUBE, "only {} checked", checked.get());
 }
 
 /// How often each branch of the first-front-face property ran.
@@ -755,5 +785,47 @@ fn surface_ray_from_dual_cell_corner_hits_block_vertex() {
         (hit.distance - 2.5).abs() <= 1e-3,
         "distance {}",
         hit.distance
+    );
+}
+
+/// Three solid corners of one dual-lattice cell make triangles that are not coplanar, so a
+/// ray can cross the plane of a triangle well outside it before reaching the real surface.
+#[test]
+fn surface_ray_ignores_triangle_planes_outside_the_triangle() {
+    let mut grid = VoxelGrid::new(16);
+    for block in [
+        IVec3::new(5, 5, 5),
+        IVec3::new(6, 5, 5),
+        IVec3::new(5, 6, 5),
+    ] {
+        grid.mutator().place(block, 1, None);
+    }
+    let tris = mesh_triangles(&grid);
+    let origin = Vec3::new(4.763, 5.757, 2.011);
+    let direction = Vec3::new(0.283, 0.138, 1.0);
+    let first_front = crossings(
+        &tris,
+        origin.as_dvec3(),
+        direction.as_dvec3().normalize(),
+        20.0,
+    )
+    .into_iter()
+    .next()
+    .filter(|c| c.front)
+    .expect("the first mesh crossing is a front face");
+
+    let hit = raycast::raycast_surface(&grid, origin, direction, 20.0)
+        .expect("ray should hit the surface");
+
+    assert!(
+        (f64::from(hit.distance) - first_front.t).abs() <= TOLERANCE,
+        "distance {} vs mesh {}",
+        hit.distance,
+        first_front.t
+    );
+    assert!(
+        distance_to_mesh(&tris, hit.position.as_dvec3()) <= TOLERANCE,
+        "hit {:?} is off the mesh",
+        hit.position
     );
 }
