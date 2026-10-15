@@ -149,6 +149,18 @@ mod tests {
     use moho_input::key::Key;
 
     #[test]
+    fn pause_screen_is_registered() {
+        let mut manager = UiStateManager::new(Prefs::default());
+
+        assert!(
+            manager.get_screen("pause").is_some(),
+            "pause screen is registered"
+        );
+        assert!(manager.show_screen("pause"));
+        assert_eq!(manager.active_screen_name(), Some("pause"));
+    }
+
+    #[test]
     fn injected_prefs_reach_the_settings_screen() {
         let mut prefs = Prefs::default();
         prefs.set_bindings(

@@ -106,6 +106,11 @@ impl GameState {
         }
     }
 
+    /// The screen a "back" navigation returns to in this state, if the state has one.
+    pub fn home_screen(self) -> Option<&'static str> {
+        None
+    }
+
     /// Validate a state transition and return an error if invalid.
     pub fn validate_transition(self, new_state: GameState) -> Result<(), String> {
         if self.can_transition_to(new_state) {
@@ -174,6 +179,20 @@ mod tests {
 
         for (from, to, expected) in rows {
             assert_eq!(from.can_transition_to(to), expected, "{from:?} -> {to:?}");
+        }
+    }
+
+    #[test]
+    fn home_screen_per_state() {
+        let rows: [(GameState, Option<&str>); 4] = [
+            (Menu, Some("start")),
+            (Paused, Some("pause")),
+            (Playing, None),
+            (ConsoleOpen, None),
+        ];
+
+        for (state, expected) in rows {
+            assert_eq!(state.home_screen(), expected, "{state:?}");
         }
     }
 }

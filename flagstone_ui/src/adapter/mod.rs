@@ -381,7 +381,7 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
         // Process menu actions (delegates to event_routing module)
         for action in &menu_actions {
             self.record_menu_action(action);
-            event_routing::process_menu_action(action, &self.event_bus);
+            event_routing::process_menu_action(action, self.current_game_state, &self.event_bus);
         }
 
         // Handle Close action locally (hide menus)

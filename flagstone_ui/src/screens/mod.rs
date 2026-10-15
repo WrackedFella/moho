@@ -6,6 +6,7 @@
 mod form_controls;
 mod menu;
 mod new_world;
+mod pause;
 mod settings;
 mod start;
 
@@ -14,6 +15,7 @@ pub use menu::{Menu, MenuAction, MenuItem, Screen, ScreenSpec, UiComponent};
 
 // Re-export screen implementations
 pub use new_world::NewWorldMenu;
+pub use pause::PauseMenu;
 pub use settings::{SettingsMenu, SettingsTab};
 pub use start::StartMenu;
 

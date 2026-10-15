@@ -53,8 +53,8 @@ pub use adapter::EguiAdapter as EguiUi;
 pub use app_state::{GameState, StateTransitionActions, StateTransitionCoordinator};
 
 pub use screens::{
-    FormControls, Menu, MenuAction, MenuItem, NewWorldMenu, Screen, ScreenSpec, SettingsMenu,
-    StartMenu, UiComponent,
+    FormControls, Menu, MenuAction, MenuItem, NewWorldMenu, PauseMenu, Screen, ScreenSpec,
+    SettingsMenu, StartMenu, UiComponent,
 };
 
 pub use overlays::{

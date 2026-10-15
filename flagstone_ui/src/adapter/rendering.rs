@@ -243,6 +243,24 @@ mod tests {
     }
 
     #[test]
+    fn paused_returns_the_actions_of_the_active_screen() {
+        let ctx = egui::Context::default();
+        let mut ui_state = menu_with_button(true);
+        for _ in 0..2 {
+            run_frame(&ctx, &mut ui_state, GameState::Paused, Vec::new());
+        }
+
+        let (_, result) = run_frame(
+            &ctx,
+            &mut ui_state,
+            GameState::Paused,
+            click_at(egui::pos2(18.0, 18.0)),
+        );
+
+        assert_eq!(result.actions, vec![MenuAction::Exit]);
+    }
+
+    #[test]
     fn render_game_state_by_state() {
         let ctx = egui::Context::default();
         let mut ui_state = UiStateManager::new(moho_core::prefs::Prefs::default());

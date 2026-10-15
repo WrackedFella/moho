@@ -68,6 +68,8 @@ impl EventProcessor {
                 tracing::info!("UI requested exit");
                 app.exit_requested = true;
             }
+            UiEvent::ResumeRequested => app.resume_game(),
+            UiEvent::MainMenuRequested => app.main_menu_requested = true,
             UiEvent::MenuShown { name } => {
                 tracing::info!(name = %name, "UI requested show menu");
                 if let Some(ui_adapter) = &app.ui_adapter

@@ -97,6 +97,9 @@ struct App {
     // Set when the UI asks to quit; `frame` autosaves and leaves the loop
     exit_requested: bool,
 
+    // Set when the UI asks for the main menu; `frame` autosaves, then shows it
+    main_menu_requested: bool,
+
     // Event bus for application-wide events
     event_bus: Arc<moho_core::EventBus>,
 
@@ -188,6 +191,7 @@ impl App {
             pending_render: Vec::new(),
             saves_dir: std::path::PathBuf::from("saves"),
             exit_requested: false,
+            main_menu_requested: false,
             event_bus: initialized.event_bus,
 
             ui_event_rx: initialized.ui_event_rx,
@@ -317,29 +321,32 @@ impl App {
                         adapter.toggle_overlay("chunk_debug");
                     }
                 }
-                // Escape closes console if open, otherwise opens menu
-                KeyCode::Escape if pressed => {
-                    use crate::game_state::GameState;
-                    match self.game_state {
-                        GameState::ConsoleOpen => self.exit_console(),
-                        GameState::Playing => {
-                            // ESC to show menu
-                            self.show_menu();
-
-                            // Also explicitly request the adapter show the "start" menu
-                            if let Some(ui_adapter) = &self.ui_adapter
-                                && let Ok(mut adapter) = ui_adapter.lock()
-                            {
-                                adapter.show_menu("start");
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                KeyCode::Escape if pressed => self.escape_pressed(),
                 _ => {}
             }
         }
     }
+
+    /// Escape: close the console, otherwise show the menu.
+    fn escape_pressed(&mut self) {
+        use crate::game_state::GameState;
+        match self.game_state {
+            GameState::ConsoleOpen => self.exit_console(),
+            GameState::Playing => {
+                self.show_menu();
+
+                if let Some(ui_adapter) = &self.ui_adapter
+                    && let Ok(mut adapter) = ui_adapter.lock()
+                {
+                    adapter.show_menu("start");
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Leave the pause and return to play.
+    fn resume_game(&mut self) {}
 
     fn handle_device_input(&mut self, event: &DeviceEvent) {
         // Only process input in game mode and first person camera mode
