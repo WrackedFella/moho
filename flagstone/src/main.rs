@@ -335,17 +335,19 @@ impl App {
         match self.game_state {
             GameState::ConsoleOpen => self.exit_console(),
             GameState::Playing => self.toggle_pause(),
-            GameState::Paused if self.pause_window_showing() => self.toggle_pause(),
+            GameState::Paused if self.home_screen_showing() => self.toggle_pause(),
             _ => {}
         }
     }
 
-    /// Whether the pause window is the active screen; true when no UI is attached.
-    fn pause_window_showing(&self) -> bool {
+    /// Whether the current state's home screen (the pause window while paused) is
+    /// the active screen; true when no UI is attached.
+    fn home_screen_showing(&self) -> bool {
+        let home = self.game_state.home_screen();
         self.ui_adapter.as_ref().is_none_or(|adapter| {
             adapter
                 .lock()
-                .is_ok_and(|adapter| adapter.active_screen_name() == Some("pause"))
+                .is_ok_and(|adapter| adapter.active_screen_name() == home)
         })
     }
 
