@@ -4,7 +4,7 @@
 use glam::Vec3;
 use moho_physics::PhysicsWorld;
 
-use crate::brain::{CoverOffer, EnemyTuning};
+use crate::brain::{CoverOffer, EnemyTuning, flat_distance};
 use crate::shot::{ShotRay, resolve_shot};
 use crate::tag::SurfaceTag;
 
@@ -27,14 +27,20 @@ pub fn pick(
     range: f32,
     accepts: impl Fn(usize) -> bool,
 ) -> Option<CoverOffer> {
-    let flat = |point: Vec3| (point.x - from.x).hypot(point.z - from.z);
-    points
+    let mut candidates: Vec<(usize, Vec3, f32)> = points
         .iter()
         .copied()
         .enumerate()
-        .filter(|&(index, point)| flat(point) <= range && !taken.contains(&index) && accepts(index))
-        .min_by(|a, b| flat(a.1).total_cmp(&flat(b.1)))
-        .map(|(index, position)| CoverOffer { index, position })
+        .map(|(index, point)| (index, point, flat_distance(from, point)))
+        .filter(|&(index, _, distance)| distance <= range && !taken.contains(&index))
+        .collect();
+    // Stable sort keeps ties in index order; `accepts` may cast rays, so it runs only
+    // until the nearest acceptable point is found.
+    candidates.sort_by(|a, b| a.2.total_cmp(&b.2));
+    candidates
+        .into_iter()
+        .find(|&(index, _, _)| accepts(index))
+        .map(|(index, position, _)| CoverOffer { index, position })
 }
 
 /// The nearest free firing position among `points` for an enemy at `from`: a point the
@@ -56,8 +62,7 @@ pub fn offer(
             threat.eye,
             point + Vec3::Y * tuning.cover_hide_height,
         );
-        let has_shot = !world_blocks(world, point + Vec3::Y * enemy_eye, threat.aim);
-        hidden && has_shot
+        hidden && !world_blocks(world, point + Vec3::Y * enemy_eye, threat.aim)
     })
 }
 

@@ -380,7 +380,7 @@ impl Brain {
     }
 }
 
-fn flat_distance(a: Vec3, b: Vec3) -> f32 {
+pub(crate) fn flat_distance(a: Vec3, b: Vec3) -> f32 {
     (b.x - a.x).hypot(b.z - a.z)
 }
 
