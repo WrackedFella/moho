@@ -140,11 +140,13 @@ struct App {
 }
 
 impl App {
-    /// Writes the running prefs to `prefs_path`; does nothing without one.
-    fn save_prefs(&self) -> std::io::Result<()> {
-        match &self.prefs_path {
-            Some(path) => self.prefs.save_to(path),
-            None => Ok(()),
+    /// Writes the running prefs to `prefs_path`; does nothing without one. A failed
+    /// write is logged: the running prefs stay in effect either way.
+    fn save_prefs(&self) {
+        if let Some(path) = &self.prefs_path
+            && let Err(e) = self.prefs.save_to(path)
+        {
+            tracing::warn!(error = %e, path = %path.display(), "Failed to save prefs");
         }
     }
 

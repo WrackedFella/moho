@@ -499,9 +499,7 @@ impl EventProcessor {
             DebugEvent::SetShadowQuality { quality } => {
                 tracing::info!(quality, "Setting shadow quality");
                 app.prefs.set_shadow_quality(quality);
-                if let Err(e) = app.save_prefs() {
-                    tracing::warn!(error = %e, "Failed to save prefs");
-                }
+                app.save_prefs();
                 if app.window.is_some() {
                     app.pending_render
                         .push(RenderRequest::ShadowQuality(quality as u8));
@@ -510,9 +508,7 @@ impl EventProcessor {
             DebugEvent::SetSsaoQuality { quality } => {
                 tracing::info!(quality, "Setting SSAO quality");
                 app.prefs.set_ssao_quality(quality);
-                if let Err(e) = app.save_prefs() {
-                    tracing::warn!(error = %e, "Failed to save prefs");
-                }
+                app.save_prefs();
                 if app.window.is_some() {
                     app.pending_render
                         .push(RenderRequest::SsaoQuality(quality as u8));
