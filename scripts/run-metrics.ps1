@@ -29,12 +29,12 @@ New-Item -ItemType Directory -Force -Path "metrics-output", "metrics-summary" | 
 
 # Run metrics on all source directories
 $sourceDirs = @(
-    "src",
+    "flagstone\src",
     "moho_core\src",
     "moho_audio\src",
     "moho_input\src",
     "moho_renderer\src",
-    "moho_ui\src"
+    "flagstone_ui\src"
 )
 
 Write-Host "`nRunning rust-code-analysis on source directories..." -ForegroundColor Cyan

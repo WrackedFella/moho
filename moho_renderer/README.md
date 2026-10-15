@@ -235,7 +235,7 @@ tracing_subscriber::fmt::init(); // Or any tracing subscriber
 
 Set log level:
 ```bash
-RUST_LOG=moho_renderer=debug cargo run
+RUST_LOG=moho_renderer=debug cargo run -p flagstone
 ```
 
 ## Testing

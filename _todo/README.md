@@ -21,7 +21,7 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 | Line | Folder | Focus |
 |---|---|---|
 | Engine | [`engine/`](engine/) | Shared crates; hygiene and debt land opportunistically |
-| Strategy/base-builder | [`strategy-game/`](strategy-game/) | **Primary** |
+| Strategy/base-builder | [`flagstone/`](flagstone/) | **Primary** |
 | FPS | [`fps-game/`](fps-game/) | GDD only until it defines real scope |
 
 ## engine/
@@ -55,7 +55,7 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 | [ENG-F25 A game line adds save files without changing the engine](https://github.com/WrackedFella/moho/issues/346) |
 | [ENG-F28 Mouse look feels like a Source game](https://github.com/WrackedFella/moho/issues/373) |
 
-## strategy-game/
+## flagstone/
 
 | Feature |
 |---|
@@ -64,7 +64,7 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 | [SG-F3 I place a building and pawns construct it](https://github.com/WrackedFella/moho/issues/312) |
 | [SG-F4 Pawns dig what I mark](https://github.com/WrackedFella/moho/issues/310) |
 | [SG-F5 I run the colony from above and step into a pawn](https://github.com/WrackedFella/moho/issues/309) |
-| [SG-F6 New worlds look intentional and ore is findable](strategy-game/SG-F6-world-generation/_feature.md) |
+| [SG-F6 New worlds look intentional and ore is findable](flagstone/SG-F6-world-generation/_feature.md) |
 
 ## fps-game/
 
@@ -74,6 +74,6 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 
 ## Shipped before this structure
 
-Engine/game crate split: `moho_game` created, renderer decoupled behind
+Engine/game crate split: `flagstone_game` created, renderer decoupled behind
 `moho_render_api`, `AudioEvent` unified, wgpu 27→29.0.4. Lasting decisions are
 in ADRs 0001–0003; the rest is in git history.

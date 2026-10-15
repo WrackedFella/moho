@@ -7,10 +7,10 @@
 Moho is a modular Rust workspace containing engine components designed for voxel-based games:
 
 - **moho_core** - Event bus, preferences, persistence
-- **moho_voxel** - Voxel terrain for the strategy line: grid, meshing, lighting, streaming
+- **flagstone_voxel** - Voxel terrain for the flagstone line: grid, meshing, lighting, streaming
 - **moho_renderer** - WGPU-based rendering backend  
 - **moho_audio** - Audio playback (rodio-based)
-- **moho_ui** - egui integration for menus and overlays
+- **flagstone_ui** - egui integration for menus and overlays
 - **moho_input** - Input mapping and state management
 
 The project emphasizes **separation of concerns** between simulation and rendering, making testing, snapshots, and future multiplayer functionality easier.
@@ -34,7 +34,7 @@ The project emphasizes **separation of concerns** between simulation and renderi
 ### Running the Game
 
 ```sh
-cargo run
+cargo run -p flagstone
 ```
 
 ### Testing
@@ -72,10 +72,10 @@ cargo clippy --all-targets --all-features -- -D warnings
 ### Library Documentation
 Each workspace crate has comprehensive documentation in its README:
 - **[moho_core/README.md](moho_core/README.md)** - Event bus, preferences, persistence
-- **[moho_voxel/README.md](moho_voxel/README.md)** - Voxel grid, chunks, meshing
+- **[flagstone_voxel/README.md](flagstone_voxel/README.md)** - Voxel grid, chunks, meshing
 - **[moho_renderer/README.md](moho_renderer/README.md)** - WGPU rendering, CSM shadows, lighting
 - **[moho_audio/README.md](moho_audio/README.md)** - Audio playback and event handling
-- **[moho_ui/README.md](moho_ui/README.md)** - egui menus, settings, console, overlays
+- **[flagstone_ui/README.md](flagstone_ui/README.md)** - egui menus, settings, console, overlays
 - **[moho_input/README.md](moho_input/README.md)** - Input mapping and key bindings
 
 ### Architecture Documentation
@@ -140,15 +140,14 @@ See `wiki/architecture/console.md` and `wiki/guides/adding-console-commands.md` 
 
 ```
 moho/
-├── benches/              # Performance benchmarks
 ├── wiki/                 # Project documentation
-├── src/                  # Main application
+├── flagstone/            # Flagstone binary (the strategy game)
 ├── tests/                # Integration tests
 ├── moho_core/            # Core types, events
-├── moho_voxel/           # Voxel terrain (strategy line)
+├── flagstone_voxel/      # Voxel terrain (flagstone line)
 ├── moho_renderer/        # WGPU rendering
 ├── moho_audio/           # Audio playback
-├── moho_ui/              # egui UI
+├── flagstone_ui/         # egui UI
 └── moho_input/           # Input handling
 ```
 

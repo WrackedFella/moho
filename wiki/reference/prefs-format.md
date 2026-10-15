@@ -1,7 +1,7 @@
 # Preferences file
 
 **Source:** `moho_core/src/prefs/` (`mod.rs`, `reader.rs`), `moho_input/src/bindings.rs`, `moho_input/src/key.rs`, `moho_input/src/pad.rs`,
-`moho_ui/src/actions.rs`. Path: `config/prefs.ini`,
+`flagstone_ui/src/actions.rs`. Path: `config/prefs.ini`,
 relative to the working directory.
 
 `Prefs::load` creates the file with defaults if it is missing. Missing sections or keys
@@ -56,7 +56,7 @@ the game interprets it. `ActionBindings::load` (`moho_input`) reads it against t
 game's `Action` enum: each key is an action's stable `name()`, each value a binding
 list. Absent actions keep their defaults; `ActionBindings::to_section` writes every
 action, defaults included. Line problems are returned as `BindingWarning`s and the
-action keeps its default (`moho_ui::actions::load_bindings` logs them): an unknown
+action keeps its default (`flagstone_ui::actions::load_bindings` logs them): an unknown
 action id, or a value with any unrecognised key. A `[bindings]` line with no `=` is a
 malformed prefs line. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
 keys and ignored.
@@ -80,7 +80,7 @@ are `Pad <Stick> <Dir>` with `LeftStick` or `RightStick` and `Up` `Down` `Left` 
 (`Pad LeftStick Up`). A malformed pad name is an unrecognised key and warns. The right
 stick's analog look is not a binding.
 
-Strategy actions (`StrategyAction`, `moho_ui/src/actions.rs`) and defaults:
+Strategy actions (`StrategyAction`, `flagstone_ui/src/actions.rs`) and defaults:
 
 | Id | Default |
 |---|---|

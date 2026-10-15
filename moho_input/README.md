@@ -52,4 +52,4 @@ assert_eq!(bindings.get(MyAction::Jump), [Binding::Key(Key::F)]);
 ```
 
 `ActionBindings` takes the raw section rather than `Prefs`, so this crate does not
-depend on `moho_core`. The strategy game's actions live in `moho_ui::actions`.
+depend on `moho_core`. The strategy game's actions live in `flagstone_ui::actions`.

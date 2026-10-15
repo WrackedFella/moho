@@ -14,7 +14,7 @@ flowchart LR
     A["architecture/<br/>how it works"] --> R["reference/<br/>look-up"]
     G["guides/<br/>how-to"] --> R
     A -. decisions .-> ADR["_todo/adr/"]
-    D["strategy/ · fps/<br/>design intent"] -. scope .-> ADR
+    D["flagstone/ · fps/<br/>design intent"] -. scope .-> ADR
     P["process/<br/>workflow"]
 ```
 
@@ -32,7 +32,7 @@ flowchart LR
 | Read or change a save file | [reference/save-format](reference/save-format.md) |
 | Edit `config/prefs.ini` | [reference/prefs-format](reference/prefs-format.md) |
 | Run the agentic workflow | [process/agentic-workflow](process/agentic-workflow.md) |
-| Know what the games should become | [strategy/vision](strategy/vision.md), [fps/game-design-document](fps/game-design-document.md) |
+| Know what the games should become | [flagstone/vision](flagstone/vision.md), [fps/game-design-document](fps/game-design-document.md) |
 | Know why a boundary exists | [ADRs](../_todo/adr/README.md) |
 
 ## Contents
@@ -56,12 +56,12 @@ flowchart LR
 - [Event bus best practices](reference/event-bus-best-practices.md)
 - [Event bus performance](reference/event-bus-performance.md): benchmarks.
 
-**Crate READMEs** (API-level detail): [`moho_core`](../moho_core/README.md), [`moho_voxel`](../moho_voxel/README.md), [`moho_renderer`](../moho_renderer/README.md), [`moho_audio`](../moho_audio/README.md), [`moho_ui`](../moho_ui/README.md), [`moho_input`](../moho_input/README.md). API docs: `cargo doc --open --no-deps`.
+**Crate READMEs** (API-level detail): [`moho_core`](../moho_core/README.md), [`flagstone_voxel`](../flagstone_voxel/README.md), [`moho_renderer`](../moho_renderer/README.md), [`moho_audio`](../moho_audio/README.md), [`flagstone_ui`](../flagstone_ui/README.md), [`moho_input`](../moho_input/README.md). API docs: `cargo doc --open --no-deps`.
 
 **Guides, design, process**
 
 - [Adding console commands](guides/adding-console-commands.md)
-- [Strategy vision](strategy/vision.md) · [FPS design document](fps/game-design-document.md) (draft)
+- [Strategy vision](flagstone/vision.md) · [FPS design document](fps/game-design-document.md) (draft)
 - [Agentic workflow](process/agentic-workflow.md)
 
 ## Known constraints

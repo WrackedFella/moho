@@ -1,6 +1,6 @@
 # Events
 
-**Source:** `moho_core/src/events/` (`bus.rs`, `types/`), `src/app/event_setup.rs`.
+**Source:** `moho_core/src/events/` (`bus.rs`, `types/`), `flagstone/src/app/event_setup.rs`.
 **Related:** [ADR-0003](../../_todo/adr/0003-core-owns-event-types.md) (core owns event types; narrowed by [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md)),
 [best practices](../reference/event-bus-best-practices.md), [benchmarks](../reference/event-bus-performance.md).
 
@@ -57,7 +57,7 @@ inside a handler. Drain order is fixed: [frame-loop](frame-loop.md#event-drain).
 
 ## Event families
 
-Engine families live in `moho_core::events` (`types/`); `WorldEvent` lives in `moho_voxel`. Variant lists: `cargo doc -p moho_core -p moho_voxel`.
+Engine families live in `moho_core::events` (`types/`); `WorldEvent` lives in `flagstone_voxel`. Variant lists: `cargo doc -p moho_core -p flagstone_voxel`.
 
 | Family | Typical producers | Drained by |
 |---|---|---|
@@ -66,7 +66,7 @@ Engine families live in `moho_core::events` (`types/`); `WorldEvent` lives in `m
 | `AudioEvent` | game, UI | `process_audio_events` |
 | `InputEvent` | input layer | not drained by the loop (see note) |
 | `GraphicsEvent` | console, settings, game clock | `process_graphics_events` |
-| `WorldEvent` (defined in `moho_voxel`) | streaming, light system, block edits | `process_world_events` |
+| `WorldEvent` (defined in `flagstone_voxel`) | streaming, light system, block edits | `process_world_events` |
 | `DebugEvent` | console | `process_debug_events` |
 
 Note: `process_input_events` does not drain the bus. It drains the binary's own

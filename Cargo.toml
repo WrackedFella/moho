@@ -1,16 +1,6 @@
-[[bin]]
-path = "src/main.rs"
-name = "moho"
-required-features = []
-
-[package]
-name = "moho"
-version = "0.1.0"
-edition = "2024"
-publish = false
-
 [workspace]
-members = ["moho_app", "moho_core", "moho_game", "moho_voxel", "moho_render_api", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_physics", "moho_level", "moho_fps_rules"]
+resolver = "3"
+members = ["flagstone", "moho_app", "moho_core", "flagstone_game", "flagstone_voxel", "moho_render_api", "moho_renderer", "moho_audio", "flagstone_ui", "moho_input", "moho_physics", "moho_level", "moho_fps_rules"]
 
 [workspace.dependencies]
 bytemuck = "1.24"
@@ -71,63 +61,3 @@ needless_pass_by_value = "allow"
 too_many_lines = "allow"
 trivially_copy_pass_by_ref = "allow"
 unnecessary_wraps = "allow"
-
-[dependencies]
-
-[dependencies.serde]
-workspace = true
-features = ["derive"]
-
-[dependencies.glam]
-workspace = true
-
-[dependencies.moho_app]
-path = "moho_app"
-
-[dependencies.moho_audio]
-path = "moho_audio"
-
-[dependencies.moho_core]
-path = "moho_core"
-
-[dependencies.moho_voxel]
-path = "moho_voxel"
-
-[dependencies.moho_game]
-path = "moho_game"
-
-[dependencies.moho_input]
-path = "moho_input"
-
-[dependencies.moho_render_api]
-path = "moho_render_api"
-
-[dependencies.moho_renderer]
-path = "moho_renderer"
-
-[dependencies.moho_physics]
-workspace = true
-
-[dependencies.moho_ui]
-path = "moho_ui"
-
-[dependencies.tracing]
-workspace = true
-
-[dependencies.tracing-subscriber]
-workspace = true
-
-[dependencies.winit]
-workspace = true
-
-[dev-dependencies]
-criterion = { version = "0.8", features = ["html_reports"] }
-tempfile = { workspace = true }
-proptest = { workspace = true }
-
-[[bench]]
-name = "event_bus_bench"
-harness = false
-
-[lints]
-workspace = true

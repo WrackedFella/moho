@@ -1,8 +1,8 @@
 # Debug console
 
-**Source:** `moho_ui/src/overlays/console/` (`mod.rs`, `commands.rs`),
-`moho_ui/src/adapter/` (`rendering.rs`, `event_routing.rs`),
-`src/app/event_loop/event_processor.rs` (`process_debug_events` and friends).
+**Source:** `flagstone_ui/src/overlays/console/` (`mod.rs`, `commands.rs`),
+`flagstone_ui/src/adapter/` (`rendering.rs`, `event_routing.rs`),
+`flagstone/src/app/event_loop/event_processor.rs` (`process_debug_events` and friends).
 
 An egui overlay for developer commands. It is not modal by itself: `GameState::ConsoleOpen`
 decides who gets input ([input-and-state](input-and-state.md)).

@@ -17,7 +17,7 @@ just mutants                       # mutation-test changes since origin/dev; exi
 just deny                          # licenses, advisories, sources
 bash scripts/cloud-tools.sh        # cloud threads only, before the first build
 gh workflow run CI --ref <branch>  # all three OSes on a branch (PRs into dev run Linux only)
-cargo run                          # RUST_LOG=debug for logging
+cargo run -p flagstone             # RUST_LOG=debug for logging
 ```
 
 ## Workflow contract (used by devflow skills and agents)
@@ -45,7 +45,7 @@ cargo run                          # RUST_LOG=debug for logging
 - **Environment setup command:** `bash scripts/cloud-tools.sh` (cloud threads only;
   text-only threads skip it).
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
-- **Domain-logic paths** (gate class `domain`): rules in `moho_game`, `moho_core`, `moho_voxel`, `moho_fps_rules`.
+- **Domain-logic paths** (gate class `domain`): rules in `flagstone_game`, `moho_core`, `flagstone_voxel`, `moho_fps_rules`.
   Adapters, UI wiring and config are glue.
 - **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
   `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing
@@ -63,13 +63,13 @@ cargo run                          # RUST_LOG=debug for logging
 ## Architecture
 
 ```
-src/            binary: winit event loop, wiring
+flagstone       binary: winit event loop, wiring
 moho_core       event bus, engine-wide events, prefs, persistence
-moho_voxel      strategy line: voxel grid, meshing, LOD, lighting, chunk store, terrain materials, world events
-moho_game       game domain: pawn, tools, controller, scenes, raycast
+flagstone_voxel flagstone line: voxel grid, meshing, LOD, lighting, chunk store, terrain materials, world events
+flagstone_game  game domain: pawn, tools, controller, scenes, raycast
 moho_render_api engine/game contract: Renderable, RenderMaterial, GPU-layout data
 moho_renderer   wgpu backend: meshes, CSM shadows, SSAO, skybox
-moho_ui         egui: menus, settings, console, HUD
+flagstone_ui    egui: menus, settings, console, HUD
 moho_audio      rodio playback, event-driven
 moho_physics    rapier3d character controller and colliders
 moho_input      key → binding-code mapping
@@ -77,13 +77,13 @@ moho_app        fixed-tick loop shared by the games: Game trait, headless loop, 
 moho_fps_rules  FPS line: rifle, magazine and body-part damage rules, platform-free (ADR-0015)
 ```
 
-- Engine crates never depend on `moho_game` (ADR-0001). World geometry reaches
-  the engine as meshes; voxels belong to the strategy line
-  (`moho_voxel`, ADR-0010).
+- Engine crates never depend on `flagstone_game` (ADR-0001). World geometry reaches
+  the engine as meshes; voxels belong to the flagstone line
+  (`flagstone_voxel`, ADR-0010).
 - Engine-wide event types live in `moho_core::events`; line-specific ones live
   with their line's crate (ADR-0003, narrowed by ADR-0010).
 - Use the event bus for cross-system fan-out; call directly within a system.
-- Entities live in typed stores (`ActorStore` in `moho_game`, `ChunkStore` in `moho_voxel`); no general ECS (ADR-0004).
+- Entities live in typed stores (`ActorStore` in `flagstone_game`, `ChunkStore` in `flagstone_voxel`); no general ECS (ADR-0004).
 - Shared dependency versions go in `[workspace.dependencies]`.
 
 ## GitNexus (code graph, index name `moho`)

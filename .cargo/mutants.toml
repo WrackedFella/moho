@@ -3,9 +3,9 @@ test_tool = "nextest"
 # there would read as missed without telling us anything.
 exclude_globs = [
     "moho_renderer/**",
-    "moho_ui/src/adapter/**",
-    "src/main.rs",
-    "src/app/renderer_setup.rs",
+    "flagstone_ui/src/adapter/**",
+    "flagstone/src/main.rs",
+    "flagstone/src/app/renderer_setup.rs",
 ]
 # These bodies only drive the renderer backend or window, which need a real
 # `Window`; the binary's headless tests (`App::headless`) can't reach them.

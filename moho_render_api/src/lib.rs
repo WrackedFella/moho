@@ -1,4 +1,4 @@
-//! Shared contract between `moho_game` (domain) and `moho_renderer`
+//! Shared contract between `flagstone_game` (domain) and `moho_renderer`
 //! (infrastructure): GPU-facing data types and the traits game-domain types
 //! implement to be rendered and persisted, without either crate depending on
 //! the other.
