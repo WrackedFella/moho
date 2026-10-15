@@ -1,6 +1,5 @@
 //! Test doubles and fixtures for the audio system: a recording [`AudioOutput`] and an
 //! in-memory WAV builder, so no test needs a sound device or a file under `assets/`.
-#![cfg(test)]
 
 use crate::error::AudioResult;
 use crate::output::{AudioOutput, Playback};

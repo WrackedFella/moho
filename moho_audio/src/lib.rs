@@ -25,7 +25,7 @@ pub mod audio_source;
 /// with the existing Moho engine architecture.
 pub mod audio_system;
 pub mod error;
-pub mod output;
+mod output;
 mod rodio_output;
 #[cfg(test)]
 mod test_support;
