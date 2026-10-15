@@ -829,3 +829,45 @@ fn surface_ray_ignores_triangle_planes_outside_the_triangle() {
         hit.position
     );
 }
+
+/// Where the ray crosses the plane of a triangle past its edge, the hit must still be the
+/// true surface crossing, not that plane extension.
+#[test]
+fn surface_ray_ignores_triangle_plane_extensions_past_the_triangle_edge() {
+    let mut grid = VoxelGrid::new(16);
+    for block in [
+        IVec3::new(5, 5, 5),
+        IVec3::new(6, 5, 5),
+        IVec3::new(6, 6, 5),
+    ] {
+        grid.mutator().place(block, 1, None);
+    }
+    let tris = mesh_triangles(&grid);
+    let origin = Vec3::new(4.763, 4.757, 2.011);
+    let direction = Vec3::new(0.283, 0.278, 1.0);
+    let first_front = crossings(
+        &tris,
+        origin.as_dvec3(),
+        direction.as_dvec3().normalize(),
+        20.0,
+    )
+    .into_iter()
+    .next()
+    .filter(|c| c.front)
+    .expect("the first mesh crossing is a front face");
+
+    let hit = raycast::raycast_surface(&grid, origin, direction, 20.0)
+        .expect("ray should hit the surface");
+
+    assert!(
+        (f64::from(hit.distance) - first_front.t).abs() <= TOLERANCE,
+        "distance {} vs mesh {}",
+        hit.distance,
+        first_front.t
+    );
+    assert!(
+        distance_to_mesh(&tris, hit.position.as_dvec3()) <= TOLERANCE,
+        "hit {:?} is off the mesh",
+        hit.position
+    );
+}
