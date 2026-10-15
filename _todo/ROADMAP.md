@@ -142,6 +142,7 @@ its consumers near, not when the earlier wave fully closes.
 | 2.11 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) shared UI shell, widened with on-screen text | #315 | FPS Phase 2 | 4 | 2.2 |
 | 2.12 | [ENG-F19](https://github.com/WrackedFella/moho/issues/231) layered content | — | FPS Phase 2 | 4 | — |
 | 2.13 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation over static levels (FPS uses waypoints until then) | — | FPS | 4 | — |
+| 2.15 | [ENG-F27](https://github.com/WrackedFella/moho/issues/361): the game lines are called flagstone and searchlight; one card per line ([#362](https://github.com/WrackedFella/moho/issues/362) FPS, [#363](https://github.com/WrackedFella/moho/issues/363) strategy) | Justin, 2026-10-15 | ENG-F5 split (M3) | 1–2 gaps | #362 after #358; #363 after #355, before #331 |
 
 - **Wave 1, start now:** the bugs, ENG-F16, ENG-F6 and ENG-F25. They need no other M2 work.
 - **Wave 2, before SG-F5 and SG-F4:** ENG-F23 and ENG-F24 unblock SG-F5; ENG-F9 comes before SG-F4.
@@ -245,3 +246,4 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-14 | New ENG-F23 (pointer to world ray, #304) and ENG-F24 (world markers and height slice, #305, #306); ENG-F18 gains on-screen text (#315) and one prefs owner; ENG-F6 reopened for seeded RNG (#316) | M2 section; [ENG-F18](https://github.com/WrackedFella/moho/issues/230), [ENG-F6](https://github.com/WrackedFella/moho/issues/233) |
 | 2026-10-14 | Strategy mode is the primary game; first person is possession of one pawn. Strategy order is SG-F2, SG-F5, SG-F4, SG-F3 (pawns before buildings); SG-F1 any time, SG-F6 once ranked; gameplay UI and sound ride inside each feature | [SG-F5](https://github.com/WrackedFella/moho/issues/309), [SG-F4](https://github.com/WrackedFella/moho/issues/310), [SG-F3](https://github.com/WrackedFella/moho/issues/312) |
 | 2026-10-14 | Game lines own their save kinds; the engine keeps only the envelope framing. ENG-F25 lands in wave 1, before SG-F4's marks-persist card | [ADR-0016](adr/0016-game-lines-own-their-save-kinds.md), [ENG-F25](https://github.com/WrackedFella/moho/issues/346) |
+| 2026-10-15 | The strategy line is renamed flagstone and the FPS line searchlight inside the monorepo, ahead of the split; engine crates keep `moho_`, and SG-/FPS- IDs stay | [ENG-F27](https://github.com/WrackedFella/moho/issues/361) |
