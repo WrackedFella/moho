@@ -517,4 +517,226 @@ mod tests {
         assert_ne!(h0, h1);
         assert_ne!(h1, h2);
     }
+
+    const GEOMETRY_EPS: f32 = 1e-4;
+
+    fn v3(p: [f32; 3]) -> Vec3 {
+        Vec3::from_array(p)
+    }
+
+    fn triangles(indices: &[u32]) -> Vec<[usize; 3]> {
+        indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|t| [t[0] as usize, t[1] as usize, t[2] as usize])
+            .collect()
+    }
+
+    #[test]
+    fn unit_cube_indexed_faces_wind_outward() {
+        let (verts, normals, indices) = Cube::unit_cube_indexed();
+
+        assert_eq!(verts.len(), 24);
+        assert_eq!(normals.len(), 24);
+        assert_eq!(indices.len(), 36);
+        assert!(indices.iter().all(|&i| (i as usize) < verts.len()));
+        for [a, b, c] in triangles(&indices) {
+            let cross = (v3(verts[b]) - v3(verts[a])).cross(v3(verts[c]) - v3(verts[a]));
+            let normal = v3(normals[a]);
+            assert_eq!(normals[a], normals[b]);
+            assert_eq!(normals[a], normals[c]);
+            assert!(cross.dot(normal) > 0.0, "triangle {a},{b},{c} faces inward");
+            assert!(cross.cross(normal).length() < GEOMETRY_EPS);
+        }
+    }
+
+    #[test]
+    fn unit_cube_indexed_normals_are_face_axes() {
+        let (verts, normals, _) = Cube::unit_cube_indexed();
+
+        let mut per_direction: Vec<([i32; 3], usize)> = Vec::new();
+        for (vert, normal) in verts.iter().zip(&normals) {
+            assert!(vert.iter().all(|c| (c.abs() - 0.5).abs() < GEOMETRY_EPS));
+            let n = v3(*normal);
+            assert!((n.length() - 1.0).abs() < GEOMETRY_EPS);
+            assert_eq!(n.to_array().iter().filter(|c| c.abs() > 0.5).count(), 1);
+            assert!((v3(*vert).dot(n) - 0.5).abs() < GEOMETRY_EPS);
+            let key = normal.map(|c| c.round() as i32);
+            match per_direction.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, count)) => *count += 1,
+                None => per_direction.push((key, 1)),
+            }
+        }
+
+        assert_eq!(per_direction.len(), 6);
+        assert!(per_direction.iter().all(|&(_, count)| count == 4));
+        for face in verts.as_chunks::<4>().0 {
+            for (i, a) in face.iter().enumerate() {
+                assert!(face[i + 1..].iter().all(|b| a != b), "duplicate corner");
+            }
+        }
+    }
+
+    const SPHERE_RESOLUTIONS: [(usize, usize); 4] = [(3, 5), (16, 16), (2, 3), (7, 4)];
+
+    #[test]
+    fn unit_sphere_indexed_vertices_lie_on_unit_sphere() {
+        for (lat, lon) in SPHERE_RESOLUTIONS {
+            let (verts, normals, indices) = Sphere::unit_sphere_indexed(lat, lon);
+
+            assert_eq!(verts.len(), (lat + 1) * (lon + 1), "{lat}x{lon}");
+            assert_eq!(normals, verts, "{lat}x{lon}");
+            assert_eq!(indices.len(), lat * lon * 6, "{lat}x{lon}");
+            assert!(indices.iter().all(|&i| (i as usize) < verts.len()));
+            for vert in &verts {
+                assert!(
+                    (v3(*vert).length() - 1.0).abs() < GEOMETRY_EPS,
+                    "{lat}x{lon}"
+                );
+            }
+            for (i, ring) in verts.chunks_exact(lon + 1).enumerate() {
+                let theta = std::f32::consts::PI * i as f32 / lat as f32;
+                for (j, vert) in ring.iter().enumerate() {
+                    let phi = std::f32::consts::TAU * j as f32 / lon as f32;
+                    let expected = Vec3::new(
+                        theta.sin() * phi.cos(),
+                        theta.cos(),
+                        theta.sin() * phi.sin(),
+                    );
+                    assert!(
+                        v3(*vert).abs_diff_eq(expected, GEOMETRY_EPS),
+                        "{lat}x{lon} ring {i} step {j}: {vert:?}"
+                    );
+                }
+                assert!(v3(ring[lon]).abs_diff_eq(v3(ring[0]), GEOMETRY_EPS));
+            }
+            let first = &verts[..=lon];
+            let last = &verts[lat * (lon + 1)..];
+            assert!(
+                first
+                    .iter()
+                    .all(|v| v3(*v).abs_diff_eq(Vec3::Y, GEOMETRY_EPS))
+            );
+            assert!(
+                last.iter()
+                    .all(|v| v3(*v).abs_diff_eq(Vec3::NEG_Y, GEOMETRY_EPS))
+            );
+        }
+    }
+
+    #[test]
+    fn unit_sphere_indexed_equator_spans_the_full_circle() {
+        let (verts, _, _) = Sphere::unit_sphere_indexed(16, 16);
+
+        let equator = &verts[8 * 17..9 * 17];
+
+        assert!(v3(equator[0]).abs_diff_eq(Vec3::X, GEOMETRY_EPS));
+        assert!(v3(equator[4]).abs_diff_eq(Vec3::Z, GEOMETRY_EPS));
+        assert!(v3(equator[8]).abs_diff_eq(Vec3::NEG_X, GEOMETRY_EPS));
+        assert!(v3(equator[12]).abs_diff_eq(Vec3::NEG_Z, GEOMETRY_EPS));
+        assert!(v3(equator[16]).abs_diff_eq(Vec3::X, GEOMETRY_EPS));
+    }
+
+    #[test]
+    fn unit_sphere_indexed_triangles_wind_outward() {
+        for (lat, lon) in SPHERE_RESOLUTIONS {
+            let (verts, _, indices) = Sphere::unit_sphere_indexed(lat, lon);
+
+            let tris = triangles(&indices);
+            let mut outward = 0;
+            for [a, b, c] in &tris {
+                let (pa, pb, pc) = (v3(verts[*a]), v3(verts[*b]), v3(verts[*c]));
+                let cross = (pb - pa).cross(pc - pa);
+                if cross.length() < GEOMETRY_EPS {
+                    continue;
+                }
+                let centroid = (pa + pb + pc) / 3.0;
+                assert!(cross.dot(centroid) > 0.0, "{lat}x{lon}: inward {a},{b},{c}");
+                outward += 1;
+            }
+
+            assert_eq!(tris.len(), lat * lon * 2, "{lat}x{lon}");
+            assert_eq!(outward, lat * lon * 2 - 2 * lon, "{lat}x{lon}");
+        }
+    }
+
+    #[test]
+    fn unit_sphere_indexed_floors_segment_counts() {
+        let floored = Sphere::unit_sphere_indexed(2, 3);
+        assert_eq!(floored.0.len(), 12);
+        assert_eq!(floored.2.len(), 36);
+
+        for (lat, lon) in [(0, 0), (1, 2), (1, 3), (2, 2)] {
+            let (verts, normals, indices) = Sphere::unit_sphere_indexed(lat, lon);
+
+            assert_eq!(verts, floored.0, "{lat}x{lon}");
+            assert_eq!(normals, floored.1, "{lat}x{lon}");
+            assert_eq!(indices, floored.2, "{lat}x{lon}");
+        }
+    }
+
+    #[test]
+    fn to_instance_scales_and_translates_by_actor_dims() {
+        let mat = MaterialType::Lambertian { albedo: Vec3::ONE };
+        let cube = Cube::new(Vec3::new(7.0, 11.0, 13.0), 2.0, 5.0, 3.0, mat);
+        let sphere = Sphere::new(Vec3::new(-1.5, 2.5, 6.0), 4.0, mat);
+
+        let cube_instance = cube.to_instance_with_material(9);
+        let sphere_instance = sphere.to_instance_with_material(4);
+
+        assert_eq!(
+            cube_instance.model,
+            [
+                [2.0, 0.0, 0.0, 0.0],
+                [0.0, 3.0, 0.0, 0.0],
+                [0.0, 0.0, 5.0, 0.0],
+                [7.0, 11.0, 13.0, 1.0],
+            ]
+        );
+        assert_eq!((cube_instance.material, cube_instance.object_type), (9, 1));
+        assert_eq!(
+            sphere_instance.model,
+            [
+                [4.0, 0.0, 0.0, 0.0],
+                [0.0, 4.0, 0.0, 0.0],
+                [0.0, 0.0, 4.0, 0.0],
+                [-1.5, 2.5, 6.0, 1.0],
+            ]
+        );
+        assert_eq!(
+            (sphere_instance.material, sphere_instance.object_type),
+            (4, 2)
+        );
+    }
+
+    #[test]
+    fn renderable_impls_delegate_to_the_actor_instance_and_material() {
+        let cube_mat = MaterialType::Lambertian { albedo: Vec3::X };
+        let sphere_mat = MaterialType::Metal {
+            albedo: Vec3::Y,
+            fuzz: 0.25,
+        };
+        let cube = Cube::new(Vec3::new(7.0, 11.0, 13.0), 2.0, 5.0, 3.0, cube_mat);
+        let sphere = Sphere::new(Vec3::new(-1.5, 2.5, 6.0), 4.0, sphere_mat);
+
+        let cube_instance = Renderable::to_instance_with_material(&cube, 12);
+        let sphere_instance = Renderable::to_instance_with_material(&sphere, 3);
+
+        assert_eq!(
+            cube_instance.model,
+            cube.to_instance_with_material(12).model
+        );
+        assert_eq!((cube_instance.material, cube_instance.object_type), (12, 1));
+        assert_eq!(
+            sphere_instance.model,
+            sphere.to_instance_with_material(3).model
+        );
+        assert_eq!(
+            (sphere_instance.material, sphere_instance.object_type),
+            (3, 2)
+        );
+        assert_eq!(*Renderable::material(&cube), cube_mat);
+        assert_eq!(*Renderable::material(&sphere), sphere_mat);
+    }
 }

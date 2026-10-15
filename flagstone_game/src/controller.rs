@@ -202,6 +202,8 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
 
 #[cfg(test)]
 mod tests {
+    use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, FRAC_PI_6, SQRT_2};
+
     use super::*;
 
     /// Golden matrices from glam 0.30 (`Mat4::look_at_rh`, `Mat4::perspective_rh`);
@@ -264,6 +266,7 @@ mod tests {
             input: ControllerInput,
             dt: f32,
             position: Vec3,
+            yaw: f32,
             pitch: f32,
             look_target: Vec3,
             height: f32,
@@ -275,6 +278,7 @@ mod tests {
             input: ControllerInput::default(),
             dt: 1.0,
             position: start,
+            yaw: 0.0,
             pitch: 0.0,
             look_target: start,
             height: 20.0,
@@ -348,6 +352,180 @@ mod tests {
                 height: 50.0,
                 ..unmoved
             },
+            Case {
+                name: "forward follows a non-zero yaw",
+                input: ControllerInput {
+                    forward: 1.0,
+                    yaw_delta: FRAC_PI_2,
+                    ..Default::default()
+                },
+                position: Vec3::new(5.0, 2.0, 3.0),
+                yaw: FRAC_PI_2,
+                ..unmoved
+            },
+            Case {
+                name: "strafe right is perpendicular to a diagonal yaw",
+                input: ControllerInput {
+                    right: 1.0,
+                    yaw_delta: FRAC_PI_4,
+                    ..Default::default()
+                },
+                position: start + Vec3::new(-2.8284, 0.0, 2.8284),
+                yaw: FRAC_PI_4,
+                ..unmoved
+            },
+            Case {
+                name: "strafe right at yaw zero moves toward negative x",
+                input: ControllerInput {
+                    right: 1.0,
+                    ..Default::default()
+                },
+                position: Vec3::new(-3.0, 2.0, 3.0),
+                ..unmoved
+            },
+            Case {
+                name: "strafe left reverses strafe right",
+                input: ControllerInput {
+                    right: -1.0,
+                    yaw_delta: FRAC_PI_2,
+                    ..Default::default()
+                },
+                position: Vec3::new(1.0, 2.0, -1.0),
+                yaw: FRAC_PI_2,
+                ..unmoved
+            },
+            Case {
+                name: "up moves along world y",
+                input: ControllerInput {
+                    up: 1.0,
+                    yaw_delta: 1.0,
+                    ..Default::default()
+                },
+                position: Vec3::new(1.0, 6.0, 3.0),
+                yaw: 1.0,
+                ..unmoved
+            },
+            Case {
+                name: "forward and up combine into one normalized direction",
+                input: ControllerInput {
+                    forward: 1.0,
+                    up: 1.0,
+                    ..Default::default()
+                },
+                position: start + Vec3::new(0.0, 2.8284, 2.8284),
+                ..unmoved
+            },
+            Case {
+                name: "forward follows pitch",
+                input: ControllerInput {
+                    forward: 1.0,
+                    pitch_delta: FRAC_PI_6,
+                    ..Default::default()
+                },
+                position: start + Vec3::new(0.0, 2.0, 3.4641),
+                pitch: FRAC_PI_6,
+                ..unmoved
+            },
+            Case {
+                name: "look deltas accumulate without moving",
+                input: ControllerInput {
+                    yaw_delta: 0.5,
+                    pitch_delta: 0.3,
+                    ..Default::default()
+                },
+                yaw: 0.5,
+                pitch: 0.3,
+                ..unmoved
+            },
+            Case {
+                name: "dt scales distance down",
+                input: ControllerInput {
+                    forward: 1.0,
+                    ..Default::default()
+                },
+                dt: 0.25,
+                position: Vec3::new(1.0, 2.0, 4.0),
+                ..unmoved
+            },
+            Case {
+                name: "dt scales distance up",
+                input: ControllerInput {
+                    forward: 1.0,
+                    ..Default::default()
+                },
+                dt: 2.0,
+                position: Vec3::new(1.0, 2.0, 11.0),
+                ..unmoved
+            },
+            Case {
+                name: "no input leaves the pawn in place",
+                ..unmoved
+            },
+            Case {
+                name: "isometric right pans along the ground perpendicular to forward",
+                mode: CameraMode::Isometric,
+                input: ControllerInput {
+                    right: 1.0,
+                    ..Default::default()
+                },
+                look_target: start + Vec3::new(2.8284, 0.0, -2.8284),
+                ..unmoved
+            },
+            Case {
+                name: "isometric forward and right combine into one normalized pan",
+                mode: CameraMode::Isometric,
+                input: ControllerInput {
+                    forward: 1.0,
+                    right: 1.0,
+                    ..Default::default()
+                },
+                look_target: start + Vec3::new(0.0, 0.0, -4.0),
+                ..unmoved
+            },
+            Case {
+                name: "isometric pan scales with dt",
+                mode: CameraMode::Isometric,
+                input: ControllerInput {
+                    forward: 1.0,
+                    ..Default::default()
+                },
+                dt: 0.5,
+                look_target: start + Vec3::new(-SQRT_2, 0.0, -SQRT_2),
+                ..unmoved
+            },
+            Case {
+                name: "isometric ignores sprint and look deltas",
+                mode: CameraMode::Isometric,
+                input: ControllerInput {
+                    forward: 1.0,
+                    sprint: true,
+                    yaw_delta: 1.0,
+                    pitch_delta: 1.0,
+                    ..Default::default()
+                },
+                look_target: start + Vec3::new(-2.8284, 0.0, -2.8284),
+                ..unmoved
+            },
+            Case {
+                name: "zoom in moves two height units per notch",
+                mode: CameraMode::Isometric,
+                input: ControllerInput {
+                    zoom_delta: 1.0,
+                    ..Default::default()
+                },
+                height: 18.0,
+                ..unmoved
+            },
+            Case {
+                name: "zoom out moves two height units per notch",
+                mode: CameraMode::Isometric,
+                input: ControllerInput {
+                    zoom_delta: -3.0,
+                    ..Default::default()
+                },
+                height: 26.0,
+                ..unmoved
+            },
         ];
 
         for case in cases {
@@ -361,6 +539,11 @@ mod tests {
                 pc.position.abs_diff_eq(case.position, TOLERANCE),
                 "{name}: position {}",
                 pc.position
+            );
+            assert!(
+                (pc.yaw - case.yaw).abs() < TOLERANCE,
+                "{name}: yaw {}",
+                pc.yaw
             );
             assert!(
                 (pc.pitch - case.pitch).abs() < TOLERANCE,
@@ -378,5 +561,86 @@ mod tests {
                 pc.rts_height
             );
         }
+    }
+
+    #[test]
+    fn look_at_first_person_faces_target() {
+        let start = Vec3::new(1.0, 2.0, 3.0);
+        let mut pc = PlayerController::new(start);
+
+        pc.look_at(start + Vec3::new(2.0, 3.0, 6.0));
+
+        assert!((pc.yaw - 0.321_75).abs() < 1e-4, "yaw {}", pc.yaw);
+        assert!((pc.pitch - 0.442_99).abs() < 1e-4, "pitch {}", pc.pitch);
+        let facing = Vec3::new(
+            pc.yaw.sin() * pc.pitch.cos(),
+            pc.pitch.sin(),
+            pc.yaw.cos() * pc.pitch.cos(),
+        );
+        assert!(facing.abs_diff_eq(Vec3::new(2.0, 3.0, 6.0) / 7.0, 1e-4));
+        assert_eq!(pc.position, start);
+        assert_eq!(pc.rts_look_target, start);
+    }
+
+    #[test]
+    fn look_at_first_person_uses_x_over_z_for_yaw_in_every_quadrant() {
+        let start = Vec3::new(1.0, 2.0, 3.0);
+        let cases = [
+            (Vec3::new(2.0, 0.0, -2.0), 3.0 * FRAC_PI_4),
+            (Vec3::new(-4.0, 0.0, 0.0), -FRAC_PI_2),
+            (Vec3::new(0.0, 0.0, 5.0), 0.0),
+        ];
+
+        for (offset, yaw) in cases {
+            let mut pc = PlayerController::new(start);
+
+            pc.look_at(start + offset);
+
+            assert!((pc.yaw - yaw).abs() < 1e-4, "{offset}: yaw {}", pc.yaw);
+            assert!(pc.pitch.abs() < 1e-4, "{offset}: pitch {}", pc.pitch);
+        }
+    }
+
+    #[test]
+    fn look_at_first_person_clamps_pitch_when_target_is_straight_above_or_below() {
+        let start = Vec3::new(1.0, 2.0, 3.0);
+        let mut pc = PlayerController::new(start);
+
+        pc.look_at(start + Vec3::Y);
+        let up = pc.pitch;
+        pc.look_at(start - Vec3::Y);
+        let down = pc.pitch;
+
+        assert!((up - 1.54).abs() < 1e-4, "up {up}");
+        assert!((down + 1.54).abs() < 1e-4, "down {down}");
+    }
+
+    #[test]
+    fn look_at_from_target_keeps_pitch_level() {
+        let start = Vec3::new(1.0, 2.0, 3.0);
+        let mut pc = PlayerController::new(start);
+        pc.pitch = 0.8;
+        pc.yaw = 1.0;
+
+        pc.look_at(start);
+
+        assert_eq!(pc.pitch, 0.0);
+        assert_eq!(pc.yaw, 0.0);
+    }
+
+    #[test]
+    fn look_at_isometric_moves_only_the_target() {
+        let start = Vec3::new(1.0, 2.0, 3.0);
+        let mut pc = PlayerController::new(start);
+        pc.camera_mode = CameraMode::Isometric;
+        pc.yaw = 0.4;
+        pc.pitch = 0.2;
+
+        pc.look_at(Vec3::new(9.0, 8.0, 7.0));
+
+        assert_eq!(pc.rts_look_target, Vec3::new(9.0, 8.0, 7.0));
+        assert_eq!(pc.position, start);
+        assert_eq!(pc.yaw, 0.4);
+        assert_eq!(pc.pitch, 0.2);
     }
 }
