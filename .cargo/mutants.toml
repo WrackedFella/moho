@@ -92,4 +92,19 @@ exclude_re = [
     # Equivalent: the target number is shifted past the three part-index bits, so OR and
     # XOR agree.
     'replace \| with \^ in <impl From<SurfaceTag> for HitTag>::from',
+    # flagstone_game::raycast. Untested boundary: `3·ceil(L)` already covers every boundary a
+    # ray of length L crosses; they differ only at `max_distance` <= 0 from an origin exactly
+    # on a cell face, which is unspecified.
+    'replace \+ with \* in max_boundary_crossings',
+    # Equivalent: each corner owns a distinct bit, so OR and XOR agree.
+    'replace \| with \^ in cube_index',
+    # Equivalent: `<=` differs from `<` only for a barycentric exactly on the edge margin, or
+    # (in the facing test) a zero determinant, which is already rejected; measure zero.
+    'replace < with <= in triangle_crossing',
+    'replace > with >= in triangle_crossing',
+    # Equivalent: `step` is always 1 or -1.
+    'replace > with >= in axis_traversal',
+    # Unspecified: these change only which side cell is visited when a ray crosses a cell
+    # edge or corner exactly, i.e. when it grazes the skipped cell's edge.
+    'replace < with <= in GridWalk::advance',
 ]
