@@ -1004,8 +1004,13 @@ mod title_and_aspect_tests {
     }
 
     #[test]
+    fn window_title_is_searchlight() {
+        assert_eq!(WINDOW_TITLE, "Searchlight");
+    }
+
+    #[test]
     fn window_title_with_empty_status_is_just_the_base_title() {
-        assert_eq!(window_title(""), "moho_fps");
+        assert_eq!(window_title(""), "Searchlight");
         assert_eq!(window_title(""), WINDOW_TITLE);
     }
 
@@ -1013,7 +1018,7 @@ mod title_and_aspect_tests {
     fn window_title_with_a_status_appends_it_after_a_separator() {
         let title = window_title("Ammo 12/30");
 
-        assert_eq!(title, "moho_fps | Ammo 12/30");
+        assert_eq!(title, "Searchlight | Ammo 12/30");
         assert!(title.starts_with(WINDOW_TITLE));
     }
 
