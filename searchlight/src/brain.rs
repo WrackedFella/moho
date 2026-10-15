@@ -144,7 +144,6 @@ impl Brain {
     }
 }
 
-/// Distance on the ground plane.
 fn flat_distance(a: Vec3, b: Vec3) -> f32 {
     (b.x - a.x).hypot(b.z - a.z)
 }

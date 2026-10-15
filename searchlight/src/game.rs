@@ -210,7 +210,6 @@ fn enemy_segments() -> [(Vec3, Vec3); 7] {
     segments
 }
 
-/// Appends a solid rect to a UI mesh.
 fn push_quad(
     vertices: &mut Vec<UiVertex>,
     indices: &mut Vec<u32>,

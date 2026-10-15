@@ -77,7 +77,6 @@ pub fn hit_edge(player: Vec3, yaw: f32, from: Vec3) -> Edge {
     }
 }
 
-/// The window-title text for the player's health.
 pub fn health_text(health: u32, max_health: u32) -> String {
     format!("HP {health}/{max_health}")
 }

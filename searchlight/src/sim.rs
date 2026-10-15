@@ -598,7 +598,6 @@ impl FpsSim {
         Self::assemble(world, &spawns, config, Some(arena.clone()))
     }
 
-    /// The player's body.
     pub fn player_body(&self) -> &Body {
         &self.player_body
     }
