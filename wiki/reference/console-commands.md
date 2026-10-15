@@ -19,6 +19,7 @@ Commands are case-insensitive on the first token; arguments are whitespace-separ
 | `r_shadow_quality` | `<0-4>` | Off, Low, Med, High, Ultra |
 | `r_ssao_quality` | `<0-4>` | Off, Low, Med, High, Ultra |
 | `spawn` | `<type> [args]` | `torch`, `light` (args `r g b`), `cube`, `sphere`; placed by raycast from the camera |
+| `snd_play_at` | `<path> <x> <y> <z> [volume]` | Play a sound at a world position in metres (volume defaults to 1.0); non-finite numbers are rejected |
 
 Out-of-range quality values are rejected with a message. Unknown commands print a hint.
 
@@ -27,4 +28,5 @@ Out-of-range quality values are rejected with a message. Unknown commands print 
 > sun 45 60
 > r_shadow_quality 4
 > spawn light 1 0.5 0
+> snd_play_at assets/audio/boom.wav 1 0 -5 0.8
 ```
