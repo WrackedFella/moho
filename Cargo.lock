@@ -945,6 +945,7 @@ dependencies = [
  "glam 0.33.12",
  "moho_core",
  "moho_render_api",
+ "proptest",
  "serde",
  "tracing",
 ]
@@ -956,6 +957,7 @@ dependencies = [
  "egui",
  "egui-winit",
  "flagstone_game",
+ "glam 0.33.12",
  "moho_core",
  "moho_input",
  "moho_render_api",
@@ -1710,7 +1712,9 @@ dependencies = [
 name = "moho_audio"
 version = "0.1.0"
 dependencies = [
+ "glam 0.33.12",
  "moho_core",
+ "proptest",
  "rodio",
  "tempfile",
  "thiserror 2.0.20",

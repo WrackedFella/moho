@@ -77,7 +77,9 @@ The tick drains one channel per event family, in this order:
 | 5 | `process_debug_events` | spawn, god mode, noclip; point lights and shadow/SSAO quality are queued as `RenderRequest`s |
 
 Audio events are drained in `Game::frame` and forwarded to `AudioSystem`, since the runner
-owns it. Why channels instead of handling inside bus handlers: [events](events.md#the-channel-hand-off).
+owns it. `AudioEvent::PlaySoundAt` carries a world position: `AudioSystem` attenuates
+sound-effect and voice sources by distance from its `Listener` (full volume within 2 m,
+inverse distance beyond, not played past 100 m; `moho_audio/src/spatial.rs`). Why channels instead of handling inside bus handlers: [events](events.md#the-channel-hand-off).
 
 ## Frame
 
@@ -87,7 +89,8 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
 
 1. `poll_gamepads`: apply pad events while playing with focus, otherwise discard them
    and release pad actions;
-2. apply queued `RenderRequest`s and drain audio events;
+2. apply queued `RenderRequest`s, set the audio listener from the frame camera
+   (`Listener::from_view`), and drain audio events;
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
 4. `update_hud_data`, then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
    with actors, the sphere and cube mesh handles and the frame camera (below).

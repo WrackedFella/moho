@@ -4,11 +4,24 @@
 //! from voxel density fields, creating smooth terrain geometry.
 
 use super::VoxelMesh;
+use glam::Vec3;
 
 /// Marching Cubes mesh generator for smooth terrain
 pub struct MarchingCubes;
 
 impl MarchingCubes {
+    /// Offsets of a cell's eight corners from corner 0, in the order the tables index them.
+    pub const CORNER_OFFSETS: [[usize; 3]; 8] = [
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 0, 1],
+        [0, 0, 1],
+        [0, 1, 0],
+        [1, 1, 0],
+        [1, 1, 1],
+        [0, 1, 1],
+    ];
+
     /// Generate smooth mesh for a chunk using Marching Cubes algorithm.
     ///
     /// # Arguments
@@ -71,6 +84,30 @@ impl MarchingCubes {
             block_light_rgb,
             sky_exposed,
         }
+    }
+
+    /// Triangles of one unit cell for a 0/1 corner pattern, corner 0 at the origin.
+    ///
+    /// Corner `i` is solid when bit `i` of `cube_index` is set, with the corner order and
+    /// winding of [`Self::generate_mesh`]. Indices 0 and 255 yield no triangles.
+    pub fn cell_triangles(cube_index: u8) -> impl Iterator<Item = [Vec3; 3]> {
+        let corner = |i: usize| Vec3::from_array(Self::CORNER_OFFSETS[i].map(|c| c as f32));
+        // With 0/1 densities and iso level 0.5 every edge vertex is the edge midpoint.
+        let edge_midpoint = move |edge: u8| {
+            let (a, b) = EDGE_CONNECTIONS[usize::from(edge)];
+            (corner(a) + corner(b)) * 0.5
+        };
+        Self::triangle_edges(cube_index).map(move |tri| tri.map(edge_midpoint))
+    }
+
+    /// The edges each triangle of `cube_index` puts its three vertices on, from `TRI_TABLE`.
+    fn triangle_edges(cube_index: u8) -> impl Iterator<Item = [u8; 3]> {
+        TRI_TABLE[usize::from(cube_index)]
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .copied()
+            .take_while(|tri| tri[0] != 255)
     }
 
     /// Process a single cell in the marching cubes algorithm
@@ -147,18 +184,12 @@ impl MarchingCubes {
         }
 
         // Generate triangles from the triangle table
-        let tri_indices = &TRI_TABLE[cube_index as usize];
-
-        for tri_edge_indices in tri_indices.chunks(3) {
-            if tri_edge_indices[0] == 255 {
-                break;
-            }
-
+        for tri_edge_indices in Self::triangle_edges(cube_index) {
             // Record base vertex for this triangle
             let base_vertex = vertices.len() as u32;
 
             // Add the three vertices of this triangle
-            for &edge_idx in tri_edge_indices {
+            for edge_idx in tri_edge_indices {
                 let vert = edge_vertices[edge_idx as usize];
                 vertices.push(vert);
 
@@ -221,17 +252,8 @@ impl MarchingCubes {
     }
 
     fn corner_sample(x: usize, y: usize, z: usize, corner_idx: usize) -> [usize; 3] {
-        match corner_idx {
-            0 => [x, y, z],
-            1 => [x + 1, y, z],
-            2 => [x + 1, y, z + 1],
-            3 => [x, y, z + 1],
-            4 => [x, y + 1, z],
-            5 => [x + 1, y + 1, z],
-            6 => [x + 1, y + 1, z + 1],
-            7 => [x, y + 1, z + 1],
-            _ => unreachable!("a cube has 8 corners, got {corner_idx}"),
-        }
+        let [dx, dy, dz] = Self::CORNER_OFFSETS[corner_idx];
+        [x + dx, y + dy, z + dz]
     }
 
     /// Density gradient at an integer sample: central differences, one-sided at the
@@ -1041,6 +1063,79 @@ mod tests {
             assert!(
                 idx < vertex_count,
                 "index {idx} out of range ({vertex_count} vertices)"
+            );
+        }
+    }
+
+    /// Corner offsets in `process_cell` / `corner_sample` order.
+    const CORNER_OFFSETS: [[usize; 3]; 8] = [
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 0, 1],
+        [0, 0, 1],
+        [0, 1, 0],
+        [1, 1, 0],
+        [1, 1, 1],
+        [0, 1, 1],
+    ];
+
+    const CELL: [usize; 3] = [8, 8, 8];
+
+    fn mesh_triangles_in_cell(cube_index: u8) -> Vec<[Vec3; 3]> {
+        let mut field = [[[0.0f32; 18]; 18]; 18];
+        for (corner, offset) in CORNER_OFFSETS.iter().enumerate() {
+            if cube_index & (1 << corner) != 0 {
+                field[CELL[0] + offset[0]][CELL[1] + offset[1]][CELL[2] + offset[2]] = 1.0;
+            }
+        }
+        let origin = Vec3::new(CELL[0] as f32, CELL[1] as f32, CELL[2] as f32);
+
+        let mesh = MarchingCubes::generate_mesh(&field, 16);
+
+        let vertex = |i: u32| {
+            let v = mesh.vertices[i as usize];
+            Vec3::new(v[0], v[1], v[2]) - origin
+        };
+        mesh.indices
+            .chunks(3)
+            .map(|t| [vertex(t[0]), vertex(t[1]), vertex(t[2])])
+            .filter(|tri| {
+                let c = (tri[0] + tri[1] + tri[2]) / 3.0;
+                c.to_array().iter().all(|&a| a > 1e-4 && a < 1.0 - 1e-4)
+            })
+            .collect()
+    }
+
+    /// Same triangle, same winding, up to which vertex is listed first.
+    fn same_triangle(a: &[Vec3; 3], b: &[Vec3; 3]) -> bool {
+        (0..3).any(|r| (0..3).all(|i| a[i].abs_diff_eq(b[(i + r) % 3], 1e-5)))
+    }
+
+    #[test]
+    fn cell_triangles_match_generated_mesh_for_every_cube_index() {
+        for cube_index in 0..=255u8 {
+            let from_mesh = mesh_triangles_in_cell(cube_index);
+
+            let mut unmatched: Vec<[Vec3; 3]> = MarchingCubes::cell_triangles(cube_index).collect();
+
+            let uniform = cube_index == 0 || cube_index == 255;
+            assert_eq!(
+                from_mesh.is_empty(),
+                uniform,
+                "index {cube_index}: the mesher's triangles in the cell"
+            );
+            for tri in &from_mesh {
+                let found = unmatched.iter().position(|t| same_triangle(t, tri));
+                let Some(found) = found else {
+                    panic!(
+                        "index {cube_index}: mesher triangle {tri:?} missing from cell_triangles"
+                    );
+                };
+                unmatched.swap_remove(found);
+            }
+            assert!(
+                unmatched.is_empty(),
+                "index {cube_index}: cell_triangles has extra triangles {unmatched:?}"
             );
         }
     }

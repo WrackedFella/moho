@@ -46,7 +46,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # A PR that is closed, merged or has lost its head branch has nothing to review.
+      - name: Resolve the PR
+        id: pr
+        run: |
+          read -r state repo ref < <(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" \
+            --jq '[.state, (.head.repo.full_name // ""), .head.ref] | @tsv')
+          reason=""
+          if [ "$state" != "open" ]; then
+            reason="PR #$PR is $state."
+          elif [ -z "$repo" ] || ! gh api "repos/$repo/branches/$ref" --silent 2>/dev/null; then
+            reason="The head branch \`$ref\` of PR #$PR no longer exists."
+          fi
+          if [ -n "$reason" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Skipped: $reason" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Check out the PR head
+        if: steps.pr.outputs.skip != 'true'
         run: |
           gh pr checkout "$PR"
           git config user.name "github-actions[bot]"
@@ -54,10 +71,12 @@ jobs:
           echo "HEAD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       # Installs the pinned Rust toolchain and the gate's tools (just, nextest, ...).
       - name: Install toolchain
+        if: steps.pr.outputs.skip != 'true'
         run: |
           bash scripts/cloud-tools.sh --force
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - if: steps.pr.outputs.skip != 'true'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         env:
           CARGO_TERM_COLOR: always
           CARGO_INCREMENTAL: 0
@@ -66,6 +85,8 @@ jobs:
           shared-key: gate-ubuntu-latest
           save-if: false
       - name: Review
+        id: review
+        if: steps.pr.outputs.skip != 'true'
         uses: anthropics/claude-code-action@v1
         env:
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
@@ -80,14 +101,33 @@ jobs:
             --max-turns 100
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never push, merge or resolve a thread."
             --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh api:*),Task,Skill"
+      # The action hides the run's output; a denied tool call otherwise ends the review
+      # silently, so list the denials here.
+      - name: Show permission denials
+        if: always() && steps.review.outcome != 'skipped' && steps.review.outputs.execution_file != ''
+        env:
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+        run: |
+          jq -r '
+            [(if type == "array" then .[] else . end) | select(.type == "result") | .permission_denials // []] | add // []
+            | if length == 0 then "Review run: no permission denials."
+              else "### Review run: \(length) permission denial(s)\n" +
+                   (map("- `\(.tool_name)`: `\(.tool_input | tostring | .[0:300])`") | join("\n"))
+              end' "$EXECUTION_FILE" >> "$GITHUB_STEP_SUMMARY"
       # The verdict is the first line of the review the skill posted for this head SHA.
+      # No review for this head means the run never reached a verdict, so the job fails.
       - name: Read verdict
         id: verdict
+        if: steps.pr.outputs.skip != 'true'
         run: |
           verdict=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --paginate \
             --jq "[.[] | select(.commit_id == \"$HEAD_SHA\" and (.body | startswith(\"Verdict:\")))] | last | .body // \"\"" \
             | head -n1 | sed -E 's/^Verdict: *([a-z]+).*/\1/')
-          echo "verdict=${verdict:-none}" >> "$GITHUB_OUTPUT"
+          if [ -z "$verdict" ]; then
+            echo "::error::No review with a verdict was posted for $HEAD_SHA. See the permission denials in the Step Summary."
+            exit 1
+          fi
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
       - name: Fix findings
         id: respond
         if: steps.verdict.outputs.verdict == 'changes' && env.ROUND != '3'

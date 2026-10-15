@@ -77,4 +77,17 @@ mod tests {
 
         assert!(!inventory.is_empty());
     }
+
+    #[test]
+    fn iter_yields_each_resource_and_count() {
+        let mut inventory = Inventory::default();
+        inventory.add(7, 2);
+        inventory.add(3, 5);
+        inventory.add(7, 1);
+
+        let mut pairs: Vec<(u32, u32)> = inventory.iter().collect();
+        pairs.sort_unstable();
+
+        assert_eq!(pairs, vec![(3, 5), (7, 3)]);
+    }
 }

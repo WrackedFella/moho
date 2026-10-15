@@ -42,6 +42,7 @@ jobs:
       - name: Note existing cards
         run: gh api "repos/$GITHUB_REPOSITORY/issues/$FEATURE/sub_issues" --paginate --jq '.[].number' > "$RUNNER_TEMP/cards-before"
       - uses: anthropics/claude-code-action@v1
+        id: claude
         env:
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
         with:
@@ -55,6 +56,18 @@ jobs:
             --max-turns 100
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running."
             --allowedTools "Bash(gh issue:*),Bash(gh api:*),Bash(git log:*),Bash(git show:*),Edit,Write,Task,Skill"
+      # The action hides the run's output, so a denial shows only as a count. List what was
+      # denied, so the allow-list can be tuned from evidence.
+      - name: List denied commands
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          [ -f "$EXECUTION_FILE" ] || exit 0
+          {
+            echo "### Denied commands"
+            jq -r '.[] | select(.type == "result") | .permission_denials[]? | "- `\(.tool_name)`: \((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:200])"' "$EXECUTION_FILE"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Start runs for new labeled cards
         run: |
           gh api "repos/$GITHUB_REPOSITORY/issues/$FEATURE/sub_issues" --paginate \
@@ -91,6 +104,7 @@ jobs:
           shared-key: gate-ubuntu-latest
           save-if: false
       - uses: anthropics/claude-code-action@v1
+        id: claude
         env:
           # The run ends when the main agent stops, so a background subagent is killed
           # mid-task. Subagents must run in the foreground.
@@ -107,7 +121,19 @@ jobs:
           claude_args: |
             --max-turns 200
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running."
-            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Edit,Write,Task,Skill"
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Edit,Write,Task,Skill"
+      # The action hides the run's output, so a denial shows only as a count. List what was
+      # denied, so the allow-list can be tuned from evidence.
+      - name: List denied commands
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          [ -f "$EXECUTION_FILE" ] || exit 0
+          {
+            echo "### Denied commands"
+            jq -r '.[] | select(.type == "result") | .permission_denials[]? | "- `\(.tool_name)`: \((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:200])"' "$EXECUTION_FILE"
+          } >> "$GITHUB_STEP_SUMMARY"
       # PRs opened with the default token start no workflow, so start the review loop here.
       - name: Start PR review
         if: always()

@@ -73,7 +73,16 @@ impl EventProcessor {
                 if let Some(ui_adapter) = &app.ui_adapter
                     && let Ok(mut adapter) = ui_adapter.lock()
                 {
-                    adapter.show_menu(&name);
+                    if name == "settings" {
+                        // Seed from the running prefs so a console change isn't overwritten on save.
+                        let path = app
+                            .prefs_path
+                            .clone()
+                            .unwrap_or_else(moho_core::prefs::Prefs::config_path);
+                        adapter.open_settings(app.prefs.clone(), path);
+                    } else {
+                        adapter.show_menu(&name);
+                    }
                 }
             }
             UiEvent::MenuHidden { name } => {
@@ -91,8 +100,15 @@ impl EventProcessor {
             }
             UiEvent::SettingsSaved => {
                 tracing::info!("Settings saved");
-                // Settings are already saved by the UI adapter
-                // Here we could reload/apply them if needed
+                // Prefs never ride on the bus (ADR-0011); the adapter holds the saved copy.
+                let saved = app
+                    .ui_adapter
+                    .as_ref()
+                    .and_then(|adapter| adapter.lock().ok())
+                    .and_then(|mut adapter| adapter.take_saved_prefs());
+                if let Some(prefs) = saved {
+                    app.adopt_settings(prefs);
+                }
             }
             UiEvent::WindowSettingsChanged {
                 mode,
@@ -482,24 +498,20 @@ impl EventProcessor {
             }
             DebugEvent::SetShadowQuality { quality } => {
                 tracing::info!(quality, "Setting shadow quality");
+                app.prefs.set_shadow_quality(quality);
+                app.save_prefs();
                 if app.window.is_some() {
                     app.pending_render
                         .push(RenderRequest::ShadowQuality(quality as u8));
-
-                    // Update prefs
-                    app.prefs.set_shadow_quality(quality);
-                    let _ = app.save_prefs();
                 }
             }
             DebugEvent::SetSsaoQuality { quality } => {
                 tracing::info!(quality, "Setting SSAO quality");
+                app.prefs.set_ssao_quality(quality);
+                app.save_prefs();
                 if app.window.is_some() {
                     app.pending_render
                         .push(RenderRequest::SsaoQuality(quality as u8));
-
-                    // Update prefs
-                    app.prefs.set_ssao_quality(quality);
-                    let _ = app.save_prefs();
                 }
             }
             _ => {}
@@ -803,5 +815,195 @@ mod tests {
                 "player {player:?}, chunk {chunk:?}"
             );
         }
+    }
+
+    use flagstone_ui::actions::StrategyAction;
+    use moho_core::prefs::{Prefs, WindowMode};
+    use moho_input::bindings::Binding;
+    use moho_input::key::Key;
+    use std::path::{Path, PathBuf};
+
+    fn headless_saving_to(path: &Path) -> App {
+        let mut app = App::headless();
+        app.prefs_path = Some(path.to_path_buf());
+        app
+    }
+
+    fn forward_bound_to_q(prefs: &mut Prefs) {
+        prefs.set_bindings(
+            [("move_forward".to_string(), "Q".to_string())]
+                .into_iter()
+                .collect(),
+        );
+    }
+
+    fn forward_keys(app: &App) -> Vec<Binding> {
+        app.input
+            .actions
+            .bindings()
+            .get(StrategyAction::MoveForward)
+            .to_vec()
+    }
+
+    fn run_console_shadow_command(app: &mut App, quality: u32) {
+        app.event_bus
+            .publish(DebugEvent::SetShadowQuality { quality });
+        EventProcessor::new().process_debug_events(app);
+    }
+
+    fn prefs_file(dir: &tempfile::TempDir) -> PathBuf {
+        dir.path().join("prefs.ini")
+    }
+
+    fn attach_adapter(
+        app: &mut App,
+    ) -> std::sync::Arc<std::sync::Mutex<flagstone_ui::EguiAdapter>> {
+        let adapter = std::sync::Arc::new(std::sync::Mutex::new(flagstone_ui::EguiAdapter::new(
+            None,
+            app.event_bus.clone(),
+            app.prefs.clone(),
+        )));
+        app.ui_adapter = Some(adapter.clone());
+        adapter
+    }
+
+    #[test]
+    fn console_shadow_command_keeps_saved_settings() {
+        type Stage = fn(&mut Prefs);
+        type Holds = fn(&Prefs) -> bool;
+        let rows: [(&str, Stage, Holds); 2] = [
+            ("a key binding", forward_bound_to_q, |p| {
+                p.bindings().get("move_forward").map(String::as_str) == Some("Q")
+            }),
+            (
+                "the window mode",
+                |p| p.set_window_mode(WindowMode::Borderless),
+                |p| p.window_mode() == WindowMode::Borderless,
+            ),
+        ];
+
+        for (row, stage, holds) in rows {
+            let dir = tempfile::tempdir().unwrap();
+            let path = prefs_file(&dir);
+            let mut app = headless_saving_to(&path);
+            let mut saved = Prefs::default();
+            stage(&mut saved);
+            saved.save_to(&path).unwrap();
+            app.adopt_settings(saved);
+
+            run_console_shadow_command(&mut app, 1);
+
+            let on_disk = Prefs::load_from(&path).0;
+            assert!(holds(&on_disk), "row {row}: the Settings change was lost");
+            assert_eq!(on_disk.shadow_quality(), 1, "row {row}: shadow not saved");
+            assert!(holds(&app.prefs), "row {row}: the running prefs lost it");
+        }
+    }
+
+    #[test]
+    fn settings_opened_after_a_console_command_save_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = prefs_file(&dir);
+        let mut app = headless_saving_to(&path);
+        let adapter = attach_adapter(&mut app);
+        run_console_shadow_command(&mut app, 1);
+        app.event_bus.publish(UiEvent::MenuShown {
+            name: "settings".to_string(),
+        });
+        app.event_bus.process_deferred();
+        EventProcessor::new().process_ui_events(&mut app, &mut moho_app::GameClock::default());
+
+        {
+            let mut adapter = adapter.lock().unwrap();
+            let menu = adapter
+                .settings_menu_mut()
+                .expect("the settings screen is registered");
+            menu.start_listening(0);
+            assert!(menu.apply_key_while_listening(Key::Q));
+            menu.apply_staged_changes().unwrap();
+            // The Save button's action carries the screen's saved prefs.
+            let saved = flagstone_ui::screens::MenuAction::SettingsSaved(Prefs::load_from(&path).0);
+            adapter.record_menu_action(&saved);
+        }
+        app.event_bus.publish(UiEvent::SettingsSaved);
+        app.event_bus.process_deferred();
+        EventProcessor::new().process_ui_events(&mut app, &mut moho_app::GameClock::default());
+
+        let on_disk = Prefs::load_from(&path).0;
+        assert_eq!(on_disk.shadow_quality(), 1, "the console change was lost");
+        // Capturing a key keeps the default pad binding, so only the key is checked.
+        assert!(
+            on_disk
+                .bindings()
+                .get("move_forward")
+                .is_some_and(|b| b.split(", ").any(|k| k == "Q")),
+            "the Settings binding was lost: {:?}",
+            on_disk.bindings().get("move_forward")
+        );
+        assert_eq!(app.prefs.shadow_quality(), 1);
+        assert!(forward_keys(&app).contains(&Binding::Key(Key::Q)));
+        assert!(!forward_keys(&app).contains(&Binding::Key(Key::W)));
+    }
+
+    #[test]
+    fn saved_binding_and_console_shadow_survive_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = prefs_file(&dir);
+        let mut app = headless_saving_to(&path);
+        let mut saved = Prefs::default();
+        forward_bound_to_q(&mut saved);
+        saved.save_to(&path).unwrap();
+        app.adopt_settings(saved);
+        run_console_shadow_command(&mut app, 1);
+
+        let restarted = App::from_config(crate::app::config::AppConfig::from_prefs_struct(
+            Prefs::load_from(&path).0,
+        ));
+
+        let keys = forward_keys(&restarted);
+        assert!(keys.contains(&Binding::Key(Key::Q)), "bindings: {keys:?}");
+        assert!(!keys.contains(&Binding::Key(Key::W)), "bindings: {keys:?}");
+        assert_eq!(restarted.prefs.shadow_quality(), 1);
+    }
+
+    #[test]
+    fn adopting_settings_rebinds_the_running_game() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = prefs_file(&dir);
+        let mut app = headless_saving_to(&path);
+        assert!(forward_keys(&app).contains(&Binding::Key(Key::W)));
+        let mut adopted = Prefs::default();
+        forward_bound_to_q(&mut adopted);
+
+        app.adopt_settings(adopted.clone());
+
+        let keys = forward_keys(&app);
+        assert!(keys.contains(&Binding::Key(Key::Q)), "bindings: {keys:?}");
+        assert!(!keys.contains(&Binding::Key(Key::W)), "bindings: {keys:?}");
+        assert_eq!(app.prefs, adopted);
+        assert!(!path.exists(), "adopting does not write the file");
+    }
+
+    #[test]
+    fn console_prefs_command_updates_prefs_without_a_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = prefs_file(&dir);
+        let mut app = headless_saving_to(&path);
+        assert!(app.window.is_none());
+
+        run_console_shadow_command(&mut app, 1);
+        app.event_bus
+            .publish(DebugEvent::SetSsaoQuality { quality: 2 });
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert_eq!(app.prefs.shadow_quality(), 1);
+        assert_eq!(app.prefs.ssao_quality(), 2);
+        let on_disk = Prefs::load_from(&path).0;
+        assert_eq!(on_disk.shadow_quality(), 1);
+        assert_eq!(on_disk.ssao_quality(), 2);
+        assert!(
+            app.pending_render.is_empty(),
+            "no window, so nothing is queued for the renderer"
+        );
     }
 }
