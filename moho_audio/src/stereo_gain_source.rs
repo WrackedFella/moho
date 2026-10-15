@@ -4,6 +4,9 @@ use crate::spatial::StereoGain;
 use rodio::{ChannelCount, Sample, SampleRate, Source};
 use std::time::Duration;
 
+/// Every frame this source emits is left then right.
+const STEREO: ChannelCount = ChannelCount::new(2).expect("2 is non-zero");
+
 /// Averages its input's channels to mono and emits stereo frames scaled by a [`StereoGain`].
 pub struct StereoGainSource<I> {
     input: I,
@@ -53,15 +56,12 @@ impl<I: Source> Iterator for StereoGainSource<I> {
 
 impl<I: Source> Source for StereoGainSource<I> {
     fn current_span_len(&self) -> Option<usize> {
-        match self.input.current_span_len()? {
-            // The input is drained but the last frame's right-ear sample is still to come.
-            0 if self.pending_right.is_some() => Some(1),
-            samples => Some(samples / usize::from(self.input.channels().get()) * 2),
-        }
+        let frames = self.input.current_span_len()? / usize::from(self.input.channels().get());
+        Some(frames * usize::from(STEREO.get()) + usize::from(self.pending_right.is_some()))
     }
 
     fn channels(&self) -> ChannelCount {
-        ChannelCount::new(2).expect("2 is non-zero")
+        STEREO
     }
 
     fn sample_rate(&self) -> SampleRate {

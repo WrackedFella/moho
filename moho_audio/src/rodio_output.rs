@@ -56,14 +56,14 @@ impl AudioOutput for RodioOutput {
 
         let player = rodio::Player::connect_new(&self.mixer);
         player.set_volume(playback.volume);
-        match (playback.looped, playback.pan) {
-            (true, Some(pan)) => {
-                player.append(StereoGainSource::new(decoder.repeat_infinite(), pan));
-            }
-            (true, None) => player.append(decoder.repeat_infinite()),
-            (false, Some(pan)) => player.append(StereoGainSource::new(decoder, pan)),
-            (false, None) => player.append(decoder),
+        let mut source: Box<dyn Source + Send> = Box::new(decoder);
+        if playback.looped {
+            source = Box::new(source.repeat_infinite());
         }
+        if let Some(pan) = playback.pan {
+            source = Box::new(StereoGainSource::new(source, pan));
+        }
+        player.append(source);
         player.play();
         Ok(player)
     }
