@@ -217,3 +217,215 @@ impl Drop for AudioSystem {
         debug!("Audio system shutdown");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{RecordingOutput, assert_volume_eq, wav_bytes};
+
+    const CLICK: &str = "assets/audio/ui/button_click.mp3";
+    const SOUND: &str = "sounds/boom.wav";
+    const MENU_MUSIC: &str = "music/menu.wav";
+    const BATTLE_MUSIC: &str = "music/battle.wav";
+
+    fn system(settings: AudioSettings) -> (AudioSystem<RecordingOutput>, RecordingOutput) {
+        // The click is seeded with different bytes in each cache so a test can tell
+        // which cache a UI event was served from.
+        let cache = AudioCache::seeded(
+            &[
+                (CLICK, wav_bytes(50, 100)),
+                (SOUND, wav_bytes(100, 1000)),
+                (MENU_MUSIC, wav_bytes(200, 2000)),
+                (BATTLE_MUSIC, wav_bytes(300, 3000)),
+            ],
+            &[(CLICK, wav_bytes(10, 500))],
+        );
+        let output = RecordingOutput::default();
+        let mut system = AudioSystem::with_output(output.clone(), cache);
+        system.set_settings(settings);
+        (system, output)
+    }
+
+    fn full_volume() -> AudioSettings {
+        AudioSettings::new()
+            .with_master_volume(1.0)
+            .with_ui_volume(1.0)
+            .with_sound_effects_volume(1.0)
+            .with_music_volume(1.0)
+    }
+
+    fn music_start(path: &str, volume: f32) -> AudioEvent {
+        AudioEvent::MusicStart {
+            path: path.to_owned(),
+            volume,
+            looped: true,
+        }
+    }
+
+    #[test]
+    fn ui_event_plays_click_once_at_its_volume() {
+        let rows = [
+            (AudioEvent::ButtonClick, 0.8),
+            (AudioEvent::MenuNavigate, 0.6),
+            (AudioEvent::Confirm, 0.8),
+            (AudioEvent::Cancel, 0.7),
+            (AudioEvent::Error, 0.9),
+        ];
+
+        for (event, volume) in rows {
+            let (mut system, output) = system(full_volume());
+
+            let result = system.handle_event(event.clone());
+
+            result.unwrap_or_else(|e| panic!("{event:?} failed: {e}"));
+            let voices = output.voices();
+            assert_eq!(voices.len(), 1, "{event:?}");
+            assert_eq!(voices[0].path, CLICK, "{event:?}");
+            assert_eq!(
+                voices[0].bytes,
+                wav_bytes(10, 500),
+                "{event:?} used the UI cache"
+            );
+            assert_volume_eq(voices[0].volume, volume);
+            assert!(!voices[0].looped, "{event:?}");
+            assert!(voices[0].detached && !voices[0].stopped, "{event:?}");
+        }
+    }
+
+    #[test]
+    fn ui_event_volume_is_scaled_by_the_ui_category_volume() {
+        let (mut system, output) = system(full_volume().with_ui_volume(0.5));
+
+        system.handle_event(AudioEvent::Cancel).unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 1);
+        assert_volume_eq(voices[0].volume, 0.35);
+    }
+
+    #[test]
+    fn play_sound_scales_by_effect_volume() {
+        let (mut system, output) = system(full_volume().with_sound_effects_volume(0.5));
+
+        system
+            .handle_event(AudioEvent::PlaySound {
+                path: SOUND.to_owned(),
+                volume: 0.8,
+            })
+            .unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 1);
+        assert_eq!(voices[0].path, SOUND);
+        assert_eq!(voices[0].bytes, wav_bytes(100, 1000));
+        assert_volume_eq(voices[0].volume, 0.4);
+        assert!(!voices[0].looped);
+    }
+
+    #[test]
+    fn muted_play_sound_starts_nothing_and_succeeds() {
+        let (mut system, output) = system(full_volume().set_muted(true));
+
+        let result = system.handle_event(AudioEvent::PlaySound {
+            path: SOUND.to_owned(),
+            volume: 0.8,
+        });
+
+        assert!(result.is_ok(), "{result:?}");
+        assert!(output.voices().is_empty());
+    }
+
+    #[test]
+    fn music_start_stops_previous_track_and_loops_new_one() {
+        let (mut system, output) = system(full_volume());
+        system.handle_event(music_start(MENU_MUSIC, 1.0)).unwrap();
+
+        system.handle_event(music_start(BATTLE_MUSIC, 1.0)).unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 2);
+        assert_eq!(voices[0].path, MENU_MUSIC);
+        assert!(voices[0].stopped);
+        assert_eq!(voices[1].path, BATTLE_MUSIC);
+        assert!(voices[1].looped);
+        assert!(!voices[1].stopped);
+        assert!(!voices[1].detached, "the music voice is kept, not detached");
+    }
+
+    #[test]
+    fn set_settings_changes_playing_music_volume() {
+        let (mut system, output) = system(full_volume());
+        system.handle_event(music_start(MENU_MUSIC, 0.8)).unwrap();
+        assert_volume_eq(output.voices()[0].volume, 0.8);
+
+        system.set_settings(full_volume().with_music_volume(0.5));
+
+        // The category volume replaces the track's own volume (pinned, not endorsed).
+        assert_volume_eq(output.voices()[0].volume, 0.5);
+    }
+
+    #[test]
+    fn stop_events_stop_music() {
+        for event in [AudioEvent::MusicStop, AudioEvent::StopAll] {
+            let (mut system, output) = system(full_volume());
+            system.handle_event(music_start(MENU_MUSIC, 1.0)).unwrap();
+
+            let result = system.handle_event(event.clone());
+
+            assert!(result.is_ok(), "{event:?}: {result:?}");
+            assert!(output.voices()[0].stopped, "{event:?}");
+            system.set_settings(full_volume().with_music_volume(0.1));
+            assert_volume_eq(output.voices()[0].volume, 1.0);
+        }
+    }
+
+    #[test]
+    fn missing_file_errors_with_its_path_and_starts_nothing() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let missing = dir.path().join("absent.wav");
+        let path = missing.to_str().expect("utf-8 path").to_owned();
+        let (mut system, output) = system(full_volume());
+
+        let result = system.handle_event(AudioEvent::PlaySound {
+            path: path.clone(),
+            volume: 0.8,
+        });
+
+        match result {
+            Err(AudioError::FileNotFound(message)) => {
+                assert!(message.contains(&path), "{message}");
+            }
+            other => panic!("expected FileNotFound, got {other:?}"),
+        }
+        assert!(output.voices().is_empty());
+    }
+
+    #[test]
+    fn one_shot_is_detached_and_music_is_kept() {
+        let (mut system, output) = system(full_volume());
+
+        system
+            .handle_event(AudioEvent::PlaySound {
+                path: SOUND.to_owned(),
+                volume: 1.0,
+            })
+            .unwrap();
+        system.handle_event(music_start(MENU_MUSIC, 1.0)).unwrap();
+        system.handle_event(AudioEvent::StopAll).unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 2);
+        assert!(voices[0].detached && !voices[0].stopped, "one-shot");
+        assert!(!voices[1].detached && voices[1].stopped, "music");
+    }
+
+    #[test]
+    fn dropping_the_system_stops_the_music() {
+        let (mut system, output) = system(full_volume());
+        system.handle_event(music_start(MENU_MUSIC, 1.0)).unwrap();
+
+        drop(system);
+
+        assert!(output.voices()[0].stopped);
+    }
+}
