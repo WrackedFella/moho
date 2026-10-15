@@ -1734,6 +1734,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "moho_fps"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "moho_app",
+ "moho_audio",
+ "moho_fps_rules",
+ "moho_input",
+ "moho_level",
+ "moho_physics",
+ "moho_render_api",
+ "moho_renderer",
+ "proptest",
+ "thiserror 2.0.20",
+ "tracing",
+ "tracing-subscriber",
+ "winit",
+]
+
+[[package]]
 name = "moho_fps_rules"
 version = "0.1.0"
 dependencies = [

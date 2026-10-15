@@ -75,6 +75,7 @@ moho_physics    rapier3d character controller and colliders
 moho_input      key → binding-code mapping
 moho_app        fixed-tick loop shared by the games: Game trait, headless loop, GameClock
 moho_fps_rules  FPS line: rifle, magazine and body-part damage rules, platform-free (ADR-0015)
+moho_fps        FPS line: arena, shot resolution, sim and binary on the engine and moho_fps_rules
 ```
 
 - Engine crates never depend on `flagstone_game` (ADR-0001). World geometry reaches

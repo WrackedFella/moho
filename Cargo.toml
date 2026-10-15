@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["flagstone", "moho_app", "moho_core", "flagstone_game", "flagstone_voxel", "moho_render_api", "moho_renderer", "moho_audio", "flagstone_ui", "moho_input", "moho_physics", "moho_level", "moho_fps_rules"]
+members = ["flagstone", "moho_app", "moho_core", "flagstone_game", "flagstone_voxel", "moho_render_api", "moho_renderer", "moho_audio", "flagstone_ui", "moho_input", "moho_physics", "moho_level", "moho_fps_rules", "moho_fps"]
 
 [workspace.dependencies]
 bytemuck = "1.24"

@@ -6,6 +6,7 @@ exclude_globs = [
     "flagstone_ui/src/adapter/**",
     "flagstone/src/main.rs",
     "flagstone/src/app/renderer_setup.rs",
+    "moho_fps/src/main.rs",
 ]
 # These bodies only drive the renderer backend or window, which need a real
 # `Window`; the binary's headless tests (`App::headless`) can't reach them.
@@ -71,4 +72,22 @@ exclude_re = [
     # Polling needs a live gilrs backend; headless tests and the headless App have none.
     'replace Gamepads::poll with \(\)',
     'replace Gamepads::discard with \(\)',
+    # moho_fps: these bodies need a real `Window`, a GPU or an audio device, which tests
+    # don't have; the logic around them (status text, flash timing, geometry) is tested.
+    'replace capture_cursor with \(\)',
+    'delete match arm Feedback::Fired in Stage::react',
+    'replace Stage::play_shot with \(\)',
+    'replace <impl Game for FpsGame>::(init|event) with \(\)',
+    # The title text is `window_title`, tested; what is left is comparing with the shown title and
+    # calling `Window::set_title`, which needs a real window.
+    'replace Stage::refresh_title with \(\)',
+    'replace != with == in Stage::refresh_title',
+    # Equivalent: `SETTLE_DT` only feeds the one step that indexes new colliders, and the
+    # static level geometry does not move in it.
+    'arena\.rs:\d+:\d+: replace / with [%\*]$',
+    # Equivalent: a zero cooldown leaves the weapon `Ready` on the next advance either way.
+    'replace > with >= in FpsSim::pull_trigger',
+    # Equivalent: the target number is shifted past the three part-index bits, so OR and
+    # XOR agree.
+    'replace \| with \^ in <impl From<SurfaceTag> for HitTag>::from',
 ]

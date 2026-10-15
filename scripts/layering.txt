@@ -6,6 +6,6 @@
 
 engine: moho_app moho_core moho_render_api moho_renderer moho_audio moho_physics moho_input moho_level
 flagstone: flagstone_voxel flagstone_game flagstone_ui flagstone
-fps: moho_fps_rules
+fps: moho_fps_rules moho_fps
 domain: moho_core flagstone_voxel flagstone_game moho_level moho_fps_rules
 gpu: moho_renderer
