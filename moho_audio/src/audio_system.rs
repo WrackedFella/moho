@@ -397,4 +397,71 @@ mod tests {
 
         assert!(output.voices()[0].stopped);
     }
+
+    #[test]
+    fn unlooped_music_start_is_a_one_shot_and_keeps_the_playing_track() {
+        let (mut system, output) = system(full_volume());
+        system.handle_event(music_start(MENU_MUSIC, 1.0)).unwrap();
+
+        system
+            .handle_event(AudioEvent::MusicStart {
+                path: BATTLE_MUSIC.to_owned(),
+                volume: 1.0,
+                looped: false,
+            })
+            .unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 2);
+        assert_eq!(voices[0].path, MENU_MUSIC);
+        assert!(!voices[0].stopped && !voices[0].detached, "menu track kept");
+        assert_eq!(voices[1].path, BATTLE_MUSIC);
+        assert!(voices[1].detached && !voices[1].stopped, "battle one-shot");
+        assert!(!voices[1].looped);
+        system.set_settings(full_volume().with_music_volume(0.5));
+        let voices = output.voices();
+        assert_volume_eq(voices[0].volume, 0.5);
+        assert_volume_eq(voices[1].volume, 1.0);
+    }
+
+    #[test]
+    fn failed_music_start_keeps_the_playing_track() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let missing = dir.path().join("absent.wav");
+        let path = missing.to_str().expect("utf-8 path").to_owned();
+        let (mut system, output) = system(full_volume());
+        system.handle_event(music_start(MENU_MUSIC, 1.0)).unwrap();
+
+        let result = system.handle_event(music_start(&path, 1.0));
+
+        assert!(
+            matches!(result, Err(AudioError::FileNotFound(_))),
+            "{result:?}"
+        );
+        let voices = output.voices();
+        assert_eq!(voices.len(), 1);
+        assert!(!voices[0].stopped);
+        system.handle_event(AudioEvent::MusicStop).unwrap();
+        assert!(output.voices()[0].stopped, "the menu voice was retained");
+    }
+
+    #[test]
+    fn stopping_a_non_music_category_leaves_music_playing() {
+        let categories = [
+            AudioCategory::SoundEffect,
+            AudioCategory::UserInterface,
+            AudioCategory::Voice,
+        ];
+
+        for category in categories {
+            let (mut system, output) = system(full_volume());
+            system.handle_event(music_start(MENU_MUSIC, 1.0)).unwrap();
+
+            system.stop_audio(Some(category.clone()));
+
+            assert!(!output.voices()[0].stopped, "{category:?}");
+            system.set_settings(full_volume().with_music_volume(0.25));
+            assert_volume_eq(output.voices()[0].volume, 0.25);
+        }
+    }
 }
