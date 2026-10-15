@@ -1962,11 +1962,9 @@ mod enemy_tests {
         config_b.damage = PLAYER_ONE_SHOT;
         let mut firing = FpsSim::start(duel(&[]), config_b);
 
+        run(&mut walking, &script(5, &[]));
+        let before = walking.enemy_state(0).expect("alive unshot").position;
         let walked = run(&mut walking, &script(3, &[0]));
-        let before = walking
-            .enemy_state(0)
-            .expect("alive after one hit")
-            .position;
         let killed = run(&mut walking, &script(1, &[0]));
         let after_death = run(&mut walking, &script(60, &[]));
         let shooting = run(&mut firing, &script(90, &[3]));

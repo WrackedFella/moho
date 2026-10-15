@@ -316,13 +316,13 @@ impl Brain {
         tuning: &EnemyTuning,
         dt: f32,
     ) -> Intent {
+        if let Some(shooter) = percept.hurt {
+            self.react_to_hurt(shooter, percept.offer);
+        }
         let engaged = matches!(self, Self::Engage { .. });
         let seen = percept
             .target
             .filter(|&target| engaged || notices(percept, target, tuning));
-        if let Some(shooter) = percept.hurt {
-            self.react_to_hurt(shooter, percept.offer);
-        }
         let tick = Tick {
             route,
             percept,
