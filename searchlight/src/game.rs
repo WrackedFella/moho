@@ -812,6 +812,34 @@ mod tests {
     }
 
     #[test]
+    fn an_ordinary_alive_tick_blends_from_the_previous_pose_and_keeps_the_status() {
+        let sim = FpsSim::start(arena_arena(), arena_config());
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = FpsGame::new(sim, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let walk = FpsCommand {
+            movement: moho_physics::CharacterCommand {
+                forward: 1.0,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..FpsCommand::default()
+        };
+        for _ in 0..5 {
+            tick_with(&mut game, &mut clock, &walk);
+        }
+        assert!(!game.sim().player_body().is_dead());
+        game.stage.react(&Feedback::Dry, None);
+        assert!(!game.stage.status.is_empty());
+        let before = game.sim().player();
+
+        tick_with(&mut game, &mut clock, &walk);
+
+        assert_eq!(game.previous, before);
+        assert_ne!(game.previous, game.sim().player());
+        assert!(!game.stage.status.is_empty());
+    }
+
+    #[test]
     fn a_headless_frame_drains_the_feedback_without_audio_or_window() {
         let mut game = game();
         press(game.input_mut(), FpsAction::Fire);
