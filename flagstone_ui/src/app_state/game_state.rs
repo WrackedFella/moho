@@ -108,7 +108,11 @@ impl GameState {
 
     /// The screen a "back" navigation returns to in this state, if the state has one.
     pub fn home_screen(self) -> Option<&'static str> {
-        None
+        match self {
+            GameState::Menu => Some("start"),
+            GameState::Paused => Some("pause"),
+            GameState::ConsoleOpen | GameState::Playing => None,
+        }
     }
 
     /// Validate a state transition and return an error if invalid.

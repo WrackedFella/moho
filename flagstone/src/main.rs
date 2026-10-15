@@ -321,32 +321,43 @@ impl App {
                         adapter.toggle_overlay("chunk_debug");
                     }
                 }
-                KeyCode::Escape if pressed => self.escape_pressed(),
+                // A held Escape repeats; acting on repeats would flicker between pause and play.
+                KeyCode::Escape if pressed && !event.repeat => self.escape_pressed(),
                 _ => {}
             }
         }
     }
 
-    /// Escape: close the console, otherwise show the menu.
+    /// Escape: close the console, pause play, or resume from the pause window.
+    /// On Settings (reached from the pause window) it does nothing.
     fn escape_pressed(&mut self) {
         use crate::game_state::GameState;
         match self.game_state {
             GameState::ConsoleOpen => self.exit_console(),
-            GameState::Playing => {
-                self.show_menu();
-
-                if let Some(ui_adapter) = &self.ui_adapter
-                    && let Ok(mut adapter) = ui_adapter.lock()
-                {
-                    adapter.show_menu("start");
-                }
-            }
+            GameState::Playing => self.toggle_pause(),
+            GameState::Paused if self.pause_window_showing() => self.toggle_pause(),
             _ => {}
         }
     }
 
+    /// Whether the pause window is the active screen; true when no UI is attached.
+    fn pause_window_showing(&self) -> bool {
+        self.ui_adapter.as_ref().is_none_or(|adapter| {
+            adapter
+                .lock()
+                .is_ok_and(|adapter| adapter.active_screen_name() == Some("pause"))
+        })
+    }
+
     /// Leave the pause and return to play.
-    fn resume_game(&mut self) {}
+    fn resume_game(&mut self) {
+        use flagstone_ui::StateTransitionCoordinator;
+
+        match StateTransitionCoordinator::resume_game(self.game_state) {
+            Ok(actions) => self.apply_transition(actions),
+            Err(e) => tracing::debug!(error = %e, "Cannot resume game"),
+        }
+    }
 
     fn handle_device_input(&mut self, event: &DeviceEvent) {
         // Only process input in game mode and first person camera mode
@@ -417,7 +428,6 @@ impl App {
     }
 
     /// Toggle pause state
-    #[allow(dead_code)]
     fn toggle_pause(&mut self) {
         use flagstone_ui::StateTransitionCoordinator;
 

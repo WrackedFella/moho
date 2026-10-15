@@ -63,7 +63,7 @@ impl StateTransitionActions {
             ui_visible: Self::should_show_ui(to),
             cursor_grabbed: to.should_grab_cursor(),
             cursor_visible: to.cursor_visible(),
-            show_menu: Self::menu_for_state(to),
+            show_menu: to.home_screen(),
         })
     }
 
@@ -72,16 +72,6 @@ impl StateTransitionActions {
         match state {
             GameState::Menu | GameState::ConsoleOpen | GameState::Paused => true,
             GameState::Playing => false,
-        }
-    }
-
-    /// Determine which menu (if any) should be shown for a state
-    fn menu_for_state(state: GameState) -> Option<&'static str> {
-        match state {
-            GameState::Menu => Some("start"),
-            GameState::Paused => Some("pause"),
-            GameState::ConsoleOpen => None, // Console UI handles this
-            GameState::Playing => None,
         }
     }
 }

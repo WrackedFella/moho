@@ -307,6 +307,8 @@ impl moho_app::Game for App {
 
         if self.main_menu_requested {
             self.main_menu_requested = false;
+            self.autosave(ctx.clock(), ctx.renderer());
+            self.show_menu();
         }
 
         let clock = ctx.clock();

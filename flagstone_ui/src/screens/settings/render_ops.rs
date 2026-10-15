@@ -105,7 +105,7 @@ pub fn render_bottom_panel(ui: &mut egui::Ui, menu: &mut SettingsMenu) -> Vec<Me
                             ui.add(egui::Button::new("Back").min_size(egui::vec2(100.0, 36.0)));
                         let back_clicked = back.clicked();
                         items.push(MenuItem {
-                            action: MenuAction::ShowMenu("start".to_string()),
+                            action: MenuAction::Back,
                             rect: Some(back.rect),
                             enabled: true,
                             clicked: back_clicked,

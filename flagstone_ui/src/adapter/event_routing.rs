@@ -11,11 +11,26 @@ use crate::screens::MenuAction;
 use moho_core::EventBus;
 
 /// Process a menu action and publish corresponding events to the event bus
-pub fn process_menu_action(action: &MenuAction, _game_state: GameState, event_bus: &EventBus) {
+pub fn process_menu_action(action: &MenuAction, game_state: GameState, event_bus: &EventBus) {
     use moho_core::events::UiEvent as CoreUiEvent;
 
     match action {
-        MenuAction::Back | MenuAction::Resume | MenuAction::ExitToMainMenu => {}
+        MenuAction::Back => {
+            emit_audio_event(event_bus, UiAudioEvent::MenuNavigate);
+            if let Some(home) = game_state.home_screen() {
+                event_bus.publish(CoreUiEvent::MenuShown {
+                    name: home.to_string(),
+                });
+            }
+        }
+        MenuAction::Resume => {
+            emit_audio_event(event_bus, UiAudioEvent::Confirm);
+            event_bus.publish(CoreUiEvent::ResumeRequested);
+        }
+        MenuAction::ExitToMainMenu => {
+            emit_audio_event(event_bus, UiAudioEvent::ButtonClick);
+            event_bus.publish(CoreUiEvent::MainMenuRequested);
+        }
         MenuAction::LoadScene(path) => {
             emit_audio_event(event_bus, UiAudioEvent::Confirm);
             event_bus.publish(CoreUiEvent::LoadSceneRequested { path: path.clone() });
