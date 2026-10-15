@@ -2,18 +2,23 @@ use crate::audio_cache::AudioCache;
 use crate::audio_events::AudioEvent;
 use crate::audio_settings::AudioSettings;
 use crate::audio_source::{AudioCategory, AudioSource};
-use crate::error::{AudioError, AudioResult};
-use rodio::Source;
+#[cfg(test)]
+use crate::error::AudioError;
+use crate::error::AudioResult;
+use crate::output::{AudioOutput, Playback};
+use crate::rodio_output::RodioOutput;
 use std::path::Path;
 use tracing::{debug, warn};
+
+const CLICK_SOUND: &str = "assets/audio/ui/button_click.mp3";
 
 /// Main audio system for the Moho engine.
 ///
 /// AudioSystem manages audio playback, asset loading, and provides
 /// a clean interface for the rest of the engine to play sounds.
-pub struct AudioSystem {
-    /// Rodio device sink (keeps the audio stream alive)
-    device: rodio::MixerDeviceSink,
+pub struct AudioSystem<O: AudioOutput = RodioOutput> {
+    /// Where voices are played
+    output: O,
 
     /// Current audio settings
     settings: AudioSettings,
@@ -21,24 +26,33 @@ pub struct AudioSystem {
     /// Audio cache manager (handles loading and caching)
     audio_cache: AudioCache,
 
-    /// Currently playing background music player (for volume control)
-    music_player: Option<rodio::Player>,
+    /// Currently playing background music voice (for volume control)
+    music_voice: Option<O::Voice>,
 }
 
 impl AudioSystem {
-    /// Create a new audio system with optimized settings for low latency
+    /// Create a new audio system playing through the default audio device.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the device or the UI sound cache cannot be opened.
     pub fn new() -> AudioResult<Self> {
-        let device = rodio::DeviceSinkBuilder::open_default_sink()
-            .map_err(|e| AudioError::InitializationFailed(e.to_string()))?;
+        let output = RodioOutput::open_default()?;
 
         debug!("Audio system initialized successfully");
 
-        Ok(Self {
-            device,
+        Ok(Self::with_output(output, AudioCache::new()?))
+    }
+}
+
+impl<O: AudioOutput> AudioSystem<O> {
+    pub(crate) fn with_output(output: O, audio_cache: AudioCache) -> Self {
+        Self {
+            output,
             settings: AudioSettings::default(),
-            audio_cache: AudioCache::new()?,
-            music_player: None,
-        })
+            audio_cache,
+            music_voice: None,
+        }
     }
 
     /// Get current audio settings
@@ -51,9 +65,9 @@ impl AudioSystem {
         self.settings = settings;
 
         // Update music volume if currently playing
-        if let Some(player) = &self.music_player {
+        if let Some(voice) = &self.music_voice {
             let music_volume = self.settings.effective_volume(&AudioCategory::Music);
-            player.set_volume(music_volume);
+            self.output.set_volume(voice, music_volume);
         }
     }
 
@@ -70,36 +84,27 @@ impl AudioSystem {
         }
 
         // Use pre-loaded data for UI sounds, or load on-demand for others
-        let audio_data = if *source.category() == AudioCategory::UserInterface {
+        let bytes = if *source.category() == AudioCategory::UserInterface {
             self.audio_cache.get_ui_sound(source.path())?
         } else {
             self.audio_cache.get_audio(source.path())?
         };
 
-        let cursor = std::io::Cursor::new(audio_data);
-        let source_decoder = rodio::Decoder::new(cursor).map_err(|e| {
-            AudioError::LoadFailed(format!("Failed to decode {}: {}", source.path(), e))
+        let voice = self.output.start(Playback {
+            path: source.path().to_owned(),
+            bytes,
+            volume: effective_volume,
+            looped: source.looped(),
         })?;
 
-        let player = rodio::Player::connect_new(self.device.mixer());
-        player.set_volume(effective_volume);
-
-        if source.looped() {
-            player.append(source_decoder.repeat_infinite());
-        } else {
-            player.append(source_decoder);
-        }
-
-        // For background music, store the player for volume control
+        // For background music, keep the voice for volume control
         if *source.category() == AudioCategory::Music && source.looped() {
-            if let Some(old_player) = self.music_player.take() {
-                old_player.stop();
+            if let Some(old_voice) = self.music_voice.take() {
+                self.output.stop(old_voice);
             }
-            player.play();
-            self.music_player = Some(player);
+            self.music_voice = Some(voice);
         } else {
-            player.play();
-            player.detach(); // Let it play and clean up automatically
+            self.output.detach(voice); // Let it play and clean up automatically
         }
 
         debug!(
@@ -119,14 +124,11 @@ impl AudioSystem {
     /// Handle audio events from the UI or game
     pub fn handle_event(&mut self, event: AudioEvent) -> AudioResult<()> {
         match event {
-            AudioEvent::ButtonClick => {
-                // Use the button_click.mp3 from assets/audio/ui directory
-                self.play_ui_sound("assets/audio/ui/button_click.mp3", 0.8)
-            }
-            AudioEvent::MenuNavigate => self.play_ui_sound("assets/audio/ui/button_click.mp3", 0.6),
-            AudioEvent::Confirm => self.play_ui_sound("assets/audio/ui/button_click.mp3", 0.8),
-            AudioEvent::Cancel => self.play_ui_sound("assets/audio/ui/button_click.mp3", 0.7),
-            AudioEvent::Error => self.play_ui_sound("assets/audio/ui/button_click.mp3", 0.9),
+            AudioEvent::ButtonClick => self.play_click(0.8),
+            AudioEvent::MenuNavigate => self.play_click(0.6),
+            AudioEvent::Confirm => self.play_click(0.8),
+            AudioEvent::Cancel => self.play_click(0.7),
+            AudioEvent::Error => self.play_click(0.9),
             AudioEvent::PlaySound { path, volume } => self.play_sound(&path, volume),
             AudioEvent::MusicStart {
                 path,
@@ -141,8 +143,8 @@ impl AudioSystem {
                 Ok(())
             }
             AudioEvent::MusicVolumeChanged { volume: _ } => {
-                // TODO: adjust the active music player's volume in place once
-                // AudioSystem exposes a live volume control for music_player.
+                // TODO: adjust the active music voice's volume in place once
+                // AudioSystem exposes a live volume control for it.
                 Ok(())
             }
             AudioEvent::StopAll => {
@@ -152,51 +154,18 @@ impl AudioSystem {
         }
     }
 
-    /// Play a UI sound effect with optimized low-latency playback
-    fn play_ui_sound<P: AsRef<Path>>(&mut self, path: P, volume: f32) -> AudioResult<()> {
-        let path_str = path.as_ref().to_string_lossy().to_string();
-        let effective_volume = self
-            .settings
-            .effective_volume(&AudioCategory::UserInterface)
-            * volume;
-
-        if effective_volume <= 0.0 {
-            debug!(path = %path_str, "Skipping UI audio playback due to zero volume");
-            return Ok(());
-        }
-
-        // Get pre-loaded audio data (delegate to AudioCache)
-        let audio_data = self.audio_cache.get_ui_sound(&path_str)?;
-
-        // Create a new cursor and decoder for this playback
-        let cursor = std::io::Cursor::new(audio_data);
-        let source_decoder = rodio::Decoder::new(cursor)
-            .map_err(|e| AudioError::LoadFailed(format!("Failed to decode {path_str}: {e}")))?;
-
-        // For UI sounds, create a new player each time for immediate playback
-        // This avoids queueing delays that would occur with a shared player
-        let player = rodio::Player::connect_new(self.device.mixer());
-        player.set_volume(effective_volume);
-        player.append(source_decoder);
-        player.play();
-        player.detach(); // Let it play and clean up automatically
-
-        debug!(path = %path_str, volume = effective_volume, "Playing UI audio");
-        Ok(())
+    /// Play the UI click, served from the pre-loaded UI cache for low latency.
+    fn play_click(&mut self, volume: f32) -> AudioResult<()> {
+        self.play_audio_source(&AudioSource::ui_sound(CLICK_SOUND, volume))
     }
 
     /// Stop audio based on category
     pub fn stop_audio(&mut self, category: Option<AudioCategory>) {
         match category {
-            None => {
-                if let Some(player) = self.music_player.take() {
-                    player.stop();
-                }
-                // Note: Individual sound effects can't be stopped once detached
-            }
-            Some(AudioCategory::Music) => {
-                if let Some(player) = self.music_player.take() {
-                    player.stop();
+            None | Some(AudioCategory::Music) => {
+                // Individual sound effects can't be stopped once detached
+                if let Some(voice) = self.music_voice.take() {
+                    self.output.stop(voice);
                 }
             }
             Some(
@@ -209,10 +178,10 @@ impl AudioSystem {
     }
 }
 
-impl Drop for AudioSystem {
+impl<O: AudioOutput> Drop for AudioSystem<O> {
     fn drop(&mut self) {
-        if let Some(player) = self.music_player.take() {
-            player.stop();
+        if let Some(voice) = self.music_voice.take() {
+            self.output.stop(voice);
         }
         debug!("Audio system shutdown");
     }

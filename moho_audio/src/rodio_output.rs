@@ -1,3 +1,82 @@
+//! [`AudioOutput`] backed by rodio and the default audio device.
+
+use crate::error::{AudioError, AudioResult};
+use crate::output::{AudioOutput, Playback};
+use rodio::Source;
+use rodio::mixer::Mixer;
+
+/// Plays voices through a rodio mixer, normally the default device's.
+pub struct RodioOutput {
+    mixer: Mixer,
+    /// Keeps the audio stream alive; absent for a headless mixer.
+    _device: Option<rodio::MixerDeviceSink>,
+}
+
+impl RodioOutput {
+    /// Opens the default audio device.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::InitializationFailed`] if no device can be opened.
+    pub fn open_default() -> AudioResult<Self> {
+        let device = rodio::DeviceSinkBuilder::open_default_sink()
+            .map_err(|e| AudioError::InitializationFailed(e.to_string()))?;
+        Ok(Self {
+            mixer: device.mixer().clone(),
+            _device: Some(device),
+        })
+    }
+
+    /// An output into a bare mixer, with the mixer's read end for the test to pull samples from.
+    #[cfg(test)]
+    pub(crate) fn headless() -> (Self, rodio::mixer::MixerSource) {
+        use std::num::NonZero;
+        let (mixer, source) = rodio::mixer::mixer(
+            NonZero::new(2).expect("two channels"),
+            NonZero::new(44_100).expect("44.1 kHz"),
+        );
+        (
+            Self {
+                mixer,
+                _device: None,
+            },
+            source,
+        )
+    }
+}
+
+impl AudioOutput for RodioOutput {
+    type Voice = rodio::Player;
+
+    fn start(&mut self, playback: Playback) -> AudioResult<rodio::Player> {
+        let decoder = rodio::Decoder::new(std::io::Cursor::new(playback.bytes)).map_err(|e| {
+            AudioError::LoadFailed(format!("Failed to decode {}: {}", playback.path, e))
+        })?;
+
+        let player = rodio::Player::connect_new(&self.mixer);
+        player.set_volume(playback.volume);
+        if playback.looped {
+            player.append(decoder.repeat_infinite());
+        } else {
+            player.append(decoder);
+        }
+        player.play();
+        Ok(player)
+    }
+
+    fn set_volume(&mut self, voice: &rodio::Player, volume: f32) {
+        voice.set_volume(volume);
+    }
+
+    fn stop(&mut self, voice: rodio::Player) {
+        voice.stop();
+    }
+
+    fn detach(&mut self, voice: rodio::Player) {
+        voice.detach();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::error::AudioError;
