@@ -141,7 +141,7 @@ impl<O: AudioOutput> AudioSystem<O> {
                 Ok(())
             }
             AudioEvent::MusicVolumeChanged { volume: _ } => {
-                // Ignored for now: the music voice's volume follows the settings only.
+                // TODO: set the music voice's volume to `volume` times the music category volume.
                 Ok(())
             }
             AudioEvent::StopAll => {
