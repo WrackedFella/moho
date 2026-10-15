@@ -886,6 +886,104 @@ mod tests {
         }
     }
 
+    /// Thinks `ticks` times, applying each turn to the enemy's yaw so it can come to face
+    /// the target; the target stays where it is.
+    fn think_turning(
+        brain: &mut Brain,
+        first: Percept,
+        target: Option<Vec3>,
+        ticks: usize,
+    ) -> Vec<Intent> {
+        let route = square();
+        let tuning = tuning();
+        let mut percept = first;
+        let mut intents = Vec::new();
+        for _ in 0..ticks {
+            let intent = brain.think(&route, &percept, &tuning, DT);
+            percept = at_origin(percept.yaw + intent.yaw_delta, target);
+            intents.push(intent);
+        }
+        intents
+    }
+
+    #[test]
+    fn a_hurt_enemy_with_no_offer_engages_a_shooter_outside_its_view_cone() {
+        let behind = bearing(PI * 0.8, 10.0);
+        let hurt = hurt_by(behind, None, Some(behind));
+        let starts = [Brain::Patrol { next: 2 }, chasing(bearing(0.3, 12.0), 3)];
+
+        for start in starts {
+            let mut brain = start;
+
+            let intents = think_turning(&mut brain, hurt, Some(behind), 40);
+
+            assert!(
+                intents[0].yaw_delta > 0.0,
+                "from {start:?}: it should turn to face the shooter: {:?}",
+                intents[0]
+            );
+            assert!(
+                intents.iter().all(|intent| intent.forward == 0.0),
+                "from {start:?}: it walked instead of standing to fight: {intents:?}"
+            );
+            assert!(
+                intents.iter().any(|intent| intent.fire),
+                "from {start:?}: it never fired: {intents:?}"
+            );
+            assert!(
+                matches!(brain, Brain::Engage { held: None, .. }),
+                "from {start:?}: {brain:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hurt_enemy_with_no_offer_becomes_engaged_on_the_hurt_tick_even_if_the_shooter_is_behind() {
+        let behind = bearing(PI * 0.8, 10.0);
+        let hurt = hurt_by(behind, None, Some(behind));
+        let starts = [Brain::Patrol { next: 2 }, chasing(bearing(0.3, 12.0), 3)];
+
+        for start in starts {
+            let mut brain = start;
+
+            think_n(&mut brain, &hurt, 1);
+
+            assert!(
+                matches!(
+                    brain,
+                    Brain::Engage {
+                        next: 2,
+                        held: None,
+                        ..
+                    }
+                ),
+                "from {start:?}: {brain:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hurt_enemy_with_an_offer_runs_for_cover_even_if_the_shooter_is_behind() {
+        let behind = bearing(PI * 0.8, 10.0);
+        let hurt = hurt_by(behind, Some(far_offer()), Some(behind));
+        let starts = [Brain::Patrol { next: 2 }, chasing(bearing(0.3, 12.0), 3)];
+
+        for start in starts {
+            let mut brain = start;
+
+            let intents = think_turning(&mut brain, hurt, Some(behind), 4);
+
+            assert!(
+                matches!(brain, Brain::Cover { next: 2, offer, .. } if offer == far_offer()),
+                "from {start:?}: {brain:?}"
+            );
+            for intent in &intents {
+                assert!(intent.forward > 0.0, "from {start:?}: {intent:?}");
+                assert!(!intent.fire, "from {start:?}: {intent:?}");
+            }
+        }
+    }
+
     #[test]
     fn cover_and_chase_give_up_at_their_tick_limit() {
         let tuning = tuning();

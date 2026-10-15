@@ -2666,6 +2666,31 @@ mod enemy_tests {
     }
 
     #[test]
+    fn an_enemy_shot_from_behind_with_no_cover_turns_and_fires_without_walking() {
+        let arena = arena_with(&[], Vec3::ZERO, &[ENEMY_SPAWN], &[AWAY_FROM_PLAYER]);
+        let mut sim = FpsSim::start(arena, cover_config());
+        let mut farthest: f32 = 0.0;
+
+        let mut ticks = Vec::new();
+        for command in script(180, &[0]) {
+            ticks.extend(run(&mut sim, &[command]));
+            farthest = farthest.max(horizontal(enemy_at(&sim, 0), ENEMY_SPAWN));
+        }
+
+        let hits: Vec<_> = ticks[0].iter().filter_map(hit_of).collect();
+        assert_eq!(hits.len(), 1, "{:?}", ticks[0]);
+        assert!(
+            count(&ticks, enemy_fired) >= 5,
+            "{} shots",
+            count(&ticks, enemy_fired)
+        );
+        assert!(
+            farthest < 0.3,
+            "the enemy walked {farthest} m instead of standing to fight"
+        );
+    }
+
+    #[test]
     fn a_hurt_enemy_in_an_arena_without_cover_points_keeps_firing() {
         let mut sim = FpsSim::start(duel(&[LOW_WALL]), cover_config());
 
