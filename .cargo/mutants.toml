@@ -66,6 +66,8 @@ exclude_re = [
     'delete match arm gilrs::EventType::AxisChanged\(axis, value, _\) in apply_event',
     # Opening the default device needs sound hardware, which tests don't have.
     'replace RodioOutput::open_default -> AudioResult<Self> with',
+    # Equivalent: dropping an undetached rodio `Player` stops it, as `stop` does.
+    'replace <impl AudioOutput for RodioOutput>::stop with \(\)',
     # Polling needs a live gilrs backend; headless tests and the headless App have none.
     'replace Gamepads::poll with \(\)',
     'replace Gamepads::discard with \(\)',
