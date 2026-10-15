@@ -144,7 +144,12 @@ type Triangle = [DVec3; 3];
 
 /// The exact triangles of chunk 0's mesh, in world space.
 fn mesh_triangles(grid: &VoxelGrid) -> Vec<Triangle> {
-    let chunk = VoxelChunk::from_grid_lod(grid, IVec3::ZERO, 0);
+    chunk_triangles(grid, IVec3::ZERO)
+}
+
+/// The exact triangles of the mesh of chunk `coord`, in world space.
+fn chunk_triangles(grid: &VoxelGrid, coord: IVec3) -> Vec<Triangle> {
+    let chunk = VoxelChunk::from_grid_lod(grid, coord, 0);
     let verts = chunk.vertices();
     let vertex = |i: u32| {
         let v = verts[i as usize];
@@ -597,5 +602,158 @@ fn removing_reported_block_moves_hit_farther_on_ramp() {
     assert!(
         tested > 100,
         "expected a decent number of surface hits, got {tested}"
+    );
+}
+
+fn lone_block_grid(block: IVec3) -> VoxelGrid {
+    let mut grid = VoxelGrid::new(16);
+    grid.mutator().place(block, 1, None);
+    grid
+}
+
+#[test]
+fn surface_ray_hits_near_vertex_of_block_in_negative_chunk() {
+    let grid = lone_block_grid(IVec3::splat(-5));
+
+    let hit = raycast::raycast_surface(&grid, Vec3::new(-4.5, -4.5, 3.0), Vec3::NEG_Z, 20.0)
+        .expect("ray should hit the block's surface");
+
+    assert_eq!(hit.block_pos, IVec3::splat(-5));
+    assert!(
+        (hit.distance - 7.0).abs() <= 1e-3,
+        "distance {}",
+        hit.distance
+    );
+    assert!(
+        (hit.position.z + 4.0).abs() <= 1e-3,
+        "position {:?}",
+        hit.position
+    );
+}
+
+#[test]
+fn surface_ray_hits_near_vertex_of_block_at_large_coordinates() {
+    let grid = lone_block_grid(IVec3::new(1000, 40, -1000));
+
+    let hit = raycast::raycast_surface(&grid, Vec3::new(1000.5, 40.5, -990.0), Vec3::NEG_Z, 20.0)
+        .expect("ray should hit the block's surface");
+
+    assert_eq!(hit.block_pos, IVec3::new(1000, 40, -1000));
+    assert!(
+        (hit.distance - 9.0).abs() <= 1e-3,
+        "distance {}",
+        hit.distance
+    );
+    assert!(
+        (hit.position.z + 999.0).abs() <= 1e-3,
+        "position {:?}",
+        hit.position
+    );
+}
+
+#[test]
+fn surface_hit_lies_on_mesh_of_negative_chunk_when_scene_is_shifted_by_a_chunk() {
+    let strategy = cases(20.0..60.0, 0.9, Start::Anywhere);
+    let shift = IVec3::splat(-16);
+    let hits = Cell::new(0u32);
+    let mut runner = deterministic_runner();
+
+    runner
+        .run(&strategy, |case| {
+            let blocks: Vec<IVec3> = case.blocks.iter().map(|&b| b + shift).collect();
+            let origin = case.origin + shift.as_vec3();
+            let shifted = Case {
+                blocks,
+                origin,
+                ..case
+            };
+            let grid = shifted.grid();
+            let tris = chunk_triangles(&grid, IVec3::splat(-1));
+
+            let hit =
+                raycast::raycast_surface(&grid, origin, shifted.direction, shifted.max_distance);
+
+            if let Some(hit) = hit {
+                bump(&hits);
+                let off_mesh = distance_to_mesh(&tris, hit.position.as_dvec3());
+                prop_assert!(
+                    off_mesh <= TOLERANCE,
+                    "hit {:?} is {off_mesh} from the mesh",
+                    hit.position
+                );
+                prop_assert!(grid.material_at(hit.block_pos).is_some());
+            }
+            Ok(())
+        })
+        .unwrap_or_else(|e| panic!("{e}"));
+
+    assert!(hits.get() >= 40, "only {} hits", hits.get());
+}
+
+fn slab_grid() -> VoxelGrid {
+    let mut grid = VoxelGrid::new(16);
+    for x in 4..9 {
+        for z in 4..9 {
+            grid.mutator().place(IVec3::new(x, 0, z), 1, None);
+        }
+    }
+    grid
+}
+
+#[test]
+fn surface_ray_in_lattice_plane_above_flat_slab_reports_no_hit() {
+    let grid = slab_grid();
+
+    let hit = raycast::raycast_surface(&grid, Vec3::new(2.0, 1.5, 6.5), Vec3::X, 20.0);
+
+    assert_eq!(hit, None);
+}
+
+#[test]
+fn surface_ray_just_below_slab_top_hits_side_wall_where_the_mesh_does() {
+    let grid = slab_grid();
+    let tris = mesh_triangles(&grid);
+    let origin = Vec3::new(2.0, 0.9, 6.5);
+    let first_front = crossings(&tris, origin.as_dvec3(), DVec3::X, 20.0)
+        .into_iter()
+        .find(|c| c.front)
+        .expect("mesh side wall should be crossed");
+
+    let hit = raycast::raycast_surface(&grid, origin, Vec3::X, 20.0)
+        .expect("ray should hit the slab's side wall");
+
+    assert_eq!(hit.block_pos.x, 4);
+    assert!(
+        (f64::from(hit.distance) - first_front.t).abs() <= TOLERANCE,
+        "distance {} vs mesh {}",
+        hit.distance,
+        first_front.t
+    );
+}
+
+#[test]
+fn surface_ray_with_zero_or_negative_max_distance_reports_no_hit() {
+    let grid = lone_block_grid(IVec3::new(5, 5, 5));
+    let origin = Vec3::new(5.5, 5.5, 3.0);
+
+    let zero = raycast::raycast_surface(&grid, origin, Vec3::Z, 0.0);
+    let negative = raycast::raycast_surface(&grid, origin, Vec3::Z, -1.0);
+
+    assert_eq!(zero, None);
+    assert_eq!(negative, None);
+}
+
+#[test]
+fn surface_ray_from_dual_cell_corner_hits_block_vertex() {
+    let grid = lone_block_grid(IVec3::new(6, 3, 3));
+
+    let hit = raycast::raycast_surface(&grid, Vec3::new(3.5, 3.5, 3.5), Vec3::X, 20.0)
+        .expect("ray should hit the block's surface");
+
+    assert_eq!(hit.block_pos, IVec3::new(6, 3, 3));
+    assert!(
+        (hit.distance - 2.5).abs() <= 1e-3,
+        "distance {}",
+        hit.distance
     );
 }
