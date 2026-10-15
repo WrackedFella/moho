@@ -97,12 +97,17 @@ impl MarchingCubes {
             let (a, b) = EDGE_CONNECTIONS[usize::from(edge)];
             (corner(a) + corner(b)) * 0.5
         };
+        Self::triangle_edges(cube_index).map(move |tri| tri.map(edge_midpoint))
+    }
+
+    /// The edges each triangle of `cube_index` puts its three vertices on, from `TRI_TABLE`.
+    fn triangle_edges(cube_index: u8) -> impl Iterator<Item = [u8; 3]> {
         TRI_TABLE[usize::from(cube_index)]
             .as_chunks::<3>()
             .0
             .iter()
+            .copied()
             .take_while(|tri| tri[0] != 255)
-            .map(move |&tri| tri.map(edge_midpoint))
     }
 
     /// Process a single cell in the marching cubes algorithm
@@ -179,18 +184,12 @@ impl MarchingCubes {
         }
 
         // Generate triangles from the triangle table
-        let tri_indices = &TRI_TABLE[cube_index as usize];
-
-        for tri_edge_indices in tri_indices.chunks(3) {
-            if tri_edge_indices[0] == 255 {
-                break;
-            }
-
+        for tri_edge_indices in Self::triangle_edges(cube_index) {
             // Record base vertex for this triangle
             let base_vertex = vertices.len() as u32;
 
             // Add the three vertices of this triangle
-            for &edge_idx in tri_edge_indices {
+            for edge_idx in tri_edge_indices {
                 let vert = edge_vertices[edge_idx as usize];
                 vertices.push(vert);
 

@@ -36,36 +36,30 @@ fn max_boundary_crossings(max_distance: f32) -> usize {
     3 * (max_distance.max(0.0).ceil() as usize + 1)
 }
 
-/// The solid block responsible for the surface at `p` inside the dual-lattice cell whose
-/// base block is `base`: of the cell's eight corner blocks, the nearest one that is
-/// actually solid.
-fn owning_block(grid: &VoxelGrid, base: IVec3, p: Vec3) -> Option<BlockPos> {
-    let mut best: Option<(f32, BlockPos)> = None;
-    for offset in MarchingCubes::CORNER_OFFSETS {
-        let block = base + IVec3::from_array(offset.map(|c| c as i32));
-        if grid.material_at(block).is_none() {
-            continue;
-        }
-        let centre = block.as_vec3() + Vec3::splat(0.5);
-        let d = (centre - p).length_squared();
-        if best.is_none_or(|(bd, _)| d < bd) {
-            best = Some((d, block));
-        }
-    }
-    best.map(|(_, block)| block)
+/// Corner block `i` of the dual-lattice cell whose base block is `base`, in the mesher's
+/// corner order.
+fn corner_block(base: IVec3, i: usize) -> BlockPos {
+    base + IVec3::from_array(MarchingCubes::CORNER_OFFSETS[i].map(|c| c as i32))
 }
 
 /// Which of the eight corner blocks of the cell at `base` are solid, in the corner order
 /// of the mesher (bit `i` set when corner `i` is solid).
 fn cube_index(grid: &VoxelGrid, base: IVec3) -> u8 {
-    MarchingCubes::CORNER_OFFSETS
-        .iter()
-        .enumerate()
-        .filter(|(_, offset)| {
-            grid.material_at(base + IVec3::from_array(offset.map(|c| c as i32)))
-                .is_some()
+    (0..8)
+        .filter(|&i| grid.material_at(corner_block(base, i)).is_some())
+        .fold(0, |index, i| index | (1 << i))
+}
+
+/// The solid block responsible for the surface at `p` inside the cell at `base` with
+/// solid corners `index`: of the cell's solid corner blocks, the one nearest `p`.
+fn owning_block(base: IVec3, index: u8, p: Vec3) -> Option<BlockPos> {
+    (0..8)
+        .filter(|&i| index & (1 << i) != 0)
+        .map(|i| corner_block(base, i))
+        .min_by(|a, b| {
+            let d = |block: &BlockPos| (block.as_vec3() + Vec3::splat(0.5) - p).length_squared();
+            d(a).total_cmp(&d(b))
         })
-        .fold(0, |index, (i, _)| index | (1 << i))
 }
 
 /// Distance along the ray to triangle `tri` (Moller-Trumbore, inclusive at the edges), and
@@ -141,7 +135,7 @@ pub fn raycast_surface(
                 return None;
             }
             let position = origin + dir * t;
-            let block_pos = owning_block(grid, cell, position)?;
+            let block_pos = owning_block(cell, index, position)?;
             return Some(SurfaceHit {
                 block_pos,
                 position,
@@ -149,7 +143,8 @@ pub fn raycast_surface(
             });
         }
 
-        t_enter = walk.advance().0;
+        walk.advance();
+        t_enter = t_exit;
     }
 
     None
