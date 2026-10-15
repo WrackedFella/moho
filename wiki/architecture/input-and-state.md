@@ -104,6 +104,6 @@ Same-state transitions are allowed (no-op). Everything else is rejected, includi
 | `ConsoleOpen` | console text | world (frozen) + console | free | paused |
 | `Paused` | pause menu | world (frozen) + menu | free | paused |
 
-`GameState::home_screen` names the screen a state shows on entry and that Back returns to: `start` for `Menu`, `pause` for `Paused`, none for `Playing` and `ConsoleOpen`. The pause window (`PauseMenu`, screen `pause`) offers Resume, Settings and Exit to main menu. Resume and Exit publish `UiEvent::ResumeRequested` and `UiEvent::MainMenuRequested` from `process_menu_action`; the binary resumes through `StateTransitionCoordinator::resume_game`, and on a main-menu request `App::frame` autosaves, then shows the main menu.
+`GameState::home_screen` names the screen a state shows on entry and that Back returns to: `start` for `Menu`, `pause` for `Paused`, none for `Playing` and `ConsoleOpen`. The pause window (`PauseMenu`, screen `pause`) offers Continue, Settings and Exit to main menu. Continue and Exit publish `UiEvent::ResumeRequested` and `UiEvent::MainMenuRequested` from `process_menu_action`; the binary resumes through `StateTransitionCoordinator::resume_game`, and on a main-menu request `App::frame` autosaves, then shows the main menu.
 
 `flagstone/src/game_state.rs` re-exports `flagstone_ui::GameState`; the UI adapter takes the same type. Per-frame gameplay steps check `== Playing` ([frame-loop](frame-loop.md)).
