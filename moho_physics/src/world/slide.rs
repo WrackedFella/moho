@@ -1,6 +1,6 @@
 //! The rapier collide-and-slide behind [`crate::movement::step`].
 
-use crate::movement::{Slide, WALKABLE_NORMAL_Y};
+use crate::movement::{Ground, Slide, WALKABLE_NORMAL_Y};
 use glam::Vec3;
 use rapier3d::control::{
     CharacterLength, EffectiveCharacterMovement, KinematicCharacterController,
@@ -102,12 +102,13 @@ impl Slider<'_> {
         }
     }
 
-    /// The face normal of the walkable surface straight under `centre`, or `None` when a ray
-    /// cast down from it finds none within the capsule's half-height plus a margin.
+    /// The walkable surface straight under `centre`, or `None` when a ray cast down from it
+    /// finds none within the capsule's half-height plus a margin.
     ///
     /// A ray, unlike a shape cast, ignores the capsule's rounded base, so it reads the face the
-    /// centre stands over rather than a ledge edge the base merely overlaps.
-    pub(super) fn ground_under(&self, centre: Vec3) -> Option<Vec3> {
+    /// centre stands over rather than a ledge edge the base merely overlaps. The gap is how far
+    /// the capsule hangs above that face's plane, measured on the ray.
+    pub(super) fn ground_under(&self, centre: Vec3) -> Option<Ground> {
         let capsule = self
             .shape
             .as_capsule()
@@ -115,7 +116,10 @@ impl Slider<'_> {
         let reach = capsule.half_height() + capsule.radius + GROUND_REACH_MARGIN;
         let ray = Ray::new(centre, -Vec3::Y);
         let (_, hit) = self.queries.cast_ray_and_get_normal(&ray, reach, true)?;
-        (hit.normal.y >= WALKABLE_NORMAL_Y).then_some(hit.normal)
+        (hit.normal.y >= WALKABLE_NORMAL_Y).then(|| Ground {
+            normal: hit.normal,
+            gap: hit.time_of_impact - (capsule.half_height() + capsule.radius / hit.normal.y),
+        })
     }
 
     /// The surface under a character the controller grounded without reporting a hit.
@@ -330,7 +334,7 @@ mod tests {
             shape: capsule.as_ref(),
             dt: 1.0 / 60.0,
         };
-        slider.ground_under(centre)
+        slider.ground_under(centre).map(|ground| ground.normal)
     }
 
     /// A plane through the origin rising toward +Z at `degrees`.

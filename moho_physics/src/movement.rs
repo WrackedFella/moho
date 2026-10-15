@@ -63,11 +63,21 @@ pub struct Impact {
 pub struct Slide {
     pub translation: Vec3,
     pub grounded: bool,
-    /// Face normal of the walkable surface straight under the capsule's centre after the
-    /// slide, `None` when there is none.
-    pub ground: Option<Vec3>,
+    /// The walkable surface straight under the capsule's centre after the slide, `None` when
+    /// there is none. A walker that ends ungrounded within [`GROUND_SNAP`] of it still counts
+    /// as standing on it.
+    pub ground: Option<Ground>,
     /// Each surface touched, with its normal.
     pub hits: Vec<(ColliderHandle, Vec3)>,
+}
+
+/// The walkable surface under a character's centre.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ground {
+    /// The face normal.
+    pub normal: Vec3,
+    /// How far the capsule hangs above the face's plane, in metres, measured straight down.
+    pub gap: f32,
 }
 
 /// Tolerance, in metres, on "the slide moved less into a surface than asked".
@@ -79,6 +89,14 @@ const BLOCKED_EPSILON: f32 = 1e-4;
 ///
 /// The controller's `max_slope_climb_angle` is built from it, so both agree.
 pub(crate) const WALKABLE_NORMAL_Y: f32 = std::f32::consts::FRAC_1_SQRT_2;
+
+/// Furthest, in metres, a walker is pulled down onto ground, and the largest [`Ground::gap`]
+/// at which a slide ending ungrounded still counts as standing.
+///
+/// The controller's `snap_to_ground` is built from it, so both agree. Without it, a walker
+/// carrying a ramp's upward speed over a crest onto level ground asks an upward move, which
+/// the controller does not snap, and hops.
+pub(crate) const GROUND_SNAP: f32 = 0.1;
 
 /// Vertical speed below which a character counts as resting rather than rising.
 ///
@@ -166,7 +184,8 @@ fn clip(
 ///
 /// A jump adds `jump_speed` to the vertical velocity. A grounded walker ends the tick moving
 /// along the ground under its centre, keeping its horizontal velocity; a landing zeroes the
-/// vertical velocity.
+/// vertical velocity. A walker whose slide ends ungrounded but within [`GROUND_SNAP`] of its
+/// ground is lowered onto it and stays grounded, as in Source's `StayOnGround`.
 pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
@@ -213,10 +232,17 @@ pub fn step(
 
     let impacts = clip(&mut state.velocity, asked, &slid, walking, airborne_before);
 
-    state.grounded = slid.grounded && (walking || state.velocity.y <= REST_SPEED);
+    let hanging = slid
+        .ground
+        .filter(|ground| walking && !slid.grounded && ground.gap <= GROUND_SNAP);
+    if let Some(ground) = hanging {
+        state.position.y -= ground.gap.max(0.0);
+    }
+    state.grounded =
+        (slid.grounded || hanging.is_some()) && (walking || state.velocity.y <= REST_SPEED);
     if state.grounded {
         match (walking, slid.ground) {
-            (true, Some(n)) => {
+            (true, Some(Ground { normal: n, .. })) => {
                 state.velocity.y = -(n.x * state.velocity.x + n.z * state.velocity.z) / n.y;
             }
             (true, None) => {}
@@ -286,7 +312,10 @@ mod tests {
             Slide {
                 translation,
                 grounded: landed,
-                ground: landed.then_some(Vec3::Y),
+                ground: landed.then_some(Ground {
+                    normal: Vec3::Y,
+                    gap: 0.0,
+                }),
                 hits,
             }
         }
@@ -509,7 +538,7 @@ mod tests {
             move |asked| Slide {
                 translation: asked,
                 grounded: true,
-                ground: normal,
+                ground: normal.map(|normal| Ground { normal, gap: 0.0 }),
                 hits: Vec::new(),
             }
         }
@@ -547,7 +576,10 @@ mod tests {
             step(&mut state, &forward(), &frictionless(), DT, |asked| Slide {
                 translation: asked,
                 grounded: false,
-                ground: Some(slope_normal(25.0)),
+                ground: Some(Ground {
+                    normal: slope_normal(25.0),
+                    gap: 1.0,
+                }),
                 hits: Vec::new(),
             });
 
@@ -824,7 +856,7 @@ mod tests {
             move |asked| Slide {
                 translation: asked,
                 grounded: true,
-                ground,
+                ground: ground.map(|normal| Ground { normal, gap: 0.0 }),
                 hits: Vec::new(),
             }
         }
