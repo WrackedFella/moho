@@ -1540,5 +1540,34 @@ mod tests {
             assert_eq!(app.game_state, GameState::Paused);
             assert_eq!(screen_shown(&adapter).as_deref(), Some("settings"));
         }
+
+        /// egui swallows Escape once a pause-window button has keyboard focus (Tab),
+        /// so an Escape that pauses or resumes must be taken before the UI sees it.
+        #[test]
+        fn escape_skips_the_ui_only_where_it_pauses_or_resumes() {
+            let rows: [(&str, GameState, Option<&str>, bool); 5] = [
+                ("playing", GameState::Playing, None, true),
+                ("pause window", GameState::Paused, Some("pause"), true),
+                (
+                    "settings from pause",
+                    GameState::Paused,
+                    Some("settings"),
+                    false,
+                ),
+                ("console", GameState::ConsoleOpen, None, false),
+                ("start menu", GameState::Menu, Some("start"), false),
+            ];
+
+            for (label, state, screen, expected) in rows {
+                let mut app = first_person_app();
+                let adapter = attach_adapter(&mut app);
+                app.game_state = state;
+                if let Some(screen) = screen {
+                    adapter.lock().expect("adapter lock").show_menu(screen);
+                }
+
+                assert_eq!(app.escape_skips_the_ui(), expected, "row {label}");
+            }
+        }
     }
 }

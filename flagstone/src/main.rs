@@ -340,6 +340,10 @@ impl App {
         }
     }
 
+    fn escape_skips_the_ui(&self) -> bool {
+        false
+    }
+
     /// Whether the current state's home screen (the pause window while paused) is
     /// the active screen; true when no UI is attached.
     fn home_screen_showing(&self) -> bool {
