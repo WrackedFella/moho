@@ -134,4 +134,16 @@ mod encoding_tests {
         assert_eq!(tag(3, BodyPart::LeftArm), HitTag(27));
         assert_eq!(tag(2, BodyPart::RightLeg), HitTag(22));
     }
+
+    #[test]
+    fn part_indices_past_the_last_part_are_rejected_not_clamped_or_wrapped() {
+        // Tag = 1 + (target << 3 | index); indices 6 and 7 name no part.
+        let past_the_parts = [7, 8, 15, 16, 1 + (500 << 3 | 6), 1 + (500 << 3 | 7)];
+
+        for raw in past_the_parts {
+            let decoded = SurfaceTag::try_from(HitTag(raw));
+
+            assert_eq!(decoded, Err(UnknownTag(raw)), "tag {raw}");
+        }
+    }
 }

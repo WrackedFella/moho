@@ -71,8 +71,9 @@ pub enum Feedback {
 /// The six hit volumes of a dummy numbered `target`, one per body part, in the body frame
 /// around the capsule centre. Each volume's tag is `SurfaceTag::Part` for that part.
 ///
-/// The body faces +Z at yaw 0, so its left side is +X. The boxes stand inside the capsule's
-/// height and sit edge to edge, so a ray at any height inside the body meets a part.
+/// The body faces +Z at yaw 0, so its left side is +X. The head sits directly on the torso
+/// and the legs under it, so a level ray from the player's eye height meets a part rather than
+/// passing through a gap at the neck.
 pub fn dummy_hit_volumes(target: u16) -> [HitVolume; 6] {
     let volume = |part, offset: Vec3, half_extents: Vec3| HitVolume {
         offset,
@@ -84,7 +85,7 @@ pub fn dummy_hit_volumes(target: u16) -> [HitVolume; 6] {
     [
         volume(
             BodyPart::Head,
-            Vec3::new(0.0, 0.85, 0.0),
+            Vec3::new(0.0, 0.72, 0.0),
             Vec3::new(0.12, 0.12, 0.12),
         ),
         volume(
@@ -233,19 +234,23 @@ impl FpsSim {
                 ignore: Some(self.player),
             },
         );
-        if let Some(Strike {
+        let Some(Strike {
             tag: SurfaceTag::Part { target, part },
             ..
         }) = strike
-            && let Some(body) = self.dummies.get_mut(usize::from(target))
-        {
-            let report = body.hit(part, self.damage);
-            self.outbox.push(Feedback::Hit {
-                target,
-                part,
-                report,
-            });
-        }
+        else {
+            return;
+        };
+        let Some(body) = self.dummies.get_mut(usize::from(target)) else {
+            tracing::warn!(target, "shot struck a target with no body, dropped");
+            return;
+        };
+        let report = body.hit(part, self.damage);
+        self.outbox.push(Feedback::Hit {
+            target,
+            part,
+            report,
+        });
     }
 
     fn begin_reload(&mut self) {
@@ -1093,7 +1098,7 @@ mod hit_volume_and_cooldown_tests {
         assert_eq!(
             offsets,
             [
-                [0.0, 0.85, 0.0],
+                [0.0, 0.72, 0.0],
                 [0.0, 0.25, 0.0],
                 [0.3, 0.25, 0.0],
                 [-0.3, 0.25, 0.0],
@@ -1126,6 +1131,63 @@ mod hit_volume_and_cooldown_tests {
         assert_eq!(fired_ticks(1, 4), [0, 1, 2, 3]);
         assert_eq!(fired_ticks(2, 6), [0, 2, 4]);
         assert_eq!(fired_ticks(3, 7), [0, 3, 6]);
+    }
+
+    /// Whether a level shot at a dummy `distance` ahead, from `eye_height` and sideways
+    /// offset `x`, reports a hit.
+    fn level_shot_hits(eye_height: f32, x: f32, distance: f32) -> bool {
+        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        config.eye_height = eye_height;
+        let mut sim = FpsSim::new(
+            flat_floor(),
+            Vec3::new(x, 0.0, 0.0),
+            &[Vec3::new(0.0, 0.0, distance)],
+            config,
+        );
+        let pull = FpsCommand {
+            fire: true,
+            ..FpsCommand::default()
+        };
+
+        sim.tick(&pull, DT);
+
+        sim.drain_feedback()
+            .iter()
+            .any(|fb| matches!(fb, Feedback::Hit { target: 0, .. }))
+    }
+
+    #[test]
+    fn a_level_shot_from_the_shipped_eye_height_hits_the_dummy() {
+        let hit = level_shot_hits(0.7, 0.0, 4.0);
+
+        assert!(hit);
+    }
+
+    #[test]
+    fn a_level_shot_hits_at_every_height_between_the_dummys_feet_and_crown() {
+        let volumes = dummy_hit_volumes(0);
+        let bottom = volumes
+            .iter()
+            .map(|v| v.offset.y - v.half_extents.y)
+            .fold(f32::INFINITY, f32::min);
+        let top = volumes
+            .iter()
+            .map(|v| v.offset.y + v.half_extents.y)
+            .fold(f32::NEG_INFINITY, f32::max);
+        // Sideways 0.1 is inside the head, torso and both legs, so only vertical gaps can miss.
+        let x = 0.1;
+        // The exact bottom and top planes are grazing rays, so start and stop one step inside.
+        let steps = ((top - bottom) / 0.01).floor() as i32;
+
+        let misses: Vec<f32> = (1..steps)
+            .map(|step| bottom + step as f32 * 0.01)
+            .filter(|&eye| !level_shot_hits(eye, x, 5.0))
+            .collect();
+
+        assert!(
+            misses.is_empty(),
+            "level shots passed through at {misses:?}"
+        );
     }
 
     #[test]
