@@ -23,7 +23,7 @@ engine repo once the split ([ENG-F5](https://github.com/WrackedFella/moho/issues
 | [ENG-F1-01 constructor-size-cleanup](ENG-F1-01-constructor-size-cleanup.md) |
 | [ENG-F1-02 error-handling-backlog](ENG-F1-02-error-handling-backlog.md) |
 | [ENG-F1-03 god-module-splits](ENG-F1-03-god-module-splits.md) |
-| [ENG-F1-04 keybind-test-layering](ENG-F1-04-keybind-test-layering.md) |
+| ENG-F1-04 keybind-test-layering: folded into [#392](https://github.com/WrackedFella/moho/issues/392) (ENG-F26-01) |
 | [ENG-F1-05 material-model-revisit](ENG-F1-05-material-model-revisit.md) |
 | [ENG-F1-06 unsafe-surface](https://github.com/WrackedFella/moho/issues/57) |
 | [ENG-F1-07 lint-ratchet](ENG-F1-07-lint-ratchet.md) |
