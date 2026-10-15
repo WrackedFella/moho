@@ -1872,14 +1872,13 @@ mod tests {
             );
             let h = rest_at(&mut world, Vec3::new(0.0, -5.0 * rise + 1.5, -5.0), 0.0);
             let before = run_steadily(&mut world, h, 30);
-
-            assert_jump_keeps_velocity_plus_impulse(&mut world, h, before);
-
             assert!(
                 (before.velocity.y - slope_climb()).abs() < 0.15,
                 "a walker climbing the slope rises with it: {:?}",
                 before.velocity
             );
+
+            assert_jump_keeps_velocity_plus_impulse(&mut world, h, before);
         }
 
         #[test]
@@ -1963,11 +1962,23 @@ mod tests {
                 path.push((now.grounded, now.position));
             }
 
+            let crest_z = 6.0;
             let take_off = path
                 .iter()
-                .position(|&(grounded, position)| !grounded && position.z > 3.0)
+                .position(|&(grounded, position)| !grounded && position.z > 0.5)
                 .expect("left the ramp's top");
+            let launch = path[take_off].1;
 
+            assert!(
+                (launch.z - crest_z).abs() < 0.5,
+                "left the ground at the crest, not before it: {launch:?}"
+            );
+            assert!(
+                path.iter()
+                    .filter(|&&(_, p)| p.z > 0.5 && p.z < crest_z - 0.5)
+                    .all(|&(grounded, _)| grounded),
+                "stayed on the ramp until the crest"
+            );
             let after = &path[take_off..];
             assert!(
                 after.windows(2).take(3).all(|w| w[1].1.y > w[0].1.y),
@@ -1975,10 +1986,15 @@ mod tests {
                 &after[..4]
             );
             let peak = after.iter().map(|&(_, p)| p.y).fold(f32::MIN, f32::max);
-            let end = path.last().unwrap().1.y;
             assert!(
-                end < peak - 0.5,
-                "then gravity brings it down: peak {peak}, end {end}"
+                peak - launch.y < 0.3,
+                "a ramp launch rises about climb^2 / 2g = 0.1 m, not a jump's height: {}",
+                peak - launch.y
+            );
+            let end = &path[path.len() - 2..];
+            assert!(
+                end[1].1.y < end[0].1.y && end[1].1.y < peak - 1.0,
+                "then gravity brings it down: peak {peak}, end {end:?}"
             );
         }
     }

@@ -334,6 +334,7 @@ mod tests {
         let flat = ground_under_centre(&[ground(0.0, -10.0, 10.0)], Vec3::new(0.0, 1.2, 0.0));
         let on_slope = ground_under_centre(&[slope(25.0)], Vec3::new(0.0, 1.27, 0.0));
         let at_reach = ground_under_centre(&[slope(40.0)], Vec3::new(1.0, 1.4, 0.0));
+        let over_ledge = ground_under_centre(&[ground(0.0, -10.0, 1.0)], Vec3::new(0.0, 1.2, 0.5));
 
         assert!(flat.expect("flat ground below").distance(Vec3::Y) < 1e-3);
         assert!(
@@ -341,25 +342,35 @@ mod tests {
             "{on_slope:?}"
         );
         assert!(at_reach.is_some(), "a 40 degree face is walkable");
+        assert!(over_ledge.is_some(), "the ray finds the ledge's top");
     }
 
     #[test]
     fn ground_under_is_none_past_a_ledge_and_on_steep_faces() {
-        let ledge = [ground(0.0, -10.0, 1.0)];
-        let over_ledge = ground_under_centre(&ledge, Vec3::new(0.0, 1.2, 0.5));
-        let past_ledge = ground_under_centre(&ledge, Vec3::new(0.0, 1.2, 1.5));
-        let walkable = ground_under_centre(&[slope(40.0)], Vec3::new(0.0, 1.2, 0.0));
-        let in_reach = ground_under_centre(&[ground(0.0, -10.0, 10.0)], Vec3::new(0.0, 1.4, 0.0));
-        let steep = ground_under_centre(&[slope(50.0)], Vec3::new(0.0, 1.2, 0.0));
-        let too_high = ground_under_centre(&[ground(0.0, -10.0, 10.0)], Vec3::new(0.0, 1.6, 0.0));
-        let over_nothing = ground_under_centre(&[], Vec3::new(0.0, 1.2, 0.0));
+        let ledge = || vec![ground(0.0, -10.0, 1.0)];
+        let level = || vec![ground(0.0, -10.0, 10.0)];
+        let cases: Vec<(&str, Vec<WorldMesh>, Vec3)> = vec![
+            ("well past a ledge", ledge(), Vec3::new(0.0, 1.2, 1.5)),
+            (
+                "just past a ledge, where a shape cast would see its rounded edge",
+                ledge(),
+                Vec3::new(0.0, 1.2, 1.07),
+            ),
+            (
+                "over a 50 degree face",
+                vec![slope(50.0)],
+                Vec3::new(0.0, 1.2, 0.0),
+            ),
+            (
+                "beyond the capsule's reach",
+                level(),
+                Vec3::new(0.0, 1.6, 0.0),
+            ),
+            ("over nothing", Vec::new(), Vec3::new(0.0, 1.2, 0.0)),
+        ];
 
-        assert!(over_ledge.is_some(), "the ray finds the ledge's top");
-        assert!(walkable.is_some(), "a 40 degree face is walkable");
-        assert!(in_reach.is_some(), "ground within the capsule's reach");
-        assert_eq!(past_ledge, None);
-        assert_eq!(steep, None, "a 50 degree face is not walkable");
-        assert_eq!(too_high, None, "ground beyond the capsule's reach");
-        assert_eq!(over_nothing, None);
+        for (case, meshes, centre) in cases {
+            assert_eq!(ground_under_centre(&meshes, centre), None, "{case}");
+        }
     }
 }

@@ -526,6 +526,25 @@ mod tests {
         }
 
         #[test]
+        fn walker_whose_slide_ends_airborne_is_not_flattened_onto_the_ground() {
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, -1.0, 4.0), true);
+
+            step(&mut state, &forward(), &frictionless(), DT, |asked| Slide {
+                translation: asked,
+                grounded: false,
+                ground: Some(slope_normal(25.0)),
+                hits: Vec::new(),
+            });
+
+            assert!(!state.grounded, "{state:?}");
+            assert!(
+                (state.velocity.y + 1.0).abs() < 1e-4,
+                "{:?}",
+                state.velocity
+            );
+        }
+
+        #[test]
         fn upslope_walker_stays_grounded() {
             let normal = slope_normal(25.0);
             let climb = 4.0 * 25.0_f32.to_radians().tan();
@@ -784,6 +803,63 @@ mod tests {
                 state.velocity
             );
             assert!(!state.grounded);
+        }
+
+        fn grounded_slide(ground: Option<Vec3>) -> impl FnOnce(Vec3) -> Slide {
+            move |asked| Slide {
+                translation: asked,
+                grounded: true,
+                ground,
+                hits: Vec::new(),
+            }
+        }
+
+        #[test]
+        fn jump_smaller_than_the_horizontal_speed_still_leaves_the_ground() {
+            let settings = MoveSettings {
+                jump_speed: 2.0,
+                ..test_settings()
+            };
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 4.0), true);
+            let jump = CharacterCommand {
+                jump: true,
+                ..forward()
+            };
+
+            step(
+                &mut state,
+                &jump,
+                &settings,
+                DT,
+                grounded_slide(Some(Vec3::Y)),
+            );
+
+            assert!(!state.grounded, "{state:?}");
+            assert!(
+                (state.velocity.y - (2.0 - 18.0 * DT)).abs() < 1e-4,
+                "{:?}",
+                state.velocity
+            );
+        }
+
+        #[test]
+        fn upward_speed_above_the_horizontal_speed_is_airborne_even_on_flat_ground() {
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 2.0, 1.0), true);
+
+            step(
+                &mut state,
+                &CharacterCommand::default(),
+                &test_settings(),
+                DT,
+                grounded_slide(Some(Vec3::Y)),
+            );
+
+            assert!(!state.grounded, "{state:?}");
+            assert!(
+                (state.velocity.y - (2.0 - 18.0 * DT)).abs() < 1e-4,
+                "{:?}",
+                state.velocity
+            );
         }
 
         #[test]
