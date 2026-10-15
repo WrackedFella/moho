@@ -2,6 +2,7 @@
 //! the engine crates and the platform-free rules in `searchlight_rules`.
 
 pub mod arena;
+pub mod brain;
 pub mod game;
 pub mod hud;
 pub mod input;
