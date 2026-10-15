@@ -202,7 +202,7 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
 
 #[cfg(test)]
 mod tests {
-    use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, FRAC_PI_6, SQRT_2};
+    use std::f32::consts::{FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, FRAC_PI_6, SQRT_2};
 
     use super::*;
 
@@ -421,6 +421,19 @@ mod tests {
                 ..unmoved
             },
             Case {
+                name: "forward combines non-zero yaw and pitch",
+                input: ControllerInput {
+                    forward: 1.0,
+                    ..Default::default()
+                },
+                start_yaw: FRAC_PI_2,
+                start_pitch: FRAC_PI_3,
+                position: start + Vec3::new(2.0, 2.0 * 3.0_f32.sqrt(), 0.0),
+                yaw: FRAC_PI_2,
+                pitch: FRAC_PI_3,
+                ..unmoved
+            },
+            Case {
                 name: "look deltas add to the existing yaw and pitch without moving",
                 input: ControllerInput {
                     yaw_delta: 0.5,
@@ -625,5 +638,15 @@ mod tests {
         assert_eq!(pc.position, start);
         assert_eq!(pc.yaw, 0.4);
         assert_eq!(pc.pitch, 0.2);
+    }
+
+    #[test]
+    fn look_at_target_exactly_epsilon_away_resets_pitch_to_level() {
+        let mut pc = PlayerController::new(Vec3::ZERO);
+        pc.pitch = 0.8;
+
+        pc.look_at(Vec3::new(0.0, f32::EPSILON, 0.0));
+
+        assert_eq!(pc.pitch, 0.0);
     }
 }
