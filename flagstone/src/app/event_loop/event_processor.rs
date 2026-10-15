@@ -921,8 +921,13 @@ mod tests {
             menu.start_listening(0);
             assert!(menu.apply_key_while_listening(Key::Q));
             menu.apply_staged_changes().unwrap();
+            // The Save button's action carries the screen's saved prefs.
+            let saved = flagstone_ui::screens::MenuAction::SettingsSaved(Prefs::load_from(&path).0);
+            adapter.record_menu_action(&saved);
         }
-        app.adopt_settings(Prefs::load_from(&path).0);
+        app.event_bus.publish(UiEvent::SettingsSaved);
+        app.event_bus.process_deferred();
+        EventProcessor::new().process_ui_events(&mut app, &mut moho_app::GameClock::default());
 
         let on_disk = Prefs::load_from(&path).0;
         assert_eq!(on_disk.shadow_quality(), 1, "the console change was lost");
@@ -937,6 +942,7 @@ mod tests {
         );
         assert_eq!(app.prefs.shadow_quality(), 1);
         assert!(forward_keys(&app).contains(&Binding::Key(Key::Q)));
+        assert!(!forward_keys(&app).contains(&Binding::Key(Key::W)));
     }
 
     #[test]

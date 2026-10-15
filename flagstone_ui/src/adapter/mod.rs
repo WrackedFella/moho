@@ -183,7 +183,9 @@ impl EguiAdapter {
         self.saved_prefs.take()
     }
 
-    fn record_menu_action(&mut self, action: &MenuAction) {
+    /// Keep what a menu action means for the adapter itself: a Settings save's prefs,
+    /// held for `take_saved_prefs`. `ui_frame` calls it for every action.
+    pub fn record_menu_action(&mut self, action: &MenuAction) {
         if let MenuAction::SettingsSaved(prefs) = action {
             self.saved_prefs = Some(prefs.clone());
         }

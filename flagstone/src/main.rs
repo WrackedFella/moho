@@ -121,8 +121,9 @@ struct App {
 
     // Keybinds and preferences
     prefs: Prefs,
-    /// Where prefs are saved. `None` for a headless `App`, so tests never write the
-    /// user's config file.
+    /// Where the app saves prefs. `None` for a headless `App`, so its console prefs
+    /// commands never write the user's config file; a Settings screen opened there
+    /// still saves to `Prefs::config_path()`, so tests that save from it set a path.
     prefs_path: Option<std::path::PathBuf>,
 
     // Grouped sub-systems

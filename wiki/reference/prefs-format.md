@@ -40,8 +40,9 @@ flowchart LR
 
 ## Running prefs and saving
 
-`App::prefs` is the running copy; `App::prefs_path` is where it is saved (`None` for a
-headless `App`, so tests never touch the user's file).
+`App::prefs` is the running copy; `App::prefs_path` is where the app saves it (`None` for
+a headless `App`, so its console commands never touch the user's file; a Settings screen
+opened there still saves to the default path).
 
 - **Console graphics commands** (`SetShadowQuality`, `SetSsaoQuality`) update `App::prefs`
   and call `App::save_prefs`, with or without a window; a failed write is logged.
