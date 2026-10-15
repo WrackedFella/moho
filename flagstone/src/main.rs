@@ -121,6 +121,10 @@ struct App {
 
     // Keybinds and preferences
     prefs: Prefs,
+    /// Where the app saves prefs. `None` for a headless `App`, so its console prefs
+    /// commands never write the user's config file; a Settings screen opened there
+    /// still saves to `Prefs::config_path()`, so tests that save from it set a path.
+    prefs_path: Option<std::path::PathBuf>,
 
     // Grouped sub-systems
     physics: app::physics_controller::PhysicsController,
@@ -137,11 +141,22 @@ struct App {
 }
 
 impl App {
-    /// Saves prefs together with the current bindings.
-    fn save_prefs(&mut self) -> std::io::Result<()> {
-        self.prefs
-            .set_bindings(self.input.actions.bindings().to_section());
-        self.prefs.save()
+    /// Writes the running prefs to `prefs_path`; does nothing without one. A failed
+    /// write is logged: the running prefs stay in effect either way.
+    fn save_prefs(&self) {
+        if let Some(path) = &self.prefs_path
+            && let Err(e) = self.prefs.save_to(path)
+        {
+            tracing::warn!(error = %e, path = %path.display(), "Failed to save prefs");
+        }
+    }
+
+    /// Makes `prefs` (just saved by the Settings screen) the running prefs and
+    /// rebinds input from them. Does not save: the screen already wrote the file.
+    fn adopt_settings(&mut self, prefs: Prefs) {
+        let config = crate::app::config::AppConfig::from_prefs_struct(prefs);
+        self.input.actions = crate::app::initializer::build_actions(&config);
+        self.prefs = config.prefs;
     }
 
     fn from_config(config: crate::app::config::AppConfig) -> Self {
@@ -190,6 +205,7 @@ impl App {
             simulation: initialized.simulation,
 
             prefs: initialized.prefs,
+            prefs_path: Some(Prefs::config_path()),
 
             physics: app::physics_controller::PhysicsController::new(),
             generation: app::generation_job::WorldGenerationJob::new(),
@@ -205,7 +221,9 @@ impl App {
     /// prefs so tests never read `config/prefs.ini`.
     #[cfg(test)]
     fn headless() -> Self {
-        Self::from_config(crate::app::config::AppConfig::builder().build())
+        let mut app = Self::from_config(crate::app::config::AppConfig::builder().build());
+        app.prefs_path = None;
+        app
     }
 
     fn generate_new_world(

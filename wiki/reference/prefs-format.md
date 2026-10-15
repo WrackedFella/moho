@@ -1,7 +1,8 @@
 # Preferences file
 
 **Source:** `moho_core/src/prefs/` (`mod.rs`, `reader.rs`), `moho_input/src/bindings.rs`, `moho_input/src/key.rs`, `moho_input/src/pad.rs`,
-`flagstone_ui/src/actions.rs`. Path: `config/prefs.ini`,
+`flagstone_ui/src/actions.rs`, `flagstone/src/main.rs` (`App::save_prefs`, `App::adopt_settings`),
+`flagstone/src/app/initializer.rs` (`build_actions`), `flagstone_ui/src/adapter/mod.rs`. Path: `config/prefs.ini`,
 relative to the working directory.
 
 `Prefs::load` creates the file with defaults if it is missing. Missing sections or keys
@@ -36,6 +37,24 @@ flowchart LR
     B -.->|"ActionBindings::to_section"| P
     P -->|"Prefs::save"| F
 ```
+
+## Running prefs and saving
+
+`App::prefs` is the running copy; `App::prefs_path` is where the app saves it (`None` for
+a headless `App`, so its console commands never touch the user's file; a Settings screen
+opened there still saves to the default path).
+
+- **Console graphics commands** (`SetShadowQuality`, `SetSsaoQuality`) update `App::prefs`
+  and call `App::save_prefs`, with or without a window; a failed write is logged.
+- **Settings screen** is seeded from `App::prefs` when it opens
+  (`EguiAdapter::open_settings`), so a console change made earlier is not overwritten
+  on save. The screen writes the file itself. Prefs never ride on the event bus
+  ([ADR-0011](../../_todo/adr/0011-simulation-stays-network-ready.md)): on `UiEvent::SettingsSaved` the app takes the
+  saved copy from the adapter (`EguiAdapter::take_saved_prefs`, once) and calls
+  `App::adopt_settings`.
+- **`adopt_settings`** replaces `App::prefs` and rebuilds the input `ActionMap` through
+  `build_actions`, the same function startup uses, so new bindings, sensitivity and
+  filtering apply without a restart. It does not write the file.
 
 ## Keys
 

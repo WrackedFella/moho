@@ -167,11 +167,7 @@ impl AppInitializer {
         tracing::debug!("Event bus initialized with subscribers");
 
         // Create input system with config values
-        let mut actions = ActionMap::new(
-            load_bindings(&self.config.prefs),
-            self.config.mouse_sensitivity,
-        );
-        actions.set_filtering(self.config.input_filtering_enabled);
+        let actions = build_actions(&self.config);
         tracing::debug!("Input system initialized");
 
         tracing::info!("Application initialization complete");
@@ -195,6 +191,15 @@ impl AppInitializer {
             prefs: self.config.prefs,
         })
     }
+}
+
+/// Builds the action map a game runs on from `config`: the prefs' bindings, the
+/// scaled mouse sensitivity and the input-filtering switch. Shared by startup and
+/// by adopting saved settings so the two can't drift apart.
+pub(crate) fn build_actions(config: &AppConfig) -> ActionMap<StrategyAction> {
+    let mut actions = ActionMap::new(load_bindings(&config.prefs), config.mouse_sensitivity);
+    actions.set_filtering(config.input_filtering_enabled);
+    actions
 }
 
 #[cfg(test)]

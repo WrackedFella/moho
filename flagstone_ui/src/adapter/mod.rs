@@ -8,7 +8,7 @@ mod rendering;
 
 pub use crate::app_state::GameState;
 use crate::prefs::Prefs;
-use crate::screens::{Menu, MenuAction};
+use crate::screens::{Menu, MenuAction, SettingsMenu};
 use crate::ui_state::UiStateManager;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -78,6 +78,9 @@ pub struct EguiAdapter {
 
     // Checked once at construction.
     menu_music_exists: bool,
+
+    // Prefs from the last `SettingsSaved` action, until the app takes them.
+    saved_prefs: Option<Prefs>,
 }
 
 /// Lightweight progress state used by the adapter to render an overlay.
@@ -131,6 +134,7 @@ impl EguiAdapter {
             last_hovered_key: None,
             menu_music_playing: false,
             menu_music_exists: std::path::Path::new(event_routing::MENU_MUSIC_PATH).exists(),
+            saved_prefs: None,
         }
     }
 
@@ -151,6 +155,40 @@ impl EguiAdapter {
     /// Show a specific menu
     pub fn show_menu(&mut self, name: &str) {
         self.ui_state.show_screen(name);
+    }
+
+    /// Replace the settings screen with one seeded from `prefs` (saving to `save_path`)
+    /// and show it, so it starts from the running prefs rather than the file.
+    pub fn open_settings(&mut self, prefs: Prefs, save_path: PathBuf) {
+        self.ui_state.add_screen(
+            "settings".to_string(),
+            Box::new(SettingsMenu::with_prefs_at(prefs, save_path)),
+        );
+        self.ui_state.show_screen("settings");
+    }
+
+    /// The registered settings screen, if it is a `SettingsMenu`.
+    pub fn settings_menu_mut(&mut self) -> Option<&mut SettingsMenu> {
+        self.ui_state
+            .get_screen_mut("settings")?
+            .as_any_mut()
+            .downcast_mut::<SettingsMenu>()
+    }
+
+    /// Hand over the prefs from the last saved Settings screen, once.
+    ///
+    /// Prefs don't ride on the event bus, so the app collects them here after
+    /// `UiEvent::SettingsSaved`.
+    pub fn take_saved_prefs(&mut self) -> Option<Prefs> {
+        self.saved_prefs.take()
+    }
+
+    /// Keep what a menu action means for the adapter itself: a Settings save's prefs,
+    /// held for `take_saved_prefs`. `ui_frame` calls it for every action.
+    pub fn record_menu_action(&mut self, action: &MenuAction) {
+        if let MenuAction::SettingsSaved(prefs) = action {
+            self.saved_prefs = Some(prefs.clone());
+        }
     }
 
     /// Hide all menus
@@ -342,6 +380,7 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
 
         // Process menu actions (delegates to event_routing module)
         for action in &menu_actions {
+            self.record_menu_action(action);
             event_routing::process_menu_action(action, &self.event_bus);
         }
 
@@ -492,5 +531,67 @@ mod tests {
         assert_eq!(events.len(), 2, "events: {events:?}");
         assert!(matches!(events[0], AudioEvent::MusicStart { .. }));
         assert!(matches!(events[1], AudioEvent::MusicStop));
+    }
+
+    fn prefs_forward_on_q() -> Prefs {
+        let mut prefs = Prefs::default();
+        prefs.set_bindings(
+            [("move_forward".to_string(), "Q".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        prefs
+    }
+
+    #[test]
+    fn open_settings_seeds_the_screen_from_the_given_prefs() {
+        use moho_input::bindings::Binding;
+        use moho_input::key::Key;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.ini");
+        let mut adapter = adapter();
+        let mut prefs = prefs_forward_on_q();
+        prefs.set_shadow_quality(1);
+
+        adapter.open_settings(prefs, path.clone());
+
+        assert_eq!(adapter.active_screen_name(), Some("settings"));
+        assert!(adapter.is_visible());
+        let menu = adapter
+            .settings_menu_mut()
+            .expect("the settings screen is registered");
+        assert_eq!(
+            menu.get_staged_binding(0).first(),
+            Some(&Binding::Key(Key::Q))
+        );
+        menu.apply_staged_changes().unwrap();
+        let saved = Prefs::load_from(&path).0;
+        assert_eq!(
+            saved.shadow_quality(),
+            1,
+            "the screen saves what it was seeded with"
+        );
+        assert_eq!(
+            saved.bindings().get("move_forward").map(String::as_str),
+            Some("Q")
+        );
+    }
+
+    #[test]
+    fn saved_prefs_are_handed_over_once() {
+        let mut adapter = adapter();
+        let mut saved = prefs_forward_on_q();
+        saved.set_shadow_quality(1);
+        assert!(adapter.take_saved_prefs().is_none(), "nothing saved yet");
+        adapter.record_menu_action(&MenuAction::Close);
+        assert!(
+            adapter.take_saved_prefs().is_none(),
+            "Close carries no prefs"
+        );
+
+        adapter.record_menu_action(&MenuAction::SettingsSaved(saved.clone()));
+
+        assert_eq!(adapter.take_saved_prefs(), Some(saved));
+        assert!(adapter.take_saved_prefs().is_none(), "handed over once");
     }
 }
