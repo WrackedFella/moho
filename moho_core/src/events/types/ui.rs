@@ -38,6 +38,12 @@ pub enum UiEvent {
     /// Exit requested
     ExitRequested,
 
+    /// Resume from the pause window requested
+    ResumeRequested,
+
+    /// Return to the main menu requested
+    MainMenuRequested,
+
     /// Window/display settings changed (emitted after saving video prefs)
     WindowSettingsChanged {
         mode: WindowMode,

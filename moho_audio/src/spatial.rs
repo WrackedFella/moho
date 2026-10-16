@@ -33,6 +33,32 @@ impl Listener {
             orientation,
         }
     }
+
+    /// The listener's right-ear direction, `orientation × +X`, so pitch and roll carry over.
+    pub fn right(&self) -> Vec3 {
+        self.orientation * Vec3::X
+    }
+}
+
+/// Per-ear volume multipliers for a panned sound.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StereoGain {
+    /// Linear gain for the left channel, in [0, 1].
+    pub left: f32,
+    /// Linear gain for the right channel, in [0, 1].
+    pub right: f32,
+}
+
+/// Constant-power pan of a sound at `source` as heard by `listener`.
+pub fn stereo_pan(listener: &Listener, source: Vec3) -> StereoGain {
+    let side = (source - listener.position)
+        .normalize_or_zero()
+        .dot(listener.right());
+    let angle = (side + 1.0) * std::f32::consts::FRAC_PI_4;
+    StereoGain {
+        left: angle.cos(),
+        right: angle.sin(),
+    }
 }
 
 /// Volume multiplier for a sound `distance` metres from the listener, or `None` past
@@ -114,6 +140,175 @@ mod tests {
         assert_eq!(listener.position, Vec3::ZERO);
         let facing = listener.orientation * Vec3::NEG_Z;
         assert!((facing - Vec3::NEG_Z).length() < 1e-6, "{facing}");
+    }
+
+    const NORTH: Vec3 = Vec3::NEG_Z;
+    const EAST: Vec3 = Vec3::X;
+
+    fn facing_south() -> Listener {
+        Listener {
+            orientation: Quat::from_rotation_y(std::f32::consts::PI),
+            ..Listener::default()
+        }
+    }
+
+    #[track_caller]
+    fn assert_gain(gain: StereoGain, left: f32, right: f32) {
+        assert_close(gain.left, left);
+        assert_close(gain.right, right);
+    }
+
+    fn power(gain: StereoGain) -> f32 {
+        gain.left * gain.left + gain.right * gain.right
+    }
+
+    #[test]
+    fn listener_right_is_the_orientation_x_axis() {
+        use std::f32::consts::{FRAC_PI_2, PI};
+        let rows = [
+            ("facing south", Quat::from_rotation_y(PI), Vec3::NEG_X),
+            ("facing east", Quat::from_rotation_y(-FRAC_PI_2), Vec3::Z),
+            (
+                "pitched straight down",
+                Quat::from_rotation_x(-FRAC_PI_2),
+                Vec3::X,
+            ),
+        ];
+
+        for (name, orientation, expected) in rows {
+            let listener = Listener {
+                orientation,
+                ..Listener::default()
+            };
+
+            let right = listener.right();
+
+            assert!((right - expected).length() < 1e-5, "{name}: {right}");
+        }
+    }
+
+    #[test]
+    fn diagonal_sound_follows_the_cos_sin_law() {
+        use std::f32::consts::FRAC_PI_2;
+        let rows = [
+            (
+                "north-east",
+                Vec3::new(10.0, 0.0, -10.0),
+                Listener::default(),
+            ),
+            (
+                "right and up",
+                Vec3::new(10.0, 10.0, 0.0),
+                Listener::default(),
+            ),
+            (
+                "east, listener pitched straight down",
+                EAST * 10.0,
+                Listener {
+                    orientation: Quat::from_rotation_x(-FRAC_PI_2),
+                    ..Listener::default()
+                },
+            ),
+        ];
+        let expected = [(0.22801, 0.97366), (0.22801, 0.97366), (0.0, 1.0)];
+
+        for ((name, source, listener), (left, right)) in rows.into_iter().zip(expected) {
+            let gain = stereo_pan(&listener, source);
+
+            assert!(
+                (gain.left - left).abs() < 1e-4 && (gain.right - right).abs() < 1e-4,
+                "{name}: {gain:?}, want ({left}, {right})"
+            );
+        }
+    }
+
+    #[test]
+    fn sound_to_a_side_is_louder_in_that_ear() {
+        let rows = [("east", EAST, 0.0, 1.0), ("west", -EAST, 1.0, 0.0)];
+
+        for (side, direction, left, right) in rows {
+            let gain = stereo_pan(&Listener::default(), direction * 10.0);
+
+            assert_gain(gain, left, right);
+            assert!(
+                (gain.right > gain.left) == (right > left),
+                "{side}: {gain:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn panning_follows_facing_not_world_axes() {
+        let gain = stereo_pan(&facing_south(), EAST * 10.0);
+
+        assert_gain(gain, 1.0, 0.0);
+    }
+
+    #[test]
+    fn pan_is_measured_from_the_listener_position() {
+        let listener = Listener {
+            position: Vec3::new(5.0, 0.0, 5.0),
+            ..Listener::default()
+        };
+
+        let gain = stereo_pan(&listener, Vec3::new(15.0, 0.0, 5.0));
+
+        assert_gain(gain, 0.0, 1.0);
+    }
+
+    #[test]
+    fn ahead_behind_and_on_listener_are_centred() {
+        let rows = [
+            ("10 m north", NORTH * 10.0),
+            ("10 m south", -NORTH * 10.0),
+            ("10 m above", Vec3::Y * 10.0),
+            ("at the listener", Vec3::ZERO),
+        ];
+
+        for (where_, source) in rows {
+            let gain = stereo_pan(&Listener::default(), source);
+
+            assert!(gain.left.is_finite() && gain.right.is_finite(), "{where_}");
+            assert_gain(
+                gain,
+                std::f32::consts::FRAC_1_SQRT_2,
+                std::f32::consts::FRAC_1_SQRT_2,
+            );
+        }
+    }
+
+    #[test]
+    fn pan_keeps_total_power() {
+        let listener = Listener::default();
+
+        let east = stereo_pan(&listener, EAST * 10.0);
+        let north = stereo_pan(&listener, NORTH * 10.0);
+
+        assert_close(power(east), 1.0);
+        assert_close(power(north), 1.0);
+        assert_close(power(east), power(north));
+    }
+
+    proptest! {
+        #[test]
+        fn pan_power_is_one_in_every_direction(
+            x in -50.0f32..50.0,
+            y in -50.0f32..50.0,
+            z in -50.0f32..50.0,
+            yaw in -3.2f32..3.2,
+            pitch in -1.5f32..1.5,
+        ) {
+            let listener = Listener {
+                position: Vec3::new(1.0, 2.0, 3.0),
+                orientation: Quat::from_euler(glam::EulerRot::YXZ, yaw, pitch, 0.0),
+            };
+
+            let gain = stereo_pan(&listener, Vec3::new(x, y, z));
+
+            prop_assert!((power(gain) - 1.0).abs() < 1e-4, "{gain:?}");
+            prop_assert!(gain.left >= -1e-6 && gain.left <= 1.0 + 1e-6, "{gain:?}");
+            prop_assert!(gain.right >= -1e-6 && gain.right <= 1.0 + 1e-6, "{gain:?}");
+        }
     }
 
     #[test]

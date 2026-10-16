@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
-use winit::event::{DeviceEvent, ElementState, KeyEvent};
+use winit::event::{DeviceEvent, ElementState, KeyEvent, WindowEvent};
 mod input_dispatcher;
 use crate::input_dispatcher::InputDispatcher;
 mod input_event;
@@ -96,6 +96,9 @@ struct App {
 
     // Set when the UI asks to quit; `frame` autosaves and leaves the loop
     exit_requested: bool,
+
+    // Set when the UI asks for the main menu; `frame` autosaves, then shows it
+    main_menu_requested: bool,
 
     // Event bus for application-wide events
     event_bus: Arc<moho_core::EventBus>,
@@ -188,6 +191,7 @@ impl App {
             pending_render: Vec::new(),
             saves_dir: std::path::PathBuf::from("saves"),
             exit_requested: false,
+            main_menu_requested: false,
             event_bus: initialized.event_bus,
 
             ui_event_rx: initialized.ui_event_rx,
@@ -317,27 +321,75 @@ impl App {
                         adapter.toggle_overlay("chunk_debug");
                     }
                 }
-                // Escape closes console if open, otherwise opens menu
-                KeyCode::Escape if pressed => {
-                    use crate::game_state::GameState;
-                    match self.game_state {
-                        GameState::ConsoleOpen => self.exit_console(),
-                        GameState::Playing => {
-                            // ESC to show menu
-                            self.show_menu();
-
-                            // Also explicitly request the adapter show the "start" menu
-                            if let Some(ui_adapter) = &self.ui_adapter
-                                && let Ok(mut adapter) = ui_adapter.lock()
-                            {
-                                adapter.show_menu("start");
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                // A held Escape repeats; acting on repeats would flicker between pause and play.
+                KeyCode::Escape if pressed && !event.repeat => self.escape_pressed(),
                 _ => {}
             }
+        }
+    }
+
+    /// Escape: close the console, pause play, or resume from the pause window.
+    /// On Settings (reached from the pause window) it does nothing.
+    fn escape_pressed(&mut self) {
+        use crate::game_state::GameState;
+        match self.game_state {
+            GameState::ConsoleOpen => self.exit_console(),
+            GameState::Playing => self.toggle_pause(),
+            GameState::Paused if self.home_screen_showing() => self.toggle_pause(),
+            _ => {}
+        }
+    }
+
+    /// Whether Escape pauses or resumes here, so it must reach `escape_pressed` before
+    /// the UI: egui swallows it once a pause-window button has keyboard focus (Tab).
+    fn escape_skips_the_ui(&self) -> bool {
+        use crate::game_state::GameState;
+        match self.game_state {
+            GameState::Playing => true,
+            GameState::Paused => self.home_screen_showing(),
+            GameState::Menu | GameState::ConsoleOpen => false,
+        }
+    }
+
+    /// Runs a pausing or resuming Escape press ahead of the UI; true when it did.
+    fn take_escape_before_ui(&mut self, event: &WindowEvent) -> bool {
+        let WindowEvent::KeyboardInput {
+            event:
+                KeyEvent {
+                    physical_key: PhysicalKey::Code(KeyCode::Escape),
+                    state: ElementState::Pressed,
+                    repeat: false,
+                    ..
+                },
+            ..
+        } = event
+        else {
+            return false;
+        };
+        if !self.escape_skips_the_ui() {
+            return false;
+        }
+        self.escape_pressed();
+        true
+    }
+
+    /// Whether the current state's home screen (the pause window while paused) is
+    /// the active screen; true when no UI is attached.
+    fn home_screen_showing(&self) -> bool {
+        let home = self.game_state.home_screen();
+        self.ui_adapter.as_ref().is_none_or(|adapter| {
+            adapter
+                .lock()
+                .is_ok_and(|adapter| adapter.active_screen_name() == home)
+        })
+    }
+
+    fn resume_game(&mut self) {
+        use flagstone_ui::StateTransitionCoordinator;
+
+        match StateTransitionCoordinator::resume_game(self.game_state) {
+            Ok(actions) => self.apply_transition(actions),
+            Err(e) => tracing::debug!(error = %e, "Cannot resume game"),
         }
     }
 
@@ -410,7 +462,6 @@ impl App {
     }
 
     /// Toggle pause state
-    #[allow(dead_code)]
     fn toggle_pause(&mut self) {
         use flagstone_ui::StateTransitionCoordinator;
 

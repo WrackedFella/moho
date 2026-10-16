@@ -1,13 +1,17 @@
 //! Shared builders for the crate's tests: small hand-made worlds and tuning values.
 
+use std::sync::Arc;
+
 use glam::Vec3;
 use moho_input::Action;
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::Binding;
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
-use searchlight_rules::{BodyProfile, Magazine, Rifle};
+use searchlight_rules::{BodyPart, BodyProfile, Magazine, Rifle};
 
+use crate::arena::Arena;
+use crate::brain::EnemyTuning;
 use crate::input::FpsAction;
 use crate::sim::SimConfig;
 use crate::tag::SurfaceTag;
@@ -114,7 +118,53 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         body: test_profile(),
         rifle,
         spares,
+        enemy: enemy_tuning(),
+        enemy_aim_at: BodyPart::Torso,
     }
+}
+
+/// Enemy tuning with a 3-tick reaction (so the first shot is on tick 2), a 4-tick cooldown,
+/// 10 damage, no aim error and a fast turn.
+pub(crate) fn enemy_tuning() -> EnemyTuning {
+    EnemyTuning {
+        sight_range: 30.0,
+        view_half_angle: 60.0_f32.to_radians(),
+        reaction_ticks: 3,
+        cooldown_ticks: 4,
+        damage: 10,
+        aim_error: 0.0,
+        turn_rate: 6.0,
+        patrol_speed: 0.5,
+        arrive_radius: 0.5,
+        fire_cone: 0.1,
+        cover_range: 15.0,
+        cover_ticks: 240,
+        chase_ticks: 600,
+        cover_hide_height: 0.9,
+        seed: 7,
+    }
+}
+
+/// An arena of a 60 m square floor (top at y = 0) plus one `World` box per `(min, max)` pair,
+/// with the given spawns and patrol route and no dummies.
+pub(crate) fn arena_with(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+) -> Arc<Arena> {
+    let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+    Arc::new(Arena {
+        meshes: std::iter::once(&floor)
+            .chain(boxes)
+            .map(|&(min, max)| box_mesh(min, max))
+            .collect(),
+        player_spawn: player,
+        dummy_spawns: Vec::new(),
+        enemy_spawns: enemies.to_vec(),
+        route: route.to_vec(),
+        covers: Vec::new(),
+    })
 }
 
 /// Presses the first default binding of `action` on `map`.

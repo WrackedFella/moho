@@ -34,10 +34,11 @@ impl UiStateManager {
     /// Create a new UI state manager with default screens
     pub fn new(prefs: moho_core::prefs::Prefs) -> Self {
         // Register default screens
-        use crate::screens::{NewWorldMenu, SettingsMenu, StartMenu};
+        use crate::screens::{NewWorldMenu, PauseMenu, SettingsMenu, StartMenu};
         let mut screens: HashMap<String, Box<dyn Menu>> = HashMap::new();
 
         screens.insert("start".to_string(), Box::new(StartMenu::new()));
+        screens.insert("pause".to_string(), Box::new(PauseMenu::new()));
         screens.insert(
             "settings".to_string(),
             Box::new(SettingsMenu::with_prefs(prefs)),
@@ -147,6 +148,18 @@ mod tests {
     use moho_core::prefs::Prefs;
     use moho_input::bindings::Binding;
     use moho_input::key::Key;
+
+    #[test]
+    fn pause_screen_is_registered() {
+        let mut manager = UiStateManager::new(Prefs::default());
+
+        assert!(
+            manager.get_screen("pause").is_some(),
+            "pause screen is registered"
+        );
+        assert!(manager.show_screen("pause"));
+        assert_eq!(manager.active_screen_name(), Some("pause"));
+    }
 
     #[test]
     fn injected_prefs_reach_the_settings_screen() {

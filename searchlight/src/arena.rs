@@ -3,14 +3,15 @@
 
 use std::path::Path;
 
+use glam::Vec3;
 use moho_level::{Level, LevelError, LevelMarker};
 use moho_physics::PhysicsWorld;
-use moho_render_api::WorldMeshId;
+use moho_render_api::{WorldMesh, WorldMeshId};
 
 use crate::tag::SurfaceTag;
 
 /// One nominal tick, enough for a step to index freshly added colliders.
-const SETTLE_DT: f32 = 1.0 / 60.0;
+pub(crate) const SETTLE_DT: f32 = 1.0 / 60.0;
 
 const PLAYER_SPAWN: &str = "player_spawn";
 const DUMMY_PREFIX: &str = "dummy_";
@@ -31,6 +32,9 @@ pub enum ArenaError {
     /// A marker that must be unique appears more than once.
     #[error("arena has more than one `{marker}` marker")]
     DuplicateMarker { marker: String },
+    /// A waypoint's suffix is not a number, or repeats an earlier waypoint's number.
+    #[error("arena waypoint `{marker}` needs a unique numeric suffix")]
+    BadWaypoint { marker: String },
 }
 
 /// The arena's markers, grouped by kind. Within a kind, markers keep file order.
@@ -53,7 +57,10 @@ impl ArenaMarkers {
     ///
     /// # Errors
     /// [`ArenaError::MissingMarker`] naming `player_spawn` or `dummy_NN`;
-    /// [`ArenaError::DuplicateMarker`] naming `player_spawn`.
+    /// [`ArenaError::DuplicateMarker`] naming `player_spawn`;
+    /// [`ArenaError::MissingMarker`] naming `waypoint_NN` when there is an enemy spawn and
+    /// no waypoint to patrol; [`ArenaError::BadWaypoint`] naming a waypoint whose suffix is not
+    /// a number or repeats an earlier one's value.
     pub fn from_level(level: &Level) -> Result<Self, ArenaError> {
         let mut spawns = Vec::new();
         let mut dummies = Vec::new();
@@ -90,6 +97,18 @@ impl ArenaMarkers {
                 marker: format!("{DUMMY_PREFIX}NN"),
             });
         }
+        if !enemy_spawns.is_empty() && waypoints.is_empty() {
+            return Err(ArenaError::MissingMarker {
+                marker: format!("{WAYPOINT_PREFIX}NN"),
+            });
+        }
+        let mut numbers = Vec::new();
+        for marker in &waypoints {
+            let number = waypoint_number(marker).filter(|n| !numbers.contains(n));
+            numbers.push(number.ok_or_else(|| ArenaError::BadWaypoint {
+                marker: marker.name.clone(),
+            })?);
+        }
         Ok(Self {
             player_spawn,
             dummies,
@@ -97,6 +116,65 @@ impl ArenaMarkers {
             waypoints,
             covers,
         })
+    }
+}
+
+/// The `NN` of a `waypoint_NN` marker, `None` when it is not a number.
+fn waypoint_number(marker: &LevelMarker) -> Option<u32> {
+    marker.name[WAYPOINT_PREFIX.len()..].parse().ok()
+}
+
+impl ArenaMarkers {
+    /// The patrol loop: every `waypoint_NN` position, in numeric order of `NN`.
+    pub fn patrol_route(&self) -> Vec<Vec3> {
+        let mut waypoints: Vec<&LevelMarker> = self.waypoints.iter().collect();
+        waypoints.sort_by_key(|marker| waypoint_number(marker));
+        waypoints
+            .into_iter()
+            .map(|marker| marker.position)
+            .collect()
+    }
+}
+
+/// Everything a sim needs to start, and to start again: static geometry plus spawn points.
+/// The sim holds it behind an `Arc`, so a restart rebuilds from the same data.
+#[derive(Debug, Clone)]
+pub struct Arena {
+    pub meshes: Vec<WorldMesh>,
+    /// Floor point the player starts on.
+    pub player_spawn: Vec3,
+    /// Floor points of the training dummies.
+    pub dummy_spawns: Vec<Vec3>,
+    /// Floor points of the enemies.
+    pub enemy_spawns: Vec<Vec3>,
+    /// The loop every enemy patrols, in order.
+    pub route: Vec<Vec3>,
+    pub covers: Vec<Vec3>,
+}
+
+impl Arena {
+    /// The arena `level` and its `markers` describe.
+    pub fn from_level(level: &Level, markers: &ArenaMarkers) -> Self {
+        let positions = |list: &[LevelMarker]| list.iter().map(|marker| marker.position).collect();
+        Self {
+            meshes: level.meshes.iter().map(|m| m.mesh.clone()).collect(),
+            player_spawn: markers.player_spawn.position,
+            dummy_spawns: positions(&markers.dummies),
+            enemy_spawns: positions(&markers.enemy_spawns),
+            route: markers.patrol_route(),
+            covers: positions(&markers.covers),
+        }
+    }
+
+    /// A physics world whose static colliders are this arena's meshes, tagged
+    /// [`SurfaceTag::World`], stepped once so they are queryable.
+    pub fn physics_world(&self) -> PhysicsWorld {
+        let mut world = PhysicsWorld::new();
+        for (index, mesh) in self.meshes.iter().enumerate() {
+            world.set_world_mesh(arena_mesh_id(index), mesh, SurfaceTag::World.into());
+        }
+        world.step(SETTLE_DT);
+        world
     }
 }
 
@@ -185,6 +263,97 @@ mod tests {
             .filter(|m| m.name == "player_spawn")
             .count();
         assert_eq!(player_spawns, 1);
+    }
+
+    #[test]
+    fn the_shipped_arena_has_an_enemy_spawn_and_a_waypoint_loop() {
+        let (_, markers) = load(&shipped_arena()).expect("the shipped arena loads");
+
+        let route = markers.patrol_route();
+
+        assert!(!markers.enemy_spawns.is_empty(), "no enemy spawn");
+        assert!(route.len() >= 3, "a loop needs three waypoints: {route:?}");
+        let numbered: Vec<Vec3> = (1..=route.len())
+            .map(|n| {
+                let name = format!("waypoint_{n:02}");
+                markers
+                    .waypoints
+                    .iter()
+                    .find(|m| m.name == name)
+                    .unwrap_or_else(|| panic!("no {name}"))
+                    .position
+            })
+            .collect();
+        assert_eq!(route, numbered);
+    }
+
+    #[test]
+    fn an_enemy_spawn_without_waypoints_is_an_error_naming_it() {
+        let level = level_of(&["player_spawn", "dummy_01", "enemy_spawn_01"]);
+
+        let error = ArenaMarkers::from_level(&level).unwrap_err();
+
+        assert!(
+            matches!(&error, ArenaError::MissingMarker { marker } if marker.starts_with("waypoint_")),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains("waypoint_"));
+    }
+
+    #[test]
+    fn waypoints_without_enemy_spawns_are_not_an_error() {
+        let level = level_of(&["player_spawn", "dummy_01", "waypoint_01"]);
+
+        let markers = ArenaMarkers::from_level(&level);
+
+        assert!(markers.is_ok(), "{markers:?}");
+    }
+
+    #[test]
+    fn the_patrol_route_follows_waypoint_numbers_not_file_order() {
+        let mut level = level_of(&["player_spawn", "dummy_01", "enemy_spawn_01"]);
+        for (name, x) in [
+            ("waypoint_10", 10.0),
+            ("waypoint_02", 2.0),
+            ("waypoint_01", 1.0),
+        ] {
+            level.markers.push(marker(name, Vec3::new(x, 0.0, 0.0)));
+        }
+
+        let markers = ArenaMarkers::from_level(&level).expect("a valid arena");
+
+        let xs: Vec<f32> = markers.patrol_route().iter().map(|p| p.x).collect();
+        assert_eq!(xs, [1.0, 2.0, 10.0]);
+    }
+
+    #[test]
+    fn a_waypoint_with_a_non_numeric_suffix_is_an_error_naming_it() {
+        let level = level_of(&[
+            "player_spawn",
+            "dummy_01",
+            "enemy_spawn_01",
+            "waypoint_01",
+            "waypoint_a",
+        ]);
+
+        let error = ArenaMarkers::from_level(&level).unwrap_err();
+
+        assert!(error.to_string().contains("waypoint_a"), "{error}");
+    }
+
+    #[test]
+    fn two_waypoints_with_the_same_number_are_an_error_naming_the_later_one() {
+        let level = level_of(&[
+            "player_spawn",
+            "dummy_01",
+            "enemy_spawn_01",
+            "waypoint_1",
+            "waypoint_01",
+        ]);
+
+        let error = ArenaMarkers::from_level(&level).unwrap_err();
+
+        assert!(error.to_string().contains("waypoint_01"), "{error}");
     }
 
     #[test]

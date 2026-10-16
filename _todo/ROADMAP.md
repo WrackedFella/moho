@@ -100,7 +100,7 @@ lines ask for.
 **Gate:** whatever the games need for a V1 release. M2 runs in waves; Justin declares it
 done when the games' requirements are adequately met. Each wave is planned from the
 open engine requests (label `engine-request`) when the one before it nears its end.
-Engine requests answered here: #302, #304–#307, #315, #316 (#303 goes to the strategy
+Engine requests answered here: #302, #304–#307, #315, #316, #402 (#303 goes to the strategy
 line, as an [SG-F4](https://github.com/WrackedFella/moho/issues/310) card).
 
 **Current wave set (decided 2026-10-14), all must hold:**
@@ -139,18 +139,21 @@ its consumers near, not when the earlier wave fully closes.
 | 2.8 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234) domain tests catch behaviour changes (from M1's 1.3) | — | SG-F4 | 2–3 | before SG-F4 |
 | 2.9 | [ENG-F11-04](https://github.com/WrackedFella/moho/issues/334): the simulation pauses and runs at 1x, 2x or 3x (`moho_app`) | #307 | SG-F4 follow-up; FPS pause | 3 | SG-F4's skeleton |
 | 2.10 | [ENG-F24-03](https://github.com/WrackedFella/moho/issues/329): the game hides the world above a chosen height (renderer) | #306 | SG-F4 underground marks | 3 | ENG-F24's first card |
-| 2.11 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) shared UI shell, widened with on-screen text | #315 | FPS Phase 2 | 4 | 2.2 |
+| 2.11 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) console (priority): [ENG-F18-05](https://github.com/WrackedFella/moho/issues/403) the FPS opens a console and runs its own commands, then [ENG-F18-06](https://github.com/WrackedFella/moho/issues/404) renderer and sound commands | #402 | FPS-F2-06; FPS feature testing | 2 | #403 after #401 (FPS-F2-03, shares searchlight's game module) |
+| 2.11a | [ENG-F18-07](https://github.com/WrackedFella/moho/issues/405): a game's own setting survives a relaunch (priority) | #402 | FPS-F2-06 `tgm` | 2 | #354; before #377 and #379 (shared prefs) |
+| 2.11b | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) rest: [ENG-F18-08](https://github.com/WrackedFella/moho/issues/406) strategy on the shared console, [ENG-F18-09](https://github.com/WrackedFella/moho/issues/407) on-screen text | #315 | FPS Phase 2 | 4 | #403 (#406 also #404) |
 | 2.12 | [ENG-F19](https://github.com/WrackedFella/moho/issues/231) layered content | — | FPS Phase 2 | 4 | — |
 | 2.13 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation over static levels (FPS uses waypoints until then) | — | FPS | 4 | — |
 | 2.14 | [ENG-F26](https://github.com/WrackedFella/moho/issues/359): one key carries tap, hold, modifier and toggle actions (new; `moho_input`, settings display) | Justin, 2026-10-15 | strategy sprint toggle; FPS reload, check mag, unjam | 4 | before ENG-F18's keybind card |
 | 2.15 | [ENG-F27](https://github.com/WrackedFella/moho/issues/361): the game lines are called flagstone and searchlight; one card per line ([#362](https://github.com/WrackedFella/moho/issues/362) FPS, [#363](https://github.com/WrackedFella/moho/issues/363) strategy) | Justin, 2026-10-15 | ENG-F5 split (M3) | 1–2 gaps | #362 after #358; #363 after #355, before #331 |
-| 2.16 | [ENG-F28](https://github.com/WrackedFella/moho/issues/373): mouse look feels like a Source game (raw, per-frame look; sensitivity, smoothing, acceleration and vsync settings) | Justin, 2026-10-15 | FPS prototype feel; strategy first-person camera | 2 | prefs and settings cards after #331, #333, #354 |
+| 2.16 | [ENG-F28](https://github.com/WrackedFella/moho/issues/373): mouse look feels like a Source game (raw, per-frame look; sensitivity, smoothing, acceleration and vsync settings) | Justin, 2026-10-15 | FPS prototype feel; strategy first-person camera | 2 | prefs and settings cards after #331, #333, #354, #405 |
 
 - **Wave 1, start now:** the bugs, ENG-F16, ENG-F6 and ENG-F25. They need no other M2 work.
 - **Wave 2, before SG-F5 and SG-F4:** ENG-F23 and ENG-F24 unblock SG-F5; ENG-F9 comes before SG-F4.
-  ENG-F28 (mouse feel) runs alongside; its settings cards queue behind the wave-1 prefs cards.
+  ENG-F28 (mouse feel) runs alongside; its settings cards queue behind the wave-1 prefs cards and ENG-F18-07.
+  The ENG-F18 console (2.11, 2.11a) is pulled into wave 2 so the FPS can test features with it.
 - **Wave 3, SG-F4 follow-ups:** pause and speed, then the height slice, once SG-F4's walking skeleton exists.
-- **Wave 4, before FPS Phase 2:** ENG-F18 (after 2.2), ENG-F19, ENG-F17 and ENG-F26
+- **Wave 4, before FPS Phase 2:** the rest of ENG-F18 (2.11b), ENG-F19, ENG-F17 and ENG-F26
   (before ENG-F18's keybind card, which builds the hold and chord capture on it).
 
 ### Strategy
@@ -211,8 +214,7 @@ edits data); ADR-0011's rules cover netcode.
 
 [ENG-F1-01](engine/ENG-F1-engine-hygiene/ENG-F1-01-constructor-size-cleanup.md)/[02](engine/ENG-F1-engine-hygiene/ENG-F1-02-error-handling-backlog.md)/[03](engine/ENG-F1-engine-hygiene/ENG-F1-03-god-module-splits.md)/[05](engine/ENG-F1-engine-hygiene/ENG-F1-05-material-model-revisit.md)/[07](engine/ENG-F1-engine-hygiene/ENG-F1-07-lint-ratchet.md), [ENG-F3-01](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-01-bind-group-split.md)/[02](engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-02-frustum-culling-sorting.md), [ENG-F4](engine/ENG-F4-terrain-rendering-debt/_feature.md)-*,
 [ENG-F1-08](engine/ENG-F1-engine-hygiene/ENG-F1-08-headless-app-tests.md) (headless app wiring tests),
-[ENG-F1-04](engine/ENG-F1-engine-hygiene/ENG-F1-04-keybind-test-layering.md) (keybind test tiers; drop what ENG-F22's UI test cards already cover),
-[ENG-F1-10](https://github.com/WrackedFella/moho/issues/246) (key capture stops listening on a conflict; pair with ENG-F1-04).
+[ENG-F1-10](https://github.com/WrackedFella/moho/issues/246) (key capture stops listening on a conflict; pair with [#392](https://github.com/WrackedFella/moho/issues/392), which collapses the keybind test tiers, ex ENG-F1-04).
 
 ## Decisions
 
@@ -253,3 +255,4 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-15 | New ENG-F26 (tap, hold, modifier and toggle bindings) in M2 wave 4, not a gate item. Brings back the modifier chords ENG-F12 dropped on 2026-10-08, now with a consumer; hold timing counts ticks (ADR-0011) | [ENG-F26](https://github.com/WrackedFella/moho/issues/359) |
 | 2026-10-15 | The strategy line is renamed flagstone and the FPS line searchlight inside the monorepo, ahead of the split; engine crates keep `moho_`, and SG-/FPS- IDs stay | [ENG-F27](https://github.com/WrackedFella/moho/issues/361) |
 | 2026-10-15 | New ENG-F28 (Source-like mouse look) in M2 wave 2, not a gate item: look turns every frame ahead of the tick that consumes it (ADR-0011 holds), raw by default, settings in the same feature | [ENG-F28](https://github.com/WrackedFella/moho/issues/373) |
+| 2026-10-16 | ENG-F18's console moves to wave 2 for FPS testing (#402): games inherit the engine's commands and add their own, a taken name is refused; game settings persist in each game's own prefs file. Strategy migration and on-screen text stay in wave 4 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) |

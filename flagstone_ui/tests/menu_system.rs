@@ -2,7 +2,7 @@
 
 use flagstone_ui::UiComponent;
 use flagstone_ui::prefs::Prefs;
-use flagstone_ui::{MenuAction, MenuItem, SettingsMenu};
+use flagstone_ui::{MenuAction, MenuItem, PauseMenu, SettingsMenu};
 
 #[test]
 fn settings_menu_structure() {
@@ -27,10 +27,40 @@ fn settings_menu_structure() {
         MenuAction::None,
         "Save emits nothing unclicked"
     );
-    assert_eq!(items[1].action, MenuAction::ShowMenu("start".to_string()));
+    assert_eq!(items[1].action, MenuAction::Back);
 
     // Verify menu metadata
     assert_eq!(menu.name(), "settings");
+}
+
+#[test]
+fn pause_menu_structure() {
+    let mut menu = PauseMenu::new();
+    let ctx = egui::Context::default();
+
+    let mut items: Vec<MenuItem> = Vec::new();
+    let _ = run_ui(&ctx, egui::RawInput::default(), |ui| {
+        items = menu.render(ui);
+    });
+
+    let actions: Vec<_> = items.iter().map(|item| item.action.clone()).collect();
+    assert_eq!(
+        actions,
+        [
+            MenuAction::Resume,
+            MenuAction::ShowMenu("settings".to_string()),
+            MenuAction::ExitToMainMenu,
+        ]
+    );
+    for item in &items {
+        assert!(
+            item.rect.is_some_and(|rect| rect.is_positive()),
+            "Menu items should have rects"
+        );
+        assert!(item.enabled, "Menu items should be enabled");
+        assert!(!item.clicked, "nothing was clicked");
+    }
+    assert_eq!(menu.name(), "pause");
 }
 
 /// Runs one frame and clears its texture delta; egui asserts in debug builds

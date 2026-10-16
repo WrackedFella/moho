@@ -70,7 +70,7 @@ The tick drains one channel per event family, in this order:
 
 | # | Drain | Effect |
 |---|---|---|
-| 1 | `process_ui_events` | load/new world, exit request (auto-save runs in `frame`), menus |
+| 1 | `process_ui_events` | load/new world, exit and main-menu requests (their auto-save runs in `frame`), resume, menus |
 | 2 | `process_graphics_events` | time of day, debug view |
 | 3 | `process_world_events` | `ChunkMeshDirty` → remesh (draw + collider) |
 | 4 | `process_input_events` | wheel zoom, mine action |
@@ -79,7 +79,9 @@ The tick drains one channel per event family, in this order:
 Audio events are drained in `Game::frame` and forwarded to `AudioSystem`, since the runner
 owns it. `AudioEvent::PlaySoundAt` carries a world position: `AudioSystem` attenuates
 sound-effect and voice sources by distance from its `Listener` (full volume within 2 m,
-inverse distance beyond, not played past 100 m; `moho_audio/src/spatial.rs`). Why channels instead of handling inside bus handlers: [events](events.md#the-channel-hand-off).
+inverse distance beyond, not played past 100 m; `moho_audio/src/spatial.rs`). They are also
+constant-power panned by direction relative to the listener's facing (centred sounds play
+3 dB quieter per ear; stereo files are folded to mono). Why channels instead of handling inside bus handlers: [events](events.md#the-channel-hand-off).
 
 ## Frame
 
@@ -92,7 +94,8 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
 2. apply queued `RenderRequest`s, set the audio listener from the frame camera
    (`Listener::from_view`), and drain audio events;
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
-4. `update_hud_data`, then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
+4. if the UI asked for the main menu (Exit to main menu): auto-save, then `show_menu`, and go on;
+5. `update_hud_data`, then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
    with actors, the sphere and cube mesh handles and the frame camera (below).
 
 A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:

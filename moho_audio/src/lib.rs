@@ -28,6 +28,7 @@ pub mod error;
 mod output;
 mod rodio_output;
 pub mod spatial;
+mod stereo_gain_source;
 #[cfg(test)]
 mod test_support;
 
