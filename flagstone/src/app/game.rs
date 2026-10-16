@@ -342,6 +342,25 @@ mod tests {
         app
     }
 
+    #[test]
+    fn app_starts_with_audio_settings_from_saved_prefs() {
+        let mut prefs = moho_core::prefs::Prefs::default();
+        *prefs.sound_effect_volume_mut() = 5.0;
+
+        let app = App::from_config(
+            crate::app::config::AppConfig::builder()
+                .prefs(prefs)
+                .build(),
+        );
+
+        let settings = app
+            .pending_audio_settings
+            .as_ref()
+            .expect("startup queues audio settings from prefs");
+        let volume = settings.effective_volume(&moho_audio::AudioCategory::SoundEffect);
+        assert!((volume - 0.5).abs() < 1e-6, "volume={volume}");
+    }
+
     fn hold(app: &mut App, action: StrategyAction) {
         let key = default_key(app, action);
         app.input.actions.key(key, true);

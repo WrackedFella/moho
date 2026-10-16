@@ -129,6 +129,9 @@ struct App {
     /// still saves to `Prefs::config_path()`, so tests that save from it set a path.
     prefs_path: Option<std::path::PathBuf>,
 
+    // Volumes queued for the audio system; `frame` applies them
+    pending_audio_settings: Option<moho_audio::AudioSettings>,
+
     // Grouped sub-systems
     physics: app::physics_controller::PhysicsController,
     generation: app::generation_job::WorldGenerationJob,
@@ -210,6 +213,7 @@ impl App {
 
             prefs: initialized.prefs,
             prefs_path: Some(Prefs::config_path()),
+            pending_audio_settings: None,
 
             physics: app::physics_controller::PhysicsController::new(),
             generation: app::generation_job::WorldGenerationJob::new(),
@@ -566,6 +570,46 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use moho_audio::AudioCategory;
+
+    fn prefs_with_sfx(volume: f32) -> Prefs {
+        let mut prefs = Prefs::default();
+        *prefs.sound_effect_volume_mut() = volume;
+        prefs
+    }
+
+    fn pending_sfx(app: &App) -> Option<f32> {
+        app.pending_audio_settings
+            .as_ref()
+            .map(|s| s.effective_volume(&AudioCategory::SoundEffect))
+    }
+
+    #[test]
+    fn adopt_settings_queues_audio_settings_from_prefs() {
+        let mut app = App::headless();
+        app.adopt_settings(prefs_with_sfx(10.0));
+        app.pending_audio_settings = None;
+
+        app.adopt_settings(prefs_with_sfx(3.0));
+
+        let volume = pending_sfx(&app).expect("adopting settings queues audio settings");
+        assert!((volume - 0.3).abs() < 1e-6, "volume={volume}");
+    }
+
+    #[test]
+    fn frame_without_a_save_leaves_audio_settings_unqueued() {
+        use moho_app::{FrameContext, Game, GameClock, LoopConfig};
+        let mut app = App::headless();
+        app.pending_audio_settings = None;
+        let clock = GameClock::default();
+        let tick = LoopConfig::new(flagstone_game::TICK_HZ).tick_length();
+        let mut ctx = FrameContext::new(tick, &clock, None, None);
+
+        Game::frame(&mut app, &mut ctx, 0.0);
+
+        assert!(app.pending_audio_settings.is_none());
+    }
 
     #[test]
     fn app_config_ticks_at_60hz() {

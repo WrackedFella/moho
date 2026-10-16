@@ -418,6 +418,32 @@ mod tests {
     }
 
     #[test]
+    fn volume_slider_reaches_zero() {
+        let ctx = egui::Context::default();
+        let mut value = 5.0_f32;
+        volume_frame(&ctx, Vec::new(), &mut value);
+        volume_frame(&ctx, Vec::new(), &mut value);
+        let at = |x: f32| egui::pos2(x, 20.0);
+        let button = |x: f32, pressed| egui::Event::PointerButton {
+            pos: at(x),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+
+        volume_frame(&ctx, vec![egui::Event::PointerMoved(at(700.0))], &mut value);
+        volume_frame(&ctx, vec![button(700.0, true)], &mut value);
+        volume_frame(
+            &ctx,
+            vec![egui::Event::PointerMoved(at(-500.0))],
+            &mut value,
+        );
+        volume_frame(&ctx, vec![button(-500.0, false)], &mut value);
+
+        assert_eq!(value, 0.0);
+    }
+
+    #[test]
     fn volume_slider_steps_by_tenths() {
         for press_x in [688.4_f32, 700.3, 765.2, 777.1] {
             let ctx = egui::Context::default();
