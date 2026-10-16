@@ -205,6 +205,9 @@ impl RendererBackend for Renderer<'_> {
     fn set_ui_source(&mut self, source: Option<UiSource>) {
         self.set_ui_source(source);
     }
+    fn enqueue_markers(&mut self, markers: &[moho_render_api::MarkerGpu]) {
+        self.enqueue_markers(markers);
+    }
     fn add_point_light(
         &mut self,
         position: glam::Vec3,

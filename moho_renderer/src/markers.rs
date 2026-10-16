@@ -1,5 +1,6 @@
 //! Renderer-side store of box markers keyed by [`MarkerId`].
 
+use glam::Vec3;
 use moho_render_api::{Marker, MarkerGpu, MarkerId};
 use std::collections::BTreeMap;
 
@@ -8,10 +9,26 @@ use std::collections::BTreeMap;
 pub const MARKER_INFLATE: f32 = 0.01;
 
 /// Corners of the unit cube spanning `(0, 0, 0)` to `(1, 1, 1)`, scaled per marker by the shader.
-pub(crate) const UNIT_CUBE_VERTICES: &[[f32; 3]] = &[];
+pub(crate) const UNIT_CUBE_VERTICES: &[[f32; 3]] = &[
+    [0.0, 0.0, 0.0],
+    [1.0, 0.0, 0.0],
+    [1.0, 1.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0, 1.0],
+    [1.0, 0.0, 1.0],
+    [1.0, 1.0, 1.0],
+    [0.0, 1.0, 1.0],
+];
 
 /// Triangle list over [`UNIT_CUBE_VERTICES`], counter-clockwise seen from outside.
-pub(crate) const UNIT_CUBE_INDICES: &[u32] = &[];
+pub(crate) const UNIT_CUBE_INDICES: &[u32] = &[
+    0, 3, 2, 0, 2, 1, // -z
+    4, 5, 6, 4, 6, 7, // +z
+    0, 4, 7, 0, 7, 3, // -x
+    1, 2, 6, 1, 6, 5, // +x
+    0, 1, 5, 0, 5, 4, // -y
+    3, 7, 6, 3, 6, 2, // +y
+];
 
 /// The markers a game has placed, drawn each frame until removed.
 ///
@@ -28,26 +45,47 @@ impl Markers {
 
     /// Add or replace the marker under `id`.
     pub fn upsert(&mut self, id: MarkerId, marker: Marker) {
-        let _ = (id, marker);
-        todo!("store the marker")
+        self.live.insert(id, marker);
     }
 
     /// Remove the marker under `id`; an unknown id is a no-op.
     pub fn remove(&mut self, id: MarkerId) {
-        let _ = id;
-        todo!("drop the marker")
+        self.live.remove(&id);
     }
 
     /// Remove every marker.
     pub fn clear(&mut self) {
-        todo!("drop all markers")
+        self.live.clear();
     }
 
     /// The markers as GPU instances, each box grown by [`MARKER_INFLATE`] per
     /// side and sorted far to near by box centre from `eye`.
     pub fn draws(&self, eye: glam::Vec3) -> Vec<MarkerGpu> {
-        let _ = (&self.live, eye, UNIT_CUBE_VERTICES, UNIT_CUBE_INDICES);
-        todo!("inflate and sort the markers")
+        let mut keyed: Vec<(f32, MarkerGpu)> = self
+            .live
+            .values()
+            .map(|m| {
+                let centre = (Vec3::from(m.min) + Vec3::from(m.max)) * 0.5;
+                let gpu = MarkerGpu {
+                    min: [
+                        m.min[0] - MARKER_INFLATE,
+                        m.min[1] - MARKER_INFLATE,
+                        m.min[2] - MARKER_INFLATE,
+                        0.0,
+                    ],
+                    max: [
+                        m.max[0] + MARKER_INFLATE,
+                        m.max[1] + MARKER_INFLATE,
+                        m.max[2] + MARKER_INFLATE,
+                        0.0,
+                    ],
+                    color: m.color,
+                };
+                (centre.distance_squared(eye), gpu)
+            })
+            .collect();
+        keyed.sort_by(|a, b| b.0.total_cmp(&a.0));
+        keyed.into_iter().map(|(_, gpu)| gpu).collect()
     }
 }
 
