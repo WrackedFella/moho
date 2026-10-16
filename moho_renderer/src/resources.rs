@@ -55,7 +55,6 @@ pub struct ResourcePool {
     /// Number of vertices in skybox
     pub(crate) skybox_vertex_count: u32,
 
-    /// Unit cube and per-frame instance buffer for the marker pass
     pub(crate) marker_buffers: MarkerBuffers,
 }
 

@@ -53,7 +53,6 @@ impl Markers {
         self.live.remove(&id);
     }
 
-    /// Remove every marker.
     pub fn clear(&mut self) {
         self.live.clear();
     }

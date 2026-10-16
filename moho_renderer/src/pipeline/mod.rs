@@ -360,7 +360,6 @@ impl PipelineSetup {
         &self.skybox_pipeline
     }
 
-    /// Get the translucent box marker pipeline.
     pub fn marker_pipeline(&self) -> &wgpu::RenderPipeline {
         &self.marker_pipeline
     }
