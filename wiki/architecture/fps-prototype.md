@@ -1,7 +1,8 @@
 # FPS prototype
 
-**Source:** `searchlight/src/`, `searchlight/assets/`.
-**Decisions:** [ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md).
+**Source:** `searchlight/src/`, `searchlight/assets/`, `moho_ui_shell/src/`.
+**Decisions:** [ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md),
+[ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md).
 
 `searchlight` is the FPS line's engine adapter: a library and the `searchlight` binary. Rules
 (`Rifle`, `Magazine`, `Body`, `BodyProfile`) come from `searchlight_rules`; windowing, loop,
@@ -34,12 +35,23 @@ flowchart LR
 | `cover` | `pick` and `offer`: choose the nearest free cover point a hurt enemy should run to, using world-only rays against the player (`Threat`) |
 | `sim` | `FpsSim`: player character and body, rifle, spare magazines, dummies and enemies; emits `Feedback` |
 | `hud` | Text for rifle state, hits, health and death; the hit-edge direction; the death overlay |
+| `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (none yet, so only the engine's `help`, `clear` and `quit` run) |
 | `game` | `FpsGame`, the `moho_app::Game` implementation: samples input, ticks the sim, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair |
 
 `FpsSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `FpsSim::tick` queues it, the game drains it
 (`drain_feedback`) and reacts. `TICK_HZ` is 60. Tuning values (speeds, damage, cooldown,
 magazine size, body profile, `EnemyTuning`, the player part enemies aim at) live in `main.rs` as a `SimConfig`.
+
+## Console
+
+`FpsGame` owns a `moho_ui_shell::UiShell` behind an `Arc<Mutex<_>>` and composes it with the
+crosshair through `UiLayers` as the renderer's one UI source. Every key and button goes to the
+shell first (`route_input`): the console toggle key opens it, `release_all` drops held game keys,
+and while it is open input does not reach the game. Escape closes the console instead of
+exiting. Engine commands typed in the console (`quit`) return as values and apply on the next
+frame through `apply_engine_command`. Console commands are hidden debug commands
+([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
 
 ## Tick
 
