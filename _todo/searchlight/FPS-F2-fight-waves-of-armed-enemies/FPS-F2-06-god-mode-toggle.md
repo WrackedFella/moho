@@ -28,7 +28,7 @@ Scenario: God mode is off on first launch
   When the game starts
   Then god mode is off
 
-Scenario: tgm flips the value and prints it
+Scenario Outline: tgm flips the value and prints it
   Given god mode is <before>
   When the tester enters "tgm"
   Then god mode is <after>
