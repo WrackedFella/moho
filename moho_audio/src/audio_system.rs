@@ -725,6 +725,52 @@ mod tests {
     }
 
     #[test]
+    fn sound_behind_plays_quieter_than_in_front() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(Listener::default());
+        let north = Vec3::new(0.0, 0.0, -10.0);
+        let south = Vec3::new(0.0, 0.0, 10.0);
+        let east = Vec3::new(10.0, 0.0, 0.0);
+
+        system.handle_event(play_at(SOUND, 1.0, north)).unwrap();
+        system.handle_event(play_at(SOUND, 1.0, east)).unwrap();
+        system.handle_event(play_at(SOUND, 1.0, south)).unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 3);
+        assert!(voices[2].volume < voices[0].volume, "south vs north");
+        assert!(voices[2].volume < voices[1].volume, "south vs east");
+        assert_volume_eq(voices[2].volume, 0.2 * crate::spatial::REAR_GAIN);
+    }
+
+    #[test]
+    fn sound_in_front_plays_at_its_distance_volume() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(Listener::default());
+
+        system
+            .handle_event(play_at(SOUND, 1.0, Vec3::new(0.0, 0.0, -10.0)))
+            .unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 1);
+        let expected = distance_gain(10.0).expect("10 m is audible");
+        assert_volume_eq(voices[0].volume, expected);
+    }
+
+    #[test]
+    fn unpositioned_sound_gets_no_rear_cue() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(Listener::default());
+
+        system.play_sound(SOUND, 0.8).unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 1);
+        assert_volume_eq(voices[0].volume, 0.8);
+    }
+
+    #[test]
     fn music_and_ui_ignore_a_position() {
         let far = [500.0, 0.0, 0.0];
         let sources = [
