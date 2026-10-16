@@ -91,8 +91,9 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
 
 1. `poll_gamepads`: apply pad events while playing with focus, otherwise discard them
    and release pad actions;
-2. apply queued `RenderRequest`s, set the audio listener from the frame camera
-   (`Listener::from_view`), and drain audio events;
+2. apply queued `RenderRequest`s; when an audio system exists, apply queued
+   `AudioSettings` (they stay queued without one) and set the listener from the frame
+   camera (`Listener::from_view`); then drain audio events;
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
 4. if the UI asked for the main menu (Exit to main menu): auto-save, then `show_menu`, and go on;
 5. `update_hud_data`, then `update_lighting` (sun, moon, ambient) and `scene.render(...)`

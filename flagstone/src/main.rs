@@ -157,7 +157,8 @@ impl App {
     }
 
     /// Makes `prefs` (just saved by the Settings screen) the running prefs and
-    /// rebinds input from them. Does not save: the screen already wrote the file.
+    /// rebinds input from them and queues their audio levels for the next frame.
+    /// Does not save: the screen already wrote the file.
     fn adopt_settings(&mut self, prefs: Prefs) {
         let config = crate::app::config::AppConfig::from_prefs_struct(prefs);
         self.input.actions = crate::app::initializer::build_actions(&config);

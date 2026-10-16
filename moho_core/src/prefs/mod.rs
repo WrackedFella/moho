@@ -53,7 +53,7 @@ pub const RESOLUTION_PRESETS: &[(&str, (u32, u32))] = &[
 pub struct Prefs {
     mouse_sensitivity: f32,
     input_filtering_enabled: bool,
-    // Audio settings (values 1.0 to 10.0)
+    // Audio settings (values 0.0 to 10.0)
     audio_sound_effect_volume: f32,
     audio_music_volume: f32,
     audio_ui_volume: f32,
