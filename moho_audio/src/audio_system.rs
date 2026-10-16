@@ -87,7 +87,7 @@ impl<O: AudioOutput> AudioSystem<O> {
     /// from the listener, quieter when behind it (the rear cue), and not started at all
     /// beyond audible range; music and UI sources ignore a position.
     pub fn play_audio_source(&mut self, source: &AudioSource) -> AudioResult<()> {
-        let Some(distance_gain) = self.distance_gain_for(source) else {
+        let Some(spatial_gain) = self.spatial_gain_for(source) else {
             debug!(
                 path = source.path(),
                 "Skipping audio playback: out of audible range or non-finite distance"
@@ -95,7 +95,7 @@ impl<O: AudioOutput> AudioSystem<O> {
             return Ok(());
         };
         let effective_volume =
-            self.settings.effective_volume(source.category()) * source.volume() * distance_gain;
+            self.settings.effective_volume(source.category()) * source.volume() * spatial_gain;
 
         if effective_volume <= 0.0 {
             debug!(
@@ -141,7 +141,7 @@ impl<O: AudioOutput> AudioSystem<O> {
 
     /// Distance attenuation times the rear cue for a positioned source, `None` when
     /// out of range; 1.0 for sources heard without a position.
-    fn distance_gain_for(&self, source: &AudioSource) -> Option<f32> {
+    fn spatial_gain_for(&self, source: &AudioSource) -> Option<f32> {
         match Self::world_position(source) {
             Some(position) => distance_gain(self.listener.position.distance(position))
                 .map(|gain| gain * rear_gain(&self.listener, position)),
