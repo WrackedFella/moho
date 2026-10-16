@@ -55,6 +55,7 @@ jobs:
           claude_args: |
             --max-turns 100
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running."
+            --add-dir /home/runner/.claude/plugins/cache
             --allowedTools "Bash(gh issue:*),Bash(gh api:*),Bash(git log:*),Bash(git show:*),Edit,Write,Task,Skill"
       # The action hides the run's output, so a denial shows only as a count. List what was
       # denied, so the allow-list can be tuned from evidence.
@@ -121,7 +122,8 @@ jobs:
           claude_args: |
             --max-turns 200
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running."
-            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Edit,Write,Task,Skill"
+            --add-dir /home/runner/.claude/plugins/cache
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/board *),Edit,Write,Task,Skill"
       # The action hides the run's output, so a denial shows only as a count. List what was
       # denied, so the allow-list can be tuned from evidence.
       - name: List denied commands
