@@ -190,11 +190,11 @@ impl Default for Prefs {
         Self {
             mouse_sensitivity: 1.0,
             input_filtering_enabled: true,
-            // Default audio volumes (mid-range)
-            audio_sound_effect_volume: 7.0,
-            audio_music_volume: 5.0,
-            audio_ui_volume: 8.0,
-            audio_voice_volume: 7.0,
+            // Audio volumes on the 0 to 10 scale, matching the levels players hear
+            audio_sound_effect_volume: 8.0,
+            audio_music_volume: 6.0,
+            audio_ui_volume: 7.0,
+            audio_voice_volume: 9.0,
             // Default graphics settings (High)
             graphics_shadow_quality: 3,
             graphics_ssao_quality: 3,

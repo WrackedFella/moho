@@ -133,7 +133,7 @@ impl FormControls {
                     |ui| {
                         ui.spacing_mut().slider_width = 120.0;
                         let slider = ui.add(
-                            egui::Slider::new(value, 1.0..=10.0)
+                            egui::Slider::new(value, 0.0..=10.0)
                                 .step_by(0.1)
                                 .show_value(false),
                         );
@@ -148,7 +148,7 @@ impl FormControls {
                 // Drag value
                 let drag = ui.add(
                     egui::DragValue::new(value)
-                        .range(1.0..=10.0)
+                        .range(0.0..=10.0)
                         .speed(0.1)
                         .min_decimals(1)
                         .max_decimals(1),

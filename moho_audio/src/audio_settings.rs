@@ -26,14 +26,7 @@ pub struct AudioSettings {
 
 impl Default for AudioSettings {
     fn default() -> Self {
-        Self {
-            master_volume: 1.0,
-            sound_effects_volume: 0.8,
-            music_volume: 0.6,
-            ui_volume: 0.7,
-            voice_volume: 0.9,
-            muted: false,
-        }
+        Self::from_prefs(&moho_core::prefs::Prefs::default())
     }
 }
 
@@ -44,8 +37,19 @@ impl AudioSettings {
     }
 
     /// Levels from saved prefs: each category is its 0..=10 pref divided by ten.
-    pub fn from_prefs(_prefs: &moho_core::prefs::Prefs) -> Self {
-        todo!()
+    pub fn from_prefs(prefs: &moho_core::prefs::Prefs) -> Self {
+        Self {
+            master_volume: 1.0,
+            sound_effects_volume: 0.0,
+            music_volume: 0.0,
+            ui_volume: 0.0,
+            voice_volume: 0.0,
+            muted: false,
+        }
+        .with_sound_effects_volume(prefs.sound_effect_volume() / 10.0)
+        .with_music_volume(prefs.music_volume() / 10.0)
+        .with_ui_volume(prefs.ui_volume() / 10.0)
+        .with_voice_volume(prefs.voice_volume() / 10.0)
     }
 
     /// Set master volume (affects all audio)

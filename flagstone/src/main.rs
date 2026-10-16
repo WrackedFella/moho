@@ -162,6 +162,7 @@ impl App {
     fn adopt_settings(&mut self, prefs: Prefs) {
         let config = crate::app::config::AppConfig::from_prefs_struct(prefs);
         self.input.actions = crate::app::initializer::build_actions(&config);
+        self.pending_audio_settings = Some(moho_audio::AudioSettings::from_prefs(&config.prefs));
         self.prefs = config.prefs;
     }
 
@@ -211,9 +212,9 @@ impl App {
 
             simulation: initialized.simulation,
 
+            pending_audio_settings: Some(moho_audio::AudioSettings::from_prefs(&initialized.prefs)),
             prefs: initialized.prefs,
             prefs_path: Some(Prefs::config_path()),
-            pending_audio_settings: None,
 
             physics: app::physics_controller::PhysicsController::new(),
             generation: app::generation_job::WorldGenerationJob::new(),

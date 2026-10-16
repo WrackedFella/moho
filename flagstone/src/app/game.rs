@@ -298,6 +298,9 @@ impl moho_app::Game for App {
         }
         let camera = self.render_camera(alpha);
         if let Some(audio) = ctx.audio() {
+            if let Some(settings) = self.pending_audio_settings.take() {
+                audio.set_settings(settings);
+            }
             audio.set_listener(moho_audio::Listener::from_view(camera.0));
         }
         self.drain_audio_events(ctx.audio());
