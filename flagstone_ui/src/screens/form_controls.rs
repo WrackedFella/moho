@@ -433,6 +433,7 @@ mod tests {
 
         volume_frame(&ctx, vec![egui::Event::PointerMoved(at(700.0))], &mut value);
         volume_frame(&ctx, vec![button(700.0, true)], &mut value);
+        assert!((value - 5.0).abs() > 0.05, "press did not hit the slider");
         volume_frame(
             &ctx,
             vec![egui::Event::PointerMoved(at(-500.0))],

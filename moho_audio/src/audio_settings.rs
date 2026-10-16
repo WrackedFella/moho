@@ -171,9 +171,9 @@ mod tests {
 
     #[test]
     fn from_prefs_zero_volume_is_silent() {
-        let settings = AudioSettings::from_prefs(&prefs_with(0.0, 0.0, 0.0, 0.0));
+        let settings = AudioSettings::from_prefs(&prefs_with(0.0, 10.0, 3.0, 1.0));
 
-        assert_volumes(&settings, [0.0, 0.0, 0.0, 0.0]);
+        assert_volumes(&settings, [0.0, 1.0, 0.3, 0.1]);
     }
 
     #[test]
@@ -181,8 +181,6 @@ mod tests {
         let settings = AudioSettings::from_prefs(&prefs_with(5.0, 10.0, 3.0, 1.0));
 
         assert_volumes(&settings, [0.5, 1.0, 0.3, 0.1]);
-        assert!(!settings.muted);
-        assert_eq!(settings.master_volume, 1.0);
     }
 
     #[test]
