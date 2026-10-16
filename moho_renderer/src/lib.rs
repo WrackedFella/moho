@@ -27,7 +27,9 @@ pub use gpu_types::{
 };
 pub use moho_render_api::{InstanceGpu, MaterialGpu};
 mod block_on;
+mod markers;
 mod ui_pass;
+pub use markers::{MARKER_INFLATE, Markers};
 mod world_meshes;
 pub use world_meshes::WorldMeshes;
 mod instance_collector;
@@ -139,6 +141,10 @@ pub trait RendererBackend {
     /// Set the provider of UI paint data, pulled in `submit_frame` and drawn
     /// over the scene; `None` clears it. No-op by default.
     fn set_ui_source(&mut self, _source: Option<UiSource>) {}
+    /// Queue the frame's translucent box markers, sorted far to near, to draw
+    /// over the world. Called once per frame after the transparent draws and
+    /// before `submit_frame`. No-op by default.
+    fn enqueue_markers(&mut self, _markers: &[moho_render_api::MarkerGpu]) {}
 }
 
 pub use moho_render_api::UiSource;

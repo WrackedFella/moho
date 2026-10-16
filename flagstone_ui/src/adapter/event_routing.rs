@@ -107,6 +107,9 @@ pub fn process_console_action(action: crate::overlays::ConsoleAction, event_bus:
     use crate::overlays::ConsoleAction;
 
     match action {
+        ConsoleAction::ShowMarker { .. } | ConsoleAction::ClearMarkers(_) => {
+            todo!("publish the marker debug events")
+        }
         ConsoleAction::Close => {
             use moho_core::events::UiEvent;
             event_bus.publish(UiEvent::MenuHidden {

@@ -2,7 +2,9 @@
 //! observed through a recording `RendererBackend`.
 
 use glam::Vec3;
-use moho_render_api::{InstanceGpu, MaterialGpu, MaterialKey, RenderMaterial, Renderable};
+use moho_render_api::{
+    InstanceGpu, Marker, MarkerGpu, MarkerId, MaterialGpu, MaterialKey, RenderMaterial, Renderable,
+};
 use moho_renderer::{FrameError, LightingGpu, RendererBackend, Scene};
 
 const SPHERE_MESH: u32 = 1;
@@ -86,10 +88,20 @@ struct Draw {
     xs: Vec<f32>,
 }
 
+/// One backend call that shapes the frame, in the order it was made.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Call {
+    Draw,
+    Markers,
+    Submit,
+}
+
 #[derive(Default)]
 struct RecordingRenderer {
     draws: Vec<Draw>,
     material_uploads: Vec<usize>,
+    marker_batches: Vec<Vec<MarkerGpu>>,
+    calls: Vec<Call>,
 }
 
 impl RecordingRenderer {
@@ -143,8 +155,15 @@ impl RendererBackend for RecordingRenderer {
             mesh,
             xs: instances.iter().map(|i| i.model[3][0]).collect(),
         });
+        self.calls.push(Call::Draw);
     }
-    fn submit_frame(&mut self) {}
+    fn enqueue_markers(&mut self, markers: &[MarkerGpu]) {
+        self.marker_batches.push(markers.to_vec());
+        self.calls.push(Call::Markers);
+    }
+    fn submit_frame(&mut self) {
+        self.calls.push(Call::Submit);
+    }
     fn set_materials(&mut self, materials: &[MaterialGpu]) {
         self.material_uploads.push(materials.len());
     }
@@ -281,4 +300,113 @@ fn materials_upload_only_when_table_changed() {
     render_frame(&mut scene, &mut renderer, &with_new_material, &[]);
 
     assert_eq!(renderer.material_uploads, vec![1, 2]);
+}
+
+const AMBER: [f32; 4] = [1.0, 0.75, 0.0, 0.4];
+
+#[test]
+fn markers_enqueue_once_after_transparent_draws() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    scene
+        .markers_mut()
+        .upsert(MarkerId(1), Marker::new([0.0; 3], [1.0; 3], AMBER));
+    let spheres = [prop(1.0, OPAQUE), prop(4.0, GLASS)];
+    let cubes = [prop(3.0, GLASS)];
+
+    render_frame(&mut scene, &mut renderer, &spheres, &cubes);
+
+    let marker_calls = renderer
+        .calls
+        .iter()
+        .filter(|c| **c == Call::Markers)
+        .count();
+    assert_eq!(marker_calls, 1, "{:?}", renderer.calls);
+    let (last, before) = renderer
+        .calls
+        .split_last()
+        .expect("the frame made backend calls");
+    assert_eq!(*last, Call::Submit);
+    assert_eq!(
+        before.last(),
+        Some(&Call::Markers),
+        "markers come after every draw, transparent ones included: {:?}",
+        renderer.calls
+    );
+    assert!(
+        before.contains(&Call::Draw),
+        "the actors were drawn: {:?}",
+        renderer.calls
+    );
+    assert_eq!(renderer.marker_batches.len(), 1);
+    assert_eq!(renderer.marker_batches[0].len(), 1);
+    assert_eq!(renderer.marker_batches[0][0].color, AMBER);
+}
+
+#[test]
+fn markers_enqueue_far_to_near_from_the_camera_eye() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let at =
+        |x: f32, tag: f32| Marker::new([x, 0.0, 0.0], [x + 1.0, 1.0, 1.0], [tag, 0.0, 0.0, 0.5]);
+    scene.markers_mut().upsert(MarkerId(1), at(1.0, 1.0));
+    scene.markers_mut().upsert(MarkerId(2), at(8.0, 8.0));
+
+    render_frame_from(
+        &mut scene,
+        &mut renderer,
+        &[],
+        &[],
+        Vec3::new(0.0, 0.5, 0.5),
+    );
+
+    let tags: Vec<f32> = renderer.marker_batches[0]
+        .iter()
+        .map(|m| m.color[0])
+        .collect();
+    assert_eq!(tags, vec![8.0, 1.0]);
+}
+
+#[test]
+fn markers_are_not_enqueued_as_draws() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    scene
+        .markers_mut()
+        .upsert(MarkerId(1), Marker::new([0.0; 3], [1.0; 3], AMBER));
+
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    assert!(
+        renderer.non_empty_draws().is_empty(),
+        "a draw carrying a marker would enter the shadow and AO passes: {:?}",
+        renderer.draws
+    );
+    assert_eq!(
+        renderer.marker_batches.len(),
+        1,
+        "markers reach the backend through enqueue_markers"
+    );
+    assert_eq!(renderer.marker_batches[0].len(), 1);
+}
+
+#[test]
+fn removed_markers_are_no_longer_enqueued() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    scene
+        .markers_mut()
+        .upsert(MarkerId(1), Marker::new([0.0; 3], [1.0; 3], AMBER));
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    scene.markers_mut().remove(MarkerId(1));
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    // An empty second frame may skip the call or send an empty batch; it must not resend the marker.
+    assert_eq!(renderer.marker_batches.first().map(Vec::len), Some(1));
+    assert!(
+        renderer.marker_batches.iter().skip(1).all(Vec::is_empty),
+        "{:?}",
+        renderer.marker_batches
+    );
 }

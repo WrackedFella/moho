@@ -32,6 +32,14 @@ pub enum ConsoleAction {
         position: glam::Vec3,
         volume: f32,
     },
+    /// Show or replace a box marker, corners in world metres
+    ShowMarker {
+        id: u64,
+        min: glam::Vec3,
+        max: glam::Vec3,
+    },
+    /// Remove the marker with this id, or every marker when `None`
+    ClearMarkers(Option<u64>),
     /// No action
     None,
 }
@@ -662,5 +670,95 @@ mod tests {
             "{:?}",
             result.messages
         );
+    }
+
+    #[test]
+    fn marker_parses_id_position_and_size() {
+        let processor = CommandProcessor::new();
+
+        let sized = processor.execute("marker 7 1.5 -2 30 2.5");
+        let unit = processor.execute("marker 8 1 2 3");
+
+        assert!(!sized.messages.is_empty());
+        assert_eq!(
+            sized.action,
+            ConsoleAction::ShowMarker {
+                id: 7,
+                min: glam::Vec3::new(1.5, -2.0, 30.0),
+                max: glam::Vec3::new(4.0, 0.5, 32.5),
+            }
+        );
+        assert_eq!(
+            unit.action,
+            ConsoleAction::ShowMarker {
+                id: 8,
+                min: glam::Vec3::new(1.0, 2.0, 3.0),
+                max: glam::Vec3::new(2.0, 3.0, 4.0),
+            },
+            "size defaults to one block"
+        );
+    }
+
+    #[test]
+    fn marker_rejects_bad_numbers() {
+        let processor = CommandProcessor::new();
+        let rows = [
+            ("marker x 1 2 3", "Error:"),
+            ("marker -1 1 2 3", "Error:"),
+            ("marker 1.5 1 2 3", "Error:"),
+            ("marker 1 a 2 3", "Error:"),
+            ("marker 1 1 2 3 big", "Error:"),
+            ("marker 1 1 nan 3", "Error:"),
+            ("marker 1 1 2 3 inf", "Error:"),
+            ("marker 1 1 2 3 0", "Error:"),
+            ("marker 1 1 2 3 -2", "Error:"),
+            ("marker 1 1 2", "Usage:"),
+            ("marker 1", "Usage:"),
+            ("marker", "Usage:"),
+            ("marker 1 1 2 3 4 5", "Usage:"),
+        ];
+
+        for (input, expected) in rows {
+            let result = processor.execute(input);
+
+            assert_eq!(result.action, ConsoleAction::None, "{input}");
+            assert!(
+                result.messages.iter().any(|m| m.contains(expected)),
+                "{input}: {:?}",
+                result.messages
+            );
+        }
+    }
+
+    #[test]
+    fn marker_clear_with_and_without_id() {
+        let processor = CommandProcessor::new();
+
+        let all = processor.execute("marker_clear");
+        let one = processor.execute("marker_clear 7");
+        let bad = processor.execute("marker_clear x");
+        let extra = processor.execute("marker_clear 7 8");
+
+        assert_eq!(all.action, ConsoleAction::ClearMarkers(None));
+        assert_eq!(one.action, ConsoleAction::ClearMarkers(Some(7)));
+        assert_eq!(bad.action, ConsoleAction::None);
+        assert!(bad.messages.iter().any(|m| m.contains("Error:")));
+        assert_eq!(extra.action, ConsoleAction::None);
+        assert!(extra.messages.iter().any(|m| m.contains("Usage:")));
+    }
+
+    #[test]
+    fn help_lists_marker_commands() {
+        let processor = CommandProcessor::new();
+
+        let result = processor.execute("help");
+
+        for command in ["marker <", "marker_clear"] {
+            assert!(
+                result.messages.iter().any(|m| m.contains(command)),
+                "{command}: {:?}",
+                result.messages
+            );
+        }
     }
 }
