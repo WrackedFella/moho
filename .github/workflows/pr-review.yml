@@ -100,6 +100,7 @@ jobs:
           claude_args: |
             --max-turns 100
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never push, merge or resolve a thread."
+            --add-dir /home/runner/.claude/plugins/cache
             --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh api:*),Task,Skill"
       # The action hides the run's output; a denied tool call otherwise ends the review
       # silently, so list the denials here.
@@ -144,6 +145,7 @@ jobs:
           claude_args: |
             --max-turns 200
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Merge the base branch into the PR branch; never rebase or force-push. Address the findings in the latest review whose first line starts with 'Verdict:'."
+            --add-dir /home/runner/.claude/plugins/cache
             --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh api:*),Edit,Write,Task,Skill"
       - name: Review again
         if: steps.respond.outcome == 'success'
