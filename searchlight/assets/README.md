@@ -2,7 +2,7 @@
 
 | File | What it is |
 |---|---|
-| `arena.glb` | Greybox arena: floor, perimeter walls, hip-high crates, and the named marker nodes the game reads (`player_spawn`, `dummy_NN`, `enemy_spawn_NN`, `waypoint_NN`, `cover_NN`). |
+| `arena.glb` | Greybox arena: floor, perimeter walls, hip-high crates, two full-height screen walls that break line of sight (no cover marker), and the named marker nodes the game reads (`player_spawn`, `dummy_NN`, `enemy_spawn_NN`, `waypoint_NN`, `cover_NN`). |
 | `rifle_shot.wav` | A short synthesized gunshot (22.05 kHz, mono, 16-bit). |
 
 ## Origin

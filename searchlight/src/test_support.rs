@@ -137,6 +137,10 @@ pub(crate) fn enemy_tuning() -> EnemyTuning {
         patrol_speed: 0.5,
         arrive_radius: 0.5,
         fire_cone: 0.1,
+        cover_range: 15.0,
+        cover_ticks: 240,
+        chase_ticks: 600,
+        cover_hide_height: 0.9,
         seed: 7,
     }
 }
@@ -159,6 +163,7 @@ pub(crate) fn arena_with(
         dummy_spawns: Vec::new(),
         enemy_spawns: enemies.to_vec(),
         route: route.to_vec(),
+        covers: Vec::new(),
     })
 }
 

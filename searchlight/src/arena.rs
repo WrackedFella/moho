@@ -149,6 +149,7 @@ pub struct Arena {
     pub enemy_spawns: Vec<Vec3>,
     /// The loop every enemy patrols, in order.
     pub route: Vec<Vec3>,
+    pub covers: Vec<Vec3>,
 }
 
 impl Arena {
@@ -161,6 +162,7 @@ impl Arena {
             dummy_spawns: positions(&markers.dummies),
             enemy_spawns: positions(&markers.enemy_spawns),
             route: markers.patrol_route(),
+            covers: positions(&markers.covers),
         }
     }
 

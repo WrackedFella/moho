@@ -3,6 +3,7 @@
 
 pub mod arena;
 pub mod brain;
+pub mod cover;
 pub mod game;
 pub mod hud;
 pub mod input;
