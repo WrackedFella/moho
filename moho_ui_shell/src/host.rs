@@ -164,6 +164,8 @@ impl<G> UiFrameSource for UiShell<G> {
         }
         let context = self.context.clone();
         let output = context.run_ui(input, |ui| self.console.show(ui.ctx()));
+        // Platform output is dropped: handing it to egui-winit would show the cursor the game
+        // grabbed. Copy, IME and cursor icons in the console go with it.
         let primitives = context.tessellate(output.shapes, output.pixels_per_point);
         Some(to_ui_frame(
             &primitives,

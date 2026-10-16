@@ -55,7 +55,6 @@ pub struct Console<G> {
     open: bool,
     toggle: Vec<Binding>,
     input: String,
-    focus_input: bool,
     output: ConsoleOutput,
     registry: Registry<G>,
     commands: Vec<G>,
@@ -86,7 +85,6 @@ impl<G> Console<G> {
             open: false,
             toggle,
             input: String::new(),
-            focus_input: false,
             output: ConsoleOutput::new(),
             registry: Registry::new(),
             commands: Vec::new(),
@@ -168,7 +166,6 @@ impl<G> Console<G> {
 
     pub fn open(&mut self) {
         self.open = true;
-        self.focus_input = true;
     }
 
     pub fn close(&mut self) {
@@ -185,7 +182,6 @@ impl<G> Console<G> {
     }
 }
 
-/// Prints a reply, one output line per line of text.
 /// Queues a parsed command and prints its reply, or prints only the error reply.
 fn run<C>(parsed: Result<(C, String), String>, queue: &mut Vec<C>, output: &mut ConsoleOutput) {
     let reply = match parsed {
@@ -198,6 +194,7 @@ fn run<C>(parsed: Result<(C, String), String>, queue: &mut Vec<C>, output: &mut 
     print_reply(output, &reply);
 }
 
+/// Prints a reply, one output line per line of text.
 fn print_reply(output: &mut ConsoleOutput, reply: &str) {
     for line in reply.lines() {
         output.add_line(line.to_owned());

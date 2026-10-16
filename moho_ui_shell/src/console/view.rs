@@ -44,15 +44,16 @@ impl<G> Console<G> {
                                     .font(egui::FontId::monospace(14.0))
                                     .desired_width(f32::INFINITY),
                             );
-                            if self.focus_input {
-                                response.request_focus();
-                                self.focus_input = false;
-                            }
                             if response.lost_focus()
                                 && ui.input(|i| i.key_pressed(egui::Key::Enter))
                             {
                                 submitted = Some(std::mem::take(&mut self.input));
-                                self.focus_input = true;
+                            }
+                            // The line keeps focus while the console is open: with the cursor
+                            // grabbed, a click lands wherever egui last saw the pointer, and
+                            // typing would otherwise go nowhere until the console reopens.
+                            if !response.has_focus() {
+                                response.request_focus();
                             }
                             if response.has_focus() {
                                 if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
@@ -176,6 +177,52 @@ mod tests {
         assert_eq!(console.input(), "tgm 1");
         assert!(!console.output().lines().iter().any(|l| l == "> tgm 1"));
         assert_eq!(console.take_commands(), vec![]);
+    }
+
+    #[test]
+    fn typing_after_a_click_away_from_the_line_still_reaches_it() {
+        let (ctx, mut console) = open_console();
+        pass(
+            &ctx,
+            &mut console,
+            vec![egui::Event::Text("tgm".to_owned())],
+        );
+        let away = egui::pos2(400.0, 50.0);
+        let click = |pressed| egui::Event::PointerButton {
+            pos: away,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        pass(
+            &ctx,
+            &mut console,
+            vec![egui::Event::PointerMoved(away), click(true)],
+        );
+        pass(&ctx, &mut console, vec![click(false)]);
+        pass(&ctx, &mut console, vec![]);
+
+        pass(&ctx, &mut console, vec![egui::Event::Text(" 1".to_owned())]);
+
+        assert_eq!(console.input(), "tgm 1");
+    }
+
+    #[test]
+    fn down_after_up_returns_to_an_empty_line() {
+        let (ctx, mut console) = open_console();
+        pass(
+            &ctx,
+            &mut console,
+            vec![egui::Event::Text("tgm 1".to_owned())],
+        );
+        pass(&ctx, &mut console, vec![key(egui::Key::Enter)]);
+        pass(&ctx, &mut console, vec![]);
+        pass(&ctx, &mut console, vec![key(egui::Key::ArrowUp)]);
+        assert_eq!(console.input(), "tgm 1");
+
+        pass(&ctx, &mut console, vec![key(egui::Key::ArrowDown)]);
+
+        assert_eq!(console.input(), "");
     }
 
     #[test]
