@@ -17,12 +17,14 @@ impl<G> Console<G> {
             .fill(egui::Color32::from_rgba_premultiplied(20, 20, 30, 180))
             .inner_margin(egui::Margin::same(MARGIN as _));
         let mut submitted = None;
+        let mut sizing_pass = false;
 
         // Foreground order so the console paints over anything else the pass draws.
         egui::Area::new("console_panel".into())
             .order(egui::Order::Foreground)
             .fixed_pos(egui::pos2(screen_rect.min.x, screen_rect.max.y - HEIGHT))
             .show(ctx, |ui| {
+                sizing_pass = ui.is_sizing_pass();
                 frame.show(ui, |ui| {
                     let inner_height = HEIGHT - MARGIN * 2.0;
                     ui.set_min_width(screen_rect.width() - MARGIN * 2.0);
@@ -86,10 +88,9 @@ impl<G> Console<G> {
                 });
             });
 
-        // An area draws nothing on its first pass while egui measures it: run the pass again so
-        // the first frame after the console opens is not blank.
-        if !self.sized {
-            self.sized = true;
+        // An area draws nothing on a pass where egui measures it: run the pass again so the
+        // frame is not blank.
+        if sizing_pass {
             ctx.request_discard("console area sizing pass");
         }
         if let Some(line) = submitted {

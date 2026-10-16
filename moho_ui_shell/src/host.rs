@@ -162,7 +162,7 @@ impl<G> UiFrameSource for UiShell<G> {
             return None;
         }
         let context = self.context.clone();
-        let output = context.run_ui(input, |ui| self.console.show(&ui.ctx().clone()));
+        let output = context.run_ui(input, |ui| self.console.show(ui.ctx()));
         let primitives = context.tessellate(output.shapes, output.pixels_per_point);
         Some(to_ui_frame(
             &primitives,
