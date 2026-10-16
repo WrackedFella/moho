@@ -94,7 +94,7 @@ pub trait RendererBackend {
     /// given instances. Must be called after `begin_frame` and before
     /// `submit_frame`.
     fn enqueue_draw(&mut self, mesh: u32, instances: &[moho_render_api::InstanceGpu]);
-    /// Flush all queued draws (shadow passes, main pass, SSAO) and present
+    /// Flush all queued draws (shadow passes, main pass, markers, SSAO) and present
     /// the frame. No-op if `begin_frame` wasn't called or didn't acquire a
     /// surface texture.
     fn submit_frame(&mut self);

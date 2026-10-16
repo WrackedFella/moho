@@ -557,7 +557,7 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    /// Flush all queued draws (shadow passes, main pass, SSAO) and present
+    /// Flush all queued draws (shadow passes, main pass, markers, SSAO) and present
     /// the frame. No-op if `begin_frame` wasn't called or didn't acquire a
     /// surface texture.
     pub fn submit_frame(&mut self) {

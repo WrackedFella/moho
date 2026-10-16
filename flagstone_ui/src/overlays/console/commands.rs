@@ -227,6 +227,11 @@ impl CommandProcessor {
 
         let min = glam::Vec3::new(x, y, z);
         let max = min + glam::Vec3::splat(size);
+        if !max.is_finite() {
+            return CommandResult::message(
+                "Error: the box's far corner is out of range".to_string(),
+            );
+        }
         CommandResult::with_action(
             format!("Marker {id} from {min} to {max}"),
             ConsoleAction::ShowMarker { id, min, max },

@@ -151,7 +151,7 @@ linear RGBA colour with straight alpha; `Marker::new` orders the corners per axi
 order: `upsert`, `remove`, `clear`. Markers persist until removed. `Scene::render` turns
 them into `MarkerGpu` instances (each box grown by `MARKER_INFLATE` per side so a marker
 on a block face does not z-fight it, sorted far to near by box centre) and passes them to
-`Renderer::enqueue_markers`.
+`RendererBackend::enqueue_markers`.
 
 `submit_frame` draws them in a separate pass after the main pass: colour and depth are
 loaded, not cleared, so markers are depth-tested against the world; the pipeline writes no
