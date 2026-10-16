@@ -773,6 +773,7 @@ mod tests {
             ("marker 1 1 2 3 inf", "Error:"),
             ("marker 1 1 2 3 0", "Error:"),
             ("marker 1 1 2 3 -2", "Error:"),
+            ("marker 1 3e38 0 0 3e38", "Error:"),
             ("marker 1 1 2", "Usage:"),
             ("marker 1", "Usage:"),
             ("marker", "Usage:"),

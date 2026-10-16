@@ -1021,4 +1021,77 @@ mod tests {
             "no window, so nothing is queued for the renderer"
         );
     }
+
+    fn show_marker(app: &App, id: u64, min: glam::Vec3, max: glam::Vec3) {
+        app.event_bus
+            .publish(DebugEvent::ShowMarker { id, min, max });
+    }
+
+    fn marker_draws(app: &mut App) -> Vec<moho_render_api::MarkerGpu> {
+        app.scene.markers_mut().draws(glam::Vec3::ZERO)
+    }
+
+    #[test]
+    fn show_marker_event_draws_one_translucent_marker_at_the_given_box() {
+        let mut app = App::headless();
+        show_marker(
+            &app,
+            3,
+            glam::Vec3::new(1.0, 2.0, 3.0),
+            glam::Vec3::new(4.0, 5.0, 6.0),
+        );
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        let draws = marker_draws(&mut app);
+        assert_eq!(draws.len(), 1);
+        let grow = moho_renderer::MARKER_INFLATE;
+        for axis in 0..3 {
+            let lo = [1.0, 2.0, 3.0][axis] - grow;
+            let hi = [4.0, 5.0, 6.0][axis] + grow;
+            assert!((draws[0].min[axis] - lo).abs() < 1e-5, "min {axis}");
+            assert!((draws[0].max[axis] - hi).abs() < 1e-5, "max {axis}");
+        }
+        assert!(draws[0].color[3] > 0.0 && draws[0].color[3] < 1.0);
+    }
+
+    #[test]
+    fn show_marker_event_with_the_same_id_replaces_the_marker() {
+        let mut app = App::headless();
+        show_marker(&app, 3, glam::Vec3::ZERO, glam::Vec3::ONE);
+        show_marker(&app, 3, glam::Vec3::splat(10.0), glam::Vec3::splat(12.0));
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        let draws = marker_draws(&mut app);
+        assert_eq!(draws.len(), 1);
+        assert!((draws[0].min[0] - (10.0 - moho_renderer::MARKER_INFLATE)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn clear_markers_event_with_an_id_removes_only_that_marker() {
+        let mut app = App::headless();
+        show_marker(&app, 1, glam::Vec3::ZERO, glam::Vec3::ONE);
+        show_marker(&app, 2, glam::Vec3::splat(10.0), glam::Vec3::splat(11.0));
+        app.event_bus
+            .publish(DebugEvent::ClearMarkers { id: Some(1) });
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        let draws = marker_draws(&mut app);
+        assert_eq!(draws.len(), 1);
+        assert!(draws[0].min[0] > 5.0, "the surviving marker is id 2");
+    }
+
+    #[test]
+    fn clear_markers_event_without_an_id_removes_every_marker() {
+        let mut app = App::headless();
+        show_marker(&app, 1, glam::Vec3::ZERO, glam::Vec3::ONE);
+        show_marker(&app, 2, glam::Vec3::splat(10.0), glam::Vec3::splat(11.0));
+        app.event_bus.publish(DebugEvent::ClearMarkers { id: None });
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert!(marker_draws(&mut app).is_empty());
+    }
 }
