@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["flagstone", "moho_app", "moho_core", "flagstone_game", "flagstone_voxel", "moho_render_api", "moho_renderer", "moho_audio", "flagstone_ui", "moho_input", "moho_physics", "moho_level", "searchlight_rules", "searchlight"]
+members = ["flagstone", "moho_app", "moho_core", "flagstone_game", "flagstone_voxel", "moho_render_api", "moho_renderer", "moho_audio", "flagstone_ui", "moho_input", "moho_ui_shell", "moho_physics", "moho_level", "searchlight_rules", "searchlight"]
 
 [workspace.dependencies]
 bytemuck = "1.24"
@@ -24,6 +24,8 @@ rapier3d = "0.36"
 tempfile = "3.5"
 gltf = { version = "1.4.1", default-features = false, features = ["utils", "names", "extras"] }
 serde_json = "1"
+egui = "0.36.2"
+egui-winit = { version = "0.36.2", default-features = false, features = ["clipboard", "wayland", "x11"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
