@@ -7,7 +7,7 @@ use crate::error::AudioError;
 use crate::error::AudioResult;
 use crate::output::{AudioOutput, Playback};
 use crate::rodio_output::RodioOutput;
-use crate::spatial::{Listener, distance_gain, stereo_pan};
+use crate::spatial::{Listener, distance_gain, rear_gain, stereo_pan};
 use glam::Vec3;
 use std::path::Path;
 use tracing::{debug, warn};
@@ -84,10 +84,10 @@ impl<O: AudioOutput> AudioSystem<O> {
     /// Play a sound from an AudioSource with optimized loading
     ///
     /// Sound-effect and voice sources with a position are attenuated by their distance
-    /// from the listener and not started at all beyond audible range; music and UI
-    /// sources ignore a position.
+    /// from the listener, quieter when behind it (the rear cue), and not started at all
+    /// beyond audible range; music and UI sources ignore a position.
     pub fn play_audio_source(&mut self, source: &AudioSource) -> AudioResult<()> {
-        let Some(distance_gain) = self.distance_gain_for(source) else {
+        let Some(spatial_gain) = self.spatial_gain_for(source) else {
             debug!(
                 path = source.path(),
                 "Skipping audio playback: out of audible range or non-finite distance"
@@ -95,7 +95,7 @@ impl<O: AudioOutput> AudioSystem<O> {
             return Ok(());
         };
         let effective_volume =
-            self.settings.effective_volume(source.category()) * source.volume() * distance_gain;
+            self.settings.effective_volume(source.category()) * source.volume() * spatial_gain;
 
         if effective_volume <= 0.0 {
             debug!(
@@ -139,9 +139,12 @@ impl<O: AudioOutput> AudioSystem<O> {
         Ok(())
     }
 
-    fn distance_gain_for(&self, source: &AudioSource) -> Option<f32> {
+    /// Distance attenuation times the rear cue for a positioned source, `None` when
+    /// out of range; 1.0 for sources heard without a position.
+    fn spatial_gain_for(&self, source: &AudioSource) -> Option<f32> {
         match Self::world_position(source) {
-            Some(position) => distance_gain(self.listener.position.distance(position)),
+            Some(position) => distance_gain(self.listener.position.distance(position))
+                .map(|gain| gain * rear_gain(&self.listener, position)),
             None => Some(1.0),
         }
     }
@@ -645,7 +648,7 @@ mod tests {
         system.set_listener(Listener::default());
 
         system
-            .handle_event(play_at(SOUND, 0.8, Vec3::new(0.0, 0.0, 8.0)))
+            .handle_event(play_at(SOUND, 0.8, Vec3::new(0.0, 0.0, -8.0)))
             .unwrap();
 
         assert_volume_eq(output.voices()[0].volume, 0.05);
@@ -725,11 +728,66 @@ mod tests {
     }
 
     #[test]
+    fn sound_behind_plays_quieter_than_in_front() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(Listener::default());
+        let north = Vec3::new(0.0, 0.0, -10.0);
+        let south = Vec3::new(0.0, 0.0, 10.0);
+        let east = Vec3::new(10.0, 0.0, 0.0);
+
+        system.handle_event(play_at(SOUND, 1.0, north)).unwrap();
+        system.handle_event(play_at(SOUND, 1.0, east)).unwrap();
+        system.handle_event(play_at(SOUND, 1.0, south)).unwrap();
+        let voice_behind = AudioSource::new(SOUND)
+            .with_category(AudioCategory::Voice)
+            .with_position(south.to_array());
+        system.set_settings(full_volume().with_voice_volume(1.0));
+        system.play_audio_source(&voice_behind).unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 4);
+        assert!(voices[2].volume < voices[0].volume, "south vs north");
+        assert!(voices[2].volume < voices[1].volume, "south vs east");
+        assert_volume_eq(voices[2].volume, 0.2 * crate::spatial::REAR_GAIN);
+        assert_volume_eq(voices[3].volume, 0.2 * crate::spatial::REAR_GAIN);
+    }
+
+    #[test]
+    fn sound_in_front_plays_at_its_distance_volume() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(Listener::default());
+
+        system
+            .handle_event(play_at(SOUND, 1.0, Vec3::new(0.0, 0.0, -10.0)))
+            .unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 1);
+        let expected = distance_gain(10.0).expect("10 m is audible");
+        assert_volume_eq(voices[0].volume, expected);
+    }
+
+    #[test]
+    fn unpositioned_sound_gets_no_rear_cue() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(listener_at(Vec3::new(0.0, 0.0, -10.0)));
+
+        system.play_sound(SOUND, 0.8).unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 1);
+        assert_volume_eq(voices[0].volume, 0.8);
+    }
+
+    #[test]
     fn music_and_ui_ignore_a_position() {
         let far = [500.0, 0.0, 0.0];
+        let behind = [0.0, 0.0, 10.0];
         let sources = [
             AudioSource::background_music(MENU_MUSIC, 0.8).with_position(far),
             AudioSource::ui_sound(CLICK, 0.8).with_position(far),
+            AudioSource::background_music(MENU_MUSIC, 0.8).with_position(behind),
+            AudioSource::ui_sound(CLICK, 0.8).with_position(behind),
         ];
 
         for source in sources {
