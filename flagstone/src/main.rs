@@ -129,7 +129,6 @@ struct App {
     /// still saves to `Prefs::config_path()`, so tests that save from it set a path.
     prefs_path: Option<std::path::PathBuf>,
 
-    // Volumes queued for the audio system; `frame` applies them
     pending_audio_settings: Option<moho_audio::AudioSettings>,
 
     // Grouped sub-systems

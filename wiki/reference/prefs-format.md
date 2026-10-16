@@ -2,7 +2,7 @@
 
 **Source:** `moho_core/src/prefs/` (`mod.rs`, `reader.rs`), `moho_input/src/bindings.rs`, `moho_input/src/key.rs`, `moho_input/src/pad.rs`,
 `flagstone_ui/src/actions.rs`, `flagstone/src/main.rs` (`App::save_prefs`, `App::adopt_settings`),
-`flagstone/src/app/initializer.rs` (`build_actions`), `flagstone_ui/src/adapter/mod.rs`. Path: `config/prefs.ini`,
+`flagstone/src/app/initializer.rs` (`build_actions`), `moho_audio/src/audio_settings.rs` (`AudioSettings::from_prefs`), `flagstone_ui/src/adapter/mod.rs`. Path: `config/prefs.ini`,
 relative to the working directory.
 
 `Prefs::load` creates the file with defaults if it is missing. Missing sections or keys
@@ -54,7 +54,10 @@ opened there still saves to the default path).
   `App::adopt_settings`.
 - **`adopt_settings`** replaces `App::prefs` and rebuilds the input `ActionMap` through
   `build_actions`, the same function startup uses, so new bindings, sensitivity and
-  filtering apply without a restart. It does not write the file.
+  filtering apply without a restart. It also queues `AudioSettings::from_prefs`
+  (`moho_audio`), which the next frame applies to the audio engine. It does not write the file.
+- **Startup** builds the same `AudioSettings` from the loaded prefs and applies it on the
+  first frame. Each category volume is its pref divided by ten and clamped to 0..=1; 0 is silent.
 
 ## Keys
 
@@ -63,7 +66,7 @@ opened there still saves to the default path).
 | `[prefs]` | `mouse_sensitivity` | finite float | `1` |
 | | `input_filtering_enabled` | `true` `false` `1` `0` (any case) | `true` |
 | `[bindings]` | one key per action id | binding list | per action, below |
-| `[audio]` | `sound_effect_volume` `music_volume` `ui_volume` `voice_volume` | finite float, written with 1 decimal | `7.0` `5.0` `8.0` `7.0` |
+| `[audio]` | `sound_effect_volume` `music_volume` `ui_volume` `voice_volume` | finite float on a 0 to 10 scale (the UI offers 0.0 to 10.0), written with 1 decimal | `8.0` `6.0` `7.0` `9.0` |
 | `[graphics]` | `shadow_quality` `ssao_quality` | unsigned integer; the UI offers 0 (off) to 4 (ultra) | `3` `3` |
 | `[video]` | `window_mode` | `Windowed` \| `Fullscreen` \| `Borderless`, exact case | `Windowed` |
 | | `window_width` `window_height` | unsigned integer pixels | `1920` `1080` |

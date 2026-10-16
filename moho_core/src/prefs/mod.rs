@@ -190,7 +190,7 @@ impl Default for Prefs {
         Self {
             mouse_sensitivity: 1.0,
             input_filtering_enabled: true,
-            // Audio volumes on the 0 to 10 scale, matching the levels players hear
+            // Audio volumes use a 0 to 10 scale
             audio_sound_effect_volume: 8.0,
             audio_music_volume: 6.0,
             audio_ui_volume: 7.0,
