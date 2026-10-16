@@ -100,7 +100,6 @@ cargo run --example audio_test
 
 ## Future Plans
 
-- 3D spatial audio positioning
 - Audio mixing and dynamic volume adjustment
 - Real-time audio effects (reverb, echo)
 - Streaming large audio files

@@ -7,7 +7,7 @@ use crate::error::AudioError;
 use crate::error::AudioResult;
 use crate::output::{AudioOutput, Playback};
 use crate::rodio_output::RodioOutput;
-use crate::spatial::{Listener, distance_gain};
+use crate::spatial::{Listener, distance_gain, stereo_pan};
 use glam::Vec3;
 use std::path::Path;
 use tracing::{debug, warn};
@@ -112,11 +112,13 @@ impl<O: AudioOutput> AudioSystem<O> {
             self.audio_cache.get_audio(source.path())?
         };
 
+        let pan = Self::world_position(source).map(|position| stereo_pan(&self.listener, position));
         let voice = self.output.start(Playback {
             path: source.path().to_owned(),
             bytes,
             volume: effective_volume,
             looped: source.looped(),
+            pan,
         })?;
 
         if *source.category() == AudioCategory::Music && source.looped() {
@@ -131,17 +133,26 @@ impl<O: AudioOutput> AudioSystem<O> {
         debug!(
             path = source.path(),
             volume = effective_volume,
+            pan = ?pan,
             "Playing audio"
         );
         Ok(())
     }
 
     fn distance_gain_for(&self, source: &AudioSource) -> Option<f32> {
+        match Self::world_position(source) {
+            Some(position) => distance_gain(self.listener.position.distance(position)),
+            None => Some(1.0),
+        }
+    }
+
+    /// Position of a sound heard in space: only positioned sound effects and voices.
+    fn world_position(source: &AudioSource) -> Option<Vec3> {
         match (source.category(), source.position()) {
             (AudioCategory::SoundEffect | AudioCategory::Voice, Some(position)) => {
-                distance_gain(self.listener.position.distance(Vec3::from_array(position)))
+                Some(Vec3::from_array(position))
             }
-            _ => Some(1.0),
+            _ => None,
         }
     }
 
@@ -231,7 +242,7 @@ mod tests {
     use super::*;
     use crate::spatial::{Listener, MAX_AUDIBLE_DISTANCE};
     use crate::test_support::{RecordingOutput, assert_volume_eq, wav_bytes};
-    use glam::Vec3;
+    use glam::{Quat, Vec3};
 
     const CLICK: &str = "assets/audio/ui/button_click.mp3";
     const SOUND: &str = "sounds/boom.wav";
@@ -671,6 +682,49 @@ mod tests {
     }
 
     #[test]
+    fn positioned_sound_carries_its_pan() {
+        let listener = Listener {
+            position: Vec3::new(5.0, 0.0, 5.0),
+            orientation: Quat::from_rotation_y(std::f32::consts::PI),
+        };
+        let east = Vec3::new(15.0, 0.0, 5.0);
+        let voice_source = AudioSource::new(SOUND)
+            .with_category(AudioCategory::Voice)
+            .with_position(east.to_array());
+        let rows = [("play event", None), ("voice source", Some(voice_source))];
+
+        for (name, source) in rows {
+            let (mut system, output) = system(full_volume());
+            system.set_listener(listener);
+
+            match source {
+                Some(source) => system.play_audio_source(&source).unwrap(),
+                None => system.handle_event(play_at(SOUND, 1.0, east)).unwrap(),
+            }
+
+            let voices = output.voices();
+            assert_eq!(voices.len(), 1, "{name}");
+            let pan = voices[0].pan.expect("a positioned sound is panned");
+            assert!(
+                (pan.left - 1.0).abs() < 1e-5 && pan.right.abs() < 1e-5,
+                "{name}: {pan:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unpositioned_sound_has_no_pan() {
+        let (mut system, output) = system(full_volume());
+        system.set_listener(listener_at(Vec3::new(100.0, 0.0, 0.0)));
+
+        system.play_sound(SOUND, 0.8).unwrap();
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 1);
+        assert_eq!(voices[0].pan, None);
+    }
+
+    #[test]
     fn music_and_ui_ignore_a_position() {
         let far = [500.0, 0.0, 0.0];
         let sources = [
@@ -688,6 +742,7 @@ mod tests {
             let voices = output.voices();
             assert_eq!(voices.len(), 1, "{:?}", source.category());
             assert_volume_eq(voices[0].volume, 0.8);
+            assert_eq!(voices[0].pan, None, "{:?}", source.category());
         }
     }
 }

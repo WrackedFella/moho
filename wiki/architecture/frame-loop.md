@@ -79,7 +79,9 @@ The tick drains one channel per event family, in this order:
 Audio events are drained in `Game::frame` and forwarded to `AudioSystem`, since the runner
 owns it. `AudioEvent::PlaySoundAt` carries a world position: `AudioSystem` attenuates
 sound-effect and voice sources by distance from its `Listener` (full volume within 2 m,
-inverse distance beyond, not played past 100 m; `moho_audio/src/spatial.rs`). Why channels instead of handling inside bus handlers: [events](events.md#the-channel-hand-off).
+inverse distance beyond, not played past 100 m; `moho_audio/src/spatial.rs`). They are also
+constant-power panned by direction relative to the listener's facing (centred sounds play
+3 dB quieter per ear; stereo files are folded to mono). Why channels instead of handling inside bus handlers: [events](events.md#the-channel-hand-off).
 
 ## Frame
 
