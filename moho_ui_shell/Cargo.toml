@@ -1,0 +1,21 @@
+[package]
+name = "moho_ui_shell"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+egui = { workspace = true }
+egui-winit = { workspace = true }
+moho_render_api = { path = "../moho_render_api" }
+moho_input = { path = "../moho_input" }
+moho_app = { path = "../moho_app" }
+winit = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

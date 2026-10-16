@@ -2106,7 +2106,7 @@ mod enemy_tests {
         let mut sim = FpsSim::start(arena, config);
         let walker_start = sim.enemy_state(1).expect("spawned").position;
 
-        let mut ticks = Vec::new();
+        let mut ticks: Vec<Vec<Feedback>> = Vec::new();
         while !ticks.iter().flatten().any(player_died) {
             ticks.extend(run(&mut sim, &script(1, &[])));
             assert!(ticks.len() < 300, "the player never died");

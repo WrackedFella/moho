@@ -144,9 +144,10 @@ UI reaches the renderer as plain data ([ADR-0013](../../_todo/adr/0013-ui-reache
 not as wgpu or egui types. `moho_render_api::UiFrame` holds `pixels_per_point`, texture
 deltas (`UiTextureSet` before drawing, `UiTextureId` frees after) and `UiMesh`es
 (clipped, textured triangle lists of `UiVertex`, in points). A game implements
-`UiFrameSource` (`flagstone_ui`'s `EguiAdapter` maps egui tessellation in `adapter/paint_map.rs`)
+`UiFrameSource` (`flagstone_ui`'s `EguiAdapter` and `moho_ui_shell`'s `UiShell` map egui tessellation through `moho_ui_shell/src/paint_map.rs`)
 and registers a `UiSource` with `RendererBackend::set_ui_source`; the
-renderer pulls `Option<UiFrame>` once per frame with the surface size. The adapter
+renderer pulls `Option<UiFrame>` once per frame with the surface size. Several sources reach
+the one slot through `moho_ui_shell::UiLayers`, which merges them in order, later on top. The adapter
 consumes egui's `TexturesDelta`; `textures_set` keeps the order of partial updates
 to one texture, so patches apply after the full upload they follow.
 

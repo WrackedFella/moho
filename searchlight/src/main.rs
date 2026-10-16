@@ -9,9 +9,11 @@ use moho_app::{AppConfig, LoopConfig};
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::ActionBindings;
 use moho_physics::MoveSettings;
+use moho_ui_shell::UiShell;
 use searchlight::TICK_HZ;
 use searchlight::arena::{self, Arena};
 use searchlight::brain::EnemyTuning;
+use searchlight::console_commands;
 use searchlight::game::{FpsGame, WINDOW_TITLE};
 use searchlight::sim::{FpsSim, SimConfig};
 use searchlight_rules::{BodyPart, BodyProfile, Magazine, Rifle};
@@ -71,7 +73,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     for warning in warnings {
         tracing::warn!(?warning, "default bindings");
     }
+    let (console, console_warnings) = console_commands::console(&BTreeMap::new());
+    for warning in console_warnings {
+        tracing::warn!(?warning, "console binding");
+    }
     let game = FpsGame::new(sim, ActionMap::new(bindings, LOOK_PER_PIXEL))
+        .with_shell(UiShell::new(console))
         .with_arena(arena.meshes.clone(), &arena.dummy_spawns)
         .with_shot_sound(&assets().join("rifle_shot.wav"));
 

@@ -7,7 +7,8 @@
 [0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md),
 [0005](../../_todo/adr/0005-crate-lines-and-dependency-direction.md),
 [0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md),
-[0012](../../_todo/adr/0012-engine-crate-map-for-m2.md).
+[0012](../../_todo/adr/0012-engine-crate-map-for-m2.md),
+[0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md).
 
 ## Crate graph
 
@@ -28,10 +29,11 @@ flowchart TD
     input["moho_input<br/>Key, Action, ActionBindings,<br/>ActionMap, mouse filtering"]:::engine
     app["moho_app<br/>window, fixed-step loop, Game trait"]:::engine
     level["moho_level<br/>glTF level loader"]:::engine
+    shell["moho_ui_shell<br/>egui host, console,<br/>UI layers"]:::engine
     fps["searchlight_rules<br/>rifle, magazine, body damage"]:::fps
     fpsgame["searchlight<br/>arena, shots, sim, binary"]:::fps
 
-    ui --> renderer & input & core & game
+    ui --> renderer & input & core & game & shell
     game --> core & rapi & voxel
     voxel --> core & rapi
     renderer --> rapi
@@ -39,7 +41,8 @@ flowchart TD
     audio --> core
     physics --> rapi
     level --> rapi
-    fpsgame --> fps & app & physics & level & input & audio & renderer & rapi
+    shell --> rapi & input & app
+    fpsgame --> fps & app & physics & level & input & audio & renderer & rapi & shell
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
     classDef strategy fill:#dcfce7,stroke:#16a34a,color:#111
@@ -52,6 +55,7 @@ with no engine dependency. `searchlight` is the only FPS crate that reaches the 
 plus the `searchlight` binary, described in [FPS prototype](fps-prototype.md). Every shot resolves
 through one path (ray, surface tag, part, rule call) for player and enemy alike
 ([ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md)).
+`moho_ui_shell` is the engine's only egui-facing crate: the console every game opens and adds commands to, and the egui host that draws it ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
 `moho_app` owns the window and winit event loop; the binary implements its `Game` trait and hands it
 to `moho_app::run` ([frame loop](frame-loop.md)).
 

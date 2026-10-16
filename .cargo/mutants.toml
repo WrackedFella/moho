@@ -120,4 +120,15 @@ exclude_re = [
     # searchlight::cover. Hangs rather than survives: the mutated step walks the ray backwards, so
     # it strikes the same character forever and only the timeout stops it.
     'replace \+ with - in world_blocks',
+    # moho_ui_shell::host. Feeding egui needs the `egui_winit::State` that `attach` builds from a
+    # real `Window`; headless tests have none, so these bodies do nothing there. Building the
+    # key or button events `input_of` reads hits the same `KeyEvent` / `DeviceId::dummy()`
+    # limit as `handle_window_event`; the routing behind them is tested through `route`.
+    'replace UiShell<G>::(attach|feed|feed_egui) with \(\)',
+    'replace == with != in UiShell<G>::feed',
+    'delete match arm \(Some\(state\), Some\(window\)\) in UiShell<G>::take_input',
+    'replace is_input_event -> bool with false',
+    'replace input_of -> Option<\(Binding, bool, bool\)> with None',
+    'delete match arm WindowEvent::KeyboardInput\{event:KeyEvent\{physical_key, state, repeat, \.\.\}, \.\.\} in input_of',
+    'delete match arm WindowEvent::MouseInput\{state, button, \.\.\} in input_of',
 ]

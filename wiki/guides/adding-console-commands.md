@@ -1,5 +1,13 @@
 # Adding a console command
 
+> **FPS (searchlight) and new games:** register on the engine console instead. In the game's
+> `console_commands.rs`, build a `moho_ui_shell::CommandSpec` (name, usage, help and a plain
+> `fn` parse returning the game's command and a reply, or an error reply) and call
+> `Console::register`; a name the engine (`help`, `clear`, `quit`) or the game already has is
+> refused. The game drains `Console::take_commands` in `Game::command()` and applies them in
+> its tick ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
+> The steps below are strategy's own console until it moves onto the engine console (#406).
+
 **Source:** `flagstone_ui/src/overlays/console/commands.rs`, `flagstone_ui/src/adapter/event_routing.rs`,
 `flagstone/src/app/event_loop/event_processor.rs`. Background: [console](../architecture/console.md).
 
