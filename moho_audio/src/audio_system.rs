@@ -735,12 +735,18 @@ mod tests {
         system.handle_event(play_at(SOUND, 1.0, north)).unwrap();
         system.handle_event(play_at(SOUND, 1.0, east)).unwrap();
         system.handle_event(play_at(SOUND, 1.0, south)).unwrap();
+        let voice_behind = AudioSource::new(SOUND)
+            .with_category(AudioCategory::Voice)
+            .with_position(south.to_array());
+        system.set_settings(full_volume().with_voice_volume(1.0));
+        system.play_audio_source(&voice_behind).unwrap();
 
         let voices = output.voices();
-        assert_eq!(voices.len(), 3);
+        assert_eq!(voices.len(), 4);
         assert!(voices[2].volume < voices[0].volume, "south vs north");
         assert!(voices[2].volume < voices[1].volume, "south vs east");
         assert_volume_eq(voices[2].volume, 0.2 * crate::spatial::REAR_GAIN);
+        assert_volume_eq(voices[3].volume, 0.2 * crate::spatial::REAR_GAIN);
     }
 
     #[test]
@@ -761,7 +767,7 @@ mod tests {
     #[test]
     fn unpositioned_sound_gets_no_rear_cue() {
         let (mut system, output) = system(full_volume());
-        system.set_listener(Listener::default());
+        system.set_listener(listener_at(Vec3::new(0.0, 0.0, -10.0)));
 
         system.play_sound(SOUND, 0.8).unwrap();
 
@@ -773,9 +779,12 @@ mod tests {
     #[test]
     fn music_and_ui_ignore_a_position() {
         let far = [500.0, 0.0, 0.0];
+        let behind = [0.0, 0.0, 10.0];
         let sources = [
             AudioSource::background_music(MENU_MUSIC, 0.8).with_position(far),
             AudioSource::ui_sound(CLICK, 0.8).with_position(far),
+            AudioSource::background_music(MENU_MUSIC, 0.8).with_position(behind),
+            AudioSource::ui_sound(CLICK, 0.8).with_position(behind),
         ];
 
         for source in sources {

@@ -398,25 +398,42 @@ mod tests {
                 ..Listener::default()
             };
             let (earlier, later) = if a <= b { (a, b) } else { (b, a) };
-            let at = |angle: f32| {
-                let local = Vec3::new(angle.sin(), 0.0, -angle.cos()) * 10.0;
-                listener.orientation * local
-            };
 
-            let earlier_gain = rear_gain(&listener, at(earlier));
-            let later_gain = rear_gain(&listener, at(later));
+            let earlier_gain = rear_gain(&listener, sound_at_angle(&listener, earlier));
+            let later_gain = rear_gain(&listener, sound_at_angle(&listener, later));
 
             prop_assert!(
                 later_gain <= earlier_gain + 1e-5,
                 "{later} rad gain {later_gain} > {earlier} rad gain {earlier_gain}"
             );
-            if earlier >= std::f32::consts::FRAC_PI_2 && later - earlier > 0.5 {
-                prop_assert!(
-                    later_gain < earlier_gain - 1e-3,
-                    "no drop from {earlier} to {later} rad"
-                );
-            }
         }
+
+        #[test]
+        fn rear_gain_drops_as_a_sound_moves_further_behind(
+            earlier in std::f32::consts::FRAC_PI_2..(std::f32::consts::PI - 0.5),
+            gap in 0.5f32..1.5,
+            yaw in -3.2f32..3.2,
+        ) {
+            let listener = Listener {
+                orientation: Quat::from_rotation_y(yaw),
+                ..Listener::default()
+            };
+            let later = (earlier + gap).min(std::f32::consts::PI);
+
+            let earlier_gain = rear_gain(&listener, sound_at_angle(&listener, earlier));
+            let later_gain = rear_gain(&listener, sound_at_angle(&listener, later));
+
+            prop_assert!(
+                later_gain < earlier_gain - 1e-3,
+                "no drop from {earlier} to {later} rad: {earlier_gain} -> {later_gain}"
+            );
+        }
+    }
+
+    /// A sound 10 m from the listener, `angle` radians off its facing in the horizontal plane.
+    fn sound_at_angle(listener: &Listener, angle: f32) -> Vec3 {
+        let local = Vec3::new(angle.sin(), 0.0, -angle.cos()) * 10.0;
+        listener.position + listener.orientation * local
     }
 
     #[test]
