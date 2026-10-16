@@ -514,6 +514,22 @@ impl EventProcessor {
                         .push(RenderRequest::SsaoQuality(quality as u8));
                 }
             }
+            DebugEvent::ShowMarker { id, min, max } => {
+                use moho_render_api::{Marker, MarkerId};
+                /// Translucent amber, linear RGBA with straight alpha.
+                const MARKER_COLOR: [f32; 4] = [1.0, 0.55, 0.0, 0.35];
+                app.scene.markers_mut().upsert(
+                    MarkerId(id),
+                    Marker::new(min.to_array(), max.to_array(), MARKER_COLOR),
+                );
+            }
+            DebugEvent::ClearMarkers { id } => match id {
+                Some(id) => app
+                    .scene
+                    .markers_mut()
+                    .remove(moho_render_api::MarkerId(id)),
+                None => app.scene.markers_mut().clear(),
+            },
             _ => {}
         }
     }

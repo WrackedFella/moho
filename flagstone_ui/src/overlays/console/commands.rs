@@ -121,6 +121,8 @@ impl CommandProcessor {
             "r_ssao_quality" => self.ssao_quality_command(&parts),
             "spawn" => self.spawn_command(&parts),
             "snd_play_at" => self.snd_play_at_command(&parts),
+            "marker" => self.marker_command(&parts),
+            "marker_clear" => self.marker_clear_command(&parts),
             _ => self.unknown_command(parts[0]),
         }
     }
@@ -141,6 +143,9 @@ impl CommandProcessor {
             "  r_ssao_quality <0-4> - Set SSAO quality (Off/Low/Med/High/Ultra)".to_string(),
             "  snd_play_at <path> <x> <y> <z> [volume] - Play a sound at a world position (metres)"
                 .to_string(),
+            "  marker <id> <x> <y> <z> [size] - Show a translucent box marker at a block corner"
+                .to_string(),
+            "  marker_clear [id] - Remove one marker, or all markers".to_string(),
         ])
     }
 
@@ -194,6 +199,59 @@ impl CommandProcessor {
                 volume,
             },
         )
+    }
+
+    fn marker_command(&self, parts: &[&str]) -> CommandResult {
+        if !(5..=6).contains(&parts.len()) {
+            return CommandResult::messages(vec![
+                "Usage: marker <id> <x> <y> <z> [size]".to_string(),
+                "  Example: marker 1 10 4 -3 2".to_string(),
+            ]);
+        }
+
+        let finite = |part: &str| part.parse::<f32>().ok().filter(|n| n.is_finite());
+        let Ok(id) = parts[1].parse::<u64>() else {
+            return CommandResult::message("Error: id must be a non-negative integer".to_string());
+        };
+        let (Some(x), Some(y), Some(z), Some(size)) = (
+            finite(parts[2]),
+            finite(parts[3]),
+            finite(parts[4]),
+            parts.get(5).map_or(Some(1.0), |part| finite(part)),
+        ) else {
+            return CommandResult::message(
+                "Error: position and size must be finite numbers".to_string(),
+            );
+        };
+        if size <= 0.0 {
+            return CommandResult::message("Error: size must be greater than zero".to_string());
+        }
+
+        let min = glam::Vec3::new(x, y, z);
+        let max = min + glam::Vec3::splat(size);
+        CommandResult::with_action(
+            format!("Marker {id} from {min} to {max}"),
+            ConsoleAction::ShowMarker { id, min, max },
+        )
+    }
+
+    fn marker_clear_command(&self, parts: &[&str]) -> CommandResult {
+        match parts {
+            [_] => CommandResult::with_action(
+                "Clearing all markers".to_string(),
+                ConsoleAction::ClearMarkers(None),
+            ),
+            [_, id] => match id.parse::<u64>() {
+                Ok(id) => CommandResult::with_action(
+                    format!("Clearing marker {id}"),
+                    ConsoleAction::ClearMarkers(Some(id)),
+                ),
+                Err(_) => {
+                    CommandResult::message("Error: id must be a non-negative integer".to_string())
+                }
+            },
+            _ => CommandResult::messages(vec!["Usage: marker_clear [id]".to_string()]),
+        }
     }
 
     /// Handle sun direction command
