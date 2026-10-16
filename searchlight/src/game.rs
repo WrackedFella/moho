@@ -754,7 +754,7 @@ mod tests {
     use glam::Vec3;
     use moho_app::{GameClock, HeadlessLoop, LoopConfig};
     use moho_input::bindings::ActionBindings;
-    use winit::event::DeviceEvent;
+    use winit::event::{DeviceEvent, WindowEvent};
 
     use super::*;
     use crate::sim::Feedback;
@@ -983,6 +983,31 @@ mod tests {
         assert_eq!(held.movement.forward, 0.0);
         assert_eq!(turned.movement.yaw_delta, 0.0);
         assert_eq!(turned.movement.pitch_delta, 0.0);
+    }
+
+    #[test]
+    fn losing_window_focus_releases_a_held_movement_key() {
+        let mut game = game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Binding::Key(Key::W), true, false);
+
+        game.event(&mut ctx, Event::Window(WindowEvent::Focused(false)));
+        let command = game.command();
+
+        assert_eq!(command.movement.forward, 0.0);
+    }
+
+    #[test]
+    fn a_held_movement_key_moves_forward_until_focus_is_lost() {
+        let mut game = game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Binding::Key(Key::W), true, false);
+
+        let command = game.command();
+
+        assert_eq!(command.movement.forward, 1.0);
     }
 
     #[test]

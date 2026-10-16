@@ -22,7 +22,7 @@ impl<G> Console<G> {
         // Foreground order so the console paints over anything else the pass draws.
         egui::Area::new("console_panel".into())
             .order(egui::Order::Foreground)
-            .fixed_pos(egui::pos2(screen_rect.min.x, screen_rect.max.y - HEIGHT))
+            .anchor(egui::Align2::LEFT_BOTTOM, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 sizing_pass = ui.is_sizing_pass();
                 frame.show(ui, |ui| {
@@ -159,6 +159,23 @@ mod tests {
         assert!(console.output().lines().iter().any(|l| l == "> tgm 1"));
         assert_eq!(console.take_commands(), vec![Cmd::God(true)]);
         assert_eq!(console.input(), "");
+    }
+
+    #[test]
+    fn the_input_line_losing_focus_without_enter_does_not_submit() {
+        let (ctx, mut console) = open_console();
+        pass(
+            &ctx,
+            &mut console,
+            vec![egui::Event::Text("tgm 1".to_owned())],
+        );
+
+        pass(&ctx, &mut console, vec![key(egui::Key::Tab)]);
+        pass(&ctx, &mut console, vec![]);
+
+        assert_eq!(console.input(), "tgm 1");
+        assert!(!console.output().lines().iter().any(|l| l == "> tgm 1"));
+        assert_eq!(console.take_commands(), vec![]);
     }
 
     #[test]

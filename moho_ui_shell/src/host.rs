@@ -240,4 +240,61 @@ mod tests {
         assert!(!frame.textures_set.is_empty());
         assert!(frame.meshes.iter().all(|m| !m.vertices.is_empty()));
     }
+
+    #[test]
+    fn the_open_console_fills_the_bottom_300_points_of_the_screen_width() {
+        let mut shell = shell();
+        shell.console_mut().open();
+
+        let frame = shell.ui_frame([800, 600]).expect("an open console draws");
+
+        let positions: Vec<[f32; 2]> = frame
+            .meshes
+            .iter()
+            .flat_map(|m| m.vertices.iter().map(|v| v.pos))
+            .collect();
+        let min_x = positions.iter().map(|p| p[0]).fold(f32::MAX, f32::min);
+        let max_x = positions.iter().map(|p| p[0]).fold(f32::MIN, f32::max);
+        let min_y = positions.iter().map(|p| p[1]).fold(f32::MAX, f32::min);
+        let max_y = positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
+        assert_eq!(frame.pixels_per_point, 1.0);
+        assert!(min_x.abs() <= 1.0, "left edge at {min_x}");
+        assert!((max_x - 800.0).abs() <= 1.0, "right edge at {max_x}");
+        assert!((min_y - 300.0).abs() <= 1.0, "top edge at {min_y}");
+        assert!((max_y - 600.0).abs() <= 1.0, "bottom edge at {max_y}");
+    }
+
+    #[test]
+    fn a_long_log_scrolls_inside_a_234_point_window_above_the_input_line() {
+        let mut shell = shell();
+        shell.console_mut().open();
+        for i in 0..60 {
+            shell.console_mut().submit(&format!("line {i}"));
+        }
+
+        let frame = shell.ui_frame([800, 600]).expect("an open console draws");
+
+        let log = frame
+            .meshes
+            .iter()
+            .max_by_key(|m| m.vertices.len())
+            .expect("the log is drawn");
+        let height = log.clip_rect.max[1] - log.clip_rect.min[1];
+        assert!((height - 234.0).abs() <= 1.0, "log window is {height} tall");
+        assert!(log.clip_rect.min[1] >= 300.0, "log starts above the panel");
+        assert!(log.clip_rect.max[1] <= 600.0, "log ends below the panel");
+    }
+
+    #[test]
+    fn the_console_shell_debug_names_the_shell_and_whether_the_console_is_open() {
+        let mut shell = shell();
+        let closed = format!("{shell:?}");
+
+        shell.console_mut().open();
+        let open = format!("{shell:?}");
+
+        assert!(closed.contains("UiShell"), "{closed}");
+        assert!(closed.contains("console_open: false"), "{closed}");
+        assert!(open.contains("console_open: true"), "{open}");
+    }
 }
