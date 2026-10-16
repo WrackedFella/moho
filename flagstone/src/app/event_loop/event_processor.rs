@@ -10,6 +10,7 @@ use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
 use flagstone_voxel::{BlockChangeReason, VoxelChunk, WorldEvent};
 use moho_core::events::{GraphicsEvent, UiEvent};
+use moho_render_api::{Marker, MarkerId};
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
@@ -24,6 +25,8 @@ const TORCH_MATERIAL_ID: u32 = 3; // TODO: look up from MaterialRegistry
 const MINE_MAX_DISTANCE: f32 = 8.0;
 const DEFAULT_POINT_LIGHT_INTENSITY: f32 = 5.0;
 const DEFAULT_POINT_LIGHT_RANGE: f32 = 20.0;
+/// Console markers' colour: translucent amber, linear RGBA with straight alpha.
+const MARKER_COLOR: [f32; 4] = [1.0, 0.55, 0.0, 0.35];
 
 /// Handles processing of all event types
 pub struct EventProcessor;
@@ -517,19 +520,13 @@ impl EventProcessor {
                 }
             }
             DebugEvent::ShowMarker { id, min, max } => {
-                use moho_render_api::{Marker, MarkerId};
-                /// Translucent amber, linear RGBA with straight alpha.
-                const MARKER_COLOR: [f32; 4] = [1.0, 0.55, 0.0, 0.35];
                 app.scene.markers_mut().upsert(
                     MarkerId(id),
                     Marker::new(min.to_array(), max.to_array(), MARKER_COLOR),
                 );
             }
             DebugEvent::ClearMarkers { id } => match id {
-                Some(id) => app
-                    .scene
-                    .markers_mut()
-                    .remove(moho_render_api::MarkerId(id)),
+                Some(id) => app.scene.markers_mut().remove(MarkerId(id)),
                 None => app.scene.markers_mut().clear(),
             },
             _ => {}

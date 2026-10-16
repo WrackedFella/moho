@@ -60,7 +60,7 @@ impl Markers {
 
     /// The markers as GPU instances, each box grown by [`MARKER_INFLATE`] per
     /// side and sorted far to near by box centre from `eye`.
-    pub fn draws(&self, eye: glam::Vec3) -> Vec<MarkerGpu> {
+    pub fn draws(&self, eye: Vec3) -> Vec<MarkerGpu> {
         let mut keyed: Vec<(f32, MarkerGpu)> = self
             .live
             .values()

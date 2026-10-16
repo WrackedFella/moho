@@ -621,9 +621,7 @@ impl<'a> Renderer<'a> {
                 &self.depth_texture_view,
                 &self.marker_pipeline,
                 &self.camera_bind_group,
-                &self.marker_buffers.cube_vertices,
-                &self.marker_buffers.cube_indices,
-                &self.marker_buffers.instances,
+                &self.marker_buffers,
                 self.pending_markers.len() as u32,
             );
         }
