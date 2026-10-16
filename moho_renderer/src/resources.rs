@@ -109,7 +109,7 @@ impl MarkerBuffers {
         markers: &[MarkerGpu],
     ) {
         if markers.len() > self.capacity {
-            self.capacity = markers.len().next_power_of_two();
+            self.capacity = crate::MeshRenderer::next_capacity(self.capacity, markers.len());
             self.instances = Self::allocate(device, self.capacity);
         }
         queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(markers));

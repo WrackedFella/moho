@@ -178,12 +178,11 @@ impl CommandProcessor {
             ]);
         }
 
-        let finite = |part: &str| part.parse::<f32>().ok().filter(|n| n.is_finite());
         let (Some(x), Some(y), Some(z), Some(volume)) = (
-            finite(parts[2]),
-            finite(parts[3]),
-            finite(parts[4]),
-            parts.get(5).map_or(Some(1.0), |part| finite(part)),
+            parse_finite(parts[2]),
+            parse_finite(parts[3]),
+            parse_finite(parts[4]),
+            parts.get(5).map_or(Some(1.0), |part| parse_finite(part)),
         ) else {
             return CommandResult::message(
                 "Error: position and volume must be finite numbers".to_string(),
@@ -209,15 +208,14 @@ impl CommandProcessor {
             ]);
         }
 
-        let finite = |part: &str| part.parse::<f32>().ok().filter(|n| n.is_finite());
         let Ok(id) = parts[1].parse::<u64>() else {
             return CommandResult::message("Error: id must be a non-negative integer".to_string());
         };
         let (Some(x), Some(y), Some(z), Some(size)) = (
-            finite(parts[2]),
-            finite(parts[3]),
-            finite(parts[4]),
-            parts.get(5).map_or(Some(1.0), |part| finite(part)),
+            parse_finite(parts[2]),
+            parse_finite(parts[3]),
+            parse_finite(parts[4]),
+            parts.get(5).map_or(Some(1.0), |part| parse_finite(part)),
         ) else {
             return CommandResult::message(
                 "Error: position and size must be finite numbers".to_string(),
@@ -413,6 +411,11 @@ impl CommandProcessor {
             "Type 'help' for available commands".to_string(),
         ])
     }
+}
+
+/// A console argument as a finite `f32`; `None` for text, NaN or infinity.
+fn parse_finite(part: &str) -> Option<f32> {
+    part.parse::<f32>().ok().filter(|n| n.is_finite())
 }
 
 impl Default for CommandProcessor {

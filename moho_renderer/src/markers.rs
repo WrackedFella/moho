@@ -65,22 +65,14 @@ impl Markers {
             .live
             .values()
             .map(|m| {
-                let centre = (Vec3::from(m.min) + Vec3::from(m.max)) * 0.5;
+                let (min, max) = (Vec3::from(m.min), Vec3::from(m.max));
+                let grow = Vec3::splat(MARKER_INFLATE);
                 let gpu = MarkerGpu {
-                    min: [
-                        m.min[0] - MARKER_INFLATE,
-                        m.min[1] - MARKER_INFLATE,
-                        m.min[2] - MARKER_INFLATE,
-                        0.0,
-                    ],
-                    max: [
-                        m.max[0] + MARKER_INFLATE,
-                        m.max[1] + MARKER_INFLATE,
-                        m.max[2] + MARKER_INFLATE,
-                        0.0,
-                    ],
+                    min: (min - grow).extend(0.0).to_array(),
+                    max: (max + grow).extend(0.0).to_array(),
                     color: m.color,
                 };
+                let centre = (min + max) * 0.5;
                 (centre.distance_squared(eye), gpu)
             })
             .collect();
