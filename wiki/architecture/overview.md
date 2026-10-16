@@ -41,7 +41,7 @@ flowchart TD
     audio --> core
     physics --> rapi
     level --> rapi
-    shell --> rapi & input & core
+    shell --> rapi & input & app
     fpsgame --> fps & app & physics & level & input & audio & renderer & rapi & shell
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
