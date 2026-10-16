@@ -1,23 +1,94 @@
 //! Several UI sources composed into the one the renderer takes.
 
-use moho_render_api::{UiFrame, UiFrameSource, UiSource};
+use std::collections::HashMap;
+
+use moho_render_api::{UiFrame, UiFrameSource, UiMesh, UiRect, UiSource, UiTextureId};
 
 /// Pulls every layer in order each frame and merges them into one frame at
 /// `pixels_per_point = 1.0`; later layers draw on top.
+///
+/// The renderer locks this, then each layer: a caller must not hold a layer's lock while it
+/// draws.
 pub struct UiLayers {
     layers: Vec<UiSource>,
+    /// Each layer numbers its textures itself, so `(layer, id)` maps to an id unique here.
+    textures: HashMap<(usize, UiTextureId), UiTextureId>,
+    next_texture: u64,
 }
 
 impl UiLayers {
     pub fn new(layers: Vec<UiSource>) -> Self {
-        Self { layers }
+        Self {
+            layers,
+            textures: HashMap::new(),
+            next_texture: 0,
+        }
+    }
+
+    fn map_texture(&mut self, layer: usize, id: UiTextureId) -> UiTextureId {
+        *self.textures.entry((layer, id)).or_insert_with(|| {
+            let fresh = UiTextureId(self.next_texture);
+            self.next_texture += 1;
+            fresh
+        })
+    }
+
+    fn merge(&mut self, layer: usize, frame: UiFrame, out: &mut UiFrame) {
+        let scale = frame.pixels_per_point;
+        for mut set in frame.textures_set {
+            set.id = self.map_texture(layer, set.id);
+            out.textures_set.push(set);
+        }
+        for mesh in frame.meshes {
+            out.meshes.push(UiMesh {
+                clip_rect: UiRect {
+                    min: scaled(mesh.clip_rect.min, scale),
+                    max: scaled(mesh.clip_rect.max, scale),
+                },
+                texture: self.map_texture(layer, mesh.texture),
+                vertices: mesh
+                    .vertices
+                    .into_iter()
+                    .map(|mut v| {
+                        v.pos = scaled(v.pos, scale);
+                        v
+                    })
+                    .collect(),
+                indices: mesh.indices,
+            });
+        }
+        for id in frame.textures_free {
+            if let Some(mapped) = self.textures.remove(&(layer, id)) {
+                out.textures_free.push(mapped);
+            }
+        }
     }
 }
 
+fn scaled(point: [f32; 2], scale: f32) -> [f32; 2] {
+    [point[0] * scale, point[1] * scale]
+}
+
 impl UiFrameSource for UiLayers {
-    fn ui_frame(&mut self, _size_in_pixels: [u32; 2]) -> Option<UiFrame> {
-        let _ = &self.layers;
-        Some(UiFrame::default())
+    fn ui_frame(&mut self, size_in_pixels: [u32; 2]) -> Option<UiFrame> {
+        let mut out = UiFrame {
+            pixels_per_point: 1.0,
+            ..UiFrame::default()
+        };
+        let mut drew = false;
+        for index in 0..self.layers.len() {
+            let Ok(mut layer) = self.layers[index].lock() else {
+                tracing::warn!(layer = index, "skipped a ui layer with a poisoned lock");
+                continue;
+            };
+            let frame = layer.ui_frame(size_in_pixels);
+            drop(layer);
+            if let Some(frame) = frame {
+                drew = true;
+                self.merge(index, frame, &mut out);
+            }
+        }
+        drew.then_some(out)
     }
 }
 

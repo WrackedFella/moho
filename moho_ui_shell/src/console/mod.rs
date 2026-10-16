@@ -1,4 +1,7 @@
 //! The developer console: a command registry, an output buffer and the open/closed state.
+//!
+//! Commands are hidden debug commands: they appear only here and in `help`, never in a
+//! Settings screen.
 
 pub mod output;
 pub mod registry;
@@ -6,13 +9,33 @@ mod view;
 
 use std::collections::BTreeMap;
 
-use moho_input::bindings::{Binding, BindingWarning};
+use moho_input::bindings::{Action, ActionBindings, Binding, BindingWarning};
+use moho_input::key::Key;
 
 use output::ConsoleOutput;
-use registry::{CommandSpec, EngineCommand, RegisterError};
+use registry::{CommandSpec, EngineCommand, Handler, RegisterError, Registry};
 
 /// The reserved `[bindings]` entry that names the console key.
 pub const CONSOLE_BINDING: &str = "console";
+
+/// The console key as an action, so it loads like any other binding. It is no game's action:
+/// no keybind screen lists it, and it is rebound only in the prefs file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ConsoleKey;
+
+impl Action for ConsoleKey {
+    const ALL: &'static [Self] = &[ConsoleKey];
+
+    fn name(self) -> &'static str {
+        CONSOLE_BINDING
+    }
+
+    fn default_bindings(self) -> &'static [Binding] {
+        &[Binding::Key(Key::Backtick)]
+    }
+}
+
+const ESCAPE: Binding = Binding::Key(Key::Escape);
 
 /// Where an input should go after the console has seen it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,38 +53,115 @@ pub enum Routing {
 /// The console for a game whose own commands are `G`.
 pub struct Console<G> {
     open: bool,
+    toggle: Vec<Binding>,
     input: String,
+    focus_input: bool,
+    sized: bool,
     output: ConsoleOutput,
+    registry: Registry<G>,
     commands: Vec<G>,
     engine_commands: Vec<EngineCommand>,
 }
 
 impl<G> Console<G> {
-    /// Reads only the `console` entry of the game's `[bindings]` section.
-    pub fn new(_bindings: &BTreeMap<String, String>) -> (Self, Vec<BindingWarning>) {
+    /// Reads only the `console` entry of the game's `[bindings]` section. The console always has
+    /// a key: an entry that is unbound or unreadable falls back to backtick, with a warning.
+    pub fn new(bindings: &BTreeMap<String, String>) -> (Self, Vec<BindingWarning>) {
+        let entry = bindings.get(CONSOLE_BINDING);
+        let section: BTreeMap<String, String> = entry
+            .map(|value| (CONSOLE_BINDING.to_owned(), value.clone()))
+            .into_iter()
+            .collect();
+        let (loaded, mut warnings) = ActionBindings::<ConsoleKey>::load(&section);
+        let mut toggle = loaded.get(ConsoleKey).to_vec();
+        if toggle.is_empty() {
+            toggle = ConsoleKey.default_bindings().to_vec();
+            if let Some(value) = entry {
+                warnings.push(BindingWarning {
+                    name: CONSOLE_BINDING.to_owned(),
+                    value: value.clone(),
+                });
+            }
+        }
         let console = Self {
             open: false,
+            toggle,
             input: String::new(),
+            focus_input: false,
+            sized: false,
             output: ConsoleOutput::new(),
+            registry: Registry::new(),
             commands: Vec::new(),
             engine_commands: Vec::new(),
         };
-        (console, Vec::new())
+        (console, warnings)
     }
 
     /// Adds a game command; a refused registration changes nothing.
-    pub fn register(&mut self, _spec: CommandSpec<G>) -> Result<(), RegisterError> {
-        Ok(())
+    ///
+    /// # Errors
+    /// `Taken` if the name (ignoring case) is an engine or earlier game command; `InvalidName`
+    /// if it is empty or holds whitespace.
+    pub fn register(&mut self, spec: CommandSpec<G>) -> Result<(), RegisterError> {
+        self.registry.register(spec)
     }
 
     /// Routes one key or button event: a non-repeat press of the console binding toggles; while
     /// open, Escape closes and everything else belongs to the console.
-    pub fn on_key(&mut self, _input: Binding, _pressed: bool, _repeat: bool) -> Routing {
-        Routing::Game
+    pub fn on_key(&mut self, input: Binding, pressed: bool, repeat: bool) -> Routing {
+        let press = pressed && !repeat;
+        if press && self.open && (self.toggle.contains(&input) || input == ESCAPE) {
+            self.close();
+            Routing::Closed
+        } else if press && !self.open && self.toggle.contains(&input) {
+            self.open();
+            Routing::Opened
+        } else if self.open {
+            Routing::Console
+        } else {
+            Routing::Game
+        }
     }
 
-    /// Runs one typed line.
-    pub fn submit(&mut self, _line: &str) {}
+    /// Runs one typed line: echoes it, then runs the command named by its first word. A game
+    /// command that parses is queued for `take_commands`; its reply, or the parse error, prints.
+    pub fn submit(&mut self, line: &str) {
+        let line = line.trim();
+        if line.is_empty() {
+            return;
+        }
+        self.output.add_line(format!("> {line}"));
+        self.output.add_to_history(line.to_owned());
+        let mut words = line.split_whitespace();
+        let name = words.next().unwrap_or_default();
+        let args: Vec<&str> = words.collect();
+        match self.registry.find(name) {
+            None => self.output.add_line(format!(
+                "Unknown command '{name}'. Type 'help' for a list of commands."
+            )),
+            Some(Handler::Help) => {
+                for entry in self.registry.entries() {
+                    self.output
+                        .add_line(format!("  {} - {}", entry.usage, entry.help));
+                }
+            }
+            Some(Handler::Clear) => self.output.clear_output(),
+            Some(Handler::Engine(parse)) => match parse(&args) {
+                Ok((command, reply)) => {
+                    self.engine_commands.push(command);
+                    print_reply(&mut self.output, &reply);
+                }
+                Err(reply) => print_reply(&mut self.output, &reply),
+            },
+            Some(Handler::Game(parse)) => match parse(&args) {
+                Ok((command, reply)) => {
+                    self.commands.push(command);
+                    print_reply(&mut self.output, &reply);
+                }
+                Err(reply) => print_reply(&mut self.output, &reply),
+            },
+        }
+    }
 
     /// Drains the game's commands queued by `submit`. A game calls this in `Game::command()` and
     /// carries the values in its tick command; the console never mutates game state.
@@ -80,6 +180,7 @@ impl<G> Console<G> {
 
     pub fn open(&mut self) {
         self.open = true;
+        self.focus_input = true;
     }
 
     pub fn close(&mut self) {
@@ -93,6 +194,13 @@ impl<G> Console<G> {
 
     pub fn output(&self) -> &ConsoleOutput {
         &self.output
+    }
+}
+
+/// Prints a reply, one output line per line of text.
+fn print_reply(output: &mut ConsoleOutput, reply: &str) {
+    for line in reply.lines() {
+        output.add_line(line.to_owned());
     }
 }
 
@@ -342,6 +450,16 @@ pub(crate) mod tests {
             "{printed:?}"
         );
         assert!(console.take_commands().is_empty());
+        assert!(console.take_engine_commands().is_empty());
+    }
+
+    #[test]
+    fn a_line_with_surrounding_whitespace_runs_the_command_with_its_arguments() {
+        let mut console = console_with(tgm());
+
+        console.submit("   tgm 1  ");
+
+        assert_eq!(console.take_commands(), vec![Cmd::God(true)]);
         assert!(console.take_engine_commands().is_empty());
     }
 

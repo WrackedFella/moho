@@ -5,7 +5,11 @@ use moho_app::FrameContext;
 use crate::console::registry::EngineCommand;
 
 /// Applies `command`: `Quit` asks the runner to exit, as closing the window does.
-pub fn apply_engine_command(_command: &EngineCommand, _ctx: &mut FrameContext<'_>) {}
+pub fn apply_engine_command(command: &EngineCommand, ctx: &mut FrameContext<'_>) {
+    match command {
+        EngineCommand::Quit => ctx.request_exit(),
+    }
+}
 
 #[cfg(test)]
 mod tests {

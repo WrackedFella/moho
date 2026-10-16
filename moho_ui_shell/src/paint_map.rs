@@ -74,7 +74,7 @@ fn to_mesh(clip_rect: egui::Rect, mesh: &egui::epaint::Mesh) -> UiMesh {
 ///
 /// Consumes the texture delta: egui asserts in debug builds that a non-empty
 /// delta is not dropped. Deltas of one texture keep their order.
-pub(crate) fn to_ui_frame(
+pub fn to_ui_frame(
     primitives: &[egui::ClippedPrimitive],
     mut textures_delta: egui::TexturesDelta,
     pixels_per_point: f32,

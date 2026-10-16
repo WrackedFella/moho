@@ -89,4 +89,4 @@ pub trait UiFrameSource {
 }
 
 /// Shared handle to a game's UI paint-data provider.
-pub type UiSource = std::sync::Arc<std::sync::Mutex<dyn UiFrameSource>>;
+pub type UiSource = std::sync::Arc<std::sync::Mutex<dyn UiFrameSource + Send>>;

@@ -8,6 +8,7 @@ pub mod apply;
 pub mod console;
 pub mod host;
 pub mod layers;
+pub mod paint_map;
 
 pub use apply::apply_engine_command;
 pub use console::registry::{CommandSpec, EngineCommand, Owner, RegisterError};

@@ -3,7 +3,6 @@
 //! This adapter manages menus and UI state in a scalable way,
 //! allowing easy addition of new menus and menu types.
 mod event_routing;
-mod paint_map;
 mod rendering;
 
 pub use crate::app_state::GameState;
@@ -409,7 +408,7 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
         let clipped_primitives = self
             .context
             .tessellate(full_output.shapes, full_output.pixels_per_point);
-        Some(paint_map::to_ui_frame(
+        Some(moho_ui_shell::paint_map::to_ui_frame(
             &clipped_primitives,
             full_output.textures_delta,
             full_output.pixels_per_point,

@@ -961,6 +961,7 @@ dependencies = [
  "moho_core",
  "moho_input",
  "moho_render_api",
+ "moho_ui_shell",
  "rand 0.10.2",
  "tempfile",
  "tracing",

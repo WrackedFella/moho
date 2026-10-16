@@ -1,20 +1,16 @@
 //! The prototype as a [`moho_app::Game`]: samples input, ticks the sim, and turns its
 //! feedback into sound, a title status line, a hit flash and a crosshair.
 
-#[cfg(test)]
 use std::collections::BTreeMap;
-#[cfg(test)]
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use glam::{Mat4, Quat, Vec3};
 use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext};
 use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
-#[cfg(test)]
 use moho_input::bindings::Binding;
-#[cfg(test)]
 use moho_input::key::Key;
 use moho_physics::{CharacterState, first_person_view};
 use moho_render_api::{
@@ -23,12 +19,10 @@ use moho_render_api::{
     WorldMeshId,
 };
 use moho_renderer::{LightingGpu, RendererBackend, Scene};
-use winit::event::{ElementState, KeyEvent, WindowEvent};
-use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window};
 
-#[cfg(test)]
-use moho_ui_shell::{Console, Routing, UiShell};
+use moho_ui_shell::host::input_of;
+use moho_ui_shell::{Console, Routing, UiLayers, UiShell, apply_engine_command};
 
 use crate::hud::Edge;
 use crate::input::{FpsAction, FpsCommand};
@@ -359,7 +353,6 @@ struct Stage {
     window: Option<Arc<Window>>,
     status: String,
     title: String,
-    #[cfg(test)]
     shell: Arc<Mutex<UiShell<Infallible>>>,
 }
 
@@ -383,9 +376,14 @@ impl Stage {
             window: None,
             status: String::new(),
             title: String::new(),
-            #[cfg(test)]
             shell: Arc::new(Mutex::new(UiShell::new(Console::new(&BTreeMap::new()).0))),
         }
+    }
+
+    /// The console shell. Never hold the guard across `draw`: the renderer locks the shell
+    /// itself when it pulls the UI frame.
+    fn shell(&self) -> MutexGuard<'_, UiShell<Infallible>> {
+        self.shell.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn add_arena(&mut self, meshes: Vec<WorldMesh>, dummy_spawns: &[Vec3]) {
@@ -626,25 +624,41 @@ impl FpsGame {
         &mut self.input
     }
 
-    /// Where one key or button press or release goes. The window-event path calls this once
+    /// Replaces the default console shell, which has no game commands.
+    #[must_use]
+    pub fn with_shell(mut self, shell: UiShell<Infallible>) -> Self {
+        self.stage.shell = Arc::new(Mutex::new(shell));
+        self
+    }
+
+    /// Where one key or button press or release goes: the console sees it first, so a game
+    /// action bound to the console key never shadows it. The window-event path calls this once
     /// it has a `Binding`, so it is testable without a winit `KeyEvent`.
-    #[cfg(test)]
     fn route_input(
         &mut self,
         ctx: &mut EventContext<'_>,
         input: Binding,
         pressed: bool,
-        _repeat: bool,
+        repeat: bool,
     ) -> Routing {
-        if pressed && input == Binding::Key(Key::Escape) {
-            ctx.request_exit();
+        let routing = self.stage.shell().route(input, pressed, repeat);
+        match routing {
+            // A key held as the console opened would otherwise stay held: its release goes to
+            // the console.
+            Routing::Opened => self.input.release_all(),
+            Routing::Console | Routing::Closed => {}
+            Routing::Game => {
+                if pressed && !repeat && input == Binding::Key(Key::Escape) {
+                    ctx.request_exit();
+                }
+                match input {
+                    Binding::Key(key) => self.input.key(key, pressed),
+                    Binding::Mouse(button) => self.input.mouse_button(button, pressed),
+                    Binding::Pad(_) => {}
+                }
+            }
         }
-        match input {
-            Binding::Key(key) => self.input.key(key, pressed),
-            Binding::Mouse(button) => self.input.mouse_button(button, pressed),
-            Binding::Pad(_) => {}
-        }
-        Routing::Game
+        routing
     }
 }
 
@@ -668,33 +682,37 @@ impl Game for FpsGame {
 
     fn init(&mut self, ctx: &mut InitContext<'_>) {
         capture_cursor(ctx.window);
+        self.stage.shell().attach(ctx.window.clone());
         let crosshair: UiSource = self.stage.crosshair.clone();
-        ctx.renderer.set_ui_source(Some(crosshair));
+        let shell: UiSource = self.stage.shell.clone();
+        let layers: UiSource = Arc::new(Mutex::new(UiLayers::new(vec![crosshair, shell])));
+        ctx.renderer.set_ui_source(Some(layers));
         self.stage.window = Some(ctx.window.clone());
     }
 
     fn event(&mut self, ctx: &mut EventContext<'_>, event: Event) {
         match event {
             Event::Window(event) => {
-                if let WindowEvent::KeyboardInput {
-                    event:
-                        KeyEvent {
-                            physical_key: PhysicalKey::Code(KeyCode::Escape),
-                            state: ElementState::Pressed,
-                            ..
-                        },
-                    ..
-                } = event
-                {
-                    ctx.request_exit();
+                if let Some((input, pressed, repeat)) = input_of(&event) {
+                    let routing = self.route_input(ctx, input, pressed, repeat);
+                    self.stage.shell().feed(&event, routing);
+                } else if self.stage.shell().on_window_event(&event) == Routing::Game {
+                    handle_window_event(&mut self.input, &event);
                 }
-                handle_window_event(&mut self.input, &event);
             }
-            Event::Device(event) => handle_device_event(&mut self.input, &event),
+            Event::Device(event) => {
+                if !self.stage.shell().captures_input() {
+                    handle_device_event(&mut self.input, &event);
+                }
+            }
         }
     }
 
     fn frame(&mut self, ctx: &mut FrameContext<'_>, alpha: f32) {
+        let engine_commands = self.stage.shell().console_mut().take_engine_commands();
+        for command in &engine_commands {
+            apply_engine_command(command, ctx);
+        }
         for feedback in self.sim.drain_feedback() {
             if let Feedback::PlayerHit { from, .. } = feedback {
                 let player = self.sim.player();
@@ -915,6 +933,34 @@ mod tests {
         assert_eq!(routing, Routing::Closed);
         assert!(!ctx.exit_requested());
         assert!(!game.stage.shell.lock().unwrap().captures_input());
+    }
+
+    #[test]
+    fn an_escape_repeat_after_the_console_closed_does_not_exit() {
+        let mut game = game();
+        let clock = GameClock::default();
+        open_the_console(&mut game, &clock);
+        let mut ctx = EventContext::new(&clock, None, None);
+        let escape = Binding::Key(Key::Escape);
+
+        let closing = game.route_input(&mut ctx, escape, true, false);
+        let repeated = game.route_input(&mut ctx, escape, true, true);
+
+        assert_eq!(closing, Routing::Closed);
+        assert_eq!(repeated, Routing::Game);
+        assert!(!ctx.exit_requested());
+    }
+
+    #[test]
+    fn escape_with_the_console_closed_exits() {
+        let mut game = game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        let routing = game.route_input(&mut ctx, Binding::Key(Key::Escape), true, false);
+
+        assert_eq!(routing, Routing::Game);
+        assert!(ctx.exit_requested());
     }
 
     #[test]
