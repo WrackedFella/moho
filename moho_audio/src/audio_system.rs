@@ -7,7 +7,7 @@ use crate::error::AudioError;
 use crate::error::AudioResult;
 use crate::output::{AudioOutput, Playback};
 use crate::rodio_output::RodioOutput;
-use crate::spatial::{Listener, distance_gain, stereo_pan};
+use crate::spatial::{Listener, distance_gain, rear_gain, stereo_pan};
 use glam::Vec3;
 use std::path::Path;
 use tracing::{debug, warn};
@@ -84,8 +84,8 @@ impl<O: AudioOutput> AudioSystem<O> {
     /// Play a sound from an AudioSource with optimized loading
     ///
     /// Sound-effect and voice sources with a position are attenuated by their distance
-    /// from the listener and not started at all beyond audible range; music and UI
-    /// sources ignore a position.
+    /// from the listener, quieter when behind it (the rear cue), and not started at all
+    /// beyond audible range; music and UI sources ignore a position.
     pub fn play_audio_source(&mut self, source: &AudioSource) -> AudioResult<()> {
         let Some(distance_gain) = self.distance_gain_for(source) else {
             debug!(
@@ -139,9 +139,12 @@ impl<O: AudioOutput> AudioSystem<O> {
         Ok(())
     }
 
+    /// Distance attenuation times the rear cue for a positioned source, `None` when
+    /// out of range; 1.0 for sources heard without a position.
     fn distance_gain_for(&self, source: &AudioSource) -> Option<f32> {
         match Self::world_position(source) {
-            Some(position) => distance_gain(self.listener.position.distance(position)),
+            Some(position) => distance_gain(self.listener.position.distance(position))
+                .map(|gain| gain * rear_gain(&self.listener, position)),
             None => Some(1.0),
         }
     }
@@ -645,7 +648,7 @@ mod tests {
         system.set_listener(Listener::default());
 
         system
-            .handle_event(play_at(SOUND, 0.8, Vec3::new(0.0, 0.0, 8.0)))
+            .handle_event(play_at(SOUND, 0.8, Vec3::new(0.0, 0.0, -8.0)))
             .unwrap();
 
         assert_volume_eq(output.voices()[0].volume, 0.05);

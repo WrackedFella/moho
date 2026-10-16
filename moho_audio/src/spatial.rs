@@ -41,7 +41,7 @@ impl Listener {
 
     /// The direction the listener faces, `orientation × -Z`.
     pub fn forward(&self) -> Vec3 {
-        todo!("orientation * Vec3::NEG_Z")
+        self.orientation * Vec3::NEG_Z
     }
 }
 
@@ -50,8 +50,15 @@ pub const REAR_GAIN: f32 = 0.5;
 
 /// Volume multiplier for the rear cue: 1.0 at or in front of the listener's side,
 /// falling linearly to [`REAR_GAIN`] straight behind.
-pub fn rear_gain(_listener: &Listener, _source: Vec3) -> f32 {
-    1.0
+pub fn rear_gain(listener: &Listener, source: Vec3) -> f32 {
+    let ahead = (source - listener.position)
+        .normalize_or_zero()
+        .dot(listener.forward());
+    if ahead >= 0.0 {
+        1.0
+    } else {
+        1.0 - (1.0 - REAR_GAIN) * -ahead
+    }
 }
 
 /// Per-ear volume multipliers for a panned sound.
@@ -382,7 +389,7 @@ mod tests {
             let gain = rear_gain(&listener, Vec3::new(x, y, z));
 
             prop_assert!(
-                gain >= REAR_GAIN - 1e-5 && gain <= 1.0 + 1e-5,
+                (REAR_GAIN - 1e-5..=1.0 + 1e-5).contains(&gain),
                 "gain {gain} outside [{REAR_GAIN}, 1]"
             );
         }
