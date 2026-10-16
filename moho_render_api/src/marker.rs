@@ -18,8 +18,11 @@ pub struct Marker {
 impl Marker {
     /// A marker spanning the two corners, ordered per axis so `min <= max`.
     pub fn new(a: [f32; 3], b: [f32; 3], color: [f32; 4]) -> Self {
-        let _ = (a, b, color);
-        todo!("order the corners per axis")
+        Self {
+            min: std::array::from_fn(|i| a[i].min(b[i])),
+            max: std::array::from_fn(|i| a[i].max(b[i])),
+            color,
+        }
     }
 }
 

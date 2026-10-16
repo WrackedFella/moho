@@ -17,6 +17,7 @@ use wgpu::util::DeviceExt;
 use crate::MaterialGpu;
 use crate::gpu_types::LightingGpu;
 use crate::types::GpuInstance;
+use moho_render_api::MarkerGpu;
 
 /// Encapsulates all GPU resources for the renderer.
 ///
@@ -53,6 +54,66 @@ pub struct ResourcePool {
 
     /// Number of vertices in skybox
     pub(crate) skybox_vertex_count: u32,
+
+    /// Unit cube and per-frame instance buffer for the marker pass
+    pub(crate) marker_buffers: MarkerBuffers,
+}
+
+/// GPU buffers of the marker pass: one shared unit cube and a growable
+/// per-frame instance buffer.
+#[derive(Debug)]
+pub(crate) struct MarkerBuffers {
+    pub(crate) cube_vertices: wgpu::Buffer,
+    pub(crate) cube_indices: wgpu::Buffer,
+    pub(crate) instances: wgpu::Buffer,
+    capacity: usize,
+}
+
+impl MarkerBuffers {
+    const INITIAL_CAPACITY: usize = 16;
+
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let cube_vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("marker-cube-vertices"),
+            contents: bytemuck::cast_slice(crate::markers::UNIT_CUBE_VERTICES),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let cube_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("marker-cube-indices"),
+            contents: bytemuck::cast_slice(crate::markers::UNIT_CUBE_INDICES),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        Self {
+            cube_vertices,
+            cube_indices,
+            instances: Self::allocate(device, Self::INITIAL_CAPACITY),
+            capacity: Self::INITIAL_CAPACITY,
+        }
+    }
+
+    fn allocate(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("marker-instance-buffer"),
+            size: (capacity * std::mem::size_of::<MarkerGpu>()) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    /// Write `markers` into the instance buffer, reallocating (doubling) only
+    /// when they no longer fit.
+    pub(crate) fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        markers: &[MarkerGpu],
+    ) {
+        if markers.len() > self.capacity {
+            self.capacity = markers.len().next_power_of_two();
+            self.instances = Self::allocate(device, self.capacity);
+        }
+        queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(markers));
+    }
 }
 
 impl ResourcePool {
@@ -174,6 +235,7 @@ impl ResourcePool {
             instance_capacity,
             skybox_vertex_buffer,
             skybox_vertex_count,
+            marker_buffers: MarkerBuffers::new(device),
         }
     }
 

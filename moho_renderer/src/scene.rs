@@ -89,6 +89,8 @@ impl Scene {
         // Render transparent instances (back-to-front sorted)
         Self::enqueue_transparent(renderer, prepared.transparent_entries, camera.2);
 
+        renderer.enqueue_markers(&self.markers.draws(camera.2));
+
         renderer.submit_frame();
         Ok(())
     }
