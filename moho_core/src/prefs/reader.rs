@@ -781,10 +781,10 @@ mod tests {
              mouse_sensitivity=1\n\
              input_filtering_enabled=true\n\
              \n[audio]\n\
-             sound_effect_volume=7.0\n\
-             music_volume=5.0\n\
-             ui_volume=8.0\n\
-             voice_volume=7.0\n\
+             sound_effect_volume=8.0\n\
+             music_volume=6.0\n\
+             ui_volume=7.0\n\
+             voice_volume=9.0\n\
              \n[graphics]\n\
              shadow_quality=3\n\
              ssao_quality=3\n\

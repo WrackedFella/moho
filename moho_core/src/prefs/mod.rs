@@ -53,7 +53,7 @@ pub const RESOLUTION_PRESETS: &[(&str, (u32, u32))] = &[
 pub struct Prefs {
     mouse_sensitivity: f32,
     input_filtering_enabled: bool,
-    // Audio settings (values 1.0 to 10.0)
+    // Audio settings (values 0.0 to 10.0)
     audio_sound_effect_volume: f32,
     audio_music_volume: f32,
     audio_ui_volume: f32,
@@ -190,11 +190,11 @@ impl Default for Prefs {
         Self {
             mouse_sensitivity: 1.0,
             input_filtering_enabled: true,
-            // Default audio volumes (mid-range)
-            audio_sound_effect_volume: 7.0,
-            audio_music_volume: 5.0,
-            audio_ui_volume: 8.0,
-            audio_voice_volume: 7.0,
+            // Audio volumes use a 0 to 10 scale
+            audio_sound_effect_volume: 8.0,
+            audio_music_volume: 6.0,
+            audio_ui_volume: 7.0,
+            audio_voice_volume: 9.0,
             // Default graphics settings (High)
             graphics_shadow_quality: 3,
             graphics_ssao_quality: 3,

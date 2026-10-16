@@ -133,7 +133,7 @@ impl FormControls {
                     |ui| {
                         ui.spacing_mut().slider_width = 120.0;
                         let slider = ui.add(
-                            egui::Slider::new(value, 1.0..=10.0)
+                            egui::Slider::new(value, 0.0..=10.0)
                                 .step_by(0.1)
                                 .show_value(false),
                         );
@@ -148,7 +148,7 @@ impl FormControls {
                 // Drag value
                 let drag = ui.add(
                     egui::DragValue::new(value)
-                        .range(1.0..=10.0)
+                        .range(0.0..=10.0)
                         .speed(0.1)
                         .min_decimals(1)
                         .max_decimals(1),
@@ -415,6 +415,33 @@ mod tests {
                 FormControls::volume_slider(ui, "Vol", value, 5.0, 60.0);
             });
         });
+    }
+
+    #[test]
+    fn volume_slider_reaches_zero() {
+        let ctx = egui::Context::default();
+        let mut value = 5.0_f32;
+        volume_frame(&ctx, Vec::new(), &mut value);
+        volume_frame(&ctx, Vec::new(), &mut value);
+        let at = |x: f32| egui::pos2(x, 20.0);
+        let button = |x: f32, pressed| egui::Event::PointerButton {
+            pos: at(x),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+
+        volume_frame(&ctx, vec![egui::Event::PointerMoved(at(700.0))], &mut value);
+        volume_frame(&ctx, vec![button(700.0, true)], &mut value);
+        assert!((value - 5.0).abs() > 0.05, "press did not hit the slider");
+        volume_frame(
+            &ctx,
+            vec![egui::Event::PointerMoved(at(-500.0))],
+            &mut value,
+        );
+        volume_frame(&ctx, vec![button(-500.0, false)], &mut value);
+
+        assert_eq!(value, 0.0);
     }
 
     #[test]

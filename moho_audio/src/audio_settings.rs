@@ -26,14 +26,7 @@ pub struct AudioSettings {
 
 impl Default for AudioSettings {
     fn default() -> Self {
-        Self {
-            master_volume: 1.0,
-            sound_effects_volume: 0.8,
-            music_volume: 0.6,
-            ui_volume: 0.7,
-            voice_volume: 0.9,
-            muted: false,
-        }
+        Self::from_prefs(&moho_core::prefs::Prefs::default())
     }
 }
 
@@ -41,6 +34,22 @@ impl AudioSettings {
     /// Create new audio settings with default values
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Levels from saved prefs: each category is its 0..=10 pref divided by ten.
+    pub fn from_prefs(prefs: &moho_core::prefs::Prefs) -> Self {
+        Self {
+            master_volume: 1.0,
+            sound_effects_volume: 0.0,
+            music_volume: 0.0,
+            ui_volume: 0.0,
+            voice_volume: 0.0,
+            muted: false,
+        }
+        .with_sound_effects_volume(prefs.sound_effect_volume() / 10.0)
+        .with_music_volume(prefs.music_volume() / 10.0)
+        .with_ui_volume(prefs.ui_volume() / 10.0)
+        .with_voice_volume(prefs.voice_volume() / 10.0)
     }
 
     /// Set master volume (affects all audio)
@@ -122,6 +131,67 @@ mod tests {
             AudioCategory::UserInterface => 0.7,
             AudioCategory::Voice => 0.9,
         }
+    }
+
+    fn prefs_with(sfx: f32, music: f32, ui: f32, voice: f32) -> moho_core::prefs::Prefs {
+        let mut prefs = moho_core::prefs::Prefs::default();
+        *prefs.sound_effect_volume_mut() = sfx;
+        *prefs.music_volume_mut() = music;
+        *prefs.ui_volume_mut() = ui;
+        *prefs.voice_volume_mut() = voice;
+        prefs
+    }
+
+    fn assert_volumes(settings: &AudioSettings, expected: [f32; 4]) {
+        for ((category, _), want) in CATEGORY_ROWS.iter().zip(expected) {
+            let actual = settings.effective_volume(category);
+
+            assert!(
+                (actual - want).abs() < TOLERANCE,
+                "category={category:?} expected={want} actual={actual}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_is_today_s_levels_and_matches_prefs_defaults() {
+        let prefs = moho_core::prefs::Prefs::default();
+
+        let defaults = AudioSettings::default();
+        let from_defaults = AudioSettings::from_prefs(&prefs);
+
+        assert_volumes(&defaults, [0.8, 0.6, 0.7, 0.9]);
+        assert_volumes(&from_defaults, [0.8, 0.6, 0.7, 0.9]);
+        assert_eq!(
+            [
+                prefs.sound_effect_volume(),
+                prefs.music_volume(),
+                prefs.ui_volume(),
+                prefs.voice_volume()
+            ],
+            [8.0, 6.0, 7.0, 9.0]
+        );
+    }
+
+    #[test]
+    fn from_prefs_zero_volume_is_silent() {
+        let settings = AudioSettings::from_prefs(&prefs_with(0.0, 10.0, 3.0, 1.0));
+
+        assert_volumes(&settings, [0.0, 1.0, 0.3, 0.1]);
+    }
+
+    #[test]
+    fn from_prefs_scales_each_category_by_a_tenth() {
+        let settings = AudioSettings::from_prefs(&prefs_with(5.0, 10.0, 3.0, 1.0));
+
+        assert_volumes(&settings, [0.5, 1.0, 0.3, 0.1]);
+    }
+
+    #[test]
+    fn from_prefs_clamps_out_of_range_values() {
+        let settings = AudioSettings::from_prefs(&prefs_with(25.0, -3.0, 11.0, 100.0));
+
+        assert_volumes(&settings, [1.0, 0.0, 1.0, 1.0]);
     }
 
     #[test]
