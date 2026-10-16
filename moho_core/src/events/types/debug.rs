@@ -34,6 +34,16 @@ pub enum DebugEvent {
 
     /// Set SSAO quality
     SetSsaoQuality { quality: u32 },
+
+    /// Show or replace a box marker; `min` and `max` are world positions in metres
+    ShowMarker {
+        id: u64,
+        min: glam::Vec3,
+        max: glam::Vec3,
+    },
+
+    /// Remove the marker with `id`, or every marker when `None`
+    ClearMarkers { id: Option<u64> },
 }
 
 #[derive(Clone, Debug)]

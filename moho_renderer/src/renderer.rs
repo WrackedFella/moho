@@ -35,6 +35,9 @@ pub struct Renderer<'a> {
     dynamic_lights_buffer: wgpu::Buffer,
     ui_pass: crate::ui_pass::UiPass,
     ui_source: Option<crate::UiSource>,
+    marker_pipeline: wgpu::RenderPipeline,
+    marker_buffers: crate::resources::MarkerBuffers,
+    pending_markers: Vec<moho_render_api::MarkerGpu>,
 }
 
 impl<'a> Renderer<'a> {
@@ -116,6 +119,9 @@ impl<'a> Renderer<'a> {
             dynamic_lights_buffer,
             ui_pass,
             ui_source: None,
+            marker_pipeline: pipeline_setup.marker_pipeline().clone(),
+            marker_buffers: resources.marker_buffers,
+            pending_markers: Vec::new(),
         };
 
         // Recreate camera bind group with SSAO textures if available
@@ -523,6 +529,12 @@ impl<'a> Renderer<'a> {
         }
     }
 
+    /// Store this frame's markers (sorted far to near) for `submit_frame` to draw.
+    pub fn enqueue_markers(&mut self, markers: &[moho_render_api::MarkerGpu]) {
+        self.pending_markers.clear();
+        self.pending_markers.extend_from_slice(markers);
+    }
+
     /// Set the provider of UI paint data; `None` clears it.
     pub fn set_ui_source(&mut self, source: Option<crate::UiSource>) {
         self.ui_source = source;
@@ -545,7 +557,7 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    /// Flush all queued draws (shadow passes, main pass, SSAO) and present
+    /// Flush all queued draws (shadow passes, main pass, markers, SSAO) and present
     /// the frame. No-op if `begin_frame` wasn't called or didn't acquire a
     /// surface texture.
     pub fn submit_frame(&mut self) {
@@ -600,6 +612,20 @@ impl<'a> Renderer<'a> {
             &offsets,
         );
 
+        if !self.pending_markers.is_empty() {
+            self.marker_buffers
+                .upload(&self.device, &self.queue, &self.pending_markers);
+            crate::render_ops::marker_pass_ops::render_marker_pass(
+                &mut encoder,
+                frame_view,
+                &self.depth_texture_view,
+                &self.marker_pipeline,
+                &self.camera_bind_group,
+                &self.marker_buffers,
+                self.pending_markers.len() as u32,
+            );
+        }
+
         if let Some(ssao) = &self.ssao {
             ssao.compute_ao(
                 &self.device,
@@ -621,5 +647,6 @@ impl<'a> Renderer<'a> {
 
         self.pending_frame_view = None;
         self.pending_draws.clear();
+        self.pending_markers.clear();
     }
 }
