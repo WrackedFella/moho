@@ -81,7 +81,8 @@ owns it. `AudioEvent::PlaySoundAt` carries a world position: `AudioSystem` atten
 sound-effect and voice sources by distance from its `Listener` (full volume within 2 m,
 inverse distance beyond, not played past 100 m; `moho_audio/src/spatial.rs`). They are also
 constant-power panned by direction relative to the listener's facing (centred sounds play
-3 dB quieter per ear; stereo files are folded to mono). Why channels instead of handling inside bus handlers: [events](events.md#the-channel-hand-off).
+3 dB quieter per ear; stereo files are folded to mono). A rear cue scales volume by 1.0 at
+or in front of the listener's side, falling linearly to half straight behind. Why channels instead of handling inside bus handlers: [events](events.md#the-channel-hand-off).
 
 ## Frame
 

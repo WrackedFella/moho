@@ -38,6 +38,27 @@ impl Listener {
     pub fn right(&self) -> Vec3 {
         self.orientation * Vec3::X
     }
+
+    /// The direction the listener faces, `orientation × -Z`.
+    pub fn forward(&self) -> Vec3 {
+        self.orientation * Vec3::NEG_Z
+    }
+}
+
+/// Volume multiplier for a sound straight behind the listener.
+pub const REAR_GAIN: f32 = 0.5;
+
+/// Volume multiplier for the rear cue: 1.0 at or in front of the listener's side,
+/// falling linearly to [`REAR_GAIN`] straight behind.
+pub fn rear_gain(listener: &Listener, source: Vec3) -> f32 {
+    let ahead = (source - listener.position)
+        .normalize_or_zero()
+        .dot(listener.forward());
+    if ahead >= 0.0 {
+        1.0
+    } else {
+        1.0 - (1.0 - REAR_GAIN) * -ahead
+    }
 }
 
 /// Per-ear volume multipliers for a panned sound.
@@ -309,6 +330,129 @@ mod tests {
             prop_assert!(gain.left >= -1e-6 && gain.left <= 1.0 + 1e-6, "{gain:?}");
             prop_assert!(gain.right >= -1e-6 && gain.right <= 1.0 + 1e-6, "{gain:?}");
         }
+    }
+
+    #[test]
+    fn rear_cue_grows_from_side_to_behind() {
+        let listener = Listener::default();
+        let behind_right = Vec3::new(10.0, 0.0, 10.0);
+        let rows = [
+            ("ahead", NORTH * 10.0, 1.0),
+            ("to the side", EAST * 10.0, 1.0),
+            (
+                "diagonally behind",
+                behind_right,
+                1.0 - 0.5 * (0.5f32).sqrt(),
+            ),
+            ("straight behind", -NORTH * 10.0, REAR_GAIN),
+        ];
+
+        let gains = rows.map(|(_, source, _)| rear_gain(&listener, source));
+
+        for ((name, _, expected), gain) in rows.into_iter().zip(gains) {
+            assert!(
+                (gain - expected).abs() < 1e-5,
+                "{name}: {gain} != {expected}"
+            );
+        }
+        assert!(gains[1] > gains[2] && gains[2] > gains[3], "{gains:?}");
+    }
+
+    #[test]
+    fn rear_cue_follows_facing_not_world_axes() {
+        let south_sound = -NORTH * 10.0;
+        let north_sound = NORTH * 10.0;
+
+        let facing_north = rear_gain(&Listener::default(), south_sound);
+        let facing_south_front = rear_gain(&facing_south(), south_sound);
+        let facing_south_rear = rear_gain(&facing_south(), north_sound);
+
+        assert_close(facing_north, REAR_GAIN);
+        assert_close(facing_south_front, 1.0);
+        assert_close(facing_south_rear, REAR_GAIN);
+    }
+
+    proptest! {
+        #[test]
+        fn rear_gain_stays_between_rear_gain_and_one(
+            x in -50.0f32..50.0,
+            y in -50.0f32..50.0,
+            z in -50.0f32..50.0,
+            yaw in -3.2f32..3.2,
+            pitch in -1.5f32..1.5,
+        ) {
+            let listener = Listener {
+                position: Vec3::new(1.0, 2.0, 3.0),
+                orientation: Quat::from_euler(glam::EulerRot::YXZ, yaw, pitch, 0.0),
+            };
+
+            let gain = rear_gain(&listener, Vec3::new(x, y, z));
+
+            prop_assert!(
+                (REAR_GAIN - 1e-5..=1.0 + 1e-5).contains(&gain),
+                "gain {gain} outside [{REAR_GAIN}, 1]"
+            );
+        }
+
+        #[test]
+        fn rear_gain_never_rises_as_a_sound_moves_behind(
+            a in 0.0f32..std::f32::consts::PI,
+            b in 0.0f32..std::f32::consts::PI,
+            yaw in -3.2f32..3.2,
+        ) {
+            let listener = Listener {
+                orientation: Quat::from_rotation_y(yaw),
+                ..Listener::default()
+            };
+            let (earlier, later) = if a <= b { (a, b) } else { (b, a) };
+
+            let earlier_gain = rear_gain(&listener, sound_at_angle(&listener, earlier));
+            let later_gain = rear_gain(&listener, sound_at_angle(&listener, later));
+
+            prop_assert!(
+                later_gain <= earlier_gain + 1e-5,
+                "{later} rad gain {later_gain} > {earlier} rad gain {earlier_gain}"
+            );
+        }
+
+        #[test]
+        fn rear_gain_drops_as_a_sound_moves_further_behind(
+            earlier in std::f32::consts::FRAC_PI_2..(std::f32::consts::PI - 0.5),
+            gap in 0.5f32..1.5,
+            yaw in -3.2f32..3.2,
+        ) {
+            let listener = Listener {
+                orientation: Quat::from_rotation_y(yaw),
+                ..Listener::default()
+            };
+            let later = (earlier + gap).min(std::f32::consts::PI);
+
+            let earlier_gain = rear_gain(&listener, sound_at_angle(&listener, earlier));
+            let later_gain = rear_gain(&listener, sound_at_angle(&listener, later));
+
+            prop_assert!(
+                later_gain < earlier_gain - 1e-3,
+                "no drop from {earlier} to {later} rad: {earlier_gain} -> {later_gain}"
+            );
+        }
+    }
+
+    /// A sound 10 m from the listener, `angle` radians off its facing in the horizontal plane.
+    fn sound_at_angle(listener: &Listener, angle: f32) -> Vec3 {
+        let local = Vec3::new(angle.sin(), 0.0, -angle.cos()) * 10.0;
+        listener.position + listener.orientation * local
+    }
+
+    #[test]
+    fn sound_on_the_listener_gets_no_rear_cue() {
+        let listener = Listener {
+            position: Vec3::new(5.0, 1.0, -3.0),
+            orientation: Quat::from_rotation_y(1.0),
+        };
+
+        let gain = rear_gain(&listener, listener.position);
+
+        assert_eq!(gain, 1.0);
     }
 
     #[test]
