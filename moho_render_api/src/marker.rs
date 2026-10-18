@@ -77,4 +77,33 @@ mod tests {
         assert_eq!(marker.min, [0.0, 1.0, 2.0]);
         assert_eq!(marker.max, [3.0, 4.0, 5.0]);
     }
+
+    #[test]
+    fn new_marker_is_filled() {
+        let marker = Marker::new([0.0; 3], [1.0; 3], [1.0; 4]);
+
+        assert_eq!(marker.style, MarkerStyle::Fill);
+    }
+
+    #[test]
+    fn with_style_outline_sets_style_and_keeps_other_fields() {
+        let color = [0.1, 0.2, 0.3, 0.4];
+        let filled = Marker::new([3.0, 1.0, 2.0], [0.0, 4.0, 5.0], color);
+
+        let outlined = filled.with_style(MarkerStyle::Outline);
+
+        assert_eq!(outlined.style, MarkerStyle::Outline);
+        assert_eq!(outlined.min, filled.min);
+        assert_eq!(outlined.max, filled.max);
+        assert_eq!(outlined.color, color);
+    }
+
+    #[test]
+    fn with_style_fill_on_outline_marker_returns_fill() {
+        let outlined = Marker::new([0.0; 3], [1.0; 3], [1.0; 4]).with_style(MarkerStyle::Outline);
+
+        let filled = outlined.with_style(MarkerStyle::Fill);
+
+        assert_eq!(filled.style, MarkerStyle::Fill);
+    }
 }
