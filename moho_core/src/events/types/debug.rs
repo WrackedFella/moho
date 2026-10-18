@@ -40,6 +40,7 @@ pub enum DebugEvent {
         id: u64,
         min: glam::Vec3,
         max: glam::Vec3,
+        style: moho_render_api::MarkerStyle,
     },
 
     /// Remove the marker with `id`, or every marker when `None`

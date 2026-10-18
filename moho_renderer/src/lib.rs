@@ -29,7 +29,7 @@ pub use moho_render_api::{InstanceGpu, MaterialGpu};
 mod block_on;
 mod markers;
 mod ui_pass;
-pub use markers::{MARKER_INFLATE, Markers};
+pub use markers::{MARKER_INFLATE, MarkerDraws, Markers};
 mod world_meshes;
 pub use world_meshes::WorldMeshes;
 mod instance_collector;
@@ -141,10 +141,16 @@ pub trait RendererBackend {
     /// Set the provider of UI paint data, pulled in `submit_frame` and drawn
     /// over the scene; `None` clears it. No-op by default.
     fn set_ui_source(&mut self, _source: Option<UiSource>) {}
-    /// Queue the frame's translucent box markers, sorted far to near, to draw
-    /// over the world. Called once per frame after the transparent draws and
-    /// before `submit_frame`. No-op by default.
-    fn enqueue_markers(&mut self, _markers: &[moho_render_api::MarkerGpu]) {}
+    /// Queue the frame's box markers to draw over the world: translucent
+    /// `fills` and edge-only `outlines`, each sorted far to near. Called once
+    /// per frame after the transparent draws and before `submit_frame`. No-op
+    /// by default.
+    fn enqueue_markers(
+        &mut self,
+        _fills: &[moho_render_api::MarkerGpu],
+        _outlines: &[moho_render_api::MarkerGpu],
+    ) {
+    }
 }
 
 pub use moho_render_api::UiSource;
@@ -205,8 +211,12 @@ impl RendererBackend for Renderer<'_> {
     fn set_ui_source(&mut self, source: Option<UiSource>) {
         self.set_ui_source(source);
     }
-    fn enqueue_markers(&mut self, markers: &[moho_render_api::MarkerGpu]) {
-        self.enqueue_markers(markers);
+    fn enqueue_markers(
+        &mut self,
+        fills: &[moho_render_api::MarkerGpu],
+        outlines: &[moho_render_api::MarkerGpu],
+    ) {
+        self.enqueue_markers(fills, outlines);
     }
     fn add_point_light(
         &mut self,

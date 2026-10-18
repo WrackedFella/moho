@@ -5,7 +5,8 @@ use moho_render_api::MarkerGpu;
 const MARKER_SHADER: &str = include_str!("../../../shaders/marker.wgsl");
 
 /// Alpha-blended, back-face-culled, depth-tested but depth-write-free pipeline
-/// drawing a unit cube instanced by [`MarkerGpu`].
+/// drawing a unit cube instanced by [`MarkerGpu`]: solid triangles for
+/// `TriangleList`, one-pixel edges for `LineList`.
 ///
 /// Single-sampled to match the main pass's colour and depth targets, which
 /// the marker pass loads rather than clears.
@@ -14,14 +15,19 @@ pub(super) fn create_marker_pipeline(
     layout: &wgpu::PipelineLayout,
     surface_format: wgpu::TextureFormat,
     depth_format: wgpu::TextureFormat,
+    topology: wgpu::PrimitiveTopology,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("marker-shader"),
         source: wgpu::ShaderSource::Wgsl(MARKER_SHADER.into()),
     });
+    let label = match topology {
+        wgpu::PrimitiveTopology::LineList => "marker-outline-pipeline",
+        _ => "marker-pipeline",
+    };
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("marker-pipeline"),
+        label: Some(label),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: &shader,
@@ -55,7 +61,7 @@ pub(super) fn create_marker_pipeline(
             })],
         }),
         primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
+            topology,
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: Some(wgpu::Face::Back),

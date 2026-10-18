@@ -1729,6 +1729,7 @@ dependencies = [
  "criterion",
  "glam 0.33.12",
  "ini",
+ "moho_render_api",
  "postcard",
  "proptest",
  "serde",

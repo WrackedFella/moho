@@ -519,10 +519,15 @@ impl EventProcessor {
                         .push(RenderRequest::SsaoQuality(quality as u8));
                 }
             }
-            DebugEvent::ShowMarker { id, min, max } => {
+            DebugEvent::ShowMarker {
+                id,
+                min,
+                max,
+                style,
+            } => {
                 app.scene.markers_mut().upsert(
                     MarkerId(id),
-                    Marker::new(min.to_array(), max.to_array(), MARKER_COLOR),
+                    Marker::new(min.to_array(), max.to_array(), MARKER_COLOR).with_style(style),
                 );
             }
             DebugEvent::ClearMarkers { id } => match id {

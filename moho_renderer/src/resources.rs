@@ -58,12 +58,13 @@ pub struct ResourcePool {
     pub(crate) marker_buffers: MarkerBuffers,
 }
 
-/// GPU buffers of the marker pass: one shared unit cube and a growable
-/// per-frame instance buffer.
+/// GPU buffers of the marker pass: one shared unit cube with face and edge
+/// index lists, and a growable per-frame instance buffer.
 #[derive(Debug)]
 pub(crate) struct MarkerBuffers {
     pub(crate) cube_vertices: wgpu::Buffer,
     pub(crate) cube_indices: wgpu::Buffer,
+    pub(crate) edge_indices: wgpu::Buffer,
     pub(crate) instances: wgpu::Buffer,
     capacity: usize,
 }
@@ -82,9 +83,15 @@ impl MarkerBuffers {
             contents: bytemuck::cast_slice(crate::markers::UNIT_CUBE_INDICES),
             usage: wgpu::BufferUsages::INDEX,
         });
+        let edge_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("marker-edge-indices"),
+            contents: bytemuck::cast_slice(crate::markers::UNIT_CUBE_EDGES),
+            usage: wgpu::BufferUsages::INDEX,
+        });
         Self {
             cube_vertices,
             cube_indices,
+            edge_indices,
             instances: Self::allocate(device, Self::INITIAL_CAPACITY),
             capacity: Self::INITIAL_CAPACITY,
         }

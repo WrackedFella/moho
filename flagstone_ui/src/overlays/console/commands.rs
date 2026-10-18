@@ -3,6 +3,8 @@
 //! Handles command parsing, execution, and help text generation
 //! for the debug console.
 
+use moho_render_api::MarkerStyle;
+
 /// Console command action to be processed by the application
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConsoleAction {
@@ -37,6 +39,7 @@ pub enum ConsoleAction {
         id: u64,
         min: glam::Vec3,
         max: glam::Vec3,
+        style: MarkerStyle,
     },
     /// Remove the marker with this id, or every marker when `None`
     ClearMarkers(Option<u64>),
@@ -143,7 +146,7 @@ impl CommandProcessor {
             "  r_ssao_quality <0-4> - Set SSAO quality (Off/Low/Med/High/Ultra)".to_string(),
             "  snd_play_at <path> <x> <y> <z> [volume] - Play a sound at a world position (metres)"
                 .to_string(),
-            "  marker <id> <x> <y> <z> [size] - Show a translucent box marker at a block corner"
+            "  marker <id> <x> <y> <z> [size] [fill|outline] - Show a box marker at a block corner"
                 .to_string(),
             "  marker_clear [id] - Remove one marker, or all markers".to_string(),
         ])
@@ -201,10 +204,10 @@ impl CommandProcessor {
     }
 
     fn marker_command(&self, parts: &[&str]) -> CommandResult {
-        if !(5..=6).contains(&parts.len()) {
+        if !(5..=7).contains(&parts.len()) {
             return CommandResult::messages(vec![
-                "Usage: marker <id> <x> <y> <z> [size]".to_string(),
-                "  Example: marker 1 10 4 -3 2".to_string(),
+                "Usage: marker <id> <x> <y> <z> [size] [fill|outline]".to_string(),
+                "  Example: marker 1 10 4 -3 2 outline".to_string(),
             ]);
         }
 
@@ -224,6 +227,15 @@ impl CommandProcessor {
         if size <= 0.0 {
             return CommandResult::message("Error: size must be greater than zero".to_string());
         }
+        let style = match parts.get(6).copied() {
+            None | Some("fill") => MarkerStyle::Fill,
+            Some("outline") => MarkerStyle::Outline,
+            Some(other) => {
+                return CommandResult::message(format!(
+                    "Error: style must be fill or outline, not {other}"
+                ));
+            }
+        };
 
         let min = glam::Vec3::new(x, y, z);
         let max = min + glam::Vec3::splat(size);
@@ -234,7 +246,12 @@ impl CommandProcessor {
         }
         CommandResult::with_action(
             format!("Marker {id} from {min} to {max}"),
-            ConsoleAction::ShowMarker { id, min, max },
+            ConsoleAction::ShowMarker {
+                id,
+                min,
+                max,
+                style,
+            },
         )
     }
 

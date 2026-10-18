@@ -36,8 +36,12 @@ pub struct Renderer<'a> {
     ui_pass: crate::ui_pass::UiPass,
     ui_source: Option<crate::UiSource>,
     marker_pipeline: wgpu::RenderPipeline,
+    marker_outline_pipeline: wgpu::RenderPipeline,
     marker_buffers: crate::resources::MarkerBuffers,
+    /// This frame's fills followed by its outlines.
     pending_markers: Vec<moho_render_api::MarkerGpu>,
+    /// How many leading entries of `pending_markers` are fills.
+    pending_fill_count: usize,
 }
 
 impl<'a> Renderer<'a> {
@@ -120,8 +124,10 @@ impl<'a> Renderer<'a> {
             ui_pass,
             ui_source: None,
             marker_pipeline: pipeline_setup.marker_pipeline().clone(),
+            marker_outline_pipeline: pipeline_setup.marker_outline_pipeline().clone(),
             marker_buffers: resources.marker_buffers,
             pending_markers: Vec::new(),
+            pending_fill_count: 0,
         };
 
         // Recreate camera bind group with SSAO textures if available
@@ -529,10 +535,17 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    /// Store this frame's markers (sorted far to near) for `submit_frame` to draw.
-    pub fn enqueue_markers(&mut self, markers: &[moho_render_api::MarkerGpu]) {
+    /// Store this frame's fill and outline markers (each sorted far to near)
+    /// for `submit_frame` to draw.
+    pub fn enqueue_markers(
+        &mut self,
+        fills: &[moho_render_api::MarkerGpu],
+        outlines: &[moho_render_api::MarkerGpu],
+    ) {
         self.pending_markers.clear();
-        self.pending_markers.extend_from_slice(markers);
+        self.pending_markers.extend_from_slice(fills);
+        self.pending_markers.extend_from_slice(outlines);
+        self.pending_fill_count = fills.len();
     }
 
     /// Set the provider of UI paint data; `None` clears it.
@@ -619,10 +632,13 @@ impl<'a> Renderer<'a> {
                 &mut encoder,
                 frame_view,
                 &self.depth_texture_view,
-                &self.marker_pipeline,
+                [&self.marker_pipeline, &self.marker_outline_pipeline],
                 &self.camera_bind_group,
                 &self.marker_buffers,
-                self.pending_markers.len() as u32,
+                [
+                    0..self.pending_fill_count as u32,
+                    self.pending_fill_count as u32..self.pending_markers.len() as u32,
+                ],
             );
         }
 
@@ -648,5 +664,6 @@ impl<'a> Renderer<'a> {
         self.pending_frame_view = None;
         self.pending_draws.clear();
         self.pending_markers.clear();
+        self.pending_fill_count = 0;
     }
 }

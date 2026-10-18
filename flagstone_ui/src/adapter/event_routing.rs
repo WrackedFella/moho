@@ -124,9 +124,19 @@ pub fn process_console_action(action: crate::overlays::ConsoleAction, event_bus:
     use crate::overlays::ConsoleAction;
 
     match action {
-        ConsoleAction::ShowMarker { id, min, max } => {
+        ConsoleAction::ShowMarker {
+            id,
+            min,
+            max,
+            style,
+        } => {
             use moho_core::events::DebugEvent;
-            event_bus.publish(DebugEvent::ShowMarker { id, min, max });
+            event_bus.publish(DebugEvent::ShowMarker {
+                id,
+                min,
+                max,
+                style,
+            });
         }
         ConsoleAction::ClearMarkers(id) => {
             use moho_core::events::DebugEvent;

@@ -6,23 +6,40 @@ use bytemuck::{Pod, Zeroable};
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MarkerId(pub u64);
 
-/// An axis-aligned box in world space with a translucent colour.
+/// How a marker's box is drawn.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum MarkerStyle {
+    /// A translucent solid box.
+    #[default]
+    Fill,
+    /// The box's twelve edges only.
+    Outline,
+}
+
+/// An axis-aligned box in world space with a colour.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Marker {
     pub min: [f32; 3],
     pub max: [f32; 3],
     /// Linear RGBA, straight (not premultiplied) alpha.
     pub color: [f32; 4],
+    pub style: MarkerStyle,
 }
 
 impl Marker {
-    /// A marker spanning the two corners, ordered per axis so `min <= max`.
+    /// A [`MarkerStyle::Fill`] marker spanning the two corners, ordered per axis so `min <= max`.
     pub fn new(a: [f32; 3], b: [f32; 3], color: [f32; 4]) -> Self {
         Self {
             min: std::array::from_fn(|i| a[i].min(b[i])),
             max: std::array::from_fn(|i| a[i].max(b[i])),
             color,
+            style: MarkerStyle::Fill,
         }
+    }
+
+    /// This marker drawn in `style`.
+    pub fn with_style(self, style: MarkerStyle) -> Self {
+        Self { style, ..self }
     }
 }
 
