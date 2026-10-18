@@ -1047,11 +1047,39 @@ mod tests {
         map.pointer_moved(100.0, 200.0);
         map.mouse_button(MouseButton::Left, true);
         map.pointer_moved(300.0, 400.0);
+        map.mouse_button(MouseButton::Left, false);
+        map.pointer_moved(500.0, 600.0);
+        map.mouse_button(MouseButton::Left, true);
+        map.pointer_moved(700.0, 800.0);
+        map.mouse_button(MouseButton::Left, false);
+        map.pointer_moved(900.0, 1000.0);
         let frame = map.end_tick();
 
-        assert_eq!(frame.press_pointer(), Some((100.0, 200.0)));
-        assert_eq!(frame.pointer(), Some((300.0, 400.0)));
-        assert!(frame.pressed(TestAction::Fire));
+        assert_eq!(frame.press_pointer(), Some((500.0, 600.0)));
+        assert_eq!(frame.pointer(), Some((900.0, 1000.0)));
+    }
+
+    #[test]
+    fn press_without_a_pointer_has_no_press_pointer() {
+        let mut before_any_move = map(1.0);
+        before_any_move.mouse_button(MouseButton::Left, true);
+        let mut after_leaving = map(1.0);
+        after_leaving.pointer_moved(10.0, 20.0);
+        after_leaving.pointer_left();
+        after_leaving.mouse_button(MouseButton::Left, true);
+
+        let first = before_any_move.end_tick();
+        let second = after_leaving.end_tick();
+
+        assert!(first.pressed(TestAction::Fire));
+        assert!(second.pressed(TestAction::Fire));
+        assert_eq!(first.press_pointer(), None);
+        assert_eq!(second.press_pointer(), None);
+
+        after_leaving.pointer_moved(30.0, 40.0);
+        let later = after_leaving.end_tick();
+        assert_eq!(later.pointer(), Some((30.0, 40.0)));
+        assert_eq!(later.press_pointer(), None);
     }
 
     #[test]

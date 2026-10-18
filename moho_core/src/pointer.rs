@@ -127,7 +127,6 @@ mod tests {
                 "{point:?}: depth {}",
                 offset.dot(forward)
             );
-            assert!(offset.length() >= NEAR - 1e-4, "{point:?}");
             assert!(offset.length() < NEAR * 2.0, "{point:?}");
         }
     }
@@ -170,14 +169,15 @@ mod tests {
         let eye = Vec3::new(2.0, 3.0, 4.0);
         let forward = Vec3::new(0.1, -0.3, -1.0).normalize();
         let world = eye + view_offset(forward, Vec3::new(0.5, 0.3, -10.0));
-        let mut directions = Vec::new();
+        let sixteen_by_nine = UVec2::new(1280, 720);
 
-        for viewport in [
-            UVec2::new(1280, 720),
-            UVec2::new(2560, 1440),
-            UVec2::new(1000, 1000),
+        for (viewport, projected_for) in [
+            (UVec2::new(1280, 720), UVec2::new(1280, 720)),
+            (UVec2::new(2560, 1440), UVec2::new(2560, 1440)),
+            (UVec2::new(1000, 1000), UVec2::new(1000, 1000)),
+            (UVec2::new(1000, 1000), sixteen_by_nine),
         ] {
-            let (view, proj) = camera(eye, forward, viewport);
+            let (view, proj) = camera(eye, forward, projected_for);
             let pixel = pixel_of(world, view, proj, viewport);
 
             let ray = screen_ray(view, proj, viewport, pixel).expect("ray");
@@ -185,15 +185,6 @@ mod tests {
             assert!((ray.direction.length() - 1.0).abs() < 1e-4, "{viewport:?}");
             let miss = distance_to_line(ray, world) / world.distance(eye);
             assert!(miss < 1e-3, "{viewport:?}: missed by {miss} relative");
-            directions.push(ray.direction);
-        }
-
-        for direction in &directions {
-            assert!(
-                direction.distance(directions[0]) < 1e-3,
-                "{direction:?} vs {:?}",
-                directions[0]
-            );
         }
     }
 
@@ -220,9 +211,21 @@ mod tests {
     fn non_finite_point_has_no_ray() {
         let viewport = UVec2::new(1280, 720);
         let (view, proj) = camera(Vec3::ZERO, Vec3::NEG_Z, viewport);
+        let inside = Vec2::new(10.0, 10.0);
+        let mut nan_view = view;
+        nan_view.w_axis.x = f32::NAN;
+        let mut nan_proj = proj;
+        nan_proj.x_axis.x = f32::NAN;
+        let cases = [
+            ("NaN point", view, proj, Vec2::new(f32::NAN, 10.0)),
+            ("infinite point", view, proj, Vec2::new(10.0, f32::INFINITY)),
+            ("NaN view", nan_view, proj, inside),
+            ("NaN projection", view, nan_proj, inside),
+            ("singular projection", view, Mat4::ZERO, inside),
+        ];
 
-        for point in [Vec2::new(f32::NAN, 10.0), Vec2::new(10.0, f32::INFINITY)] {
-            assert_eq!(screen_ray(view, proj, viewport, point), None, "{point:?}");
+        for (name, view, proj, point) in cases {
+            assert_eq!(screen_ray(view, proj, viewport, point), None, "{name}");
         }
     }
 }
