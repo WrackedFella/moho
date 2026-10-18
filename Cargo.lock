@@ -1805,9 +1805,11 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "egui-winit",
+ "glam 0.33.12",
  "moho_app",
  "moho_input",
  "moho_render_api",
+ "moho_renderer",
  "proptest",
  "thiserror 2.0.20",
  "tracing",

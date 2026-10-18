@@ -667,3 +667,63 @@ impl<'a> Renderer<'a> {
         self.pending_fill_count = 0;
     }
 }
+
+/// `lighting` with the shader's debug mode (`params[1]`) replaced by `debug_view`; `None`
+/// keeps the game's own value.
+pub fn lighting_with_debug_view(
+    lighting: crate::gpu_types::LightingGpu,
+    _debug_view: Option<u32>,
+) -> crate::gpu_types::LightingGpu {
+    lighting
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::gpu_types::LightingGpu;
+
+    use super::*;
+
+    fn game_lighting() -> LightingGpu {
+        LightingGpu {
+            sun_direction: [0.1, 0.2, 0.3, 1.0],
+            sun_color: [1.0, 0.9, 0.8, 0.0],
+            moon_direction: [0.4, 0.5, 0.6, 0.2],
+            moon_color: [0.1, 0.1, 0.3, 0.0],
+            ambient: [0.2, 0.2, 0.25, 0.3],
+            params: [13.5, 2.0, 7.0, 9.0],
+        }
+    }
+
+    #[test]
+    fn debug_view_override_replaces_params_y() {
+        let lighting = game_lighting();
+
+        let overridden = lighting_with_debug_view(lighting, Some(3));
+
+        assert_eq!(overridden.params, [13.5, 3.0, 7.0, 9.0]);
+        assert_eq!(overridden.sun_direction, lighting.sun_direction);
+        assert_eq!(overridden.ambient, lighting.ambient);
+    }
+
+    #[test]
+    fn debug_view_override_of_zero_clears_the_games_view() {
+        let lighting = game_lighting();
+
+        let overridden = lighting_with_debug_view(lighting, Some(0));
+
+        assert_eq!(overridden.params[1], 0.0);
+    }
+
+    #[test]
+    fn no_override_keeps_the_games_params_y() {
+        let lighting = game_lighting();
+
+        let kept = lighting_with_debug_view(lighting, None);
+
+        assert_eq!(
+            bytemuck::bytes_of(&kept),
+            bytemuck::bytes_of(&lighting),
+            "every field is untouched"
+        );
+    }
+}

@@ -55,7 +55,7 @@ pub mod builder;
 pub use builder::RendererBuilder;
 
 mod renderer;
-pub use renderer::Renderer;
+pub use renderer::{Renderer, lighting_with_debug_view};
 
 /// Object-safe renderer backend trait.
 ///
@@ -141,6 +141,9 @@ pub trait RendererBackend {
     /// Set the provider of UI paint data, pulled in `submit_frame` and drawn
     /// over the scene; `None` clears it. No-op by default.
     fn set_ui_source(&mut self, _source: Option<UiSource>) {}
+    /// Override the debug view mode in the lighting the shader reads; `None` leaves the
+    /// game's own value. No-op by default.
+    fn set_debug_view(&mut self, _mode: Option<u32>) {}
     /// Queue the frame's box markers to draw over the world: translucent
     /// `fills` and edge-only `outlines`, each sorted far to near. Called once
     /// per frame after the transparent draws and before `submit_frame`. No-op

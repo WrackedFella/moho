@@ -41,10 +41,18 @@ pub enum RegisterError {
 }
 
 /// What the engine's own commands hand back to the game as values.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum EngineCommand {
     Quit,
+    DebugView(u32),
+    ShadowQuality(u8),
+    SsaoQuality(u8),
+    PlaySoundAt {
+        path: std::path::PathBuf,
+        position: glam::Vec3,
+        volume: f32,
+    },
 }
 
 /// What running a command does.
@@ -130,6 +138,234 @@ mod tests {
     use crate::console::tests::{Cmd, help_lines, parse_tgm, tgm};
 
     use super::*;
+
+    const DEBUG_VIEW_USAGE: &str = "Usage: r_debug_view <mode> (0=None, 1=Normals, 2=Bias, 3=Shadows, 4=LightLevel, 5=PointLights)";
+    const SHADOW_USAGE: &str =
+        "Usage: r_shadow_quality <0-4> (0=Off, 1=Low, 2=Med, 3=High, 4=Ultra)";
+    const SSAO_USAGE: &str = "Usage: r_ssao_quality <0-4> (0=Off, 1=Low, 2=Med, 3=High, 4=Ultra)";
+    const AUDIO_CUE_USAGE: [&str; 2] = [
+        "Usage: audio_cue <path> <x> <y> <z> [volume]",
+        "  Example: audio_cue searchlight/assets/rifle_shot.wav 1 0 -5 0.8",
+    ];
+
+    /// What one typed line queued and printed: the engine commands, the game commands, and the
+    /// reply lines after the echo of the line.
+    fn run_line(line: &str) -> (Vec<EngineCommand>, Vec<Cmd>, Vec<String>) {
+        let (mut console, _) = Console::<Cmd>::new(&std::collections::BTreeMap::new());
+        console.submit(line);
+        let printed: Vec<String> = console.output().lines().iter().cloned().collect();
+        let echo = printed.iter().position(|l| *l == format!("> {line}"));
+        assert!(echo.is_some(), "{printed:?}");
+        (
+            console.take_engine_commands(),
+            console.take_commands(),
+            printed[echo.unwrap_or_default() + 1..].to_vec(),
+        )
+    }
+
+    fn assert_reply(line: &str, expected: Option<EngineCommand>, reply: &[&str]) {
+        let (engine, game, printed) = run_line(line);
+
+        assert_eq!(engine, expected.into_iter().collect::<Vec<_>>(), "{line}");
+        assert!(game.is_empty(), "{line}");
+        assert_eq!(printed, reply, "{line}");
+    }
+
+    #[test]
+    fn debug_view_parses_with_todays_reply() {
+        assert_reply(
+            "r_debug_view 3",
+            Some(EngineCommand::DebugView(3)),
+            &["Debug view set to: Shadows (3)"],
+        );
+    }
+
+    #[test]
+    fn audio_cue_parses_position_and_default_volume() {
+        assert_reply(
+            "audio_cue searchlight/assets/rifle_shot.wav 2 0 0",
+            Some(EngineCommand::PlaySoundAt {
+                path: "searchlight/assets/rifle_shot.wav".into(),
+                position: glam::Vec3::new(2.0, 0.0, 0.0),
+                volume: 1.0,
+            }),
+            &[&format!(
+                "Playing searchlight/assets/rifle_shot.wav at {} (volume 1)",
+                glam::Vec3::new(2.0, 0.0, 0.0)
+            )],
+        );
+    }
+
+    #[test]
+    fn refused_engine_lines_print_todays_reply_and_queue_nothing() {
+        assert_reply(
+            "r_shadow_quality 9",
+            None,
+            &["Quality must be between 0 and 4"],
+        );
+        assert_reply("r_ssao_quality", None, &[SSAO_USAGE]);
+        assert_reply("audio_cue missing.wav 1", None, &AUDIO_CUE_USAGE);
+    }
+
+    #[test]
+    fn help_lists_the_renderer_and_sound_commands() {
+        let (mut console, _) = Console::<Cmd>::new(&std::collections::BTreeMap::new());
+        assert_eq!(console.register(tgm()), Ok(()));
+
+        console.submit("help");
+
+        let help = help_lines(&console);
+        assert_eq!(help.len(), 8, "{help:?}");
+        for prefix in [
+            "  r_debug_view <0-5> - ",
+            "  r_shadow_quality <0-4> - ",
+            "  r_ssao_quality <0-4> - ",
+            "  audio_cue <path> <x> <y> <z> [volume] - ",
+        ] {
+            let line = help.iter().find(|l| l.starts_with(prefix));
+            assert!(
+                line.is_some_and(|l| l.len() > prefix.len()),
+                "{prefix}: {help:?}"
+            );
+        }
+        assert_eq!(
+            help[7], "  tgm [0|1] - toggle god mode",
+            "game rows stay last"
+        );
+    }
+
+    #[test]
+    fn renderer_and_sound_names_are_engine_owned() {
+        for name in [
+            "r_debug_view",
+            "r_shadow_quality",
+            "r_ssao_quality",
+            "audio_cue",
+        ] {
+            let (mut console, _) = Console::<Cmd>::new(&std::collections::BTreeMap::new());
+            let spec = CommandSpec {
+                name: name.to_owned(),
+                ..tgm()
+            };
+
+            let refused = console.register(spec);
+
+            assert_eq!(
+                refused,
+                Err(RegisterError::Taken {
+                    name: name.to_owned(),
+                    owner: Owner::Engine
+                }),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn engine_parse_table_matches_strategy() {
+        let quality = |name: &str, label: &str, make: fn(u8) -> EngineCommand, usage: &str| {
+            let mut rows: Vec<(String, Option<EngineCommand>, Vec<String>)> = Vec::new();
+            for (n, word) in [
+                (0u8, "Off"),
+                (1, "Low"),
+                (2, "Medium"),
+                (3, "High"),
+                (4, "Ultra"),
+            ] {
+                rows.push((
+                    format!("{name} {n}"),
+                    Some(make(n)),
+                    vec![format!("{label} quality set to: {word} ({n})")],
+                ));
+            }
+            for (arg, reply) in [
+                ("5", "Quality must be between 0 and 4"),
+                ("x", "Invalid quality. Must be a number."),
+                ("-1", "Invalid quality. Must be a number."),
+                ("2.5", "Invalid quality. Must be a number."),
+            ] {
+                rows.push((format!("{name} {arg}"), None, vec![reply.to_owned()]));
+            }
+            rows.push((name.to_owned(), None, vec![usage.to_owned()]));
+            rows
+        };
+        let mut rows = quality(
+            "r_shadow_quality",
+            "Shadow",
+            EngineCommand::ShadowQuality,
+            SHADOW_USAGE,
+        );
+        rows.extend(quality(
+            "r_ssao_quality",
+            "SSAO",
+            EngineCommand::SsaoQuality,
+            SSAO_USAGE,
+        ));
+        for (mode, word) in [
+            (0u32, "None"),
+            (1, "Normals"),
+            (2, "Bias"),
+            (3, "Shadows"),
+            (4, "Light Level"),
+            (5, "Point Lights"),
+        ] {
+            rows.push((
+                format!("r_debug_view {mode}"),
+                Some(EngineCommand::DebugView(mode)),
+                vec![format!("Debug view set to: {word} ({mode})")],
+            ));
+        }
+        for (arg, reply) in [
+            ("6", "Debug view must be between 0 and 5"),
+            ("x", "Invalid mode. Must be a number."),
+        ] {
+            rows.push((format!("r_debug_view {arg}"), None, vec![reply.to_owned()]));
+        }
+        rows.push((
+            "r_debug_view".to_owned(),
+            None,
+            vec![DEBUG_VIEW_USAGE.to_owned()],
+        ));
+        let finite = "Error: position and volume must be finite numbers";
+        for line in [
+            "audio_cue b.wav a 2 3",
+            "audio_cue b.wav 1 2 3 loud",
+            "audio_cue b.wav 1 nan 3",
+            "audio_cue b.wav 1 2 3 inf",
+            "audio_cue b.wav -inf 2 3",
+        ] {
+            rows.push((line.to_owned(), None, vec![finite.to_owned()]));
+        }
+        for line in [
+            "audio_cue",
+            "audio_cue b.wav",
+            "audio_cue b.wav 1 2",
+            "audio_cue b.wav 1 2 3 0.5 9",
+        ] {
+            rows.push((
+                line.to_owned(),
+                None,
+                AUDIO_CUE_USAGE.iter().map(|&l| l.to_owned()).collect(),
+            ));
+        }
+        rows.push((
+            "audio_cue sounds/boom.wav 1.5 -2 30 0.4".to_owned(),
+            Some(EngineCommand::PlaySoundAt {
+                path: "sounds/boom.wav".into(),
+                position: glam::Vec3::new(1.5, -2.0, 30.0),
+                volume: 0.4,
+            }),
+            vec![format!(
+                "Playing sounds/boom.wav at {} (volume 0.4)",
+                glam::Vec3::new(1.5, -2.0, 30.0)
+            )],
+        ));
+
+        for (line, expected, reply) in rows {
+            let reply: Vec<&str> = reply.iter().map(String::as_str).collect();
+            assert_reply(&line, expected, &reply);
+        }
+    }
 
     #[test]
     fn registering_an_engine_name_is_refused_and_the_engine_command_stays() {
