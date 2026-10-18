@@ -681,7 +681,7 @@ impl<'a> Renderer<'a> {
 
 /// `lighting` with the shader's debug mode (`params[1]`) replaced by `debug_view`; `None`
 /// keeps the game's own value.
-pub fn lighting_with_debug_view(
+fn lighting_with_debug_view(
     lighting: crate::gpu_types::LightingGpu,
     debug_view: Option<u32>,
 ) -> crate::gpu_types::LightingGpu {

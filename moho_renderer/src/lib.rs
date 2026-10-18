@@ -55,7 +55,7 @@ pub mod builder;
 pub use builder::RendererBuilder;
 
 mod renderer;
-pub use renderer::{Renderer, lighting_with_debug_view};
+pub use renderer::Renderer;
 
 /// Object-safe renderer backend trait.
 ///
