@@ -4,7 +4,7 @@
 # gpu = the only crates that may reach wgpu, egui-wgpu or naga without going through
 # another workspace member; dev-dependencies count)
 
-engine: moho_app moho_core moho_render_api moho_renderer moho_audio moho_physics moho_input moho_level
+engine: moho_app moho_core moho_render_api moho_renderer moho_audio moho_physics moho_input moho_ui_shell moho_level
 flagstone: flagstone_voxel flagstone_game flagstone_ui flagstone
 searchlight: searchlight_rules searchlight
 domain: moho_core flagstone_voxel flagstone_game moho_level searchlight_rules

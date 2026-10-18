@@ -80,7 +80,9 @@ list. Absent actions keep their defaults; `ActionBindings::to_section` writes ev
 action, defaults included. Line problems are returned as `BindingWarning`s and the
 action keeps its default (`flagstone_ui::actions::load_bindings` logs them): an unknown
 action id, or a value with any unrecognised key. A `[bindings]` line with no `=` is a
-malformed prefs line. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
+malformed prefs line. `console` is reserved in every game's `[bindings]`: it is the
+engine console's key (`moho_ui_shell`, default backtick; an unbound or unreadable value
+falls back to backtick), not a game action. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
 keys and ignored.
 
 A binding list is comma-separated key names (`W`, `Spacebar, Enter`); an action may

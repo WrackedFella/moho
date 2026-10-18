@@ -22,6 +22,7 @@ moho_level = { path = "../moho_level" }
 moho_physics = { workspace = true }
 moho_render_api = { path = "../moho_render_api" }
 moho_renderer = { path = "../moho_renderer" }
+moho_ui_shell = { path = "../moho_ui_shell" }
 
 [dev-dependencies]
 proptest = { workspace = true }

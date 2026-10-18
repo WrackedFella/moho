@@ -961,6 +961,7 @@ dependencies = [
  "moho_core",
  "moho_input",
  "moho_render_api",
+ "moho_ui_shell",
  "rand 0.10.2",
  "tempfile",
  "tracing",
@@ -1794,6 +1795,21 @@ dependencies = [
  "thiserror 2.0.20",
  "tracing",
  "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "moho_ui_shell"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "egui-winit",
+ "moho_app",
+ "moho_input",
+ "moho_render_api",
+ "proptest",
+ "thiserror 2.0.20",
+ "tracing",
  "winit",
 ]
 
@@ -3084,6 +3100,7 @@ dependencies = [
  "moho_physics",
  "moho_render_api",
  "moho_renderer",
+ "moho_ui_shell",
  "proptest",
  "searchlight_rules",
  "thiserror 2.0.20",

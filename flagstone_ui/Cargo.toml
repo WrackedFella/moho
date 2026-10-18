@@ -8,10 +8,11 @@ publish = false
 glam = { workspace = true }
 moho_render_api = { path = "../moho_render_api" }
 winit = { workspace = true }
-egui = "0.36.2"
-egui-winit = { version = "0.36.2", default-features = false, features = ["clipboard", "wayland", "x11"] }
+egui = { workspace = true }
+egui-winit = { workspace = true }
 tracing = { workspace = true }
 moho_input = { path = "../moho_input" }
+moho_ui_shell = { path = "../moho_ui_shell" }
 moho_core = { path = "../moho_core" }
 flagstone_game = { path = "../flagstone_game" }
 rand = { workspace = true }

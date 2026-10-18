@@ -1,13 +1,17 @@
 //! The prototype as a [`moho_app::Game`]: samples input, ticks the sim, and turns its
 //! feedback into sound, a title status line, a hit flash and a crosshair.
 
+use std::collections::BTreeMap;
+use std::convert::Infallible;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use glam::{Mat4, Quat, Vec3};
 use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext};
 use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
+use moho_input::bindings::Binding;
+use moho_input::key::Key;
 use moho_physics::{CharacterState, first_person_view};
 use moho_render_api::{
     InstanceGpu, MaterialGpu, MaterialKey, RenderMaterial, Renderable, UiFrame, UiFrameSource,
@@ -15,9 +19,10 @@ use moho_render_api::{
     WorldMeshId,
 };
 use moho_renderer::{LightingGpu, RendererBackend, Scene};
-use winit::event::{ElementState, KeyEvent, WindowEvent};
-use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window};
+
+use moho_ui_shell::host::input_of;
+use moho_ui_shell::{Console, Routing, UiLayers, UiShell, apply_engine_command};
 
 use crate::hud::Edge;
 use crate::input::{FpsAction, FpsCommand};
@@ -348,6 +353,7 @@ struct Stage {
     window: Option<Arc<Window>>,
     status: String,
     title: String,
+    shell: Arc<Mutex<UiShell<Infallible>>>,
 }
 
 impl Stage {
@@ -370,7 +376,14 @@ impl Stage {
             window: None,
             status: String::new(),
             title: String::new(),
+            shell: Arc::new(Mutex::new(UiShell::new(Console::new(&BTreeMap::new()).0))),
         }
+    }
+
+    /// The console shell. Never hold the guard across `draw`: the renderer locks the shell
+    /// itself when it pulls the UI frame.
+    fn shell(&self) -> MutexGuard<'_, UiShell<Infallible>> {
+        self.shell.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn add_arena(&mut self, meshes: Vec<WorldMesh>, dummy_spawns: &[Vec3]) {
@@ -610,18 +623,61 @@ impl FpsGame {
     pub fn input_mut(&mut self) -> &mut ActionMap<FpsAction> {
         &mut self.input
     }
+
+    /// Replaces the default console shell, which has no game commands.
+    #[must_use]
+    pub fn with_shell(mut self, shell: UiShell<Infallible>) -> Self {
+        self.stage.shell = Arc::new(Mutex::new(shell));
+        self
+    }
+
+    /// Where one key or button press or release goes: the console sees it first, so a game
+    /// action bound to the console key never shadows it. The window-event path calls this once
+    /// it has a `Binding`, so it is testable without a winit `KeyEvent`.
+    fn route_input(
+        &mut self,
+        ctx: &mut EventContext<'_>,
+        input: Binding,
+        pressed: bool,
+        repeat: bool,
+    ) -> Routing {
+        let routing = self.stage.shell().route(input, pressed, repeat);
+        match routing {
+            // A key held as the console opened would otherwise stay held: its release goes to
+            // the console.
+            Routing::Opened => self.input.release_all(),
+            Routing::Console | Routing::Closed => {}
+            Routing::Game => {
+                if pressed && !repeat && input == Binding::Key(Key::Escape) {
+                    ctx.request_exit();
+                }
+                match input {
+                    Binding::Key(key) => self.input.key(key, pressed),
+                    Binding::Mouse(button) => self.input.mouse_button(button, pressed),
+                    Binding::Pad(_) => {}
+                }
+            }
+        }
+        routing
+    }
 }
 
 impl Game for FpsGame {
     type Command = FpsCommand;
 
     fn command(&mut self) -> FpsCommand {
-        FpsCommand::from_frame(&self.input.end_tick())
+        FpsCommand {
+            paused: self.stage.shell().captures_input(),
+            ..FpsCommand::from_frame(&self.input.end_tick())
+        }
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &FpsCommand) {
-        let was_dead = self.sim.player_body().is_dead();
         self.previous = self.sim.player();
+        if command.paused {
+            return;
+        }
+        let was_dead = self.sim.player_body().is_dead();
         self.sim.tick(command, ctx.tick_length.as_secs_f32());
         if was_dead && !self.sim.player_body().is_dead() {
             self.previous = self.sim.player();
@@ -632,33 +688,37 @@ impl Game for FpsGame {
 
     fn init(&mut self, ctx: &mut InitContext<'_>) {
         capture_cursor(ctx.window);
+        self.stage.shell().attach(ctx.window.clone());
         let crosshair: UiSource = self.stage.crosshair.clone();
-        ctx.renderer.set_ui_source(Some(crosshair));
+        let shell: UiSource = self.stage.shell.clone();
+        let layers: UiSource = Arc::new(Mutex::new(UiLayers::new(vec![crosshair, shell])));
+        ctx.renderer.set_ui_source(Some(layers));
         self.stage.window = Some(ctx.window.clone());
     }
 
     fn event(&mut self, ctx: &mut EventContext<'_>, event: Event) {
         match event {
             Event::Window(event) => {
-                if let WindowEvent::KeyboardInput {
-                    event:
-                        KeyEvent {
-                            physical_key: PhysicalKey::Code(KeyCode::Escape),
-                            state: ElementState::Pressed,
-                            ..
-                        },
-                    ..
-                } = event
-                {
-                    ctx.request_exit();
+                if let Some((input, pressed, repeat)) = input_of(&event) {
+                    let routing = self.route_input(ctx, input, pressed, repeat);
+                    self.stage.shell().feed(&event, routing);
+                } else if self.stage.shell().on_window_event(&event) == Routing::Game {
+                    handle_window_event(&mut self.input, &event);
                 }
-                handle_window_event(&mut self.input, &event);
             }
-            Event::Device(event) => handle_device_event(&mut self.input, &event),
+            Event::Device(event) => {
+                if !self.stage.shell().captures_input() {
+                    handle_device_event(&mut self.input, &event);
+                }
+            }
         }
     }
 
     fn frame(&mut self, ctx: &mut FrameContext<'_>, alpha: f32) {
+        let engine_commands = self.stage.shell().console_mut().take_engine_commands();
+        for command in &engine_commands {
+            apply_engine_command(command, ctx);
+        }
         for feedback in self.sim.drain_feedback() {
             if let Feedback::PlayerHit { from, .. } = feedback {
                 let player = self.sim.player();
@@ -700,6 +760,7 @@ mod tests {
     use glam::Vec3;
     use moho_app::{GameClock, HeadlessLoop, LoopConfig};
     use moho_input::bindings::ActionBindings;
+    use winit::event::{DeviceEvent, WindowEvent};
 
     use super::*;
     use crate::sim::Feedback;
@@ -837,6 +898,170 @@ mod tests {
         assert_eq!(game.previous, before);
         assert_ne!(game.previous, game.sim().player());
         assert!(!game.stage.status.is_empty());
+    }
+
+    const BACKTICK: Binding = Binding::Key(Key::Backtick);
+    const TICK: Duration = Duration::from_millis(16);
+
+    fn open_the_console(game: &mut FpsGame, clock: &GameClock) {
+        let mut ctx = EventContext::new(clock, None, None);
+        let routing = game.route_input(&mut ctx, BACKTICK, true, false);
+        assert_eq!(routing, Routing::Opened);
+    }
+
+    /// A game whose enemy is walking toward the player, so every sim tick moves it.
+    fn game_with_a_moving_enemy() -> FpsGame {
+        let sim = FpsSim::start(arena_arena(), arena_config());
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        FpsGame::new(sim, ActionMap::new(bindings, 1.0))
+    }
+
+    #[test]
+    fn an_open_console_freezes_the_simulation() {
+        let mut game = game_with_a_moving_enemy();
+        let clock = GameClock::default();
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.step(&mut game, 1);
+        open_the_console(&mut game, &clock);
+        let (enemy, player, health) = (
+            game.sim().enemy_state(0),
+            game.sim().player(),
+            game.sim().player_body().health(),
+        );
+
+        headless.step(&mut game, 120);
+
+        assert_eq!(game.sim().enemy_state(0), enemy);
+        assert_eq!(game.sim().player(), player);
+        assert_eq!(game.sim().player_body().health(), health);
+        assert_eq!(
+            game.previous, player,
+            "the view does not blend while frozen"
+        );
+    }
+
+    #[test]
+    fn closing_the_console_resumes_the_simulation() {
+        let mut game = game_with_a_moving_enemy();
+        let clock = GameClock::default();
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        open_the_console(&mut game, &clock);
+        headless.step(&mut game, 1);
+        let mut ctx = EventContext::new(&clock, None, None);
+        let routing = game.route_input(&mut ctx, BACKTICK, true, false);
+        assert_eq!(routing, Routing::Closed);
+        let frozen = game.sim().enemy_state(0);
+
+        headless.step(&mut game, 30);
+
+        assert_ne!(game.sim().enemy_state(0), frozen);
+    }
+
+    #[test]
+    fn quit_typed_in_the_console_exits_on_the_next_frame() {
+        let mut game = game();
+        let clock = GameClock::default();
+        open_the_console(&mut game, &clock);
+        game.stage
+            .shell
+            .lock()
+            .unwrap()
+            .console_mut()
+            .submit("quit");
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+
+        game.frame(&mut ctx, 0.0);
+
+        assert!(ctx.exit_requested());
+    }
+
+    #[test]
+    fn escape_with_the_console_open_does_not_exit() {
+        let mut game = game();
+        let clock = GameClock::default();
+        open_the_console(&mut game, &clock);
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        let routing = game.route_input(&mut ctx, Binding::Key(Key::Escape), true, false);
+
+        assert_eq!(routing, Routing::Closed);
+        assert!(!ctx.exit_requested());
+        assert!(!game.stage.shell.lock().unwrap().captures_input());
+    }
+
+    #[test]
+    fn an_escape_repeat_after_the_console_closed_does_not_exit() {
+        let mut game = game();
+        let clock = GameClock::default();
+        open_the_console(&mut game, &clock);
+        let mut ctx = EventContext::new(&clock, None, None);
+        let escape = Binding::Key(Key::Escape);
+
+        let closing = game.route_input(&mut ctx, escape, true, false);
+        let repeated = game.route_input(&mut ctx, escape, true, true);
+
+        assert_eq!(closing, Routing::Closed);
+        assert_eq!(repeated, Routing::Game);
+        assert!(!ctx.exit_requested());
+    }
+
+    #[test]
+    fn escape_with_the_console_closed_exits() {
+        let mut game = game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        let routing = game.route_input(&mut ctx, Binding::Key(Key::Escape), true, false);
+
+        assert_eq!(routing, Routing::Game);
+        assert!(ctx.exit_requested());
+    }
+
+    #[test]
+    fn an_open_console_stops_movement_and_look() {
+        let mut game = game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Binding::Key(Key::W), true, false);
+
+        open_the_console(&mut game, &clock);
+        let held = game.command();
+        game.event(
+            &mut ctx,
+            Event::Device(DeviceEvent::MouseMotion {
+                delta: (40.0, 30.0),
+            }),
+        );
+        let turned = game.command();
+
+        assert_eq!(held.movement.forward, 0.0);
+        assert_eq!(turned.movement.yaw_delta, 0.0);
+        assert_eq!(turned.movement.pitch_delta, 0.0);
+    }
+
+    #[test]
+    fn losing_window_focus_releases_a_held_movement_key() {
+        let mut game = game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Binding::Key(Key::W), true, false);
+
+        game.event(&mut ctx, Event::Window(WindowEvent::Focused(false)));
+        let command = game.command();
+
+        assert_eq!(command.movement.forward, 0.0);
+    }
+
+    #[test]
+    fn a_held_movement_key_moves_forward_until_focus_is_lost() {
+        let mut game = game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Binding::Key(Key::W), true, false);
+
+        let command = game.command();
+
+        assert_eq!(command.movement.forward, 1.0);
     }
 
     #[test]
