@@ -7,9 +7,11 @@ mod paint_map;
 mod rendering;
 
 pub use crate::app_state::GameState;
+use crate::app_state::game_state::cursor_grabbed;
 use crate::prefs::Prefs;
 use crate::screens::{Menu, MenuAction, SettingsMenu};
 use crate::ui_state::UiStateManager;
+use flagstone_game::controller::CameraMode;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -212,11 +214,28 @@ impl EguiAdapter {
         self.context.is_pointer_over_egui()
     }
 
+    /// Whether the cursor is free to point at the screen, going by the game state and the
+    /// camera mode in the last HUD data.
+    pub fn cursor_free(&self) -> bool {
+        let camera_mode = if self.ui_state.overlay_manager.is_fps_mode() {
+            CameraMode::FirstPerson
+        } else {
+            CameraMode::Isometric
+        };
+        !cursor_grabbed(self.current_game_state, camera_mode)
+    }
+
     /// Handles a window event while no menu is visible (gameplay).
     ///
-    /// Pointer motion still feeds egui so it knows what is under the pointer. Returns true
-    /// for a mouse press that lands on a panel, which the game must not see.
+    /// With a free cursor, pointer motion feeds egui so it knows what is under the pointer,
+    /// and a mouse press that lands on a panel is returned as true, which the game must not
+    /// see. With a grabbed cursor nothing is fed or consumed: the pointer is hidden, so
+    /// panels cannot be aimed at.
     pub fn handle_gameplay_event(&mut self, event: &WindowEvent) -> bool {
+        let cursor_free = self.cursor_free();
+        if !cursor_free {
+            return false;
+        }
         match event {
             WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } => {
                 self.handle_winit_event(event);
@@ -225,7 +244,7 @@ impl EguiAdapter {
             WindowEvent::MouseInput {
                 state: winit::event::ElementState::Pressed,
                 ..
-            } => self.pointer_over_ui(),
+            } => press_consumed(self.pointer_over_ui(), cursor_free),
             _ => false,
         }
     }
@@ -440,6 +459,11 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
     }
 }
 
+/// Whether a mouse press is taken by the UI: it lands on a panel and the cursor is free.
+fn press_consumed(pointer_over_ui: bool, cursor_free: bool) -> bool {
+    pointer_over_ui && cursor_free
+}
+
 /// Build adapter function
 pub fn build_adapter(
     window: Option<Arc<Window>>,
@@ -522,6 +546,48 @@ mod tests {
         gameplay_frame_with_pointer_at(&mut adapter, egui::pos2(100.0, 300.0));
 
         assert!(!adapter.pointer_over_ui());
+    }
+
+    #[test]
+    fn press_is_consumed_only_over_a_panel_with_a_free_cursor() {
+        let rows = [
+            (true, true, true),
+            (true, false, false),
+            (false, true, false),
+            (false, false, false),
+        ];
+
+        for (over_ui, cursor_free, consumed) in rows {
+            assert_eq!(
+                press_consumed(over_ui, cursor_free),
+                consumed,
+                "over_ui {over_ui}, cursor_free {cursor_free}"
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_is_not_free_while_playing_in_first_person() {
+        let mut adapter = adapter();
+        adapter.set_game_state(GameState::Playing);
+        adapter.update_hud_data(crate::overlays::HudData {
+            is_fps_mode: true,
+            ..Default::default()
+        });
+
+        assert!(!adapter.cursor_free());
+    }
+
+    #[test]
+    fn cursor_is_free_while_playing_in_the_strategy_view() {
+        let mut adapter = adapter();
+        adapter.set_game_state(GameState::Playing);
+        adapter.update_hud_data(crate::overlays::HudData {
+            is_fps_mode: false,
+            ..Default::default()
+        });
+
+        assert!(adapter.cursor_free());
     }
 
     fn audio_adapter() -> (EguiAdapter, std::sync::mpsc::Receiver<AudioEvent>) {
