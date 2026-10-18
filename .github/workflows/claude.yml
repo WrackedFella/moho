@@ -117,6 +117,9 @@ jobs:
           # marketplace's default branch; .claude/settings.json holds the pinned ref.
           plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
           plugins: devflow@claude-skills
+          # Re-dispatched runs are started by the default token, so the actor is
+          # github-actions[bot]. Allow only that bot; the repo is public.
+          allowed_bots: github-actions
           display_report: true
           prompt: /devflow:orchestrate ${{ github.event.issue.number || inputs.issue }}
           claude_args: |
