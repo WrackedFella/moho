@@ -15,7 +15,7 @@ pub struct Ray {
 /// `proj` must map depth to `0..1` (`glam::camera::rh::proj::directx`).
 /// Returns `None` for a zero-sized viewport or non-finite input.
 pub fn screen_ray(view: Mat4, proj: Mat4, viewport: UVec2, point: Vec2) -> Option<Ray> {
-    if viewport.x == 0 || viewport.y == 0 || !point.is_finite() {
+    if viewport.cmpeq(UVec2::ZERO).any() {
         return None;
     }
     let view_proj = proj * view;
