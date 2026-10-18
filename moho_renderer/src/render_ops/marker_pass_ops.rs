@@ -6,8 +6,7 @@ use std::ops::Range;
 use wgpu::{BindGroup, CommandEncoder, RenderPipeline, TextureView};
 
 /// Draw the `fills` instance range as translucent boxes, then the `outlines`
-/// range as box edges, over what the main pass left
-/// in `frame_view`.
+/// range as box edges, over what the main pass left in `frame_view`.
 ///
 /// Loads colour and depth rather than clearing them, so markers are tested
 /// against the world's depth; the pipeline writes none, which keeps them out of
