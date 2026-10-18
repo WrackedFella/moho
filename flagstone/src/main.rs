@@ -532,7 +532,6 @@ impl App {
         self.apply_cursor();
     }
 
-    /// Grabs or frees the cursor for the current state and camera mode.
     fn apply_cursor(&mut self) {
         if flagstone_ui::app_state::game_state::cursor_grabbed(
             self.game_state,
