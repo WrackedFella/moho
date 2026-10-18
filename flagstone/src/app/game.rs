@@ -298,6 +298,9 @@ impl moho_app::Game for App {
         }
         let camera = self.render_camera(alpha);
         if let Some(audio) = ctx.audio() {
+            if let Some(settings) = self.pending_audio_settings.take() {
+                audio.set_settings(settings);
+            }
             audio.set_listener(moho_audio::Listener::from_view(camera.0));
         }
         self.drain_audio_events(ctx.audio());
@@ -340,6 +343,25 @@ mod tests {
         app.simulation
             .set_position_yaw_pitch(glam::Vec3::new(10.0, 20.0, 30.0), 0.7, 0.0);
         app
+    }
+
+    #[test]
+    fn app_starts_with_audio_settings_from_saved_prefs() {
+        let mut prefs = moho_core::prefs::Prefs::default();
+        *prefs.sound_effect_volume_mut() = 5.0;
+
+        let app = App::from_config(
+            crate::app::config::AppConfig::builder()
+                .prefs(prefs)
+                .build(),
+        );
+
+        let settings = app
+            .pending_audio_settings
+            .as_ref()
+            .expect("startup queues audio settings from prefs");
+        let volume = settings.effective_volume(&moho_audio::AudioCategory::SoundEffect);
+        assert!((volume - 0.5).abs() < 1e-6, "volume={volume}");
     }
 
     fn hold(app: &mut App, action: StrategyAction) {
