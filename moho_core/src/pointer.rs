@@ -14,10 +14,26 @@ pub struct Ray {
 ///
 /// `proj` must map depth to `0..1` (`glam::camera::rh::proj::directx`).
 /// Returns `None` for a zero-sized viewport or non-finite input.
-pub fn screen_ray(_view: Mat4, _proj: Mat4, _viewport: UVec2, _point: Vec2) -> Option<Ray> {
+pub fn screen_ray(view: Mat4, proj: Mat4, viewport: UVec2, point: Vec2) -> Option<Ray> {
+    if viewport.x == 0 || viewport.y == 0 || !point.is_finite() {
+        return None;
+    }
+    let view_proj = proj * view;
+    if !view_proj.is_finite() {
+        return None;
+    }
+    let inverse = view_proj.inverse();
+    if !inverse.is_finite() {
+        return None;
+    }
+    let ndc_x = point.x / viewport.x as f32 * 2.0 - 1.0;
+    let ndc_y = 1.0 - point.y / viewport.y as f32 * 2.0;
+    let near = inverse.project_point3(Vec3::new(ndc_x, ndc_y, 0.0));
+    let far = inverse.project_point3(Vec3::new(ndc_x, ndc_y, 1.0));
+    let direction = (far - near).try_normalize()?;
     Some(Ray {
-        origin: Vec3::ZERO,
-        direction: Vec3::ZERO,
+        origin: near,
+        direction,
     })
 }
 

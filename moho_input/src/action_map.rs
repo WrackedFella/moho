@@ -31,6 +31,8 @@ pub struct ActionFrame<A: Action> {
     pressed: u64,
     released: u64,
     look: (f32, f32),
+    pointer: Option<(f32, f32)>,
+    press_pointer: Option<(f32, f32)>,
     actions: PhantomData<A>,
 }
 
@@ -64,12 +66,12 @@ impl<A: Action> ActionFrame<A> {
 
     /// Pointer position in physical pixels at the end of the tick, `None` when outside the window.
     pub fn pointer(&self) -> Option<(f32, f32)> {
-        None
+        self.pointer
     }
 
     /// Pointer position at the last mouse press in the tick, else `None`.
     pub fn press_pointer(&self) -> Option<(f32, f32)> {
-        None
+        self.press_pointer
     }
 }
 
@@ -86,6 +88,8 @@ pub struct ActionMap<A: Action> {
     sticks: [(f32, f32); 2],
     sensitivity: f32,
     filter: FilterPipeline,
+    pointer: Option<(f32, f32)>,
+    press_pointer: Option<(f32, f32)>,
 }
 
 impl<A: Action> ActionMap<A> {
@@ -101,6 +105,8 @@ impl<A: Action> ActionMap<A> {
             sticks: [(0.0, 0.0); 2],
             sensitivity,
             filter: FilterPipeline::new(),
+            pointer: None,
+            press_pointer: None,
         }
     }
 
@@ -113,6 +119,9 @@ impl<A: Action> ActionMap<A> {
     }
 
     pub fn mouse_button(&mut self, button: MouseButton, down: bool) {
+        if down {
+            self.press_pointer = self.pointer;
+        }
         self.set_down(Binding::Mouse(button), down);
     }
 
@@ -123,10 +132,14 @@ impl<A: Action> ActionMap<A> {
     }
 
     /// Records the pointer at `(x, y)` physical pixels.
-    pub fn pointer_moved(&mut self, _x: f32, _y: f32) {}
+    pub fn pointer_moved(&mut self, x: f32, y: f32) {
+        self.pointer = Some((x, y));
+    }
 
     /// Forgets the pointer: it left the window.
-    pub fn pointer_left(&mut self) {}
+    pub fn pointer_left(&mut self) {
+        self.pointer = None;
+    }
 
     pub fn pad_button(&mut self, button: PadButton, down: bool) {
         self.set_down(Binding::Pad(PadInput::Button(button)), down);
@@ -177,6 +190,8 @@ impl<A: Action> ActionMap<A> {
             pressed: self.pressed,
             released: self.released,
             look: self.sample_look(),
+            pointer: self.pointer,
+            press_pointer: self.press_pointer.take(),
             actions: PhantomData,
         };
         self.pressed = 0;
@@ -269,6 +284,10 @@ pub fn handle_window_event<A: Action>(map: &mut ActionMap<A>, event: &WindowEven
                 map.mouse_button(button, *state == ElementState::Pressed);
             }
         }
+        WindowEvent::CursorMoved { position, .. } => {
+            map.pointer_moved(position.x as f32, position.y as f32);
+        }
+        WindowEvent::CursorLeft { .. } => map.pointer_left(),
         WindowEvent::Focused(false) => map.release_all(),
         _ => {}
     }

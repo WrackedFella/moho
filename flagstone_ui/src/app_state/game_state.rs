@@ -1,5 +1,6 @@
 //! The strategy game's application modes.
 
+use flagstone_game::controller::CameraMode;
 use std::fmt;
 
 /// The current state of the game application.
@@ -23,7 +24,8 @@ pub enum GameState {
     /// Actively playing the game.
     /// - Input: Game controls (movement, camera, actions)
     /// - Rendering: Game world
-    /// - Cursor: Grabbed and hidden
+    /// - Cursor: Grabbed and hidden in first person, free in the strategy view
+    ///   (see [`cursor_grabbed`])
     /// - Simulation: Running
     Playing,
 
@@ -145,6 +147,13 @@ impl GameState {
     }
 }
 
+/// Whether the cursor is grabbed and hidden: only while playing in first person.
+///
+/// The strategy view needs a free cursor to click the world with.
+pub fn cursor_grabbed(state: GameState, camera_mode: CameraMode) -> bool {
+    state == GameState::Playing && camera_mode == CameraMode::FirstPerson
+}
+
 impl fmt::Display for GameState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -159,6 +168,8 @@ impl fmt::Display for GameState {
 #[cfg(test)]
 mod tests {
     use super::GameState::{self, ConsoleOpen, Menu, Paused, Playing};
+    use super::cursor_grabbed;
+    use flagstone_game::controller::CameraMode;
 
     #[test]
     fn can_transition_to_matrix() {
@@ -183,6 +194,24 @@ mod tests {
 
         for (from, to, expected) in rows {
             assert_eq!(from.can_transition_to(to), expected, "{from:?} -> {to:?}");
+        }
+    }
+
+    #[test]
+    fn cursor_free_only_in_strategy_play() {
+        let rows = [
+            (Playing, CameraMode::FirstPerson, true),
+            (Playing, CameraMode::Isometric, false),
+            (Menu, CameraMode::FirstPerson, false),
+            (Menu, CameraMode::Isometric, false),
+            (Paused, CameraMode::FirstPerson, false),
+            (Paused, CameraMode::Isometric, false),
+            (ConsoleOpen, CameraMode::FirstPerson, false),
+            (ConsoleOpen, CameraMode::Isometric, false),
+        ];
+
+        for (state, mode, grabbed) in rows {
+            assert_eq!(cursor_grabbed(state, mode), grabbed, "{state:?} {mode:?}");
         }
     }
 

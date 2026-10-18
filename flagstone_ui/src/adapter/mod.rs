@@ -207,6 +207,29 @@ impl EguiAdapter {
         false
     }
 
+    /// Whether egui's last frame had a panel under the pointer.
+    pub fn pointer_over_ui(&self) -> bool {
+        self.context.is_pointer_over_egui()
+    }
+
+    /// Handles a window event while no menu is visible (gameplay).
+    ///
+    /// Pointer motion still feeds egui so it knows what is under the pointer. Returns true
+    /// for a mouse press that lands on a panel, which the game must not see.
+    pub fn handle_gameplay_event(&mut self, event: &WindowEvent) -> bool {
+        match event {
+            WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } => {
+                self.handle_winit_event(event);
+                false
+            }
+            WindowEvent::MouseInput {
+                state: winit::event::ElementState::Pressed,
+                ..
+            } => self.pointer_over_ui(),
+            _ => false,
+        }
+    }
+
     /// Return true if the active menu/screen captures raw input events.
     pub fn active_screen_captures_input(&self) -> bool {
         if let Some(screen) = self.ui_state.active_screen() {
@@ -465,6 +488,40 @@ mod tests {
             !frame.textures_set.is_empty(),
             "the first frame uploads egui's font atlas"
         );
+    }
+
+    /// Runs one gameplay frame in the isometric view with the pointer at `pos`.
+    fn gameplay_frame_with_pointer_at(adapter: &mut EguiAdapter, pos: egui::Pos2) {
+        use crate::overlays::test_support::{input, run_ui};
+        adapter.set_game_state(GameState::Playing);
+        adapter.update_hud_data(crate::overlays::HudData {
+            is_fps_mode: false,
+            ..Default::default()
+        });
+        let bus = adapter.event_bus.clone();
+        for events in [Vec::new(), vec![egui::Event::PointerMoved(pos)]] {
+            let _ = run_ui(&adapter.context, input(events), |ui| {
+                rendering::render_game_state(ui, &mut adapter.ui_state, GameState::Playing, &bus);
+            });
+        }
+    }
+
+    #[test]
+    fn press_over_a_hud_panel_is_consumed() {
+        let mut adapter = adapter();
+
+        gameplay_frame_with_pointer_at(&mut adapter, egui::pos2(770.0, 22.0));
+
+        assert!(adapter.pointer_over_ui());
+    }
+
+    #[test]
+    fn press_over_open_world_is_not_consumed() {
+        let mut adapter = adapter();
+
+        gameplay_frame_with_pointer_at(&mut adapter, egui::pos2(100.0, 300.0));
+
+        assert!(!adapter.pointer_over_ui());
     }
 
     fn audio_adapter() -> (EguiAdapter, std::sync::mpsc::Receiver<AudioEvent>) {
