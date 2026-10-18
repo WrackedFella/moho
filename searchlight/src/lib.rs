@@ -15,19 +15,28 @@ pub mod tag;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use moho_ui_shell::CONSOLE_BINDING;
+
 /// Ticks per second the prototype runs at.
 pub const TICK_HZ: u32 = 60;
 
 /// Where the FPS keeps its preferences.
 pub fn prefs_path() -> PathBuf {
-    moho_core::prefs::Prefs::config_path()
+    PathBuf::from("config/searchlight.ini")
 }
 
-/// Splits a `[bindings]` section into the `console` entry and the game's own actions.
+/// Splits a `[bindings]` section into the `console` entry and the game's own actions,
+/// so neither loader warns about the other's name.
 pub fn split_console_binding(
     section: &BTreeMap<String, String>,
 ) -> (BTreeMap<String, String>, BTreeMap<String, String>) {
-    (section.clone(), section.clone())
+    let mut game = section.clone();
+    let console = game
+        .remove(CONSOLE_BINDING)
+        .map(|value| (CONSOLE_BINDING.to_owned(), value))
+        .into_iter()
+        .collect();
+    (console, game)
 }
 
 #[cfg(test)]

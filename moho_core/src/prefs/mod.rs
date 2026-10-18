@@ -86,15 +86,29 @@ pub enum DebugValueError {
 
 impl Prefs {
     /// The value a game stored under `name` in `[debug]`, if any.
-    pub fn debug_value(&self, _name: &str) -> Option<&str> {
-        None
+    pub fn debug_value(&self, name: &str) -> Option<&str> {
+        self.debug.get(name).map(String::as_str)
     }
 
     /// Stores a game's debug value.
     ///
     /// # Errors
     /// Refuses a name or value that would not read back exactly; prefs stay unchanged.
-    pub fn set_debug_value(&mut self, _name: &str, _value: &str) -> Result<(), DebugValueError> {
+    pub fn set_debug_value(&mut self, name: &str, value: &str) -> Result<(), DebugValueError> {
+        let name_ok = !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        if !name_ok {
+            return Err(DebugValueError::InvalidName(name.to_owned()));
+        }
+        // The INI reader trims values and treats `;` and `#` as comments.
+        let value_ok =
+            !value.is_empty() && value.trim() == value && !value.contains([';', '#', '\r', '\n']);
+        if !value_ok {
+            return Err(DebugValueError::InvalidValue(value.to_owned()));
+        }
+        self.debug.insert(name.to_owned(), value.to_owned());
         Ok(())
     }
 
@@ -291,6 +305,14 @@ impl Prefs {
                 self.bindings
                     .iter()
                     .map(|(action, value)| format!("{action}={value}\n")),
+            );
+        }
+        if !self.debug.is_empty() {
+            text.push_str("\n[debug]\n");
+            text.extend(
+                self.debug
+                    .iter()
+                    .map(|(name, value)| format!("{name}={value}\n")),
             );
         }
         text

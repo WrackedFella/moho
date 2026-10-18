@@ -1,6 +1,6 @@
 //! Reads preferences from INI text and files, reporting every fallback as data.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -181,16 +181,20 @@ fn read_section(
     issues
 }
 
-/// Takes the `[bindings]` section verbatim; interpreting it is the game's job.
-fn read_bindings(prefs: &mut Prefs, keys: &SectionKeys) -> Vec<PrefsIssue> {
+/// Takes a game-owned section verbatim; interpreting it is the game's job.
+fn read_raw_section(
+    section: &str,
+    keys: &SectionKeys,
+    into: &mut BTreeMap<String, String>,
+) -> Vec<PrefsIssue> {
     let mut issues = Vec::new();
     for (key, value) in sorted_entries(keys) {
         match value {
             Some(value) => {
-                prefs.bindings.insert(key.clone(), value.clone());
+                into.insert(key.clone(), value.clone());
             }
             None => issues.push(PrefsIssue::Malformed {
-                section: "bindings".to_string(),
+                section: section.to_string(),
                 key: key.clone(),
                 value: None,
             }),
@@ -216,7 +220,11 @@ impl Prefs {
         sections.sort_by_key(|(name, _)| name.as_str());
         for (name, keys) in sections {
             if name == "bindings" {
-                issues.extend(read_bindings(&mut prefs, keys));
+                issues.extend(read_raw_section(name, keys, &mut prefs.bindings));
+                continue;
+            }
+            if name == "debug" {
+                issues.extend(read_raw_section(name, keys, &mut prefs.debug));
                 continue;
             }
             let table = match name.as_str() {
