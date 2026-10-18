@@ -752,6 +752,7 @@ mod tests {
                 id: 7,
                 min: glam::Vec3::new(1.5, -2.0, 30.0),
                 max: glam::Vec3::new(4.0, 0.5, 32.5),
+                style: moho_render_api::MarkerStyle::Fill,
             }
         );
         assert_eq!(
@@ -760,8 +761,64 @@ mod tests {
                 id: 8,
                 min: glam::Vec3::new(1.0, 2.0, 3.0),
                 max: glam::Vec3::new(2.0, 3.0, 4.0),
+                style: moho_render_api::MarkerStyle::Fill,
             },
             "size defaults to one block"
+        );
+    }
+
+    #[test]
+    fn marker_parses_style() {
+        use moho_render_api::MarkerStyle;
+        let processor = CommandProcessor::new();
+        let min = glam::Vec3::new(1.0, 2.0, 3.0);
+        let max = glam::Vec3::new(3.0, 4.0, 5.0);
+
+        let outline = processor.execute("marker 5 1 2 3 2 outline");
+        let fill = processor.execute("marker 5 1 2 3 2 fill");
+        let default = processor.execute("marker 5 1 2 3 2");
+        let bad = processor.execute("marker 5 1 2 3 2 dotted");
+        let extra = processor.execute("marker 5 1 2 3 2 fill 9");
+
+        assert_eq!(
+            outline.action,
+            ConsoleAction::ShowMarker {
+                id: 5,
+                min,
+                max,
+                style: MarkerStyle::Outline,
+            }
+        );
+        assert_eq!(
+            fill.action,
+            ConsoleAction::ShowMarker {
+                id: 5,
+                min,
+                max,
+                style: MarkerStyle::Fill,
+            }
+        );
+        assert_eq!(
+            default.action,
+            ConsoleAction::ShowMarker {
+                id: 5,
+                min,
+                max,
+                style: MarkerStyle::Fill,
+            },
+            "style defaults to fill"
+        );
+        assert_eq!(bad.action, ConsoleAction::None);
+        assert!(
+            bad.messages.iter().any(|m| m.contains("Error:")),
+            "{:?}",
+            bad.messages
+        );
+        assert_eq!(extra.action, ConsoleAction::None);
+        assert!(
+            extra.messages.iter().any(|m| m.contains("Usage:")),
+            "{:?}",
+            extra.messages
         );
     }
 
@@ -782,7 +839,7 @@ mod tests {
             ("marker 1 1 2", "Usage:"),
             ("marker 1", "Usage:"),
             ("marker", "Usage:"),
-            ("marker 1 1 2 3 4 5", "Usage:"),
+            ("marker 1 1 2 3 4 fill 5", "Usage:"),
         ];
 
         for (input, expected) in rows {
