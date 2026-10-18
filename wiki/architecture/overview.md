@@ -37,6 +37,7 @@ flowchart TD
     renderer --> rapi
     app --> renderer & audio
     audio --> core
+    core --> rapi
     physics --> rapi
     level --> rapi
     fpsgame --> fps & app & physics & level & input & audio & renderer & rapi
