@@ -815,6 +815,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_file_without_a_game_section_loads_with_no_game_warning() {
+        let content = base_ini_with(None);
+        assert!(!content.contains("debug"), "test setup: no [debug] section");
+
+        let (prefs, issues) = Prefs::parse(&content);
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs, base_prefs());
+        assert_eq!(prefs.debug_value("god"), None);
+    }
+
+    #[test]
+    fn a_game_section_is_read_raw_without_warnings() {
+        let content = format!(
+            "{}[debug]\ngod=1\nany_name_at_all=free text\n",
+            base_ini_with(None)
+        );
+
+        let (prefs, issues) = Prefs::parse(&content);
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.debug_value("god"), Some("1"));
+        assert_eq!(prefs.debug_value("any_name_at_all"), Some("free text"));
+        assert!(prefs.bindings().is_empty());
+        assert_eq!(snapshot(&prefs), snapshot(&base_prefs()));
+    }
+
     fn volume_strategy() -> impl Strategy<Value = f32> {
         (0u32..=100).prop_map(|n| n as f32 / 10.0)
     }

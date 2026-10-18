@@ -69,11 +69,35 @@ pub struct Prefs {
     world_unload_radius: u32,
     world_chunks_per_frame: u32,
     bindings: BTreeMap<String, String>,
+    debug: BTreeMap<String, String>,
 }
 
 const MAX_GRAPHICS_QUALITY: u32 = 4;
 
+/// Why a debug name or value was refused.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum DebugValueError {
+    #[error("debug name {0:?} must be non-empty lowercase letters, digits or underscores")]
+    InvalidName(String),
+    #[error("debug value {0:?} must be non-empty, unpadded and free of ';', '#' and line breaks")]
+    InvalidValue(String),
+}
+
 impl Prefs {
+    /// The value a game stored under `name` in `[debug]`, if any.
+    pub fn debug_value(&self, _name: &str) -> Option<&str> {
+        None
+    }
+
+    /// Stores a game's debug value.
+    ///
+    /// # Errors
+    /// Refuses a name or value that would not read back exactly; prefs stay unchanged.
+    pub fn set_debug_value(&mut self, _name: &str, _value: &str) -> Result<(), DebugValueError> {
+        Ok(())
+    }
+
     /// The raw `[bindings]` section: action name to unparsed value.
     pub fn bindings(&self) -> &BTreeMap<String, String> {
         &self.bindings
@@ -206,6 +230,7 @@ impl Default for Prefs {
             world_unload_radius: 12,
             world_chunks_per_frame: 4,
             bindings: BTreeMap::new(),
+            debug: BTreeMap::new(),
         }
     }
 }
@@ -354,6 +379,90 @@ mod tests {
 
         assert_eq!(issues, vec![]);
         assert_eq!(parsed.bindings(), &raw);
+    }
+
+    #[test]
+    fn a_debug_value_survives_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config").join("game.ini");
+        let mut prefs = Prefs::default();
+        prefs.set_debug_value("god", "1").unwrap();
+
+        prefs.save_to(&path).unwrap();
+        let (loaded, warnings) = Prefs::load_from(&path);
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(loaded.debug_value("god"), Some("1"));
+        assert_eq!(loaded, prefs);
+    }
+
+    #[test]
+    fn an_unstored_debug_value_is_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("game.ini");
+        let mut prefs = Prefs::default();
+        assert_eq!(prefs.debug_value("god"), None);
+        prefs.set_debug_value("tgm", "on").unwrap();
+        prefs.save_to(&path).unwrap();
+
+        let (loaded, _) = Prefs::load_from(&path);
+
+        assert_eq!(loaded.debug_value("god"), None);
+        assert_eq!(loaded.debug_value("tgm"), Some("on"));
+    }
+
+    #[test]
+    fn invalid_debug_value_is_refused() {
+        let mut prefs = Prefs::default();
+        prefs.set_debug_value("kept", "yes").unwrap();
+        let before = prefs.clone();
+        let bad_names = ["God", "a b", "", "a-b", "a=b", "a;b", "é", "a\n"];
+        let bad_values = [
+            "", "a;b", "a#b", "a\nb", "a\rb", " 1", "1 ", "\t1", "1\n", "  ",
+        ];
+
+        for name in bad_names {
+            let result = prefs.set_debug_value(name, "1");
+
+            assert!(
+                matches!(result, Err(DebugValueError::InvalidName(_))),
+                "name {name:?}: {result:?}"
+            );
+            assert_eq!(prefs, before, "name {name:?} changed prefs");
+        }
+        for value in bad_values {
+            let result = prefs.set_debug_value("god", value);
+
+            assert!(
+                matches!(result, Err(DebugValueError::InvalidValue(_))),
+                "value {value:?}: {result:?}"
+            );
+            assert_eq!(prefs, before, "value {value:?} changed prefs");
+        }
+    }
+
+    #[test]
+    fn no_game_section_is_written_when_empty() {
+        let text = Prefs::default().to_ini_string();
+
+        assert!(!text.contains("[debug]"), "{text}");
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn accepted_debug_values_round_trip(
+            name in "[a-z0-9_]{1,16}",
+            value in "[A-Za-z0-9_.,:/=+-]([A-Za-z0-9_.,:/=+ -]{0,12}[A-Za-z0-9_.,:/=+-])?",
+        ) {
+            let mut prefs = Prefs::default();
+            prefs.set_debug_value(&name, &value).unwrap();
+
+            let (parsed, issues) = Prefs::parse(&prefs.to_ini_string());
+
+            proptest::prop_assert_eq!(issues, vec![]);
+            proptest::prop_assert_eq!(parsed.debug_value(&name), Some(value.as_str()));
+            proptest::prop_assert_eq!(parsed, prefs);
+        }
     }
 
     #[test]
