@@ -11,7 +11,7 @@ mod ui_paint;
 mod world_geometry;
 
 pub use instance::{InstanceGpu, Renderable};
-pub use marker::{Marker, MarkerGpu, MarkerId};
+pub use marker::{Marker, MarkerGpu, MarkerId, MarkerStyle};
 pub use material::{MaterialGpu, MaterialKey, RenderMaterial};
 pub use persistence::{CameraDesc, LightDesc};
 pub use ui_paint::{

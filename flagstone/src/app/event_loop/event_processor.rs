@@ -519,10 +519,15 @@ impl EventProcessor {
                         .push(RenderRequest::SsaoQuality(quality as u8));
                 }
             }
-            DebugEvent::ShowMarker { id, min, max } => {
+            DebugEvent::ShowMarker {
+                id,
+                min,
+                max,
+                style,
+            } => {
                 app.scene.markers_mut().upsert(
                     MarkerId(id),
-                    Marker::new(min.to_array(), max.to_array(), MARKER_COLOR),
+                    Marker::new(min.to_array(), max.to_array(), MARKER_COLOR).with_style(style),
                 );
             }
             DebugEvent::ClearMarkers { id } => match id {
@@ -1023,12 +1028,51 @@ mod tests {
     }
 
     fn show_marker(app: &App, id: u64, min: glam::Vec3, max: glam::Vec3) {
-        app.event_bus
-            .publish(DebugEvent::ShowMarker { id, min, max });
+        show_styled_marker(app, id, min, max, moho_render_api::MarkerStyle::Fill);
+    }
+
+    fn show_styled_marker(
+        app: &App,
+        id: u64,
+        min: glam::Vec3,
+        max: glam::Vec3,
+        style: moho_render_api::MarkerStyle,
+    ) {
+        app.event_bus.publish(DebugEvent::ShowMarker {
+            id,
+            min,
+            max,
+            style,
+        });
     }
 
     fn marker_draws(app: &mut App) -> Vec<moho_render_api::MarkerGpu> {
-        app.scene.markers_mut().draws(glam::Vec3::ZERO)
+        app.scene.markers_mut().draws(glam::Vec3::ZERO).fills
+    }
+
+    #[test]
+    fn show_marker_event_with_outline_style_draws_in_the_outline_list() {
+        let mut app = App::headless();
+        show_styled_marker(
+            &app,
+            3,
+            glam::Vec3::ZERO,
+            glam::Vec3::ONE,
+            moho_render_api::MarkerStyle::Fill,
+        );
+        show_styled_marker(
+            &app,
+            3,
+            glam::Vec3::ZERO,
+            glam::Vec3::ONE,
+            moho_render_api::MarkerStyle::Outline,
+        );
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        let draws = app.scene.markers_mut().draws(glam::Vec3::ZERO);
+        assert!(draws.fills.is_empty(), "the replaced fill is gone");
+        assert_eq!(draws.outlines.len(), 1);
     }
 
     #[test]

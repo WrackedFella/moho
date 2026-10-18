@@ -3,7 +3,8 @@
 
 use glam::Vec3;
 use moho_render_api::{
-    InstanceGpu, Marker, MarkerGpu, MarkerId, MaterialGpu, MaterialKey, RenderMaterial, Renderable,
+    InstanceGpu, Marker, MarkerGpu, MarkerId, MarkerStyle, MaterialGpu, MaterialKey,
+    RenderMaterial, Renderable,
 };
 use moho_renderer::{FrameError, LightingGpu, RendererBackend, Scene};
 
@@ -101,6 +102,7 @@ struct RecordingRenderer {
     draws: Vec<Draw>,
     material_uploads: Vec<usize>,
     marker_batches: Vec<Vec<MarkerGpu>>,
+    outline_batches: Vec<Vec<MarkerGpu>>,
     calls: Vec<Call>,
 }
 
@@ -157,8 +159,9 @@ impl RendererBackend for RecordingRenderer {
         });
         self.calls.push(Call::Draw);
     }
-    fn enqueue_markers(&mut self, markers: &[MarkerGpu]) {
-        self.marker_batches.push(markers.to_vec());
+    fn enqueue_markers(&mut self, fills: &[MarkerGpu], outlines: &[MarkerGpu]) {
+        self.marker_batches.push(fills.to_vec());
+        self.outline_batches.push(outlines.to_vec());
         self.calls.push(Call::Markers);
     }
     fn submit_frame(&mut self) {
@@ -409,4 +412,22 @@ fn removed_markers_are_no_longer_enqueued() {
         "{:?}",
         renderer.marker_batches
     );
+}
+
+#[test]
+fn outline_markers_reach_the_backend_in_the_second_list() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let fill = Marker::new([0.0; 3], [1.0; 3], [1.0, 0.0, 0.0, 0.5]);
+    let outline =
+        Marker::new([4.0; 3], [5.0; 3], [2.0, 0.0, 0.0, 0.5]).with_style(MarkerStyle::Outline);
+    scene.markers_mut().upsert(MarkerId(1), fill);
+    scene.markers_mut().upsert(MarkerId(2), outline);
+
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    let tags = |batch: &[MarkerGpu]| batch.iter().map(|m| m.color[0]).collect::<Vec<f32>>();
+    assert_eq!(renderer.marker_batches.len(), 1);
+    assert_eq!(tags(&renderer.marker_batches[0]), vec![1.0]);
+    assert_eq!(tags(&renderer.outline_batches[0]), vec![2.0]);
 }

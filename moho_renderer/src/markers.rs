@@ -1,7 +1,7 @@
 //! Renderer-side store of box markers keyed by [`MarkerId`].
 
 use glam::Vec3;
-use moho_render_api::{Marker, MarkerGpu, MarkerId};
+use moho_render_api::{Marker, MarkerGpu, MarkerId, MarkerStyle};
 use std::collections::BTreeMap;
 
 /// How far each side of a marker is pushed out, in metres, so a marker lying on
@@ -30,6 +30,20 @@ pub(crate) const UNIT_CUBE_INDICES: &[u32] = &[
     3, 7, 6, 3, 6, 2, // +y
 ];
 
+/// Line list over [`UNIT_CUBE_VERTICES`]: the twelve box edges.
+pub(crate) const UNIT_CUBE_EDGES: &[u32] = &[
+    0, 1, 1, 2, 2, 3, 3, 0, // -z
+    4, 5, 5, 6, 6, 7, 7, 4, // +z
+    0, 4, 1, 5, 2, 6, 3, 7, // along z
+];
+
+/// One frame's marker instances, each list sorted far to near.
+#[derive(Debug, Default, Clone)]
+pub struct MarkerDraws {
+    pub fills: Vec<MarkerGpu>,
+    pub outlines: Vec<MarkerGpu>,
+}
+
 /// The markers a game has placed, drawn each frame until removed.
 ///
 /// Kept in id order so the draw order of equidistant markers is deterministic.
@@ -57,26 +71,34 @@ impl Markers {
         self.live.clear();
     }
 
-    /// The markers as GPU instances, each box grown by [`MARKER_INFLATE`] per
-    /// side and sorted far to near by box centre from `eye`.
-    pub fn draws(&self, eye: Vec3) -> Vec<MarkerGpu> {
-        let mut keyed: Vec<(f32, MarkerGpu)> = self
-            .live
-            .values()
-            .map(|m| {
-                let (min, max) = (Vec3::from(m.min), Vec3::from(m.max));
-                let grow = Vec3::splat(MARKER_INFLATE);
-                let gpu = MarkerGpu {
-                    min: (min - grow).extend(0.0).to_array(),
-                    max: (max + grow).extend(0.0).to_array(),
-                    color: m.color,
-                };
-                let centre = (min + max) * 0.5;
-                (centre.distance_squared(eye), gpu)
-            })
-            .collect();
-        keyed.sort_by(|a, b| b.0.total_cmp(&a.0));
-        keyed.into_iter().map(|(_, gpu)| gpu).collect()
+    /// The markers as GPU instances split by style, each box grown by
+    /// [`MARKER_INFLATE`] per side and each list sorted far to near by box
+    /// centre from `eye`.
+    pub fn draws(&self, eye: Vec3) -> MarkerDraws {
+        let mut fills: Vec<(f32, MarkerGpu)> = Vec::new();
+        let mut outlines: Vec<(f32, MarkerGpu)> = Vec::new();
+        for m in self.live.values() {
+            let (min, max) = (Vec3::from(m.min), Vec3::from(m.max));
+            let grow = Vec3::splat(MARKER_INFLATE);
+            let gpu = MarkerGpu {
+                min: (min - grow).extend(0.0).to_array(),
+                max: (max + grow).extend(0.0).to_array(),
+                color: m.color,
+            };
+            let distance = ((min + max) * 0.5).distance_squared(eye);
+            match m.style {
+                MarkerStyle::Fill => fills.push((distance, gpu)),
+                MarkerStyle::Outline => outlines.push((distance, gpu)),
+            }
+        }
+        let far_to_near = |mut keyed: Vec<(f32, MarkerGpu)>| {
+            keyed.sort_by(|a, b| b.0.total_cmp(&a.0));
+            keyed.into_iter().map(|(_, gpu)| gpu).collect()
+        };
+        MarkerDraws {
+            fills: far_to_near(fills),
+            outlines: far_to_near(outlines),
+        }
     }
 }
 
@@ -84,6 +106,7 @@ impl Markers {
 mod tests {
     use super::*;
     use glam::Vec3;
+    use moho_render_api::MarkerStyle;
     use proptest::prelude::*;
 
     const TOLERANCE: f32 = 1e-5;
@@ -115,7 +138,7 @@ mod tests {
             Marker::new([1.0, 2.0, 3.0], [2.0, 4.0, 6.0], color),
         );
 
-        let draws = markers.draws(Vec3::ZERO);
+        let draws = markers.draws(Vec3::ZERO).fills;
 
         assert_eq!(draws.len(), 1);
         assert_near(
@@ -146,7 +169,7 @@ mod tests {
 
         markers.upsert(MarkerId(1), marker([5.0; 3], [6.0; 3], 2.0));
 
-        let draws = markers.draws(Vec3::ZERO);
+        let draws = markers.draws(Vec3::ZERO).fills;
         assert_eq!(tags(&draws), vec![2.0]);
         assert_near(draws[0].min, [5.0 - MARKER_INFLATE; 3], "moved min");
     }
@@ -158,8 +181,8 @@ mod tests {
         markers.upsert(MarkerId(2), marker([5.0, 0.0, 0.0], [6.0, 1.0, 1.0], 5.0));
         markers.upsert(MarkerId(3), marker([3.0, 0.0, 0.0], [4.0, 1.0, 1.0], 3.0));
 
-        let from_origin = tags(&markers.draws(Vec3::ZERO));
-        let from_far_x = tags(&markers.draws(Vec3::new(9.0, 0.0, 0.0)));
+        let from_origin = tags(&markers.draws(Vec3::ZERO).fills);
+        let from_far_x = tags(&markers.draws(Vec3::new(9.0, 0.0, 0.0)).fills);
 
         assert_eq!(from_origin, vec![5.0, 3.0, 1.0]);
         assert_eq!(from_far_x, vec![1.0, 3.0, 5.0]);
@@ -173,7 +196,7 @@ mod tests {
         // Centre 4.5 away, min corner 4 away.
         markers.upsert(MarkerId(2), marker([4.0, 0.0, 0.0], [5.0, 1.0, 1.0], 2.0));
 
-        let order = tags(&markers.draws(Vec3::new(0.0, 0.5, 0.5)));
+        let order = tags(&markers.draws(Vec3::new(0.0, 0.5, 0.5)).fills);
 
         assert_eq!(order, vec![1.0, 2.0]);
     }
@@ -186,7 +209,9 @@ mod tests {
 
         markers.clear();
 
-        assert!(markers.draws(Vec3::ZERO).is_empty());
+        let draws = markers.draws(Vec3::ZERO);
+        assert!(draws.fills.is_empty());
+        assert!(draws.outlines.is_empty());
     }
 
     #[test]
@@ -210,6 +235,94 @@ mod tests {
                 "triangle {tri:?} faces inward: normal {normal}, outward {outward}"
             );
         }
+    }
+
+    #[test]
+    fn style_picks_the_draw_list() {
+        let rows = [(MarkerStyle::Fill, true), (MarkerStyle::Outline, false)];
+
+        for (style, in_fills) in rows {
+            let mut markers = Markers::new();
+            markers.upsert(
+                MarkerId(1),
+                marker([1.0; 3], [2.0; 3], 4.0).with_style(style),
+            );
+
+            let draws = markers.draws(Vec3::ZERO);
+
+            let (hit, miss) = if in_fills {
+                (&draws.fills, &draws.outlines)
+            } else {
+                (&draws.outlines, &draws.fills)
+            };
+            assert_eq!(tags(hit), vec![4.0], "{style:?} lands in its own list");
+            assert!(miss.is_empty(), "{style:?} stays out of the other list");
+            assert_near(
+                hit[0].min,
+                [1.0 - MARKER_INFLATE; 3],
+                "inflated min in either list",
+            );
+            assert_near(
+                hit[0].max,
+                [2.0 + MARKER_INFLATE; 3],
+                "inflated max in either list",
+            );
+        }
+    }
+
+    #[test]
+    fn each_list_sorts_far_to_near_on_its_own() {
+        let mut markers = Markers::new();
+        let at = |x: f32, tag: f32| marker([x, 0.0, 0.0], [x + 1.0, 1.0, 1.0], tag);
+        markers.upsert(MarkerId(1), at(1.0, 1.0));
+        markers.upsert(MarkerId(2), at(2.0, 2.0).with_style(MarkerStyle::Outline));
+        markers.upsert(MarkerId(3), at(3.0, 3.0));
+        markers.upsert(MarkerId(4), at(4.0, 4.0).with_style(MarkerStyle::Outline));
+
+        let draws = markers.draws(Vec3::ZERO);
+
+        assert_eq!(tags(&draws.fills), vec![3.0, 1.0]);
+        assert_eq!(tags(&draws.outlines), vec![4.0, 2.0]);
+    }
+
+    #[test]
+    fn replacing_with_another_style_moves_the_marker_between_lists() {
+        let mut markers = Markers::new();
+        markers.upsert(MarkerId(1), marker([0.0; 3], [1.0; 3], 1.0));
+
+        markers.upsert(
+            MarkerId(1),
+            marker([0.0; 3], [1.0; 3], 1.0).with_style(MarkerStyle::Outline),
+        );
+
+        let as_outline = markers.draws(Vec3::ZERO);
+        assert!(as_outline.fills.is_empty());
+        assert_eq!(tags(&as_outline.outlines), vec![1.0]);
+
+        markers.upsert(MarkerId(1), marker([0.0; 3], [1.0; 3], 1.0));
+
+        let as_fill = markers.draws(Vec3::ZERO);
+        assert_eq!(tags(&as_fill.fills), vec![1.0]);
+        assert!(as_fill.outlines.is_empty());
+    }
+
+    #[test]
+    fn unit_cube_edges_are_the_twelve_box_edges() {
+        assert_eq!(UNIT_CUBE_EDGES.len(), 24, "12 line segments");
+
+        let (pairs, rest) = UNIT_CUBE_EDGES.as_chunks::<2>();
+        assert!(rest.is_empty());
+        let mut seen = std::collections::BTreeSet::new();
+        for &[a, b] in pairs {
+            let va = UNIT_CUBE_VERTICES[usize::try_from(a).expect("index fits usize")];
+            let vb = UNIT_CUBE_VERTICES[usize::try_from(b).expect("index fits usize")];
+            let differing = (0..3).filter(|&axis| va[axis] != vb[axis]).count();
+
+            assert_eq!(differing, 1, "edge {a}-{b} runs along exactly one axis");
+
+            seen.insert((a.min(b), a.max(b)));
+        }
+        assert_eq!(seen.len(), 12, "every edge is distinct: {seen:?}");
     }
 
     #[derive(Clone, Debug)]
@@ -258,7 +371,7 @@ mod tests {
                 }
             }
 
-            let draws = markers.draws(Vec3::new(1.0, 2.0, 3.0));
+            let draws = markers.draws(Vec3::new(1.0, 2.0, 3.0)).fills;
 
             let mut drawn: Vec<MarkerGpu> = draws;
             drawn.sort_by(|a, b| a.color[0].total_cmp(&b.color[0]));

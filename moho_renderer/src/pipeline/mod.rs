@@ -100,6 +100,7 @@ pub struct PipelineSetup {
     main_pipeline: wgpu::RenderPipeline,
     skybox_pipeline: wgpu::RenderPipeline,
     marker_pipeline: wgpu::RenderPipeline,
+    marker_outline_pipeline: wgpu::RenderPipeline,
 
     // Configuration
     depth_format: wgpu::TextureFormat,
@@ -174,6 +175,14 @@ impl PipelineSetup {
             &skybox_pipeline_layout,
             config.format,
             depth_format,
+            wgpu::PrimitiveTopology::TriangleList,
+        );
+        let marker_outline_pipeline = marker::create_marker_pipeline(
+            device,
+            &skybox_pipeline_layout,
+            config.format,
+            depth_format,
+            wgpu::PrimitiveTopology::LineList,
         );
 
         Ok(Self {
@@ -188,6 +197,7 @@ impl PipelineSetup {
             main_pipeline,
             skybox_pipeline,
             marker_pipeline,
+            marker_outline_pipeline,
             depth_format,
         })
     }
@@ -362,6 +372,11 @@ impl PipelineSetup {
 
     pub fn marker_pipeline(&self) -> &wgpu::RenderPipeline {
         &self.marker_pipeline
+    }
+
+    /// Get the marker pipeline that draws box edges as lines.
+    pub fn marker_outline_pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.marker_outline_pipeline
     }
 
     /// Get the camera bind group layout.

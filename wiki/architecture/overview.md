@@ -39,6 +39,7 @@ flowchart TD
     renderer --> rapi
     app --> renderer & audio
     audio --> core
+    core --> rapi
     physics --> rapi
     level --> rapi
     shell --> rapi & input & app

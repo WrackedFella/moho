@@ -114,7 +114,7 @@ sequenceDiagram
     S->>B: begin_frame(camera)<br/>upload camera, cull lights, update shadow matrices,<br/>acquire surface
     S->>B: enqueue_draw(cubes, spheres, each world mesh)
     S->>B: enqueue_draw(transparent, sorted back-to-front)
-    S->>B: enqueue_markers(sorted far to near)
+    S->>B: enqueue_markers(fills, outlines, each sorted far to near)
     S->>B: submit_frame()
 ```
 
@@ -142,21 +142,25 @@ and presents. Shader sources are `shaders/*.wgsl` (`common`, `vertex`,
 
 ## Markers
 
-Markers are translucent axis-aligned boxes a game places over the world (selection
-and mining marks). `moho_render_api::Marker` holds `min`, `max` (world metres) and a
-linear RGBA colour with straight alpha; `Marker::new` orders the corners per axis. A
+Markers are axis-aligned boxes a game places over the world (selection and mining
+marks). `moho_render_api::Marker` holds `min`, `max` (world metres), a linear RGBA colour
+with straight alpha and a `MarkerStyle`: `Fill` (translucent solid, the default) or
+`Outline` (the twelve edges only). `Marker::new` orders the corners per axis and makes a
+fill; `with_style` changes the style. A
 `MarkerId` is the game-chosen stable key.
 
 `moho_renderer::Markers` (reached via `Scene::markers_mut`) holds the live set in id
 order: `upsert`, `remove`, `clear`. Markers persist until removed. `Scene::render` turns
-them into `MarkerGpu` instances (each box grown by `MARKER_INFLATE` per side so a marker
-on a block face does not z-fight it, sorted far to near by box centre) and passes them to
-`RendererBackend::enqueue_markers`.
+them into `MarkerDraws` (`fills` and `outlines` lists of `MarkerGpu` instances; each box
+grown by `MARKER_INFLATE` per side so a marker on a block face does not z-fight it, each
+list sorted far to near by box centre) and passes both to `RendererBackend::enqueue_markers`.
 
 `submit_frame` draws them in a separate pass after the main pass: colour and depth are
 loaded, not cleared, so markers are depth-tested against the world; the pipeline writes no
 depth, which keeps them out of the SSAO pass. One unit cube is instanced per marker and
-scaled to its box in `shaders/marker.wgsl`. Layout: [GPU ABI](../reference/gpu-abi.md).
+scaled to its box in `shaders/marker.wgsl`. Fills draw first as a triangle list, then
+outlines through a second pipeline over the same shader as a line list on the cube's edge
+indices. Layout: [GPU ABI](../reference/gpu-abi.md).
 The console drives them with `marker` and `marker_clear`
 ([console](console.md)).
 
