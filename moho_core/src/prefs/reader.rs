@@ -652,6 +652,14 @@ mod tests {
     }
 
     #[test]
+    fn debug_line_without_value_is_malformed() {
+        let (prefs, issues) = Prefs::parse("[debug]\ngod\n");
+
+        assert_eq!(issues, vec![malformed("debug", "god", None)]);
+        assert_eq!(prefs.debug_value("god"), None);
+    }
+
+    #[test]
     fn unknown_section_is_reported_and_its_keys_default() {
         let content = base_ini_with(None).replace("[video]", "[vidoe]");
 
