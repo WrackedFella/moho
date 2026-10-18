@@ -50,7 +50,7 @@ from `process_console_action`; the console never touches `App`.
 | `SetDebugView(m)` | `GraphicsEvent::DebugViewChanged` | `process_graphics_events` |
 | `SetShadowQuality(q)` | `DebugEvent::SetShadowQuality` | `process_debug_events` |
 | `SetSsaoQuality(q)` | `DebugEvent::SetSsaoQuality` | `process_debug_events` |
-| `ShowMarker { id, min, max }` | `DebugEvent::ShowMarker` | `process_debug_events` (`Scene::markers_mut().upsert`, fixed amber colour) |
+| `ShowMarker { id, min, max, style }` | `DebugEvent::ShowMarker` | `process_debug_events` (`Scene::markers_mut().upsert`, fixed amber colour) |
 | `ClearMarkers(id)` | `DebugEvent::ClearMarkers { id }` | `process_debug_events` (`remove`, or `clear` for `None`) |
 | `Spawn(type, args)` | `DebugEvent::SpawnEntity { position: None }` | raycasts from the camera for a position |
 
