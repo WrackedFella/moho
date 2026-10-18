@@ -60,8 +60,8 @@ How cloud threads and Actions runs differ from a local session is in the devflow
 [runtimes](https://github.com/WrackedFella/claude-skills/blob/main/wiki/runtimes.md) page. Moho's setup:
 
 - **devflow delivery.** The account-level cloud environment's setup script installs
-  devflow at user scope, pinned to a tag, and serves all three line projects. Bump the
-  script's `DEVFLOW_REF` together with `.claude/settings.json`. See
+  devflow at user scope from `main` and refreshes it on each rebuild; it serves all three
+  line projects. There is no version to bump. See
   [Anthropic: cloud environments](https://code.claude.com/docs/en/cloud-environments) and
   [projects](https://code.claude.com/docs/en/claude-projects).
 - **Toolchain.** Threads that build or test run `bash scripts/cloud-tools.sh` first; it installs the pinned Rust toolchain and gate tools from release downloads.

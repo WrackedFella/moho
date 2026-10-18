@@ -37,9 +37,9 @@
     "claude-skills": {
       "source": {
         "source": "github",
-        "repo": "WrackedFella/claude-skills",
-        "ref": "v0.22.3"
-      }
+        "repo": "WrackedFella/claude-skills"
+      },
+      "autoUpdate": true
     }
   },
   "enabledPlugins": {
