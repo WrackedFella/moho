@@ -397,6 +397,20 @@ mod tests {
     }
 
     #[test]
+    fn storing_a_debug_value_again_overwrites_it() {
+        let mut prefs = Prefs::default();
+        prefs.set_debug_value("god", "0").unwrap();
+        prefs.set_debug_value("tgm", "1").unwrap();
+
+        prefs.set_debug_value("god", "1").unwrap();
+        assert_eq!(prefs.debug_value("god"), Some("1"));
+
+        prefs.set_debug_value("tgm", "0").unwrap();
+        assert_eq!(prefs.debug_value("tgm"), Some("0"));
+        assert_eq!(prefs.debug_value("god"), Some("1"));
+    }
+
+    #[test]
     fn an_unstored_debug_value_is_absent() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("game.ini");
@@ -431,7 +445,7 @@ mod tests {
             assert_eq!(prefs, before, "name {name:?} changed prefs");
         }
         for value in bad_values {
-            let result = prefs.set_debug_value("god", value);
+            let result = prefs.set_debug_value("kept", value);
 
             assert!(
                 matches!(result, Err(DebugValueError::InvalidValue(_))),

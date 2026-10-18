@@ -43,34 +43,25 @@ mod tests {
     use moho_input::key::Key;
     use moho_ui_shell::console::Routing;
 
-    /// Restores the working directory when dropped, even if the test panics.
-    struct CwdGuard(PathBuf);
-
-    impl Drop for CwdGuard {
-        fn drop(&mut self) {
-            let _ = std::env::set_current_dir(&self.0);
-        }
-    }
-
     #[test]
     fn the_fps_prefs_file_is_not_strategys() {
+        assert_eq!(prefs_path(), std::path::Path::new("config/searchlight.ini"));
         assert_ne!(prefs_path(), Prefs::config_path());
     }
 
-    /// Changes the working directory; nextest runs each test in its own process.
     #[test]
     fn a_fresh_fps_prefs_file_has_the_default_console_key() {
         let dir = tempfile::tempdir().unwrap();
-        let _restore = CwdGuard(std::env::current_dir().unwrap());
-        std::env::set_current_dir(dir.path()).unwrap();
         let mut strategy = Prefs::default();
         strategy.set_bindings(BTreeMap::from([(
             "console".to_owned(),
             "Backslash".to_owned(),
         )]));
-        strategy.save_to(&Prefs::config_path()).unwrap();
+        strategy
+            .save_to(&dir.path().join(Prefs::config_path()))
+            .unwrap();
 
-        let (fps, warnings) = Prefs::load_from(&prefs_path());
+        let (fps, warnings) = Prefs::load_from(&dir.path().join(prefs_path()));
         let (console_section, _) = split_console_binding(fps.bindings());
         let (mut console, console_warnings) = console_commands::console(&console_section);
 

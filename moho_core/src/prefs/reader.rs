@@ -501,10 +501,14 @@ mod tests {
     fn base_file_loads_to_base_prefs_without_issues() {
         assert_base_differs_from_default();
 
-        let (prefs, issues) = Prefs::parse(&base_ini_with(None));
+        let content = base_ini_with(None);
+        assert!(!content.contains("debug"), "test setup: no [debug] section");
+
+        let (prefs, issues) = Prefs::parse(&content);
 
         assert_eq!(issues, vec![]);
         assert_eq!(prefs, base_prefs());
+        assert_eq!(prefs.debug_value("god"), None);
     }
 
     #[test]
@@ -813,18 +817,6 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             prefs.to_ini_string()
         );
-    }
-
-    #[test]
-    fn a_file_without_a_game_section_loads_with_no_game_warning() {
-        let content = base_ini_with(None);
-        assert!(!content.contains("debug"), "test setup: no [debug] section");
-
-        let (prefs, issues) = Prefs::parse(&content);
-
-        assert_eq!(issues, vec![]);
-        assert_eq!(prefs, base_prefs());
-        assert_eq!(prefs.debug_value("god"), None);
     }
 
     #[test]
