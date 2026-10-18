@@ -1,7 +1,7 @@
 # Rendering
 
 **Source:** `moho_render_api/src/` (`world_geometry.rs`), `moho_renderer/src/` (`scene.rs`,
-`world_meshes.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `flagstone/src/app/world_geometry.rs`,
+`world_meshes.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`,
 `shaders/`, `moho_level/src/`.
 **Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
 [ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md).
@@ -114,6 +114,7 @@ sequenceDiagram
     S->>B: begin_frame(camera)<br/>upload camera, cull lights, update shadow matrices,<br/>acquire surface
     S->>B: enqueue_draw(cubes, spheres, each world mesh)
     S->>B: enqueue_draw(transparent, sorted back-to-front)
+    S->>B: enqueue_markers(sorted far to near)
     S->>B: submit_frame()
 ```
 
@@ -129,14 +130,35 @@ command encoder:
 flowchart LR
     A["flatten instances<br/>upload to instance buffer"] --> B["shadow passes<br/>shadow_ops"]
     B --> C["main pass<br/>skybox, then geometry<br/>main_pass_ops"]
-    C --> D["SSAO compute<br/>from depth"]
+    C --> K["marker pass<br/>marker_pass_ops<br/>only when markers exist"]
+    K --> D["SSAO compute<br/>from depth"]
     D --> U["UI pass<br/>draw_ui"]
     U --> E["finish_frame<br/>submit, present"]
 ```
 
 The egui UI is drawn by the UI pass from paint data (below); `finish_frame` only submits
 and presents. Shader sources are `shaders/*.wgsl` (`common`, `vertex`,
-`fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`).
+`fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`, `marker`).
+
+## Markers
+
+Markers are translucent axis-aligned boxes a game places over the world (selection
+and mining marks). `moho_render_api::Marker` holds `min`, `max` (world metres) and a
+linear RGBA colour with straight alpha; `Marker::new` orders the corners per axis. A
+`MarkerId` is the game-chosen stable key.
+
+`moho_renderer::Markers` (reached via `Scene::markers_mut`) holds the live set in id
+order: `upsert`, `remove`, `clear`. Markers persist until removed. `Scene::render` turns
+them into `MarkerGpu` instances (each box grown by `MARKER_INFLATE` per side so a marker
+on a block face does not z-fight it, sorted far to near by box centre) and passes them to
+`RendererBackend::enqueue_markers`.
+
+`submit_frame` draws them in a separate pass after the main pass: colour and depth are
+loaded, not cleared, so markers are depth-tested against the world; the pipeline writes no
+depth, which keeps them out of the SSAO pass. One unit cube is instanced per marker and
+scaled to its box in `shaders/marker.wgsl`. Layout: [GPU ABI](../reference/gpu-abi.md).
+The console drives them with `marker` and `marker_clear`
+([console](console.md)).
 
 ## UI paint data
 

@@ -8,6 +8,7 @@
 | `moho_render_api/src/material.rs` (`MaterialGpu`) | `Material` in `common.wgsl` |
 | `moho_render_api/src/instance.rs` (`InstanceGpu`) | `InstanceIn` vertex inputs |
 | `moho_render_api/src/ui_paint.rs` (`UiVertex`) | vertex inputs in `shaders/ui.wgsl` |
+| `moho_render_api/src/marker.rs` (`MarkerGpu`) | vertex inputs in `shaders/marker.wgsl` |
 
 All structs are `#[repr(C)]`, `bytemuck::{Pod, Zeroable}`, and built from `vec4`-sized
 fields so std140/std430 padding never differs between the two sides. Size matches
@@ -26,6 +27,7 @@ fields so std140/std430 padding never differs between the two sides. Size matche
 | `PointLightGpu` | 32 B (2 × vec4) | element of `DynamicLightsGpu` |
 | `ShadowMatrixGpu` | 64 B | legacy single shadow map |
 | `InstanceGpu` | 80 B (mat4 + 4 × u32) | per-instance vertex buffer |
+| `MarkerGpu` | 48 B (3 × vec4) | per-instance vertex buffer, marker pass |
 | `UiVertex` | 20 B (f32×2 pos, f32×2 uv, u8×4 colour) | UI pass vertex buffer |
 
 Group 0 also binds the SSAO texture and sampler (bindings 3, 4). Group 1 binds the
@@ -53,6 +55,8 @@ nearest sampler for the PCSS blocker search (3).
 | | `color_intensity` | xyz colour, w intensity |
 | `DynamicLightsGpu` | `light_count` | x active count |
 | | `lights` | `[PointLightGpu; 64]` |
+| `MarkerGpu` | `min`, `max` | xyz box corners in world metres, w unused |
+| | `color` | linear RGBA, straight alpha |
 | `InstanceGpu` | `model` | column-major mat4 |
 | | `material`, `object_type` | `u32` material index, object kind |
 | | `padding` | `[u32; 2]` |

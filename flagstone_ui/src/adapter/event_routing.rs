@@ -124,6 +124,14 @@ pub fn process_console_action(action: crate::overlays::ConsoleAction, event_bus:
     use crate::overlays::ConsoleAction;
 
     match action {
+        ConsoleAction::ShowMarker { id, min, max } => {
+            use moho_core::events::DebugEvent;
+            event_bus.publish(DebugEvent::ShowMarker { id, min, max });
+        }
+        ConsoleAction::ClearMarkers(id) => {
+            use moho_core::events::DebugEvent;
+            event_bus.publish(DebugEvent::ClearMarkers { id });
+        }
         ConsoleAction::Close => {
             use moho_core::events::UiEvent;
             event_bus.publish(UiEvent::MenuHidden {
@@ -587,6 +595,33 @@ mod tests {
             ),
             "unexpected {:?}",
             published[0]
+        );
+    }
+
+    #[test]
+    fn console_marker_actions_publish_debug_events() {
+        use crate::overlays::ConsoleAction;
+        use moho_core::events::DebugEvent;
+        let min = glam::Vec3::new(1.0, 2.0, 3.0);
+        let max = glam::Vec3::new(2.0, 3.0, 4.0);
+        let bus = EventBus::new();
+        let debug = record::<DebugEvent>(&bus);
+
+        process_console_action(ConsoleAction::ShowMarker { id: 7, min, max }, &bus);
+        process_console_action(ConsoleAction::ClearMarkers(Some(7)), &bus);
+        process_console_action(ConsoleAction::ClearMarkers(None), &bus);
+
+        let published: Vec<_> = debug.try_iter().collect();
+        assert!(
+            matches!(
+                published.as_slice(),
+                [
+                    DebugEvent::ShowMarker { id: 7, min: a, max: b },
+                    DebugEvent::ClearMarkers { id: Some(7) },
+                    DebugEvent::ClearMarkers { id: None },
+                ] if *a == min && *b == max
+            ),
+            "events: {published:?}"
         );
     }
 

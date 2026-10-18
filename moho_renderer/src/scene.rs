@@ -1,4 +1,4 @@
-use crate::{InstanceCollector, MaterialTable, RendererBackend, WorldMeshes};
+use crate::{InstanceCollector, Markers, MaterialTable, RendererBackend, WorldMeshes};
 use moho_render_api::{InstanceGpu, Renderable};
 
 mod preparation;
@@ -17,6 +17,7 @@ pub struct Scene {
     pub material_table: MaterialTable,
     instance_collector: InstanceCollector,
     world_meshes: WorldMeshes,
+    markers: Markers,
 }
 
 impl Scene {
@@ -25,7 +26,13 @@ impl Scene {
             material_table: MaterialTable::new(),
             instance_collector: InstanceCollector::new(),
             world_meshes: WorldMeshes::new(),
+            markers: Markers::new(),
         }
+    }
+
+    /// Add, move and remove box markers; they draw on the next `render`.
+    pub fn markers_mut(&mut self) -> &mut Markers {
+        &mut self.markers
     }
 
     /// Queue world-geometry changes; they reach the backend on the next `render`.
@@ -81,6 +88,8 @@ impl Scene {
 
         // Render transparent instances (back-to-front sorted)
         Self::enqueue_transparent(renderer, prepared.transparent_entries, camera.2);
+
+        renderer.enqueue_markers(&self.markers.draws(camera.2));
 
         renderer.submit_frame();
         Ok(())

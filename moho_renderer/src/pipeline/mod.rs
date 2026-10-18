@@ -34,6 +34,7 @@
 //! ```
 
 mod layouts;
+mod marker;
 mod shaders;
 
 pub use shaders::{main_shader_source, ui_shader_source};
@@ -98,6 +99,7 @@ pub struct PipelineSetup {
     // Render pipelines
     main_pipeline: wgpu::RenderPipeline,
     skybox_pipeline: wgpu::RenderPipeline,
+    marker_pipeline: wgpu::RenderPipeline,
 
     // Configuration
     depth_format: wgpu::TextureFormat,
@@ -167,6 +169,12 @@ impl PipelineSetup {
             config.format,
             depth_format,
         );
+        let marker_pipeline = marker::create_marker_pipeline(
+            device,
+            &skybox_pipeline_layout,
+            config.format,
+            depth_format,
+        );
 
         Ok(Self {
             main_shader,
@@ -179,6 +187,7 @@ impl PipelineSetup {
             skybox_pipeline_layout,
             main_pipeline,
             skybox_pipeline,
+            marker_pipeline,
             depth_format,
         })
     }
@@ -349,6 +358,10 @@ impl PipelineSetup {
     /// Get the skybox render pipeline.
     pub fn skybox_pipeline(&self) -> &wgpu::RenderPipeline {
         &self.skybox_pipeline
+    }
+
+    pub fn marker_pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.marker_pipeline
     }
 
     /// Get the camera bind group layout.
