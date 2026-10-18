@@ -33,7 +33,7 @@ Two properties that bite:
 - Each input kind gets its own `register` call (wheel and mine-click are separate
   handlers), so a new input type is a new registration, not a new branch.
 - A forwarder drops the event rather than blocking if it can't take the UI adapter lock.
-- During gameplay egui sees only pointer motion (`EguiAdapter::handle_gameplay_event`), so it knows what lies under the pointer. A mouse press over a panel is consumed and never reaches the game. The mine-click forwarder leaves the press unconsumed, so the action map sees it too.
+- During gameplay egui sees only pointer motion (`EguiAdapter::handle_gameplay_event`), so it knows what lies under the pointer. While the cursor is free (strategy view), a mouse press over a panel is consumed and never reaches the game; in first person egui gets no pointer input. The mine-click forwarder leaves the press unconsumed, so the action map sees it too.
 
 Global hotkeys in `handle_keyboard_input`, checked before game keys:
 
