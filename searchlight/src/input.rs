@@ -74,6 +74,8 @@ pub struct FpsCommand {
     pub check: bool,
     /// The restart input went down this tick.
     pub restart: bool,
+    /// The world holds still this tick: the developer console is open.
+    pub paused: bool,
 }
 
 impl FpsCommand {
@@ -98,6 +100,7 @@ impl FpsCommand {
             reload: frame.pressed(FpsAction::Reload),
             check: frame.pressed(FpsAction::CheckMagazine),
             restart: frame.pressed(FpsAction::Restart),
+            paused: false,
         }
     }
 }

@@ -666,12 +666,18 @@ impl Game for FpsGame {
     type Command = FpsCommand;
 
     fn command(&mut self) -> FpsCommand {
-        FpsCommand::from_frame(&self.input.end_tick())
+        FpsCommand {
+            paused: self.stage.shell().captures_input(),
+            ..FpsCommand::from_frame(&self.input.end_tick())
+        }
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &FpsCommand) {
-        let was_dead = self.sim.player_body().is_dead();
         self.previous = self.sim.player();
+        if command.paused {
+            return;
+        }
+        let was_dead = self.sim.player_body().is_dead();
         self.sim.tick(command, ctx.tick_length.as_secs_f32());
         if was_dead && !self.sim.player_body().is_dead() {
             self.previous = self.sim.player();
@@ -901,6 +907,54 @@ mod tests {
         let mut ctx = EventContext::new(clock, None, None);
         let routing = game.route_input(&mut ctx, BACKTICK, true, false);
         assert_eq!(routing, Routing::Opened);
+    }
+
+    /// A game whose enemy is walking toward the player, so every sim tick moves it.
+    fn game_with_a_moving_enemy() -> FpsGame {
+        let sim = FpsSim::start(arena_arena(), arena_config());
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        FpsGame::new(sim, ActionMap::new(bindings, 1.0))
+    }
+
+    #[test]
+    fn an_open_console_freezes_the_simulation() {
+        let mut game = game_with_a_moving_enemy();
+        let clock = GameClock::default();
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.step(&mut game, 1);
+        open_the_console(&mut game, &clock);
+        let (enemy, player, health) = (
+            game.sim().enemy_state(0),
+            game.sim().player(),
+            game.sim().player_body().health(),
+        );
+
+        headless.step(&mut game, 120);
+
+        assert_eq!(game.sim().enemy_state(0), enemy);
+        assert_eq!(game.sim().player(), player);
+        assert_eq!(game.sim().player_body().health(), health);
+        assert_eq!(
+            game.previous, player,
+            "the view does not blend while frozen"
+        );
+    }
+
+    #[test]
+    fn closing_the_console_resumes_the_simulation() {
+        let mut game = game_with_a_moving_enemy();
+        let clock = GameClock::default();
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        open_the_console(&mut game, &clock);
+        headless.step(&mut game, 1);
+        let mut ctx = EventContext::new(&clock, None, None);
+        let routing = game.route_input(&mut ctx, BACKTICK, true, false);
+        assert_eq!(routing, Routing::Closed);
+        let frozen = game.sim().enemy_state(0);
+
+        headless.step(&mut game, 30);
+
+        assert_ne!(game.sim().enemy_state(0), frozen);
     }
 
     #[test]
