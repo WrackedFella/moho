@@ -42,6 +42,8 @@ pub struct Renderer<'a> {
     pending_markers: Vec<moho_render_api::MarkerGpu>,
     /// How many leading entries of `pending_markers` are fills.
     pending_fill_count: usize,
+    /// Debug view that replaces the game's own in every lighting update, once one is set.
+    debug_view: Option<u32>,
 }
 
 impl<'a> Renderer<'a> {
@@ -128,6 +130,7 @@ impl<'a> Renderer<'a> {
             marker_buffers: resources.marker_buffers,
             pending_markers: Vec::new(),
             pending_fill_count: 0,
+            debug_view: None,
         };
 
         // Recreate camera bind group with SSAO textures if available
@@ -153,9 +156,17 @@ impl<'a> Renderer<'a> {
 
     /// Update lighting parameters and write to GPU buffer.
     pub fn update_lighting(&mut self, lighting: crate::gpu_types::LightingGpu) {
+        let lighting = lighting_with_debug_view(lighting, self.debug_view);
         self.shadow.current_lighting = lighting;
         self.queue
             .write_buffer(&self.lighting_buffer, 0, bytemuck::bytes_of(&lighting));
+    }
+
+    /// Override the shader's debug view mode, now and in every later lighting update; `None`
+    /// leaves the game's own value.
+    pub fn set_debug_view(&mut self, mode: Option<u32>) {
+        self.debug_view = mode;
+        self.update_lighting(self.shadow.current_lighting);
     }
 
     /// Add a dynamic point light to the scene. Returns the light ID for future updates/removal.
@@ -672,8 +683,12 @@ impl<'a> Renderer<'a> {
 /// keeps the game's own value.
 pub fn lighting_with_debug_view(
     lighting: crate::gpu_types::LightingGpu,
-    _debug_view: Option<u32>,
+    debug_view: Option<u32>,
 ) -> crate::gpu_types::LightingGpu {
+    let mut lighting = lighting;
+    if let Some(mode) = debug_view {
+        lighting.params[1] = mode as f32;
+    }
     lighting
 }
 

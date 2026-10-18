@@ -1,6 +1,8 @@
 //! The default way a game applies the engine's commands.
 
 use moho_app::FrameContext;
+use moho_audio::AudioSource;
+use moho_renderer::RendererBackend;
 
 use crate::console::registry::EngineCommand;
 
@@ -8,10 +10,43 @@ use crate::console::registry::EngineCommand;
 pub fn apply_engine_command(command: &EngineCommand, ctx: &mut FrameContext<'_>) {
     match command {
         EngineCommand::Quit => ctx.request_exit(),
-        EngineCommand::DebugView(_)
-        | EngineCommand::ShadowQuality(_)
-        | EngineCommand::SsaoQuality(_)
-        | EngineCommand::PlaySoundAt { .. } => {}
+        EngineCommand::DebugView(mode) => {
+            with_renderer(command, ctx, |r| r.set_debug_view(Some(*mode)));
+        }
+        EngineCommand::ShadowQuality(quality) => {
+            with_renderer(command, ctx, |r| r.set_shadow_quality(*quality));
+        }
+        EngineCommand::SsaoQuality(quality) => {
+            with_renderer(command, ctx, |r| r.set_ssao_quality(*quality));
+        }
+        EngineCommand::PlaySoundAt {
+            path,
+            position,
+            volume,
+        } => {
+            if let Some(audio) = ctx.audio() {
+                let source = AudioSource::new(path)
+                    .with_volume(*volume)
+                    .with_position(position.to_array());
+                if let Err(error) = audio.play_audio_source(&source) {
+                    tracing::warn!(path = %path.display(), %error, "console sound failed to play");
+                }
+            } else {
+                tracing::debug!(?command, "no audio; engine command dropped");
+            }
+        }
+    }
+}
+
+fn with_renderer(
+    command: &EngineCommand,
+    ctx: &mut FrameContext<'_>,
+    apply: impl FnOnce(&mut dyn RendererBackend),
+) {
+    if let Some(renderer) = ctx.renderer() {
+        apply(renderer);
+    } else {
+        tracing::debug!(?command, "no renderer; engine command dropped");
     }
 }
 

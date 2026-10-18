@@ -1807,6 +1807,7 @@ dependencies = [
  "egui-winit",
  "glam 0.33.12",
  "moho_app",
+ "moho_audio",
  "moho_input",
  "moho_render_api",
  "moho_renderer",

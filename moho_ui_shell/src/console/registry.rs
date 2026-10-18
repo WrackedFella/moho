@@ -74,6 +74,104 @@ fn parse_quit(_args: &[&str]) -> Result<(EngineCommand, String), String> {
     Ok((EngineCommand::Quit, "Quitting".to_owned()))
 }
 
+const DEBUG_VIEW_NAMES: [&str; 6] = [
+    "None",
+    "Normals",
+    "Bias",
+    "Shadows",
+    "Light Level",
+    "Point Lights",
+];
+const QUALITY_NAMES: [&str; 5] = ["Off", "Low", "Medium", "High", "Ultra"];
+
+fn parse_debug_view(args: &[&str]) -> Result<(EngineCommand, String), String> {
+    let Some(arg) = args.first() else {
+        return Err("Usage: r_debug_view <mode> (0=None, 1=Normals, 2=Bias, 3=Shadows, 4=LightLevel, 5=PointLights)".to_owned());
+    };
+    let mode = arg
+        .parse::<u32>()
+        .map_err(|_| "Invalid mode. Must be a number.".to_owned())?;
+    let name = usize::try_from(mode)
+        .ok()
+        .and_then(|i| DEBUG_VIEW_NAMES.get(i))
+        .ok_or_else(|| "Debug view must be between 0 and 5".to_owned())?;
+    Ok((
+        EngineCommand::DebugView(mode),
+        format!("Debug view set to: {name} ({mode})"),
+    ))
+}
+
+/// The level in `args` as a `u8` in `0..=4`, with its name, or the reply that refuses it.
+fn parse_quality(args: &[&str], usage: &str) -> Result<(u8, &'static str), String> {
+    let Some(arg) = args.first() else {
+        return Err(usage.to_owned());
+    };
+    let level = arg
+        .parse::<u32>()
+        .map_err(|_| "Invalid quality. Must be a number.".to_owned())?;
+    usize::try_from(level)
+        .ok()
+        .and_then(|i| QUALITY_NAMES.get(i))
+        .zip(u8::try_from(level).ok())
+        .map(|(name, quality)| (quality, *name))
+        .ok_or_else(|| "Quality must be between 0 and 4".to_owned())
+}
+
+fn parse_shadow_quality(args: &[&str]) -> Result<(EngineCommand, String), String> {
+    let (quality, name) = parse_quality(
+        args,
+        "Usage: r_shadow_quality <0-4> (0=Off, 1=Low, 2=Med, 3=High, 4=Ultra)",
+    )?;
+    Ok((
+        EngineCommand::ShadowQuality(quality),
+        format!("Shadow quality set to: {name} ({quality})"),
+    ))
+}
+
+fn parse_ssao_quality(args: &[&str]) -> Result<(EngineCommand, String), String> {
+    let (quality, name) = parse_quality(
+        args,
+        "Usage: r_ssao_quality <0-4> (0=Off, 1=Low, 2=Med, 3=High, 4=Ultra)",
+    )?;
+    Ok((
+        EngineCommand::SsaoQuality(quality),
+        format!("SSAO quality set to: {name} ({quality})"),
+    ))
+}
+
+/// A console argument as a finite `f32`; `None` for text, NaN or infinity.
+fn parse_finite(arg: &str) -> Option<f32> {
+    arg.parse::<f32>().ok().filter(|n| n.is_finite())
+}
+
+fn parse_audio_cue(args: &[&str]) -> Result<(EngineCommand, String), String> {
+    let [path, x, y, z, volume @ ..] = args else {
+        return Err(AUDIO_CUE_USAGE.to_owned());
+    };
+    if volume.len() > 1 {
+        return Err(AUDIO_CUE_USAGE.to_owned());
+    }
+    let (Some(x), Some(y), Some(z), Some(volume)) = (
+        parse_finite(x),
+        parse_finite(y),
+        parse_finite(z),
+        volume.first().map_or(Some(1.0), |v| parse_finite(v)),
+    ) else {
+        return Err("Error: position and volume must be finite numbers".to_owned());
+    };
+    let position = glam::Vec3::new(x, y, z);
+    Ok((
+        EngineCommand::PlaySoundAt {
+            path: (*path).into(),
+            position,
+            volume,
+        },
+        format!("Playing {path} at {position} (volume {volume})"),
+    ))
+}
+
+const AUDIO_CUE_USAGE: &str = "Usage: audio_cue <path> <x> <y> <z> [volume]\n  Example: audio_cue searchlight/assets/rifle_shot.wav 1 0 -5 0.8";
+
 /// The engine's commands first, then the game's, in registration order.
 pub(super) struct Registry<G> {
     entries: Vec<Entry<G>>,
@@ -92,6 +190,30 @@ impl<G> Registry<G> {
                 engine("help", "help", "list the commands", Handler::Help),
                 engine("clear", "clear", "clear the console", Handler::Clear),
                 engine("quit", "quit", "exit the game", Handler::Engine(parse_quit)),
+                engine(
+                    "r_debug_view",
+                    "r_debug_view <0-5>",
+                    "set the debug view (0=None, 3=Shadows)",
+                    Handler::Engine(parse_debug_view),
+                ),
+                engine(
+                    "r_shadow_quality",
+                    "r_shadow_quality <0-4>",
+                    "set shadow quality (Off/Low/Med/High/Ultra)",
+                    Handler::Engine(parse_shadow_quality),
+                ),
+                engine(
+                    "r_ssao_quality",
+                    "r_ssao_quality <0-4>",
+                    "set SSAO quality (Off/Low/Med/High/Ultra)",
+                    Handler::Engine(parse_ssao_quality),
+                ),
+                engine(
+                    "audio_cue",
+                    "audio_cue <path> <x> <y> <z> [volume]",
+                    "play a sound at a world position (metres)",
+                    Handler::Engine(parse_audio_cue),
+                ),
             ],
         }
     }
@@ -477,9 +599,9 @@ mod tests {
             })
         );
         let help = help_lines(&console);
-        assert_eq!(help.len(), 4, "{help:?}");
+        assert_eq!(help.len(), 8, "{help:?}");
         assert_eq!(help.iter().filter(|l| l.starts_with("  quit")).count(), 1);
-        assert_eq!(help[3], "  tgm [0|1] - toggle god mode");
+        assert_eq!(help[7], "  tgm [0|1] - toggle god mode");
     }
 
     #[test]
