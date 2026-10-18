@@ -95,6 +95,9 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
           plugins: devflow@claude-skills
+          # Re-dispatched runs are started by the default token, so the actor is
+          # github-actions[bot]. Allow only that bot; the repo is public.
+          allowed_bots: github-actions
           display_report: true
           prompt: /devflow:pr-review ${{ env.PR }}
           claude_args: |
@@ -140,6 +143,9 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
           plugins: devflow@claude-skills
+          # Re-dispatched runs are started by the default token, so the actor is
+          # github-actions[bot]. Allow only that bot; the repo is public.
+          allowed_bots: github-actions
           display_report: true
           prompt: /devflow:respond ${{ env.PR }}
           claude_args: |
