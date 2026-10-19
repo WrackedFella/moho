@@ -153,15 +153,24 @@ mod tests {
 
     #[test]
     fn output_is_the_mean_of_this_and_the_previous_sample_on_both_axes() {
-        let mut smoothing = MouseSmoothing::new();
+        let rows: [([(f32, f32); 3], [(f32, f32); 3]); 2] = [
+            (
+                [(10.0, -4.0), (20.0, 8.0), (0.0, 0.0)],
+                [(5.0, -2.0), (15.0, 2.0), (10.0, 4.0)],
+            ),
+            (
+                [(1.0, 0.0), (0.0, 1.0), (0.0, 0.0)],
+                [(0.5, 0.0), (0.5, 0.5), (0.0, 0.5)],
+            ),
+        ];
 
-        let first = smoothing.apply((10.0, -4.0));
-        let second = smoothing.apply((20.0, 8.0));
-        let third = smoothing.apply((0.0, 0.0));
+        for (inputs, expected) in rows {
+            let mut smoothing = MouseSmoothing::new();
 
-        assert_eq!(first, (5.0, -2.0));
-        assert_eq!(second, (15.0, 2.0));
-        assert_eq!(third, (10.0, 4.0));
+            let outputs = inputs.map(|sample| smoothing.apply(sample));
+
+            assert_eq!(outputs, expected, "inputs {inputs:?}");
+        }
     }
 
     #[test]
@@ -185,19 +194,6 @@ mod tests {
         let out = smoothing.apply((0.0, 0.0));
 
         assert_eq!(out, (0.0, 0.0));
-    }
-
-    #[test]
-    fn a_single_count_is_not_dropped() {
-        let mut smoothing = MouseSmoothing::new();
-
-        let first = smoothing.apply((1.0, 0.0));
-        let second = smoothing.apply((0.0, 1.0));
-        let third = smoothing.apply((0.0, 0.0));
-
-        assert_eq!(first, (0.5, 0.0));
-        assert_eq!(second, (0.5, 0.5));
-        assert_eq!(third, (0.0, 0.5));
     }
 
     proptest! {

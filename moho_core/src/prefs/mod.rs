@@ -382,7 +382,11 @@ mod tests {
 
     #[test]
     fn with_mouse_smoothing_sets_the_flag() {
-        assert!(Prefs::default().with_mouse_smoothing(true).mouse_smoothing());
+        assert!(
+            Prefs::default()
+                .with_mouse_smoothing(true)
+                .mouse_smoothing()
+        );
         assert!(
             !Prefs::default()
                 .with_mouse_smoothing(true)

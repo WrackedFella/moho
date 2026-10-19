@@ -207,10 +207,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_applies_config_sensitivity_and_filtering() {
+    fn build_applies_config_sensitivity_and_smoothing() {
         let config = AppConfig::builder()
             .mouse_sensitivity(0.5)
-            .input_filtering(false)
+            .mouse_smoothing(false)
             .build();
         let mut initialized = AppInitializer::new(config)
             .build()
@@ -219,6 +219,18 @@ mod tests {
         initialized.actions.mouse_motion(10.0, 0.0);
 
         assert_eq!(initialized.actions.end_tick().look(), (5.0, 0.0));
+    }
+
+    #[test]
+    fn build_actions_applies_mouse_smoothing_from_prefs() {
+        let prefs = Prefs::default()
+            .with_mouse_sensitivity(250.0)
+            .with_mouse_smoothing(true);
+        let mut actions = build_actions(&AppConfig::from_prefs_struct(prefs));
+
+        actions.mouse_motion(10.0, 0.0);
+
+        assert_eq!(actions.end_tick().look(), (2.5, 0.0));
     }
 
     #[test]

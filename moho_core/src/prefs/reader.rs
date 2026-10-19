@@ -366,10 +366,7 @@ mod tests {
     const BASE: &[(&str, &[(&str, &str)])] = &[
         (
             "prefs",
-            &[
-                ("mouse_sensitivity", "2.5"),
-                ("input_filtering_enabled", "false"),
-            ],
+            &[("mouse_sensitivity", "2.5"), ("mouse_smoothing", "true")],
         ),
         (
             "audio",
@@ -426,7 +423,7 @@ mod tests {
     fn base_prefs() -> Prefs {
         let mut p = Prefs::default();
         *p.mouse_sensitivity_mut() = 2.5;
-        *p.input_filtering_enabled_mut() = false;
+        *p.mouse_smoothing_mut() = true;
         *p.sound_effect_volume_mut() = 1.5;
         *p.music_volume_mut() = 2.5;
         *p.ui_volume_mut() = 3.5;
@@ -449,8 +446,8 @@ mod tests {
                 format!("{:?}", p.mouse_sensitivity()),
             ),
             (
-                "prefs.input_filtering_enabled",
-                format!("{:?}", p.input_filtering_enabled()),
+                "prefs.mouse_smoothing",
+                format!("{:?}", p.mouse_smoothing()),
             ),
             (
                 "audio.sound_effect_volume",
@@ -527,7 +524,7 @@ mod tests {
             ("prefs", "mouse_sensitivity", "fast"),
             ("prefs", "mouse_sensitivity", "NaN"),
             ("prefs", "mouse_sensitivity", ""),
-            ("prefs", "input_filtering_enabled", "yes"),
+            ("prefs", "mouse_smoothing", "yes"),
             ("audio", "music_volume", "5,0"),
             ("graphics", "shadow_quality", "high"),
             ("video", "window_mode", "Windowd"),
@@ -558,28 +555,23 @@ mod tests {
 
     #[test]
     fn mouse_smoothing_round_trips() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config").join("prefs.ini");
-        let mut prefs = Prefs::default();
-        *prefs.mouse_smoothing_mut() = true;
+        for smoothing in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config").join("prefs.ini");
+            let mut prefs = Prefs::default().with_mouse_sensitivity(2.5);
+            *prefs.mouse_smoothing_mut() = smoothing;
 
-        prefs.save_to(&path).unwrap();
-        let (loaded, warnings) = Prefs::load_from(&path);
+            prefs.save_to(&path).unwrap();
+            let (loaded, warnings) = Prefs::load_from(&path);
 
-        assert_eq!(warnings, vec![]);
-        assert!(loaded.mouse_smoothing());
-        assert!(prefs.to_ini_string().contains("mouse_smoothing=true\n"));
-    }
-
-    #[test]
-    fn mouse_smoothing_off_round_trips() {
-        let mut prefs = Prefs::default().with_mouse_smoothing(true);
-        *prefs.mouse_smoothing_mut() = false;
-
-        let (loaded, issues) = Prefs::parse(&prefs.to_ini_string());
-
-        assert_eq!(issues, vec![]);
-        assert!(!loaded.mouse_smoothing());
+            assert_eq!(warnings, vec![], "smoothing {smoothing}");
+            assert_eq!(loaded.mouse_smoothing(), smoothing);
+            assert!(
+                prefs
+                    .to_ini_string()
+                    .contains(&format!("mouse_smoothing={smoothing}\n"))
+            );
+        }
     }
 
     #[test]
@@ -726,7 +718,7 @@ mod tests {
         let default = Prefs::default();
         assert_eq!(prefs.window_mode(), default.window_mode());
         assert_eq!(prefs.window_resolution(), default.window_resolution());
-        assert!(!prefs.input_filtering_enabled());
+        assert!(prefs.mouse_smoothing());
         assert_eq!(prefs.music_volume(), 2.5);
     }
 
@@ -817,18 +809,18 @@ mod tests {
 
     #[test]
     fn keys_before_any_header_load_as_prefs() {
-        let content = "input_filtering_enabled=false\nmouse_sensitivity=2.5\n";
+        let content = "mouse_smoothing=true\nmouse_sensitivity=2.5\n";
 
         let (prefs, issues) = Prefs::parse(content);
 
         assert_eq!(issues, vec![]);
-        assert!(!prefs.input_filtering_enabled());
+        assert!(prefs.mouse_smoothing());
         assert_eq!(prefs.mouse_sensitivity(), 2.5);
     }
 
     #[test]
     fn keys_before_header_are_reported_when_prefs_section_exists() {
-        let content = "mouse_sensitivity=2.0\n[prefs]\ninput_filtering_enabled=false\n";
+        let content = "mouse_sensitivity=2.0\n[prefs]\nmouse_smoothing=true\n";
 
         let (prefs, issues) = Prefs::parse(content);
 
@@ -843,7 +835,7 @@ mod tests {
             prefs.mouse_sensitivity(),
             Prefs::default().mouse_sensitivity()
         );
-        assert!(!prefs.input_filtering_enabled());
+        assert!(prefs.mouse_smoothing());
     }
 
     /// Pins the exact text written for the defaults, so a format change is deliberate.
@@ -851,7 +843,7 @@ mod tests {
     fn to_ini_string_of_defaults_is_the_save_format() {
         let expected = "[prefs]\n\
              mouse_sensitivity=1\n\
-             input_filtering_enabled=true\n\
+             mouse_smoothing=false\n\
              \n[audio]\n\
              sound_effect_volume=8.0\n\
              music_volume=6.0\n\
@@ -929,10 +921,10 @@ mod tests {
             (window_mode_strategy(), any::<u32>(), any::<u32>()),
             (any::<u32>(), any::<u32>(), 1u32..=u32::MAX),
         )
-            .prop_map(|(sens, filtering, vols, quality, video, world)| {
+            .prop_map(|(sens, smoothing, vols, quality, video, world)| {
                 let mut p = Prefs::default();
                 *p.mouse_sensitivity_mut() = sens;
-                *p.input_filtering_enabled_mut() = filtering;
+                *p.mouse_smoothing_mut() = smoothing;
                 *p.sound_effect_volume_mut() = vols[0];
                 *p.music_volume_mut() = vols[1];
                 *p.ui_volume_mut() = vols[2];

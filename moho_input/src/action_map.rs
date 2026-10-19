@@ -724,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn set_sensitivity_changes_later_look() {
+    fn set_look_changes_later_look() {
         let mut map = map(1.0);
         map.set_look(LookSettings::raw(3.0));
 
@@ -759,28 +759,26 @@ mod tests {
         for (counts, ticks) in rows {
             let mut map = map(0.5);
             let per_tick = f64::from(counts / ticks);
+            let expected_tick = (per_tick as f32 * 0.5, -(per_tick as f32) * 0.5);
             let mut total = (0.0f32, 0.0f32);
 
-            for _ in 0..ticks {
+            for tick in 0..ticks {
                 map.mouse_motion(per_tick, -per_tick);
-                let (x, y) = map.end_tick().look();
-                total = (total.0 + x, total.1 + y);
+                let look = map.end_tick().look();
+                assert_eq!(
+                    look, expected_tick,
+                    "{counts} counts over {ticks} ticks, tick {tick}"
+                );
+                total = (total.0 + look.0, total.1 + look.1);
             }
-            let (x, y) = map.end_tick().look();
-            total = (total.0 + x, total.1 + y);
 
             let expected = counts as f32 * 0.5;
-            assert_eq!(total, (expected, -expected), "{counts} counts over {ticks} ticks");
+            assert_eq!(
+                total,
+                (expected, -expected),
+                "{counts} counts over {ticks} ticks"
+            );
         }
-    }
-
-    #[test]
-    fn a_single_count_turns_the_view_that_tick() {
-        let mut map = map(0.5);
-
-        map.mouse_motion(1.0, 0.0);
-
-        assert_eq!(map.end_tick().look(), (0.5, 0.0));
     }
 
     #[test]

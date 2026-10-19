@@ -157,6 +157,17 @@ mod tests {
         assert!(has_dirty_decor(&output));
     }
 
+    fn has_text(output: &egui::FullOutput, needle: &str) -> bool {
+        fn find(shape: &egui::epaint::Shape, needle: &str) -> bool {
+            match shape {
+                egui::epaint::Shape::Text(t) => t.galley.text().contains(needle),
+                egui::epaint::Shape::Vec(v) => v.iter().any(|s| find(s, needle)),
+                _ => false,
+            }
+        }
+        output.shapes.iter().any(|c| find(&c.shape, needle))
+    }
+
     #[test]
     fn changed_mouse_smoothing_is_dirty_and_decorated() {
         let mut menu = SettingsMenu::with_prefs(Prefs::default());
@@ -166,6 +177,7 @@ mod tests {
 
         assert!(menu.has_unsaved_changes());
         assert!(has_dirty_decor(&output));
+        assert!(has_text(&output, "Mouse smoothing"));
     }
 
     #[test]
