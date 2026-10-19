@@ -155,6 +155,11 @@ impl<G> Console<G> {
         std::mem::take(&mut self.commands)
     }
 
+    /// Prints game text to the output, one output line per line of text.
+    pub fn print(&mut self, text: &str) {
+        let _ = text;
+    }
+
     /// Drains the engine's commands queued by `submit`.
     pub fn take_engine_commands(&mut self) -> Vec<EngineCommand> {
         std::mem::take(&mut self.engine_commands)
@@ -232,6 +237,10 @@ pub(crate) mod tests {
         Ok((Cmd::God(true), "first\nsecond\nthird".to_owned()))
     }
 
+    fn parse_silent(_: &[&str]) -> Result<(Cmd, String), String> {
+        Ok((Cmd::God(true), String::new()))
+    }
+
     pub(crate) fn tgm() -> CommandSpec<Cmd> {
         CommandSpec {
             name: "tgm".to_owned(),
@@ -249,6 +258,11 @@ pub(crate) mod tests {
 
     fn lines(console: &Console<Cmd>) -> Vec<String> {
         console.output().lines().iter().cloned().collect()
+    }
+
+    fn last_lines(console: &Console<Cmd>, count: usize) -> Vec<String> {
+        let all = lines(console);
+        all[all.len().saturating_sub(count)..].to_vec()
     }
 
     /// The lines the last `help` printed, after its echo.
@@ -555,5 +569,69 @@ pub(crate) mod tests {
             &printed[at.unwrap_or_default()..],
             ["first", "second", "third"]
         );
+    }
+
+    #[test]
+    fn a_game_prints_a_line_after_draining_its_command() {
+        let mut console = console_with(CommandSpec {
+            parse: parse_silent,
+            ..tgm()
+        });
+        console.submit("tgm");
+
+        let drained = console.take_commands();
+        console.print("god mode applied");
+
+        assert_eq!(drained, vec![Cmd::God(true)]);
+        assert_eq!(last_lines(&console, 2), ["> tgm", "god mode applied"]);
+    }
+
+    #[test]
+    fn a_printed_text_is_one_output_line_per_line() {
+        let mut console = console_with(tgm());
+
+        console.print("first\nsecond");
+
+        assert_eq!(last_lines(&console, 2), ["first", "second"]);
+    }
+
+    #[test]
+    fn an_empty_reply_prints_nothing_and_still_queues_the_command() {
+        let mut console = console_with(CommandSpec {
+            parse: parse_silent,
+            ..tgm()
+        });
+
+        let before = lines(&console).len();
+
+        console.submit("tgm");
+
+        assert_eq!(lines(&console).len(), before + 1);
+        assert_eq!(last_lines(&console, 1), ["> tgm"]);
+        assert_eq!(console.take_commands(), vec![Cmd::God(true)]);
+    }
+
+    #[test]
+    fn a_line_printed_while_closed_is_in_the_output_when_opened() {
+        let mut console = console_with(tgm());
+        assert!(!console.is_open());
+
+        console.print("while closed");
+        console.open();
+
+        assert!(console.is_open());
+        assert_eq!(last_lines(&console, 1), ["while closed"]);
+    }
+
+    #[test]
+    fn printed_lines_respect_the_output_cap() {
+        let mut console = console_with(tgm());
+
+        for i in 0..25 {
+            console.print(&format!("line {i}"));
+        }
+
+        let expected: Vec<String> = (5..25).map(|i| format!("line {i}")).collect();
+        assert_eq!(lines(&console), expected);
     }
 }
