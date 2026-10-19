@@ -9,8 +9,11 @@ use moho_input::LookSettings;
 
 /// The look settings `prefs` ask for: its sensitivity scaled by 0.002 radians per
 /// count, and its mouse-smoothing switch.
-pub fn look_settings(_prefs: &Prefs) -> LookSettings {
-    todo!()
+pub fn look_settings(prefs: &Prefs) -> LookSettings {
+    LookSettings {
+        look_per_count: prefs.mouse_sensitivity() * 0.002,
+        smoothing: prefs.mouse_smoothing(),
+    }
 }
 
 /// Central configuration for application initialization.
@@ -28,7 +31,7 @@ pub fn look_settings(_prefs: &Prefs) -> LookSettings {
 /// // Or create with custom settings
 /// let config = AppConfig::builder()
 ///     .mouse_sensitivity(0.5)
-///     .input_filtering(true)
+///     .mouse_smoothing(true)
 ///     .build();
 /// # }
 /// ```
@@ -36,9 +39,6 @@ pub fn look_settings(_prefs: &Prefs) -> LookSettings {
 pub struct AppConfig {
     /// Per-pixel look factor: the prefs mouse sensitivity scaled by 0.002.
     pub mouse_sensitivity: f32,
-
-    /// Whether input filtering is enabled in the input system
-    pub input_filtering_enabled: bool,
 
     /// Whether mouse smoothing is on.
     pub mouse_smoothing: bool,
@@ -75,10 +75,10 @@ impl AppConfig {
     ///
     /// This is useful for testing or when you already have a Prefs instance.
     pub fn from_prefs_struct(prefs: Prefs) -> Self {
+        let look = look_settings(&prefs);
         Self {
-            mouse_sensitivity: prefs.mouse_sensitivity() * 0.002,
-            input_filtering_enabled: prefs.input_filtering_enabled(),
-            mouse_smoothing: true,
+            mouse_sensitivity: look.look_per_count,
+            mouse_smoothing: look.smoothing,
             prefs,
         }
     }
@@ -91,11 +91,11 @@ impl AppConfig {
     ///
     /// let config = AppConfig::builder()
     ///     .mouse_sensitivity(0.5)
-    ///     .input_filtering(false)
+    ///     .mouse_smoothing(false)
     ///     .build();
     ///
     /// assert_eq!(config.mouse_sensitivity, 0.5);
-    /// assert_eq!(config.input_filtering_enabled, false);
+    /// assert!(!config.mouse_smoothing);
     /// ```
     #[allow(dead_code)] // Builder API for future use
     pub fn builder() -> AppConfigBuilder {
@@ -111,7 +111,6 @@ impl AppConfig {
 #[allow(dead_code)] // Builder for future use
 pub struct AppConfigBuilder {
     mouse_sensitivity: Option<f32>,
-    input_filtering_enabled: Option<bool>,
     mouse_smoothing: Option<bool>,
     prefs: Option<Prefs>,
 }
@@ -124,14 +123,10 @@ impl AppConfigBuilder {
         self
     }
 
-    /// Set whether input filtering is enabled.
-    pub fn input_filtering(mut self, enabled: bool) -> Self {
-        self.input_filtering_enabled = Some(enabled);
+    /// Set whether mouse smoothing is on.
+    pub fn mouse_smoothing(mut self, enabled: bool) -> Self {
+        self.mouse_smoothing = Some(enabled);
         self
-    }
-
-    pub fn mouse_smoothing(self, _enabled: bool) -> Self {
-        todo!()
     }
 
     /// Set the preferences object directly.
@@ -149,10 +144,7 @@ impl AppConfigBuilder {
 
         AppConfig {
             mouse_sensitivity: self.mouse_sensitivity.unwrap_or(base.mouse_sensitivity),
-            input_filtering_enabled: self
-                .input_filtering_enabled
-                .unwrap_or(base.input_filtering_enabled),
-            mouse_smoothing: base.mouse_smoothing,
+            mouse_smoothing: self.mouse_smoothing.unwrap_or(base.mouse_smoothing),
             prefs: base.prefs,
         }
     }

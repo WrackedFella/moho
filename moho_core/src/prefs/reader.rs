@@ -100,8 +100,8 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
     ("prefs", "mouse_sensitivity", |p, s| {
         set(&mut p.mouse_sensitivity, parse_f32(s))
     }),
-    ("prefs", "input_filtering_enabled", |p, s| {
-        set(&mut p.input_filtering_enabled, parse_bool(s))
+    ("prefs", "mouse_smoothing", |p, s| {
+        set(&mut p.mouse_smoothing, parse_bool(s))
     }),
     ("audio", "sound_effect_volume", |p, s| {
         set(&mut p.audio_sound_effect_volume, parse_f32(s))

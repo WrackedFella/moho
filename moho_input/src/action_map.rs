@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 
 use crate::bindings::{Action, ActionBindings, Binding};
-use crate::filter::{DeadzoneFilter, FilterPipeline};
+use crate::filter::{DeadzoneFilter, MouseSmoothing};
 use crate::key::{Key, MouseButton};
 use crate::pad::{PadButton, PadInput, Stick, StickAxis, StickDir};
 
@@ -76,7 +76,7 @@ impl<A: Action> ActionFrame<A> {
         self.released & bit(action) != 0
     }
 
-    /// Filtered, sensitivity-scaled mouse motion for the tick.
+    /// Look for the tick: mouse counts (smoothed if enabled) scaled per count, plus the stick.
     pub fn look(&self) -> (f32, f32) {
         self.look
     }
@@ -103,14 +103,15 @@ pub struct ActionMap<A: Action> {
     look_accumulator: (f64, f64),
     /// Left and right stick `(x, y)`, Y up.
     sticks: [(f32, f32); 2],
-    sensitivity: f32,
-    filter: FilterPipeline,
+    look: LookSettings,
+    smoothing: MouseSmoothing,
     pointer: Option<(f32, f32)>,
     press_pointer: Option<(f32, f32)>,
 }
 
 impl<A: Action> ActionMap<A> {
-    pub fn new(bindings: ActionBindings<A>, sensitivity: f32) -> Self {
+    /// Raw look: no smoothing, `look_per_count` radians per mouse count.
+    pub fn new(bindings: ActionBindings<A>, look_per_count: f32) -> Self {
         const { assert!(A::ALL.len() <= 64, "frame masks hold at most 64 actions") };
         Self {
             bindings,
@@ -120,8 +121,8 @@ impl<A: Action> ActionMap<A> {
             released: 0,
             look_accumulator: (0.0, 0.0),
             sticks: [(0.0, 0.0); 2],
-            sensitivity,
-            filter: FilterPipeline::new(),
+            look: LookSettings::raw(look_per_count),
+            smoothing: MouseSmoothing::new(),
             pointer: None,
             press_pointer: None,
         }
@@ -189,19 +190,15 @@ impl<A: Action> ActionMap<A> {
     /// Discards pending motion and smoothing state so a camera jump cannot follow.
     pub fn reset_look(&mut self) {
         self.look_accumulator = (0.0, 0.0);
-        self.filter.reset();
+        self.smoothing.reset();
     }
 
-    pub fn set_sensitivity(&mut self, sensitivity: f32) {
-        self.sensitivity = sensitivity;
-    }
-
-    pub fn set_filtering(&mut self, enabled: bool) {
-        self.filter.set_enabled(enabled);
-    }
-
-    pub fn set_look(&mut self, _settings: LookSettings) {
-        todo!()
+    /// Applies new look settings; turning smoothing off drops its carry.
+    pub fn set_look(&mut self, settings: LookSettings) {
+        if !settings.smoothing {
+            self.smoothing.reset();
+        }
+        self.look = settings;
     }
 
     /// The only read: reports this tick's edges and look, then starts the next tick.
@@ -272,13 +269,16 @@ impl<A: Action> ActionMap<A> {
 
     fn sample_look(&mut self) -> (f32, f32) {
         let (dx, dy) = std::mem::take(&mut self.look_accumulator);
-        let mouse = if dx.abs() < f64::EPSILON && dy.abs() < f64::EPSILON {
-            self.filter.reset();
-            (0.0, 0.0)
+        let counts = (dx as f32, dy as f32);
+        let counts = if self.look.smoothing {
+            self.smoothing.apply(counts)
         } else {
-            self.filter
-                .apply((dx as f32 * self.sensitivity, dy as f32 * self.sensitivity))
+            counts
         };
+        let mouse = (
+            counts.0 * self.look.look_per_count,
+            counts.1 * self.look.look_per_count,
+        );
         let (stick_x, stick_y) = self.stick_look();
         (mouse.0 + stick_x, mouse.1 + stick_y)
     }
@@ -287,7 +287,7 @@ impl<A: Action> ActionMap<A> {
     fn stick_look(&self) -> (f32, f32) {
         let (x, y) = DeadzoneFilter::new(STICK_LOOK_DEAD_ZONE)
             .apply(self.sticks[Stick::RightStick as usize]);
-        let scale = PAD_LOOK_PER_TICK * self.sensitivity;
+        let scale = PAD_LOOK_PER_TICK * self.look.look_per_count;
         (x * scale, -y * scale)
     }
 }

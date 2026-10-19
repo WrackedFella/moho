@@ -52,7 +52,7 @@ pub const RESOLUTION_PRESETS: &[(&str, (u32, u32))] = &[
 #[derive(Clone, Debug, PartialEq)]
 pub struct Prefs {
     mouse_sensitivity: f32,
-    input_filtering_enabled: bool,
+    mouse_smoothing: bool,
     // Audio settings (values 0.0 to 10.0)
     audio_sound_effect_volume: f32,
     audio_music_volume: f32,
@@ -126,11 +126,8 @@ impl Prefs {
     pub fn mouse_sensitivity(&self) -> f32 {
         self.mouse_sensitivity
     }
-    pub fn input_filtering_enabled(&self) -> bool {
-        self.input_filtering_enabled
-    }
     pub fn mouse_smoothing(&self) -> bool {
-        todo!()
+        self.mouse_smoothing
     }
     pub fn sound_effect_volume(&self) -> f32 {
         self.audio_sound_effect_volume
@@ -180,11 +177,8 @@ impl Prefs {
     pub fn mouse_sensitivity_mut(&mut self) -> &mut f32 {
         &mut self.mouse_sensitivity
     }
-    pub fn input_filtering_enabled_mut(&mut self) -> &mut bool {
-        &mut self.input_filtering_enabled
-    }
     pub fn mouse_smoothing_mut(&mut self) -> &mut bool {
-        todo!()
+        &mut self.mouse_smoothing
     }
     pub fn sound_effect_volume_mut(&mut self) -> &mut f32 {
         &mut self.audio_sound_effect_volume
@@ -223,12 +217,9 @@ impl Prefs {
         self.mouse_sensitivity = v;
         self
     }
-    pub fn with_input_filtering_enabled(mut self, v: bool) -> Self {
-        self.input_filtering_enabled = v;
+    pub fn with_mouse_smoothing(mut self, v: bool) -> Self {
+        self.mouse_smoothing = v;
         self
-    }
-    pub fn with_mouse_smoothing(self, _v: bool) -> Self {
-        todo!()
     }
 }
 
@@ -236,7 +227,7 @@ impl Default for Prefs {
     fn default() -> Self {
         Self {
             mouse_sensitivity: 1.0,
-            input_filtering_enabled: true,
+            mouse_smoothing: false,
             // Audio volumes use a 0 to 10 scale
             audio_sound_effect_volume: 8.0,
             audio_music_volume: 6.0,
@@ -276,7 +267,7 @@ impl Prefs {
         let mut text = format!(
             "[prefs]\n\
              mouse_sensitivity={mouse_sensitivity}\n\
-             input_filtering_enabled={input_filtering_enabled}\n\
+             mouse_smoothing={mouse_smoothing}\n\
              \n[audio]\n\
              sound_effect_volume={sfx:.1}\n\
              music_volume={music:.1}\n\
@@ -294,7 +285,7 @@ impl Prefs {
              unload_radius={unload}\n\
              chunks_per_frame={chunks}\n",
             mouse_sensitivity = self.mouse_sensitivity,
-            input_filtering_enabled = self.input_filtering_enabled,
+            mouse_smoothing = self.mouse_smoothing,
             sfx = self.audio_sound_effect_volume,
             music = self.audio_music_volume,
             ui = self.audio_ui_volume,
