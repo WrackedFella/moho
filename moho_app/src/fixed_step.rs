@@ -98,7 +98,10 @@ impl FixedStep {
         self.accumulator = self.accumulator.saturating_add(added);
         let due = self.accumulator / UNITS_PER_TICK;
         self.accumulator %= UNITS_PER_TICK;
-        due.min(u128::from(self.max_catch_up_ticks) * multiplier) as u32
+        let cap = self
+            .max_catch_up_ticks
+            .saturating_mul(self.speed.multiplier());
+        u32::try_from(due.min(u128::from(cap))).unwrap_or(u32::MAX)
     }
 
     /// Runs the simulation at `speed` from the next `advance`.
@@ -203,6 +206,19 @@ mod tests {
             at_3x.alpha().abs() < 1e-6,
             "dropped time must not leave a remainder"
         );
+    }
+
+    #[test]
+    fn a_cap_beyond_u32_saturates_instead_of_wrapping() {
+        let mut step = FixedStep::new(LoopConfig {
+            max_catch_up_ticks: u32::MAX,
+            ..LoopConfig::new(60)
+        });
+        step.set_speed(SimSpeed::X3);
+
+        let ticks = step.advance(Duration::MAX);
+
+        assert_eq!(ticks, u32::MAX);
     }
 
     #[test]
