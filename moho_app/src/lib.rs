@@ -35,6 +35,8 @@ pub struct FrameContext<'a> {
     renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
     audio: Option<&'a mut AudioSystem>,
     exit_requested: bool,
+    requested_paused: Option<bool>,
+    requested_speed: Option<SimSpeed>,
 }
 
 impl<'a> FrameContext<'a> {
@@ -52,6 +54,8 @@ impl<'a> FrameContext<'a> {
             renderer,
             audio,
             exit_requested: false,
+            requested_paused: None,
+            requested_speed: None,
         }
     }
 
@@ -84,19 +88,23 @@ impl<'a> FrameContext<'a> {
     }
 
     /// Asks the loop to pause or resume from the next tick.
-    pub fn set_paused(&mut self, _paused: bool) {}
+    pub fn set_paused(&mut self, paused: bool) {
+        self.requested_paused = Some(paused);
+    }
 
     /// Asks the loop to run at `speed` from the next tick.
-    pub fn set_speed(&mut self, _speed: SimSpeed) {}
+    pub fn set_speed(&mut self, speed: SimSpeed) {
+        self.requested_speed = Some(speed);
+    }
 
     /// The last pause state the game asked for, if it asked.
     pub fn requested_paused(&self) -> Option<bool> {
-        None
+        self.requested_paused
     }
 
     /// The last speed the game asked for, if it asked.
     pub fn requested_speed(&self) -> Option<SimSpeed> {
-        None
+        self.requested_speed
     }
 }
 
@@ -113,6 +121,8 @@ pub struct EventContext<'a> {
     renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
     audio: Option<&'a mut AudioSystem>,
     exit_requested: bool,
+    requested_paused: Option<bool>,
+    requested_speed: Option<SimSpeed>,
 }
 
 impl<'a> EventContext<'a> {
@@ -128,6 +138,8 @@ impl<'a> EventContext<'a> {
             renderer,
             audio,
             exit_requested: false,
+            requested_paused: None,
+            requested_speed: None,
         }
     }
 
@@ -156,19 +168,23 @@ impl<'a> EventContext<'a> {
     }
 
     /// Asks the loop to pause or resume from the next tick.
-    pub fn set_paused(&mut self, _paused: bool) {}
+    pub fn set_paused(&mut self, paused: bool) {
+        self.requested_paused = Some(paused);
+    }
 
     /// Asks the loop to run at `speed` from the next tick.
-    pub fn set_speed(&mut self, _speed: SimSpeed) {}
+    pub fn set_speed(&mut self, speed: SimSpeed) {
+        self.requested_speed = Some(speed);
+    }
 
     /// The last pause state the game asked for, if it asked.
     pub fn requested_paused(&self) -> Option<bool> {
-        None
+        self.requested_paused
     }
 
     /// The last speed the game asked for, if it asked.
     pub fn requested_speed(&self) -> Option<SimSpeed> {
-        None
+        self.requested_speed
     }
 }
 

@@ -12,6 +12,8 @@ pub struct HeadlessLoop<G> {
     step: FixedStep,
     tick_length: Duration,
     next_tick: u64,
+    paused: bool,
+    speed: SimSpeed,
     clock: GameClock,
     game: std::marker::PhantomData<fn(&mut G)>,
 }
@@ -28,21 +30,49 @@ impl<G: Game> HeadlessLoop<G> {
             step,
             tick_length: config.tick_length(),
             next_tick: 0,
+            paused: false,
+            speed: SimSpeed::default(),
             clock: config.clock,
             game: std::marker::PhantomData,
         }
     }
 
     /// Runs the ticks due for `frame_dt`, then one frame. Returns ticks run.
+    ///
+    /// While paused no tick runs; the game's command is applied through
+    /// [`Game::apply_while_paused`] before the frame. Pause and speed the frame
+    /// asks for take effect from the next tick.
     pub fn advance(&mut self, game: &mut G, frame_dt: Duration) -> u32 {
         let n = self.run_ticks(game, frame_dt);
+        self.apply_paused_command(game);
         let mut ctx = FrameContext::headless(self.tick_length, &self.clock);
         game.frame(&mut ctx, self.step.alpha());
+        let (paused, speed) = (ctx.requested_paused(), ctx.requested_speed());
+        if let Some(paused) = paused {
+            self.set_paused(paused);
+        }
+        if let Some(speed) = speed {
+            self.set_speed(speed);
+        }
         n
     }
 
+    /// While paused, hands the game's command to [`Game::apply_while_paused`]
+    /// at the boundary before the next tick.
+    pub(crate) fn apply_paused_command(&mut self, game: &mut G) {
+        if self.paused {
+            let command = game.command();
+            game.apply_while_paused(self.next_tick, &command);
+        }
+    }
+
     /// Runs the ticks due for `frame_dt` and no frame. Returns ticks run.
+    ///
+    /// A paused loop runs none and leaves the sub-tick remainder untouched.
     pub(crate) fn run_ticks(&mut self, game: &mut G, frame_dt: Duration) -> u32 {
+        if self.paused {
+            return 0;
+        }
         let n = self.step.advance(frame_dt);
         for _ in 0..n {
             self.run_tick(game);
@@ -51,16 +81,21 @@ impl<G: Game> HeadlessLoop<G> {
     }
 
     /// Pauses or resumes the simulation; the speed is untouched.
-    pub fn set_paused(&mut self, _paused: bool) {}
-
-    pub fn paused(&self) -> bool {
-        false
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
     }
 
-    pub fn set_speed(&mut self, _speed: SimSpeed) {}
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    pub fn set_speed(&mut self, speed: SimSpeed) {
+        self.speed = speed;
+        self.step.set_speed(speed);
+    }
 
     pub fn speed(&self) -> SimSpeed {
-        SimSpeed::X1
+        self.speed
     }
 
     /// Index of the next tick to run.
@@ -68,9 +103,12 @@ impl<G: Game> HeadlessLoop<G> {
         self.next_tick
     }
 
-    /// Real time until the next tick is due.
+    /// Real time until the next tick is due; one tick length while paused.
     pub(crate) fn until_next_tick(&self) -> Duration {
-        todo!("HeadlessLoop::until_next_tick")
+        if self.paused {
+            return self.tick_length;
+        }
+        (self.tick_length / self.speed.multiplier()).mul_f32(1.0 - self.step.alpha())
     }
 
     /// Fraction of a tick left over after the last run.
@@ -86,7 +124,7 @@ impl<G: Game> HeadlessLoop<G> {
         self.tick_length
     }
 
-    /// Runs exactly `n` ticks and no frame.
+    /// Runs exactly `n` ticks and no frame, whether or not the loop is paused.
     pub fn step(&mut self, game: &mut G, n: u32) {
         for _ in 0..n {
             self.run_tick(game);
@@ -570,7 +608,7 @@ mod tests {
             waits.push(sim.until_next_tick());
         }
         sim.set_speed(SimSpeed::X2);
-        sim.advance(&mut game, Duration::from_nanos(NS / 120));
+        sim.advance(&mut game, Duration::from_nanos(NS / 240));
         let half_done = sim.until_next_tick();
         sim.set_paused(true);
         let paused = sim.until_next_tick();

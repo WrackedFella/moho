@@ -12,6 +12,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::{
     AppConfig, AppError, Event, EventContext, FrameContext, Game, HeadlessLoop, InitContext,
+    SimSpeed,
 };
 
 /// What the runner does with a window event.
@@ -74,6 +75,18 @@ struct Runner<G: Game> {
     audio: Option<AudioSystem>,
     last_wake: Instant,
     error: Option<AppError>,
+}
+
+impl<G: Game> Runner<G> {
+    /// Applies the pause and speed a game asked for, from the next tick.
+    fn apply_requests(&mut self, (paused, speed): (Option<bool>, Option<SimSpeed>)) {
+        if let Some(paused) = paused {
+            self.sim.set_paused(paused);
+        }
+        if let Some(speed) = speed {
+            self.sim.set_speed(speed);
+        }
+    }
 }
 
 impl<G: Game> ApplicationHandler for Runner<G> {
@@ -142,12 +155,11 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         let elapsed = now - self.last_wake;
         self.last_wake = now;
 
-        if self.sim.run_ticks(&mut self.game, elapsed) > 0 {
+        if self.sim.run_ticks(&mut self.game, elapsed) > 0 || self.sim.paused() {
             window.request_redraw();
         }
 
-        let until_next_tick = self.sim.tick_length().mul_f32(1.0 - self.sim.alpha());
-        event_loop.set_control_flow(ControlFlow::WaitUntil(now + until_next_tick));
+        event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.sim.until_next_tick()));
     }
 
     fn window_event(
@@ -159,6 +171,7 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         let route = route(&event);
         match route {
             Route::Frame => {
+                self.sim.apply_paused_command(&mut self.game);
                 let mut ctx = FrameContext::new(
                     self.sim.tick_length(),
                     self.sim.clock(),
@@ -166,7 +179,10 @@ impl<G: Game> ApplicationHandler for Runner<G> {
                     self.audio.as_mut(),
                 );
                 self.game.frame(&mut ctx, self.sim.alpha());
-                if ctx.exit_requested() {
+                let requests = (ctx.requested_paused(), ctx.requested_speed());
+                let exit = ctx.exit_requested();
+                self.apply_requests(requests);
+                if exit {
                     event_loop.exit();
                 }
                 return;
@@ -185,7 +201,10 @@ impl<G: Game> ApplicationHandler for Runner<G> {
             self.audio.as_mut(),
         );
         self.game.event(&mut ctx, Event::Window(event));
-        if ctx.exit_requested() || route == Route::Close {
+        let requests = (ctx.requested_paused(), ctx.requested_speed());
+        let exit = ctx.exit_requested();
+        self.apply_requests(requests);
+        if exit || route == Route::Close {
             event_loop.exit();
         }
     }
@@ -202,7 +221,10 @@ impl<G: Game> ApplicationHandler for Runner<G> {
             self.audio.as_mut(),
         );
         self.game.event(&mut ctx, Event::Device(event));
-        if ctx.exit_requested() {
+        let requests = (ctx.requested_paused(), ctx.requested_speed());
+        let exit = ctx.exit_requested();
+        self.apply_requests(requests);
+        if exit {
             event_loop.exit();
         }
     }

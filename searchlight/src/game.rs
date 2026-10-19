@@ -666,17 +666,11 @@ impl Game for FpsGame {
     type Command = FpsCommand;
 
     fn command(&mut self) -> FpsCommand {
-        FpsCommand {
-            paused: self.stage.shell().captures_input(),
-            ..FpsCommand::from_frame(&self.input.end_tick())
-        }
+        FpsCommand::from_frame(&self.input.end_tick())
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &FpsCommand) {
         self.previous = self.sim.player();
-        if command.paused {
-            return;
-        }
         let was_dead = self.sim.player_body().is_dead();
         self.sim.tick(command, ctx.tick_length.as_secs_f32());
         if was_dead && !self.sim.player_body().is_dead() {
@@ -712,9 +706,16 @@ impl Game for FpsGame {
                 }
             }
         }
+        ctx.set_paused(self.stage.shell().captures_input());
     }
 
     fn frame(&mut self, ctx: &mut FrameContext<'_>, alpha: f32) {
+        let frozen = self.stage.shell().captures_input();
+        ctx.set_paused(frozen);
+        if frozen {
+            // The loop holds `alpha` while paused, so blending would freeze the view mid-step.
+            self.previous = self.sim.player();
+        }
         let engine_commands = self.stage.shell().console_mut().take_engine_commands();
         for command in &engine_commands {
             apply_engine_command(command, ctx);

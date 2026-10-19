@@ -50,7 +50,11 @@ pub enum SimSpeed {
 impl SimSpeed {
     /// Ticks run per real tick period: 1, 2 or 3.
     pub fn multiplier(self) -> u32 {
-        todo!("SimSpeed::multiplier")
+        match self {
+            Self::X1 => 1,
+            Self::X2 => 2,
+            Self::X3 => 3,
+        }
     }
 }
 
@@ -64,6 +68,7 @@ const UNITS_PER_TICK: u128 = 1_000_000_000;
 pub struct FixedStep {
     tick_hz: u32,
     max_catch_up_ticks: u32,
+    speed: SimSpeed,
     accumulator: u128,
 }
 
@@ -76,24 +81,35 @@ impl FixedStep {
         Self {
             tick_hz: config.tick_hz,
             max_catch_up_ticks: config.max_catch_up_ticks,
+            speed: SimSpeed::default(),
             accumulator: 0,
         }
     }
 
     /// Ticks due for a frame of `frame_dt`.
     ///
-    /// At most `max_catch_up_ticks` are returned; time beyond that is dropped
-    /// so a stall cannot trigger a spiral of ever-longer catch-up frames.
+    /// At most `max_catch_up_ticks` times the speed multiplier are returned;
+    /// time beyond that is dropped so a stall cannot trigger a spiral of
+    /// ever-longer catch-up frames. The cap scales with speed because it bounds
+    /// a stall in real time.
     pub fn advance(&mut self, frame_dt: Duration) -> u32 {
-        let added = frame_dt.as_nanos() * u128::from(self.tick_hz);
+        let multiplier = u128::from(self.speed.multiplier());
+        let added = frame_dt.as_nanos() * u128::from(self.tick_hz) * multiplier;
         self.accumulator = self.accumulator.saturating_add(added);
         let due = self.accumulator / UNITS_PER_TICK;
         self.accumulator %= UNITS_PER_TICK;
-        due.min(u128::from(self.max_catch_up_ticks)) as u32
+        due.min(u128::from(self.max_catch_up_ticks) * multiplier) as u32
     }
 
     /// Runs the simulation at `speed` from the next `advance`.
-    pub fn set_speed(&mut self, _speed: SimSpeed) {}
+    pub fn set_speed(&mut self, speed: SimSpeed) {
+        self.speed = speed;
+    }
+
+    /// The speed ticks are currently scheduled at.
+    pub fn speed(&self) -> SimSpeed {
+        self.speed
+    }
 
     /// Fraction of a tick left over after the last `advance`.
     pub fn alpha(&self) -> f32 {
