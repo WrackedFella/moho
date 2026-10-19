@@ -30,6 +30,7 @@ pub struct Renderer<'a> {
     skybox_vertex_count: u32,
     shadow: ShadowSystem,
     ssao: Option<crate::ssao::SsaoSystem>,
+    view_height: Option<f32>,
     depth_sampler: wgpu::Sampler,
     light_manager: crate::lights::LightManager,
     dynamic_lights_buffer: wgpu::Buffer,
@@ -120,6 +121,7 @@ impl<'a> Renderer<'a> {
             skybox_vertex_count: resources.skybox_vertex_count,
             shadow,
             ssao,
+            view_height: None,
             depth_sampler,
             light_manager,
             dynamic_lights_buffer,
@@ -467,12 +469,14 @@ impl<'a> Renderer<'a> {
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) -> Result<(), crate::FrameError> {
         let (view_mat, proj_mat, cam_pos) = camera;
+        let cut = crate::gpu_types::view_height_uniform(self.view_height);
         crate::render_ops::camera_ops::update_camera_uniforms(
             &self.queue,
             &self.camera_buffer,
             view_mat,
             proj_mat,
             cam_pos,
+            cut,
         );
 
         if let Some(ssao) = &self.ssao {
@@ -494,6 +498,7 @@ impl<'a> Renderer<'a> {
             &mut self.shadow,
             &self.queue,
             cam_pos,
+            cut,
         );
 
         if !self.acquire_render_target() {
@@ -529,6 +534,11 @@ impl<'a> Renderer<'a> {
             _ => crate::shadow::PcssQuality::Medium,
         };
         self.shadow.pcss_settings.quality = quality_enum;
+    }
+
+    /// Cut the world above `height` metres; `None` clears the cut.
+    pub fn set_view_height(&mut self, height: Option<f32>) {
+        self.view_height = height;
     }
 
     pub fn set_ssao_quality(&mut self, quality: u8) {

@@ -126,6 +126,7 @@ impl App {
                 }
                 RenderRequest::ShadowQuality(quality) => renderer.set_shadow_quality(quality),
                 RenderRequest::SsaoQuality(quality) => renderer.set_ssao_quality(quality),
+                RenderRequest::ViewHeight(height) => renderer.set_view_height(height),
             }
         }
     }

@@ -142,6 +142,10 @@ pub fn process_console_action(action: crate::overlays::ConsoleAction, event_bus:
             use moho_core::events::DebugEvent;
             event_bus.publish(DebugEvent::ClearMarkers { id });
         }
+        ConsoleAction::SetViewHeight(height) => {
+            use moho_core::events::DebugEvent;
+            event_bus.publish(DebugEvent::SetViewHeight { height });
+        }
         ConsoleAction::Close => {
             use moho_core::events::UiEvent;
             event_bus.publish(UiEvent::MenuHidden {

@@ -501,7 +501,13 @@ impl ShadowSystem {
                     }),
                 ],
             },
-            fragment: None,
+            // Fragment stage only discards above the view-height cut; no colour output.
+            fragment: Some(wgpu::FragmentState {
+                module: &shadow_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[],
+            }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,

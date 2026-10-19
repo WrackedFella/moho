@@ -534,6 +534,9 @@ impl EventProcessor {
                 Some(id) => app.scene.markers_mut().remove(MarkerId(id)),
                 None => app.scene.markers_mut().clear(),
             },
+            DebugEvent::SetViewHeight { height } => {
+                app.pending_render.push(RenderRequest::ViewHeight(height));
+            }
             _ => {}
         }
     }

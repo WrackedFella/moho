@@ -9,6 +9,7 @@ pub struct CameraGpu {
     pub vp1: [f32; 4],
     pub vp2: [f32; 4],
     pub vp3: [f32; 4],
+    /// Camera position (xyz) and view-height cut (w): world y above it is discarded.
     pub cam_pos: [f32; 4],
 }
 
@@ -80,8 +81,15 @@ pub struct MultiLightShadowGpu {
     /// Light intensities for blending (x=Sun, y=Moon, z=Dynamic1, w=Dynamic2)
     pub light_intensities: [f32; 4],
 
-    /// Metadata: x=shadow_distance, y=light_size (for PCSS), z=pcss_quality (0=off, 1=low, 2=med, 3=high), w=unused
+    /// Metadata: x=shadow_distance, y=light_size (for PCSS), z=pcss_quality (0=off, 1=low, 2=med, 3=high), w=view-height cut
     pub metadata: [f32; 4],
+}
+
+/// Uniform value for the view-height cut: `None` and non-finite heights map to
+/// `f32::MAX`, which `y > cut` never exceeds. Not infinity, because WGSL lets
+/// implementations assume no infinities.
+pub fn view_height_uniform(height: Option<f32>) -> f32 {
+    height.filter(|h| h.is_finite()).unwrap_or(f32::MAX)
 }
 
 /// Maximum number of dynamic point/spot lights supported
