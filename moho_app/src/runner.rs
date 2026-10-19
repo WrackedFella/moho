@@ -166,7 +166,7 @@ impl<G: Game> ApplicationHandler for Runner<G> {
                     self.audio.as_mut(),
                 );
                 self.game.frame(&mut ctx, self.sim.alpha());
-                let requests = (ctx.requested_paused(), ctx.requested_speed());
+                let requests = ctx.loop_requests();
                 let exit = ctx.exit_requested();
                 self.sim.apply_requests(requests);
                 if exit {
@@ -188,7 +188,7 @@ impl<G: Game> ApplicationHandler for Runner<G> {
             self.audio.as_mut(),
         );
         self.game.event(&mut ctx, Event::Window(event));
-        let requests = (ctx.requested_paused(), ctx.requested_speed());
+        let requests = ctx.loop_requests();
         let exit = ctx.exit_requested();
         self.sim.apply_requests(requests);
         if exit || route == Route::Close {
@@ -208,7 +208,7 @@ impl<G: Game> ApplicationHandler for Runner<G> {
             self.audio.as_mut(),
         );
         self.game.event(&mut ctx, Event::Device(event));
-        let requests = (ctx.requested_paused(), ctx.requested_speed());
+        let requests = ctx.loop_requests();
         let exit = ctx.exit_requested();
         self.sim.apply_requests(requests);
         if exit {

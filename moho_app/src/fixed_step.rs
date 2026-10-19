@@ -93,14 +93,12 @@ impl FixedStep {
     /// ever-longer catch-up frames. The cap scales with speed because it bounds
     /// a stall in real time.
     pub fn advance(&mut self, frame_dt: Duration) -> u32 {
-        let multiplier = u128::from(self.speed.multiplier());
-        let added = frame_dt.as_nanos() * u128::from(self.tick_hz) * multiplier;
+        let multiplier = self.speed.multiplier();
+        let added = frame_dt.as_nanos() * u128::from(self.tick_hz) * u128::from(multiplier);
         self.accumulator = self.accumulator.saturating_add(added);
         let due = self.accumulator / UNITS_PER_TICK;
         self.accumulator %= UNITS_PER_TICK;
-        let cap = self
-            .max_catch_up_ticks
-            .saturating_mul(self.speed.multiplier());
+        let cap = self.max_catch_up_ticks.saturating_mul(multiplier);
         u32::try_from(due.min(u128::from(cap))).unwrap_or(u32::MAX)
     }
 

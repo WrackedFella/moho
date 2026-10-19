@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::clock::GameClock;
 use crate::fixed_step::{FixedStep, LoopConfig, SimSpeed};
-use crate::{FrameContext, Game, TickContext};
+use crate::{FrameContext, Game, LoopRequests, TickContext};
 
 /// Drives a [`Game`] without a window.
 #[derive(Debug, Clone)]
@@ -45,17 +45,16 @@ impl<G: Game> HeadlessLoop<G> {
         self.apply_paused_command(game);
         let mut ctx = FrameContext::headless(self.tick_length, &self.clock);
         game.frame(&mut ctx, self.step.alpha());
-        let requests = (ctx.requested_paused(), ctx.requested_speed());
-        self.apply_requests(requests);
+        self.apply_requests(ctx.loop_requests());
         n
     }
 
     /// Applies the pause and speed a game asked for, from the next tick.
-    pub(crate) fn apply_requests(&mut self, (paused, speed): (Option<bool>, Option<SimSpeed>)) {
-        if let Some(paused) = paused {
+    pub(crate) fn apply_requests(&mut self, requests: LoopRequests) {
+        if let Some(paused) = requests.paused {
             self.set_paused(paused);
         }
-        if let Some(speed) = speed {
+        if let Some(speed) = requests.speed {
             self.set_speed(speed);
         }
     }
