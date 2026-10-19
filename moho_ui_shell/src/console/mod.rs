@@ -150,7 +150,8 @@ impl<G> Console<G> {
     }
 
     /// Drains the game's commands queued by `submit`. A game calls this in `Game::command()` and
-    /// carries the values in its tick command; the console never mutates game state.
+    /// carries the values in its tick command; the console never mutates game state. A result it
+    /// knows only after acting is shown with `print`.
     pub fn take_commands(&mut self) -> Vec<G> {
         std::mem::take(&mut self.commands)
     }
