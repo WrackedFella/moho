@@ -1,6 +1,6 @@
 //! State Transition Coordinator
 //!
-//! Coordinates state transitions and their side effects (UI updates, cursor changes, etc.)
+//! Coordinates state transitions and their side effects (UI visibility, menu to show).
 //! This eliminates the repeated boilerplate in App's state transition methods.
 use super::GameState;
 
@@ -18,12 +18,6 @@ pub struct StateTransitionActions {
 
     /// Whether UI should be visible
     pub ui_visible: bool,
-
-    /// Whether cursor should be grabbed
-    pub cursor_grabbed: bool,
-
-    /// Whether cursor should be visible
-    pub cursor_visible: bool,
 
     /// Optional specific menu to show (e.g., "start", "settings")
     pub show_menu: Option<&'static str>,
@@ -51,7 +45,7 @@ impl StateTransitionActions {
     ///
     /// assert_eq!(actions.new_state, GameState::Menu);
     /// assert_eq!(actions.ui_visible, true);
-    /// assert_eq!(actions.cursor_grabbed, false);
+    /// assert_eq!(actions.show_menu, Some("start"));
     /// ```
     pub fn for_transition(from: GameState, to: GameState) -> Result<Self, String> {
         // Validate transition
@@ -61,8 +55,6 @@ impl StateTransitionActions {
         Ok(Self {
             new_state: to,
             ui_visible: Self::should_show_ui(to),
-            cursor_grabbed: to.should_grab_cursor(),
-            cursor_visible: to.cursor_visible(),
             show_menu: to.home_screen(),
         })
     }
@@ -147,8 +139,6 @@ mod tests {
         let actions = StateTransitionCoordinator::show_menu(GameState::Playing).unwrap();
         assert_eq!(actions.new_state, GameState::Menu);
         assert!(actions.ui_visible);
-        assert!(!actions.cursor_grabbed);
-        assert!(actions.cursor_visible);
         assert_eq!(actions.show_menu, Some("start"));
     }
 
@@ -167,8 +157,6 @@ mod tests {
             Ok(StateTransitionActions {
                 new_state: GameState::ConsoleOpen,
                 ui_visible: true,
-                cursor_grabbed: false,
-                cursor_visible: true,
                 show_menu: None,
             })
         );
@@ -181,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn transitions_to_playing_grab_and_hide_cursor() {
+    fn transitions_to_playing_hide_ui() {
         let cases = [
             (
                 "hide_menu from Menu",
@@ -195,8 +183,6 @@ mod tests {
         let expected = StateTransitionActions {
             new_state: GameState::Playing,
             ui_visible: false,
-            cursor_grabbed: true,
-            cursor_visible: false,
             show_menu: None,
         };
 
@@ -210,7 +196,6 @@ mod tests {
         let actions = StateTransitionCoordinator::pause_game(GameState::Playing).unwrap();
         assert_eq!(actions.new_state, GameState::Paused);
         assert!(actions.ui_visible);
-        assert!(!actions.cursor_grabbed);
         assert_eq!(actions.show_menu, Some("pause"));
     }
 
@@ -219,7 +204,6 @@ mod tests {
         let actions = StateTransitionCoordinator::resume_game(GameState::Paused).unwrap();
         assert_eq!(actions.new_state, GameState::Playing);
         assert!(!actions.ui_visible);
-        assert!(actions.cursor_grabbed);
     }
 
     #[test]

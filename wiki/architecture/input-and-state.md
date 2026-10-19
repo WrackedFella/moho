@@ -86,7 +86,8 @@ In the isometric view, a tick with `Select` pressed turns `press_pointer` into a
 
 `flagstone_ui::GameState` decides input routing, rendering, cursor and whether the
 simulation runs. `can_transition_to` is the legality table; `StateTransitionCoordinator`
-returns the side effects (UI visibility, cursor grab) for a legal transition.
+returns the UI visibility and the menu to show for a legal transition. The cursor
+follows `cursor_grabbed(state, camera_mode)`, not the coordinator.
 
 ```mermaid
 stateDiagram-v2

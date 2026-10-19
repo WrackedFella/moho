@@ -84,22 +84,6 @@ impl GameState {
         }
     }
 
-    /// Returns whether the cursor should be visible in this state.
-    pub fn cursor_visible(self) -> bool {
-        match self {
-            GameState::Menu | GameState::ConsoleOpen | GameState::Paused => true,
-            GameState::Playing => false,
-        }
-    }
-
-    /// Returns whether the cursor should be grabbed and hidden in this state.
-    pub fn should_grab_cursor(self) -> bool {
-        match self {
-            GameState::Playing => true,
-            GameState::Menu | GameState::ConsoleOpen | GameState::Paused => false,
-        }
-    }
-
     /// Returns whether the simulation should be running in this state.
     pub fn is_simulating(self) -> bool {
         match self {
@@ -198,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn cursor_free_only_in_strategy_play() {
+    fn cursor_grabbed_only_in_first_person_play() {
         let rows = [
             (Playing, CameraMode::FirstPerson, true),
             (Playing, CameraMode::Isometric, false),
