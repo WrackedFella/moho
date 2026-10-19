@@ -445,4 +445,17 @@ mod tests {
         assert_eq!(resumed, Some(false));
         assert_eq!(ctx.requested_speed(), Some(SimSpeed::X2));
     }
+
+    #[test]
+    fn event_context_hands_its_requests_to_the_loop() {
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        ctx.set_paused(true);
+        ctx.set_speed(SimSpeed::X3);
+        let requests = ctx.loop_requests();
+
+        assert_eq!(requests.paused, Some(true));
+        assert_eq!(requests.speed, Some(SimSpeed::X3));
+    }
 }
