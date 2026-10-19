@@ -16,12 +16,14 @@ flowchart TD
     RES["resumed"] --> mk["create window, renderer,<br/>AudioSystem if enabled"] --> init["Game::init"]
 
     NE["new_events"] --> acc["FixedStep accumulates<br/>time since last wake"]
+    NE -. paused .-> rr
     acc --> tk["per due tick:<br/>Game::command, Game::tick,<br/>then GameClock advance"]
-    tk --> rr["request_redraw if ticks ran"]
+    tk --> rr["request_redraw if ticks ran<br/>or the loop is paused"]
     rr --> cf["control flow: wait until next tick"]
 
     WE["window_event"] --> route{"runner::route"}
-    route -- RedrawRequested --> fr["Game::frame(alpha)"]
+    route -- RedrawRequested --> wp["if paused: Game::command,<br/>then Game::apply_while_paused"] --> fr["Game::frame(alpha)"]
+    fr --> req["apply set_paused / set_speed<br/>from the next tick"]
     route -- Resized --> rs["renderer.resize, then Game::event"]
     route -- CloseRequested --> ev["Game::event, then exit"]
     route -- other --> ev2["Game::event"]

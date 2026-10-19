@@ -710,12 +710,7 @@ impl Game for FpsGame {
     }
 
     fn frame(&mut self, ctx: &mut FrameContext<'_>, alpha: f32) {
-        let frozen = self.stage.shell().captures_input();
-        ctx.set_paused(frozen);
-        if frozen {
-            // The loop holds `alpha` while paused, so blending would freeze the view mid-step.
-            self.previous = self.sim.player();
-        }
+        ctx.set_paused(self.stage.shell().captures_input());
         let engine_commands = self.stage.shell().console_mut().take_engine_commands();
         for command in &engine_commands {
             apply_engine_command(command, ctx);
@@ -941,10 +936,6 @@ mod tests {
         assert_eq!(game.sim().enemy_state(0), enemy);
         assert_eq!(game.sim().player(), player);
         assert_eq!(game.sim().player_body().health(), health);
-        assert_eq!(
-            game.previous, player,
-            "the view does not blend while frozen"
-        );
     }
 
     #[test]

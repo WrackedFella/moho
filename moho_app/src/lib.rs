@@ -230,10 +230,11 @@ pub enum AppError {
 
 /// A game driven by a fixed-timestep loop.
 pub trait Game {
-    /// Input sampled once per tick.
+    /// Input sampled once per tick, or once per frame while paused.
     type Command;
 
-    /// Samples the command for the next tick.
+    /// Samples the command for the next tick; while paused, for
+    /// [`Game::apply_while_paused`] on every frame.
     fn command(&mut self) -> Self::Command;
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &Self::Command);
@@ -246,6 +247,9 @@ pub trait Game {
     fn event(&mut self, _ctx: &mut EventContext<'_>, _event: Event) {}
 
     /// Applies `command` while the loop is paused, at the boundary before tick `next_tick`.
+    ///
+    /// Runs before the frame, so its result is visible in that frame. Whatever
+    /// part of `command` it does not apply is dropped; the default drops it all.
     fn apply_while_paused(&mut self, _next_tick: u64, _command: &Self::Command) {}
 
     /// Presents a frame, `alpha` of the way between the last two ticks.

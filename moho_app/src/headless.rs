@@ -87,14 +87,17 @@ impl<G: Game> HeadlessLoop<G> {
         self.paused = paused;
     }
 
+    /// Whether the loop is paused.
     pub fn paused(&self) -> bool {
         self.paused
     }
 
+    /// Runs the simulation at `speed` from the next tick; pause is untouched.
     pub fn set_speed(&mut self, speed: SimSpeed) {
         self.step.set_speed(speed);
     }
 
+    /// The speed ticks run at, kept while paused.
     pub fn speed(&self) -> SimSpeed {
         self.step.speed()
     }
@@ -452,6 +455,43 @@ mod tests {
         assert_eq!(game.ticks, vec![0, 1], "no tick may run while paused");
         assert_eq!(sim.next_tick(), 2);
         assert_eq!(sim.clock().elapsed_seconds(), elapsed);
+    }
+
+    /// An order changes `state`; each frame records the `state` it saw.
+    #[derive(Default)]
+    struct FrameWatcher {
+        state: i32,
+        seen_by_frames: Vec<i32>,
+    }
+
+    impl Game for FrameWatcher {
+        type Command = i32;
+
+        fn command(&mut self) -> i32 {
+            7
+        }
+
+        fn tick(&mut self, _ctx: &mut TickContext<'_>, _command: &i32) {}
+
+        fn apply_while_paused(&mut self, _next_tick: u64, command: &i32) {
+            self.state += *command;
+        }
+
+        fn frame(&mut self, _ctx: &mut FrameContext<'_>, _alpha: f32) {
+            self.seen_by_frames.push(self.state);
+        }
+    }
+
+    #[test]
+    fn a_paused_order_is_visible_in_the_same_frame() {
+        let mut game = FrameWatcher::default();
+        let mut sim = HeadlessLoop::new(LoopConfig::new(60));
+        sim.set_paused(true);
+
+        sim.advance(&mut game, Duration::from_nanos(NS / 60));
+        sim.advance(&mut game, Duration::from_nanos(NS / 60));
+
+        assert_eq!(game.seen_by_frames, vec![7, 14]);
     }
 
     #[test]

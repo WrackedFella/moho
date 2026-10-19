@@ -99,7 +99,7 @@ impl FixedStep {
         let due = self.accumulator / UNITS_PER_TICK;
         self.accumulator %= UNITS_PER_TICK;
         let cap = self.max_catch_up_ticks.saturating_mul(multiplier);
-        u32::try_from(due.min(u128::from(cap))).unwrap_or(u32::MAX)
+        u32::try_from(due.min(u128::from(cap))).expect("bounded by a u32 cap")
     }
 
     /// Runs the simulation at `speed` from the next `advance`.
