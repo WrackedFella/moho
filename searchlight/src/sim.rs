@@ -47,6 +47,29 @@ fn nearest_waypoint(spawn: Vec3, route: &[Vec3]) -> (usize, f32) {
     (index, (waypoint.x - spawn.x).atan2(waypoint.z - spawn.z))
 }
 
+/// Radius of a character's capsule, in metres; two characters touch at twice this.
+pub const CAPSULE_RADIUS: f32 = 0.3;
+
+/// Whether a sim starts with an enemy at each enemy spawn marker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Start {
+    AtMarkers,
+    /// No enemies; the markers are remembered for [`FpsSim::spawn_enemy`].
+    Empty,
+}
+
+/// Why [`FpsSim::spawn_enemy`] added no enemy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum SpawnError {
+    #[error("the arena has no enemy spawn marker {marker}")]
+    UnknownMarker { marker: usize },
+    #[error("enemy spawn marker {marker} is occupied")]
+    OccupiedMarker { marker: usize },
+    #[error("no more targets can be numbered")]
+    TooManyTargets,
+}
+
 /// Tuning the simulation is built with.
 #[derive(Clone, Debug)]
 pub struct SimConfig {
@@ -633,6 +656,50 @@ impl FpsSim {
             .map(|dummy| &dummy.body)
     }
 
+    /// A sim started from `arena` as [`Self::start`] does, except that with [`Start::Empty`]
+    /// no enemy stands at the markers; a restart rebuilds through the same `start`.
+    pub fn with_start(arena: Arc<Arena>, config: SimConfig, start: Start) -> Self {
+        let _ = (arena, config, start);
+        todo!()
+    }
+
+    /// Adds one enemy at enemy spawn marker `marker`, set up like a marker-start enemy.
+    ///
+    /// # Errors
+    /// If there is no such marker, a character stands on it, or the new enemy's target number
+    /// does not fit a `u16`.
+    pub fn spawn_enemy(&mut self, marker: usize) -> Result<(), SpawnError> {
+        let _ = marker;
+        todo!()
+    }
+
+    /// Enemy spawn markers, ascending, with no living character within two capsule radii.
+    pub fn free_enemy_spawns(&self) -> Vec<usize> {
+        todo!()
+    }
+
+    /// Enemies still in the world.
+    pub fn enemies_alive(&self) -> usize {
+        todo!()
+    }
+
+    /// Enemies the player's shots have killed since the sim was built or last restarted.
+    pub fn kills(&self) -> u32 {
+        todo!()
+    }
+
+    /// Applies a lethal hit to enemy `index` (enemy order) as a player's shot would.
+    #[cfg(test)]
+    pub(crate) fn kill_enemy(&mut self, _index: usize) {
+        todo!()
+    }
+
+    /// Kills the player outright.
+    #[cfg(test)]
+    pub(crate) fn kill_player(&mut self) {
+        self.player_body.hit(BodyPart::Torso, 1_000_000);
+    }
+
     /// A sim started from `arena`: the player, one dummy per dummy spawn and one enemy per enemy
     /// spawn, numbered dummies first. Every enemy starts facing its nearest waypoint.
     ///
@@ -1072,6 +1139,304 @@ mod tests {
         assert_eq!(pending, [Feedback::Fired]);
         assert_eq!(drained, pending);
         assert!(sim.pending_feedback().is_empty());
+    }
+
+    mod waves {
+        use super::*;
+        use crate::test_support::arena_with;
+
+        fn config() -> SimConfig {
+            test_config(Rifle::loaded(mag(30, 30)), vec![])
+        }
+
+        fn idle() -> FpsCommand {
+            FpsCommand::default()
+        }
+
+        fn pull() -> FpsCommand {
+            FpsCommand {
+                fire: true,
+                ..FpsCommand::default()
+            }
+        }
+
+        fn restart() -> FpsCommand {
+            FpsCommand {
+                restart: true,
+                ..FpsCommand::default()
+            }
+        }
+
+        /// A far waypoint straight ahead of the markers, so enemies face away from the player.
+        const AHEAD: Vec3 = Vec3::new(0.0, 0.0, 40.0);
+
+        fn empty_sim(markers: &[Vec3]) -> FpsSim {
+            FpsSim::with_start(
+                arena_with(&[], Vec3::ZERO, markers, &[AHEAD]),
+                config(),
+                Start::Empty,
+            )
+        }
+
+        fn hits(sim: &mut FpsSim) -> Vec<u16> {
+            sim.drain_feedback()
+                .into_iter()
+                .filter_map(|feedback| match feedback {
+                    Feedback::Hit { target, .. } => Some(target),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        #[test]
+        fn spawn_enemy_places_an_enemy_at_the_marker() {
+            let mut sim = empty_sim(&[Vec3::new(5.0, 0.0, 10.0), Vec3::new(-5.0, 0.0, 10.0)]);
+            assert_eq!(sim.enemy_count(), 0);
+
+            let spawned = sim.spawn_enemy(1);
+
+            assert_eq!(spawned, Ok(()));
+            assert_eq!(sim.enemy_count(), 1);
+            assert_eq!(sim.enemies_alive(), 1);
+            let state = sim.enemy_state(0).expect("the enemy spawned");
+            assert!((state.position.x + 5.0).abs() < 1e-3, "{state:?}");
+            assert!((state.position.z - 10.0).abs() < 1e-3, "{state:?}");
+            assert!((state.position.y - STAND_HEIGHT).abs() < 1e-3, "{state:?}");
+        }
+
+        #[test]
+        fn a_spawned_enemy_faces_its_nearest_waypoint_and_walks_it() {
+            let arena = arena_with(
+                &[],
+                Vec3::new(0.0, 0.0, -10.0),
+                &[Vec3::new(0.0, 0.0, 10.0)],
+                &[Vec3::new(10.0, 0.0, 10.0), AHEAD],
+            );
+            let mut sim = FpsSim::with_start(arena, config(), Start::Empty);
+            sim.spawn_enemy(0).expect("the marker is free");
+
+            let spawned = sim.enemy_state(0).expect("the enemy spawned");
+            for _ in 0..30 {
+                sim.tick(&idle(), DT);
+            }
+
+            let walked = sim.enemy_state(0).expect("the enemy is alive");
+            assert!((spawned.yaw - FRAC_PI_2).abs() < 1e-3, "{spawned:?}");
+            assert!(walked.position.x > 0.5, "{walked:?}");
+        }
+
+        #[test]
+        fn a_spawned_enemy_takes_the_next_target_number_after_the_dummies() {
+            let mut arena =
+                (*arena_with(&[], Vec3::ZERO, &[Vec3::new(0.0, 0.0, 10.0)], &[AHEAD])).clone();
+            arena.dummy_spawns = vec![Vec3::new(-8.0, 0.0, 4.0), Vec3::new(-4.0, 0.0, 4.0)];
+            let mut sim = FpsSim::with_start(Arc::new(arena), config(), Start::Empty);
+            sim.spawn_enemy(0).expect("the marker is free");
+
+            sim.tick(&pull(), DT);
+
+            assert_eq!(hits(&mut sim), [2]);
+        }
+
+        #[test]
+        fn a_respawned_enemy_takes_a_new_target_number_and_the_dead_keep_theirs() {
+            let mut sim = empty_sim(&[Vec3::new(0.0, 0.0, 10.0)]);
+            sim.spawn_enemy(0).expect("the marker is free");
+            sim.kill_enemy(0);
+            sim.tick(&idle(), DT);
+            assert_eq!(sim.enemies_alive(), 0);
+            sim.drain_feedback();
+
+            let respawned = sim.spawn_enemy(0);
+            sim.tick(&pull(), DT);
+
+            assert_eq!(respawned, Ok(()));
+            assert_eq!(sim.enemy_count(), 2);
+            assert!(sim.enemy_state(0).is_none());
+            assert!(sim.enemy_state(1).is_some());
+            assert_eq!(hits(&mut sim), [1]);
+        }
+
+        #[test]
+        fn an_occupied_marker_is_not_free() {
+            let mut sim = empty_sim(&[Vec3::new(0.0, 0.0, 10.0), Vec3::new(0.0, 0.0, 20.0)]);
+            let before = sim.free_enemy_spawns();
+
+            sim.spawn_enemy(0).expect("the marker is free");
+            let while_occupied = sim.free_enemy_spawns();
+            sim.kill_enemy(0);
+            sim.tick(&idle(), DT);
+            let after_death = sim.free_enemy_spawns();
+
+            assert_eq!(before, [0, 1]);
+            assert_eq!(while_occupied, [1]);
+            assert_eq!(after_death, [0, 1]);
+        }
+
+        #[test]
+        fn a_marker_within_a_capsule_width_of_a_character_is_not_free() {
+            let mut arena = (*arena_with(
+                &[],
+                Vec3::ZERO,
+                &[
+                    Vec3::new(0.55, 0.0, 0.0),
+                    Vec3::new(0.65, 0.0, 0.0),
+                    Vec3::new(-8.0, 0.0, 4.0),
+                    Vec3::new(-8.5, 0.0, 4.0),
+                    Vec3::new(-8.0, 5.0, 4.0),
+                ],
+                &[AHEAD],
+            ))
+            .clone();
+            arena.dummy_spawns = vec![Vec3::new(-8.0, 0.0, 4.0)];
+            let sim = FpsSim::with_start(Arc::new(arena), config(), Start::Empty);
+
+            let free = sim.free_enemy_spawns();
+
+            // 0.55 m from the player and 0.0 and 0.5 m from the dummy are touching; 0.65 m is not,
+            // and a marker high above the dummy still counts as on it.
+            assert_eq!(free, [1]);
+        }
+
+        #[test]
+        fn spawn_enemy_refuses_an_occupied_or_unknown_marker() {
+            let mut sim = empty_sim(&[Vec3::new(0.0, 0.0, 10.0)]);
+
+            let unknown = sim.spawn_enemy(1);
+            let first = sim.spawn_enemy(0);
+            let occupied = sim.spawn_enemy(0);
+
+            assert_eq!(unknown, Err(SpawnError::UnknownMarker { marker: 1 }));
+            assert_eq!(first, Ok(()));
+            assert_eq!(occupied, Err(SpawnError::OccupiedMarker { marker: 0 }));
+            assert_eq!(sim.enemy_count(), 1);
+        }
+
+        #[test]
+        fn with_start_at_markers_matches_start() {
+            let arena = arena_with(
+                &[],
+                Vec3::ZERO,
+                &[Vec3::new(0.0, 0.0, 10.0), Vec3::new(3.0, 0.0, 10.0)],
+                &[AHEAD],
+            );
+
+            let with = FpsSim::with_start(arena.clone(), config(), Start::AtMarkers);
+            let plain = FpsSim::start(arena, config());
+
+            assert_eq!(with.enemy_count(), 2);
+            assert_eq!(with.enemies_alive(), 2);
+            assert_eq!(with.enemy_state(1), plain.enemy_state(1));
+            assert_eq!(with.free_enemy_spawns(), plain.free_enemy_spawns());
+            assert_eq!(with.kills(), 0);
+        }
+
+        #[test]
+        fn kills_counts_player_kills_and_resets_on_restart() {
+            let mut sim = empty_sim(&[Vec3::new(-3.0, 0.0, 10.0), Vec3::new(3.0, 0.0, 10.0)]);
+            sim.spawn_enemy(0).expect("free");
+            sim.spawn_enemy(1).expect("free");
+            let none = sim.kills();
+
+            sim.kill_enemy(0);
+            let one = sim.kills();
+            sim.kill_enemy(1);
+            let two = sim.kills();
+            sim.tick(&idle(), DT);
+            let after_removal = sim.kills();
+            sim.kill_player();
+            sim.tick(&restart(), DT);
+
+            assert_eq!((none, one, two, after_removal), (0, 1, 2, 2));
+            assert_eq!(sim.kills(), 0);
+            assert_eq!(sim.enemy_count(), 0);
+            assert_eq!(sim.enemies_alive(), 0);
+        }
+
+        #[test]
+        fn an_empty_start_survives_restart() {
+            let mut sim = empty_sim(&[Vec3::new(-3.0, 0.0, 10.0), Vec3::new(3.0, 0.0, 10.0)]);
+            sim.spawn_enemy(0).expect("free");
+            sim.kill_player();
+
+            sim.tick(&restart(), DT);
+
+            assert!(!sim.player_body().is_dead());
+            assert_eq!(sim.enemy_count(), 0);
+            assert_eq!(sim.free_enemy_spawns(), [0, 1]);
+            assert_eq!(sim.spawn_enemy(0), Ok(()));
+            assert_eq!(sim.enemy_count(), 1);
+        }
+
+        #[test]
+        fn a_restart_of_an_at_markers_sim_brings_the_enemies_back() {
+            let arena = arena_with(&[], Vec3::ZERO, &[Vec3::new(0.0, 0.0, 10.0)], &[AHEAD]);
+            let mut sim = FpsSim::with_start(arena, config(), Start::AtMarkers);
+            sim.kill_enemy(0);
+            sim.tick(&idle(), DT);
+            assert_eq!(sim.enemies_alive(), 0);
+            sim.kill_player();
+
+            sim.tick(&restart(), DT);
+
+            assert_eq!(sim.enemies_alive(), 1);
+            assert_eq!(sim.kills(), 0);
+        }
+
+        #[test]
+        fn a_hit_on_a_dummy_is_not_a_kill() {
+            let mut arena = (*arena_with(&[], Vec3::ZERO, &[], &[])).clone();
+            arena.dummy_spawns = vec![Vec3::new(0.0, 0.0, 10.0)];
+            let mut config = config();
+            config.damage = 1_000;
+            let mut sim = FpsSim::with_start(Arc::new(arena), config, Start::AtMarkers);
+
+            sim.tick(&pull(), DT);
+
+            assert_eq!(hits(&mut sim), [0]);
+            assert!(sim.dummy_body(0).expect("a dummy").is_dead());
+            assert_eq!(sim.kills(), 0);
+        }
+
+        #[test]
+        fn a_non_lethal_hit_on_an_enemy_is_not_a_kill_and_the_lethal_one_is() {
+            let mut sim = empty_sim(&[Vec3::new(0.0, 0.0, 10.0)]);
+            sim.spawn_enemy(0).expect("free");
+            // The 3-tick cooldown allows the second pull on tick 3; two 30-damage head hits kill.
+            let mut kills_after = Vec::new();
+            for tick in 0..4 {
+                sim.tick(
+                    &if tick == 0 || tick == 3 {
+                        pull()
+                    } else {
+                        idle()
+                    },
+                    DT,
+                );
+                kills_after.push(sim.kills());
+                if tick == 0 {
+                    assert!(!sim.enemy_body(0).expect("an enemy").is_dead());
+                    assert_eq!(sim.enemies_alive(), 1);
+                }
+            }
+
+            assert_eq!(kills_after, [0, 0, 0, 1]);
+            assert_eq!(sim.enemies_alive(), 0);
+            assert_eq!(sim.enemy_count(), 1);
+        }
+
+        #[test]
+        fn a_dead_enemy_is_counted_once_however_long_it_lies() {
+            let mut sim = empty_sim(&[Vec3::new(0.0, 0.0, 10.0)]);
+            sim.spawn_enemy(0).expect("free");
+
+            sim.kill_enemy(0);
+            for _ in 0..5 {
+                sim.tick(&idle(), DT);
+            }
+
+            assert_eq!(sim.kills(), 1);
+        }
     }
 }
 

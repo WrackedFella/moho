@@ -81,6 +81,12 @@ pub fn health_text(health: u32, max_health: u32) -> String {
     format!("HP {health}/{max_health}")
 }
 
+/// The wave and score line, such as `Wave 3  Score 200`.
+pub fn arena_text(wave: u32, score: u32) -> String {
+    let _ = (wave, score);
+    todo!()
+}
+
 /// What the dead player reads in the title, or `None` while alive.
 pub fn death_text(dead: bool) -> Option<&'static str> {
     dead.then_some("Dead - press Enter to restart")
@@ -198,6 +204,13 @@ mod feedback_tests {
         assert_eq!(health_text(0, 100), "HP 0/100");
         assert_eq!(health_text(100, 100), "HP 100/100");
         assert_eq!(health_text(5, 12), "HP 5/12");
+    }
+
+    #[test]
+    fn the_status_line_shows_wave_and_score() {
+        assert_eq!(arena_text(3, 200), "Wave 3  Score 200");
+        assert_eq!(arena_text(1, 0), "Wave 1  Score 0");
+        assert_eq!(arena_text(12, 4_000), "Wave 12  Score 4000");
     }
 
     #[test]

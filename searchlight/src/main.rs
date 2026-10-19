@@ -15,7 +15,9 @@ use searchlight::arena::{self, Arena};
 use searchlight::brain::EnemyTuning;
 use searchlight::console_commands;
 use searchlight::game::{FpsGame, WINDOW_TITLE};
-use searchlight::sim::{FpsSim, SimConfig};
+use searchlight::mode::ArenaMode;
+use searchlight::sim::SimConfig;
+use searchlight::wave::WaveTuning;
 use searchlight_rules::{BodyPart, BodyProfile, Magazine, Rifle};
 
 /// Radians of turn per pixel of mouse motion.
@@ -68,7 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .map_or_else(|| assets().join("arena.glb"), PathBuf::from);
     let (level, markers) = arena::load(&arena_path)?;
     let arena = Arc::new(Arena::from_level(&level, &markers));
-    let sim = FpsSim::start(arena.clone(), tuning()?);
+    let mode = ArenaMode::new(arena.clone(), tuning()?, WaveTuning::default());
     let (bindings, warnings) = ActionBindings::load(&BTreeMap::new());
     for warning in warnings {
         tracing::warn!(?warning, "default bindings");
@@ -77,7 +79,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     for warning in console_warnings {
         tracing::warn!(?warning, "console binding");
     }
-    let game = FpsGame::new(sim, ActionMap::new(bindings, LOOK_PER_PIXEL))
+    let game = FpsGame::new(mode, ActionMap::new(bindings, LOOK_PER_PIXEL))
         .with_shell(UiShell::new(console))
         .with_arena(arena.meshes.clone(), &arena.dummy_spawns)
         .with_shot_sound(&assets().join("rifle_shot.wav"));

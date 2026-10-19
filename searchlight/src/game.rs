@@ -26,6 +26,7 @@ use moho_ui_shell::{Console, Routing, UiLayers, UiShell, apply_engine_command};
 
 use crate::hud::Edge;
 use crate::input::{FpsAction, FpsCommand};
+use crate::mode::ArenaMode;
 use crate::sim::{Feedback, FpsSim, dummy_at, dummy_hit_volumes};
 use crate::tag::SurfaceTag;
 use crate::{TICK_HZ, hud};
@@ -579,10 +580,10 @@ impl Stage {
     }
 }
 
-/// The FPS prototype's game: one sim and the input that drives it.
+/// The FPS prototype's game: one arena mode and the input that drives it.
 #[derive(Debug)]
 pub struct FpsGame {
-    sim: FpsSim,
+    mode: ArenaMode,
     input: ActionMap<FpsAction>,
     /// The player as the tick before the last left them, for blending the view.
     previous: CharacterState,
@@ -590,11 +591,11 @@ pub struct FpsGame {
 }
 
 impl FpsGame {
-    /// A game ticking `sim` with commands sampled from `input`.
-    pub fn new(sim: FpsSim, input: ActionMap<FpsAction>) -> Self {
-        let previous = sim.player();
+    /// A game ticking `mode` with commands sampled from `input`.
+    pub fn new(mode: ArenaMode, input: ActionMap<FpsAction>) -> Self {
+        let previous = mode.sim().player();
         Self {
-            sim,
+            mode,
             input,
             previous,
             stage: Stage::new(),
@@ -616,7 +617,7 @@ impl FpsGame {
     }
 
     pub fn sim(&self) -> &FpsSim {
-        &self.sim
+        self.mode.sim()
     }
 
     /// The input map, for feeding it device events.
@@ -673,14 +674,14 @@ impl Game for FpsGame {
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &FpsCommand) {
-        self.previous = self.sim.player();
+        self.previous = self.mode.sim().player();
         if command.paused {
             return;
         }
-        let was_dead = self.sim.player_body().is_dead();
-        self.sim.tick(command, ctx.tick_length.as_secs_f32());
-        if was_dead && !self.sim.player_body().is_dead() {
-            self.previous = self.sim.player();
+        let was_dead = self.mode.sim().player_body().is_dead();
+        self.mode.tick(command, ctx.tick_length.as_secs_f32());
+        if was_dead && !self.mode.sim().player_body().is_dead() {
+            self.previous = self.mode.sim().player();
             self.stage.status.clear();
         }
         self.stage.tick_flashes();
@@ -719,32 +720,28 @@ impl Game for FpsGame {
         for command in &engine_commands {
             apply_engine_command(command, ctx);
         }
-        for feedback in self.sim.drain_feedback() {
+        for feedback in self.mode.drain_feedback() {
             if let Feedback::PlayerHit { from, .. } = feedback {
-                let player = self.sim.player();
+                let player = self.mode.sim().player();
                 self.stage
                     .show_hit_edge(hud::hit_edge(player.position, player.yaw, from));
             }
             self.stage.react(&feedback, ctx.audio());
         }
-        let dead = self.sim.player_body().is_dead();
+        let sim = self.mode.sim();
+        let dead = sim.player_body().is_dead();
         let vitals = hud::death_text(dead).map_or_else(
-            || {
-                hud::health_text(
-                    self.sim.player_body().health(),
-                    self.sim.player_max_health(),
-                )
-            },
+            || hud::health_text(sim.player_body().health(), sim.player_max_health()),
             str::to_owned,
         );
         self.stage.refresh_title(&vitals);
         self.stage.refresh_hud(dead);
-        self.stage.sync_enemies(&self.sim);
+        self.stage.sync_enemies(self.mode.sim());
         if let Some(renderer) = ctx.renderer() {
             let view = first_person_view(
                 &self.previous,
-                &self.sim.player(),
-                self.sim.eye_height(),
+                &self.mode.sim().player(),
+                self.mode.sim().eye_height(),
                 alpha,
             );
             self.stage.draw(renderer, (view.view_matrix(), view.eye));
@@ -764,18 +761,17 @@ mod tests {
 
     use super::*;
     use crate::sim::Feedback;
-    use crate::test_support::{arena_with, flat_floor, mag, press, test_config};
+    use crate::test_support::{arena_with, mag, press, test_config, wave_tuning};
     use searchlight_rules::Rifle;
 
     fn game() -> FpsGame {
-        let sim = FpsSim::new(
-            flat_floor(),
-            Vec3::ZERO,
-            &[],
+        let mode = ArenaMode::new(
+            arena_with(&[], Vec3::ZERO, &[], &[]),
             test_config(Rifle::loaded(mag(30, 5)), vec![]),
+            wave_tuning(1),
         );
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
-        FpsGame::new(sim, ActionMap::new(bindings, 1.0))
+        FpsGame::new(mode, ActionMap::new(bindings, 1.0))
     }
 
     #[test]
@@ -818,9 +814,9 @@ mod tests {
 
     /// A game whose player walked toward an enemy and was shot dead there, with a status shown.
     fn game_with_a_player_dead_away_from_the_spawn() -> (FpsGame, GameClock) {
-        let sim = FpsSim::start(arena_arena(), arena_config());
+        let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
-        let mut game = FpsGame::new(sim, ActionMap::new(bindings, 1.0));
+        let mut game = FpsGame::new(mode, ActionMap::new(bindings, 1.0));
         let mut clock = GameClock::new(0.0, 1.0, 1.0);
         let walk = FpsCommand {
             movement: moho_physics::CharacterCommand {
@@ -874,9 +870,9 @@ mod tests {
 
     #[test]
     fn an_ordinary_alive_tick_blends_from_the_previous_pose_and_keeps_the_status() {
-        let sim = FpsSim::start(arena_arena(), arena_config());
+        let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
-        let mut game = FpsGame::new(sim, ActionMap::new(bindings, 1.0));
+        let mut game = FpsGame::new(mode, ActionMap::new(bindings, 1.0));
         let mut clock = GameClock::new(0.0, 1.0, 1.0);
         let walk = FpsCommand {
             movement: moho_physics::CharacterCommand {
@@ -911,9 +907,9 @@ mod tests {
 
     /// A game whose enemy is walking toward the player, so every sim tick moves it.
     fn game_with_a_moving_enemy() -> FpsGame {
-        let sim = FpsSim::start(arena_arena(), arena_config());
+        let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
-        FpsGame::new(sim, ActionMap::new(bindings, 1.0))
+        FpsGame::new(mode, ActionMap::new(bindings, 1.0))
     }
 
     #[test]
@@ -1565,6 +1561,7 @@ mod enemy_and_hud_tests {
     use searchlight_rules::Rifle;
 
     use super::*;
+    use crate::sim::Start;
     use crate::test_support::{arena_with, mag, test_config};
 
     /// Keeps the vertices of every mesh uploaded and the draws of the last frame.
@@ -1753,6 +1750,45 @@ mod enemy_and_hud_tests {
         let targets: Vec<u16> = stage.enemies.iter().map(|rig| rig.target).collect();
         assert_eq!(targets, [2, 3]);
         assert_eq!(drawn.len(), 12 + 14);
+    }
+
+    #[test]
+    fn restarting_removes_the_drawn_models_of_enemies_that_no_longer_exist() {
+        let markers = [
+            Vec3::new(-3.0, 0.0, 4.0),
+            Vec3::new(3.0, 0.0, 4.0),
+            Vec3::new(9.0, 0.0, 4.0),
+        ];
+        let arena = arena_with(
+            &[],
+            Vec3::new(0.0, 0.0, -20.0),
+            &markers,
+            &[Vec3::new(13.0, 0.0, 4.0)],
+        );
+        let config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let mut sim = FpsSim::with_start(arena, config, Start::Empty);
+        for marker in 0..markers.len() {
+            sim.spawn_enemy(marker).expect("the marker is free");
+        }
+        let mut stage = Stage::new();
+        let mut renderer = RecordingRenderer::default();
+        let before = drawn_after_sync(&mut stage, &mut renderer, &sim).len();
+        sim.kill_player();
+        sim.tick(
+            &FpsCommand {
+                restart: true,
+                ..FpsCommand::default()
+            },
+            1.0 / 60.0,
+        );
+        sim.spawn_enemy(0).expect("the restart emptied the markers");
+        assert_eq!(sim.enemy_count(), 1);
+
+        let after = drawn_after_sync(&mut stage, &mut renderer, &sim).len();
+
+        assert_eq!(before, 3 * 7);
+        assert_eq!(after, 7, "stale enemy models are still drawn");
+        assert_eq!(stage.enemies.iter().filter(|rig| rig.shown).count(), 1);
     }
 
     fn sim_dummy_spawns() -> [Vec3; 2] {

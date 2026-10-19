@@ -15,6 +15,7 @@ use crate::brain::EnemyTuning;
 use crate::input::FpsAction;
 use crate::sim::SimConfig;
 use crate::tag::SurfaceTag;
+use crate::wave::WaveTuning;
 
 pub(crate) const DT: f32 = 1.0 / 60.0;
 
@@ -165,6 +166,11 @@ pub(crate) fn arena_with(
         route: route.to_vec(),
         covers: Vec::new(),
     })
+}
+
+/// Waves that open with `first_size` enemies, grow by one and score 100 a kill.
+pub(crate) fn wave_tuning(first_size: u32) -> WaveTuning {
+    WaveTuning::new(first_size, 1, 100).expect("a positive first wave and growth are valid")
 }
 
 /// Presses the first default binding of `action` on `map`.
