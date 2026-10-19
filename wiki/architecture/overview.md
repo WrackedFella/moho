@@ -26,7 +26,7 @@ flowchart TD
     core["moho_core<br/>event bus, persist,<br/>prefs, seeded RNG"]:::engine
     audio["moho_audio<br/>rodio"]:::engine
     physics["moho_physics<br/>rapier3d"]:::engine
-    input["moho_input<br/>Key, Action, ActionBindings,<br/>ActionMap, mouse filtering"]:::engine
+    input["moho_input<br/>Key, Action, ActionBindings,<br/>ActionMap, mouse smoothing"]:::engine
     app["moho_app<br/>window, fixed-step loop, Game trait"]:::engine
     level["moho_level<br/>glTF level loader"]:::engine
     shell["moho_ui_shell<br/>egui host, console,<br/>UI layers"]:::engine
@@ -91,7 +91,7 @@ flowchart TD
 
     app["moho_app<br/>window, loop, accumulator,<br/>GameClock, Game interface"]:::engineNew
     shell["moho_ui_shell<br/>egui, console, settings,<br/>modal stack"]:::engineNew
-    input["moho_input<br/>action map, gamepad,<br/>bindings, mouse filtering"]:::engine
+    input["moho_input<br/>action map, gamepad,<br/>bindings, mouse smoothing"]:::engine
     renderer["moho_renderer<br/>wgpu backend"]:::engine
     physics["moho_physics<br/>rapier3d"]:::engine
     audio["moho_audio<br/>rodio"]:::engine
