@@ -70,7 +70,6 @@ impl ArenaMode {
         self.step_waves();
     }
 
-    /// The simulation underneath.
     pub fn sim(&self) -> &FpsSim {
         &self.sim
     }

@@ -44,17 +44,14 @@ impl WaveTuning {
         })
     }
 
-    /// Enemies in wave 1.
     pub fn first_size(&self) -> u32 {
         self.first_size
     }
 
-    /// Enemies each wave adds over the one before.
     pub fn growth(&self) -> u32 {
         self.growth
     }
 
-    /// Score for one kill.
     pub fn score_per_kill(&self) -> u32 {
         self.score_per_kill
     }
@@ -99,7 +96,6 @@ impl WaveState {
         self.wave
     }
 
-    /// Points scored so far.
     pub fn score(&self) -> u32 {
         self.score
     }
