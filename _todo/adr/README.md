@@ -8,6 +8,10 @@ Supersede rather than edit: add a new ADR and set the old one's status to
 Format: **Status** (Proposed | Accepted | Superseded by NNNN), **Context**,
 **Decision**, **Consequences**.
 
+ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
+`moho_game` as `flagstone_game`, `moho_ui` as `flagstone_ui`, `moho_voxel` as
+`flagstone_voxel` and the "strategy line" as flagstone.
+
 | ADR | Decision | Status |
 |---|---|---|
 | [0001](0001-render-api-boundary.md) | Renderer sees game types only through `moho_render_api` | Accepted |

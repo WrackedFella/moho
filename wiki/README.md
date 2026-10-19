@@ -63,7 +63,7 @@ flowchart LR
 **Guides, design, process**
 
 - [Adding console commands](guides/adding-console-commands.md)
-- [Strategy vision](flagstone/vision.md) · [FPS design document](searchlight/game-design-document.md) (draft)
+- [Flagstone vision](flagstone/vision.md) · [FPS design document](searchlight/game-design-document.md) (draft)
 - [Agentic workflow](process/agentic-workflow.md)
 
 ## Known constraints
