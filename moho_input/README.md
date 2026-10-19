@@ -23,7 +23,7 @@ and the action map that hands the game one frame of actions per tick.
   empty for none) and returns warnings for unusable lines, which keep their
   defaults; `to_section` writes every action back.
 - `ActionMap<A>`: owns the bindings, which bindings are down, this tick's edges and
-  the mouse-look accumulator and filter. Feed it with `key`, `mouse_button`,
+  the mouse-look accumulator, `LookSettings` (turn per count, smoothing on/off; `set_look`) and the smoothing state. Feed it with `key`, `mouse_button`,
   `mouse_motion`, `pad_button`, `pad_axis`, `pad_disconnected` and `release_all`, or from winit through `action_map::handle_window_event`
   / `handle_device_event`. `end_tick` is the only read: it returns an `ActionFrame`
   (`held`, `pressed`, `released` masks and `look`; plain `Copy` data, at most 64 actions).

@@ -3,7 +3,10 @@
 **Source:** `moho_core/src/prefs/` (`mod.rs`, `reader.rs`), `moho_input/src/bindings.rs`, `moho_input/src/key.rs`, `moho_input/src/pad.rs`,
 `flagstone_ui/src/actions.rs`, `flagstone/src/main.rs` (`App::save_prefs`, `App::adopt_settings`),
 `flagstone/src/app/initializer.rs` (`build_actions`), `moho_audio/src/audio_settings.rs` (`AudioSettings::from_prefs`), `flagstone_ui/src/adapter/mod.rs`. Path: `config/prefs.ini`,
-relative to the working directory.
+relative to the working directory. The FPS (`searchlight`) keeps its own file,
+`config/searchlight.ini` (`searchlight::prefs_path`), read with `Prefs::load_from`. It
+splits the `console` entry from the game's own `[bindings]` (`split_console_binding`) so
+neither loader warns about the other's key.
 
 `Prefs::load` creates the file with defaults if it is missing. Missing sections or keys
 take their defaults silently. `Prefs::save` writes every key below.
@@ -54,7 +57,7 @@ opened there still saves to the default path).
   `App::adopt_settings`.
 - **`adopt_settings`** replaces `App::prefs` and rebuilds the input `ActionMap` through
   `build_actions`, the same function startup uses, so new bindings, sensitivity and
-  filtering apply without a restart. It also queues `AudioSettings::from_prefs`
+  mouse smoothing apply without a restart. It also queues `AudioSettings::from_prefs`
   (`moho_audio`), which the next frame applies to the audio engine. It does not write the file.
 - **Startup** builds the same `AudioSettings` from the loaded prefs and applies it on the
   first frame. Each category volume is its pref divided by ten and clamped to 0..=1; 0 is silent.
@@ -64,7 +67,7 @@ opened there still saves to the default path).
 | Section | Key | Accepted values | Default |
 |---|---|---|---|
 | `[prefs]` | `mouse_sensitivity` | finite float | `1` |
-| | `input_filtering_enabled` | `true` `false` `1` `0` (any case) | `true` |
+| | `mouse_smoothing` | `true` `false` `1` `0` (any case) | `false` |
 | `[bindings]` | one key per action id | binding list | per action, below |
 | `[audio]` | `sound_effect_volume` `music_volume` `ui_volume` `voice_volume` | finite float on a 0 to 10 scale (the UI offers 0.0 to 10.0), written with 1 decimal | `8.0` `6.0` `7.0` `9.0` |
 | `[graphics]` | `shadow_quality` `ssao_quality` | unsigned integer; the UI offers 0 (off) to 4 (ultra) | `3` `3` |
@@ -72,6 +75,7 @@ opened there still saves to the default path).
 | | `window_width` `window_height` | unsigned integer pixels | `1920` `1080` |
 | `[world]` | `load_radius` `unload_radius` | integer chunks | `8` `12` |
 | | `chunks_per_frame` | unsigned integer, 1 or more | `4` |
+| `[debug]` | one key per game debug value | free text, see below | none |
 
 `[bindings]` is stored by `Prefs` as raw text (`Prefs::bindings`, `Prefs::set_bindings`);
 the game interprets it. `ActionBindings::load` (`moho_input`) reads it against the
@@ -95,6 +99,13 @@ punctuation spelled as a word (`Comma`, `Semicolon`, `LeftBracket`, ...), `Arrow
 words: the INI reader cuts a line at `;` or `#`, reads a line with `[` as a section
 header, and `,` separates list items. There is no modifier syntax such as `Ctrl+W`
 and no numeric key codes.
+
+`[debug]` is a game-owned section of named values (a game's debug toggles), stored raw like
+`[bindings]` and written only when non-empty. `Prefs::debug_value` reads one;
+`Prefs::set_debug_value` stores one and returns `DebugValueError` for a name or value
+that would not read back exactly. Names are non-empty lowercase letters, digits and
+underscores. Values are non-empty, have no leading or trailing whitespace, and contain no
+`;`, `#` or line break. The Settings screen's save keeps them.
 
 Gamepad bindings are written `Pad <name>` and mix freely with keys in one list
 (`jump=Spacebar, Pad South`). Buttons (`PadButton`): `South` `East` `North` `West`
@@ -126,7 +137,7 @@ World keys drive [world streaming](../architecture/world-streaming.md).
 ```ini
 [prefs]
 mouse_sensitivity=1.2
-input_filtering_enabled=true
+mouse_smoothing=false
 
 [bindings]
 move_forward=W

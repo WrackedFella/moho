@@ -14,7 +14,7 @@ use winit::event::{DeviceEvent, WindowEvent};
 use winit::window::Window;
 
 pub use clock::GameClock;
-pub use fixed_step::{FixedStep, LoopConfig};
+pub use fixed_step::{FixedStep, LoopConfig, SimSpeed};
 pub use headless::HeadlessLoop;
 pub use runner::run;
 
@@ -28,6 +28,13 @@ pub struct TickContext<'a> {
     pub clock: &'a mut GameClock,
 }
 
+/// Pause and speed changes a game asked for, applied by the loop from the next tick.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct LoopRequests {
+    pub(crate) paused: Option<bool>,
+    pub(crate) speed: Option<SimSpeed>,
+}
+
 /// Per-frame context handed to [`Game::frame`].
 pub struct FrameContext<'a> {
     pub tick_length: Duration,
@@ -35,6 +42,7 @@ pub struct FrameContext<'a> {
     renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
     audio: Option<&'a mut AudioSystem>,
     exit_requested: bool,
+    requests: LoopRequests,
 }
 
 impl<'a> FrameContext<'a> {
@@ -52,6 +60,7 @@ impl<'a> FrameContext<'a> {
             renderer,
             audio,
             exit_requested: false,
+            requests: LoopRequests::default(),
         }
     }
 
@@ -82,6 +91,30 @@ impl<'a> FrameContext<'a> {
     pub fn exit_requested(&self) -> bool {
         self.exit_requested
     }
+
+    /// Asks the loop to pause or resume from the next tick.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.requests.paused = Some(paused);
+    }
+
+    /// Asks the loop to run at `speed` from the next tick.
+    pub fn set_speed(&mut self, speed: SimSpeed) {
+        self.requests.speed = Some(speed);
+    }
+
+    /// The last pause state the game asked for, if it asked.
+    pub fn requested_paused(&self) -> Option<bool> {
+        self.requests.paused
+    }
+
+    /// The last speed the game asked for, if it asked.
+    pub fn requested_speed(&self) -> Option<SimSpeed> {
+        self.requests.speed
+    }
+
+    pub(crate) fn loop_requests(&self) -> LoopRequests {
+        self.requests
+    }
 }
 
 /// Context handed to [`Game::init`], once the window and renderer exist.
@@ -97,6 +130,7 @@ pub struct EventContext<'a> {
     renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
     audio: Option<&'a mut AudioSystem>,
     exit_requested: bool,
+    requests: LoopRequests,
 }
 
 impl<'a> EventContext<'a> {
@@ -112,6 +146,7 @@ impl<'a> EventContext<'a> {
             renderer,
             audio,
             exit_requested: false,
+            requests: LoopRequests::default(),
         }
     }
 
@@ -137,6 +172,30 @@ impl<'a> EventContext<'a> {
     /// Whether the game asked to leave the loop.
     pub fn exit_requested(&self) -> bool {
         self.exit_requested
+    }
+
+    /// Asks the loop to pause or resume from the next tick.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.requests.paused = Some(paused);
+    }
+
+    /// Asks the loop to run at `speed` from the next tick.
+    pub fn set_speed(&mut self, speed: SimSpeed) {
+        self.requests.speed = Some(speed);
+    }
+
+    /// The last pause state the game asked for, if it asked.
+    pub fn requested_paused(&self) -> Option<bool> {
+        self.requests.paused
+    }
+
+    /// The last speed the game asked for, if it asked.
+    pub fn requested_speed(&self) -> Option<SimSpeed> {
+        self.requests.speed
+    }
+
+    pub(crate) fn loop_requests(&self) -> LoopRequests {
+        self.requests
     }
 }
 
@@ -171,10 +230,11 @@ pub enum AppError {
 
 /// A game driven by a fixed-timestep loop.
 pub trait Game {
-    /// Input sampled once per tick.
+    /// Input sampled once per tick, or once per frame while paused.
     type Command;
 
-    /// Samples the command for the next tick.
+    /// Samples the command for the next tick; while paused, for
+    /// [`Game::apply_while_paused`] on every frame.
     fn command(&mut self) -> Self::Command;
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &Self::Command);
@@ -185,6 +245,12 @@ pub trait Game {
     /// Called for every window and device event the runner does not consume;
     /// never called headless.
     fn event(&mut self, _ctx: &mut EventContext<'_>, _event: Event) {}
+
+    /// Applies `command` while the loop is paused, at the boundary before tick `next_tick`.
+    ///
+    /// Runs before the frame, so its result is visible in that frame. Whatever
+    /// part of `command` it does not apply is dropped; the default drops it all.
+    fn apply_while_paused(&mut self, _next_tick: u64, _command: &Self::Command) {}
 
     /// Presents a frame, `alpha` of the way between the last two ticks.
     fn frame(&mut self, ctx: &mut FrameContext<'_>, alpha: f32);
@@ -342,5 +408,54 @@ mod tests {
         let ctx = EventContext::new(&clock, None, None);
 
         assert_eq!(ctx.clock().time_of_day(), 15.25);
+    }
+
+    #[test]
+    fn frame_context_records_pause_and_speed_requests() {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+        assert_eq!(ctx.requested_paused(), None);
+        assert_eq!(ctx.requested_speed(), None);
+
+        ctx.set_paused(true);
+        let paused = ctx.requested_paused();
+        ctx.set_paused(false);
+        let resumed = ctx.requested_paused();
+        ctx.set_speed(SimSpeed::X3);
+
+        assert_eq!(paused, Some(true));
+        assert_eq!(resumed, Some(false));
+        assert_eq!(ctx.requested_speed(), Some(SimSpeed::X3));
+    }
+
+    #[test]
+    fn event_context_records_pause_and_speed_requests() {
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        assert_eq!(ctx.requested_paused(), None);
+        assert_eq!(ctx.requested_speed(), None);
+
+        ctx.set_paused(true);
+        let paused = ctx.requested_paused();
+        ctx.set_paused(false);
+        let resumed = ctx.requested_paused();
+        ctx.set_speed(SimSpeed::X2);
+
+        assert_eq!(paused, Some(true));
+        assert_eq!(resumed, Some(false));
+        assert_eq!(ctx.requested_speed(), Some(SimSpeed::X2));
+    }
+
+    #[test]
+    fn event_context_hands_its_requests_to_the_loop() {
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        ctx.set_paused(true);
+        ctx.set_speed(SimSpeed::X3);
+        let requests = ctx.loop_requests();
+
+        assert_eq!(requests.paused, Some(true));
+        assert_eq!(requests.speed, Some(SimSpeed::X3));
     }
 }

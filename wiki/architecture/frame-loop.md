@@ -16,12 +16,14 @@ flowchart TD
     RES["resumed"] --> mk["create window, renderer,<br/>AudioSystem if enabled"] --> init["Game::init"]
 
     NE["new_events"] --> acc["FixedStep accumulates<br/>time since last wake"]
+    NE -. paused .-> rr
     acc --> tk["per due tick:<br/>Game::command, Game::tick,<br/>then GameClock advance"]
-    tk --> rr["request_redraw if ticks ran"]
+    tk --> rr["request_redraw if ticks ran<br/>or the loop is paused"]
     rr --> cf["control flow: wait until next tick"]
 
     WE["window_event"] --> route{"runner::route"}
-    route -- RedrawRequested --> fr["Game::frame(alpha)"]
+    route -- RedrawRequested --> wp["if paused: Game::command,<br/>then Game::apply_while_paused"] --> fr["Game::frame(alpha)"]
+    fr --> req["apply set_paused / set_speed<br/>from the next tick"]
     route -- Resized --> rs["renderer.resize, then Game::event"]
     route -- CloseRequested --> ev["Game::event, then exit"]
     route -- other --> ev2["Game::event"]
@@ -34,6 +36,7 @@ Init failures (window, renderer) end `run` with an `AppError`; audio failure onl
 `FrameContext::renderer` and `audio` are `None` under `HeadlessLoop`, which drives the
 same `command`/`tick`/`frame` without a window (`init` and `event` never run).
 Time beyond `max_catch_up_ticks` is dropped ([overview](overview.md#fixed-step-loop-moho_app)).
+A game pauses or changes `SimSpeed` through `set_paused` / `set_speed` on its event or frame context; the loop applies the request after the callback returns, from the next tick. While paused the loop runs no tick, still renders, and wakes once per tick length ([ADR-0018](../../_todo/adr/0018-paused-commands-apply-at-the-tick-boundary.md)).
 
 ## `Game::tick` order (`App`)
 

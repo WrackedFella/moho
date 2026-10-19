@@ -36,7 +36,7 @@ flowchart LR
 | `sim` | `SearchlightSim`: player character and body, rifle, spare magazines, dummies and enemies; emits `Feedback` |
 | `hud` | Text for rifle state, hits, health and death; the hit-edge direction; the death overlay |
 | `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (none yet, so only the engine's `help`, `clear` and `quit` run) |
-| `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples input, ticks the sim, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair |
+| `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples input, ticks the sim, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open), so the sim freezes instead of ticking with an ignored command |
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
@@ -49,8 +49,10 @@ magazine size, body profile, `EnemyTuning`, the player part enemies aim at) live
 crosshair through `UiLayers` as the renderer's one UI source. Every key and button goes to the
 shell first (`route_input`): the console toggle key opens it, `release_all` drops held game keys,
 and while it is open input does not reach the game. Escape closes the console instead of
-exiting. Engine commands typed in the console (`quit`) return as values and apply on the next
-frame through `apply_engine_command`. Console commands are hidden debug commands
+exiting. Engine commands typed in the console (`quit`, `r_debug_view`, `r_shadow_quality`,
+`r_ssao_quality`, `audio_cue`) return as `EngineCommand` values and apply on the next
+frame through `apply_engine_command`, which reaches the renderer (`RendererBackend`) and audio
+through `FrameContext`; with neither present the command is dropped. Console commands are hidden debug commands
 ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
 
 ## Tick

@@ -4,16 +4,25 @@ use crate::app::event_loop::{EventProcessor, FrameProcessor, GenerationProcessor
 use crate::game_state::GameState;
 use crate::{App, RenderRequest};
 use flagstone_game::controller::{CameraMode, ControllerInput};
+use flagstone_game::raycast::raycast_surface;
 use flagstone_ui::actions::StrategyAction;
+use moho_core::pointer::{Ray, screen_ray};
 use moho_input::action_map;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
+
+/// How far a pointer ray reaches into the world, in metres.
+pub const POINTER_RAY_RANGE: f32 = 256.0;
 
 /// One tick's worth of player input.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StrategyCommand {
     pub input: ControllerInput,
     pub jump: bool,
+    /// The world ray under the pointer when `Select` was pressed in the strategy view.
+    ///
+    /// A ray rather than a pixel, so the command replays without a window.
+    pub select: Option<Ray>,
 }
 
 impl App {
@@ -41,6 +50,20 @@ impl App {
         let (look_x, look_y) = frame.look();
         let (yaw_delta, pitch_delta) = (-look_x, -look_y);
 
+        // The camera the player saw: the one drawn, not the one this tick will move.
+        let select = (self.simulation.camera_mode() == CameraMode::Isometric
+            && frame.pressed(StrategyAction::Select))
+        .then(|| frame.press_pointer())
+        .flatten()
+        .and_then(|(x, y)| {
+            screen_ray(
+                self.camera.0,
+                self.camera.1,
+                self.viewport,
+                glam::Vec2::new(x, y),
+            )
+        });
+
         StrategyCommand {
             input: ControllerInput {
                 forward,
@@ -53,6 +76,7 @@ impl App {
                 zoom_delta: 0.0,
             },
             jump,
+            select,
         }
     }
 
@@ -76,6 +100,17 @@ impl App {
     fn apply_command(&mut self, command: &StrategyCommand) {
         *self.simulation.controller_input_mut() = command.input;
         self.physics.jump_pressed = command.jump;
+        if let Some(ray) = command.select
+            && let Some(light_system) = &self.light_system
+        {
+            self.pointer_hit = raycast_surface(
+                light_system.grid(),
+                ray.origin,
+                ray.direction,
+                POINTER_RAY_RANGE,
+            );
+            tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
+        }
     }
 
     fn apply_pending_render(&mut self, renderer: &mut dyn moho_renderer::RendererBackend) {
@@ -91,6 +126,7 @@ impl App {
                 }
                 RenderRequest::ShadowQuality(quality) => renderer.set_shadow_quality(quality),
                 RenderRequest::SsaoQuality(quality) => renderer.set_ssao_quality(quality),
+                RenderRequest::ViewHeight(height) => renderer.set_view_height(height),
             }
         }
     }
@@ -182,7 +218,12 @@ impl App {
             && self.game_state == GameState::Playing
         {
             self.toggle_camera_mode();
+            self.apply_cursor();
             return;
+        }
+
+        if let WindowEvent::Resized(size) = &event {
+            self.viewport = glam::UVec2::new(size.width, size.height);
         }
 
         if let WindowEvent::Focused(focused) = event {
@@ -277,6 +318,8 @@ impl moho_app::Game for App {
     }
 
     fn init(&mut self, ctx: &mut moho_app::InitContext<'_>) {
+        let size = ctx.window.inner_size();
+        self.viewport = glam::UVec2::new(size.width, size.height);
         crate::app::renderer_setup::init_renderer_and_ui(self, ctx.window, &mut *ctx.renderer);
         crate::app::renderer_setup::apply_video_settings(&self.prefs, ctx.window);
         self.initial_render(ctx);
@@ -554,6 +597,7 @@ mod tests {
         lights: Vec<(glam::Vec3, glam::Vec3, f32, f32)>,
         shadow_qualities: Vec<u8>,
         ssao_qualities: Vec<u8>,
+        view_heights: Vec<Option<f32>>,
         lightings: Vec<LightingGpu>,
         frames_begun: u32,
         cameras: Vec<(glam::Mat4, glam::Mat4, glam::Vec3)>,
@@ -612,6 +656,9 @@ mod tests {
         }
         fn set_ssao_quality(&mut self, quality: u8) {
             self.ssao_qualities.push(quality);
+        }
+        fn set_view_height(&mut self, height: Option<f32>) {
+            self.view_heights.push(height);
         }
     }
 
@@ -870,6 +917,20 @@ mod tests {
 
             assert_eq!(fake.shadow_qualities, vec![2]);
             assert_eq!(fake.ssao_qualities, vec![3]);
+        }
+
+        #[test]
+        fn view_height_request_reaches_the_renderer() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+            app.pending_render
+                .push(RenderRequest::ViewHeight(Some(12.5)));
+            app.pending_render.push(RenderRequest::ViewHeight(None));
+
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.view_heights, vec![Some(12.5), None]);
+            assert!(app.pending_render.is_empty());
         }
 
         #[test]
@@ -1211,7 +1272,6 @@ mod tests {
             app.simulation.set_camera_mode(CameraMode::FirstPerson);
             app.simulation
                 .set_position_yaw_pitch(glam::Vec3::new(100.0, 100.0, 100.0), 0.0, 0.0);
-            app.input.actions.set_filtering(false);
             app.input.actions.mouse_motion(5.0, 5.0);
 
             let cmd = Game::command(&mut app);
@@ -1220,6 +1280,146 @@ mod tests {
             let (yaw, pitch) = app.simulation.yaw_pitch();
             assert!(yaw < 0.0, "yaw = {yaw}");
             assert!(pitch < 0.0, "pitch = {pitch}");
+        }
+    }
+
+    mod pointer_select {
+        use super::*;
+        use glam::{UVec2, Vec3};
+        use moho_input::key::MouseButton;
+
+        const VIEWPORT: UVec2 = UVec2::new(1280, 720);
+
+        /// A flat floor of smooth blocks seen from above and behind, in `mode`.
+        fn app_over_flat_ground(mode: CameraMode) -> App {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(mode);
+            let grid = app
+                .light_system
+                .as_mut()
+                .expect("App starts with a light system")
+                .grid_mut();
+            for x in 2..14 {
+                for z in 2..14 {
+                    for y in 2..=3 {
+                        grid.mutator()
+                            .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                    }
+                }
+            }
+            let eye = Vec3::new(8.0, 14.0, 20.0);
+            let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::new(8.0, 3.0, 8.0), Vec3::Y);
+            let proj = glam::camera::rh::proj::directx::perspective(
+                std::f32::consts::FRAC_PI_3,
+                16.0 / 9.0,
+                0.1,
+                500.0,
+            );
+            app.camera = (view, proj, eye);
+            app.viewport = VIEWPORT;
+            app
+        }
+
+        /// The ground surface point under world `(x, z)`, found by a straight-down cast.
+        fn ground_at(app: &App, x: f32, z: f32) -> Vec3 {
+            let grid = app.light_system.as_ref().expect("light system").grid();
+            flagstone_game::raycast::raycast_surface(
+                grid,
+                Vec3::new(x, 30.0, z),
+                Vec3::NEG_Y,
+                100.0,
+            )
+            .expect("the floor is under the point")
+            .position
+        }
+
+        fn click_on(app: &mut App, world: Vec3) {
+            let (view, proj, _) = app.camera;
+            let ndc = (proj * view).project_point3(world);
+            let (x, y) = (
+                (ndc.x + 1.0) * 0.5 * VIEWPORT.x as f32,
+                (1.0 - ndc.y) * 0.5 * VIEWPORT.y as f32,
+            );
+            app.input.actions.pointer_moved(x, y);
+            app.input.actions.mouse_button(MouseButton::Left, true);
+            app.input.actions.mouse_button(MouseButton::Left, false);
+        }
+
+        #[test]
+        fn strategy_click_records_the_surface_hit() {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            let ground = ground_at(&app, 6.3, 9.1);
+            click_on(&mut app, ground);
+
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+
+            assert!(command.select.is_some());
+            let hit = app.pointer_hit.expect("the click found the ground");
+            assert!(
+                hit.position.distance(ground) < 0.05,
+                "hit {:?} vs ground {ground:?}",
+                hit.position
+            );
+        }
+
+        #[test]
+        fn first_person_click_records_no_pointer_hit() {
+            let mut app = app_over_flat_ground(CameraMode::FirstPerson);
+            let ground = ground_at(&app, 6.3, 9.1);
+            click_on(&mut app, ground);
+
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+
+            assert!(command.select.is_none());
+            assert!(app.pointer_hit.is_none());
+        }
+
+        #[test]
+        fn strategy_click_without_a_pointer_records_no_hit() {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            app.input.actions.mouse_button(MouseButton::Left, true);
+
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+
+            assert!(command.select.is_none());
+            assert!(app.pointer_hit.is_none());
+        }
+
+        #[test]
+        fn strategy_click_on_the_sky_clears_the_previous_hit() {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            let ground = ground_at(&app, 6.3, 9.1);
+            click_on(&mut app, ground);
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+            assert!(app.pointer_hit.is_some());
+            app.input.actions.pointer_moved(640.0, 2.0);
+            app.input.actions.mouse_button(MouseButton::Left, true);
+            app.input.actions.mouse_button(MouseButton::Left, false);
+
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+
+            assert!(command.select.is_some());
+            assert!(app.pointer_hit.is_none());
+        }
+
+        #[test]
+        fn tick_without_a_click_keeps_the_last_hit() {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            let ground = ground_at(&app, 6.3, 9.1);
+            click_on(&mut app, ground);
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+
+            let idle = Game::command(&mut app);
+            tick_app(&mut app, &idle);
+
+            assert!(idle.select.is_none());
+            assert!(app.pointer_hit.is_some());
         }
     }
 

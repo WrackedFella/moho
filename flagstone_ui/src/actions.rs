@@ -3,7 +3,7 @@
 use moho_core::prefs::Prefs;
 use moho_input::Action;
 use moho_input::bindings::{ActionBindings, Binding};
-use moho_input::key::Key;
+use moho_input::key::{Key, MouseButton};
 use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
 
 const fn stick(dir: StickDir) -> Binding {
@@ -23,6 +23,8 @@ const JUMP: [Binding; 2] = [Binding::Key(Key::Space), button(PadButton::South)];
 const DESCEND: [Binding; 2] = [Binding::Key(Key::Ctrl), button(PadButton::LeftTrigger)];
 const SPRINT: [Binding; 2] = [Binding::Key(Key::Shift), button(PadButton::LeftThumb)];
 
+const SELECT: [Binding; 1] = [Binding::Mouse(MouseButton::Left)];
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StrategyAction {
     MoveForward,
@@ -33,6 +35,8 @@ pub enum StrategyAction {
     Descend,
     Sprint,
     Jump,
+    /// The strategy view's primary pointer action.
+    Select,
 }
 
 impl Action for StrategyAction {
@@ -45,6 +49,7 @@ impl Action for StrategyAction {
         StrategyAction::Descend,
         StrategyAction::Sprint,
         StrategyAction::Jump,
+        StrategyAction::Select,
     ];
 
     fn name(self) -> &'static str {
@@ -57,6 +62,7 @@ impl Action for StrategyAction {
             StrategyAction::Descend => "descend",
             StrategyAction::Sprint => "sprint",
             StrategyAction::Jump => "jump",
+            StrategyAction::Select => "select",
         }
     }
 
@@ -70,6 +76,7 @@ impl Action for StrategyAction {
             StrategyAction::Jump => &JUMP,
             StrategyAction::Descend => &DESCEND,
             StrategyAction::Sprint => &SPRINT,
+            StrategyAction::Select => &SELECT,
         }
     }
 }
@@ -86,7 +93,7 @@ pub fn load_bindings(prefs: &Prefs) -> ActionBindings<StrategyAction> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use moho_input::key::Key;
+    use moho_input::key::{Key, MouseButton};
     use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
 
     #[test]
@@ -146,6 +153,7 @@ mod tests {
 
         let actual: Vec<_> = StrategyAction::ALL
             .iter()
+            .filter(|&&a| a != StrategyAction::Select)
             .map(|a| (*a, a.name(), a.default_bindings().to_vec()))
             .collect();
 
@@ -154,6 +162,28 @@ mod tests {
             .map(|&(a, n, k, p)| (a, n, vec![Binding::Key(k), p]))
             .collect();
         assert_eq!(actual, want);
+    }
+
+    #[test]
+    fn select_is_the_left_mouse_button() {
+        assert_eq!(StrategyAction::Select.name(), "select");
+        assert_eq!(
+            StrategyAction::Select.default_bindings(),
+            [Binding::Mouse(MouseButton::Left)]
+        );
+        assert!(StrategyAction::ALL.contains(&StrategyAction::Select));
+    }
+
+    #[test]
+    fn saved_bindings_without_select_load_its_default() {
+        let (prefs, _) = Prefs::parse("[bindings]\nmove_forward = Q\n");
+
+        let bindings = load_bindings(&prefs);
+
+        assert_eq!(
+            bindings.get(StrategyAction::Select),
+            [Binding::Mouse(MouseButton::Left)]
+        );
     }
 
     #[test]

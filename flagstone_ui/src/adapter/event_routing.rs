@@ -142,6 +142,10 @@ pub fn process_console_action(action: crate::overlays::ConsoleAction, event_bus:
             use moho_core::events::DebugEvent;
             event_bus.publish(DebugEvent::ClearMarkers { id });
         }
+        ConsoleAction::SetViewHeight(height) => {
+            use moho_core::events::DebugEvent;
+            event_bus.publish(DebugEvent::SetViewHeight { height });
+        }
         ConsoleAction::Close => {
             use moho_core::events::UiEvent;
             event_bus.publish(UiEvent::MenuHidden {
@@ -638,6 +642,29 @@ mod tests {
                     DebugEvent::ClearMarkers { id: Some(7) },
                     DebugEvent::ClearMarkers { id: None },
                 ] if *a == min && *b == max && *style == moho_render_api::MarkerStyle::Outline
+            ),
+            "events: {published:?}"
+        );
+    }
+
+    #[test]
+    fn console_view_height_action_publishes_debug_event() {
+        use crate::overlays::ConsoleAction;
+        use moho_core::events::DebugEvent;
+        let bus = EventBus::new();
+        let debug = record::<DebugEvent>(&bus);
+
+        process_console_action(ConsoleAction::SetViewHeight(Some(12.5)), &bus);
+        process_console_action(ConsoleAction::SetViewHeight(None), &bus);
+
+        let published: Vec<_> = debug.try_iter().collect();
+        assert!(
+            matches!(
+                published.as_slice(),
+                [
+                    DebugEvent::SetViewHeight { height: Some(h) },
+                    DebugEvent::SetViewHeight { height: None },
+                ] if *h == 12.5
             ),
             "events: {published:?}"
         );

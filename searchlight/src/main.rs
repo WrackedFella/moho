@@ -1,21 +1,21 @@
 //! The FPS prototype binary: loads the arena and runs the fixed-tick loop.
 
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use moho_app::{AppConfig, LoopConfig};
+use moho_core::prefs::Prefs;
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::ActionBindings;
 use moho_physics::MoveSettings;
 use moho_ui_shell::UiShell;
-use searchlight::TICK_HZ;
 use searchlight::arena::{self, Arena};
 use searchlight::brain::EnemyTuning;
 use searchlight::console_commands;
 use searchlight::game::{SearchlightGame, WINDOW_TITLE};
 use searchlight::sim::{SearchlightSim, SimConfig};
+use searchlight::{TICK_HZ, prefs_path, split_console_binding};
 use searchlight_rules::{BodyPart, BodyProfile, Magazine, Rifle};
 
 /// Radians of turn per pixel of mouse motion.
@@ -69,11 +69,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (level, markers) = arena::load(&arena_path)?;
     let arena = Arc::new(Arena::from_level(&level, &markers));
     let sim = SearchlightSim::start(arena.clone(), tuning()?);
-    let (bindings, warnings) = ActionBindings::load(&BTreeMap::new());
-    for warning in warnings {
-        tracing::warn!(?warning, "default bindings");
+    let (prefs, prefs_warnings) = Prefs::load_from(&prefs_path());
+    for warning in prefs_warnings {
+        tracing::warn!(%warning, "Preferences load fallback");
     }
-    let (console, console_warnings) = console_commands::console(&BTreeMap::new());
+    let (console_section, game_section) = split_console_binding(prefs.bindings());
+    let (bindings, warnings) = ActionBindings::load(&game_section);
+    for warning in warnings {
+        tracing::warn!(?warning, "bindings");
+    }
+    let (console, console_warnings) = console_commands::console(&console_section);
     for warning in console_warnings {
         tracing::warn!(?warning, "console binding");
     }

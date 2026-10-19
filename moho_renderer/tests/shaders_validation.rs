@@ -54,6 +54,23 @@ fn shadow_shader_parses_and_validates() {
 }
 
 #[test]
+fn shadow_shader_has_a_fragment_stage() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../shaders/shadow.wgsl");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read shader {}: {e}", path.display()));
+
+    let module = validate("shadow.wgsl", &source, Capabilities::IMMEDIATES);
+
+    assert!(
+        module
+            .entry_points
+            .iter()
+            .any(|e| e.name == "fs_main" && e.stage == naga::ShaderStage::Fragment),
+        "fs_main fragment entry point missing"
+    );
+}
+
+#[test]
 fn gtao_shader_parses_and_validates() {
     validate_file("gtao.wgsl", Capabilities::empty());
 }

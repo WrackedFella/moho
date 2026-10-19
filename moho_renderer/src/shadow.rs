@@ -453,7 +453,8 @@ impl ShadowSystem {
         )
     }
 
-    /// Stage 6: Compile the shadow vertex shader and assemble the depth-only render pipeline.
+    /// Stage 6: Compile the shadow shader and assemble the depth-only render pipeline; its
+    /// fragment stage only discards above the view-height cut.
     fn create_render_pipeline(
         device: &wgpu::Device,
         csm_pass_bgl: &wgpu::BindGroupLayout,
@@ -501,7 +502,13 @@ impl ShadowSystem {
                     }),
                 ],
             },
-            fragment: None,
+            // Fragment stage only discards above the view-height cut; no colour output.
+            fragment: Some(wgpu::FragmentState {
+                module: &shadow_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[],
+            }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
@@ -832,7 +839,7 @@ impl ShadowSystem {
             light3_m3: [0.0, 0.0, 0.0, 1.0],
 
             light_intensities: [sun_intensity, moon_intensity, 0.0, 0.0],
-            // metadata: [shadow_distance, light_size, pcss_quality, unused]
+            // metadata: [shadow_distance, light_size, pcss_quality, view-height cut (set per frame by shadow_ops)]
             metadata: [
                 SHADOW_DISTANCE,
                 self.pcss_settings.light_size,

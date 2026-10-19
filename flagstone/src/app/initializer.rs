@@ -18,6 +18,7 @@
 use flagstone_game::scene::SceneEntities;
 use flagstone_game::simulation::SimulationController;
 use flagstone_ui::actions::{StrategyAction, load_bindings};
+use moho_input::LookSettings;
 use moho_input::action_map::ActionMap;
 use std::sync::Arc;
 
@@ -194,11 +195,14 @@ impl AppInitializer {
 }
 
 /// Builds the action map a game runs on from `config`: the prefs' bindings, the
-/// scaled mouse sensitivity and the input-filtering switch. Shared by startup and
+/// scaled mouse sensitivity and the mouse-smoothing switch. Shared by startup and
 /// by adopting saved settings so the two can't drift apart.
 pub(crate) fn build_actions(config: &AppConfig) -> ActionMap<StrategyAction> {
     let mut actions = ActionMap::new(load_bindings(&config.prefs), config.mouse_sensitivity);
-    actions.set_filtering(config.input_filtering_enabled);
+    actions.set_look(LookSettings {
+        look_per_count: config.mouse_sensitivity,
+        smoothing: config.mouse_smoothing,
+    });
     actions
 }
 
@@ -207,10 +211,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_applies_config_sensitivity_and_filtering() {
+    fn build_applies_config_sensitivity_and_smoothing() {
         let config = AppConfig::builder()
             .mouse_sensitivity(0.5)
-            .input_filtering(false)
+            .mouse_smoothing(false)
             .build();
         let mut initialized = AppInitializer::new(config)
             .build()
@@ -219,6 +223,18 @@ mod tests {
         initialized.actions.mouse_motion(10.0, 0.0);
 
         assert_eq!(initialized.actions.end_tick().look(), (5.0, 0.0));
+    }
+
+    #[test]
+    fn build_actions_applies_mouse_smoothing_from_prefs() {
+        let prefs = Prefs::default()
+            .with_mouse_sensitivity(250.0)
+            .with_mouse_smoothing(true);
+        let mut actions = build_actions(&AppConfig::from_prefs_struct(prefs));
+
+        actions.mouse_motion(10.0, 0.0);
+
+        assert_eq!(actions.end_tick().look(), (2.5, 0.0));
     }
 
     #[test]

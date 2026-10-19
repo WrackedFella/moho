@@ -91,30 +91,27 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
 
         ui.add_space(12.0);
 
-        // Input Filtering
         {
-            let saved_filtering = menu.state.prefs().input_filtering_enabled();
-            let is_dirty = menu.state.staged().input_filtering_enabled() != saved_filtering;
+            let saved_smoothing = menu.state.prefs().mouse_smoothing();
+            let is_dirty = menu.state.staged().mouse_smoothing() != saved_smoothing;
 
             ui.horizontal(|ui| {
                 ui.allocate_ui_with_layout(
                     egui::vec2(label_width, 28.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                        ui.label("Input Filtering:");
+                        ui.label("Mouse smoothing:");
                     },
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let checkbox = ui.checkbox(
-                        menu.state.staged_mut().input_filtering_enabled_mut(),
-                        "Enable",
-                    );
+                    let checkbox =
+                        ui.checkbox(menu.state.staged_mut().mouse_smoothing_mut(), "Enable");
                     SettingsMenu::paint_dirty_decor(ui, &checkbox, is_dirty);
                 });
             });
 
             if is_dirty {
-                menu.state.mark_dirty(SettingsField::InputFiltering);
+                menu.state.mark_dirty(SettingsField::MouseSmoothing);
             }
         }
     });
@@ -155,6 +152,29 @@ mod tests {
 
         assert!(menu.has_unsaved_changes());
         assert!(has_dirty_decor(&output));
+    }
+
+    fn has_text(output: &egui::FullOutput, needle: &str) -> bool {
+        fn find(shape: &egui::epaint::Shape, needle: &str) -> bool {
+            match shape {
+                egui::epaint::Shape::Text(t) => t.galley.text().contains(needle),
+                egui::epaint::Shape::Vec(v) => v.iter().any(|s| find(s, needle)),
+                _ => false,
+            }
+        }
+        output.shapes.iter().any(|c| find(&c.shape, needle))
+    }
+
+    #[test]
+    fn changed_mouse_smoothing_is_dirty_and_decorated() {
+        let mut menu = SettingsMenu::with_prefs(Prefs::default());
+        *menu.state.staged_mut().mouse_smoothing_mut() = true;
+
+        let output = render_menu(&mut menu);
+
+        assert!(menu.has_unsaved_changes());
+        assert!(has_dirty_decor(&output));
+        assert!(has_text(&output, "Mouse smoothing"));
     }
 
     #[test]

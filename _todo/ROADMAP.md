@@ -161,9 +161,9 @@ its consumers near, not when the earlier wave fully closes.
 | # | Feature | Engine items it needs | Notes |
 |---|---|---|---|
 | S.1 | [SG-F1](https://github.com/WrackedFella/moho/issues/311) possessing a pawn feels right | 2.1 for feel | — |
-| S.2 | [SG-F2](https://github.com/WrackedFella/moho/issues/308) a saved world comes back as I left it: [SG-F2-01](https://github.com/WrackedFella/moho/issues/341), [SG-F2-03](https://github.com/WrackedFella/moho/issues/343), [SG-F2-02](https://github.com/WrackedFella/moho/issues/342) | none | its load-path card covers the #264 gap (scene load skips releasing held keys) |
-| S.3 | [SG-F5](https://github.com/WrackedFella/moho/issues/309) run the colony from above, step into a pawn | 2.6, 2.7 | block and pawn picking are strategy-line |
-| S.4 | [SG-F4](https://github.com/WrackedFella/moho/issues/310) pawns dig what I mark | 2.5a, 2.7, 2.8; then 2.9, 2.10 | first new persisted type; #303 voxel routing is its card. Before SG-F3 |
+| S.2 | [SG-F2](https://github.com/WrackedFella/moho/issues/308) a saved world comes back as I left it: [SG-F2-01](https://github.com/WrackedFella/moho/issues/341), [SG-F2-03](https://github.com/WrackedFella/moho/issues/343), [SG-F2-02](https://github.com/WrackedFella/moho/issues/342) | none | ENG-F10-03 is done, so these no longer race the voxel move; its load-path card covers the #264 gap (scene load skips releasing held keys) |
+| S.3 | [SG-F5](https://github.com/WrackedFella/moho/issues/309) run the colony from above, step into a pawn | 2.6, 2.7 (both done) | block and pawn picking are strategy-line; its pan, zoom and possess cards can run alongside S.2 |
+| S.4 | [SG-F4](https://github.com/WrackedFella/moho/issues/310) pawns dig what I mark | 2.8 (2.5a, 2.7 done; 2.9, 2.10 delivered, adopt after the skeleton) | first new persisted type; #303 voxel routing is its card. Before SG-F3 |
 | S.5 | [SG-F3](https://github.com/WrackedFella/moho/issues/312) buildings and construction (not a gate item) | 2.7 (placement preview) | after SG-F4 |
 | S.6 | SG-F6 new worlds look intentional ([draft](flagstone/SG-F6-world-generation/_feature.md), not filed; not a gate item) | none | waits for the user to rank the world-generation problems |
 
@@ -256,3 +256,4 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-15 | The strategy line is renamed flagstone and the FPS line searchlight inside the monorepo, ahead of the split; engine crates keep `moho_`, and SG-/FPS- IDs stay | [ENG-F27](https://github.com/WrackedFella/moho/issues/361) |
 | 2026-10-15 | New ENG-F28 (Source-like mouse look) in M2 wave 2, not a gate item: look turns every frame ahead of the tick that consumes it (ADR-0011 holds), raw by default, settings in the same feature | [ENG-F28](https://github.com/WrackedFella/moho/issues/373) |
 | 2026-10-16 | ENG-F18's console moves to wave 2 for FPS testing (#402): games inherit the engine's commands and add their own, a taken name is refused; game settings persist in each game's own prefs file. Strategy migration and on-screen text stay in wave 4 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) |
+| 2026-10-19 | Strategy plan in four milestones named for what the player can do: trust the world (SG-F2, SG-F1-04), run the colony from above (SG-F5), pawns dig what I mark (SG-F4), build and polish (SG-F3, SG-F6); the first two may overlap, and the SG-F4 BA pass starts during SG-F5 | [flagstone-milestones](https://github.com/WrackedFella/moho/issues/308) |

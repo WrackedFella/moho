@@ -1,6 +1,6 @@
 # 0011 — The simulation stays network-ready
 
-**Status:** Accepted (2026-10-08)
+**Status:** Accepted (2026-10-08); narrowed by [0018](0018-paused-commands-apply-at-the-tick-boundary.md): while paused, a command may apply at the tick boundary without a tick
 
 ## Context
 

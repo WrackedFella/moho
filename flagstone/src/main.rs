@@ -70,6 +70,7 @@ enum RenderRequest {
     },
     ShadowQuality(u8),
     SsaoQuality(u8),
+    ViewHeight(Option<f32>),
 }
 
 struct App {
@@ -143,6 +144,11 @@ struct App {
     /// from `simulation.player_controller`, which is camera/movement-only —
     /// see `flagstone_game::pawn::Pawn`'s doc comment.
     pawn: flagstone_game::pawn::Pawn,
+
+    /// The window's physical size, which pointer positions are measured in.
+    viewport: glam::UVec2,
+    /// The surface under the last strategy-view click, `None` when it hit nothing.
+    pointer_hit: Option<flagstone_game::raycast::SurfaceHit>,
 }
 
 impl App {
@@ -223,6 +229,9 @@ impl App {
             lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
 
             pawn: flagstone_game::pawn::Pawn::default(),
+
+            viewport: glam::UVec2::ZERO,
+            pointer_hit: None,
         }
     }
 
@@ -482,7 +491,6 @@ impl App {
     /// - Update game_state
     /// - Release every held input action
     /// - Update UI visibility and state
-    /// - Handle cursor grab/release
     /// - Show specific menu if requested
     fn apply_transition(&mut self, actions: flagstone_ui::StateTransitionActions) {
         tracing::info!(
@@ -521,8 +529,14 @@ impl App {
             );
         }
 
-        // Handle cursor state
-        if actions.cursor_grabbed {
+        self.apply_cursor();
+    }
+
+    fn apply_cursor(&mut self) {
+        if flagstone_ui::app_state::game_state::cursor_grabbed(
+            self.game_state,
+            self.simulation.camera_mode(),
+        ) {
             self.grab_cursor();
         } else {
             self.release_cursor();

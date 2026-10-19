@@ -4,9 +4,9 @@ name: PR review
 # the verdict is `changes`, devflow:respond fixes the findings and the workflow
 # re-dispatches itself for another review. At most two fix rounds, then a third review
 # with no fixes. The review is posted as a comment (`PR approval` is unset); a human
-# approves and merges. Pushes and PRs made with the default token start no workflow, so
-# the orchestrate job in claude.yml dispatches round 1 itself and this workflow
-# dispatches each later round.
+# approves and merges. Each review waits for CI on the PR head to finish. Pushes and PRs
+# made with the default token start no workflow, so the orchestrate job in claude.yml
+# dispatches round 1 itself and this workflow dispatches each later round.
 on:
   pull_request:
     types: [ready_for_review]
@@ -69,6 +69,28 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           echo "HEAD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      # The review reads CI as evidence, and a pending CI ends it without a verdict, so wait
+      # for the CI run on this head before starting Claude. A head with no CI run (a push by
+      # the default token starts none) is reviewed after five minutes. Polling costs no tokens.
+      - name: Wait for CI
+        if: steps.pr.outputs.skip != 'true'
+        run: |
+          deadline=$((SECONDS + 2700))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            status=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$HEAD_SHA" \
+              --limit 1 --json status --jq '.[0].status // "none"')
+            if [ "$status" = "completed" ]; then
+              echo "CI finished on $HEAD_SHA." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            if [ "$status" = "none" ] && [ "$SECONDS" -gt 300 ]; then
+              echo "No CI run for $HEAD_SHA; reviewing without one." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::CI on $HEAD_SHA did not finish in 45 minutes."
+          exit 1
       # Installs the pinned Rust toolchain and the gate's tools (just, nextest, ...).
       - name: Install toolchain
         if: steps.pr.outputs.skip != 'true'
