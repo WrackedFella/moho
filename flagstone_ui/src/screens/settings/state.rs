@@ -202,6 +202,23 @@ mod tests {
     }
 
     #[test]
+    fn saving_settings_keeps_debug_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.ini");
+        let mut prefs = Prefs::default();
+        prefs.set_debug_value("debug_overlay", "on").unwrap();
+        let mut state = SettingsState::from_prefs_at(prefs, path.clone());
+        *state.staged_mut().music_volume_mut() = 2.5;
+
+        state.apply_changes().unwrap();
+        let (reloaded, warnings) = Prefs::load_from(&path);
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(reloaded.music_volume(), 2.5);
+        assert_eq!(reloaded.debug_value("debug_overlay"), Some("on"));
+    }
+
+    #[test]
     fn video_setting_change_marks_dirty_and_reverts() {
         use crate::prefs::WindowMode;
         let mut state = SettingsState::from_prefs(Prefs::default());
