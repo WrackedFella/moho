@@ -458,6 +458,16 @@ impl Stage {
 
     /// Puts every living enemy's segments where the sim has it, and takes the dead ones out.
     fn sync_enemies(&mut self, sim: &FpsSim) {
+        let known = self.dummy_count + sim.enemy_count();
+        for rig in &mut self.enemies {
+            if usize::from(rig.target) >= known && rig.shown {
+                rig.shown = false;
+                let meshes = self.scene.world_meshes_mut();
+                for slot in 0..7 {
+                    meshes.remove(rig.mesh_id(slot));
+                }
+            }
+        }
         for index in 0..sim.enemy_count() {
             let target = u16::try_from(self.dummy_count + index)
                 .expect("the sim numbers its targets with a u16");
@@ -733,6 +743,10 @@ impl Game for FpsGame {
         let vitals = hud::death_text(dead).map_or_else(
             || hud::health_text(sim.player_body().health(), sim.player_max_health()),
             str::to_owned,
+        );
+        let vitals = format!(
+            "{vitals} | {}",
+            hud::arena_text(self.mode.wave(), self.mode.score())
         );
         self.stage.refresh_title(&vitals);
         self.stage.refresh_hud(dead);

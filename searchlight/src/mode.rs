@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::arena::Arena;
 use crate::input::FpsCommand;
-use crate::sim::{Feedback, FpsSim, SimConfig};
+use crate::sim::{Feedback, FpsSim, SimConfig, Start};
 use crate::wave::{WaveState, WaveTuning};
 
 /// A sim that starts empty and is fed waves of enemies as the player clears them.
@@ -22,37 +22,74 @@ impl ArenaMode {
     /// A mode over `arena` whose first wave is already standing, as far as the enemy markers
     /// allow, before the first tick.
     pub fn new(arena: Arc<Arena>, config: SimConfig, waves: WaveTuning) -> Self {
-        let _ = (arena, config, waves);
-        todo!()
+        let mut mode = Self {
+            sim: FpsSim::with_start(arena, config, Start::Empty),
+            waves: WaveState::begin(&waves),
+            tuning: waves,
+            seen_kills: 0,
+        };
+        mode.step_waves();
+        mode
+    }
+
+    /// Scores the sim's new kills and spawns the wave's enemies at the first free markers; none
+    /// while the player is dead.
+    fn step_waves(&mut self) {
+        let kills = self.sim.kills();
+        let free = if self.sim.player_body().is_dead() {
+            Vec::new()
+        } else {
+            self.sim.free_enemy_spawns()
+        };
+        let spawn = self.waves.step(
+            &self.tuning,
+            kills - self.seen_kills,
+            self.sim.enemies_alive(),
+            free.len(),
+        );
+        self.seen_kills = kills;
+        for &marker in free.iter().take(spawn as usize) {
+            self.sim
+                .spawn_enemy(marker)
+                .expect("a marker the sim reported free takes an enemy");
+        }
     }
 
     /// Runs one tick of `dt` seconds: the sim, then the score of its kills and the wave's
     /// spawns. A restart of a dead player begins wave 1 again with no score.
     pub fn tick(&mut self, command: &FpsCommand, dt: f32) {
-        let _ = (command, dt);
-        todo!()
+        let restarting = command.restart && self.sim.player_body().is_dead();
+        self.sim.tick(command, dt);
+        if restarting {
+            self.waves = WaveState::begin(&self.tuning);
+            self.seen_kills = 0;
+        }
+        self.step_waves();
     }
 
+    /// The simulation underneath.
     pub fn sim(&self) -> &FpsSim {
-        todo!()
+        &self.sim
     }
 
     /// Takes the sim's pending feedback, oldest first.
     pub fn drain_feedback(&mut self) -> Vec<Feedback> {
-        todo!()
+        self.sim.drain_feedback()
     }
 
+    /// The running wave, counting from 1.
     pub fn wave(&self) -> u32 {
-        todo!()
+        self.waves.wave()
     }
 
+    /// Points scored since the last restart.
     pub fn score(&self) -> u32 {
-        todo!()
+        self.waves.score()
     }
 
     #[cfg(test)]
     pub(crate) fn sim_mut(&mut self) -> &mut FpsSim {
-        todo!()
+        &mut self.sim
     }
 }
 
@@ -308,7 +345,8 @@ mod tests {
 
         assert_eq!(waiting, 2);
         assert_eq!(freed, (3, 2, 1, 100));
-        assert_enemy_at(&mode, 2, markers[0]);
+        assert_enemy_at(&mode, 3, markers[0]);
+        assert_enemy_at(&mode, 4, markers[1]);
         assert_eq!(mode.wave(), 2);
         assert_eq!(mode.score(), 300);
         assert_eq!(mode.sim().enemies_alive(), 2);

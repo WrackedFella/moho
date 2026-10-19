@@ -236,6 +236,8 @@ pub struct FpsSim {
     rng: SplitMix64,
     weapon: Weapon,
     outbox: Vec<Feedback>,
+    /// Lethal player shots on enemies since the sim was built or last restarted.
+    kills: u32,
     /// What a restart rebuilds the characters from, in the same world.
     origin: (Spawns, SimConfig),
 }
@@ -245,9 +247,43 @@ pub struct FpsSim {
 struct Spawns {
     player: Vec3,
     dummies: Vec<Vec3>,
+    /// Enemies standing from the start, a prefix of the targets after the dummies.
     enemies: Vec<Vec3>,
+    /// Every enemy spawn marker the arena has, whether or not an enemy starts on it.
+    markers: Vec<Vec3>,
     route: Vec<Vec3>,
     covers: Vec<Vec3>,
+}
+
+/// A target standing on the floor point `spawn` as target number `index`. With a `route` it is
+/// an enemy, facing the nearest waypoint; without, a dummy.
+fn new_target(
+    world: &mut PhysicsWorld,
+    index: usize,
+    spawn: Vec3,
+    route: Option<&[Vec3]>,
+    profile: BodyProfile,
+) -> Target {
+    let (target, centre) = dummy_at(index, spawn);
+    let handle = world.add_character(centre);
+    for volume in dummy_hit_volumes(target) {
+        world
+            .add_hit_volume(handle, volume)
+            .expect("the target was added a moment ago");
+    }
+    let brain = route.map(|route| {
+        let (nearest, yaw) = nearest_waypoint(spawn, route);
+        world
+            .set_character_look(handle, yaw, 0.0)
+            .expect("the enemy was added a moment ago");
+        Brain::Patrol { next: nearest }
+    });
+    Target {
+        handle: Some(handle),
+        body: Body::new(profile),
+        brain,
+        hurt: None,
+    }
 }
 
 impl FpsSim {
@@ -267,6 +303,7 @@ impl FpsSim {
             player: player_spawn,
             dummies: dummy_spawns.to_vec(),
             enemies: Vec::new(),
+            markers: Vec::new(),
             route: Vec::new(),
             covers: Vec::new(),
         };
@@ -288,26 +325,8 @@ impl FpsSim {
             .offset;
         let mut targets = Vec::new();
         for (index, &spawn) in spawns.dummies.iter().chain(&spawns.enemies).enumerate() {
-            let (target, centre) = dummy_at(index, spawn);
-            let handle = world.add_character(centre);
-            for volume in dummy_hit_volumes(target) {
-                world
-                    .add_hit_volume(handle, volume)
-                    .expect("the target was added a moment ago");
-            }
-            let brain = (index >= spawns.dummies.len()).then(|| {
-                let (nearest, yaw) = nearest_waypoint(spawn, &spawns.route);
-                world
-                    .set_character_look(handle, yaw, 0.0)
-                    .expect("the enemy was added a moment ago");
-                Brain::Patrol { next: nearest }
-            });
-            targets.push(Target {
-                handle: Some(handle),
-                body: Body::new(config.body),
-                brain,
-                hurt: None,
-            });
+            let route = (index >= spawns.dummies.len()).then_some(spawns.route.as_slice());
+            targets.push(new_target(&mut world, index, spawn, route, config.body));
         }
         // Index the new hit volumes so the first tick's rays can strike them.
         world.step(SETTLE_DT);
@@ -333,6 +352,7 @@ impl FpsSim {
             rng: SplitMix64(config.enemy.seed),
             weapon: Weapon::Ready,
             outbox: Vec::new(),
+            kills: 0,
             origin: (spawns, config),
         }
     }
@@ -593,13 +613,25 @@ impl FpsSim {
         else {
             return;
         };
+        self.apply_player_hit(target, part, self.damage, state.position);
+    }
+
+    /// Lands a player's hit of `damage` on `part` of target `target`, shot from `from`: wounds
+    /// the body, alerts a surviving enemy, counts a kill and reports the hit.
+    fn apply_player_hit(&mut self, target: u16, part: BodyPart, damage: u32, from: Vec3) {
         let Some(struck) = self.targets.get_mut(usize::from(target)) else {
             tracing::warn!(target, "shot struck a target with no body, dropped");
             return;
         };
-        let report = struck.body.hit(part, self.damage);
-        if struck.brain.is_some() && !struck.body.is_dead() {
-            struck.hurt = Some(state.position);
+        let was_dead = struck.body.is_dead();
+        let report = struck.body.hit(part, damage);
+        let is_dead = struck.body.is_dead();
+        if struck.brain.is_some() {
+            if is_dead {
+                self.kills += u32::from(!was_dead);
+            } else {
+                struck.hurt = Some(from);
+            }
         }
         self.outbox.push(Feedback::Hit {
             target,
@@ -659,8 +691,18 @@ impl FpsSim {
     /// A sim started from `arena` as [`Self::start`] does, except that with [`Start::Empty`]
     /// no enemy stands at the markers; a restart rebuilds through the same `start`.
     pub fn with_start(arena: Arc<Arena>, config: SimConfig, start: Start) -> Self {
-        let _ = (arena, config, start);
-        todo!()
+        let spawns = Spawns {
+            player: arena.player_spawn,
+            dummies: arena.dummy_spawns.clone(),
+            enemies: match start {
+                Start::AtMarkers => arena.enemy_spawns.clone(),
+                Start::Empty => Vec::new(),
+            },
+            markers: arena.enemy_spawns.clone(),
+            route: arena.route.clone(),
+            covers: arena.covers.clone(),
+        };
+        Self::assemble(arena.physics_world(), spawns, config)
     }
 
     /// Adds one enemy at enemy spawn marker `marker`, set up like a marker-start enemy.
@@ -669,29 +711,73 @@ impl FpsSim {
     /// If there is no such marker, a character stands on it, or the new enemy's target number
     /// does not fit a `u16`.
     pub fn spawn_enemy(&mut self, marker: usize) -> Result<(), SpawnError> {
-        let _ = marker;
-        todo!()
+        let spawn = *self
+            .origin
+            .0
+            .markers
+            .get(marker)
+            .ok_or(SpawnError::UnknownMarker { marker })?;
+        if !self.free_enemy_spawns().contains(&marker) {
+            return Err(SpawnError::OccupiedMarker { marker });
+        }
+        let index = self.targets.len();
+        u16::try_from(index).map_err(|_| SpawnError::TooManyTargets)?;
+        let target = new_target(
+            &mut self.world,
+            index,
+            spawn,
+            Some(&self.route),
+            self.origin.1.body,
+        );
+        self.targets.push(target);
+        // Index the new hit volumes so the next tick's rays can strike them.
+        self.world.step(SETTLE_DT);
+        Ok(())
     }
 
     /// Enemy spawn markers, ascending, with no living character within two capsule radii.
     pub fn free_enemy_spawns(&self) -> Vec<usize> {
-        todo!()
+        let occupants: Vec<Vec3> = self
+            .targets
+            .iter()
+            .filter_map(|target| target.handle)
+            .chain([self.player])
+            .filter_map(|handle| self.world.character(handle))
+            .map(|state| state.position)
+            .collect();
+        self.origin
+            .0
+            .markers
+            .iter()
+            .enumerate()
+            .filter(|(_, marker)| {
+                occupants.iter().all(|position| {
+                    (position.x - marker.x).hypot(position.z - marker.z) >= 2.0 * CAPSULE_RADIUS
+                })
+            })
+            .map(|(index, _)| index)
+            .collect()
     }
 
     /// Enemies still in the world.
     pub fn enemies_alive(&self) -> usize {
-        todo!()
+        self.targets[self.dummy_count..]
+            .iter()
+            .filter(|enemy| enemy.handle.is_some())
+            .count()
     }
 
     /// Enemies the player's shots have killed since the sim was built or last restarted.
     pub fn kills(&self) -> u32 {
-        todo!()
+        self.kills
     }
 
     /// Applies a lethal hit to enemy `index` (enemy order) as a player's shot would.
     #[cfg(test)]
-    pub(crate) fn kill_enemy(&mut self, _index: usize) {
-        todo!()
+    pub(crate) fn kill_enemy(&mut self, index: usize) {
+        let target = u16::try_from(self.dummy_count + index).expect("target numbers fit a u16");
+        let from = self.player().position;
+        self.apply_player_hit(target, BodyPart::Torso, 1_000_000, from);
     }
 
     /// Kills the player outright.
@@ -706,14 +792,7 @@ impl FpsSim {
     /// # Panics
     /// If the arena has an enemy spawn but no route, or more targets than a `u16` can number.
     pub fn start(arena: Arc<Arena>, config: SimConfig) -> Self {
-        let spawns = Spawns {
-            player: arena.player_spawn,
-            dummies: arena.dummy_spawns.clone(),
-            enemies: arena.enemy_spawns.clone(),
-            route: arena.route.clone(),
-            covers: arena.covers.clone(),
-        };
-        Self::assemble(arena.physics_world(), spawns, config)
+        Self::with_start(arena, config, Start::AtMarkers)
     }
 
     pub fn player_body(&self) -> &Body {

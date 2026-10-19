@@ -1,5 +1,9 @@
 //! Waves of enemies and the score for killing them, as plain numbers: no physics, no markers.
 
+const DEFAULT_FIRST_SIZE: u32 = 2;
+const DEFAULT_GROWTH: u32 = 2;
+const DEFAULT_SCORE_PER_KILL: u32 = 100;
+
 /// Why a [`WaveTuning`] was refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -27,32 +31,48 @@ impl WaveTuning {
     /// # Errors
     /// If `first_size` or `growth` is zero.
     pub fn new(first_size: u32, growth: u32, score_per_kill: u32) -> Result<Self, WaveTuningError> {
-        let _ = (first_size, growth, score_per_kill);
-        todo!()
+        if first_size == 0 {
+            return Err(WaveTuningError::ZeroFirstSize);
+        }
+        if growth == 0 {
+            return Err(WaveTuningError::ZeroGrowth);
+        }
+        Ok(Self {
+            first_size,
+            growth,
+            score_per_kill,
+        })
     }
 
+    /// Enemies in wave 1.
     pub fn first_size(&self) -> u32 {
-        todo!()
+        self.first_size
     }
 
+    /// Enemies each wave adds over the one before.
     pub fn growth(&self) -> u32 {
-        todo!()
+        self.growth
     }
 
+    /// Score for one kill.
     pub fn score_per_kill(&self) -> u32 {
-        todo!()
+        self.score_per_kill
     }
 
     /// Enemies in `wave`, counting the first wave as 1; saturates at `u32::MAX`.
     pub fn size(&self, wave: u32) -> u32 {
-        let _ = wave;
-        todo!()
+        self.first_size
+            .saturating_add(self.growth.saturating_mul(wave.saturating_sub(1)))
     }
 }
 
 impl Default for WaveTuning {
     fn default() -> Self {
-        todo!()
+        Self {
+            first_size: DEFAULT_FIRST_SIZE,
+            growth: DEFAULT_GROWTH,
+            score_per_kill: DEFAULT_SCORE_PER_KILL,
+        }
     }
 }
 
@@ -67,20 +87,26 @@ pub struct WaveState {
 impl WaveState {
     /// Wave 1 with nothing spawned yet and no score.
     pub fn begin(tuning: &WaveTuning) -> Self {
-        let _ = tuning;
-        todo!()
+        Self {
+            wave: 1,
+            to_spawn: tuning.size(1),
+            score: 0,
+        }
     }
 
+    /// The running wave, counting from 1.
     pub fn wave(&self) -> u32 {
-        todo!()
+        self.wave
     }
 
+    /// Points scored so far.
     pub fn score(&self) -> u32 {
-        todo!()
+        self.score
     }
 
+    /// Enemies of the running wave that have not appeared yet.
     pub fn to_spawn(&self) -> u32 {
-        todo!()
+        self.to_spawn
     }
 
     /// Scores `kills`, starts the next wave if this one is cleared (nothing left to spawn and
@@ -93,8 +119,18 @@ impl WaveState {
         alive: usize,
         free_spawns: usize,
     ) -> u32 {
-        let _ = (tuning, kills, alive, free_spawns);
-        todo!()
+        self.score = self
+            .score
+            .saturating_add(kills.saturating_mul(tuning.score_per_kill));
+        if self.to_spawn == 0 && alive == 0 {
+            self.wave = self.wave.saturating_add(1);
+            self.to_spawn = tuning.size(self.wave);
+        }
+        let spawn = u32::try_from(free_spawns)
+            .unwrap_or(u32::MAX)
+            .min(self.to_spawn);
+        self.to_spawn -= spawn;
+        spawn
     }
 }
 

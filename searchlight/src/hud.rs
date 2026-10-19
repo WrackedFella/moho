@@ -83,8 +83,7 @@ pub fn health_text(health: u32, max_health: u32) -> String {
 
 /// The wave and score line, such as `Wave 3  Score 200`.
 pub fn arena_text(wave: u32, score: u32) -> String {
-    let _ = (wave, score);
-    todo!()
+    format!("Wave {wave}  Score {score}")
 }
 
 /// What the dead player reads in the title, or `None` while alive.
