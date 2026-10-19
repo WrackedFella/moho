@@ -91,7 +91,6 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
 
         ui.add_space(12.0);
 
-        // Mouse smoothing
         {
             let saved_smoothing = menu.state.prefs().mouse_smoothing();
             let is_dirty = menu.state.staged().mouse_smoothing() != saved_smoothing;

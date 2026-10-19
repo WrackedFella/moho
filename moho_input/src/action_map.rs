@@ -76,7 +76,7 @@ impl<A: Action> ActionFrame<A> {
         self.released & bit(action) != 0
     }
 
-    /// Look for the tick: mouse counts (smoothed if enabled) scaled per count, plus the stick.
+    /// Look for the tick: scaled (and, if enabled, smoothed) mouse counts plus the stick.
     pub fn look(&self) -> (f32, f32) {
         self.look
     }
@@ -110,7 +110,7 @@ pub struct ActionMap<A: Action> {
 }
 
 impl<A: Action> ActionMap<A> {
-    /// Raw look: no smoothing, `look_per_count` radians per mouse count.
+    /// Raw look: no smoothing.
     pub fn new(bindings: ActionBindings<A>, look_per_count: f32) -> Self {
         const { assert!(A::ALL.len() <= 64, "frame masks hold at most 64 actions") };
         Self {
