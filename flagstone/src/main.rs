@@ -490,7 +490,6 @@ impl App {
     /// - Update game_state
     /// - Release every held input action
     /// - Update UI visibility and state
-    /// - Handle cursor grab/release
     /// - Show specific menu if requested
     fn apply_transition(&mut self, actions: flagstone_ui::StateTransitionActions) {
         tracing::info!(

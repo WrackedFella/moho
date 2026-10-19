@@ -99,9 +99,6 @@ impl EventProcessor {
             }
             UiEvent::OverlayToggled { name, visible } => {
                 tracing::info!(name = %name, visible, "Overlay toggled");
-                if visible && let Some(window) = &app.window {
-                    window.set_cursor_visible(true);
-                }
             }
             UiEvent::SettingsSaved => {
                 tracing::info!("Settings saved");
