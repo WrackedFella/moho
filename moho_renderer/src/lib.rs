@@ -144,6 +144,10 @@ pub trait RendererBackend {
     /// Override the debug view mode in the lighting the shader reads; `None` leaves the
     /// game's own value. No-op by default.
     fn set_debug_view(&mut self, _mode: Option<u32>) {}
+    /// Draw nothing in the world above `height` metres (`None` clears the cut).
+    /// A non-finite height counts as `None`. Sticky until changed. No-op by
+    /// default.
+    fn set_view_height(&mut self, _height: Option<f32>) {}
     /// Queue the frame's box markers to draw over the world: translucent
     /// `fills` and edge-only `outlines`, each sorted far to near. Called once
     /// per frame after the transparent draws and before `submit_frame`. No-op
@@ -216,6 +220,9 @@ impl RendererBackend for Renderer<'_> {
     }
     fn set_debug_view(&mut self, mode: Option<u32>) {
         self.set_debug_view(mode);
+    }
+    fn set_view_height(&mut self, height: Option<f32>) {
+        self.set_view_height(height);
     }
     fn enqueue_markers(
         &mut self,

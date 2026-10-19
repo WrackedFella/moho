@@ -3,7 +3,7 @@
 //! This module handles shadow matrix calculation and shadow pass rendering
 //! for multi-light shadow mapping (Sun, Moon, Dynamic lights).
 
-use crate::gpu_types::ShadowMatrixGpu;
+use crate::gpu_types::{MultiLightShadowGpu, ShadowMatrixGpu};
 use crate::shadow::ShadowSystem;
 use crate::types::{GpuInstance, MeshEntry};
 use glam::Vec3;
@@ -18,7 +18,13 @@ use wgpu::{Buffer, CommandEncoder, Queue};
 /// * `shadow_system` - Shadow system containing buffers and state
 /// * `queue` - WGPU queue for buffer writes
 /// * `cam_pos` - Camera position in world space
-pub fn update_shadow_matrices(shadow_system: &mut ShadowSystem, queue: &Queue, cam_pos: Vec3) {
+/// * `cut` - View-height cut, from `view_height_uniform`
+pub fn update_shadow_matrices(
+    shadow_system: &mut ShadowSystem,
+    queue: &Queue,
+    cam_pos: Vec3,
+    cut: f32,
+) {
     let lighting = &shadow_system.current_lighting;
 
     let sun_dir = Vec3::new(
@@ -34,7 +40,10 @@ pub fn update_shadow_matrices(shadow_system: &mut ShadowSystem, queue: &Queue, c
     );
 
     // Calculate multi-light shadow matrices
-    let multi_light_gpu = shadow_system.calculate_multi_light_matrices(sun_dir, moon_dir, cam_pos);
+    let multi_light_gpu = with_view_height(
+        shadow_system.calculate_multi_light_matrices(sun_dir, moon_dir, cam_pos),
+        cut,
+    );
 
     // Upload multi-light shadow data to csm buffer (which is now used for multi-light)
     queue.write_buffer(
@@ -55,6 +64,12 @@ pub fn update_shadow_matrices(shadow_system: &mut ShadowSystem, queue: &Queue, c
         0,
         bytemuck::bytes_of(&shadow_matrix_gpu),
     );
+}
+
+/// Set the view-height cut in `metadata.w`, which the shadow shader reads.
+fn with_view_height(mut gpu: MultiLightShadowGpu, cut: f32) -> MultiLightShadowGpu {
+    gpu.metadata[3] = cut;
+    gpu
 }
 
 /// Render all meshes into shadow maps for active lights.
@@ -140,5 +155,22 @@ pub fn render_shadow_passes(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shadow_uniform_carries_the_cut_in_metadata_w() {
+        let gpu = MultiLightShadowGpu {
+            metadata: [1.0, 2.0, 3.0, 0.0],
+            ..Default::default()
+        };
+
+        let cut = with_view_height(gpu, 12.5);
+
+        assert_eq!(cut.metadata, [1.0, 2.0, 3.0, 12.5]);
     }
 }

@@ -26,7 +26,7 @@ struct MultiLightShadowMatrix {
     light3_m3: vec4<f32>,
     // Light intensities: x=sun, y=moon, z=dyn1, w=dyn2
     light_intensities: vec4<f32>,
-    // Metadata: x=shadow_distance, y=reserved, z=reserved, w=reserved
+    // Metadata: x=shadow_distance, y=reserved, z=reserved, w=view-height cut (world y above it is discarded)
     metadata: vec4<f32>,
 }
 
@@ -88,6 +88,8 @@ struct InstanceInput {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
+    // World y relative to the view-height cut; positive means above it.
+    @location(0) height_over_cut: f32,
 }
 
 @vertex
@@ -120,7 +122,17 @@ fn vs_main(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
         dot(r3, world_pos)
     );
     
+    out.height_over_cut = world_pos.y - shadow_matrices.metadata.w;
+
     return out;
 }
 
-// No fragment shader needed - depth-only pass
+// Depth-only pass: the fragment stage exists only to discard what the main
+// pass discards, so shadows come from drawn geometry alone. It is a varying
+// rather than a uniform read so the shadow bind group stays vertex-only.
+@fragment
+fn fs_main(in: VertexOutput) {
+    if (in.height_over_cut > 0.0) {
+        discard;
+    }
+}

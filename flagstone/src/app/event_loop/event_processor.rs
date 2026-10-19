@@ -531,6 +531,9 @@ impl EventProcessor {
                 Some(id) => app.scene.markers_mut().remove(MarkerId(id)),
                 None => app.scene.markers_mut().clear(),
             },
+            DebugEvent::SetViewHeight { height } => {
+                app.pending_render.push(RenderRequest::ViewHeight(height));
+            }
             _ => {}
         }
     }
@@ -1021,6 +1024,29 @@ mod tests {
         assert!(
             app.pending_render.is_empty(),
             "no window, so nothing is queued for the renderer"
+        );
+    }
+
+    #[test]
+    fn view_height_event_queues_a_render_request() {
+        let mut app = App::headless();
+        app.event_bus
+            .publish(DebugEvent::SetViewHeight { height: Some(12.5) });
+        app.event_bus
+            .publish(DebugEvent::SetViewHeight { height: None });
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert!(
+            matches!(
+                app.pending_render.as_slice(),
+                [
+                    RenderRequest::ViewHeight(Some(h)),
+                    RenderRequest::ViewHeight(None),
+                ] if *h == 12.5
+            ),
+            "queued {} requests",
+            app.pending_render.len()
         );
     }
 

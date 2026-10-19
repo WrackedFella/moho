@@ -9,6 +9,7 @@ pub struct CameraGpu {
     pub vp1: [f32; 4],
     pub vp2: [f32; 4],
     pub vp3: [f32; 4],
+    /// Camera position (xyz) and view-height cut (w): world y above it is discarded.
     pub cam_pos: [f32; 4],
 }
 
@@ -80,8 +81,15 @@ pub struct MultiLightShadowGpu {
     /// Light intensities for blending (x=Sun, y=Moon, z=Dynamic1, w=Dynamic2)
     pub light_intensities: [f32; 4],
 
-    /// Metadata: x=shadow_distance, y=light_size (for PCSS), z=pcss_quality (0=off, 1=low, 2=med, 3=high), w=unused
+    /// Metadata: x=shadow_distance, y=light_size (for PCSS), z=pcss_quality (0=off, 1=low, 2=med, 3=high), w=view-height cut
     pub metadata: [f32; 4],
+}
+
+/// Uniform value for the view-height cut: `None` and non-finite heights map to
+/// `f32::MAX`, which `y > cut` never exceeds. Not infinity, because WGSL lets
+/// implementations assume no infinities.
+pub fn view_height_uniform(height: Option<f32>) -> f32 {
+    height.filter(|h| h.is_finite()).unwrap_or(f32::MAX)
 }
 
 /// Maximum number of dynamic point/spot lights supported
@@ -253,5 +261,23 @@ mod tests {
             MAX_SHADOW_LIGHTS * std::mem::size_of::<ShadowMatrixGpu>() + 32,
             "one matrix slot per shadow light, plus two vec4s"
         );
+    }
+
+    #[test]
+    fn view_height_uniform_passes_a_set_height() {
+        assert_eq!(view_height_uniform(Some(12.5)), 12.5);
+        assert_eq!(view_height_uniform(Some(-3.0)), -3.0);
+    }
+
+    #[test]
+    fn view_height_uniform_none_is_no_cut() {
+        assert_eq!(view_height_uniform(None), f32::MAX);
+    }
+
+    #[test]
+    fn view_height_uniform_non_finite_is_no_cut() {
+        for height in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(view_height_uniform(Some(height)), f32::MAX, "{height}");
+        }
     }
 }

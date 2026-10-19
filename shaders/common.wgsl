@@ -4,7 +4,7 @@ struct Camera {
     vp1: vec4<f32>,
     vp2: vec4<f32>,
     vp3: vec4<f32>,
-    cam_pos: vec4<f32>,
+    cam_pos: vec4<f32>,  // xyz = camera position, w = view-height cut (world y above it is discarded)
 }
 
 struct Lighting {
@@ -40,7 +40,7 @@ struct MultiLightShadowMatrix {
     light3_m3: vec4<f32>,
     // Light intensities (x=Sun, y=Moon, z=Dynamic1, w=Dynamic2)
     light_intensities: vec4<f32>,
-    // Metadata: x=shadow_distance, y=light_size (for PCSS), z=pcss_quality (0=off, 1=low, 2=med, 3=high), w=unused
+    // Metadata: x=shadow_distance, y=light_size (for PCSS), z=pcss_quality (0=off, 1=low, 2=med, 3=high), w=view-height cut
     metadata: vec4<f32>,
 }
 

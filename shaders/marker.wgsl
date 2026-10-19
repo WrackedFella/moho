@@ -6,7 +6,7 @@ struct Camera {
     vp1: vec4<f32>,
     vp2: vec4<f32>,
     vp3: vec4<f32>,
-    cam_pos: vec4<f32>,
+    cam_pos: vec4<f32>,  // w = view-height cut
 }
 
 @group(0) @binding(0)
@@ -22,6 +22,7 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) world_y: f32,
 }
 
 @vertex
@@ -31,10 +32,14 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let view_proj = mat4x4<f32>(camera.vp0, camera.vp1, camera.vp2, camera.vp3);
     out.clip_position = view_proj * vec4<f32>(world_pos, 1.0);
     out.color = in.color;
+    out.world_y = world_pos.y;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    if (in.world_y > camera.cam_pos.w) {
+        discard;
+    }
     return in.color;
 }
