@@ -566,7 +566,6 @@ fn calculate_point_light(
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    // View-height cut: nothing above it is drawn.
     if (in.world_pos.y > camera.cam_pos.w) {
         discard;
     }

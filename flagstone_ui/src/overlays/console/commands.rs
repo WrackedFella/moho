@@ -411,7 +411,6 @@ impl CommandProcessor {
         }
     }
 
-    /// Handle the view-height command: a finite height in metres, or `off`
     fn view_height_command(&self, parts: &[&str]) -> CommandResult {
         let [_, arg] = parts else {
             return CommandResult::message("Usage: r_view_height <metres|off>".to_string());

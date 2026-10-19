@@ -6,7 +6,7 @@ struct Camera {
     vp1: vec4<f32>,
     vp2: vec4<f32>,
     vp3: vec4<f32>,
-    cam_pos: vec4<f32>,
+    cam_pos: vec4<f32>,  // w = view-height cut
 }
 
 @group(0) @binding(0)
@@ -38,7 +38,6 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // cam_pos.w carries the view-height cut.
     if (in.world_y > camera.cam_pos.w) {
         discard;
     }

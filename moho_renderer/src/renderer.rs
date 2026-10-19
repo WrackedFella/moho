@@ -536,7 +536,6 @@ impl<'a> Renderer<'a> {
         self.shadow.pcss_settings.quality = quality_enum;
     }
 
-    /// Cut the world above `height` metres; `None` clears the cut.
     pub fn set_view_height(&mut self, height: Option<f32>) {
         self.view_height = height;
     }
