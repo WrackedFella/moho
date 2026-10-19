@@ -57,6 +57,24 @@ pub fn update_shadow_matrices(shadow_system: &mut ShadowSystem, queue: &Queue, c
     );
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gpu_types::MultiLightShadowGpu;
+
+    #[test]
+    fn shadow_uniform_carries_the_cut_in_metadata_w() {
+        let gpu = MultiLightShadowGpu {
+            metadata: [1.0, 2.0, 3.0, 0.0],
+            ..Default::default()
+        };
+
+        let cut = with_view_height(gpu, 12.5);
+
+        assert_eq!(cut.metadata, [1.0, 2.0, 3.0, 12.5]);
+    }
+}
+
 /// Render all meshes into shadow maps for active lights.
 ///
 /// Creates one render pass per active light to render the scene from the light's

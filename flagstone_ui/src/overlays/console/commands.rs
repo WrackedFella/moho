@@ -889,6 +889,33 @@ mod tests {
     }
 
     #[test]
+    fn r_view_height_sets_and_clears() {
+        let processor = CommandProcessor::new();
+
+        let set = processor.execute("r_view_height 12.5");
+        let cleared = processor.execute("r_view_height off");
+
+        assert_eq!(set.action, ConsoleAction::SetViewHeight(Some(12.5)));
+        assert_eq!(cleared.action, ConsoleAction::SetViewHeight(None));
+    }
+
+    #[test]
+    fn r_view_height_rejects_a_non_number() {
+        let processor = CommandProcessor::new();
+
+        for input in ["r_view_height x", "r_view_height NaN", "r_view_height inf"] {
+            let result = processor.execute(input);
+
+            assert_eq!(result.action, ConsoleAction::None, "{input}");
+            assert!(
+                result.messages.iter().any(|m| m.contains("Invalid")),
+                "{input}: {:?}",
+                result.messages
+            );
+        }
+    }
+
+    #[test]
     fn help_lists_marker_commands() {
         let processor = CommandProcessor::new();
 

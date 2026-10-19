@@ -254,4 +254,22 @@ mod tests {
             "one matrix slot per shadow light, plus two vec4s"
         );
     }
+
+    #[test]
+    fn view_height_uniform_passes_a_set_height() {
+        assert_eq!(view_height_uniform(Some(12.5)), 12.5);
+        assert_eq!(view_height_uniform(Some(-3.0)), -3.0);
+    }
+
+    #[test]
+    fn view_height_uniform_none_is_no_cut() {
+        assert_eq!(view_height_uniform(None), f32::MAX);
+    }
+
+    #[test]
+    fn view_height_uniform_non_finite_is_no_cut() {
+        for height in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(view_height_uniform(Some(height)), f32::MAX, "{height}");
+        }
+    }
 }

@@ -596,6 +596,7 @@ mod tests {
         lights: Vec<(glam::Vec3, glam::Vec3, f32, f32)>,
         shadow_qualities: Vec<u8>,
         ssao_qualities: Vec<u8>,
+        view_heights: Vec<Option<f32>>,
         lightings: Vec<LightingGpu>,
         frames_begun: u32,
         cameras: Vec<(glam::Mat4, glam::Mat4, glam::Vec3)>,
@@ -654,6 +655,9 @@ mod tests {
         }
         fn set_ssao_quality(&mut self, quality: u8) {
             self.ssao_qualities.push(quality);
+        }
+        fn set_view_height(&mut self, height: Option<f32>) {
+            self.view_heights.push(height);
         }
     }
 
@@ -912,6 +916,20 @@ mod tests {
 
             assert_eq!(fake.shadow_qualities, vec![2]);
             assert_eq!(fake.ssao_qualities, vec![3]);
+        }
+
+        #[test]
+        fn view_height_request_reaches_the_renderer() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+            app.pending_render
+                .push(RenderRequest::ViewHeight(Some(12.5)));
+            app.pending_render.push(RenderRequest::ViewHeight(None));
+
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.view_heights, vec![Some(12.5), None]);
+            assert!(app.pending_render.is_empty());
         }
 
         #[test]

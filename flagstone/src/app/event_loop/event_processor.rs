@@ -1027,6 +1027,29 @@ mod tests {
         );
     }
 
+    #[test]
+    fn view_height_event_queues_a_render_request() {
+        let mut app = App::headless();
+        app.event_bus
+            .publish(DebugEvent::SetViewHeight { height: Some(12.5) });
+        app.event_bus
+            .publish(DebugEvent::SetViewHeight { height: None });
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert!(
+            matches!(
+                app.pending_render.as_slice(),
+                [
+                    RenderRequest::ViewHeight(Some(h)),
+                    RenderRequest::ViewHeight(None),
+                ] if *h == 12.5
+            ),
+            "queued {} requests",
+            app.pending_render.len()
+        );
+    }
+
     fn show_marker(app: &App, id: u64, min: glam::Vec3, max: glam::Vec3) {
         show_styled_marker(app, id, min, max, moho_render_api::MarkerStyle::Fill);
     }

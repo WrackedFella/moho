@@ -44,3 +44,20 @@ pub fn update_camera_uniforms(
 
     queue.write_buffer(camera_buffer, 0, bytemuck::cast_slice(&cols));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn camera_uniform_carries_the_cut_in_cam_pos_w() {
+        let view = Mat4::look_at_rh(Vec3::new(1.0, 2.0, 3.0), Vec3::ZERO, Vec3::Y);
+        let proj = Mat4::perspective_rh(1.0, 1.5, 0.1, 100.0);
+
+        let data = camera_uniform_data(view, proj, Vec3::new(1.0, 2.0, 3.0), 12.5);
+
+        assert_eq!(data[16..19], [1.0, 2.0, 3.0]);
+        assert_eq!(data[19], 12.5);
+        assert_eq!(data[..16], (proj * view).to_cols_array());
+    }
+}

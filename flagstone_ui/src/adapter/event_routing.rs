@@ -643,6 +643,29 @@ mod tests {
         );
     }
 
+    #[test]
+    fn console_view_height_action_publishes_debug_event() {
+        use crate::overlays::ConsoleAction;
+        use moho_core::events::DebugEvent;
+        let bus = EventBus::new();
+        let debug = record::<DebugEvent>(&bus);
+
+        process_console_action(ConsoleAction::SetViewHeight(Some(12.5)), &bus);
+        process_console_action(ConsoleAction::SetViewHeight(None), &bus);
+
+        let published: Vec<_> = debug.try_iter().collect();
+        assert!(
+            matches!(
+                published.as_slice(),
+                [
+                    DebugEvent::SetViewHeight { height: Some(h) },
+                    DebugEvent::SetViewHeight { height: None },
+                ] if *h == 12.5
+            ),
+            "events: {published:?}"
+        );
+    }
+
     mod menu_table {
         use super::*;
         use moho_core::events::{AudioEvent, UiEvent};
