@@ -557,6 +557,58 @@ mod tests {
     }
 
     #[test]
+    fn mouse_smoothing_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config").join("prefs.ini");
+        let mut prefs = Prefs::default();
+        *prefs.mouse_smoothing_mut() = true;
+
+        prefs.save_to(&path).unwrap();
+        let (loaded, warnings) = Prefs::load_from(&path);
+
+        assert_eq!(warnings, vec![]);
+        assert!(loaded.mouse_smoothing());
+        assert!(prefs.to_ini_string().contains("mouse_smoothing=true\n"));
+    }
+
+    #[test]
+    fn mouse_smoothing_off_round_trips() {
+        let mut prefs = Prefs::default().with_mouse_smoothing(true);
+        *prefs.mouse_smoothing_mut() = false;
+
+        let (loaded, issues) = Prefs::parse(&prefs.to_ini_string());
+
+        assert_eq!(issues, vec![]);
+        assert!(!loaded.mouse_smoothing());
+    }
+
+    #[test]
+    fn old_input_filtering_key_warns_and_smoothing_is_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.ini");
+        std::fs::write(
+            &path,
+            "[prefs]\nmouse_sensitivity=2.5\ninput_filtering_enabled=true\n",
+        )
+        .unwrap();
+
+        let (prefs, warnings) = Prefs::load_from(&path);
+
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(
+            warnings[0].issue,
+            PrefsIssue::UnknownKey {
+                section: "prefs".into(),
+                key: "input_filtering_enabled".into(),
+            }
+        );
+        let text = warnings[0].to_string();
+        assert!(text.contains("input_filtering_enabled"), "{text}");
+        assert!(!prefs.mouse_smoothing());
+        assert_eq!(prefs.mouse_sensitivity(), 2.5);
+    }
+
+    #[test]
     fn key_without_value_is_malformed() {
         let content = "[video]\nwindow_mode\nwindow_width=1280\n";
 

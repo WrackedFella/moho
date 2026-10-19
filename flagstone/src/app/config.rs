@@ -5,6 +5,13 @@
 //! is set up and configured at runtime.
 
 use moho_core::prefs::Prefs;
+use moho_input::LookSettings;
+
+/// The look settings `prefs` ask for: its sensitivity scaled by 0.002 radians per
+/// count, and its mouse-smoothing switch.
+pub fn look_settings(_prefs: &Prefs) -> LookSettings {
+    todo!()
+}
 
 /// Central configuration for application initialization.
 ///
@@ -150,6 +157,39 @@ mod tests {
         assert_eq!(
             Prefs::config_path(),
             std::path::Path::new("config/prefs.ini")
+        );
+    }
+
+    #[test]
+    fn look_settings_take_smoothing_from_prefs() {
+        let on = Prefs::default()
+            .with_mouse_sensitivity(2.0)
+            .with_mouse_smoothing(true);
+        let off = Prefs::default()
+            .with_mouse_sensitivity(2.0)
+            .with_mouse_smoothing(false);
+
+        assert_eq!(
+            look_settings(&on),
+            LookSettings {
+                look_per_count: 2.0 * 0.002,
+                smoothing: true,
+            }
+        );
+        assert_eq!(
+            look_settings(&off),
+            LookSettings {
+                look_per_count: 2.0 * 0.002,
+                smoothing: false,
+            }
+        );
+    }
+
+    #[test]
+    fn default_prefs_give_raw_look() {
+        assert_eq!(
+            look_settings(&Prefs::default()),
+            LookSettings::raw(0.002)
         );
     }
 

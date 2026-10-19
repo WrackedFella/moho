@@ -8,4 +8,5 @@ pub mod gamepad;
 pub mod key;
 pub mod pad;
 
+pub use action_map::LookSettings;
 pub use bindings::Action;

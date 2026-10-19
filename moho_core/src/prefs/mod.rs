@@ -129,6 +129,9 @@ impl Prefs {
     pub fn input_filtering_enabled(&self) -> bool {
         self.input_filtering_enabled
     }
+    pub fn mouse_smoothing(&self) -> bool {
+        todo!()
+    }
     pub fn sound_effect_volume(&self) -> f32 {
         self.audio_sound_effect_volume
     }
@@ -180,6 +183,9 @@ impl Prefs {
     pub fn input_filtering_enabled_mut(&mut self) -> &mut bool {
         &mut self.input_filtering_enabled
     }
+    pub fn mouse_smoothing_mut(&mut self) -> &mut bool {
+        todo!()
+    }
     pub fn sound_effect_volume_mut(&mut self) -> &mut f32 {
         &mut self.audio_sound_effect_volume
     }
@@ -220,6 +226,9 @@ impl Prefs {
     pub fn with_input_filtering_enabled(mut self, v: bool) -> Self {
         self.input_filtering_enabled = v;
         self
+    }
+    pub fn with_mouse_smoothing(self, _v: bool) -> Self {
+        todo!()
     }
 }
 
@@ -364,6 +373,22 @@ mod tests {
 
         assert!(dir.path().join("config/prefs.ini").is_file());
         assert_eq!(loaded, prefs);
+    }
+
+    #[test]
+    fn default_prefs_have_mouse_smoothing_off() {
+        assert!(!Prefs::default().mouse_smoothing());
+    }
+
+    #[test]
+    fn with_mouse_smoothing_sets_the_flag() {
+        assert!(Prefs::default().with_mouse_smoothing(true).mouse_smoothing());
+        assert!(
+            !Prefs::default()
+                .with_mouse_smoothing(true)
+                .with_mouse_smoothing(false)
+                .mouse_smoothing()
+        );
     }
 
     #[test]

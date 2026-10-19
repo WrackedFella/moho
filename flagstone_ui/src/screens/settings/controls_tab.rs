@@ -158,6 +158,17 @@ mod tests {
     }
 
     #[test]
+    fn changed_mouse_smoothing_is_dirty_and_decorated() {
+        let mut menu = SettingsMenu::with_prefs(Prefs::default());
+        *menu.state.staged_mut().mouse_smoothing_mut() = true;
+
+        let output = render_menu(&mut menu);
+
+        assert!(menu.has_unsaved_changes());
+        assert!(has_dirty_decor(&output));
+    }
+
+    #[test]
     fn untouched_controls_are_not_dirty_or_decorated() {
         let mut menu = SettingsMenu::with_prefs(Prefs::default());
 

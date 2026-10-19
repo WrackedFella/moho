@@ -124,3 +124,101 @@ impl Default for FilterPipeline {
         Self::new()
     }
 }
+
+/// Two-sample mean of raw mouse counts: each output averages this sample and the
+/// previous one, so the total output equals the total input once a quiet sample has run.
+#[derive(Clone, Debug, Default)]
+pub struct MouseSmoothing {
+    previous: (f32, f32),
+}
+
+impl MouseSmoothing {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn apply(&mut self, _counts: (f32, f32)) -> (f32, f32) {
+        todo!()
+    }
+
+    pub fn reset(&mut self) {
+        todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn output_is_the_mean_of_this_and_the_previous_sample_on_both_axes() {
+        let mut smoothing = MouseSmoothing::new();
+
+        let first = smoothing.apply((10.0, -4.0));
+        let second = smoothing.apply((20.0, 8.0));
+        let third = smoothing.apply((0.0, 0.0));
+
+        assert_eq!(first, (5.0, -2.0));
+        assert_eq!(second, (15.0, 2.0));
+        assert_eq!(third, (10.0, 4.0));
+    }
+
+    #[test]
+    fn a_quiet_sample_does_not_reset_the_carry() {
+        let mut smoothing = MouseSmoothing::new();
+
+        smoothing.apply((8.0, 8.0));
+        let quiet = smoothing.apply((0.0, 0.0));
+        let after = smoothing.apply((0.0, 0.0));
+
+        assert_eq!(quiet, (4.0, 4.0));
+        assert_eq!(after, (0.0, 0.0));
+    }
+
+    #[test]
+    fn reset_discards_the_carry() {
+        let mut smoothing = MouseSmoothing::new();
+        smoothing.apply((8.0, 8.0));
+
+        smoothing.reset();
+        let out = smoothing.apply((0.0, 0.0));
+
+        assert_eq!(out, (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_single_count_is_not_dropped() {
+        let mut smoothing = MouseSmoothing::new();
+
+        let first = smoothing.apply((1.0, 0.0));
+        let second = smoothing.apply((0.0, 1.0));
+        let third = smoothing.apply((0.0, 0.0));
+
+        assert_eq!(first, (0.5, 0.0));
+        assert_eq!(second, (0.5, 0.5));
+        assert_eq!(third, (0.0, 0.5));
+    }
+
+    proptest! {
+        /// Whole counts below 2^24 and halves of them add exactly in f32.
+        #[test]
+        fn prop_smoothing_total_equals_input_after_a_quiet_sample(
+            samples in proptest::collection::vec((-2000i32..=2000, -2000i32..=2000), 0..64),
+        ) {
+            let mut smoothing = MouseSmoothing::new();
+            let mut input = (0.0f32, 0.0f32);
+            let mut output = (0.0f32, 0.0f32);
+
+            for &(x, y) in &samples {
+                let out = smoothing.apply((x as f32, y as f32));
+                input = (input.0 + x as f32, input.1 + y as f32);
+                output = (output.0 + out.0, output.1 + out.1);
+            }
+            let flush = smoothing.apply((0.0, 0.0));
+            output = (output.0 + flush.0, output.1 + flush.1);
+
+            prop_assert_eq!(output, input);
+        }
+    }
+}

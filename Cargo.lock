@@ -1745,6 +1745,7 @@ version = "0.1.0"
 dependencies = [
  "gilrs",
  "moho_core",
+ "proptest",
  "tempfile",
  "tracing",
  "winit",

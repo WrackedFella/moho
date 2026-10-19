@@ -1253,7 +1253,6 @@ mod tests {
             app.simulation.set_camera_mode(CameraMode::FirstPerson);
             app.simulation
                 .set_position_yaw_pitch(glam::Vec3::new(100.0, 100.0, 100.0), 0.0, 0.0);
-            app.input.actions.set_filtering(false);
             app.input.actions.mouse_motion(5.0, 5.0);
 
             let cmd = Game::command(&mut app);
