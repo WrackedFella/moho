@@ -14,7 +14,7 @@ use winit::event::{DeviceEvent, WindowEvent};
 use winit::window::Window;
 
 pub use clock::GameClock;
-pub use fixed_step::{FixedStep, LoopConfig};
+pub use fixed_step::{FixedStep, LoopConfig, SimSpeed};
 pub use headless::HeadlessLoop;
 pub use runner::run;
 
@@ -82,6 +82,22 @@ impl<'a> FrameContext<'a> {
     pub fn exit_requested(&self) -> bool {
         self.exit_requested
     }
+
+    /// Asks the loop to pause or resume from the next tick.
+    pub fn set_paused(&mut self, _paused: bool) {}
+
+    /// Asks the loop to run at `speed` from the next tick.
+    pub fn set_speed(&mut self, _speed: SimSpeed) {}
+
+    /// The last pause state the game asked for, if it asked.
+    pub fn requested_paused(&self) -> Option<bool> {
+        None
+    }
+
+    /// The last speed the game asked for, if it asked.
+    pub fn requested_speed(&self) -> Option<SimSpeed> {
+        None
+    }
 }
 
 /// Context handed to [`Game::init`], once the window and renderer exist.
@@ -138,6 +154,22 @@ impl<'a> EventContext<'a> {
     pub fn exit_requested(&self) -> bool {
         self.exit_requested
     }
+
+    /// Asks the loop to pause or resume from the next tick.
+    pub fn set_paused(&mut self, _paused: bool) {}
+
+    /// Asks the loop to run at `speed` from the next tick.
+    pub fn set_speed(&mut self, _speed: SimSpeed) {}
+
+    /// The last pause state the game asked for, if it asked.
+    pub fn requested_paused(&self) -> Option<bool> {
+        None
+    }
+
+    /// The last speed the game asked for, if it asked.
+    pub fn requested_speed(&self) -> Option<SimSpeed> {
+        None
+    }
 }
 
 /// A winit event the runner hands to the game unchanged.
@@ -185,6 +217,9 @@ pub trait Game {
     /// Called for every window and device event the runner does not consume;
     /// never called headless.
     fn event(&mut self, _ctx: &mut EventContext<'_>, _event: Event) {}
+
+    /// Applies `command` while the loop is paused, at the boundary before tick `next_tick`.
+    fn apply_while_paused(&mut self, _next_tick: u64, _command: &Self::Command) {}
 
     /// Presents a frame, `alpha` of the way between the last two ticks.
     fn frame(&mut self, ctx: &mut FrameContext<'_>, alpha: f32);
@@ -342,5 +377,41 @@ mod tests {
         let ctx = EventContext::new(&clock, None, None);
 
         assert_eq!(ctx.clock().time_of_day(), 15.25);
+    }
+
+    #[test]
+    fn frame_context_records_pause_and_speed_requests() {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+        assert_eq!(ctx.requested_paused(), None);
+        assert_eq!(ctx.requested_speed(), None);
+
+        ctx.set_paused(true);
+        let paused = ctx.requested_paused();
+        ctx.set_paused(false);
+        let resumed = ctx.requested_paused();
+        ctx.set_speed(SimSpeed::X3);
+
+        assert_eq!(paused, Some(true));
+        assert_eq!(resumed, Some(false));
+        assert_eq!(ctx.requested_speed(), Some(SimSpeed::X3));
+    }
+
+    #[test]
+    fn event_context_records_pause_and_speed_requests() {
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        assert_eq!(ctx.requested_paused(), None);
+        assert_eq!(ctx.requested_speed(), None);
+
+        ctx.set_paused(true);
+        let paused = ctx.requested_paused();
+        ctx.set_paused(false);
+        let resumed = ctx.requested_paused();
+        ctx.set_speed(SimSpeed::X2);
+
+        assert_eq!(paused, Some(true));
+        assert_eq!(resumed, Some(false));
+        assert_eq!(ctx.requested_speed(), Some(SimSpeed::X2));
     }
 }

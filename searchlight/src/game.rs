@@ -923,14 +923,20 @@ mod tests {
         let mut headless = HeadlessLoop::new(LoopConfig::new(60));
         headless.step(&mut game, 1);
         open_the_console(&mut game, &clock);
-        let (enemy, player, health) = (
+        headless.advance(&mut game, Duration::ZERO);
+        let (enemy, player, health, next_tick) = (
             game.sim().enemy_state(0),
             game.sim().player(),
             game.sim().player_body().health(),
+            headless.next_tick(),
         );
 
-        headless.step(&mut game, 120);
+        for _ in 0..120 {
+            headless.advance(&mut game, Duration::from_secs(1) / 60);
+        }
 
+        assert!(headless.paused());
+        assert_eq!(headless.next_tick(), next_tick);
         assert_eq!(game.sim().enemy_state(0), enemy);
         assert_eq!(game.sim().player(), player);
         assert_eq!(game.sim().player_body().health(), health);
@@ -938,6 +944,38 @@ mod tests {
             game.previous, player,
             "the view does not blend while frozen"
         );
+    }
+
+    #[test]
+    fn opening_the_console_asks_the_loop_to_pause() {
+        let mut game = game();
+        let clock = GameClock::default();
+        open_the_console(&mut game, &clock);
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        game.event(
+            &mut ctx,
+            Event::Device(DeviceEvent::MouseMotion { delta: (1.0, 1.0) }),
+        );
+
+        assert_eq!(ctx.requested_paused(), Some(true));
+    }
+
+    #[test]
+    fn closing_the_console_asks_the_loop_to_resume() {
+        let mut game = game();
+        let clock = GameClock::default();
+        open_the_console(&mut game, &clock);
+        let mut ctx = EventContext::new(&clock, None, None);
+        let routing = game.route_input(&mut ctx, BACKTICK, true, false);
+        assert_eq!(routing, Routing::Closed);
+
+        game.event(
+            &mut ctx,
+            Event::Device(DeviceEvent::MouseMotion { delta: (1.0, 1.0) }),
+        );
+
+        assert_eq!(ctx.requested_paused(), Some(false));
     }
 
     #[test]
