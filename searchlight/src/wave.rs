@@ -128,6 +128,13 @@ impl WaveState {
         self.to_spawn -= spawn;
         spawn
     }
+
+    /// Gives back `count` enemies that [`step`](Self::step) asked for but that could not be
+    /// spawned, so they stay to come.
+    pub fn unspawned(&mut self, count: u32) {
+        let _ = count;
+        todo!("return the count to to_spawn")
+    }
 }
 
 #[cfg(test)]
@@ -323,6 +330,21 @@ mod tests {
         assert_eq!((fewer, left_after_fewer), (1, 3));
         assert_eq!((exactly, left_after_exactly), (3, 0));
         assert_eq!(nothing_left, 0);
+    }
+
+    #[test]
+    fn enemies_that_could_not_spawn_go_back_to_the_wave() {
+        let tuning = tuning(2, 2, 10);
+        let mut state = WaveState::begin(&tuning);
+        let spawned = state.step(&tuning, 0, 0, 5);
+
+        state.unspawned(1);
+        let again = state.step(&tuning, 0, 0, 0);
+
+        assert_eq!(spawned, 2);
+        assert_eq!(again, 0);
+        assert_eq!(state.to_spawn(), 1);
+        assert_eq!(state.wave(), 1);
     }
 
     #[test]

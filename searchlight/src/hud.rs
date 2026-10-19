@@ -86,6 +86,12 @@ pub fn arena_text(wave: u32, score: u32) -> String {
     format!("Wave {wave}  Score {score}")
 }
 
+/// The title line: `vitals` followed by the wave and score, such as `HP 70/100 | Wave 3  Score 200`.
+pub fn vitals_text(vitals: &str, wave: u32, score: u32) -> String {
+    let _ = (vitals, wave, score);
+    todo!("join vitals and arena_text")
+}
+
 /// What the dead player reads in the title, or `None` while alive.
 pub fn death_text(dead: bool) -> Option<&'static str> {
     dead.then_some("Dead - press Enter to restart")
@@ -137,6 +143,21 @@ mod feedback_tests {
     use std::f32::consts::FRAC_PI_2;
 
     use super::*;
+
+    #[test]
+    fn the_dead_title_keeps_wave_and_score() {
+        let alive = health_text(70, 100);
+        let dead = death_text(true).expect("a dead player has a title");
+
+        let alive_title = vitals_text(&alive, 3, 200);
+        let dead_title = vitals_text(dead, 3, 200);
+
+        assert_eq!(alive_title, "HP 70/100 | Wave 3  Score 200");
+        assert_eq!(
+            dead_title,
+            "Dead - press Enter to restart | Wave 3  Score 200"
+        );
+    }
 
     #[test]
     fn the_hit_edge_points_toward_the_shooter() {

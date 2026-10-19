@@ -356,6 +356,24 @@ mod tests {
     }
 
     #[test]
+    fn a_marker_that_turns_out_blocked_does_not_shorten_the_wave() {
+        let close = [Vec3::new(0.0, 0.0, 12.0), Vec3::new(0.4, 0.0, 12.0)];
+        let arena = arena_with(&[], Vec3::ZERO, &close, &[Vec3::new(0.0, 0.0, 25.0)]);
+        let mut mode = ArenaMode::new(arena, calm_config(), tuning(2, 2, 100));
+        let standing = (mode.sim().enemy_count(), mode.sim().enemies_alive());
+        let wave_at_start = mode.wave();
+        mode.sim_mut().kill_enemy(0);
+
+        mode.tick(&idle(), DT);
+
+        assert_eq!(standing, (1, 1));
+        assert_eq!(wave_at_start, 1);
+        assert_eq!(mode.wave(), 1);
+        assert_eq!(mode.sim().enemy_count(), 2);
+        assert_eq!(mode.sim().enemies_alive(), 1);
+    }
+
+    #[test]
     fn the_feedback_of_the_sim_is_drained_through_the_mode() {
         let mut mode = calm_mode(1, tuning(1, 1, 100));
         mode.sim_mut().kill_enemy(0);

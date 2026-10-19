@@ -266,6 +266,19 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_arena_has_enough_enemy_spawns_for_the_first_wave() {
+        let (_, markers) = load(&shipped_arena()).expect("the shipped arena loads");
+
+        let first_wave = crate::wave::WaveTuning::default().first_size() as usize;
+
+        assert!(
+            markers.enemy_spawns.len() >= first_wave,
+            "{} enemy spawns for a first wave of {first_wave}",
+            markers.enemy_spawns.len()
+        );
+    }
+
+    #[test]
     fn the_shipped_arena_has_an_enemy_spawn_and_a_waypoint_loop() {
         let (_, markers) = load(&shipped_arena()).expect("the shipped arena loads");
 
