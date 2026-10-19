@@ -666,17 +666,11 @@ impl Game for FpsGame {
     type Command = FpsCommand;
 
     fn command(&mut self) -> FpsCommand {
-        FpsCommand {
-            paused: self.stage.shell().captures_input(),
-            ..FpsCommand::from_frame(&self.input.end_tick())
-        }
+        FpsCommand::from_frame(&self.input.end_tick())
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &FpsCommand) {
         self.previous = self.sim.player();
-        if command.paused {
-            return;
-        }
         let was_dead = self.sim.player_body().is_dead();
         self.sim.tick(command, ctx.tick_length.as_secs_f32());
         if was_dead && !self.sim.player_body().is_dead() {
@@ -712,9 +706,11 @@ impl Game for FpsGame {
                 }
             }
         }
+        ctx.set_paused(self.stage.shell().captures_input());
     }
 
     fn frame(&mut self, ctx: &mut FrameContext<'_>, alpha: f32) {
+        ctx.set_paused(self.stage.shell().captures_input());
         let engine_commands = self.stage.shell().console_mut().take_engine_commands();
         for command in &engine_commands {
             apply_engine_command(command, ctx);
@@ -923,21 +919,55 @@ mod tests {
         let mut headless = HeadlessLoop::new(LoopConfig::new(60));
         headless.step(&mut game, 1);
         open_the_console(&mut game, &clock);
-        let (enemy, player, health) = (
+        headless.advance(&mut game, Duration::ZERO);
+        let (enemy, player, health, next_tick) = (
             game.sim().enemy_state(0),
             game.sim().player(),
             game.sim().player_body().health(),
+            headless.next_tick(),
         );
 
-        headless.step(&mut game, 120);
+        for _ in 0..120 {
+            headless.advance(&mut game, Duration::from_secs(1) / 60);
+        }
 
+        assert!(headless.paused());
+        assert_eq!(headless.next_tick(), next_tick);
         assert_eq!(game.sim().enemy_state(0), enemy);
         assert_eq!(game.sim().player(), player);
         assert_eq!(game.sim().player_body().health(), health);
-        assert_eq!(
-            game.previous, player,
-            "the view does not blend while frozen"
+    }
+
+    #[test]
+    fn opening_the_console_asks_the_loop_to_pause() {
+        let mut game = game();
+        let clock = GameClock::default();
+        open_the_console(&mut game, &clock);
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        game.event(
+            &mut ctx,
+            Event::Device(DeviceEvent::MouseMotion { delta: (1.0, 1.0) }),
         );
+
+        assert_eq!(ctx.requested_paused(), Some(true));
+    }
+
+    #[test]
+    fn closing_the_console_asks_the_loop_to_resume() {
+        let mut game = game();
+        let clock = GameClock::default();
+        open_the_console(&mut game, &clock);
+        let mut ctx = EventContext::new(&clock, None, None);
+        let routing = game.route_input(&mut ctx, BACKTICK, true, false);
+        assert_eq!(routing, Routing::Closed);
+
+        game.event(
+            &mut ctx,
+            Event::Device(DeviceEvent::MouseMotion { delta: (1.0, 1.0) }),
+        );
+
+        assert_eq!(ctx.requested_paused(), Some(false));
     }
 
     #[test]
