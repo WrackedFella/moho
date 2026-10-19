@@ -1,6 +1,7 @@
 //! Command registration: data and lookup, no traits.
 
 /// Turns the arguments after a command name into the game's command and a reply, or an error reply.
+/// An empty reply prints nothing; the game then prints its own line with `Console::print`.
 pub type ParseFn<G> = fn(&[&str]) -> Result<(G, String), String>;
 
 type EngineFn = fn(&[&str]) -> Result<(EngineCommand, String), String>;

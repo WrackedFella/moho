@@ -2,7 +2,9 @@
 
 > **FPS (searchlight) and new games:** register on the engine console instead. In the game's
 > `console_commands.rs`, build a `moho_ui_shell::CommandSpec` (name, usage, help and a plain
-> `fn` parse returning the game's command and a reply, or an error reply) and call
+> `fn` parse returning the game's command and a reply, or an error reply; an empty reply prints
+> nothing, for a result only the game knows once it acts, which it prints with `Console::print`
+> where it drains `take_commands`) and call
 > `Console::register`; a name the engine (`help`, `clear`, `quit`, `r_debug_view`, `r_shadow_quality`,
 > `r_ssao_quality`, `audio_cue`) or the game already has is refused. The game drains `Console::take_commands` in `Game::command()` and applies them in
 > its tick ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
