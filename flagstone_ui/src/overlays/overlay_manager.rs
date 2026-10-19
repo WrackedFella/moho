@@ -140,6 +140,11 @@ impl OverlayManager {
         self.hud_data = data;
     }
 
+    /// Whether the last pushed HUD data says the camera is first person.
+    pub fn is_fps_mode(&self) -> bool {
+        self.hud_data.is_fps_mode
+    }
+
     /// Render every registered overlay (each self-filters on visibility/mode).
     pub fn render_all(&mut self, ui: &mut egui::Ui) {
         for overlay in &mut self.overlays {

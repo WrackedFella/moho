@@ -143,6 +143,11 @@ struct App {
     /// from `simulation.player_controller`, which is camera/movement-only —
     /// see `flagstone_game::pawn::Pawn`'s doc comment.
     pawn: flagstone_game::pawn::Pawn,
+
+    /// The window's physical size, which pointer positions are measured in.
+    viewport: glam::UVec2,
+    /// The surface under the last strategy-view click, `None` when it hit nothing.
+    pointer_hit: Option<flagstone_game::raycast::SurfaceHit>,
 }
 
 impl App {
@@ -223,6 +228,9 @@ impl App {
             lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
 
             pawn: flagstone_game::pawn::Pawn::default(),
+
+            viewport: glam::UVec2::ZERO,
+            pointer_hit: None,
         }
     }
 
@@ -521,8 +529,14 @@ impl App {
             );
         }
 
-        // Handle cursor state
-        if actions.cursor_grabbed {
+        self.apply_cursor();
+    }
+
+    fn apply_cursor(&mut self) {
+        if flagstone_ui::app_state::game_state::cursor_grabbed(
+            self.game_state,
+            self.simulation.camera_mode(),
+        ) {
             self.grab_cursor();
         } else {
             self.release_cursor();
