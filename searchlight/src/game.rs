@@ -746,10 +746,7 @@ impl Game for FpsGame {
             || hud::health_text(sim.player_body().health(), sim.player_max_health()),
             str::to_owned,
         );
-        let vitals = format!(
-            "{vitals} | {}",
-            hud::arena_text(self.mode.wave(), self.mode.score())
-        );
+        let vitals = hud::vitals_text(&vitals, self.mode.wave(), self.mode.score());
         self.stage.refresh_title(&vitals);
         self.stage.refresh_hud(dead);
         self.stage.sync_enemies(self.mode.sim());

@@ -50,12 +50,15 @@ impl ArenaMode {
             free.len(),
         );
         self.seen_kills = kills;
+        let mut spawned = 0;
         for &marker in free.iter().take(spawn as usize) {
             if let Err(error) = self.sim.spawn_enemy(marker) {
                 tracing::warn!(%error, marker, "wave enemy not spawned");
                 break;
             }
+            spawned += 1;
         }
+        self.waves.unspawned(spawn - spawned);
     }
 
     /// Runs one tick of `dt` seconds: the sim, then the score of its kills and the wave's

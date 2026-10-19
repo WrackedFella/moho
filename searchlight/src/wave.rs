@@ -132,8 +132,7 @@ impl WaveState {
     /// Gives back `count` enemies that [`step`](Self::step) asked for but that could not be
     /// spawned, so they stay to come.
     pub fn unspawned(&mut self, count: u32) {
-        let _ = count;
-        todo!("return the count to to_spawn")
+        self.to_spawn = self.to_spawn.saturating_add(count);
     }
 }
 

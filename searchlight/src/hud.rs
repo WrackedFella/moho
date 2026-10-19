@@ -88,8 +88,7 @@ pub fn arena_text(wave: u32, score: u32) -> String {
 
 /// The title line: `vitals` followed by the wave and score, such as `HP 70/100 | Wave 3  Score 200`.
 pub fn vitals_text(vitals: &str, wave: u32, score: u32) -> String {
-    let _ = (vitals, wave, score);
-    todo!("join vitals and arena_text")
+    format!("{vitals} | {}", arena_text(wave, score))
 }
 
 /// What the dead player reads in the title, or `None` while alive.
