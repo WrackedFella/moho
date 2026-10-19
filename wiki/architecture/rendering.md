@@ -191,6 +191,7 @@ blending, sRGB vertex colours, no custom paint callbacks.
 | Shadow quality 0–4 | `graphics.shadow_quality`, `r_shadow_quality` | Off/Low/Med/High/Ultra |
 | SSAO quality 0–4 | `graphics.ssao_quality`, `r_ssao_quality` | Samples 0/4/8/16/32 |
 | Debug view | `r_debug_view <mode>` | `Lighting.params.y` |
+| View-height cut | `r_view_height <metres\|off>` | `Renderer::set_view_height`; sticky; cuts world, markers and shadows |
 | Shadow map size | `SHADOW_MAP_SIZE` = 4096 | `shadow.rs` |
 | Shadow distance | `SHADOW_DISTANCE` = 1000 | `shadow.rs` |
 

@@ -39,7 +39,7 @@ nearest sampler for the PCSS blocker search (3).
 | Struct | Field | Contents |
 |---|---|---|
 | `CameraGpu` | `vp0`–`vp3` | view-projection matrix columns |
-| | `cam_pos` | xyz eye position |
+| | `cam_pos` | xyz eye position, w view-height cut |
 | `LightingGpu` | `sun_direction` | xyz normalized direction, w intensity |
 | | `sun_color` | xyz colour |
 | | `moon_direction` | xyz normalized direction, w intensity |
@@ -50,7 +50,7 @@ nearest sampler for the PCSS blocker search (3).
 | | `params` | xyz `[fuzz, ref_idx, transparent]` (terrain: side-face colour), w emissive |
 | `MultiLightShadowGpu` | `light0`–`light3` | one mat4 each: Sun, Moon, Dynamic 1, Dynamic 2 |
 | | `light_intensities` | x sun, y moon, z dyn 1, w dyn 2 |
-| | `metadata` | x shadow distance, y light size (PCSS), z PCSS quality 0–3 |
+| | `metadata` | x shadow distance, y light size (PCSS), z PCSS quality 0–3, w view-height cut |
 | `PointLightGpu` | `position_range` | xyz position, w range |
 | | `color_intensity` | xyz colour, w intensity |
 | `DynamicLightsGpu` | `light_count` | x active count |
@@ -67,6 +67,10 @@ Notes:
   materials reuse `params.xyz` for the side-face colour; `params.w > 0` bypasses lighting.
 - `LightingGpu.params.y` is the debug view mode set by `r_debug_view`
   ([console commands](console-commands.md)).
+- View-height cut (`r_view_height`): `view_height_uniform` maps `None` and non-finite
+  heights to `f32::MAX` (no cut, not infinity: WGSL may assume none). The main and
+  marker fragment shaders discard world y above `CameraGpu.cam_pos.w`; the shadow pass
+  has a fragment stage that discards on `metadata.w`, so shadows follow drawn geometry.
 - Shadow constants (`shadow.rs`): map size 4096, shadow distance 1000.
   `MAX_SHADOW_LIGHTS` = 4, `MAX_DYNAMIC_LIGHTS` = 64.
 
