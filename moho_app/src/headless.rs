@@ -13,7 +13,6 @@ pub struct HeadlessLoop<G> {
     tick_length: Duration,
     next_tick: u64,
     paused: bool,
-    speed: SimSpeed,
     clock: GameClock,
     game: std::marker::PhantomData<fn(&mut G)>,
 }
@@ -31,7 +30,6 @@ impl<G: Game> HeadlessLoop<G> {
             tick_length: config.tick_length(),
             next_tick: 0,
             paused: false,
-            speed: SimSpeed::default(),
             clock: config.clock,
             game: std::marker::PhantomData,
         }
@@ -47,14 +45,19 @@ impl<G: Game> HeadlessLoop<G> {
         self.apply_paused_command(game);
         let mut ctx = FrameContext::headless(self.tick_length, &self.clock);
         game.frame(&mut ctx, self.step.alpha());
-        let (paused, speed) = (ctx.requested_paused(), ctx.requested_speed());
+        let requests = (ctx.requested_paused(), ctx.requested_speed());
+        self.apply_requests(requests);
+        n
+    }
+
+    /// Applies the pause and speed a game asked for, from the next tick.
+    pub(crate) fn apply_requests(&mut self, (paused, speed): (Option<bool>, Option<SimSpeed>)) {
         if let Some(paused) = paused {
             self.set_paused(paused);
         }
         if let Some(speed) = speed {
             self.set_speed(speed);
         }
-        n
     }
 
     /// While paused, hands the game's command to [`Game::apply_while_paused`]
@@ -90,12 +93,11 @@ impl<G: Game> HeadlessLoop<G> {
     }
 
     pub fn set_speed(&mut self, speed: SimSpeed) {
-        self.speed = speed;
         self.step.set_speed(speed);
     }
 
     pub fn speed(&self) -> SimSpeed {
-        self.speed
+        self.step.speed()
     }
 
     /// Index of the next tick to run.
@@ -108,7 +110,7 @@ impl<G: Game> HeadlessLoop<G> {
         if self.paused {
             return self.tick_length;
         }
-        (self.tick_length / self.speed.multiplier()).mul_f32(1.0 - self.step.alpha())
+        (self.tick_length / self.speed().multiplier()).mul_f32(1.0 - self.step.alpha())
     }
 
     /// Fraction of a tick left over after the last run.

@@ -12,7 +12,6 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::{
     AppConfig, AppError, Event, EventContext, FrameContext, Game, HeadlessLoop, InitContext,
-    SimSpeed,
 };
 
 /// What the runner does with a window event.
@@ -75,18 +74,6 @@ struct Runner<G: Game> {
     audio: Option<AudioSystem>,
     last_wake: Instant,
     error: Option<AppError>,
-}
-
-impl<G: Game> Runner<G> {
-    /// Applies the pause and speed a game asked for, from the next tick.
-    fn apply_requests(&mut self, (paused, speed): (Option<bool>, Option<SimSpeed>)) {
-        if let Some(paused) = paused {
-            self.sim.set_paused(paused);
-        }
-        if let Some(speed) = speed {
-            self.sim.set_speed(speed);
-        }
-    }
 }
 
 impl<G: Game> ApplicationHandler for Runner<G> {
@@ -181,7 +168,7 @@ impl<G: Game> ApplicationHandler for Runner<G> {
                 self.game.frame(&mut ctx, self.sim.alpha());
                 let requests = (ctx.requested_paused(), ctx.requested_speed());
                 let exit = ctx.exit_requested();
-                self.apply_requests(requests);
+                self.sim.apply_requests(requests);
                 if exit {
                     event_loop.exit();
                 }
@@ -203,7 +190,7 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         self.game.event(&mut ctx, Event::Window(event));
         let requests = (ctx.requested_paused(), ctx.requested_speed());
         let exit = ctx.exit_requested();
-        self.apply_requests(requests);
+        self.sim.apply_requests(requests);
         if exit || route == Route::Close {
             event_loop.exit();
         }
@@ -223,7 +210,7 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         self.game.event(&mut ctx, Event::Device(event));
         let requests = (ctx.requested_paused(), ctx.requested_speed());
         let exit = ctx.exit_requested();
-        self.apply_requests(requests);
+        self.sim.apply_requests(requests);
         if exit {
             event_loop.exit();
         }
