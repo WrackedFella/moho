@@ -46,7 +46,7 @@ pub(crate) mod test_support;
 mod tests {
     use super::*;
     use crate::console_commands;
-    use crate::input::FpsAction;
+    use crate::input::SearchlightAction;
     use moho_core::prefs::Prefs;
     use moho_input::bindings::{ActionBindings, Binding};
     use moho_input::key::Key;
@@ -95,7 +95,7 @@ mod tests {
 
         let (console_section, game_section) = split_console_binding(&section);
         let (mut console, console_warnings) = console_commands::console(&console_section);
-        let (bindings, game_warnings) = ActionBindings::<FpsAction>::load(&game_section);
+        let (bindings, game_warnings) = ActionBindings::<SearchlightAction>::load(&game_section);
 
         assert_eq!(console_warnings, vec![]);
         assert_eq!(game_warnings, vec![]);
@@ -103,6 +103,9 @@ mod tests {
             console.on_key(Binding::Key(Key::Backslash), true, false),
             Routing::Opened
         );
-        assert_eq!(bindings.get(FpsAction::Jump), [Binding::Key(Key::F)]);
+        assert_eq!(
+            bindings.get(SearchlightAction::Jump),
+            [Binding::Key(Key::F)]
+        );
     }
 }

@@ -25,8 +25,8 @@ use moho_ui_shell::host::input_of;
 use moho_ui_shell::{Console, Routing, UiLayers, UiShell, apply_engine_command};
 
 use crate::hud::Edge;
-use crate::input::{FpsAction, FpsCommand};
-use crate::sim::{Feedback, FpsSim, dummy_at, dummy_hit_volumes};
+use crate::input::{SearchlightAction, SearchlightCommand};
+use crate::sim::{Feedback, SearchlightSim, dummy_at, dummy_hit_volumes};
 use crate::tag::SurfaceTag;
 use crate::{TICK_HZ, hud};
 
@@ -456,7 +456,7 @@ impl Stage {
     }
 
     /// Puts every living enemy's segments where the sim has it, and takes the dead ones out.
-    fn sync_enemies(&mut self, sim: &FpsSim) {
+    fn sync_enemies(&mut self, sim: &SearchlightSim) {
         for index in 0..sim.enemy_count() {
             let target = u16::try_from(self.dummy_count + index)
                 .expect("the sim numbers its targets with a u16");
@@ -581,17 +581,17 @@ impl Stage {
 
 /// The FPS prototype's game: one sim and the input that drives it.
 #[derive(Debug)]
-pub struct FpsGame {
-    sim: FpsSim,
-    input: ActionMap<FpsAction>,
+pub struct SearchlightGame {
+    sim: SearchlightSim,
+    input: ActionMap<SearchlightAction>,
     /// The player as the tick before the last left them, for blending the view.
     previous: CharacterState,
     stage: Stage,
 }
 
-impl FpsGame {
+impl SearchlightGame {
     /// A game ticking `sim` with commands sampled from `input`.
-    pub fn new(sim: FpsSim, input: ActionMap<FpsAction>) -> Self {
+    pub fn new(sim: SearchlightSim, input: ActionMap<SearchlightAction>) -> Self {
         let previous = sim.player();
         Self {
             sim,
@@ -615,12 +615,12 @@ impl FpsGame {
         self
     }
 
-    pub fn sim(&self) -> &FpsSim {
+    pub fn sim(&self) -> &SearchlightSim {
         &self.sim
     }
 
     /// The input map, for feeding it device events.
-    pub fn input_mut(&mut self) -> &mut ActionMap<FpsAction> {
+    pub fn input_mut(&mut self) -> &mut ActionMap<SearchlightAction> {
         &mut self.input
     }
 
@@ -662,14 +662,14 @@ impl FpsGame {
     }
 }
 
-impl Game for FpsGame {
-    type Command = FpsCommand;
+impl Game for SearchlightGame {
+    type Command = SearchlightCommand;
 
-    fn command(&mut self) -> FpsCommand {
-        FpsCommand::from_frame(&self.input.end_tick())
+    fn command(&mut self) -> SearchlightCommand {
+        SearchlightCommand::from_frame(&self.input.end_tick())
     }
 
-    fn tick(&mut self, ctx: &mut TickContext<'_>, command: &FpsCommand) {
+    fn tick(&mut self, ctx: &mut TickContext<'_>, command: &SearchlightCommand) {
         self.previous = self.sim.player();
         let was_dead = self.sim.player_body().is_dead();
         self.sim.tick(command, ctx.tick_length.as_secs_f32());
@@ -763,21 +763,21 @@ mod tests {
     use crate::test_support::{arena_with, flat_floor, mag, press, test_config};
     use searchlight_rules::Rifle;
 
-    fn game() -> FpsGame {
-        let sim = FpsSim::new(
+    fn game() -> SearchlightGame {
+        let sim = SearchlightSim::new(
             flat_floor(),
             Vec3::ZERO,
             &[],
             test_config(Rifle::loaded(mag(30, 5)), vec![]),
         );
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
-        FpsGame::new(sim, ActionMap::new(bindings, 1.0))
+        SearchlightGame::new(sim, ActionMap::new(bindings, 1.0))
     }
 
     #[test]
     fn a_headless_tick_turns_a_trigger_press_into_a_shot() {
         let mut game = game();
-        press(game.input_mut(), FpsAction::Fire);
+        press(game.input_mut(), SearchlightAction::Fire);
         let mut headless = HeadlessLoop::new(LoopConfig::new(60));
 
         headless.step(&mut game, 1);
@@ -803,7 +803,7 @@ mod tests {
         )
     }
 
-    fn tick_with(game: &mut FpsGame, clock: &mut GameClock, command: &FpsCommand) {
+    fn tick_with(game: &mut SearchlightGame, clock: &mut GameClock, command: &SearchlightCommand) {
         let mut ctx = TickContext {
             tick: 0,
             tick_length: Duration::from_secs_f32(1.0 / 60.0),
@@ -813,17 +813,17 @@ mod tests {
     }
 
     /// A game whose player walked toward an enemy and was shot dead there, with a status shown.
-    fn game_with_a_player_dead_away_from_the_spawn() -> (FpsGame, GameClock) {
-        let sim = FpsSim::start(arena_arena(), arena_config());
+    fn game_with_a_player_dead_away_from_the_spawn() -> (SearchlightGame, GameClock) {
+        let sim = SearchlightSim::start(arena_arena(), arena_config());
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
-        let mut game = FpsGame::new(sim, ActionMap::new(bindings, 1.0));
+        let mut game = SearchlightGame::new(sim, ActionMap::new(bindings, 1.0));
         let mut clock = GameClock::new(0.0, 1.0, 1.0);
-        let walk = FpsCommand {
+        let walk = SearchlightCommand {
             movement: moho_physics::CharacterCommand {
                 forward: 1.0,
                 ..moho_physics::CharacterCommand::default()
             },
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         };
         for _ in 0..600 {
             tick_with(&mut game, &mut clock, &walk);
@@ -841,17 +841,17 @@ mod tests {
         (game, clock)
     }
 
-    fn restart_command() -> FpsCommand {
-        FpsCommand {
+    fn restart_command() -> SearchlightCommand {
+        SearchlightCommand {
             restart: true,
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         }
     }
 
     #[test]
     fn the_view_does_not_blend_from_the_death_position_on_the_restart_tick() {
         let (mut game, mut clock) = game_with_a_player_dead_away_from_the_spawn();
-        let spawn = FpsSim::start(arena_arena(), arena_config()).player();
+        let spawn = SearchlightSim::start(arena_arena(), arena_config()).player();
 
         tick_with(&mut game, &mut clock, &restart_command());
 
@@ -870,16 +870,16 @@ mod tests {
 
     #[test]
     fn an_ordinary_alive_tick_blends_from_the_previous_pose_and_keeps_the_status() {
-        let sim = FpsSim::start(arena_arena(), arena_config());
+        let sim = SearchlightSim::start(arena_arena(), arena_config());
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
-        let mut game = FpsGame::new(sim, ActionMap::new(bindings, 1.0));
+        let mut game = SearchlightGame::new(sim, ActionMap::new(bindings, 1.0));
         let mut clock = GameClock::new(0.0, 1.0, 1.0);
-        let walk = FpsCommand {
+        let walk = SearchlightCommand {
             movement: moho_physics::CharacterCommand {
                 forward: 1.0,
                 ..moho_physics::CharacterCommand::default()
             },
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         };
         for _ in 0..5 {
             tick_with(&mut game, &mut clock, &walk);
@@ -899,17 +899,17 @@ mod tests {
     const BACKTICK: Binding = Binding::Key(Key::Backtick);
     const TICK: Duration = Duration::from_millis(16);
 
-    fn open_the_console(game: &mut FpsGame, clock: &GameClock) {
+    fn open_the_console(game: &mut SearchlightGame, clock: &GameClock) {
         let mut ctx = EventContext::new(clock, None, None);
         let routing = game.route_input(&mut ctx, BACKTICK, true, false);
         assert_eq!(routing, Routing::Opened);
     }
 
     /// A game whose enemy is walking toward the player, so every sim tick moves it.
-    fn game_with_a_moving_enemy() -> FpsGame {
-        let sim = FpsSim::start(arena_arena(), arena_config());
+    fn game_with_a_moving_enemy() -> SearchlightGame {
+        let sim = SearchlightSim::start(arena_arena(), arena_config());
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
-        FpsGame::new(sim, ActionMap::new(bindings, 1.0))
+        SearchlightGame::new(sim, ActionMap::new(bindings, 1.0))
     }
 
     #[test]
@@ -1183,7 +1183,7 @@ mod tests {
     #[test]
     fn a_headless_frame_drains_the_feedback_without_audio_or_window() {
         let mut game = game();
-        press(game.input_mut(), FpsAction::Fire);
+        press(game.input_mut(), SearchlightAction::Fire);
         let mut headless = HeadlessLoop::new(LoopConfig::new(60));
         headless.step(&mut game, 1);
 
@@ -1760,12 +1760,12 @@ mod enemy_and_hud_tests {
         fn set_ssao_quality(&mut self, _quality: u8) {}
     }
 
-    fn sim_of(arena: Arc<crate::arena::Arena>) -> FpsSim {
-        FpsSim::start(arena, test_config(Rifle::loaded(mag(30, 30)), vec![]))
+    fn sim_of(arena: Arc<crate::arena::Arena>) -> SearchlightSim {
+        SearchlightSim::start(arena, test_config(Rifle::loaded(mag(30, 30)), vec![]))
     }
 
     /// One enemy at (3, 0, 4) whose only waypoint is ten metres to +X, so it faces +X.
-    fn lone_enemy() -> FpsSim {
+    fn lone_enemy() -> SearchlightSim {
         sim_of(arena_with(
             &[],
             Vec3::new(0.0, 0.0, -20.0),
@@ -1778,7 +1778,7 @@ mod enemy_and_hud_tests {
     fn drawn_after_sync(
         stage: &mut Stage,
         renderer: &mut RecordingRenderer,
-        sim: &FpsSim,
+        sim: &SearchlightSim,
     ) -> Vec<(Vec3, Vec3, MaterialGpu)> {
         stage.sync_enemies(sim);
         stage.draw(renderer, (Mat4::IDENTITY, Vec3::ZERO));

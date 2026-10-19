@@ -1,4 +1,4 @@
-# FPS prototype
+# Searchlight
 
 **Source:** `searchlight/src/`, `searchlight/assets/`, `moho_ui_shell/src/`.
 **Decisions:** [ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md),
@@ -13,9 +13,9 @@ strategy crate ([overview](overview.md#lines-and-rules)).
 
 ```mermaid
 flowchart LR
-    main["main.rs<br/>tuning, wiring"] --> game["game.rs<br/>FpsGame: Game impl"]
-    game --> sim["sim.rs<br/>FpsSim"]
-    game --> input["input.rs<br/>FpsAction, FpsCommand"]
+    main["main.rs<br/>tuning, wiring"] --> game["game.rs<br/>SearchlightGame: Game impl"]
+    game --> sim["sim.rs<br/>SearchlightSim"]
+    game --> input["input.rs<br/>SearchlightAction, SearchlightCommand"]
     game --> hud["hud.rs<br/>status wording"]
     sim --> brain["brain.rs<br/>enemy Brain"]
     sim --> cover["cover.rs<br/>cover choice"]
@@ -28,24 +28,24 @@ flowchart LR
 | Module | Role |
 |---|---|
 | `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes, spawns, route, cover points) and builds the world colliders |
-| `input` | `FpsAction` set and default bindings; `FpsCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on Enter) |
+| `input` | `SearchlightAction` set and default bindings; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on Enter) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }` or `Player(part)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld` |
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` in, `Intent` out; `EnemyTuning` holds its numbers |
 | `cover` | `pick` and `offer`: choose the nearest free cover point a hurt enemy should run to, using world-only rays against the player (`Threat`) |
-| `sim` | `FpsSim`: player character and body, rifle, spare magazines, dummies and enemies; emits `Feedback` |
+| `sim` | `SearchlightSim`: player character and body, rifle, spare magazines, dummies and enemies; emits `Feedback` |
 | `hud` | Text for rifle state, hits, health and death; the hit-edge direction; the death overlay |
 | `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (none yet, so only the engine's `help`, `clear` and `quit` run) |
-| `game` | `FpsGame`, the `moho_app::Game` implementation: samples input, ticks the sim, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open), so the sim freezes instead of ticking with an ignored command |
+| `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples input, ticks the sim, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open), so the sim freezes instead of ticking with an ignored command |
 
-`FpsSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
-`Feedback` is the only output: `FpsSim::tick` queues it, the game drains it
+`SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
+`Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
 (`drain_feedback`) and reacts. `TICK_HZ` is 60. Tuning values (speeds, damage, cooldown,
 magazine size, body profile, `EnemyTuning`, the player part enemies aim at) live in `main.rs` as a `SimConfig`.
 
 ## Console
 
-`FpsGame` owns a `moho_ui_shell::UiShell` behind an `Arc<Mutex<_>>` and composes it with the
+`SearchlightGame` owns a `moho_ui_shell::UiShell` behind an `Arc<Mutex<_>>` and composes it with the
 crosshair through `UiLayers` as the renderer's one UI source. Every key and button goes to the
 shell first (`route_input`): the console toggle key opens it, `release_all` drops held game keys,
 and while it is open input does not reach the game. Escape closes the console instead of
@@ -57,14 +57,14 @@ through `FrameContext`; with neither present the command is dropped. Console com
 
 ## Tick
 
-`FpsSim::tick(command, dt)` lets the enemies perceive and move, moves the player character,
+`SearchlightSim::tick(command, dt)` lets the enemies perceive and move, moves the player character,
 steps the physics world, applies weapon actions, then resolves the shots the enemies decided
 on and removes enemies that died. The rifle is in one state at a time (ready, cooling down
 after a shot, reloading); cooldown and reload are tick counts.
 
-`FpsSim::start(arena, config)` builds the full sim: targets are numbered dummies first, then
-enemies. `FpsSim::new` builds one with dummies only. A sim started from an arena keeps the
-`Arena` and `SimConfig`; once the player is dead, `tick` reads only `FpsCommand::restart` and
+`SearchlightSim::start(arena, config)` builds the full sim: targets are numbered dummies first, then
+enemies. `SearchlightSim::new` builds one with dummies only. A sim started from an arena keeps the
+`Arena` and `SimConfig`; once the player is dead, `tick` reads only `SearchlightCommand::restart` and
 rebuilds the sim from them.
 
 ## Enemies
@@ -112,7 +112,7 @@ Markers are node names in the glTF file. `player_spawn` is required and unique; 
 unless an `enemy_spawn_NN` exists, then at least one is required (`ArenaError::MissingMarker`);
 the patrol route follows the waypoint numbers, not file order. Each
 `cover_NN` carries a `shielded_from` extra (`+x`, `-x`, `+z`, `-z`). Spawns are floor points;
-`FpsSim::new` lifts capsule centres by `STAND_HEIGHT`. Errors surface as `ArenaError`.
+`SearchlightSim::new` lifts capsule centres by `STAND_HEIGHT`. Errors surface as `ArenaError`.
 
 `assets/arena.glb` and `assets/rifle_shot.wav` are generated by
 `assets/tools/make_arena.py`; see [`assets/README.md`](../../searchlight/assets/README.md) for

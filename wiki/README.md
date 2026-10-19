@@ -27,7 +27,7 @@ flowchart LR
 | Publish or handle an event | [architecture/events](architecture/events.md), then [best practices](reference/event-bus-best-practices.md) |
 | Know where a key press goes | [architecture/input-and-state](architecture/input-and-state.md) |
 | Understand chunk load, light, mesh, unload | [architecture/world-streaming](architecture/world-streaming.md) |
-| Work on the FPS prototype | [architecture/fps-prototype](architecture/fps-prototype.md) |
+| Work on Searchlight | [architecture/searchlight](architecture/searchlight.md) |
 | Change rendering or a shader struct | [architecture/rendering](architecture/rendering.md), [reference/gpu-abi](reference/gpu-abi.md) |
 | Add a debug-console command | [guides/adding-console-commands](guides/adding-console-commands.md) |
 | Read or change a save file | [reference/save-format](reference/save-format.md) |
@@ -47,7 +47,7 @@ flowchart LR
 - [World streaming](architecture/world-streaming.md): chunk lifecycle.
 - [Rendering](architecture/rendering.md): render API boundary, pass order.
 - [Console](architecture/console.md): debug console data flow.
-- [FPS prototype](architecture/fps-prototype.md): `searchlight` arena, shot path, sim, game adapter.
+- [Searchlight](architecture/searchlight.md): `searchlight` arena, shot path, sim, game adapter.
 
 **Reference**
 
@@ -63,7 +63,7 @@ flowchart LR
 **Guides, design, process**
 
 - [Adding console commands](guides/adding-console-commands.md)
-- [Strategy vision](flagstone/vision.md) · [FPS design document](searchlight/game-design-document.md) (draft)
+- [Flagstone vision](flagstone/vision.md) · [FPS design document](searchlight/game-design-document.md) (draft)
 - [Agentic workflow](process/agentic-workflow.md)
 
 ## Known constraints

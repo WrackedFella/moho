@@ -13,8 +13,8 @@ use moho_ui_shell::UiShell;
 use searchlight::arena::{self, Arena};
 use searchlight::brain::EnemyTuning;
 use searchlight::console_commands;
-use searchlight::game::{FpsGame, WINDOW_TITLE};
-use searchlight::sim::{FpsSim, SimConfig};
+use searchlight::game::{SearchlightGame, WINDOW_TITLE};
+use searchlight::sim::{SearchlightSim, SimConfig};
 use searchlight::{TICK_HZ, prefs_path, split_console_binding};
 use searchlight_rules::{BodyPart, BodyProfile, Magazine, Rifle};
 
@@ -68,7 +68,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .map_or_else(|| assets().join("arena.glb"), PathBuf::from);
     let (level, markers) = arena::load(&arena_path)?;
     let arena = Arc::new(Arena::from_level(&level, &markers));
-    let sim = FpsSim::start(arena.clone(), tuning()?);
+    let sim = SearchlightSim::start(arena.clone(), tuning()?);
     let (prefs, prefs_warnings) = Prefs::load_from(&prefs_path());
     for warning in prefs_warnings {
         tracing::warn!(%warning, "Preferences load fallback");
@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     for warning in console_warnings {
         tracing::warn!(?warning, "console binding");
     }
-    let game = FpsGame::new(sim, ActionMap::new(bindings, LOOK_PER_PIXEL))
+    let game = SearchlightGame::new(sim, ActionMap::new(bindings, LOOK_PER_PIXEL))
         .with_shell(UiShell::new(console))
         .with_arena(arena.meshes.clone(), &arena.dummy_spawns)
         .with_shot_sound(&assets().join("rifle_shot.wav"));
