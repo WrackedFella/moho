@@ -50,10 +50,10 @@ flowchart TD
     classDef fps fill:#ffedd5,stroke:#ea580c,color:#111
 ```
 
-Blue is the engine line, green is the flagstone line, orange is the FPS line.
+Blue is the engine line, green is the flagstone line, orange is the searchlight line.
 `searchlight_rules` holds plain serialisable weapon and body rules (`Rifle`, `Magazine`, `Body`)
-with no engine dependency. `searchlight` is the only FPS crate that reaches the engine: a library
-plus the `searchlight` binary, described in [FPS prototype](fps-prototype.md). Every shot resolves
+with no engine dependency. `searchlight` is the only searchlight-line crate that reaches the engine: a library
+plus the `searchlight` binary, described in [Searchlight](searchlight.md). Every shot resolves
 through one path (ray, surface tag, part, rule call) for player and enemy alike
 ([ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md)).
 `moho_ui_shell` is the engine's only egui-facing crate: the console every game opens and adds commands to, and the egui host that draws it ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
@@ -68,7 +68,7 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 | Rule | Reason |
 |---|---|
 | Engine crates never depend on a game-line crate (dev-dependencies allowed) | The engine ships to both games and, after the split, from its own repo |
-| A game line never depends on another game line | Strategy and FPS must separate cleanly |
+| A game line never depends on another game line | Flagstone and Searchlight must separate cleanly |
 | Domain crates (`moho_core`, `flagstone_voxel`, `flagstone_game`, `moho_level`, `searchlight_rules`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
 | Only `moho_renderer` (the `gpu` row of `scripts/layering.txt`) reaches `wgpu`, `egui-wgpu` or `naga` without going through another workspace member, dev-dependencies included | GPU code stays behind the renderer boundary |
 
@@ -125,7 +125,7 @@ Changes from today:
 - Navigation (ENG-F17) and the character controller and camera (ENG-F21) are modules of
   an engine crate unless their specs name a boundary.
 
-The FPS line sits beside the flagstone line and depends only on engine crates.
+The searchlight line sits beside the flagstone line and depends only on engine crates.
 
 ### Engine seams
 
@@ -193,4 +193,4 @@ Library crates never install a subscriber.
 
 ## Next
 
-[Frame loop](frame-loop.md) · [FPS prototype](fps-prototype.md) · [Events](events.md) · [Rendering](rendering.md)
+[Frame loop](frame-loop.md) · [Searchlight](searchlight.md) · [Events](events.md) · [Rendering](rendering.md)
