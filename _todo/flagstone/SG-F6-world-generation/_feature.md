@@ -1,7 +1,7 @@
 # SG-F6 — New worlds look intentional and ore is findable
 
 **Status:** Draft
-**Labels:** feature, line:flagstone
+**Labels:** feature, line:strategy
 **Note:** No exit criteria until the user ranks the world-generation problems.
 
 ## End state
