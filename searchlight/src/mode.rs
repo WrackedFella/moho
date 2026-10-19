@@ -37,7 +37,7 @@ impl ArenaMode {
     fn step_waves(&mut self) {
         let kills = self.sim.kills();
         let scan = !self.sim.player_body().is_dead()
-            && (self.waves.to_spawn() > 0 || self.sim.enemies_alive() == 0);
+            && (self.waves.to_spawn() != 0 || self.sim.enemies_alive() == 0);
         let free = if scan {
             self.sim.free_enemy_spawns()
         } else {

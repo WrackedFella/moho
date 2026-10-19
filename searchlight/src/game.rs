@@ -1811,6 +1811,30 @@ mod enemy_and_hud_tests {
         assert_eq!(stage.enemies.iter().filter(|rig| rig.shown).count(), 1);
     }
 
+    #[test]
+    fn syncing_keeps_the_gun_flash_of_a_shown_living_enemy_numbered_after_the_dummies() {
+        let mut arena = (*arena_with(
+            &[],
+            Vec3::new(0.0, 0.0, -20.0),
+            &[Vec3::new(3.0, 0.0, 4.0)],
+            &[Vec3::new(13.0, 0.0, 4.0)],
+        ))
+        .clone();
+        arena.dummy_spawns = vec![Vec3::new(-8.0, 0.0, 4.0), Vec3::new(-4.0, 0.0, 4.0)];
+        let sim = sim_of(Arc::new(arena));
+        let mut stage = Stage::new();
+        let mut renderer = RecordingRenderer::default();
+        stage.add_arena(Vec::new(), &sim_dummy_spawns());
+        drawn_after_sync(&mut stage, &mut renderer, &sim);
+
+        stage.react(&Feedback::EnemyFired { target: 2 }, None);
+        let drawn = drawn_after_sync(&mut stage, &mut renderer, &sim);
+
+        assert_eq!(stage.enemies[0].gun_flash, FLASH_TICKS);
+        let enemy_draws = &drawn[drawn.len() - 7..];
+        assert!(is_paint(enemy_draws[6].2, Paint::Struck));
+    }
+
     fn sim_dummy_spawns() -> [Vec3; 2] {
         [Vec3::new(-8.0, 0.0, 4.0), Vec3::new(-4.0, 0.0, 4.0)]
     }
