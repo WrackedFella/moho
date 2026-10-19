@@ -975,6 +975,92 @@ mod tests {
         assert!(ctx.exit_requested());
     }
 
+    /// Records the engine's renderer settings; the draw calls do nothing.
+    #[derive(Default)]
+    struct SettingsRenderer {
+        shadow: Vec<u8>,
+        ssao: Vec<u8>,
+        debug_view: Vec<Option<u32>>,
+    }
+
+    impl RendererBackend for SettingsRenderer {
+        fn resize(&mut self, _width: u32, _height: u32) {}
+        fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+            0
+        }
+        fn register_indexed_mesh(
+            &mut self,
+            _vertices: &[[f32; 3]],
+            _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
+            _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
+            _indices: &[u32],
+        ) -> u32 {
+            0
+        }
+        fn unregister_mesh(&mut self, _mesh: u32) {}
+        fn begin_frame(
+            &mut self,
+            _camera: (Mat4, Mat4, Vec3),
+        ) -> Result<(), moho_renderer::FrameError> {
+            Ok(())
+        }
+        fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
+        fn submit_frame(&mut self) {}
+        fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
+        fn update_lighting(&mut self, _lighting: LightingGpu) {}
+        fn add_point_light(&mut self, _p: Vec3, _c: Vec3, _intensity: f32, _range: f32) -> u32 {
+            0
+        }
+        fn remove_light(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn set_light_position(&mut self, _id: u32, _position: Vec3) {}
+        fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+        fn set_shadow_quality(&mut self, quality: u8) {
+            self.shadow.push(quality);
+        }
+        fn set_ssao_quality(&mut self, quality: u8) {
+            self.ssao.push(quality);
+        }
+        fn set_debug_view(&mut self, mode: Option<u32>) {
+            self.debug_view.push(mode);
+        }
+    }
+
+    #[test]
+    fn a_renderer_command_applies_on_the_next_frame() {
+        let mut game = game();
+        let clock = GameClock::default();
+        open_the_console(&mut game, &clock);
+        {
+            let mut shell = game.stage.shell.lock().unwrap();
+            shell.console_mut().submit("r_shadow_quality 0");
+            shell.console_mut().submit("r_ssao_quality 4");
+            shell.console_mut().submit("r_debug_view 3");
+        }
+        let mut renderer = SettingsRenderer::default();
+        let before = (
+            renderer.shadow.clone(),
+            renderer.ssao.clone(),
+            renderer.debug_view.clone(),
+        );
+        {
+            let backend: &mut dyn RendererBackend = &mut renderer;
+            let mut ctx = FrameContext::new(TICK, &clock, Some(backend), None);
+
+            game.frame(&mut ctx, 0.0);
+        }
+
+        assert_eq!(before, (vec![], vec![], vec![]));
+        assert_eq!(renderer.shadow, vec![0]);
+        assert_eq!(renderer.ssao, vec![4]);
+        assert_eq!(renderer.debug_view, vec![Some(3)]);
+    }
+
     #[test]
     fn escape_with_the_console_open_does_not_exit() {
         let mut game = game();

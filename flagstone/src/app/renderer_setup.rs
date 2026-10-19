@@ -95,8 +95,8 @@ pub fn init_renderer_and_ui(
             });
 
         // Register UI adapter as a normal UI subscriber.
-        // Only forward events to egui when menus/console are visible;
-        // during gameplay the overlays are passive and don't need input.
+        // Menus and the console get every event. During gameplay egui only tracks the
+        // pointer and takes a press that lands on a panel.
         let ui_adapter_clone = ui_adapter.clone();
         app.dispatcher
             .register(100, move |event: &winit::event::WindowEvent| {
@@ -104,7 +104,7 @@ pub fn init_renderer_and_ui(
                     if a.is_visible() {
                         a.handle_winit_event(event)
                     } else {
-                        false
+                        a.handle_gameplay_event(event)
                     }
                 } else {
                     false
@@ -142,7 +142,8 @@ pub fn init_renderer_and_ui(
 
         // Register a separate low-priority subscriber for the mine action: a
         // left click, not captured by UI, requests a mine attempt via the same
-        // channel. Kept as its own registration rather than folded into the
+        // channel. It leaves the press unconsumed so it also reaches the action map
+        // (`Select`). Kept as its own registration rather than folded into the
         // wheel handler above — each input kind gets its own subscriber so a
         // future input type is a new `register` call, not another branch on
         // an existing one.
@@ -162,9 +163,13 @@ pub fn init_renderer_and_ui(
                     return false;
                 }
 
-                mine_tx
+                if mine_tx
                     .send(crate::input_event::InputEvent::MineRequested)
-                    .is_ok()
+                    .is_err()
+                {
+                    tracing::debug!("Mine request dropped: input channel closed");
+                }
+                false
             });
 
         // Register a low-priority subscriber for hotbar slot selection:

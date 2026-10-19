@@ -1,6 +1,6 @@
 //! Reads preferences from INI text and files, reporting every fallback as data.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -181,16 +181,20 @@ fn read_section(
     issues
 }
 
-/// Takes the `[bindings]` section verbatim; interpreting it is the game's job.
-fn read_bindings(prefs: &mut Prefs, keys: &SectionKeys) -> Vec<PrefsIssue> {
+/// Takes a game-owned section verbatim; interpreting it is the game's job.
+fn read_raw_section(
+    section: &str,
+    keys: &SectionKeys,
+    into: &mut BTreeMap<String, String>,
+) -> Vec<PrefsIssue> {
     let mut issues = Vec::new();
     for (key, value) in sorted_entries(keys) {
         match value {
             Some(value) => {
-                prefs.bindings.insert(key.clone(), value.clone());
+                into.insert(key.clone(), value.clone());
             }
             None => issues.push(PrefsIssue::Malformed {
-                section: "bindings".to_string(),
+                section: section.to_string(),
                 key: key.clone(),
                 value: None,
             }),
@@ -216,7 +220,11 @@ impl Prefs {
         sections.sort_by_key(|(name, _)| name.as_str());
         for (name, keys) in sections {
             if name == "bindings" {
-                issues.extend(read_bindings(&mut prefs, keys));
+                issues.extend(read_raw_section(name, keys, &mut prefs.bindings));
+                continue;
+            }
+            if name == "debug" {
+                issues.extend(read_raw_section(name, keys, &mut prefs.debug));
                 continue;
             }
             let table = match name.as_str() {
@@ -501,10 +509,14 @@ mod tests {
     fn base_file_loads_to_base_prefs_without_issues() {
         assert_base_differs_from_default();
 
-        let (prefs, issues) = Prefs::parse(&base_ini_with(None));
+        let content = base_ini_with(None);
+        assert!(!content.contains("debug"), "test setup: no [debug] section");
+
+        let (prefs, issues) = Prefs::parse(&content);
 
         assert_eq!(issues, vec![]);
         assert_eq!(prefs, base_prefs());
+        assert_eq!(prefs.debug_value("god"), None);
     }
 
     #[test]
@@ -637,6 +649,14 @@ mod tests {
 
         assert_eq!(issues, vec![malformed("bindings", "jump", None)]);
         assert!(prefs.bindings().is_empty());
+    }
+
+    #[test]
+    fn debug_line_without_value_is_malformed() {
+        let (prefs, issues) = Prefs::parse("[debug]\ngod\n");
+
+        assert_eq!(issues, vec![malformed("debug", "god", None)]);
+        assert_eq!(prefs.debug_value("god"), None);
     }
 
     #[test]
@@ -813,6 +833,22 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             prefs.to_ini_string()
         );
+    }
+
+    #[test]
+    fn a_game_section_is_read_raw_without_warnings() {
+        let content = format!(
+            "{}[debug]\ngod=1\nany_name_at_all=free text\n",
+            base_ini_with(None)
+        );
+
+        let (prefs, issues) = Prefs::parse(&content);
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.debug_value("god"), Some("1"));
+        assert_eq!(prefs.debug_value("any_name_at_all"), Some("free text"));
+        assert!(prefs.bindings().is_empty());
+        assert_eq!(snapshot(&prefs), snapshot(&base_prefs()));
     }
 
     fn volume_strategy() -> impl Strategy<Value = f32> {

@@ -387,12 +387,22 @@ pub(crate) mod tests {
         console.submit("help");
 
         let help = help_lines(&console);
-        assert_eq!(help.len(), 4, "{help:?}");
-        for (line, name) in help.iter().zip(["help", "clear", "quit", "tgm"]) {
+        assert_eq!(help.len(), 8, "{help:?}");
+        let names = [
+            "help",
+            "clear",
+            "quit",
+            "r_debug_view",
+            "r_shadow_quality",
+            "r_ssao_quality",
+            "audio_cue",
+            "tgm",
+        ];
+        for (line, name) in help.iter().zip(names) {
             assert!(line.starts_with(&format!("  {name}")), "{line:?}");
             assert!(line.contains(" - "), "{line:?}");
         }
-        assert_eq!(help[3], "  tgm [0|1] - toggle god mode");
+        assert_eq!(help[7], "  tgm [0|1] - toggle god mode");
     }
 
     #[test]

@@ -49,8 +49,10 @@ magazine size, body profile, `EnemyTuning`, the player part enemies aim at) live
 crosshair through `UiLayers` as the renderer's one UI source. Every key and button goes to the
 shell first (`route_input`): the console toggle key opens it, `release_all` drops held game keys,
 and while it is open input does not reach the game. Escape closes the console instead of
-exiting. Engine commands typed in the console (`quit`) return as values and apply on the next
-frame through `apply_engine_command`. Console commands are hidden debug commands
+exiting. Engine commands typed in the console (`quit`, `r_debug_view`, `r_shadow_quality`,
+`r_ssao_quality`, `audio_cue`) return as `EngineCommand` values and apply on the next
+frame through `apply_engine_command`, which reaches the renderer (`RendererBackend`) and audio
+through `FrameContext`; with neither present the command is dropped. Console commands are hidden debug commands
 ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
 
 ## Tick

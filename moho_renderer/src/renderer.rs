@@ -42,6 +42,8 @@ pub struct Renderer<'a> {
     pending_markers: Vec<moho_render_api::MarkerGpu>,
     /// How many leading entries of `pending_markers` are fills.
     pending_fill_count: usize,
+    /// Debug view that replaces the game's own in every lighting update, once one is set.
+    debug_view: Option<u32>,
 }
 
 impl<'a> Renderer<'a> {
@@ -128,6 +130,7 @@ impl<'a> Renderer<'a> {
             marker_buffers: resources.marker_buffers,
             pending_markers: Vec::new(),
             pending_fill_count: 0,
+            debug_view: None,
         };
 
         // Recreate camera bind group with SSAO textures if available
@@ -153,9 +156,17 @@ impl<'a> Renderer<'a> {
 
     /// Update lighting parameters and write to GPU buffer.
     pub fn update_lighting(&mut self, lighting: crate::gpu_types::LightingGpu) {
+        let lighting = lighting_with_debug_view(lighting, self.debug_view);
         self.shadow.current_lighting = lighting;
         self.queue
             .write_buffer(&self.lighting_buffer, 0, bytemuck::bytes_of(&lighting));
+    }
+
+    /// Override the shader's debug view mode, now and in every later lighting update; `None`
+    /// leaves the game's own value.
+    pub fn set_debug_view(&mut self, mode: Option<u32>) {
+        self.debug_view = mode;
+        self.update_lighting(self.shadow.current_lighting);
     }
 
     /// Add a dynamic point light to the scene. Returns the light ID for future updates/removal.
@@ -665,5 +676,69 @@ impl<'a> Renderer<'a> {
         self.pending_draws.clear();
         self.pending_markers.clear();
         self.pending_fill_count = 0;
+    }
+}
+
+/// `lighting` with the shader's debug mode (`params[1]`) replaced by `debug_view`; `None`
+/// keeps the game's own value.
+fn lighting_with_debug_view(
+    lighting: crate::gpu_types::LightingGpu,
+    debug_view: Option<u32>,
+) -> crate::gpu_types::LightingGpu {
+    let mut lighting = lighting;
+    if let Some(mode) = debug_view {
+        lighting.params[1] = mode as f32;
+    }
+    lighting
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::gpu_types::LightingGpu;
+
+    use super::*;
+
+    fn game_lighting() -> LightingGpu {
+        LightingGpu {
+            sun_direction: [0.1, 0.2, 0.3, 1.0],
+            sun_color: [1.0, 0.9, 0.8, 0.0],
+            moon_direction: [0.4, 0.5, 0.6, 0.2],
+            moon_color: [0.1, 0.1, 0.3, 0.0],
+            ambient: [0.2, 0.2, 0.25, 0.3],
+            params: [13.5, 2.0, 7.0, 9.0],
+        }
+    }
+
+    #[test]
+    fn debug_view_override_replaces_params_y() {
+        let lighting = game_lighting();
+
+        let overridden = lighting_with_debug_view(lighting, Some(3));
+
+        assert_eq!(overridden.params, [13.5, 3.0, 7.0, 9.0]);
+        assert_eq!(overridden.sun_direction, lighting.sun_direction);
+        assert_eq!(overridden.ambient, lighting.ambient);
+    }
+
+    #[test]
+    fn debug_view_override_of_zero_clears_the_games_view() {
+        let lighting = game_lighting();
+
+        let overridden = lighting_with_debug_view(lighting, Some(0));
+
+        assert_eq!(overridden.params[1], 0.0);
+    }
+
+    #[test]
+    fn no_override_keeps_the_games_params_y() {
+        let lighting = game_lighting();
+
+        let kept = lighting_with_debug_view(lighting, None);
+
+        assert_eq!(
+            bytemuck::bytes_of(&kept),
+            bytemuck::bytes_of(&lighting),
+            "every field is untouched"
+        );
     }
 }

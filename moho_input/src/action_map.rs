@@ -31,6 +31,8 @@ pub struct ActionFrame<A: Action> {
     pressed: u64,
     released: u64,
     look: (f32, f32),
+    pointer: Option<(f32, f32)>,
+    press_pointer: Option<(f32, f32)>,
     actions: PhantomData<A>,
 }
 
@@ -61,6 +63,16 @@ impl<A: Action> ActionFrame<A> {
     pub fn look(&self) -> (f32, f32) {
         self.look
     }
+
+    /// Pointer position in physical pixels at the end of the tick, `None` when outside the window.
+    pub fn pointer(&self) -> Option<(f32, f32)> {
+        self.pointer
+    }
+
+    /// Pointer position at the last mouse press in the tick, else `None`.
+    pub fn press_pointer(&self) -> Option<(f32, f32)> {
+        self.press_pointer
+    }
 }
 
 /// Collects input events and reports them once per tick.
@@ -76,6 +88,8 @@ pub struct ActionMap<A: Action> {
     sticks: [(f32, f32); 2],
     sensitivity: f32,
     filter: FilterPipeline,
+    pointer: Option<(f32, f32)>,
+    press_pointer: Option<(f32, f32)>,
 }
 
 impl<A: Action> ActionMap<A> {
@@ -91,6 +105,8 @@ impl<A: Action> ActionMap<A> {
             sticks: [(0.0, 0.0); 2],
             sensitivity,
             filter: FilterPipeline::new(),
+            pointer: None,
+            press_pointer: None,
         }
     }
 
@@ -103,6 +119,9 @@ impl<A: Action> ActionMap<A> {
     }
 
     pub fn mouse_button(&mut self, button: MouseButton, down: bool) {
+        if down {
+            self.press_pointer = self.pointer;
+        }
         self.set_down(Binding::Mouse(button), down);
     }
 
@@ -110,6 +129,16 @@ impl<A: Action> ActionMap<A> {
     pub fn mouse_motion(&mut self, dx: f64, dy: f64) {
         self.look_accumulator.0 += dx;
         self.look_accumulator.1 += dy;
+    }
+
+    /// Records the pointer at `(x, y)` physical pixels.
+    pub fn pointer_moved(&mut self, x: f32, y: f32) {
+        self.pointer = Some((x, y));
+    }
+
+    /// Forgets the pointer: it left the window.
+    pub fn pointer_left(&mut self) {
+        self.pointer = None;
     }
 
     pub fn pad_button(&mut self, button: PadButton, down: bool) {
@@ -161,6 +190,8 @@ impl<A: Action> ActionMap<A> {
             pressed: self.pressed,
             released: self.released,
             look: self.sample_look(),
+            pointer: self.pointer,
+            press_pointer: self.press_pointer.take(),
             actions: PhantomData,
         };
         self.pressed = 0;
@@ -253,6 +284,10 @@ pub fn handle_window_event<A: Action>(map: &mut ActionMap<A>, event: &WindowEven
                 map.mouse_button(button, *state == ElementState::Pressed);
             }
         }
+        WindowEvent::CursorMoved { position, .. } => {
+            map.pointer_moved(position.x as f32, position.y as f32);
+        }
+        WindowEvent::CursorLeft { .. } => map.pointer_left(),
         WindowEvent::Focused(false) => map.release_all(),
         _ => {}
     }
@@ -1006,6 +1041,80 @@ mod tests {
 
         assert!((x - 0.16).abs() < 1e-6, "x = {x}");
         assert!((y - 0.16).abs() < 1e-6, "y = {y}");
+    }
+
+    #[test]
+    fn pointer_moves_reach_the_next_frame() {
+        let mut map = map(1.0);
+
+        map.pointer_moved(10.0, 20.0);
+        map.pointer_moved(30.5, 40.5);
+        let frame = map.end_tick();
+        let next = map.end_tick();
+        map.pointer_left();
+        let gone = map.end_tick();
+
+        assert_eq!(frame.pointer(), Some((30.5, 40.5)));
+        assert_eq!(next.pointer(), Some((30.5, 40.5)));
+        assert_eq!(gone.pointer(), None);
+    }
+
+    #[test]
+    fn press_records_the_pointer_at_the_press() {
+        let mut map = map(1.0);
+
+        map.pointer_moved(100.0, 200.0);
+        map.mouse_button(MouseButton::Left, true);
+        map.pointer_moved(300.0, 400.0);
+        map.mouse_button(MouseButton::Left, false);
+        map.pointer_moved(500.0, 600.0);
+        map.mouse_button(MouseButton::Left, true);
+        map.pointer_moved(700.0, 800.0);
+        map.mouse_button(MouseButton::Left, false);
+        map.pointer_moved(900.0, 1000.0);
+        let frame = map.end_tick();
+
+        assert_eq!(frame.press_pointer(), Some((500.0, 600.0)));
+        assert_eq!(frame.pointer(), Some((900.0, 1000.0)));
+    }
+
+    #[test]
+    fn press_without_a_pointer_has_no_press_pointer() {
+        let mut before_any_move = map(1.0);
+        before_any_move.mouse_button(MouseButton::Left, true);
+        let mut after_leaving = map(1.0);
+        after_leaving.pointer_moved(10.0, 20.0);
+        after_leaving.pointer_left();
+        after_leaving.mouse_button(MouseButton::Left, true);
+
+        let first = before_any_move.end_tick();
+        let second = after_leaving.end_tick();
+
+        assert!(first.pressed(TestAction::Fire));
+        assert!(second.pressed(TestAction::Fire));
+        assert_eq!(first.press_pointer(), None);
+        assert_eq!(second.press_pointer(), None);
+
+        after_leaving.pointer_moved(30.0, 40.0);
+        let later = after_leaving.end_tick();
+        assert_eq!(later.pointer(), Some((30.0, 40.0)));
+        assert_eq!(later.press_pointer(), None);
+    }
+
+    #[test]
+    fn no_press_means_no_press_pointer() {
+        let mut map = map(1.0);
+
+        map.pointer_moved(5.0, 6.0);
+        map.key(Key::W, true);
+        let frame = map.end_tick();
+        map.mouse_button(MouseButton::Left, true);
+        map.end_tick();
+        let later = map.end_tick();
+
+        assert_eq!(frame.pointer(), Some((5.0, 6.0)));
+        assert_eq!(frame.press_pointer(), None);
+        assert_eq!(later.press_pointer(), None);
     }
 
     fn assert_close(actual: (f32, f32), expected: (f32, f32)) {

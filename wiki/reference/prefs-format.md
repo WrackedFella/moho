@@ -3,7 +3,10 @@
 **Source:** `moho_core/src/prefs/` (`mod.rs`, `reader.rs`), `moho_input/src/bindings.rs`, `moho_input/src/key.rs`, `moho_input/src/pad.rs`,
 `flagstone_ui/src/actions.rs`, `flagstone/src/main.rs` (`App::save_prefs`, `App::adopt_settings`),
 `flagstone/src/app/initializer.rs` (`build_actions`), `moho_audio/src/audio_settings.rs` (`AudioSettings::from_prefs`), `flagstone_ui/src/adapter/mod.rs`. Path: `config/prefs.ini`,
-relative to the working directory.
+relative to the working directory. The FPS (`searchlight`) keeps its own file,
+`config/searchlight.ini` (`searchlight::prefs_path`), read with `Prefs::load_from`. It
+splits the `console` entry from the game's own `[bindings]` (`split_console_binding`) so
+neither loader warns about the other's key.
 
 `Prefs::load` creates the file with defaults if it is missing. Missing sections or keys
 take their defaults silently. `Prefs::save` writes every key below.
@@ -72,6 +75,7 @@ opened there still saves to the default path).
 | | `window_width` `window_height` | unsigned integer pixels | `1920` `1080` |
 | `[world]` | `load_radius` `unload_radius` | integer chunks | `8` `12` |
 | | `chunks_per_frame` | unsigned integer, 1 or more | `4` |
+| `[debug]` | one key per game debug value | free text, see below | none |
 
 `[bindings]` is stored by `Prefs` as raw text (`Prefs::bindings`, `Prefs::set_bindings`);
 the game interprets it. `ActionBindings::load` (`moho_input`) reads it against the
@@ -95,6 +99,13 @@ punctuation spelled as a word (`Comma`, `Semicolon`, `LeftBracket`, ...), `Arrow
 words: the INI reader cuts a line at `;` or `#`, reads a line with `[` as a section
 header, and `,` separates list items. There is no modifier syntax such as `Ctrl+W`
 and no numeric key codes.
+
+`[debug]` is a game-owned section of named values (a game's debug toggles), stored raw like
+`[bindings]` and written only when non-empty. `Prefs::debug_value` reads one;
+`Prefs::set_debug_value` stores one and returns `DebugValueError` for a name or value
+that would not read back exactly. Names are non-empty lowercase letters, digits and
+underscores. Values are non-empty, have no leading or trailing whitespace, and contain no
+`;`, `#` or line break. The Settings screen's save keeps them.
 
 Gamepad bindings are written `Pad <name>` and mix freely with keys in one list
 (`jump=Spacebar, Pad South`). Buttons (`PadButton`): `South` `East` `North` `West`
