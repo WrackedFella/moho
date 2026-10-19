@@ -45,7 +45,8 @@ impl SettingsTab {
 }
 
 /// The actions the settings screen lists, in row order. `Jump` is absent: it
-/// shares Space with `Ascend`.
+/// shares Space with `Ascend`. `Select` is absent: it is a mouse button, and the
+/// screen rebinds keys.
 pub const BINDING_ROWS: [StrategyAction; 7] = [
     StrategyAction::MoveForward,
     StrategyAction::MoveLeft,
@@ -72,5 +73,6 @@ pub fn display_name(action: StrategyAction) -> &'static str {
         StrategyAction::Descend => "Move Down",
         StrategyAction::Sprint => "Sprint",
         StrategyAction::Jump => "Jump",
+        StrategyAction::Select => "Select",
     }
 }

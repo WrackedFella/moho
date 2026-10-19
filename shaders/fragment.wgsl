@@ -566,6 +566,10 @@ fn calculate_point_light(
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    if (in.world_pos.y > camera.cam_pos.w) {
+        discard;
+    }
+
     // Extract lighting parameters from uniform
     let sun_dir = normalize(lighting.sun_direction.xyz);
     let sun_intensity = lighting.sun_direction.w;

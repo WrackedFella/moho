@@ -43,6 +43,8 @@ pub enum ConsoleAction {
     },
     /// Remove the marker with this id, or every marker when `None`
     ClearMarkers(Option<u64>),
+    /// Cut the world above this height in metres; `None` clears the cut
+    SetViewHeight(Option<f32>),
     /// No action
     None,
 }
@@ -126,6 +128,7 @@ impl CommandProcessor {
             "snd_play_at" => self.snd_play_at_command(&parts),
             "marker" => self.marker_command(&parts),
             "marker_clear" => self.marker_clear_command(&parts),
+            "r_view_height" => self.view_height_command(&parts),
             _ => self.unknown_command(parts[0]),
         }
     }
@@ -149,6 +152,7 @@ impl CommandProcessor {
             "  marker <id> <x> <y> <z> [size] [fill|outline] - Show a box marker at a block corner"
                 .to_string(),
             "  marker_clear [id] - Remove one marker, or all markers".to_string(),
+            "  r_view_height <metres|off> - Draw nothing in the world above a height".to_string(),
         ])
     }
 
@@ -404,6 +408,28 @@ impl CommandProcessor {
                 )
             }
             Err(_) => CommandResult::message("Invalid quality. Must be a number.".to_string()),
+        }
+    }
+
+    fn view_height_command(&self, parts: &[&str]) -> CommandResult {
+        let [_, arg] = parts else {
+            return CommandResult::message("Usage: r_view_height <metres|off>".to_string());
+        };
+
+        if *arg == "off" {
+            return CommandResult::with_action(
+                "View height cleared".to_string(),
+                ConsoleAction::SetViewHeight(None),
+            );
+        }
+        match parse_finite(arg) {
+            Some(height) => CommandResult::with_action(
+                format!("View height set to {height} m"),
+                ConsoleAction::SetViewHeight(Some(height)),
+            ),
+            None => CommandResult::message(
+                "Invalid height. Must be a finite number of metres, or off.".to_string(),
+            ),
         }
     }
 
@@ -886,6 +912,33 @@ mod tests {
         assert!(bad.messages.iter().any(|m| m.contains("Error:")));
         assert_eq!(extra.action, ConsoleAction::None);
         assert!(extra.messages.iter().any(|m| m.contains("Usage:")));
+    }
+
+    #[test]
+    fn r_view_height_sets_and_clears() {
+        let processor = CommandProcessor::new();
+
+        let set = processor.execute("r_view_height 12.5");
+        let cleared = processor.execute("r_view_height off");
+
+        assert_eq!(set.action, ConsoleAction::SetViewHeight(Some(12.5)));
+        assert_eq!(cleared.action, ConsoleAction::SetViewHeight(None));
+    }
+
+    #[test]
+    fn r_view_height_rejects_a_non_number() {
+        let processor = CommandProcessor::new();
+
+        for input in ["r_view_height x", "r_view_height NaN", "r_view_height inf"] {
+            let result = processor.execute(input);
+
+            assert_eq!(result.action, ConsoleAction::None, "{input}");
+            assert!(
+                result.messages.iter().any(|m| m.contains("Invalid")),
+                "{input}: {:?}",
+                result.messages
+            );
+        }
     }
 
     #[test]

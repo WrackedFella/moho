@@ -24,7 +24,7 @@ use crate::actions::StrategyAction;
 pub(super) enum SettingsField {
     Binding(StrategyAction),
     MouseSensitivity,
-    InputFiltering,
+    MouseSmoothing,
     AudioSoundEffect,
     AudioMusic,
     AudioUI,

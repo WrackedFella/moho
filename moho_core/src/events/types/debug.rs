@@ -45,6 +45,9 @@ pub enum DebugEvent {
 
     /// Remove the marker with `id`, or every marker when `None`
     ClearMarkers { id: Option<u64> },
+
+    /// Draw nothing in the world above `height` metres; `None` clears the cut
+    SetViewHeight { height: Option<f32> },
 }
 
 #[derive(Clone, Debug)]

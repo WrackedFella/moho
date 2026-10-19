@@ -74,8 +74,6 @@ pub struct FpsCommand {
     pub check: bool,
     /// The restart input went down this tick.
     pub restart: bool,
-    /// The world holds still this tick: the developer console is open.
-    pub paused: bool,
 }
 
 impl FpsCommand {
@@ -100,7 +98,6 @@ impl FpsCommand {
             reload: frame.pressed(FpsAction::Reload),
             check: frame.pressed(FpsAction::CheckMagazine),
             restart: frame.pressed(FpsAction::Restart),
-            paused: false,
         }
     }
 }
@@ -218,7 +215,6 @@ mod tests {
     #[test]
     fn mouse_motion_turns_and_pitches_with_up_positive() {
         let mut map = fresh_map();
-        map.set_filtering(false);
         map.mouse_motion(0.0, 10.0);
 
         let down = FpsCommand::from_frame(&map.end_tick());
@@ -284,7 +280,6 @@ mod look_direction_tests {
     fn yaw_after_mouse_motion(dx: f64) -> f32 {
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
         let mut map = ActionMap::<FpsAction>::new(bindings, 1.0);
-        map.set_filtering(false);
         map.mouse_motion(dx, 0.0);
         FpsCommand::from_frame(&map.end_tick()).movement.yaw_delta
     }

@@ -142,12 +142,11 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         let elapsed = now - self.last_wake;
         self.last_wake = now;
 
-        if self.sim.run_ticks(&mut self.game, elapsed) > 0 {
+        if self.sim.run_ticks(&mut self.game, elapsed) > 0 || self.sim.paused() {
             window.request_redraw();
         }
 
-        let until_next_tick = self.sim.tick_length().mul_f32(1.0 - self.sim.alpha());
-        event_loop.set_control_flow(ControlFlow::WaitUntil(now + until_next_tick));
+        event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.sim.until_next_tick()));
     }
 
     fn window_event(
@@ -159,6 +158,7 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         let route = route(&event);
         match route {
             Route::Frame => {
+                self.sim.apply_paused_command(&mut self.game);
                 let mut ctx = FrameContext::new(
                     self.sim.tick_length(),
                     self.sim.clock(),
@@ -166,7 +166,10 @@ impl<G: Game> ApplicationHandler for Runner<G> {
                     self.audio.as_mut(),
                 );
                 self.game.frame(&mut ctx, self.sim.alpha());
-                if ctx.exit_requested() {
+                let requests = ctx.loop_requests();
+                let exit = ctx.exit_requested();
+                self.sim.apply_requests(requests);
+                if exit {
                     event_loop.exit();
                 }
                 return;
@@ -185,7 +188,10 @@ impl<G: Game> ApplicationHandler for Runner<G> {
             self.audio.as_mut(),
         );
         self.game.event(&mut ctx, Event::Window(event));
-        if ctx.exit_requested() || route == Route::Close {
+        let requests = ctx.loop_requests();
+        let exit = ctx.exit_requested();
+        self.sim.apply_requests(requests);
+        if exit || route == Route::Close {
             event_loop.exit();
         }
     }
@@ -202,7 +208,10 @@ impl<G: Game> ApplicationHandler for Runner<G> {
             self.audio.as_mut(),
         );
         self.game.event(&mut ctx, Event::Device(event));
-        if ctx.exit_requested() {
+        let requests = ctx.loop_requests();
+        let exit = ctx.exit_requested();
+        self.sim.apply_requests(requests);
+        if exit {
             event_loop.exit();
         }
     }

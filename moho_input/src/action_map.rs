@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 
 use crate::bindings::{Action, ActionBindings, Binding};
-use crate::filter::{DeadzoneFilter, FilterPipeline};
+use crate::filter::{DeadzoneFilter, MouseSmoothing};
 use crate::key::{Key, MouseButton};
 use crate::pad::{PadButton, PadInput, Stick, StickAxis, StickDir};
 
@@ -22,6 +22,23 @@ pub const PAD_LOOK_PER_TICK: f32 = 26.0;
 
 const STICK_LOOK_DEAD_ZONE: f32 = 0.15;
 
+/// How raw mouse counts become look: the turn per count, and whether to smooth.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct LookSettings {
+    pub look_per_count: f32,
+    pub smoothing: bool,
+}
+
+impl LookSettings {
+    /// Unsmoothed look at `look_per_count`.
+    pub fn raw(look_per_count: f32) -> Self {
+        Self {
+            look_per_count,
+            smoothing: false,
+        }
+    }
+}
+
 /// What the actions did over one tick.
 ///
 /// Plain data: masks are indexed by position in `A::ALL`.
@@ -31,6 +48,8 @@ pub struct ActionFrame<A: Action> {
     pressed: u64,
     released: u64,
     look: (f32, f32),
+    pointer: Option<(f32, f32)>,
+    press_pointer: Option<(f32, f32)>,
     actions: PhantomData<A>,
 }
 
@@ -57,9 +76,19 @@ impl<A: Action> ActionFrame<A> {
         self.released & bit(action) != 0
     }
 
-    /// Filtered, sensitivity-scaled mouse motion for the tick.
+    /// Look for the tick: scaled (and, if enabled, smoothed) mouse counts plus the stick.
     pub fn look(&self) -> (f32, f32) {
         self.look
+    }
+
+    /// Pointer position in physical pixels at the end of the tick, `None` when outside the window.
+    pub fn pointer(&self) -> Option<(f32, f32)> {
+        self.pointer
+    }
+
+    /// Pointer position at the last mouse press in the tick, else `None`.
+    pub fn press_pointer(&self) -> Option<(f32, f32)> {
+        self.press_pointer
     }
 }
 
@@ -74,12 +103,15 @@ pub struct ActionMap<A: Action> {
     look_accumulator: (f64, f64),
     /// Left and right stick `(x, y)`, Y up.
     sticks: [(f32, f32); 2],
-    sensitivity: f32,
-    filter: FilterPipeline,
+    look: LookSettings,
+    smoothing: MouseSmoothing,
+    pointer: Option<(f32, f32)>,
+    press_pointer: Option<(f32, f32)>,
 }
 
 impl<A: Action> ActionMap<A> {
-    pub fn new(bindings: ActionBindings<A>, sensitivity: f32) -> Self {
+    /// Raw look: no smoothing.
+    pub fn new(bindings: ActionBindings<A>, look_per_count: f32) -> Self {
         const { assert!(A::ALL.len() <= 64, "frame masks hold at most 64 actions") };
         Self {
             bindings,
@@ -89,8 +121,10 @@ impl<A: Action> ActionMap<A> {
             released: 0,
             look_accumulator: (0.0, 0.0),
             sticks: [(0.0, 0.0); 2],
-            sensitivity,
-            filter: FilterPipeline::new(),
+            look: LookSettings::raw(look_per_count),
+            smoothing: MouseSmoothing::new(),
+            pointer: None,
+            press_pointer: None,
         }
     }
 
@@ -103,6 +137,9 @@ impl<A: Action> ActionMap<A> {
     }
 
     pub fn mouse_button(&mut self, button: MouseButton, down: bool) {
+        if down {
+            self.press_pointer = self.pointer;
+        }
         self.set_down(Binding::Mouse(button), down);
     }
 
@@ -110,6 +147,16 @@ impl<A: Action> ActionMap<A> {
     pub fn mouse_motion(&mut self, dx: f64, dy: f64) {
         self.look_accumulator.0 += dx;
         self.look_accumulator.1 += dy;
+    }
+
+    /// Records the pointer at `(x, y)` physical pixels.
+    pub fn pointer_moved(&mut self, x: f32, y: f32) {
+        self.pointer = Some((x, y));
+    }
+
+    /// Forgets the pointer: it left the window.
+    pub fn pointer_left(&mut self) {
+        self.pointer = None;
     }
 
     pub fn pad_button(&mut self, button: PadButton, down: bool) {
@@ -143,15 +190,15 @@ impl<A: Action> ActionMap<A> {
     /// Discards pending motion and smoothing state so a camera jump cannot follow.
     pub fn reset_look(&mut self) {
         self.look_accumulator = (0.0, 0.0);
-        self.filter.reset();
+        self.smoothing.reset();
     }
 
-    pub fn set_sensitivity(&mut self, sensitivity: f32) {
-        self.sensitivity = sensitivity;
-    }
-
-    pub fn set_filtering(&mut self, enabled: bool) {
-        self.filter.set_enabled(enabled);
+    /// Applies new look settings; turning smoothing off drops its carry.
+    pub fn set_look(&mut self, settings: LookSettings) {
+        if !settings.smoothing {
+            self.smoothing.reset();
+        }
+        self.look = settings;
     }
 
     /// The only read: reports this tick's edges and look, then starts the next tick.
@@ -161,6 +208,8 @@ impl<A: Action> ActionMap<A> {
             pressed: self.pressed,
             released: self.released,
             look: self.sample_look(),
+            pointer: self.pointer,
+            press_pointer: self.press_pointer.take(),
             actions: PhantomData,
         };
         self.pressed = 0;
@@ -220,13 +269,16 @@ impl<A: Action> ActionMap<A> {
 
     fn sample_look(&mut self) -> (f32, f32) {
         let (dx, dy) = std::mem::take(&mut self.look_accumulator);
-        let mouse = if dx.abs() < f64::EPSILON && dy.abs() < f64::EPSILON {
-            self.filter.reset();
-            (0.0, 0.0)
+        let counts = (dx as f32, dy as f32);
+        let counts = if self.look.smoothing {
+            self.smoothing.apply(counts)
         } else {
-            self.filter
-                .apply((dx as f32 * self.sensitivity, dy as f32 * self.sensitivity))
+            counts
         };
+        let mouse = (
+            counts.0 * self.look.look_per_count,
+            counts.1 * self.look.look_per_count,
+        );
         let (stick_x, stick_y) = self.stick_look();
         (mouse.0 + stick_x, mouse.1 + stick_y)
     }
@@ -235,7 +287,7 @@ impl<A: Action> ActionMap<A> {
     fn stick_look(&self) -> (f32, f32) {
         let (x, y) = DeadzoneFilter::new(STICK_LOOK_DEAD_ZONE)
             .apply(self.sticks[Stick::RightStick as usize]);
-        let scale = PAD_LOOK_PER_TICK * self.sensitivity;
+        let scale = PAD_LOOK_PER_TICK * self.look.look_per_count;
         (x * scale, -y * scale)
     }
 }
@@ -253,6 +305,10 @@ pub fn handle_window_event<A: Action>(map: &mut ActionMap<A>, event: &WindowEven
                 map.mouse_button(button, *state == ElementState::Pressed);
             }
         }
+        WindowEvent::CursorMoved { position, .. } => {
+            map.pointer_moved(position.x as f32, position.y as f32);
+        }
+        WindowEvent::CursorLeft { .. } => map.pointer_left(),
         WindowEvent::Focused(false) => map.release_all(),
         _ => {}
     }
@@ -425,9 +481,12 @@ mod tests {
 
     #[test]
     fn right_stick_adds_per_tick_look() {
-        for filtering in [true, false] {
+        for smoothing in [true, false] {
             let mut map = pad_map(2.0);
-            map.set_filtering(filtering);
+            map.set_look(LookSettings {
+                look_per_count: 2.0,
+                smoothing,
+            });
 
             map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
             let first = map.end_tick().look();
@@ -442,7 +501,6 @@ mod tests {
     #[test]
     fn right_stick_up_looks_up_and_scales_with_deflection() {
         let mut map = pad_map(1.0);
-        map.set_filtering(false);
 
         map.pad_axis(Stick::RightStick, StickAxis::Y, 0.5);
         let look = map.end_tick().look();
@@ -453,7 +511,6 @@ mod tests {
     #[test]
     fn right_stick_inside_dead_zone_adds_no_look() {
         let mut map = pad_map(1.0);
-        map.set_filtering(false);
 
         map.pad_axis(Stick::RightStick, StickAxis::X, 0.1);
         map.pad_axis(Stick::RightStick, StickAxis::Y, 0.1);
@@ -464,7 +521,6 @@ mod tests {
     #[test]
     fn right_stick_dead_zone_is_radial_not_per_axis() {
         let mut map = pad_map(1.0);
-        map.set_filtering(false);
 
         map.pad_axis(Stick::RightStick, StickAxis::X, 0.12);
         map.pad_axis(Stick::RightStick, StickAxis::Y, 0.12);
@@ -476,7 +532,6 @@ mod tests {
     #[test]
     fn left_stick_does_not_add_look() {
         let mut map = pad_map(1.0);
-        map.set_filtering(false);
 
         map.pad_axis(Stick::LeftStick, StickAxis::X, 1.0);
 
@@ -484,20 +539,8 @@ mod tests {
     }
 
     #[test]
-    fn stick_look_is_added_after_the_mouse_filter() {
-        let mut map = pad_map(1.0);
-        map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
-        map.mouse_motion(1.0, 0.0);
-
-        let look = map.end_tick().look();
-
-        assert_close(look, (0.8 + PAD_LOOK_PER_TICK, 0.0));
-    }
-
-    #[test]
     fn release_all_stops_stick_look() {
         let mut map = pad_map(1.0);
-        map.set_filtering(false);
         map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
         assert_close(map.end_tick().look(), (PAD_LOOK_PER_TICK, 0.0));
 
@@ -546,7 +589,6 @@ mod tests {
     #[test]
     fn pad_disconnect_releases_pad_bindings() {
         let mut map = pad_map(1.0);
-        map.set_filtering(false);
         map.pad_button(PadButton::South, true);
         map.pad_axis(Stick::LeftStick, StickAxis::Y, 1.0);
         map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
@@ -671,7 +713,6 @@ mod tests {
     #[test]
     fn look_is_scaled_motion_since_previous_tick() {
         let mut map = map(2.0);
-        map.set_filtering(false);
 
         map.mouse_motion(1.0, 0.0);
         map.mouse_motion(2.0, 1.0);
@@ -683,34 +724,9 @@ mod tests {
     }
 
     #[test]
-    fn filtered_look_accumulates_then_smooths_and_resets() {
+    fn set_look_changes_later_look() {
         let mut map = map(1.0);
-
-        map.mouse_motion(1.0, 0.0);
-        map.mouse_motion(1.0, 0.0);
-        map.mouse_motion(0.0, 1.0);
-        let frame = map.end_tick();
-        let next = map.end_tick();
-
-        assert_eq!(frame.look(), (1.6, 0.8));
-        assert_eq!(next.look(), (0.0, 0.0));
-    }
-
-    #[test]
-    fn filtered_look_applies_sensitivity_before_smoothing() {
-        let mut map = map(2.0);
-
-        map.mouse_motion(1.0, 1.0);
-        let frame = map.end_tick();
-
-        assert_eq!(frame.look(), (1.6, 1.6));
-    }
-
-    #[test]
-    fn set_sensitivity_changes_later_look() {
-        let mut map = map(1.0);
-        map.set_filtering(false);
-        map.set_sensitivity(3.0);
+        map.set_look(LookSettings::raw(3.0));
 
         map.mouse_motion(1.0, 2.0);
 
@@ -720,12 +736,156 @@ mod tests {
     #[test]
     fn reset_look_discards_pending_motion() {
         let mut map = map(1.0);
-        map.set_filtering(false);
         map.mouse_motion(5.0, 5.0);
 
         map.reset_look();
 
         assert_eq!(map.end_tick().look(), (0.0, 0.0));
+    }
+
+    fn smoothed(look_per_count: f32) -> ActionMap<TestAction> {
+        let mut map = map(look_per_count);
+        map.set_look(LookSettings {
+            look_per_count,
+            smoothing: true,
+        });
+        map
+    }
+
+    #[test]
+    fn mouse_counts_turn_in_proportion_at_any_speed() {
+        let rows = [(1u32, 1u32), (4, 4), (300, 1), (300, 60)];
+
+        for (counts, ticks) in rows {
+            let mut map = map(0.5);
+            let per_tick = f64::from(counts / ticks);
+            let expected_tick = (per_tick as f32 * 0.5, -(per_tick as f32) * 0.5);
+            let mut total = (0.0f32, 0.0f32);
+
+            for tick in 0..ticks {
+                map.mouse_motion(per_tick, -per_tick);
+                let look = map.end_tick().look();
+                assert_eq!(
+                    look, expected_tick,
+                    "{counts} counts over {ticks} ticks, tick {tick}"
+                );
+                total = (total.0 + look.0, total.1 + look.1);
+            }
+
+            let expected = counts as f32 * 0.5;
+            assert_eq!(
+                total,
+                (expected, -expected),
+                "{counts} counts over {ticks} ticks"
+            );
+        }
+    }
+
+    #[test]
+    fn motion_smaller_than_one_count_still_turns() {
+        let mut map = map(1.0);
+
+        map.mouse_motion(0.005, 0.0);
+        map.mouse_motion(0.0, 0.005);
+
+        assert_eq!(map.end_tick().look(), (0.005, 0.005));
+    }
+
+    #[test]
+    fn smoothing_spreads_a_motion_without_losing_any() {
+        let mut map = smoothed(0.5);
+
+        map.mouse_motion(100.0, -100.0);
+        let first = map.end_tick().look();
+        let second = map.end_tick().look();
+        let third = map.end_tick().look();
+
+        assert!(first.0 > 0.0 && first.0 < 50.0, "first = {first:?}");
+        assert!(first.1 < 0.0 && first.1 > -50.0, "first = {first:?}");
+        assert_eq!(first.0 + second.0 + third.0, 50.0);
+        assert_eq!(first.1 + second.1 + third.1, -50.0);
+    }
+
+    #[test]
+    fn smoothing_scales_the_smoothed_counts_by_look_per_count() {
+        let mut map = smoothed(2.0);
+
+        map.mouse_motion(10.0, 4.0);
+        let first = map.end_tick().look();
+        let second = map.end_tick().look();
+
+        assert_eq!(first, (10.0, 4.0));
+        assert_eq!(second, (10.0, 4.0));
+    }
+
+    #[test]
+    fn stick_look_is_added_after_the_smoothed_mouse() {
+        let mut map = pad_map(1.0);
+        map.set_look(LookSettings {
+            look_per_count: 1.0,
+            smoothing: true,
+        });
+        map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+        map.mouse_motion(2.0, 0.0);
+
+        let look = map.end_tick().look();
+
+        assert_close(look, (1.0 + PAD_LOOK_PER_TICK, 0.0));
+    }
+
+    #[test]
+    fn reset_look_discards_the_smoothing_carry() {
+        let mut map = smoothed(1.0);
+        map.mouse_motion(10.0, 10.0);
+        map.end_tick();
+
+        map.reset_look();
+        let after = map.end_tick().look();
+
+        assert_eq!(after, (0.0, 0.0));
+    }
+
+    #[test]
+    fn turning_smoothing_off_drops_the_carry() {
+        let mut map = smoothed(1.0);
+        map.mouse_motion(10.0, 10.0);
+        map.end_tick();
+
+        map.set_look(LookSettings::raw(1.0));
+        map.set_look(LookSettings {
+            look_per_count: 1.0,
+            smoothing: true,
+        });
+        let after = map.end_tick().look();
+
+        assert_eq!(after, (0.0, 0.0));
+    }
+
+    #[test]
+    fn turning_smoothing_off_makes_look_raw_again() {
+        let mut map = smoothed(1.0);
+        map.mouse_motion(10.0, 0.0);
+        map.end_tick();
+
+        map.set_look(LookSettings::raw(1.0));
+        map.mouse_motion(3.0, 0.0);
+
+        assert_eq!(map.end_tick().look(), (3.0, 0.0));
+    }
+
+    #[test]
+    fn changing_sensitivity_while_smoothing_keeps_the_carry() {
+        let mut map = smoothed(1.0);
+        map.mouse_motion(10.0, 0.0);
+        map.end_tick();
+
+        map.set_look(LookSettings {
+            look_per_count: 2.0,
+            smoothing: true,
+        });
+        let after = map.end_tick().look();
+
+        assert_eq!(after, (10.0, 0.0));
     }
 
     #[test]
@@ -858,7 +1018,6 @@ mod tests {
     #[test]
     fn mouse_motion_device_event_feeds_look() {
         let mut map = map(1.0);
-        map.set_filtering(false);
 
         handle_device_event(&mut map, &DeviceEvent::MouseMotion { delta: (3.0, -1.0) });
 
@@ -868,7 +1027,6 @@ mod tests {
     #[test]
     fn unfiltered_horizontal_only_motion_scales_x_and_leaves_y_zero() {
         let mut map = map(2.0);
-        map.set_filtering(false);
 
         map.mouse_motion(3.0, 0.0);
 
@@ -878,7 +1036,6 @@ mod tests {
     #[test]
     fn unfiltered_vertical_only_motion_scales_y_and_leaves_x_zero() {
         let mut map = map(2.0);
-        map.set_filtering(false);
 
         map.mouse_motion(0.0, 3.0);
 
@@ -886,126 +1043,77 @@ mod tests {
     }
 
     #[test]
-    fn filtered_motion_below_deadzone_reads_zero() {
+    fn pointer_moves_reach_the_next_frame() {
         let mut map = map(1.0);
 
-        map.mouse_motion(0.005, 0.0);
+        map.pointer_moved(10.0, 20.0);
+        map.pointer_moved(30.5, 40.5);
+        let frame = map.end_tick();
+        let next = map.end_tick();
+        map.pointer_left();
+        let gone = map.end_tick();
 
-        assert_eq!(map.end_tick().look(), (0.0, 0.0));
+        assert_eq!(frame.pointer(), Some((30.5, 40.5)));
+        assert_eq!(next.pointer(), Some((30.5, 40.5)));
+        assert_eq!(gone.pointer(), None);
     }
 
     #[test]
-    fn filtered_diagonal_motion_above_deadzone_by_magnitude_is_smoothed_not_zeroed() {
+    fn press_records_the_pointer_at_the_press() {
         let mut map = map(1.0);
 
-        map.mouse_motion(0.009, 0.009);
-        let (x, y) = map.end_tick().look();
+        map.pointer_moved(100.0, 200.0);
+        map.mouse_button(MouseButton::Left, true);
+        map.pointer_moved(300.0, 400.0);
+        map.mouse_button(MouseButton::Left, false);
+        map.pointer_moved(500.0, 600.0);
+        map.mouse_button(MouseButton::Left, true);
+        map.pointer_moved(700.0, 800.0);
+        map.mouse_button(MouseButton::Left, false);
+        map.pointer_moved(900.0, 1000.0);
+        let frame = map.end_tick();
 
-        assert!((x - 0.0072).abs() < 1e-6, "x = {x}");
-        assert!((y - 0.0072).abs() < 1e-6, "y = {y}");
+        assert_eq!(frame.press_pointer(), Some((500.0, 600.0)));
+        assert_eq!(frame.pointer(), Some((900.0, 1000.0)));
     }
 
     #[test]
-    fn consecutive_filtered_ticks_blend_with_previous_output_on_both_axes() {
-        let mut map = map(1.0);
+    fn press_without_a_pointer_has_no_press_pointer() {
+        let mut before_any_move = map(1.0);
+        before_any_move.mouse_button(MouseButton::Left, true);
+        let mut after_leaving = map(1.0);
+        after_leaving.pointer_moved(10.0, 20.0);
+        after_leaving.pointer_left();
+        after_leaving.mouse_button(MouseButton::Left, true);
 
-        map.mouse_motion(1.0, 1.0);
-        let first = map.end_tick().look();
-        map.mouse_motion(1.0, 1.0);
-        let second = map.end_tick().look();
+        let first = before_any_move.end_tick();
+        let second = after_leaving.end_tick();
 
-        assert!((first.0 - 0.8).abs() < 1e-6 && (first.1 - 0.8).abs() < 1e-6);
-        assert!((second.0 - 0.96).abs() < 1e-6, "x = {}", second.0);
-        assert!((second.1 - 0.96).abs() < 1e-6, "y = {}", second.1);
+        assert!(first.pressed(TestAction::Fire));
+        assert!(second.pressed(TestAction::Fire));
+        assert_eq!(first.press_pointer(), None);
+        assert_eq!(second.press_pointer(), None);
+
+        after_leaving.pointer_moved(30.0, 40.0);
+        let later = after_leaving.end_tick();
+        assert_eq!(later.pointer(), Some((30.0, 40.0)));
+        assert_eq!(later.press_pointer(), None);
     }
 
     #[test]
-    fn idle_tick_clears_smoothing_state() {
+    fn no_press_means_no_press_pointer() {
         let mut map = map(1.0);
-        map.mouse_motion(1.0, 1.0);
+
+        map.pointer_moved(5.0, 6.0);
+        map.key(Key::W, true);
+        let frame = map.end_tick();
+        map.mouse_button(MouseButton::Left, true);
         map.end_tick();
-        map.end_tick();
+        let later = map.end_tick();
 
-        map.mouse_motion(1.0, 1.0);
-        let (x, y) = map.end_tick().look();
-
-        assert!((x - 0.8).abs() < 1e-6, "x = {x}");
-        assert!((y - 0.8).abs() < 1e-6, "y = {y}");
-    }
-
-    #[test]
-    fn enabling_filtering_while_enabled_keeps_smoothing_state() {
-        let mut map = map(1.0);
-        map.mouse_motion(1.0, 1.0);
-        map.end_tick();
-
-        map.set_filtering(true);
-        map.mouse_motion(1.0, 1.0);
-        let (x, y) = map.end_tick().look();
-
-        assert!((x - 0.96).abs() < 1e-6, "x = {x}");
-        assert!((y - 0.96).abs() < 1e-6, "y = {y}");
-    }
-
-    #[test]
-    fn disabling_filtering_discards_smoothing_state() {
-        let mut map = map(1.0);
-        map.mouse_motion(1.0, 1.0);
-        map.end_tick();
-
-        map.set_filtering(false);
-        map.set_filtering(true);
-        map.mouse_motion(1.0, 1.0);
-        let (x, y) = map.end_tick().look();
-
-        assert!((x - 0.8).abs() < 1e-6, "x = {x}");
-        assert!((y - 0.8).abs() < 1e-6, "y = {y}");
-    }
-
-    #[test]
-    fn filtered_vertical_motion_below_deadzone_reads_zero() {
-        let mut map = map(1.0);
-
-        map.mouse_motion(0.0, 0.005);
-
-        assert_eq!(map.end_tick().look(), (0.0, 0.0));
-    }
-
-    #[test]
-    fn filtered_motion_exactly_at_deadzone_threshold_passes() {
-        let mut map = map(1.0);
-
-        map.mouse_motion(0.01, 0.0);
-        let (x, y) = map.end_tick().look();
-
-        assert!((x - 0.008).abs() < 1e-6, "x = {x}");
-        assert_eq!(y, 0.0);
-    }
-
-    #[test]
-    fn horizontal_motion_of_exactly_epsilon_is_not_idle_and_keeps_smoothing() {
-        let mut map = map(1.0);
-        map.mouse_motion(1.0, 1.0);
-        map.end_tick();
-
-        map.mouse_motion(f64::EPSILON, 0.0);
-        let (x, y) = map.end_tick().look();
-
-        assert!((x - 0.16).abs() < 1e-6, "x = {x}");
-        assert!((y - 0.16).abs() < 1e-6, "y = {y}");
-    }
-
-    #[test]
-    fn vertical_motion_of_exactly_epsilon_is_not_idle_and_keeps_smoothing() {
-        let mut map = map(1.0);
-        map.mouse_motion(1.0, 1.0);
-        map.end_tick();
-
-        map.mouse_motion(0.0, f64::EPSILON);
-        let (x, y) = map.end_tick().look();
-
-        assert!((x - 0.16).abs() < 1e-6, "x = {x}");
-        assert!((y - 0.16).abs() < 1e-6, "y = {y}");
+        assert_eq!(frame.pointer(), Some((5.0, 6.0)));
+        assert_eq!(frame.press_pointer(), None);
+        assert_eq!(later.press_pointer(), None);
     }
 
     fn assert_close(actual: (f32, f32), expected: (f32, f32)) {
@@ -1018,7 +1126,6 @@ mod tests {
     #[test]
     fn test_input_accumulation() {
         let mut map = map(1.0);
-        map.set_filtering(false);
 
         map.mouse_motion(1.0, 0.0);
         map.mouse_motion(1.0, 1.0);
@@ -1030,55 +1137,10 @@ mod tests {
     #[test]
     fn test_sensitivity_scaling() {
         let mut map = map(2.0);
-        map.set_filtering(false);
 
         map.mouse_motion(1.0, 3.0);
 
         assert_eq!(map.end_tick().look(), (2.0, 6.0));
-    }
-
-    #[test]
-    fn filter_smooths_across_frames() {
-        let mut map = map(1.0);
-
-        map.mouse_motion(1.0, 2.0);
-        let first = map.end_tick().look();
-        map.mouse_motion(1.0, 2.0);
-        let second = map.end_tick().look();
-
-        assert_close(first, (0.8, 1.6));
-        // 0.8 * input + 0.2 * previous output, per axis
-        assert_close(second, (0.96, 1.92));
-    }
-
-    #[test]
-    fn filter_resets_on_idle_frame() {
-        let mut map = map(1.0);
-
-        map.mouse_motion(1.0, 0.0);
-        map.end_tick();
-        let idle = map.end_tick().look();
-        map.mouse_motion(1.0, 0.0);
-        let after_idle = map.end_tick().look();
-
-        assert_eq!(idle, (0.0, 0.0));
-        assert_close(after_idle, (0.8, 0.0));
-    }
-
-    #[test]
-    fn deadzone_zeroes_tiny_output() {
-        let look_of = |dx, dy| {
-            let mut map = map(1.0);
-            map.mouse_motion(dx, dy);
-            map.end_tick().look()
-        };
-
-        assert_eq!(look_of(0.005, 0.0), (0.0, 0.0));
-        assert_eq!(look_of(0.0, 0.005), (0.0, 0.0));
-        assert_close(look_of(0.02, 0.0), (0.016, 0.0));
-        // Each axis is below 0.01, the magnitude is not.
-        assert_close(look_of(0.0075, 0.0075), (0.006, 0.006));
-        assert_close(look_of(0.01, 0.0), (0.008, 0.0));
     }
 
     #[test]

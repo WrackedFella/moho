@@ -57,12 +57,18 @@ exclude_re = [
     # unsafe (`unsafe_code` is denied). The `ActionMap` calls these arms make are tested.
     'delete match arm WindowEvent::KeyboardInput\{event, \.\.\} in handle_window_event',
     'delete match arm WindowEvent::MouseInput\{state, button, \.\.\} in handle_window_event',
+    # The pointer arms need a `CursorMoved` or `CursorLeft` event, which hits the same
+    # `DeviceId::dummy()` limit; `pointer_moved` and `pointer_left` are tested.
+    'delete match arm WindowEvent::CursorMoved\{position, \.\.\} in handle_window_event',
+    'delete match arm WindowEvent::CursorLeft\{\.\.\} in handle_window_event',
     'replace == with != in handle_window_event',
     # Equivalent: the settings menu's spec is always `ScreenSpec::default()`.
     'replace <impl Screen for SettingsMenu>::spec -> &ScreenSpec with Box::leak',
     # `Default` calls `new`, which calls `from_prefs`: this mutant recurses until the
     # stack runs out and reads as a timeout, not a survivor.
     'replace SettingsState::from_prefs -> Self with Default::default\(\)',
+    # `AppConfig::default` calls `from_prefs_struct`, so this mutant recurses the same way.
+    'replace AppConfig::from_prefs_struct -> Self with Default::default\(\)',
     # gilrs::ev::Code has no public constructor, so no test can build a button or axis
     # event; the ActionMap calls these arms make are tested.
     'delete match arm gilrs::EventType::ButtonPressed\(button, _\) \| gilrs::EventType::ButtonReleased\(button, _\) in apply_event',

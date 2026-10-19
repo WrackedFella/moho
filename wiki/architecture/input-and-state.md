@@ -1,7 +1,7 @@
 # Input and state
 
 **Source:** `flagstone/src/input_dispatcher.rs`, `moho_input/src/`, `flagstone_ui/src/actions.rs`, `flagstone/src/app/renderer_setup.rs` (registrations),
-`flagstone/src/app/game.rs` (`Game::event`, `poll_gamepads`), `flagstone/src/main.rs` (`handle_keyboard_input`), `flagstone_ui/src/app_state/game_state.rs`,
+`moho_core/src/pointer.rs`, `flagstone/src/app/game.rs` (`Game::event`, `poll_gamepads`), `flagstone/src/main.rs` (`handle_keyboard_input`), `flagstone_ui/src/app_state/game_state.rs`,
 `flagstone_ui/src/app_state/state_coordinator.rs`, `flagstone_ui/src/screens/pause.rs`, `flagstone_ui/src/adapter/event_routing.rs`.
 
 ## Input routing
@@ -33,6 +33,7 @@ Two properties that bite:
 - Each input kind gets its own `register` call (wheel and mine-click are separate
   handlers), so a new input type is a new registration, not a new branch.
 - A forwarder drops the event rather than blocking if it can't take the UI adapter lock.
+- During gameplay egui sees only pointer motion (`EguiAdapter::handle_gameplay_event`), so it knows what lies under the pointer. While the cursor is free (strategy view), a mouse press over a panel is consumed and never reaches the game; in first person egui gets no pointer input. The mine-click forwarder leaves the press unconsumed, so the action map sees it too.
 
 Global hotkeys in `handle_keyboard_input`, checked before game keys:
 
@@ -66,20 +67,27 @@ which returns an `ActionFrame` and resets the per-tick state:
 - `held`: down at the end of the tick; `pressed` / `released`: edges at any point in the
   tick, so a tap shorter than a tick is not lost.
 - `look`: the right stick adds `PAD_LOOK_PER_TICK` times its deflection per tick (after a
-  small dead zone), on top of the mouse input below. The mouse part is the tick's accumulated mouse motion scaled by sensitivity, then, when
-  filtering is on, deadzone, exponential smoothing and the linear response curve
-  (`moho_input/src/filter.rs`). Motion is unnegated; `App::command` inverts it for
+  small dead zone), on top of the mouse input below. The mouse part is the tick's accumulated mouse motion smoothed when `LookSettings::smoothing`
+  is on (a two-sample mean of raw counts, `MouseSmoothing` in `moho_input/src/filter.rs`, which loses no motion),
+  then scaled by `LookSettings::look_per_count`. `ActionMap::set_look` applies new settings. Motion is unnegated; `App::command` inverts it for
   yaw and pitch.
 
 A stick direction binding is down while its axis is at or past `STICK_DIRECTION_THRESHOLD`.
 An action is held when any of its bindings is down. A frame holds at most 64 actions.
+The map also tracks the pointer in physical pixels: `ActionFrame::pointer` is its position at the end of the tick (`None` outside the window), and `press_pointer` is its position at the last mouse press in the tick. `StrategyAction::Select` (left mouse by default) is the strategy view's primary pointer action.
+
 Bindings persist in the `[bindings]` section of [prefs](../reference/prefs-format.md).
+
+## Pointer picking
+
+In the isometric view, a tick with `Select` pressed turns `press_pointer` into a world `Ray` with `moho_core::pointer::screen_ray` (view and projection of the frame the player saw, window size as viewport) and carries it in the command as `select`. The ray, not the pixel, is the command, so it replays without a window. The apply step casts it with `flagstone_game::raycast::raycast_surface` over `POINTER_RAY_RANGE` and stores the result in `App::pointer_hit`; a miss clears it. First-person never selects.
 
 ## GameState
 
 `flagstone_ui::GameState` decides input routing, rendering, cursor and whether the
 simulation runs. `can_transition_to` is the legality table; `StateTransitionCoordinator`
-returns the side effects (UI visibility, cursor grab) for a legal transition.
+returns the UI visibility and the menu to show for a legal transition. The cursor
+follows `cursor_grabbed(state, camera_mode)`, not the coordinator.
 
 ```mermaid
 stateDiagram-v2
@@ -100,7 +108,7 @@ Same-state transitions are allowed (no-op). Everything else is rejected, includi
 | State | Input goes to | Draws | Cursor | Simulation |
 |---|---|---|---|---|
 | `Menu` | menu | menu screens | free | stopped |
-| `Playing` | game | world | grabbed | running |
+| `Playing` | game | world | grabbed in first person, free in the isometric view | running |
 | `ConsoleOpen` | console text | world (frozen) + console | free | paused |
 | `Paused` | pause menu | world (frozen) + menu | free | paused |
 
