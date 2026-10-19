@@ -150,14 +150,17 @@ impl<G> Console<G> {
     }
 
     /// Drains the game's commands queued by `submit`. A game calls this in `Game::command()` and
-    /// carries the values in its tick command; the console never mutates game state.
+    /// carries the values in its tick command; the console never mutates game state. A reply the
+    /// game can only know after it acts goes back through `print`.
     pub fn take_commands(&mut self) -> Vec<G> {
         std::mem::take(&mut self.commands)
     }
 
-    /// Prints game text to the output, one output line per line of text.
+    /// Prints text to the output, one output line per line of text, as a command reply does. A game
+    /// calls this where it drains `take_commands`, once it knows a result the parse function could
+    /// not. It touches output only, never game state or the command queue.
     pub fn print(&mut self, text: &str) {
-        let _ = text;
+        print_reply(&mut self.output, text);
     }
 
     /// Drains the engine's commands queued by `submit`.
