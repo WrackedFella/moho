@@ -18,7 +18,7 @@ use moho_render_api::{
     UiImage, UiMesh, UiRect, UiSampler, UiSource, UiTextureId, UiTextureSet, UiVertex, WorldMesh,
     WorldMeshId,
 };
-use moho_renderer::{LightingGpu, RendererBackend, Scene};
+use moho_renderer::{LightingGpu, RendererBackend, Scene, WorldMeshes};
 use winit::window::{CursorGrabMode, Window};
 
 use moho_ui_shell::host::input_of;
@@ -203,6 +203,15 @@ struct EnemyRig {
 impl EnemyRig {
     fn mesh_id(&self, slot: usize) -> WorldMeshId {
         WorldMeshId(ENEMY_MESH_BASE + u64::from(self.target) * ENEMY_MESH_SLOTS + slot as u64)
+    }
+
+    /// Takes the segments out of the scene and clears the gun flash.
+    fn hide(&mut self, meshes: &mut WorldMeshes) {
+        for slot in 0..enemy_segments().len() {
+            meshes.remove(self.mesh_id(slot));
+        }
+        self.shown = false;
+        self.gun_flash = 0;
     }
 }
 
@@ -435,9 +444,8 @@ impl Stage {
         }
     }
 
-    fn enemy_rig(&mut self, target: u16) -> &mut EnemyRig {
-        let index = self
-            .enemies
+    fn rig_index(&mut self, target: u16) -> usize {
+        self.enemies
             .iter()
             .position(|rig| rig.target == target)
             .unwrap_or_else(|| {
@@ -447,7 +455,11 @@ impl Stage {
                     gun_flash: 0,
                 });
                 self.enemies.len() - 1
-            });
+            })
+    }
+
+    fn enemy_rig(&mut self, target: u16) -> &mut EnemyRig {
+        let index = self.rig_index(target);
         &mut self.enemies[index]
     }
 
@@ -461,30 +473,24 @@ impl Stage {
         let known = self.dummy_count + sim.enemy_count();
         for rig in &mut self.enemies {
             if usize::from(rig.target) >= known && rig.shown {
-                rig.shown = false;
-                let meshes = self.scene.world_meshes_mut();
-                for slot in 0..7 {
-                    meshes.remove(rig.mesh_id(slot));
-                }
+                rig.hide(self.scene.world_meshes_mut());
             }
         }
         for index in 0..sim.enemy_count() {
             let target = u16::try_from(self.dummy_count + index)
                 .expect("the sim numbers its targets with a u16");
-            let rig = self.enemy_rig(target);
-            let state = sim.enemy_state(index);
-            let (shown, gun_flash) = (rig.shown, rig.gun_flash);
-            let ids: [WorldMeshId; 7] = std::array::from_fn(|slot| rig.mesh_id(slot));
-            rig.shown = state.is_some();
+            let rig_index = self.rig_index(target);
+            let rig = &mut self.enemies[rig_index];
             let meshes = self.scene.world_meshes_mut();
-            let Some(state) = state else {
-                if shown {
-                    for id in ids {
-                        meshes.remove(id);
-                    }
+            let Some(state) = sim.enemy_state(index) else {
+                if rig.shown {
+                    rig.hide(meshes);
                 }
                 continue;
             };
+            rig.shown = true;
+            let gun_flash = rig.gun_flash;
+            let ids: [WorldMeshId; 7] = std::array::from_fn(|slot| rig.mesh_id(slot));
             let facing = Quat::from_rotation_y(state.yaw);
             for (slot, (offset, half)) in enemy_segments().into_iter().enumerate() {
                 let material = if slot == 6 && gun_flash > 0 {

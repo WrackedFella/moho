@@ -627,10 +627,10 @@ impl FpsSim {
         let report = struck.body.hit(part, damage);
         let is_dead = struck.body.is_dead();
         if struck.brain.is_some() {
-            if is_dead {
-                self.kills += u32::from(!was_dead);
-            } else {
+            if !is_dead {
                 struck.hurt = Some(from);
+            } else if !was_dead {
+                self.kills += 1;
             }
         }
         self.outbox.push(Feedback::Hit {
@@ -717,7 +717,7 @@ impl FpsSim {
             .markers
             .get(marker)
             .ok_or(SpawnError::UnknownMarker { marker })?;
-        if !self.free_enemy_spawns().contains(&marker) {
+        if !self.marker_is_free(spawn, &self.occupant_positions()) {
             return Err(SpawnError::OccupiedMarker { marker });
         }
         let index = self.targets.len();
@@ -737,26 +737,33 @@ impl FpsSim {
 
     /// Enemy spawn markers, ascending, with no living character within two capsule radii.
     pub fn free_enemy_spawns(&self) -> Vec<usize> {
-        let occupants: Vec<Vec3> = self
-            .targets
-            .iter()
-            .filter_map(|target| target.handle)
-            .chain([self.player])
-            .filter_map(|handle| self.world.character(handle))
-            .map(|state| state.position)
-            .collect();
+        let occupants = self.occupant_positions();
         self.origin
             .0
             .markers
             .iter()
             .enumerate()
-            .filter(|(_, marker)| {
-                occupants.iter().all(|position| {
-                    (position.x - marker.x).hypot(position.z - marker.z) >= 2.0 * CAPSULE_RADIUS
-                })
-            })
+            .filter(|(_, marker)| self.marker_is_free(**marker, &occupants))
             .map(|(index, _)| index)
             .collect()
+    }
+
+    /// Positions of the living characters, the player included.
+    fn occupant_positions(&self) -> Vec<Vec3> {
+        self.targets
+            .iter()
+            .filter_map(|target| target.handle)
+            .chain([self.player])
+            .filter_map(|handle| self.world.character(handle))
+            .map(|state| state.position)
+            .collect()
+    }
+
+    /// Whether no occupant stands within two capsule radii of `marker`, measured on the ground plane.
+    fn marker_is_free(&self, marker: Vec3, occupants: &[Vec3]) -> bool {
+        occupants.iter().all(|position| {
+            (position.x - marker.x).hypot(position.z - marker.z) >= 2.0 * CAPSULE_RADIUS
+        })
     }
 
     /// Enemies still in the world.

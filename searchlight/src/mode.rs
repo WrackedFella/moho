@@ -36,10 +36,12 @@ impl ArenaMode {
     /// while the player is dead.
     fn step_waves(&mut self) {
         let kills = self.sim.kills();
-        let free = if self.sim.player_body().is_dead() {
-            Vec::new()
-        } else {
+        let scan = !self.sim.player_body().is_dead()
+            && (self.waves.to_spawn() > 0 || self.sim.enemies_alive() == 0);
+        let free = if scan {
             self.sim.free_enemy_spawns()
+        } else {
+            Vec::new()
         };
         let spawn = self.waves.step(
             &self.tuning,
@@ -49,9 +51,10 @@ impl ArenaMode {
         );
         self.seen_kills = kills;
         for &marker in free.iter().take(spawn as usize) {
-            self.sim
-                .spawn_enemy(marker)
-                .expect("a marker the sim reported free takes an enemy");
+            if let Err(error) = self.sim.spawn_enemy(marker) {
+                tracing::warn!(%error, marker, "wave enemy not spawned");
+                break;
+            }
         }
     }
 
