@@ -426,7 +426,7 @@ fn controls_tab_draws_binding_rows_and_input_options() {
         "Move Left:",
         "Sprint:",
         "Mouse Sensitivity:",
-        "Input Filtering:",
+        "Mouse smoothing:",
     ] {
         assert!(
             text.contains(expected),

@@ -218,7 +218,6 @@ mod tests {
     #[test]
     fn mouse_motion_turns_and_pitches_with_up_positive() {
         let mut map = fresh_map();
-        map.set_filtering(false);
         map.mouse_motion(0.0, 10.0);
 
         let down = FpsCommand::from_frame(&map.end_tick());
@@ -284,7 +283,6 @@ mod look_direction_tests {
     fn yaw_after_mouse_motion(dx: f64) -> f32 {
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
         let mut map = ActionMap::<FpsAction>::new(bindings, 1.0);
-        map.set_filtering(false);
         map.mouse_motion(dx, 0.0);
         FpsCommand::from_frame(&map.end_tick()).movement.yaw_delta
     }

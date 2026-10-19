@@ -57,7 +57,7 @@ opened there still saves to the default path).
   `App::adopt_settings`.
 - **`adopt_settings`** replaces `App::prefs` and rebuilds the input `ActionMap` through
   `build_actions`, the same function startup uses, so new bindings, sensitivity and
-  filtering apply without a restart. It also queues `AudioSettings::from_prefs`
+  mouse smoothing apply without a restart. It also queues `AudioSettings::from_prefs`
   (`moho_audio`), which the next frame applies to the audio engine. It does not write the file.
 - **Startup** builds the same `AudioSettings` from the loaded prefs and applies it on the
   first frame. Each category volume is its pref divided by ten and clamped to 0..=1; 0 is silent.
@@ -67,7 +67,7 @@ opened there still saves to the default path).
 | Section | Key | Accepted values | Default |
 |---|---|---|---|
 | `[prefs]` | `mouse_sensitivity` | finite float | `1` |
-| | `input_filtering_enabled` | `true` `false` `1` `0` (any case) | `true` |
+| | `mouse_smoothing` | `true` `false` `1` `0` (any case) | `false` |
 | `[bindings]` | one key per action id | binding list | per action, below |
 | `[audio]` | `sound_effect_volume` `music_volume` `ui_volume` `voice_volume` | finite float on a 0 to 10 scale (the UI offers 0.0 to 10.0), written with 1 decimal | `8.0` `6.0` `7.0` `9.0` |
 | `[graphics]` | `shadow_quality` `ssao_quality` | unsigned integer; the UI offers 0 (off) to 4 (ultra) | `3` `3` |
@@ -137,7 +137,7 @@ World keys drive [world streaming](../architecture/world-streaming.md).
 ```ini
 [prefs]
 mouse_sensitivity=1.2
-input_filtering_enabled=true
+mouse_smoothing=false
 
 [bindings]
 move_forward=W

@@ -5,6 +5,16 @@
 //! is set up and configured at runtime.
 
 use moho_core::prefs::Prefs;
+use moho_input::LookSettings;
+
+/// The look settings `prefs` ask for: its sensitivity scaled by 0.002 radians per
+/// count, and its mouse-smoothing switch.
+pub fn look_settings(prefs: &Prefs) -> LookSettings {
+    LookSettings {
+        look_per_count: prefs.mouse_sensitivity() * 0.002,
+        smoothing: prefs.mouse_smoothing(),
+    }
+}
 
 /// Central configuration for application initialization.
 ///
@@ -21,7 +31,7 @@ use moho_core::prefs::Prefs;
 /// // Or create with custom settings
 /// let config = AppConfig::builder()
 ///     .mouse_sensitivity(0.5)
-///     .input_filtering(true)
+///     .mouse_smoothing(true)
 ///     .build();
 /// # }
 /// ```
@@ -30,8 +40,8 @@ pub struct AppConfig {
     /// Per-pixel look factor: the prefs mouse sensitivity scaled by 0.002.
     pub mouse_sensitivity: f32,
 
-    /// Whether input filtering is enabled in the input system
-    pub input_filtering_enabled: bool,
+    /// Whether mouse smoothing is on.
+    pub mouse_smoothing: bool,
 
     /// Preferences object (contains keybindings and other settings)
     pub prefs: Prefs,
@@ -65,9 +75,10 @@ impl AppConfig {
     ///
     /// This is useful for testing or when you already have a Prefs instance.
     pub fn from_prefs_struct(prefs: Prefs) -> Self {
+        let look = look_settings(&prefs);
         Self {
-            mouse_sensitivity: prefs.mouse_sensitivity() * 0.002,
-            input_filtering_enabled: prefs.input_filtering_enabled(),
+            mouse_sensitivity: look.look_per_count,
+            mouse_smoothing: look.smoothing,
             prefs,
         }
     }
@@ -80,11 +91,11 @@ impl AppConfig {
     ///
     /// let config = AppConfig::builder()
     ///     .mouse_sensitivity(0.5)
-    ///     .input_filtering(false)
+    ///     .mouse_smoothing(false)
     ///     .build();
     ///
     /// assert_eq!(config.mouse_sensitivity, 0.5);
-    /// assert_eq!(config.input_filtering_enabled, false);
+    /// assert!(!config.mouse_smoothing);
     /// ```
     #[allow(dead_code)] // Builder API for future use
     pub fn builder() -> AppConfigBuilder {
@@ -100,7 +111,7 @@ impl AppConfig {
 #[allow(dead_code)] // Builder for future use
 pub struct AppConfigBuilder {
     mouse_sensitivity: Option<f32>,
-    input_filtering_enabled: Option<bool>,
+    mouse_smoothing: Option<bool>,
     prefs: Option<Prefs>,
 }
 
@@ -112,9 +123,9 @@ impl AppConfigBuilder {
         self
     }
 
-    /// Set whether input filtering is enabled.
-    pub fn input_filtering(mut self, enabled: bool) -> Self {
-        self.input_filtering_enabled = Some(enabled);
+    /// Set whether mouse smoothing is on.
+    pub fn mouse_smoothing(mut self, enabled: bool) -> Self {
+        self.mouse_smoothing = Some(enabled);
         self
     }
 
@@ -133,9 +144,7 @@ impl AppConfigBuilder {
 
         AppConfig {
             mouse_sensitivity: self.mouse_sensitivity.unwrap_or(base.mouse_sensitivity),
-            input_filtering_enabled: self
-                .input_filtering_enabled
-                .unwrap_or(base.input_filtering_enabled),
+            mouse_smoothing: self.mouse_smoothing.unwrap_or(base.mouse_smoothing),
             prefs: base.prefs,
         }
     }
@@ -154,21 +163,46 @@ mod tests {
     }
 
     #[test]
+    fn look_settings_take_smoothing_from_prefs() {
+        let on = Prefs::default()
+            .with_mouse_sensitivity(2.0)
+            .with_mouse_smoothing(true);
+        let off = Prefs::default()
+            .with_mouse_sensitivity(2.0)
+            .with_mouse_smoothing(false);
+
+        assert_eq!(
+            look_settings(&on),
+            LookSettings {
+                look_per_count: 2.0 * 0.002,
+                smoothing: true,
+            }
+        );
+        assert_eq!(
+            look_settings(&off),
+            LookSettings {
+                look_per_count: 2.0 * 0.002,
+                smoothing: false,
+            }
+        );
+    }
+
+    #[test]
     fn test_default_config() {
         let config = AppConfig::default();
         assert!(config.mouse_sensitivity > 0.0);
-        assert!(config.input_filtering_enabled);
+        assert!(!config.mouse_smoothing);
     }
 
     #[test]
     fn test_builder_customization() {
         let config = AppConfig::builder()
             .mouse_sensitivity(0.5)
-            .input_filtering(false)
+            .mouse_smoothing(true)
             .build();
 
         assert_eq!(config.mouse_sensitivity, 0.5);
-        assert!(!config.input_filtering_enabled);
+        assert!(config.mouse_smoothing);
     }
 
     #[test]
@@ -176,19 +210,19 @@ mod tests {
         let config = AppConfig::builder().mouse_sensitivity(0.75).build();
 
         assert_eq!(config.mouse_sensitivity, 0.75);
-        assert!(config.input_filtering_enabled); // Uses default
+        assert!(!config.mouse_smoothing); // Uses default
     }
 
     #[test]
     fn test_from_prefs_struct() {
         let prefs = Prefs::default()
             .with_mouse_sensitivity(2.0)
-            .with_input_filtering_enabled(false);
+            .with_mouse_smoothing(true);
 
         let config = AppConfig::from_prefs_struct(prefs.clone());
 
         assert_eq!(config.mouse_sensitivity, 2.0 * 0.002);
-        assert!(!config.input_filtering_enabled);
+        assert!(config.mouse_smoothing);
         assert_eq!(config.prefs.mouse_sensitivity(), 2.0);
     }
 
@@ -196,17 +230,17 @@ mod tests {
     fn builder_with_prefs_derives_unset_fields_from_them() {
         let prefs = Prefs::default()
             .with_mouse_sensitivity(2.5)
-            .with_input_filtering_enabled(false);
+            .with_mouse_smoothing(true);
 
         let config = AppConfig::builder().prefs(prefs).build();
 
         assert_eq!(config.mouse_sensitivity, 2.5 * 0.002);
-        assert!(!config.input_filtering_enabled);
+        assert!(config.mouse_smoothing);
     }
 
     #[test]
-    fn builder_with_prefs_and_explicit_sensitivity_takes_filtering_from_prefs() {
-        let prefs = Prefs::default().with_input_filtering_enabled(false);
+    fn builder_with_prefs_and_explicit_sensitivity_takes_smoothing_from_prefs() {
+        let prefs = Prefs::default().with_mouse_smoothing(true);
 
         let config = AppConfig::builder()
             .prefs(prefs)
@@ -214,22 +248,22 @@ mod tests {
             .build();
 
         assert_eq!(config.mouse_sensitivity, 0.5);
-        assert!(!config.input_filtering_enabled);
+        assert!(config.mouse_smoothing);
     }
 
     #[test]
-    fn builder_with_prefs_and_explicit_filtering_takes_sensitivity_from_prefs() {
+    fn builder_with_prefs_and_explicit_smoothing_takes_sensitivity_from_prefs() {
         let prefs = Prefs::default()
             .with_mouse_sensitivity(2.5)
-            .with_input_filtering_enabled(false);
+            .with_mouse_smoothing(true);
 
         let config = AppConfig::builder()
             .prefs(prefs)
-            .input_filtering(true)
+            .mouse_smoothing(false)
             .build();
 
         assert_eq!(config.mouse_sensitivity, 2.5 * 0.002);
-        assert!(config.input_filtering_enabled);
+        assert!(!config.mouse_smoothing);
     }
 
     #[test]
