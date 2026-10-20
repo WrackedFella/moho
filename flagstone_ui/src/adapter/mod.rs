@@ -396,12 +396,8 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
 
         let full_output = self.context.run_ui(raw_input, |ui| {
             // Render based on current game state (delegates to rendering module)
-            let result = rendering::render_game_state(
-                ui,
-                &mut self.ui_state,
-                self.current_game_state,
-                &self.event_bus,
-            );
+            let result =
+                rendering::render_game_state(ui, &mut self.ui_state, self.current_game_state);
             menu_actions.extend(result.actions);
             new_hovered_key = result.hovered_key;
 
@@ -546,10 +542,9 @@ mod tests {
             is_fps_mode: false,
             ..Default::default()
         });
-        let bus = adapter.event_bus.clone();
         for events in [Vec::new(), vec![egui::Event::PointerMoved(pos)]] {
             let _ = run_ui(&adapter.context, input(events), |ui| {
-                rendering::render_game_state(ui, &mut adapter.ui_state, GameState::Playing, &bus);
+                rendering::render_game_state(ui, &mut adapter.ui_state, GameState::Playing);
             });
         }
     }

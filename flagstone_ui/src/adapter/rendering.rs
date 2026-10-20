@@ -8,7 +8,6 @@ use crate::adapter::ProgressState;
 use crate::app_state::GameState;
 use crate::screens::MenuAction;
 use crate::ui_state::UiStateManager;
-use moho_core::EventBus;
 
 /// Result of rendering the menu for a single frame.
 pub struct MenuRenderResult {
@@ -25,7 +24,6 @@ pub fn render_game_state(
     ui: &mut egui::Ui,
     ui_state: &mut UiStateManager,
     game_state: GameState,
-    _event_bus: &EventBus,
 ) -> MenuRenderResult {
     match game_state {
         GameState::Menu => render_menu(ui, ui_state),
@@ -164,7 +162,6 @@ mod tests {
         game_state: GameState,
         events: Vec<egui::Event>,
     ) -> (egui::FullOutput, MenuRenderResult) {
-        let bus = EventBus::new();
         let input = crate::overlays::test_support::input(events);
         let mut result = MenuRenderResult {
             actions: Vec::new(),
@@ -172,7 +169,7 @@ mod tests {
         };
 
         let output = crate::overlays::test_support::run_ui(ctx, input, |ui| {
-            result = render_game_state(ui, ui_state, game_state, &bus);
+            result = render_game_state(ui, ui_state, game_state);
         });
 
         (output, result)
