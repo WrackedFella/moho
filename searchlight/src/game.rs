@@ -19,13 +19,14 @@ use moho_render_api::{
     WorldMeshId,
 };
 use moho_renderer::{LightingGpu, RendererBackend, Scene};
+use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
 
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{Console, Routing, UiLayers, UiShell, apply_engine_command};
 
 use crate::hud::Edge;
-use crate::input::{SearchlightAction, SearchlightCommand};
+use crate::input::{SearchlightAction, SearchlightCommand, look_to_turn};
 use crate::sim::{Feedback, SearchlightSim, dummy_at, dummy_hit_volumes};
 use crate::tag::SurfaceTag;
 use crate::{TICK_HZ, hud};
@@ -586,6 +587,8 @@ pub struct SearchlightGame {
     input: ActionMap<SearchlightAction>,
     /// The player as the tick before the last left them, for blending the view.
     previous: CharacterState,
+    /// Whether the window has focus; look is sampled only while it does.
+    focused: bool,
     stage: Stage,
 }
 
@@ -597,6 +600,7 @@ impl SearchlightGame {
             sim,
             input,
             previous,
+            focused: true,
             stage: Stage::new(),
         }
     }
@@ -666,6 +670,11 @@ impl Game for SearchlightGame {
     type Command = SearchlightCommand;
 
     fn command(&mut self) -> SearchlightCommand {
+        // The paused loop asks every frame; ending the tick would consume the look the
+        // frames showed and snap the view back.
+        if self.stage.shell().captures_input() {
+            return SearchlightCommand::default();
+        }
         SearchlightCommand::from_frame(&self.input.end_tick())
     }
 
@@ -693,6 +702,9 @@ impl Game for SearchlightGame {
     fn event(&mut self, ctx: &mut EventContext<'_>, event: Event) {
         match event {
             Event::Window(event) => {
+                if let WindowEvent::Focused(focused) = event {
+                    self.focused = focused;
+                }
                 if let Some((input, pressed, repeat)) = input_of(&event) {
                     let routing = self.route_input(ctx, input, pressed, repeat);
                     self.stage.shell().feed(&event, routing);
@@ -701,7 +713,7 @@ impl Game for SearchlightGame {
                 }
             }
             Event::Device(event) => {
-                if !self.stage.shell().captures_input() {
+                if self.focused && !self.stage.shell().captures_input() {
                     handle_device_event(&mut self.input, &event);
                 }
             }
@@ -710,7 +722,11 @@ impl Game for SearchlightGame {
     }
 
     fn frame(&mut self, ctx: &mut FrameContext<'_>, alpha: f32) {
-        ctx.set_paused(self.stage.shell().captures_input());
+        let captured = self.stage.shell().captures_input();
+        ctx.set_paused(captured);
+        if self.focused && !captured {
+            self.input.sample_frame(ctx.frame_dt);
+        }
         let engine_commands = self.stage.shell().console_mut().take_engine_commands();
         for command in &engine_commands {
             apply_engine_command(command, ctx);
@@ -742,7 +758,7 @@ impl Game for SearchlightGame {
                 &self.sim.player(),
                 self.sim.eye_height(),
                 alpha,
-                (0.0, 0.0),
+                look_to_turn(self.input.pending_look()),
             );
             self.stage.draw(renderer, (view.view_matrix(), view.eye));
         }

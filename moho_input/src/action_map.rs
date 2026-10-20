@@ -14,13 +14,6 @@ use crate::pad::{PadButton, PadInput, Stick, StickAxis, StickDir};
 /// An axis reading at or past this magnitude holds its stick direction.
 pub const STICK_DIRECTION_THRESHOLD: f32 = 0.5;
 
-/// Look units a fully deflected right stick adds per tick, before sensitivity.
-///
-/// 26 turns about 180 degrees per second at the 60 Hz tick with default
-/// sensitivity: the binary scales look by `0.002` radians per unit, and
-/// `26 * 0.002 * 60` is about `pi`.
-pub const PAD_LOOK_PER_TICK: f32 = 26.0;
-
 /// Look units a fully deflected right stick adds per second, before sensitivity.
 pub const PAD_LOOK_PER_SECOND: f32 = 1560.0;
 
@@ -96,7 +89,7 @@ impl<A: Action> ActionFrame<A> {
     }
 }
 
-/// Collects input events and reports them once per tick.
+/// Collects input events; frames sample look, and each tick reports it with the edges.
 #[derive(Debug)]
 pub struct ActionMap<A: Action> {
     bindings: ActionBindings<A>,
@@ -105,6 +98,8 @@ pub struct ActionMap<A: Action> {
     pressed: u64,
     released: u64,
     look_accumulator: (f64, f64),
+    /// Look sampled by frames and not yet consumed by a tick.
+    pending: (f32, f32),
     /// Left and right stick `(x, y)`, Y up.
     sticks: [(f32, f32); 2],
     look: LookSettings,
@@ -124,6 +119,7 @@ impl<A: Action> ActionMap<A> {
             pressed: 0,
             released: 0,
             look_accumulator: (0.0, 0.0),
+            pending: (0.0, 0.0),
             sticks: [(0.0, 0.0); 2],
             look: LookSettings::raw(look_per_count),
             smoothing: MouseSmoothing::new(),
@@ -191,9 +187,11 @@ impl<A: Action> ActionMap<A> {
         self.refresh_held();
     }
 
-    /// Discards pending motion and smoothing state so a camera jump cannot follow.
+    /// Discards unsampled motion, the pending look and smoothing state so a camera jump
+    /// cannot follow.
     pub fn reset_look(&mut self) {
         self.look_accumulator = (0.0, 0.0);
+        self.pending = (0.0, 0.0);
         self.smoothing.reset();
     }
 
@@ -206,13 +204,17 @@ impl<A: Action> ActionMap<A> {
     }
 
     /// Samples the raw counts and right stick since the last sample into the pending look.
-    pub fn sample_frame(&mut self, _frame_dt: Duration) {
-        todo!()
+    ///
+    /// The stick adds `PAD_LOOK_PER_SECOND` times its deflection over `frame_dt`.
+    pub fn sample_frame(&mut self, frame_dt: Duration) {
+        let (x, y) = self.sample_look(frame_dt);
+        self.pending.0 += x;
+        self.pending.1 += y;
     }
 
     /// Look sampled by frames but not yet consumed by a tick.
     pub fn pending_look(&self) -> (f32, f32) {
-        todo!()
+        self.pending
     }
 
     /// The only read: reports this tick's edges and look, then starts the next tick.
@@ -221,7 +223,7 @@ impl<A: Action> ActionMap<A> {
             held: self.held,
             pressed: self.pressed,
             released: self.released,
-            look: self.sample_look(),
+            look: std::mem::take(&mut self.pending),
             pointer: self.pointer,
             press_pointer: self.press_pointer.take(),
             actions: PhantomData,
@@ -281,7 +283,7 @@ impl<A: Action> ActionMap<A> {
         }
     }
 
-    fn sample_look(&mut self) -> (f32, f32) {
+    fn sample_look(&mut self, frame_dt: Duration) -> (f32, f32) {
         let (dx, dy) = std::mem::take(&mut self.look_accumulator);
         let counts = (dx as f32, dy as f32);
         let counts = if self.look.smoothing {
@@ -293,15 +295,15 @@ impl<A: Action> ActionMap<A> {
             counts.0 * self.look.look_per_count,
             counts.1 * self.look.look_per_count,
         );
-        let (stick_x, stick_y) = self.stick_look();
+        let (stick_x, stick_y) = self.stick_look(frame_dt);
         (mouse.0 + stick_x, mouse.1 + stick_y)
     }
 
-    /// Right-stick look for one tick; stick up looks up, and mouse dy is down-positive.
-    fn stick_look(&self) -> (f32, f32) {
+    /// Right-stick look over `frame_dt`; stick up looks up, and mouse dy is down-positive.
+    fn stick_look(&self, frame_dt: Duration) -> (f32, f32) {
         let (x, y) = DeadzoneFilter::new(STICK_LOOK_DEAD_ZONE)
             .apply(self.sticks[Stick::RightStick as usize]);
-        let scale = PAD_LOOK_PER_TICK * self.look.look_per_count;
+        let scale = PAD_LOOK_PER_SECOND * frame_dt.as_secs_f32() * self.look.look_per_count;
         (x * scale, -y * scale)
     }
 }

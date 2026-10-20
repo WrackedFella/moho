@@ -76,21 +76,27 @@ pub struct SearchlightCommand {
     pub restart: bool,
 }
 
+/// Yaw and pitch deltas for a look. Mouse motion is right- and down-positive; positive yaw
+/// turns left and positive pitch looks up.
+///
+/// The one mapping, shared by the command and the camera so a tick lands where the frame drew.
+pub fn look_to_turn((look_x, look_y): (f32, f32)) -> (f32, f32) {
+    (-look_x, -look_y)
+}
+
 impl SearchlightCommand {
     /// The command for the tick `frame` describes.
     pub fn from_frame(frame: &ActionFrame<SearchlightAction>) -> Self {
         let axis = |positive, negative| {
             f32::from(u8::from(frame.held(positive))) - f32::from(u8::from(frame.held(negative)))
         };
-        // Mouse motion is right- and down-positive; positive yaw turns left and positive pitch
-        // looks up.
-        let (look_x, look_y) = frame.look();
+        let (yaw_delta, pitch_delta) = look_to_turn(frame.look());
         Self {
             movement: CharacterCommand {
                 forward: axis(SearchlightAction::MoveForward, SearchlightAction::MoveBack),
                 right: axis(SearchlightAction::MoveRight, SearchlightAction::MoveLeft),
-                yaw_delta: -look_x,
-                pitch_delta: -look_y,
+                yaw_delta,
+                pitch_delta,
                 // A tap shorter than one tick still jumps.
                 jump: frame.held(SearchlightAction::Jump) || frame.pressed(SearchlightAction::Jump),
             },

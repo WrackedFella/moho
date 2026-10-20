@@ -3,7 +3,7 @@
 use crate::app::event_loop::{EventProcessor, FrameProcessor, GenerationProcessor};
 use crate::game_state::GameState;
 use crate::{App, RenderRequest};
-use flagstone_game::controller::{CameraMode, ControllerInput};
+use flagstone_game::controller::{CameraMode, ControllerInput, controller_to_camera};
 use flagstone_game::raycast::raycast_surface;
 use flagstone_ui::actions::StrategyAction;
 use moho_core::pointer::{Ray, screen_ray};
@@ -23,6 +23,13 @@ pub struct StrategyCommand {
     ///
     /// A ray rather than a pixel, so the command replays without a window.
     pub select: Option<Ray>,
+}
+
+/// Yaw and pitch deltas for a look. Mouse motion is fed unnegated, so look is inverted here.
+///
+/// The one mapping, shared by the command and the camera so a tick lands where the frame drew.
+fn look_to_turn((look_x, look_y): (f32, f32)) -> (f32, f32) {
+    (-look_x, -look_y)
 }
 
 impl App {
@@ -46,9 +53,7 @@ impl App {
         // A tap shorter than one tick still jumps.
         let jump = is_active(StrategyAction::Jump) || frame.pressed(StrategyAction::Jump);
 
-        // Mouse motion is fed unnegated; look is inverted here.
-        let (look_x, look_y) = frame.look();
-        let (yaw_delta, pitch_delta) = (-look_x, -look_y);
+        let (yaw_delta, pitch_delta) = look_to_turn(frame.look());
 
         // The camera the player saw: the one drawn, not the one this tick will move.
         let select = (self.simulation.camera_mode() == CameraMode::Isometric
@@ -142,19 +147,36 @@ impl App {
         }
     }
 
-    /// The camera to draw this frame: the player's eye blended between the last two
-    /// ticks while walking, the tick camera otherwise.
+    /// The camera to draw this frame: in first person, the simulation turned by the look
+    /// frames sampled but no tick has consumed yet, with the walking eye blended between the
+    /// last two ticks; the tick camera otherwise.
     fn render_camera(&self, alpha: f32) -> (glam::Mat4, glam::Mat4, glam::Vec3) {
-        let walking_states = self
-            .is_kcc_walking()
-            .then(|| self.physics.player_states())
-            .flatten();
+        if self.simulation.camera_mode() != CameraMode::FirstPerson {
+            return self.camera;
+        }
+        let pending = self.input.actions.pending_look();
+        let (yaw_delta, pitch_delta) = look_to_turn(pending);
+        // Outside play the tick camera stands, unless a turn was shown and must not snap back.
+        let walking =
+            self.is_kcc_walking() || (self.physics.is_kcc_active() && pending != (0.0, 0.0));
+        let walking_states = walking.then(|| self.physics.player_states()).flatten();
         match walking_states {
             Some((previous, current)) => {
-                let view =
-                    moho_physics::first_person_view(&previous, &current, 0.0, alpha, (0.0, 0.0));
+                let view = moho_physics::first_person_view(
+                    &previous,
+                    &current,
+                    0.0,
+                    alpha,
+                    (yaw_delta, pitch_delta),
+                );
                 (view.view_matrix(), self.camera.1, view.eye)
             }
+            None if pending != (0.0, 0.0) => controller_to_camera(
+                &self
+                    .simulation
+                    .player_controller
+                    .turned(yaw_delta, pitch_delta),
+            ),
             None => self.camera,
         }
     }
@@ -337,6 +359,12 @@ impl moho_app::Game for App {
         let frame_processor = FrameProcessor::new();
 
         self.poll_gamepads();
+        if self.game_state == GameState::Playing
+            && self.input.focused
+            && self.simulation.camera_mode() == CameraMode::FirstPerson
+        {
+            self.input.actions.sample_frame(ctx.frame_dt);
+        }
         if let Some(renderer) = ctx.renderer() {
             self.apply_pending_render(renderer);
         }

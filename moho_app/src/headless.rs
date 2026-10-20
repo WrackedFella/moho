@@ -11,6 +11,7 @@ use crate::{FrameContext, Game, LoopRequests, TickContext};
 pub struct HeadlessLoop<G> {
     step: FixedStep,
     tick_length: Duration,
+    max_catch_up_ticks: u32,
     next_tick: u64,
     paused: bool,
     clock: GameClock,
@@ -28,6 +29,7 @@ impl<G: Game> HeadlessLoop<G> {
         Self {
             step,
             tick_length: config.tick_length(),
+            max_catch_up_ticks: config.max_catch_up_ticks,
             next_tick: 0,
             paused: false,
             clock: config.clock,
@@ -43,10 +45,17 @@ impl<G: Game> HeadlessLoop<G> {
     pub fn advance(&mut self, game: &mut G, frame_dt: Duration) -> u32 {
         let n = self.run_ticks(game, frame_dt);
         self.apply_paused_command(game);
-        let mut ctx = FrameContext::headless(self.tick_length, &self.clock);
+        let mut ctx = FrameContext::headless(self.tick_length, &self.clock)
+            .with_frame_dt(self.capped_frame_dt(frame_dt));
         game.frame(&mut ctx, self.step.alpha());
         self.apply_requests(ctx.loop_requests());
         n
+    }
+
+    /// `elapsed` capped at `max_catch_up_ticks` ticks: the frame time a game sees, so a long
+    /// stall cannot turn the view by more than the loop would simulate.
+    pub(crate) fn capped_frame_dt(&self, elapsed: Duration) -> Duration {
+        elapsed.min(self.tick_length * self.max_catch_up_ticks)
     }
 
     /// Applies the pause and speed a game asked for, from the next tick.

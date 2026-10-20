@@ -68,6 +68,11 @@ impl<'a> FrameContext<'a> {
         }
     }
 
+    pub(crate) fn with_frame_dt(mut self, frame_dt: Duration) -> Self {
+        self.frame_dt = frame_dt;
+        self
+    }
+
     pub(crate) fn headless(tick_length: Duration, clock: &'a GameClock) -> Self {
         Self::new(tick_length, clock, None, None)
     }

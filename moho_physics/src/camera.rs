@@ -1,5 +1,6 @@
 //! First-person camera built from a character's eye and look direction.
 
+use crate::movement::turned_look;
 use crate::world::CharacterState;
 use glam::{Mat4, Vec3};
 
@@ -25,10 +26,11 @@ pub fn first_person_view(
     current: &CharacterState,
     eye_height: f32,
     alpha: f32,
-    _pending: (f32, f32),
+    pending: (f32, f32),
 ) -> FirstPersonView {
-    let (yaw_sin, yaw_cos) = current.yaw.sin_cos();
-    let (pitch_sin, pitch_cos) = current.pitch.sin_cos();
+    let (yaw, pitch) = turned_look((current.yaw, current.pitch), pending);
+    let (yaw_sin, yaw_cos) = yaw.sin_cos();
+    let (pitch_sin, pitch_cos) = pitch.sin_cos();
     FirstPersonView {
         eye: previous.position.lerp(current.position, alpha) + Vec3::Y * eye_height,
         forward: Vec3::new(yaw_sin * pitch_cos, pitch_sin, yaw_cos * pitch_cos),
