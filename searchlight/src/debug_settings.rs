@@ -5,7 +5,6 @@ use std::path::PathBuf;
 
 use moho_core::prefs::Prefs;
 
-/// The prefs entry that holds god mode.
 const GOD_MODE: &str = "god_mode";
 
 /// The whole loaded prefs and where to save them, so a save keeps every other value.

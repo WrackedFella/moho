@@ -7,20 +7,18 @@ use moho_input::bindings::BindingWarning;
 use moho_ui_shell::Console;
 use moho_ui_shell::console::registry::CommandSpec;
 
-/// What a console command asks of the game.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConsoleCommand {
     GodMode(GodModeArg),
 }
 
-/// What `tgm` asks of god mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GodModeArg {
     Toggle,
     Set(bool),
 }
 
-/// The parse function registered as `tgm`; usage `tgm [0|1]`.
+/// Parses `tgm [0|1]`; no argument toggles.
 pub fn parse_tgm(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
     match args {
         [] => Ok((ConsoleCommand::GodMode(GodModeArg::Toggle), String::new())),
