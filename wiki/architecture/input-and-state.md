@@ -66,8 +66,8 @@ which returns an `ActionFrame` and resets the per-tick state:
 
 - `held`: down at the end of the tick; `pressed` / `released`: edges at any point in the
   tick, so a tap shorter than a tick is not lost.
-- `look`: the right stick adds `PAD_LOOK_PER_TICK` times its deflection per tick (after a
-  small dead zone), on top of the mouse input below. The mouse part is the tick's accumulated mouse motion smoothed when `LookSettings::smoothing`
+- `look`: the pending look that rendered frames sampled with `ActionMap::sample_frame(frame_dt)` since the last tick (read with `pending_look`); a tick consumes exactly what the last frame showed. The right stick adds `PAD_LOOK_PER_SECOND` times its deflection per second of frame time (after a
+  small dead zone), on top of the mouse input below. The mouse part is the motion accumulated since the previous frame, smoothed when `LookSettings::smoothing`
   is on (a two-sample mean of raw counts, `MouseSmoothing` in `moho_input/src/filter.rs`, which loses no motion),
   then scaled by `LookSettings::look_per_count`. `ActionMap::set_look` applies new settings. Motion is unnegated; `App::command` inverts it for
   yaw and pitch.
