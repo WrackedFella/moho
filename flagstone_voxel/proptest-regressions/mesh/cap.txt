@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 46e8ef4a91dac3210bc03a7d4dd531be580cf17fad616724b1b59a5f1c29d4d3 # shrinks to field = Field { lo: [0, 6, 0], hi: [2, 10, 2], normal: [-1, -1, -2], offset: -11 }, sixty_fourths = 396
+cc caf16b37f9713e8128193736e9f2f6c35e1e1ed5b9dcd189b28d02e776ef78df # shrinks to field = Field { lo: [1, 8, 1], hi: [3, 16, 3], normal: [0, 0, 0], offset: 1 }, cut = 15.5

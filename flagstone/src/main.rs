@@ -77,6 +77,9 @@ struct App {
     entities: SceneEntities,
     scene: moho_renderer::Scene,
     terrain_material_idx: u32,
+    /// Material table index of the cut-face caps' colour.
+    cut_face_material_idx: u32,
+    cut_caps: app::cut_caps::CutCaps,
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
 
     // Light propagation system (owns the voxel grid internally)
@@ -190,6 +193,8 @@ impl App {
             entities: initialized.entities,
             scene: initialized.scene,
             terrain_material_idx: initialized.terrain_material_idx,
+            cut_face_material_idx: initialized.cut_face_material_idx,
+            cut_caps: app::cut_caps::CutCaps::default(),
             camera: initialized.camera,
 
             light_system: Some(light_system),

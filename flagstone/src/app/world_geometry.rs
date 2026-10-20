@@ -47,6 +47,12 @@ pub fn register_terrain_material(scene: &mut Scene) -> u32 {
     scene.material_table.find_or_push(&terrain)
 }
 
+/// Register the cut-face material once and return its table index; idempotent. It is
+/// the terrain's dirt colour on both faces, so a cap reads as the inside of the ground.
+pub fn register_cut_face_material(scene: &mut Scene) -> u32 {
+    register_terrain_material(scene)
+}
+
 /// Queue `chunk`'s mesh with the renderer and register its collider. A refused
 /// mesh is logged; the chunk is neither drawn nor solid.
 fn upsert_chunk_mesh(
@@ -124,6 +130,8 @@ pub fn remove_all_chunk_meshes(app: &mut App) {
 pub(crate) mod tests {
     use super::*;
     use crate::App;
+    use crate::app::cut_caps::cap_mesh_id;
+    use crate::app::cut_caps::tests::{CaptureBackend, drawn_caps, ground_app, refresh_caps};
     use crate::app::event_loop::event_processor::EventProcessor;
     use crate::app::event_loop::frame_processor::FrameProcessor;
     use crate::game_state::GameState;
@@ -510,6 +518,66 @@ pub(crate) mod tests {
             "nothing is drawn for the evicted chunk"
         );
         assert_eq!(backend.unregistered, vec![handle], "its GPU mesh was freed");
+    }
+
+    #[test]
+    fn caps_use_the_cut_face_material() {
+        let mut app = ground_app();
+        let mut backend = CaptureBackend::default();
+        app.cut_caps.set_cut(Some(18.0));
+        refresh_caps(&mut app);
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        let caps = drawn_caps(&mut app, &backend);
+
+        assert!(!caps.is_empty(), "the cut through the ground is capped");
+        let dirt = glam::Vec3::new(0.6, 0.5, 0.4);
+        let expected = MaterialType::VoxelTerrain {
+            top_albedo: dirt,
+            side_albedo: dirt,
+        }
+        .to_gpu();
+        for cap in caps {
+            let stored = app.scene.material_table.as_slice()[cap.material as usize];
+            assert_ne!(
+                cap.material, app.terrain_material_idx,
+                "not the grass terrain"
+            );
+            assert_eq!(stored.albedo, expected.albedo, "cut-face albedo");
+            assert_eq!(stored.params, expected.params, "cut-face params");
+        }
+    }
+
+    #[test]
+    fn caps_register_no_collider() {
+        let mut app = ground_app();
+        let colliders_before = terrain_collider_count(&app);
+        assert!(colliders_before > 0, "the ground has colliders");
+        let mut backend = CaptureBackend::default();
+
+        app.cut_caps.set_cut(Some(18.0));
+        refresh_caps(&mut app);
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        assert!(
+            !drawn_caps(&mut app, &backend).is_empty(),
+            "the cut through the ground is capped"
+        );
+        let physics = app.physics.world.as_ref().expect("physics world");
+        for chunk in app.entities.chunks.iter() {
+            assert!(
+                physics
+                    .world_mesh_collider(cap_mesh_id(chunk.chunk_pos()))
+                    .is_none(),
+                "cap of {} has a collider",
+                chunk.chunk_pos()
+            );
+        }
+        assert_eq!(
+            terrain_collider_count(&app),
+            colliders_before,
+            "no new collider"
+        );
     }
 
     fn collider_of(app: &App, pos: IVec3) -> Option<moho_physics::ColliderHandle> {

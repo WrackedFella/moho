@@ -4,6 +4,11 @@ use moho_render_api::MarkerGpu;
 
 const MARKER_SHADER: &str = include_str!("../../../shaders/marker.wgsl");
 
+/// The pipeline-overridable constants of `marker.wgsl`, name and value.
+pub(super) fn marker_constants() -> [(&'static str, f64); 1] {
+    [("marker_inflate", 0.0)]
+}
+
 /// Alpha-blended, back-face-culled, depth-tested but depth-write-free pipeline
 /// drawing a unit cube instanced by [`MarkerGpu`]: solid triangles for
 /// `TriangleList`, one-pixel edges for `LineList`.
@@ -80,4 +85,17 @@ pub(super) fn create_marker_pipeline(
         multiview_mask: None,
         cache: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::MARKER_INFLATE;
+
+    #[test]
+    fn marker_pipeline_sets_inflate_from_marker_inflate() {
+        let constants = marker_constants();
+
+        assert_eq!(constants, [("marker_inflate", f64::from(MARKER_INFLATE))]);
+    }
 }

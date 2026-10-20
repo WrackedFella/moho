@@ -1046,6 +1046,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn view_height_event_sets_the_cut() {
+        let mut app = App::headless();
+        app.event_bus
+            .publish(DebugEvent::SetViewHeight { height: Some(12.5) });
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert_eq!(app.cut_caps.cut(), Some(12.5));
+        assert!(
+            matches!(
+                app.pending_render.as_slice(),
+                [RenderRequest::ViewHeight(Some(h))] if *h == 12.5
+            ),
+            "the renderer request is still queued"
+        );
+
+        app.event_bus
+            .publish(DebugEvent::SetViewHeight { height: None });
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert_eq!(
+            app.cut_caps.cut(),
+            None,
+            "clearing the height clears the cut"
+        );
+    }
+
     fn show_marker(app: &App, id: u64, min: glam::Vec3, max: glam::Vec3) {
         show_styled_marker(app, id, min, max, moho_render_api::MarkerStyle::Fill);
     }

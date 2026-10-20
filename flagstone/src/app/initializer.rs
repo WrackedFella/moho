@@ -61,6 +61,7 @@ pub struct InitializedApp {
     pub entities: SceneEntities,
     pub scene: moho_renderer::Scene,
     pub terrain_material_idx: u32,
+    pub cut_face_material_idx: u32,
     pub camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     pub event_bus: Arc<moho_core::EventBus>,
 
@@ -147,6 +148,8 @@ impl AppInitializer {
         let mut scene = moho_renderer::Scene::new();
         let terrain_material_idx =
             crate::app::world_geometry::register_terrain_material(&mut scene);
+        let cut_face_material_idx =
+            crate::app::world_geometry::register_cut_face_material(&mut scene);
         tracing::debug!("Created world and scene");
 
         // Initialize camera with default voxel terrain view
@@ -177,6 +180,7 @@ impl AppInitializer {
             entities,
             scene,
             terrain_material_idx,
+            cut_face_material_idx,
             camera,
             event_bus,
 

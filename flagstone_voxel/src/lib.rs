@@ -47,6 +47,9 @@ pub use light_sky::{dirty_chunks_below, ensure_chunk_sky_ready, recompute_sky_ex
 pub use light_storage::{CHUNK_SIZE as LIGHT_CHUNK_SIZE, ChunkLight};
 pub use light_system::{LightSystem, LightSystemStats};
 pub use materials::MaterialType;
-pub use mesh::{BlockyMeshGenerator, ChunkContent, HybridMeshGenerator, MarchingCubes, VoxelMesh};
+pub use mesh::{
+    BlockyMeshGenerator, CAP_PROBE, ChunkContent, HybridMeshGenerator, MarchingCubes, VoxelMesh,
+    cut_cap_mesh,
+};
 pub use modification::VoxelMutator;
 pub use streaming::StreamingConfig;

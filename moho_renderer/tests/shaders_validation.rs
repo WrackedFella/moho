@@ -125,3 +125,37 @@ fn marker_shader_parses_and_validates() {
         );
     }
 }
+
+#[test]
+fn marker_shader_declares_the_inflate_override() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../shaders/marker.wgsl");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read shader {}: {e}", path.display()));
+
+    let module = validate("marker.wgsl", &source, Capabilities::empty());
+
+    let (handle, declared) = module
+        .overrides
+        .iter()
+        .find(|(_, o)| o.name.as_deref() == Some("marker_inflate"))
+        .expect("marker.wgsl declares `override marker_inflate`");
+    assert_eq!(
+        module.types[declared.ty].inner,
+        naga::TypeInner::Scalar(naga::Scalar::F32),
+        "marker_inflate is an f32"
+    );
+    assert!(declared.init.is_none(), "the pipeline supplies the value");
+    let fragment = module
+        .entry_points
+        .iter()
+        .find(|e| e.name == "fs_main")
+        .expect("fs_main");
+    assert!(
+        fragment
+            .function
+            .expressions
+            .iter()
+            .any(|(_, e)| matches!(e, naga::Expression::Override(h) if *h == handle)),
+        "the fragment discard reads marker_inflate"
+    );
+}
