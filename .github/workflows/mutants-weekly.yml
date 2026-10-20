@@ -3,8 +3,7 @@ name: Mutants (weekly)
 # Full mutation run over the workspace; surfaces test-quality decay that per-PR
 # diff runs can't see. Survivors are reviewed, not gated.
 #
-# The run is split round-robin across a shard matrix so no single runner holds all
-# ~5,000 mutants, and one lost shard doesn't lose the others; `merge` sums the shards.
+# Sharded so no single runner holds every mutant and one lost shard doesn't lose the rest.
 on:
   schedule:
     - cron: '0 6 * * 1'
