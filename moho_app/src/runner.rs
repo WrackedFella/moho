@@ -40,6 +40,12 @@ pub(crate) fn route(event: &WindowEvent) -> Route {
     }
 }
 
+/// Whether the runner asks for a frame after waking, given the `ticks_ran` it just ran and
+/// whether the loop is `paused`.
+pub(crate) fn redraw_wanted(ticks_ran: u32, paused: bool) -> bool {
+    ticks_ran > 0 || paused
+}
+
 /// Runs `game` in a window until it asks to exit or the window closes.
 ///
 /// # Errors
@@ -142,7 +148,10 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         let elapsed = now - self.last_wake;
         self.last_wake = now;
 
-        if self.sim.run_ticks(&mut self.game, elapsed) > 0 || self.sim.paused() {
+        if redraw_wanted(
+            self.sim.run_ticks(&mut self.game, elapsed),
+            self.sim.paused(),
+        ) {
             window.request_redraw();
         }
 
@@ -268,6 +277,18 @@ mod tests {
 
         for event in &others {
             assert_eq!(route(event), Route::Forward, "{event:?}");
+        }
+    }
+
+    #[test]
+    fn frame_requests_the_next_redraw() {
+        for ticks_ran in [0, 1, 3] {
+            for paused in [false, true] {
+                assert!(
+                    redraw_wanted(ticks_ran, paused),
+                    "{ticks_ran} ticks ran, paused = {paused}"
+                );
+            }
         }
     }
 }

@@ -112,6 +112,8 @@ mod tests {
     use super::*;
     use crate::test_support::press;
 
+    const FRAME: std::time::Duration = std::time::Duration::from_millis(16);
+
     fn fresh_map() -> ActionMap<SearchlightAction> {
         let (bindings, warnings) = ActionBindings::load(&BTreeMap::new());
         assert!(warnings.is_empty());
@@ -216,9 +218,11 @@ mod tests {
     fn mouse_motion_turns_and_pitches_with_up_positive() {
         let mut map = fresh_map();
         map.mouse_motion(0.0, 10.0);
+        map.sample_frame(FRAME);
 
         let down = SearchlightCommand::from_frame(&map.end_tick());
         map.mouse_motion(10.0, 0.0);
+        map.sample_frame(FRAME);
         let sideways = SearchlightCommand::from_frame(&map.end_tick());
 
         assert!(down.movement.pitch_delta < 0.0, "{down:?}");
@@ -281,6 +285,7 @@ mod look_direction_tests {
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
         let mut map = ActionMap::<SearchlightAction>::new(bindings, 1.0);
         map.mouse_motion(dx, 0.0);
+        map.sample_frame(std::time::Duration::from_millis(16));
         SearchlightCommand::from_frame(&map.end_tick())
             .movement
             .yaw_delta

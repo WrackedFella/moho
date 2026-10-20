@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 use std::marker::PhantomData;
+use std::time::Duration;
 
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 
@@ -19,6 +20,9 @@ pub const STICK_DIRECTION_THRESHOLD: f32 = 0.5;
 /// sensitivity: the binary scales look by `0.002` radians per unit, and
 /// `26 * 0.002 * 60` is about `pi`.
 pub const PAD_LOOK_PER_TICK: f32 = 26.0;
+
+/// Look units a fully deflected right stick adds per second, before sensitivity.
+pub const PAD_LOOK_PER_SECOND: f32 = 1560.0;
 
 const STICK_LOOK_DEAD_ZONE: f32 = 0.15;
 
@@ -201,6 +205,16 @@ impl<A: Action> ActionMap<A> {
         self.look = settings;
     }
 
+    /// Samples the raw counts and right stick since the last sample into the pending look.
+    pub fn sample_frame(&mut self, _frame_dt: Duration) {
+        todo!()
+    }
+
+    /// Look sampled by frames but not yet consumed by a tick.
+    pub fn pending_look(&self) -> (f32, f32) {
+        todo!()
+    }
+
     /// The only read: reports this tick's edges and look, then starts the next tick.
     pub fn end_tick(&mut self) -> ActionFrame<A> {
         let frame = ActionFrame {
@@ -325,6 +339,13 @@ pub fn handle_device_event<A: Action>(map: &mut ActionMap<A>, event: &DeviceEven
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// A power-of-two fraction of a second, so stick arithmetic is exact in f32.
+    const FRAME: Duration = Duration::from_micros(15_625);
+
+    fn stick_per_frame() -> f32 {
+        PAD_LOOK_PER_SECOND * FRAME.as_secs_f32()
+    }
 
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
     enum TestAction {
@@ -480,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn right_stick_adds_per_tick_look() {
+    fn right_stick_adds_look_per_sampled_frame() {
         for smoothing in [true, false] {
             let mut map = pad_map(2.0);
             map.set_look(LookSettings {
@@ -489,10 +510,12 @@ mod tests {
             });
 
             map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+            map.sample_frame(FRAME);
             let first = map.end_tick().look();
+            map.sample_frame(FRAME);
             let second = map.end_tick().look();
 
-            let expected = PAD_LOOK_PER_TICK * 2.0;
+            let expected = stick_per_frame() * 2.0;
             assert_close(first, (expected, 0.0));
             assert_close(second, (expected, 0.0));
         }
@@ -503,9 +526,10 @@ mod tests {
         let mut map = pad_map(1.0);
 
         map.pad_axis(Stick::RightStick, StickAxis::Y, 0.5);
+        map.sample_frame(FRAME);
         let look = map.end_tick().look();
 
-        assert_close(look, (0.0, -0.5 * PAD_LOOK_PER_TICK));
+        assert_close(look, (0.0, -0.5 * stick_per_frame()));
     }
 
     #[test]
@@ -514,6 +538,7 @@ mod tests {
 
         map.pad_axis(Stick::RightStick, StickAxis::X, 0.1);
         map.pad_axis(Stick::RightStick, StickAxis::Y, 0.1);
+        map.sample_frame(FRAME);
 
         assert_eq!(map.end_tick().look(), (0.0, 0.0));
     }
@@ -524,9 +549,10 @@ mod tests {
 
         map.pad_axis(Stick::RightStick, StickAxis::X, 0.12);
         map.pad_axis(Stick::RightStick, StickAxis::Y, 0.12);
+        map.sample_frame(FRAME);
         let look = map.end_tick().look();
 
-        assert_close(look, (0.12 * PAD_LOOK_PER_TICK, -0.12 * PAD_LOOK_PER_TICK));
+        assert_close(look, (0.12 * stick_per_frame(), -0.12 * stick_per_frame()));
     }
 
     #[test]
@@ -534,6 +560,7 @@ mod tests {
         let mut map = pad_map(1.0);
 
         map.pad_axis(Stick::LeftStick, StickAxis::X, 1.0);
+        map.sample_frame(FRAME);
 
         assert_eq!(map.end_tick().look(), (0.0, 0.0));
     }
@@ -542,10 +569,13 @@ mod tests {
     fn release_all_stops_stick_look() {
         let mut map = pad_map(1.0);
         map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
-        assert_close(map.end_tick().look(), (PAD_LOOK_PER_TICK, 0.0));
+        map.sample_frame(FRAME);
+        assert_close(map.end_tick().look(), (stick_per_frame(), 0.0));
 
         map.release_all();
+        map.sample_frame(FRAME);
         let frame = map.end_tick();
+        map.sample_frame(FRAME);
         let next = map.end_tick();
 
         assert_eq!(frame.look(), (0.0, 0.0));
@@ -595,7 +625,9 @@ mod tests {
         map.end_tick();
 
         map.pad_disconnected();
+        map.sample_frame(FRAME);
         let frame = map.end_tick();
+        map.sample_frame(FRAME);
         let next = map.end_tick();
 
         assert!(frame.released(TestAction::Jump));
@@ -716,7 +748,9 @@ mod tests {
 
         map.mouse_motion(1.0, 0.0);
         map.mouse_motion(2.0, 1.0);
+        map.sample_frame(FRAME);
         let frame = map.end_tick();
+        map.sample_frame(FRAME);
         let next = map.end_tick();
 
         assert_eq!(frame.look(), (6.0, 2.0));
@@ -729,6 +763,7 @@ mod tests {
         map.set_look(LookSettings::raw(3.0));
 
         map.mouse_motion(1.0, 2.0);
+        map.sample_frame(FRAME);
 
         assert_eq!(map.end_tick().look(), (3.0, 6.0));
     }
@@ -739,6 +774,7 @@ mod tests {
         map.mouse_motion(5.0, 5.0);
 
         map.reset_look();
+        map.sample_frame(FRAME);
 
         assert_eq!(map.end_tick().look(), (0.0, 0.0));
     }
@@ -764,6 +800,7 @@ mod tests {
 
             for tick in 0..ticks {
                 map.mouse_motion(per_tick, -per_tick);
+                map.sample_frame(FRAME);
                 let look = map.end_tick().look();
                 assert_eq!(
                     look, expected_tick,
@@ -787,6 +824,7 @@ mod tests {
 
         map.mouse_motion(0.005, 0.0);
         map.mouse_motion(0.0, 0.005);
+        map.sample_frame(FRAME);
 
         assert_eq!(map.end_tick().look(), (0.005, 0.005));
     }
@@ -796,8 +834,11 @@ mod tests {
         let mut map = smoothed(0.5);
 
         map.mouse_motion(100.0, -100.0);
+        map.sample_frame(FRAME);
         let first = map.end_tick().look();
+        map.sample_frame(FRAME);
         let second = map.end_tick().look();
+        map.sample_frame(FRAME);
         let third = map.end_tick().look();
 
         assert!(first.0 > 0.0 && first.0 < 50.0, "first = {first:?}");
@@ -811,7 +852,9 @@ mod tests {
         let mut map = smoothed(2.0);
 
         map.mouse_motion(10.0, 4.0);
+        map.sample_frame(FRAME);
         let first = map.end_tick().look();
+        map.sample_frame(FRAME);
         let second = map.end_tick().look();
 
         assert_eq!(first, (10.0, 4.0));
@@ -827,19 +870,22 @@ mod tests {
         });
         map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
         map.mouse_motion(2.0, 0.0);
+        map.sample_frame(FRAME);
 
         let look = map.end_tick().look();
 
-        assert_close(look, (1.0 + PAD_LOOK_PER_TICK, 0.0));
+        assert_close(look, (1.0 + stick_per_frame(), 0.0));
     }
 
     #[test]
     fn reset_look_discards_the_smoothing_carry() {
         let mut map = smoothed(1.0);
         map.mouse_motion(10.0, 10.0);
+        map.sample_frame(FRAME);
         map.end_tick();
 
         map.reset_look();
+        map.sample_frame(FRAME);
         let after = map.end_tick().look();
 
         assert_eq!(after, (0.0, 0.0));
@@ -849,6 +895,7 @@ mod tests {
     fn turning_smoothing_off_drops_the_carry() {
         let mut map = smoothed(1.0);
         map.mouse_motion(10.0, 10.0);
+        map.sample_frame(FRAME);
         map.end_tick();
 
         map.set_look(LookSettings::raw(1.0));
@@ -856,6 +903,7 @@ mod tests {
             look_per_count: 1.0,
             smoothing: true,
         });
+        map.sample_frame(FRAME);
         let after = map.end_tick().look();
 
         assert_eq!(after, (0.0, 0.0));
@@ -865,10 +913,12 @@ mod tests {
     fn turning_smoothing_off_makes_look_raw_again() {
         let mut map = smoothed(1.0);
         map.mouse_motion(10.0, 0.0);
+        map.sample_frame(FRAME);
         map.end_tick();
 
         map.set_look(LookSettings::raw(1.0));
         map.mouse_motion(3.0, 0.0);
+        map.sample_frame(FRAME);
 
         assert_eq!(map.end_tick().look(), (3.0, 0.0));
     }
@@ -877,12 +927,14 @@ mod tests {
     fn changing_sensitivity_while_smoothing_keeps_the_carry() {
         let mut map = smoothed(1.0);
         map.mouse_motion(10.0, 0.0);
+        map.sample_frame(FRAME);
         map.end_tick();
 
         map.set_look(LookSettings {
             look_per_count: 2.0,
             smoothing: true,
         });
+        map.sample_frame(FRAME);
         let after = map.end_tick().look();
 
         assert_eq!(after, (10.0, 0.0));
@@ -1020,6 +1072,7 @@ mod tests {
         let mut map = map(1.0);
 
         handle_device_event(&mut map, &DeviceEvent::MouseMotion { delta: (3.0, -1.0) });
+        map.sample_frame(FRAME);
 
         assert_eq!(map.end_tick().look(), (3.0, -1.0));
     }
@@ -1029,6 +1082,7 @@ mod tests {
         let mut map = map(2.0);
 
         map.mouse_motion(3.0, 0.0);
+        map.sample_frame(FRAME);
 
         assert_eq!(map.end_tick().look(), (6.0, 0.0));
     }
@@ -1038,6 +1092,7 @@ mod tests {
         let mut map = map(2.0);
 
         map.mouse_motion(0.0, 3.0);
+        map.sample_frame(FRAME);
 
         assert_eq!(map.end_tick().look(), (0.0, 6.0));
     }
@@ -1129,6 +1184,7 @@ mod tests {
 
         map.mouse_motion(1.0, 0.0);
         map.mouse_motion(1.0, 1.0);
+        map.sample_frame(FRAME);
 
         assert_eq!(map.end_tick().look(), (2.0, 1.0));
         assert_eq!(map.end_tick().look(), (0.0, 0.0));
@@ -1139,6 +1195,7 @@ mod tests {
         let mut map = map(2.0);
 
         map.mouse_motion(1.0, 3.0);
+        map.sample_frame(FRAME);
 
         assert_eq!(map.end_tick().look(), (2.0, 6.0));
     }
@@ -1147,6 +1204,7 @@ mod tests {
     fn reset_look_discards_accumulated_delta() {
         let mut dirty = map(1.0);
         dirty.mouse_motion(1.0, 0.0);
+        dirty.sample_frame(FRAME);
         dirty.end_tick();
         dirty.mouse_motion(5.0, 5.0);
         dirty.reset_look();
@@ -1154,7 +1212,187 @@ mod tests {
 
         dirty.mouse_motion(1.0, 0.0);
         fresh.mouse_motion(1.0, 0.0);
+        dirty.sample_frame(FRAME);
+        fresh.sample_frame(FRAME);
 
         assert_eq!(dirty.end_tick().look(), fresh.end_tick().look());
+    }
+
+    #[test]
+    fn stick_look_grows_with_each_frame() {
+        let mut map = pad_map(1.0);
+        map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+        let mut yaws = Vec::new();
+
+        for _ in 0..4 {
+            map.sample_frame(FRAME);
+            yaws.push(map.pending_look().0);
+        }
+
+        assert!(yaws.windows(2).all(|pair| pair[1] > pair[0]), "{yaws:?}");
+        assert_close((yaws[3], 0.0), (4.0 * stick_per_frame(), 0.0));
+    }
+
+    #[test]
+    fn stick_look_scales_with_frame_time() {
+        let mut slow = pad_map(1.0);
+        let mut fast = pad_map(1.0);
+        slow.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+        fast.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+
+        slow.sample_frame(FRAME * 2);
+        fast.sample_frame(FRAME);
+
+        assert_close(slow.pending_look(), (2.0 * fast.pending_look().0, 0.0));
+        assert!(fast.pending_look().0 > 0.0);
+    }
+
+    #[test]
+    fn pending_look_is_zero_before_any_sample() {
+        let mut map = map(1.0);
+
+        map.mouse_motion(4.0, 4.0);
+
+        assert_eq!(map.pending_look(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn sample_frame_moves_counts_into_pending_look() {
+        let mut map = map(2.0);
+
+        map.mouse_motion(3.0, -1.0);
+        map.sample_frame(FRAME);
+
+        assert_eq!(map.pending_look(), (6.0, -2.0));
+    }
+
+    #[test]
+    fn frames_without_a_tick_accumulate_pending_look() {
+        let mut map = map(1.0);
+
+        map.mouse_motion(1.0, 2.0);
+        map.sample_frame(FRAME);
+        map.mouse_motion(3.0, 4.0);
+        map.sample_frame(FRAME);
+
+        assert_eq!(map.pending_look(), (4.0, 6.0));
+    }
+
+    #[test]
+    fn end_tick_consumes_exactly_the_pending_look() {
+        let mut map = map(2.0);
+        map.mouse_motion(1.0, 1.0);
+        map.sample_frame(FRAME);
+        map.mouse_motion(2.0, 0.0);
+        map.sample_frame(FRAME);
+        let shown = map.pending_look();
+
+        let frame = map.end_tick();
+
+        assert_eq!(frame.look(), shown);
+        assert_eq!(frame.look(), (6.0, 2.0));
+        assert_eq!(map.pending_look(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn end_tick_consumes_exactly_the_pending_look_with_smoothing() {
+        let mut map = smoothed(0.5);
+        map.mouse_motion(100.0, -40.0);
+        map.sample_frame(FRAME);
+        map.sample_frame(FRAME);
+        map.mouse_motion(7.0, 3.0);
+        map.sample_frame(FRAME);
+        let shown = map.pending_look();
+
+        let frame = map.end_tick();
+
+        assert_eq!(frame.look(), shown);
+        assert!(shown.0 > 0.0);
+    }
+
+    #[test]
+    fn motion_after_the_last_frame_waits_for_the_next_frame() {
+        let mut map = map(1.0);
+        map.mouse_motion(2.0, 0.0);
+        map.sample_frame(FRAME);
+        map.mouse_motion(5.0, 0.0);
+
+        let tick = map.end_tick();
+        map.sample_frame(FRAME);
+        let next = map.end_tick();
+
+        assert_eq!(tick.look(), (2.0, 0.0));
+        assert_eq!(next.look(), (5.0, 0.0));
+    }
+
+    #[test]
+    fn catch_up_ticks_after_the_first_get_no_look() {
+        let mut map = map(1.0);
+        map.mouse_motion(3.0, 1.0);
+        map.sample_frame(FRAME);
+
+        let first = map.end_tick();
+        let second = map.end_tick();
+        let third = map.end_tick();
+
+        assert_eq!(first.look(), (3.0, 1.0));
+        assert_eq!(second.look(), (0.0, 0.0));
+        assert_eq!(third.look(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn reset_look_discards_pending_look() {
+        let mut map = map(1.0);
+        map.mouse_motion(5.0, 5.0);
+        map.sample_frame(FRAME);
+        map.mouse_motion(1.0, 1.0);
+
+        map.reset_look();
+
+        assert_eq!(map.pending_look(), (0.0, 0.0));
+        map.sample_frame(FRAME);
+        assert_eq!(map.end_tick().look(), (0.0, 0.0));
+    }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn prop_turn_total_is_independent_of_frame_split(
+                counts in proptest::collection::vec(-40i32..40, 1..24),
+                frames_per_tick in proptest::collection::vec(1usize..5, 1..6),
+            ) {
+                let mut whole = map(1.0);
+                for &count in &counts {
+                    whole.mouse_motion(f64::from(count), 0.0);
+                }
+                whole.sample_frame(FRAME);
+                let expected = whole.end_tick().look();
+
+                let mut split = map(1.0);
+                let mut total = (0.0f32, 0.0f32);
+                let mut feed = counts.iter();
+                for &frames in &frames_per_tick {
+                    for _ in 0..frames {
+                        if let Some(&count) = feed.next() {
+                            split.mouse_motion(f64::from(count), 0.0);
+                        }
+                        split.sample_frame(FRAME);
+                    }
+                    let look = split.end_tick().look();
+                    total = (total.0 + look.0, total.1 + look.1);
+                }
+                for &count in feed {
+                    split.mouse_motion(f64::from(count), 0.0);
+                }
+                split.sample_frame(FRAME);
+                let look = split.end_tick().look();
+                total = (total.0 + look.0, total.1 + look.1);
+
+                prop_assert_eq!(total, expected);
+            }
+        }
     }
 }

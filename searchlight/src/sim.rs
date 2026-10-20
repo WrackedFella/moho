@@ -553,7 +553,7 @@ impl SearchlightSim {
 
     fn resolve_player_shot(&mut self) {
         let state = self.player();
-        let view = first_person_view(&state, &state, self.eye_height, 1.0);
+        let view = first_person_view(&state, &state, self.eye_height, 1.0, (0.0, 0.0));
         let strike = resolve_shot(
             &self.world,
             ShotRay {
@@ -1245,7 +1245,7 @@ mod adversarial_tests {
 
             let state = sim.player();
             assert_eq!(state.pitch.abs(), PITCH_LIMIT);
-            let view = first_person_view(&state, &state, sim.eye_height(), 1.0);
+            let view = first_person_view(&state, &state, sim.eye_height(), 1.0, (0.0, 0.0));
             assert!(view.eye.is_finite() && view.forward.is_finite(), "{view:?}");
             assert!((view.forward.length() - 1.0).abs() < 1e-3);
             let strike = resolve_shot(

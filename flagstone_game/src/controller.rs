@@ -87,6 +87,12 @@ impl PlayerController {
         }
     }
 
+    /// This controller with its look turned by the deltas, pitch clamped exactly as
+    /// [`apply_input`](Self::apply_input) does; nothing else changes.
+    pub fn turned(&self, _yaw_delta: f32, _pitch_delta: f32) -> Self {
+        todo!()
+    }
+
     pub fn apply_input(&mut self, input: &ControllerInput, dt: f32) {
         match self.camera_mode {
             CameraMode::FirstPerson => {
@@ -648,5 +654,72 @@ mod tests {
         pc.look_at(Vec3::new(0.0, f32::EPSILON, 0.0));
 
         assert_eq!(pc.pitch, 0.0);
+    }
+
+    #[test]
+    fn turned_adds_the_deltas_to_yaw_and_pitch() {
+        let mut controller = PlayerController::new(Vec3::new(1.0, 2.0, 3.0));
+        controller.yaw = 0.5;
+        controller.pitch = 0.25;
+
+        let turned = controller.turned(0.125, -0.5);
+
+        assert_eq!(turned.yaw, 0.625);
+        assert_eq!(turned.pitch, -0.25);
+        assert_eq!(turned.position, controller.position);
+        assert_eq!(turned.speed, controller.speed);
+        assert_eq!(turned.camera_mode, controller.camera_mode);
+        assert_eq!(controller.yaw, 0.5, "the original is not changed");
+    }
+
+    #[test]
+    fn turned_clamps_pitch_like_apply_input() {
+        let cases = [
+            (PITCH_LIMIT_RAD, 0.5),
+            (-PITCH_LIMIT_RAD, -0.5),
+            (PITCH_LIMIT_RAD - 0.1, 2.0),
+            (-PITCH_LIMIT_RAD + 0.1, -2.0),
+        ];
+
+        for (pitch, delta) in cases {
+            let mut controller = PlayerController::new(Vec3::ZERO);
+            controller.pitch = pitch;
+            let mut applied = controller;
+
+            let turned = controller.turned(0.3, delta);
+            applied.apply_input(
+                &ControllerInput {
+                    yaw_delta: 0.3,
+                    pitch_delta: delta,
+                    ..Default::default()
+                },
+                0.0,
+            );
+
+            assert_eq!(turned.pitch, applied.pitch, "from {pitch} by {delta}");
+            assert_eq!(turned.yaw, applied.yaw);
+            assert_eq!(turned.pitch.abs(), PITCH_LIMIT_RAD);
+        }
+    }
+
+    #[test]
+    fn turned_builds_the_view_the_next_apply_input_lands_on() {
+        let mut controller = PlayerController::new(Vec3::ZERO);
+        controller.yaw = 0.37;
+        controller.pitch = 1.2;
+        let (yaw_delta, pitch_delta) = (0.123_456_7, 0.9);
+
+        let shown = controller.turned(yaw_delta, pitch_delta);
+        controller.apply_input(
+            &ControllerInput {
+                yaw_delta,
+                pitch_delta,
+                ..Default::default()
+            },
+            1.0 / 60.0,
+        );
+
+        assert_eq!(controller.yaw, shown.yaw);
+        assert_eq!(controller.pitch, shown.pitch);
     }
 }

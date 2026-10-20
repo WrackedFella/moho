@@ -311,6 +311,7 @@ mod tests {
         renderer_absent: Option<bool>,
         audio_absent: Option<bool>,
         tick_length: Option<Duration>,
+        frame_dts: Vec<Duration>,
     }
 
     impl Game for ContextProbe {
@@ -324,7 +325,36 @@ mod tests {
             self.renderer_absent = Some(ctx.renderer().is_none());
             self.audio_absent = Some(ctx.audio().is_none());
             self.tick_length = Some(ctx.tick_length);
+            self.frame_dts.push(ctx.frame_dt);
         }
+    }
+
+    #[test]
+    fn advance_passes_frame_dt_to_the_frame() {
+        let mut game = ContextProbe::default();
+        let mut sim = HeadlessLoop::new(LoopConfig::new(60));
+        let dts = [
+            Duration::from_nanos(NS / 144),
+            Duration::from_nanos(NS / 60),
+            Duration::from_nanos(NS / 30),
+        ];
+
+        for dt in dts {
+            sim.advance(&mut game, dt);
+        }
+
+        assert_eq!(game.frame_dts, dts);
+    }
+
+    #[test]
+    fn a_paused_loop_still_passes_frame_dt_to_the_frame() {
+        let mut game = ContextProbe::default();
+        let mut sim = HeadlessLoop::new(LoopConfig::new(60));
+        sim.set_paused(true);
+
+        sim.advance(&mut game, Duration::from_nanos(NS / 144));
+
+        assert_eq!(game.frame_dts, [Duration::from_nanos(NS / 144)]);
     }
 
     #[test]

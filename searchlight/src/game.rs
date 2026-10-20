@@ -742,6 +742,7 @@ impl Game for SearchlightGame {
                 &self.sim.player(),
                 self.sim.eye_height(),
                 alpha,
+                (0.0, 0.0),
             );
             self.stage.draw(renderer, (view.view_matrix(), view.eye));
         }
@@ -1011,6 +1012,8 @@ mod tests {
         shadow: Vec<u8>,
         ssao: Vec<u8>,
         debug_view: Vec<Option<u32>>,
+        /// The view matrix of every frame begun.
+        views: Vec<Mat4>,
     }
 
     impl RendererBackend for SettingsRenderer {
@@ -1034,8 +1037,9 @@ mod tests {
         fn unregister_mesh(&mut self, _mesh: u32) {}
         fn begin_frame(
             &mut self,
-            _camera: (Mat4, Mat4, Vec3),
+            camera: (Mat4, Mat4, Vec3),
         ) -> Result<(), moho_renderer::FrameError> {
+            self.views.push(camera.0);
             Ok(())
         }
         fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
@@ -1190,6 +1194,217 @@ mod tests {
         headless.advance(&mut game, Duration::ZERO);
 
         assert!(game.sim().pending_feedback().is_empty());
+    }
+
+    /// The `alpha` the view tests draw with.
+    const ALPHA: f32 = 0.5;
+
+    /// A game with a visible-size sensitivity, the window focused and the given smoothing.
+    fn turning_game(smoothing: bool) -> SearchlightGame {
+        let mut game = game();
+        game.input_mut()
+            .set_look(moho_input::action_map::LookSettings {
+                look_per_count: 0.002,
+                smoothing,
+            });
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.event(&mut ctx, Event::Window(WindowEvent::Focused(true)));
+        game
+    }
+
+    fn mouse(game: &mut SearchlightGame, dx: f64, dy: f64) {
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.event(
+            &mut ctx,
+            Event::Device(DeviceEvent::MouseMotion { delta: (dx, dy) }),
+        );
+    }
+
+    /// Runs one frame and returns the view it drew.
+    fn draw_frame(game: &mut SearchlightGame, renderer: &mut SettingsRenderer) -> Mat4 {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, Some(renderer), None);
+        game.frame(&mut ctx, ALPHA);
+        *renderer.views.last().expect("a frame began")
+    }
+
+    /// The view a frame must draw: the sim's player turned by the look shown but not yet ticked.
+    fn expected_view(game: &SearchlightGame) -> Mat4 {
+        let (look_x, look_y) = game.input.pending_look();
+        first_person_view(
+            &game.previous,
+            &game.sim.player(),
+            game.sim.eye_height(),
+            ALPHA,
+            (-look_x, -look_y),
+        )
+        .view_matrix()
+    }
+
+    fn forward_of(view: Mat4) -> Vec3 {
+        -view.transpose().col(2).truncate()
+    }
+
+    fn tick_once(game: &mut SearchlightGame) {
+        let command = game.command();
+        let mut clock = GameClock::default();
+        tick_with(game, &mut clock, &command);
+    }
+
+    #[test]
+    fn mouse_motion_turns_the_next_frame_before_any_tick() {
+        let mut game = turning_game(false);
+        let mut renderer = SettingsRenderer::default();
+        let before = draw_frame(&mut game, &mut renderer);
+        let player = game.sim().player();
+
+        mouse(&mut game, 400.0, 200.0);
+        let after = draw_frame(&mut game, &mut renderer);
+
+        let (was, now) = (forward_of(before), forward_of(after));
+        assert!(now.distance(was) > 1e-3, "the frame did not turn");
+        assert!(
+            now.x.atan2(now.z) < was.x.atan2(was.z),
+            "right is negative yaw"
+        );
+        assert!(now.y < was.y, "down looks down");
+        assert_eq!(game.sim().player(), player, "no tick ran");
+        assert_eq!(after, expected_view(&game));
+    }
+
+    #[test]
+    fn tick_lands_on_the_last_frames_view() {
+        const MOTION: [(f64, f64); 3] = [(120.0, 40.0), (-30.0, 80.0), (200.0, -150.0)];
+
+        for smoothing in [false, true] {
+            let mut game = turning_game(smoothing);
+            let mut renderer = SettingsRenderer::default();
+            let level = draw_frame(&mut game, &mut renderer);
+            let start = game.sim().player();
+
+            for (dx, dy) in MOTION {
+                mouse(&mut game, dx, dy);
+                draw_frame(&mut game, &mut renderer);
+            }
+            let last_frame = *renderer.views.last().expect("a frame began");
+            assert_ne!(
+                last_frame, level,
+                "smoothing {smoothing}: the frames turned"
+            );
+            let (look_x, look_y) = game.input.pending_look();
+            tick_once(&mut game);
+
+            let landed = game.sim().player();
+            assert_eq!(landed.yaw, start.yaw + (-look_x), "smoothing {smoothing}");
+            assert_eq!(
+                landed.pitch,
+                (start.pitch + (-look_y))
+                    .clamp(-moho_physics::PITCH_LIMIT, moho_physics::PITCH_LIMIT),
+                "smoothing {smoothing}"
+            );
+            assert_eq!(
+                game.input.pending_look(),
+                (0.0, 0.0),
+                "smoothing {smoothing}"
+            );
+        }
+    }
+
+    #[test]
+    fn drawn_view_is_the_simulation_turned_by_the_pending_look() {
+        for smoothing in [false, true] {
+            let mut game = turning_game(smoothing);
+            let mut renderer = SettingsRenderer::default();
+            let mut previous = draw_frame(&mut game, &mut renderer);
+
+            for (dx, dy) in [(120.0, 40.0), (-30.0, 80.0), (200.0, -150.0)] {
+                mouse(&mut game, dx, dy);
+                let view = draw_frame(&mut game, &mut renderer);
+
+                assert_ne!(view, previous, "smoothing {smoothing}: the frame turned");
+                assert_eq!(view, expected_view(&game), "smoothing {smoothing}");
+                previous = view;
+            }
+        }
+    }
+
+    #[test]
+    fn pitch_held_at_the_limit_in_the_view_and_after_the_tick() {
+        let mut game = turning_game(false);
+        let mut renderer = SettingsRenderer::default();
+        let limit = moho_physics::PITCH_LIMIT;
+
+        for up in [100_000.0, 5_000.0] {
+            mouse(&mut game, 0.0, -up);
+            let view = draw_frame(&mut game, &mut renderer);
+            tick_once(&mut game);
+
+            assert!(
+                (forward_of(view).y - limit.sin()).abs() < 1e-5,
+                "view at {}",
+                forward_of(view).y
+            );
+            assert_eq!(game.sim().player().pitch, limit);
+        }
+    }
+
+    #[test]
+    fn unfocused_mouse_motion_does_not_turn() {
+        let mut game = turning_game(false);
+        let mut renderer = SettingsRenderer::default();
+        let level = draw_frame(&mut game, &mut renderer);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.event(&mut ctx, Event::Window(WindowEvent::Focused(false)));
+
+        mouse(&mut game, 400.0, 200.0);
+        let unfocused = draw_frame(&mut game, &mut renderer);
+        game.event(&mut ctx, Event::Window(WindowEvent::Focused(true)));
+        let refocused = draw_frame(&mut game, &mut renderer);
+        let command = game.command();
+
+        assert!(forward_of(unfocused).distance(forward_of(level)) < 1e-6);
+        assert!(forward_of(refocused).distance(forward_of(level)) < 1e-6);
+        assert_eq!(command.movement.yaw_delta, 0.0);
+        assert_eq!(command.movement.pitch_delta, 0.0);
+    }
+
+    #[test]
+    fn open_console_freezes_the_view() {
+        let mut game = turning_game(false);
+        let clock = GameClock::default();
+        let mut renderer = SettingsRenderer::default();
+        let level = draw_frame(&mut game, &mut renderer);
+        mouse(&mut game, 300.0, 150.0);
+        let shown = draw_frame(&mut game, &mut renderer);
+        assert_ne!(shown, level, "the look showed before the console opened");
+        let (look_x, look_y) = game.input.pending_look();
+        let start = game.sim().player();
+
+        open_the_console(&mut game, &clock);
+        let mut open_views = Vec::new();
+        for _ in 0..3 {
+            // A paused loop asks for the command on every frame.
+            game.command();
+            mouse(&mut game, 500.0, 500.0);
+            open_views.push(draw_frame(&mut game, &mut renderer));
+        }
+        let mut ctx = EventContext::new(&clock, None, None);
+        let routing = game.route_input(&mut ctx, BACKTICK, true, false);
+        assert_eq!(routing, Routing::Closed);
+        tick_once(&mut game);
+
+        for view in open_views {
+            assert_eq!(view, shown, "the open console changed the view");
+        }
+        let landed = game.sim().player();
+        assert_eq!(landed.yaw, start.yaw + (-look_x));
+        assert_eq!(
+            landed.pitch,
+            (start.pitch + (-look_y)).clamp(-moho_physics::PITCH_LIMIT, moho_physics::PITCH_LIMIT)
+        );
     }
 }
 

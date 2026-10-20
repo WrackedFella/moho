@@ -18,12 +18,14 @@ impl FirstPersonView {
 }
 
 /// Eye blended between the last two ticks by `alpha` (0 = previous, 1 = current);
-/// look from the current tick.
+/// look from the current tick turned by `pending` (yaw, pitch deltas), pitch clamped at
+/// [`PITCH_LIMIT`](crate::PITCH_LIMIT).
 pub fn first_person_view(
     previous: &CharacterState,
     current: &CharacterState,
     eye_height: f32,
     alpha: f32,
+    _pending: (f32, f32),
 ) -> FirstPersonView {
     let (yaw_sin, yaw_cos) = current.yaw.sin_cos();
     let (pitch_sin, pitch_cos) = current.pitch.sin_cos();
@@ -36,6 +38,7 @@ pub fn first_person_view(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PITCH_LIMIT;
 
     const EPS: f32 = 1e-5;
 
@@ -53,7 +56,7 @@ mod tests {
     fn eye_is_position_plus_eye_height_at_alpha_one() {
         let at_origin = state_at(Vec3::ZERO, 0.0, 0.0);
 
-        let view = first_person_view(&at_origin, &at_origin, 1.6, 1.0);
+        let view = first_person_view(&at_origin, &at_origin, 1.6, 1.0, (0.0, 0.0));
 
         assert!(
             view.eye.distance(Vec3::new(0.0, 1.6, 0.0)) < EPS,
@@ -66,7 +69,7 @@ mod tests {
         let pitch = 30.0_f32.to_radians();
         let looking_up = state_at(Vec3::new(2.0, 1.0, -3.0), 0.0, pitch);
 
-        let view = first_person_view(&looking_up, &looking_up, 1.6, 1.0);
+        let view = first_person_view(&looking_up, &looking_up, 1.6, 1.0, (0.0, 0.0));
 
         let expected = Vec3::new(0.0, pitch.sin(), pitch.cos());
         assert!(view.forward.distance(expected) < EPS, "{view:?}");
@@ -87,7 +90,7 @@ mod tests {
         let previous = state_at(Vec3::ZERO, 0.0, 0.0);
         let current = state_at(Vec3::new(1.0, 0.0, 0.0), 0.0, 0.0);
 
-        let view = first_person_view(&previous, &current, 1.6, 0.5);
+        let view = first_person_view(&previous, &current, 1.6, 0.5, (0.0, 0.0));
 
         assert!(
             view.eye.distance(Vec3::new(0.5, 1.6, 0.0)) < EPS,
@@ -100,7 +103,7 @@ mod tests {
         let previous = state_at(Vec3::ZERO, 0.0, 0.0);
         let current = state_at(Vec3::new(1.0, 0.0, 0.0), 0.0, 0.0);
 
-        let view = first_person_view(&previous, &current, 1.6, 0.0);
+        let view = first_person_view(&previous, &current, 1.6, 0.0, (0.0, 0.0));
 
         assert!(
             view.eye.distance(Vec3::new(0.0, 1.6, 0.0)) < EPS,
@@ -113,7 +116,7 @@ mod tests {
         let pitch = 30.0_f32.to_radians();
         let facing_x = state_at(Vec3::ZERO, 90.0_f32.to_radians(), pitch);
 
-        let view = first_person_view(&facing_x, &facing_x, 0.0, 1.0);
+        let view = first_person_view(&facing_x, &facing_x, 0.0, 1.0, (0.0, 0.0));
 
         let expected = Vec3::new(pitch.cos(), pitch.sin(), 0.0);
         assert!(view.forward.distance(expected) < EPS, "{view:?}");
@@ -124,8 +127,85 @@ mod tests {
         let previous = state_at(Vec3::ZERO, 1.0, -0.4);
         let current = state_at(Vec3::new(1.0, 0.0, 0.0), 0.0, 0.0);
 
-        let view = first_person_view(&previous, &current, 0.0, 0.5);
+        let view = first_person_view(&previous, &current, 0.0, 0.5, (0.0, 0.0));
 
         assert!(view.forward.distance(Vec3::Z) < EPS, "{view:?}");
+    }
+
+    #[test]
+    fn pending_yaw_turns_the_view_from_the_current_tick() {
+        let current = state_at(Vec3::ZERO, 0.25, 0.1);
+
+        let view = first_person_view(&current, &current, 0.0, 1.0, (0.5, 0.0));
+
+        let expected = state_at(Vec3::ZERO, 0.75, 0.1);
+        let want = first_person_view(&expected, &expected, 0.0, 1.0, (0.0, 0.0));
+        assert!(view.forward.distance(want.forward) < EPS, "{view:?}");
+    }
+
+    #[test]
+    fn pending_pitch_tilts_the_view_up_and_down() {
+        let level = state_at(Vec3::ZERO, 0.0, 0.0);
+
+        let up = first_person_view(&level, &level, 0.0, 1.0, (0.0, 0.3));
+        let down = first_person_view(&level, &level, 0.0, 1.0, (0.0, -0.3));
+
+        assert!(
+            up.forward
+                .distance(Vec3::new(0.0, 0.3_f32.sin(), 0.3_f32.cos()))
+                < EPS
+        );
+        assert!(
+            down.forward
+                .distance(Vec3::new(0.0, -0.3_f32.sin(), 0.3_f32.cos()))
+                < EPS
+        );
+    }
+
+    #[test]
+    fn pending_pitch_is_clamped_at_the_limit() {
+        let up_forward = Vec3::new(0.0, PITCH_LIMIT.sin(), PITCH_LIMIT.cos());
+        let down_forward = Vec3::new(0.0, -PITCH_LIMIT.sin(), PITCH_LIMIT.cos());
+        let cases = [
+            (PITCH_LIMIT, 0.5, up_forward),
+            (-PITCH_LIMIT, -0.5, down_forward),
+            (PITCH_LIMIT - 0.1, 2.0, up_forward),
+            (-PITCH_LIMIT + 0.1, -2.0, down_forward),
+        ];
+
+        for (pitch, pending_pitch, expected) in cases {
+            let current = state_at(Vec3::ZERO, 0.0, pitch);
+
+            let view = first_person_view(&current, &current, 0.0, 1.0, (0.0, pending_pitch));
+
+            assert_eq!(view.forward, expected, "from {pitch} by {pending_pitch}");
+        }
+    }
+
+    #[test]
+    fn pending_look_matches_a_step_with_the_same_deltas_exactly() {
+        let start = state_at(Vec3::ZERO, 0.37, 1.2);
+        let (yaw_delta, pitch_delta) = (0.123_456_7_f32, 0.9_f32);
+        let mut stepped = start;
+        stepped.yaw += yaw_delta;
+        stepped.pitch = (stepped.pitch + pitch_delta).clamp(-PITCH_LIMIT, PITCH_LIMIT);
+
+        let drawn = first_person_view(&start, &start, 0.0, 1.0, (yaw_delta, pitch_delta));
+        let landed = first_person_view(&stepped, &stepped, 0.0, 1.0, (0.0, 0.0));
+
+        assert_eq!(drawn.forward, landed.forward);
+    }
+
+    #[test]
+    fn pending_look_leaves_the_eye_alone() {
+        let previous = state_at(Vec3::ZERO, 0.0, 0.0);
+        let current = state_at(Vec3::new(1.0, 0.0, 0.0), 0.0, 0.0);
+
+        let view = first_person_view(&previous, &current, 1.6, 0.5, (1.0, 0.5));
+
+        assert!(
+            view.eye.distance(Vec3::new(0.5, 1.6, 0.0)) < EPS,
+            "{view:?}"
+        );
     }
 }
