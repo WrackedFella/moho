@@ -1426,12 +1426,11 @@ mod tests {
             let level = draw_frame(&mut game, &mut renderer);
             mouse(&mut game, 300.0, 150.0);
 
-            match stop {
-                "console" => open_the_console(&mut game, &clock),
-                _ => {
-                    let mut ctx = EventContext::new(&clock, None, None);
-                    game.event(&mut ctx, Event::Window(WindowEvent::Focused(false)));
-                }
+            if stop == "console" {
+                open_the_console(&mut game, &clock);
+            } else {
+                let mut ctx = EventContext::new(&clock, None, None);
+                game.event(&mut ctx, Event::Window(WindowEvent::Focused(false)));
             }
             for _ in 0..3 {
                 let view = draw_frame(&mut game, &mut renderer);
