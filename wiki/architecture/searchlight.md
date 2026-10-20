@@ -1,4 +1,4 @@
-# FPS prototype
+# Searchlight
 
 **Source:** `searchlight/src/`, `searchlight/assets/`, `moho_ui_shell/src/`.
 **Decisions:** [ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md),
@@ -13,11 +13,11 @@ strategy crate ([overview](overview.md#lines-and-rules)).
 
 ```mermaid
 flowchart LR
-    main["main.rs<br/>tuning, wiring"] --> game["game.rs<br/>FpsGame: Game impl"]
+    main["main.rs<br/>tuning, wiring"] --> game["game.rs<br/>SearchlightGame: Game impl"]
     game --> mode["mode.rs<br/>ArenaMode"]
     mode --> wave["wave.rs<br/>WaveTuning, WaveState"]
-    mode --> sim["sim.rs<br/>FpsSim"]
-    game --> input["input.rs<br/>FpsAction, FpsCommand"]
+    mode --> sim["sim.rs<br/>SearchlightSim"]
+    game --> input["input.rs<br/>SearchlightAction, SearchlightCommand"]
     game --> hud["hud.rs<br/>status wording"]
     sim --> brain["brain.rs<br/>enemy Brain"]
     sim --> cover["cover.rs<br/>cover choice"]
@@ -30,26 +30,26 @@ flowchart LR
 | Module | Role |
 |---|---|
 | `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes, spawns, route, cover points) and builds the world colliders |
-| `input` | `FpsAction` set and default bindings; `FpsCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on Enter) |
+| `input` | `SearchlightAction` set and default bindings; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on Enter) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }` or `Player(part)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld` |
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` in, `Intent` out; `EnemyTuning` holds its numbers |
 | `cover` | `pick` and `offer`: choose the nearest free cover point a hurt enemy should run to, using world-only rays against the player (`Threat`) |
-| `sim` | `FpsSim`: player character and body, rifle, spare magazines, dummies and enemies; emits `Feedback`; counts player kills |
+| `sim` | `SearchlightSim`: player character and body, rifle, spare magazines, dummies and enemies; emits `Feedback`; counts player kills |
 | `wave` | `WaveTuning` (first wave size, growth per wave, points per kill; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, score) as plain numbers, no physics |
-| `mode` | `ArenaMode`: the arena as a game mode. Owns an `FpsSim` started empty, scores its kills and spawns each wave's enemies at free enemy markers |
+| `mode` | `ArenaMode`: the arena as a game mode. Owns a `SearchlightSim` started empty, scores its kills and spawns each wave's enemies at free enemy markers |
 | `hud` | Text for rifle state, hits, health, death and the wave and score line; the hit-edge direction; the death overlay |
 | `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (none yet, so only the engine's `help`, `clear` and `quit` run) |
-| `game` | `FpsGame`, the `moho_app::Game` implementation: samples input, ticks the `ArenaMode`, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open), so the sim freezes instead of ticking with an ignored command |
+| `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples input, ticks the `ArenaMode`, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open), so the sim freezes instead of ticking with an ignored command |
 
-`FpsSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
-`Feedback` is the only output: `FpsSim::tick` queues it, the game drains it
+`SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
+`Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
 (`drain_feedback`) and reacts. `TICK_HZ` is 60. Tuning values (speeds, damage, cooldown,
 magazine size, body profile, `EnemyTuning`, the player part enemies aim at) live in `main.rs` as a `SimConfig`.
 
 ## Console
 
-`FpsGame` owns a `moho_ui_shell::UiShell` behind an `Arc<Mutex<_>>` and composes it with the
+`SearchlightGame` owns a `moho_ui_shell::UiShell` behind an `Arc<Mutex<_>>` and composes it with the
 crosshair through `UiLayers` as the renderer's one UI source. Every key and button goes to the
 shell first (`route_input`): the console toggle key opens it, `release_all` drops held game keys,
 and while it is open input does not reach the game. Escape closes the console instead of
@@ -61,27 +61,27 @@ through `FrameContext`; with neither present the command is dropped. Console com
 
 ## Tick
 
-`FpsSim::tick(command, dt)` lets the enemies perceive and move, moves the player character,
+`SearchlightSim::tick(command, dt)` lets the enemies perceive and move, moves the player character,
 steps the physics world, applies weapon actions, then resolves the shots the enemies decided
 on and removes enemies that died. The rifle is in one state at a time (ready, cooling down
 after a shot, reloading); cooldown and reload are tick counts.
 
-`FpsSim::start(arena, config)` builds the full sim: targets are numbered dummies first, then
-enemies. `FpsSim::new` builds one with dummies only. A sim started from an arena keeps the
-`Arena` and `SimConfig`; once the player is dead, `tick` reads only `FpsCommand::restart` and
+`SearchlightSim::start(arena, config)` builds the full sim: targets are numbered dummies first, then
+enemies. `SearchlightSim::new` builds one with dummies only. A sim started from an arena keeps the
+`Arena` and `SimConfig`; once the player is dead, `tick` reads only `SearchlightCommand::restart` and
 rebuilds the sim from them.
 
 ## Waves
 
-`ArenaMode::new(arena, config, waves)` builds the sim with `Start::Empty` (`FpsSim::with_start`):
+`ArenaMode::new(arena, config, waves)` builds the sim with `Start::Empty` (`SearchlightSim::with_start`):
 dummies and the player stand, enemy markers are remembered but unoccupied. Each
 `ArenaMode::tick` runs the sim, then `WaveState::step` with the sim's new kills and the number of
-free markers (`FpsSim::free_enemy_spawns`: no living character within two `CAPSULE_RADIUS`) and
-spawns that many enemies through `FpsSim::spawn_enemy`. Wave 1 holds `first_size` enemies and each
+free markers (`SearchlightSim::free_enemy_spawns`: no living character within two `CAPSULE_RADIUS`) and
+spawns that many enemies through `SearchlightSim::spawn_enemy`. Wave 1 holds `first_size` enemies and each
 later wave `growth` more; the next wave begins when the current one has nothing left to spawn and
 none alive. Spawned enemies take the next target number after the dummies; the dead keep theirs.
 Nothing spawns while the player is dead; the restart rebuilds the sim empty and begins wave 1
-with no score. `FpsGame` reads `wave()` and `score()` for the HUD.
+with no score. `SearchlightGame` reads `wave()` and `score()` for the HUD.
 
 ## Enemies
 
@@ -128,7 +128,7 @@ Markers are node names in the glTF file. `player_spawn` is required and unique; 
 unless an `enemy_spawn_NN` exists, then at least one is required (`ArenaError::MissingMarker`);
 the patrol route follows the waypoint numbers, not file order. Each
 `cover_NN` carries a `shielded_from` extra (`+x`, `-x`, `+z`, `-z`). Spawns are floor points;
-`FpsSim::new` lifts capsule centres by `STAND_HEIGHT`. Errors surface as `ArenaError`.
+`SearchlightSim::new` lifts capsule centres by `STAND_HEIGHT`. Errors surface as `ArenaError`.
 
 `assets/arena.glb` and `assets/rifle_shot.wav` are generated by
 `assets/tools/make_arena.py`; see [`assets/README.md`](../../searchlight/assets/README.md) for

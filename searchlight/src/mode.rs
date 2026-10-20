@@ -4,14 +4,14 @@
 use std::sync::Arc;
 
 use crate::arena::Arena;
-use crate::input::FpsCommand;
-use crate::sim::{Feedback, FpsSim, SimConfig, Start};
+use crate::input::SearchlightCommand;
+use crate::sim::{Feedback, SearchlightSim, SimConfig, Start};
 use crate::wave::{WaveState, WaveTuning};
 
 /// A sim that starts empty and is fed waves of enemies as the player clears them.
 #[derive(Debug)]
 pub struct ArenaMode {
-    sim: FpsSim,
+    sim: SearchlightSim,
     waves: WaveState,
     tuning: WaveTuning,
     /// Kills of the sim already scored.
@@ -23,7 +23,7 @@ impl ArenaMode {
     /// allow, before the first tick.
     pub fn new(arena: Arc<Arena>, config: SimConfig, waves: WaveTuning) -> Self {
         let mut mode = Self {
-            sim: FpsSim::with_start(arena, config, Start::Empty),
+            sim: SearchlightSim::with_start(arena, config, Start::Empty),
             waves: WaveState::begin(&waves),
             tuning: waves,
             seen_kills: 0,
@@ -63,7 +63,7 @@ impl ArenaMode {
 
     /// Runs one tick of `dt` seconds: the sim, then the score of its kills and the wave's
     /// spawns. A restart of a dead player begins wave 1 again with no score.
-    pub fn tick(&mut self, command: &FpsCommand, dt: f32) {
+    pub fn tick(&mut self, command: &SearchlightCommand, dt: f32) {
         let restarting = command.restart && self.sim.player_body().is_dead();
         self.sim.tick(command, dt);
         if restarting {
@@ -73,7 +73,7 @@ impl ArenaMode {
         self.step_waves();
     }
 
-    pub fn sim(&self) -> &FpsSim {
+    pub fn sim(&self) -> &SearchlightSim {
         &self.sim
     }
 
@@ -93,7 +93,7 @@ impl ArenaMode {
     }
 
     #[cfg(test)]
-    pub(crate) fn sim_mut(&mut self) -> &mut FpsSim {
+    pub(crate) fn sim_mut(&mut self) -> &mut SearchlightSim {
         &mut self.sim
     }
 }
@@ -107,14 +107,14 @@ mod tests {
     use crate::sim::STAND_HEIGHT;
     use crate::test_support::{DT, arena_with, mag, test_config};
 
-    fn idle() -> FpsCommand {
-        FpsCommand::default()
+    fn idle() -> SearchlightCommand {
+        SearchlightCommand::default()
     }
 
-    fn restart() -> FpsCommand {
-        FpsCommand {
+    fn restart() -> SearchlightCommand {
+        SearchlightCommand {
             restart: true,
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         }
     }
 
@@ -290,7 +290,7 @@ mod tests {
 
     /// The tick on which an unattended player dies in `arena`.
     fn tick_of_death(arena: &Arc<Arena>, config: &SimConfig) -> usize {
-        let mut sim = FpsSim::start(arena.clone(), config.clone());
+        let mut sim = SearchlightSim::start(arena.clone(), config.clone());
         (0..300)
             .find(|_| {
                 sim.tick(&idle(), DT);

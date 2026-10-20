@@ -1,4 +1,4 @@
-# Strategy game — vision
+# Flagstone — vision
 
 The design intent behind the flagstone line. Features and their order live in the
 [roadmap](../../_todo/ROADMAP.md) and the GitHub issues. This page holds what stays true across features.

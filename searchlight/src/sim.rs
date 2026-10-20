@@ -15,7 +15,7 @@ use searchlight_rules::{
 use crate::arena::{Arena, SETTLE_DT};
 use crate::brain::{Brain, EnemyTuning, Percept};
 use crate::cover::{self, Threat};
-use crate::input::FpsCommand;
+use crate::input::SearchlightCommand;
 use crate::shot::{ShotRay, Strike, resolve_shot};
 use crate::tag::SurfaceTag;
 
@@ -54,11 +54,11 @@ pub const CAPSULE_RADIUS: f32 = 0.3;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
     AtMarkers,
-    /// No enemies; the markers are remembered for [`FpsSim::spawn_enemy`].
+    /// No enemies; the markers are remembered for [`SearchlightSim::spawn_enemy`].
     Empty,
 }
 
-/// Why [`FpsSim::spawn_enemy`] added no enemy.
+/// Why [`SearchlightSim::spawn_enemy`] added no enemy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum SpawnError {
@@ -211,7 +211,7 @@ impl SplitMix64 {
 
 /// The world, the player, the rifle, the dummies and the enemies.
 #[derive(Debug)]
-pub struct FpsSim {
+pub struct SearchlightSim {
     world: PhysicsWorld,
     player: CharacterHandle,
     move_settings: MoveSettings,
@@ -286,7 +286,7 @@ fn new_target(
     }
 }
 
-impl FpsSim {
+impl SearchlightSim {
     /// A sim over `world` (static geometry already in), the player standing at
     /// `player_spawn` and one dummy at each of `dummy_spawns`, numbered by position in the
     /// slice. Spawns are floor points: capsule centres sit [`STAND_HEIGHT`] above them.
@@ -363,7 +363,7 @@ impl FpsSim {
     /// back at its spawn, as a fresh sim over the same world would have them. Otherwise the enemies perceive and move, the player moves, the
     /// world steps, the player's weapon actions apply, then the enemies that decided to fire
     /// do, and enemies that died leave the world.
-    pub fn tick(&mut self, command: &FpsCommand, dt: f32) {
+    pub fn tick(&mut self, command: &SearchlightCommand, dt: f32) {
         if self.player_body.is_dead() {
             if command.restart {
                 self.restart();
@@ -856,37 +856,37 @@ mod tests {
         Rifle::loaded(mag(30, rounds))
     }
 
-    fn idle() -> FpsCommand {
-        FpsCommand::default()
+    fn idle() -> SearchlightCommand {
+        SearchlightCommand::default()
     }
 
-    fn pull() -> FpsCommand {
-        FpsCommand {
+    fn pull() -> SearchlightCommand {
+        SearchlightCommand {
             fire: true,
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         }
     }
 
-    fn reload() -> FpsCommand {
-        FpsCommand {
+    fn reload() -> SearchlightCommand {
+        SearchlightCommand {
             reload: true,
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         }
     }
 
-    fn check() -> FpsCommand {
-        FpsCommand {
+    fn check() -> SearchlightCommand {
+        SearchlightCommand {
             check: true,
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         }
     }
 
-    fn arena_sim(rifle: Rifle, spares: Vec<Magazine>) -> FpsSim {
-        FpsSim::new(flat_floor(), Vec3::ZERO, &[], test_config(rifle, spares))
+    fn arena_sim(rifle: Rifle, spares: Vec<Magazine>) -> SearchlightSim {
+        SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], test_config(rifle, spares))
     }
 
     /// Ticks once per command in `script`, draining feedback after each tick.
-    fn run(sim: &mut FpsSim, script: &[FpsCommand]) -> Vec<Vec<Feedback>> {
+    fn run(sim: &mut SearchlightSim, script: &[SearchlightCommand]) -> Vec<Vec<Feedback>> {
         script
             .iter()
             .map(|command| {
@@ -909,7 +909,7 @@ mod tests {
     fn player_starts_at_the_arena_spawn() {
         let spawn = Vec3::new(3.0, 0.0, -2.0);
 
-        let sim = FpsSim::new(flat_floor(), spawn, &[], test_config(rifle_with(5), vec![]));
+        let sim = SearchlightSim::new(flat_floor(), spawn, &[], test_config(rifle_with(5), vec![]));
 
         let at = sim.player().position;
         assert!(
@@ -923,14 +923,15 @@ mod tests {
     fn player_cannot_walk_out_of_the_arena() {
         for turns in 0..4 {
             let yaw = FRAC_PI_2 * turns as f32;
-            let mut sim = FpsSim::new(room(), Vec3::ZERO, &[], test_config(rifle_with(5), vec![]));
-            let walk = |yaw_delta| FpsCommand {
+            let mut sim =
+                SearchlightSim::new(room(), Vec3::ZERO, &[], test_config(rifle_with(5), vec![]));
+            let walk = |yaw_delta| SearchlightCommand {
                 movement: CharacterCommand {
                     forward: 1.0,
                     yaw_delta,
                     ..CharacterCommand::default()
                 },
-                ..FpsCommand::default()
+                ..SearchlightCommand::default()
             };
 
             sim.tick(&walk(yaw), DT);
@@ -955,7 +956,7 @@ mod tests {
     fn trigger_pulls_spend_rounds_and_report_dry() {
         let mut sim = arena_sim(rifle_with(3), vec![]);
         let spaced = [pull(), idle(), idle()];
-        let script: Vec<FpsCommand> = spaced.iter().cycle().take(10).copied().collect();
+        let script: Vec<SearchlightCommand> = spaced.iter().cycle().take(10).copied().collect();
 
         let ticks = run(&mut sim, &script);
 
@@ -1111,7 +1112,7 @@ mod tests {
                 .expect("a volume per part");
             let mut config = test_config(rifle_with(5), vec![]);
             config.eye_height = volume.offset.y;
-            let mut sim = FpsSim::new(
+            let mut sim = SearchlightSim::new(
                 flat_floor(),
                 Vec3::new(volume.offset.x, 0.0, 0.0),
                 &[Vec3::new(0.0, 0.0, 8.0)],
@@ -1163,7 +1164,7 @@ mod tests {
             .expect("a torso volume");
         let mut config = test_config(rifle_with(5), vec![]);
         config.eye_height = volume.offset.y + 5.0;
-        let mut sim = FpsSim::new(
+        let mut sim = SearchlightSim::new(
             flat_floor(),
             Vec3::new(volume.offset.x, 0.0, 0.0),
             &[Vec3::new(0.0, 0.0, 8.0)],
@@ -1190,7 +1191,7 @@ mod tests {
             let mut config = test_config(rifle_with(5), vec![]);
             config.eye_height = volume.offset.y;
             config.range = range;
-            let mut sim = FpsSim::new(
+            let mut sim = SearchlightSim::new(
                 flat_floor(),
                 Vec3::new(volume.offset.x, 0.0, 0.0),
                 &[Vec3::new(0.0, 0.0, 8.0)],
@@ -1235,36 +1236,36 @@ mod tests {
             test_config(Rifle::loaded(mag(30, 30)), vec![])
         }
 
-        fn idle() -> FpsCommand {
-            FpsCommand::default()
+        fn idle() -> SearchlightCommand {
+            SearchlightCommand::default()
         }
 
-        fn pull() -> FpsCommand {
-            FpsCommand {
+        fn pull() -> SearchlightCommand {
+            SearchlightCommand {
                 fire: true,
-                ..FpsCommand::default()
+                ..SearchlightCommand::default()
             }
         }
 
-        fn restart() -> FpsCommand {
-            FpsCommand {
+        fn restart() -> SearchlightCommand {
+            SearchlightCommand {
                 restart: true,
-                ..FpsCommand::default()
+                ..SearchlightCommand::default()
             }
         }
 
         /// A far waypoint straight ahead of the markers, so enemies face away from the player.
         const AHEAD: Vec3 = Vec3::new(0.0, 0.0, 40.0);
 
-        fn empty_sim(markers: &[Vec3]) -> FpsSim {
-            FpsSim::with_start(
+        fn empty_sim(markers: &[Vec3]) -> SearchlightSim {
+            SearchlightSim::with_start(
                 arena_with(&[], Vec3::ZERO, markers, &[AHEAD]),
                 config(),
                 Start::Empty,
             )
         }
 
-        fn hits(sim: &mut FpsSim) -> Vec<u16> {
+        fn hits(sim: &mut SearchlightSim) -> Vec<u16> {
             sim.drain_feedback()
                 .into_iter()
                 .filter_map(|feedback| match feedback {
@@ -1298,7 +1299,7 @@ mod tests {
                 &[Vec3::new(0.0, 0.0, 10.0)],
                 &[Vec3::new(10.0, 0.0, 10.0), AHEAD],
             );
-            let mut sim = FpsSim::with_start(arena, config(), Start::Empty);
+            let mut sim = SearchlightSim::with_start(arena, config(), Start::Empty);
             sim.spawn_enemy(0).expect("the marker is free");
 
             let spawned = sim.enemy_state(0).expect("the enemy spawned");
@@ -1316,7 +1317,7 @@ mod tests {
             let mut arena =
                 (*arena_with(&[], Vec3::ZERO, &[Vec3::new(0.0, 0.0, 10.0)], &[AHEAD])).clone();
             arena.dummy_spawns = vec![Vec3::new(-8.0, 0.0, 4.0), Vec3::new(-4.0, 0.0, 4.0)];
-            let mut sim = FpsSim::with_start(Arc::new(arena), config(), Start::Empty);
+            let mut sim = SearchlightSim::with_start(Arc::new(arena), config(), Start::Empty);
             sim.spawn_enemy(0).expect("the marker is free");
 
             sim.tick(&pull(), DT);
@@ -1375,7 +1376,7 @@ mod tests {
             ))
             .clone();
             arena.dummy_spawns = vec![Vec3::new(-8.0, 0.0, 4.0)];
-            let sim = FpsSim::with_start(Arc::new(arena), config(), Start::Empty);
+            let sim = SearchlightSim::with_start(Arc::new(arena), config(), Start::Empty);
 
             let free = sim.free_enemy_spawns();
 
@@ -1407,8 +1408,8 @@ mod tests {
                 &[AHEAD],
             );
 
-            let with = FpsSim::with_start(arena.clone(), config(), Start::AtMarkers);
-            let plain = FpsSim::start(arena, config());
+            let with = SearchlightSim::with_start(arena.clone(), config(), Start::AtMarkers);
+            let plain = SearchlightSim::start(arena, config());
 
             assert_eq!(with.enemy_count(), 2);
             assert_eq!(with.enemies_alive(), 2);
@@ -1457,7 +1458,7 @@ mod tests {
         #[test]
         fn a_restart_of_an_at_markers_sim_brings_the_enemies_back() {
             let arena = arena_with(&[], Vec3::ZERO, &[Vec3::new(0.0, 0.0, 10.0)], &[AHEAD]);
-            let mut sim = FpsSim::with_start(arena, config(), Start::AtMarkers);
+            let mut sim = SearchlightSim::with_start(arena, config(), Start::AtMarkers);
             sim.kill_enemy(0);
             sim.tick(&idle(), DT);
             assert_eq!(sim.enemies_alive(), 0);
@@ -1475,7 +1476,7 @@ mod tests {
             arena.dummy_spawns = vec![Vec3::new(0.0, 0.0, 10.0)];
             let mut config = config();
             config.damage = 1_000;
-            let mut sim = FpsSim::with_start(Arc::new(arena), config, Start::AtMarkers);
+            let mut sim = SearchlightSim::with_start(Arc::new(arena), config, Start::AtMarkers);
 
             sim.tick(&pull(), DT);
 
@@ -1545,20 +1546,20 @@ mod dummy_pose_tests {
             .expect("a torso volume");
         let mut config = test_config(Rifle::loaded(mag(30, 5)), vec![]);
         config.eye_height = volume.offset.y;
-        let mut sim = FpsSim::new(
+        let mut sim = SearchlightSim::new(
             flat_floor(),
             Vec3::ZERO,
             &[Vec3::new(0.0, 0.0, 8.0)],
             config,
         );
         for _ in 0..600 {
-            sim.tick(&FpsCommand::default(), DT);
+            sim.tick(&SearchlightCommand::default(), DT);
         }
 
         sim.tick(
-            &FpsCommand {
+            &SearchlightCommand {
                 fire: true,
-                ..FpsCommand::default()
+                ..SearchlightCommand::default()
             },
             DT,
         );
@@ -1579,21 +1580,21 @@ mod adversarial_tests {
         Rifle::loaded(mag(30, rounds))
     }
 
-    fn idle() -> FpsCommand {
-        FpsCommand::default()
+    fn idle() -> SearchlightCommand {
+        SearchlightCommand::default()
     }
 
-    fn pull() -> FpsCommand {
-        FpsCommand {
+    fn pull() -> SearchlightCommand {
+        SearchlightCommand {
             fire: true,
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         }
     }
 
-    fn reload() -> FpsCommand {
-        FpsCommand {
+    fn reload() -> SearchlightCommand {
+        SearchlightCommand {
             reload: true,
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         }
     }
 
@@ -1605,7 +1606,7 @@ mod adversarial_tests {
             .expect("a volume per part")
     }
 
-    fn run(sim: &mut FpsSim, script: &[FpsCommand]) -> Vec<Vec<Feedback>> {
+    fn run(sim: &mut SearchlightSim, script: &[SearchlightCommand]) -> Vec<Vec<Feedback>> {
         script
             .iter()
             .map(|command| {
@@ -1620,7 +1621,7 @@ mod adversarial_tests {
         let head = volume_of(1, BodyPart::Head);
         let mut config = test_config(rifle_with(5), vec![]);
         config.eye_height = head.offset.y;
-        let mut sim = FpsSim::new(
+        let mut sim = SearchlightSim::new(
             flat_floor(),
             Vec3::new(3.0, 0.0, 0.0),
             &[Vec3::new(0.0, 0.0, 8.0), Vec3::new(3.0, 0.0, 8.0)],
@@ -1677,18 +1678,18 @@ mod adversarial_tests {
     #[test]
     fn pitch_extremes_keep_the_shot_finite_and_a_downward_shot_strikes_the_floor() {
         for pitch_delta in [-10.0_f32, 10.0] {
-            let mut sim = FpsSim::new(
+            let mut sim = SearchlightSim::new(
                 flat_floor(),
                 Vec3::ZERO,
                 &[],
                 test_config(rifle_with(5), vec![]),
             );
-            let look = FpsCommand {
+            let look = SearchlightCommand {
                 movement: CharacterCommand {
                     pitch_delta,
                     ..CharacterCommand::default()
                 },
-                ..FpsCommand::default()
+                ..SearchlightCommand::default()
             };
 
             sim.tick(&look, DT);
@@ -1724,7 +1725,7 @@ mod adversarial_tests {
         for cooldown_ticks in [3, 30] {
             let mut config = test_config(rifle_with(10), vec![mag(30, 30)]);
             config.cooldown_ticks = cooldown_ticks;
-            let mut sim = FpsSim::new(flat_floor(), Vec3::ZERO, &[], config);
+            let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
             let mut script = vec![pull(), reload()];
             script.extend([pull(); 9]);
             script.push(pull());
@@ -1750,7 +1751,7 @@ mod adversarial_tests {
 
     #[test]
     fn pull_reload_and_check_in_one_tick_report_in_order_and_start_the_reload() {
-        let mut reference = FpsSim::new(
+        let mut reference = SearchlightSim::new(
             flat_floor(),
             Vec3::ZERO,
             &[],
@@ -1759,7 +1760,7 @@ mod adversarial_tests {
         reference.tick(&pull(), DT);
         reference.drain_feedback();
         reference.tick(
-            &FpsCommand {
+            &SearchlightCommand {
                 check: true,
                 ..idle()
             },
@@ -1773,13 +1774,13 @@ mod adversarial_tests {
             MagazineLevel::Full,
             "the test needs a non-full pre-reload magazine"
         );
-        let mut sim = FpsSim::new(
+        let mut sim = SearchlightSim::new(
             flat_floor(),
             Vec3::ZERO,
             &[],
             test_config(rifle_with(10), vec![mag(30, 30)]),
         );
-        let all = FpsCommand {
+        let all = SearchlightCommand {
             fire: true,
             reload: true,
             check: true,
@@ -1813,8 +1814,8 @@ mod adversarial_tests {
     fn an_instant_reload_completes_before_the_check_reads_the_level() {
         let mut config = test_config(rifle_with(10), vec![mag(30, 30)]);
         config.reload_ticks = 0;
-        let mut sim = FpsSim::new(flat_floor(), Vec3::ZERO, &[], config);
-        let all = FpsCommand {
+        let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
+        let all = SearchlightCommand {
             fire: true,
             reload: true,
             check: true,
@@ -1839,7 +1840,7 @@ mod adversarial_tests {
         let mut config = test_config(rifle_with(20), vec![]);
         config.eye_height = torso.offset.y;
         config.cooldown_ticks = 0;
-        let mut sim = FpsSim::new(
+        let mut sim = SearchlightSim::new(
             flat_floor(),
             Vec3::new(torso.offset.x, 0.0, 0.0),
             &[Vec3::new(0.0, 0.0, 8.0)],
@@ -1870,7 +1871,7 @@ mod adversarial_tests {
 
     #[test]
     fn a_second_reload_request_neither_restarts_nor_extends_the_reload() {
-        let mut sim = FpsSim::new(
+        let mut sim = SearchlightSim::new(
             flat_floor(),
             Vec3::ZERO,
             &[],
@@ -1941,10 +1942,10 @@ mod hit_volume_and_cooldown_tests {
     fn fired_ticks(cooldown_ticks: u32, ticks: usize) -> Vec<usize> {
         let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
         config.cooldown_ticks = cooldown_ticks;
-        let mut sim = FpsSim::new(flat_floor(), Vec3::ZERO, &[], config);
-        let pull = FpsCommand {
+        let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
+        let pull = SearchlightCommand {
             fire: true,
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         };
         (0..ticks)
             .filter(|_| {
@@ -1967,15 +1968,15 @@ mod hit_volume_and_cooldown_tests {
     fn level_shot_hits(eye_height: f32, x: f32, distance: f32) -> bool {
         let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
         config.eye_height = eye_height;
-        let mut sim = FpsSim::new(
+        let mut sim = SearchlightSim::new(
             flat_floor(),
             Vec3::new(x, 0.0, 0.0),
             &[Vec3::new(0.0, 0.0, distance)],
             config,
         );
-        let pull = FpsCommand {
+        let pull = SearchlightCommand {
             fire: true,
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         };
 
         sim.tick(&pull, DT);
@@ -2024,7 +2025,7 @@ mod hit_volume_and_cooldown_tests {
         let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
         config.eye_height = 1.6;
 
-        let sim = FpsSim::new(flat_floor(), Vec3::ZERO, &[], config);
+        let sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
 
         assert_eq!(sim.eye_height(), 1.6);
     }
@@ -2063,26 +2064,26 @@ mod enemy_tests {
         config
     }
 
-    fn idle() -> FpsCommand {
-        FpsCommand::default()
+    fn idle() -> SearchlightCommand {
+        SearchlightCommand::default()
     }
 
-    fn pull() -> FpsCommand {
-        FpsCommand {
+    fn pull() -> SearchlightCommand {
+        SearchlightCommand {
             fire: true,
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         }
     }
 
-    fn restart() -> FpsCommand {
-        FpsCommand {
+    fn restart() -> SearchlightCommand {
+        SearchlightCommand {
             restart: true,
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         }
     }
 
     /// `len` ticks of nothing, with a trigger pull on each tick in `pulls`.
-    fn script(len: usize, pulls: &[usize]) -> Vec<FpsCommand> {
+    fn script(len: usize, pulls: &[usize]) -> Vec<SearchlightCommand> {
         (0..len)
             .map(|tick| {
                 if pulls.contains(&tick) {
@@ -2094,7 +2095,7 @@ mod enemy_tests {
             .collect()
     }
 
-    fn run(sim: &mut FpsSim, script: &[FpsCommand]) -> Vec<Vec<Feedback>> {
+    fn run(sim: &mut SearchlightSim, script: &[SearchlightCommand]) -> Vec<Vec<Feedback>> {
         script
             .iter()
             .map(|command| {
@@ -2168,7 +2169,7 @@ mod enemy_tests {
             .map(|(a, b)| horizontal(*a, *b))
             .sum();
         let budget = (lap / speed * 60.0 * 2.0) as usize + 600;
-        let mut sim = FpsSim::start(Arc::new(arena), config);
+        let mut sim = SearchlightSim::start(Arc::new(arena), config);
         let mut closest = vec![f32::MAX; route.len()];
 
         for _ in 0..budget {
@@ -2199,7 +2200,7 @@ mod enemy_tests {
             &[ENEMY_SPAWN],
             &[Vec3::new(10.0, 0.0, 10.0), AWAY_FROM_PLAYER],
         );
-        let mut sim = FpsSim::start(arena, config());
+        let mut sim = SearchlightSim::start(arena, config());
 
         let spawned = sim.enemy_state(0).expect("the enemy spawned");
         run(&mut sim, &script(30, &[]));
@@ -2212,7 +2213,7 @@ mod enemy_tests {
 
     #[test]
     fn an_enemy_with_sight_fires_at_the_player() {
-        let mut sim = FpsSim::start(duel(&[]), config());
+        let mut sim = SearchlightSim::start(duel(&[]), config());
 
         let ticks = run(&mut sim, &script(12, &[]));
 
@@ -2233,7 +2234,7 @@ mod enemy_tests {
         let fired_with_range = |sight_range: f32| {
             let mut config = config();
             config.enemy.sight_range = sight_range;
-            let mut sim = FpsSim::start(duel(&[]), config);
+            let mut sim = SearchlightSim::start(duel(&[]), config);
             let ticks = run(&mut sim, &script(30, &[]));
             count(&ticks, enemy_fired)
         };
@@ -2248,7 +2249,7 @@ mod enemy_tests {
     #[test]
     fn an_enemy_behind_a_wall_does_not_damage_the_player() {
         let wall = (Vec3::new(-8.0, 0.0, 5.0), Vec3::new(8.0, 4.0, 5.5));
-        let mut sim = FpsSim::start(duel(&[wall]), config());
+        let mut sim = SearchlightSim::start(duel(&[wall]), config());
 
         let ticks = run(&mut sim, &script(180, &[]));
 
@@ -2268,7 +2269,7 @@ mod enemy_tests {
         for (part, head, left_leg) in cases {
             let mut config = config();
             config.enemy_aim_at = part;
-            let mut sim = FpsSim::start(duel(&[]), config);
+            let mut sim = SearchlightSim::start(duel(&[]), config);
 
             let ticks = run(&mut sim, &script(3, &[]));
 
@@ -2292,7 +2293,7 @@ mod enemy_tests {
     fn enemy_shots_to_the_head_kill_a_player_with_health_left() {
         let mut config = config();
         config.enemy_aim_at = BodyPart::Head;
-        let mut sim = FpsSim::start(duel(&[]), config);
+        let mut sim = SearchlightSim::start(duel(&[]), config);
 
         let ticks = run(&mut sim, &script(60, &[]));
 
@@ -2307,7 +2308,7 @@ mod enemy_tests {
 
     #[test]
     fn enemy_shots_to_the_torso_kill_when_health_is_gone() {
-        let mut sim = FpsSim::start(duel(&[]), config());
+        let mut sim = SearchlightSim::start(duel(&[]), config());
 
         let ticks = run(&mut sim, &script(80, &[]));
 
@@ -2327,7 +2328,7 @@ mod enemy_tests {
             config.enemy.aim_error = 0.05;
             config.enemy.damage = 1;
             config.enemy.seed = seed;
-            let mut sim = FpsSim::start(duel(&[]), config);
+            let mut sim = SearchlightSim::start(duel(&[]), config);
             let ticks = run(&mut sim, &script(300, &[]));
             (
                 ticks_where(&ticks, enemy_fired),
@@ -2361,8 +2362,8 @@ mod enemy_tests {
         config.enemy.aim_error = 0.2;
         config.enemy.patrol_speed = 0.0;
         let untouched = Body::new(config.body);
-        let mut probe = FpsSim::start(arena.clone(), config.clone());
-        let mut sim = FpsSim::start(arena, config);
+        let mut probe = SearchlightSim::start(arena.clone(), config.clone());
+        let mut sim = SearchlightSim::start(arena, config);
 
         let ticks = run(&mut sim, &script(600, &[]));
 
@@ -2407,11 +2408,11 @@ mod enemy_tests {
         let away = arena_with(&[], Vec3::ZERO, &[ENEMY_SPAWN], &[AWAY_FROM_PLAYER]);
         let mut config_a = config();
         config_a.damage = 30;
-        let mut walking = FpsSim::start(away, config_a);
+        let mut walking = SearchlightSim::start(away, config_a);
         // Facing the player, who answers its first shot with a killing one.
         let mut config_b = config();
         config_b.damage = PLAYER_ONE_SHOT;
-        let mut firing = FpsSim::start(duel(&[]), config_b);
+        let mut firing = SearchlightSim::start(duel(&[]), config_b);
 
         run(&mut walking, &script(5, &[]));
         let before = walking.enemy_state(0).expect("alive unshot").position;
@@ -2454,7 +2455,7 @@ mod enemy_tests {
         );
         let mut config = config();
         config.damage = PLAYER_ONE_SHOT;
-        let mut sim = FpsSim::start(arena, config);
+        let mut sim = SearchlightSim::start(arena, config);
 
         let ticks = run(&mut sim, &script(4, &[0, 3]));
 
@@ -2470,8 +2471,8 @@ mod enemy_tests {
     fn an_enemy_killed_this_tick_does_not_fire() {
         let mut config = config();
         config.damage = PLAYER_ONE_SHOT;
-        let mut control = FpsSim::start(duel(&[]), config.clone());
-        let mut contested = FpsSim::start(duel(&[]), config);
+        let mut control = SearchlightSim::start(duel(&[]), config.clone());
+        let mut contested = SearchlightSim::start(duel(&[]), config);
 
         let undisturbed = run(&mut control, &script(60, &[]));
         let shot_down = run(&mut contested, &script(60, &[2]));
@@ -2489,7 +2490,7 @@ mod enemy_tests {
     #[test]
     fn an_enemy_does_not_fire_at_a_player_behind_it() {
         let arena = arena_with(&[], Vec3::ZERO, &[ENEMY_SPAWN], &[AWAY_FROM_PLAYER]);
-        let mut sim = FpsSim::start(arena, config());
+        let mut sim = SearchlightSim::start(arena, config());
 
         let ticks = run(&mut sim, &script(180, &[]));
 
@@ -2508,14 +2509,14 @@ mod enemy_tests {
             &[ENEMY_SPAWN],
             &[TOWARD_PLAYER, Vec3::new(0.0, 0.0, 25.0)],
         );
-        let mut sim = FpsSim::start(arena, sturdy(config()));
-        let turn_and_walk = |first: bool| FpsCommand {
+        let mut sim = SearchlightSim::start(arena, sturdy(config()));
+        let turn_and_walk = |first: bool| SearchlightCommand {
             movement: CharacterCommand {
                 forward: 1.0,
                 yaw_delta: if first { FRAC_PI_2 } else { 0.0 },
                 ..CharacterCommand::default()
             },
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         };
 
         let mut exposed = Vec::new();
@@ -2554,7 +2555,7 @@ mod enemy_tests {
         let mut config = config();
         config.enemy.damage = 100;
         config.enemy.reaction_ticks = 30;
-        let mut sim = FpsSim::start(arena, config);
+        let mut sim = SearchlightSim::start(arena, config);
         let walker_start = sim.enemy_state(1).expect("spawned").position;
 
         let mut ticks: Vec<Vec<Feedback>> = Vec::new();
@@ -2565,7 +2566,7 @@ mod enemy_tests {
         let walker_at_death = sim.enemy_state(1).expect("alive").position;
         let player_at_death = sim.player();
         let rounds = sim.rifle().magazine().rounds();
-        let restless = FpsCommand {
+        let restless = SearchlightCommand {
             movement: CharacterCommand {
                 forward: 1.0,
                 jump: true,
@@ -2574,7 +2575,7 @@ mod enemy_tests {
             fire: true,
             reload: true,
             check: true,
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         };
         let frozen = run(&mut sim, &[restless; 90]);
 
@@ -2596,7 +2597,7 @@ mod enemy_tests {
         );
         let mut config = config();
         config.enemy.damage = 100;
-        let mut sim = FpsSim::start(arena, config);
+        let mut sim = SearchlightSim::start(arena, config);
 
         let ticks = run(&mut sim, &script(120, &[]));
 
@@ -2609,7 +2610,7 @@ mod enemy_tests {
     }
 
     /// The player killed by one of two enemies after dropping the other, then restarted.
-    fn dead_player_in_a_busy_arena() -> (FpsSim, Arc<Arena>, SimConfig) {
+    fn dead_player_in_a_busy_arena() -> (SearchlightSim, Arc<Arena>, SimConfig) {
         let arena = arena_with(
             &[],
             Vec3::ZERO,
@@ -2620,7 +2621,7 @@ mod enemy_tests {
         config.damage = PLAYER_ONE_SHOT;
         config.enemy.damage = 100;
         config.enemy.aim_error = 0.05;
-        let mut sim = FpsSim::start(arena.clone(), config.clone());
+        let mut sim = SearchlightSim::start(arena.clone(), config.clone());
         let mut dead = false;
         for tick in 0..2000 {
             sim.tick(&if tick == 0 { pull() } else { idle() }, DT);
@@ -2636,7 +2637,7 @@ mod enemy_tests {
     #[test]
     fn restart_after_death_matches_a_fresh_start() {
         let (mut restarted, arena, config) = dead_player_in_a_busy_arena();
-        let mut fresh = FpsSim::start(arena, config);
+        let mut fresh = SearchlightSim::start(arena, config);
         assert!(
             restarted.enemy_state(0).is_none(),
             "the setup killed the first enemy"
@@ -2670,7 +2671,7 @@ mod enemy_tests {
 
     #[test]
     fn a_dead_player_in_an_arena_sim_restarts_to_a_living_one() {
-        let mut sim = FpsSim::start(arena_with(&[], Vec3::ZERO, &[], &[]), config());
+        let mut sim = SearchlightSim::start(arena_with(&[], Vec3::ZERO, &[], &[]), config());
         sim.player_body.hit(BodyPart::Torso, 1_000);
         assert!(sim.player_body().is_dead());
 
@@ -2681,7 +2682,8 @@ mod enemy_tests {
 
     #[test]
     fn a_dead_player_in_a_sim_built_without_an_arena_restarts_to_a_living_one() {
-        let mut sim = FpsSim::new(crate::test_support::flat_floor(), Vec3::ZERO, &[], config());
+        let mut sim =
+            SearchlightSim::new(crate::test_support::flat_floor(), Vec3::ZERO, &[], config());
         sim.player_body.hit(BodyPart::Torso, 1_000);
         assert!(sim.player_body().is_dead());
 
@@ -2695,17 +2697,17 @@ mod enemy_tests {
         let arena = duel(&[]);
         let mut config = config();
         config.damage = PLAYER_ONE_SHOT;
-        let mut pressed = FpsSim::start(arena.clone(), config.clone());
-        let mut control = FpsSim::start(arena, config);
-        let walk = FpsCommand {
+        let mut pressed = SearchlightSim::start(arena.clone(), config.clone());
+        let mut control = SearchlightSim::start(arena, config);
+        let walk = SearchlightCommand {
             movement: CharacterCommand {
                 forward: 1.0,
                 ..CharacterCommand::default()
             },
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         };
         let lead_in = [walk; 5];
-        let with_restart = FpsCommand {
+        let with_restart = SearchlightCommand {
             restart: true,
             ..walk
         };
@@ -2770,24 +2772,24 @@ mod enemy_tests {
         config
     }
 
-    fn shoot_at(sim: &FpsSim, index: usize) -> FpsCommand {
+    fn shoot_at(sim: &SearchlightSim, index: usize) -> SearchlightCommand {
         let at = sim
             .enemy_state(index)
             .expect("the enemy to shoot at is alive")
             .position;
         let player = sim.player();
         let bearing = (at.x - player.position.x).atan2(at.z - player.position.z);
-        FpsCommand {
+        SearchlightCommand {
             movement: CharacterCommand {
                 yaw_delta: bearing - player.yaw,
                 ..CharacterCommand::default()
             },
             fire: true,
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         }
     }
 
-    fn enemy_at(sim: &FpsSim, index: usize) -> Vec3 {
+    fn enemy_at(sim: &SearchlightSim, index: usize) -> Vec3 {
         sim.enemy_state(index).expect("the enemy is alive").position
     }
 
@@ -2798,7 +2800,7 @@ mod enemy_tests {
     #[test]
     fn an_enemy_hit_by_the_player_runs_to_cover() {
         let arena = with_covers(duel(&[LOW_WALL]), &[DECOY, SHIELDED]);
-        let mut sim = FpsSim::start(arena, cover_config());
+        let mut sim = SearchlightSim::start(arena, cover_config());
 
         let ticks = run(&mut sim, &script(300, &[0]));
 
@@ -2836,7 +2838,7 @@ mod enemy_tests {
         );
         let first_enemy =
             u16::try_from(arena.dummy_spawns.len()).expect("a few dummies fit a target number");
-        let mut sim = FpsSim::start(Arc::new(arena), cover_config());
+        let mut sim = SearchlightSim::start(Arc::new(arena), cover_config());
 
         let ticks = run(&mut sim, &script(400, &[0]));
 
@@ -2864,8 +2866,8 @@ mod enemy_tests {
         lethal.damage = PLAYER_ONE_SHOT;
         let mut wounding = cover_config();
         wounding.damage = 30;
-        let mut killer = FpsSim::start(arena.clone(), lethal);
-        let mut control = FpsSim::start(arena, wounding);
+        let mut killer = SearchlightSim::start(arena.clone(), lethal);
+        let mut control = SearchlightSim::start(arena, wounding);
 
         let killed = run(&mut killer, &script(300, &[0]));
         run(&mut control, &script(300, &[0]));
@@ -2905,7 +2907,7 @@ mod enemy_tests {
     fn two_enemies_hit_together_take_different_cover_points() {
         let mut config = cover_config();
         config.cooldown_ticks = 0;
-        let mut sim = FpsSim::start(two_enemies_and_two_shielded_points(), config);
+        let mut sim = SearchlightSim::start(two_enemies_and_two_shielded_points(), config);
 
         let first = shoot_at(&sim, 0);
         sim.tick(&first, DT);
@@ -2938,7 +2940,7 @@ mod enemy_tests {
     fn a_dead_enemys_cover_point_is_free_again() {
         let mut config = cover_config();
         config.cooldown_ticks = 0;
-        let mut sim = FpsSim::start(two_enemies_and_two_shielded_points(), config);
+        let mut sim = SearchlightSim::start(two_enemies_and_two_shielded_points(), config);
         let first = shoot_at(&sim, 0);
         sim.tick(&first, DT);
         run(&mut sim, &script(120, &[]));
@@ -2969,7 +2971,7 @@ mod enemy_tests {
     #[test]
     fn an_enemy_at_cover_fires_at_the_player() {
         let arena = with_covers(duel(&[LOW_WALL]), &[SHIELDED]);
-        let mut sim = FpsSim::start(arena, cover_config());
+        let mut sim = SearchlightSim::start(arena, cover_config());
         sim.tick(&pull(), DT);
         sim.drain_feedback();
         let mut waited = 0;
@@ -3002,7 +3004,7 @@ mod enemy_tests {
 
     /// The enemy ten metres ahead of the player, a waypoint beside it and a far one behind,
     /// and the player walking east behind `SIDE_WALL`.
-    fn player_ducks_behind_the_side_wall() -> FpsSim {
+    fn player_ducks_behind_the_side_wall() -> SearchlightSim {
         let arena = arena_with(
             &[SIDE_WALL],
             Vec3::ZERO,
@@ -3013,14 +3015,14 @@ mod enemy_tests {
         config.enemy.arrive_radius = 2.5;
         config.enemy.patrol_speed = 1.0;
         config.enemy.chase_ticks = 600;
-        let mut sim = FpsSim::start(arena, config);
-        let turn_and_walk = |first: bool| FpsCommand {
+        let mut sim = SearchlightSim::start(arena, config);
+        let turn_and_walk = |first: bool| SearchlightCommand {
             movement: CharacterCommand {
                 forward: 1.0,
                 yaw_delta: if first { FRAC_PI_2 } else { 0.0 },
                 ..CharacterCommand::default()
             },
-            ..FpsCommand::default()
+            ..SearchlightCommand::default()
         };
         let mut first = true;
         let mut walked = 0;
@@ -3086,7 +3088,7 @@ mod enemy_tests {
         );
         let mut config = cover_config();
         config.cooldown_ticks = 0;
-        let mut sim = FpsSim::start(arena, config);
+        let mut sim = SearchlightSim::start(arena, config);
         let first = shoot_at(&sim, 0);
         sim.tick(&first, DT);
         run(&mut sim, &script(120, &[]));
@@ -3117,7 +3119,7 @@ mod enemy_tests {
     #[test]
     fn an_enemy_shot_from_behind_with_no_cover_turns_and_fires_without_walking() {
         let arena = arena_with(&[], Vec3::ZERO, &[ENEMY_SPAWN], &[AWAY_FROM_PLAYER]);
-        let mut sim = FpsSim::start(arena, cover_config());
+        let mut sim = SearchlightSim::start(arena, cover_config());
         let mut farthest: f32 = 0.0;
 
         let mut ticks = Vec::new();
@@ -3141,7 +3143,7 @@ mod enemy_tests {
 
     #[test]
     fn a_hurt_enemy_in_an_arena_without_cover_points_keeps_firing() {
-        let mut sim = FpsSim::start(duel(&[LOW_WALL]), cover_config());
+        let mut sim = SearchlightSim::start(duel(&[LOW_WALL]), cover_config());
 
         let ticks = run(&mut sim, &script(400, &[0]));
 
@@ -3169,7 +3171,7 @@ mod enemy_tests {
     #[test]
     fn a_wall_above_the_line_from_the_players_eye_hides_a_cover_point() {
         let arena = with_covers(duel(&[midfield_wall(1.55)]), &[SHIELDED]);
-        let mut sim = FpsSim::start(arena, head_aiming_cover_config());
+        let mut sim = SearchlightSim::start(arena, head_aiming_cover_config());
 
         run(&mut sim, &script(300, &[0]));
 
@@ -3183,7 +3185,7 @@ mod enemy_tests {
     #[test]
     fn a_wall_below_the_line_from_the_players_eye_leaves_a_cover_point_in_view() {
         let arena = with_covers(duel(&[midfield_wall(1.2)]), &[SHIELDED]);
-        let mut sim = FpsSim::start(arena, head_aiming_cover_config());
+        let mut sim = SearchlightSim::start(arena, head_aiming_cover_config());
 
         let ticks = run(&mut sim, &script(300, &[0]));
 
@@ -3278,7 +3280,7 @@ mod pinned_behaviour_tests {
         let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
         config.enemy.aim_error = 0.5;
         config.enemy.seed = 7;
-        let mut sim = FpsSim::new(flat_floor(), Vec3::ZERO, &[], config);
+        let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
         let mut reference = SplitMix64(7);
         let across = reference.next_signed() * 0.5;
         let rise = reference.next_signed() * 0.5;
@@ -3295,7 +3297,7 @@ mod pinned_behaviour_tests {
     #[test]
     fn the_sim_reports_the_configured_maximum_health() {
         let config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
-        let sim = FpsSim::new(flat_floor(), Vec3::ZERO, &[], config);
+        let sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
 
         assert_eq!(sim.player_max_health(), 100);
     }
@@ -3312,7 +3314,7 @@ mod pinned_behaviour_tests {
         arena.dummy_spawns = vec![Vec3::new(-10.0, 0.0, -10.0)];
         let config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
 
-        let sim = FpsSim::start(Arc::new(arena), config);
+        let sim = SearchlightSim::start(Arc::new(arena), config);
 
         assert_eq!(sim.enemy_count(), 2);
         assert!(sim.dummy_body(0).is_some());
@@ -3326,7 +3328,7 @@ mod pinned_behaviour_tests {
     #[test]
     fn a_sim_without_enemies_has_none() {
         let config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
-        let sim = FpsSim::new(
+        let sim = SearchlightSim::new(
             flat_floor(),
             Vec3::ZERO,
             &[Vec3::new(3.0, 0.0, 3.0), Vec3::new(6.0, 0.0, 3.0)],
@@ -3350,11 +3352,11 @@ mod pinned_behaviour_tests {
         );
         let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
         config.eye_height = 0.72;
-        let mut sim = FpsSim::start(arena, config);
+        let mut sim = SearchlightSim::start(arena, config);
 
         let mut feedback = Vec::new();
         for _ in 0..3 {
-            sim.tick(&FpsCommand::default(), DT);
+            sim.tick(&SearchlightCommand::default(), DT);
             feedback.extend(sim.drain_feedback());
         }
 

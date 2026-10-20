@@ -1,7 +1,7 @@
 # FPS-F1 — Game Design Document
 
 **Status:** Draft
-**Labels:** feature, line:searchlight
+**Labels:** feature, line:fps
 
 ## Summary
 

@@ -13,7 +13,7 @@ use moho_ui_shell::UiShell;
 use searchlight::arena::{self, Arena};
 use searchlight::brain::EnemyTuning;
 use searchlight::console_commands;
-use searchlight::game::{FpsGame, WINDOW_TITLE};
+use searchlight::game::{SearchlightGame, WINDOW_TITLE};
 use searchlight::mode::ArenaMode;
 use searchlight::sim::SimConfig;
 use searchlight::wave::WaveTuning;
@@ -84,7 +84,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     for warning in console_warnings {
         tracing::warn!(?warning, "console binding");
     }
-    let game = FpsGame::new(mode, ActionMap::new(bindings, LOOK_PER_PIXEL))
+    let game = SearchlightGame::new(mode, ActionMap::new(bindings, LOOK_PER_PIXEL))
         .with_shell(UiShell::new(console))
         .with_arena(arena.meshes.clone(), &arena.dummy_spawns)
         .with_shot_sound(&assets().join("rifle_shot.wav"));

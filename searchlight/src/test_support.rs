@@ -12,7 +12,7 @@ use searchlight_rules::{BodyPart, BodyProfile, Magazine, Rifle};
 
 use crate::arena::Arena;
 use crate::brain::EnemyTuning;
-use crate::input::FpsAction;
+use crate::input::SearchlightAction;
 use crate::sim::SimConfig;
 use crate::tag::SurfaceTag;
 use crate::wave::WaveTuning;
@@ -174,7 +174,7 @@ pub(crate) fn wave_tuning(first_size: u32) -> WaveTuning {
 }
 
 /// Presses the first default binding of `action` on `map`.
-pub(crate) fn press(map: &mut ActionMap<FpsAction>, action: FpsAction) {
+pub(crate) fn press(map: &mut ActionMap<SearchlightAction>, action: SearchlightAction) {
     match action.default_bindings()[0] {
         Binding::Key(key) => map.key(key, true),
         Binding::Mouse(button) => map.mouse_button(button, true),
