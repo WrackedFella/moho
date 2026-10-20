@@ -419,6 +419,22 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_non_finite_cut_caps_nothing() {
+        for cut in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut app = ground_app();
+            let mut backend = CaptureBackend::default();
+            app.scene.world_meshes_mut().flush(&mut backend);
+
+            cut_and_draw(&mut app, &mut backend, Some(cut));
+
+            assert!(
+                drawn_caps(&mut app, &backend).is_empty(),
+                "a cut of {cut} leaves a cap"
+            );
+        }
+    }
+
+    #[test]
     fn the_frame_stage_caps_the_ground_under_the_cut_face_material() {
         let mut app = ground_app();
         let mut backend = CaptureBackend::default();

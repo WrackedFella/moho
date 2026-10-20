@@ -918,6 +918,123 @@ mod tests {
     }
 
     #[test]
+    fn a_non_finite_cut_caps_nothing() {
+        let mut grid = VoxelGrid::new(CHUNK);
+        fill(&mut grid, [0, 0, 0], [7, 0, 15], SMOOTH);
+        fill(&mut grid, [8, 0, 0], [15, 0, 15], BLOCKY);
+        let finite = cap(&grid, 0.5);
+        assert!(
+            !finite.indices.is_empty(),
+            "the fixture is capped at a finite cut"
+        );
+
+        for cut in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            for lod in [0, 1] {
+                let mesh = cut_cap_mesh(&grid, IVec3::ZERO, lod, cut);
+
+                assert_empty(&mesh, &format!("cut {cut} at lod {lod}"));
+            }
+        }
+    }
+
+    /// The largest cut whose probe, summed in f32, is exactly `target`.
+    fn cut_landing_on(target: f32) -> f32 {
+        let start = target - CAP_PROBE;
+        (0..16u32)
+            .flat_map(|k| {
+                [
+                    f32::from_bits(start.to_bits() + k),
+                    f32::from_bits(start.to_bits() - k),
+                ]
+            })
+            .find(|&c| c + CAP_PROBE == target)
+            .unwrap_or_else(|| panic!("no f32 cut has a probe of exactly {target}"))
+    }
+
+    #[test]
+    fn a_probe_on_a_vertex_height_still_caps_the_section() {
+        let mut flat = VoxelGrid::new(CHUNK);
+        fill(&mut flat, [1, 1, 1], [14, 9, 14], SMOOTH);
+        let mut terraces = VoxelGrid::new(CHUNK);
+        fill(&mut terraces, [1, 1, 1], [14, 3, 14], SMOOTH);
+        fill(&mut terraces, [3, 4, 3], [12, 6, 12], SMOOTH);
+        fill(&mut terraces, [5, 7, 5], [10, 9, 10], SMOOTH);
+
+        let mut failures = Vec::new();
+        for (name, grid) in [("flat ground", &flat), ("terraces", &terraces)] {
+            let chunk_mesh = HybridMeshGenerator::generate_chunk_mesh(grid, IVec3::ZERO, CHUNK);
+            for target in [5.0f32, 5.5, 6.0, 6.5] {
+                let cut = cut_landing_on(target);
+                assert_eq!(
+                    cut + CAP_PROBE,
+                    target,
+                    "the probe lands on the vertex height"
+                );
+                let walls = slice(&chunk_mesh, f64::from(target));
+                let expected = enclosed_area(&walls);
+
+                let mesh = cap(grid, cut);
+
+                assert!(expected > 1.0, "{name}: the cut at {target} crosses solid");
+                let area = cap_area(&mesh);
+                if (area - expected).abs() >= AREA_TOLERANCE {
+                    failures.push(format!(
+                        "{name}: area {area} is not {expected} at probe {target}"
+                    ));
+                }
+                'edges: for (from, to) in boundary_edges(&mesh) {
+                    for s in [0.0, 0.5, 1.0] {
+                        let p = [
+                            from[0] + s * (to[0] - from[0]),
+                            from[1] + s * (to[1] - from[1]),
+                        ];
+                        if !walls
+                            .iter()
+                            .any(|w| distance_to_segment(p, w.a, w.b) < WALL_TOLERANCE)
+                        {
+                            failures.push(format!(
+                                "{name}: cap edge point {p:?} at probe {target} is off the wall"
+                            ));
+                            break 'edges;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    #[test]
+    fn caps_in_negative_chunks() {
+        for (material, name, expected) in [
+            (SMOOTH, "smooth", 18.0 * 18.0 - 4.0 * CORNER_CHAMFER),
+            (BLOCKY, "blocky", 18.0 * 18.0),
+        ] {
+            let mut grid = VoxelGrid::new(CHUNK);
+            fill(&mut grid, [-20, -20, -20], [-3, -3, -3], material);
+
+            for cut in [-10.5f32, -16.0] {
+                let mut total = 0.0;
+                for (x, y, z) in
+                    (-2..0).flat_map(|x| (-3..1).flat_map(move |y| (-2..0).map(move |z| (x, y, z))))
+                {
+                    let mesh = cut_cap_mesh(&grid, IVec3::new(x, y, z), 0, cut);
+                    if !mesh.indices.is_empty() {
+                        assert_well_formed_cap(&mesh, cut);
+                    }
+                    total += cap_area(&mesh);
+                }
+
+                assert_near(
+                    total,
+                    expected,
+                    &format!("{name}: summed cap area at {cut}"),
+                );
+            }
+        }
+    }
+
+    #[test]
     fn blocky_block_on_a_chunk_layer_border_is_capped_once() {
         let mut grid = VoxelGrid::new(CHUNK);
         grid.place_block(IVec3::new(3, 16, 5), BLOCKY, None);
@@ -990,6 +1107,19 @@ mod tests {
         fn caps_tile_across_chunk_borders((field, blocky, cut) in tiling_cases()) {
             let grid = field.grid(if blocky { BLOCKY } else { SMOOTH });
             let h = f64::from(cut) + f64::from(CAP_PROBE);
+            // The mesher draws nothing for an Empty chunk even when its padding holds
+            // solid, a crack at -x/-y/-z faces that caps do not repair.
+            if !blocky {
+                let owner_layer = ((h - 0.5) / 16.0).floor() as i32;
+                for (x, z) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                    let pos = IVec3::new(x, owner_layer, z);
+                    let (content, _, _) = HybridMeshGenerator::analyze_chunk(&grid, pos, CHUNK);
+                    let padding_solid = (0..18).any(|i| (0..18).any(|j| (0..18).any(|k| {
+                        grid.is_solid_at(pos * CHUNK + IVec3::new(i, j, k) - IVec3::ONE)
+                    })));
+                    prop_assume!(content != ChunkContent::Empty || !padding_solid);
+                }
+            }
             let expected = if blocky {
                 let layer = h.floor() as i32;
                 (0..32).flat_map(|x| (0..32).map(move |z| (x, z)))
