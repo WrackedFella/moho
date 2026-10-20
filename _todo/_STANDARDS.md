@@ -222,6 +222,8 @@ something observable when finished.
   available on a user-owned repo); each card's issue is a sub-issue of it, so feature
   progress is visible on GitHub.
 - Labels: `line:engine` | `line:strategy` | `line:fps`; `feature` on feature issues;
+  the line labels name the game line, not the crate, so the Flagstone and Searchlight
+  renames (ENG-F27) did not change them and must not;
   `engine-request` on engine requests; `agent-ready` to start a remote run: on a work item it starts the orchestrator, on a
   `feature` issue it starts refinement into work items. Templates: *Feature*, *Work item*, *Engine
   request*.
