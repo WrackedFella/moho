@@ -333,10 +333,10 @@ impl HybridMeshGenerator {
                     if !cell_solid(cx, cy - 1, cz) {
                         Self::emit_coarse_quad(
                             &mut mesh,
-                            [wx, wy, wz + STRIDE],
-                            [wx + STRIDE, wy, wz + STRIDE],
-                            [wx + STRIDE, wy, wz],
                             [wx, wy, wz],
+                            [wx + STRIDE, wy, wz],
+                            [wx + STRIDE, wy, wz + STRIDE],
+                            [wx, wy, wz + STRIDE],
                             [0.0, -1.0, 0.0],
                         );
                     }

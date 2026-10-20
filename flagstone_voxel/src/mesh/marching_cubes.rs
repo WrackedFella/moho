@@ -301,25 +301,6 @@ impl MarchingCubes {
         // Density rises into the solid, so outward is the negated gradient.
         gradient.map(|g| -g / len)
     }
-
-    /// Convert voxel block data to density field
-    ///
-    /// This creates a 18x18x18 field (16x16x16 chunk + 1 padding on each side)
-    /// for proper gradient computation at boundaries.
-    pub fn create_density_field(blocks: &[[[bool; 16]; 16]; 16]) -> [[[f32; 18]; 18]; 18] {
-        let mut field = [[[0.0f32; 18]; 18]; 18];
-
-        for x in 0..16 {
-            for y in 0..16 {
-                for z in 0..16 {
-                    // Center the blocks in the field (skip padding)
-                    field[x + 1][y + 1][z + 1] = if blocks[x][y][z] { 1.0 } else { 0.0 };
-                }
-            }
-        }
-
-        field
-    }
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
@@ -894,25 +875,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_create_density_field() {
-        let mut blocks = [[[false; 16]; 16]; 16];
-        blocks[0][0][0] = true;
-        blocks[1][1][1] = true;
-
-        let field = MarchingCubes::create_density_field(&blocks);
-
-        // Check padding is zero
-        assert_eq!(field[0][0][0], 0.0);
-
-        // Check interior blocks are set
-        assert_eq!(field[1][1][1], 1.0); // blocks[0][0][0]
-        assert_eq!(field[2][2][2], 1.0); // blocks[1][1][1]
-    }
-
-    #[test]
     fn test_empty_density_field() {
-        let blocks = [[[false; 16]; 16]; 16];
-        let field = MarchingCubes::create_density_field(&blocks);
+        let field = [[[0.0f32; 18]; 18]; 18];
         let mesh = MarchingCubes::generate_mesh(&field, 16);
 
         // Empty field should produce no geometry
@@ -1054,8 +1018,9 @@ mod tests {
     #[test]
     fn all_indices_in_range() {
         // Regression guard: out-of-range indices cause silent GPU crashes on some hardware.
-        let blocks = [[[true; 16]; 16]; 16];
-        let field = MarchingCubes::create_density_field(&blocks);
+        let solid =
+            (1..=16).flat_map(|x| (1..=16).flat_map(move |y| (1..=16).map(move |z| (x, y, z))));
+        let field = solid_samples_field(solid);
         let mesh = MarchingCubes::generate_mesh(&field, 16);
 
         let vertex_count = mesh.vertices.len() as u32;

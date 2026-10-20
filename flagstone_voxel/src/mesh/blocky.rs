@@ -145,10 +145,10 @@ impl FaceDirection {
             ),
             FaceDirection::NegY => (
                 [
-                    [0.0, 0.0, 1.0], // front-left
-                    [1.0, 0.0, 1.0], // front-right
-                    [1.0, 0.0, 0.0], // back-right
                     [0.0, 0.0, 0.0], // back-left
+                    [1.0, 0.0, 0.0], // back-right
+                    [1.0, 0.0, 1.0], // front-right
+                    [0.0, 0.0, 1.0], // front-left
                 ],
                 [0.0, -1.0, 0.0],
             ),
@@ -187,7 +187,6 @@ impl FaceDirection {
                 let v0 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(1, -1, -1), // bottom-back
                     IVec3::new(1, 0, -1),
                     IVec3::new(1, -1, 0),
                     IVec3::new(1, -1, -1),
@@ -195,7 +194,6 @@ impl FaceDirection {
                 let v1 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(1, 1, -1), // top-back
                     IVec3::new(1, 1, 0),
                     IVec3::new(1, 0, -1),
                     IVec3::new(1, 1, -1),
@@ -203,7 +201,6 @@ impl FaceDirection {
                 let v2 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(1, 1, 1), // top-front
                     IVec3::new(1, 0, 1),
                     IVec3::new(1, 1, 0),
                     IVec3::new(1, 1, 1),
@@ -211,7 +208,6 @@ impl FaceDirection {
                 let v3 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(1, -1, 1), // bottom-front
                     IVec3::new(1, -1, 0),
                     IVec3::new(1, 0, 1),
                     IVec3::new(1, -1, 1),
@@ -223,7 +219,6 @@ impl FaceDirection {
                 let v0 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(-1, -1, 1),
                     IVec3::new(-1, 0, 1),
                     IVec3::new(-1, -1, 0),
                     IVec3::new(-1, -1, 1),
@@ -231,7 +226,6 @@ impl FaceDirection {
                 let v1 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(-1, 1, 1),
                     IVec3::new(-1, 1, 0),
                     IVec3::new(-1, 0, 1),
                     IVec3::new(-1, 1, 1),
@@ -239,7 +233,6 @@ impl FaceDirection {
                 let v2 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(-1, 1, -1),
                     IVec3::new(-1, 0, -1),
                     IVec3::new(-1, 1, 0),
                     IVec3::new(-1, 1, -1),
@@ -247,7 +240,6 @@ impl FaceDirection {
                 let v3 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(-1, -1, -1),
                     IVec3::new(-1, -1, 0),
                     IVec3::new(-1, 0, -1),
                     IVec3::new(-1, -1, -1),
@@ -259,7 +251,6 @@ impl FaceDirection {
                 let v0 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(-1, 1, -1),
                     IVec3::new(-1, 1, 0),
                     IVec3::new(0, 1, -1),
                     IVec3::new(-1, 1, -1),
@@ -267,7 +258,6 @@ impl FaceDirection {
                 let v1 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(-1, 1, 1),
                     IVec3::new(0, 1, 1),
                     IVec3::new(-1, 1, 0),
                     IVec3::new(-1, 1, 1),
@@ -275,7 +265,6 @@ impl FaceDirection {
                 let v2 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(1, 1, 1),
                     IVec3::new(1, 1, 0),
                     IVec3::new(0, 1, 1),
                     IVec3::new(1, 1, 1),
@@ -283,7 +272,6 @@ impl FaceDirection {
                 let v3 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(1, 1, -1),
                     IVec3::new(0, 1, -1),
                     IVec3::new(1, 1, 0),
                     IVec3::new(1, 1, -1),
@@ -295,7 +283,6 @@ impl FaceDirection {
                 let v0 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(-1, -1, 1),
                     IVec3::new(0, -1, 1),
                     IVec3::new(-1, -1, 0),
                     IVec3::new(-1, -1, 1),
@@ -303,7 +290,6 @@ impl FaceDirection {
                 let v1 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(1, -1, 1),
                     IVec3::new(1, -1, 0),
                     IVec3::new(0, -1, 1),
                     IVec3::new(1, -1, 1),
@@ -311,7 +297,6 @@ impl FaceDirection {
                 let v2 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(1, -1, -1),
                     IVec3::new(0, -1, -1),
                     IVec3::new(1, -1, 0),
                     IVec3::new(1, -1, -1),
@@ -319,19 +304,17 @@ impl FaceDirection {
                 let v3 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(-1, -1, -1),
                     IVec3::new(-1, -1, 0),
                     IVec3::new(0, -1, -1),
                     IVec3::new(-1, -1, -1),
                 );
-                [v0, v1, v2, v3]
+                [v3, v2, v1, v0]
             }
             FaceDirection::PosZ => {
                 // Front face: vertices see +Z direction
                 let v0 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(-1, -1, 1),
                     IVec3::new(-1, 0, 1),
                     IVec3::new(0, -1, 1),
                     IVec3::new(-1, -1, 1),
@@ -339,7 +322,6 @@ impl FaceDirection {
                 let v1 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(1, -1, 1),
                     IVec3::new(0, -1, 1),
                     IVec3::new(1, 0, 1),
                     IVec3::new(1, -1, 1),
@@ -347,7 +329,6 @@ impl FaceDirection {
                 let v2 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(1, 1, 1),
                     IVec3::new(1, 0, 1),
                     IVec3::new(0, 1, 1),
                     IVec3::new(1, 1, 1),
@@ -355,7 +336,6 @@ impl FaceDirection {
                 let v3 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(-1, 1, 1),
                     IVec3::new(0, 1, 1),
                     IVec3::new(-1, 0, 1),
                     IVec3::new(-1, 1, 1),
@@ -367,7 +347,6 @@ impl FaceDirection {
                 let v0 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(1, -1, -1),
                     IVec3::new(0, -1, -1),
                     IVec3::new(1, 0, -1),
                     IVec3::new(1, -1, -1),
@@ -375,7 +354,6 @@ impl FaceDirection {
                 let v1 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(-1, -1, -1),
                     IVec3::new(-1, 0, -1),
                     IVec3::new(0, -1, -1),
                     IVec3::new(-1, -1, -1),
@@ -383,7 +361,6 @@ impl FaceDirection {
                 let v2 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(-1, 1, -1),
                     IVec3::new(0, 1, -1),
                     IVec3::new(-1, 0, -1),
                     IVec3::new(-1, 1, -1),
@@ -391,7 +368,6 @@ impl FaceDirection {
                 let v3 = Self::vertex_ao(
                     grid,
                     pos,
-                    IVec3::new(1, 1, -1),
                     IVec3::new(1, 0, -1),
                     IVec3::new(0, 1, -1),
                     IVec3::new(1, 1, -1),
@@ -406,7 +382,6 @@ impl FaceDirection {
     /// # Arguments
     /// * `grid` - The voxel grid
     /// * `pos` - Base block position
-    /// * `_corner` - Corner offset (unused, kept for documentation)
     /// * `side1` - First edge neighbor offset
     /// * `side2` - Second edge neighbor offset
     /// * `diagonal` - Diagonal corner neighbor offset
@@ -416,7 +391,6 @@ impl FaceDirection {
     fn vertex_ao(
         grid: &VoxelGrid,
         pos: BlockPos,
-        _corner: IVec3,
         side1: IVec3,
         side2: IVec3,
         diagonal: IVec3,
