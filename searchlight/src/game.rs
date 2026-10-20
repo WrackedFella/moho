@@ -1418,6 +1418,44 @@ mod tests {
     }
 
     #[test]
+    fn motion_just_before_the_console_opens_waits_for_it_to_close() {
+        for stop in ["console", "focus lost"] {
+            let mut game = turning_game(false);
+            let clock = GameClock::default();
+            let mut renderer = SettingsRenderer::default();
+            let level = draw_frame(&mut game, &mut renderer);
+            mouse(&mut game, 300.0, 150.0);
+
+            match stop {
+                "console" => open_the_console(&mut game, &clock),
+                _ => {
+                    let mut ctx = EventContext::new(&clock, None, None);
+                    game.event(&mut ctx, Event::Window(WindowEvent::Focused(false)));
+                }
+            }
+            for _ in 0..3 {
+                let view = draw_frame(&mut game, &mut renderer);
+
+                assert_eq!(view, level, "{stop}: the view turned while stopped");
+            }
+            let mut ctx = EventContext::new(&clock, None, None);
+            match stop {
+                "console" => {
+                    let routing = game.route_input(&mut ctx, BACKTICK, true, false);
+                    assert_eq!(routing, Routing::Closed);
+                }
+                _ => game.event(&mut ctx, Event::Window(WindowEvent::Focused(true))),
+            }
+            let resumed = draw_frame(&mut game, &mut renderer);
+
+            assert_ne!(
+                resumed, level,
+                "{stop}: the waiting motion shows once play resumes"
+            );
+        }
+    }
+
+    #[test]
     fn open_console_freezes_the_view() {
         let mut game = turning_game(false);
         let clock = GameClock::default();
