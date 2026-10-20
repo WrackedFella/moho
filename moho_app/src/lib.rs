@@ -38,6 +38,9 @@ pub(crate) struct LoopRequests {
 /// Per-frame context handed to [`Game::frame`].
 pub struct FrameContext<'a> {
     pub tick_length: Duration,
+    /// Time since the previous frame, capped at `tick_length` times
+    /// `LoopConfig::max_catch_up_ticks`. Defaults to `tick_length`.
+    pub frame_dt: Duration,
     clock: &'a GameClock,
     renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
     audio: Option<&'a mut AudioSystem>,
@@ -56,6 +59,7 @@ impl<'a> FrameContext<'a> {
     ) -> Self {
         Self {
             tick_length,
+            frame_dt: tick_length,
             clock,
             renderer,
             audio,

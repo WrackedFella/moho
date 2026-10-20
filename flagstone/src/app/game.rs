@@ -3,7 +3,7 @@
 use crate::app::event_loop::{EventProcessor, FrameProcessor, GenerationProcessor};
 use crate::game_state::GameState;
 use crate::{App, RenderRequest};
-use flagstone_game::controller::{CameraMode, ControllerInput};
+use flagstone_game::controller::{CameraMode, ControllerInput, controller_to_camera};
 use flagstone_game::raycast::raycast_surface;
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
@@ -33,6 +33,13 @@ pub struct StrategyCommand {
     pub engine: Vec<EngineCommand>,
 }
 
+/// Yaw and pitch deltas for a look. Mouse motion is fed unnegated, so look is inverted here.
+///
+/// The one mapping, shared by the command and the camera so a tick lands where the frame drew.
+fn look_to_turn((look_x, look_y): (f32, f32)) -> (f32, f32) {
+    (-look_x, -look_y)
+}
+
 impl App {
     /// Sums the held bindings into the movement and look input for one tick.
     fn sample_command(&mut self) -> StrategyCommand {
@@ -54,9 +61,7 @@ impl App {
         // A tap shorter than one tick still jumps.
         let jump = is_active(StrategyAction::Jump) || frame.pressed(StrategyAction::Jump);
 
-        // Mouse motion is fed unnegated; look is inverted here.
-        let (look_x, look_y) = frame.look();
-        let (yaw_delta, pitch_delta) = (-look_x, -look_y);
+        let (yaw_delta, pitch_delta) = look_to_turn(frame.look());
 
         // The camera the player saw: the one drawn, not the one this tick will move.
         let select = (self.simulation.camera_mode() == CameraMode::Isometric
@@ -196,19 +201,40 @@ impl App {
         }
     }
 
-    /// The camera to draw this frame: the player's eye blended between the last two
-    /// ticks while walking, the tick camera otherwise.
+    /// The camera to draw this frame. In first person it is the simulation turned by the look
+    /// frames sampled but no tick has consumed yet: while walking, the eye blends between the
+    /// last two ticks; otherwise it is the tick camera's, since ticks keep cycling `alpha`
+    /// outside play while the player stands frozen. Isometric draws the tick camera.
     fn render_camera(&self, alpha: f32) -> (glam::Mat4, glam::Mat4, glam::Vec3) {
+        if self.simulation.camera_mode() != CameraMode::FirstPerson {
+            return self.camera;
+        }
+        let pending = self.input.actions.pending_look();
+        let (yaw_delta, pitch_delta) = look_to_turn(pending);
         let walking_states = self
             .is_kcc_walking()
             .then(|| self.physics.player_states())
             .flatten();
         match walking_states {
             Some((previous, current)) => {
-                let view = moho_physics::first_person_view(&previous, &current, 0.0, alpha);
+                let view = moho_physics::first_person_view(
+                    &previous,
+                    &current,
+                    0.0,
+                    alpha,
+                    (yaw_delta, pitch_delta),
+                );
                 (view.view_matrix(), self.camera.1, view.eye)
             }
-            None => self.camera,
+            // Nothing shown since the tick: its camera stands, which is also the initial
+            // camera before any tick.
+            None if pending == (0.0, 0.0) => self.camera,
+            None => controller_to_camera(
+                &self
+                    .simulation
+                    .player_controller
+                    .turned(yaw_delta, pitch_delta),
+            ),
         }
     }
 
@@ -414,6 +440,12 @@ impl moho_app::Game for App {
         let frame_processor = FrameProcessor::new();
 
         self.poll_gamepads();
+        if self.game_state == GameState::Playing
+            && self.input.focused
+            && self.simulation.camera_mode() == CameraMode::FirstPerson
+        {
+            self.input.actions.sample_frame(ctx.frame_dt);
+        }
         if let Some(renderer) = ctx.renderer() {
             self.apply_pending_render(renderer);
         }
@@ -614,6 +646,14 @@ mod tests {
 
     /// A first-person player standing on a floor, facing +Z, holding forward and jump.
     fn walking_app() -> App {
+        let mut app = standing_app();
+        hold(&mut app, StrategyAction::MoveForward);
+        hold(&mut app, StrategyAction::Jump);
+        app
+    }
+
+    /// A first-person player on a floor, facing +Z, holding nothing.
+    fn standing_app() -> App {
         let mut app = playing_app();
         app.simulation.set_camera_mode(CameraMode::FirstPerson);
         app.simulation
@@ -624,8 +664,6 @@ mod tests {
             .expect("physics world")
             .set_world_mesh(moho_render_api::WorldMeshId(1), &floor(), HitTag(0));
         app.physics.spawn_player(glam::Vec3::new(0.0, 1.2, 0.0));
-        hold(&mut app, StrategyAction::MoveForward);
-        hold(&mut app, StrategyAction::Jump);
         app
     }
 
@@ -764,6 +802,12 @@ mod tests {
         ctx.exit_requested()
     }
 
+    fn frame_without_renderer(app: &mut App) {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(tick(), &clock, None, None);
+        Game::frame(app, &mut ctx, 0.5);
+    }
+
     fn walker_state(app: &App) -> moho_physics::CharacterState {
         app.physics
             .world
@@ -847,6 +891,16 @@ mod tests {
     fn paused_frame_renders_the_tick_camera() {
         let mut app = app_after_a_moving_tick();
         app.game_state = GameState::Menu;
+        let mut fake = FakeRenderer::default();
+
+        run_frame(&mut app, &mut fake);
+
+        assert_eq!(fake.cameras.last().copied(), Some(app.camera));
+    }
+
+    #[test]
+    fn a_frame_before_any_tick_draws_the_initial_camera() {
+        let mut app = App::headless();
         let mut fake = FakeRenderer::default();
 
         run_frame(&mut app, &mut fake);
@@ -1300,6 +1354,7 @@ mod tests {
                     delta: (400.0, 200.0),
                 }),
             );
+            frame_without_renderer(&mut app);
             let cmd = Game::command(&mut app);
 
             assert_ne!(cmd.input.yaw_delta, 0.0);
@@ -1320,6 +1375,7 @@ mod tests {
                     delta: (400.0, 200.0),
                 }),
             );
+            frame_without_renderer(&mut app);
             let cmd = Game::command(&mut app);
 
             assert_eq!(cmd.input.yaw_delta, 0.0);
@@ -1341,6 +1397,8 @@ mod tests {
                 }),
             );
 
+            frame_without_renderer(&mut app);
+
             assert_eq!(app.input.actions.end_tick().look(), (0.0, 0.0));
         }
 
@@ -1352,12 +1410,499 @@ mod tests {
                 .set_position_yaw_pitch(glam::Vec3::new(100.0, 100.0, 100.0), 0.0, 0.0);
             app.input.actions.mouse_motion(5.0, 5.0);
 
+            frame_without_renderer(&mut app);
             let cmd = Game::command(&mut app);
             tick_app(&mut app, &cmd);
 
             let (yaw, pitch) = app.simulation.yaw_pitch();
             assert!(yaw < 0.0, "yaw = {yaw}");
             assert!(pitch < 0.0, "pitch = {pitch}");
+        }
+    }
+
+    mod view_turn {
+        use super::*;
+        use flagstone_game::controller::controller_to_camera;
+        use glam::{Mat4, Vec3};
+        use moho_input::action_map::LookSettings;
+        use moho_input::pad::{Stick, StickAxis};
+        use moho_physics::{PITCH_LIMIT, first_person_view};
+        use winit::event::DeviceEvent;
+
+        /// How the first-person view is drawn: from the character controller or the free camera.
+        #[derive(Clone, Copy, Debug)]
+        enum Rig {
+            Walking,
+            FreeCam,
+        }
+
+        const RIGS: [Rig; 2] = [Rig::Walking, Rig::FreeCam];
+        /// The `alpha` `run_frame` draws with.
+        const ALPHA: f32 = 0.5;
+
+        fn rig_app(rig: Rig) -> App {
+            let mut app = match rig {
+                Rig::Walking => standing_app(),
+                Rig::FreeCam => {
+                    let mut app = playing_app();
+                    app.simulation.set_camera_mode(CameraMode::FirstPerson);
+                    app.physics.noclip = true;
+                    app
+                }
+            };
+            HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ)).step(&mut app, 1);
+            app
+        }
+
+        fn mouse(app: &mut App, dx: f64, dy: f64) {
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            Game::event(
+                app,
+                &mut ctx,
+                moho_app::Event::Device(DeviceEvent::MouseMotion { delta: (dx, dy) }),
+            );
+        }
+
+        fn drawn(fake: &FakeRenderer) -> Mat4 {
+            fake.cameras.last().expect("a frame began").0
+        }
+
+        fn forward_of(view: Mat4) -> Vec3 {
+            -view.transpose().col(2).truncate()
+        }
+
+        fn yaw_of(view: Mat4) -> f32 {
+            let forward = forward_of(view);
+            forward.x.atan2(forward.z)
+        }
+
+        fn pitch_of(view: Mat4) -> f32 {
+            forward_of(view).y.asin()
+        }
+
+        /// The character's yaw and pitch as the simulation holds them.
+        fn sim_look(app: &App, rig: Rig) -> (f32, f32) {
+            match rig {
+                Rig::Walking => {
+                    let state = walker_state(app);
+                    (state.yaw, state.pitch)
+                }
+                Rig::FreeCam => app.simulation.yaw_pitch(),
+            }
+        }
+
+        /// The view a frame must draw: the simulation turned by the look shown but not yet ticked.
+        fn expected_view(app: &App, rig: Rig) -> Mat4 {
+            let (look_x, look_y) = app.input.actions.pending_look();
+            match rig {
+                Rig::Walking => {
+                    let (previous, current) = app.physics.player_states().expect("a walker");
+                    first_person_view(&previous, &current, 0.0, ALPHA, (-look_x, -look_y))
+                        .view_matrix()
+                }
+                Rig::FreeCam => {
+                    controller_to_camera(&app.simulation.player_controller.turned(-look_x, -look_y))
+                        .0
+                }
+            }
+        }
+
+        #[test]
+        fn mouse_motion_turns_the_next_frame_before_any_tick() {
+            for rig in RIGS {
+                let mut app = rig_app(rig);
+                let mut fake = FakeRenderer::default();
+                let before_look = sim_look(&app, rig);
+                run_frame(&mut app, &mut fake);
+                let before = drawn(&fake);
+
+                mouse(&mut app, 400.0, 200.0);
+                run_frame(&mut app, &mut fake);
+                let after = drawn(&fake);
+
+                assert!(
+                    forward_of(after).distance(forward_of(before)) > 1e-3,
+                    "{rig:?}: the frame did not turn"
+                );
+                assert!(
+                    yaw_of(after) < yaw_of(before),
+                    "{rig:?}: right is negative yaw"
+                );
+                assert!(
+                    pitch_of(after) < pitch_of(before),
+                    "{rig:?}: down is negative pitch"
+                );
+                assert_eq!(sim_look(&app, rig), before_look, "{rig:?}: no tick ran");
+                assert_eq!(after, expected_view(&app, rig), "{rig:?}");
+            }
+        }
+
+        #[test]
+        fn tick_lands_on_the_last_frames_view() {
+            const MOTION: [(f64, f64); 3] = [(120.0, 40.0), (-30.0, 80.0), (200.0, -150.0)];
+
+            for rig in RIGS {
+                for smoothing in [false, true] {
+                    let mut app = rig_app(rig);
+                    app.input.actions.set_look(LookSettings {
+                        look_per_count: 0.002,
+                        smoothing,
+                    });
+                    let mut fake = FakeRenderer::default();
+                    let (yaw_before, pitch_before) = sim_look(&app, rig);
+                    run_frame(&mut app, &mut fake);
+                    let level = drawn(&fake);
+
+                    for (dx, dy) in MOTION {
+                        mouse(&mut app, dx, dy);
+                        run_frame(&mut app, &mut fake);
+                    }
+                    let last_frame = drawn(&fake);
+                    assert_ne!(last_frame, level, "{rig:?}: the frames turned the view");
+                    let (look_x, look_y) = app.input.actions.pending_look();
+                    let command = Game::command(&mut app);
+                    tick_app(&mut app, &command);
+
+                    let case = format!("{rig:?}, smoothing {smoothing}");
+                    let yaw = yaw_before + (-look_x);
+                    let pitch = (pitch_before + (-look_y)).clamp(-PITCH_LIMIT, PITCH_LIMIT);
+                    assert_ne!(yaw, yaw_before, "{case}: the frames turned");
+                    assert_eq!(sim_look(&app, rig), (yaw, pitch), "{case}");
+                    assert_eq!(app.input.actions.pending_look(), (0.0, 0.0), "{case}");
+                    if let Rig::FreeCam = rig {
+                        assert_eq!(app.camera.0, last_frame, "{case}: the tick camera");
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn drawn_view_is_the_simulation_turned_by_the_pending_look() {
+            const MOTION: [(f64, f64); 3] = [(120.0, 40.0), (-30.0, 80.0), (200.0, -150.0)];
+
+            for rig in RIGS {
+                for smoothing in [false, true] {
+                    let mut app = rig_app(rig);
+                    app.input.actions.set_look(LookSettings {
+                        look_per_count: 0.002,
+                        smoothing,
+                    });
+                    let mut fake = FakeRenderer::default();
+                    run_frame(&mut app, &mut fake);
+                    let mut previous = drawn(&fake);
+
+                    for (dx, dy) in MOTION {
+                        mouse(&mut app, dx, dy);
+                        run_frame(&mut app, &mut fake);
+                        assert_ne!(drawn(&fake), previous, "{rig:?}: the frame turned");
+                        previous = drawn(&fake);
+
+                        assert_eq!(
+                            drawn(&fake),
+                            expected_view(&app, rig),
+                            "{rig:?}, smoothing {smoothing}"
+                        );
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn pitch_held_at_the_limit_on_screen_and_after_the_tick() {
+            for rig in RIGS {
+                for (direction, limit) in [("up", PITCH_LIMIT), ("down", -PITCH_LIMIT)] {
+                    let mut app = rig_app(rig);
+                    let mut fake = FakeRenderer::default();
+                    // Mouse y is down-positive.
+                    let toward = -f64::from(limit.signum());
+
+                    for (round, count) in [100_000.0_f64, 5_000.0].into_iter().enumerate() {
+                        mouse(&mut app, 0.0, toward * count);
+                        run_frame(&mut app, &mut fake);
+                        let height = forward_of(drawn(&fake)).y;
+                        let command = Game::command(&mut app);
+                        tick_app(&mut app, &command);
+
+                        assert!(
+                            (height - limit.sin()).abs() < 1e-5,
+                            "{rig:?} {direction} round {round}: view at {height}"
+                        );
+                        assert_eq!(
+                            sim_look(&app, rig).1,
+                            limit,
+                            "{rig:?} {direction} round {round}"
+                        );
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn stick_turns_each_frame_between_ticks() {
+            for rig in RIGS {
+                let mut app = rig_app(rig);
+                let mut fake = FakeRenderer::default();
+                let before_look = sim_look(&app, rig);
+                run_frame(&mut app, &mut fake);
+                let mut yaws = vec![yaw_of(drawn(&fake))];
+
+                app.input
+                    .actions
+                    .pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+                for _ in 0..4 {
+                    run_frame(&mut app, &mut fake);
+                    yaws.push(yaw_of(drawn(&fake)));
+                }
+
+                assert!(
+                    yaws.windows(2).all(|pair| pair[1] < pair[0]),
+                    "{rig:?}: yaw should fall (turn right) every frame: {yaws:?}"
+                );
+                assert_eq!(sim_look(&app, rig), before_look, "{rig:?}: no tick ran");
+            }
+        }
+
+        #[test]
+        fn stick_turn_follows_the_frame_time() {
+            const LOOK_PER_COUNT: f32 = 0.002;
+
+            for rig in RIGS {
+                let pending_after = |frame_dt: Duration| {
+                    let mut app = rig_app(rig);
+                    app.input.actions.set_look(LookSettings {
+                        look_per_count: LOOK_PER_COUNT,
+                        smoothing: false,
+                    });
+                    app.input
+                        .actions
+                        .pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+                    let clock = GameClock::default();
+                    let mut fake = FakeRenderer::default();
+                    let mut ctx = FrameContext::new(tick(), &clock, Some(&mut fake), None);
+                    ctx.frame_dt = frame_dt;
+                    Game::frame(&mut app, &mut ctx, ALPHA);
+                    app.input.actions.pending_look().0
+                };
+
+                let full = pending_after(tick());
+                let half = pending_after(tick() / 2);
+
+                let by_hand = 1560.0 * tick().as_secs_f32() * LOOK_PER_COUNT;
+                assert!(
+                    (full - by_hand).abs() < 1e-5,
+                    "{rig:?}: {full} vs {by_hand}"
+                );
+                assert_eq!(half * 2.0, full, "{rig:?}: half the time, half the turn");
+            }
+        }
+
+        fn focus(app: &mut App, focused: bool) {
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            Game::event(
+                app,
+                &mut ctx,
+                moho_app::Event::Window(WindowEvent::Focused(focused)),
+            );
+        }
+
+        /// Why the view must hold still.
+        #[derive(Clone, Copy, Debug)]
+        enum Stop {
+            Paused,
+            Menu,
+            Console,
+            Unfocused,
+        }
+
+        const STOPS: [Stop; 4] = [Stop::Paused, Stop::Menu, Stop::Console, Stop::Unfocused];
+
+        impl Stop {
+            /// Enters the stop through the game's own transition.
+            fn enter(self, app: &mut App) {
+                match self {
+                    Stop::Paused => app.escape_pressed(),
+                    Stop::Menu => app.show_menu(),
+                    Stop::Console => app.enter_console(),
+                    Stop::Unfocused => focus(app, false),
+                }
+            }
+
+            /// Leaves the stop through the matching transition. Resuming from pause uses
+            /// `toggle_pause`, which Escape calls too, because Escape resumes only from the
+            /// home screen.
+            fn leave(self, app: &mut App) {
+                match self {
+                    Stop::Paused => app.toggle_pause(),
+                    Stop::Menu => app.hide_menu(),
+                    Stop::Console => app.exit_console(),
+                    Stop::Unfocused => focus(app, true),
+                }
+            }
+        }
+
+        #[test]
+        fn paused_or_unfocused_frames_do_not_turn() {
+            for rig in RIGS {
+                for stop in STOPS {
+                    let mut app = rig_app(rig);
+                    let mut fake = FakeRenderer::default();
+                    run_frame(&mut app, &mut fake);
+                    let level = forward_of(drawn(&fake));
+                    mouse(&mut app, 300.0, 150.0);
+                    run_frame(&mut app, &mut fake);
+                    let shown_view = drawn(&fake);
+                    let shown = forward_of(shown_view);
+                    assert!(
+                        shown.distance(level) > 1e-3,
+                        "{rig:?} {stop:?}: look is live first"
+                    );
+                    let (look_x, look_y) = app.input.actions.pending_look();
+                    let (yaw_before, pitch_before) = sim_look(&app, rig);
+
+                    stop.enter(&mut app);
+                    assert!(
+                        app.game_state != GameState::Playing || !app.input.focused,
+                        "{rig:?} {stop:?}: stopped"
+                    );
+                    let mut views = Vec::new();
+                    for _ in 0..3 {
+                        if !matches!(stop, Stop::Unfocused) {
+                            // A paused loop asks for the command on every frame.
+                            Game::command(&mut app);
+                        }
+                        mouse(&mut app, 500.0, 500.0);
+                        run_frame(&mut app, &mut fake);
+                        views.push(forward_of(drawn(&fake)));
+                    }
+
+                    for view in views {
+                        assert!(
+                            view.distance(shown) < 1e-4,
+                            "{rig:?} {stop:?}: the view moved from {shown:?} to {view:?}"
+                        );
+                    }
+                    assert_eq!(
+                        sim_look(&app, rig),
+                        (yaw_before, pitch_before),
+                        "{rig:?} {stop:?}"
+                    );
+
+                    stop.leave(&mut app);
+                    assert!(
+                        app.game_state == GameState::Playing && app.input.focused,
+                        "{rig:?} {stop:?}: play resumed"
+                    );
+                    run_frame(&mut app, &mut fake);
+                    assert_eq!(
+                        drawn(&fake),
+                        shown_view,
+                        "{rig:?} {stop:?}: the first frame after resuming still draws the shown view"
+                    );
+                    let command = Game::command(&mut app);
+                    tick_app(&mut app, &command);
+
+                    assert_eq!(
+                        sim_look(&app, rig),
+                        (
+                            yaw_before + (-look_x),
+                            (pitch_before + (-look_y)).clamp(-PITCH_LIMIT, PITCH_LIMIT)
+                        ),
+                        "{rig:?} {stop:?}: the tick lands on the view that was shown"
+                    );
+                }
+            }
+        }
+
+        fn frame_at(app: &mut App, fake: &mut FakeRenderer, alpha: f32) -> (Mat4, Vec3) {
+            let clock = GameClock::default();
+            let mut ctx = FrameContext::new(tick(), &clock, Some(&mut *fake), None);
+            Game::frame(app, &mut ctx, alpha);
+            let camera = fake.cameras.last().expect("a frame began");
+            (camera.0, camera.2)
+        }
+
+        #[test]
+        fn paused_walking_view_holds_still() {
+            for stop in [Stop::Paused, Stop::Menu, Stop::Console] {
+                let mut app = walking_app();
+                HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ)).step(&mut app, 3);
+                let (previous, current) = app.physics.player_states().expect("a walker");
+                assert!(
+                    previous.position.distance(current.position) > 1e-3,
+                    "the walk is moving"
+                );
+                let mut fake = FakeRenderer::default();
+                mouse(&mut app, 300.0, 150.0);
+                frame_at(&mut app, &mut fake, 0.5);
+                let pending = app.input.actions.pending_look();
+                assert_ne!(pending, (0.0, 0.0), "{stop:?}: look is live first");
+
+                stop.enter(&mut app);
+                let (yaw_delta, pitch_delta) = look_to_turn(pending);
+                let (expected_view, _, expected_eye) = controller_to_camera(
+                    &app.simulation
+                        .player_controller
+                        .turned(yaw_delta, pitch_delta),
+                );
+                let mut drawn_views = Vec::new();
+                for alpha in [0.0, 0.3, 0.7, 1.0] {
+                    // The strategy loop keeps ticking while stopped.
+                    let command = Game::command(&mut app);
+                    tick_app(&mut app, &command);
+                    drawn_views.push((alpha, frame_at(&mut app, &mut fake, alpha)));
+                }
+
+                assert_eq!(
+                    app.physics.player_states(),
+                    Some((previous, current)),
+                    "{stop:?}: the tick states stay frozen"
+                );
+                for (alpha, (view, eye)) in drawn_views {
+                    assert_eq!(eye, expected_eye, "{stop:?} at alpha {alpha}: the eye");
+                    assert_eq!(view, expected_view, "{stop:?} at alpha {alpha}: the view");
+                }
+            }
+        }
+
+        #[test]
+        fn unfocused_device_motion_does_not_turn_after_refocus() {
+            for rig in RIGS {
+                let mut app = rig_app(rig);
+                let mut fake = FakeRenderer::default();
+                run_frame(&mut app, &mut fake);
+                let level = forward_of(drawn(&fake));
+                focus(&mut app, false);
+
+                mouse(&mut app, 400.0, 200.0);
+                focus(&mut app, true);
+                run_frame(&mut app, &mut fake);
+                let command = Game::command(&mut app);
+
+                assert!(
+                    forward_of(drawn(&fake)).distance(level) < 1e-6,
+                    "{rig:?}: the view turned"
+                );
+                assert_eq!(command.input.yaw_delta, 0.0, "{rig:?}");
+                assert_eq!(command.input.pitch_delta, 0.0, "{rig:?}");
+            }
+        }
+
+        #[test]
+        fn isometric_frames_do_not_turn_the_view() {
+            let mut app = rig_app(Rig::FreeCam);
+            app.simulation.set_camera_mode(CameraMode::Isometric);
+            let mut fake = FakeRenderer::default();
+
+            app.input.actions.mouse_motion(400.0, 200.0);
+            run_frame(&mut app, &mut fake);
+
+            let command = Game::command(&mut app);
+
+            assert_eq!(fake.cameras.last().copied(), Some(app.camera));
+            assert_eq!(command.input.yaw_delta, 0.0);
+            assert_eq!(command.input.pitch_delta, 0.0);
         }
     }
 

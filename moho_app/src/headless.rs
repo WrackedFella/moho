@@ -11,6 +11,7 @@ use crate::{FrameContext, Game, LoopRequests, TickContext};
 pub struct HeadlessLoop<G> {
     step: FixedStep,
     tick_length: Duration,
+    max_catch_up_ticks: u32,
     next_tick: u64,
     paused: bool,
     clock: GameClock,
@@ -28,6 +29,7 @@ impl<G: Game> HeadlessLoop<G> {
         Self {
             step,
             tick_length: config.tick_length(),
+            max_catch_up_ticks: config.max_catch_up_ticks,
             next_tick: 0,
             paused: false,
             clock: config.clock,
@@ -44,9 +46,16 @@ impl<G: Game> HeadlessLoop<G> {
         let n = self.run_ticks(game, frame_dt);
         self.apply_paused_command(game);
         let mut ctx = FrameContext::headless(self.tick_length, &self.clock);
+        ctx.frame_dt = self.capped_frame_dt(frame_dt);
         game.frame(&mut ctx, self.step.alpha());
         self.apply_requests(ctx.loop_requests());
         n
+    }
+
+    /// `elapsed` capped at `max_catch_up_ticks` ticks: the frame time a game sees, so a long
+    /// stall cannot turn the view by more than the loop would simulate.
+    pub(crate) fn capped_frame_dt(&self, elapsed: Duration) -> Duration {
+        elapsed.min(self.tick_length * self.max_catch_up_ticks)
     }
 
     /// Applies the pause and speed a game asked for, from the next tick.
@@ -311,6 +320,7 @@ mod tests {
         renderer_absent: Option<bool>,
         audio_absent: Option<bool>,
         tick_length: Option<Duration>,
+        frame_dts: Vec<Duration>,
     }
 
     impl Game for ContextProbe {
@@ -324,7 +334,48 @@ mod tests {
             self.renderer_absent = Some(ctx.renderer().is_none());
             self.audio_absent = Some(ctx.audio().is_none());
             self.tick_length = Some(ctx.tick_length);
+            self.frame_dts.push(ctx.frame_dt);
         }
+    }
+
+    #[test]
+    fn advance_passes_frame_dt_to_the_frame() {
+        let mut game = ContextProbe::default();
+        let mut sim = HeadlessLoop::new(LoopConfig::new(60));
+        let dts = [
+            Duration::from_nanos(NS / 144),
+            Duration::from_nanos(NS / 60),
+            Duration::from_nanos(NS / 30),
+        ];
+
+        for dt in dts {
+            sim.advance(&mut game, dt);
+        }
+
+        assert_eq!(game.frame_dts, dts);
+    }
+
+    #[test]
+    fn frame_dt_is_capped_at_the_catch_up_limit() {
+        let mut game = ContextProbe::default();
+        let config = LoopConfig::new(60);
+        let mut sim = HeadlessLoop::new(config);
+
+        sim.advance(&mut game, Duration::from_secs(1));
+
+        assert_eq!(config.max_catch_up_ticks, 5);
+        assert_eq!(game.frame_dts, [Duration::from_secs(1) / 60 * 5]);
+    }
+
+    #[test]
+    fn a_paused_loop_still_passes_frame_dt_to_the_frame() {
+        let mut game = ContextProbe::default();
+        let mut sim = HeadlessLoop::new(LoopConfig::new(60));
+        sim.set_paused(true);
+
+        sim.advance(&mut game, Duration::from_nanos(NS / 144));
+
+        assert_eq!(game.frame_dts, [Duration::from_nanos(NS / 144)]);
     }
 
     #[test]

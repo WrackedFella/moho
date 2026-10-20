@@ -55,6 +55,7 @@ pub fn run<G: Game + 'static>(game: G, config: AppConfig) -> Result<(), AppError
         renderer: None,
         audio: None,
         last_wake: Instant::now(),
+        last_frame: Instant::now(),
         error: None,
     };
 
@@ -73,6 +74,7 @@ struct Runner<G: Game> {
     renderer: Option<Box<dyn RendererBackend>>,
     audio: Option<AudioSystem>,
     last_wake: Instant,
+    last_frame: Instant,
     error: Option<AppError>,
 }
 
@@ -131,20 +133,19 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         self.window = Some(window);
         self.renderer = Some(renderer);
         self.last_wake = Instant::now();
+        self.last_frame = self.last_wake;
     }
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, _cause: StartCause) {
-        let Some(window) = &self.window else {
+        if self.window.is_none() {
             return;
-        };
+        }
 
         let now = Instant::now();
         let elapsed = now - self.last_wake;
         self.last_wake = now;
 
-        if self.sim.run_ticks(&mut self.game, elapsed) > 0 || self.sim.paused() {
-            window.request_redraw();
-        }
+        self.sim.run_ticks(&mut self.game, elapsed);
 
         event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.sim.until_next_tick()));
     }
@@ -159,18 +160,24 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         match route {
             Route::Frame => {
                 self.sim.apply_paused_command(&mut self.game);
+                let now = Instant::now();
+                let frame_dt = self.sim.capped_frame_dt(now - self.last_frame);
+                self.last_frame = now;
                 let mut ctx = FrameContext::new(
                     self.sim.tick_length(),
                     self.sim.clock(),
                     self.renderer.as_deref_mut(),
                     self.audio.as_mut(),
                 );
+                ctx.frame_dt = frame_dt;
                 self.game.frame(&mut ctx, self.sim.alpha());
                 let requests = ctx.loop_requests();
                 let exit = ctx.exit_requested();
                 self.sim.apply_requests(requests);
                 if exit {
                     event_loop.exit();
+                } else if let Some(window) = &self.window {
+                    window.request_redraw();
                 }
                 return;
             }

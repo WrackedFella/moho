@@ -87,13 +87,23 @@ impl PlayerController {
         }
     }
 
+    /// This controller with its look turned by the deltas, pitch clamped exactly as
+    /// [`apply_input`](Self::apply_input) does; nothing else changes.
+    pub fn turned(&self, yaw_delta: f32, pitch_delta: f32) -> Self {
+        let mut turned = *self;
+        turned.turn(yaw_delta, pitch_delta);
+        turned
+    }
+
+    fn turn(&mut self, yaw_delta: f32, pitch_delta: f32) {
+        self.yaw += yaw_delta;
+        self.pitch = (self.pitch + pitch_delta).clamp(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD);
+    }
+
     pub fn apply_input(&mut self, input: &ControllerInput, dt: f32) {
         match self.camera_mode {
             CameraMode::FirstPerson => {
-                // Apply look deltas
-                self.yaw += input.yaw_delta;
-                self.pitch =
-                    (self.pitch + input.pitch_delta).clamp(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD);
+                self.turn(input.yaw_delta, input.pitch_delta);
 
                 // Build horizontal forward direction (for right vector and pitch-less reference)
                 let forward_horizontal =
@@ -648,5 +658,70 @@ mod tests {
         pc.look_at(Vec3::new(0.0, f32::EPSILON, 0.0));
 
         assert_eq!(pc.pitch, 0.0);
+    }
+
+    #[test]
+    fn turned_adds_the_deltas_to_yaw_and_pitch() {
+        let mut controller = PlayerController::new(Vec3::new(1.0, 2.0, 3.0));
+        controller.yaw = 0.5;
+        controller.pitch = 0.25;
+
+        let turned = controller.turned(0.125, -0.5);
+
+        assert_eq!(turned.yaw, 0.625);
+        assert_eq!(turned.pitch, -0.25);
+        assert_eq!(turned.position, controller.position);
+        assert_eq!(turned.speed, controller.speed);
+        assert_eq!(turned.camera_mode, controller.camera_mode);
+        assert_eq!(controller.yaw, 0.5, "the original is not changed");
+    }
+
+    #[test]
+    fn turned_clamps_pitch_like_apply_input() {
+        struct Row {
+            yaw: f32,
+            pitch: f32,
+            yaw_delta: f32,
+            pitch_delta: f32,
+            dt: f32,
+            clamped: bool,
+        }
+        let row = |yaw, pitch, yaw_delta, pitch_delta, dt, clamped| Row {
+            yaw,
+            pitch,
+            yaw_delta,
+            pitch_delta,
+            dt,
+            clamped,
+        };
+        let rows = [
+            row(0.0, PITCH_LIMIT_RAD, 0.3, 0.5, 0.0, true),
+            row(0.0, -PITCH_LIMIT_RAD, 0.3, -0.5, 0.0, true),
+            row(0.0, PITCH_LIMIT_RAD - 0.1, 0.3, 2.0, 0.0, true),
+            row(0.0, -PITCH_LIMIT_RAD + 0.1, 0.3, -2.0, 0.0, true),
+            row(0.37, 1.2, 0.123_456_7, 0.9, 1.0 / 60.0, true),
+        ];
+
+        for r in rows {
+            let mut controller = PlayerController::new(Vec3::ZERO);
+            controller.yaw = r.yaw;
+            controller.pitch = r.pitch;
+            let mut applied = controller;
+
+            let turned = controller.turned(r.yaw_delta, r.pitch_delta);
+            applied.apply_input(
+                &ControllerInput {
+                    yaw_delta: r.yaw_delta,
+                    pitch_delta: r.pitch_delta,
+                    ..Default::default()
+                },
+                r.dt,
+            );
+
+            let case = format!("from {} by {}", r.pitch, r.pitch_delta);
+            assert_eq!(turned.pitch, applied.pitch, "{case}");
+            assert_eq!(turned.yaw, applied.yaw, "{case}");
+            assert_eq!(turned.pitch.abs() == PITCH_LIMIT_RAD, r.clamped, "{case}");
+        }
     }
 }
