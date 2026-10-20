@@ -71,18 +71,6 @@ mod tests {
     }
 
     #[test]
-    fn same_seed_gives_identical_samples() {
-        let a = Perlin::new(1234);
-        let b = Perlin::new(1234);
-
-        for x in grid(-10.0, 10.0, 0.37) {
-            for z in grid(-10.0, 10.0, 0.41) {
-                assert_eq!(a.sample(x, z), b.sample(x, z), "at ({x}, {z})");
-            }
-        }
-    }
-
-    #[test]
     fn different_seeds_differ_at_non_lattice_points() {
         let points: Vec<(f64, f64)> = (0..100)
             .map(|i| {

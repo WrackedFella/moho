@@ -179,22 +179,6 @@ mod tests {
     }
 
     #[test]
-    fn biome_at_is_deterministic() {
-        let a = BiomeMap::new(123);
-        let b = BiomeMap::new(123);
-        let enabled = [BiomeType::Plains, BiomeType::Mountains, BiomeType::Canyon];
-        for x in (-32..32).step_by(4) {
-            for z in (-32..32).step_by(4) {
-                assert_eq!(
-                    a.biome_at(x, z, &enabled),
-                    b.biome_at(x, z, &enabled),
-                    "biome at ({x}, {z}) must match across BiomeMap instances with same seed"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn empty_enabled_list_falls_back_to_gentle_hills() {
         let map = BiomeMap::new(1);
         assert_eq!(map.biome_at(0, 0, &[]), BiomeType::GentleHills);

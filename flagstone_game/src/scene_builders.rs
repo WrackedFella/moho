@@ -336,39 +336,7 @@ pub fn generate_chunk(
 mod tests {
     use super::*;
 
-    fn generate_grid(seed: u32) -> VoxelGrid {
-        let config = TerrainConfig {
-            seed,
-            world_size: 32, // small enough to run quickly
-            ..TerrainConfig::default()
-        };
-        let mut grid = VoxelGrid::new(16);
-        generate_terrain(&mut grid, &config);
-        grid
-    }
-
-    fn collect_blocks(grid: &VoxelGrid) -> Vec<(BlockPos, u32, Option<u32>)> {
-        let mut blocks: Vec<_> = grid
-            .iter_block_data()
-            .map(|b| (b.position, b.material_id, b.resource_id))
-            .collect();
-        blocks.sort_by_key(|(p, _, _)| (p.x, p.y, p.z));
-        blocks
-    }
-
-    #[test]
-    fn same_seed_produces_same_grid() {
-        let a = collect_blocks(&generate_grid(42));
-        let b = collect_blocks(&generate_grid(42));
-        assert_eq!(a, b, "same seed must produce identical terrain");
-    }
-
-    #[test]
-    fn different_seeds_produce_different_grids() {
-        let a = collect_blocks(&generate_grid(42));
-        let b = collect_blocks(&generate_grid(43));
-        assert_ne!(a, b, "different seeds must produce different terrain");
-    }
+    type Block = (BlockPos, u32, Option<u32>);
 
     fn small_config(seed: u32) -> TerrainConfig {
         TerrainConfig {
@@ -378,12 +346,108 @@ mod tests {
         }
     }
 
+    fn all_biome_config() -> TerrainConfig {
+        TerrainConfig {
+            seed: 7,
+            world_size: 64,
+            enabled_biomes: vec![
+                BiomeType::GentleHills,
+                BiomeType::Mountains,
+                BiomeType::Plains,
+                BiomeType::Cliffs,
+                BiomeType::Canyon,
+            ],
+            ..TerrainConfig::default()
+        }
+    }
+
+    /// Every chunk position that can hold terrain, with the blocks `generate_chunk` gives it.
+    fn world_chunks(config: &TerrainConfig) -> Vec<(glam::IVec3, Vec<Block>)> {
+        let half = (config.world_size / 2) as i32;
+        let lo = (-half).div_euclid(CHUNK_SIZE);
+        let hi = (half - 1).div_euclid(CHUNK_SIZE);
+        let mut chunks = Vec::new();
+        for cx in lo..=hi {
+            for cy in 0..=MAX_TERRAIN_HEIGHT / CHUNK_SIZE {
+                for cz in lo..=hi {
+                    let pos = glam::IVec3::new(cx, cy, cz);
+                    chunks.push((pos, generate_chunk(config, pos)));
+                }
+            }
+        }
+        chunks
+    }
+
+    fn world_blocks(config: &TerrainConfig) -> Vec<Block> {
+        let mut blocks: Vec<Block> = world_chunks(config)
+            .into_iter()
+            .flat_map(|(_, blocks)| blocks)
+            .collect();
+        blocks.sort_by_key(|(p, _, _)| (p.x, p.y, p.z));
+        blocks
+    }
+
+    /// 64-bit FNV-1a over the sorted blocks; `None` resources get a distinct tag byte.
+    fn fingerprint(blocks: &[Block]) -> u64 {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut feed = |bytes: &[u8]| {
+            for &b in bytes {
+                hash ^= u64::from(b);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        };
+        for (p, material, resource) in blocks {
+            feed(&p.x.to_le_bytes());
+            feed(&p.y.to_le_bytes());
+            feed(&p.z.to_le_bytes());
+            feed(&material.to_le_bytes());
+            match resource {
+                None => feed(&[0]),
+                Some(n) => {
+                    feed(&[1]);
+                    feed(&n.to_le_bytes());
+                }
+            }
+        }
+        hash
+    }
+
+    fn ore_count(blocks: &[Block]) -> usize {
+        blocks.iter().filter(|(_, _, r)| *r == Some(1)).count()
+    }
+
     #[test]
-    fn generate_chunk_same_seed_is_deterministic() {
-        let cfg = small_config(7);
-        let a = generate_chunk(&cfg, glam::IVec3::ZERO);
-        let b = generate_chunk(&cfg, glam::IVec3::ZERO);
-        assert_eq!(a, b, "same seed + chunk_pos must yield identical blocks");
+    fn default_world_matches_its_pinned_fingerprint() {
+        let blocks = world_blocks(&small_config(42));
+
+        let measured = (fingerprint(&blocks), blocks.len(), ore_count(&blocks));
+
+        assert_eq!(
+            measured,
+            (16_667_745_297_482_914_019, 67_114, 5_792),
+            "world generation output changed; update these pins only when the change is deliberate"
+        );
+    }
+
+    #[test]
+    fn all_biome_world_matches_its_pinned_fingerprint() {
+        let blocks = world_blocks(&all_biome_config());
+
+        let measured = (fingerprint(&blocks), blocks.len(), ore_count(&blocks));
+
+        assert_eq!(
+            measured,
+            (3_431_315_624_261_164_992, 265_476, 22_876),
+            "world generation output changed; update these pins only when the change is deliberate"
+        );
+    }
+
+    #[test]
+    fn different_seeds_produce_different_grids() {
+        let a = world_blocks(&small_config(42));
+        let b = world_blocks(&small_config(43));
+
+        assert_ne!(a, b, "different seeds must produce different terrain");
     }
 
     #[test]
@@ -406,6 +470,32 @@ mod tests {
     }
 
     #[test]
+    fn chunk_past_each_world_edge_is_empty() {
+        let cfg = small_config(42);
+
+        // (outside chunk, in-world neighbour), one edge at a time.
+        let edges = [
+            ((1, 4, 0), (0, 4, 0)),
+            ((-2, 4, 0), (-1, 4, 0)),
+            ((0, 4, 1), (0, 4, 0)),
+            ((0, 4, -2), (0, 4, -1)),
+        ];
+
+        for (outside, inside) in edges {
+            let outside = glam::IVec3::from(outside);
+            let inside = glam::IVec3::from(inside);
+            assert!(
+                generate_chunk(&cfg, outside).is_empty(),
+                "chunk {outside:?} lies past one edge and must be empty"
+            );
+            assert!(
+                !generate_chunk(&cfg, inside).is_empty(),
+                "chunk {inside:?} is in the world and must have blocks"
+            );
+        }
+    }
+
+    #[test]
     fn generate_chunk_blocks_within_chunk_bounds() {
         let cfg = small_config(1);
         let cp = glam::IVec3::new(0, 0, 0);
@@ -425,31 +515,52 @@ mod tests {
     }
 
     #[test]
-    fn generate_chunk_matches_full_terrain() {
-        let cfg = small_config(42);
-        let full = collect_blocks(&generate_grid(42));
+    fn chunks_tile_the_world_without_overlap() {
+        use std::collections::HashSet;
+        let cfg = all_biome_config();
+        let half = (cfg.world_size / 2) as i32;
+        let mut seen = HashSet::new();
+        let mut columns = HashSet::new();
 
-        for chunk_pos in [glam::IVec3::new(0, 4, 0), glam::IVec3::new(-1, 4, -1)] {
-            let min = chunk_pos * CHUNK_SIZE;
+        for (chunk, blocks) in world_chunks(&cfg) {
+            let min = chunk * CHUNK_SIZE;
             let max = min + glam::IVec3::splat(CHUNK_SIZE);
-            let expected: Vec<_> = full
-                .iter()
-                .filter(|(p, _, _)| {
+            for (p, _, _) in blocks {
+                assert!(
                     (min.x..max.x).contains(&p.x)
                         && (min.y..max.y).contains(&p.y)
-                        && (min.z..max.z).contains(&p.z)
-                })
-                .copied()
-                .collect();
-            let mut actual = generate_chunk(&cfg, chunk_pos);
-            actual.sort_by_key(|(p, _, _)| (p.x, p.y, p.z));
-
-            assert!(!actual.is_empty(), "chunk {chunk_pos:?} must have blocks");
-            assert_eq!(
-                actual, expected,
-                "generate_chunk must match full terrain for chunk {chunk_pos:?}"
-            );
+                        && (min.z..max.z).contains(&p.z),
+                    "block {p:?} lies outside its chunk {chunk:?}"
+                );
+                assert!(seen.insert((p.x, p.y, p.z)), "block {p:?} is in two chunks");
+                columns.insert((p.x, p.z));
+            }
         }
+
+        for x in -half..half {
+            for z in -half..half {
+                assert!(columns.contains(&(x, z)), "column ({x}, {z}) has no blocks");
+            }
+        }
+    }
+
+    #[test]
+    fn block_at_zero_density_is_air() {
+        // Perlin noise is 0 at lattice point (0, 0), so the surface sits exactly at BASE_ELEVATION.
+        let noise = Perlin::new(42);
+        let biome = BiomeType::GentleHills;
+        let params = biome.params();
+        let surface_y = BASE_ELEVATION as i32;
+
+        let at_surface = density(&noise, 0, surface_y, 0, &biome, &params);
+
+        assert_eq!(
+            at_surface.to_bits(),
+            0.0_f32.to_bits(),
+            "density must be +0.0"
+        );
+        assert!(!is_solid(&noise, 0, surface_y, 0, &biome, &params));
+        assert!(is_solid(&noise, 0, surface_y - 1, 0, &biome, &params));
     }
 
     #[test]
