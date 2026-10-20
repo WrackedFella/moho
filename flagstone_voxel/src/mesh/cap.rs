@@ -9,7 +9,7 @@ use super::hybrid::{
     COARSE_STRIDE, ChunkContent, DENSITY_SAMPLE_TO_WORLD, HybridMeshGenerator, MeshPlan,
     coarse_cell_solid, is_meshed_blocky_in_mixed, mesh_plan,
 };
-use super::marching_cubes::MarchingCubes;
+use super::marching_cubes::{MarchingCubes, cube_index};
 use glam::{IVec3, Vec2, Vec3};
 use std::ops::RangeInclusive;
 
@@ -88,21 +88,11 @@ fn cap_smooth_cells(
     );
     for x in 1..=chunk_size as usize {
         for z in 1..=chunk_size as usize {
-            let cube_index = MarchingCubes::cube_index(&field, x, y, z);
+            let cube_index = cube_index(&field, x, y, z);
             let origin = Vec2::new(
                 (base.x + x as i32) as f32 + DENSITY_SAMPLE_TO_WORLD,
                 (base.z + z as i32) as f32 + DENSITY_SAMPLE_TO_WORLD,
             );
-            match cube_index {
-                0 => continue,
-                255 => {
-                    let [sw, se, ne, nw] = SQUARE.map(|p| p + origin);
-                    cap.triangle([sw, se, ne]);
-                    cap.triangle([sw, ne, nw]);
-                    continue;
-                }
-                _ => {}
-            }
             // Clipped in cell coordinates, where the slice points are exact enough to
             // tell a straight run of wall from a corner.
             for tri in cell_section(cube_index, height)
@@ -203,7 +193,7 @@ fn cell_section(cube_index: u8, height: f32) -> Vec<Vec<Vec2>> {
             }
         };
         let mut crossings: Vec<Vec2> = segments.iter().flatten().copied().filter(on_edge).collect();
-        crossings.sort_by(|a, b| (*a - from).dot(along).total_cmp(&(*b - from).dot(along)));
+        crossings.sort_by(|a, b| a.dot(along).total_cmp(&b.dot(along)));
         let mut solid = column_solid(k);
         let mut start = from;
         for p in crossings {

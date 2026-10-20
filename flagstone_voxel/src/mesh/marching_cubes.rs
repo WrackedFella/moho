@@ -110,21 +110,6 @@ impl MarchingCubes {
             .take_while(|tri| tri[0] != 255)
     }
 
-    /// Bit `i` is set when corner `i` (in `CORNER_OFFSETS` order) of the cell at field
-    /// index `(x, y, z)` is inside the surface, that is, denser than 0.5.
-    pub(crate) fn cube_index(
-        density_field: &[[[f32; 18]; 18]; 18],
-        x: usize,
-        y: usize,
-        z: usize,
-    ) -> u8 {
-        Self::CORNER_OFFSETS
-            .iter()
-            .enumerate()
-            .filter(|(_, [dx, dy, dz])| density_field[x + dx][y + dy][z + dz] > 0.5)
-            .fold(0u8, |index, (corner, _)| index | 1 << corner)
-    }
-
     /// Process a single cell in the marching cubes algorithm
     #[allow(clippy::too_many_arguments)]
     fn process_cell(
@@ -150,7 +135,7 @@ impl MarchingCubes {
             density_field[x][y + 1][z + 1],
         ];
 
-        let cube_index = Self::cube_index(density_field, x, y, z);
+        let cube_index = cube_index(density_field, x, y, z);
 
         // Skip if cube is entirely inside or outside
         if cube_index == 0 || cube_index == 255 {
@@ -329,6 +314,21 @@ impl MarchingCubes {
 
         field
     }
+}
+
+/// Bit `i` is set when corner `i` (in `MarchingCubes::CORNER_OFFSETS` order) of the cell
+/// at field index `(x, y, z)` is inside the surface, that is, denser than 0.5.
+pub(crate) fn cube_index(
+    density_field: &[[[f32; 18]; 18]; 18],
+    x: usize,
+    y: usize,
+    z: usize,
+) -> u8 {
+    MarchingCubes::CORNER_OFFSETS
+        .iter()
+        .enumerate()
+        .filter(|(_, [dx, dy, dz])| density_field[x + dx][y + dy][z + dz] > 0.5)
+        .fold(0u8, |index, (corner, _)| index | 1 << corner)
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
