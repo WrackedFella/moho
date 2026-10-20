@@ -40,7 +40,7 @@ Global hotkeys in `handle_keyboard_input`, checked before game keys:
 | Key | Effect |
 |---|---|
 | `` ` `` (the `console` binding) | Playing → console; ConsoleOpen → Playing. Routed by `App::route_console_input` through `Console::on_key` ahead of the dispatcher, see [console](console.md#input-routing) |
-| `Esc` | ConsoleOpen → Playing; Playing → Paused; Paused → Playing while the pause window is the active screen (inert on Settings). Taken before the dispatcher when it pauses or resumes, so a focused egui button cannot swallow it; key repeats are ignored |
+| `Esc` | ConsoleOpen → Playing (taken by `Console::on_key` before this handler, as the console key is); Playing → Paused; Paused → Playing while the pause window is the active screen (inert on Settings). Taken before the dispatcher when it pauses or resumes, so a focused egui button cannot swallow it; key repeats are ignored |
 | `F3` | Toggle debug HUD |
 | `F4` | Toggle chunk-boundary minimap |
 | `Tab` | Toggle camera mode (handled before the dispatcher) |

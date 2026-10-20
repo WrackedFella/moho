@@ -466,29 +466,12 @@ The settings screen provides click-to-rebind functionality:
 
 ## Console Integration
 
-The debug console overlay supports command execution:
-
-```rust
-use flagstone_ui::Console;
-
-let mut console = Console::new();
-
-// Render console
-let action = console.render(ui);
-
-// render returns a ConsoleAction for the caller to route:
-// - SetTimeOfDay(f32)
-// - SaveRequested
-// - LoadRequested
-// - ExitRequested
-```
-
-Available commands:
-- `time <0-24>` - Set time of day
-- `save` - Save game state
-- `load` - Load game state
-- `exit` / `quit` - Exit application
-- `clear` - Clear console output
+Strategy uses the engine console, `moho_ui_shell::Console<StrategyConsoleCommand>`, held in
+`UiStateManager.console`. `console_commands::register` adds the strategy commands (god, noclip,
+sun, time, spawn, marker, marker_clear, r_view_height) next to the engine's; the game drains
+them in `Game::command()` and applies them in its tick. See
+[wiki/architecture/console.md](../wiki/architecture/console.md) and
+[wiki/reference/console-commands.md](../wiki/reference/console-commands.md).
 
 ## HUD Overlay
 
