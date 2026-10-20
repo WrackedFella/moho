@@ -5,7 +5,8 @@
 
 use glam::Vec3;
 use moho_render_api::MarkerStyle;
-use moho_ui_shell::{Console, RegisterError};
+use moho_ui_shell::console::registry::ParseFn;
+use moho_ui_shell::{CommandSpec, Console, RegisterError};
 
 /// What a strategy console line asks the game to do on its next tick. Plain data: the console
 /// never touches game state.
@@ -41,8 +42,199 @@ pub enum StrategyConsoleCommand {
 /// # Errors
 /// A [`RegisterError`] if a name is already taken; that is a bug in the command table.
 pub fn register(console: &mut Console<StrategyConsoleCommand>) -> Result<(), RegisterError> {
-    let _ = console;
-    todo!()
+    let table: [(&str, &str, ParseFn<StrategyConsoleCommand>); 8] = [
+        ("god", "Toggle god mode (invincibility)", parse_god),
+        (
+            "noclip",
+            "Toggle noclip mode (fly through walls)",
+            parse_noclip,
+        ),
+        (
+            "sun <yaw> <pitch>",
+            "Set sun direction (degrees)",
+            parse_sun,
+        ),
+        (
+            "time <0-24>",
+            "Set time of day (0=midnight, 6=dawn, 12=noon, 18=dusk)",
+            parse_time,
+        ),
+        (
+            "spawn <type> [material/args]",
+            "Spawn an entity or block",
+            parse_spawn,
+        ),
+        (
+            "marker <id> <x> <y> <z> [size] [fill|outline]",
+            "Show a box marker at a block corner",
+            parse_marker,
+        ),
+        (
+            "marker_clear [id]",
+            "Remove one marker, or all markers",
+            parse_marker_clear,
+        ),
+        (
+            "r_view_height <metres|off>",
+            "Draw nothing in the world above a height",
+            parse_view_height,
+        ),
+    ];
+    for (usage, help, parse) in table {
+        let name = usage.split(' ').next().unwrap_or(usage);
+        console.register(CommandSpec {
+            name: name.to_owned(),
+            usage: usage.to_owned(),
+            help: help.to_owned(),
+            parse,
+        })?;
+    }
+    Ok(())
+}
+
+type Parsed = Result<(StrategyConsoleCommand, String), String>;
+
+fn parse_god(_args: &[&str]) -> Parsed {
+    Ok((
+        StrategyConsoleCommand::ToggleGodMode,
+        "Toggling god mode...".to_owned(),
+    ))
+}
+
+fn parse_noclip(_args: &[&str]) -> Parsed {
+    Ok((
+        StrategyConsoleCommand::ToggleNoclip,
+        "Toggling noclip mode...".to_owned(),
+    ))
+}
+
+fn parse_sun(args: &[&str]) -> Parsed {
+    let [yaw, pitch] = args else {
+        return Err("Usage: sun <yaw> <pitch>\n  Example: sun 45 60".to_owned());
+    };
+    let (Ok(yaw_deg), Ok(pitch_deg)) = (yaw.parse::<f32>(), pitch.parse::<f32>()) else {
+        return Err("Error: yaw and pitch must be numbers".to_owned());
+    };
+    Ok((
+        StrategyConsoleCommand::SetSunDirection { yaw_deg, pitch_deg },
+        format!("Setting sun direction: yaw={yaw_deg}, pitch={pitch_deg}"),
+    ))
+}
+
+fn parse_time(args: &[&str]) -> Parsed {
+    let [hours] = args else {
+        return Err(
+            "Usage: time <0-24>\n  0 = midnight, 6 = dawn, 12 = noon, 18 = dusk, 24 = midnight"
+                .to_owned(),
+        );
+    };
+    let Ok(time) = hours.parse::<f32>() else {
+        return Err("Error: time must be a number between 0 and 24".to_owned());
+    };
+    let clamped = time.clamp(0.0, 24.0);
+    let whole = clamped.floor() as u32;
+    let minutes = ((clamped.fract() * 60.0) as u32).min(59);
+    Ok((
+        StrategyConsoleCommand::SetTimeOfDay(clamped),
+        format!("Setting time to {whole:02}:{minutes:02}"),
+    ))
+}
+
+fn parse_spawn(args: &[&str]) -> Parsed {
+    let [kind, rest @ ..] = args else {
+        return Err("Usage: spawn <type> [material/args]".to_owned());
+    };
+    let extra = (!rest.is_empty()).then(|| rest.join(" "));
+    Ok((
+        StrategyConsoleCommand::Spawn {
+            kind: (*kind).to_owned(),
+            args: extra,
+        },
+        format!("Spawning {kind}..."),
+    ))
+}
+
+/// A console argument as a finite `f32`; `None` for text, NaN or infinity.
+fn parse_finite(arg: &str) -> Option<f32> {
+    arg.parse::<f32>().ok().filter(|n| n.is_finite())
+}
+
+const ID_ERROR: &str = "Error: id must be a non-negative integer";
+
+fn parse_marker(args: &[&str]) -> Parsed {
+    if !(4..=6).contains(&args.len()) {
+        return Err(
+            "Usage: marker <id> <x> <y> <z> [size] [fill|outline]\n  Example: marker 1 10 4 -3 2 outline"
+                .to_owned(),
+        );
+    }
+    let id = args[0].parse::<u64>().map_err(|_| ID_ERROR.to_owned())?;
+    let (Some(x), Some(y), Some(z), Some(size)) = (
+        parse_finite(args[1]),
+        parse_finite(args[2]),
+        parse_finite(args[3]),
+        args.get(4).map_or(Some(1.0), |part| parse_finite(part)),
+    ) else {
+        return Err("Error: position and size must be finite numbers".to_owned());
+    };
+    if size <= 0.0 {
+        return Err("Error: size must be greater than zero".to_owned());
+    }
+    let style = match args.get(5).copied() {
+        None | Some("fill") => MarkerStyle::Fill,
+        Some("outline") => MarkerStyle::Outline,
+        Some(other) => return Err(format!("Error: style must be fill or outline, not {other}")),
+    };
+    let min = Vec3::new(x, y, z);
+    let max = min + Vec3::splat(size);
+    if !max.is_finite() {
+        return Err("Error: the box's far corner is out of range".to_owned());
+    }
+    Ok((
+        StrategyConsoleCommand::ShowMarker {
+            id,
+            min,
+            max,
+            style,
+        },
+        format!("Marker {id} from {min} to {max}"),
+    ))
+}
+
+fn parse_marker_clear(args: &[&str]) -> Parsed {
+    match args {
+        [] => Ok((
+            StrategyConsoleCommand::ClearMarkers(None),
+            "Clearing all markers".to_owned(),
+        )),
+        [id] => {
+            let id = id.parse::<u64>().map_err(|_| ID_ERROR.to_owned())?;
+            Ok((
+                StrategyConsoleCommand::ClearMarkers(Some(id)),
+                format!("Clearing marker {id}"),
+            ))
+        }
+        _ => Err("Usage: marker_clear [id]".to_owned()),
+    }
+}
+
+fn parse_view_height(args: &[&str]) -> Parsed {
+    let [arg] = args else {
+        return Err("Usage: r_view_height <metres|off>".to_owned());
+    };
+    if *arg == "off" {
+        return Ok((
+            StrategyConsoleCommand::SetViewHeight(None),
+            "View height cleared".to_owned(),
+        ));
+    }
+    match parse_finite(arg) {
+        Some(height) => Ok((
+            StrategyConsoleCommand::SetViewHeight(Some(height)),
+            format!("View height set to {height} m"),
+        )),
+        None => Err("Invalid height. Must be a finite number of metres, or off.".to_owned()),
+    }
 }
 
 #[cfg(test)]

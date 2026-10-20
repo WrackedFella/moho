@@ -141,10 +141,6 @@ impl EguiAdapter {
 
     /// Update the current game state (called by main app each frame)
     pub fn set_game_state(&mut self, state: GameState) {
-        // Reset console state when entering ConsoleOpen to prevent immediate close
-        if state == GameState::ConsoleOpen && self.current_game_state != GameState::ConsoleOpen {
-            self.ui_state.console.reset_on_open();
-        }
         self.current_game_state = state;
     }
 
@@ -345,27 +341,26 @@ impl EguiAdapter {
         pressed: bool,
         repeat: bool,
     ) -> moho_ui_shell::Routing {
-        let _ = (input, pressed, repeat);
-        todo!()
+        self.ui_state.console.on_key(input, pressed, repeat)
     }
 
     /// The strategy console, for typing a line into it.
     pub fn console_mut(
         &mut self,
     ) -> &mut moho_ui_shell::Console<crate::console_commands::StrategyConsoleCommand> {
-        todo!()
+        &mut self.ui_state.console
     }
 
     /// Drains the strategy commands queued by the console.
     pub fn take_console_commands(
         &mut self,
     ) -> Vec<crate::console_commands::StrategyConsoleCommand> {
-        todo!()
+        self.ui_state.console.take_commands()
     }
 
     /// Drains the engine commands queued by the console.
     pub fn take_engine_commands(&mut self) -> Vec<moho_ui_shell::EngineCommand> {
-        todo!()
+        self.ui_state.console.take_engine_commands()
     }
 
     /// Toggle the debug HUD overlay (F3).

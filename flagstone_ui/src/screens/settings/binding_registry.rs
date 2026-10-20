@@ -2,6 +2,7 @@
 
 use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::Key;
+use moho_ui_shell::CONSOLE_BINDING;
 
 use super::types::BINDING_ROWS;
 use crate::actions::{StrategyAction, load_bindings};
@@ -22,7 +23,11 @@ impl BindingRegistry {
     }
 
     pub fn write_to_prefs(&self, prefs: &mut Prefs) {
-        prefs.set_bindings(self.bindings.to_section());
+        let mut section = self.bindings.to_section();
+        if let Some(console) = prefs.bindings().get(CONSOLE_BINDING) {
+            section.insert(CONSOLE_BINDING.to_owned(), console.clone());
+        }
+        prefs.set_bindings(section);
     }
 
     /// The listed row (other than `exclude`) already bound to `key`, if any.

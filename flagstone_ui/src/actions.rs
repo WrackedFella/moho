@@ -5,6 +5,7 @@ use moho_input::Action;
 use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::{Key, MouseButton};
 use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
+use moho_ui_shell::CONSOLE_BINDING;
 
 const fn stick(dir: StickDir) -> Binding {
     Binding::Pad(PadInput::Stick(Stick::LeftStick, dir))
@@ -82,8 +83,11 @@ impl Action for StrategyAction {
 }
 
 /// Reads the strategy bindings from prefs, warning about each line that fell back to a default.
+/// The `console` entry belongs to the console, not to a strategy action, and is skipped.
 pub fn load_bindings(prefs: &Prefs) -> ActionBindings<StrategyAction> {
-    let (bindings, warnings) = ActionBindings::load(prefs.bindings());
+    let mut section = prefs.bindings().clone();
+    section.remove(CONSOLE_BINDING);
+    let (bindings, warnings) = ActionBindings::load(&section);
     for w in warnings {
         tracing::warn!(action = %w.name, value = %w.value, "Unusable binding, default kept");
     }

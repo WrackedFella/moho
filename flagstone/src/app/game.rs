@@ -10,6 +10,7 @@ use flagstone_ui::console_commands::StrategyConsoleCommand;
 use moho_core::pointer::{Ray, screen_ray};
 use moho_input::action_map;
 use moho_input::bindings::Binding;
+use moho_ui_shell::host::input_of;
 use moho_ui_shell::{EngineCommand, Routing};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -94,8 +95,37 @@ impl App {
     /// Outside `Playing` and `ConsoleOpen` the console is skipped and the input is the game's.
     /// Takes a `Binding` so it is testable without a winit `KeyEvent`.
     fn route_console_input(&mut self, input: Binding, pressed: bool, repeat: bool) -> Routing {
-        let _ = (input, pressed, repeat);
-        todo!()
+        if !matches!(self.game_state, GameState::Playing | GameState::ConsoleOpen) {
+            return Routing::Game;
+        }
+        let Some(ui_adapter) = &self.ui_adapter else {
+            return Routing::Game;
+        };
+        let routing = match ui_adapter.lock() {
+            Ok(mut adapter) => adapter.on_key(input, pressed, repeat),
+            Err(_) => return Routing::Game,
+        };
+        // The adapter lock is released: the transitions lock it again.
+        match routing {
+            Routing::Opened => self.enter_console(),
+            Routing::Closed => self.exit_console(),
+            Routing::Console | Routing::Game => {}
+        }
+        routing
+    }
+
+    /// Takes the commands the console has queued: strategy's, then the engine's.
+    fn take_console_commands(&mut self) -> (Vec<StrategyConsoleCommand>, Vec<EngineCommand>) {
+        let Some(ui_adapter) = &self.ui_adapter else {
+            return (Vec::new(), Vec::new());
+        };
+        match ui_adapter.lock() {
+            Ok(mut adapter) => (
+                adapter.take_console_commands(),
+                adapter.take_engine_commands(),
+            ),
+            Err(_) => (Vec::new(), Vec::new()),
+        }
     }
 
     /// Feeds pad events to the action map while playing with focus. Otherwise the
@@ -252,6 +282,18 @@ impl App {
             action_map::handle_window_event(&mut self.input.actions, &event);
         }
 
+        if let Some((input, pressed, repeat)) = input_of(&event) {
+            match self.route_console_input(input, pressed, repeat) {
+                Routing::Opened | Routing::Closed => return,
+                // Only egui sees what the open console takes.
+                Routing::Console => {
+                    self.dispatcher.dispatch(&event);
+                    return;
+                }
+                Routing::Game => {}
+            }
+        }
+
         if self.take_escape_before_ui(&event) {
             return;
         }
@@ -300,10 +342,16 @@ impl moho_app::Game for App {
     type Command = StrategyCommand;
 
     fn command(&mut self) -> StrategyCommand {
-        if self.game_state != GameState::Playing {
-            return StrategyCommand::default();
-        }
-        self.sample_command()
+        // Before the `Playing` check: the console is open only outside `Playing`.
+        let (console, engine) = self.take_console_commands();
+        let mut command = if self.game_state == GameState::Playing {
+            self.sample_command()
+        } else {
+            StrategyCommand::default()
+        };
+        command.console = console;
+        command.engine = engine;
+        command
     }
 
     fn tick(&mut self, ctx: &mut moho_app::TickContext<'_>, command: &StrategyCommand) {
@@ -317,6 +365,12 @@ impl moho_app::Game for App {
         let frame_number = frame_processor.publish_frame_start(self, dt);
         if self.game_state == GameState::Playing {
             self.apply_command(command);
+        }
+        for console_command in &command.console {
+            crate::app::console::apply_console_command(self, console_command);
+        }
+        for engine_command in &command.engine {
+            crate::app::console::apply_engine_command(self, engine_command);
         }
         frame_processor.update_game_state(self, dt);
         frame_processor.update_chunk_streaming(self);

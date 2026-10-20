@@ -2,7 +2,7 @@
 //!
 //! This module handles:
 //! - Menu state rendering based on game state
-//! - Console overlay rendering
+//! - Console rendering
 //! - Progress overlay rendering
 use crate::adapter::ProgressState;
 use crate::app_state::GameState;
@@ -25,13 +25,13 @@ pub fn render_game_state(
     ui: &mut egui::Ui,
     ui_state: &mut UiStateManager,
     game_state: GameState,
-    event_bus: &EventBus,
+    _event_bus: &EventBus,
 ) -> MenuRenderResult {
     match game_state {
         GameState::Menu => render_menu(ui, ui_state),
         GameState::ConsoleOpen => {
             render_overlays(ui, ui_state);
-            render_console(ui, ui_state, event_bus);
+            ui_state.console.show(ui.ctx());
             MenuRenderResult {
                 actions: Vec::new(),
                 hovered_key: None,
@@ -79,14 +79,6 @@ fn render_menu(ui: &mut egui::Ui, ui_state: &mut UiStateManager) -> MenuRenderRe
         actions,
         hovered_key,
     }
-}
-
-/// Render console overlay and process console actions
-fn render_console(ui: &mut egui::Ui, ui_state: &mut UiStateManager, event_bus: &EventBus) {
-    let console_action = ui_state.console.render(ui);
-
-    // Process console action through event routing
-    super::event_routing::process_console_action(console_action, event_bus);
 }
 
 /// Render progress overlay if present

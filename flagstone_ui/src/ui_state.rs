@@ -3,10 +3,11 @@
 //! This module separates UI state management from rendering concerns,
 //! making the adapter lighter and the state easier to test and maintain.
 
+use crate::console_commands::{self, StrategyConsoleCommand};
 use crate::modal::ModalManager;
-use crate::overlays::Console;
 use crate::overlays::{ChunkDebugOverlay, DebugHud, FpsHud, GameplayHud, OverlayManager, RtsHud};
 use crate::screens::Menu;
+use moho_ui_shell::Console;
 use std::collections::HashMap;
 
 /// Manages the lifecycle and state of all UI components
@@ -21,7 +22,7 @@ pub struct UiStateManager {
     pub modal_manager: ModalManager,
 
     /// Debug console overlay (separate from screens)
-    pub console: Console,
+    pub console: Console<StrategyConsoleCommand>,
 
     /// Overlay layer manager (FPS HUD, RTS HUD, Debug HUD, etc.)
     pub overlay_manager: OverlayManager,
@@ -30,11 +31,25 @@ pub struct UiStateManager {
     pub visible: bool,
 }
 
+/// The console with the strategy commands registered. A bad `console` binding or a command
+/// name clash is logged, and the console still works.
+fn strategy_console(prefs: &moho_core::prefs::Prefs) -> Console<StrategyConsoleCommand> {
+    let (mut console, warnings) = Console::new(prefs.bindings());
+    for warning in warnings {
+        tracing::warn!(?warning, "console binding");
+    }
+    if let Err(error) = console_commands::register(&mut console) {
+        tracing::error!(%error, "strategy console command refused");
+    }
+    console
+}
+
 impl UiStateManager {
     /// Create a new UI state manager with default screens
     pub fn new(prefs: moho_core::prefs::Prefs) -> Self {
         // Register default screens
         use crate::screens::{NewWorldMenu, PauseMenu, SettingsMenu, StartMenu};
+        let console = strategy_console(&prefs);
         let mut screens: HashMap<String, Box<dyn Menu>> = HashMap::new();
 
         screens.insert("start".to_string(), Box::new(StartMenu::new()));
@@ -57,7 +72,7 @@ impl UiStateManager {
             screens,
             active_screen: Some("start".to_string()),
             modal_manager: ModalManager::new(),
-            console: Console::new(),
+            console,
             overlay_manager,
             visible: true,
         }
