@@ -733,15 +733,12 @@ impl Game for SearchlightGame {
 
     fn command(&mut self) -> SearchlightCommand {
         self.apply_console_commands();
-        // The paused loop asks every frame; ending the tick would consume the look the
-        // frames showed and snap the view back. Edges are dropped instead, so a press made as
-        // the console opened does not act when it closes.
+        // The paused loop asks every frame and drops the command; ending the tick would
+        // consume the look the frames showed and snap the view back. Edges are dropped
+        // instead, so a press made as the console opened does not act when it closes.
         if self.stage.shell().captures_input() {
             self.input.discard_edges();
-            return SearchlightCommand {
-                god_mode: self.god_mode,
-                ..SearchlightCommand::default()
-            };
+            return SearchlightCommand::default();
         }
         SearchlightCommand {
             god_mode: self.god_mode,
