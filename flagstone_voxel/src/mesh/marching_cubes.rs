@@ -143,12 +143,7 @@ impl MarchingCubes {
             }
         }
 
-        // Skip if cube is entirely inside or outside
-        if cube_index == 0 || cube_index == 255 {
-            return;
-        }
-
-        // Get triangulation for this cube configuration
+        // Edges the surface crosses; none when the cube is entirely inside or outside.
         let edge_flags = EDGE_TABLE[cube_index as usize];
         if edge_flags == 0 {
             return;
@@ -167,12 +162,9 @@ impl MarchingCubes {
                 let d0 = corners[v0_idx];
                 let d1 = corners[v1_idx];
 
-                // Linear interpolation
-                let t = if (d1 - d0).abs() < 0.00001 {
-                    0.5
-                } else {
-                    (iso_level - d0) / (d1 - d0)
-                };
+                // A crossed edge has one end above the iso level and one at or below it, so
+                // `d1 != d0`.
+                let t = (iso_level - d0) / (d1 - d0);
 
                 edge_vertices[i] = lerp3(
                     Self::corner_position(x, y, z, v0_idx),
