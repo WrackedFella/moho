@@ -1,0 +1,8 @@
+{
+  "total_mutants": 2,
+  "missed": 1,
+  "caught": 1,
+  "timeout": 0,
+  "unviable": 0,
+  "end_time": null
+}

@@ -65,10 +65,10 @@ jobs:
       - name: Mutate shard ${{ matrix.shard }}
         continue-on-error: true
         run: >
-          sudo systemd-run --scope --quiet
+          sudo --preserve-env systemd-run --scope --quiet
           --uid="$(id -u)" --gid="$(id -g)"
           -p MemoryMax=12G -p MemorySwapMax=0 -p OOMPolicy=continue
-          -- env PATH="$PATH" HOME="$HOME"
+          -- env PATH="$PATH"
           just mutants-shard ${{ matrix.shard }} ${{ env.SHARDS }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -83,42 +83,30 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: just
+
+      - run: just mutants-merge-test
+
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: mutants-shard-*
           path: shards
 
+      # Fails the run when a shard is missing or incomplete; survivors alone don't.
       - name: Merge shards
         run: |
-          shopt -s nullglob
-          mkdir -p shards mutants-out
-          missing=() unfinished=()
-          for ((k = 0; k < SHARDS; k++)); do
-            f=shards/mutants-shard-$k/outcomes.json
-            if [[ ! -f $f ]]; then missing+=("$k")
-            elif jq -e '.end_time == null' "$f" > /dev/null; then unfinished+=("$k"); fi
-          done
-          outcomes=(shards/*/outcomes.json)
-          for list in caught missed timeout unviable; do
-            cat shards/*/"$list".txt /dev/null | sort > "mutants-out/$list.txt"
-          done
-          cp -r shards mutants-out/
-          {
-            echo '## Weekly mutation run'
-            if ((${#outcomes[@]})); then
-              jq -rs '"| caught | missed | unviable | timeout |\n|---|---|---|---|\n" +
-                "| \(map(.caught) | add) | \(map(.missed) | add) | \(map(.unviable) | add) | \(map(.timeout) | add) |"' \
-                "${outcomes[@]}"
-            fi
-            if ((${#missing[@]})); then
-              echo; echo "**Shards that reported nothing:** ${missing[*]}"
-            fi
-            if ((${#unfinished[@]})); then
-              echo; echo "**Shards stopped before their last mutant (partial counts):** ${unfinished[*]}"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p shards
+          totals="$(scripts/mutants-merge.sh shards "$SHARDS" mutants-out)" || status=$?
+          cat mutants-out/summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Weekly mutation run::$totals"
+          exit "${status:-0}"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
         with:
           name: mutants-out
           path: mutants-out
