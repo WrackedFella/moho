@@ -164,39 +164,7 @@ impl LightPropagator {
             level,
         });
         affected.insert(chunk_pos);
-
-        while let Some(node) = self.queue.pop_front() {
-            let stored = Self::read_ch(grid, node.chunk_pos, node.idx, ch);
-            if node.level <= stored {
-                continue;
-            }
-            Self::write_ch(grid, node.chunk_pos, node.idx, ch, node.level);
-            affected.insert(node.chunk_pos);
-
-            let next = node.level.saturating_sub(1);
-            if next == 0 {
-                continue;
-            }
-            let world = node.chunk_pos * CHUNK_SIZE + idx_to_local(node.idx);
-            for &off in &OFFSETS {
-                let nb_world = world + off;
-                // Fully opaque blocks absorb — no propagation through them.
-                if grid
-                    .material_at(nb_world)
-                    .is_some_and(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
-                {
-                    continue;
-                }
-                let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
-                if next > Self::read_ch(grid, nb_chunk, nb_idx, ch) {
-                    self.queue.push_back(PropNode {
-                        chunk_pos: nb_chunk,
-                        idx: nb_idx,
-                        level: next,
-                    });
-                }
-            }
-        }
+        self.drain(grid, ch, affected);
     }
 
     /// Re-seed BFS from a set of nodes whose values are already written in the grid.
@@ -210,32 +178,46 @@ impl LightPropagator {
         affected: &mut std::collections::HashSet<IVec3>,
     ) {
         self.queue.clear();
-        // Emit from each seed directly to neighbors.
         for &seed in seeds {
-            let next = seed.level.saturating_sub(1);
-            if next == 0 {
+            self.enqueue_neighbours(grid, seed, ch);
+        }
+        self.drain(grid, ch, affected);
+    }
+
+    /// Enqueue each neighbour of `node` that `node.level - 1` would brighten.
+    fn enqueue_neighbours(&mut self, grid: &VoxelGrid, node: PropNode, ch: LightChannel) {
+        let next = node.level.saturating_sub(1);
+        if next == 0 {
+            return;
+        }
+        let world = node.chunk_pos * CHUNK_SIZE + idx_to_local(node.idx);
+        for &off in &OFFSETS {
+            let nb_world = world + off;
+            // Fully opaque blocks absorb — no propagation through them.
+            if grid
+                .material_at(nb_world)
+                .is_some_and(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
+            {
                 continue;
             }
-            let world = seed.chunk_pos * CHUNK_SIZE + idx_to_local(seed.idx);
-            for &off in &OFFSETS {
-                let nb_world = world + off;
-                if grid
-                    .material_at(nb_world)
-                    .is_some_and(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
-                {
-                    continue;
-                }
-                let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
-                if next > Self::read_ch(grid, nb_chunk, nb_idx, ch) {
-                    self.queue.push_back(PropNode {
-                        chunk_pos: nb_chunk,
-                        idx: nb_idx,
-                        level: next,
-                    });
-                }
+            let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
+            if next > Self::read_ch(grid, nb_chunk, nb_idx, ch) {
+                self.queue.push_back(PropNode {
+                    chunk_pos: nb_chunk,
+                    idx: nb_idx,
+                    level: next,
+                });
             }
         }
-        // Standard "only-if-brighter" BFS from the enqueued neighbor entries.
+    }
+
+    /// Standard "only-if-brighter" BFS over the queued nodes.
+    fn drain(
+        &mut self,
+        grid: &mut VoxelGrid,
+        ch: LightChannel,
+        affected: &mut std::collections::HashSet<IVec3>,
+    ) {
         while let Some(node) = self.queue.pop_front() {
             let stored = Self::read_ch(grid, node.chunk_pos, node.idx, ch);
             if node.level <= stored {
@@ -243,29 +225,7 @@ impl LightPropagator {
             }
             Self::write_ch(grid, node.chunk_pos, node.idx, ch, node.level);
             affected.insert(node.chunk_pos);
-
-            let next = node.level.saturating_sub(1);
-            if next == 0 {
-                continue;
-            }
-            let world = node.chunk_pos * CHUNK_SIZE + idx_to_local(node.idx);
-            for &off in &OFFSETS {
-                let nb_world = world + off;
-                if grid
-                    .material_at(nb_world)
-                    .is_some_and(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
-                {
-                    continue;
-                }
-                let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
-                if next > Self::read_ch(grid, nb_chunk, nb_idx, ch) {
-                    self.queue.push_back(PropNode {
-                        chunk_pos: nb_chunk,
-                        idx: nb_idx,
-                        level: next,
-                    });
-                }
-            }
+            self.enqueue_neighbours(grid, node, ch);
         }
     }
 
@@ -285,6 +245,8 @@ impl LightPropagator {
 
         let mut dark: VecDeque<PropNode> = VecDeque::with_capacity(512);
         let mut relight: Vec<PropNode> = Vec::new();
+        let mut relight_seen: std::collections::HashSet<(IVec3, usize)> =
+            std::collections::HashSet::new();
 
         dark.push_back(PropNode {
             chunk_pos: start_chunk,
@@ -321,10 +283,7 @@ impl LightPropagator {
                     });
                 } else {
                     // Lit by another surviving source — re-seed.
-                    if !relight
-                        .iter()
-                        .any(|r| r.chunk_pos == nb_chunk && r.idx == nb_idx)
-                    {
+                    if relight_seen.insert((nb_chunk, nb_idx)) {
                         relight.push(PropNode {
                             chunk_pos: nb_chunk,
                             idx: nb_idx,
