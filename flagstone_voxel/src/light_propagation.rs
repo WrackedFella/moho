@@ -217,7 +217,7 @@ impl LightPropagator {
         }
     }
 
-    /// Standard "only-if-brighter" BFS over the queued nodes.
+    /// BFS over the queued nodes that only overwrites dimmer voxels.
     fn drain(
         &mut self,
         grid: &mut VoxelGrid,

@@ -74,7 +74,6 @@ impl LightSystem {
         }
     }
 
-    /// Create with the default frame budget
     pub fn with_default_budget(grid: VoxelGrid, event_bus: Arc<EventBus>) -> Self {
         Self::new(grid, event_bus, LightFrameBudget::default())
     }
