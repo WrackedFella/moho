@@ -52,6 +52,33 @@ mutants base=base:
 mutants-full:
     cargo mutants --workspace --all-features
 
+# Shard `k` of `n` of the full run, as the weekly CI matrix runs it. Round-robin spreads
+# the slow crates across shards; the timeout floor keeps a loaded runner from reading
+# slow tests as timeouts.
+mutants-shard k n:
+    cargo mutants --workspace --all-features --shard {{k}}/{{n}} --sharding round-robin --minimum-test-timeout 60
+
+# Self-test of the weekly run's shard merge against fixtures: missing, unfinished,
+# baseline-failed and truncated shards are reported and fail the merge.
+mutants-merge-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="$(mktemp -d)"
+    trap 'rm -rf "$out"' EXIT
+    fixtures=scripts/fixtures/mutants-merge
+    expect() {
+        local count=$1 status=$2 line=$3 got rc=0
+        got="$(scripts/mutants-merge.sh "$fixtures" "$count" "$out/$count")" || rc=$?
+        if [[ $rc != "$status" || $got != "$line" ]]; then
+            echo "mutants-merge $count shards: expected exit $status and '$line', got exit $rc and '$got'" >&2
+            exit 1
+        fi
+    }
+    expect 1 0 'caught 2  missed 1  unviable 0  timeout 1; complete 1/1; missing: none; incomplete: none'
+    expect 6 1 'caught 3  missed 1  unviable 2  timeout 1; complete 2/6; missing: 4; incomplete: 1 2 3'
+    diff <(printf '%s\n' 'a.rs:1:1: replace a' 'b.rs:2:2: replace b') "$out/6/missed.txt"
+    echo "mutants-merge: OK"
+
 # Layering check on the real crate graph, plus self-tests that each rule rejects its fixture.
 layering:
     #!/usr/bin/env bash
