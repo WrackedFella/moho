@@ -13,7 +13,7 @@
 //!   then re-seeds from any adjacent voxels still lit by surviving sources.
 
 use super::grid::VoxelGrid;
-use super::light_storage::{self, CHUNK_SIZE};
+use super::light_storage::{self, CHUNK_SIZE, idx_to_local};
 use glam::IVec3;
 use std::collections::VecDeque;
 
@@ -67,14 +67,7 @@ impl LightPropagator {
             return vec![];
         }
         let mut affected = std::collections::HashSet::new();
-        for (ch, &level) in [LightChannel::R, LightChannel::G, LightChannel::B]
-            .iter()
-            .zip(rgb.iter())
-        {
-            if level > 0 {
-                self.bfs_add(grid, pos, level, *ch, &mut affected);
-            }
-        }
+        self.add_rgb(grid, pos, rgb, &mut affected);
         affected.into_iter().collect()
     }
 
@@ -111,16 +104,30 @@ impl LightPropagator {
             })
             .collect();
 
+        // Order does not matter: each voxel ends at the brightest level any seed reaches it with.
         let mut affected = std::collections::HashSet::new();
-        for ch in [LightChannel::R, LightChannel::G, LightChannel::B] {
-            let ci = ch as usize;
-            for &(pos, rgb) in &seeds {
-                if rgb[ci] > 0 {
-                    self.bfs_add(grid, pos, rgb[ci], ch, &mut affected);
-                }
-            }
+        for (pos, rgb) in seeds {
+            self.add_rgb(grid, pos, rgb, &mut affected);
         }
         affected.into_iter().collect()
+    }
+
+    /// One BFS pass per lit channel of `rgb`, recording touched chunks in `affected`.
+    fn add_rgb(
+        &mut self,
+        grid: &mut VoxelGrid,
+        pos: IVec3,
+        rgb: [u8; 3],
+        affected: &mut std::collections::HashSet<IVec3>,
+    ) {
+        for (ch, level) in [LightChannel::R, LightChannel::G, LightChannel::B]
+            .into_iter()
+            .zip(rgb)
+        {
+            if level > 0 {
+                self.bfs_add(grid, pos, level, ch, affected);
+            }
+        }
     }
 
     // --- Internal BFS helpers ---
@@ -191,8 +198,7 @@ impl LightPropagator {
             return;
         }
         let world = node.chunk_pos * CHUNK_SIZE + idx_to_local(node.idx);
-        for &off in &OFFSETS {
-            let nb_world = world + off;
+        for nb_world in neighbours(world) {
             // Fully opaque blocks absorb — no propagation through them.
             if grid
                 .material_at(nb_world)
@@ -267,8 +273,7 @@ impl LightPropagator {
             affected.insert(node.chunk_pos);
 
             let world = node.chunk_pos * CHUNK_SIZE + idx_to_local(node.idx);
-            for &off in &OFFSETS {
-                let nb_world = world + off;
+            for nb_world in neighbours(world) {
                 let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
                 let nb_stored = Self::read_ch(grid, nb_chunk, nb_idx, ch);
                 if nb_stored == 0 {
@@ -300,14 +305,7 @@ impl LightPropagator {
     }
 }
 
-/// Reconstruct chunk-local (x, y, z) from a dense linear index.
-/// Index layout: idx = x + y*16 + z*256.
-#[inline]
-fn idx_to_local(idx: usize) -> IVec3 {
-    let cs = CHUNK_SIZE as usize;
-    IVec3::new(
-        (idx % cs) as i32,
-        ((idx / cs) % cs) as i32,
-        (idx / (cs * cs)) as i32,
-    )
+/// The six face neighbours of `world`.
+fn neighbours(world: IVec3) -> impl Iterator<Item = IVec3> {
+    OFFSETS.iter().map(move |&off| world + off)
 }

@@ -164,27 +164,14 @@ impl LightSystem {
     /// Returns the number of chunks marked dirty
     pub fn emit_dirty_events(&mut self) -> usize {
         let count = self.affected_chunks.len();
-
-        for &chunk_pos in &self.affected_chunks {
-            // Emit event for both terrain and structure meshes
-            // (light affects both geometry types)
+        // Light shades both terrain and structure meshes.
+        for chunk_pos in self.affected_chunks.drain() {
             self.event_bus.publish(WorldEvent::ChunkMeshDirty {
                 chunk_pos,
                 terrain_dirty: true,
                 structure_dirty: true,
             });
         }
-
-        // Clear affected chunks after emitting events
-        self.affected_chunks.clear();
-
-        if count > 0 {
-            tracing::debug!(
-                count = count,
-                "Emitted ChunkMeshDirty events for light updates"
-            );
-        }
-
         count
     }
 

@@ -30,6 +30,16 @@ pub fn local_index(x: i32, y: i32, z: i32) -> usize {
     (x as usize) + (y as usize) * CHUNK_USIZE + (z as usize) * CHUNK_USIZE * CHUNK_USIZE
 }
 
+/// Chunk-local (x, y, z) of a linear index; the inverse of [`local_index`].
+#[inline]
+pub(crate) fn idx_to_local(idx: usize) -> IVec3 {
+    IVec3::new(
+        (idx % CHUNK_USIZE) as i32,
+        ((idx / CHUNK_USIZE) % CHUNK_USIZE) as i32,
+        (idx / (CHUNK_USIZE * CHUNK_USIZE)) as i32,
+    )
+}
+
 /// Convert a world-space block position to (chunk_pos, chunk-local index, chunk-local xyz).
 #[inline]
 pub fn world_to_chunk_local(pos: IVec3) -> (IVec3, usize, IVec3) {
@@ -171,6 +181,20 @@ mod tests {
         assert_eq!(local_index(0, 1, 0), 16);
         assert_eq!(local_index(0, 0, 1), 256);
         assert_eq!(local_index(15, 15, 15), 4095);
+    }
+
+    #[test]
+    fn idx_to_local_inverts_local_index() {
+        for (x, y, z) in [
+            (0, 0, 0),
+            (15, 0, 0),
+            (0, 15, 0),
+            (0, 0, 15),
+            (3, 9, 14),
+            (15, 15, 15),
+        ] {
+            assert_eq!(idx_to_local(local_index(x, y, z)), IVec3::new(x, y, z));
+        }
     }
 
     #[test]
