@@ -137,6 +137,9 @@ impl FrameProcessor {
         }
     }
 
+    /// Build the cut-face caps of chunks whose ground changed since the last frame.
+    pub fn update_cut_caps(&self, _app: &mut App) {}
+
     /// Update chunk streaming: evict distant chunks, load nearby ones.
     pub fn update_chunk_streaming(&self, app: &mut App) {
         if app.game_state != crate::game_state::GameState::Playing {

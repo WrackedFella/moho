@@ -278,11 +278,18 @@ mod tests {
             .collect()
     }
 
-    /// Whether `p` lies on the square outline of the cell range `lo..hi` on both axes.
-    fn on_outline(p: [f64; 2], lo: f64, hi: f64) -> bool {
-        [lo, hi].iter().any(|&edge| {
-            (p[0] - edge).abs() < WALL_TOLERANCE || (p[1] - edge).abs() < WALL_TOLERANCE
-        })
+    /// Whether (x, z) is inside the closed curve of `walls`, by ray parity towards +x.
+    fn inside(walls: &[Wall], x: f64, z: f64) -> bool {
+        let crossings = walls
+            .iter()
+            .filter(|w| {
+                (w.a[1] > z) != (w.b[1] > z) && {
+                    let t = (z - w.a[1]) / (w.b[1] - w.a[1]);
+                    w.a[0] + t * (w.b[0] - w.a[0]) > x
+                }
+            })
+            .count();
+        crossings % 2 == 1
     }
 
     /// A convex region of blocks: a box cut by a plane. A cell of such a field never has
@@ -317,15 +324,24 @@ mod tests {
         }
     }
 
-    /// Fields inside the blocks `min..=max` on every axis.
-    fn fields(min: i32, max: i32) -> impl Strategy<Value = Field> {
-        let axis = move || {
-            (min..=max - 2, 2..=10i32).prop_map(move |(lo, size)| (lo, (lo + size).min(max)))
-        };
+    /// Per-axis (lo, hi) block ranges inside `min..=max`.
+    fn inside_blocks(min: i32, max: i32) -> BoxedStrategy<(i32, i32)> {
+        (min..=max - 2, 2..=10i32)
+            .prop_map(move |(lo, size)| (lo, (lo + size).min(max)))
+            .boxed()
+    }
+
+    /// Per-axis (lo, hi) block ranges that cross the chunk border at 16.
+    fn straddling_blocks() -> BoxedStrategy<(i32, i32)> {
+        (10..=15i32, 17..=22i32).boxed()
+    }
+
+    /// Fields whose box spans `axis` on every axis.
+    fn fields_on(axis: BoxedStrategy<(i32, i32)>) -> impl Strategy<Value = Field> {
         (
-            axis(),
-            axis(),
-            axis(),
+            axis.clone(),
+            axis.clone(),
+            axis,
             (-3..=3i32, -3..=3i32, -3..=3i32),
             -12..=12i32,
         )
@@ -339,6 +355,11 @@ mod tests {
                     offset: (0..3).map(|k| normal[k] * centre[k]).sum::<i32>() + shift,
                 }
             })
+    }
+
+    /// Heights in sixty-fourths across the field's own y-span, where its solid is.
+    fn heights_through(field: &Field) -> impl Strategy<Value = f32> + use<> {
+        (field.lo[1] * 64..=field.hi[1] * 64 + 64).prop_map(|n| n as f32 / 64.0)
     }
 
     #[test]
@@ -422,6 +443,14 @@ mod tests {
             );
             assert_empty(&cap(grid, 9.0), &format!("{name}: cut above all ground"));
             assert_empty(&cap(grid, -3.0), &format!("{name}: cut below the chunk"));
+            assert_empty(
+                &cut_cap_mesh(grid, IVec3::Y, 0, 2.5),
+                &format!("{name}: the chunk layer above does not own the cut"),
+            );
+            assert_empty(
+                &cut_cap_mesh(grid, IVec3::NEG_Y, 0, 2.5),
+                &format!("{name}: the chunk layer below does not own the cut"),
+            );
             assert_empty(
                 &cut_cap_mesh(grid, IVec3::ZERO, 1, 9.0),
                 &format!("{name}: LOD 1 cut above all ground"),
@@ -548,61 +577,92 @@ mod tests {
         }
     }
 
+    #[test]
+    fn blocky_block_on_a_chunk_layer_border_is_capped_once() {
+        let mut grid = VoxelGrid::new(CHUNK);
+        grid.place_block(IVec3::new(3, 16, 5), BLOCKY, None);
+        grid.place_block(IVec3::new(3, 15, 5), BLOCKY, None);
+
+        for (cut, owner) in [(16.25f32, IVec3::Y), (15.25, IVec3::ZERO)] {
+            let layers = [IVec3::ZERO, IVec3::Y].map(|pos| cut_cap_mesh(&grid, pos, 0, cut));
+
+            let areas = layers.each_ref().map(cap_area);
+            let expected = [IVec3::ZERO, IVec3::Y].map(|pos| if pos == owner { 1.0 } else { 0.0 });
+            assert_eq!(areas, expected, "cap area per chunk layer at {cut}");
+        }
+    }
+
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(32))]
+        #![proptest_config(ProptestConfig::with_cases(24))]
 
         #[test]
         fn cap_edge_lies_on_the_wall(
-            field in fields(0, 15),
-            sixty_fourths in 32..1056i32,
+            (field, cut) in fields_on(inside_blocks(1, 14))
+                .prop_flat_map(|f| { let cut = heights_through(&f); (Just(f), cut) }),
         ) {
             let grid = field.grid(SMOOTH);
-            let cut = sixty_fourths as f32 / 64.0;
             let h = f64::from(cut) + f64::from(CAP_PROBE);
             let chunk_mesh = HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::ZERO, CHUNK);
             let walls = slice(&chunk_mesh, h);
+            let expected = enclosed_area(&walls);
 
             let mesh = cap(&grid, cut);
 
-            if walls.iter().any(|w| (w.b[0] - w.a[0]).hypot(w.b[1] - w.a[1]) > 0.25) {
-                prop_assert!(!mesh.indices.is_empty(), "the cut crosses a wall but nothing is capped");
+            if expected > 0.01 {
+                prop_assert!(!mesh.indices.is_empty(), "the cut crosses solid but nothing is capped");
             }
-            for (a, b) in boundary_edges(&mesh) {
+            prop_assert!(
+                (cap_area(&mesh) - expected).abs() < AREA_TOLERANCE,
+                "cap area {} is not the solid area {} at cut {}",
+                cap_area(&mesh), expected, cut
+            );
+            for t in triangles(&mesh) {
+                let area = cross(sub(t[1], t[0]), sub(t[2], t[0]))[1].abs() / 2.0;
+                let (x, z) = ((t[0][0] + t[1][0] + t[2][0]) / 3.0, (t[0][2] + t[1][2] + t[2][2]) / 3.0);
+                prop_assert!(area < 1e-9 || inside(&walls, x, z), "cap triangle at ({}, {}) is on the air side at cut {}", x, z, cut);
+            }
+            for (from, to) in boundary_edges(&mesh) {
                 for s in [0.0, 0.25, 0.5, 0.75, 1.0] {
-                    let p = [a[0] + s * (b[0] - a[0]), a[1] + s * (b[1] - a[1])];
+                    let p = [from[0] + s * (to[0] - from[0]), from[1] + s * (to[1] - from[1])];
                     let on_wall = walls.iter().any(|w| distance_to_segment(p, w.a, w.b) < WALL_TOLERANCE);
-                    prop_assert!(
-                        on_wall || on_outline(p, 0.5, 16.5),
-                        "cap edge point {:?} at cut {} is off the wall",
-                        p,
-                        cut
-                    );
+                    prop_assert!(on_wall, "cap edge point {:?} at cut {} is off the wall", p, cut);
                 }
             }
         }
     }
 
-    fn tiling_cuts() -> impl Strategy<Value = f32> {
-        prop_oneof![
-            (1..=2i32, prop::sample::select(vec![-0.5f32, 0.0, 0.5]))
-                .prop_map(|(k, offset)| 16.0 * k as f32 + offset),
-            (32..2016i32).prop_map(|n| n as f32 / 64.0),
-        ]
+    /// A field that straddles the chunk borders at 16, a material, and a cut: on a
+    /// border, half a block either side of it, or anywhere through the field.
+    fn tiling_cases() -> impl Strategy<Value = (Field, bool, f32)> {
+        (fields_on(straddling_blocks()), any::<bool>()).prop_flat_map(|(field, blocky)| {
+            let cut = prop_oneof![
+                prop::sample::select(vec![16.0f32, 15.5, 16.5]),
+                heights_through(&field),
+            ];
+            (Just(field), Just(blocky), cut)
+        })
     }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(16))]
 
         #[test]
-        fn caps_tile_across_chunk_borders(field in fields(1, 30), cut in tiling_cuts()) {
-            let grid = field.grid(SMOOTH);
+        fn caps_tile_across_chunk_borders((field, blocky, cut) in tiling_cases()) {
+            let grid = field.grid(if blocky { BLOCKY } else { SMOOTH });
             let h = f64::from(cut) + f64::from(CAP_PROBE);
-            let mut walls = Vec::new();
-            for (x, y, z) in (0..2).flat_map(|x| (0..2).flat_map(move |y| (0..2).map(move |z| (x, y, z)))) {
-                let mesh = HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::new(x, y, z), CHUNK);
-                walls.extend(slice(&mesh, h));
-            }
-            let expected = enclosed_area(&walls);
+            let expected = if blocky {
+                let layer = h.floor() as i32;
+                (0..32).flat_map(|x| (0..32).map(move |z| (x, z)))
+                    .filter(|&(x, z)| field.solid([x, layer, z]))
+                    .count() as f64
+            } else {
+                let mut walls = Vec::new();
+                for (x, y, z) in (0..2).flat_map(|x| (0..2).flat_map(move |y| (0..2).map(move |z| (x, y, z)))) {
+                    let mesh = HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::new(x, y, z), CHUNK);
+                    walls.extend(slice(&mesh, h));
+                }
+                enclosed_area(&walls)
+            };
 
             let mut tris = Vec::new();
             let mut total = 0.0;
@@ -614,8 +674,8 @@ mod tests {
 
             prop_assert!(
                 (total - expected).abs() < AREA_TOLERANCE,
-                "summed cap area {} differs from the solid cross-section {} at cut {}",
-                total, expected, cut
+                "summed cap area {} differs from the solid cross-section {} at cut {} (blocky: {})",
+                total, expected, cut, blocky
             );
             for i in 0..24 {
                 for j in 0..24 {

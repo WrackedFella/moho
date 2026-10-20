@@ -57,6 +57,7 @@ pub fn cap_mesh_id(pos: IVec3) -> WorldMeshId {
 pub(crate) mod tests {
     use super::*;
     use crate::App;
+    use crate::app::event_loop::frame_processor::FrameProcessor;
     use crate::app::world_geometry::{insert_chunk, remove_chunk};
     use flagstone_voxel::VoxelChunk;
     use moho_renderer::RendererBackend;
@@ -204,24 +205,18 @@ pub(crate) mod tests {
         app
     }
 
-    /// What the frame does for the caps, minus the flush to a renderer.
+    /// The frame's cap stage, minus the flush to a renderer.
     pub(crate) fn refresh_caps(app: &mut App) {
-        let grid = app.light_system.as_ref().expect("light system").grid();
-        app.cut_caps.refresh(
-            grid,
-            &app.entities.chunks,
-            app.scene.world_meshes_mut(),
-            app.cut_face_material_idx,
-        );
+        FrameProcessor::new().update_cut_caps(app);
     }
 
-    fn cut_and_draw(app: &mut App, backend: &mut CaptureBackend, cut: Option<f32>) {
+    pub(crate) fn cut_and_draw(app: &mut App, backend: &mut CaptureBackend, cut: Option<f32>) {
         app.cut_caps.set_cut(cut);
         refresh_caps(app);
         app.scene.world_meshes_mut().flush(backend);
     }
 
-    fn assert_ground_capped_at(app: &mut App, backend: &CaptureBackend, cut: f32) {
+    pub(crate) fn assert_ground_capped_at(app: &mut App, backend: &CaptureBackend, cut: f32) {
         let caps = drawn_caps(app, backend);
 
         assert_eq!(caps.len(), 2, "one cap per chunk column the cut crosses");
@@ -264,10 +259,11 @@ pub(crate) mod tests {
         app.scene.world_meshes_mut().flush(&mut backend);
         let terrain_draws = app.scene.world_meshes_mut().draws().count();
         cut_and_draw(&mut app, &mut backend, Some(18.0));
-        let cap_handles: Vec<u32> = drawn_caps(&mut app, &backend)
+        let mut cap_handles: Vec<u32> = drawn_caps(&mut app, &backend)
             .iter()
             .map(|c| c.handle)
             .collect();
+        cap_handles.sort_unstable();
         assert_eq!(cap_handles.len(), 2, "the caps exist before the cut clears");
 
         cut_and_draw(&mut app, &mut backend, None);
@@ -349,11 +345,77 @@ pub(crate) mod tests {
         let mut app = ground_app();
         let mut backend = CaptureBackend::default();
 
-        for cut in [18.0, 25.0, 10.0, 18.0] {
+        // 16.25 is owned by the chunk layer below the border, whose cells reach 16.5.
+        for cut in [18.0, 25.0, 10.0, 16.25, 18.0, 10.0] {
             cut_and_draw(&mut app, &mut backend, Some(cut));
 
             assert_ground_capped_at(&mut app, &backend, cut);
         }
+        cut_and_draw(&mut app, &mut backend, Some(40.0));
+
+        assert!(
+            drawn_caps(&mut app, &backend).is_empty(),
+            "no ground at 40, so no cap is left from the old cut"
+        );
+    }
+
+    #[test]
+    fn the_frame_stage_caps_the_ground_under_the_cut_face_material() {
+        let mut app = ground_app();
+        let mut backend = CaptureBackend::default();
+        app.cut_caps.set_cut(Some(18.0));
+
+        FrameProcessor::new().update_cut_caps(&mut app);
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        assert_ground_capped_at(&mut app, &backend, 18.0);
+        for cap in drawn_caps(&mut app, &backend) {
+            assert_ne!(cap.material, app.terrain_material_idx, "not the grass");
+        }
+    }
+
+    #[test]
+    fn removing_a_dirty_chunk_leaves_no_cap() {
+        let mut app = ground_app();
+        let mut backend = CaptureBackend::default();
+        cut_and_draw(&mut app, &mut backend, Some(18.0));
+        assert_eq!(drawn_caps(&mut app, &backend).len(), 2, "both capped");
+        let grid = app.light_system.as_mut().expect("light system").grid_mut();
+        assert!(
+            grid.mutator().remove(IVec3::new(5, 18, 5)),
+            "block was there"
+        );
+        let edited = VoxelChunk::from_grid_lod(grid, IVec3::new(0, 1, 0), 0);
+        insert_chunk(&mut app, edited);
+
+        remove_chunk(&mut app, IVec3::new(0, 1, 0));
+        refresh_caps(&mut app);
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        let caps = drawn_caps(&mut app, &backend);
+        assert_eq!(caps.len(), 1, "only the other chunk is capped");
+        assert!(caps[0].x_range()[0] >= 16.5, "the other chunk's cap");
+    }
+
+    #[test]
+    fn a_coarse_chunk_is_capped_with_its_coarse_cells() {
+        let mut app = App::headless();
+        let grid = app.light_system.as_mut().expect("light system").grid_mut();
+        grid.mutator()
+            .fill_region(IVec3::ZERO, IVec3::new(15, 15, 15), 0);
+        let coarse = VoxelChunk::from_grid_lod(grid, IVec3::ZERO, 1);
+        insert_chunk(&mut app, coarse);
+        let mut backend = CaptureBackend::default();
+
+        cut_and_draw(&mut app, &mut backend, Some(7.0));
+
+        let caps = drawn_caps(&mut app, &backend);
+        assert_eq!(caps.len(), 1, "the chunk is capped");
+        assert!(
+            (caps[0].area() - 256.0).abs() < AREA_TOLERANCE,
+            "coarse cells cover the whole 16x16 chunk, not {}",
+            caps[0].area()
+        );
     }
 
     proptest! {

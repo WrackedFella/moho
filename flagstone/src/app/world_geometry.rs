@@ -131,7 +131,9 @@ pub(crate) mod tests {
     use super::*;
     use crate::App;
     use crate::app::cut_caps::cap_mesh_id;
-    use crate::app::cut_caps::tests::{CaptureBackend, drawn_caps, ground_app, refresh_caps};
+    use crate::app::cut_caps::tests::{
+        CaptureBackend, assert_ground_capped_at, cut_and_draw, drawn_caps, ground_app, refresh_caps,
+    };
     use crate::app::event_loop::event_processor::EventProcessor;
     use crate::app::event_loop::frame_processor::FrameProcessor;
     use crate::game_state::GameState;
@@ -578,6 +580,40 @@ pub(crate) mod tests {
             colliders_before,
             "no new collider"
         );
+    }
+
+    #[test]
+    fn removing_every_chunk_mesh_removes_the_caps() {
+        let mut app = ground_app();
+        let mut backend = CaptureBackend::default();
+        cut_and_draw(&mut app, &mut backend, Some(18.0));
+        assert_ground_capped_at(&mut app, &backend, 18.0);
+
+        remove_all_chunk_meshes(&mut app);
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        assert!(drawn_caps(&mut app, &backend).is_empty(), "no cap is drawn");
+        assert_eq!(
+            app.scene.world_meshes_mut().draws().count(),
+            0,
+            "nothing is drawn"
+        );
+    }
+
+    #[test]
+    fn upserting_every_chunk_rebuilds_the_caps() {
+        let mut app = ground_app();
+        let mut backend = CaptureBackend::default();
+        cut_and_draw(&mut app, &mut backend, Some(18.0));
+        remove_all_chunk_meshes(&mut app);
+        app.scene.world_meshes_mut().flush(&mut backend);
+        assert!(drawn_caps(&mut app, &backend).is_empty(), "caps removed");
+
+        upsert_all_chunks(&mut app);
+        refresh_caps(&mut app);
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        assert_ground_capped_at(&mut app, &backend, 18.0);
     }
 
     fn collider_of(app: &App, pos: IVec3) -> Option<moho_physics::ColliderHandle> {
