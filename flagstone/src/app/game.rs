@@ -441,6 +441,7 @@ impl moho_app::Game for App {
 
         let clock = ctx.clock();
         frame_processor.update_hud_data(self, clock, ctx.tick_length);
+        frame_processor.update_cut_caps(self);
         if let Some(renderer) = ctx.renderer() {
             frame_processor.update_lighting(self, clock, &mut *renderer);
             self.render_scene(renderer, camera);

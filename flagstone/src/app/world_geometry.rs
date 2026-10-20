@@ -38,11 +38,14 @@ pub fn chunk_world_mesh(chunk: &VoxelChunk) -> Result<WorldMesh, WorldMeshError>
 /// the registration signature.
 const TERRAIN_TAG: HitTag = HitTag(0);
 
+const GRASS: glam::Vec3 = glam::Vec3::new(0.3, 0.6, 0.3);
+const DIRT: glam::Vec3 = glam::Vec3::new(0.6, 0.5, 0.4);
+
 /// Register the terrain material once and return its table index; idempotent.
 pub fn register_terrain_material(scene: &mut Scene) -> u32 {
     let terrain = MaterialType::VoxelTerrain {
-        top_albedo: glam::Vec3::new(0.3, 0.6, 0.3),  // grass green
-        side_albedo: glam::Vec3::new(0.6, 0.5, 0.4), // dirt brown
+        top_albedo: GRASS,
+        side_albedo: DIRT,
     };
     scene.material_table.find_or_push(&terrain)
 }
@@ -50,7 +53,11 @@ pub fn register_terrain_material(scene: &mut Scene) -> u32 {
 /// Register the cut-face material once and return its table index; idempotent. It is
 /// the terrain's dirt colour on both faces, so a cap reads as the inside of the ground.
 pub fn register_cut_face_material(scene: &mut Scene) -> u32 {
-    register_terrain_material(scene)
+    let cut_face = MaterialType::VoxelTerrain {
+        top_albedo: DIRT,
+        side_albedo: DIRT,
+    };
+    scene.material_table.find_or_push(&cut_face)
 }
 
 /// Queue `chunk`'s mesh with the renderer and register its collider. A refused
@@ -84,7 +91,8 @@ fn remove_chunk_mesh(scene: &mut Scene, physics: Option<&mut PhysicsWorld>, id: 
 }
 
 /// Put `chunk` in the store and hand its mesh to the renderer and physics,
-/// replacing any previous chunk at that position.
+/// replacing any previous chunk at that position. Its cut-face cap is rebuilt on the
+/// next cap refresh.
 pub fn insert_chunk(app: &mut App, chunk: VoxelChunk) -> Option<VoxelChunk> {
     upsert_chunk_mesh(
         &mut app.scene,
@@ -92,10 +100,13 @@ pub fn insert_chunk(app: &mut App, chunk: VoxelChunk) -> Option<VoxelChunk> {
         app.terrain_material_idx,
         &chunk,
     );
+    app.cut_caps.mark_dirty(chunk.chunk_pos());
     app.entities.chunks.insert(chunk)
 }
 
+/// Take the chunk at `pos` out of the store, the renderer and physics, with its cap.
 pub fn remove_chunk(app: &mut App, pos: IVec3) -> Option<VoxelChunk> {
+    app.cut_caps.remove(pos, app.scene.world_meshes_mut());
     remove_chunk_mesh(
         &mut app.scene,
         app.physics.world.as_mut(),
@@ -104,6 +115,8 @@ pub fn remove_chunk(app: &mut App, pos: IVec3) -> Option<VoxelChunk> {
     app.entities.chunks.remove(pos)
 }
 
+/// Hand every stored chunk's mesh to the renderer and physics; their cut-face caps
+/// are rebuilt on the next cap refresh.
 pub fn upsert_all_chunks(app: &mut App) {
     for chunk in app.entities.chunks.iter() {
         upsert_chunk_mesh(
@@ -112,12 +125,15 @@ pub fn upsert_all_chunks(app: &mut App) {
             app.terrain_material_idx,
             chunk,
         );
+        app.cut_caps.mark_dirty(chunk.chunk_pos());
     }
 }
 
 /// Call before the store is cleared: mesh ids are derived from its chunks.
 pub fn remove_all_chunk_meshes(app: &mut App) {
     for chunk in app.entities.chunks.iter() {
+        app.cut_caps
+            .remove(chunk.chunk_pos(), app.scene.world_meshes_mut());
         remove_chunk_mesh(
             &mut app.scene,
             app.physics.world.as_mut(),

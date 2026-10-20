@@ -528,6 +528,7 @@ impl EventProcessor {
                 None => app.scene.markers_mut().clear(),
             },
             DebugEvent::SetViewHeight { height } => {
+                app.cut_caps.set_cut(height);
                 app.pending_render.push(RenderRequest::ViewHeight(height));
             }
             _ => {}
