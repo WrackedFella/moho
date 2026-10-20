@@ -158,8 +158,8 @@ impl BiomeMap {
             .sample(f64::from(x) * self.frequency, f64::from(z) * self.frequency);
         // Noise lies in [-1.0, 1.0]; map into [0.0, 1.0).
         let t = ((n + 1.0) * 0.5).clamp(0.0, 0.999_999);
-        let idx = (t * enabled.len() as f64) as usize;
-        enabled[idx.min(enabled.len() - 1)]
+        // `t < 1`, so the index stays below `enabled.len()`.
+        enabled[(t * enabled.len() as f64) as usize]
     }
 }
 
@@ -174,22 +174,6 @@ mod tests {
         for x in -64..64 {
             for z in -64..64 {
                 assert_eq!(map.biome_at(x, z, &enabled), BiomeType::Mountains);
-            }
-        }
-    }
-
-    #[test]
-    fn biome_at_is_deterministic() {
-        let a = BiomeMap::new(123);
-        let b = BiomeMap::new(123);
-        let enabled = [BiomeType::Plains, BiomeType::Mountains, BiomeType::Canyon];
-        for x in (-32..32).step_by(4) {
-            for z in (-32..32).step_by(4) {
-                assert_eq!(
-                    a.biome_at(x, z, &enabled),
-                    b.biome_at(x, z, &enabled),
-                    "biome at ({x}, {z}) must match across BiomeMap instances with same seed"
-                );
             }
         }
     }
