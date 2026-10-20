@@ -1,6 +1,6 @@
 use crate::biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
 use crate::perlin::Perlin;
-use flagstone_voxel::{BlockPos, ChunkStore, LightPropagator, VoxelChunk, VoxelGrid};
+use flagstone_voxel::BlockPos;
 use serde::{Deserialize, Serialize};
 
 /// Parameters describing a new world request coming from the UI or other
@@ -60,49 +60,6 @@ impl Default for TerrainConfig {
     }
 }
 
-/// Generate voxel-based terrain using Perlin noise
-/// Two-pass algorithm: 1) Place blocks, 2) Smooth transitions
-pub fn voxel_terrain_scene(chunks: &mut ChunkStore) -> VoxelGrid {
-    let config = TerrainConfig::default();
-    voxel_terrain_scene_with_config(chunks, &config)
-}
-
-/// Variant that accepts a custom `TerrainConfig`. This allows callers to
-/// control the PRNG seed (and later other parameters) when generating a
-/// terrain for new-world generation.
-///
-/// Returns the VoxelGrid for use with light propagation system.
-pub fn voxel_terrain_scene_with_config(
-    chunks: &mut ChunkStore,
-    config: &TerrainConfig,
-) -> VoxelGrid {
-    // NOTE: Hybrid mesh generation currently requires chunk_size=16
-    // due to hardcoded density field size in Marching Cubes
-    let mut grid = VoxelGrid::new(16); // 16×16×16 chunks
-
-    tracing::info!(seed = config.seed, "Generating voxel terrain");
-    generate_terrain(&mut grid, config);
-
-    // Initialize block light propagation from all emissive blocks.
-    tracing::info!("Initializing light propagation...");
-    let mut light_propagator = LightPropagator::new();
-    light_propagator.flood_fill_block_lights(&mut grid);
-    tracing::info!("Block light propagation complete");
-
-    // TODO: Consider making grid size configurable via the config struct
-    // (e.g., grid_size: u32) so callers can control world extents.
-
-    tracing::info!("Converting grid to renderable chunks...");
-    for chunk in grid_to_chunks(&grid) {
-        chunks.insert(chunk);
-    }
-
-    tracing::info!(count = chunks.len(), "Voxel terrain scene ready");
-
-    // Return the grid so it can be stored by the caller for light propagation
-    grid
-}
-
 /// Deterministic positional hash for use during terrain generation.
 /// Produces a value in [0.0, 1.0) that depends only on position and seed —
 /// no entropy-seeded RNG, so generation is a pure function of its inputs.
@@ -119,40 +76,6 @@ pub(crate) fn pos_hash(x: i32, y: i32, z: i32, seed: u32) -> f32 {
 /// Max block height for the terrain column (clamp for the legacy 32-tall range).
 pub(crate) const MAX_TERRAIN_HEIGHT: i32 = 128;
 pub(crate) const BASE_ELEVATION: f32 = 64.0;
-
-/// Generate terrain blocks using a 3D density field.
-///
-/// For each column, we pick a biome, sample a continuous surface height,
-/// then iterate blocks up to the column's solid top, emitting any block
-/// whose `density(x, y, z) > 0.0`. This keeps today's heightmap-shaped
-/// result while giving cave carving a natural hook (just subtract cave
-/// noise from density) and keeping the ore scan mechanic pure.
-fn generate_terrain(grid: &mut VoxelGrid, config: &TerrainConfig) {
-    let noise = Perlin::new(config.seed);
-    let biome_map = BiomeMap::new(config.seed);
-    // `config.world_size` is the full width in blocks (e.g., 128 -> loop -64..64)
-    let size = (config.world_size / 2) as i32;
-
-    for x in -size..size {
-        for z in -size..size {
-            let biome = biome_map.biome_at(x, z, &config.enabled_biomes);
-            let params = biome.params();
-            let surface_h = BASE_ELEVATION + sample_surface_height(&noise, x, z, &biome, &params);
-            let column_height = (surface_h as i32).clamp(0, MAX_TERRAIN_HEIGHT);
-
-            for y in 0..=column_height {
-                if !is_solid(&noise, x, y, z, &biome, &params) {
-                    continue;
-                }
-                let pos = BlockPos::new(x, y, z);
-                let material_id = determine_material_id(column_height, y, &params);
-                let resource_id = determine_resource_id(column_height, y, x, z, config.seed);
-
-                grid.mutator().place(pos, material_id, resource_id);
-            }
-        }
-    }
-}
 
 /// Continuous surface height at `(x, z)`. Multi-octave Perlin noise scaled
 /// by the biome's amplitude/frequency/octaves, shaped by `BiomeType::shape`,
@@ -242,47 +165,13 @@ pub(crate) fn determine_resource_id(
     }
 }
 
-/// Convert VoxelGrid to optimized VoxelChunks for rendering
-fn grid_to_chunks(grid: &VoxelGrid) -> Vec<VoxelChunk> {
-    use std::collections::HashSet;
-
-    // Find all unique chunk positions from the blocks
-    let mut chunk_positions = HashSet::new();
-    for block_pos in grid.block_positions() {
-        let chunk_pos = VoxelGrid::get_chunk_pos(block_pos, grid.chunk_size());
-        chunk_positions.insert(chunk_pos);
-    }
-
-    tracing::info!(count = chunk_positions.len(), "Converting chunks from grid");
-
-    // Generate a VoxelChunk for each chunk position
-    let mut chunks = Vec::new();
-    for chunk_pos in chunk_positions {
-        let chunk = VoxelChunk::from_grid_hybrid(grid, chunk_pos);
-
-        // Only include non-empty chunks
-        if !chunk.is_empty() {
-            tracing::debug!(
-                chunk = ?chunk_pos,
-                vertices = chunk.vertices().len(),
-                indices = chunk.indices().len(),
-                "Chunk generated"
-            );
-            chunks.push(chunk);
-        }
-    }
-
-    tracing::info!(count = chunks.len(), "Generated non-empty chunks");
-    chunks
-}
-
 /// Chunk size constant — must match `light_storage::CHUNK_SIZE`.
 const CHUNK_SIZE: i32 = 16;
 
 /// Generate the solid blocks for a single 16³ chunk at `chunk_pos`.
 ///
 /// Returns `(world_pos, material_id, resource_id)` for each solid block in the
-/// chunk, using the same algorithm and seed as the full terrain generator.
+/// chunk, using the world seed from `config`.
 ///
 /// Returns an empty `Vec` when the chunk lies entirely outside the world's XZ
 /// bounds (i.e., more than `world_size/2` blocks from the origin).
@@ -294,14 +183,10 @@ pub fn generate_chunk(
     let chunk_min = chunk_pos * CHUNK_SIZE;
     let chunk_max = chunk_min + glam::IVec3::splat(CHUNK_SIZE);
 
-    // Fast-reject: if this chunk has no overlap with [-half, half) in both X and Z → empty.
-    if chunk_max.x <= -half || chunk_min.x >= half || chunk_max.z <= -half || chunk_min.z >= half {
-        return vec![];
-    }
-
     let noise = Perlin::new(config.seed);
     let biome_map = BiomeMap::new(config.seed);
 
+    // Clamped to the world, so a chunk outside it gets an empty range and no blocks.
     let x_range = chunk_min.x.max(-half)..chunk_max.x.min(half);
     let z_range = chunk_min.z.max(-half)..chunk_max.z.min(half);
 
@@ -336,39 +221,7 @@ pub fn generate_chunk(
 mod tests {
     use super::*;
 
-    fn generate_grid(seed: u32) -> VoxelGrid {
-        let config = TerrainConfig {
-            seed,
-            world_size: 32, // small enough to run quickly
-            ..TerrainConfig::default()
-        };
-        let mut grid = VoxelGrid::new(16);
-        generate_terrain(&mut grid, &config);
-        grid
-    }
-
-    fn collect_blocks(grid: &VoxelGrid) -> Vec<(BlockPos, u32, Option<u32>)> {
-        let mut blocks: Vec<_> = grid
-            .iter_block_data()
-            .map(|b| (b.position, b.material_id, b.resource_id))
-            .collect();
-        blocks.sort_by_key(|(p, _, _)| (p.x, p.y, p.z));
-        blocks
-    }
-
-    #[test]
-    fn same_seed_produces_same_grid() {
-        let a = collect_blocks(&generate_grid(42));
-        let b = collect_blocks(&generate_grid(42));
-        assert_eq!(a, b, "same seed must produce identical terrain");
-    }
-
-    #[test]
-    fn different_seeds_produce_different_grids() {
-        let a = collect_blocks(&generate_grid(42));
-        let b = collect_blocks(&generate_grid(43));
-        assert_ne!(a, b, "different seeds must produce different terrain");
-    }
+    type Block = (BlockPos, u32, Option<u32>);
 
     fn small_config(seed: u32) -> TerrainConfig {
         TerrainConfig {
@@ -378,31 +231,134 @@ mod tests {
         }
     }
 
-    #[test]
-    fn generate_chunk_same_seed_is_deterministic() {
-        let cfg = small_config(7);
-        let a = generate_chunk(&cfg, glam::IVec3::ZERO);
-        let b = generate_chunk(&cfg, glam::IVec3::ZERO);
-        assert_eq!(a, b, "same seed + chunk_pos must yield identical blocks");
+    fn all_biome_config() -> TerrainConfig {
+        TerrainConfig {
+            seed: 7,
+            world_size: 64,
+            enabled_biomes: vec![
+                BiomeType::GentleHills,
+                BiomeType::Mountains,
+                BiomeType::Plains,
+                BiomeType::Cliffs,
+                BiomeType::Canyon,
+            ],
+            ..TerrainConfig::default()
+        }
+    }
+
+    /// Every chunk position that can hold terrain, with the blocks `generate_chunk` gives it.
+    fn world_chunks(config: &TerrainConfig) -> Vec<(glam::IVec3, Vec<Block>)> {
+        let half = (config.world_size / 2) as i32;
+        let lo = (-half).div_euclid(CHUNK_SIZE);
+        let hi = (half - 1).div_euclid(CHUNK_SIZE);
+        let mut chunks = Vec::new();
+        for cx in lo..=hi {
+            for cy in 0..=MAX_TERRAIN_HEIGHT / CHUNK_SIZE {
+                for cz in lo..=hi {
+                    let pos = glam::IVec3::new(cx, cy, cz);
+                    chunks.push((pos, generate_chunk(config, pos)));
+                }
+            }
+        }
+        chunks
+    }
+
+    fn world_blocks(config: &TerrainConfig) -> Vec<Block> {
+        let mut blocks: Vec<Block> = world_chunks(config)
+            .into_iter()
+            .flat_map(|(_, blocks)| blocks)
+            .collect();
+        blocks.sort_by_key(|(p, _, _)| (p.x, p.y, p.z));
+        blocks
+    }
+
+    /// 64-bit FNV-1a over the sorted blocks; `None` resources get a distinct tag byte.
+    fn fingerprint(blocks: &[Block]) -> u64 {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut feed = |bytes: &[u8]| {
+            for &b in bytes {
+                hash ^= u64::from(b);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        };
+        for (p, material, resource) in blocks {
+            feed(&p.x.to_le_bytes());
+            feed(&p.y.to_le_bytes());
+            feed(&p.z.to_le_bytes());
+            feed(&material.to_le_bytes());
+            match resource {
+                None => feed(&[0]),
+                Some(n) => {
+                    feed(&[1]);
+                    feed(&n.to_le_bytes());
+                }
+            }
+        }
+        hash
+    }
+
+    fn ore_count(blocks: &[Block]) -> usize {
+        blocks.iter().filter(|(_, _, r)| *r == Some(1)).count()
     }
 
     #[test]
-    fn generate_chunk_outside_world_returns_empty() {
+    fn default_world_matches_its_pinned_fingerprint() {
+        let blocks = world_blocks(&small_config(42));
+
+        let measured = (fingerprint(&blocks), blocks.len(), ore_count(&blocks));
+
+        assert_eq!(
+            measured,
+            (16_667_745_297_482_914_019, 67_114, 5_792),
+            "world generation output changed; update these pins only when the change is deliberate"
+        );
+    }
+
+    #[test]
+    fn all_biome_world_matches_its_pinned_fingerprint() {
+        let blocks = world_blocks(&all_biome_config());
+
+        let measured = (fingerprint(&blocks), blocks.len(), ore_count(&blocks));
+
+        assert_eq!(
+            measured,
+            (3_431_315_624_261_164_992, 265_476, 22_876),
+            "world generation output changed; update these pins only when the change is deliberate"
+        );
+    }
+
+    #[test]
+    fn different_seeds_produce_different_grids() {
+        let a = world_blocks(&small_config(42));
+        let b = world_blocks(&small_config(43));
+
+        assert_ne!(a, b, "different seeds must produce different terrain");
+    }
+
+    #[test]
+    fn chunk_past_each_world_edge_is_empty() {
         let cfg = small_config(42);
 
-        for outside in [(1, 0, 0), (-2, 0, 0), (0, 0, 1), (0, 0, -2)] {
-            let chunk = glam::IVec3::from(outside);
+        // (outside chunk, in-world neighbour), one edge at a time.
+        let edges = [
+            ((1, 4, 0), (0, 4, 0)),
+            ((-2, 4, 0), (-1, 4, 0)),
+            ((0, 4, 1), (0, 4, 0)),
+            ((0, 4, -2), (0, 4, -1)),
+        ];
+
+        for (outside, inside) in edges {
+            let outside = glam::IVec3::from(outside);
+            let inside = glam::IVec3::from(inside);
             assert!(
-                generate_chunk(&cfg, chunk).is_empty(),
-                "chunk {chunk:?} lies outside the world and must be empty"
+                generate_chunk(&cfg, outside).is_empty(),
+                "chunk {outside:?} lies past one edge and must be empty"
+            );
+            assert!(
+                !generate_chunk(&cfg, inside).is_empty(),
+                "chunk {inside:?} is in the world and must have blocks"
             );
         }
-
-        let edge = glam::IVec3::new(-1, 0, 0);
-        assert!(
-            !generate_chunk(&cfg, edge).is_empty(),
-            "chunk {edge:?} touches the world's -X edge and must have blocks"
-        );
     }
 
     #[test]
@@ -425,31 +381,54 @@ mod tests {
     }
 
     #[test]
-    fn generate_chunk_matches_full_terrain() {
-        let cfg = small_config(42);
-        let full = collect_blocks(&generate_grid(42));
+    fn chunks_tile_the_world_without_overlap() {
+        use std::collections::HashSet;
+        let cfg = all_biome_config();
+        let half = (cfg.world_size / 2) as i32;
+        let mut seen = HashSet::new();
+        let mut columns = HashSet::new();
 
-        for chunk_pos in [glam::IVec3::new(0, 4, 0), glam::IVec3::new(-1, 4, -1)] {
-            let min = chunk_pos * CHUNK_SIZE;
+        for (chunk, blocks) in world_chunks(&cfg) {
+            let min = chunk * CHUNK_SIZE;
             let max = min + glam::IVec3::splat(CHUNK_SIZE);
-            let expected: Vec<_> = full
-                .iter()
-                .filter(|(p, _, _)| {
+            for (p, _, _) in blocks {
+                assert!(
                     (min.x..max.x).contains(&p.x)
                         && (min.y..max.y).contains(&p.y)
-                        && (min.z..max.z).contains(&p.z)
-                })
-                .copied()
-                .collect();
-            let mut actual = generate_chunk(&cfg, chunk_pos);
-            actual.sort_by_key(|(p, _, _)| (p.x, p.y, p.z));
-
-            assert!(!actual.is_empty(), "chunk {chunk_pos:?} must have blocks");
-            assert_eq!(
-                actual, expected,
-                "generate_chunk must match full terrain for chunk {chunk_pos:?}"
-            );
+                        && (min.z..max.z).contains(&p.z),
+                    "block {p:?} lies outside its chunk {chunk:?}"
+                );
+                assert!(seen.insert((p.x, p.y, p.z)), "block {p:?} is in two chunks");
+                columns.insert((p.x, p.z));
+            }
         }
+
+        for x in -half..half {
+            for z in -half..half {
+                assert!(columns.contains(&(x, z)), "column ({x}, {z}) has no blocks");
+            }
+        }
+    }
+
+    #[test]
+    fn block_at_zero_density_is_air() {
+        // Perlin noise is 0 at lattice point (0, 0), so the surface sits exactly at BASE_ELEVATION.
+        let noise = Perlin::new(42);
+        let biome = BiomeType::GentleHills;
+        let params = biome.params();
+        let surface_y = BASE_ELEVATION as i32;
+
+        let at_surface = density(&noise, 0, surface_y, 0, &biome, &params);
+
+        assert_eq!(at_surface, 0.0, "fixture: density at the surface must be 0");
+        assert!(
+            !is_solid(&noise, 0, surface_y, 0, &biome, &params),
+            "a block at zero density is air"
+        );
+        assert!(
+            is_solid(&noise, 0, surface_y - 1, 0, &biome, &params),
+            "the block below the surface is solid"
+        );
     }
 
     #[test]

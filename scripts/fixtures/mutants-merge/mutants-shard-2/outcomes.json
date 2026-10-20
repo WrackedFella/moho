@@ -1,0 +1,8 @@
+{
+  "total_mutants": 0,
+  "missed": 0,
+  "caught": 0,
+  "timeout": 0,
+  "unviable": 0,
+  "end_time": "2026-10-20T00:00:00Z"
+}

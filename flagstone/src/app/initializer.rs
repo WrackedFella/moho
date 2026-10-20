@@ -212,6 +212,8 @@ pub(crate) fn build_actions(config: &AppConfig) -> ActionMap<StrategyAction> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     #[test]
@@ -225,6 +227,7 @@ mod tests {
             .expect("non-default config builds");
 
         initialized.actions.mouse_motion(10.0, 0.0);
+        initialized.actions.sample_frame(Duration::from_millis(16));
 
         assert_eq!(initialized.actions.end_tick().look(), (5.0, 0.0));
     }
@@ -237,6 +240,7 @@ mod tests {
         let mut actions = build_actions(&AppConfig::from_prefs_struct(prefs));
 
         actions.mouse_motion(10.0, 0.0);
+        actions.sample_frame(Duration::from_millis(16));
 
         assert_eq!(actions.end_tick().look(), (2.5, 0.0));
     }

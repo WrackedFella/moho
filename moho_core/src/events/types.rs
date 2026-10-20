@@ -43,12 +43,6 @@ pub use ui::*;
 /// }
 /// ```
 pub trait Event: Clone + Debug + Send + Sync + 'static {
-    /// Optional event priority (lower = higher priority)
-    /// Used for ordering when multiple events are processed
-    fn priority(&self) -> i32 {
-        0
-    }
-
     /// Whether this event should be recorded in history
     /// Disable for high-frequency events to save memory
     fn should_record(&self) -> bool {

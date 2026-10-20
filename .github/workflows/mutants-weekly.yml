@@ -2,10 +2,16 @@ name: Mutants (weekly)
 
 # Full mutation run over the workspace; surfaces test-quality decay that per-PR
 # diff runs can't see. Survivors are reviewed, not gated.
+#
+# Sharded so no single runner holds every mutant and one lost shard doesn't lose the rest.
 on:
   schedule:
     - cron: '0 6 * * 1'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or SHA to mutate
+        default: dev
 
 permissions:
   contents: read
@@ -14,15 +20,26 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   NEXTEST_PROFILE: ci
+  # Must match the length of the shard matrix below.
+  SHARDS: 8
 
 jobs:
-  mutants-full:
+  shard:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: dev
+          ref: ${{ inputs.ref || 'dev' }}
+
+      # The image's preinstalled SDKs leave too little disk for a full workspace build
+      # in cargo-mutants' scratch copy.
+      - name: Free disk
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
 
       - name: Install system deps
         run: |
@@ -42,20 +59,56 @@ jobs:
           shared-key: mutants
           cache-on-failure: true
 
-      - run: just mutants-full
+      # A mutant that eats memory is OOM-killed inside this scope and reads as caught,
+      # instead of taking the runner down. OOMPolicy=continue keeps systemd from
+      # stopping the whole scope, cargo-mutants included, when that happens.
+      - name: Mutate shard ${{ matrix.shard }}
         continue-on-error: true
+        run: >
+          sudo --preserve-env systemd-run --scope --quiet
+          --uid="$(id -u)" --gid="$(id -g)"
+          -p MemoryMax=12G -p MemorySwapMax=0 -p OOMPolicy=continue
+          -- env PATH="$PATH"
+          just mutants-shard ${{ matrix.shard }} ${{ env.SHARDS }}
 
-      - name: Summarize
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
+        with:
+          name: mutants-shard-${{ matrix.shard }}
+          path: mutants.out
+          if-no-files-found: ignore
+
+  merge:
+    needs: shard
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: just
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: mutants-shard-*
+          path: shards
+
+      # Fails the run when a shard is missing or incomplete; survivors alone don't.
+      - name: Merge shards
         run: |
-          if [[ -f mutants.out/outcomes.json ]]; then
-            jq -r '"caught \(.caught)  missed \(.missed)  unviable \(.unviable)  timeout \(.timeout)"' \
-              mutants.out/outcomes.json >> "$GITHUB_STEP_SUMMARY"
-          fi
+          mkdir -p shards
+          totals="$(scripts/mutants-merge.sh shards "$SHARDS" mutants-out)" || status=$?
+          cat mutants-out/summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Weekly mutation run::$totals"
+          exit "${status:-0}"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: mutants-out
-          path: mutants.out
-          if-no-files-found: ignore
+          path: mutants-out
+
+      # Last, so a broken merge script fails the run without costing the week's results.
+      - run: just mutants-merge-test
+        if: always()

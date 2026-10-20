@@ -25,9 +25,9 @@ and the action map that hands the game one frame of actions per tick.
 - `ActionMap<A>`: owns the bindings, which bindings are down, this tick's edges and
   the mouse-look accumulator, `LookSettings` (turn per count, smoothing on/off; `set_look`) and the smoothing state. Feed it with `key`, `mouse_button`,
   `mouse_motion`, `pad_button`, `pad_axis`, `pad_disconnected` and `release_all`, or from winit through `action_map::handle_window_event`
-  / `handle_device_event`. `end_tick` is the only read: it returns an `ActionFrame`
+  / `handle_device_event`. `end_tick` reports a tick: it returns an `ActionFrame`
   (`held`, `pressed`, `released` masks and `look`; plain `Copy` data, at most 64 actions).
-  The right stick adds `PAD_LOOK_PER_TICK` of look per tick on top of mouse motion.
+  `sample_frame(frame_dt)` turns the mouse counts since the last sample, plus the right stick at `PAD_LOOK_PER_SECOND` times its deflection per second, into a pending look (`pending_look`); `end_tick` returns it and zeroes it.
 - `Gamepads`: the only `gilrs` user. `Gamepads::new` returns `None` with one warning when
   the backend can't start; `poll` drains pad events into an `ActionMap` (all pads feed one map).
 

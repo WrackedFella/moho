@@ -189,16 +189,18 @@ impl EventBus {
 
         // Add to history if enabled
         if self.history_enabled && event.should_record() {
-            let mut history = self.history.lock().unwrap();
-            history.push_back(format!("{event:?}"));
-
-            // Limit history size
-            while history.len() > self.max_history {
-                history.pop_front();
-            }
+            self.record(format!("{event:?}"));
         }
 
         self.dispatch_to_handlers(&event);
+    }
+
+    /// Append an entry to the history, dropping the oldest beyond `max_history`.
+    fn record(&self, entry: String) {
+        let mut history = self.history.lock().unwrap();
+        history.push_back(entry);
+        let excess = history.len().saturating_sub(self.max_history);
+        history.drain(..excess);
     }
 
     /// Dispatch an event to all registered synchronous handlers.
@@ -252,11 +254,7 @@ impl EventBus {
         // Record history at defer time so the event is visible even before
         // process_deferred() runs.
         if self.history_enabled && event.should_record() {
-            let mut history = self.history.lock().unwrap();
-            history.push_back(format!("{event:?}"));
-            while history.len() > self.max_history {
-                history.pop_front();
-            }
+            self.record(format!("{event:?}"));
         }
 
         let deferred = DeferredEvent {

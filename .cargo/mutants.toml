@@ -126,6 +126,15 @@ exclude_re = [
     # searchlight::cover. Hangs rather than survives: the mutated step walks the ray backwards, so
     # it strikes the same character forever and only the timeout stops it.
     'replace \+ with - in world_blocks',
+    # flagstone_voxel::grid. Hangs rather than survives: with no chunk light to read, the light BFS
+    # sees every cell as dark and re-queues all its neighbours, so only the timeout stops it.
+    'replace VoxelGrid::chunk_light -> Option<&ChunkLight> with None',
+    # Equivalent: `VoxelGrid::new` debug-asserts a chunk size of 16 and every caller passes 16, so
+    # every grid supports lighting.
+    'replace VoxelGrid::supports_lighting -> bool with true',
+    # Equivalent: the lower-chunk pass runs only once the changed chunk's own `sky_dirty` is
+    # true, so also marking that chunk writes `true` over `true`.
+    'replace < with <= in VoxelGrid::note_block_change',
     # moho_ui_shell::host. Feeding egui needs the `egui_winit::State` that `attach` builds from a
     # real `Window`; headless tests have none, so these bodies do nothing there. Building the
     # key or button events `input_of` reads hits the same `KeyEvent` / `DeviceId::dummy()`

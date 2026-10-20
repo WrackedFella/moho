@@ -16,14 +16,13 @@ flowchart TD
     RES["resumed"] --> mk["create window, renderer,<br/>AudioSystem if enabled"] --> init["Game::init"]
 
     NE["new_events"] --> acc["FixedStep accumulates<br/>time since last wake"]
-    NE -. paused .-> rr
     acc --> tk["per due tick:<br/>Game::command, Game::tick,<br/>then GameClock advance"]
-    tk --> rr["request_redraw if ticks ran<br/>or the loop is paused"]
-    rr --> cf["control flow: wait until next tick"]
+    tk --> cf["control flow: wait until next tick"]
 
     WE["window_event"] --> route{"runner::route"}
-    route -- RedrawRequested --> wp["if paused: Game::command,<br/>then Game::apply_while_paused"] --> fr["Game::frame(alpha)"]
+    route -- RedrawRequested --> wp["if paused: Game::command,<br/>then Game::apply_while_paused"] --> fr["Game::frame(alpha, frame_dt)"]
     fr --> req["apply set_paused / set_speed<br/>from the next tick"]
+    req --> rr["request_redraw<br/>unless exiting"]
     route -- Resized --> rs["renderer.resize, then Game::event"]
     route -- CloseRequested --> ev["Game::event, then exit"]
     route -- other --> ev2["Game::event"]
@@ -35,8 +34,8 @@ A game stops the loop with `request_exit` on its `FrameContext` or `EventContext
 Init failures (window, renderer) end `run` with an `AppError`; audio failure only logs.
 `FrameContext::renderer` and `audio` are `None` under `HeadlessLoop`, which drives the
 same `command`/`tick`/`frame` without a window (`init` and `event` never run).
-Time beyond `max_catch_up_ticks` is dropped ([overview](overview.md#fixed-step-loop-moho_app)).
-A game pauses or changes `SimSpeed` through `set_paused` / `set_speed` on its event or frame context; the loop applies the request after the callback returns, from the next tick. While paused the loop runs no tick, still renders, and wakes once per tick length ([ADR-0018](../../_todo/adr/0018-paused-commands-apply-at-the-tick-boundary.md)).
+Every frame requests the next redraw, so frames run at the presentation rate and look turns the view on each one; `FrameContext::frame_dt` is the time since the previous frame, capped at `tick_length` times `max_catch_up_ticks`. Time beyond `max_catch_up_ticks` is dropped ([overview](overview.md#fixed-step-loop-moho_app)).
+A game pauses or changes `SimSpeed` through `set_paused` / `set_speed` on its event or frame context; the loop applies the request after the callback returns, from the next tick. While paused the loop runs no tick and still renders every frame ([ADR-0018](../../_todo/adr/0018-paused-commands-apply-at-the-tick-boundary.md)).
 
 ## `Game::tick` order (`App`)
 
@@ -112,6 +111,7 @@ A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
 (Playing, first person, character controller active and not noclip) the eye is blended
 between the player's last two tick states by `alpha` (0 = previous tick, 1 = current) via
 `moho_physics::first_person_view` (`moho_physics/src/camera.rs`); look comes from the
-current tick. `PhysicsController` keeps the pre-tick state (`previous`) for this and
-resets it on spawn, teleport and `reset`. In every other case the tick camera is drawn
-unchanged.
+current tick turned by the pending look: what frames sampled (`ActionMap::sample_frame`) and no tick has consumed yet, pitch clamped with the same f32 operations as `moho_physics::step`, so the next tick lands on exactly the drawn angles. `PhysicsController` keeps the pre-tick state (`previous`) for this and
+resets it on spawn, teleport and `reset`. In every other first-person case (free-cam, or outside play) the tick camera is drawn
+turned by the pending look (`PlayerController::turned`), with no eye blend; in isometric the tick camera is drawn
+unchanged. Frames sample look only while Playing, focused and in first person; otherwise the pending look stays frozen and still drawn.

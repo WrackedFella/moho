@@ -176,6 +176,15 @@ fn clip(
     impacts
 }
 
+/// `look` (yaw, pitch) turned by `delta` with pitch clamped at [`PITCH_LIMIT`]; the one
+/// place the turn is computed, so a drawn view and a stepped state agree bit for bit.
+pub(crate) fn turned_look(look: (f32, f32), delta: (f32, f32)) -> (f32, f32) {
+    (
+        look.0 + delta.0,
+        (look.1 + delta.1).clamp(-PITCH_LIMIT, PITCH_LIMIT),
+    )
+}
+
 /// Advance `state` by one tick of `dt` seconds and report the impacts.
 ///
 /// `slide` receives the displacement the tick asks for and reports what the world
@@ -191,8 +200,10 @@ pub fn step(
     dt: f32,
     slide: impl FnOnce(Vec3) -> Slide,
 ) -> Vec<Impact> {
-    state.yaw += command.yaw_delta;
-    state.pitch = (state.pitch + command.pitch_delta).clamp(-PITCH_LIMIT, PITCH_LIMIT);
+    (state.yaw, state.pitch) = turned_look(
+        (state.yaw, state.pitch),
+        (command.yaw_delta, command.pitch_delta),
+    );
 
     let (sin, cos) = state.yaw.sin_cos();
     let wish_vector =

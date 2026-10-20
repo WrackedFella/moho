@@ -78,21 +78,27 @@ pub struct SearchlightCommand {
     pub god_mode: bool,
 }
 
+/// Yaw and pitch deltas for a look. Mouse motion is right- and down-positive; positive yaw
+/// turns left and positive pitch looks up.
+///
+/// The one mapping, shared by the command and the camera so a tick lands where the frame drew.
+pub fn look_to_turn((look_x, look_y): (f32, f32)) -> (f32, f32) {
+    (-look_x, -look_y)
+}
+
 impl SearchlightCommand {
     /// The command for the tick `frame` describes.
     pub fn from_frame(frame: &ActionFrame<SearchlightAction>) -> Self {
         let axis = |positive, negative| {
             f32::from(u8::from(frame.held(positive))) - f32::from(u8::from(frame.held(negative)))
         };
-        // Mouse motion is right- and down-positive; positive yaw turns left and positive pitch
-        // looks up.
-        let (look_x, look_y) = frame.look();
+        let (yaw_delta, pitch_delta) = look_to_turn(frame.look());
         Self {
             movement: CharacterCommand {
                 forward: axis(SearchlightAction::MoveForward, SearchlightAction::MoveBack),
                 right: axis(SearchlightAction::MoveRight, SearchlightAction::MoveLeft),
-                yaw_delta: -look_x,
-                pitch_delta: -look_y,
+                yaw_delta,
+                pitch_delta,
                 // A tap shorter than one tick still jumps.
                 jump: frame.held(SearchlightAction::Jump) || frame.pressed(SearchlightAction::Jump),
             },
@@ -114,6 +120,8 @@ mod tests {
 
     use super::*;
     use crate::test_support::press;
+
+    const FRAME: std::time::Duration = std::time::Duration::from_millis(16);
 
     fn fresh_map() -> ActionMap<SearchlightAction> {
         let (bindings, warnings) = ActionBindings::load(&BTreeMap::new());
@@ -219,9 +227,11 @@ mod tests {
     fn mouse_motion_turns_and_pitches_with_up_positive() {
         let mut map = fresh_map();
         map.mouse_motion(0.0, 10.0);
+        map.sample_frame(FRAME);
 
         let down = SearchlightCommand::from_frame(&map.end_tick());
         map.mouse_motion(10.0, 0.0);
+        map.sample_frame(FRAME);
         let sideways = SearchlightCommand::from_frame(&map.end_tick());
 
         assert!(down.movement.pitch_delta < 0.0, "{down:?}");
@@ -295,6 +305,7 @@ mod look_direction_tests {
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
         let mut map = ActionMap::<SearchlightAction>::new(bindings, 1.0);
         map.mouse_motion(dx, 0.0);
+        map.sample_frame(std::time::Duration::from_millis(16));
         SearchlightCommand::from_frame(&map.end_tick())
             .movement
             .yaw_delta
