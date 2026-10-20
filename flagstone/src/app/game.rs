@@ -147,19 +147,19 @@ impl App {
         }
     }
 
-    /// The camera to draw this frame: in first person, the simulation turned by the look
-    /// frames sampled but no tick has consumed yet, with the walking eye blended between the
-    /// last two ticks; the tick camera otherwise.
+    /// The camera to draw this frame. In first person it is the simulation turned by the look
+    /// frames sampled but no tick has consumed yet: while walking, the eye blends between the
+    /// last two ticks; otherwise it is the tick camera's, since ticks keep cycling `alpha`
+    /// outside play while the player stands frozen. Isometric draws the tick camera.
     fn render_camera(&self, alpha: f32) -> (glam::Mat4, glam::Mat4, glam::Vec3) {
         if self.simulation.camera_mode() != CameraMode::FirstPerson {
             return self.camera;
         }
-        let pending = self.input.actions.pending_look();
-        let (yaw_delta, pitch_delta) = look_to_turn(pending);
-        // Outside play the tick camera stands, unless a turn was shown and must not snap back.
-        let walking =
-            self.is_kcc_walking() || (self.physics.is_kcc_active() && pending != (0.0, 0.0));
-        let walking_states = walking.then(|| self.physics.player_states()).flatten();
+        let (yaw_delta, pitch_delta) = look_to_turn(self.input.actions.pending_look());
+        let walking_states = self
+            .is_kcc_walking()
+            .then(|| self.physics.player_states())
+            .flatten();
         match walking_states {
             Some((previous, current)) => {
                 let view = moho_physics::first_person_view(
@@ -171,13 +171,12 @@ impl App {
                 );
                 (view.view_matrix(), self.camera.1, view.eye)
             }
-            None if pending != (0.0, 0.0) => controller_to_camera(
+            None => controller_to_camera(
                 &self
                     .simulation
                     .player_controller
                     .turned(yaw_delta, pitch_delta),
             ),
-            None => self.camera,
         }
     }
 

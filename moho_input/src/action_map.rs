@@ -219,7 +219,9 @@ impl<A: Action> ActionMap<A> {
 
     /// Forgets this tick's presses and releases; held actions and the pending look stay.
     pub fn discard_edges(&mut self) {
-        todo!()
+        self.pressed = 0;
+        self.released = 0;
+        self.press_pointer = None;
     }
 
     /// The only read: reports this tick's edges and look, then starts the next tick.
@@ -230,11 +232,10 @@ impl<A: Action> ActionMap<A> {
             released: self.released,
             look: std::mem::take(&mut self.pending),
             pointer: self.pointer,
-            press_pointer: self.press_pointer.take(),
+            press_pointer: self.press_pointer,
             actions: PhantomData,
         };
-        self.pressed = 0;
-        self.released = 0;
+        self.discard_edges();
         frame
     }
 
