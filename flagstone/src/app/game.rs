@@ -1724,6 +1724,57 @@ mod tests {
             }
         }
 
+        fn frame_at(app: &mut App, fake: &mut FakeRenderer, alpha: f32) -> (Mat4, Vec3) {
+            let clock = GameClock::default();
+            let mut ctx = FrameContext::new(tick(), &clock, Some(&mut *fake), None);
+            Game::frame(app, &mut ctx, alpha);
+            let camera = fake.cameras.last().expect("a frame began");
+            (camera.0, camera.2)
+        }
+
+        #[test]
+        fn paused_walking_view_holds_still() {
+            for stop in [Stop::Paused, Stop::Menu, Stop::Console] {
+                let mut app = walking_app();
+                HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ)).step(&mut app, 3);
+                let (previous, current) = app.physics.player_states().expect("a walker");
+                assert!(
+                    previous.position.distance(current.position) > 1e-3,
+                    "the walk is moving"
+                );
+                let mut fake = FakeRenderer::default();
+                mouse(&mut app, 300.0, 150.0);
+                frame_at(&mut app, &mut fake, 0.5);
+                let pending = app.input.actions.pending_look();
+                assert_ne!(pending, (0.0, 0.0), "{stop:?}: look is live first");
+
+                stop.enter(&mut app);
+                let (yaw_delta, pitch_delta) = look_to_turn(pending);
+                let (expected_view, _, expected_eye) = controller_to_camera(
+                    &app.simulation
+                        .player_controller
+                        .turned(yaw_delta, pitch_delta),
+                );
+                let mut drawn_views = Vec::new();
+                for alpha in [0.0, 0.3, 0.7, 1.0] {
+                    // The strategy loop keeps ticking while stopped.
+                    let command = Game::command(&mut app);
+                    tick_app(&mut app, &command);
+                    drawn_views.push((alpha, frame_at(&mut app, &mut fake, alpha)));
+                }
+
+                assert_eq!(
+                    app.physics.player_states(),
+                    Some((previous, current)),
+                    "{stop:?}: the tick states stay frozen"
+                );
+                for (alpha, (view, eye)) in drawn_views {
+                    assert_eq!(eye, expected_eye, "{stop:?} at alpha {alpha}: the eye");
+                    assert_eq!(view, expected_view, "{stop:?} at alpha {alpha}: the view");
+                }
+            }
+        }
+
         #[test]
         fn unfocused_device_motion_does_not_turn_after_refocus() {
             for rig in RIGS {

@@ -1388,6 +1388,34 @@ mod tests {
     }
 
     #[test]
+    fn a_press_made_as_the_console_opens_does_not_act_on_close() {
+        for press_binding in [
+            Binding::Mouse(moho_input::key::MouseButton::Left),
+            Binding::Key(Key::R),
+        ] {
+            let mut game = turning_game(false);
+            let clock = GameClock::default();
+            let mut renderer = SettingsRenderer::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            let routing = game.route_input(&mut ctx, press_binding, true, false);
+            assert_eq!(routing, Routing::Game);
+
+            open_the_console(&mut game, &clock);
+            for _ in 0..3 {
+                // A paused loop asks for the command on every frame.
+                game.command();
+                draw_frame(&mut game, &mut renderer);
+            }
+            let routing = game.route_input(&mut ctx, BACKTICK, true, false);
+            assert_eq!(routing, Routing::Closed);
+            let command = game.command();
+
+            assert!(!command.fire, "{press_binding:?}: fire");
+            assert!(!command.reload, "{press_binding:?}: reload");
+        }
+    }
+
+    #[test]
     fn open_console_freezes_the_view() {
         let mut game = turning_game(false);
         let clock = GameClock::default();

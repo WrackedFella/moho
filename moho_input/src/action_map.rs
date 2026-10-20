@@ -217,6 +217,11 @@ impl<A: Action> ActionMap<A> {
         self.pending
     }
 
+    /// Forgets this tick's presses and releases; held actions and the pending look stay.
+    pub fn discard_edges(&mut self) {
+        todo!()
+    }
+
     /// The only read: reports this tick's edges and look, then starts the next tick.
     pub fn end_tick(&mut self) -> ActionFrame<A> {
         let frame = ActionFrame {
@@ -1389,5 +1394,38 @@ mod tests {
                 prop_assert_eq!(total, expected);
             }
         }
+    }
+
+    #[test]
+    fn discard_edges_keeps_held_and_pending_look() {
+        let mut map = map(2.0);
+        map.key(Key::W, true);
+        map.key(Key::ArrowUp, true);
+        map.key(Key::ArrowUp, false);
+        map.key(Key::Space, true);
+        map.key(Key::Space, false);
+        map.pointer_moved(10.0, 20.0);
+        map.mouse_button(MouseButton::Left, true);
+        map.mouse_motion(3.0, -1.0);
+        map.sample_frame(FRAME);
+        let pending = map.pending_look();
+
+        map.discard_edges();
+        let frame = map.end_tick();
+
+        assert_eq!(pending, (6.0, -2.0));
+        for action in [TestAction::MoveForward, TestAction::Jump, TestAction::Fire] {
+            assert!(!frame.pressed(action), "{action:?} pressed");
+            assert!(!frame.released(action), "{action:?} released");
+        }
+        assert!(frame.held(TestAction::MoveForward), "W is still down");
+        assert!(
+            frame.held(TestAction::Fire),
+            "the mouse button is still down"
+        );
+        assert!(!frame.held(TestAction::Jump));
+        assert_eq!(frame.look(), pending);
+        assert_eq!(frame.press_pointer(), None);
+        assert_eq!(frame.pointer(), Some((10.0, 20.0)));
     }
 }
