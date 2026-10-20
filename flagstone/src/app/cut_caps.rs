@@ -20,13 +20,15 @@ pub struct CutCaps {
 
 impl CutCaps {
     /// The view height the caps follow; `None` when no cut is set.
+    #[cfg(test)]
     pub fn cut(&self) -> Option<f32> {
         self.cut
     }
 
-    /// Follow a new view height; `None` removes every cap on the next `refresh`.
+    /// Follow a new view height; `None` or a non-finite height (no cut, as the renderer
+    /// reads it) removes every cap on the next `refresh`.
     pub fn set_cut(&mut self, cut: Option<f32>) {
-        self.cut = cut;
+        self.cut = cut.filter(|cut| cut.is_finite());
         self.cut_moved = true;
     }
 

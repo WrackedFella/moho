@@ -21,8 +21,11 @@ const SAME_POINT: f32 = 1e-12;
 /// The flat face at `y = cut` covering the part of chunk `chunk_pos`'s cells (meshed at
 /// `lod`) that is solid at `cut + CAP_PROBE`. Every vertex faces `+Y`, with full
 /// ambient light, no block light and geometry type 0. A chunk the cut does not cross,
-/// or with no solid there, gives an empty mesh.
+/// with no solid there, or a non-finite cut gives an empty mesh.
 pub fn cut_cap_mesh(grid: &VoxelGrid, chunk_pos: IVec3, lod: u8, cut: f32) -> VoxelMesh {
+    if !cut.is_finite() {
+        return VoxelMesh::empty();
+    }
     let chunk_size = grid.chunk_size();
     let base = chunk_pos * chunk_size;
     let probe = cut + CAP_PROBE;
@@ -49,8 +52,8 @@ pub fn cut_cap_mesh(grid: &VoxelGrid, chunk_pos: IVec3, lod: u8, cut: f32) -> Vo
     cap.mesh
 }
 
-/// Caps the marching-cubes cells of the one cell row whose height span holds `probe`,
-/// from the same density field the chunk's smooth mesh was built from.
+/// Caps the marching-cubes cells of the one cell row whose height span `(bottom, top]`
+/// holds `probe`, from the same density field the chunk's smooth mesh was built from.
 fn cap_smooth_cells(
     grid: &VoxelGrid,
     chunk_pos: IVec3,
@@ -62,7 +65,10 @@ fn cap_smooth_cells(
     let base = chunk_pos * chunk_size;
     // Cell `i` spans field samples `i..=i + 1`, i.e. world `base + i - 0.5 ..= base + i + 0.5`.
     let field_y = probe - (base.y as f32 + DENSITY_SAMPLE_TO_WORLD);
-    let row = field_y.floor();
+    // A probe on a row boundary slices the row below at its top, not the row above at
+    // its bottom: the horizontal-edge vertices lie there, and a slice that counts them
+    // as above (as the chunk mesh's own slice does) finds no wall in the row above.
+    let row = field_y.ceil() - 1.0;
     if !(1.0..=chunk_size as f32).contains(&row) {
         return;
     }
@@ -155,7 +161,7 @@ const SQUARE: [Vec2; 4] = [
     Vec2::new(0.0, 1.0),
 ];
 
-/// The solid part, at `height` in `0..1`, of the unit cell's horizontal square in
+/// The solid part, at `height` in `0 < height <= 1`, of the unit cell's horizontal square in
 /// `(x, z)`, as counter-clockwise rings. The boundary is the cell's own triangles sliced
 /// at `height`, with the solid on their inner side, plus the stretches of the square's
 /// edges that are solid.
