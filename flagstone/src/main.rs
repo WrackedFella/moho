@@ -408,7 +408,6 @@ impl App {
     }
 
     fn handle_device_input(&mut self, event: &DeviceEvent) {
-        // Only process input in game mode and first person camera mode, with focus
         if self.game_state != crate::game_state::GameState::Playing
             || !self.input.focused
             || self.simulation.camera_mode() != flagstone_game::controller::CameraMode::FirstPerson
