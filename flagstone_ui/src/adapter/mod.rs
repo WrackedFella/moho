@@ -140,12 +140,15 @@ impl EguiAdapter {
     }
 
     /// Update the current game state (called by main app each frame)
+    /// The console is open exactly while the game is in `ConsoleOpen`, whichever transition got
+    /// it there or took it out.
     pub fn set_game_state(&mut self, state: GameState) {
-        // Reset console state when entering ConsoleOpen to prevent immediate close
-        if state == GameState::ConsoleOpen && self.current_game_state != GameState::ConsoleOpen {
-            self.ui_state.console.reset_on_open();
-        }
         self.current_game_state = state;
+        if state == GameState::ConsoleOpen {
+            self.ui_state.console.open();
+        } else {
+            self.ui_state.console.close();
+        }
     }
 
     /// Add a new menu to the manager
@@ -338,6 +341,32 @@ impl EguiAdapter {
         self.ui_state.overlay_manager.update_data(data);
     }
 
+    /// Routes one key or button through the console before egui sees it.
+    pub fn on_key(
+        &mut self,
+        input: moho_input::bindings::Binding,
+        pressed: bool,
+        repeat: bool,
+    ) -> moho_ui_shell::Routing {
+        self.ui_state.console.on_key(input, pressed, repeat)
+    }
+
+    pub fn console_mut(
+        &mut self,
+    ) -> &mut moho_ui_shell::Console<crate::console_commands::StrategyConsoleCommand> {
+        &mut self.ui_state.console
+    }
+
+    pub fn take_console_commands(
+        &mut self,
+    ) -> Vec<crate::console_commands::StrategyConsoleCommand> {
+        self.ui_state.console.take_commands()
+    }
+
+    pub fn take_engine_commands(&mut self) -> Vec<moho_ui_shell::EngineCommand> {
+        self.ui_state.console.take_engine_commands()
+    }
+
     /// Toggle the debug HUD overlay (F3).
     pub fn toggle_debug_hud(&mut self) {
         self.ui_state.overlay_manager.toggle("debug");
@@ -371,12 +400,8 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
 
         let full_output = self.context.run_ui(raw_input, |ui| {
             // Render based on current game state (delegates to rendering module)
-            let result = rendering::render_game_state(
-                ui,
-                &mut self.ui_state,
-                self.current_game_state,
-                &self.event_bus,
-            );
+            let result =
+                rendering::render_game_state(ui, &mut self.ui_state, self.current_game_state);
             menu_actions.extend(result.actions);
             new_hovered_key = result.hovered_key;
 
@@ -521,10 +546,9 @@ mod tests {
             is_fps_mode: false,
             ..Default::default()
         });
-        let bus = adapter.event_bus.clone();
         for events in [Vec::new(), vec![egui::Event::PointerMoved(pos)]] {
             let _ = run_ui(&adapter.context, input(events), |ui| {
-                rendering::render_game_state(ui, &mut adapter.ui_state, GameState::Playing, &bus);
+                rendering::render_game_state(ui, &mut adapter.ui_state, GameState::Playing);
             });
         }
     }

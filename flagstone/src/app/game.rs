@@ -6,8 +6,12 @@ use crate::{App, RenderRequest};
 use flagstone_game::controller::{CameraMode, ControllerInput};
 use flagstone_game::raycast::raycast_surface;
 use flagstone_ui::actions::StrategyAction;
+use flagstone_ui::console_commands::StrategyConsoleCommand;
 use moho_core::pointer::{Ray, screen_ray};
 use moho_input::action_map;
+use moho_input::bindings::Binding;
+use moho_ui_shell::host::input_of;
+use moho_ui_shell::{EngineCommand, Routing};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
@@ -15,7 +19,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 pub const POINTER_RAY_RANGE: f32 = 256.0;
 
 /// One tick's worth of player input.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct StrategyCommand {
     pub input: ControllerInput,
     pub jump: bool,
@@ -23,6 +27,10 @@ pub struct StrategyCommand {
     ///
     /// A ray rather than a pixel, so the command replays without a window.
     pub select: Option<Ray>,
+    /// Strategy console commands typed since the last tick.
+    pub console: Vec<StrategyConsoleCommand>,
+    /// Engine console commands typed since the last tick.
+    pub engine: Vec<EngineCommand>,
 }
 
 impl App {
@@ -77,6 +85,52 @@ impl App {
             },
             jump,
             select,
+            console: Vec::new(),
+            engine: Vec::new(),
+        }
+    }
+
+    /// Where one key or mouse button press or release goes. The console sees it before egui or
+    /// the action map; `Opened` and `Closed` also enter and leave `GameState::ConsoleOpen`.
+    /// Outside `Playing` and `ConsoleOpen` the console is skipped and the input is the game's.
+    /// Takes a `Binding` so it is testable without a winit `KeyEvent`.
+    fn route_console_input(&mut self, input: Binding, pressed: bool, repeat: bool) -> Routing {
+        if !matches!(self.game_state, GameState::Playing | GameState::ConsoleOpen) {
+            return Routing::Game;
+        }
+        let Some(ui_adapter) = &self.ui_adapter else {
+            return Routing::Game;
+        };
+        let routing = match ui_adapter.lock() {
+            Ok(mut adapter) => adapter.on_key(input, pressed, repeat),
+            Err(error) => {
+                tracing::warn!(%error, "UI adapter lock poisoned; console input skipped");
+                return Routing::Game;
+            }
+        };
+        // The adapter lock is released: the transitions lock it again.
+        match routing {
+            Routing::Opened => self.enter_console(),
+            Routing::Closed => self.exit_console(),
+            Routing::Console | Routing::Game => {}
+        }
+        routing
+    }
+
+    /// Takes the commands the console has queued: strategy's, then the engine's.
+    fn take_console_commands(&mut self) -> (Vec<StrategyConsoleCommand>, Vec<EngineCommand>) {
+        let Some(ui_adapter) = &self.ui_adapter else {
+            return (Vec::new(), Vec::new());
+        };
+        match ui_adapter.lock() {
+            Ok(mut adapter) => (
+                adapter.take_console_commands(),
+                adapter.take_engine_commands(),
+            ),
+            Err(error) => {
+                tracing::warn!(%error, "UI adapter lock poisoned; console commands dropped");
+                (Vec::new(), Vec::new())
+            }
         }
     }
 
@@ -234,6 +288,18 @@ impl App {
             action_map::handle_window_event(&mut self.input.actions, &event);
         }
 
+        if let Some((input, pressed, repeat)) = input_of(&event) {
+            match self.route_console_input(input, pressed, repeat) {
+                Routing::Opened | Routing::Closed => return,
+                // Only egui sees what the open console takes.
+                Routing::Console => {
+                    self.dispatcher.dispatch(&event);
+                    return;
+                }
+                Routing::Game => {}
+            }
+        }
+
         if self.take_escape_before_ui(&event) {
             return;
         }
@@ -282,10 +348,16 @@ impl moho_app::Game for App {
     type Command = StrategyCommand;
 
     fn command(&mut self) -> StrategyCommand {
-        if self.game_state != GameState::Playing {
-            return StrategyCommand::default();
-        }
-        self.sample_command()
+        // Before the `Playing` check: the console is open only outside `Playing`.
+        let (console, engine) = self.take_console_commands();
+        let mut command = if self.game_state == GameState::Playing {
+            self.sample_command()
+        } else {
+            StrategyCommand::default()
+        };
+        command.console = console;
+        command.engine = engine;
+        command
     }
 
     fn tick(&mut self, ctx: &mut moho_app::TickContext<'_>, command: &StrategyCommand) {
@@ -299,6 +371,12 @@ impl moho_app::Game for App {
         let frame_number = frame_processor.publish_frame_start(self, dt);
         if self.game_state == GameState::Playing {
             self.apply_command(command);
+        }
+        for console_command in &command.console {
+            crate::app::console::apply_console_command(self, console_command);
+        }
+        for engine_command in &command.engine {
+            crate::app::console::apply_engine_command(self, engine_command);
         }
         frame_processor.update_game_state(self, dt);
         frame_processor.update_chunk_streaming(self);
@@ -1794,6 +1872,183 @@ mod tests {
 
                 assert_eq!(app.escape_skips_the_ui(), expected, "row {label}");
             }
+        }
+    }
+
+    mod console {
+        use super::*;
+        use flagstone_ui::console_commands::StrategyConsoleCommand;
+        use moho_input::key::Key;
+        use moho_ui_shell::{EngineCommand, Routing};
+        use std::collections::BTreeMap;
+        use std::sync::{Arc, Mutex};
+
+        type SharedAdapter = Arc<Mutex<flagstone_ui::EguiAdapter>>;
+
+        fn noon() -> GameClock {
+            GameClock::new(12.0, 600.0, 420.0)
+        }
+
+        /// A playing app whose UI adapter is built from the app's own prefs.
+        fn app_with_console() -> (App, SharedAdapter) {
+            let mut app = playing_app();
+            let adapter = Arc::new(Mutex::new(flagstone_ui::EguiAdapter::new(
+                None,
+                app.event_bus.clone(),
+                app.prefs.clone(),
+            )));
+            app.ui_adapter = Some(adapter.clone());
+            (app, adapter)
+        }
+
+        fn press(app: &mut App, key: Key) -> Routing {
+            app.route_console_input(Binding::Key(key), true, false)
+        }
+
+        fn type_line(adapter: &SharedAdapter, line: &str) {
+            adapter
+                .lock()
+                .expect("adapter lock")
+                .console_mut()
+                .submit(line);
+        }
+
+        fn console_is_open(adapter: &SharedAdapter) -> bool {
+            adapter
+                .lock()
+                .expect("adapter lock")
+                .console_mut()
+                .is_open()
+        }
+
+        #[test]
+        fn console_key_opens_the_console_and_stops_game_time() {
+            let (mut app, adapter) = app_with_console();
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ).with_clock(noon()));
+            sim.step(&mut app, 60);
+            let playing = sim.clock().time_of_day();
+            assert!(playing > 12.0, "time runs while playing: {playing}");
+
+            let routing = press(&mut app, Key::Backtick);
+            let opened_at = sim.clock().time_of_day();
+            sim.step(&mut app, 60);
+
+            assert_eq!(routing, Routing::Opened);
+            assert_eq!(app.game_state, GameState::ConsoleOpen);
+            assert!(console_is_open(&adapter));
+            assert_eq!(sim.clock().time_of_day(), opened_at, "time ran while open");
+        }
+
+        #[test]
+        fn console_key_and_escape_close_the_console() {
+            for closing in [Key::Backtick, Key::Escape] {
+                let (mut app, adapter) = app_with_console();
+                assert_eq!(press(&mut app, Key::Backtick), Routing::Opened);
+
+                let routing = press(&mut app, closing);
+
+                assert_eq!(routing, Routing::Closed, "{closing:?}");
+                assert_eq!(app.game_state, GameState::Playing, "{closing:?}");
+                assert!(!console_is_open(&adapter), "{closing:?}");
+            }
+        }
+
+        #[test]
+        fn console_key_is_skipped_in_menu_and_paused() {
+            for state in [GameState::Menu, GameState::Paused] {
+                let (mut app, adapter) = app_with_console();
+                app.game_state = state;
+
+                press(&mut app, Key::Backtick);
+
+                assert_eq!(app.game_state, state, "{state:?}");
+                assert!(!console_is_open(&adapter), "{state:?}");
+            }
+        }
+
+        #[test]
+        fn leaving_the_console_through_the_menu_closes_it() {
+            let (mut app, adapter) = app_with_console();
+            assert_eq!(press(&mut app, Key::Backtick), Routing::Opened);
+
+            app.show_menu();
+            app.hide_menu();
+            let movement = press(&mut app, Key::W);
+            let reopened = press(&mut app, Key::Backtick);
+
+            assert_eq!(movement, Routing::Game, "the closed console took W");
+            assert_eq!(reopened, Routing::Opened);
+            assert_eq!(app.game_state, GameState::ConsoleOpen);
+            assert!(console_is_open(&adapter));
+        }
+
+        #[test]
+        fn a_rebound_console_key_opens_the_console() {
+            let mut app = playing_app();
+            app.prefs.set_bindings(BTreeMap::from([(
+                "console".to_owned(),
+                "Backslash".to_owned(),
+            )]));
+            let adapter = Arc::new(Mutex::new(flagstone_ui::EguiAdapter::new(
+                None,
+                app.event_bus.clone(),
+                app.prefs.clone(),
+            )));
+            app.ui_adapter = Some(adapter.clone());
+
+            let default_key = press(&mut app, Key::Backtick);
+            let default_state = app.game_state;
+            let rebound = press(&mut app, Key::Backslash);
+
+            assert_eq!(default_key, Routing::Game);
+            assert_eq!(default_state, GameState::Playing);
+            assert_eq!(rebound, Routing::Opened);
+            assert_eq!(app.game_state, GameState::ConsoleOpen);
+            assert!(console_is_open(&adapter));
+        }
+
+        #[test]
+        fn command_carries_console_commands_outside_playing() {
+            let (mut app, adapter) = app_with_console();
+            press(&mut app, Key::Backtick);
+            type_line(&adapter, "time 18");
+            type_line(&adapter, "quit");
+            assert_eq!(app.game_state, GameState::ConsoleOpen);
+
+            let command = Game::command(&mut app);
+            let drained = Game::command(&mut app);
+
+            assert_eq!(
+                command.console,
+                vec![StrategyConsoleCommand::SetTimeOfDay(18.0)]
+            );
+            assert_eq!(command.engine, vec![EngineCommand::Quit]);
+            assert_eq!(command.input.forward, 0.0);
+            assert!(!command.jump);
+            assert!(drained.console.is_empty(), "commands are delivered once");
+            assert!(drained.engine.is_empty(), "commands are delivered once");
+        }
+
+        #[test]
+        fn tick_applies_the_console_commands_while_the_console_is_open() {
+            let (mut app, adapter) = app_with_console();
+            press(&mut app, Key::Backtick);
+            type_line(&adapter, "time 18");
+            type_line(&adapter, "noclip");
+            type_line(&adapter, "quit");
+            let command = Game::command(&mut app);
+            let mut clock = noon();
+
+            let mut ctx = TickContext {
+                tick: 0,
+                tick_length: tick(),
+                clock: &mut clock,
+            };
+            Game::tick(&mut app, &mut ctx, &command);
+
+            assert_eq!(clock.time_of_day(), 18.0);
+            assert!(app.physics.noclip);
+            assert!(app.exit_requested);
         }
     }
 }

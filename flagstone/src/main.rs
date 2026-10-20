@@ -306,17 +306,6 @@ impl App {
 
         if let PhysicalKey::Code(keycode) = event.physical_key {
             match keycode {
-                KeyCode::Backquote => {
-                    // Backtick (`) toggles console
-                    if pressed {
-                        use crate::game_state::GameState;
-                        match self.game_state {
-                            GameState::Playing => self.enter_console(),
-                            GameState::ConsoleOpen => self.exit_console(),
-                            _ => {}
-                        }
-                    }
-                }
                 KeyCode::F3 => {
                     // F3 toggles the debug HUD overlay
                     if pressed

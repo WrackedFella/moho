@@ -43,6 +43,9 @@ workspace = true
 [dependencies.flagstone_ui]
 path = "../flagstone_ui"
 
+[dependencies.moho_ui_shell]
+path = "../moho_ui_shell"
+
 [dependencies.tracing]
 workspace = true
 

@@ -2,13 +2,12 @@
 //!
 //! This module handles:
 //! - Menu state rendering based on game state
-//! - Console overlay rendering
+//! - Console rendering
 //! - Progress overlay rendering
 use crate::adapter::ProgressState;
 use crate::app_state::GameState;
 use crate::screens::MenuAction;
 use crate::ui_state::UiStateManager;
-use moho_core::EventBus;
 
 /// Result of rendering the menu for a single frame.
 pub struct MenuRenderResult {
@@ -25,13 +24,12 @@ pub fn render_game_state(
     ui: &mut egui::Ui,
     ui_state: &mut UiStateManager,
     game_state: GameState,
-    event_bus: &EventBus,
 ) -> MenuRenderResult {
     match game_state {
         GameState::Menu => render_menu(ui, ui_state),
         GameState::ConsoleOpen => {
             render_overlays(ui, ui_state);
-            render_console(ui, ui_state, event_bus);
+            ui_state.console.show(ui.ctx());
             MenuRenderResult {
                 actions: Vec::new(),
                 hovered_key: None,
@@ -79,14 +77,6 @@ fn render_menu(ui: &mut egui::Ui, ui_state: &mut UiStateManager) -> MenuRenderRe
         actions,
         hovered_key,
     }
-}
-
-/// Render console overlay and process console actions
-fn render_console(ui: &mut egui::Ui, ui_state: &mut UiStateManager, event_bus: &EventBus) {
-    let console_action = ui_state.console.render(ui);
-
-    // Process console action through event routing
-    super::event_routing::process_console_action(console_action, event_bus);
 }
 
 /// Render progress overlay if present
@@ -172,7 +162,6 @@ mod tests {
         game_state: GameState,
         events: Vec<egui::Event>,
     ) -> (egui::FullOutput, MenuRenderResult) {
-        let bus = EventBus::new();
         let input = crate::overlays::test_support::input(events);
         let mut result = MenuRenderResult {
             actions: Vec::new(),
@@ -180,7 +169,7 @@ mod tests {
         };
 
         let output = crate::overlays::test_support::run_ui(ctx, input, |ui| {
-            result = render_game_state(ui, ui_state, game_state, &bus);
+            result = render_game_state(ui, ui_state, game_state);
         });
 
         (output, result)

@@ -5,6 +5,7 @@ use moho_input::Action;
 use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::{Key, MouseButton};
 use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
+use moho_ui_shell::CONSOLE_BINDING;
 
 const fn stick(dir: StickDir) -> Binding {
     Binding::Pad(PadInput::Stick(Stick::LeftStick, dir))
@@ -82,8 +83,11 @@ impl Action for StrategyAction {
 }
 
 /// Reads the strategy bindings from prefs, warning about each line that fell back to a default.
+/// The `console` entry belongs to the console, not to a strategy action, and is skipped.
 pub fn load_bindings(prefs: &Prefs) -> ActionBindings<StrategyAction> {
-    let (bindings, warnings) = ActionBindings::load(prefs.bindings());
+    let mut section = prefs.bindings().clone();
+    section.remove(CONSOLE_BINDING);
+    let (bindings, warnings) = ActionBindings::load(&section);
     for w in warnings {
         tracing::warn!(action = %w.name, value = %w.value, "Unusable binding, default kept");
     }
@@ -196,5 +200,62 @@ mod tests {
             bindings.get(StrategyAction::MoveForward),
             [Binding::Key(Key::W), stick(StickDir::Up)]
         );
+    }
+
+    /// Collects what `tracing` writes while `run` executes.
+    fn logged(run: impl FnOnce()) -> String {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("log sink").extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = Arc::clone(&buffer);
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || Sink(Arc::clone(&writer)))
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, run);
+        let bytes = buffer.lock().expect("log sink").clone();
+        String::from_utf8(bytes).expect("log output is utf-8")
+    }
+
+    #[test]
+    fn load_bindings_skips_the_console_entry() {
+        let (prefs, _) = Prefs::parse("[bindings]\nconsole = Backslash\nmove_forward = Q\n");
+        let mut loaded = None;
+
+        let log = logged(|| loaded = Some(load_bindings(&prefs)));
+
+        let bindings = loaded.expect("bindings loaded");
+        assert!(!log.contains("console"), "warned about the console: {log}");
+        assert_eq!(
+            bindings.get(StrategyAction::MoveForward),
+            [Binding::Key(Key::Q)]
+        );
+        assert_eq!(
+            bindings.get(StrategyAction::Jump),
+            StrategyAction::Jump.default_bindings()
+        );
+    }
+
+    #[test]
+    fn load_bindings_still_warns_about_an_unknown_entry() {
+        let (prefs, _) = Prefs::parse("[bindings]\nfly_to_moon = Q\n");
+
+        let log = logged(|| {
+            load_bindings(&prefs);
+        });
+
+        assert!(log.contains("fly_to_moon"), "no warning logged: {log}");
     }
 }
