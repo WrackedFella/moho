@@ -372,6 +372,13 @@ mod tests {
     }
 
     #[test]
+    fn with_mouse_sensitivity_sets_the_value() {
+        let prefs = Prefs::default().with_mouse_sensitivity(2.5);
+
+        assert_eq!(prefs.mouse_sensitivity(), 2.5);
+    }
+
+    #[test]
     fn with_mouse_smoothing_sets_the_flag() {
         assert!(
             Prefs::default()
