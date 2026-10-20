@@ -45,8 +45,8 @@ impl<G: Game> HeadlessLoop<G> {
     pub fn advance(&mut self, game: &mut G, frame_dt: Duration) -> u32 {
         let n = self.run_ticks(game, frame_dt);
         self.apply_paused_command(game);
-        let mut ctx = FrameContext::headless(self.tick_length, &self.clock)
-            .with_frame_dt(self.capped_frame_dt(frame_dt));
+        let mut ctx = FrameContext::headless(self.tick_length, &self.clock);
+        ctx.frame_dt = self.capped_frame_dt(frame_dt);
         game.frame(&mut ctx, self.step.alpha());
         self.apply_requests(ctx.loop_requests());
         n

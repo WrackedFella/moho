@@ -168,8 +168,8 @@ impl<G: Game> ApplicationHandler for Runner<G> {
                     self.sim.clock(),
                     self.renderer.as_deref_mut(),
                     self.audio.as_mut(),
-                )
-                .with_frame_dt(frame_dt);
+                );
+                ctx.frame_dt = frame_dt;
                 self.game.frame(&mut ctx, self.sim.alpha());
                 let requests = ctx.loop_requests();
                 let exit = ctx.exit_requested();
