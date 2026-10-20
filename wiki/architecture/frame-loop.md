@@ -35,7 +35,7 @@ Init failures (window, renderer) end `run` with an `AppError`; audio failure onl
 `FrameContext::renderer` and `audio` are `None` under `HeadlessLoop`, which drives the
 same `command`/`tick`/`frame` without a window (`init` and `event` never run).
 Every frame requests the next redraw, so frames run at the presentation rate and look turns the view on each one; `FrameContext::frame_dt` is the time since the previous frame, capped at `tick_length` times `max_catch_up_ticks`. Time beyond `max_catch_up_ticks` is dropped ([overview](overview.md#fixed-step-loop-moho_app)).
-A game pauses or changes `SimSpeed` through `set_paused` / `set_speed` on its event or frame context; the loop applies the request after the callback returns, from the next tick. While paused the loop runs no tick, still renders, and wakes once per tick length ([ADR-0018](../../_todo/adr/0018-paused-commands-apply-at-the-tick-boundary.md)).
+A game pauses or changes `SimSpeed` through `set_paused` / `set_speed` on its event or frame context; the loop applies the request after the callback returns, from the next tick. While paused the loop runs no tick and still renders every frame ([ADR-0018](../../_todo/adr/0018-paused-commands-apply-at-the-tick-boundary.md)).
 
 ## `Game::tick` order (`App`)
 
@@ -111,6 +111,7 @@ A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
 (Playing, first person, character controller active and not noclip) the eye is blended
 between the player's last two tick states by `alpha` (0 = previous tick, 1 = current) via
 `moho_physics::first_person_view` (`moho_physics/src/camera.rs`); look comes from the
-current tick turned by the pending look: what frames sampled (`ActionMap::sample_frame`) and no tick has consumed yet, pitch clamped with the same f32 operations as `moho_physics::step`, so the next tick lands on exactly the drawn angles. The free-cam draws `PlayerController::turned` the same way. `PhysicsController` keeps the pre-tick state (`previous`) for this and
-resets it on spawn, teleport and `reset`. In every other case the tick camera is drawn
+current tick turned by the pending look: what frames sampled (`ActionMap::sample_frame`) and no tick has consumed yet, pitch clamped with the same f32 operations as `moho_physics::step`, so the next tick lands on exactly the drawn angles. `PhysicsController` keeps the pre-tick state (`previous`) for this and
+resets it on spawn, teleport and `reset`. In every other first-person case (free-cam, or outside play) the tick camera is drawn
+turned by the pending look (`PlayerController::turned`), with no eye blend; in isometric the tick camera is drawn
 unchanged. Frames sample look only while Playing, focused and in first person; otherwise the pending look stays frozen and still drawn.

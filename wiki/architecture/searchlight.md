@@ -36,7 +36,7 @@ flowchart LR
 | `sim` | `SearchlightSim`: player character and body, rifle, spare magazines, dummies and enemies; emits `Feedback` |
 | `hud` | Text for rifle state, hits, health and death; the hit-edge direction; the death overlay |
 | `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (none yet, so only the engine's `help`, `clear` and `quit` run) |
-| `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples input, ticks the sim, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open), so the sim freezes instead of ticking with an ignored command |
+| `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples look every frame while focused and the console is closed (the camera draws the sim turned by the pending look, and `input::look_to_turn` is the one look mapping for command and camera), samples input, ticks the sim, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open), so the sim freezes instead of ticking with an ignored command; while it does, `command()` returns the default command without ending the action-map tick, so the look already shown stays pending and is not lost |
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
