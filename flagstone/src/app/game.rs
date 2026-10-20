@@ -6,8 +6,11 @@ use crate::{App, RenderRequest};
 use flagstone_game::controller::{CameraMode, ControllerInput};
 use flagstone_game::raycast::raycast_surface;
 use flagstone_ui::actions::StrategyAction;
+use flagstone_ui::console_commands::StrategyConsoleCommand;
 use moho_core::pointer::{Ray, screen_ray};
 use moho_input::action_map;
+use moho_input::bindings::Binding;
+use moho_ui_shell::{EngineCommand, Routing};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
@@ -15,7 +18,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 pub const POINTER_RAY_RANGE: f32 = 256.0;
 
 /// One tick's worth of player input.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct StrategyCommand {
     pub input: ControllerInput,
     pub jump: bool,
@@ -23,6 +26,10 @@ pub struct StrategyCommand {
     ///
     /// A ray rather than a pixel, so the command replays without a window.
     pub select: Option<Ray>,
+    /// Strategy console commands typed since the last tick.
+    pub console: Vec<StrategyConsoleCommand>,
+    /// Engine console commands typed since the last tick.
+    pub engine: Vec<EngineCommand>,
 }
 
 impl App {
@@ -77,7 +84,18 @@ impl App {
             },
             jump,
             select,
+            console: Vec::new(),
+            engine: Vec::new(),
         }
+    }
+
+    /// Where one key or mouse button press or release goes. The console sees it before egui or
+    /// the action map; `Opened` and `Closed` also enter and leave `GameState::ConsoleOpen`.
+    /// Outside `Playing` and `ConsoleOpen` the console is skipped and the input is the game's.
+    /// Takes a `Binding` so it is testable without a winit `KeyEvent`.
+    fn route_console_input(&mut self, input: Binding, pressed: bool, repeat: bool) -> Routing {
+        let _ = (input, pressed, repeat);
+        todo!()
     }
 
     /// Feeds pad events to the action map while playing with focus. Otherwise the
@@ -1794,6 +1812,167 @@ mod tests {
 
                 assert_eq!(app.escape_skips_the_ui(), expected, "row {label}");
             }
+        }
+    }
+
+    mod console {
+        use super::*;
+        use flagstone_ui::console_commands::StrategyConsoleCommand;
+        use moho_input::key::Key;
+        use moho_ui_shell::{EngineCommand, Routing};
+        use std::collections::BTreeMap;
+        use std::sync::{Arc, Mutex};
+
+        type SharedAdapter = Arc<Mutex<flagstone_ui::EguiAdapter>>;
+
+        fn noon() -> GameClock {
+            GameClock::new(12.0, 600.0, 420.0)
+        }
+
+        /// A playing app whose UI adapter is built from the app's own prefs.
+        fn app_with_console() -> (App, SharedAdapter) {
+            let mut app = playing_app();
+            let adapter = Arc::new(Mutex::new(flagstone_ui::EguiAdapter::new(
+                None,
+                app.event_bus.clone(),
+                app.prefs.clone(),
+            )));
+            app.ui_adapter = Some(adapter.clone());
+            (app, adapter)
+        }
+
+        fn press(app: &mut App, key: Key) -> Routing {
+            app.route_console_input(Binding::Key(key), true, false)
+        }
+
+        fn type_line(adapter: &SharedAdapter, line: &str) {
+            adapter
+                .lock()
+                .expect("adapter lock")
+                .console_mut()
+                .submit(line);
+        }
+
+        fn console_is_open(adapter: &SharedAdapter) -> bool {
+            adapter
+                .lock()
+                .expect("adapter lock")
+                .console_mut()
+                .is_open()
+        }
+
+        #[test]
+        fn console_key_opens_the_console_and_stops_game_time() {
+            let (mut app, adapter) = app_with_console();
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ).with_clock(noon()));
+            sim.step(&mut app, 60);
+            let playing = sim.clock().time_of_day();
+            assert!(playing > 12.0, "time runs while playing: {playing}");
+
+            let routing = press(&mut app, Key::Backtick);
+            let opened_at = sim.clock().time_of_day();
+            sim.step(&mut app, 60);
+
+            assert_eq!(routing, Routing::Opened);
+            assert_eq!(app.game_state, GameState::ConsoleOpen);
+            assert!(console_is_open(&adapter));
+            assert_eq!(sim.clock().time_of_day(), opened_at, "time ran while open");
+        }
+
+        #[test]
+        fn console_key_and_escape_close_the_console() {
+            for closing in [Key::Backtick, Key::Escape] {
+                let (mut app, adapter) = app_with_console();
+                assert_eq!(press(&mut app, Key::Backtick), Routing::Opened);
+
+                let routing = press(&mut app, closing);
+
+                assert_eq!(routing, Routing::Closed, "{closing:?}");
+                assert_eq!(app.game_state, GameState::Playing, "{closing:?}");
+                assert!(!console_is_open(&adapter), "{closing:?}");
+            }
+        }
+
+        #[test]
+        fn console_key_is_skipped_in_menu_and_paused() {
+            for state in [GameState::Menu, GameState::Paused] {
+                let (mut app, adapter) = app_with_console();
+                app.game_state = state;
+
+                press(&mut app, Key::Backtick);
+
+                assert_eq!(app.game_state, state, "{state:?}");
+                assert!(!console_is_open(&adapter), "{state:?}");
+            }
+        }
+
+        #[test]
+        fn a_rebound_console_key_opens_the_console() {
+            let mut app = playing_app();
+            app.prefs.set_bindings(BTreeMap::from([(
+                "console".to_owned(),
+                "Backslash".to_owned(),
+            )]));
+            let adapter = Arc::new(Mutex::new(flagstone_ui::EguiAdapter::new(
+                None,
+                app.event_bus.clone(),
+                app.prefs.clone(),
+            )));
+            app.ui_adapter = Some(adapter.clone());
+
+            let default_key = press(&mut app, Key::Backtick);
+            let default_state = app.game_state;
+            let rebound = press(&mut app, Key::Backslash);
+
+            assert_eq!(default_key, Routing::Game);
+            assert_eq!(default_state, GameState::Playing);
+            assert_eq!(rebound, Routing::Opened);
+            assert_eq!(app.game_state, GameState::ConsoleOpen);
+            assert!(console_is_open(&adapter));
+        }
+
+        #[test]
+        fn command_carries_console_commands_outside_playing() {
+            let (mut app, adapter) = app_with_console();
+            press(&mut app, Key::Backtick);
+            type_line(&adapter, "time 18");
+            type_line(&adapter, "quit");
+            assert_eq!(app.game_state, GameState::ConsoleOpen);
+
+            let command = Game::command(&mut app);
+            let drained = Game::command(&mut app);
+
+            assert_eq!(
+                command.console,
+                vec![StrategyConsoleCommand::SetTimeOfDay(18.0)]
+            );
+            assert_eq!(command.engine, vec![EngineCommand::Quit]);
+            assert_eq!(command.input.forward, 0.0);
+            assert!(!command.jump);
+            assert!(drained.console.is_empty(), "commands are delivered once");
+            assert!(drained.engine.is_empty(), "commands are delivered once");
+        }
+
+        #[test]
+        fn tick_applies_the_console_commands_while_the_console_is_open() {
+            let (mut app, adapter) = app_with_console();
+            press(&mut app, Key::Backtick);
+            type_line(&adapter, "time 18");
+            type_line(&adapter, "noclip");
+            type_line(&adapter, "quit");
+            let command = Game::command(&mut app);
+            let mut clock = noon();
+
+            let mut ctx = TickContext {
+                tick: 0,
+                tick_length: tick(),
+                clock: &mut clock,
+            };
+            Game::tick(&mut app, &mut ctx, &command);
+
+            assert_eq!(clock.time_of_day(), 18.0);
+            assert!(app.physics.noclip);
+            assert!(app.exit_requested);
         }
     }
 }

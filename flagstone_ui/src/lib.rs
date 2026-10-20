@@ -29,6 +29,8 @@ impl moho_render_api::UiFrameSource for StubUi {
 pub mod actions;
 pub mod adapter;
 
+pub mod console_commands;
+
 pub mod app_state;
 
 pub mod screens;

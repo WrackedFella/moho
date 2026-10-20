@@ -165,4 +165,32 @@ mod tests {
             [Binding::Key(Key::Q)]
         );
     }
+
+    #[test]
+    fn writing_bindings_keeps_the_console_entry() {
+        let (mut prefs, _) = Prefs::parse("[bindings]\nconsole = Backslash\nmove_forward = W\n");
+        let mut registry = BindingRegistry::from_prefs(&prefs);
+        registry.set_binding(StrategyAction::MoveForward, vec![Binding::Key(Key::Q)]);
+
+        registry.write_to_prefs(&mut prefs);
+
+        assert_eq!(
+            prefs.bindings().get("console").map(String::as_str),
+            Some("Backslash")
+        );
+        assert_eq!(
+            BindingRegistry::from_prefs(&prefs).get_binding(StrategyAction::MoveForward),
+            [Binding::Key(Key::Q)]
+        );
+    }
+
+    #[test]
+    fn writing_bindings_adds_no_console_entry_when_the_prefs_have_none() {
+        let mut prefs = Prefs::default();
+        let registry = BindingRegistry::from_prefs(&prefs);
+
+        registry.write_to_prefs(&mut prefs);
+
+        assert_eq!(prefs.bindings().get("console"), None);
+    }
 }

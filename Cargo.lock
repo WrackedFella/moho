@@ -929,6 +929,7 @@ dependencies = [
  "moho_physics",
  "moho_render_api",
  "moho_renderer",
+ "moho_ui_shell",
  "proptest",
  "serde",
  "tempfile",
@@ -965,6 +966,7 @@ dependencies = [
  "rand 0.10.2",
  "tempfile",
  "tracing",
+ "tracing-subscriber",
  "winit",
 ]
 

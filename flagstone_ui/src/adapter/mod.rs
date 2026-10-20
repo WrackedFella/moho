@@ -338,6 +338,36 @@ impl EguiAdapter {
         self.ui_state.overlay_manager.update_data(data);
     }
 
+    /// Routes one key or button through the console before egui sees it.
+    pub fn on_key(
+        &mut self,
+        input: moho_input::bindings::Binding,
+        pressed: bool,
+        repeat: bool,
+    ) -> moho_ui_shell::Routing {
+        let _ = (input, pressed, repeat);
+        todo!()
+    }
+
+    /// The strategy console, for typing a line into it.
+    pub fn console_mut(
+        &mut self,
+    ) -> &mut moho_ui_shell::Console<crate::console_commands::StrategyConsoleCommand> {
+        todo!()
+    }
+
+    /// Drains the strategy commands queued by the console.
+    pub fn take_console_commands(
+        &mut self,
+    ) -> Vec<crate::console_commands::StrategyConsoleCommand> {
+        todo!()
+    }
+
+    /// Drains the engine commands queued by the console.
+    pub fn take_engine_commands(&mut self) -> Vec<moho_ui_shell::EngineCommand> {
+        todo!()
+    }
+
     /// Toggle the debug HUD overlay (F3).
     pub fn toggle_debug_hud(&mut self) {
         self.ui_state.overlay_manager.toggle("debug");

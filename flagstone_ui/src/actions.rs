@@ -197,4 +197,61 @@ mod tests {
             [Binding::Key(Key::W), stick(StickDir::Up)]
         );
     }
+
+    /// Collects what `tracing` writes while `run` executes.
+    fn logged(run: impl FnOnce()) -> String {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("log sink").extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = Arc::clone(&buffer);
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || Sink(Arc::clone(&writer)))
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, run);
+        let bytes = buffer.lock().expect("log sink").clone();
+        String::from_utf8(bytes).expect("log output is utf-8")
+    }
+
+    #[test]
+    fn load_bindings_skips_the_console_entry() {
+        let (prefs, _) = Prefs::parse("[bindings]\nconsole = Backslash\nmove_forward = Q\n");
+        let mut loaded = None;
+
+        let log = logged(|| loaded = Some(load_bindings(&prefs)));
+
+        let bindings = loaded.expect("bindings loaded");
+        assert!(!log.contains("console"), "warned about the console: {log}");
+        assert_eq!(
+            bindings.get(StrategyAction::MoveForward),
+            [Binding::Key(Key::Q)]
+        );
+        assert_eq!(
+            bindings.get(StrategyAction::Jump),
+            StrategyAction::Jump.default_bindings()
+        );
+    }
+
+    #[test]
+    fn load_bindings_still_warns_about_an_unknown_entry() {
+        let (prefs, _) = Prefs::parse("[bindings]\nfly_to_moon = Q\n");
+
+        let log = logged(|| {
+            load_bindings(&prefs);
+        });
+
+        assert!(log.contains("fly_to_moon"), "no warning logged: {log}");
+    }
 }
