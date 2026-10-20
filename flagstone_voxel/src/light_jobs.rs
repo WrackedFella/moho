@@ -209,13 +209,6 @@ impl Default for LightFrameBudget {
     }
 }
 
-impl LightFrameBudget {
-    /// Balanced budget for typical gameplay
-    pub fn balanced() -> Self {
-        Self::default()
-    }
-}
-
 /// Light update job queue with frame budget
 pub struct LightJobQueue {
     /// Pending jobs in priority order
@@ -232,11 +225,6 @@ pub struct LightJobQueue {
 
     /// Light propagator (reused across jobs)
     propagator: LightPropagator,
-
-    /// Statistics
-    total_jobs_processed: u64,
-    total_blocks_processed: u64,
-    total_time_us: u64,
 }
 
 impl LightJobQueue {
@@ -248,25 +236,12 @@ impl LightJobQueue {
             results: VecDeque::new(),
             budget,
             propagator: LightPropagator::new(),
-            total_jobs_processed: 0,
-            total_blocks_processed: 0,
-            total_time_us: 0,
         }
     }
 
-    /// Create with default balanced budget
+    /// Create with the default frame budget
     pub fn with_default_budget() -> Self {
-        Self::new(LightFrameBudget::balanced())
-    }
-
-    /// Set the frame budget configuration
-    pub fn set_budget(&mut self, budget: LightFrameBudget) {
-        self.budget = budget;
-    }
-
-    /// Get current frame budget
-    pub fn budget(&self) -> LightFrameBudget {
-        self.budget
+        Self::new(LightFrameBudget::default())
     }
 
     /// Submit a new light update job
@@ -335,16 +310,9 @@ impl LightJobQueue {
             }
 
             // Process the job
-            let job_start = std::time::Instant::now();
             let result = self.process_job(grid, job);
-            let job_time_us = job_start.elapsed().as_micros() as u64;
 
             blocks_processed_this_frame += result.blocks_processed;
-
-            // Update statistics
-            self.total_jobs_processed += 1;
-            self.total_blocks_processed += result.blocks_processed as u64;
-            self.total_time_us += job_time_us;
 
             // Remove cancellation token
             self.cancellation_tokens.remove(&result.job.id);
@@ -425,45 +393,6 @@ impl LightJobQueue {
     /// Get number of pending jobs
     pub fn pending_jobs(&self) -> usize {
         self.jobs.len()
-    }
-
-    /// Get statistics
-    pub fn stats(&self) -> LightJobStats {
-        LightJobStats {
-            total_jobs_processed: self.total_jobs_processed,
-            total_blocks_processed: self.total_blocks_processed,
-            total_time_us: self.total_time_us,
-            average_time_per_job_us: self
-                .total_time_us
-                .checked_div(self.total_jobs_processed)
-                .unwrap_or(0),
-            average_blocks_per_job: self
-                .total_blocks_processed
-                .checked_div(self.total_jobs_processed)
-                .unwrap_or(0),
-        }
-    }
-}
-
-/// Statistics for light job processing
-#[derive(Debug, Clone, Copy)]
-pub struct LightJobStats {
-    pub total_jobs_processed: u64,
-    pub total_blocks_processed: u64,
-    pub total_time_us: u64,
-    pub average_time_per_job_us: u64,
-    pub average_blocks_per_job: u64,
-}
-
-impl LightJobStats {
-    /// Get average time per job in milliseconds
-    pub fn average_time_ms(&self) -> f64 {
-        self.average_time_per_job_us as f64 / 1000.0
-    }
-
-    /// Get total time in milliseconds
-    pub fn total_time_ms(&self) -> f64 {
-        self.total_time_us as f64 / 1000.0
     }
 }
 
@@ -778,29 +707,5 @@ mod tests {
             .with_player_distance(player_pos);
 
         assert!(job_close.priority < job_far.priority);
-    }
-
-    /// Counts jobs, not frames.
-    #[test]
-    fn test_stats_tracking() {
-        let mut grid = transparent_grid();
-        let mut queue = LightJobQueue::new(unlimited_budget());
-
-        for x in 0..5i32 {
-            for y in 0..5i32 {
-                for z in 0..5i32 {
-                    grid.place_block(IVec3::new(x, y, z), 1, None);
-                }
-            }
-        }
-
-        for i in 0..3i32 {
-            let job = LightUpdateJob::add_light(IVec3::new(i, 2, 2), [15, 0, 0], 10);
-            queue.submit(job);
-        }
-
-        queue.process_frame(&mut grid);
-
-        assert_eq!(queue.stats().total_jobs_processed, 3);
     }
 }

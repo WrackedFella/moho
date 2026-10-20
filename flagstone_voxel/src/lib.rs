@@ -39,13 +39,13 @@ pub use grid::{
     BlockData, BlockPos, CHUNK_FILE, MaterialLighting, MaterialRegistry, ResourceData, VoxelGrid,
 };
 pub use light_jobs::{
-    JobId, LightCancellationToken, LightFrameBudget, LightJobQueue, LightJobStats, LightUpdateJob,
-    LightUpdateOp, LightUpdateResult,
+    JobId, LightCancellationToken, LightFrameBudget, LightJobQueue, LightUpdateJob, LightUpdateOp,
+    LightUpdateResult,
 };
 pub use light_propagation::{LightChannel, LightPropagator};
-pub use light_sky::{dirty_chunks_below, ensure_chunk_sky_ready, recompute_sky_exposure};
+pub use light_sky::{dirty_chunks_below, recompute_sky_exposure};
 pub use light_storage::{CHUNK_SIZE as LIGHT_CHUNK_SIZE, ChunkLight};
-pub use light_system::{LightSystem, LightSystemStats};
+pub use light_system::LightSystem;
 pub use materials::MaterialType;
 pub use mesh::{BlockyMeshGenerator, ChunkContent, HybridMeshGenerator, MarchingCubes, VoxelMesh};
 pub use modification::VoxelMutator;

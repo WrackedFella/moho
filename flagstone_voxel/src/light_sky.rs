@@ -122,11 +122,6 @@ fn world_column_height(
     highest
 }
 
-/// Convenience: ensure sky-exposure is computed for the chunk containing `pos`.
-pub fn ensure_chunk_sky_ready(grid: &mut VoxelGrid, chunk_pos: IVec3) {
-    recompute_sky_exposure(grid, chunk_pos);
-}
-
 /// Mark all loaded chunks below `chunk_pos` (in the same xz-column-of-chunks)
 /// as `sky_dirty`. Called after any block change in `chunk_pos` that could
 /// shift the world column height seen by lower chunks.

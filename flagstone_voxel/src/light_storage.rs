@@ -104,11 +104,6 @@ impl ChunkLight {
         }
     }
 
-    /// Clear all sky-exposed bits.
-    pub fn clear_sky(&mut self) {
-        self.sky_exposed.fill(0);
-    }
-
     // --- RGB block-light ---
 
     #[inline]
@@ -125,13 +120,6 @@ impl ChunkLight {
         self.block_light_r[idx] = rgb[0].min(15);
         self.block_light_g[idx] = rgb[1].min(15);
         self.block_light_b[idx] = rgb[2].min(15);
-    }
-
-    /// Zero all block-light channels.
-    pub fn clear_block_light(&mut self) {
-        self.block_light_r.fill(0);
-        self.block_light_g.fill(0);
-        self.block_light_b.fill(0);
     }
 
     // --- column heightmap ---

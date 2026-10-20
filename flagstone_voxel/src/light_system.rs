@@ -20,23 +20,21 @@
 //!
 //! let grid = VoxelGrid::new(16);
 //! let event_bus = EventBus::new();
-//! let mut light_system = LightSystem::new(grid, event_bus, LightFrameBudget::balanced());
+//! let mut light_system = LightSystem::new(grid, event_bus, LightFrameBudget::default());
 //!
 //! // Process light updates each frame
 //! light_system.process_frame();
 //!
-//! // Check affected chunks and trigger mesh regeneration
-//! let affected = light_system.collect_affected_chunks();
+//! // Notify the mesh system of chunks whose light changed
+//! let dirtied = light_system.emit_dirty_events();
 //! ```
 
 use super::grid::VoxelGrid;
-use super::light_jobs::{
-    LightFrameBudget, LightJobQueue, LightJobStats, LightUpdateJob, LightUpdateResult,
-};
+use super::light_jobs::{LightFrameBudget, LightJobQueue, LightUpdateJob};
 use crate::events::{BlockChangeReason, WorldEvent};
 use glam::{IVec3, Vec3};
 use moho_core::events::EventBus;
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 /// Light system manager coordinating light propagation with events
@@ -55,13 +53,6 @@ pub struct LightSystem {
 
     /// Chunks affected by recent light updates (pending mesh dirty events)
     affected_chunks: HashSet<IVec3>,
-
-    /// Recently completed light update results
-    completed_results: VecDeque<LightUpdateResult>,
-
-    /// Statistics
-    total_jobs_submitted: u64,
-    total_chunks_affected: u64,
 }
 
 impl LightSystem {
@@ -80,35 +71,17 @@ impl LightSystem {
             event_bus,
             player_pos: Vec3::ZERO,
             affected_chunks: HashSet::new(),
-            completed_results: VecDeque::new(),
-            total_jobs_submitted: 0,
-            total_chunks_affected: 0,
         }
     }
 
-    /// Create with default balanced budget
+    /// Create with the default frame budget
     pub fn with_default_budget(grid: VoxelGrid, event_bus: Arc<EventBus>) -> Self {
-        Self::new(grid, event_bus, LightFrameBudget::balanced())
+        Self::new(grid, event_bus, LightFrameBudget::default())
     }
 
     /// Update player position for priority calculation
     pub fn set_player_position(&mut self, pos: Vec3) {
         self.player_pos = pos;
-    }
-
-    /// Get current player position
-    pub fn player_position(&self) -> Vec3 {
-        self.player_pos
-    }
-
-    /// Set frame budget configuration
-    pub fn set_budget(&mut self, budget: LightFrameBudget) {
-        self.job_queue.set_budget(budget);
-    }
-
-    /// Get current frame budget
-    pub fn budget(&self) -> LightFrameBudget {
-        self.job_queue.budget()
     }
 
     /// Handle a block placed event.
@@ -121,13 +94,11 @@ impl LightSystem {
                 let job =
                     LightUpdateJob::remove_light(position, 0).with_player_distance(self.player_pos);
                 self.job_queue.submit(job);
-                self.total_jobs_submitted += 1;
             }
         } else {
             let job = LightUpdateJob::add_light(position, emission, 0)
                 .with_player_distance(self.player_pos);
             self.job_queue.submit(job);
-            self.total_jobs_submitted += 1;
         }
     }
 
@@ -136,7 +107,6 @@ impl LightSystem {
         // Remove any block-light the removed block was contributing or blocking.
         let job = LightUpdateJob::remove_light(position, 0).with_player_distance(self.player_pos);
         self.job_queue.submit(job);
-        self.total_jobs_submitted += 1;
 
         tracing::debug!(
             pos = ?position,
@@ -166,7 +136,6 @@ impl LightSystem {
                 };
                 self.job_queue
                     .submit(job.with_player_distance(self.player_pos));
-                self.total_jobs_submitted += 1;
             }
         }
     }
@@ -184,16 +153,6 @@ impl LightSystem {
             // Track affected chunks
             for &chunk_pos in &result.affected_chunks {
                 self.affected_chunks.insert(chunk_pos);
-            }
-
-            self.total_chunks_affected += result.affected_chunks.len() as u64;
-
-            // Store result for external access
-            self.completed_results.push_back(result);
-
-            // Limit stored results to prevent unbounded growth
-            if self.completed_results.len() > 100 {
-                self.completed_results.pop_front();
             }
         }
 
@@ -232,50 +191,9 @@ impl LightSystem {
         count
     }
 
-    /// Collect affected chunks without emitting events
-    ///
-    /// Returns a list of chunks affected by recent light updates
-    pub fn collect_affected_chunks(&mut self) -> Vec<IVec3> {
-        let chunks: Vec<_> = self.affected_chunks.iter().copied().collect();
-        self.affected_chunks.clear();
-        chunks
-    }
-
-    /// Get recently completed light update results
-    pub fn recent_results(&self) -> &VecDeque<LightUpdateResult> {
-        &self.completed_results
-    }
-
     /// Get number of pending jobs
     pub fn pending_jobs(&self) -> usize {
         self.job_queue.pending_jobs()
-    }
-
-    /// Get light job queue statistics
-    pub fn stats(&self) -> LightJobStats {
-        self.job_queue.stats()
-    }
-
-    /// Get system-wide statistics
-    pub fn system_stats(&self) -> LightSystemStats {
-        LightSystemStats {
-            total_jobs_submitted: self.total_jobs_submitted,
-            total_chunks_affected: self.total_chunks_affected,
-            pending_jobs: self.pending_jobs(),
-            queue_stats: self.stats(),
-        }
-    }
-
-    /// Subscribe to world events
-    ///
-    /// This sets up event listeners for BlockPlaced and BlockRemoved events.
-    /// Should be called once during initialization.
-    pub fn subscribe_to_events(&mut self) {
-        // Note: Event subscription would typically use callbacks or channels
-        // For now, events should be forwarded to on_block_placed/on_block_removed
-        // by the caller (e.g., main game loop)
-
-        tracing::info!("LightSystem ready to process block modification events");
     }
 
     /// Process a WorldEvent
@@ -316,33 +234,6 @@ impl LightSystem {
     /// Get mutable reference to the underlying voxel grid
     pub fn grid_mut(&mut self) -> &mut VoxelGrid {
         &mut self.grid
-    }
-}
-
-/// System-wide statistics for the light system
-#[derive(Debug, Clone, Copy)]
-pub struct LightSystemStats {
-    /// Total jobs submitted since creation
-    pub total_jobs_submitted: u64,
-
-    /// Total chunks affected by light updates
-    pub total_chunks_affected: u64,
-
-    /// Current number of pending jobs
-    pub pending_jobs: usize,
-
-    /// Light job queue statistics
-    pub queue_stats: LightJobStats,
-}
-
-impl LightSystemStats {
-    /// Get average chunks affected per job
-    pub fn average_chunks_per_job(&self) -> f64 {
-        if self.queue_stats.total_jobs_processed > 0 {
-            self.total_chunks_affected as f64 / self.queue_stats.total_jobs_processed as f64
-        } else {
-            0.0
-        }
     }
 }
 

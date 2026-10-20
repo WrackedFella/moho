@@ -297,21 +297,9 @@ impl LightPropagator {
             if stored == 0 {
                 continue;
             }
-            if stored != node.level {
-                // A brighter surviving source already owns this voxel — re-seed from it.
-                if stored > 0
-                    && !relight
-                        .iter()
-                        .any(|r| r.chunk_pos == node.chunk_pos && r.idx == node.idx)
-                {
-                    relight.push(PropNode {
-                        chunk_pos: node.chunk_pos,
-                        idx: node.idx,
-                        level: stored,
-                    });
-                }
-                continue;
-            }
+            // A dark node carries the value stored when it was pushed, and the only
+            // write in this loop zeroes a voxel, which the check above skips.
+            debug_assert_eq!(stored, node.level);
             // Clear this voxel.
             Self::write_ch(grid, node.chunk_pos, node.idx, ch, 0);
             affected.insert(node.chunk_pos);
