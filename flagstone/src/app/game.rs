@@ -103,7 +103,10 @@ impl App {
         };
         let routing = match ui_adapter.lock() {
             Ok(mut adapter) => adapter.on_key(input, pressed, repeat),
-            Err(_) => return Routing::Game,
+            Err(error) => {
+                tracing::warn!(%error, "UI adapter lock poisoned; console input skipped");
+                return Routing::Game;
+            }
         };
         // The adapter lock is released: the transitions lock it again.
         match routing {
@@ -124,7 +127,10 @@ impl App {
                 adapter.take_console_commands(),
                 adapter.take_engine_commands(),
             ),
-            Err(_) => (Vec::new(), Vec::new()),
+            Err(error) => {
+                tracing::warn!(%error, "UI adapter lock poisoned; console commands dropped");
+                (Vec::new(), Vec::new())
+            }
         }
     }
 
