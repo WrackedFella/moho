@@ -351,21 +351,18 @@ impl EguiAdapter {
         self.ui_state.console.on_key(input, pressed, repeat)
     }
 
-    /// The strategy console, for typing a line into it.
     pub fn console_mut(
         &mut self,
     ) -> &mut moho_ui_shell::Console<crate::console_commands::StrategyConsoleCommand> {
         &mut self.ui_state.console
     }
 
-    /// Drains the strategy commands queued by the console.
     pub fn take_console_commands(
         &mut self,
     ) -> Vec<crate::console_commands::StrategyConsoleCommand> {
         self.ui_state.console.take_commands()
     }
 
-    /// Drains the engine commands queued by the console.
     pub fn take_engine_commands(&mut self) -> Vec<moho_ui_shell::EngineCommand> {
         self.ui_state.console.take_engine_commands()
     }
