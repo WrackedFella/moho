@@ -1040,6 +1040,297 @@ mod tests {
     }
 
     #[test]
+    fn cap_chunk_layers_spans_the_layers_within_a_block_of_the_cut() {
+        let rows = [
+            (8.0, 16, 0..=0),
+            (16.25, 16, 0..=1),
+            (15.5, 16, 0..=1),
+            (40.0, 16, 2..=2),
+            (-0.5, 16, -1..=0),
+            (-20.0, 16, -2..=-2),
+            (100.0, 16, 6..=6),
+            (8.0, 8, 0..=1),
+            (20.0, 8, 2..=2),
+        ];
+
+        for (cut, size, expected) in rows {
+            assert_eq!(
+                cap_chunk_layers(cut, size),
+                expected,
+                "cut {cut}, chunk size {size}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_coarse_chunk_off_the_origin_is_capped_in_its_own_cells() {
+        for (layer, block_y, cut) in [(1, 18, 18.0f32), (-1, -14, -14.0)] {
+            let mut grid = VoxelGrid::new(CHUNK);
+            grid.place_block(IVec3::new(1, block_y, 1), SMOOTH, None);
+
+            let mesh = cut_cap_mesh(&grid, IVec3::new(0, layer, 0), 1, cut);
+
+            assert_near(
+                cap_area(&mesh),
+                4.0,
+                &format!("coarse cell cap in layer {layer}"),
+            );
+            assert_eq!(footprint(&mesh), ([0.0, 2.0], [0.0, 2.0]));
+        }
+    }
+
+    #[test]
+    fn a_probe_on_the_surface_of_flat_ground_caps_nothing() {
+        let mut grid = VoxelGrid::new(CHUNK);
+        fill(&mut grid, [1, 1, 1], [14, 4, 14], SMOOTH);
+        let cut = cut_landing_on(5.0);
+        assert_eq!(cut + CAP_PROBE, 5.0);
+
+        let mesh = cap(&grid, cut);
+
+        assert_empty(&mesh, "the probe lies on the ground's top surface");
+    }
+
+    fn ring_area(ring: &[Vec2]) -> f32 {
+        (0..ring.len())
+            .map(|i| ring[i].perp_dot(ring[(i + 1) % ring.len()]))
+            .sum::<f32>()
+            / 2.0
+    }
+
+    fn in_ring(ring: &[Vec2], p: Vec2) -> bool {
+        (0..ring.len())
+            .filter(|&i| {
+                let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+                (a.y > p.y) != (b.y > p.y) && a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x) > p.x
+            })
+            .count()
+            % 2
+            == 1
+    }
+
+    /// Triangles that are all counter-clockwise, cover the ring's area, and cover every
+    /// sample point inside it once and every point outside it never.
+    fn assert_triangulates(ring: &[Vec2], tris: &[[Vec2; 3]]) {
+        for t in tris {
+            assert!(
+                turn(t[0], t[1], t[2]) > 0.0,
+                "{t:?} is not counter-clockwise"
+            );
+        }
+        let area: f32 = tris.iter().map(|t| turn(t[0], t[1], t[2]) / 2.0).sum();
+        assert!(
+            (area - ring_area(ring)).abs() < 1e-4,
+            "triangles cover {area}, ring is {}",
+            ring_area(ring)
+        );
+        for i in 0..40 {
+            for j in 0..40 {
+                let p = Vec2::new(0.0713 + i as f32 * 0.1013, 0.0391 + j as f32 * 0.1007);
+                let covering = tris
+                    .iter()
+                    .filter(|t| {
+                        turn(t[0], t[1], p) > 1e-6
+                            && turn(t[1], t[2], p) > 1e-6
+                            && turn(t[2], t[0], p) > 1e-6
+                    })
+                    .count();
+                assert_eq!(covering, usize::from(in_ring(ring, p)), "point {p:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn ear_clip_skips_an_ear_that_holds_a_reflex_vertex() {
+        let ring = vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(4.0, 0.0),
+            Vec2::new(4.0, 4.0),
+            Vec2::new(2.0, 1.0),
+            Vec2::new(0.0, 4.0),
+        ];
+
+        let tris = ear_clip(ring.clone());
+
+        assert_eq!(tris.len(), 3);
+        assert_triangulates(&ring, &tris);
+    }
+
+    #[test]
+    fn ear_clip_skips_an_ear_with_a_vertex_on_its_edge() {
+        // (2, 2) lies on the diagonal of the ear at (4, 0) and the ring bends inward there.
+        let ring = vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(4.0, 0.0),
+            Vec2::new(4.0, 4.0),
+            Vec2::new(2.0, 2.0),
+            Vec2::new(3.0, 1.0),
+            Vec2::new(2.0, 2.0),
+            Vec2::new(0.0, 4.0),
+        ];
+
+        let tris = ear_clip(ring.clone());
+
+        assert_triangulates(&ring, &tris);
+    }
+
+    #[test]
+    fn ear_clip_picks_the_first_ear_no_other_vertex_touches() {
+        let cases: [(&[Vec2], &[[Vec2; 3]]); 4] = [
+            (
+                &[
+                    Vec2::new(2.0, 1.0),
+                    Vec2::new(2.0, 0.0),
+                    Vec2::new(4.0, 0.0),
+                    Vec2::new(3.0, 4.0),
+                    Vec2::new(0.0, 3.0),
+                ],
+                &[
+                    [
+                        Vec2::new(2.0, 1.0),
+                        Vec2::new(2.0, 0.0),
+                        Vec2::new(4.0, 0.0),
+                    ],
+                    [
+                        Vec2::new(0.0, 3.0),
+                        Vec2::new(2.0, 1.0),
+                        Vec2::new(4.0, 0.0),
+                    ],
+                    [
+                        Vec2::new(0.0, 3.0),
+                        Vec2::new(4.0, 0.0),
+                        Vec2::new(3.0, 4.0),
+                    ],
+                ],
+            ),
+            (
+                &[
+                    Vec2::new(0.0, 1.0),
+                    Vec2::new(2.0, 1.0),
+                    Vec2::new(2.0, 0.0),
+                    Vec2::new(4.0, 1.0),
+                    Vec2::new(3.0, 4.0),
+                    Vec2::new(1.0, 3.0),
+                ],
+                &[
+                    [
+                        Vec2::new(1.0, 3.0),
+                        Vec2::new(0.0, 1.0),
+                        Vec2::new(2.0, 1.0),
+                    ],
+                    [
+                        Vec2::new(2.0, 1.0),
+                        Vec2::new(2.0, 0.0),
+                        Vec2::new(4.0, 1.0),
+                    ],
+                    [
+                        Vec2::new(1.0, 3.0),
+                        Vec2::new(2.0, 1.0),
+                        Vec2::new(4.0, 1.0),
+                    ],
+                    [
+                        Vec2::new(1.0, 3.0),
+                        Vec2::new(4.0, 1.0),
+                        Vec2::new(3.0, 4.0),
+                    ],
+                ],
+            ),
+            (
+                &[
+                    Vec2::new(3.0, 0.0),
+                    Vec2::new(4.0, 0.0),
+                    Vec2::new(4.0, 1.0),
+                    Vec2::new(3.0, 4.0),
+                    Vec2::new(2.0, 4.0),
+                    Vec2::new(1.0, 4.0),
+                    Vec2::new(2.0, 3.0),
+                ],
+                &[
+                    [
+                        Vec2::new(2.0, 3.0),
+                        Vec2::new(3.0, 0.0),
+                        Vec2::new(4.0, 0.0),
+                    ],
+                    [
+                        Vec2::new(2.0, 3.0),
+                        Vec2::new(4.0, 0.0),
+                        Vec2::new(4.0, 1.0),
+                    ],
+                    [
+                        Vec2::new(1.0, 4.0),
+                        Vec2::new(4.0, 1.0),
+                        Vec2::new(3.0, 4.0),
+                    ],
+                ],
+            ),
+            (
+                &[
+                    Vec2::new(0.0, 1.0),
+                    Vec2::new(3.0, 0.0),
+                    Vec2::new(4.0, 1.0),
+                    Vec2::new(3.0, 2.0),
+                    Vec2::new(2.0, 4.0),
+                    Vec2::new(2.0, 3.0),
+                    Vec2::new(1.0, 2.0),
+                ],
+                &[
+                    [
+                        Vec2::new(2.0, 3.0),
+                        Vec2::new(0.0, 1.0),
+                        Vec2::new(3.0, 0.0),
+                    ],
+                    [
+                        Vec2::new(3.0, 0.0),
+                        Vec2::new(4.0, 1.0),
+                        Vec2::new(3.0, 2.0),
+                    ],
+                    [
+                        Vec2::new(2.0, 3.0),
+                        Vec2::new(3.0, 0.0),
+                        Vec2::new(3.0, 2.0),
+                    ],
+                    [
+                        Vec2::new(2.0, 3.0),
+                        Vec2::new(3.0, 2.0),
+                        Vec2::new(2.0, 4.0),
+                    ],
+                ],
+            ),
+        ];
+
+        for (ring, expected) in cases {
+            assert_eq!(ear_clip(ring.to_vec()), expected, "ring {ring:?}");
+        }
+    }
+
+    #[test]
+    fn ear_clip_drops_a_vertex_by_its_offset_from_the_line_not_the_area() {
+        let square = |side: f32, off: f32| {
+            vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(side / 2.0, -off),
+                Vec2::new(side, 0.0),
+                Vec2::new(side, side),
+                Vec2::new(0.0, side),
+            ]
+        };
+
+        let far_and_nearly_straight = ear_clip(square(2.0, 5e-7));
+        let near_and_bent = ear_clip(square(0.01, 1e-5));
+
+        assert_eq!(
+            far_and_nearly_straight.len(),
+            2,
+            "5e-7 off a 2 long line is straight"
+        );
+        assert_eq!(
+            near_and_bent.len(),
+            3,
+            "1e-5 off a 0.01 long line is a corner"
+        );
+    }
+
+    #[test]
     fn blocky_block_on_a_chunk_layer_border_is_capped_once() {
         let mut grid = VoxelGrid::new(CHUNK);
         grid.place_block(IVec3::new(3, 16, 5), BLOCKY, None);
@@ -1089,6 +1380,30 @@ mod tests {
                     let on_wall = walls.iter().any(|w| distance_to_segment(p, w.a, w.b) < WALL_TOLERANCE);
                     prop_assert!(on_wall, "cap edge point {:?} at cut {} is off the wall", p, cut);
                 }
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+
+        #[test]
+        fn only_chunks_in_the_cap_layers_are_capped(
+            (field, cut) in fields_on(inside_blocks(1, 30))
+                .prop_flat_map(|f| { let cut = heights_through(&f); (Just(f), cut) }),
+            blocky in any::<bool>(),
+            lod in 0u8..2,
+        ) {
+            let grid = field.grid(if blocky { BLOCKY } else { SMOOTH });
+            let layers = cap_chunk_layers(cut, CHUNK);
+
+            prop_assert!(layers.end() - layers.start() <= 1, "{:?} spans over two layers", layers);
+            for (x, y, z) in (0..2).flat_map(|x| (-1..3).flat_map(move |y| (0..2).map(move |z| (x, y, z)))) {
+                let mesh = cut_cap_mesh(&grid, IVec3::new(x, y, z), lod, cut);
+                prop_assert!(
+                    mesh.indices.is_empty() || layers.contains(&y),
+                    "chunk layer {} is capped at {} outside {:?}", y, cut, layers
+                );
             }
         }
     }

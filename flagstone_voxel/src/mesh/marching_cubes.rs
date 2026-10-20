@@ -903,6 +903,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_corner_at_exactly_the_iso_level_is_air() {
+        let mut field = [[[0.0f32; 18]; 18]; 18];
+        field[5][5][5] = 0.5;
+
+        let mesh = MarchingCubes::generate_mesh(&field, 16);
+
+        assert!(
+            mesh.indices.is_empty(),
+            "{} triangles",
+            mesh.indices.len() / 3
+        );
+        assert_eq!(cube_index(&field, 5, 5, 5), 0);
+        field[5][5][5] = 0.5001;
+        assert_eq!(
+            cube_index(&field, 5, 5, 5),
+            1,
+            "just over the iso level is solid"
+        );
+    }
+
+    #[test]
     fn test_create_density_field() {
         let mut blocks = [[[false; 16]; 16]; 16];
         blocks[0][0][0] = true;
