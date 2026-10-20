@@ -14,7 +14,22 @@ use glam::{IVec3, Vec3};
 // path and the grid used by raycasting. Two offsets fold into one `-0.5`:
 // 1. `create_selective_density_field` pads by one cell, so index `i` is block `base + i - 1`.
 // 2. A density sample stands for the whole block, so it belongs at the block centre (`+ 0.5`).
-const DENSITY_SAMPLE_TO_WORLD: f32 = -0.5;
+pub(crate) const DENSITY_SAMPLE_TO_WORLD: f32 = -0.5;
+
+/// Edge length, in blocks, of a coarse (LOD 1) cell.
+pub(crate) const COARSE_STRIDE: i32 = 2;
+
+/// Whether the coarse cell `cell` of the chunk whose first block is `base` holds any
+/// solid block. Samples into neighbouring chunks for cells outside `0..8`, so faces
+/// between chunks cull correctly.
+pub(crate) fn coarse_cell_solid(grid: &VoxelGrid, base: IVec3, cell: IVec3) -> bool {
+    let origin = base + cell * COARSE_STRIDE;
+    (0..COARSE_STRIDE).any(|dx| {
+        (0..COARSE_STRIDE).any(|dy| {
+            (0..COARSE_STRIDE).any(|dz| grid.is_solid_at(origin + IVec3::new(dx, dy, dz)))
+        })
+    })
+}
 
 /// Classifies the content of a chunk
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,7 +187,7 @@ impl HybridMeshGenerator {
     ///
     /// # Arguments
     /// * `only_smooth` - If true, only include smooth blocks in density
-    fn create_selective_density_field(
+    pub(crate) fn create_selective_density_field(
         grid: &VoxelGrid,
         chunk_pos: IVec3,
         chunk_size: i32,
@@ -241,29 +256,12 @@ impl HybridMeshGenerator {
     /// neighbouring chunks). Skirt quads are appended along the four vertical chunk
     /// edges to prevent seam cracks at LOD boundaries.
     pub fn generate_coarse_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
-        const STRIDE: i32 = 2;
+        const STRIDE: i32 = COARSE_STRIDE;
         let coarse_size = chunk_size / STRIDE; // 8 for chunk_size == 16
         let base = chunk_pos * chunk_size;
         let mut mesh = VoxelMesh::empty();
-
-        // Returns true if any block in the STRIDE³ region rooted at the given coarse
-        // cell coordinates is solid. Intentionally samples into adjacent chunks via
-        // `grid.is_solid_at` so inter-chunk face culling works correctly.
-        let cell_solid = |cx: i32, cy: i32, cz: i32| -> bool {
-            let wx = base.x + cx * STRIDE;
-            let wy = base.y + cy * STRIDE;
-            let wz = base.z + cz * STRIDE;
-            for dx in 0..STRIDE {
-                for dy in 0..STRIDE {
-                    for dz in 0..STRIDE {
-                        if grid.is_solid_at(IVec3::new(wx + dx, wy + dy, wz + dz)) {
-                            return true;
-                        }
-                    }
-                }
-            }
-            false
-        };
+        let cell_solid =
+            |cx: i32, cy: i32, cz: i32| coarse_cell_solid(grid, base, IVec3::new(cx, cy, cz));
 
         for cx in 0..coarse_size {
             for cy in 0..coarse_size {

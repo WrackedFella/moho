@@ -1,21 +1,361 @@
 //! Flat cap faces that close a chunk's solid ground at a horizontal cut.
+//!
+//! A cap covers exactly the cells the chunk's own mesher drew, cut the way that mesher
+//! cut them, so its edge meets the chunk's walls and caps of neighbouring chunks tile.
 
 use super::super::grid::VoxelGrid;
 use super::VoxelMesh;
-use glam::IVec3;
+use super::hybrid::{
+    COARSE_STRIDE, ChunkContent, DENSITY_SAMPLE_TO_WORLD, HybridMeshGenerator, coarse_cell_solid,
+};
+use super::marching_cubes::MarchingCubes;
+use glam::{IVec3, Vec2, Vec3};
 
 /// How far above the cut the solid test samples, so a surface lying exactly at the cut
 /// gets no coplanar cap and the slice never passes through marching-cubes vertices.
 pub const CAP_PROBE: f32 = 1e-3;
 
+/// Squared distance under which two slice points are the same point.
+const SAME_POINT: f32 = 1e-12;
+
 /// The flat face at `y = cut` covering the part of chunk `chunk_pos`'s cells (meshed at
 /// `lod`) that is solid at `cut + CAP_PROBE`. Every vertex faces `+Y`, with full
 /// ambient light, no block light and geometry type 0. A chunk the cut does not cross,
 /// or with no solid there, gives an empty mesh.
-pub fn cut_cap_mesh(_grid: &VoxelGrid, _chunk_pos: IVec3, _lod: u8, _cut: f32) -> VoxelMesh {
-    VoxelMesh::empty()
+pub fn cut_cap_mesh(grid: &VoxelGrid, chunk_pos: IVec3, lod: u8, cut: f32) -> VoxelMesh {
+    let chunk_size = grid.chunk_size();
+    let base = chunk_pos * chunk_size;
+    let probe = cut + CAP_PROBE;
+    let mut cap = CapBuilder::new(cut);
+    if lod == 0 {
+        let (content, _, _) = HybridMeshGenerator::analyze_chunk(grid, chunk_pos, chunk_size);
+        match content {
+            ChunkContent::Empty => {}
+            ChunkContent::AllSmooth => {
+                cap_smooth_cells(grid, chunk_pos, chunk_size, false, probe, &mut cap);
+            }
+            ChunkContent::AllBlocky => {
+                cap_blocks(grid, base, chunk_size, probe, |_| true, &mut cap);
+            }
+            ChunkContent::Mixed => {
+                cap_smooth_cells(grid, chunk_pos, chunk_size, true, probe, &mut cap);
+                let blocky = |pos| grid.is_smooth_at(pos) == Some(false);
+                cap_blocks(grid, base, chunk_size, probe, blocky, &mut cap);
+            }
+        }
+    } else {
+        cap_coarse_cells(grid, base, chunk_size, probe, &mut cap);
+    }
+    cap.mesh
 }
 
+/// Caps the marching-cubes cells of the one cell row whose height span holds `probe`,
+/// from the same density field the chunk's smooth mesh was built from.
+fn cap_smooth_cells(
+    grid: &VoxelGrid,
+    chunk_pos: IVec3,
+    chunk_size: i32,
+    only_smooth: bool,
+    probe: f32,
+    cap: &mut CapBuilder,
+) {
+    let base = chunk_pos * chunk_size;
+    // Cell `i` spans field samples `i..=i + 1`, i.e. world `base + i - 0.5 ..= base + i + 0.5`.
+    let field_y = probe - (base.y as f32 + DENSITY_SAMPLE_TO_WORLD);
+    let row = field_y.floor();
+    if !(1.0..=chunk_size as f32).contains(&row) {
+        return;
+    }
+    let height = field_y - row;
+    let y = row as usize;
+    let field = HybridMeshGenerator::create_selective_density_field(
+        grid,
+        chunk_pos,
+        chunk_size,
+        only_smooth,
+    );
+    for x in 1..=chunk_size as usize {
+        for z in 1..=chunk_size as usize {
+            let cube_index = MarchingCubes::CORNER_OFFSETS
+                .iter()
+                .enumerate()
+                .filter(|(_, [dx, dy, dz])| field[x + dx][y + dy][z + dz] > 0.5)
+                .fold(0u8, |index, (corner, _)| index | 1 << corner);
+            let origin = Vec2::new(
+                (base.x + x as i32) as f32 + DENSITY_SAMPLE_TO_WORLD,
+                (base.z + z as i32) as f32 + DENSITY_SAMPLE_TO_WORLD,
+            );
+            // Clipped in cell coordinates, where the slice points are exact enough to
+            // tell a straight run of wall from a corner.
+            for tri in cell_section(cube_index, height)
+                .into_iter()
+                .flat_map(ear_clip)
+            {
+                cap.triangle(tri.map(|p| p + origin));
+            }
+        }
+    }
+}
+
+/// Caps every block in the chunk's range that spans `probe` and passes `meshed_blocky`.
+fn cap_blocks(
+    grid: &VoxelGrid,
+    base: IVec3,
+    chunk_size: i32,
+    probe: f32,
+    meshed_blocky: impl Fn(IVec3) -> bool,
+    cap: &mut CapBuilder,
+) {
+    let y = probe.floor() as i32;
+    if !(base.y..base.y + chunk_size).contains(&y) {
+        return;
+    }
+    for x in base.x..base.x + chunk_size {
+        for z in base.z..base.z + chunk_size {
+            let pos = IVec3::new(x, y, z);
+            if grid.is_solid_at(pos) && meshed_blocky(pos) {
+                cap.square(Vec2::new(x as f32, z as f32), 1);
+            }
+        }
+    }
+}
+
+/// Caps every coarse (LOD 1) cell of the chunk that spans `probe` and is solid.
+fn cap_coarse_cells(
+    grid: &VoxelGrid,
+    base: IVec3,
+    chunk_size: i32,
+    probe: f32,
+    cap: &mut CapBuilder,
+) {
+    let cells = chunk_size / COARSE_STRIDE;
+    let cy = ((probe - base.y as f32) / COARSE_STRIDE as f32).floor() as i32;
+    if !(0..cells).contains(&cy) {
+        return;
+    }
+    for cx in 0..cells {
+        for cz in 0..cells {
+            if coarse_cell_solid(grid, base, IVec3::new(cx, cy, cz)) {
+                let corner = Vec2::new(
+                    (base.x + cx * COARSE_STRIDE) as f32,
+                    (base.z + cz * COARSE_STRIDE) as f32,
+                );
+                cap.square(corner, COARSE_STRIDE);
+            }
+        }
+    }
+}
+
+/// Square corners counter-clockwise in `(x, z)`, in the column order of
+/// `MarchingCubes::CORNER_OFFSETS` (corner `k` below, `k + 4` above).
+const SQUARE: [Vec2; 4] = [
+    Vec2::new(0.0, 0.0),
+    Vec2::new(1.0, 0.0),
+    Vec2::new(1.0, 1.0),
+    Vec2::new(0.0, 1.0),
+];
+
+/// The solid part, at `height` in `0..1`, of the unit cell's horizontal square in
+/// `(x, z)`, as counter-clockwise rings. The boundary is the cell's own triangles sliced
+/// at `height`, with the solid on their inner side, plus the stretches of the square's
+/// edges that are solid.
+///
+/// Every slice segment that meets the square's edge ends there (each marching-cubes
+/// patch is bounded by the cell's faces), and walking an edge from a corner whose
+/// solidity is known toggles at each segment end. A ring that does not close (a crack
+/// on an ambiguous face, which the chunk mesh shows too) is left out.
+fn cell_section(cube_index: u8, height: f32) -> Vec<Vec<Vec2>> {
+    let mut segments = slice_walls(cube_index, height);
+    // A vertical cell edge changes solidity at its midpoint only.
+    let column_solid = |column: usize| {
+        let corner = if height < 0.5 { column } else { column + 4 };
+        cube_index & (1 << corner) != 0
+    };
+    let mut rim = Vec::new();
+    for (k, &from) in SQUARE.iter().enumerate() {
+        let to = SQUARE[(k + 1) % 4];
+        let along = to - from;
+        // Segment ends on this edge share its fixed coordinate exactly: they are
+        // interpolated between two edge midpoints of the face the edge lies in.
+        let on_edge = |p: &Vec2| {
+            if along.x == 0.0 {
+                p.x == from.x
+            } else {
+                p.y == from.y
+            }
+        };
+        let mut crossings: Vec<Vec2> = segments.iter().flatten().copied().filter(on_edge).collect();
+        crossings.sort_by(|a, b| (*a - from).dot(along).total_cmp(&(*b - from).dot(along)));
+        let mut solid = column_solid(k);
+        let mut start = from;
+        for p in crossings {
+            if solid {
+                rim.push([start, p]);
+            }
+            solid = !solid;
+            start = p;
+        }
+        if solid {
+            rim.push([start, to]);
+        }
+    }
+    segments.extend(rim);
+    chain_rings(segments)
+}
+
+/// The cell's triangles sliced at `height`, each segment oriented with the solid on
+/// its left in `(x, z)`.
+fn slice_walls(cube_index: u8, height: f32) -> Vec<[Vec2; 2]> {
+    MarchingCubes::cell_triangles(cube_index)
+        .filter_map(|tri| {
+            let above = tri.map(|v| v.y >= height);
+            if above.iter().all(|&a| a) || above.iter().all(|&a| !a) {
+                return None;
+            }
+            let mut ends = [(0, 1), (1, 2), (2, 0)]
+                .into_iter()
+                .filter(|&(i, j)| above[i] != above[j])
+                .map(|(i, j)| {
+                    // Interpolating from the lower vertex makes the triangles sharing an
+                    // edge compute the identical point, so their segments chain exactly.
+                    let (low, high) = if above[i] {
+                        (tri[j], tri[i])
+                    } else {
+                        (tri[i], tri[j])
+                    };
+                    // Not `Vec3::lerp`: this form keeps a coordinate both ends share exact.
+                    let p = low + (high - low) * ((height - low.y) / (high.y - low.y));
+                    Vec2::new(p.x, p.z)
+                });
+            let (a, b) = (ends.next()?, ends.next()?);
+            let outward = (tri[1] - tri[0]).cross(tri[2] - tri[0]);
+            let along = b - a;
+            if along.length_squared() <= SAME_POINT {
+                None
+            } else if along.perp().dot(Vec2::new(outward.x, outward.z)) < 0.0 {
+                Some([a, b])
+            } else {
+                Some([b, a])
+            }
+        })
+        .collect()
+}
+
+/// Joins directed segments end to start into closed rings; segments that never close
+/// a ring are dropped.
+fn chain_rings(mut segments: Vec<[Vec2; 2]>) -> Vec<Vec<Vec2>> {
+    let mut rings = Vec::new();
+    while let Some([start, mut end]) = segments.pop() {
+        let mut ring = vec![start];
+        loop {
+            if end.distance_squared(start) <= SAME_POINT {
+                rings.push(ring);
+                break;
+            }
+            let Some(next) = segments
+                .iter()
+                .position(|s| s[0].distance_squared(end) <= SAME_POINT)
+            else {
+                break;
+            };
+            ring.push(end);
+            end = segments.swap_remove(next)[1];
+        }
+    }
+    rings
+}
+
+/// Twice the signed area of `(a, b, c)` in `(x, z)`; positive when counter-clockwise.
+fn turn(a: Vec2, b: Vec2, c: Vec2) -> f32 {
+    (b - a).perp_dot(c - a)
+}
+
+/// Splits a counter-clockwise simple ring into triangles by ear clipping.
+fn ear_clip(mut ring: Vec<Vec2>) -> Vec<[Vec2; 3]> {
+    /// How far off the line through its neighbours a vertex may sit and still count
+    /// as on it.
+    const FLAT: f32 = 1e-6;
+    let mut triangles = Vec::new();
+    while ring.len() >= 3 {
+        let n = ring.len();
+        let corner = |i: usize| (ring[(i + n - 1) % n], ring[i], ring[(i + 1) % n]);
+        // A straight or doubled-back vertex adds no area; drop it first.
+        if let Some(flat) = (0..n).find(|&i| {
+            let (a, b, c) = corner(i);
+            turn(a, b, c).abs() <= FLAT * a.distance(c)
+        }) {
+            ring.remove(flat);
+            continue;
+        }
+        let is_ear = |i: usize| {
+            let (a, b, c) = corner(i);
+            turn(a, b, c) > 0.0
+                && ring.iter().all(|&p| {
+                    p == a
+                        || p == b
+                        || p == c
+                        || turn(a, b, p) < 0.0
+                        || turn(b, c, p) < 0.0
+                        || turn(c, a, p) < 0.0
+                })
+        };
+        // Only a malformed ring (clockwise, or self-touching from a crack) has no ear.
+        let Some(ear) = (0..n).find(|&i| is_ear(i)) else {
+            break;
+        };
+        let (a, b, c) = corner(ear);
+        triangles.push([a, b, c]);
+        ring.remove(ear);
+    }
+    triangles
+}
+
+/// Accumulates upward-facing cap triangles at one height.
+struct CapBuilder {
+    cut: f32,
+    mesh: VoxelMesh,
+}
+
+impl CapBuilder {
+    fn new(cut: f32) -> Self {
+        Self {
+            cut,
+            mesh: VoxelMesh::empty(),
+        }
+    }
+
+    /// Adds the axis-aligned square of whole-block `size` with its low corner at
+    /// `corner` in `(x, z)`, as one-block-deep strips so no triangle edge crosses a
+    /// block centre.
+    fn square(&mut self, corner: Vec2, size: i32) {
+        for row in 0..size {
+            let near = corner + Vec2::new(0.0, row as f32);
+            let far = near + Vec2::new(size as f32, 1.0);
+            self.triangle([near, Vec2::new(far.x, near.y), far]);
+            self.triangle([near, far, Vec2::new(near.x, far.y)]);
+        }
+    }
+
+    /// Adds a counter-clockwise triangle in `(x, z)`. Counter-clockwise with `z` up the
+    /// page is clockwise seen from `+Y`, so the indices are reversed to face up.
+    fn triangle(&mut self, [a, b, c]: [Vec2; 3]) {
+        let first = self.mesh.vertices.len() as u32;
+        for p in [a, b, c] {
+            self.mesh
+                .vertices
+                .push(Vec3::new(p.x, self.cut, p.y).to_array());
+            self.mesh.normals.push([0.0, 1.0, 0.0]);
+            self.mesh.ambient_occlusion.push(1.0);
+            self.mesh.geometry_type.push(0);
+            self.mesh.light_level.push(1.0);
+            self.mesh.block_light_rgb.push([0.0; 3]);
+            self.mesh.sky_exposed.push(1.0);
+        }
+        self.mesh
+            .indices
+            .extend_from_slice(&[first, first + 2, first + 1]);
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

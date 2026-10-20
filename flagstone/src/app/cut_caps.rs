@@ -1,8 +1,8 @@
 //! Keeps the cut-face caps of the ground in step with the view height.
 
-use flagstone_voxel::{ChunkStore, VoxelGrid};
+use flagstone_voxel::{ChunkStore, VoxelGrid, VoxelMesh, cut_cap_mesh};
 use glam::IVec3;
-use moho_render_api::WorldMeshId;
+use moho_render_api::{WorldMesh, WorldMeshId};
 use moho_renderer::WorldMeshes;
 use std::collections::HashSet;
 
@@ -12,6 +12,8 @@ use super::world_geometry::chunk_mesh_id;
 #[derive(Debug, Default)]
 pub struct CutCaps {
     cut: Option<f32>,
+    /// The cut moved since the last `refresh`, which then re-picks the capped chunks.
+    cut_moved: bool,
     capped: HashSet<IVec3>,
     dirty: HashSet<IVec3>,
 }
@@ -23,7 +25,10 @@ impl CutCaps {
     }
 
     /// Follow a new view height; `None` removes every cap on the next `refresh`.
-    pub fn set_cut(&mut self, _cut: Option<f32>) {}
+    pub fn set_cut(&mut self, cut: Option<f32>) {
+        self.cut = cut;
+        self.cut_moved = true;
+    }
 
     /// Rebuild the cap of the chunk at `pos` on the next `refresh`.
     pub fn mark_dirty(&mut self, pos: IVec3) {
@@ -31,26 +36,80 @@ impl CutCaps {
     }
 
     /// Drop the cap of the chunk at `pos` now.
-    pub fn remove(&mut self, pos: IVec3, _world_meshes: &mut WorldMeshes) {
-        self.capped.remove(&pos);
+    pub fn remove(&mut self, pos: IVec3, world_meshes: &mut WorldMeshes) {
+        self.dirty.remove(&pos);
+        if self.capped.remove(&pos) {
+            world_meshes.remove(cap_mesh_id(pos));
+        }
     }
 
     /// Build the caps of dirty chunks and queue them with `world_meshes` under
     /// `cap_material`; an empty cap removes the chunk's cap.
     pub fn refresh(
         &mut self,
-        _grid: &VoxelGrid,
-        _chunks: &ChunkStore,
-        _world_meshes: &mut WorldMeshes,
-        _cap_material: u32,
+        grid: &VoxelGrid,
+        chunks: &ChunkStore,
+        world_meshes: &mut WorldMeshes,
+        cap_material: u32,
     ) {
-        self.dirty.clear();
+        let Some(cut) = self.cut else {
+            for pos in self.capped.drain() {
+                world_meshes.remove(cap_mesh_id(pos));
+            }
+            self.dirty.clear();
+            self.cut_moved = false;
+            return;
+        };
+        // Only the cells within a block of the cut can own its cap, and those lie in
+        // at most two chunk layers.
+        let chunk_size = grid.chunk_size() as f32;
+        let layers =
+            ((cut - 1.0) / chunk_size).floor() as i32..=((cut + 1.0) / chunk_size).floor() as i32;
+        if std::mem::take(&mut self.cut_moved) {
+            self.dirty.extend(self.capped.iter().copied());
+            self.dirty.extend(
+                chunks
+                    .iter()
+                    .map(flagstone_voxel::VoxelChunk::chunk_pos)
+                    .filter(|pos| layers.contains(&pos.y)),
+            );
+        }
+        for pos in self.dirty.drain() {
+            let chunk = chunks.get(pos).filter(|_| layers.contains(&pos.y));
+            let mesh = chunk.map(|chunk| cut_cap_mesh(grid, pos, chunk.lod(), cut));
+            match mesh.filter(|mesh| !mesh.indices.is_empty()) {
+                Some(mesh) => {
+                    world_meshes.upsert(cap_mesh_id(pos), cap_world_mesh(mesh), cap_material);
+                    self.capped.insert(pos);
+                }
+                None => {
+                    if self.capped.remove(&pos) {
+                        world_meshes.remove(cap_mesh_id(pos));
+                    }
+                }
+            }
+        }
     }
 }
 
-/// Renderer key for the cap of the chunk at `pos`; never equals a chunk's key.
+/// The cap in the world-geometry contract's form.
+fn cap_world_mesh(mesh: VoxelMesh) -> WorldMesh {
+    WorldMesh::new(
+        mesh.vertices,
+        mesh.normals,
+        mesh.ambient_occlusion,
+        mesh.block_light_rgb,
+        mesh.sky_exposed,
+        mesh.geometry_type,
+        mesh.indices,
+    )
+    .expect("cut_cap_mesh fills every vertex channel and indexes only its own vertices")
+}
+
+/// Renderer key for the cap of the chunk at `pos`; never equals a chunk's key, which
+/// uses only the low 63 bits.
 pub fn cap_mesh_id(pos: IVec3) -> WorldMeshId {
-    chunk_mesh_id(pos)
+    WorldMeshId(chunk_mesh_id(pos).0 | 1 << 63)
 }
 
 #[cfg(test)]
