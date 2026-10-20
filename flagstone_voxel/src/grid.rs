@@ -200,11 +200,6 @@ impl VoxelGrid {
         )
     }
 
-    /// Chunk coordinate containing `pos`.
-    pub fn chunk_pos_of(&self, pos: BlockPos) -> IVec3 {
-        Self::get_chunk_pos(pos, self.chunk_size)
-    }
-
     // -------------------------------------------------------------------------
     // Accessor API (Stage 4B / 4D)
     // -------------------------------------------------------------------------
@@ -393,13 +388,6 @@ impl VoxelGrid {
         Ok(())
     }
 
-    /// Whether the chunk at `pos` has been modified since the last save.
-    pub fn chunk_is_modified(&self, pos: IVec3) -> bool {
-        self.chunks
-            .get(&pos)
-            .is_some_and(paletted::PalettedChunk::is_modified)
-    }
-
     /// Clear the modified flag on the chunk at `pos`.
     ///
     /// Called after the streaming system generates a chunk from seed (freshly
@@ -571,14 +559,6 @@ pub struct BlockData {
     pub position: BlockPos,
     pub material_id: u32,
     pub resource_id: Option<u32>,
-}
-
-impl BlockData {
-    /// Geometry category — smooth iff `material_id < 100`.
-    #[inline]
-    pub fn is_smooth(&self) -> bool {
-        self.material_id < 100
-    }
 }
 
 #[cfg(test)]
@@ -769,12 +749,17 @@ mod tests {
         assert!(grid.serialize_chunk(chunk).is_none(), "absent chunk");
 
         grid.place_block(BlockPos::new(1, 1, 1), 2, None);
-        assert!(grid.serialize_chunk(chunk).is_some(), "edited chunk");
+        let bytes = grid.serialize_chunk(chunk).expect("edited chunk");
+        let mut restored = VoxelGrid::new(16);
+        restored
+            .deserialize_chunk_into(chunk, &bytes)
+            .expect("decode");
+        assert_eq!(restored.material_at(BlockPos::new(1, 1, 1)), Some(2));
+        assert_eq!(restored.block_count(), 1);
 
         grid.clear_chunk_modified(chunk);
 
         assert!(grid.serialize_chunk(chunk).is_none(), "unmodified chunk");
-        assert!(!grid.chunk_is_modified(chunk));
         assert_eq!(grid.material_at(BlockPos::new(1, 1, 1)), Some(2));
     }
 
@@ -804,5 +789,196 @@ mod tests {
         );
         assert_eq!(grid.material_at(IVec3::new(1, 2, 3)), None);
         assert!(grid.chunk_light(target).expect("light entry").light_dirty);
+    }
+
+    const COLUMN: IVec3 = IVec3::new(1, 0, -1);
+
+    fn grid_with_clean_lights(lit: &[IVec3]) -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        for &pos in lit {
+            grid.chunk_light_mut(pos).sky_dirty = false;
+        }
+        grid
+    }
+
+    fn dirty_sky_chunks(grid: &VoxelGrid) -> HashSet<IVec3> {
+        grid.lit_chunk_positions()
+            .filter(|&pos| grid.chunk_light(pos).is_some_and(|cl| cl.sky_dirty))
+            .collect()
+    }
+
+    fn column_neighbourhood() -> Vec<IVec3> {
+        vec![
+            COLUMN,
+            COLUMN + IVec3::new(0, -1, 0),
+            COLUMN + IVec3::new(0, -3, 0),
+            COLUMN + IVec3::new(0, 1, 0),
+            COLUMN + IVec3::new(1, -1, 0),
+            COLUMN + IVec3::new(-1, -1, 0),
+            COLUMN + IVec3::new(0, -1, 1),
+            COLUMN + IVec3::new(0, -1, -1),
+            COLUMN + IVec3::new(1, -1, 1),
+            COLUMN + IVec3::new(1, 0, 0),
+            COLUMN + IVec3::new(0, 0, 1),
+        ]
+    }
+
+    fn lower_in_column() -> HashSet<IVec3> {
+        HashSet::from([
+            COLUMN,
+            COLUMN + IVec3::new(0, -1, 0),
+            COLUMN + IVec3::new(0, -3, 0),
+        ])
+    }
+
+    fn world_pos(chunk: IVec3, local: IVec3) -> BlockPos {
+        chunk * 16 + local
+    }
+
+    #[test]
+    fn block_change_marks_only_lower_chunks_in_its_column() {
+        let mut grid = grid_with_clean_lights(&column_neighbourhood());
+
+        grid.place_block(world_pos(COLUMN, IVec3::new(3, 5, 7)), 2, None);
+
+        assert_eq!(dirty_sky_chunks(&grid), lower_in_column());
+    }
+
+    #[test]
+    fn removing_a_column_top_block_marks_lower_chunks() {
+        let mut grid = VoxelGrid::new(16);
+        let top = world_pos(COLUMN, IVec3::new(3, 5, 7));
+        grid.place_block(top, 2, None);
+        for pos in column_neighbourhood() {
+            grid.chunk_light_mut(pos).sky_dirty = false;
+        }
+
+        let removed = grid.clear_block(top);
+
+        assert!(removed);
+        assert_eq!(dirty_sky_chunks(&grid), lower_in_column());
+    }
+
+    #[test]
+    fn a_change_below_the_column_top_leaves_sky_clean() {
+        let mut grid = VoxelGrid::new(16);
+        grid.place_block(world_pos(COLUMN, IVec3::new(3, 9, 7)), 2, None);
+        let low = world_pos(COLUMN, IVec3::new(3, 2, 7));
+        for pos in column_neighbourhood() {
+            grid.chunk_light_mut(pos).sky_dirty = false;
+        }
+
+        grid.place_block(low, 2, None);
+
+        assert!(dirty_sky_chunks(&grid).is_empty());
+
+        let removed = grid.clear_block(low);
+
+        assert!(removed);
+        assert!(dirty_sky_chunks(&grid).is_empty());
+    }
+
+    #[test]
+    fn block_change_in_an_already_dirty_chunk_does_not_mark_lower_chunks() {
+        let mut grid = grid_with_clean_lights(&column_neighbourhood());
+        grid.chunk_light_mut(COLUMN).sky_dirty = true;
+
+        grid.place_block(world_pos(COLUMN, IVec3::new(3, 5, 7)), 2, None);
+
+        assert_eq!(dirty_sky_chunks(&grid), HashSet::from([COLUMN]));
+    }
+
+    #[test]
+    fn set_lighting_overrides_a_material() {
+        let mut registry = MaterialRegistry::new();
+        let torch = MaterialLighting {
+            emission: [15, 8, 2],
+            opacity_cost: 0,
+        };
+        for id in 0..3 {
+            assert_eq!(registry.lighting(id), MaterialLighting::NON_EMISSIVE_OPAQUE);
+            assert!(!registry.lighting(id).is_emissive());
+        }
+
+        registry.set_lighting(1, torch);
+
+        assert_eq!(registry.lighting(1), torch);
+        assert_eq!(registry.emission(1), [15, 8, 2]);
+        assert_eq!(registry.opacity_cost(1), 0);
+        assert!(registry.lighting(1).is_emissive());
+        for id in [0, 2] {
+            assert_eq!(registry.lighting(id), MaterialLighting::NON_EMISSIVE_OPAQUE);
+            assert_eq!(registry.emission(id), [0, 0, 0]);
+            assert_eq!(registry.opacity_cost(id), 15);
+        }
+    }
+
+    #[test]
+    fn any_single_emission_channel_is_emissive() {
+        for emission in [[1, 0, 0], [0, 1, 0], [0, 0, 1]] {
+            let lighting = MaterialLighting {
+                emission,
+                opacity_cost: 15,
+            };
+
+            assert!(lighting.is_emissive(), "{emission:?}");
+        }
+    }
+
+    #[test]
+    fn chunk_set_is_read_back() {
+        let mut grid = VoxelGrid::new(16);
+        let origin = IVec3::ZERO;
+        let far = IVec3::new(2, -1, 0);
+        grid.place_block(BlockPos::new(1, 1, 1), 2, None);
+        grid.place_block(world_pos(far, IVec3::new(4, 4, 4)), 3, None);
+
+        let positions: HashSet<IVec3> = grid.chunk_positions().collect();
+
+        assert_eq!(positions, HashSet::from([origin, far]));
+        assert!(grid.has_chunk(origin));
+        assert!(grid.has_chunk(far));
+        assert!(!grid.has_chunk(IVec3::new(0, 1, 0)));
+        assert!(!grid.has_chunk(IVec3::new(-2, 1, 0)));
+    }
+
+    #[test]
+    fn remove_chunk_drops_blocks_and_light_but_keeps_others() {
+        let mut grid = VoxelGrid::new(16);
+        let origin = IVec3::ZERO;
+        let far = IVec3::new(2, -1, 0);
+        let far_block = world_pos(far, IVec3::new(4, 4, 4));
+        grid.place_block(BlockPos::new(1, 1, 1), 2, None);
+        grid.place_block(far_block, 3, None);
+        assert!(grid.chunk_light(far).is_some());
+
+        grid.remove_chunk(far);
+
+        assert!(!grid.has_chunk(far));
+        assert_eq!(grid.material_at(far_block), None);
+        assert!(grid.chunk_light(far).is_none());
+        assert!(grid.has_chunk(origin));
+        assert_eq!(grid.material_at(BlockPos::new(1, 1, 1)), Some(2));
+        assert!(grid.chunk_light(origin).is_some());
+        assert_eq!(grid.block_count(), 1);
+    }
+
+    #[test]
+    fn set_sky_exposed_is_read_back() {
+        let mut grid = VoxelGrid::new(16);
+        let pos = BlockPos::new(-3, 20, 5);
+        let neighbour = BlockPos::new(-2, 20, 5);
+        grid.set_sky_exposed(neighbour, true);
+        assert!(!grid.sky_exposed_at(pos));
+
+        grid.set_sky_exposed(pos, true);
+
+        assert!(grid.sky_exposed_at(pos));
+        assert!(grid.sky_exposed_at(neighbour));
+
+        grid.set_sky_exposed(pos, false);
+
+        assert!(!grid.sky_exposed_at(pos));
+        assert!(grid.sky_exposed_at(neighbour));
     }
 }

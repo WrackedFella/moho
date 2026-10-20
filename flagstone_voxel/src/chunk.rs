@@ -264,4 +264,95 @@ mod tests {
         );
         assert!(fine.vertices().iter().flatten().any(|c| c.fract() != 0.0));
     }
+
+    fn lit_mixed_grid() -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        for pos in [
+            IVec3::new(1, 1, 1),
+            IVec3::new(2, 1, 1),
+            IVec3::new(2, 2, 1),
+        ] {
+            grid.place_block(pos, 0, None);
+        }
+        for pos in [IVec3::new(8, 8, 8), IVec3::new(9, 8, 8)] {
+            grid.place_block(pos, 100, None);
+        }
+        grid.set_block_light_rgb(IVec3::new(8, 8, 8), [6, 3, 1]);
+        grid.set_sky_exposed(IVec3::new(8, 8, 8), true);
+        grid.set_block_light_rgb(IVec3::new(9, 8, 8), [3, 9, 12]);
+        grid
+    }
+
+    #[test]
+    fn accessors_return_the_mesh_arrays() {
+        let grid = lit_mixed_grid();
+        let pos = IVec3::ZERO;
+        let mesh = crate::mesh::HybridMeshGenerator::generate_chunk_mesh(&grid, pos, 16);
+
+        let chunk = VoxelChunk::from_grid_hybrid(&grid, pos);
+
+        assert!(mesh.vertices.len() > 1);
+        assert_ne!(mesh.light_level, mesh.sky_exposed);
+        assert_ne!(mesh.ambient_occlusion, mesh.light_level);
+        assert_ne!(mesh.ambient_occlusion, mesh.sky_exposed);
+        assert_eq!(chunk.chunk_pos(), pos);
+        assert_eq!(chunk.vertices(), mesh.vertices.as_slice());
+        assert_eq!(chunk.normals(), mesh.normals.as_slice());
+        assert_eq!(chunk.ambient_occlusion(), mesh.ambient_occlusion.as_slice());
+        assert_eq!(chunk.geometry_type(), mesh.geometry_type.as_slice());
+        assert_eq!(chunk.light_level(), mesh.light_level.as_slice());
+        assert_eq!(chunk.block_light_rgb(), mesh.block_light_rgb.as_slice());
+        assert_eq!(chunk.sky_exposed(), mesh.sky_exposed.as_slice());
+        assert_eq!(chunk.indices(), mesh.indices.as_slice());
+    }
+
+    #[test]
+    fn accessors_return_the_constructor_arrays() {
+        let chunk = VoxelChunk::new(
+            IVec3::new(1, 2, 3),
+            vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            vec![[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]],
+            vec![0.25, 0.5, 0.75],
+            vec![3, 4, 5],
+            vec![0.1, 0.2, 0.3],
+            vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]],
+            vec![0.9, 0.8, 0.7],
+            vec![0, 1, 2],
+            42,
+        );
+
+        assert_eq!(chunk.chunk_pos(), IVec3::new(1, 2, 3));
+        assert_eq!(chunk.normals()[1], [0.0, 1.0, 0.0]);
+        assert_eq!(chunk.normals().len(), 3);
+        assert_eq!(chunk.ambient_occlusion(), &[0.25, 0.5, 0.75]);
+        assert_eq!(chunk.geometry_type(), &[3, 4, 5]);
+        assert_eq!(chunk.light_level(), &[0.1, 0.2, 0.3]);
+        assert_eq!(chunk.block_light_rgb()[2], [0.7, 0.8, 0.9]);
+        assert_eq!(chunk.block_light_rgb().len(), 3);
+        assert_eq!(chunk.sky_exposed(), &[0.9, 0.8, 0.7]);
+        assert_eq!(chunk.indices(), &[0, 1, 2]);
+        assert_eq!(chunk.material_id(), 42);
+        assert_eq!(chunk.lod(), 0);
+    }
+
+    #[test]
+    fn primary_material_is_the_most_common() {
+        // The `+=` to `*=` mutant zeroes every count, leaving the pick to random HashMap order.
+        for _ in 0..16 {
+            let mut grid = VoxelGrid::new(16);
+            for x in 0..3 {
+                grid.place_block(IVec3::new(x, 0, 0), 7, None);
+            }
+            grid.place_block(IVec3::new(0, 0, 4), 2, None);
+            grid.place_block(IVec3::new(1, 0, 4), 9, None);
+            grid.place_block(IVec3::new(2, 0, 4), 11, None);
+            grid.place_block(IVec3::new(3, 0, 4), 12, None);
+
+            let hybrid = VoxelChunk::from_grid_hybrid(&grid, IVec3::ZERO);
+            let coarse = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 1);
+
+            assert_eq!(hybrid.material_id(), 7);
+            assert_eq!(coarse.material_id(), 7);
+        }
+    }
 }
