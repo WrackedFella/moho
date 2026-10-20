@@ -5,6 +5,7 @@ use glam::IVec3;
 use moho_render_api::{WorldMesh, WorldMeshId};
 use moho_renderer::WorldMeshes;
 use std::collections::HashSet;
+use std::time::Instant;
 
 use super::world_geometry::chunk_mesh_id;
 
@@ -80,7 +81,10 @@ impl CutCaps {
                     .filter(|pos| layers.contains(&pos.y)),
             );
         }
-        for pos in std::mem::take(&mut self.dirty) {
+        let started = Instant::now();
+        let dirty = std::mem::take(&mut self.dirty);
+        let rebuilt = dirty.len();
+        for pos in dirty {
             let chunk = chunks.get(pos).filter(|_| layers.contains(&pos.y));
             let mesh = chunk.map(|chunk| cut_cap_mesh(grid, pos, chunk.lod(), cut));
             match mesh.filter(|mesh| !mesh.indices.is_empty()) {
@@ -90,6 +94,13 @@ impl CutCaps {
                 }
                 None => self.uncap(pos, world_meshes),
             }
+        }
+        if rebuilt > 0 {
+            tracing::debug!(
+                rebuilt,
+                elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+                "Cut caps rebuilt"
+            );
         }
     }
 }

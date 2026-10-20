@@ -41,7 +41,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    if (in.world_y > camera.cam_pos.w + marker_inflate) {
+    // 1.5x leaves headroom so interpolation error on a lid at cut + inflate is not discarded.
+    if (in.world_y > camera.cam_pos.w + marker_inflate * 1.5) {
         discard;
     }
     return in.color;

@@ -44,8 +44,14 @@ pub enum ChunkContent {
     Mixed,
 }
 
-/// How a chunk is meshed at a level of detail; shared by the mesher and the cut caps so
-/// both cover the same cells.
+/// Whether `lod` is meshed at full detail (LOD 0) rather than coarse; the one LOD rule
+/// shared by chunk meshing and the cut caps.
+pub(crate) fn is_fine_lod(lod: u8) -> bool {
+    lod == 0
+}
+
+/// How the cut caps follow a chunk meshed at a level of detail, so they cover the same
+/// cells as the mesh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MeshPlan {
     /// Full-detail meshing of the content found in the chunk.
@@ -56,7 +62,7 @@ pub(crate) enum MeshPlan {
 
 /// The plan for chunk `chunk_pos` meshed at `lod`.
 pub(crate) fn mesh_plan(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32, lod: u8) -> MeshPlan {
-    if lod == 0 {
+    if is_fine_lod(lod) {
         let (content, _, _) = HybridMeshGenerator::analyze_chunk(grid, chunk_pos, chunk_size);
         MeshPlan::Fine(content)
     } else {
@@ -129,22 +135,13 @@ impl HybridMeshGenerator {
     /// # Returns
     /// A VoxelMesh combining smooth and blocky geometry as appropriate
     pub fn generate_chunk_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
-        match mesh_plan(grid, chunk_pos, chunk_size, 0) {
-            MeshPlan::Fine(ChunkContent::Empty) => VoxelMesh::empty(),
-
-            MeshPlan::Fine(ChunkContent::AllSmooth) => {
+        match Self::analyze_chunk(grid, chunk_pos, chunk_size).0 {
+            ChunkContent::Empty => VoxelMesh::empty(),
+            ChunkContent::AllSmooth => {
                 Self::generate_smooth_mesh(grid, chunk_pos, chunk_size, false)
             }
-
-            MeshPlan::Fine(ChunkContent::AllBlocky) => {
-                Self::generate_blocky_mesh(grid, chunk_pos, chunk_size)
-            }
-
-            MeshPlan::Fine(ChunkContent::Mixed) => {
-                Self::generate_mixed_mesh(grid, chunk_pos, chunk_size)
-            }
-
-            MeshPlan::Coarse => Self::generate_coarse_mesh(grid, chunk_pos, chunk_size),
+            ChunkContent::AllBlocky => Self::generate_blocky_mesh(grid, chunk_pos, chunk_size),
+            ChunkContent::Mixed => Self::generate_mixed_mesh(grid, chunk_pos, chunk_size),
         }
     }
 

@@ -20,6 +20,13 @@ pub const CAP_PROBE: f32 = 1e-3;
 /// Squared distance under which two slice points are the same point.
 const SAME_POINT: f32 = 1e-12;
 
+/// How far above the middle height, where the vertical-edge vertices lie, a cell is
+/// sliced when asked for exactly that height. A column whose solid starts at the middle
+/// has a section only about this wide there, so it must stay well above f32 noise at
+/// cell scale; the cap edge then sits at most this far off a slanted wall, the same order
+/// as `CAP_PROBE`.
+const MIDDLE_SLICE_LIFT: f32 = 4e-3;
+
 /// The chunk layers (`chunk_pos.y`) whose caps can be non-empty at `cut`: only cells
 /// within a block of the cut can own it, and those lie in at most two layers.
 /// `cut_cap_mesh` is empty for a chunk outside this range.
@@ -173,7 +180,15 @@ const SQUARE: [Vec2; 4] = [
 /// solidity is known toggles at each segment end. A ring that does not close (a crack
 /// on an ambiguous face, which the chunk mesh shows too) is left out.
 fn cell_section(cube_index: u8, height: f32) -> Vec<Vec<Vec2>> {
-    let mut segments = slice_walls(cube_index, height);
+    // The vertical-edge vertices sit at the middle height. Slicing through them would
+    // count them as above while the rim takes the top corners, so slice a little above
+    // them, where both agree.
+    let slice_height = if height == 0.5 {
+        height + MIDDLE_SLICE_LIFT
+    } else {
+        height
+    };
+    let mut segments = slice_walls(cube_index, slice_height);
     // A vertical cell edge changes solidity at its midpoint only.
     let column_solid = |column: usize| {
         let corner = if height < 0.5 { column } else { column + 4 };
@@ -1136,6 +1151,77 @@ mod tests {
                 assert_eq!(covering, usize::from(in_ring(ring, p)), "point {p:?}");
             }
         }
+    }
+
+    /// Failures of the section's ring orientation, triangulated area and per-column
+    /// coverage over every cube index at `heights`.
+    fn section_failures(heights: &[f32], inset: f32) -> Vec<String> {
+        let mut failures = Vec::new();
+        for index in 1..=254u8 {
+            for &height in heights {
+                let rings = cell_section(index, height);
+                let mut tris = Vec::new();
+                for ring in &rings {
+                    let area = ring_area(ring);
+                    if area <= 0.0 {
+                        failures.push(format!("index {index} height {height}: ring area {area} is not counter-clockwise"));
+                    }
+                    let clipped = ear_clip(ring.clone());
+                    let clipped_area: f32 =
+                        clipped.iter().map(|t| turn(t[0], t[1], t[2]) / 2.0).sum();
+                    if (clipped_area - area).abs() > 1e-5 {
+                        failures.push(format!("index {index} height {height}: triangles cover {clipped_area}, ring is {area}"));
+                    }
+                    tris.extend(clipped);
+                }
+                for (column, &corner) in SQUARE.iter().enumerate() {
+                    let bit = if height < 0.5 { column } else { column + 4 };
+                    let solid = index & (1 << bit) != 0;
+                    let inward = (Vec2::splat(0.5) - corner).signum() * inset;
+                    let p = corner + inward;
+                    let covered = tris.iter().any(|t| {
+                        turn(t[0], t[1], p) >= 0.0
+                            && turn(t[1], t[2], p) >= 0.0
+                            && turn(t[2], t[0], p) >= 0.0
+                    });
+                    if covered != solid {
+                        failures.push(format!("index {index} height {height}: column {column} solid {solid} but covered {covered}"));
+                    }
+                }
+            }
+        }
+        failures
+    }
+
+    #[test]
+    fn cell_section_covers_each_solid_column_for_every_cube_index() {
+        let heights: Vec<f32> = (1..=64)
+            .filter(|&k| k != 32)
+            .map(|k| k as f32 / 64.0)
+            .collect();
+
+        let failures = section_failures(&heights, 1e-3);
+
+        assert!(
+            failures.is_empty(),
+            "{} failures, first: {:#?}",
+            failures.len(),
+            &failures[..failures.len().min(10)]
+        );
+    }
+
+    #[test]
+    fn cell_section_at_the_middle_height_covers_each_solid_column() {
+        // A column whose solid starts at the middle height has a section only about as
+        // wide as the slice lift, so its corner is probed inside that.
+        let failures = section_failures(&[0.5], MIDDLE_SLICE_LIFT / 4.0);
+
+        assert!(
+            failures.is_empty(),
+            "{} failures, first: {:#?}",
+            failures.len(),
+            &failures[..failures.len().min(10)]
+        );
     }
 
     #[test]

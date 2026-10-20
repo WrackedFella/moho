@@ -56,7 +56,7 @@ draw per mesh in id order.
 The binary adapts voxel chunks in `flagstone/src/app/world_geometry.rs`: `chunk_mesh_id` packs
 the chunk position at 21 bits per signed axis, `chunk_world_mesh` converts a
 `VoxelChunk`, and `insert_chunk` / `remove_chunk` keep the `ChunkStore`, the
-renderer and the physics colliders in step. The same `WorldMesh` and `WorldMeshId` go to
+renderer and the physics colliders in step, along with the chunk's [cut-face cap](#cut-face-caps). The same `WorldMesh` and `WorldMeshId` go to
 `PhysicsWorld::set_world_mesh` / `remove_world_mesh` (`moho_physics/src/world.rs`), which
 holds one static trimesh collider per id; an empty mesh holds none. A refused mesh is
 logged and the chunk is neither drawn nor solid.
@@ -106,7 +106,7 @@ mesh to `WorldMeshes` and `PhysicsWorld` as above.
 The view-height cut discards geometry above the plane and leaves the ground hollow.
 The binary closes it with flat caps built from the voxels, not by the renderer.
 `flagstone/src/app/cut_caps.rs` (`CutCaps`) follows the cut: `SetViewHeight` sets it
-(`set_cut`), chunk insert, upsert and remove mark chunks dirty, and
+(`set_cut`), chunk insert and upsert mark the chunk dirty, remove drops its cap at once, and
 `FrameProcessor::update_cut_caps` runs `refresh` each frame before lighting and render.
 `refresh` rebuilds caps only for dirty chunks, plus, when the cut moved, every chunk in
 `cap_chunk_layers` and every chunk already capped. A cap is an ordinary world mesh queued
