@@ -1,6 +1,6 @@
 use crate::biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
 use crate::perlin::Perlin;
-use flagstone_voxel::{BlockPos, ChunkStore, LightPropagator, VoxelChunk, VoxelGrid};
+use flagstone_voxel::BlockPos;
 use serde::{Deserialize, Serialize};
 
 /// Parameters describing a new world request coming from the UI or other
@@ -60,49 +60,6 @@ impl Default for TerrainConfig {
     }
 }
 
-/// Generate voxel-based terrain using Perlin noise
-/// Two-pass algorithm: 1) Place blocks, 2) Smooth transitions
-pub fn voxel_terrain_scene(chunks: &mut ChunkStore) -> VoxelGrid {
-    let config = TerrainConfig::default();
-    voxel_terrain_scene_with_config(chunks, &config)
-}
-
-/// Variant that accepts a custom `TerrainConfig`. This allows callers to
-/// control the PRNG seed (and later other parameters) when generating a
-/// terrain for new-world generation.
-///
-/// Returns the VoxelGrid for use with light propagation system.
-pub fn voxel_terrain_scene_with_config(
-    chunks: &mut ChunkStore,
-    config: &TerrainConfig,
-) -> VoxelGrid {
-    // NOTE: Hybrid mesh generation currently requires chunk_size=16
-    // due to hardcoded density field size in Marching Cubes
-    let mut grid = VoxelGrid::new(16); // 16×16×16 chunks
-
-    tracing::info!(seed = config.seed, "Generating voxel terrain");
-    generate_terrain(&mut grid, config);
-
-    // Initialize block light propagation from all emissive blocks.
-    tracing::info!("Initializing light propagation...");
-    let mut light_propagator = LightPropagator::new();
-    light_propagator.flood_fill_block_lights(&mut grid);
-    tracing::info!("Block light propagation complete");
-
-    // TODO: Consider making grid size configurable via the config struct
-    // (e.g., grid_size: u32) so callers can control world extents.
-
-    tracing::info!("Converting grid to renderable chunks...");
-    for chunk in grid_to_chunks(&grid) {
-        chunks.insert(chunk);
-    }
-
-    tracing::info!(count = chunks.len(), "Voxel terrain scene ready");
-
-    // Return the grid so it can be stored by the caller for light propagation
-    grid
-}
-
 /// Deterministic positional hash for use during terrain generation.
 /// Produces a value in [0.0, 1.0) that depends only on position and seed —
 /// no entropy-seeded RNG, so generation is a pure function of its inputs.
@@ -119,40 +76,6 @@ pub(crate) fn pos_hash(x: i32, y: i32, z: i32, seed: u32) -> f32 {
 /// Max block height for the terrain column (clamp for the legacy 32-tall range).
 pub(crate) const MAX_TERRAIN_HEIGHT: i32 = 128;
 pub(crate) const BASE_ELEVATION: f32 = 64.0;
-
-/// Generate terrain blocks using a 3D density field.
-///
-/// For each column, we pick a biome, sample a continuous surface height,
-/// then iterate blocks up to the column's solid top, emitting any block
-/// whose `density(x, y, z) > 0.0`. This keeps today's heightmap-shaped
-/// result while giving cave carving a natural hook (just subtract cave
-/// noise from density) and keeping the ore scan mechanic pure.
-fn generate_terrain(grid: &mut VoxelGrid, config: &TerrainConfig) {
-    let noise = Perlin::new(config.seed);
-    let biome_map = BiomeMap::new(config.seed);
-    // `config.world_size` is the full width in blocks (e.g., 128 -> loop -64..64)
-    let size = (config.world_size / 2) as i32;
-
-    for x in -size..size {
-        for z in -size..size {
-            let biome = biome_map.biome_at(x, z, &config.enabled_biomes);
-            let params = biome.params();
-            let surface_h = BASE_ELEVATION + sample_surface_height(&noise, x, z, &biome, &params);
-            let column_height = (surface_h as i32).clamp(0, MAX_TERRAIN_HEIGHT);
-
-            for y in 0..=column_height {
-                if !is_solid(&noise, x, y, z, &biome, &params) {
-                    continue;
-                }
-                let pos = BlockPos::new(x, y, z);
-                let material_id = determine_material_id(column_height, y, &params);
-                let resource_id = determine_resource_id(column_height, y, x, z, config.seed);
-
-                grid.mutator().place(pos, material_id, resource_id);
-            }
-        }
-    }
-}
 
 /// Continuous surface height at `(x, z)`. Multi-octave Perlin noise scaled
 /// by the biome's amplitude/frequency/octaves, shaped by `BiomeType::shape`,
@@ -242,47 +165,13 @@ pub(crate) fn determine_resource_id(
     }
 }
 
-/// Convert VoxelGrid to optimized VoxelChunks for rendering
-fn grid_to_chunks(grid: &VoxelGrid) -> Vec<VoxelChunk> {
-    use std::collections::HashSet;
-
-    // Find all unique chunk positions from the blocks
-    let mut chunk_positions = HashSet::new();
-    for block_pos in grid.block_positions() {
-        let chunk_pos = VoxelGrid::get_chunk_pos(block_pos, grid.chunk_size());
-        chunk_positions.insert(chunk_pos);
-    }
-
-    tracing::info!(count = chunk_positions.len(), "Converting chunks from grid");
-
-    // Generate a VoxelChunk for each chunk position
-    let mut chunks = Vec::new();
-    for chunk_pos in chunk_positions {
-        let chunk = VoxelChunk::from_grid_hybrid(grid, chunk_pos);
-
-        // Only include non-empty chunks
-        if !chunk.is_empty() {
-            tracing::debug!(
-                chunk = ?chunk_pos,
-                vertices = chunk.vertices().len(),
-                indices = chunk.indices().len(),
-                "Chunk generated"
-            );
-            chunks.push(chunk);
-        }
-    }
-
-    tracing::info!(count = chunks.len(), "Generated non-empty chunks");
-    chunks
-}
-
 /// Chunk size constant — must match `light_storage::CHUNK_SIZE`.
 const CHUNK_SIZE: i32 = 16;
 
 /// Generate the solid blocks for a single 16³ chunk at `chunk_pos`.
 ///
 /// Returns `(world_pos, material_id, resource_id)` for each solid block in the
-/// chunk, using the same algorithm and seed as the full terrain generator.
+/// chunk, using the world seed from `config`.
 ///
 /// Returns an empty `Vec` when the chunk lies entirely outside the world's XZ
 /// bounds (i.e., more than `world_size/2` blocks from the origin).
