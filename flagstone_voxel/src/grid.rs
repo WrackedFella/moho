@@ -200,11 +200,6 @@ impl VoxelGrid {
         )
     }
 
-    /// Chunk coordinate containing `pos`.
-    pub fn chunk_pos_of(&self, pos: BlockPos) -> IVec3 {
-        Self::get_chunk_pos(pos, self.chunk_size)
-    }
-
     // -------------------------------------------------------------------------
     // Accessor API (Stage 4B / 4D)
     // -------------------------------------------------------------------------
@@ -393,13 +388,6 @@ impl VoxelGrid {
         Ok(())
     }
 
-    /// Whether the chunk at `pos` has been modified since the last save.
-    pub fn chunk_is_modified(&self, pos: IVec3) -> bool {
-        self.chunks
-            .get(&pos)
-            .is_some_and(paletted::PalettedChunk::is_modified)
-    }
-
     /// Clear the modified flag on the chunk at `pos`.
     ///
     /// Called after the streaming system generates a chunk from seed (freshly
@@ -571,14 +559,6 @@ pub struct BlockData {
     pub position: BlockPos,
     pub material_id: u32,
     pub resource_id: Option<u32>,
-}
-
-impl BlockData {
-    /// Geometry category — smooth iff `material_id < 100`.
-    #[inline]
-    pub fn is_smooth(&self) -> bool {
-        self.material_id < 100
-    }
 }
 
 #[cfg(test)]
@@ -780,7 +760,6 @@ mod tests {
         grid.clear_chunk_modified(chunk);
 
         assert!(grid.serialize_chunk(chunk).is_none(), "unmodified chunk");
-        assert!(!grid.chunk_is_modified(chunk));
         assert_eq!(grid.material_at(BlockPos::new(1, 1, 1)), Some(2));
     }
 
