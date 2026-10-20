@@ -140,8 +140,15 @@ impl EguiAdapter {
     }
 
     /// Update the current game state (called by main app each frame)
+    /// The console is open exactly while the game is in `ConsoleOpen`, whichever transition got
+    /// it there or took it out.
     pub fn set_game_state(&mut self, state: GameState) {
         self.current_game_state = state;
+        if state == GameState::ConsoleOpen {
+            self.ui_state.console.open();
+        } else {
+            self.ui_state.console.close();
+        }
     }
 
     /// Add a new menu to the manager
