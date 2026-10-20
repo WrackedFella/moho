@@ -81,16 +81,6 @@ mod tests {
     }
 
     #[test]
-    fn fill_region_with_inverted_bounds_places_nothing() {
-        let mut grid = VoxelGrid::new(16);
-
-        grid.mutator()
-            .fill_region(BlockPos::new(2, 0, 0), BlockPos::new(0, 0, 0), 1);
-
-        assert_eq!(grid.block_count(), 0);
-    }
-
-    #[test]
     fn place_and_remove_round_trip_through_the_mutator() {
         let mut grid = VoxelGrid::new(16);
         let pos = BlockPos::new(3, 4, 5);

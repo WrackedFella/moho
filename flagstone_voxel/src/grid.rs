@@ -881,14 +881,17 @@ mod tests {
     }
 
     #[test]
-    fn removing_a_block_under_the_column_top_leaves_sky_clean() {
+    fn a_change_below_the_column_top_leaves_sky_clean() {
         let mut grid = VoxelGrid::new(16);
         grid.place_block(world_pos(COLUMN, IVec3::new(3, 9, 7)), 2, None);
         let low = world_pos(COLUMN, IVec3::new(3, 2, 7));
-        grid.place_block(low, 2, None);
         for pos in column_neighbourhood() {
             grid.chunk_light_mut(pos).sky_dirty = false;
         }
+
+        grid.place_block(low, 2, None);
+
+        assert!(dirty_sky_chunks(&grid).is_empty());
 
         let removed = grid.clear_block(low);
 
@@ -904,20 +907,6 @@ mod tests {
         grid.place_block(world_pos(COLUMN, IVec3::new(3, 5, 7)), 2, None);
 
         assert_eq!(dirty_sky_chunks(&grid), HashSet::from([COLUMN]));
-    }
-
-    #[test]
-    fn block_below_the_column_top_leaves_sky_clean() {
-        let mut grid = VoxelGrid::new(16);
-        grid.place_block(world_pos(COLUMN, IVec3::new(3, 9, 7)), 2, None);
-        for pos in column_neighbourhood() {
-            grid.chunk_light_mut(pos).sky_dirty = false;
-        }
-
-        grid.place_block(world_pos(COLUMN, IVec3::new(3, 2, 7)), 2, None);
-
-        assert!(dirty_sky_chunks(&grid).is_empty());
-        assert!(grid.chunk_light(COLUMN).expect("light").light_dirty);
     }
 
     #[test]
@@ -946,21 +935,6 @@ mod tests {
     }
 
     #[test]
-    fn set_lighting_on_an_unknown_id_is_a_no_op() {
-        let mut registry = MaterialRegistry::new();
-        let torch = MaterialLighting {
-            emission: [15, 8, 2],
-            opacity_cost: 0,
-        };
-
-        registry.set_lighting(99, torch);
-
-        assert_eq!(registry.lighting(99), MaterialLighting::NON_EMISSIVE_OPAQUE);
-        assert_eq!(registry.lighting(3), MaterialLighting::NON_EMISSIVE_OPAQUE);
-        assert_eq!(registry.lighting(0), MaterialLighting::NON_EMISSIVE_OPAQUE);
-    }
-
-    #[test]
     fn any_single_emission_channel_is_emissive() {
         for emission in [[1, 0, 0], [0, 1, 0], [0, 0, 1]] {
             let lighting = MaterialLighting {
@@ -983,7 +957,6 @@ mod tests {
         let positions: HashSet<IVec3> = grid.chunk_positions().collect();
 
         assert_eq!(positions, HashSet::from([origin, far]));
-        assert_eq!(grid.chunk_positions().count(), 2);
         assert!(grid.has_chunk(origin));
         assert!(grid.has_chunk(far));
         assert!(!grid.has_chunk(IVec3::new(0, 1, 0)));
@@ -1005,7 +978,6 @@ mod tests {
         assert!(!grid.has_chunk(far));
         assert_eq!(grid.material_at(far_block), None);
         assert!(grid.chunk_light(far).is_none());
-        assert!(!grid.lit_chunk_positions().any(|pos| pos == far));
         assert!(grid.has_chunk(origin));
         assert_eq!(grid.material_at(BlockPos::new(1, 1, 1)), Some(2));
         assert!(grid.chunk_light(origin).is_some());

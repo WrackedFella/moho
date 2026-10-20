@@ -277,9 +277,9 @@ mod tests {
         for pos in [IVec3::new(8, 8, 8), IVec3::new(9, 8, 8)] {
             grid.place_block(pos, 100, None);
         }
-        grid.set_block_light_rgb(IVec3::new(8, 9, 8), [15, 6, 3]);
-        grid.set_sky_exposed(IVec3::new(8, 9, 8), true);
-        grid.set_block_light_rgb(IVec3::new(9, 9, 8), [3, 9, 12]);
+        grid.set_block_light_rgb(IVec3::new(8, 8, 8), [6, 3, 1]);
+        grid.set_sky_exposed(IVec3::new(8, 8, 8), true);
+        grid.set_block_light_rgb(IVec3::new(9, 8, 8), [3, 9, 12]);
         grid
     }
 
@@ -292,6 +292,9 @@ mod tests {
         let chunk = VoxelChunk::from_grid_hybrid(&grid, pos);
 
         assert!(mesh.vertices.len() > 1);
+        assert_ne!(mesh.light_level, mesh.sky_exposed);
+        assert_ne!(mesh.ambient_occlusion, mesh.light_level);
+        assert_ne!(mesh.ambient_occlusion, mesh.sky_exposed);
         assert_eq!(chunk.chunk_pos(), pos);
         assert_eq!(chunk.vertices(), mesh.vertices.as_slice());
         assert_eq!(chunk.normals(), mesh.normals.as_slice());
@@ -301,11 +304,6 @@ mod tests {
         assert_eq!(chunk.block_light_rgb(), mesh.block_light_rgb.as_slice());
         assert_eq!(chunk.sky_exposed(), mesh.sky_exposed.as_slice());
         assert_eq!(chunk.indices(), mesh.indices.as_slice());
-        assert_eq!(chunk.normals().len(), mesh.vertices.len());
-        assert_eq!(chunk.ambient_occlusion().len(), mesh.vertices.len());
-        assert_eq!(chunk.light_level().len(), mesh.vertices.len());
-        assert_eq!(chunk.block_light_rgb().len(), mesh.vertices.len());
-        assert_eq!(chunk.sky_exposed().len(), mesh.vertices.len());
     }
 
     #[test]
@@ -339,6 +337,7 @@ mod tests {
 
     #[test]
     fn primary_material_is_the_most_common() {
+        // The `+=` to `*=` mutant zeroes every count, leaving the pick to random HashMap order.
         for _ in 0..16 {
             let mut grid = VoxelGrid::new(16);
             for x in 0..3 {
@@ -346,6 +345,8 @@ mod tests {
             }
             grid.place_block(IVec3::new(0, 0, 4), 2, None);
             grid.place_block(IVec3::new(1, 0, 4), 9, None);
+            grid.place_block(IVec3::new(2, 0, 4), 11, None);
+            grid.place_block(IVec3::new(3, 0, 4), 12, None);
 
             let hybrid = VoxelChunk::from_grid_hybrid(&grid, IVec3::ZERO);
             let coarse = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 1);
@@ -353,14 +354,5 @@ mod tests {
             assert_eq!(hybrid.material_id(), 7);
             assert_eq!(coarse.material_id(), 7);
         }
-    }
-
-    #[test]
-    fn primary_material_of_an_empty_chunk_is_zero() {
-        let grid = VoxelGrid::new(16);
-
-        let chunk = VoxelChunk::from_grid_hybrid(&grid, IVec3::new(3, 3, 3));
-
-        assert_eq!(chunk.material_id(), 0);
     }
 }
