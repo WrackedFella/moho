@@ -89,17 +89,21 @@ impl PlayerController {
 
     /// This controller with its look turned by the deltas, pitch clamped exactly as
     /// [`apply_input`](Self::apply_input) does; nothing else changes.
-    pub fn turned(&self, _yaw_delta: f32, _pitch_delta: f32) -> Self {
-        todo!()
+    pub fn turned(&self, yaw_delta: f32, pitch_delta: f32) -> Self {
+        let mut turned = *self;
+        turned.turn(yaw_delta, pitch_delta);
+        turned
+    }
+
+    fn turn(&mut self, yaw_delta: f32, pitch_delta: f32) {
+        self.yaw += yaw_delta;
+        self.pitch = (self.pitch + pitch_delta).clamp(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD);
     }
 
     pub fn apply_input(&mut self, input: &ControllerInput, dt: f32) {
         match self.camera_mode {
             CameraMode::FirstPerson => {
-                // Apply look deltas
-                self.yaw += input.yaw_delta;
-                self.pitch =
-                    (self.pitch + input.pitch_delta).clamp(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD);
+                self.turn(input.yaw_delta, input.pitch_delta);
 
                 // Build horizontal forward direction (for right vector and pitch-less reference)
                 let forward_horizontal =
@@ -695,7 +699,7 @@ mod tests {
             row(0.0, -PITCH_LIMIT_RAD, 0.3, -0.5, 0.0, true),
             row(0.0, PITCH_LIMIT_RAD - 0.1, 0.3, 2.0, 0.0, true),
             row(0.0, -PITCH_LIMIT_RAD + 0.1, 0.3, -2.0, 0.0, true),
-            row(0.37, 1.2, 0.123_456_7, 0.9, 1.0 / 60.0, false),
+            row(0.37, 1.2, 0.123_456_7, 0.9, 1.0 / 60.0, true),
         ];
 
         for r in rows {
