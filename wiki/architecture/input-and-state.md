@@ -2,7 +2,7 @@
 
 **Source:** `flagstone/src/input_dispatcher.rs`, `moho_input/src/`, `flagstone_ui/src/actions.rs`, `flagstone/src/app/renderer_setup.rs` (registrations),
 `moho_core/src/pointer.rs`, `flagstone/src/app/game.rs` (`Game::event`, `poll_gamepads`), `flagstone/src/main.rs` (`handle_keyboard_input`), `flagstone_ui/src/app_state/game_state.rs`,
-`flagstone_ui/src/app_state/state_coordinator.rs`, `flagstone_ui/src/screens/pause.rs`, `flagstone_ui/src/adapter/event_routing.rs`.
+`flagstone_ui/src/app_state/state_coordinator.rs`, `flagstone_ui/src/screens/pause.rs`, `moho_ui_shell/src/console/` (console key routing).
 
 ## Input routing
 
@@ -39,7 +39,7 @@ Global hotkeys in `handle_keyboard_input`, checked before game keys:
 
 | Key | Effect |
 |---|---|
-| `` ` `` (Backquote) | Playing → console; ConsoleOpen → Playing |
+| `` ` `` (the `console` binding) | Playing → console; ConsoleOpen → Playing. Routed by `App::route_console_input` through `Console::on_key` ahead of the dispatcher, see [console](console.md#input-routing) |
 | `Esc` | ConsoleOpen → Playing; Playing → Paused; Paused → Playing while the pause window is the active screen (inert on Settings). Taken before the dispatcher when it pauses or resumes, so a focused egui button cannot swallow it; key repeats are ignored |
 | `F3` | Toggle debug HUD |
 | `F4` | Toggle chunk-boundary minimap |
