@@ -347,6 +347,18 @@ mod tests {
     }
 
     #[test]
+    fn frame_dt_is_capped_at_the_catch_up_limit() {
+        let mut game = ContextProbe::default();
+        let config = LoopConfig::new(60);
+        let mut sim = HeadlessLoop::new(config);
+
+        sim.advance(&mut game, Duration::from_secs(1));
+
+        assert_eq!(config.max_catch_up_ticks, 5);
+        assert_eq!(game.frame_dts, [Duration::from_secs(1) / 60 * 5]);
+    }
+
+    #[test]
     fn a_paused_loop_still_passes_frame_dt_to_the_frame() {
         let mut game = ContextProbe::default();
         let mut sim = HeadlessLoop::new(LoopConfig::new(60));

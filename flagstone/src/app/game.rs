@@ -1492,43 +1492,30 @@ mod tests {
         #[test]
         fn pitch_held_at_the_limit_on_screen_and_after_the_tick() {
             for rig in RIGS {
-                let mut app = rig_app(rig);
-                let mut fake = FakeRenderer::default();
-                let on_screen_limit = PITCH_LIMIT.sin();
+                for (direction, limit) in [("up", PITCH_LIMIT), ("down", -PITCH_LIMIT)] {
+                    let mut app = rig_app(rig);
+                    let mut fake = FakeRenderer::default();
+                    // Mouse y is down-positive.
+                    let toward = -f64::from(limit.signum());
 
-                for (round, up) in [100_000.0, 5_000.0].into_iter().enumerate() {
-                    mouse(&mut app, 0.0, -up);
-                    run_frame(&mut app, &mut fake);
-                    let height = forward_of(drawn(&fake)).y;
-                    let command = Game::command(&mut app);
-                    tick_app(&mut app, &command);
+                    for (round, count) in [100_000.0_f64, 5_000.0].into_iter().enumerate() {
+                        mouse(&mut app, 0.0, toward * count);
+                        run_frame(&mut app, &mut fake);
+                        let height = forward_of(drawn(&fake)).y;
+                        let command = Game::command(&mut app);
+                        tick_app(&mut app, &command);
 
-                    assert!(
-                        (height - on_screen_limit).abs() < 1e-5,
-                        "{rig:?} round {round}: view at {height}, limit {on_screen_limit}"
-                    );
-                    assert_eq!(sim_look(&app, rig).1, PITCH_LIMIT, "{rig:?} round {round}");
+                        assert!(
+                            (height - limit.sin()).abs() < 1e-5,
+                            "{rig:?} {direction} round {round}: view at {height}"
+                        );
+                        assert_eq!(
+                            sim_look(&app, rig).1,
+                            limit,
+                            "{rig:?} {direction} round {round}"
+                        );
+                    }
                 }
-            }
-        }
-
-        #[test]
-        fn pitch_held_at_the_floor_on_screen_and_after_the_tick() {
-            for rig in RIGS {
-                let mut app = rig_app(rig);
-                let mut fake = FakeRenderer::default();
-
-                mouse(&mut app, 0.0, 100_000.0);
-                run_frame(&mut app, &mut fake);
-                let height = forward_of(drawn(&fake)).y;
-                let command = Game::command(&mut app);
-                tick_app(&mut app, &command);
-
-                assert!(
-                    (height + PITCH_LIMIT.sin()).abs() < 1e-5,
-                    "{rig:?}: view at {height}"
-                );
-                assert_eq!(sim_look(&app, rig).1, -PITCH_LIMIT, "{rig:?}");
             }
         }
 
@@ -1557,19 +1544,84 @@ mod tests {
             }
         }
 
+        #[test]
+        fn stick_turn_follows_the_frame_time() {
+            const LOOK_PER_COUNT: f32 = 0.002;
+
+            for rig in RIGS {
+                let pending_after = |frame_dt: Duration| {
+                    let mut app = rig_app(rig);
+                    app.input.actions.set_look(LookSettings {
+                        look_per_count: LOOK_PER_COUNT,
+                        smoothing: false,
+                    });
+                    app.input
+                        .actions
+                        .pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+                    let clock = GameClock::default();
+                    let mut fake = FakeRenderer::default();
+                    let mut ctx = FrameContext::new(tick(), &clock, Some(&mut fake), None);
+                    ctx.frame_dt = frame_dt;
+                    Game::frame(&mut app, &mut ctx, ALPHA);
+                    app.input.actions.pending_look().0
+                };
+
+                let full = pending_after(tick());
+                let half = pending_after(tick() / 2);
+
+                let by_hand = 1560.0 * tick().as_secs_f32() * LOOK_PER_COUNT;
+                assert!(
+                    (full - by_hand).abs() < 1e-5,
+                    "{rig:?}: {full} vs {by_hand}"
+                );
+                assert_eq!(half * 2.0, full, "{rig:?}: half the time, half the turn");
+            }
+        }
+
+        fn focus(app: &mut App, focused: bool) {
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            Game::event(
+                app,
+                &mut ctx,
+                moho_app::Event::Window(WindowEvent::Focused(focused)),
+            );
+        }
+
         /// Why the view must hold still.
         #[derive(Clone, Copy, Debug)]
         enum Stop {
-            State(GameState),
+            Paused,
+            Menu,
+            Console,
             Unfocused,
         }
 
-        const STOPS: [Stop; 4] = [
-            Stop::State(GameState::Paused),
-            Stop::State(GameState::Menu),
-            Stop::State(GameState::ConsoleOpen),
-            Stop::Unfocused,
-        ];
+        const STOPS: [Stop; 4] = [Stop::Paused, Stop::Menu, Stop::Console, Stop::Unfocused];
+
+        impl Stop {
+            /// Enters the stop through the game's own transition.
+            fn enter(self, app: &mut App) {
+                match self {
+                    Stop::Paused => app.escape_pressed(),
+                    Stop::Menu => app.show_menu(),
+                    Stop::Console => app.enter_console(),
+                    Stop::Unfocused => focus(app, false),
+                }
+            }
+
+            /// Leaves the stop through the matching transition. Resuming from pause uses
+            /// `toggle_pause`, which Escape calls too, because Escape resumes only from the
+            /// home screen.
+            fn leave(self, app: &mut App) {
+                match self {
+                    Stop::Paused => app.toggle_pause(),
+                    Stop::Menu => app.hide_menu(),
+                    Stop::Console => app.exit_console(),
+                    Stop::Unfocused => focus(app, true),
+                }
+            }
+        }
 
         #[test]
         fn paused_or_unfocused_frames_do_not_turn() {
@@ -1581,7 +1633,8 @@ mod tests {
                     let level = forward_of(drawn(&fake));
                     mouse(&mut app, 300.0, 150.0);
                     run_frame(&mut app, &mut fake);
-                    let shown = forward_of(drawn(&fake));
+                    let shown_view = drawn(&fake);
+                    let shown = forward_of(shown_view);
                     assert!(
                         shown.distance(level) > 1e-3,
                         "{rig:?} {stop:?}: look is live first"
@@ -1589,16 +1642,17 @@ mod tests {
                     let (look_x, look_y) = app.input.actions.pending_look();
                     let (yaw_before, pitch_before) = sim_look(&app, rig);
 
-                    match stop {
-                        Stop::State(state) => app.game_state = state,
-                        Stop::Unfocused => app.input.focused = false,
-                    }
+                    stop.enter(&mut app);
+                    assert!(
+                        app.game_state != GameState::Playing || !app.input.focused,
+                        "{rig:?} {stop:?}: stopped"
+                    );
                     let mut views = Vec::new();
                     for _ in 0..3 {
-                        if let Stop::State(_) = stop {
+                        if !matches!(stop, Stop::Unfocused) {
+                            // A paused loop asks for the command on every frame.
                             Game::command(&mut app);
                         }
-                        app.input.actions.mouse_motion(500.0, 500.0);
                         mouse(&mut app, 500.0, 500.0);
                         run_frame(&mut app, &mut fake);
                         views.push(forward_of(drawn(&fake)));
@@ -1616,8 +1670,17 @@ mod tests {
                         "{rig:?} {stop:?}"
                     );
 
-                    app.game_state = GameState::Playing;
-                    app.input.focused = true;
+                    stop.leave(&mut app);
+                    assert!(
+                        app.game_state == GameState::Playing && app.input.focused,
+                        "{rig:?} {stop:?}: play resumed"
+                    );
+                    run_frame(&mut app, &mut fake);
+                    assert_eq!(
+                        drawn(&fake),
+                        shown_view,
+                        "{rig:?} {stop:?}: the first frame after resuming still draws the shown view"
+                    );
                     let command = Game::command(&mut app);
                     tick_app(&mut app, &command);
 
@@ -1640,10 +1703,10 @@ mod tests {
                 let mut fake = FakeRenderer::default();
                 run_frame(&mut app, &mut fake);
                 let level = forward_of(drawn(&fake));
-                app.input.focused = false;
+                focus(&mut app, false);
 
                 mouse(&mut app, 400.0, 200.0);
-                app.input.focused = true;
+                focus(&mut app, true);
                 run_frame(&mut app, &mut fake);
                 let command = Game::command(&mut app);
 

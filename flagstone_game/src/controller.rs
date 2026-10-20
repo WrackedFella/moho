@@ -674,52 +674,50 @@ mod tests {
 
     #[test]
     fn turned_clamps_pitch_like_apply_input() {
-        let cases = [
-            (PITCH_LIMIT_RAD, 0.5),
-            (-PITCH_LIMIT_RAD, -0.5),
-            (PITCH_LIMIT_RAD - 0.1, 2.0),
-            (-PITCH_LIMIT_RAD + 0.1, -2.0),
+        struct Row {
+            yaw: f32,
+            pitch: f32,
+            yaw_delta: f32,
+            pitch_delta: f32,
+            dt: f32,
+            clamped: bool,
+        }
+        let row = |yaw, pitch, yaw_delta, pitch_delta, dt, clamped| Row {
+            yaw,
+            pitch,
+            yaw_delta,
+            pitch_delta,
+            dt,
+            clamped,
+        };
+        let rows = [
+            row(0.0, PITCH_LIMIT_RAD, 0.3, 0.5, 0.0, true),
+            row(0.0, -PITCH_LIMIT_RAD, 0.3, -0.5, 0.0, true),
+            row(0.0, PITCH_LIMIT_RAD - 0.1, 0.3, 2.0, 0.0, true),
+            row(0.0, -PITCH_LIMIT_RAD + 0.1, 0.3, -2.0, 0.0, true),
+            row(0.37, 1.2, 0.123_456_7, 0.9, 1.0 / 60.0, false),
         ];
 
-        for (pitch, delta) in cases {
+        for r in rows {
             let mut controller = PlayerController::new(Vec3::ZERO);
-            controller.pitch = pitch;
+            controller.yaw = r.yaw;
+            controller.pitch = r.pitch;
             let mut applied = controller;
 
-            let turned = controller.turned(0.3, delta);
+            let turned = controller.turned(r.yaw_delta, r.pitch_delta);
             applied.apply_input(
                 &ControllerInput {
-                    yaw_delta: 0.3,
-                    pitch_delta: delta,
+                    yaw_delta: r.yaw_delta,
+                    pitch_delta: r.pitch_delta,
                     ..Default::default()
                 },
-                0.0,
+                r.dt,
             );
 
-            assert_eq!(turned.pitch, applied.pitch, "from {pitch} by {delta}");
-            assert_eq!(turned.yaw, applied.yaw);
-            assert_eq!(turned.pitch.abs(), PITCH_LIMIT_RAD);
+            let case = format!("from {} by {}", r.pitch, r.pitch_delta);
+            assert_eq!(turned.pitch, applied.pitch, "{case}");
+            assert_eq!(turned.yaw, applied.yaw, "{case}");
+            assert_eq!(turned.pitch.abs() == PITCH_LIMIT_RAD, r.clamped, "{case}");
         }
-    }
-
-    #[test]
-    fn turned_builds_the_view_the_next_apply_input_lands_on() {
-        let mut controller = PlayerController::new(Vec3::ZERO);
-        controller.yaw = 0.37;
-        controller.pitch = 1.2;
-        let (yaw_delta, pitch_delta) = (0.123_456_7, 0.9);
-
-        let shown = controller.turned(yaw_delta, pitch_delta);
-        controller.apply_input(
-            &ControllerInput {
-                yaw_delta,
-                pitch_delta,
-                ..Default::default()
-            },
-            1.0 / 60.0,
-        );
-
-        assert_eq!(controller.yaw, shown.yaw);
-        assert_eq!(controller.pitch, shown.pitch);
     }
 }

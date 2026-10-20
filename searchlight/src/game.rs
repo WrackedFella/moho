@@ -1394,8 +1394,10 @@ mod tests {
         let mut ctx = EventContext::new(&clock, None, None);
         let routing = game.route_input(&mut ctx, BACKTICK, true, false);
         assert_eq!(routing, Routing::Closed);
+        let resumed = draw_frame(&mut game, &mut renderer);
         tick_once(&mut game);
 
+        assert_eq!(resumed, shown, "the first frame after closing the console");
         for view in open_views {
             assert_eq!(view, shown, "the open console changed the view");
         }

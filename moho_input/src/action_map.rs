@@ -1230,7 +1230,8 @@ mod tests {
         }
 
         assert!(yaws.windows(2).all(|pair| pair[1] > pair[0]), "{yaws:?}");
-        assert_close((yaws[3], 0.0), (4.0 * stick_per_frame(), 0.0));
+        // 1560 look units per second for 4 frames of 15.625 ms at sensitivity 1.
+        assert_close((yaws[3], 0.0), (97.5, 0.0));
     }
 
     #[test]
@@ -1257,25 +1258,17 @@ mod tests {
     }
 
     #[test]
-    fn sample_frame_moves_counts_into_pending_look() {
-        let mut map = map(2.0);
-
-        map.mouse_motion(3.0, -1.0);
-        map.sample_frame(FRAME);
-
-        assert_eq!(map.pending_look(), (6.0, -2.0));
-    }
-
-    #[test]
     fn frames_without_a_tick_accumulate_pending_look() {
-        let mut map = map(1.0);
+        let mut map = map(2.0);
 
         map.mouse_motion(1.0, 2.0);
         map.sample_frame(FRAME);
+        let first = map.pending_look();
         map.mouse_motion(3.0, 4.0);
         map.sample_frame(FRAME);
 
-        assert_eq!(map.pending_look(), (4.0, 6.0));
+        assert_eq!(first, (2.0, 4.0));
+        assert_eq!(map.pending_look(), (8.0, 12.0));
     }
 
     #[test]
