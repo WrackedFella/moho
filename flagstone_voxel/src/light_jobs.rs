@@ -636,6 +636,138 @@ mod tests {
         assert_eq!(queue.pending_jobs(), 0);
     }
 
+    /// One lit voxel per job, so each finished job is charged one chunk.
+    fn single_chunk_job(x: i32) -> LightUpdateJob {
+        LightUpdateJob::add_light(IVec3::new(x, 8, 8), [1, 0, 0], x)
+    }
+
+    fn budget_of(max_blocks_per_frame: usize) -> LightFrameBudget {
+        LightFrameBudget {
+            max_blocks_per_frame,
+            max_time_us: u64::MAX,
+        }
+    }
+
+    #[test]
+    fn frame_budget_leaves_excess_jobs_queued() {
+        // (budget in blocks, jobs finished in one frame); a finished job costs 20 per chunk.
+        for (budget, finished) in [(19, 1), (20, 1), (21, 2), (40, 2), (41, 3)] {
+            let mut grid = transparent_grid();
+            let mut queue = LightJobQueue::new(budget_of(budget));
+            for x in 0..4 {
+                queue.submit(single_chunk_job(x));
+            }
+
+            let completed = queue.process_frame(&mut grid);
+
+            assert_eq!(completed, finished, "budget {budget}");
+            assert_eq!(queue.pending_jobs(), 4 - finished, "budget {budget}");
+        }
+    }
+
+    #[test]
+    fn zero_budget_processes_nothing_and_keeps_the_job_queued() {
+        let mut grid = transparent_grid();
+        let mut queue = LightJobQueue::new(budget_of(0));
+        queue.submit(single_chunk_job(0));
+
+        let completed = queue.process_frame(&mut grid);
+
+        assert_eq!(completed, 0);
+        assert_eq!(queue.pending_jobs(), 1);
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(0, 8, 8)), [0, 0, 0]);
+    }
+
+    #[test]
+    fn cancelled_job_counts_as_completed() {
+        let mut grid = transparent_grid();
+        let mut queue = LightJobQueue::new(unlimited_budget());
+        let cancelled = queue.submit(single_chunk_job(0));
+        queue.submit(single_chunk_job(1));
+        queue.cancel(cancelled);
+
+        let completed = queue.process_frame(&mut grid);
+
+        assert_eq!(completed, 2);
+        assert_eq!(queue.pending_jobs(), 0);
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(0, 8, 8)), [0, 0, 0]);
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(1, 8, 8)), [1, 0, 0]);
+    }
+
+    /// Chunks holding any lit voxel within 16 blocks of `center`.
+    fn lit_chunks(grid: &VoxelGrid, center: IVec3) -> std::collections::HashSet<IVec3> {
+        let mut chunks = std::collections::HashSet::new();
+        for x in -16..=16 {
+            for y in -16..=16 {
+                for z in -16..=16 {
+                    let pos = center + IVec3::new(x, y, z);
+                    if grid.block_light_rgb_at(pos) != [0, 0, 0] {
+                        chunks.insert(light_storage::world_to_chunk_local(pos).0);
+                    }
+                }
+            }
+        }
+        chunks
+    }
+
+    fn assert_affected_chunks(
+        result: &LightUpdateResult,
+        expected: &std::collections::HashSet<IVec3>,
+    ) {
+        assert!(
+            expected.len() > 1,
+            "the source must sit where light spills over"
+        );
+        assert_eq!(
+            result.affected_chunks.len(),
+            expected.len(),
+            "no duplicates"
+        );
+        let got: std::collections::HashSet<IVec3> =
+            result.affected_chunks.iter().copied().collect();
+        assert_eq!(&got, expected);
+    }
+
+    #[test]
+    fn affected_chunks_of_an_add_are_the_chunks_it_lit() {
+        let mut grid = transparent_grid();
+        let mut queue = LightJobQueue::with_default_budget();
+        let source = IVec3::new(15, 15, 15);
+        queue.submit(LightUpdateJob::add_light(source, [15, 0, 0], 0));
+
+        queue.process_frame(&mut grid);
+
+        let results = queue.collect_results();
+        assert_eq!(results.len(), 1);
+        assert_affected_chunks(&results[0], &lit_chunks(&grid, source));
+    }
+
+    #[test]
+    fn affected_chunks_of_a_remove_are_the_chunks_it_darkened() {
+        let mut grid = transparent_grid();
+        let mut queue = LightJobQueue::with_default_budget();
+        let source = IVec3::new(15, 15, 15);
+        LightPropagator::new().add_light_rgb(&mut grid, source, [15, 0, 0]);
+        let lit_before = lit_chunks(&grid, source);
+        queue.submit(LightUpdateJob::remove_light(source, 0));
+
+        queue.process_frame(&mut grid);
+
+        assert!(lit_chunks(&grid, source).is_empty());
+        let results = queue.collect_results();
+        assert_eq!(results.len(), 1);
+        assert_affected_chunks(&results[0], &lit_before);
+    }
+
+    #[test]
+    fn jobs_are_equal_by_id_not_by_content() {
+        let job = LightUpdateJob::add_light(IVec3::new(1, 2, 3), [15, 0, 0], 7);
+        let twin = LightUpdateJob::add_light(IVec3::new(1, 2, 3), [15, 0, 0], 7);
+
+        assert_eq!(job, job.clone());
+        assert_ne!(job, twin);
+    }
+
     #[test]
     fn test_player_distance_priority() {
         let player_pos = Vec3::new(0.0, 0.0, 0.0);

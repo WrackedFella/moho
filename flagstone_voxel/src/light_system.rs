@@ -349,6 +349,7 @@ impl LightSystemStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::light_propagation::LightPropagator;
 
     #[test]
     fn test_block_placed_light_source() {
@@ -397,11 +398,7 @@ mod tests {
         light_system.on_block_placed(IVec3::new(15, 2, 2), 1);
         light_system.process_frame();
         assert_eq!(light_system.pending_jobs(), 0, "the frame drains the queue");
-        let expected: HashSet<IVec3> = light_system
-            .recent_results()
-            .iter()
-            .flat_map(|r| r.affected_chunks.iter().copied())
-            .collect();
+        let expected = lit_chunks(light_system.grid(), IVec3::new(15, 2, 2));
 
         let count = light_system.emit_dirty_events();
 
@@ -412,5 +409,215 @@ mod tests {
         assert_eq!(got.into_iter().collect::<HashSet<_>>(), expected);
         assert_eq!(light_system.emit_dirty_events(), 0);
         assert_eq!(received.lock().unwrap().len(), count, "no repeat events");
+    }
+
+    const TORCH: [u8; 3] = [15, 8, 2];
+
+    /// Chunks holding any lit voxel within 16 blocks of `center`.
+    fn lit_chunks(grid: &VoxelGrid, center: IVec3) -> HashSet<IVec3> {
+        let mut chunks = HashSet::new();
+        for x in -16..=16 {
+            for y in -16..=16 {
+                for z in -16..=16 {
+                    let pos = center + IVec3::new(x, y, z);
+                    if grid.block_light_rgb_at(pos) != [0, 0, 0] {
+                        chunks.insert(crate::light_storage::world_to_chunk_local(pos).0);
+                    }
+                }
+            }
+        }
+        chunks
+    }
+
+    /// Material 0 is an opaque block (the default), 1 a torch, 2 a transparent
+    /// block with no emission; the registry only holds ids 0 to 2.
+    fn test_grid() -> VoxelGrid {
+        use crate::grid::MaterialLighting;
+        let mut grid = VoxelGrid::new(16);
+        for (id, emission, opacity_cost) in [(1, TORCH, 0), (2, [0, 0, 0], 0)] {
+            grid.material_registry.set_lighting(
+                id,
+                MaterialLighting {
+                    emission,
+                    opacity_cost,
+                },
+            );
+        }
+        grid
+    }
+
+    type DirtyLog = Arc<std::sync::Mutex<Vec<IVec3>>>;
+
+    fn system_with_budget(budget: LightFrameBudget) -> (LightSystem, DirtyLog) {
+        let event_bus = Arc::new(EventBus::new());
+        let received: DirtyLog = Arc::default();
+        let sink = Arc::clone(&received);
+        event_bus.subscribe(move |event: &WorldEvent| {
+            if let WorldEvent::ChunkMeshDirty { chunk_pos, .. } = event {
+                sink.lock().unwrap().push(*chunk_pos);
+            }
+        });
+        (LightSystem::new(test_grid(), event_bus, budget), received)
+    }
+
+    fn system() -> (LightSystem, DirtyLog) {
+        system_with_budget(LightFrameBudget::balanced())
+    }
+
+    fn placed(position: IVec3, material_id: u32) -> WorldEvent {
+        WorldEvent::BlockPlaced {
+            position,
+            material_id,
+            reason: BlockChangeReason::Player,
+        }
+    }
+
+    fn assert_published_once_each(received: &DirtyLog, expected: &HashSet<IVec3>) {
+        let got = received.lock().unwrap().clone();
+        assert_eq!(got.len(), expected.len(), "one event per chunk: {got:?}");
+        assert_eq!(&got.into_iter().collect::<HashSet<_>>(), expected);
+    }
+
+    #[test]
+    fn placing_an_emissive_block_emits_dirty_events_for_reached_chunks() {
+        let (mut light_system, received) = system();
+        let source = IVec3::new(15, 15, 15);
+
+        light_system.handle_event(&placed(source, 1));
+        let completed = light_system.process_frame();
+        let emitted = light_system.emit_dirty_events();
+
+        assert_eq!(completed, 1);
+        assert_eq!(light_system.grid().block_light_rgb_at(source), TORCH);
+        let expected = lit_chunks(light_system.grid(), source);
+        assert!(
+            expected.len() > 1,
+            "light must spill into neighbouring chunks"
+        );
+        assert_eq!(emitted, expected.len());
+        assert_published_once_each(&received, &expected);
+        assert_eq!(light_system.emit_dirty_events(), 0);
+        assert_eq!(received.lock().unwrap().len(), expected.len());
+    }
+
+    #[test]
+    fn removing_an_emissive_block_darkens_it_and_emits_dirty_events_for_those_chunks() {
+        let (mut light_system, received) = system();
+        let source = IVec3::new(15, 15, 15);
+        light_system.handle_event(&placed(source, 1));
+        light_system.process_frame();
+        light_system.emit_dirty_events();
+        let lit = lit_chunks(light_system.grid(), source);
+        received.lock().unwrap().clear();
+
+        light_system.handle_event(&WorldEvent::BlockRemoved {
+            position: source,
+            old_material_id: 1,
+            reason: BlockChangeReason::Player,
+        });
+        let completed = light_system.process_frame();
+        light_system.emit_dirty_events();
+
+        assert_eq!(completed, 1);
+        assert_eq!(light_system.grid().block_light_rgb_at(source), [0, 0, 0]);
+        assert!(lit_chunks(light_system.grid(), source).is_empty());
+        assert_published_once_each(&received, &lit);
+    }
+
+    #[test]
+    fn a_batch_lights_emissive_blocks_and_clears_light_at_non_emissive_ones() {
+        let (mut light_system, _received) = system_with_budget(LightFrameBudget {
+            max_blocks_per_frame: usize::MAX,
+            max_time_us: u64::MAX,
+        });
+        let torch_pos = IVec3::new(5, 5, 5);
+        let stone_pos = IVec3::new(40, 5, 5);
+        let empty_pos = IVec3::new(70, 5, 5);
+        light_system.grid_mut().place_block(torch_pos, 1, None);
+        light_system.grid_mut().place_block(stone_pos, 2, None);
+        for pos in [stone_pos, empty_pos] {
+            LightPropagator::new().add_light_rgb(light_system.grid_mut(), pos, [10, 0, 0]);
+        }
+
+        light_system.handle_event(&WorldEvent::BlocksBatchModified {
+            chunk_pos: IVec3::ZERO,
+            positions: vec![torch_pos, stone_pos, empty_pos],
+            reason: BlockChangeReason::Explosion,
+        });
+        assert_eq!(
+            light_system.pending_jobs(),
+            2,
+            "no job for the empty position"
+        );
+        let completed = light_system.process_frame();
+
+        assert_eq!(completed, 2);
+        let grid = light_system.grid();
+        assert_eq!(grid.block_light_rgb_at(torch_pos), TORCH);
+        assert_eq!(grid.block_light_rgb_at(stone_pos), [0, 0, 0]);
+        assert_eq!(
+            grid.block_light_rgb_at(empty_pos),
+            [10, 0, 0],
+            "nothing queued for a position without a block"
+        );
+    }
+
+    #[test]
+    fn placing_an_opaque_non_emissive_block_queues_one_removal_that_clears_its_light() {
+        let (mut light_system, _received) = system();
+        let pos = IVec3::new(5, 5, 5);
+        LightPropagator::new().add_light_rgb(light_system.grid_mut(), pos, [10, 0, 0]);
+
+        light_system.handle_event(&placed(pos, 0));
+
+        assert_eq!(light_system.pending_jobs(), 1);
+        light_system.process_frame();
+        assert_eq!(light_system.grid().block_light_rgb_at(pos), [0, 0, 0]);
+    }
+
+    #[test]
+    fn placing_a_transparent_non_emissive_block_queues_nothing() {
+        let (mut light_system, _received) = system();
+        let pos = IVec3::new(5, 5, 5);
+        LightPropagator::new().add_light_rgb(light_system.grid_mut(), pos, [10, 0, 0]);
+
+        light_system.handle_event(&placed(pos, 2));
+
+        assert_eq!(light_system.pending_jobs(), 0);
+        light_system.process_frame();
+        assert_eq!(light_system.grid().block_light_rgb_at(pos), [10, 0, 0]);
+    }
+
+    #[test]
+    fn a_chunk_mesh_dirty_event_queues_nothing() {
+        let (mut light_system, _received) = system();
+
+        light_system.handle_event(&WorldEvent::ChunkMeshDirty {
+            chunk_pos: IVec3::ZERO,
+            terrain_dirty: true,
+            structure_dirty: true,
+        });
+
+        assert_eq!(light_system.pending_jobs(), 0);
+    }
+
+    #[test]
+    fn the_job_nearest_the_player_is_processed_first() {
+        let (mut light_system, _received) = system_with_budget(LightFrameBudget {
+            max_blocks_per_frame: 1,
+            max_time_us: u64::MAX,
+        });
+        let far = IVec3::new(0, 8, 8);
+        let near = IVec3::new(100, 8, 8);
+        light_system.set_player_position(Vec3::new(100.0, 8.0, 8.0));
+        light_system.handle_event(&placed(far, 1));
+        light_system.handle_event(&placed(near, 1));
+
+        let completed = light_system.process_frame();
+
+        assert_eq!(completed, 1);
+        assert_eq!(light_system.pending_jobs(), 1);
+        assert_eq!(light_system.grid().block_light_rgb_at(near), TORCH);
+        assert_eq!(light_system.grid().block_light_rgb_at(far), [0, 0, 0]);
     }
 }

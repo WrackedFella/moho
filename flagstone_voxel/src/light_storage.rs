@@ -211,6 +211,33 @@ mod tests {
     }
 
     #[test]
+    fn clearing_a_sky_bit_leaves_the_bits_around_it_in_the_word_set() {
+        let mut cl = ChunkLight::new();
+        for idx in [5, 6, 7, 63, 64] {
+            cl.set_sky_exposed(idx, true);
+        }
+
+        cl.set_sky_exposed(6, false);
+
+        assert!(!cl.sky_exposed_at(6));
+        for idx in [5, 7, 63, 64] {
+            assert!(cl.sky_exposed_at(idx), "bit {idx} must stay set");
+        }
+    }
+
+    #[test]
+    fn placing_at_the_current_max_height_leaves_sky_clean() {
+        let mut cl = ChunkLight::new();
+        cl.note_opaque_placed(5, 3, 5);
+        cl.sky_dirty = false;
+
+        cl.note_opaque_placed(5, 3, 5);
+
+        assert_eq!(cl.column_max_y(5, 5), 3);
+        assert!(!cl.sky_dirty, "an equal height changes nothing");
+    }
+
+    #[test]
     fn block_light_rgb_set_get() {
         let mut cl = ChunkLight::new();
         cl.set_block_light_rgb(100, [15, 8, 2]);
