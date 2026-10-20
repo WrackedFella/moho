@@ -100,7 +100,7 @@ lines ask for.
 **Gate:** whatever the games need for a V1 release. M2 runs in waves; Justin declares it
 done when the games' requirements are adequately met. Each wave is planned from the
 open engine requests (label `engine-request`) when the one before it nears its end.
-Engine requests answered here: #302, #304–#307, #315, #316, #402 (#303 goes to the strategy
+Engine requests answered here: #302, #304–#307, #315, #316, #402, #425 (answered by #428), #435 (#303 goes to the strategy
 line, as an [SG-F4](https://github.com/WrackedFella/moho/issues/310) card).
 
 **Current wave set (decided 2026-10-14), all must hold:**
@@ -141,9 +141,13 @@ its consumers near, not when the earlier wave fully closes.
 | 2.10 | [ENG-F24-03](https://github.com/WrackedFella/moho/issues/329): the game hides the world above a chosen height (renderer) | #306 | SG-F4 underground marks | 3 | ENG-F24's first card |
 | 2.11 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) console (priority): [ENG-F18-05](https://github.com/WrackedFella/moho/issues/403) the FPS opens a console and runs its own commands, then [ENG-F18-06](https://github.com/WrackedFella/moho/issues/404) renderer and sound commands | #402 | FPS-F2-06; FPS feature testing | 2 | #403 after #401 (FPS-F2-03, shares searchlight's game module) |
 | 2.11a | [ENG-F18-07](https://github.com/WrackedFella/moho/issues/405): a game's own setting survives a relaunch (priority) | #402 | FPS-F2-06 `tgm` | 2 | #354; before #377 and #379 (shared prefs) |
-| 2.11b | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) rest: [ENG-F18-08](https://github.com/WrackedFella/moho/issues/406) strategy on the shared console, [ENG-F18-09](https://github.com/WrackedFella/moho/issues/407) on-screen text | #315 | FPS Phase 2 | 4 | #403 (#406 also #404) |
+| 2.11b | [ENG-F18-08](https://github.com/WrackedFella/moho/issues/406): strategy on the shared console | — | strategy console | 4 | #403, #404 |
+| 2.11c | [ENG-F18-09](https://github.com/WrackedFella/moho/issues/407): a game draws text on screen from its own crates (pulled forward) | #315 | FPS Phase 2 HUD | 2 | #403; after #376; rebases on #406 if that lands first (`moho_ui_shell` host) |
+| 2.11d | [ENG-F18-10](https://github.com/WrackedFella/moho/issues/428): a game prints a line in its console after it acts on a command | #425 | FPS-F2-06 `tgm` | 2 | #403 |
+| 2.11e | [ENG-F18-16](https://github.com/WrackedFella/moho/issues/447): the player sets how often the world autosaves | #435 | SG-F2-03 (#343) | 1–2 gaps | flagstone's read after #343 |
+| 2.11f | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) settings screen, modal stack and keybind capture on the shell (held until the FPS project specs its menus) | — | FPS menus | 4 | FPS menu spec; capture after ENG-F26 |
 | 2.12 | [ENG-F19](https://github.com/WrackedFella/moho/issues/231) layered content | — | FPS Phase 2 | 4 | — |
-| 2.13 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation over static levels (FPS uses waypoints until then) | — | FPS | 4 | — |
+| 2.13 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation over static levels (FPS uses waypoints until then) | — | FPS enemy chase and patrol | 4 | — |
 | 2.14 | [ENG-F26](https://github.com/WrackedFella/moho/issues/359): one key carries tap, hold, modifier and toggle actions (new; `moho_input`, settings display) | Justin, 2026-10-15 | strategy sprint toggle; FPS reload, check mag, unjam | 4 | before ENG-F18's keybind card |
 | 2.15 | [ENG-F27](https://github.com/WrackedFella/moho/issues/361): the game lines are called flagstone and searchlight; one card per line ([#362](https://github.com/WrackedFella/moho/issues/362) FPS, [#363](https://github.com/WrackedFella/moho/issues/363) strategy) | Justin, 2026-10-15 | ENG-F5 split (M3) | 1–2 gaps | #362 after #358; #363 after #355, before #331 |
 | 2.16 | [ENG-F28](https://github.com/WrackedFella/moho/issues/373): mouse look feels like a Source game (raw, per-frame look; sensitivity, smoothing, acceleration and vsync settings) | Justin, 2026-10-15 | FPS prototype feel; strategy first-person camera | 2 | prefs and settings cards after #331, #333, #354, #405 |
@@ -151,10 +155,11 @@ its consumers near, not when the earlier wave fully closes.
 - **Wave 1, start now:** the bugs, ENG-F16, ENG-F6 and ENG-F25. They need no other M2 work.
 - **Wave 2, before SG-F5 and SG-F4:** ENG-F23 and ENG-F24 unblock SG-F5; ENG-F9 comes before SG-F4.
   ENG-F28 (mouse feel) runs alongside; its settings cards queue behind the wave-1 prefs cards and ENG-F18-07.
-  The ENG-F18 console (2.11, 2.11a) is pulled into wave 2 so the FPS can test features with it.
+  The ENG-F18 console (2.11, 2.11a, 2.11d) is pulled into wave 2 so the FPS can test features with it,
+  and on-screen text (2.11c) so the FPS HUD doesn't wait for the rest of ENG-F18.
 - **Wave 3, SG-F4 follow-ups:** pause and speed, then the height slice, once SG-F4's walking skeleton exists.
-- **Wave 4, before FPS Phase 2:** the rest of ENG-F18 (2.11b), ENG-F19, ENG-F17 and ENG-F26
-  (before ENG-F18's keybind card, which builds the hold and chord capture on it).
+- **Wave 4, before FPS Phase 2:** the rest of ENG-F18 (2.11b, and 2.11f once the FPS menus are specced),
+  ENG-F19, ENG-F17 and ENG-F26 (before ENG-F18's keybind capture, which builds on it).
 
 ### Strategy
 
@@ -257,3 +262,6 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-15 | New ENG-F28 (Source-like mouse look) in M2 wave 2, not a gate item: look turns every frame ahead of the tick that consumes it (ADR-0011 holds), raw by default, settings in the same feature | [ENG-F28](https://github.com/WrackedFella/moho/issues/373) |
 | 2026-10-16 | ENG-F18's console moves to wave 2 for FPS testing (#402): games inherit the engine's commands and add their own, a taken name is refused; game settings persist in each game's own prefs file. Strategy migration and on-screen text stay in wave 4 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) |
 | 2026-10-19 | Strategy plan in four milestones named for what the player can do: trust the world (SG-F2, SG-F1-04), run the colony from above (SG-F5), pawns dig what I mark (SG-F4), build and polish (SG-F3, SG-F6); the first two may overlap, and the SG-F4 BA pass starts during SG-F5 | [flagstone-milestones](https://github.com/WrackedFella/moho/issues/308) |
+| 2026-10-20 | ENG-F18-09 on-screen text (#407) moves to wave 2, after #376, so the FPS HUD doesn't wait for the rest of ENG-F18 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) |
+| 2026-10-20 | ENG-F18's settings screen, modal stack and keybind capture wait for the FPS project's menu spec; ENG-F19's "saves record the active root list" is deferred until a game both saves and loads content | [ENG-F18](https://github.com/WrackedFella/moho/issues/230), [ENG-F19](https://github.com/WrackedFella/moho/issues/231) |
+| 2026-10-20 | An engine request closes when the engine work that answers it merges; the game line's card tracks adoption | [agentic workflow](../wiki/process/agentic-workflow.md) |
