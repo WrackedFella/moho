@@ -92,10 +92,6 @@ impl EventProcessor {
             }
             UiEvent::MenuHidden { name } => {
                 tracing::info!(name = %name, "Menu hidden");
-                // Handle console close event
-                if name == "console" {
-                    app.exit_console();
-                }
             }
             UiEvent::OverlayToggled { name, visible } => {
                 tracing::info!(name = %name, visible, "Overlay toggled");
