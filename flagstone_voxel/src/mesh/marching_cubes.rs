@@ -916,6 +916,17 @@ mod tests {
         assert_normals_point_away_from(&mesh, [6.5, 6.5, 6.5]);
     }
 
+    #[test]
+    fn sample_at_iso_level_is_not_solid() {
+        let mut field = [[[0.0f32; 18]; 18]; 18];
+        field[8][8][8] = 0.5;
+
+        let mesh = MarchingCubes::generate_mesh(&field, 16);
+
+        assert!(mesh.vertices.is_empty());
+        assert!(mesh.indices.is_empty());
+    }
+
     fn solid_samples_field(
         solid: impl IntoIterator<Item = (usize, usize, usize)>,
     ) -> [[[f32; 18]; 18]; 18] {
