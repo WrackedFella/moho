@@ -23,6 +23,7 @@ flowchart TD
     LOD -- "no: LOD 0" --> M0["full 16³ hybrid mesh"]
     LOD -- "yes: LOD 1" --> M1["coarse 8³ blocky mesh"]
     M0 & M1 --> OUT["world_geometry::insert_chunk<br/>(ChunkStore + WorldMeshes.upsert<br/>+ PhysicsWorld.set_world_mesh)"]
+    OUT -. "mark cap dirty" .-> CAP["CutCaps (see rendering)"]
     OUT --> R["flushed and drawn next redraw"]
 ```
 
