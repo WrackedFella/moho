@@ -48,3 +48,11 @@ Out-of-range quality values are rejected with a message. Unknown commands print 
 | `r_shadow_quality` | `<0-4>` | As above |
 | `r_ssao_quality` | `<0-4>` | As above |
 | `audio_cue` | `<path> <x> <y> <z> [volume]` | Play a sound at a world position in metres (volume defaults to 1.0); non-finite numbers are rejected |
+
+## Searchlight console (`searchlight`)
+
+**Source:** `searchlight/src/console_commands.rs`. Adds to the engine commands above.
+
+| Command | Args | Effect |
+|---|---|---|
+| `tgm` | `[0\|1]` | God mode: no argument toggles, `1` on, `0` off. Enemy hits stop damaging the player. Stored as `god_mode` under `[debug]` in the game's prefs file, so it persists across runs |

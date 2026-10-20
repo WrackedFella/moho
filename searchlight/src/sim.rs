@@ -388,7 +388,7 @@ impl SearchlightSim {
                 .push(Feedback::MagazineLevel(self.rifle.magazine().level()));
         }
 
-        self.fire_enemies(&firing);
+        self.fire_enemies(&firing, command.god_mode);
         self.remove_dead_enemies();
         if self.player_body.is_dead() {
             self.outbox.push(Feedback::PlayerDied);
@@ -500,7 +500,7 @@ impl SearchlightSim {
 
     /// Fires the enemies in `firing`, in order, skipping any that died this tick and all of
     /// them once the player is dead.
-    fn fire_enemies(&mut self, firing: &[usize]) {
+    fn fire_enemies(&mut self, firing: &[usize], god_mode: bool) {
         for &index in firing {
             if self.player_body.is_dead() {
                 break;
@@ -532,7 +532,9 @@ impl SearchlightSim {
                 ..
             }) = strike
             {
-                self.player_body.hit(part, self.enemy.damage);
+                if !god_mode {
+                    self.player_body.hit(part, self.enemy.damage);
+                }
                 self.outbox.push(Feedback::PlayerHit { part, from: eye });
             }
         }
@@ -3370,5 +3372,122 @@ mod pinned_behaviour_tests {
         let eye = sim.enemy_state(0).expect("alive").position + Vec3::Y * 0.72;
         assert_eq!(hits.len(), 1, "{feedback:?}");
         assert!(hits[0].abs_diff_eq(eye, 1e-4), "{:?} vs {eye:?}", hits[0]);
+    }
+}
+
+#[cfg(test)]
+mod god_mode_tests {
+    use super::*;
+    use crate::test_support::{DT, arena_with, mag, test_config};
+
+    fn duel_sim(aim_at: BodyPart) -> SearchlightSim {
+        let arena = arena_with(
+            &[],
+            Vec3::ZERO,
+            &[Vec3::new(0.0, 0.0, 10.0)],
+            &[Vec3::new(0.0, 0.0, 6.0)],
+        );
+        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        config.eye_height = 0.72;
+        config.enemy_aim_at = aim_at;
+        SearchlightSim::start(arena, config)
+    }
+
+    fn command(god_mode: bool) -> SearchlightCommand {
+        SearchlightCommand {
+            god_mode,
+            ..SearchlightCommand::default()
+        }
+    }
+
+    /// Ticks `count` times under `god_mode`, returning all the feedback produced.
+    fn run(sim: &mut SearchlightSim, count: usize, god_mode: bool) -> Vec<Feedback> {
+        let mut feedback = Vec::new();
+        for _ in 0..count {
+            sim.tick(&command(god_mode), DT);
+            feedback.extend(sim.drain_feedback());
+        }
+        feedback
+    }
+
+    fn hits_taken(feedback: &[Feedback]) -> usize {
+        feedback
+            .iter()
+            .filter(|fb| matches!(fb, Feedback::PlayerHit { .. }))
+            .count()
+    }
+
+    #[test]
+    fn god_mode_enemy_hits_take_no_health() {
+        let mut sim = duel_sim(BodyPart::Torso);
+
+        let feedback = run(&mut sim, 60, true);
+
+        assert!(hits_taken(&feedback) >= 5, "{feedback:?}");
+        assert_eq!(sim.player_body().health(), 100);
+        assert!(!sim.player_body().is_dead());
+        assert!(!feedback.contains(&Feedback::PlayerDied));
+    }
+
+    #[test]
+    fn god_mode_head_hits_never_kill() {
+        let mut sim = duel_sim(BodyPart::Head);
+
+        let feedback = run(&mut sim, 120, true);
+
+        assert!(hits_taken(&feedback) >= 10, "{feedback:?}");
+        assert!(!sim.player_body().is_dead());
+        assert_eq!(sim.player_body().status(BodyPart::Head), Some(50));
+        assert_eq!(sim.player_body().health(), 100);
+        assert!(!feedback.contains(&Feedback::PlayerDied));
+    }
+
+    #[test]
+    fn god_mode_limb_hits_never_disable_the_limb() {
+        let mut sim = duel_sim(BodyPart::LeftLeg);
+
+        let feedback = run(&mut sim, 120, true);
+
+        assert!(hits_taken(&feedback) >= 10, "{feedback:?}");
+        assert!(!sim.player_body().is_disabled(BodyPart::LeftLeg));
+        assert_eq!(sim.player_body().status(BodyPart::LeftLeg), Some(60));
+    }
+
+    #[test]
+    fn god_mode_hits_report_the_same_feedback_as_without_it() {
+        let mut mortal = duel_sim(BodyPart::Torso);
+        let mut immortal = duel_sim(BodyPart::Torso);
+
+        let without = run(&mut mortal, 12, false);
+        let with = run(&mut immortal, 12, true);
+
+        assert_eq!(hits_taken(&without), 3);
+        assert_eq!(with, without);
+        assert_eq!(mortal.player_body().health(), 70);
+        assert_eq!(immortal.player_body().health(), 100);
+    }
+
+    #[test]
+    fn turning_god_mode_off_keeps_current_health() {
+        let mut sim = duel_sim(BodyPart::Torso);
+
+        run(&mut sim, 4, false);
+        let before = sim.player_body().health();
+        run(&mut sim, 8, true);
+        let during = sim.player_body().health();
+        run(&mut sim, 4, false);
+        let after = sim.player_body().health();
+
+        assert_eq!((before, during, after), (90, 90, 80));
+    }
+
+    #[test]
+    fn god_mode_does_not_revive_a_dead_player() {
+        let mut sim = duel_sim(BodyPart::Torso);
+        sim.kill_player();
+
+        run(&mut sim, 10, true);
+
+        assert!(sim.player_body().is_dead());
     }
 }

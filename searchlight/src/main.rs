@@ -13,6 +13,7 @@ use moho_ui_shell::UiShell;
 use searchlight::arena::{self, Arena};
 use searchlight::brain::EnemyTuning;
 use searchlight::console_commands;
+use searchlight::debug_settings::DebugSettings;
 use searchlight::game::{SearchlightGame, WINDOW_TITLE};
 use searchlight::mode::ArenaMode;
 use searchlight::sim::SimConfig;
@@ -76,6 +77,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         tracing::warn!(%warning, "Preferences load fallback");
     }
     let (console_section, game_section) = split_console_binding(prefs.bindings());
+    let debug_settings = DebugSettings::new(prefs, prefs_path());
     let (bindings, warnings) = ActionBindings::load(&game_section);
     for warning in warnings {
         tracing::warn!(?warning, "bindings");
@@ -86,6 +88,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let game = SearchlightGame::new(mode, ActionMap::new(bindings, LOOK_PER_PIXEL))
         .with_shell(UiShell::new(console))
+        .with_debug_settings(debug_settings)
         .with_arena(arena.meshes.clone(), &arena.dummy_spawns)
         .with_shot_sound(&assets().join("rifle_shot.wav"));
 

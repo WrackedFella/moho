@@ -2,7 +2,6 @@
 //! feedback into sound, a title status line, a hit flash and a crosshair.
 
 use std::collections::BTreeMap;
-use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -22,8 +21,10 @@ use moho_renderer::{LightingGpu, RendererBackend, Scene, WorldMeshes};
 use winit::window::{CursorGrabMode, Window};
 
 use moho_ui_shell::host::input_of;
-use moho_ui_shell::{Console, Routing, UiLayers, UiShell, apply_engine_command};
+use moho_ui_shell::{Routing, UiLayers, UiShell, apply_engine_command};
 
+use crate::console_commands::{self, ConsoleCommand, GodModeArg};
+use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand};
 use crate::mode::ArenaMode;
@@ -363,7 +364,7 @@ struct Stage {
     window: Option<Arc<Window>>,
     status: String,
     title: String,
-    shell: Arc<Mutex<UiShell<Infallible>>>,
+    shell: Arc<Mutex<UiShell<ConsoleCommand>>>,
 }
 
 impl Stage {
@@ -386,13 +387,15 @@ impl Stage {
             window: None,
             status: String::new(),
             title: String::new(),
-            shell: Arc::new(Mutex::new(UiShell::new(Console::new(&BTreeMap::new()).0))),
+            shell: Arc::new(Mutex::new(UiShell::new(
+                console_commands::console(&BTreeMap::new()).0,
+            ))),
         }
     }
 
     /// The console shell. Never hold the guard across `draw`: the renderer locks the shell
     /// itself when it pulls the UI frame.
-    fn shell(&self) -> MutexGuard<'_, UiShell<Infallible>> {
+    fn shell(&self) -> MutexGuard<'_, UiShell<ConsoleCommand>> {
         self.shell.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -604,6 +607,8 @@ pub struct SearchlightGame {
     /// The player as the tick before the last left them, for blending the view.
     previous: CharacterState,
     stage: Stage,
+    god_mode: bool,
+    debug_settings: Option<DebugSettings>,
 }
 
 impl SearchlightGame {
@@ -615,6 +620,46 @@ impl SearchlightGame {
             input,
             previous,
             stage: Stage::new(),
+            god_mode: false,
+            debug_settings: None,
+        }
+    }
+
+    /// Starts in the god mode `settings` holds and saves every change to it.
+    #[must_use]
+    pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
+        self.god_mode = settings.god_mode();
+        self.debug_settings = Some(settings);
+        self
+    }
+
+    /// Applies the console's queued commands in order, saves god mode once if they changed it,
+    /// and reports the value after each bare `tgm`.
+    fn apply_console_commands(&mut self) {
+        let queued = self.stage.shell().console_mut().take_commands();
+        if queued.is_empty() {
+            return;
+        }
+        let before = self.god_mode;
+        for ConsoleCommand::GodMode(arg) in queued {
+            match arg {
+                GodModeArg::Toggle => {
+                    self.god_mode = !self.god_mode;
+                    let text = if self.god_mode {
+                        "God mode: on"
+                    } else {
+                        "God mode: off"
+                    };
+                    self.stage.shell().console_mut().print(text);
+                }
+                GodModeArg::Set(on) => self.god_mode = on,
+            }
+        }
+        if self.god_mode != before
+            && let Some(settings) = &mut self.debug_settings
+            && let Err(error) = settings.set_god_mode(self.god_mode)
+        {
+            tracing::warn!(%error, god_mode = self.god_mode, "god mode not saved");
         }
     }
 
@@ -641,9 +686,9 @@ impl SearchlightGame {
         &mut self.input
     }
 
-    /// Replaces the default console shell, which has no game commands.
+    /// Replaces the default console shell.
     #[must_use]
-    pub fn with_shell(mut self, shell: UiShell<Infallible>) -> Self {
+    pub fn with_shell(mut self, shell: UiShell<ConsoleCommand>) -> Self {
         self.stage.shell = Arc::new(Mutex::new(shell));
         self
     }
@@ -683,7 +728,11 @@ impl Game for SearchlightGame {
     type Command = SearchlightCommand;
 
     fn command(&mut self) -> SearchlightCommand {
-        SearchlightCommand::from_frame(&self.input.end_tick())
+        self.apply_console_commands();
+        SearchlightCommand {
+            god_mode: self.god_mode,
+            ..SearchlightCommand::from_frame(&self.input.end_tick())
+        }
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &SearchlightCommand) {
@@ -747,6 +796,7 @@ impl Game for SearchlightGame {
             str::to_owned,
         );
         let vitals = hud::vitals_text(&vitals, self.mode.wave(), self.mode.score());
+        let vitals = hud::god_mode_text(&vitals, self.god_mode);
         self.stage.refresh_title(&vitals);
         self.stage.refresh_hud(dead);
         self.stage.sync_enemies(self.mode.sim());
@@ -769,6 +819,7 @@ mod tests {
 
     use glam::Vec3;
     use moho_app::{GameClock, HeadlessLoop, LoopConfig};
+    use moho_core::prefs::Prefs;
     use moho_input::bindings::ActionBindings;
     use winit::event::{DeviceEvent, WindowEvent};
 
@@ -1203,6 +1254,218 @@ mod tests {
         headless.advance(&mut game, Duration::ZERO);
 
         assert!(game.sim().pending_feedback().is_empty());
+    }
+
+    fn type_into_console(game: &SearchlightGame, line: &str) {
+        game.stage.shell().console_mut().submit(line);
+    }
+
+    fn console_lines(game: &SearchlightGame) -> Vec<String> {
+        game.stage
+            .shell()
+            .console_mut()
+            .output()
+            .lines()
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Types `line` and runs one `command()`, returning the god mode it carries.
+    fn tgm_tick(game: &mut SearchlightGame, line: &str) -> bool {
+        type_into_console(game, line);
+        game.command().god_mode
+    }
+
+    fn settings_in(dir: &tempfile::TempDir) -> (DebugSettings, std::path::PathBuf) {
+        let path = dir.path().join("searchlight.ini");
+        (DebugSettings::new(Prefs::default(), path.clone()), path)
+    }
+
+    fn saved_god_mode(path: &std::path::Path) -> Option<String> {
+        let (saved, _) = Prefs::load_from(path);
+        saved.debug_value("god_mode").map(str::to_owned)
+    }
+
+    #[test]
+    fn tgm_flips_god_mode_each_time() {
+        let mut game = game();
+
+        let start = game.command().god_mode;
+        let first = tgm_tick(&mut game, "tgm");
+        let second = tgm_tick(&mut game, "tgm");
+        let third = tgm_tick(&mut game, "tgm");
+
+        assert_eq!([start, first, second, third], [false, true, false, true]);
+        assert!(game.god_mode);
+    }
+
+    #[test]
+    fn bare_tgm_prints_the_value_it_set() {
+        let mut game = game();
+
+        type_into_console(&game, "tgm");
+        game.command();
+        type_into_console(&game, "tgm");
+        game.command();
+
+        let lines = console_lines(&game);
+        let tail = &lines[lines.len() - 4..];
+        assert_eq!(tail, ["> tgm", "God mode: on", "> tgm", "God mode: off"]);
+    }
+
+    #[test]
+    fn tgm_1_twice_leaves_god_mode_on() {
+        let mut game = game();
+
+        let first = tgm_tick(&mut game, "tgm 1");
+        let second = tgm_tick(&mut game, "tgm 1");
+
+        assert!(first && second);
+        assert!(game.god_mode);
+    }
+
+    #[test]
+    fn tgm_0_turns_god_mode_off() {
+        let mut game = game();
+        let on = tgm_tick(&mut game, "tgm 1");
+
+        let off = tgm_tick(&mut game, "tgm 0");
+
+        assert!(on);
+        assert!(!off);
+        assert!(!game.god_mode);
+    }
+
+    #[test]
+    fn queued_commands_apply_in_order_within_one_command_call() {
+        let mut game = game();
+        type_into_console(&game, "tgm 1");
+        type_into_console(&game, "tgm");
+        type_into_console(&game, "tgm");
+
+        let command = game.command();
+
+        assert!(command.god_mode);
+        assert!(game.god_mode);
+    }
+
+    #[test]
+    fn a_refused_tgm_leaves_god_mode_on() {
+        let mut game = game();
+        tgm_tick(&mut game, "tgm 1");
+
+        let after_two = tgm_tick(&mut game, "tgm 2");
+        let after_on = tgm_tick(&mut game, "tgm on");
+        let after_two_args = tgm_tick(&mut game, "tgm 1 0");
+
+        assert!(after_two && after_on && after_two_args);
+        assert!(game.god_mode);
+    }
+
+    #[test]
+    fn the_command_carries_god_mode_every_tick() {
+        let mut game = game();
+        tgm_tick(&mut game, "tgm 1");
+
+        let later: Vec<bool> = (0..3).map(|_| game.command().god_mode).collect();
+        tgm_tick(&mut game, "tgm 0");
+        let after_off: Vec<bool> = (0..3).map(|_| game.command().god_mode).collect();
+
+        assert_eq!(later, [true, true, true]);
+        assert_eq!(after_off, [false, false, false]);
+    }
+
+    #[test]
+    fn god_mode_survives_a_restart() {
+        let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        game.mode.sim_mut().kill_player();
+        assert!(game.sim().player_body().is_dead());
+        tgm_tick(&mut game, "tgm 1");
+
+        let restart = SearchlightCommand {
+            restart: true,
+            ..game.command()
+        };
+        tick_with(&mut game, &mut clock, &restart);
+        let mut hits = 0;
+        for _ in 0..300 {
+            let command = game.command();
+            tick_with(&mut game, &mut clock, &command);
+            hits += game
+                .mode
+                .drain_feedback()
+                .iter()
+                .filter(|fb| matches!(fb, Feedback::PlayerHit { .. }))
+                .count();
+        }
+
+        assert!(hits > 0, "no enemy ever hit the player");
+        assert!(!game.sim().player_body().is_dead());
+        assert_eq!(
+            game.sim().player_body().health(),
+            game.sim().player_max_health()
+        );
+    }
+
+    #[test]
+    fn a_saved_god_mode_starts_the_game_in_god_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut settings, path) = settings_in(&dir);
+        settings.set_god_mode(true).unwrap();
+        let mut game = game().with_debug_settings(settings);
+
+        let command = game.command();
+
+        assert!(command.god_mode);
+        assert!(game.god_mode);
+        assert_eq!(saved_god_mode(&path).as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn tgm_saves_the_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+
+        tgm_tick(&mut game, "tgm 1");
+        let on = saved_god_mode(&path);
+        tgm_tick(&mut game, "tgm");
+        let off = saved_god_mode(&path);
+
+        assert_eq!(on.as_deref(), Some("1"));
+        assert_eq!(off.as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn a_tgm_that_changes_nothing_does_not_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+
+        tgm_tick(&mut game, "tgm 0");
+        tgm_tick(&mut game, "tgm 2");
+
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_failed_save_keeps_god_mode_for_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "a file, not a directory").unwrap();
+        let settings = DebugSettings::new(Prefs::default(), blocker.join("searchlight.ini"));
+        let mut game = game().with_debug_settings(settings);
+
+        let on = tgm_tick(&mut game, "tgm 1");
+        let later = game.command().god_mode;
+        let off = tgm_tick(&mut game, "tgm");
+
+        assert!(on && later);
+        assert!(!off);
     }
 }
 

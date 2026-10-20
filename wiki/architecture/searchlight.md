@@ -39,7 +39,8 @@ flowchart LR
 | `wave` | `WaveTuning` (first wave size, growth per wave, points per kill; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, score) as plain numbers, no physics |
 | `mode` | `ArenaMode`: the arena as a game mode. Owns a `SearchlightSim` started empty, scores its kills and spawns each wave's enemies at free enemy markers |
 | `hud` | Text for rifle state, hits, health, death and the wave and score line; the hit-edge direction; the death overlay |
-| `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (none yet, so only the engine's `help`, `clear` and `quit` run) |
+| `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (`tgm`, parsed into `ConsoleCommand`) |
+| `debug_settings` | `DebugSettings`: the loaded `Prefs` and its path; reads and saves the game's `[debug]` values (`god_mode`) |
 | `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples input, ticks the `ArenaMode`, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open), so the sim freezes instead of ticking with an ignored command |
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
@@ -58,6 +59,14 @@ exiting. Engine commands typed in the console (`quit`, `r_debug_view`, `r_shadow
 frame through `apply_engine_command`, which reaches the renderer (`RendererBackend`) and audio
 through `FrameContext`; with neither present the command is dropped. Console commands are hidden debug commands
 ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
+
+Game commands (`tgm [0|1]`) queue as `ConsoleCommand` on the console. `SearchlightGame` drains them
+at the start of each `command()` sample (`apply_console_commands`), applies them in order, saves
+a changed value through `DebugSettings` (a failed save is logged, not fatal) and echoes a bare
+toggle's result to the console. God mode is loaded from `[debug]` at start (`with_debug_settings`)
+and carried on every tick as `SearchlightCommand::god_mode`. While on, enemy hits still emit
+`Feedback::PlayerHit` but do not damage the player's `Body`; it does not revive a dead player.
+The title status line appends `GOD MODE` (`hud::god_mode_text`).
 
 ## Tick
 
