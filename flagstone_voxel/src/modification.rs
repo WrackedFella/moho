@@ -50,3 +50,57 @@ impl<'a> VoxelMutator<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fill_region_fills_exactly_the_inclusive_box() {
+        let mut grid = VoxelGrid::new(16);
+        let min = BlockPos::new(-1, 15, 2);
+        let max = BlockPos::new(1, 17, 4);
+
+        grid.mutator().fill_region(min, max, 5);
+
+        assert_eq!(grid.block_count(), 27);
+        for pos in [min, max, BlockPos::new(0, 16, 3), BlockPos::new(1, 15, 2)] {
+            assert_eq!(grid.material_at(pos), Some(5), "{pos}");
+            assert_eq!(grid.resource_at(pos), None, "{pos}");
+        }
+        for pos in [
+            BlockPos::new(-2, 16, 3),
+            BlockPos::new(2, 16, 3),
+            BlockPos::new(0, 14, 3),
+            BlockPos::new(0, 18, 3),
+            BlockPos::new(0, 16, 1),
+            BlockPos::new(0, 16, 5),
+        ] {
+            assert_eq!(grid.material_at(pos), None, "{pos}");
+        }
+    }
+
+    #[test]
+    fn fill_region_with_inverted_bounds_places_nothing() {
+        let mut grid = VoxelGrid::new(16);
+
+        grid.mutator()
+            .fill_region(BlockPos::new(2, 0, 0), BlockPos::new(0, 0, 0), 1);
+
+        assert_eq!(grid.block_count(), 0);
+    }
+
+    #[test]
+    fn place_and_remove_round_trip_through_the_mutator() {
+        let mut grid = VoxelGrid::new(16);
+        let pos = BlockPos::new(3, 4, 5);
+
+        grid.mutator().place(pos, 9, Some(2));
+
+        assert_eq!(grid.material_at(pos), Some(9));
+        assert_eq!(grid.resource_at(pos), Some(2));
+        assert!(grid.mutator().remove(pos));
+        assert_eq!(grid.material_at(pos), None);
+        assert!(!grid.mutator().remove(pos));
+    }
+}
