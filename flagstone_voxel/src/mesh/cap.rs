@@ -6,10 +6,12 @@
 use super::super::grid::VoxelGrid;
 use super::VoxelMesh;
 use super::hybrid::{
-    COARSE_STRIDE, ChunkContent, DENSITY_SAMPLE_TO_WORLD, HybridMeshGenerator, coarse_cell_solid,
+    COARSE_STRIDE, ChunkContent, DENSITY_SAMPLE_TO_WORLD, HybridMeshGenerator, MeshPlan,
+    coarse_cell_solid, is_meshed_blocky_in_mixed, mesh_plan,
 };
 use super::marching_cubes::MarchingCubes;
 use glam::{IVec3, Vec2, Vec3};
+use std::ops::RangeInclusive;
 
 /// How far above the cut the solid test samples, so a surface lying exactly at the cut
 /// gets no coplanar cap and the slice never passes through marching-cubes vertices.
@@ -17,6 +19,14 @@ pub const CAP_PROBE: f32 = 1e-3;
 
 /// Squared distance under which two slice points are the same point.
 const SAME_POINT: f32 = 1e-12;
+
+/// The chunk layers (`chunk_pos.y`) whose caps can be non-empty at `cut`: only cells
+/// within a block of the cut can own it, and those lie in at most two layers.
+/// `cut_cap_mesh` is empty for a chunk outside this range.
+pub fn cap_chunk_layers(cut: f32, chunk_size: i32) -> RangeInclusive<i32> {
+    let size = chunk_size as f32;
+    ((cut - 1.0) / size).floor() as i32..=((cut + 1.0) / size).floor() as i32
+}
 
 /// The flat face at `y = cut` covering the part of chunk `chunk_pos`'s cells (meshed at
 /// `lod`) that is solid at `cut + CAP_PROBE`. Every vertex faces `+Y`, with full
@@ -30,24 +40,20 @@ pub fn cut_cap_mesh(grid: &VoxelGrid, chunk_pos: IVec3, lod: u8, cut: f32) -> Vo
     let base = chunk_pos * chunk_size;
     let probe = cut + CAP_PROBE;
     let mut cap = CapBuilder::new(cut);
-    if lod == 0 {
-        let (content, _, _) = HybridMeshGenerator::analyze_chunk(grid, chunk_pos, chunk_size);
-        match content {
-            ChunkContent::Empty => {}
-            ChunkContent::AllSmooth => {
-                cap_smooth_cells(grid, chunk_pos, chunk_size, false, probe, &mut cap);
-            }
-            ChunkContent::AllBlocky => {
-                cap_blocks(grid, base, chunk_size, probe, |_| true, &mut cap);
-            }
-            ChunkContent::Mixed => {
-                cap_smooth_cells(grid, chunk_pos, chunk_size, true, probe, &mut cap);
-                let blocky = |pos| grid.is_smooth_at(pos) == Some(false);
-                cap_blocks(grid, base, chunk_size, probe, blocky, &mut cap);
-            }
+    match mesh_plan(grid, chunk_pos, chunk_size, lod) {
+        MeshPlan::Fine(ChunkContent::Empty) => {}
+        MeshPlan::Fine(ChunkContent::AllSmooth) => {
+            cap_smooth_cells(grid, chunk_pos, chunk_size, false, probe, &mut cap);
         }
-    } else {
-        cap_coarse_cells(grid, base, chunk_size, probe, &mut cap);
+        MeshPlan::Fine(ChunkContent::AllBlocky) => {
+            cap_blocks(grid, base, chunk_size, probe, |_| true, &mut cap);
+        }
+        MeshPlan::Fine(ChunkContent::Mixed) => {
+            cap_smooth_cells(grid, chunk_pos, chunk_size, true, probe, &mut cap);
+            let blocky = |pos| is_meshed_blocky_in_mixed(grid, pos);
+            cap_blocks(grid, base, chunk_size, probe, blocky, &mut cap);
+        }
+        MeshPlan::Coarse => cap_coarse_cells(grid, base, chunk_size, probe, &mut cap),
     }
     cap.mesh
 }
@@ -82,15 +88,21 @@ fn cap_smooth_cells(
     );
     for x in 1..=chunk_size as usize {
         for z in 1..=chunk_size as usize {
-            let cube_index = MarchingCubes::CORNER_OFFSETS
-                .iter()
-                .enumerate()
-                .filter(|(_, [dx, dy, dz])| field[x + dx][y + dy][z + dz] > 0.5)
-                .fold(0u8, |index, (corner, _)| index | 1 << corner);
+            let cube_index = MarchingCubes::cube_index(&field, x, y, z);
             let origin = Vec2::new(
                 (base.x + x as i32) as f32 + DENSITY_SAMPLE_TO_WORLD,
                 (base.z + z as i32) as f32 + DENSITY_SAMPLE_TO_WORLD,
             );
+            match cube_index {
+                0 => continue,
+                255 => {
+                    let [sw, se, ne, nw] = SQUARE.map(|p| p + origin);
+                    cap.triangle([sw, se, ne]);
+                    cap.triangle([sw, ne, nw]);
+                    continue;
+                }
+                _ => {}
+            }
             // Clipped in cell coordinates, where the slice points are exact enough to
             // tell a straight run of wall from a corner.
             for tri in cell_section(cube_index, height)
@@ -215,9 +227,6 @@ fn slice_walls(cube_index: u8, height: f32) -> Vec<[Vec2; 2]> {
     MarchingCubes::cell_triangles(cube_index)
         .filter_map(|tri| {
             let above = tri.map(|v| v.y >= height);
-            if above.iter().all(|&a| a) || above.iter().all(|&a| !a) {
-                return None;
-            }
             let mut ends = [(0, 1), (1, 2), (2, 0)]
                 .into_iter()
                 .filter(|&(i, j)| above[i] != above[j])

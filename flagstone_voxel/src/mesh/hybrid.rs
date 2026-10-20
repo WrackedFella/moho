@@ -44,6 +44,32 @@ pub enum ChunkContent {
     Mixed,
 }
 
+/// How a chunk is meshed at a level of detail; shared by the mesher and the cut caps so
+/// both cover the same cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MeshPlan {
+    /// Full-detail meshing of the content found in the chunk.
+    Fine(ChunkContent),
+    /// Coarse blocky meshing, whatever the content.
+    Coarse,
+}
+
+/// The plan for chunk `chunk_pos` meshed at `lod`.
+pub(crate) fn mesh_plan(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32, lod: u8) -> MeshPlan {
+    if lod == 0 {
+        let (content, _, _) = HybridMeshGenerator::analyze_chunk(grid, chunk_pos, chunk_size);
+        MeshPlan::Fine(content)
+    } else {
+        MeshPlan::Coarse
+    }
+}
+
+/// Whether the blocky mesher draws the block at `pos` in a `Mixed` chunk, where the
+/// smooth mesher leaves blocky blocks out.
+pub(crate) fn is_meshed_blocky_in_mixed(grid: &VoxelGrid, pos: IVec3) -> bool {
+    grid.is_smooth_at(pos) == Some(false)
+}
+
 /// Hybrid mesh generator supporting both smooth and blocky geometry
 pub struct HybridMeshGenerator;
 
@@ -103,19 +129,22 @@ impl HybridMeshGenerator {
     /// # Returns
     /// A VoxelMesh combining smooth and blocky geometry as appropriate
     pub fn generate_chunk_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
-        let (content, _smooth_count, _blocky_count) =
-            Self::analyze_chunk(grid, chunk_pos, chunk_size);
+        match mesh_plan(grid, chunk_pos, chunk_size, 0) {
+            MeshPlan::Fine(ChunkContent::Empty) => VoxelMesh::empty(),
 
-        match content {
-            ChunkContent::Empty => VoxelMesh::empty(),
-
-            ChunkContent::AllSmooth => {
+            MeshPlan::Fine(ChunkContent::AllSmooth) => {
                 Self::generate_smooth_mesh(grid, chunk_pos, chunk_size, false)
             }
 
-            ChunkContent::AllBlocky => Self::generate_blocky_mesh(grid, chunk_pos, chunk_size),
+            MeshPlan::Fine(ChunkContent::AllBlocky) => {
+                Self::generate_blocky_mesh(grid, chunk_pos, chunk_size)
+            }
 
-            ChunkContent::Mixed => Self::generate_mixed_mesh(grid, chunk_pos, chunk_size),
+            MeshPlan::Fine(ChunkContent::Mixed) => {
+                Self::generate_mixed_mesh(grid, chunk_pos, chunk_size)
+            }
+
+            MeshPlan::Coarse => Self::generate_coarse_mesh(grid, chunk_pos, chunk_size),
         }
     }
 
@@ -172,7 +201,7 @@ impl HybridMeshGenerator {
             for y in 0..chunk_size {
                 for z in 0..chunk_size {
                     let pos = base_pos + IVec3::new(x, y, z);
-                    if grid.is_smooth_at(pos) == Some(false) {
+                    if is_meshed_blocky_in_mixed(grid, pos) {
                         let block_mesh = BlockyMeshGenerator::generate_mesh(grid, pos);
                         Self::append_mesh(&mut final_mesh, &block_mesh, pos);
                     }

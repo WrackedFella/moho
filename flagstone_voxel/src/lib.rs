@@ -49,7 +49,7 @@ pub use light_system::{LightSystem, LightSystemStats};
 pub use materials::MaterialType;
 pub use mesh::{
     BlockyMeshGenerator, CAP_PROBE, ChunkContent, HybridMeshGenerator, MarchingCubes, VoxelMesh,
-    cut_cap_mesh,
+    cap_chunk_layers, cut_cap_mesh,
 };
 pub use modification::VoxelMutator;
 pub use streaming::StreamingConfig;

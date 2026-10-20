@@ -1,6 +1,7 @@
 //! Hands voxel chunk meshes to the renderer through the world-geometry contract.
 
 use crate::App;
+use crate::app::cut_caps::CutCaps;
 use flagstone_voxel::{MaterialType, VoxelChunk};
 use glam::IVec3;
 use moho_physics::{HitTag, PhysicsWorld};
@@ -60,11 +61,13 @@ pub fn register_cut_face_material(scene: &mut Scene) -> u32 {
     scene.material_table.find_or_push(&cut_face)
 }
 
-/// Queue `chunk`'s mesh with the renderer and register its collider. A refused
-/// mesh is logged; the chunk is neither drawn nor solid.
+/// Queue `chunk`'s mesh with the renderer, register its collider and rebuild its cut-face
+/// cap on the next cap refresh. A refused mesh is logged; the chunk is neither drawn nor
+/// solid.
 fn upsert_chunk_mesh(
     scene: &mut Scene,
     physics: Option<&mut PhysicsWorld>,
+    cut_caps: &mut CutCaps,
     material_idx: u32,
     chunk: &VoxelChunk,
 ) {
@@ -78,12 +81,24 @@ fn upsert_chunk_mesh(
         }
         Err(error) => {
             tracing::warn!(chunk = ?chunk.chunk_pos(), %error, "chunk mesh refused, not drawn");
-            remove_chunk_mesh(scene, physics, id);
+            drop_chunk_mesh(scene, physics, id);
         }
     }
+    cut_caps.mark_dirty(chunk.chunk_pos());
 }
 
-fn remove_chunk_mesh(scene: &mut Scene, physics: Option<&mut PhysicsWorld>, id: WorldMeshId) {
+/// Take the chunk at `pos` out of the renderer and physics, with its cap now.
+fn remove_chunk_mesh(
+    scene: &mut Scene,
+    physics: Option<&mut PhysicsWorld>,
+    cut_caps: &mut CutCaps,
+    pos: IVec3,
+) {
+    cut_caps.remove(pos, scene.world_meshes_mut());
+    drop_chunk_mesh(scene, physics, chunk_mesh_id(pos));
+}
+
+fn drop_chunk_mesh(scene: &mut Scene, physics: Option<&mut PhysicsWorld>, id: WorldMeshId) {
     scene.world_meshes_mut().remove(id);
     if let Some(pw) = physics {
         pw.remove_world_mesh(id);
@@ -97,20 +112,20 @@ pub fn insert_chunk(app: &mut App, chunk: VoxelChunk) -> Option<VoxelChunk> {
     upsert_chunk_mesh(
         &mut app.scene,
         app.physics.world.as_mut(),
+        &mut app.cut_caps,
         app.terrain_material_idx,
         &chunk,
     );
-    app.cut_caps.mark_dirty(chunk.chunk_pos());
     app.entities.chunks.insert(chunk)
 }
 
 /// Take the chunk at `pos` out of the store, the renderer and physics, with its cap.
 pub fn remove_chunk(app: &mut App, pos: IVec3) -> Option<VoxelChunk> {
-    app.cut_caps.remove(pos, app.scene.world_meshes_mut());
     remove_chunk_mesh(
         &mut app.scene,
         app.physics.world.as_mut(),
-        chunk_mesh_id(pos),
+        &mut app.cut_caps,
+        pos,
     );
     app.entities.chunks.remove(pos)
 }
@@ -122,22 +137,21 @@ pub fn upsert_all_chunks(app: &mut App) {
         upsert_chunk_mesh(
             &mut app.scene,
             app.physics.world.as_mut(),
+            &mut app.cut_caps,
             app.terrain_material_idx,
             chunk,
         );
-        app.cut_caps.mark_dirty(chunk.chunk_pos());
     }
 }
 
 /// Call before the store is cleared: mesh ids are derived from its chunks.
 pub fn remove_all_chunk_meshes(app: &mut App) {
     for chunk in app.entities.chunks.iter() {
-        app.cut_caps
-            .remove(chunk.chunk_pos(), app.scene.world_meshes_mut());
         remove_chunk_mesh(
             &mut app.scene,
             app.physics.world.as_mut(),
-            chunk_mesh_id(chunk.chunk_pos()),
+            &mut app.cut_caps,
+            chunk.chunk_pos(),
         );
     }
 }

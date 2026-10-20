@@ -1,6 +1,6 @@
 //! Keeps the cut-face caps of the ground in step with the view height.
 
-use flagstone_voxel::{ChunkStore, VoxelGrid, VoxelMesh, cut_cap_mesh};
+use flagstone_voxel::{ChunkStore, VoxelGrid, VoxelMesh, cap_chunk_layers, cut_cap_mesh};
 use glam::IVec3;
 use moho_render_api::{WorldMesh, WorldMeshId};
 use moho_renderer::WorldMeshes;
@@ -26,10 +26,14 @@ impl CutCaps {
     }
 
     /// Follow a new view height; `None` or a non-finite height (no cut, as the renderer
-    /// reads it) removes every cap on the next `refresh`.
+    /// reads it) removes every cap on the next `refresh`. Setting the height already
+    /// followed changes nothing.
     pub fn set_cut(&mut self, cut: Option<f32>) {
-        self.cut = cut.filter(|cut| cut.is_finite());
-        self.cut_moved = true;
+        let cut = cut.filter(|cut| cut.is_finite());
+        if cut != self.cut {
+            self.cut = cut;
+            self.cut_moved = true;
+        }
     }
 
     /// Rebuild the cap of the chunk at `pos` on the next `refresh`.
@@ -40,6 +44,10 @@ impl CutCaps {
     /// Drop the cap of the chunk at `pos` now.
     pub fn remove(&mut self, pos: IVec3, world_meshes: &mut WorldMeshes) {
         self.dirty.remove(&pos);
+        self.uncap(pos, world_meshes);
+    }
+
+    fn uncap(&mut self, pos: IVec3, world_meshes: &mut WorldMeshes) {
         if self.capped.remove(&pos) {
             world_meshes.remove(cap_mesh_id(pos));
         }
@@ -62,11 +70,7 @@ impl CutCaps {
             self.cut_moved = false;
             return;
         };
-        // Only the cells within a block of the cut can own its cap, and those lie in
-        // at most two chunk layers.
-        let chunk_size = grid.chunk_size() as f32;
-        let layers =
-            ((cut - 1.0) / chunk_size).floor() as i32..=((cut + 1.0) / chunk_size).floor() as i32;
+        let layers = cap_chunk_layers(cut, grid.chunk_size());
         if std::mem::take(&mut self.cut_moved) {
             self.dirty.extend(self.capped.iter().copied());
             self.dirty.extend(
@@ -76,7 +80,7 @@ impl CutCaps {
                     .filter(|pos| layers.contains(&pos.y)),
             );
         }
-        for pos in self.dirty.drain() {
+        for pos in std::mem::take(&mut self.dirty) {
             let chunk = chunks.get(pos).filter(|_| layers.contains(&pos.y));
             let mesh = chunk.map(|chunk| cut_cap_mesh(grid, pos, chunk.lod(), cut));
             match mesh.filter(|mesh| !mesh.indices.is_empty()) {
@@ -84,11 +88,7 @@ impl CutCaps {
                     world_meshes.upsert(cap_mesh_id(pos), cap_world_mesh(mesh), cap_material);
                     self.capped.insert(pos);
                 }
-                None => {
-                    if self.capped.remove(&pos) {
-                        world_meshes.remove(cap_mesh_id(pos));
-                    }
-                }
+                None => self.uncap(pos, world_meshes),
             }
         }
     }
