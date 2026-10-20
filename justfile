@@ -52,6 +52,12 @@ mutants base=base:
 mutants-full:
     cargo mutants --workspace --all-features
 
+# Shard `k` of `n` of the full run, as the weekly CI matrix runs it. Round-robin spreads
+# the slow crates across shards; the timeout floor keeps a loaded runner from reading
+# slow tests as timeouts.
+mutants-shard k n:
+    cargo mutants --workspace --all-features --shard {{k}}/{{n}} --sharding round-robin --minimum-test-timeout 60
+
 # Layering check on the real crate graph, plus self-tests that each rule rejects its fixture.
 layering:
     #!/usr/bin/env bash

@@ -2,10 +2,17 @@ name: Mutants (weekly)
 
 # Full mutation run over the workspace; surfaces test-quality decay that per-PR
 # diff runs can't see. Survivors are reviewed, not gated.
+#
+# The run is split round-robin across a shard matrix so no single runner holds all
+# ~5,000 mutants, and one lost shard doesn't lose the others; `merge` sums the shards.
 on:
   schedule:
     - cron: '0 6 * * 1'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or SHA to mutate
+        default: dev
 
 permissions:
   contents: read
@@ -14,15 +21,26 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   NEXTEST_PROFILE: ci
+  # Must match the length of the shard matrix below.
+  SHARDS: 8
 
 jobs:
-  mutants-full:
+  shard:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: dev
+          ref: ${{ inputs.ref || 'dev' }}
+
+      # The image's preinstalled SDKs leave too little disk for a full workspace build
+      # in cargo-mutants' scratch copy.
+      - name: Free disk
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
 
       - name: Install system deps
         run: |
@@ -42,20 +60,66 @@ jobs:
           shared-key: mutants
           cache-on-failure: true
 
-      - run: just mutants-full
+      # A mutant that eats memory is OOM-killed inside this scope and reads as caught,
+      # instead of taking the runner down. OOMPolicy=continue keeps systemd from
+      # stopping the whole scope, cargo-mutants included, when that happens.
+      - name: Mutate shard ${{ matrix.shard }}
         continue-on-error: true
-
-      - name: Summarize
-        if: always()
-        run: |
-          if [[ -f mutants.out/outcomes.json ]]; then
-            jq -r '"caught \(.caught)  missed \(.missed)  unviable \(.unviable)  timeout \(.timeout)"' \
-              mutants.out/outcomes.json >> "$GITHUB_STEP_SUMMARY"
-          fi
+        run: >
+          sudo systemd-run --scope --quiet
+          --uid="$(id -u)" --gid="$(id -g)"
+          -p MemoryMax=12G -p MemorySwapMax=0 -p OOMPolicy=continue
+          -- env PATH="$PATH" HOME="$HOME"
+          just mutants-shard ${{ matrix.shard }} ${{ env.SHARDS }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: mutants-out
+          name: mutants-shard-${{ matrix.shard }}
           path: mutants.out
           if-no-files-found: ignore
+
+  merge:
+    needs: shard
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: mutants-shard-*
+          path: shards
+
+      - name: Merge shards
+        run: |
+          shopt -s nullglob
+          mkdir -p shards mutants-out
+          missing=() unfinished=()
+          for ((k = 0; k < SHARDS; k++)); do
+            f=shards/mutants-shard-$k/outcomes.json
+            if [[ ! -f $f ]]; then missing+=("$k")
+            elif jq -e '.end_time == null' "$f" > /dev/null; then unfinished+=("$k"); fi
+          done
+          outcomes=(shards/*/outcomes.json)
+          for list in caught missed timeout unviable; do
+            cat shards/*/"$list".txt /dev/null | sort > "mutants-out/$list.txt"
+          done
+          cp -r shards mutants-out/
+          {
+            echo '## Weekly mutation run'
+            if ((${#outcomes[@]})); then
+              jq -rs '"| caught | missed | unviable | timeout |\n|---|---|---|---|\n" +
+                "| \(map(.caught) | add) | \(map(.missed) | add) | \(map(.unviable) | add) | \(map(.timeout) | add) |"' \
+                "${outcomes[@]}"
+            fi
+            if ((${#missing[@]})); then
+              echo; echo "**Shards that reported nothing:** ${missing[*]}"
+            fi
+            if ((${#unfinished[@]})); then
+              echo; echo "**Shards stopped before their last mutant (partial counts):** ${unfinished[*]}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutants-out
+          path: mutants-out
