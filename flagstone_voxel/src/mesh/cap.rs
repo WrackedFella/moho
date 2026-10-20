@@ -315,7 +315,6 @@ fn ear_clip(mut ring: Vec<Vec2>) -> Vec<[Vec2; 3]> {
     triangles
 }
 
-/// Accumulates upward-facing cap triangles at one height.
 struct CapBuilder {
     cut: f32,
     mesh: VoxelMesh,
@@ -669,7 +668,6 @@ mod tests {
         }
     }
 
-    /// Per-axis (lo, hi) block ranges inside `min..=max`.
     fn inside_blocks(min: i32, max: i32) -> BoxedStrategy<(i32, i32)> {
         (min..=max - 2, 2..=10i32)
             .prop_map(move |(lo, size)| (lo, (lo + size).min(max)))

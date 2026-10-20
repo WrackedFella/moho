@@ -138,7 +138,6 @@ pub(crate) mod tests {
     /// The cap of the chunk at x `1`, which holds the ground's convex corner.
     const FAR_CHUNK_CAP_AREA: f32 = 15.5 * 15.5 - 0.125;
 
-    /// Backend that keeps what each live mesh uploaded.
     #[derive(Default)]
     pub(crate) struct CaptureBackend {
         next_handle: u32,
