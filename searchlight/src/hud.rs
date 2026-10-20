@@ -91,6 +91,12 @@ pub fn vitals_text(vitals: &str, wave: u32, score: u32) -> String {
     format!("{vitals} | {}", arena_text(wave, score))
 }
 
+/// `vitals` with `GOD MODE` appended while god mode is on, unchanged while off.
+pub fn god_mode_text(vitals: &str, god_mode: bool) -> String {
+    let _ = god_mode;
+    vitals.to_owned()
+}
+
 /// What the dead player reads in the title, or `None` while alive.
 pub fn death_text(dead: bool) -> Option<&'static str> {
     dead.then_some("Dead - press Enter to restart")
@@ -156,6 +162,23 @@ mod feedback_tests {
             dead_title,
             "Dead - press Enter to restart | Wave 3  Score 200"
         );
+    }
+
+    #[test]
+    fn the_title_shows_god_mode_only_when_on() {
+        let alive = vitals_text(&health_text(70, 100), 3, 200);
+        let dead = vitals_text(death_text(true).expect("dead"), 3, 200);
+
+        let off = god_mode_text(&alive, false);
+        let on = god_mode_text(&alive, true);
+        let on_while_dead = god_mode_text(&dead, true);
+
+        assert_eq!(off, alive);
+        assert!(on.starts_with(&alive), "{on}");
+        assert!(on.ends_with("GOD MODE"), "{on}");
+        assert!(on_while_dead.starts_with(&dead), "{on_while_dead}");
+        assert!(on_while_dead.ends_with("GOD MODE"), "{on_while_dead}");
+        assert!(!off.contains("GOD MODE"));
     }
 
     #[test]
