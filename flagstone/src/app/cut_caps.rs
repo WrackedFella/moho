@@ -81,6 +81,9 @@ impl CutCaps {
                     .filter(|pos| layers.contains(&pos.y)),
             );
         }
+        if self.dirty.is_empty() {
+            return;
+        }
         let started = Instant::now();
         let dirty = std::mem::take(&mut self.dirty);
         let rebuilt = dirty.len();
@@ -95,13 +98,11 @@ impl CutCaps {
                 None => self.uncap(pos, world_meshes),
             }
         }
-        if rebuilt > 0 {
-            tracing::debug!(
-                rebuilt,
-                elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
-                "Cut caps rebuilt"
-            );
-        }
+        tracing::debug!(
+            rebuilt,
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            "Cut caps rebuilt"
+        );
     }
 }
 
