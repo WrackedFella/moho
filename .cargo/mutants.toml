@@ -1,4 +1,8 @@
 test_tool = "nextest"
+# The auto-set floor is 20 s. With the voxel lighting suite, some caught mutants make the light
+# spread into far more chunks and the package's tests then need about 25 s to all finish, so they
+# read as timeouts. Genuine hangs are excluded below, so the higher floor costs little.
+minimum_test_timeout = 60
 # GPU, windowing and egui-adapter code has no headless tests, so every mutant
 # there would read as missed without telling us anything.
 exclude_globs = [
