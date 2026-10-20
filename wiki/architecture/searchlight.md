@@ -14,7 +14,9 @@ strategy crate ([overview](overview.md#lines-and-rules)).
 ```mermaid
 flowchart LR
     main["main.rs<br/>tuning, wiring"] --> game["game.rs<br/>SearchlightGame: Game impl"]
-    game --> sim["sim.rs<br/>SearchlightSim"]
+    game --> mode["mode.rs<br/>ArenaMode"]
+    mode --> wave["wave.rs<br/>WaveTuning, WaveState"]
+    mode --> sim["sim.rs<br/>SearchlightSim"]
     game --> input["input.rs<br/>SearchlightAction, SearchlightCommand"]
     game --> hud["hud.rs<br/>status wording"]
     sim --> brain["brain.rs<br/>enemy Brain"]
@@ -33,10 +35,12 @@ flowchart LR
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld` |
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` in, `Intent` out; `EnemyTuning` holds its numbers |
 | `cover` | `pick` and `offer`: choose the nearest free cover point a hurt enemy should run to, using world-only rays against the player (`Threat`) |
-| `sim` | `SearchlightSim`: player character and body, rifle, spare magazines, dummies and enemies; emits `Feedback` |
-| `hud` | Text for rifle state, hits, health and death; the hit-edge direction; the death overlay |
+| `sim` | `SearchlightSim`: player character and body, rifle, spare magazines, dummies and enemies; emits `Feedback`; counts player kills |
+| `wave` | `WaveTuning` (first wave size, growth per wave, points per kill; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, score) as plain numbers, no physics |
+| `mode` | `ArenaMode`: the arena as a game mode. Owns a `SearchlightSim` started empty, scores its kills and spawns each wave's enemies at free enemy markers |
+| `hud` | Text for rifle state, hits, health, death and the wave and score line; the hit-edge direction; the death overlay |
 | `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (none yet, so only the engine's `help`, `clear` and `quit` run) |
-| `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples input, ticks the sim, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open), so the sim freezes instead of ticking with an ignored command |
+| `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples input, ticks the `ArenaMode`, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open), so the sim freezes instead of ticking with an ignored command |
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
@@ -66,6 +70,18 @@ after a shot, reloading); cooldown and reload are tick counts.
 enemies. `SearchlightSim::new` builds one with dummies only. A sim started from an arena keeps the
 `Arena` and `SimConfig`; once the player is dead, `tick` reads only `SearchlightCommand::restart` and
 rebuilds the sim from them.
+
+## Waves
+
+`ArenaMode::new(arena, config, waves)` builds the sim with `Start::Empty` (`SearchlightSim::with_start`):
+dummies and the player stand, enemy markers are remembered but unoccupied. Each
+`ArenaMode::tick` runs the sim, then `WaveState::step` with the sim's new kills and the number of
+free markers (`SearchlightSim::free_enemy_spawns`: no living character within two `CAPSULE_RADIUS`) and
+spawns that many enemies through `SearchlightSim::spawn_enemy`. Wave 1 holds `first_size` enemies and each
+later wave `growth` more; the next wave begins when the current one has nothing left to spawn and
+none alive. Spawned enemies take the next target number after the dummies; the dead keep theirs.
+Nothing spawns while the player is dead; the restart rebuilds the sim empty and begins wave 1
+with no score. `SearchlightGame` reads `wave()` and `score()` for the HUD.
 
 ## Enemies
 

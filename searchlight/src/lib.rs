@@ -8,9 +8,11 @@ pub mod cover;
 pub mod game;
 pub mod hud;
 pub mod input;
+pub mod mode;
 pub mod shot;
 pub mod sim;
 pub mod tag;
+pub mod wave;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

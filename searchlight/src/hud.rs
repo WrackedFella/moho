@@ -81,6 +81,16 @@ pub fn health_text(health: u32, max_health: u32) -> String {
     format!("HP {health}/{max_health}")
 }
 
+/// The wave and score line, such as `Wave 3  Score 200`.
+pub fn arena_text(wave: u32, score: u32) -> String {
+    format!("Wave {wave}  Score {score}")
+}
+
+/// The title line: `vitals` followed by the wave and score, such as `HP 70/100 | Wave 3  Score 200`.
+pub fn vitals_text(vitals: &str, wave: u32, score: u32) -> String {
+    format!("{vitals} | {}", arena_text(wave, score))
+}
+
 /// What the dead player reads in the title, or `None` while alive.
 pub fn death_text(dead: bool) -> Option<&'static str> {
     dead.then_some("Dead - press Enter to restart")
@@ -132,6 +142,21 @@ mod feedback_tests {
     use std::f32::consts::FRAC_PI_2;
 
     use super::*;
+
+    #[test]
+    fn the_dead_title_keeps_wave_and_score() {
+        let alive = health_text(70, 100);
+        let dead = death_text(true).expect("a dead player has a title");
+
+        let alive_title = vitals_text(&alive, 3, 200);
+        let dead_title = vitals_text(dead, 3, 200);
+
+        assert_eq!(alive_title, "HP 70/100 | Wave 3  Score 200");
+        assert_eq!(
+            dead_title,
+            "Dead - press Enter to restart | Wave 3  Score 200"
+        );
+    }
 
     #[test]
     fn the_hit_edge_points_toward_the_shooter() {
@@ -198,6 +223,13 @@ mod feedback_tests {
         assert_eq!(health_text(0, 100), "HP 0/100");
         assert_eq!(health_text(100, 100), "HP 100/100");
         assert_eq!(health_text(5, 12), "HP 5/12");
+    }
+
+    #[test]
+    fn the_status_line_shows_wave_and_score() {
+        assert_eq!(arena_text(3, 200), "Wave 3  Score 200");
+        assert_eq!(arena_text(1, 0), "Wave 1  Score 0");
+        assert_eq!(arena_text(12, 4_000), "Wave 12  Score 4000");
     }
 
     #[test]
