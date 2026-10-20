@@ -74,6 +74,7 @@ impl LightSystem {
         }
     }
 
+    /// A light system with [`LightFrameBudget::default`].
     pub fn with_default_budget(grid: VoxelGrid, event_bus: Arc<EventBus>) -> Self {
         Self::new(grid, event_bus, LightFrameBudget::default())
     }
@@ -362,7 +363,7 @@ mod tests {
 
     #[test]
     fn a_batch_lights_emissive_blocks_and_clears_light_at_non_emissive_ones() {
-        let (mut light_system, _received) = system_with_budget(LightFrameBudget {
+        let (mut light_system, received) = system_with_budget(LightFrameBudget {
             max_blocks_per_frame: usize::MAX,
             max_time_us: u64::MAX,
         });
@@ -374,6 +375,7 @@ mod tests {
         for pos in [stone_pos, empty_pos] {
             LightPropagator::new().add_light_rgb(light_system.grid_mut(), pos, [10, 0, 0]);
         }
+        let darkened = lit_chunks(light_system.grid(), stone_pos);
 
         light_system.handle_event(&WorldEvent::BlocksBatchModified {
             chunk_pos: IVec3::ZERO,
@@ -396,6 +398,10 @@ mod tests {
             [10, 0, 0],
             "nothing queued for a position without a block"
         );
+        let mut expected = lit_chunks(grid, torch_pos);
+        expected.extend(darkened);
+        light_system.emit_dirty_events();
+        assert_published_once_each(&received, &expected);
     }
 
     #[test]

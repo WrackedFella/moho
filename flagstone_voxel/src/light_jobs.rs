@@ -63,6 +63,7 @@ pub struct LightUpdateJob {
     /// Type of operation to perform
     pub op: LightUpdateOp,
 
+    /// The block whose light is added or removed.
     pub source_pos: BlockPos,
 
     /// RGB emission for Add operations. [0,0,0] for Remove.
