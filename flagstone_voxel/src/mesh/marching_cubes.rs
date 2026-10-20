@@ -1139,4 +1139,60 @@ mod tests {
             );
         }
     }
+
+    /// Samples (8,8,8) and (9,8,8) at the given densities, everything else empty.
+    fn mesh_of_two_samples(d0: f32, d1: f32) -> VoxelMesh {
+        let mut field = [[[0.0f32; 18]; 18]; 18];
+        field[8][8][8] = d0;
+        field[9][8][8] = d1;
+        MarchingCubes::generate_mesh(&field, 16)
+    }
+
+    #[test]
+    fn edge_vertex_sits_at_iso_crossing() {
+        // (density at x=8, density at x=9, x of the crossing between them)
+        let rows = [
+            (0.2, 0.8, 8.5),
+            (0.0, 0.8, 8.625),
+            (0.2, 0.6, 8.75),
+            (0.8, 0.0, 8.375),
+            (0.9, 0.3, 8.0 + 0.4 / 0.6),
+        ];
+
+        for (d0, d1, crossing) in rows {
+            let mesh = mesh_of_two_samples(d0, d1);
+
+            let on_edge: Vec<[f32; 3]> = mesh
+                .vertices
+                .iter()
+                .copied()
+                .filter(|v| v[0] > 8.0 && v[0] < 9.0 && v[1] == 8.0 && v[2] == 8.0)
+                .collect();
+            assert!(!on_edge.is_empty(), "{d0}/{d1}: no vertex on the edge");
+            for v in on_edge {
+                assert!(
+                    (v[0] - crossing).abs() < 1e-5,
+                    "{d0}/{d1}: vertex at x={}, expected {crossing}",
+                    v[0]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ao_follows_density_at_vertex() {
+        // Every vertex sits on the 0.5 isosurface, where AO is 0.6 + 0.4 * (1 - 0.5).
+        for (d0, d1) in [(0.2, 0.8), (0.0, 0.8), (0.9, 0.3)] {
+            let mesh = mesh_of_two_samples(d0, d1);
+
+            assert!(!mesh.vertices.is_empty());
+            assert_eq!(mesh.ambient_occlusion.len(), mesh.vertices.len());
+            for (v, ao) in mesh.vertices.iter().zip(&mesh.ambient_occlusion) {
+                assert!(
+                    (ao - 0.8).abs() < 1e-5,
+                    "{d0}/{d1}: vertex {v:?} has AO {ao}, expected 0.8"
+                );
+            }
+        }
+    }
 }

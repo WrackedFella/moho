@@ -549,4 +549,77 @@ mod tests {
         assert_eq!(sparse.vertices, dense.vertices);
         assert_eq!(sparse.indices, dense.indices);
     }
+
+    type Quad = ([i32; 3], [i32; 3], [i32; 3]);
+
+    /// The 2x2-block quads covering the outside of the box `lo..hi`, as (normal, min, max).
+    fn box_quads(lo: [i32; 3], hi: [i32; 3]) -> Vec<Quad> {
+        let mut quads = Vec::new();
+        for axis in 0..3 {
+            let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+            for sign in [-1, 1] {
+                let plane = if sign < 0 { lo[axis] } else { hi[axis] };
+                for a in (lo[u]..hi[u]).step_by(2) {
+                    for b in (lo[v]..hi[v]).step_by(2) {
+                        let (mut normal, mut min, mut max) = ([0; 3], [0; 3], [0; 3]);
+                        normal[axis] = sign;
+                        (min[axis], max[axis]) = (plane, plane);
+                        (min[u], max[u]) = (a, a + 2);
+                        (min[v], max[v]) = (b, b + 2);
+                        quads.push((normal, min, max));
+                    }
+                }
+            }
+        }
+        quads
+    }
+
+    fn mesh_quads(mesh: &VoxelMesh) -> Vec<Quad> {
+        assert_eq!(mesh.vertices.len() % 4, 0);
+        let mut quads: Vec<Quad> = mesh
+            .vertices
+            .chunks(4)
+            .zip(mesh.normals.chunks(4))
+            .map(|(verts, normals)| {
+                assert!(normals.iter().all(|n| *n == normals[0]));
+                let mut min = [i32::MAX; 3];
+                let mut max = [i32::MIN; 3];
+                for v in verts {
+                    for a in 0..3 {
+                        assert_eq!(v[a].fract(), 0.0, "vertex {v:?} off the integer lattice");
+                        min[a] = min[a].min(v[a] as i32);
+                        max[a] = max[a].max(v[a] as i32);
+                    }
+                }
+                (normals[0].map(|c| c as i32), min, max)
+            })
+            .collect();
+        quads.sort_unstable();
+        quads
+    }
+
+    #[test]
+    fn coarse_mesh_emits_exposed_faces_on_the_stride_lattice() {
+        let mut grid = VoxelGrid::new(16);
+        for x in 4..8 {
+            for y in 4..8 {
+                for z in 4..8 {
+                    grid.place_block(IVec3::new(x, y, z), 0, None);
+                }
+            }
+        }
+        grid.place_block(IVec3::new(11, 11, 11), 0, None);
+        // Against the chunk's -X edge, where a skirt quad hangs one cell below.
+        grid.place_block(IVec3::new(0, 8, 8), 0, None);
+
+        let mesh = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
+
+        let mut expected = box_quads([4, 4, 4], [8, 8, 8]);
+        expected.extend(box_quads([10, 10, 10], [12, 12, 12]));
+        expected.extend(box_quads([0, 8, 8], [2, 10, 10]));
+        expected.push(([-1, 0, 0], [0, 6, 8], [0, 8, 10]));
+        expected.sort_unstable();
+        assert_eq!(mesh_quads(&mesh), expected);
+        assert_eq!(mesh.indices.len(), mesh.vertices.len() / 4 * 6);
+    }
 }

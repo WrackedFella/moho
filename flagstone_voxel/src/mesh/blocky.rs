@@ -540,4 +540,102 @@ mod tests {
         let referenced: std::collections::BTreeSet<u32> = mesh.indices.iter().copied().collect();
         assert_eq!(referenced, (0..24).collect());
     }
+
+    /// Expected AO of a block's vertex, from geometry alone: the occluders are the three
+    /// blocks diagonally outside the face beside that vertex.
+    fn expected_ao(grid: &VoxelGrid, pos: BlockPos, vertex: [f32; 3], normal: [f32; 3]) -> f32 {
+        let n = IVec3::new(normal[0] as i32, normal[1] as i32, normal[2] as i32);
+        let in_plane: Vec<usize> = (0..3).filter(|&a| normal[a] == 0.0).collect();
+        let step = |axis: usize| {
+            let mut e = IVec3::ZERO;
+            e[axis] = if vertex[axis] == 0.0 { -1 } else { 1 };
+            e
+        };
+        let (e1, e2) = (step(in_plane[0]), step(in_plane[1]));
+        let solid = |offset: IVec3| grid.is_solid_at(pos + offset);
+        let (side1, side2, corner) = (solid(n + e1), solid(n + e2), solid(n + e1 + e2));
+
+        if side1 && side2 {
+            0.4
+        } else {
+            1.0 - 0.2 * [side1, side2, corner].iter().filter(|&&s| s).count() as f32
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn vertex_ao_matches_occluders_beside_each_vertex(
+            occupied in proptest::collection::vec(proptest::bool::ANY, 27),
+        ) {
+            let mut grid = VoxelGrid::new(16);
+            let pos = IVec3::new(16, 16, 16);
+            grid.place_block(pos, 100, None);
+            for (i, solid) in occupied.iter().enumerate() {
+                let offset = IVec3::new(i as i32 % 3 - 1, (i as i32 / 3) % 3 - 1, i as i32 / 9 - 1);
+                if *solid && offset != IVec3::ZERO {
+                    grid.place_block(pos + offset, 100, None);
+                }
+            }
+
+            let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
+
+            proptest::prop_assert_eq!(mesh.vertices.len(), 24);
+            for ((vertex, normal), ao) in mesh
+                .vertices
+                .iter()
+                .zip(&mesh.normals)
+                .zip(&mesh.ambient_occlusion)
+            {
+                let expected = expected_ao(&grid, pos, *vertex, *normal);
+                proptest::prop_assert!(
+                    (ao - expected).abs() < 1e-6,
+                    "vertex {:?} on face {:?}: AO {}, expected {}",
+                    vertex, normal, ao, expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn face_vertices_carry_scaled_block_and_sky_light() {
+        // (block light, sky exposed, expected combined light)
+        let rows = [
+            ([3u8, 6, 9], false, 0.6),
+            ([3, 6, 9], true, 0.7),
+            ([15, 0, 0], true, 1.0),
+            ([0, 0, 0], true, 0.1),
+            ([0, 0, 0], false, 0.0),
+        ];
+
+        for (rgb, sky, expected_light) in rows {
+            let mut grid = VoxelGrid::new(16);
+            let pos = IVec3::new(16, 16, 16);
+            grid.place_block(pos, 100, None);
+            grid.set_block_light_rgb(pos, rgb);
+            grid.set_sky_exposed(pos, sky);
+
+            let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
+
+            let expected_rgb = rgb.map(|c| f32::from(c) / 15.0);
+            let expected_sky = if sky { 1.0 } else { 0.0 };
+            assert_eq!(mesh.light_level.len(), 24);
+            assert_eq!(mesh.block_light_rgb.len(), 24);
+            assert_eq!(mesh.sky_exposed.len(), 24);
+            for i in 0..24 {
+                assert!(
+                    (mesh.light_level[i] - expected_light).abs() < 1e-6,
+                    "{rgb:?} sky {sky}: light {} not {expected_light}",
+                    mesh.light_level[i]
+                );
+                for (got, want) in mesh.block_light_rgb[i].iter().zip(&expected_rgb) {
+                    assert!(
+                        (got - want).abs() < 1e-6,
+                        "{rgb:?} sky {sky}: channels {:?}, expected {expected_rgb:?}",
+                        mesh.block_light_rgb[i]
+                    );
+                }
+                assert_eq!(mesh.sky_exposed[i], expected_sky);
+            }
+        }
+    }
 }
