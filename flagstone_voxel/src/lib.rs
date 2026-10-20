@@ -39,8 +39,7 @@ pub use grid::{
     BlockData, BlockPos, CHUNK_FILE, MaterialLighting, MaterialRegistry, ResourceData, VoxelGrid,
 };
 pub use light_jobs::{
-    JobId, LightCancellationToken, LightFrameBudget, LightJobQueue, LightUpdateJob, LightUpdateOp,
-    LightUpdateResult,
+    JobId, LightFrameBudget, LightJobQueue, LightUpdateJob, LightUpdateOp, LightUpdateResult,
 };
 pub use light_propagation::{LightChannel, LightPropagator};
 pub use light_sky::{dirty_chunks_below, recompute_sky_exposure};

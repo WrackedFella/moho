@@ -146,15 +146,12 @@ impl LightSystem {
     pub fn process_frame(&mut self) -> usize {
         let completed = self.job_queue.process_frame(&mut self.grid);
 
-        // Collect results and track affected chunks
-        let results = self.job_queue.collect_results();
-
-        for result in results {
-            // Track affected chunks
-            for &chunk_pos in &result.affected_chunks {
-                self.affected_chunks.insert(chunk_pos);
-            }
-        }
+        self.affected_chunks.extend(
+            self.job_queue
+                .collect_results()
+                .into_iter()
+                .flat_map(|r| r.affected_chunks),
+        );
 
         completed
     }
