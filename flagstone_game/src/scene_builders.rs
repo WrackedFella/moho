@@ -183,14 +183,10 @@ pub fn generate_chunk(
     let chunk_min = chunk_pos * CHUNK_SIZE;
     let chunk_max = chunk_min + glam::IVec3::splat(CHUNK_SIZE);
 
-    // Fast-reject: if this chunk has no overlap with [-half, half) in both X and Z → empty.
-    if chunk_max.x <= -half || chunk_min.x >= half || chunk_max.z <= -half || chunk_min.z >= half {
-        return vec![];
-    }
-
     let noise = Perlin::new(config.seed);
     let biome_map = BiomeMap::new(config.seed);
 
+    // Clamped to the world, so a chunk outside it gets an empty range and no blocks.
     let x_range = chunk_min.x.max(-half)..chunk_max.x.min(half);
     let z_range = chunk_min.z.max(-half)..chunk_max.z.min(half);
 

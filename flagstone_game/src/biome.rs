@@ -158,8 +158,8 @@ impl BiomeMap {
             .sample(f64::from(x) * self.frequency, f64::from(z) * self.frequency);
         // Noise lies in [-1.0, 1.0]; map into [0.0, 1.0).
         let t = ((n + 1.0) * 0.5).clamp(0.0, 0.999_999);
-        let idx = (t * enabled.len() as f64) as usize;
-        enabled[idx.min(enabled.len() - 1)]
+        // `t < 1`, so the index stays below `enabled.len()`.
+        enabled[(t * enabled.len() as f64) as usize]
     }
 }
 
