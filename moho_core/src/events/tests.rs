@@ -26,10 +26,6 @@ mod event_bus_tests {
         fn as_any(&self) -> &dyn Any {
             self
         }
-
-        fn priority(&self) -> i32 {
-            -10 // Higher priority (lower number)
-        }
     }
 
     #[derive(Clone, Debug)]
