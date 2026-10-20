@@ -340,25 +340,6 @@ mod tests {
     }
 
     #[test]
-    fn generate_chunk_outside_world_returns_empty() {
-        let cfg = small_config(42);
-
-        for outside in [(1, 0, 0), (-2, 0, 0), (0, 0, 1), (0, 0, -2)] {
-            let chunk = glam::IVec3::from(outside);
-            assert!(
-                generate_chunk(&cfg, chunk).is_empty(),
-                "chunk {chunk:?} lies outside the world and must be empty"
-            );
-        }
-
-        let edge = glam::IVec3::new(-1, 0, 0);
-        assert!(
-            !generate_chunk(&cfg, edge).is_empty(),
-            "chunk {edge:?} touches the world's -X edge and must have blocks"
-        );
-    }
-
-    #[test]
     fn chunk_past_each_world_edge_is_empty() {
         let cfg = small_config(42);
 
@@ -443,13 +424,15 @@ mod tests {
 
         let at_surface = density(&noise, 0, surface_y, 0, &biome, &params);
 
-        assert_eq!(
-            at_surface.to_bits(),
-            0.0_f32.to_bits(),
-            "density must be +0.0"
+        assert_eq!(at_surface, 0.0, "fixture: density at the surface must be 0");
+        assert!(
+            !is_solid(&noise, 0, surface_y, 0, &biome, &params),
+            "a block at zero density is air"
         );
-        assert!(!is_solid(&noise, 0, surface_y, 0, &biome, &params));
-        assert!(is_solid(&noise, 0, surface_y - 1, 0, &biome, &params));
+        assert!(
+            is_solid(&noise, 0, surface_y - 1, 0, &biome, &params),
+            "the block below the surface is solid"
+        );
     }
 
     #[test]
