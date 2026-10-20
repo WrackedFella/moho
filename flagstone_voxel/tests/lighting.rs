@@ -162,12 +162,24 @@ fn sky_recompute_noop_when_clean() {
     assert!(sky(&grid, below), "a clean chunk keeps its stale exposure");
 }
 
-/// Chunks away from y = 0: the block's own voxel and everything below it in the
+/// In any chunk layer the block's own voxel and everything below it in the
 /// column are shadowed, everything above it is exposed.
 #[test]
-fn sky_occlusion_in_chunks_off_the_ground_layer() {
+fn sky_occlusion_shadows_the_block_and_below_in_any_chunk_layer() {
     // (chunk, block position, probes as (position, exposed))
     let cases = [
+        (
+            IVec3::ZERO,
+            IVec3::new(3, 8, 3),
+            [
+                (IVec3::new(3, 9, 3), true),
+                (IVec3::new(3, 8, 3), false),
+                (IVec3::new(3, 7, 3), false),
+                (IVec3::new(4, 8, 3), true),
+                (IVec3::new(3, 15, 3), true),
+                (IVec3::new(3, 0, 3), false),
+            ],
+        ),
         (
             IVec3::new(0, 2, 0),
             IVec3::new(3, 34, 3),
@@ -204,18 +216,6 @@ fn sky_occlusion_in_chunks_off_the_ground_layer() {
             assert_eq!(sky(&grid, pos), exposed, "chunk {chunk:?}, probe {pos:?}");
         }
     }
-}
-
-/// The opaque block itself is not exposed; the voxel directly above it is.
-#[test]
-fn sky_block_voxel_is_shadowed_and_the_one_above_is_exposed() {
-    let mut grid = grid_16();
-    grid.mutator().place(IVec3::new(3, 8, 3), 0, None);
-
-    recompute_sky_exposure(&mut grid, IVec3::ZERO);
-
-    assert!(!sky(&grid, IVec3::new(3, 8, 3)), "the block's own voxel");
-    assert!(sky(&grid, IVec3::new(3, 9, 3)), "directly above the block");
 }
 
 #[test]
@@ -523,23 +523,33 @@ fn assert_removal_leaves_only_survivors(sources: &[(IVec3, [u8; 3])], removed: u
     assert_same_light(&grid, &expected, min, max);
 }
 
-/// Sources in chunks with non-zero coordinates on every axis, whose lit areas overlap.
+/// Each case lights every source, then removes each in turn. The first case sits in
+/// chunks with non-zero coordinates on every axis; the second keeps both sources
+/// in one chunk; the third is a ring of four.
 #[test]
 fn removing_one_of_two_lights_leaves_the_other_area_lit() {
-    let a = (IVec3::new(20, 18, 33), [15, 10, 5]);
-    let b = (IVec3::new(14, 14, 30), [12, 15, 3]);
+    let cases: [&[(IVec3, [u8; 3])]; 3] = [
+        &[
+            (IVec3::new(20, 18, 33), [15, 10, 5]),
+            (IVec3::new(14, 14, 30), [12, 15, 3]),
+        ],
+        &[
+            (IVec3::new(17, 17, 17), [15, 15, 15]),
+            (IVec3::new(21, 19, 18), [13, 14, 15]),
+        ],
+        &[
+            (IVec3::new(19, 19, 19), [15, 15, 12]),
+            (IVec3::new(25, 19, 19), [14, 15, 13]),
+            (IVec3::new(19, 25, 19), [15, 14, 12]),
+            (IVec3::new(19, 19, 25), [13, 15, 14]),
+        ],
+    ];
 
-    assert_removal_leaves_only_survivors(&[a, b], 0);
-    assert_removal_leaves_only_survivors(&[a, b], 1);
-}
-
-#[test]
-fn removing_one_of_two_lights_in_one_chunk_leaves_the_other_area_lit() {
-    let a = (IVec3::new(17, 17, 17), [15, 15, 15]);
-    let b = (IVec3::new(21, 19, 18), [13, 14, 15]);
-
-    assert_removal_leaves_only_survivors(&[a, b], 0);
-    assert_removal_leaves_only_survivors(&[a, b], 1);
+    for sources in cases {
+        for removed in 0..sources.len() {
+            assert_removal_leaves_only_survivors(sources, removed);
+        }
+    }
 }
 
 /// The removed light's boundary meets both survivors at the same chunk-local
@@ -551,20 +561,6 @@ fn removing_the_middle_of_three_lights_one_chunk_apart_keeps_both_survivors() {
     let right = (IVec3::new(38, 8, 8), [15, 15, 15]);
 
     assert_removal_leaves_only_survivors(&[left, middle, right], 1);
-}
-
-#[test]
-fn removing_a_light_beside_two_survivors_in_a_ring_keeps_their_light() {
-    let sources = [
-        (IVec3::new(19, 19, 19), [15, 15, 12]),
-        (IVec3::new(25, 19, 19), [14, 15, 13]),
-        (IVec3::new(19, 25, 19), [15, 14, 12]),
-        (IVec3::new(19, 19, 25), [13, 15, 14]),
-    ];
-
-    for removed in 0..sources.len() {
-        assert_removal_leaves_only_survivors(&sources, removed);
-    }
 }
 
 #[test]

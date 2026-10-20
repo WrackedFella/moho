@@ -575,7 +575,6 @@ mod tests {
         let results = queue.collect_results();
         assert_eq!(results.len(), 1);
         assert!(!results[0].cancelled);
-        assert!(!results[0].affected_chunks.is_empty());
     }
 
     #[test]

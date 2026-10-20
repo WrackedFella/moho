@@ -372,45 +372,6 @@ mod tests {
         assert_eq!(light_system.pending_jobs(), 1);
     }
 
-    /// The first call drains the pending set, so a second emits nothing.
-    #[test]
-    fn emit_dirty_events_publishes_one_event_per_affected_chunk() {
-        use crate::grid::MaterialLighting;
-        use std::sync::Mutex;
-
-        let mut grid = VoxelGrid::new(16);
-        grid.material_registry.set_lighting(
-            1,
-            MaterialLighting {
-                emission: [15, 8, 2],
-                opacity_cost: 0,
-            },
-        );
-        let event_bus = Arc::new(EventBus::new());
-        let received = Arc::new(Mutex::new(Vec::new()));
-        let sink = Arc::clone(&received);
-        event_bus.subscribe(move |event: &WorldEvent| {
-            if let WorldEvent::ChunkMeshDirty { chunk_pos, .. } = event {
-                sink.lock().unwrap().push(*chunk_pos);
-            }
-        });
-        let mut light_system = LightSystem::with_default_budget(grid, event_bus);
-        light_system.on_block_placed(IVec3::new(15, 2, 2), 1);
-        light_system.process_frame();
-        assert_eq!(light_system.pending_jobs(), 0, "the frame drains the queue");
-        let expected = lit_chunks(light_system.grid(), IVec3::new(15, 2, 2));
-
-        let count = light_system.emit_dirty_events();
-
-        assert!(count > 1, "light must spill into neighbouring chunks");
-        assert_eq!(count, expected.len());
-        let got = received.lock().unwrap().clone();
-        assert_eq!(got.len(), count, "one event per chunk");
-        assert_eq!(got.into_iter().collect::<HashSet<_>>(), expected);
-        assert_eq!(light_system.emit_dirty_events(), 0);
-        assert_eq!(received.lock().unwrap().len(), count, "no repeat events");
-    }
-
     const TORCH: [u8; 3] = [15, 8, 2];
 
     /// Chunks holding any lit voxel within 16 blocks of `center`.
@@ -461,7 +422,7 @@ mod tests {
     }
 
     fn system() -> (LightSystem, DirtyLog) {
-        system_with_budget(LightFrameBudget::balanced())
+        system_with_budget(LightFrameBudget::default())
     }
 
     fn placed(position: IVec3, material_id: u32) -> WorldEvent {
@@ -488,6 +449,7 @@ mod tests {
         let emitted = light_system.emit_dirty_events();
 
         assert_eq!(completed, 1);
+        assert_eq!(light_system.pending_jobs(), 0, "the frame drains the queue");
         assert_eq!(light_system.grid().block_light_rgb_at(source), TORCH);
         let expected = lit_chunks(light_system.grid(), source);
         assert!(
