@@ -2,6 +2,7 @@
 
 use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::Key;
+use moho_ui_shell::CONSOLE_BINDING;
 
 use super::types::BINDING_ROWS;
 use crate::actions::{StrategyAction, load_bindings};
@@ -22,7 +23,11 @@ impl BindingRegistry {
     }
 
     pub fn write_to_prefs(&self, prefs: &mut Prefs) {
-        prefs.set_bindings(self.bindings.to_section());
+        let mut section = self.bindings.to_section();
+        if let Some(console) = prefs.bindings().get(CONSOLE_BINDING) {
+            section.insert(CONSOLE_BINDING.to_owned(), console.clone());
+        }
+        prefs.set_bindings(section);
     }
 
     /// The listed row (other than `exclude`) already bound to `key`, if any.
@@ -164,5 +169,33 @@ mod tests {
             registry.get_binding(StrategyAction::MoveForward),
             [Binding::Key(Key::Q)]
         );
+    }
+
+    #[test]
+    fn writing_bindings_keeps_the_console_entry() {
+        let (mut prefs, _) = Prefs::parse("[bindings]\nconsole = Backslash\nmove_forward = W\n");
+        let mut registry = BindingRegistry::from_prefs(&prefs);
+        registry.set_binding(StrategyAction::MoveForward, vec![Binding::Key(Key::Q)]);
+
+        registry.write_to_prefs(&mut prefs);
+
+        assert_eq!(
+            prefs.bindings().get("console").map(String::as_str),
+            Some("Backslash")
+        );
+        assert_eq!(
+            BindingRegistry::from_prefs(&prefs).get_binding(StrategyAction::MoveForward),
+            [Binding::Key(Key::Q)]
+        );
+    }
+
+    #[test]
+    fn writing_bindings_adds_no_console_entry_when_the_prefs_have_none() {
+        let mut prefs = Prefs::default();
+        let registry = BindingRegistry::from_prefs(&prefs);
+
+        registry.write_to_prefs(&mut prefs);
+
+        assert_eq!(prefs.bindings().get("console"), None);
     }
 }

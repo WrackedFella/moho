@@ -1,65 +1,85 @@
 # Debug console
 
-**Source:** `flagstone_ui/src/overlays/console/` (`mod.rs`, `commands.rs`),
-`flagstone_ui/src/adapter/` (`rendering.rs`, `event_routing.rs`),
-`flagstone/src/app/event_loop/event_processor.rs` (`process_debug_events` and friends).
+**Source:** `moho_ui_shell/src/console/` (`Console`, `Routing`, `CommandSpec`),
+`flagstone_ui/src/console_commands.rs` (strategy commands), `flagstone/src/app/console.rs`
+(applying them), `flagstone/src/app/game.rs` (`route_console_input`, `Game::command`).
 
-An egui overlay for developer commands. It is not modal by itself: `GameState::ConsoleOpen`
-decides who gets input ([input-and-state](input-and-state.md)).
+An egui overlay for developer commands. The console is the engine's `moho_ui_shell::Console`,
+shared with Searchlight ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md));
+strategy registers its own commands on it (`flagstone_ui::console_commands::register`) and owns
+the game-side effects. `GameState::ConsoleOpen` decides who gets input
+([input-and-state](input-and-state.md)); the console is open exactly while the game is in it.
 
 ## Flow
 
 ```mermaid
 sequenceDiagram
     actor U as Developer
-    participant App as App (main.rs)
-    participant C as Console (egui)
-    participant CP as CommandProcessor
-    participant A as adapter::process_console_action
+    participant App as App (game.rs)
+    participant C as Console (moho_ui_shell)
+    participant G as Game::command / Game::tick
     participant Bus as EventBus
     participant L as frame loop
 
-    U->>App: Backquote
+    U->>App: console key
+    App->>C: on_key(binding, pressed, repeat)
+    C-->>App: Routing::Opened
     App->>App: enter_console() → GameState::ConsoleOpen
-    loop each frame while ConsoleOpen
-        App->>C: render(ui)
-        U->>C: types command, Enter
-        C->>CP: execute("time 6")
-        CP-->>C: CommandResult { messages, action }
-        C-->>A: ConsoleAction::SetTimeOfDay(6.0)
-        A->>Bus: publish(GraphicsEvent::TimeOfDayChanged)
-    end
+    U->>C: types "time 6", Enter
+    C->>C: parse → StrategyConsoleCommand / EngineCommand (queued)
+    G->>C: take_commands, take_engine_commands
+    G->>G: StrategyCommand { console, engine }
+    G->>Bus: apply_console_command publishes GraphicsEvent::TimeOfDayChanged
     Bus-->>L: forwarded to channel (see events)
-    L->>L: process_graphics_events applies it next drain
 ```
 
-Parsing is `CommandProcessor::execute` (a `match` on the first token). It returns text
-for the console and a `ConsoleAction`. Side effects happen only by publishing events
-from `process_console_action`; the console never touches `App`.
+Parsing happens inside the console, by the `parse` fn of the matching `CommandSpec`; it returns
+the reply text and a command, or an error reply, and publishes nothing. The console never
+touches `App`. Each tick, `Game::command` drains the queued commands into `StrategyCommand`
+(before the `Playing` check, since the console is open only outside `Playing`), and
+`Game::tick` applies them in order: strategy commands, then engine commands.
 
-## Action → event
+## Input routing
 
-| `ConsoleAction` | Event published | Handled in |
+`App::route_console_input` offers every key and mouse-button press to `Console::on_key` before
+egui or the action map, only in `Playing` and `ConsoleOpen`. The result is a `Routing`:
+
+| `Routing` | Meaning |
+|---|---|
+| `Opened` / `Closed` | The console key (or `Esc` when open) toggled it; `enter_console` / `exit_console` run the state transition; the event ends there |
+| `Console` | The open console takes the input; only egui sees it |
+| `Game` | Not the console's; normal routing continues |
+
+The console key is the reserved `console` entry of `[bindings]` (default backtick,
+[prefs format](../reference/prefs-format.md)); `flagstone_ui::actions::load_bindings` drops it
+before the strategy action map reads the section.
+
+## Command → event
+
+`flagstone/src/app/console.rs` maps each command to an event; the handlers are the same drains
+as for any other publisher.
+
+| Command | Event published | Handled in |
 |---|---|---|
-| `Quit` | `UiEvent::ExitRequested` | `process_ui_events` (auto-saves, then exits) |
-| `Close` | `UiEvent::MenuHidden { "console" }` | `process_ui_events` |
+| `Quit` (engine) | `UiEvent::ExitRequested` | `process_ui_events` (auto-saves, then exits) |
+| `DebugView(m)` (engine) | `GraphicsEvent::DebugViewChanged` | `process_graphics_events` |
+| `ShadowQuality(q)` (engine) | `DebugEvent::SetShadowQuality` | `process_debug_events` |
+| `SsaoQuality(q)` (engine) | `DebugEvent::SetSsaoQuality` | `process_debug_events` |
+| `PlaySoundAt` (engine) | `AudioEvent::PlaySoundAt` | audio system |
 | `ToggleGodMode` | `DebugEvent::ToggleGodMode { enabled: true }` | `process_debug_events` (logs only; not implemented) |
-| `ToggleNoclip` | `DebugEvent::ToggleCollision { enabled: false }` | sets `physics.noclip` (`PhysicsController`) |
-| `SetSunDirection(yaw, pitch)` | `GraphicsEvent::SunDirectionChanged` (radians) | `process_graphics_events` |
+| `ToggleNoclip` | `DebugEvent::ToggleCollision { enabled: <current noclip> }` | sets `physics.noclip` to the opposite |
+| `SetSunDirection { yaw_deg, pitch_deg }` | `GraphicsEvent::SunDirectionChanged` (radians) | `process_graphics_events` |
 | `SetTimeOfDay(h)` | `GraphicsEvent::TimeOfDayChanged` | `process_graphics_events` |
-| `SetDebugView(m)` | `GraphicsEvent::DebugViewChanged` | `process_graphics_events` |
-| `SetShadowQuality(q)` | `DebugEvent::SetShadowQuality` | `process_debug_events` |
-| `SetSsaoQuality(q)` | `DebugEvent::SetSsaoQuality` | `process_debug_events` |
 | `ShowMarker { id, min, max, style }` | `DebugEvent::ShowMarker` | `process_debug_events` (`Scene::markers_mut().upsert`, fixed amber colour) |
 | `ClearMarkers(id)` | `DebugEvent::ClearMarkers { id }` | `process_debug_events` (`remove`, or `clear` for `None`) |
-| `Spawn(type, args)` | `DebugEvent::SpawnEntity { position: None }` | raycasts from the camera for a position |
+| `SetViewHeight(h)` | `DebugEvent::SetViewHeight` | `process_debug_events` |
+| `Spawn { kind, args }` | `DebugEvent::SpawnEntity { position: None }` | raycasts from the camera for a position |
+
+Engine commands strategy does not handle are logged and dropped.
 
 Command syntax: [console commands](../reference/console-commands.md). To add one:
 [guide](../guides/adding-console-commands.md).
 
 ## Caveats
 
-- `ToggleGodMode` and `ToggleNoclip` publish fixed values (`true` / `false`), not a toggle.
-  The noclip handler sets `noclip = !enabled`, so `noclip` always turns it **on**; the
-  console cannot turn it off.
 - God mode has no implementation behind the event.

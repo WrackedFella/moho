@@ -29,6 +29,8 @@ impl moho_render_api::UiFrameSource for StubUi {
 pub mod actions;
 pub mod adapter;
 
+pub mod console_commands;
+
 pub mod app_state;
 
 pub mod screens;
@@ -58,8 +60,7 @@ pub use screens::{
 };
 
 pub use overlays::{
-    ChunkDebugOverlay, Console, ConsoleAction, DebugHud, FpsHud, GameplayHud, HudData, Overlay,
-    OverlayManager, RtsHud,
+    ChunkDebugOverlay, DebugHud, FpsHud, GameplayHud, HudData, Overlay, OverlayManager, RtsHud,
 };
 
 pub use modal::{Modal, ModalManager, ModalResult};

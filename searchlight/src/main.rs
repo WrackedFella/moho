@@ -13,8 +13,11 @@ use moho_ui_shell::UiShell;
 use searchlight::arena::{self, Arena};
 use searchlight::brain::EnemyTuning;
 use searchlight::console_commands;
+use searchlight::debug_settings::DebugSettings;
 use searchlight::game::{SearchlightGame, WINDOW_TITLE};
-use searchlight::sim::{SearchlightSim, SimConfig};
+use searchlight::mode::ArenaMode;
+use searchlight::sim::SimConfig;
+use searchlight::wave::WaveTuning;
 use searchlight::{TICK_HZ, prefs_path, split_console_binding};
 use searchlight_rules::{BodyPart, BodyProfile, Magazine, Rifle};
 
@@ -68,12 +71,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         .map_or_else(|| assets().join("arena.glb"), PathBuf::from);
     let (level, markers) = arena::load(&arena_path)?;
     let arena = Arc::new(Arena::from_level(&level, &markers));
-    let sim = SearchlightSim::start(arena.clone(), tuning()?);
+    let mode = ArenaMode::new(arena.clone(), tuning()?, WaveTuning::default());
     let (prefs, prefs_warnings) = Prefs::load_from(&prefs_path());
     for warning in prefs_warnings {
         tracing::warn!(%warning, "Preferences load fallback");
     }
     let (console_section, game_section) = split_console_binding(prefs.bindings());
+    let debug_settings = DebugSettings::new(prefs, prefs_path());
     let (bindings, warnings) = ActionBindings::load(&game_section);
     for warning in warnings {
         tracing::warn!(?warning, "bindings");
@@ -82,8 +86,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     for warning in console_warnings {
         tracing::warn!(?warning, "console binding");
     }
-    let game = SearchlightGame::new(sim, ActionMap::new(bindings, LOOK_PER_PIXEL))
+    let game = SearchlightGame::new(mode, ActionMap::new(bindings, LOOK_PER_PIXEL))
         .with_shell(UiShell::new(console))
+        .with_debug_settings(debug_settings)
         .with_arena(arena.meshes.clone(), &arena.dummy_spawns)
         .with_shot_sound(&assets().join("rifle_shot.wav"));
 

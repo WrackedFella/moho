@@ -1,54 +1,54 @@
 # Adding a console command
 
-> **FPS (searchlight) and new games:** register on the engine console instead. In the game's
-> `console_commands.rs`, build a `moho_ui_shell::CommandSpec` (name, usage, help and a plain
-> `fn` parse returning the game's command and a reply, or an error reply; an empty reply prints
-> nothing, for a result only the game knows once it acts, which it prints with `Console::print`
-> where it drains `take_commands`) and call
-> `Console::register`; a name the engine (`help`, `clear`, `quit`, `r_debug_view`, `r_shadow_quality`,
-> `r_ssao_quality`, `audio_cue`) or the game already has is refused. The game drains `Console::take_commands` in `Game::command()` and applies them in
-> its tick ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
-> The steps below are strategy's own console until it moves onto the engine console (#406).
+Both games register commands on the engine console, `moho_ui_shell::Console`. Build a
+`moho_ui_shell::CommandSpec` (name, usage, help and a plain `fn` parse returning the game's
+command and a reply, or an error reply; an empty reply prints nothing, for a result only the game
+knows once it acts, which it prints with `Console::print` where it drains `take_commands`) and
+call `Console::register`; a name the engine (`help`, `clear`, `quit`, `r_debug_view`,
+`r_shadow_quality`, `r_ssao_quality`, `audio_cue`) or the game already has is refused. The game
+drains `Console::take_commands` and applies them in its tick
+([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
 
-**Source:** `flagstone_ui/src/overlays/console/commands.rs`, `flagstone_ui/src/adapter/event_routing.rs`,
-`flagstone/src/app/event_loop/event_processor.rs`. Background: [console](../architecture/console.md).
+Searchlight does this in its own `console_commands.rs`. The steps below are strategy's.
+
+**Source:** `flagstone_ui/src/console_commands.rs`, `flagstone/src/app/console.rs`.
+Background: [console](../architecture/console.md).
 
 ```mermaid
 flowchart LR
-    A["1. ConsoleAction variant"] --> B["2. parse in<br/>CommandProcessor::execute"]
-    B --> C["3. map to an event in<br/>process_console_action"]
+    A["1. StrategyConsoleCommand variant"] --> B["2. parse fn + table row in<br/>register"]
+    B --> C["3. apply in<br/>apply_console_command"]
     C --> D["4. handle the event in<br/>process_*_events"]
-    D --> E["5. help text + tests"]
+    D --> E["5. docs + tests"]
 ```
 
-1. **Add a variant** to `ConsoleAction` in `commands.rs`.
-2. **Parse it.** Add a match arm in `CommandProcessor::execute` and a
-   `<name>_command(&self, parts)` method returning a `CommandResult`. Validate arguments
-   here and return a usage message on bad input; never publish from a bad parse.
-3. **Publish an event.** Add an arm in `process_console_action` (`event_routing.rs`).
+1. **Add a variant** to `StrategyConsoleCommand` in `console_commands.rs`.
+2. **Parse it.** Add a `parse_<name>(args: &[&str])` fn returning `Ok((command, reply))` or
+   `Err(usage)`, and a row in the table in `register`. Validate arguments here and return a
+   usage message on bad input; a bad parse queues nothing.
+3. **Publish an event.** Add an arm in `apply_console_command` (`flagstone/src/app/console.rs`).
    Reuse an existing event family where it fits (`DebugEvent`, `GraphicsEvent`,
    `UiEvent`); a new engine-wide event type goes in `moho_core::events`, and a
    strategy-only one in the flagstone line ([ADR-0003](../../_todo/adr/0003-core-owns-event-types.md), narrowed by
    [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md)).
 4. **Handle the event** in the matching drain in `event_processor.rs`. This is where
    `App` is mutated ([events](../architecture/events.md#the-channel-hand-off)).
-5. **Document and test.** Add a line to `help_command`, a row to
+5. **Document and test.** Put the help text in the table row, add a row to
    [console commands](../reference/console-commands.md), and unit tests for parsing
-   (valid, missing arg, out-of-range) next to the existing ones in `commands.rs`.
+   (valid, missing arg, out-of-range) next to the existing ones in `console_commands.rs`.
 
 ## Example
 
 ```rust
-// commands.rs
-pub enum ConsoleAction { /* … */ Teleport(f32, f32, f32) }
-
-"tp" => self.tp_command(&parts),
+// console_commands.rs
+pub enum StrategyConsoleCommand { /* … */ Teleport(f32, f32, f32) }
+// table row in `register`: ("tp <x> <y> <z>", "Teleport the player", parse_tp)
 ```
 
 ```rust
-// event_routing.rs
-ConsoleAction::Teleport(x, y, z) => {
-    event_bus.publish(DebugEvent::TeleportPlayer { position: glam::Vec3::new(x, y, z) });
+// flagstone/src/app/console.rs, in apply_console_command
+StrategyConsoleCommand::Teleport(x, y, z) => {
+    app.event_bus.publish(DebugEvent::TeleportPlayer { position: glam::Vec3::new(*x, *y, *z) });
 }
 ```
 

@@ -2,7 +2,6 @@
 //! feedback into sound, a title status line, a hit flash and a crosshair.
 
 use std::collections::BTreeMap;
-use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -18,15 +17,18 @@ use moho_render_api::{
     UiImage, UiMesh, UiRect, UiSampler, UiSource, UiTextureId, UiTextureSet, UiVertex, WorldMesh,
     WorldMeshId,
 };
-use moho_renderer::{LightingGpu, RendererBackend, Scene};
+use moho_renderer::{LightingGpu, RendererBackend, Scene, WorldMeshes};
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
 
 use moho_ui_shell::host::input_of;
-use moho_ui_shell::{Console, Routing, UiLayers, UiShell, apply_engine_command};
+use moho_ui_shell::{Routing, UiLayers, UiShell, apply_engine_command};
 
+use crate::console_commands::{self, ConsoleCommand, GodModeArg};
+use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand, look_to_turn};
+use crate::mode::ArenaMode;
 use crate::sim::{Feedback, SearchlightSim, dummy_at, dummy_hit_volumes};
 use crate::tag::SurfaceTag;
 use crate::{TICK_HZ, hud};
@@ -204,6 +206,15 @@ impl EnemyRig {
     fn mesh_id(&self, slot: usize) -> WorldMeshId {
         WorldMeshId(ENEMY_MESH_BASE + u64::from(self.target) * ENEMY_MESH_SLOTS + slot as u64)
     }
+
+    /// Takes the segments out of the scene and clears the gun flash.
+    fn hide(&mut self, meshes: &mut WorldMeshes) {
+        for slot in 0..enemy_segments().len() {
+            meshes.remove(self.mesh_id(slot));
+        }
+        self.shown = false;
+        self.gun_flash = 0;
+    }
 }
 
 /// The enemy's segments as `(offset, half extents)` in its body frame, gun last.
@@ -354,7 +365,7 @@ struct Stage {
     window: Option<Arc<Window>>,
     status: String,
     title: String,
-    shell: Arc<Mutex<UiShell<Infallible>>>,
+    shell: Arc<Mutex<UiShell<ConsoleCommand>>>,
 }
 
 impl Stage {
@@ -377,13 +388,15 @@ impl Stage {
             window: None,
             status: String::new(),
             title: String::new(),
-            shell: Arc::new(Mutex::new(UiShell::new(Console::new(&BTreeMap::new()).0))),
+            shell: Arc::new(Mutex::new(UiShell::new(
+                console_commands::console(&BTreeMap::new()).0,
+            ))),
         }
     }
 
     /// The console shell. Never hold the guard across `draw`: the renderer locks the shell
     /// itself when it pulls the UI frame.
-    fn shell(&self) -> MutexGuard<'_, UiShell<Infallible>> {
+    fn shell(&self) -> MutexGuard<'_, UiShell<ConsoleCommand>> {
         self.shell.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -435,9 +448,8 @@ impl Stage {
         }
     }
 
-    fn enemy_rig(&mut self, target: u16) -> &mut EnemyRig {
-        let index = self
-            .enemies
+    fn rig_index(&mut self, target: u16) -> usize {
+        self.enemies
             .iter()
             .position(|rig| rig.target == target)
             .unwrap_or_else(|| {
@@ -447,7 +459,11 @@ impl Stage {
                     gun_flash: 0,
                 });
                 self.enemies.len() - 1
-            });
+            })
+    }
+
+    fn enemy_rig(&mut self, target: u16) -> &mut EnemyRig {
+        let index = self.rig_index(target);
         &mut self.enemies[index]
     }
 
@@ -458,23 +474,27 @@ impl Stage {
 
     /// Puts every living enemy's segments where the sim has it, and takes the dead ones out.
     fn sync_enemies(&mut self, sim: &SearchlightSim) {
+        let known = self.dummy_count + sim.enemy_count();
+        for rig in &mut self.enemies {
+            if usize::from(rig.target) >= known && rig.shown {
+                rig.hide(self.scene.world_meshes_mut());
+            }
+        }
         for index in 0..sim.enemy_count() {
             let target = u16::try_from(self.dummy_count + index)
                 .expect("the sim numbers its targets with a u16");
-            let rig = self.enemy_rig(target);
-            let state = sim.enemy_state(index);
-            let (shown, gun_flash) = (rig.shown, rig.gun_flash);
-            let ids: [WorldMeshId; 7] = std::array::from_fn(|slot| rig.mesh_id(slot));
-            rig.shown = state.is_some();
+            let rig_index = self.rig_index(target);
+            let rig = &mut self.enemies[rig_index];
             let meshes = self.scene.world_meshes_mut();
-            let Some(state) = state else {
-                if shown {
-                    for id in ids {
-                        meshes.remove(id);
-                    }
+            let Some(state) = sim.enemy_state(index) else {
+                if rig.shown {
+                    rig.hide(meshes);
                 }
                 continue;
             };
+            rig.shown = true;
+            let gun_flash = rig.gun_flash;
+            let ids: [WorldMeshId; 7] = std::array::from_fn(|slot| rig.mesh_id(slot));
             let facing = Quat::from_rotation_y(state.yaw);
             for (slot, (offset, half)) in enemy_segments().into_iter().enumerate() {
                 let material = if slot == 6 && gun_flash > 0 {
@@ -580,28 +600,70 @@ impl Stage {
     }
 }
 
-/// The FPS prototype's game: one sim and the input that drives it.
+/// The FPS prototype's game: one arena mode and the input that drives it.
 #[derive(Debug)]
 pub struct SearchlightGame {
-    sim: SearchlightSim,
+    mode: ArenaMode,
     input: ActionMap<SearchlightAction>,
     /// The player as the tick before the last left them, for blending the view.
     previous: CharacterState,
     /// Whether the window has focus; look is sampled only while it does.
     focused: bool,
     stage: Stage,
+    god_mode: bool,
+    debug_settings: Option<DebugSettings>,
 }
 
 impl SearchlightGame {
-    /// A game ticking `sim` with commands sampled from `input`.
-    pub fn new(sim: SearchlightSim, input: ActionMap<SearchlightAction>) -> Self {
-        let previous = sim.player();
+    /// A game ticking `mode` with commands sampled from `input`.
+    pub fn new(mode: ArenaMode, input: ActionMap<SearchlightAction>) -> Self {
+        let previous = mode.sim().player();
         Self {
-            sim,
+            mode,
             input,
             previous,
             focused: true,
             stage: Stage::new(),
+            god_mode: false,
+            debug_settings: None,
+        }
+    }
+
+    /// Starts in the god mode `settings` holds and saves every change to it.
+    #[must_use]
+    pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
+        self.god_mode = settings.god_mode();
+        self.debug_settings = Some(settings);
+        self
+    }
+
+    /// Applies the console's queued commands in order, saves god mode once if they changed it,
+    /// and reports the value after each bare `tgm`.
+    fn apply_console_commands(&mut self) {
+        let queued = self.stage.shell().console_mut().take_commands();
+        if queued.is_empty() {
+            return;
+        }
+        let before = self.god_mode;
+        for ConsoleCommand::GodMode(arg) in queued {
+            match arg {
+                GodModeArg::Toggle => {
+                    self.god_mode = !self.god_mode;
+                    let text = if self.god_mode {
+                        "God mode: on"
+                    } else {
+                        "God mode: off"
+                    };
+                    self.stage.shell().console_mut().print(text);
+                }
+                GodModeArg::Set(on) => self.god_mode = on,
+            }
+        }
+        if self.god_mode != before
+            && let Some(settings) = &mut self.debug_settings
+            && let Err(error) = settings.set_god_mode(self.god_mode)
+        {
+            tracing::warn!(%error, god_mode = self.god_mode, "god mode not saved");
         }
     }
 
@@ -620,7 +682,7 @@ impl SearchlightGame {
     }
 
     pub fn sim(&self) -> &SearchlightSim {
-        &self.sim
+        self.mode.sim()
     }
 
     /// The input map, for feeding it device events.
@@ -628,9 +690,9 @@ impl SearchlightGame {
         &mut self.input
     }
 
-    /// Replaces the default console shell, which has no game commands.
+    /// Replaces the default console shell.
     #[must_use]
-    pub fn with_shell(mut self, shell: UiShell<Infallible>) -> Self {
+    pub fn with_shell(mut self, shell: UiShell<ConsoleCommand>) -> Self {
         self.stage.shell = Arc::new(Mutex::new(shell));
         self
     }
@@ -670,22 +732,29 @@ impl Game for SearchlightGame {
     type Command = SearchlightCommand;
 
     fn command(&mut self) -> SearchlightCommand {
+        self.apply_console_commands();
         // The paused loop asks every frame; ending the tick would consume the look the
         // frames showed and snap the view back. Edges are dropped instead, so a press made as
         // the console opened does not act when it closes.
         if self.stage.shell().captures_input() {
             self.input.discard_edges();
-            return SearchlightCommand::default();
+            return SearchlightCommand {
+                god_mode: self.god_mode,
+                ..SearchlightCommand::default()
+            };
         }
-        SearchlightCommand::from_frame(&self.input.end_tick())
+        SearchlightCommand {
+            god_mode: self.god_mode,
+            ..SearchlightCommand::from_frame(&self.input.end_tick())
+        }
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &SearchlightCommand) {
-        self.previous = self.sim.player();
-        let was_dead = self.sim.player_body().is_dead();
-        self.sim.tick(command, ctx.tick_length.as_secs_f32());
-        if was_dead && !self.sim.player_body().is_dead() {
-            self.previous = self.sim.player();
+        self.previous = self.mode.sim().player();
+        let was_dead = self.mode.sim().player_body().is_dead();
+        self.mode.tick(command, ctx.tick_length.as_secs_f32());
+        if was_dead && !self.mode.sim().player_body().is_dead() {
+            self.previous = self.mode.sim().player();
             self.stage.status.clear();
         }
         self.stage.tick_flashes();
@@ -733,32 +802,30 @@ impl Game for SearchlightGame {
         for command in &engine_commands {
             apply_engine_command(command, ctx);
         }
-        for feedback in self.sim.drain_feedback() {
+        for feedback in self.mode.drain_feedback() {
             if let Feedback::PlayerHit { from, .. } = feedback {
-                let player = self.sim.player();
+                let player = self.mode.sim().player();
                 self.stage
                     .show_hit_edge(hud::hit_edge(player.position, player.yaw, from));
             }
             self.stage.react(&feedback, ctx.audio());
         }
-        let dead = self.sim.player_body().is_dead();
+        let sim = self.mode.sim();
+        let dead = sim.player_body().is_dead();
         let vitals = hud::death_text(dead).map_or_else(
-            || {
-                hud::health_text(
-                    self.sim.player_body().health(),
-                    self.sim.player_max_health(),
-                )
-            },
+            || hud::health_text(sim.player_body().health(), sim.player_max_health()),
             str::to_owned,
         );
+        let vitals = hud::vitals_text(&vitals, self.mode.wave(), self.mode.score());
+        let vitals = hud::god_mode_text(&vitals, self.god_mode);
         self.stage.refresh_title(&vitals);
         self.stage.refresh_hud(dead);
-        self.stage.sync_enemies(&self.sim);
+        self.stage.sync_enemies(self.mode.sim());
         if let Some(renderer) = ctx.renderer() {
             let view = first_person_view(
                 &self.previous,
-                &self.sim.player(),
-                self.sim.eye_height(),
+                &self.mode.sim().player(),
+                self.mode.sim().eye_height(),
                 alpha,
                 look_to_turn(self.input.pending_look()),
             );
@@ -774,23 +841,23 @@ mod tests {
 
     use glam::Vec3;
     use moho_app::{GameClock, HeadlessLoop, LoopConfig};
+    use moho_core::prefs::Prefs;
     use moho_input::bindings::ActionBindings;
     use winit::event::{DeviceEvent, WindowEvent};
 
     use super::*;
     use crate::sim::Feedback;
-    use crate::test_support::{arena_with, flat_floor, mag, press, test_config};
+    use crate::test_support::{arena_with, mag, press, test_config, wave_tuning};
     use searchlight_rules::Rifle;
 
     fn game() -> SearchlightGame {
-        let sim = SearchlightSim::new(
-            flat_floor(),
-            Vec3::ZERO,
-            &[],
+        let mode = ArenaMode::new(
+            arena_with(&[], Vec3::ZERO, &[], &[]),
             test_config(Rifle::loaded(mag(30, 5)), vec![]),
+            wave_tuning(1),
         );
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
-        SearchlightGame::new(sim, ActionMap::new(bindings, 1.0))
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
     }
 
     #[test]
@@ -833,9 +900,9 @@ mod tests {
 
     /// A game whose player walked toward an enemy and was shot dead there, with a status shown.
     fn game_with_a_player_dead_away_from_the_spawn() -> (SearchlightGame, GameClock) {
-        let sim = SearchlightSim::start(arena_arena(), arena_config());
+        let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
-        let mut game = SearchlightGame::new(sim, ActionMap::new(bindings, 1.0));
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
         let mut clock = GameClock::new(0.0, 1.0, 1.0);
         let walk = SearchlightCommand {
             movement: moho_physics::CharacterCommand {
@@ -889,9 +956,9 @@ mod tests {
 
     #[test]
     fn an_ordinary_alive_tick_blends_from_the_previous_pose_and_keeps_the_status() {
-        let sim = SearchlightSim::start(arena_arena(), arena_config());
+        let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
-        let mut game = SearchlightGame::new(sim, ActionMap::new(bindings, 1.0));
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
         let mut clock = GameClock::new(0.0, 1.0, 1.0);
         let walk = SearchlightCommand {
             movement: moho_physics::CharacterCommand {
@@ -926,9 +993,9 @@ mod tests {
 
     /// A game whose enemy is walking toward the player, so every sim tick moves it.
     fn game_with_a_moving_enemy() -> SearchlightGame {
-        let sim = SearchlightSim::start(arena_arena(), arena_config());
+        let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
-        SearchlightGame::new(sim, ActionMap::new(bindings, 1.0))
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
     }
 
     #[test]
@@ -1253,8 +1320,8 @@ mod tests {
         let (look_x, look_y) = game.input.pending_look();
         first_person_view(
             &game.previous,
-            &game.sim.player(),
-            game.sim.eye_height(),
+            &game.sim().player(),
+            game.sim().eye_height(),
             ALPHA,
             (-look_x, -look_y),
         )
@@ -1490,6 +1557,218 @@ mod tests {
             landed.pitch,
             (start.pitch + (-look_y)).clamp(-moho_physics::PITCH_LIMIT, moho_physics::PITCH_LIMIT)
         );
+    }
+
+    fn type_into_console(game: &SearchlightGame, line: &str) {
+        game.stage.shell().console_mut().submit(line);
+    }
+
+    fn console_lines(game: &SearchlightGame) -> Vec<String> {
+        game.stage
+            .shell()
+            .console_mut()
+            .output()
+            .lines()
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Types `line` and runs one `command()`, returning the god mode it carries.
+    fn tgm_tick(game: &mut SearchlightGame, line: &str) -> bool {
+        type_into_console(game, line);
+        game.command().god_mode
+    }
+
+    fn settings_in(dir: &tempfile::TempDir) -> (DebugSettings, std::path::PathBuf) {
+        let path = dir.path().join("searchlight.ini");
+        (DebugSettings::new(Prefs::default(), path.clone()), path)
+    }
+
+    fn saved_god_mode(path: &std::path::Path) -> Option<String> {
+        let (saved, _) = Prefs::load_from(path);
+        saved.debug_value("god_mode").map(str::to_owned)
+    }
+
+    #[test]
+    fn tgm_flips_god_mode_each_time() {
+        let mut game = game();
+
+        let start = game.command().god_mode;
+        let first = tgm_tick(&mut game, "tgm");
+        let second = tgm_tick(&mut game, "tgm");
+        let third = tgm_tick(&mut game, "tgm");
+
+        assert_eq!([start, first, second, third], [false, true, false, true]);
+        assert!(game.god_mode);
+    }
+
+    #[test]
+    fn bare_tgm_prints_the_value_it_set() {
+        let mut game = game();
+
+        type_into_console(&game, "tgm");
+        game.command();
+        type_into_console(&game, "tgm");
+        game.command();
+
+        let lines = console_lines(&game);
+        let tail = &lines[lines.len() - 4..];
+        assert_eq!(tail, ["> tgm", "God mode: on", "> tgm", "God mode: off"]);
+    }
+
+    #[test]
+    fn tgm_1_twice_leaves_god_mode_on() {
+        let mut game = game();
+
+        let first = tgm_tick(&mut game, "tgm 1");
+        let second = tgm_tick(&mut game, "tgm 1");
+
+        assert!(first && second);
+        assert!(game.god_mode);
+    }
+
+    #[test]
+    fn tgm_0_turns_god_mode_off() {
+        let mut game = game();
+        let on = tgm_tick(&mut game, "tgm 1");
+
+        let off = tgm_tick(&mut game, "tgm 0");
+
+        assert!(on);
+        assert!(!off);
+        assert!(!game.god_mode);
+    }
+
+    #[test]
+    fn queued_commands_apply_in_order_within_one_command_call() {
+        let mut game = game();
+        type_into_console(&game, "tgm 1");
+        type_into_console(&game, "tgm");
+        type_into_console(&game, "tgm");
+
+        let command = game.command();
+
+        assert!(command.god_mode);
+        assert!(game.god_mode);
+    }
+
+    #[test]
+    fn a_refused_tgm_leaves_god_mode_on() {
+        let mut game = game();
+        tgm_tick(&mut game, "tgm 1");
+
+        let after_two = tgm_tick(&mut game, "tgm 2");
+        let after_on = tgm_tick(&mut game, "tgm on");
+        let after_two_args = tgm_tick(&mut game, "tgm 1 0");
+
+        assert!(after_two && after_on && after_two_args);
+        assert!(game.god_mode);
+    }
+
+    #[test]
+    fn the_command_carries_god_mode_every_tick() {
+        let mut game = game();
+        tgm_tick(&mut game, "tgm 1");
+
+        let later: Vec<bool> = (0..3).map(|_| game.command().god_mode).collect();
+        tgm_tick(&mut game, "tgm 0");
+        let after_off: Vec<bool> = (0..3).map(|_| game.command().god_mode).collect();
+
+        assert_eq!(later, [true, true, true]);
+        assert_eq!(after_off, [false, false, false]);
+    }
+
+    #[test]
+    fn god_mode_survives_a_restart() {
+        let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        game.mode.sim_mut().kill_player();
+        assert!(game.sim().player_body().is_dead());
+        tgm_tick(&mut game, "tgm 1");
+
+        let restart = SearchlightCommand {
+            restart: true,
+            ..game.command()
+        };
+        tick_with(&mut game, &mut clock, &restart);
+        let mut hits = 0;
+        for _ in 0..300 {
+            let command = game.command();
+            tick_with(&mut game, &mut clock, &command);
+            hits += game
+                .mode
+                .drain_feedback()
+                .iter()
+                .filter(|fb| matches!(fb, Feedback::PlayerHit { .. }))
+                .count();
+        }
+
+        assert!(hits > 0, "no enemy ever hit the player");
+        assert!(!game.sim().player_body().is_dead());
+        assert_eq!(
+            game.sim().player_body().health(),
+            game.sim().player_max_health()
+        );
+    }
+
+    #[test]
+    fn a_saved_god_mode_starts_the_game_in_god_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut settings, path) = settings_in(&dir);
+        settings.set_god_mode(true).unwrap();
+        let mut game = game().with_debug_settings(settings);
+
+        let command = game.command();
+
+        assert!(command.god_mode);
+        assert!(game.god_mode);
+        assert_eq!(saved_god_mode(&path).as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn tgm_saves_the_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+
+        tgm_tick(&mut game, "tgm 1");
+        let on = saved_god_mode(&path);
+        tgm_tick(&mut game, "tgm");
+        let off = saved_god_mode(&path);
+
+        assert_eq!(on.as_deref(), Some("1"));
+        assert_eq!(off.as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn a_tgm_that_changes_nothing_does_not_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+
+        tgm_tick(&mut game, "tgm 0");
+        tgm_tick(&mut game, "tgm 2");
+
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_failed_save_keeps_god_mode_for_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "a file, not a directory").unwrap();
+        let settings = DebugSettings::new(Prefs::default(), blocker.join("searchlight.ini"));
+        let mut game = game().with_debug_settings(settings);
+
+        let on = tgm_tick(&mut game, "tgm 1");
+        let later = game.command().god_mode;
+        let off = tgm_tick(&mut game, "tgm");
+
+        assert!(on && later);
+        assert!(!off);
     }
 }
 
@@ -1981,6 +2260,7 @@ mod enemy_and_hud_tests {
     use searchlight_rules::Rifle;
 
     use super::*;
+    use crate::sim::Start;
     use crate::test_support::{arena_with, mag, test_config};
 
     /// Keeps the vertices of every mesh uploaded and the draws of the last frame.
@@ -2169,6 +2449,69 @@ mod enemy_and_hud_tests {
         let targets: Vec<u16> = stage.enemies.iter().map(|rig| rig.target).collect();
         assert_eq!(targets, [2, 3]);
         assert_eq!(drawn.len(), 12 + 14);
+    }
+
+    #[test]
+    fn restarting_removes_the_drawn_models_of_enemies_that_no_longer_exist() {
+        let markers = [
+            Vec3::new(-3.0, 0.0, 4.0),
+            Vec3::new(3.0, 0.0, 4.0),
+            Vec3::new(9.0, 0.0, 4.0),
+        ];
+        let arena = arena_with(
+            &[],
+            Vec3::new(0.0, 0.0, -20.0),
+            &markers,
+            &[Vec3::new(13.0, 0.0, 4.0)],
+        );
+        let config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let mut sim = SearchlightSim::with_start(arena, config, Start::Empty);
+        for marker in 0..markers.len() {
+            sim.spawn_enemy(marker).expect("the marker is free");
+        }
+        let mut stage = Stage::new();
+        let mut renderer = RecordingRenderer::default();
+        let before = drawn_after_sync(&mut stage, &mut renderer, &sim).len();
+        sim.kill_player();
+        sim.tick(
+            &SearchlightCommand {
+                restart: true,
+                ..SearchlightCommand::default()
+            },
+            1.0 / 60.0,
+        );
+        sim.spawn_enemy(0).expect("the restart emptied the markers");
+        assert_eq!(sim.enemy_count(), 1);
+
+        let after = drawn_after_sync(&mut stage, &mut renderer, &sim).len();
+
+        assert_eq!(before, 3 * 7);
+        assert_eq!(after, 7, "stale enemy models are still drawn");
+        assert_eq!(stage.enemies.iter().filter(|rig| rig.shown).count(), 1);
+    }
+
+    #[test]
+    fn syncing_keeps_the_gun_flash_of_a_shown_living_enemy_numbered_after_the_dummies() {
+        let mut arena = (*arena_with(
+            &[],
+            Vec3::new(0.0, 0.0, -20.0),
+            &[Vec3::new(3.0, 0.0, 4.0)],
+            &[Vec3::new(13.0, 0.0, 4.0)],
+        ))
+        .clone();
+        arena.dummy_spawns = vec![Vec3::new(-8.0, 0.0, 4.0), Vec3::new(-4.0, 0.0, 4.0)];
+        let sim = sim_of(Arc::new(arena));
+        let mut stage = Stage::new();
+        let mut renderer = RecordingRenderer::default();
+        stage.add_arena(Vec::new(), &sim_dummy_spawns());
+        drawn_after_sync(&mut stage, &mut renderer, &sim);
+
+        stage.react(&Feedback::EnemyFired { target: 2 }, None);
+        let drawn = drawn_after_sync(&mut stage, &mut renderer, &sim);
+
+        assert_eq!(stage.enemies[0].gun_flash, FLASH_TICKS);
+        let enemy_draws = &drawn[drawn.len() - 7..];
+        assert!(is_paint(enemy_draws[6].2, Paint::Struck));
     }
 
     fn sim_dummy_spawns() -> [Vec3; 2] {

@@ -74,6 +74,8 @@ pub struct SearchlightCommand {
     pub check: bool,
     /// The restart input went down this tick.
     pub restart: bool,
+    /// God mode is on: a level, carried on every tick like a pause.
+    pub god_mode: bool,
 }
 
 /// Yaw and pitch deltas for a look. Mouse motion is right- and down-positive; positive yaw
@@ -104,6 +106,7 @@ impl SearchlightCommand {
             reload: frame.pressed(SearchlightAction::Reload),
             check: frame.pressed(SearchlightAction::CheckMagazine),
             restart: frame.pressed(SearchlightAction::Restart),
+            god_mode: false,
         }
     }
 }
@@ -266,6 +269,17 @@ mod tests {
             [true, false, false, true]
         );
         assert!(!pressed.fire && !pressed.reload && !pressed.check);
+    }
+
+    #[test]
+    fn a_command_starts_with_god_mode_off() {
+        let mut map = fresh_map();
+        press(&mut map, SearchlightAction::Fire);
+
+        let sampled = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert!(!sampled.god_mode);
+        assert!(!SearchlightCommand::default().god_mode);
     }
 
     #[test]
