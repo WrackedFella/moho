@@ -23,7 +23,7 @@ use winit::window::{CursorGrabMode, Window};
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{Routing, UiLayers, UiShell, apply_engine_command};
 
-use crate::console_commands::{self, ConsoleCommand};
+use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand};
@@ -628,8 +628,43 @@ impl SearchlightGame {
     /// Starts in the god mode `settings` holds and saves every change to it.
     #[must_use]
     pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
+        self.god_mode = settings.god_mode();
         self.debug_settings = Some(settings);
         self
+    }
+
+    /// Applies the console's queued commands in order, saves god mode once if they changed it,
+    /// and reports the value after a bare `tgm`.
+    fn apply_console_commands(&mut self) {
+        let queued = self.stage.shell().console_mut().take_commands();
+        if queued.is_empty() {
+            return;
+        }
+        let before = self.god_mode;
+        let mut toggled = false;
+        for ConsoleCommand::GodMode(arg) in queued {
+            match arg {
+                GodModeArg::Toggle => {
+                    self.god_mode = !self.god_mode;
+                    toggled = true;
+                }
+                GodModeArg::Set(on) => self.god_mode = on,
+            }
+        }
+        if self.god_mode != before
+            && let Some(settings) = &mut self.debug_settings
+            && let Err(error) = settings.set_god_mode(self.god_mode)
+        {
+            tracing::warn!(%error, god_mode = self.god_mode, "god mode not saved");
+        }
+        if toggled {
+            let text = if self.god_mode {
+                "God mode: on"
+            } else {
+                "God mode: off"
+            };
+            self.stage.shell().console_mut().print(text);
+        }
     }
 
     /// Draws `meshes` as the arena and one dummy at each of `dummy_spawns`.
@@ -697,7 +732,11 @@ impl Game for SearchlightGame {
     type Command = SearchlightCommand;
 
     fn command(&mut self) -> SearchlightCommand {
-        SearchlightCommand::from_frame(&self.input.end_tick())
+        self.apply_console_commands();
+        SearchlightCommand {
+            god_mode: self.god_mode,
+            ..SearchlightCommand::from_frame(&self.input.end_tick())
+        }
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &SearchlightCommand) {
@@ -761,6 +800,7 @@ impl Game for SearchlightGame {
             str::to_owned,
         );
         let vitals = hud::vitals_text(&vitals, self.mode.wave(), self.mode.score());
+        let vitals = hud::god_mode_text(&vitals, self.god_mode);
         self.stage.refresh_title(&vitals);
         self.stage.refresh_hud(dead);
         self.stage.sync_enemies(self.mode.sim());

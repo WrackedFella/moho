@@ -388,7 +388,7 @@ impl SearchlightSim {
                 .push(Feedback::MagazineLevel(self.rifle.magazine().level()));
         }
 
-        self.fire_enemies(&firing);
+        self.fire_enemies(&firing, command.god_mode);
         self.remove_dead_enemies();
         if self.player_body.is_dead() {
             self.outbox.push(Feedback::PlayerDied);
@@ -500,7 +500,7 @@ impl SearchlightSim {
 
     /// Fires the enemies in `firing`, in order, skipping any that died this tick and all of
     /// them once the player is dead.
-    fn fire_enemies(&mut self, firing: &[usize]) {
+    fn fire_enemies(&mut self, firing: &[usize], god_mode: bool) {
         for &index in firing {
             if self.player_body.is_dead() {
                 break;
@@ -532,7 +532,9 @@ impl SearchlightSim {
                 ..
             }) = strike
             {
-                self.player_body.hit(part, self.enemy.damage);
+                if !god_mode {
+                    self.player_body.hit(part, self.enemy.damage);
+                }
                 self.outbox.push(Feedback::PlayerHit { part, from: eye });
             }
         }

@@ -22,7 +22,7 @@ impl DebugSettings {
 
     /// Whether god mode is stored as on; an absent or unrecognised value reads as off.
     pub fn god_mode(&self) -> bool {
-        todo!("read the god_mode debug value")
+        self.prefs.debug_value(GOD_MODE) == Some("1")
     }
 
     /// Stores god mode and saves the prefs file.
@@ -30,8 +30,10 @@ impl DebugSettings {
     /// # Errors
     /// The I/O error if the file cannot be written.
     pub fn set_god_mode(&mut self, on: bool) -> io::Result<()> {
-        let _ = (on, &mut self.prefs, &self.path, GOD_MODE);
-        todo!("store the god_mode debug value and save")
+        self.prefs
+            .set_debug_value(GOD_MODE, if on { "1" } else { "0" })
+            .expect("\"god_mode\" with \"1\" or \"0\" is a name and value prefs always accepts");
+        self.prefs.save_to(&self.path)
     }
 }
 

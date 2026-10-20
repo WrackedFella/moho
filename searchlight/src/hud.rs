@@ -93,8 +93,11 @@ pub fn vitals_text(vitals: &str, wave: u32, score: u32) -> String {
 
 /// `vitals` with `GOD MODE` appended while god mode is on, unchanged while off.
 pub fn god_mode_text(vitals: &str, god_mode: bool) -> String {
-    let _ = god_mode;
-    vitals.to_owned()
+    if god_mode {
+        format!("{vitals} | GOD MODE")
+    } else {
+        vitals.to_owned()
+    }
 }
 
 /// What the dead player reads in the title, or `None` while alive.

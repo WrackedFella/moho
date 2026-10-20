@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use moho_input::bindings::BindingWarning;
 use moho_ui_shell::Console;
+use moho_ui_shell::console::registry::CommandSpec;
 
 /// What a console command asks of the game.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,8 +22,18 @@ pub enum GodModeArg {
 
 /// The parse function registered as `tgm`; usage `tgm [0|1]`.
 pub fn parse_tgm(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
-    let _ = args;
-    todo!("parse tgm")
+    match args {
+        [] => Ok((ConsoleCommand::GodMode(GodModeArg::Toggle), String::new())),
+        ["1"] => Ok((
+            ConsoleCommand::GodMode(GodModeArg::Set(true)),
+            "God mode: on".to_owned(),
+        )),
+        ["0"] => Ok((
+            ConsoleCommand::GodMode(GodModeArg::Set(false)),
+            "God mode: off".to_owned(),
+        )),
+        _ => Err("Usage: tgm [0|1]".to_owned()),
+    }
 }
 
 /// The FPS console with the game's commands registered. Reads the `console` key from the
@@ -30,7 +41,16 @@ pub fn parse_tgm(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
 pub fn console(
     bindings: &BTreeMap<String, String>,
 ) -> (Console<ConsoleCommand>, Vec<BindingWarning>) {
-    Console::new(bindings)
+    let (mut console, warnings) = Console::new(bindings);
+    console
+        .register(CommandSpec {
+            name: "tgm".to_owned(),
+            usage: "tgm [0|1]".to_owned(),
+            help: "toggle god mode".to_owned(),
+            parse: parse_tgm,
+        })
+        .expect("\"tgm\" is not an engine command and is registered once");
+    (console, warnings)
 }
 
 #[cfg(test)]
