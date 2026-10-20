@@ -155,7 +155,8 @@ impl App {
         if self.simulation.camera_mode() != CameraMode::FirstPerson {
             return self.camera;
         }
-        let (yaw_delta, pitch_delta) = look_to_turn(self.input.actions.pending_look());
+        let pending = self.input.actions.pending_look();
+        let (yaw_delta, pitch_delta) = look_to_turn(pending);
         let walking_states = self
             .is_kcc_walking()
             .then(|| self.physics.player_states())
@@ -171,6 +172,9 @@ impl App {
                 );
                 (view.view_matrix(), self.camera.1, view.eye)
             }
+            // Nothing shown since the tick: its camera stands, which is also the initial
+            // camera before any tick.
+            None if pending == (0.0, 0.0) => self.camera,
             None => controller_to_camera(
                 &self
                     .simulation
