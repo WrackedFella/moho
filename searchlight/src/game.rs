@@ -634,19 +634,23 @@ impl SearchlightGame {
     }
 
     /// Applies the console's queued commands in order, saves god mode once if they changed it,
-    /// and reports the value after a bare `tgm`.
+    /// and reports the value after each bare `tgm`.
     fn apply_console_commands(&mut self) {
         let queued = self.stage.shell().console_mut().take_commands();
         if queued.is_empty() {
             return;
         }
         let before = self.god_mode;
-        let mut toggled = false;
         for ConsoleCommand::GodMode(arg) in queued {
             match arg {
                 GodModeArg::Toggle => {
                     self.god_mode = !self.god_mode;
-                    toggled = true;
+                    let text = if self.god_mode {
+                        "God mode: on"
+                    } else {
+                        "God mode: off"
+                    };
+                    self.stage.shell().console_mut().print(text);
                 }
                 GodModeArg::Set(on) => self.god_mode = on,
             }
@@ -656,14 +660,6 @@ impl SearchlightGame {
             && let Err(error) = settings.set_god_mode(self.god_mode)
         {
             tracing::warn!(%error, god_mode = self.god_mode, "god mode not saved");
-        }
-        if toggled {
-            let text = if self.god_mode {
-                "God mode: on"
-            } else {
-                "God mode: off"
-            };
-            self.stage.shell().console_mut().print(text);
         }
     }
 
@@ -690,7 +686,7 @@ impl SearchlightGame {
         &mut self.input
     }
 
-    /// Replaces the default console shell, which has no game commands.
+    /// Replaces the default console shell.
     #[must_use]
     pub fn with_shell(mut self, shell: UiShell<ConsoleCommand>) -> Self {
         self.stage.shell = Arc::new(Mutex::new(shell));
