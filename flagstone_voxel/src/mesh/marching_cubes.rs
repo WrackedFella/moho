@@ -875,6 +875,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sample_density_interpolates_trilinearly_inside_a_cell() {
+        // Corner (dx, dy, dz) holds 2^(4dx + 2dy + dz), so every corner is distinct
+        // and the result identifies each corner's weight.
+        let mut field = [[[0.0f32; 18]; 18]; 18];
+        let (ox, oy, oz) = (8, 8, 8);
+        for dx in 0..2 {
+            for dy in 0..2 {
+                for dz in 0..2 {
+                    field[ox + dx][oy + dy][oz + dz] = (1u32 << (4 * dx + 2 * dy + dz)) as f32;
+                }
+            }
+        }
+        let expected = |fx: f32, fy: f32, fz: f32| -> f32 {
+            let mut sum = 0.0;
+            for dx in 0..2 {
+                for dy in 0..2 {
+                    for dz in 0..2 {
+                        let wx = if dx == 1 { fx } else { 1.0 - fx };
+                        let wy = if dy == 1 { fy } else { 1.0 - fy };
+                        let wz = if dz == 1 { fz } else { 1.0 - fz };
+                        sum += (1u32 << (4 * dx + 2 * dy + dz)) as f32 * wx * wy * wz;
+                    }
+                }
+            }
+            sum
+        };
+
+        for (fx, fy, fz) in [(0.25, 0.5, 0.75), (0.75, 0.25, 0.5), (0.5, 0.75, 0.25)] {
+            let actual = MarchingCubes::sample_density(&field, 8.0 + fx, 8.0 + fy, 8.0 + fz);
+
+            assert!(
+                (actual - expected(fx, fy, fz)).abs() < 1e-3,
+                "at ({fx}, {fy}, {fz}): got {actual}, expected {}",
+                expected(fx, fy, fz)
+            );
+        }
+    }
+
+    #[test]
     fn test_empty_density_field() {
         let field = [[[0.0f32; 18]; 18]; 18];
         let mesh = MarchingCubes::generate_mesh(&field, 16);

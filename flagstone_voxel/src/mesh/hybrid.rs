@@ -498,6 +498,26 @@ mod tests {
     }
 
     #[test]
+    fn blocky_chunk_mesh_sits_at_its_chunk_origin() {
+        let mut grid = VoxelGrid::new(16);
+        grid.place_block(IVec3::new(17, 3, -14), 100, None);
+
+        let mesh = HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::new(1, 0, -1), 16);
+
+        assert_eq!(mesh.vertices.len(), 24);
+        let min = mesh
+            .vertices
+            .iter()
+            .fold(Vec3::splat(f32::MAX), |acc, v| acc.min(Vec3::from(*v)));
+        let max = mesh
+            .vertices
+            .iter()
+            .fold(Vec3::splat(f32::MIN), |acc, v| acc.max(Vec3::from(*v)));
+        assert_eq!(min, Vec3::new(17.0, 3.0, -14.0));
+        assert_eq!(max, Vec3::new(18.0, 4.0, -13.0));
+    }
+
+    #[test]
     fn test_generate_coarse_mesh_empty_grid() {
         let grid = VoxelGrid::new(16);
         let mesh = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
