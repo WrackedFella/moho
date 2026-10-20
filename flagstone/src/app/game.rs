@@ -817,6 +817,16 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_before_any_tick_draws_the_initial_camera() {
+        let mut app = App::headless();
+        let mut fake = FakeRenderer::default();
+
+        run_frame(&mut app, &mut fake);
+
+        assert_eq!(fake.cameras.last().copied(), Some(app.camera));
+    }
+
+    #[test]
     fn isometric_frame_renders_the_tick_camera() {
         let mut app = app_after_a_moving_tick();
         app.simulation.set_camera_mode(CameraMode::Isometric);
