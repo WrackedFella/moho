@@ -1961,6 +1961,22 @@ mod tests {
         }
 
         #[test]
+        fn leaving_the_console_through_the_menu_closes_it() {
+            let (mut app, adapter) = app_with_console();
+            assert_eq!(press(&mut app, Key::Backtick), Routing::Opened);
+
+            app.show_menu();
+            app.hide_menu();
+            let movement = press(&mut app, Key::W);
+            let reopened = press(&mut app, Key::Backtick);
+
+            assert_eq!(movement, Routing::Game, "the closed console took W");
+            assert_eq!(reopened, Routing::Opened);
+            assert_eq!(app.game_state, GameState::ConsoleOpen);
+            assert!(console_is_open(&adapter));
+        }
+
+        #[test]
         fn a_rebound_console_key_opens_the_console() {
             let mut app = playing_app();
             app.prefs.set_bindings(BTreeMap::from([(
