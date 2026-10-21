@@ -54,6 +54,9 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 | [ENG-F24 The game marks places in the world and keeps them in view](https://github.com/WrackedFella/moho/issues/328) |
 | [ENG-F25 A game line adds save files without changing the engine](https://github.com/WrackedFella/moho/issues/346) |
 | [ENG-F28 Mouse look feels like a Source game](https://github.com/WrackedFella/moho/issues/373) |
+| [ENG-F29 Light reads true in caves, at night and under open sky](https://github.com/WrackedFella/moho/issues/479) |
+| [ENG-F30 Light bounces off what's around it](https://github.com/WrackedFella/moho/issues/480) |
+| [ENG-F31 Mirrors and water reflect the world](https://github.com/WrackedFella/moho/issues/481) |
 
 ## flagstone/
 

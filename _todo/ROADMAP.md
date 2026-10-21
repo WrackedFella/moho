@@ -151,6 +151,8 @@ its consumers near, not when the earlier wave fully closes.
 | 2.14 | [ENG-F26](https://github.com/WrackedFella/moho/issues/359): one key carries tap, hold, modifier and toggle actions (new; `moho_input`, settings display) | Justin, 2026-10-15 | strategy sprint toggle; FPS reload, check mag, unjam | 4 | before ENG-F18's keybind card |
 | 2.15 | [ENG-F27](https://github.com/WrackedFella/moho/issues/361): the game lines are called flagstone and searchlight; one card per line ([#362](https://github.com/WrackedFella/moho/issues/362) FPS, [#363](https://github.com/WrackedFella/moho/issues/363) strategy) | Justin, 2026-10-15 | ENG-F5 split (M3) | 1–2 gaps | #362 after #358; #363 after #355, before #331 |
 | 2.16 | [ENG-F28](https://github.com/WrackedFella/moho/issues/373): mouse look feels like a Source game (raw, per-frame look; sensitivity, smoothing, acceleration and vsync settings) | Justin, 2026-10-15 | FPS prototype feel; strategy first-person camera | 2 | prefs and settings cards after #331, #333, #354, #405 |
+| 2.17 | [ENG-F29](https://github.com/WrackedFella/moho/issues/479): light reads true in caves, at night and under open sky (light composition; not a gate item) | — | SG-F7-05 and #474 checks; searchlight arena ambient | 2 | -01 lands with SG-F7-05; -02 after #469; -03 and -04 follow; -04 by the end of M2 |
+| 2.18 | [ENG-F31](https://github.com/WrackedFella/moho/issues/481): mirrors and water reflect the world (mirrors, SSR, water; not a gate item) | Justin, 2026-10-21 (must-have) | searchlight arena mirror and pool | 4 | after ENG-F29-04; its plane declaration is a new seam (ADR), settled before the ENG-F5 split gate |
 
 - **Wave 1, start now:** the bugs, ENG-F16, ENG-F6 and ENG-F25. They need no other M2 work.
 - **Wave 2, before SG-F5 and SG-F4:** ENG-F23 and ENG-F24 unblock SG-F5; ENG-F9 comes before SG-F4.
@@ -169,7 +171,7 @@ its consumers near, not when the earlier wave fully closes.
 | S.2 | [SG-F2](https://github.com/WrackedFella/moho/issues/308) a saved world comes back as I left it: [SG-F2-01](https://github.com/WrackedFella/moho/issues/341), [SG-F2-03](https://github.com/WrackedFella/moho/issues/343), [SG-F2-02](https://github.com/WrackedFella/moho/issues/342) | none | ENG-F10-03 is done, so these no longer race the voxel move; its load-path card covers the #264 gap (scene load skips releasing held keys) |
 | S.3 | [SG-F5](https://github.com/WrackedFella/moho/issues/309) run the colony from above, step into a pawn | 2.6, 2.7 (both done) | block and pawn picking are strategy-line; its pan, zoom and possess cards can run alongside S.2 |
 | S.4 | [SG-F4](https://github.com/WrackedFella/moho/issues/310) pawns dig what I mark | 2.8 (2.5a, 2.7 done; 2.9, 2.10 delivered, adopt after the skeleton) | first new persisted type; #303 voxel routing is its card. Before SG-F3 |
-| S.4a | [SG-F7](https://github.com/WrackedFella/moho/issues/470) light follows what I dig and build: [SG-F7-01](https://github.com/WrackedFella/moho/issues/471) → [SG-F7-02](https://github.com/WrackedFella/moho/issues/472); [SG-F7-03](https://github.com/WrackedFella/moho/issues/473) after #467; [SG-F7-04](https://github.com/WrackedFella/moho/issues/474) (first emissive block) after #473 and [ENG-F24-05](https://github.com/WrackedFella/moho/issues/469) | ENG-F24-05 (#469) for SG-F7-04 | M2 (Justin, 2026-10-21); dug shafts and caves need correct sky light for S.4 |
+| S.4a | [SG-F7](https://github.com/WrackedFella/moho/issues/470) light follows what I dig and build: [SG-F7-01](https://github.com/WrackedFella/moho/issues/471) → [SG-F7-02](https://github.com/WrackedFella/moho/issues/472); [SG-F7-03](https://github.com/WrackedFella/moho/issues/473) after #467; [SG-F7-04](https://github.com/WrackedFella/moho/issues/474) (first emissive block) after #473 and [ENG-F24-05](https://github.com/WrackedFella/moho/issues/469); SG-F7-05 with ENG-F29-01; [SG-F7-06](https://github.com/WrackedFella/moho/issues/482) (smooth AO) after SG-F7-05 | ENG-F24-05 (#469) for SG-F7-04; 2.17 ENG-F29-01 for SG-F7-05 | M2 (Justin, 2026-10-21); dug shafts and caves need correct sky light for S.4 |
 | S.5 | [SG-F3](https://github.com/WrackedFella/moho/issues/312) buildings and construction (not a gate item) | 2.7 (placement preview) | after SG-F4 |
 | S.6 | SG-F6 new worlds look intentional ([draft](flagstone/SG-F6-world-generation/_feature.md), not filed; not a gate item) | none | waits for the user to rank the world-generation problems |
 
@@ -191,6 +193,11 @@ one is approved.
 | A wall impact every tick (damage needs a threshold) | No consumer | The first impact-damage rule |
 | Gamepad limits and turn speed (#151) | Closed, no request | A gamepad request |
 | Shared A* between strategy routes and ENG-F17 | Neither exists yet | Both exist |
+| Source-style baked FPS lighting tier | A second pipeline for one line | A measured FPS interior quality gap, or a target GPU that can't afford the dynamic path |
+| DDGI-style probes | Leaks and blur aren't measured yet | ENG-F30 shows unacceptable leaks or blur |
+| Box-projected room probes; Hi-Z, stochastic and temporal SSR | SSR cost, noise and indoor misses not measured | SSR exists and misses or noise look wrong |
+| Strategy water | No strategy card has water | A strategy card names water |
+| One global Low/Medium/High graphics preset | Too few Video rows yet | Four or more renderer quality rows (after ENG-F30) |
 
 ## M3 — v1.0 and split
 
@@ -198,6 +205,8 @@ one is approved.
 **Gate:** the [ENG-F5](https://github.com/WrackedFella/moho/issues/232) gate: licences and the third-party
 notices file; the seam list named in [ADR-0012](adr/0012-engine-crate-map-for-m2.md) is unchanged by the last two
 FPS features; the `v1.0` tag.
+
+Not gate items, carded once M2 closes: [ENG-F30](https://github.com/WrackedFella/moho/issues/480) light bounces off what's around it (post-M2 experiment). It needs ENG-F29-04 and a named lowest-target GPU.
 
 ## M4 — Production-ready
 
@@ -267,3 +276,4 @@ edits data); ADR-0011's rules cover netcode.
 | 2026-10-20 | ENG-F18's settings screen, modal stack and keybind capture wait for the FPS project's menu spec; ENG-F19's "saves record the active root list" is deferred until a game both saves and loads content | [ENG-F18](https://github.com/WrackedFella/moho/issues/230), [ENG-F19](https://github.com/WrackedFella/moho/issues/231) |
 | 2026-10-20 | An engine request closes when the engine work that answers it merges; the game line's card tracks adoption | [agentic workflow](../wiki/process/agentic-workflow.md) |
 | 2026-10-21 | New SG-F7 (light follows edits) in M2; the first emissive block (glowing crystal, solid-colour emission) lands with it | [SG-F7](https://github.com/WrackedFella/moho/issues/470) |
+| 2026-10-21 | Lighting is one dynamic engine path for both lines; baked lightmaps only as an FPS tier on a measured gap. Short-term light composition in M2 (ENG-F29); mirrors, SSR and water in M2 wave 4 (ENG-F31, must-have), bounce light after M2 (ENG-F30); every effect has a player-facing on/off and detail setting in the Video tab | [ENG-F29](https://github.com/WrackedFella/moho/issues/479), [ENG-F30](https://github.com/WrackedFella/moho/issues/480), [ENG-F31](https://github.com/WrackedFella/moho/issues/481) |
