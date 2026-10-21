@@ -71,14 +71,17 @@ impl ContentRoots {
     ///
     /// [`ContentError::MissingRoot`] when `path` is not a folder.
     pub fn base(path: &Path) -> Result<Self, ContentError> {
-        let _ = (
-            path,
-            &ContentRoot {
-                name: String::new(),
-                path: PathBuf::new(),
-            },
-        );
-        todo!()
+        if !path.is_dir() {
+            return Err(ContentError::MissingRoot {
+                path: path.to_path_buf(),
+            });
+        }
+        Ok(Self {
+            roots: vec![ContentRoot {
+                name: "base".to_owned(),
+                path: path.to_path_buf(),
+            }],
+        })
     }
 }
 
@@ -93,8 +96,7 @@ impl<T> Definitions<T> {
     /// The definition under `id`, if any root defines it.
     #[must_use]
     pub fn get(&self, id: &str) -> Option<&T> {
-        let _ = (id, &self.entries, &self.kind);
-        todo!()
+        self.entries.get(id)
     }
 
     /// The definition under `id`.
@@ -103,9 +105,36 @@ impl<T> Definitions<T> {
     ///
     /// [`ContentError::MissingId`] when no root defines it.
     pub fn require(&self, id: &str) -> Result<&T, ContentError> {
-        let _ = id;
-        todo!()
+        self.get(id).ok_or_else(|| ContentError::MissingId {
+            kind: self.kind.clone(),
+            id: id.to_owned(),
+        })
     }
+}
+
+/// Collapses whitespace runs, newlines included, so a message fits one line.
+fn one_line(message: &str) -> String {
+    message.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Reads and parses `file`; `None` when it does not exist.
+fn read_table(file: &Path) -> Result<Option<toml::Table>, ContentError> {
+    let text = match std::fs::read_to_string(file) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(ContentError::Unreadable {
+                file: file.to_path_buf(),
+                reason: error.to_string(),
+            });
+        }
+    };
+    text.parse::<toml::Table>()
+        .map(Some)
+        .map_err(|error| ContentError::Syntax {
+            file: file.to_path_buf(),
+            reason: one_line(&error.to_string()),
+        })
 }
 
 /// Loads `<root>/<kind>.toml` from every root and types each table as `T`.
@@ -117,8 +146,28 @@ pub fn load_kind<T: DeserializeOwned>(
     roots: &ContentRoots,
     kind: &str,
 ) -> Result<Definitions<T>, ContentError> {
-    let _ = (roots, kind);
-    todo!()
+    let mut entries = BTreeMap::new();
+    for root in &roots.roots {
+        let file = root.path.join(format!("{kind}.toml"));
+        let Some(table) = read_table(&file)? else {
+            continue;
+        };
+        tracing::debug!(root = %root.name, kind, entries = table.len(), "loaded definitions");
+        for (id, value) in table {
+            let typed = value
+                .try_into::<T>()
+                .map_err(|error| ContentError::Invalid {
+                    file: file.clone(),
+                    id: id.clone(),
+                    reason: one_line(&error.to_string()),
+                })?;
+            entries.insert(id, typed);
+        }
+    }
+    Ok(Definitions {
+        entries,
+        kind: kind.to_owned(),
+    })
 }
 
 #[cfg(test)]
