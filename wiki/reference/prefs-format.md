@@ -91,7 +91,7 @@ action keeps its default (`flagstone_ui::actions::load_bindings` logs them): an 
 action id, or a value with any unrecognised key. A `[bindings]` line with no `=` is a
 malformed prefs line. `console` is reserved in every game's `[bindings]`: it is the
 engine console's key (`moho_ui_shell`, default backtick; an unbound or unreadable value, or one
-with a `Hold ` item, falls back to backtick), not a game action. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
+with a `Hold ` item or a chord, falls back to backtick), not a game action. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
 keys and ignored.
 
 A binding list is comma-separated key names (`W`, `Spacebar, Enter`); an action may
