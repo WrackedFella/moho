@@ -1,6 +1,6 @@
 //! Conversions between egui input and engine keys, and binding display labels.
 
-use moho_input::bindings::{Binding, Modifiers, Trigger};
+use moho_input::bindings::Binding;
 use moho_input::key::Key;
 
 /// `None` for egui keys the engine does not name.
@@ -89,9 +89,12 @@ pub fn binding_label(bindings: &[Binding]) -> String {
 /// chords and pad bindings in order.
 pub fn rebind_key(existing: &[Binding], key: Key) -> Vec<Binding> {
     std::iter::once(Binding::key(key))
-        .chain(existing.iter().copied().filter(|b| {
-            b.is_pad() || b.trigger != Trigger::Press || b.modifiers != Modifiers::NONE
-        }))
+        .chain(
+            existing
+                .iter()
+                .copied()
+                .filter(|b| b.is_pad() || !b.is_plain()),
+        )
         .collect()
 }
 

@@ -80,7 +80,7 @@ impl Modifiers {
     }
 
     /// Orders sets for chord resolution: more modifiers first, then Ctrl before Shift before
-    /// Alt. The greater rank wins.
+    /// Alt. The greater rank wins; Ctrl is the lowest bit, so inverted bits rank it first.
     pub(crate) const fn rank(self) -> (u32, u8) {
         (self.0.count_ones(), !self.0)
     }
@@ -136,6 +136,11 @@ impl Binding {
 
     pub fn is_pad(self) -> bool {
         self.input.is_pad()
+    }
+
+    /// Fires on press with no modifiers: the only kind a raw key event can match.
+    pub fn is_plain(self) -> bool {
+        self == Self::press(self.input)
     }
 
     /// Persisted name: the input's, prefixed by `Hold ` for a hold binding.

@@ -315,21 +315,20 @@ impl<A: Action> ActionMap<A> {
         if input.is_pad() {
             return Modifiers::NONE;
         }
-        let held = [Key::Ctrl, Key::Shift, Key::Alt]
-            .into_iter()
-            .filter(|&key| Input::Key(key) != input && self.down.contains_key(&Input::Key(key)))
-            .fold(Modifiers::NONE, |set, key| set.and(Modifiers::of_key(key)));
+        let held = self.down.keys().filter(|&&other| other != input).fold(
+            Modifiers::NONE,
+            |set, &other| match other {
+                Input::Key(key) => set.and(Modifiers::of_key(key)),
+                Input::Mouse(_) | Input::Pad(_) => set,
+            },
+        );
         A::ALL
             .iter()
             .flat_map(|&action| self.bindings.get(action))
             .filter(|b| b.input == input && held.contains(b.modifiers))
-            .fold(Modifiers::NONE, |best, b| {
-                if b.modifiers.rank() > best.rank() {
-                    b.modifiers
-                } else {
-                    best
-                }
-            })
+            .map(|b| b.modifiers)
+            .max_by_key(|modifiers| modifiers.rank())
+            .unwrap_or(Modifiers::NONE)
     }
 
     fn press_actions(&self, input: Input, modifiers: Modifiers) -> u64 {

@@ -75,7 +75,7 @@ impl<G> Console<G> {
         let mut toggle = loaded.get(ConsoleKey).to_vec();
         // Routing sees raw key events with no tick count or modifiers, so a hold or chord binding
         // could never toggle.
-        if toggle.is_empty() || toggle.iter().any(|&b| b != Binding::from(b.input)) {
+        if toggle.is_empty() || toggle.iter().any(|b| !b.is_plain()) {
             toggle = ConsoleKey.default_bindings().to_vec();
             if let Some(value) = entry {
                 warnings.push(BindingWarning {
