@@ -1,0 +1,7 @@
+[rifle]
+magazine_capacity = 30
+damage = 30
+fire = "semi_auto"
+cooldown_ticks = 6
+reload_ticks = 120
+range = 100.0
