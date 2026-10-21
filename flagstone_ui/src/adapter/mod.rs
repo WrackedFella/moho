@@ -229,26 +229,17 @@ impl EguiAdapter {
 
     /// Handles a window event while no menu is visible (gameplay).
     ///
-    /// With a free cursor, pointer motion feeds egui so it knows what is under the pointer,
-    /// and a mouse press that lands on a panel is returned as true, which the game must not
-    /// see. With a grabbed cursor nothing is fed or consumed: the pointer is hidden, so
-    /// panels cannot be aimed at.
+    /// With a free cursor, pointer motion and mouse buttons feed egui, so it knows what is
+    /// under the pointer and widgets can be dragged; a mouse press that lands on a panel is
+    /// returned as true, which the game must not see. With a grabbed cursor nothing is fed
+    /// or consumed: the pointer is hidden, so panels cannot be aimed at.
     pub fn handle_gameplay_event(&mut self, event: &WindowEvent) -> bool {
         let cursor_free = self.cursor_free();
-        if !cursor_free {
-            return false;
+        let input = GameplayInput::from(event);
+        if feeds_egui(input, cursor_free) {
+            self.handle_winit_event(event);
         }
-        match event {
-            WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } => {
-                self.handle_winit_event(event);
-                false
-            }
-            WindowEvent::MouseInput {
-                state: winit::event::ElementState::Pressed,
-                ..
-            } => press_consumed(self.pointer_over_ui(), cursor_free),
-            _ => false,
-        }
+        input == GameplayInput::Press && press_consumed(self.pointer_over_ui(), cursor_free)
     }
 
     /// Return true if the active menu/screen captures raw input events.
@@ -505,8 +496,28 @@ pub enum GameplayInput {
 /// Whether egui is given a window event during gameplay: pointer motion and buttons with a
 /// free cursor, nothing with a grabbed one.
 pub fn feeds_egui(input: GameplayInput, cursor_free: bool) -> bool {
-    let _ = (input, cursor_free);
-    false
+    cursor_free
+        && matches!(
+            input,
+            GameplayInput::Press | GameplayInput::Release | GameplayInput::Motion
+        )
+}
+
+impl From<&WindowEvent> for GameplayInput {
+    fn from(event: &WindowEvent) -> Self {
+        match event {
+            WindowEvent::MouseInput {
+                state: winit::event::ElementState::Pressed,
+                ..
+            } => Self::Press,
+            WindowEvent::MouseInput {
+                state: winit::event::ElementState::Released,
+                ..
+            } => Self::Release,
+            WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } => Self::Motion,
+            _ => Self::Key,
+        }
+    }
 }
 
 /// Whether a mouse press is taken by the UI: it lands on a panel and the cursor is free.

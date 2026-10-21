@@ -181,7 +181,11 @@ impl OverlayManager {
 
     /// Collect, and clear, what every overlay's player asked for since the last call.
     pub fn take_intents(&mut self) -> HudIntents {
-        HudIntents::default()
+        let mut intents = HudIntents::default();
+        for overlay in &mut self.overlays {
+            overlay.take_intents(&mut intents);
+        }
+        intents
     }
 
     /// Toggle an overlay by name. No-op if the name is not found.

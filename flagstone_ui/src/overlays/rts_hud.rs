@@ -3,17 +3,25 @@
 //! Stub for future implementation. Currently renders only the time of day.
 //! Will grow to include mini-map, selection info, resource counters, etc.
 
-use super::overlay_manager::{HudData, Overlay};
+use super::overlay_manager::{HudData, HudIntents, Overlay, ViewHeightHud};
+
+/// Slider track length in points.
+const SLIDER_LENGTH: f32 = 200.0;
 
 /// Isometric / RTS gameplay HUD.
 #[derive(Debug)]
 pub struct RtsHud {
     visible: bool,
+    /// The step the player picked, until `take_intents` hands it over.
+    chosen: Option<i32>,
 }
 
 impl RtsHud {
     pub fn new() -> Self {
-        Self { visible: true }
+        Self {
+            visible: true,
+            chosen: None,
+        }
     }
 }
 
@@ -42,7 +50,50 @@ impl Overlay for RtsHud {
         }
 
         render_time_of_day(ui, data.time_of_day);
+        if let Some(view_height) = data.view_height {
+            self.chosen = render_view_height(ui, view_height).or(self.chosen);
+        }
     }
+
+    fn take_intents(&mut self, out: &mut HudIntents) {
+        out.view_level = self.chosen.take();
+    }
+}
+
+/// Vertical view-height slider on the right edge, below the minimap and the clock.
+/// Returns the step the player moved it to this frame, if any.
+fn render_view_height(ui: &mut egui::Ui, view: ViewHeightHud) -> Option<i32> {
+    let mut level = view.level;
+    let mut moved = false;
+
+    egui::Area::new("rts_view_height".into())
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 200.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 120))
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    let text = if level >= view.top {
+                        "All".to_owned()
+                    } else {
+                        level.to_string()
+                    };
+                    ui.label(
+                        egui::RichText::new(text).color(egui::Color32::from_rgb(220, 220, 200)),
+                    );
+                    ui.spacing_mut().slider_width = SLIDER_LENGTH;
+                    moved = ui
+                        .add(
+                            egui::Slider::new(&mut level, view.floor + 1..=view.top)
+                                .vertical()
+                                .integer()
+                                .show_value(false),
+                        )
+                        .changed();
+                });
+        });
+
+    moved.then_some(level)
 }
 
 /// Time-of-day badge in the top-right corner.

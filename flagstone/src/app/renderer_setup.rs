@@ -96,7 +96,8 @@ pub fn init_renderer_and_ui(
 
         // Register UI adapter as a normal UI subscriber.
         // Menus and the console get every event. During gameplay egui only tracks the
-        // pointer and takes a press that lands on a panel.
+        // pointer and mouse buttons (so HUD widgets can be dragged) and takes a press that
+        // lands on a panel.
         let ui_adapter_clone = ui_adapter.clone();
         app.dispatcher
             .register(100, move |event: &winit::event::WindowEvent| {

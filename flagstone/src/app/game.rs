@@ -446,7 +446,12 @@ impl moho_app::Game for App {
         {
             self.input.actions.sample_frame(ctx.frame_dt);
         }
-        crate::app::view_level::update(self, None);
+        let chosen = self
+            .ui_adapter
+            .as_ref()
+            .and_then(|adapter| adapter.lock().ok())
+            .and_then(|mut adapter| adapter.take_hud_intents().view_level);
+        crate::app::view_level::update(self, chosen);
         if let Some(renderer) = ctx.renderer() {
             self.apply_pending_render(renderer);
         }

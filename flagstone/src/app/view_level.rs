@@ -6,7 +6,9 @@ use flagstone_ui::overlays::ViewHeightHud;
 use glam::IVec3;
 
 /// How far above a layer boundary the renderer's cut sits.
-#[cfg(test)]
+///
+/// The kept layer's top faces sit exactly on the boundary; an interpolated `y` a few ulps
+/// over it would otherwise be discarded as speckle by the renderer's `y > cut` test.
 pub const CUT_ABOVE_LAYER: f32 = 1.0 / 256.0;
 
 /// The block layers the loaded chunks span: the slider runs over `floor + 1 ..= top`.
@@ -19,8 +21,22 @@ pub struct LayerExtent {
 impl LayerExtent {
     /// The span of the chunks at `positions`; `None` with no chunks loaded.
     pub fn of_chunks(positions: impl IntoIterator<Item = IVec3>, chunk_size: i32) -> Option<Self> {
-        let _ = (positions.into_iter().count(), chunk_size);
-        None
+        let (min_cy, max_cy) =
+            positions
+                .into_iter()
+                .fold(None, |span: Option<(i32, i32)>, p| {
+                    Some(span.map_or((p.y, p.y), |(lo, hi)| (lo.min(p.y), hi.max(p.y))))
+                })?;
+        Some(Self {
+            floor: min_cy * chunk_size,
+            top: (max_cy + 1) * chunk_size,
+        })
+    }
+
+    /// The stored cut as `extent` reads it: the top is no cut, the lowest step is the floor.
+    fn clamp(self, cut: Option<i32>) -> Option<i32> {
+        cut.filter(|&level| level < self.top)
+            .map(|level| level.max(self.floor + 1))
     }
 }
 
@@ -60,7 +76,7 @@ impl ViewLevel {
     /// Record the player's pick; the top clears the cut and anything below the lowest
     /// step clamps to it.
     pub fn choose(&mut self, level: i32, extent: LayerExtent) {
-        let _ = (level, extent);
+        self.cut = extent.clamp(Some(level));
     }
 
     /// What the slider shows for `extent`.
@@ -68,16 +84,17 @@ impl ViewLevel {
         ViewHeightHud {
             floor: extent.floor,
             top: extent.top,
-            level: self.cut.unwrap_or(0),
+            level: extent.clamp(self.cut).unwrap_or(extent.top),
         }
     }
 
     /// The height the renderer should cut at in `mode`.
     pub fn renderer_height(&self, mode: CameraMode, extent: LayerExtent) -> Option<f32> {
-        let _ = extent;
         match mode {
             CameraMode::FirstPerson => None,
-            CameraMode::Isometric => self.cut.map(|cut| cut as f32),
+            CameraMode::Isometric => extent
+                .clamp(self.cut)
+                .map(|cut| cut as f32 + CUT_ABOVE_LAYER),
         }
     }
 
@@ -87,7 +104,8 @@ impl ViewLevel {
         if self.applied == Some(height) {
             return None;
         }
-        None
+        self.applied = Some(height);
+        Some(height)
     }
 }
 
@@ -118,6 +136,13 @@ mod tests {
     use proptest::prelude::*;
 
     const EXTENT: LayerExtent = LayerExtent { floor: 0, top: 144 };
+
+    /// `ground_app` starts possessing a pawn; the slider is a strategy-view tool.
+    fn strategy_app() -> App {
+        let mut app = ground_app();
+        app.simulation.set_camera_mode(CameraMode::Isometric);
+        app
+    }
 
     fn queued_heights(app: &App) -> Vec<Option<f32>> {
         app.pending_render
@@ -241,7 +266,7 @@ mod tests {
 
     #[test]
     fn an_unchanged_level_pushes_nothing() {
-        let mut app = ground_app();
+        let mut app = strategy_app();
         update(&mut app, Some(27));
         assert_eq!(queued_heights(&app).len(), 1, "the move itself is queued");
         app.pending_render.clear();
@@ -254,7 +279,7 @@ mod tests {
 
     #[test]
     fn a_choice_reaches_the_render_queue() {
-        let mut app = ground_app();
+        let mut app = strategy_app();
 
         update(&mut app, Some(27));
 
@@ -263,7 +288,7 @@ mod tests {
 
     #[test]
     fn a_choice_sets_the_cut_caps() {
-        let mut app = ground_app();
+        let mut app = strategy_app();
 
         update(&mut app, Some(27));
 
@@ -274,7 +299,7 @@ mod tests {
 
     #[test]
     fn possessing_a_pawn_takes_the_caps_and_the_renderer_cut_away() {
-        let mut app = ground_app();
+        let mut app = strategy_app();
         update(&mut app, Some(27));
         app.pending_render.clear();
 
