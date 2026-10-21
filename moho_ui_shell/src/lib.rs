@@ -1,5 +1,6 @@
 //! The engine's UI shell: the developer console every game opens and adds commands to, and the
-//! egui host that draws it. The only engine crate that names egui.
+//! egui host that draws it, along with the screen text a game queues each frame. The only engine
+//! crate that names egui.
 //!
 //! Console commands are hidden debug commands: they appear only in the console and its `help`,
 //! never in a Settings screen.

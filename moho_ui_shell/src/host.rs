@@ -1,4 +1,5 @@
-//! The engine's own egui host: one egui pass per frame, drawing the console.
+//! The engine's own egui host: one egui pass per frame, drawing the console and
+//! the screen text a game queues.
 
 use std::sync::Arc;
 
@@ -10,7 +11,7 @@ use winit::window::Window;
 
 use crate::console::{Console, Routing};
 use crate::paint_map::to_ui_frame;
-use crate::text::ScreenText;
+use crate::text::{self, ScreenText};
 
 /// Owns the egui context and the console it draws.
 pub struct UiShell<G> {
@@ -18,6 +19,7 @@ pub struct UiShell<G> {
     window: Option<Arc<Window>>,
     state: Option<egui_winit::State>,
     console: Console<G>,
+    texts: Vec<ScreenText>,
 }
 
 impl<G> std::fmt::Debug for UiShell<G> {
@@ -35,6 +37,7 @@ impl<G> UiShell<G> {
             window: None,
             state: None,
             console,
+            texts: Vec::new(),
         }
     }
 
@@ -99,7 +102,9 @@ impl<G> UiShell<G> {
     }
 
     /// Queues `text` for the next `ui_frame`, which paints it and clears the queue.
-    pub fn draw_text(&mut self, _text: ScreenText) {}
+    pub fn draw_text(&mut self, text: ScreenText) {
+        self.texts.push(text);
+    }
 
     fn feed_egui(&mut self, event: &WindowEvent) {
         if let (Some(state), Some(window)) = (&mut self.state, &self.window) {
@@ -163,11 +168,18 @@ impl<G> UiFrameSource for UiShell<G> {
     fn ui_frame(&mut self, size_in_pixels: [u32; 2]) -> Option<UiFrame> {
         // Taken even while closed, so events fed to egui do not pile up unread.
         let input = self.take_input(size_in_pixels);
-        if !self.console.is_open() {
+        if !self.console.is_open() && self.texts.is_empty() {
             return None;
         }
+        let texts = std::mem::take(&mut self.texts);
         let context = self.context.clone();
-        let output = context.run_ui(input, |ui| self.console.show(ui.ctx()));
+        let output = context.run_ui(input, |ui| {
+            // Game text first, so the console paints over it.
+            text::paint(ui.ctx(), &texts);
+            if self.console.is_open() {
+                self.console.show(ui.ctx());
+            }
+        });
         // Platform output is dropped: handing it to egui-winit would show the cursor the game
         // grabbed. Copy, IME and cursor icons in the console go with it.
         let primitives = context.tessellate(output.shapes, output.pixels_per_point);

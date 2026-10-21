@@ -18,6 +18,9 @@ pub enum Anchor {
 ///
 /// `offset` is in logical points on screen axes (x right, y down) from the anchor point; `color`
 /// is straight-alpha sRGBA.
+///
+/// Use a few fixed `size`s: egui rasterises each new size into its font atlas, so varying sizes
+/// grow the texture and cost upload deltas.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScreenText {
     pub text: String,
@@ -28,12 +31,54 @@ pub struct ScreenText {
 }
 
 /// The point of `screen` that `anchor` names.
-pub(crate) fn anchor_point(_anchor: Anchor, _screen: egui::Rect) -> egui::Pos2 {
-    todo!()
+pub(crate) fn anchor_point(anchor: Anchor, screen: egui::Rect) -> egui::Pos2 {
+    match anchor {
+        Anchor::TopLeft => screen.left_top(),
+        Anchor::Top => screen.center_top(),
+        Anchor::TopRight => screen.right_top(),
+        Anchor::Left => screen.left_center(),
+        Anchor::Center => screen.center(),
+        Anchor::Right => screen.right_center(),
+        Anchor::BottomLeft => screen.left_bottom(),
+        Anchor::Bottom => screen.center_bottom(),
+        Anchor::BottomRight => screen.right_bottom(),
+    }
+}
+
+/// The text alignment that puts a text's matching point on the anchor point, so it grows away
+/// from the screen edge.
+fn align(anchor: Anchor) -> egui::Align2 {
+    match anchor {
+        Anchor::TopLeft => egui::Align2::LEFT_TOP,
+        Anchor::Top => egui::Align2::CENTER_TOP,
+        Anchor::TopRight => egui::Align2::RIGHT_TOP,
+        Anchor::Left => egui::Align2::LEFT_CENTER,
+        Anchor::Center => egui::Align2::CENTER_CENTER,
+        Anchor::Right => egui::Align2::RIGHT_CENTER,
+        Anchor::BottomLeft => egui::Align2::LEFT_BOTTOM,
+        Anchor::Bottom => egui::Align2::CENTER_BOTTOM,
+        Anchor::BottomRight => egui::Align2::RIGHT_BOTTOM,
+    }
 }
 
 /// Paints `texts` on the background layer, under the console.
-pub fn paint(_ctx: &egui::Context, _texts: &[ScreenText]) {}
+pub fn paint(ctx: &egui::Context, texts: &[ScreenText]) {
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Background,
+        egui::Id::new("moho_ui_shell_screen_text"),
+    ));
+    let screen = ctx.content_rect();
+    for t in texts {
+        let [r, g, b, a] = t.color;
+        painter.text(
+            anchor_point(t.anchor, screen) + egui::vec2(t.offset[0], t.offset[1]),
+            align(t.anchor),
+            &t.text,
+            egui::FontId::proportional(t.size),
+            egui::Color32::from_rgba_unmultiplied(r, g, b, a),
+        );
+    }
+}
 
 #[cfg(test)]
 mod tests {
