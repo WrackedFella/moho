@@ -299,14 +299,6 @@ impl EventBus {
         }
     }
 
-    /// Clear event history
-    ///
-    /// Removes all events from the debug history buffer.
-    pub fn clear_history(&self) {
-        let mut history = self.history.lock().unwrap();
-        history.clear();
-    }
-
     /// Get event history (for debugging)
     ///
     /// Returns all events currently in the history buffer.

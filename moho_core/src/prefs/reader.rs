@@ -432,9 +432,9 @@ mod tests {
         p.set_ssao_quality(2);
         p.set_window_mode(WindowMode::Borderless);
         p.set_window_resolution(1280, 720);
-        p.set_world_load_radius(5);
-        p.set_world_unload_radius(9);
-        p.set_world_chunks_per_frame(2);
+        p.world_load_radius = 5;
+        p.world_unload_radius = 9;
+        p.world_chunks_per_frame = 2;
         p
     }
 
@@ -933,9 +933,9 @@ mod tests {
                 p.set_ssao_quality(quality.1);
                 p.set_window_mode(video.0);
                 p.set_window_resolution(video.1, video.2);
-                p.set_world_load_radius(world.0);
-                p.set_world_unload_radius(world.1);
-                p.set_world_chunks_per_frame(world.2);
+                p.world_load_radius = world.0;
+                p.world_unload_radius = world.1;
+                p.world_chunks_per_frame = world.2;
                 p
             })
     }

@@ -164,19 +164,6 @@ mod event_bus_tests {
     }
 
     #[test]
-    fn test_clear_history() {
-        let bus = EventBus::with_history(true, 100);
-
-        bus.publish(TestEvent { value: 1 });
-        bus.publish(TestEvent { value: 2 });
-
-        assert!(!bus.history().is_empty());
-
-        bus.clear_history();
-        assert!(bus.history().is_empty());
-    }
-
-    #[test]
     fn test_metrics() {
         let bus = EventBus::new();
         let counter = Arc::new(AtomicU32::new(0));
