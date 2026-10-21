@@ -34,22 +34,21 @@ pub fn local_index(x: i32, y: i32, z: i32) -> usize {
 /// The smooth mesher reads one voxel past its chunk on every side, so a voxel on an edge
 /// or corner is read by the diagonal chunks too, not only the face neighbours.
 pub(crate) fn reading_chunk_offsets(local: IVec3) -> impl Iterator<Item = IVec3> {
-    let axis_offsets = move |axis: usize| {
-        [
-            0,
-            -i32::from(local[axis] == 0),
-            i32::from(local[axis] == CHUNK_SIZE - 1),
-        ]
+    let across = |axis: usize| match local[axis] {
+        0 => Some(-1),
+        l if l == CHUNK_SIZE - 1 => Some(1),
+        _ => None,
     };
-    let [xs, ys, zs] = [0, 1, 2].map(axis_offsets);
+    // Each axis offers distinct offsets, so the product has no duplicates.
+    let [xs, ys, zs] = [0, 1, 2].map(|axis| [Some(0), across(axis)]);
     xs.into_iter()
+        .flatten()
         .flat_map(move |x| {
             ys.into_iter()
-                .flat_map(move |y| zs.into_iter().map(move |z| IVec3::new(x, y, z)))
+                .flatten()
+                .flat_map(move |y| zs.into_iter().flatten().map(move |z| IVec3::new(x, y, z)))
         })
         .filter(|offset| *offset != IVec3::ZERO)
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
 }
 
 /// Chunk-local (x, y, z) of a linear index; the inverse of [`local_index`].
