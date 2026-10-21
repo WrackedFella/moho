@@ -386,6 +386,8 @@ mod tests {
 
     const SMOOTH: u32 = 0;
     const BLOCKY: u32 = 100;
+    /// A smooth ground that is not material 0, so a cap that defaults to 0 shows.
+    const STONE: u32 = 2;
     const CHUNK: i32 = 16;
     /// How far a cap edge may sit from the wall slice it should follow.
     const WALL_TOLERANCE: f64 = 1e-4;
@@ -1698,7 +1700,7 @@ mod tests {
 
         #[test]
         fn caps_tile_across_chunk_borders((field, blocky, cut) in tiling_cases()) {
-            let grid = field.grid(if blocky { BLOCKY } else { SMOOTH });
+            let grid = field.grid(if blocky { BLOCKY } else { STONE });
             let h = f64::from(cut) + f64::from(CAP_PROBE);
             // The mesher draws nothing for an Empty chunk even when its padding holds
             // solid, a crack at -x/-y/-z faces that caps do not repair.
@@ -1729,7 +1731,7 @@ mod tests {
 
             let mut tris = Vec::new();
             let mut total = 0.0;
-            let ground_material = if blocky { BLOCKY } else { SMOOTH };
+            let ground_material = if blocky { BLOCKY } else { STONE };
             for (x, y, z) in (0..2).flat_map(|x| (-1..3).flat_map(move |y| (0..2).map(move |z| (x, y, z)))) {
                 let mesh = cut_cap_mesh(&grid, IVec3::new(x, y, z), 0, cut);
                 total += cap_area(&mesh);

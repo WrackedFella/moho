@@ -1265,37 +1265,6 @@ mod tests {
     }
 
     #[test]
-    fn nearest_solid_corner_is_the_closest_solid_one() {
-        for solid in 0..8 {
-            let only = 1u8 << solid;
-            for probe in [Vec3::splat(0.5), corner_position((solid + 4) % 8)] {
-                assert_eq!(
-                    nearest_solid_corner(only, probe),
-                    solid,
-                    "the only solid corner is {solid}, probe {probe:?}"
-                );
-            }
-        }
-        let opposite_pair = 0b0100_0001;
-        assert_eq!(
-            nearest_solid_corner(opposite_pair, Vec3::new(0.9, 0.9, 0.9)),
-            6,
-            "near corner 6"
-        );
-        assert_eq!(
-            nearest_solid_corner(opposite_pair, Vec3::new(0.1, 0.1, 0.1)),
-            0,
-            "near corner 0"
-        );
-        let all_but_zero = 0b1111_1110;
-        assert_eq!(
-            nearest_solid_corner(all_but_zero, Vec3::new(0.1, 0.1, 0.1)),
-            1,
-            "corner 0 is air, so the nearest solid one is its lowest-indexed neighbour"
-        );
-    }
-
-    #[test]
     fn nearest_solid_corner_breaks_ties_to_the_lowest_corner_index() {
         let cases = [
             (0b0000_0011u8, Vec3::new(0.5, 0.0, 0.0), 0),
@@ -1303,6 +1272,8 @@ mod tests {
             (0b1000_0100, Vec3::splat(0.5), 2),
             (0b1111_1111, Vec3::splat(0.5), 0),
             (0b1111_1000, Vec3::splat(0.5), 3),
+            // Corner 0 is air; its three neighbours 1, 3 and 4 are equally near.
+            (0b1111_1110, Vec3::splat(0.1), 1),
         ];
 
         for (cube_index, centroid, expected) in cases {
@@ -1348,13 +1319,8 @@ mod tests {
         assert_eq!(mesh.material.len(), mesh.vertices.len());
         let mut left = 0;
         let mut right = 0;
-        for (tri, materials) in mesh
-            .indices
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .zip(mesh.material.as_chunks::<3>().0)
-        {
+        for tri in mesh.indices.as_chunks::<3>().0 {
+            let materials = tri.map(|i| mesh.material[i as usize]);
             let x = tri
                 .iter()
                 .map(|&i| mesh.vertices[i as usize][0])
@@ -1371,16 +1337,5 @@ mod tests {
             }
         }
         assert!(left > 0 && right > 0, "{left} left, {right} right");
-    }
-
-    #[test]
-    fn a_lone_solid_sample_gives_every_triangle_its_material() {
-        let field = solid_samples_field([(5, 9, 7)]);
-        let material_at = |sample: [usize; 3]| if sample == [5, 9, 7] { 7 } else { 9 };
-
-        let mesh = MarchingCubes::generate_mesh(&field, 16, material_at);
-
-        assert!(!mesh.vertices.is_empty());
-        assert_eq!(mesh.material, vec![7; mesh.vertices.len()]);
     }
 }

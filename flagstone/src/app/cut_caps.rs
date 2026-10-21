@@ -543,9 +543,32 @@ pub(crate) mod tests {
         }
     }
 
+    /// Restarts the app's material table with an unrelated material first, then the
+    /// terrain, cut-face and palette entries after it, so a voxel id and its table
+    /// index differ. Call before any mesh is queued.
+    pub(crate) fn offset_palette(app: &mut App) {
+        app.scene = moho_renderer::Scene::new();
+        app.scene
+            .material_table
+            .find_or_push(&flagstone_voxel::MaterialType::Lambertian {
+                albedo: glam::Vec3::new(0.9, 0.1, 0.8),
+            });
+        app.terrain_material_idx =
+            crate::app::world_geometry::register_terrain_material(&mut app.scene);
+        app.cut_face_material_idx =
+            crate::app::world_geometry::register_cut_face_material(&mut app.scene);
+        let registry = flagstone_voxel::MaterialRegistry::new();
+        app.terrain_palette = crate::app::world_geometry::TerrainPalette::new(
+            &registry,
+            &mut app.scene.material_table,
+            app.terrain_material_idx,
+        );
+    }
+
     #[test]
     fn caps_carry_block_materials_through_the_palette() {
         let mut app = App::headless();
+        offset_palette(&mut app);
         let grid = app.light_system.as_mut().expect("light system").grid_mut();
         let mut mutator = grid.mutator();
         mutator.fill_region(IVec3::new(0, 0, 0), IVec3::new(7, 7, 15), 2);
@@ -561,6 +584,16 @@ pub(crate) mod tests {
         assert_eq!(caps.len(), 1, "the chunk is capped");
         let cap = &caps[0];
         assert_eq!(cap.vertex_materials.len(), cap.vertices.len());
+        assert_ne!(
+            app.terrain_palette.index(2),
+            2,
+            "the palette is not the identity"
+        );
+        assert_ne!(
+            app.terrain_palette.index(3),
+            3,
+            "the palette is not the identity"
+        );
         let (stone, soil, ore) = (
             app.terrain_palette.index(2),
             app.terrain_palette.index(1),

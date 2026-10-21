@@ -206,7 +206,8 @@ pub(crate) mod tests {
     use crate::App;
     use crate::app::cut_caps::cap_mesh_id;
     use crate::app::cut_caps::tests::{
-        CaptureBackend, assert_ground_capped_at, cut_and_draw, drawn_caps, ground_app, refresh_caps,
+        CaptureBackend, assert_ground_capped_at, cut_and_draw, drawn_caps, ground_app,
+        offset_palette, refresh_caps,
     };
     use crate::app::event_loop::event_processor::EventProcessor;
     use crate::app::event_loop::frame_processor::FrameProcessor;
@@ -839,7 +840,8 @@ pub(crate) mod tests {
 
     #[test]
     fn chunk_mesh_vertices_map_to_their_block_materials_colours() {
-        let app = App::headless();
+        let mut app = App::headless();
+        offset_palette(&mut app);
         let chunk = stone_soil_ore_chunk();
         let registry = flagstone_voxel::MaterialRegistry::new();
 
@@ -984,6 +986,7 @@ pub(crate) mod tests {
     #[test]
     fn chunk_with_materials_uploads_its_palette_indices() {
         let mut app = App::headless();
+        offset_palette(&mut app);
         let chunk = stone_soil_ore_chunk();
         let expected: Vec<u32> = chunk
             .materials()

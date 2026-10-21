@@ -882,6 +882,31 @@ mod tests {
     }
 
     #[test]
+    fn border_triangles_take_the_material_of_a_neighbouring_chunks_block() {
+        let grid = grid_with([([15, 8, 8], 1, None), ([16, 8, 8], 2, None)]);
+
+        let mesh = chunk_mesh(&grid);
+
+        let all = triangles(&mesh);
+        let soil_side: Vec<_> = all.iter().filter(|(c, ..)| c.x < 15.999).collect();
+        let stone_side: Vec<_> = all.iter().filter(|(c, ..)| c.x > 16.001).collect();
+        assert!(
+            !soil_side.is_empty(),
+            "the block inside the chunk is meshed"
+        );
+        assert!(
+            !stone_side.is_empty(),
+            "the border cell reaches the padding block"
+        );
+        for (c, _, materials) in soil_side {
+            assert_eq!(*materials, [1; 3], "triangle at {c:?}");
+        }
+        for (c, _, materials) in stone_side {
+            assert_eq!(*materials, [2; 3], "triangle at {c:?}");
+        }
+    }
+
+    #[test]
     fn smooth_triangles_in_a_mixed_chunk_never_carry_a_blocky_blocks_material() {
         let mut blocks = solid_box([2, 0, 2], [10, 3, 10], 2);
         blocks.push(([6, 4, 6], 100, None));
@@ -988,10 +1013,13 @@ mod tests {
         assert_eq!(top, 2, "x varies slowest: (0, 1) comes before (1, 0)");
         let column = grid_with([
             cell_block([0, 1, 0], 1, None),
-            cell_block([0, 0, 0], 2, None),
+            cell_block([0, 0, 1], 2, None),
         ]);
         let side = coarse_face_material(&column, IVec3::ZERO, cell(0, 0, 0), FaceDirection::NegX);
-        assert_eq!(side, 2, "within a layer on x, z then y: y varies fastest");
+        assert_eq!(
+            side, 1,
+            "within a layer on x, z before y: (z 0, y 1) comes before (z 1, y 0)"
+        );
     }
 
     #[test]
@@ -1075,32 +1103,19 @@ mod tests {
         #[test]
         fn every_triangle_has_one_material(
             blocks in prop::collection::vec(block_strategy(), 1..120),
+            cut in 0.0f32..7.0,
         ) {
             let grid = grid_with(blocks.clone());
             let allowed = face_materials(&grid, &blocks);
 
             let fine = chunk_mesh(&grid);
             let coarse = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
+            let caps = [0u8, 1].map(|lod| crate::mesh::cut_cap_mesh(&grid, IVec3::ZERO, lod, cut));
 
             assert_one_material_per_triangle(&fine, &allowed)?;
             assert_one_material_per_triangle(&coarse, &allowed)?;
-        }
-
-        #[test]
-        fn material_channel_matches_vertex_count(
-            blocks in prop::collection::vec(block_strategy(), 0..120),
-            cut in 0.0f32..7.0,
-        ) {
-            let grid = grid_with(blocks);
-
-            let fine = chunk_mesh(&grid);
-            let coarse = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
-            let caps = [0u8, 1].map(|lod| crate::mesh::cut_cap_mesh(&grid, IVec3::ZERO, lod, cut));
-
-            prop_assert_eq!(fine.material.len(), fine.vertices.len());
-            prop_assert_eq!(coarse.material.len(), coarse.vertices.len());
             for cap in &caps {
-                prop_assert_eq!(cap.material.len(), cap.vertices.len());
+                assert_one_material_per_triangle(cap, &allowed)?;
             }
         }
     }

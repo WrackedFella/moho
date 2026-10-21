@@ -160,6 +160,24 @@ fn marker_shader_declares_the_inflate_override() {
     );
 }
 
+/// The WGSL type a shader input must have to read an attribute of `format`.
+fn wgsl_type_of(format: wgpu::VertexFormat) -> naga::TypeInner {
+    use naga::{Scalar, TypeInner, VectorSize};
+    match format {
+        wgpu::VertexFormat::Float32 => TypeInner::Scalar(Scalar::F32),
+        wgpu::VertexFormat::Uint32 => TypeInner::Scalar(Scalar::U32),
+        wgpu::VertexFormat::Float32x3 => TypeInner::Vector {
+            size: VectorSize::Tri,
+            scalar: Scalar::F32,
+        },
+        wgpu::VertexFormat::Float32x4 => TypeInner::Vector {
+            size: VectorSize::Quad,
+            scalar: Scalar::F32,
+        },
+        other => panic!("no WGSL type mapped for {other:?}"),
+    }
+}
+
 #[test]
 fn vertex_input_locations_match_the_main_pipeline_layout() {
     let source = moho_renderer::pipeline::main_shader_source();
@@ -169,10 +187,12 @@ fn vertex_input_locations_match_the_main_pipeline_layout() {
         .iter()
         .find(|e| e.name == "vs_main")
         .expect("vs_main");
-    let mut shader_locations = Vec::new();
+    let mut shader_inputs = Vec::new();
     for argument in &entry.function.arguments {
         match &argument.binding {
-            Some(naga::Binding::Location { location, .. }) => shader_locations.push(*location),
+            Some(naga::Binding::Location { location, .. }) => {
+                shader_inputs.push((*location, module.types[argument.ty].inner.clone()));
+            }
             Some(naga::Binding::BuiltIn(_)) => {}
             None => {
                 let naga::TypeInner::Struct { members, .. } = &module.types[argument.ty].inner
@@ -181,23 +201,27 @@ fn vertex_input_locations_match_the_main_pipeline_layout() {
                 };
                 for member in members {
                     if let Some(naga::Binding::Location { location, .. }) = &member.binding {
-                        shader_locations.push(*location);
+                        shader_inputs.push((*location, module.types[member.ty].inner.clone()));
                     }
                 }
             }
         }
     }
-    shader_locations.sort_unstable();
-    let mut pipeline_locations: Vec<u32> = moho_renderer::pipeline::MAIN_VERTEX_ATTRIBUTES
-        .iter()
-        .chain(moho_renderer::pipeline::MAIN_INSTANCE_ATTRIBUTES.iter())
-        .map(|a| a.shader_location)
-        .collect();
-    pipeline_locations.sort_unstable();
+    shader_inputs.sort_by_key(|(location, _)| *location);
+    let mut pipeline_inputs: Vec<(u32, naga::TypeInner)> =
+        moho_renderer::pipeline::MAIN_VERTEX_ATTRIBUTES
+            .iter()
+            .chain(moho_renderer::pipeline::MAIN_INSTANCE_ATTRIBUTES.iter())
+            .map(|a| (a.shader_location, wgsl_type_of(a.format)))
+            .collect();
+    pipeline_inputs.sort_by_key(|(location, _)| *location);
 
-    assert_eq!(shader_locations, pipeline_locations);
+    assert_eq!(
+        shader_inputs, pipeline_inputs,
+        "locations and types of vs_main's inputs"
+    );
     assert!(
-        shader_locations.contains(&13),
-        "the per-vertex material is read at location 13"
+        shader_inputs.contains(&(13, naga::TypeInner::Scalar(naga::Scalar::U32))),
+        "the per-vertex material is a u32 at location 13"
     );
 }

@@ -1014,10 +1014,10 @@ mod tests {
 
         assert_eq!(registry.len(), 4);
         let expected = [
-            (crate::GRASS, crate::DIRT),
-            (crate::DIRT, crate::DIRT),
-            (crate::STONE, crate::STONE),
-            (crate::IRON_ORE, crate::IRON_ORE),
+            (Vec3::new(0.3, 0.6, 0.3), Vec3::new(0.6, 0.5, 0.4)),
+            (Vec3::new(0.6, 0.5, 0.4), Vec3::new(0.6, 0.5, 0.4)),
+            (Vec3::new(0.5, 0.5, 0.5), Vec3::new(0.5, 0.5, 0.5)),
+            (Vec3::new(0.62, 0.30, 0.16), Vec3::new(0.62, 0.30, 0.16)),
         ];
         for (id, (top, side)) in expected.into_iter().enumerate() {
             assert_eq!(
