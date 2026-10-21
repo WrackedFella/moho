@@ -810,6 +810,31 @@ mod tests {
     }
 
     #[test]
+    fn combining_a_modifier_already_in_the_set_keeps_it() {
+        let ctrl_shift = Modifiers::CTRL.and(Modifiers::SHIFT);
+
+        assert_eq!(ctrl_shift.and(Modifiers::CTRL), ctrl_shift);
+        assert_eq!(Modifiers::ALT.and(Modifiers::ALT), Modifiers::ALT);
+    }
+
+    #[test]
+    fn only_a_press_without_modifiers_is_plain() {
+        let r = Binding::key(Key::R);
+        let cases = [
+            (r, true),
+            (Binding::mouse(MouseButton::Left), true),
+            (Binding::pad(PadInput::Button(PadButton::West)), true),
+            (r.held(), false),
+            (r.with(Modifiers::CTRL), false),
+            (r.with(Modifiers::SHIFT).held(), false),
+        ];
+
+        for (binding, plain) in cases {
+            assert_eq!(binding.is_plain(), plain, "{}", binding.name());
+        }
+    }
+
+    #[test]
     fn chord_label_prefixes_the_modifiers_in_canonical_order() {
         let ctrl_alt = Modifiers::ALT.and(Modifiers::CTRL);
 
