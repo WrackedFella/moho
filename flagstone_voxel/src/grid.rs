@@ -10,7 +10,7 @@ mod paletted;
 pub use self::paletted::CHUNK_FILE;
 use self::paletted::PalettedChunk;
 use super::light_storage::{self, CHUNK_SIZE as LIGHT_CHUNK_SIZE, ChunkLight, idx_to_local};
-use crate::materials::MaterialType;
+use crate::materials::{DIRT, GRASS, IRON_ORE, MaterialType, STONE};
 use glam::{IVec3, Vec3};
 use std::collections::HashMap;
 
@@ -63,6 +63,7 @@ pub struct MaterialRegistry {
     /// Per-material lighting properties, indexed by material ID. Parallel to
     /// `materials`. New entries default to `MaterialLighting::NON_EMISSIVE_OPAQUE`.
     lighting: Vec<MaterialLighting>,
+    resource_materials: HashMap<u32, u32>,
 }
 
 impl MaterialRegistry {
@@ -70,23 +71,23 @@ impl MaterialRegistry {
         let mut registry = MaterialRegistry {
             materials: Vec::new(),
             lighting: Vec::new(),
+            resource_materials: HashMap::new(),
         };
 
-        // Register default materials (all non-emissive opaque).
-        // ID 0: Grass (green)
-        registry.register(MaterialType::Lambertian {
-            albedo: Vec3::new(0.3, 0.6, 0.3),
-        });
-
-        // ID 1: Dirt (brown)
-        registry.register(MaterialType::Lambertian {
-            albedo: Vec3::new(0.5, 0.4, 0.3),
-        });
-
-        // ID 2: Stone (gray)
-        registry.register(MaterialType::Lambertian {
-            albedo: Vec3::new(0.5, 0.5, 0.5),
-        });
+        // (top, side) colours of grass, dirt, stone and iron ore, by material id.
+        let terrain: [(Vec3, Vec3); 4] = [
+            (GRASS, DIRT),
+            (DIRT, DIRT),
+            (STONE, STONE),
+            (IRON_ORE, IRON_ORE),
+        ];
+        for (top, side) in terrain {
+            registry.register(MaterialType::VoxelTerrain {
+                top_albedo: top,
+                side_albedo: side,
+            });
+        }
+        registry.set_resource_material(1, 3);
 
         registry
     }
@@ -96,6 +97,32 @@ impl MaterialRegistry {
         self.materials.push(material);
         self.lighting.push(MaterialLighting::NON_EMISSIVE_OPAQUE);
         id
+    }
+
+    pub fn material(&self, id: u32) -> Option<&MaterialType> {
+        self.materials.get(id as usize)
+    }
+
+    pub fn len(&self) -> usize {
+        self.materials.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.materials.is_empty()
+    }
+
+    /// Draw blocks that carry `resource_id` in `material_id` instead of the
+    /// material they sit in.
+    pub fn set_resource_material(&mut self, resource_id: u32, material_id: u32) {
+        self.resource_materials.insert(resource_id, material_id);
+    }
+
+    /// The material a face of a block shows: the material mapped to the
+    /// block's resource when there is one, else the block's own `material_id`.
+    pub fn face_material(&self, material_id: u32, resource_id: Option<u32>) -> u32 {
+        resource_id
+            .and_then(|r| self.resource_materials.get(&r).copied())
+            .unwrap_or(material_id)
     }
 
     /// Lighting properties for a material. Falls back to opaque non-emissive
@@ -216,6 +243,17 @@ impl VoxelGrid {
     pub fn resource_at(&self, pos: BlockPos) -> Option<u32> {
         let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
         self.chunks.get(&chunk_pos)?.resource_at(idx)
+    }
+
+    /// The material a face of the block at `pos` shows (see
+    /// [`MaterialRegistry::face_material`]), or `None` for air.
+    #[inline]
+    pub(crate) fn face_material_at(&self, pos: BlockPos) -> Option<u32> {
+        let material_id = self.material_at(pos)?;
+        Some(
+            self.material_registry
+                .face_material(material_id, self.resource_at(pos)),
+        )
     }
 
     /// Whether `pos` contains a solid (non-air) block.
@@ -553,6 +591,7 @@ pub struct BlockData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moho_render_api::RenderMaterial;
     use std::collections::HashSet;
 
     #[test]
@@ -969,5 +1008,76 @@ mod tests {
 
         assert!(!grid.sky_exposed_at(pos));
         assert!(grid.sky_exposed_at(neighbour));
+    }
+
+    #[test]
+    fn grass_is_grass_on_top_and_dirt_on_its_sides() {
+        let registry = MaterialRegistry::new();
+
+        let grass = registry.material(0).expect("id 0 is registered").to_gpu();
+
+        let top = |c: Vec3| [c.x, c.y, c.z];
+        assert_eq!(grass.albedo[..3], top(crate::GRASS));
+        assert_eq!(grass.params[..3], top(crate::DIRT));
+    }
+
+    #[test]
+    fn default_registry_holds_grass_dirt_stone_and_iron_ore_as_terrain_materials() {
+        let registry = MaterialRegistry::new();
+
+        assert_eq!(registry.len(), 4);
+        let expected = [
+            (Vec3::new(0.3, 0.6, 0.3), Vec3::new(0.6, 0.5, 0.4)),
+            (Vec3::new(0.6, 0.5, 0.4), Vec3::new(0.6, 0.5, 0.4)),
+            (Vec3::new(0.5, 0.5, 0.5), Vec3::new(0.5, 0.5, 0.5)),
+            (Vec3::new(0.62, 0.30, 0.16), Vec3::new(0.62, 0.30, 0.16)),
+        ];
+        for (id, (top, side)) in expected.into_iter().enumerate() {
+            assert_eq!(
+                registry.material(id as u32),
+                Some(&MaterialType::VoxelTerrain {
+                    top_albedo: top,
+                    side_albedo: side
+                }),
+                "material {id}"
+            );
+        }
+        assert_eq!(registry.material(4), None);
+    }
+
+    #[test]
+    fn face_material_prefers_the_resources_material() {
+        let registry = MaterialRegistry::new();
+
+        assert_eq!(registry.face_material(2, Some(1)), 3, "iron ore in stone");
+        assert_eq!(registry.face_material(1, Some(1)), 3, "iron ore in soil");
+    }
+
+    #[test]
+    fn face_material_falls_back_without_a_mapping() {
+        let mut registry = MaterialRegistry::new();
+
+        assert_eq!(registry.face_material(2, None), 2, "no resource");
+        assert_eq!(registry.face_material(1, Some(9)), 1, "unmapped resource");
+
+        registry.set_resource_material(9, 0);
+
+        assert_eq!(registry.face_material(1, Some(9)), 0, "now mapped");
+        assert_eq!(registry.face_material(1, None), 1);
+    }
+
+    #[test]
+    fn is_empty_is_true_only_without_registered_materials() {
+        let default = MaterialRegistry::new();
+        let none = MaterialRegistry {
+            materials: Vec::new(),
+            lighting: Vec::new(),
+            resource_materials: HashMap::new(),
+        };
+
+        assert!(!default.is_empty());
+        assert_eq!(default.len(), 4);
+        assert!(none.is_empty());
+        assert_eq!(none.len(), 0);
     }
 }

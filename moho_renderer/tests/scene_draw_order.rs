@@ -128,6 +128,7 @@ impl RendererBackend for RecordingRenderer {
         _light_level: &[f32],
         _block_light_rgb: &[[f32; 3]],
         _sky_exposed: &[f32],
+        _material: &[u32],
         _indices: &[u32],
     ) -> u32 {
         0

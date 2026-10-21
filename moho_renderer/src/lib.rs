@@ -79,6 +79,7 @@ pub trait RendererBackend {
         light_level: &[f32],
         block_light_rgb: &[[f32; 3]],
         sky_exposed: &[f32],
+        material: &[u32],
         indices: &[u32],
     ) -> u32;
     /// Unregister a previously-registered mesh handle and free GPU resources.
@@ -178,6 +179,7 @@ impl RendererBackend for Renderer<'_> {
         light_level: &[f32],
         block_light_rgb: &[[f32; 3]],
         sky_exposed: &[f32],
+        material: &[u32],
         indices: &[u32],
     ) -> u32 {
         self.register_indexed_mesh(
@@ -188,6 +190,7 @@ impl RendererBackend for Renderer<'_> {
             light_level,
             block_light_rgb,
             sky_exposed,
+            material,
             indices,
         )
     }

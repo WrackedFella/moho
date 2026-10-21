@@ -45,7 +45,12 @@ World geometry reaches the renderer as meshes ([ADR-0010](../../_todo/adr/0010-w
 not as voxel types. `moho_render_api::WorldMesh` is an owned indexed mesh with one
 `Vec` per vertex channel (position, normal, ao, light rgb, sky exposure, surface);
 `WorldMesh::new` refuses mismatched channel lengths, out-of-range indices and partial
-triangles (`WorldMeshError`). A `WorldMeshId` is the game-chosen stable key.
+triangles (`WorldMeshError`). A `WorldMeshId` is the game-chosen stable key. An optional
+per-vertex `materials` channel (`with_materials`, one material-table index per vertex,
+one material per triangle) lets a single mesh draw in several materials; without it
+every vertex takes the `upsert` material. The renderer uploads the channel as `Vertex::material`,
+and `shaders/vertex.wgsl` uses it unless it is `u32::MAX`, which defers to the instance's
+material ([GPU ABI](../reference/gpu-abi.md)).
 
 `moho_renderer::WorldMeshes` (reached via `Scene::world_meshes_mut`) queues
 `upsert(id, mesh, material_idx)` and `remove(id)`. `Scene::render` calls `flush`
@@ -59,7 +64,9 @@ the chunk position at 21 bits per signed axis, `chunk_world_mesh` converts a
 renderer and the physics colliders in step, along with the chunk's [cut-face cap](#cut-face-caps). The same `WorldMesh` and `WorldMeshId` go to
 `PhysicsWorld::set_world_mesh` / `remove_world_mesh` (`moho_physics/src/world.rs`), which
 holds one static trimesh collider per id; an empty mesh holds none. A refused mesh is
-logged and the chunk is neither drawn nor solid.
+logged and the chunk is neither drawn nor solid. When a chunk carries per-vertex voxel
+materials, `TerrainPalette` (same file) maps each voxel material id to its material-table
+index and `apply` writes the result into the mesh's `materials` channel.
 
 Each registration carries a `HitTag`, the game's own meaning for the surface (material,
 team, body part), which the engine stores and never interprets. `PhysicsWorld::cast_ray`
@@ -119,7 +126,9 @@ The binary closes it with flat caps built from the voxels, not by the renderer.
 `refresh` rebuilds caps only for dirty chunks, plus, when the cut moved, every chunk in
 `cap_chunk_layers` and every chunk already capped. A cap is an ordinary world mesh queued
 under `cap_mesh_id` (the chunk's id with bit 63 set) with the cut-face material
-(`register_cut_face_material`: terrain dirt on both faces). Caps get no collider and are
+(`register_cut_face_material`: terrain dirt on both faces) as its default; each cap triangle
+carries the face material of the ground it cuts, picked by the same nearest-solid-block
+rule as the walls (`nearest_solid_corner`), so cap and wall edges line up. Caps get no collider and are
 removed with their chunk or when the cut clears.
 
 `flagstone_voxel::cut_cap_mesh` (`mesh/cap.rs`) builds the `+Y` face at `y = cut` over

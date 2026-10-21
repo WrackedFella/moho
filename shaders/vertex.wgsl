@@ -18,7 +18,7 @@ fn vs_main(v: VertexIn, i: InstanceIn) -> VsOut {
     let r2 = vec4<f32>(vp0.z, vp1.z, vp2.z, vp3.z);
     let r3 = vec4<f32>(vp0.w, vp1.w, vp2.w, vp3.w);
     out.clip = vec4<f32>(dot(r0, world_pos), dot(r1, world_pos), dot(r2, world_pos), dot(r3, world_pos));
-    out.material = i.material;
+    out.material = select(i.material, v.material, v.material != 0xffffffffu);
     
     // transform vertex normal (w=0) by model matrix rows
     let nvec = vec4<f32>(v.normal, 0.0);
