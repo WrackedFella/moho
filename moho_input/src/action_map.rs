@@ -1,12 +1,12 @@
 //! Turns platform-free input events into per-tick action frames.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 use std::time::Duration;
 
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 
-use crate::bindings::{Action, ActionBindings, Input};
+use crate::bindings::{Action, ActionBindings, Input, Trigger};
 use crate::filter::{DeadzoneFilter, MouseSmoothing};
 use crate::key::{Key, MouseButton};
 use crate::pad::{PadButton, PadInput, Stick, StickAxis, StickDir};
@@ -106,7 +106,10 @@ impl<A: Action> ActionFrame<A> {
 #[derive(Debug)]
 pub struct ActionMap<A: Action> {
     bindings: ActionBindings<A>,
-    down: HashSet<Input>,
+    /// Inputs now down, each with the ticks it has been down.
+    down: HashMap<Input, u32>,
+    /// Inputs some action binds with `Hold`: their `Press` bindings fire on a quick release.
+    split: HashSet<Input>,
     held: u64,
     pressed: u64,
     released: u64,
@@ -126,9 +129,16 @@ impl<A: Action> ActionMap<A> {
     pub fn new(bindings: ActionBindings<A>, look_per_count: f32) -> Self {
         const { assert!(A::ALL.len() <= 64, "frame masks hold at most 64 actions") };
         const { assert!(A::HOLD_TICKS >= 1, "a hold lasts at least one tick") };
+        let split = A::ALL
+            .iter()
+            .flat_map(|&action| bindings.get(action))
+            .filter(|binding| binding.trigger == Trigger::Hold)
+            .map(|binding| binding.input)
+            .collect();
         Self {
             bindings,
-            down: HashSet::new(),
+            down: HashMap::new(),
+            split,
             held: 0,
             pressed: 0,
             released: 0,
@@ -190,15 +200,15 @@ impl<A: Action> ActionMap<A> {
     /// Releases pad bindings only and zeroes stored stick axes.
     pub fn pad_disconnected(&mut self) {
         self.sticks = [(0.0, 0.0); 2];
-        self.down.retain(|input| !input.is_pad());
-        self.refresh_held();
+        self.down.retain(|input, _| !input.is_pad());
+        self.refresh_held(0);
     }
 
     /// Releases every held action, e.g. when the window loses focus.
     pub fn release_all(&mut self) {
         self.sticks = [(0.0, 0.0); 2];
         self.down.clear();
-        self.refresh_held();
+        self.refresh_held(0);
     }
 
     /// Discards unsampled motion, the pending look and smoothing state so a camera jump
@@ -240,6 +250,10 @@ impl<A: Action> ActionMap<A> {
 
     /// The only read: reports this tick's edges and look, then starts the next tick.
     pub fn end_tick(&mut self) -> ActionFrame<A> {
+        for ticks in self.down.values_mut() {
+            *ticks = ticks.saturating_add(1);
+        }
+        self.refresh_held(0);
         let frame = ActionFrame {
             held: self.held,
             pressed: self.pressed,
@@ -254,18 +268,50 @@ impl<A: Action> ActionMap<A> {
     }
 
     fn set_down(&mut self, input: Input, down: bool) {
-        // Re-inserting an already-down input (OS key repeat) changes nothing.
-        let changed = if down {
-            self.down.insert(input)
-        } else {
-            self.down.remove(&input)
-        };
-        if changed {
-            self.refresh_held();
+        if let Some(taps) = self.apply(input, down) {
+            self.refresh_held(taps);
         }
     }
 
-    fn refresh_held(&mut self) {
+    /// Records the change; `None` if nothing changed (OS key repeat), else the `Press`
+    /// actions of an input released before its hold matured.
+    fn apply(&mut self, input: Input, down: bool) -> Option<u64> {
+        if down {
+            return match self.down.entry(input) {
+                std::collections::hash_map::Entry::Occupied(_) => None,
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(0);
+                    Some(0)
+                }
+            };
+        }
+        let ticks = self.down.remove(&input)?;
+        let quick = self.split.contains(&input) && ticks < A::HOLD_TICKS;
+        Some(if quick { self.press_actions(input) } else { 0 })
+    }
+
+    fn press_actions(&self, input: Input) -> u64 {
+        A::ALL
+            .iter()
+            .enumerate()
+            .filter(|&(_, &action)| {
+                self.bindings
+                    .get(action)
+                    .iter()
+                    .any(|b| b.input == input && b.trigger == Trigger::Press)
+            })
+            .fold(0, |mask, (index, _)| mask | 1 << index)
+    }
+
+    fn binding_down(&self, input: Input, trigger: Trigger) -> bool {
+        self.down.get(&input).is_some_and(|&ticks| match trigger {
+            Trigger::Press => !self.split.contains(&input),
+            Trigger::Hold => ticks >= A::HOLD_TICKS,
+        })
+    }
+
+    /// Recomputes the held mask; `taps` are actions that press and release in this tick.
+    fn refresh_held(&mut self, taps: u64) {
         let held = A::ALL
             .iter()
             .enumerate()
@@ -273,11 +319,12 @@ impl<A: Action> ActionMap<A> {
                 self.bindings
                     .get(action)
                     .iter()
-                    .any(|binding| self.down.contains(&binding.input))
+                    .any(|binding| self.binding_down(binding.input, binding.trigger))
             })
             .fold(0, |mask, (index, _)| mask | 1 << index);
-        self.pressed |= held & !self.held;
-        self.released |= self.held & !held;
+        let taps = taps & !held;
+        self.pressed |= (held & !self.held) | taps;
+        self.released |= (self.held & !held) | taps;
         self.held = held;
     }
 
@@ -289,17 +336,15 @@ impl<A: Action> ActionMap<A> {
             (StickDir::Left, x <= -STICK_DIRECTION_THRESHOLD),
             (StickDir::Right, x >= STICK_DIRECTION_THRESHOLD),
         ];
-        let mut changed = false;
+        let mut changes = None;
         for (dir, active) in directions {
             let input = Input::Pad(PadInput::Stick(stick, dir));
-            changed |= if active {
-                self.down.insert(input)
-            } else {
-                self.down.remove(&input)
-            };
+            if let Some(taps) = self.apply(input, active) {
+                changes = Some(changes.unwrap_or(0) | taps);
+            }
         }
-        if changed {
-            self.refresh_held();
+        if let Some(taps) = changes {
+            self.refresh_held(taps);
         }
     }
 

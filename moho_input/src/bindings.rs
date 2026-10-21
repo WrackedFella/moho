@@ -192,7 +192,7 @@ impl<A: Action> ActionBindings<A> {
 
 const UNBOUND: &str = "Unbound";
 
-/// `None` if any item is not a known key or mouse button; empty or `Unbound` is an empty list.
+/// `None` if any item is not a known input, optionally after `Hold `; empty or `Unbound` is an empty list.
 fn parse_list(value: &str) -> Option<Vec<Binding>> {
     let value = value.trim();
     if value.is_empty() || value.eq_ignore_ascii_case(UNBOUND) {
@@ -200,14 +200,26 @@ fn parse_list(value: &str) -> Option<Vec<Binding>> {
     }
     value
         .split(',')
-        .map(|item| {
-            let item = item.trim();
-            Key::parse(item)
-                .map(Binding::key)
-                .or_else(|| MouseButton::parse(item).map(Binding::mouse))
-                .or_else(|| PadInput::parse(item).map(Binding::pad))
-        })
+        .map(|item| parse_binding(item.trim()))
         .collect()
+}
+
+const HOLD_PREFIX: &str = "Hold ";
+
+fn parse_binding(item: &str) -> Option<Binding> {
+    if let Some(prefix) = item.get(..HOLD_PREFIX.len())
+        && prefix.eq_ignore_ascii_case(HOLD_PREFIX)
+    {
+        return parse_input(item[HOLD_PREFIX.len()..].trim_start()).map(Binding::held);
+    }
+    parse_input(item)
+}
+
+fn parse_input(item: &str) -> Option<Binding> {
+    Key::parse(item)
+        .map(Binding::key)
+        .or_else(|| MouseButton::parse(item).map(Binding::mouse))
+        .or_else(|| PadInput::parse(item).map(Binding::pad))
 }
 
 fn format_list(bindings: &[Binding]) -> String {

@@ -56,7 +56,9 @@ impl Action for SearchlightAction {
             SearchlightAction::Jump => const { &[Binding::key(Key::Space)] },
             SearchlightAction::Fire => const { &[Binding::mouse(MouseButton::Left)] },
             SearchlightAction::Reload => const { &[Binding::key(Key::R)] },
-            SearchlightAction::CheckMagazine => const { &[Binding::key(Key::C)] },
+            SearchlightAction::CheckMagazine => {
+                const { &[Binding::key(Key::C), Binding::key(Key::R).held()] }
+            }
             SearchlightAction::Restart => const { &[Binding::key(Key::Enter)] },
         }
     }
