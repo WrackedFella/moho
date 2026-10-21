@@ -169,7 +169,7 @@ mod tests {
     use moho_input::key::Key;
 
     fn key(k: Key) -> Vec<Binding> {
-        vec![Binding::Key(k)]
+        vec![Binding::key(k)]
     }
 
     #[test]

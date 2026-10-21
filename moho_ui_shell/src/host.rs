@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use moho_input::bindings::Binding;
+use moho_input::bindings::Input;
 use moho_input::key::{Key, MouseButton};
 use moho_render_api::{UiFrame, UiFrameSource};
 use winit::event::{KeyEvent, WindowEvent};
@@ -56,7 +56,7 @@ impl<G> UiShell<G> {
 
     /// Routes one key or button through the console. `on_window_event` delegates here, so this
     /// is the platform-free part of that routing.
-    pub fn route(&mut self, input: Binding, pressed: bool, repeat: bool) -> Routing {
+    pub fn route(&mut self, input: Input, pressed: bool, repeat: bool) -> Routing {
         self.console.on_key(input, pressed, repeat)
     }
 
@@ -148,7 +148,7 @@ fn is_input_event(event: &WindowEvent) -> bool {
 
 /// The key or mouse button a window event presses or releases, as `(input, pressed, repeat)`;
 /// `None` for any other event and for inputs the engine does not name.
-pub fn input_of(event: &WindowEvent) -> Option<(Binding, bool, bool)> {
+pub fn input_of(event: &WindowEvent) -> Option<(Input, bool, bool)> {
     match event {
         WindowEvent::KeyboardInput {
             event:
@@ -160,12 +160,12 @@ pub fn input_of(event: &WindowEvent) -> Option<(Binding, bool, bool)> {
                 },
             ..
         } => Some((
-            Binding::Key(Key::from_winit(*physical_key)?),
+            Input::Key(Key::from_winit(*physical_key)?),
             state.is_pressed(),
             *repeat,
         )),
         WindowEvent::MouseInput { state, button, .. } => Some((
-            Binding::Mouse(MouseButton::from_winit(*button)?),
+            Input::Mouse(MouseButton::from_winit(*button)?),
             state.is_pressed(),
             false,
         )),
@@ -217,10 +217,10 @@ mod tests {
     #[test]
     fn the_toggle_key_is_not_fed_to_egui() {
         let mut shell = shell();
-        let backtick = Binding::Key(Key::Backtick);
+        let backtick = Input::Key(Key::Backtick);
 
         let opening = shell.route(backtick, true, false);
-        let typed = shell.route(Binding::Key(Key::W), true, false);
+        let typed = shell.route(Input::Key(Key::W), true, false);
         let closing = shell.route(backtick, true, false);
 
         assert_eq!(opening, Routing::Opened);
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn a_focus_loss_with_the_console_open_goes_to_the_game() {
         let mut shell = shell();
-        shell.route(Binding::Key(Key::Backtick), true, false);
+        shell.route(Input::Key(Key::Backtick), true, false);
 
         let routing = shell.on_window_event(&WindowEvent::Focused(false));
 
@@ -244,7 +244,7 @@ mod tests {
         let mut shell = shell();
         assert!(!shell.captures_input());
 
-        shell.route(Binding::Key(Key::Backtick), true, false);
+        shell.route(Input::Key(Key::Backtick), true, false);
 
         assert!(shell.captures_input());
     }

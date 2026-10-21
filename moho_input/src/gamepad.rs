@@ -194,9 +194,9 @@ mod tests {
         }
 
         fn default_bindings(self) -> &'static [crate::bindings::Binding] {
-            &[crate::bindings::Binding::Pad(crate::pad::PadInput::Button(
-                PadButton::South,
-            ))]
+            &[
+                const { crate::bindings::Binding::pad(crate::pad::PadInput::Button(PadButton::South)) },
+            ]
         }
     }
 

@@ -9,7 +9,7 @@ use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
 use moho_core::pointer::{Ray, screen_ray};
 use moho_input::action_map;
-use moho_input::bindings::Binding;
+use moho_input::bindings::Input;
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{EngineCommand, Routing};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -98,8 +98,8 @@ impl App {
     /// Where one key or mouse button press or release goes. The console sees it before egui or
     /// the action map; `Opened` and `Closed` also enter and leave `GameState::ConsoleOpen`.
     /// Outside `Playing` and `ConsoleOpen` the console is skipped and the input is the game's.
-    /// Takes a `Binding` so it is testable without a winit `KeyEvent`.
-    fn route_console_input(&mut self, input: Binding, pressed: bool, repeat: bool) -> Routing {
+    /// Takes an `Input` so it is testable without a winit `KeyEvent`.
+    fn route_console_input(&mut self, input: Input, pressed: bool, repeat: bool) -> Routing {
         if !matches!(self.game_state, GameState::Playing | GameState::ConsoleOpen) {
             return Routing::Game;
         }
@@ -494,7 +494,7 @@ mod tests {
     use flagstone_game::TICK_HZ;
     use flagstone_ui::actions::StrategyAction;
     use moho_app::{Game, GameClock, HeadlessLoop, LoopConfig, TickContext};
-    use moho_input::bindings::Binding;
+    use moho_input::bindings::Input;
     use moho_physics::HitTag;
 
     fn playing_app() -> App {
@@ -535,9 +535,9 @@ mod tests {
             .bindings()
             .get(action)
             .iter()
-            .find_map(|binding| match binding {
-                Binding::Key(key) => Some(*key),
-                Binding::Mouse(_) | Binding::Pad(_) => None,
+            .find_map(|binding| match binding.input {
+                Input::Key(key) => Some(key),
+                Input::Mouse(_) | Input::Pad(_) => None,
             })
             .expect("the action has a default key binding")
     }
@@ -2460,7 +2460,7 @@ mod tests {
         }
 
         fn press(app: &mut App, key: Key) -> Routing {
-            app.route_console_input(Binding::Key(key), true, false)
+            app.route_console_input(Input::Key(key), true, false)
         }
 
         fn type_line(adapter: &SharedAdapter, line: &str) {

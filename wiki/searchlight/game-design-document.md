@@ -7,7 +7,7 @@
 
 ---
 
-## 1. Core pillars
+## 1 Core pillars
 
 Each pillar is a filter: a feature that serves none of them is cut.
 
@@ -17,14 +17,14 @@ Each pillar is a filter: a feature that serves none of them is cut.
 4. **The world doesn't wait for you.** Factions, creatures and independents pursue their own goals; you arrive into consequences.
 5. **The Zone is unknowable.** (Area X / Roadside Picnic.) Anomalies and artifacts are never fully explained; wrongness is ambient, not a jump scare.
 
-## 2. Genre and setting
+## 2 Genre and setting
 
 - **Genre:** first-person hardcore survival looter shooter (STALKER Anomaly / GAMMA lineage).
 - **Perspective:** first-person only.
 - **Setting:** an original, vaguely dystopian sci-fi exclusion zone around an unexplained event. Emphasis on Area X tone: beauty and dread, nature reclaiming, rules of reality that bend locally.
 - **Still open (deliberately):** whether the Zone is a neglected corner of a sophisticated world, or the world is truly post-apocalyptic. Weapons stay real-world-inspired either way. Not blocking until Phase 6 (§9 Q1).
 
-## 3. Core loop
+## 3 Core loop
 
 ### Macro loop (the hamster wheel)
 
@@ -50,7 +50,7 @@ Secondary loops (run away, wait it out) exist but are smaller and obvious.
 - **Combat:** few rounds to kill, unforgiving positional damage. Reloading is a commitment (mag in hand, round in chamber). Weapons can fail.
 - **Information:** limited HUD. Ammo count is not shown as a number; you check the mag (an action). Condition is inspected, not displayed constantly.
 
-## 4. Systems
+## 4 Systems
 
 Each system states the question its prototype must answer, the design, and its cut line.
 
@@ -179,7 +179,7 @@ Each system states the question its prototype must answer, the design, and its c
 - **Grenades:** veterans use them to flush a player from cover. Gated on thrown objects and area damage, so cut until after Phase 4.
 - **Cut lines:** morale and surrender, dialogue, voice lines beyond a few callouts, enemies that open doors or use vehicles, learning from the player, a player-side suppression effect (first version is AI behavior only), predator-prey ecosystems.
 
-## 5. Modes and levels: how maps are made
+## 5 Modes and levels: how maps are made
 
 | Mode / level | Map source | Notes |
 |---|---|---|
@@ -191,7 +191,7 @@ Each system states the question its prototype must answer, the design, and its c
 
 No procedural geometry in scope. Generation is limited to *what* is placed *where* on authored maps.
 
-## 6. Scope boundaries: what this game is NOT
+## 6 Scope boundaries: what this game is NOT
 
 - Not multiplayer in the prototype (co-op is a later decision; see §9 Q2).
 - Not a voxel or destructible-terrain game.
@@ -202,9 +202,11 @@ No procedural geometry in scope. Generation is limited to *what* is placed *wher
 - No vehicles, base building, or crafting of weapons from scratch.
 - No bullet sponges and no damage scaling with difficulty by default.
 
-## 7. Recommended prototyping order
+## 7 Recommended prototyping order
 
 Principle: build the cheapest playable baseline first, then add systems in the order they **create costs**, so the ledger has something to measure by the time it arrives. Each phase ends playable and answers its question from §4.
+
+Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) sits between Phases 1 and 2. The plan is `milestone-plan.md` in the project files.
 
 | Phase | Name | Adds | Answers | Map |
 |---|---|---|---|---|
@@ -233,7 +235,7 @@ Why this order:
 - **Arena scaffolding is disposable:** score, waves and timers sit in the mode layer (§3), so dropping them in Phase 6 touches no core rules.
 - **Director last:** it needs zones, factions and AI to sim; it's also the system most at risk from a pivot (§9 Q2).
 
-## 8. Rough content plan
+## 8 Rough content plan
 
 | Content | Phase 1 | By Phase 6 | Full target (single-player) |
 |---|---|---|---|
@@ -245,7 +247,7 @@ Why this order:
 | Food/drink | — | 4–6 | 10–15 |
 | Jobs | — | 3 templates | 6–8 templates |
 
-## 9. Open questions
+## 9 Open questions
 
 1. **Setting:** ~~fictional or real?~~ Decided: original, vaguely dystopian sci-fi. Still open: neglected corner of a sophisticated world, or truly post-apocalyptic? (Not blocking until Phase 6.)
 2. **Co-op timing:** if co-op is real, it constrains the Director and sim authority early. Recommend: design single-player, keep sim state serializable, decide co-op after Phase 5.
@@ -261,7 +263,7 @@ Why this order:
 12. **Difficulty and AI:** is AI sophistication (grade mix, tactics on or off) part of the complexity toggles in Q8? Decide with Q8.
 13. **Rank-up:** may the Director raise an enemy's grade over time (Phase 7 nice-to-have)?
 
-## 10. Engine fit and engine requests
+## 10 Engine fit and engine requests
 
 Available from the engine: wgpu rendering (cascaded shadows, SSAO, skybox), a rapier3d
 character controller and triangle-mesh colliders, audio, input mapping, the event bus,

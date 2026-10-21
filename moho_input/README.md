@@ -14,10 +14,11 @@ and the action map that hands the game one frame of actions per tick.
 - `PadButton`, `Stick`, `StickDir`, `PadInput`: gamepad inputs, persisted as
   `Pad South` or `Pad LeftStick Up`. A stick direction is held past
   `STICK_DIRECTION_THRESHOLD`.
-- `Binding`: one physical input that triggers an action (`Binding::Key`, `Binding::Mouse`
-  or `Binding::Pad`).
+- `Input`: one physical input (`Input::Key`, `Input::Mouse` or `Input::Pad`).
+- `Binding`: an `Input` plus a `Trigger` (`Press` or `Hold`); built with `Binding::key`,
+  `Binding::mouse`, `Binding::pad`, and `.held()` for a hold binding.
 - `Action`: trait a game implements on its own action enum: `ALL`, a stable lowercase `snake_case`
-  `name` used as the persisted id, and `default_bindings`.
+  `name` used as the persisted id, and `default_bindings`, plus an optional `HOLD_TICKS`.
 - `ActionBindings<A>`: every action's current bindings. `load` reads a raw
   `[bindings]` section (action name → comma-separated key names, `Unbound` or
   empty for none) and returns warnings for unusable lines, which keep their
@@ -42,13 +43,13 @@ enum MyAction { Jump }
 impl Action for MyAction {
     const ALL: &'static [Self] = &[MyAction::Jump];
     fn name(self) -> &'static str { "jump" }
-    fn default_bindings(self) -> &'static [Binding] { &[Binding::Key(Key::Space)] }
+    fn default_bindings(self) -> &'static [Binding] { &[Binding::key(Key::Space)] }
 }
 
 let section = [("jump".to_string(), "F".to_string())].into();
 let (bindings, warnings) = ActionBindings::<MyAction>::load(&section);
 assert!(warnings.is_empty());
-assert_eq!(bindings.get(MyAction::Jump), [Binding::Key(Key::F)]);
+assert_eq!(bindings.get(MyAction::Jump), [Binding::key(Key::F)]);
 ```
 
 `ActionBindings` takes the raw section rather than `Prefs`, so this crate does not

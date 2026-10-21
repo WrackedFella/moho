@@ -150,7 +150,6 @@ exclude_re = [
     'replace == with != in UiShell<G>::feed',
     'delete match arm \(Some\(state\), Some\(window\)\) in UiShell<G>::take_input',
     'replace is_input_event -> bool with false',
-    'replace input_of -> Option<\(Binding, bool, bool\)> with None',
     'delete match arm WindowEvent::KeyboardInput\{event:KeyEvent\{physical_key, state, repeat, \.\.\}, \.\.\} in input_of',
     'delete match arm WindowEvent::MouseInput\{state, button, \.\.\} in input_of',
     # flagstone_voxel lighting. Hangs rather than survives: a light BFS that cannot read back its
@@ -186,4 +185,11 @@ exclude_re = [
     'replace > with >= in ear_clip',
     # Equivalent on the two ring edges; also hides the caught diagonal-edge mutant.
     'replace < with <= in ear_clip',
+        # Equivalent: actions_where folds each action index once, so `mask | 1 << index` and `^` agree.
+    'replace \| with \^ in ActionMap<A>::actions_where',
+    # Equivalent: one axis update releases at most one stick direction, so at most one tap mask
+    # is non-zero and `|` and `^` agree.
+    'replace \| with \^ in ActionMap<A>::sync_stick_directions',
+    # moho_ui_shell::host: `input_of` now returns `Input` (ENG-F26-01); same headless KeyEvent limit as above.
+    'replace input_of -> Option<\(Input, bool, bool\)> with None',
 ]

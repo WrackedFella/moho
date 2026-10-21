@@ -9,7 +9,7 @@ use glam::{Mat4, Quat, Vec3};
 use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext};
 use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
-use moho_input::bindings::Binding;
+use moho_input::bindings::Input;
 use moho_input::key::Key;
 use moho_physics::{CharacterState, first_person_view};
 use moho_render_api::{
@@ -699,11 +699,11 @@ impl SearchlightGame {
 
     /// Where one key or button press or release goes: the console sees it first, so a game
     /// action bound to the console key never shadows it. The window-event path calls this once
-    /// it has a `Binding`, so it is testable without a winit `KeyEvent`.
+    /// it has an `Input`, so it is testable without a winit `KeyEvent`.
     fn route_input(
         &mut self,
         ctx: &mut EventContext<'_>,
-        input: Binding,
+        input: Input,
         pressed: bool,
         repeat: bool,
     ) -> Routing {
@@ -714,13 +714,13 @@ impl SearchlightGame {
             Routing::Opened => self.input.release_all(),
             Routing::Console | Routing::Closed => {}
             Routing::Game => {
-                if pressed && !repeat && input == Binding::Key(Key::Escape) {
+                if pressed && !repeat && input == Input::Key(Key::Escape) {
                     ctx.request_exit();
                 }
                 match input {
-                    Binding::Key(key) => self.input.key(key, pressed),
-                    Binding::Mouse(button) => self.input.mouse_button(button, pressed),
-                    Binding::Pad(_) => {}
+                    Input::Key(key) => self.input.key(key, pressed),
+                    Input::Mouse(button) => self.input.mouse_button(button, pressed),
+                    Input::Pad(_) => {}
                 }
             }
         }
@@ -979,7 +979,7 @@ mod tests {
         assert!(!game.stage.status.is_empty());
     }
 
-    const BACKTICK: Binding = Binding::Key(Key::Backtick);
+    const BACKTICK: Input = Input::Key(Key::Backtick);
     const TICK: Duration = Duration::from_millis(16);
 
     fn open_the_console(game: &mut SearchlightGame, clock: &GameClock) {
@@ -1185,7 +1185,7 @@ mod tests {
         open_the_console(&mut game, &clock);
         let mut ctx = EventContext::new(&clock, None, None);
 
-        let routing = game.route_input(&mut ctx, Binding::Key(Key::Escape), true, false);
+        let routing = game.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
 
         assert_eq!(routing, Routing::Closed);
         assert!(!ctx.exit_requested());
@@ -1198,7 +1198,7 @@ mod tests {
         let clock = GameClock::default();
         open_the_console(&mut game, &clock);
         let mut ctx = EventContext::new(&clock, None, None);
-        let escape = Binding::Key(Key::Escape);
+        let escape = Input::Key(Key::Escape);
 
         let closing = game.route_input(&mut ctx, escape, true, false);
         let repeated = game.route_input(&mut ctx, escape, true, true);
@@ -1214,7 +1214,7 @@ mod tests {
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
 
-        let routing = game.route_input(&mut ctx, Binding::Key(Key::Escape), true, false);
+        let routing = game.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
 
         assert_eq!(routing, Routing::Game);
         assert!(ctx.exit_requested());
@@ -1225,7 +1225,7 @@ mod tests {
         let mut game = game();
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
-        game.route_input(&mut ctx, Binding::Key(Key::W), true, false);
+        game.route_input(&mut ctx, Input::Key(Key::W), true, false);
 
         open_the_console(&mut game, &clock);
         let held = game.command();
@@ -1247,7 +1247,7 @@ mod tests {
         let mut game = game();
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
-        game.route_input(&mut ctx, Binding::Key(Key::W), true, false);
+        game.route_input(&mut ctx, Input::Key(Key::W), true, false);
 
         game.event(&mut ctx, Event::Window(WindowEvent::Focused(false)));
         let command = game.command();
@@ -1260,7 +1260,7 @@ mod tests {
         let mut game = game();
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
-        game.route_input(&mut ctx, Binding::Key(Key::W), true, false);
+        game.route_input(&mut ctx, Input::Key(Key::W), true, false);
 
         let command = game.command();
 
@@ -1458,8 +1458,10 @@ mod tests {
     #[test]
     fn a_press_made_as_the_console_opens_does_not_act_on_close() {
         for press_binding in [
-            Binding::Mouse(moho_input::key::MouseButton::Left),
-            Binding::Key(Key::R),
+            Input::Mouse(moho_input::key::MouseButton::Left),
+            Input::Key(Key::C),
+            // Reload taps on R's release, so the release after close must not tap either.
+            Input::Key(Key::R),
         ] {
             let mut game = turning_game(false);
             let clock = GameClock::default();
@@ -1480,6 +1482,13 @@ mod tests {
 
             assert!(!command.fire, "{press_binding:?}: fire");
             assert!(!command.reload, "{press_binding:?}: reload");
+            assert!(!command.check, "{press_binding:?}: check");
+
+            game.route_input(&mut ctx, press_binding, false, false);
+            let command = game.command();
+
+            assert!(!command.reload, "{press_binding:?}: reload on release");
+            assert!(!command.check, "{press_binding:?}: check on release");
         }
     }
 
