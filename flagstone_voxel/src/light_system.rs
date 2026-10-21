@@ -91,13 +91,11 @@ impl LightSystem {
             // Opaque block placed — any existing light at this position must be removed.
             let opacity = self.grid.material_registry.opacity_cost(material_id);
             if opacity >= 15 {
-                let job =
-                    LightUpdateJob::remove_light(position, 0).with_player_distance(self.player_pos);
+                let job = LightUpdateJob::at(position).with_player_distance(self.player_pos);
                 self.job_queue.submit(job);
             }
         } else {
-            let job = LightUpdateJob::add_light(position, emission, 0)
-                .with_player_distance(self.player_pos);
+            let job = LightUpdateJob::at(position).with_player_distance(self.player_pos);
             self.job_queue.submit(job);
         }
     }
@@ -105,7 +103,7 @@ impl LightSystem {
     /// Handle a block removed event.
     pub fn on_block_removed(&mut self, position: IVec3, old_material_id: u32) {
         // Remove any block-light the removed block was contributing or blocking.
-        let job = LightUpdateJob::remove_light(position, 0).with_player_distance(self.player_pos);
+        let job = LightUpdateJob::at(position).with_player_distance(self.player_pos);
         self.job_queue.submit(job);
 
         tracing::debug!(
@@ -130,9 +128,9 @@ impl LightSystem {
             if let Some(mat_id) = self.grid.material_at(position) {
                 let emission = self.grid.material_registry.emission(mat_id);
                 let job = if emission == [0u8, 0, 0] {
-                    LightUpdateJob::remove_light(position, 0)
+                    LightUpdateJob::at(position)
                 } else {
-                    LightUpdateJob::add_light(position, emission, 0)
+                    LightUpdateJob::at(position)
                 };
                 self.job_queue
                     .submit(job.with_player_distance(self.player_pos));
@@ -376,6 +374,7 @@ mod tests {
             LightPropagator::new().add_light_rgb(light_system.grid_mut(), pos, [10, 0, 0]);
         }
         let darkened = lit_chunks(light_system.grid(), stone_pos);
+        let darkened_empty = lit_chunks(light_system.grid(), empty_pos);
 
         light_system.handle_event(&WorldEvent::BlocksBatchModified {
             chunk_pos: IVec3::ZERO,
@@ -384,28 +383,98 @@ mod tests {
         });
         assert_eq!(
             light_system.pending_jobs(),
-            2,
-            "no job for the empty position"
+            3,
+            "one job per position, the empty one included"
         );
         let completed = light_system.process_frame();
 
-        assert_eq!(completed, 2);
+        assert_eq!(completed, 3);
         let grid = light_system.grid();
         assert_eq!(grid.block_light_rgb_at(torch_pos), TORCH);
         assert_eq!(grid.block_light_rgb_at(stone_pos), [0, 0, 0]);
         assert_eq!(
             grid.block_light_rgb_at(empty_pos),
-            [10, 0, 0],
-            "nothing queued for a position without a block"
+            [0, 0, 0],
+            "light at a position emptied by the edit is reconciled away"
         );
         let mut expected = lit_chunks(grid, torch_pos);
         expected.extend(darkened);
+        expected.extend(darkened_empty);
         light_system.emit_dirty_events();
         assert_published_once_each(&received, &expected);
     }
 
     #[test]
-    fn placing_an_opaque_non_emissive_block_queues_one_removal_that_clears_its_light() {
+    fn a_batch_queues_every_changed_position() {
+        let (mut light_system, _received) = system();
+        let torch_pos = IVec3::new(5, 5, 5);
+        let stone_pos = IVec3::new(40, 5, 5);
+        let empty_pos = IVec3::new(70, 5, 5);
+        let second_empty_pos = IVec3::new(85, 5, 5);
+        let glass_pos = IVec3::new(100, 5, 5);
+        light_system.grid_mut().place_block(torch_pos, 1, None);
+        light_system.grid_mut().place_block(stone_pos, 0, None);
+        light_system.grid_mut().place_block(glass_pos, 2, None);
+
+        light_system.handle_event(&WorldEvent::BlocksBatchModified {
+            chunk_pos: IVec3::ZERO,
+            positions: vec![torch_pos, stone_pos, empty_pos, second_empty_pos, glass_pos],
+            reason: BlockChangeReason::Explosion,
+        });
+
+        assert_eq!(
+            light_system.pending_jobs(),
+            4,
+            "emitter, opaque and emptied positions queue; the transparent placement does not"
+        );
+    }
+
+    /// Place an emitter at `pos`, mine it again, and publish both events in the
+    /// given order before one frame runs; a distant torch proves jobs do run.
+    fn place_and_mine_before_processing(removed_event_first: bool) {
+        let (mut light_system, _received) = system();
+        let pos = IVec3::new(5, 5, 5);
+        let witness = IVec3::new(45, 5, 5);
+        light_system.grid_mut().place_block(witness, 1, None);
+        light_system.handle_event(&placed(witness, 1));
+        light_system.grid_mut().place_block(pos, 1, None);
+        let place = placed(pos, 1);
+        let remove = WorldEvent::BlockRemoved {
+            position: pos,
+            old_material_id: 1,
+            reason: BlockChangeReason::Player,
+        };
+
+        let (first, second) = if removed_event_first {
+            (&remove, &place)
+        } else {
+            (&place, &remove)
+        };
+        light_system.handle_event(first);
+        light_system.handle_event(second);
+        light_system.grid_mut().mutator().remove(pos);
+        light_system.process_frame();
+
+        let grid = light_system.grid();
+        assert_eq!(
+            grid.block_light_rgb_at(witness),
+            TORCH,
+            "the witness torch is lit"
+        );
+        assert!(
+            lit_chunks(grid, pos).is_empty(),
+            "the mined torch leaves no light (removed event first: {removed_event_first})"
+        );
+    }
+
+    #[test]
+    fn place_then_remove_before_processing_leaves_no_light() {
+        place_and_mine_before_processing(false);
+        place_and_mine_before_processing(true);
+    }
+
+    #[test]
+    fn placing_an_opaque_non_emissive_block_queues_one_job_that_clears_its_light() {
         let (mut light_system, _received) = system();
         let pos = IVec3::new(5, 5, 5);
         LightPropagator::new().add_light_rgb(light_system.grid_mut(), pos, [10, 0, 0]);

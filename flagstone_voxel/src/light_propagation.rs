@@ -88,6 +88,12 @@ impl LightPropagator {
         affected.into_iter().collect()
     }
 
+    /// Reconcile the light at `pos` with the grid as it is now.
+    /// Returns the chunk positions where a value was written.
+    pub fn update_at(&mut self, grid: &mut VoxelGrid, pos: IVec3) -> Vec<IVec3> {
+        self.remove_light(grid, pos)
+    }
+
     /// Scan all blocks for non-zero emission and flood-fill their RGB light.
     /// Used for initial world-load or full-grid recompute.
     pub fn flood_fill_block_lights(&mut self, grid: &mut VoxelGrid) -> Vec<IVec3> {
