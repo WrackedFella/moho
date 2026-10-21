@@ -53,8 +53,8 @@ sequenceDiagram
     T->>Sim: apply command, update_game_state (Playing only)
     Note over Sim: KCC: command → physics character (look + move) → camera;<br/>free-fly: controller input → camera;<br/>step rigid bodies
     T->>LS: update_chunk_streaming
-    Note over LS: evict / load chunks,<br/>publish WorldEvent::ChunkMeshDirty
-    T->>LS: update_light_system (budgeted)
+    Note over LS: evict / load chunks, light arrived chunks,<br/>publish WorldEvent::ChunkMeshDirty
+    T->>LS: update_light_system (budgeted jobs, then sky refresh)
     T->>Bus: SystemEvent::FrameEnd
     T->>T: drain event channels
     T->>T: check_generation_cancel, poll_generation
@@ -66,6 +66,10 @@ gets that tick's advance on top.
 
 All gameplay steps early-return unless `GameState::Playing`. `dt` is the fixed tick length.
 
+Mining publishes its block event while `process_input_events` drains, after
+`process_world_events`, so the light system queues the edit on the next tick and lights it in
+the tick after (two ticks, about 33 ms at 60 Hz).
+
 ## 3 Event drain
 
 The tick drains one channel per event family, in this order:
@@ -74,7 +78,7 @@ The tick drains one channel per event family, in this order:
 |---|---|---|
 | 1 | `process_ui_events` | load/new world, exit and main-menu requests (their auto-save runs in `frame`), resume, menus |
 | 2 | `process_graphics_events` | time of day, debug view |
-| 3 | `process_world_events` | `ChunkMeshDirty` → remesh (draw + collider) |
+| 3 | `process_world_events` | every world event → `LightSystem::handle_event`; each `ChunkMeshDirty` chunk → remesh once (draw + collider) |
 | 4 | `process_input_events` | wheel zoom, mine action |
 | 5 | `process_debug_events` | spawn, god mode, noclip; point lights and shadow/SSAO quality are queued as `RenderRequest`s |
 
