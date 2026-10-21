@@ -34,7 +34,7 @@ impl BindingRegistry {
     pub fn find_conflict(&self, key: Key, exclude: StrategyAction) -> Option<StrategyAction> {
         BINDING_ROWS
             .into_iter()
-            .find(|&row| row != exclude && self.bindings.get(row).contains(&Binding::Key(key)))
+            .find(|&row| row != exclude && self.bindings.get(row).contains(&Binding::key(key)))
     }
 
     pub fn set_binding(&mut self, action: StrategyAction, bindings: Vec<Binding>) {
@@ -49,6 +49,7 @@ impl BindingRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moho_input::bindings::Input;
 
     fn registry() -> BindingRegistry {
         BindingRegistry::from_prefs(&Prefs::default())
@@ -71,8 +72,8 @@ mod tests {
     fn write_to_prefs_round_trips_changes() {
         let mut prefs = Prefs::default();
         let mut registry = BindingRegistry::from_prefs(&prefs);
-        registry.set_binding(StrategyAction::MoveForward, vec![Binding::Key(Key::Q)]);
-        registry.set_binding(StrategyAction::MoveLeft, vec![Binding::Key(Key::E)]);
+        registry.set_binding(StrategyAction::MoveForward, vec![Binding::key(Key::Q)]);
+        registry.set_binding(StrategyAction::MoveLeft, vec![Binding::key(Key::E)]);
 
         registry.write_to_prefs(&mut prefs);
 
@@ -80,7 +81,7 @@ mod tests {
         assert_eq!(reloaded, registry);
         assert_eq!(
             reloaded.get_binding(StrategyAction::MoveForward),
-            [Binding::Key(Key::Q)]
+            [Binding::key(Key::Q)]
         );
     }
 
@@ -92,9 +93,9 @@ mod tests {
             let asker = BINDING_ROWS.into_iter().find(|&r| r != row).unwrap();
             let keys: Vec<Key> = moho_input::Action::default_bindings(row)
                 .iter()
-                .filter_map(|b| match b {
-                    Binding::Key(key) => Some(*key),
-                    Binding::Mouse(_) | Binding::Pad(_) => None,
+                .filter_map(|b| match b.input {
+                    Input::Key(key) => Some(key),
+                    Input::Mouse(_) | Input::Pad(_) => None,
                 })
                 .collect();
             assert!(!keys.is_empty(), "{row:?} has a default key");
@@ -109,7 +110,7 @@ mod tests {
         let mut registry = registry();
         registry.set_binding(
             StrategyAction::MoveForward,
-            vec![Binding::Key(Key::W), Binding::Key(Key::ArrowUp)],
+            vec![Binding::key(Key::W), Binding::key(Key::ArrowUp)],
         );
 
         assert_eq!(
@@ -149,6 +150,24 @@ mod tests {
     }
 
     #[test]
+    fn find_conflict_ignores_a_hold_on_the_key() {
+        let mut registry = registry();
+        registry.set_binding(
+            StrategyAction::MoveForward,
+            vec![Binding::key(Key::W), Binding::key(Key::R).held()],
+        );
+
+        assert_eq!(
+            registry.find_conflict(Key::R, StrategyAction::MoveLeft),
+            None
+        );
+        assert_eq!(
+            registry.find_conflict(Key::W, StrategyAction::MoveLeft),
+            Some(StrategyAction::MoveForward)
+        );
+    }
+
+    #[test]
     fn unbound_row_conflicts_with_nothing() {
         let mut registry = registry();
         registry.set_binding(StrategyAction::MoveForward, vec![]);
@@ -163,11 +182,11 @@ mod tests {
     fn set_binding_replaces_the_rows_keys() {
         let mut registry = registry();
 
-        registry.set_binding(StrategyAction::MoveForward, vec![Binding::Key(Key::Q)]);
+        registry.set_binding(StrategyAction::MoveForward, vec![Binding::key(Key::Q)]);
 
         assert_eq!(
             registry.get_binding(StrategyAction::MoveForward),
-            [Binding::Key(Key::Q)]
+            [Binding::key(Key::Q)]
         );
     }
 
@@ -175,7 +194,7 @@ mod tests {
     fn writing_bindings_keeps_the_console_entry() {
         let (mut prefs, _) = Prefs::parse("[bindings]\nconsole = Backslash\nmove_forward = W\n");
         let mut registry = BindingRegistry::from_prefs(&prefs);
-        registry.set_binding(StrategyAction::MoveForward, vec![Binding::Key(Key::Q)]);
+        registry.set_binding(StrategyAction::MoveForward, vec![Binding::key(Key::Q)]);
 
         registry.write_to_prefs(&mut prefs);
 
@@ -185,7 +204,7 @@ mod tests {
         );
         assert_eq!(
             BindingRegistry::from_prefs(&prefs).get_binding(StrategyAction::MoveForward),
-            [Binding::Key(Key::Q)]
+            [Binding::key(Key::Q)]
         );
     }
 

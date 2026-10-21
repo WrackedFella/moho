@@ -194,7 +194,7 @@ mod tests {
             .expect("settings screen is a SettingsMenu");
         assert_eq!(
             menu.get_staged_binding(0).first(),
-            Some(&Binding::Key(Key::Q))
+            Some(&Binding::key(Key::Q))
         );
     }
 }

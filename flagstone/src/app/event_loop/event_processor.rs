@@ -958,8 +958,8 @@ mod tests {
             on_disk.bindings().get("move_forward")
         );
         assert_eq!(app.prefs.shadow_quality(), 1);
-        assert!(forward_keys(&app).contains(&Binding::Key(Key::Q)));
-        assert!(!forward_keys(&app).contains(&Binding::Key(Key::W)));
+        assert!(forward_keys(&app).contains(&Binding::key(Key::Q)));
+        assert!(!forward_keys(&app).contains(&Binding::key(Key::W)));
     }
 
     #[test]
@@ -978,8 +978,8 @@ mod tests {
         ));
 
         let keys = forward_keys(&restarted);
-        assert!(keys.contains(&Binding::Key(Key::Q)), "bindings: {keys:?}");
-        assert!(!keys.contains(&Binding::Key(Key::W)), "bindings: {keys:?}");
+        assert!(keys.contains(&Binding::key(Key::Q)), "bindings: {keys:?}");
+        assert!(!keys.contains(&Binding::key(Key::W)), "bindings: {keys:?}");
         assert_eq!(restarted.prefs.shadow_quality(), 1);
     }
 
@@ -988,15 +988,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = prefs_file(&dir);
         let mut app = headless_saving_to(&path);
-        assert!(forward_keys(&app).contains(&Binding::Key(Key::W)));
+        assert!(forward_keys(&app).contains(&Binding::key(Key::W)));
         let mut adopted = Prefs::default();
         forward_bound_to_q(&mut adopted);
 
         app.adopt_settings(adopted.clone());
 
         let keys = forward_keys(&app);
-        assert!(keys.contains(&Binding::Key(Key::Q)), "bindings: {keys:?}");
-        assert!(!keys.contains(&Binding::Key(Key::W)), "bindings: {keys:?}");
+        assert!(keys.contains(&Binding::key(Key::Q)), "bindings: {keys:?}");
+        assert!(!keys.contains(&Binding::key(Key::W)), "bindings: {keys:?}");
         assert_eq!(app.prefs, adopted);
         assert!(!path.exists(), "adopting does not write the file");
     }

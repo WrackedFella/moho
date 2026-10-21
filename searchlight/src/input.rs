@@ -50,15 +50,17 @@ impl Action for SearchlightAction {
 
     fn default_bindings(self) -> &'static [Binding] {
         match self {
-            SearchlightAction::MoveForward => &[Binding::Key(Key::W)],
-            SearchlightAction::MoveBack => &[Binding::Key(Key::S)],
-            SearchlightAction::MoveLeft => &[Binding::Key(Key::A)],
-            SearchlightAction::MoveRight => &[Binding::Key(Key::D)],
-            SearchlightAction::Jump => &[Binding::Key(Key::Space)],
-            SearchlightAction::Fire => &[Binding::Mouse(MouseButton::Left)],
-            SearchlightAction::Reload => &[Binding::Key(Key::R)],
-            SearchlightAction::CheckMagazine => &[Binding::Key(Key::C)],
-            SearchlightAction::Restart => &[Binding::Key(Key::Enter)],
+            SearchlightAction::MoveForward => const { &[Binding::key(Key::W)] },
+            SearchlightAction::MoveBack => const { &[Binding::key(Key::S)] },
+            SearchlightAction::MoveLeft => const { &[Binding::key(Key::A)] },
+            SearchlightAction::MoveRight => const { &[Binding::key(Key::D)] },
+            SearchlightAction::Jump => const { &[Binding::key(Key::Space)] },
+            SearchlightAction::Fire => const { &[Binding::mouse(MouseButton::Left)] },
+            SearchlightAction::Reload => const { &[Binding::key(Key::R)] },
+            SearchlightAction::CheckMagazine => {
+                const { &[Binding::key(Key::C), Binding::key(Key::R).held()] }
+            }
+            SearchlightAction::Restart => const { &[Binding::key(Key::Enter)] },
         }
     }
 }
@@ -100,9 +102,9 @@ pub struct SearchlightCommand {
     pub movement: CharacterCommand,
     /// The fire input went down this tick (semi-auto: holding does not repeat).
     pub fire: bool,
-    /// The reload input went down this tick.
+    /// Reload was pressed this tick; on a key that also carries a hold, that is a tap's release.
     pub reload: bool,
-    /// The check-magazine input went down this tick.
+    /// Check magazine was pressed this tick.
     pub check: bool,
     /// The restart input went down this tick.
     pub restart: bool,
@@ -148,7 +150,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use moho_input::action_map::ActionMap;
-    use moho_input::bindings::ActionBindings;
+    use moho_input::bindings::{ActionBindings, Input};
 
     use super::*;
     use crate::test_support::press;
@@ -162,10 +164,10 @@ mod tests {
     }
 
     fn release(map: &mut ActionMap<SearchlightAction>, action: SearchlightAction) {
-        match action.default_bindings()[0] {
-            Binding::Key(key) => map.key(key, false),
-            Binding::Mouse(button) => map.mouse_button(button, false),
-            Binding::Pad(_) => panic!("pad binding"),
+        match action.default_bindings()[0].input {
+            Input::Key(key) => map.key(key, false),
+            Input::Mouse(button) => map.mouse_button(button, false),
+            Input::Pad(_) => panic!("pad binding"),
         }
     }
 
@@ -242,17 +244,47 @@ mod tests {
     }
 
     #[test]
-    fn reload_and_check_fire_once_per_press() {
+    fn tap_r_reloads_on_release() {
         let mut map = fresh_map();
-        press(&mut map, SearchlightAction::Reload);
+        map.key(Key::R, true);
+        let down = SearchlightCommand::from_frame(&map.end_tick());
+
+        map.key(Key::R, false);
+        let up = SearchlightCommand::from_frame(&map.end_tick());
+        let after = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert!(!down.reload && !down.check, "a press alone fires nothing");
+        assert!(up.reload && !up.check, "the tap reloads on release");
+        assert!(!after.reload && !after.check);
+    }
+
+    #[test]
+    fn hold_r_checks_the_magazine_and_never_reloads() {
+        let mut map = fresh_map();
+        map.key(Key::R, true);
+
+        let frames: Vec<_> = (0..18)
+            .map(|_| SearchlightCommand::from_frame(&map.end_tick()))
+            .collect();
+        map.key(Key::R, false);
+        let released = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert!(frames[17].check, "the hold checks in tick 18");
+        assert!(frames[..17].iter().all(|f| !f.check));
+        assert!(frames.iter().all(|f| !f.reload));
+        assert!(!released.reload && !released.check);
+    }
+
+    #[test]
+    fn c_still_checks_on_press() {
+        let mut map = fresh_map();
         press(&mut map, SearchlightAction::CheckMagazine);
 
         let pressed = SearchlightCommand::from_frame(&map.end_tick());
         let held = SearchlightCommand::from_frame(&map.end_tick());
 
-        assert!(pressed.reload && pressed.check);
-        assert!(!pressed.fire);
-        assert!(!held.reload && !held.check);
+        assert!(pressed.check && !pressed.reload);
+        assert!(!held.check);
     }
 
     #[test]
@@ -288,7 +320,7 @@ mod tests {
 
         assert_eq!(
             SearchlightAction::Restart.default_bindings(),
-            [Binding::Key(Key::Enter)]
+            [Binding::key(Key::Enter)]
         );
         assert!(SearchlightAction::ALL.contains(&SearchlightAction::Restart));
         assert_eq!(

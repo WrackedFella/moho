@@ -1,6 +1,6 @@
 //! Conversions between egui input and engine keys, and binding display labels.
 
-use moho_input::bindings::Binding;
+use moho_input::bindings::{Binding, Trigger};
 use moho_input::key::Key;
 
 /// `None` for egui keys the engine does not name.
@@ -85,16 +85,23 @@ pub fn binding_label(bindings: &[Binding]) -> String {
     labels.join(", ")
 }
 
-/// `key` as the action's only keyboard binding, followed by the pad bindings in `existing`.
+/// `key` in place of the plain key and mouse bindings in `existing`, followed by the rest in order.
 pub fn rebind_key(existing: &[Binding], key: Key) -> Vec<Binding> {
-    std::iter::once(Binding::Key(key))
-        .chain(existing.iter().copied().filter(|b| b.is_pad()))
+    std::iter::once(Binding::key(key))
+        .chain(
+            existing
+                .iter()
+                .copied()
+                .filter(|b| b.is_pad() || b.trigger != Trigger::Press),
+        )
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moho_input::key::MouseButton;
+    use moho_input::pad::{PadButton, PadInput};
 
     #[test]
     fn every_mapped_egui_key_maps_to_its_key() {
@@ -187,18 +194,46 @@ mod tests {
     }
 
     #[test]
+    fn rebind_key_keeps_hold_and_pad_bindings() {
+        let west = Binding::pad(PadInput::Button(PadButton::West));
+        let south = Binding::pad(PadInput::Button(PadButton::South));
+        let existing = [
+            Binding::key(Key::Shift),
+            Binding::key(Key::Q).held(),
+            south,
+            Binding::mouse(MouseButton::Right),
+            west.held(),
+            Binding::mouse(MouseButton::Right).held(),
+        ];
+
+        let rebound = rebind_key(&existing, Key::E);
+
+        assert_eq!(
+            rebound,
+            [
+                Binding::key(Key::E),
+                Binding::key(Key::Q).held(),
+                south,
+                west.held(),
+                Binding::mouse(MouseButton::Right).held()
+            ]
+        );
+        assert_eq!(binding_label(&rebound), "E, Hold Q, Hold Mouse Right");
+    }
+
+    #[test]
     fn binding_label_unbound() {
         assert_eq!(binding_label(&[]), "Unbound");
     }
 
     #[test]
     fn binding_label_names_each_key() {
-        assert_eq!(binding_label(&[Binding::Key(Key::W)]), "W");
-        assert_eq!(binding_label(&[Binding::Key(Key::Shift)]), "Shift");
-        assert_eq!(binding_label(&[Binding::Key(Key::ArrowUp)]), "ArrowUp");
-        assert_eq!(binding_label(&[Binding::Key(Key::Space)]), "Spacebar");
+        assert_eq!(binding_label(&[Binding::key(Key::W)]), "W");
+        assert_eq!(binding_label(&[Binding::key(Key::Shift)]), "Shift");
+        assert_eq!(binding_label(&[Binding::key(Key::ArrowUp)]), "ArrowUp");
+        assert_eq!(binding_label(&[Binding::key(Key::Space)]), "Spacebar");
         assert_eq!(
-            binding_label(&[Binding::Key(Key::F), Binding::Key(Key::Space)]),
+            binding_label(&[Binding::key(Key::F), Binding::key(Key::Space)]),
             "F, Spacebar"
         );
     }
