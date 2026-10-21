@@ -244,7 +244,7 @@ fn funnel(start: Vec3, goal: Vec3, portals: &[(Vec3, Vec3)]) -> Vec<Vec3> {
                 right_at = i;
             } else {
                 apex = left;
-                path.push(apex);
+                push_corner(&mut path, apex);
                 (left, right, right_at) = (apex, apex, left_at);
                 i = left_at + 1;
                 continue;
@@ -256,7 +256,7 @@ fn funnel(start: Vec3, goal: Vec3, portals: &[(Vec3, Vec3)]) -> Vec<Vec3> {
                 left_at = i;
             } else {
                 apex = right;
-                path.push(apex);
+                push_corner(&mut path, apex);
                 (left, right, left_at) = (apex, apex, right_at);
                 i = right_at + 1;
                 continue;
@@ -264,8 +264,18 @@ fn funnel(start: Vec3, goal: Vec3, portals: &[(Vec3, Vec3)]) -> Vec<Vec3> {
         }
         i += 1;
     }
-    path.push(goal);
+    if path.len() == 1 || !same(path[path.len() - 1], goal) {
+        path.push(goal);
+    }
     path
+}
+
+/// Adds `corner` unless the funnel already turned there; an apex can land on the previous
+/// corner or on the goal itself.
+fn push_corner(path: &mut Vec<Vec3>, corner: Vec3) {
+    if path.last() != Some(&corner) {
+        path.push(corner);
+    }
 }
 
 pub(super) fn path(mesh: &NavMesh, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
