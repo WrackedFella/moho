@@ -197,8 +197,8 @@ pub(crate) fn turned_look(look: (f32, f32), delta: (f32, f32)) -> (f32, f32) {
 /// 8. settle: a walker that ends the tick grounded moves along its ground, keeping its
 ///    horizontal velocity; a landing zeroes the vertical velocity.
 ///
-/// The two halves around the move give the exact displacement under constant gravity at any
-/// tick rate. A landing's impact speed is therefore the mid-tick downward speed.
+/// The two halves around the move give an airborne tick the exact displacement under constant
+/// gravity at any tick rate. A landing's impact speed is therefore the mid-tick downward speed.
 pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
