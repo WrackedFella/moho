@@ -88,26 +88,10 @@ impl BlockyMeshGenerator {
             mesh.geometry_type.push(1);
         }
 
-        // Read per-voxel lighting from the new ChunkLight store.
-        let rgb_raw = grid.block_light_rgb_at(position);
-        let rgb_f = [
-            f32::from(rgb_raw[0]) / 15.0,
-            f32::from(rgb_raw[1]) / 15.0,
-            f32::from(rgb_raw[2]) / 15.0,
-        ];
-        let sky = if grid.sky_exposed_at(position) {
-            1.0f32
-        } else {
-            0.0
-        };
-        // Compat: single-channel max for the legacy pipeline.
-        let max_ch = rgb_f[0].max(rgb_f[1]).max(rgb_f[2]);
-        let light = (max_ch + sky * 0.1).min(1.0);
-
+        // The block itself is opaque and always dark; the face shows the air it faces.
+        let front = position + IVec3::from_array(normal.map(|c| c as i32));
         for _ in 0..4 {
-            mesh.light_level.push(light);
-            mesh.block_light_rgb.push(rgb_f);
-            mesh.sky_exposed.push(sky);
+            mesh.push_light(grid.block_light_rgb_at(front), grid.sky_exposed_at(front));
         }
 
         // Add indices (2 triangles per face)

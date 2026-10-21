@@ -14,7 +14,9 @@
 //!   adjacent voxels still lit by surviving sources.
 
 use super::grid::VoxelGrid;
-use super::light_storage::{self, CHUNK_SIZE, CHUNK_VOLUME, ChunkLight, idx_to_local, local_index};
+use super::light_storage::{
+    self, CHUNK_SIZE, CHUNK_VOLUME, ChunkLight, border_offsets, idx_to_local, local_index,
+};
 use glam::IVec3;
 use std::collections::{HashSet, VecDeque};
 
@@ -280,7 +282,7 @@ impl LightPropagator {
                 continue;
             }
             Self::write_ch(grid, node.chunk_pos, node.idx, ch, node.level);
-            affected.insert(node.chunk_pos);
+            mark_light_write(grid, node.chunk_pos, node.idx, affected);
             self.enqueue_neighbours(grid, node, ch);
         }
     }
@@ -332,7 +334,7 @@ impl LightPropagator {
             debug_assert_eq!(stored, node.level);
             // Clear this voxel.
             Self::write_ch(grid, node.chunk_pos, node.idx, ch, 0);
-            affected.insert(node.chunk_pos);
+            mark_light_write(grid, node.chunk_pos, node.idx, affected);
 
             let world = node.chunk_pos * CHUNK_SIZE + idx_to_local(node.idx);
             // A surviving emitter's own voxel must read its emission again; a
@@ -372,6 +374,17 @@ impl LightPropagator {
         relight.retain(|n| is_light_source(grid, *n));
         self.bfs_add_nodes(grid, &emitters, &relight, ch, affected);
     }
+}
+
+/// Records a light write at `idx` of `chunk_pos`: the chunk itself, and the loaded chunks
+/// across the face layers the voxel lies on, whose surfaces read it.
+fn mark_light_write(grid: &VoxelGrid, chunk_pos: IVec3, idx: usize, affected: &mut HashSet<IVec3>) {
+    affected.insert(chunk_pos);
+    affected.extend(
+        border_offsets(idx_to_local(idx))
+            .map(|offset| chunk_pos + offset)
+            .filter(|&across| grid.has_chunk(across)),
+    );
 }
 
 /// Whether the light stored at `node` can spread: it sits in a transparent

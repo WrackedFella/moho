@@ -32,7 +32,7 @@
 use super::grid::VoxelGrid;
 use super::light_jobs::{LightFrameBudget, LightJobQueue, LightUpdateJob};
 use super::light_propagation::LightPropagator;
-use super::light_sky::{dirty_chunks_below, recompute_sky_exposure};
+use super::light_sky::{dirty_chunks_below, recompute_sky_change};
 use crate::events::{BlockChangeReason, WorldEvent};
 use glam::{IVec3, Vec3};
 use moho_core::events::EventBus;
@@ -154,7 +154,7 @@ impl LightSystem {
                 .into_iter()
                 .flat_map(|r| r.affected_chunks),
         );
-        self.refresh_sky();
+        self.refresh_sky(&[]);
 
         completed
     }
@@ -162,8 +162,9 @@ impl LightSystem {
     /// Recompute sky exposure of every `sky_dirty` chunk, topmost first within
     /// each column so a lower chunk reads current heights above it. Chunks with
     /// blocks whose exposure changed join the affected set; a chunk without
-    /// blocks has no mesh to rebuild.
-    fn refresh_sky(&mut self) {
+    /// blocks has no mesh to rebuild. Chunks across a changed outer layer join too,
+    /// except for `arriving` chunks, whose neighbours are re-meshed by the arrival itself.
+    fn refresh_sky(&mut self, arriving: &[IVec3]) {
         let mut dirty: Vec<IVec3> = self
             .grid
             .lit_chunk_positions()
@@ -171,8 +172,18 @@ impl LightSystem {
             .collect();
         dirty.sort_unstable_by_key(|cp| (cp.x, cp.z, std::cmp::Reverse(cp.y)));
         for chunk_pos in dirty {
-            if recompute_sky_exposure(&mut self.grid, chunk_pos) && self.grid.has_chunk(chunk_pos) {
+            let change = recompute_sky_change(&mut self.grid, chunk_pos);
+            if change.any && self.grid.has_chunk(chunk_pos) {
                 self.affected_chunks.insert(chunk_pos);
+            }
+            if !arriving.contains(&chunk_pos) {
+                self.affected_chunks.extend(
+                    change
+                        .borders
+                        .iter()
+                        .map(|&offset| chunk_pos + offset)
+                        .filter(|&across| self.grid.has_chunk(across)),
+                );
             }
         }
     }
@@ -198,7 +209,7 @@ impl LightSystem {
         for (&(x, z), &top) in &highest {
             dirty_chunks_below(&mut self.grid, IVec3::new(x, top, z));
         }
-        self.refresh_sky();
+        self.refresh_sky(chunks);
         let changed = LightPropagator::new().light_arrived(&mut self.grid, chunks);
         self.affected_chunks.extend(changed);
     }

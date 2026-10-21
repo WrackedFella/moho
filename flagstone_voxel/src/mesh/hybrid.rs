@@ -70,6 +70,12 @@ pub(crate) fn coarse_face_material(
     unreachable!("a solid coarse cell has a solid block in one of its two face layers")
 }
 
+/// The block that field sample `sample` of chunk `chunk_base`'s padded density field stands
+/// for: the field is padded by one block, so sample `i` is block `chunk_base + i - 1`.
+fn sample_block(chunk_base: IVec3, sample: [usize; 3]) -> BlockPos {
+    chunk_base + IVec3::from_array(sample.map(|c| c as i32)) - IVec3::ONE
+}
+
 /// The face material of the block that field sample `sample` of chunk `chunk_base`'s
 /// padded density field stands for. The field is padded by one block, so sample `i` is
 /// block `chunk_base + i - 1`.
@@ -77,8 +83,7 @@ pub(crate) fn coarse_face_material(
 /// # Panics
 /// If the sample is air: only solid samples are looked up.
 pub(crate) fn sample_face_material(grid: &VoxelGrid, chunk_base: IVec3, sample: [usize; 3]) -> u32 {
-    let sample = IVec3::new(sample[0] as i32, sample[1] as i32, sample[2] as i32);
-    grid.face_material_at(chunk_base + sample - IVec3::ONE)
+    grid.face_material_at(sample_block(chunk_base, sample))
         .expect("marching cubes asks for the material of solid samples only")
 }
 
@@ -209,9 +214,15 @@ impl HybridMeshGenerator {
         let density_field =
             Self::create_selective_density_field(grid, chunk_pos, chunk_size, only_smooth);
         let base = chunk_pos * chunk_size;
-        let mut mesh = MarchingCubes::generate_mesh(&density_field, chunk_size as usize, |s| {
-            sample_face_material(grid, base, s)
-        });
+        let mut mesh = MarchingCubes::generate_mesh(
+            &density_field,
+            chunk_size as usize,
+            |s| sample_face_material(grid, base, s),
+            |s| {
+                let block = sample_block(base, s);
+                (grid.block_light_rgb_at(block), grid.sky_exposed_at(block))
+            },
+        );
 
         let offset = (chunk_pos * chunk_size).as_vec3() + Vec3::splat(DENSITY_SAMPLE_TO_WORLD);
         for vertex in &mut mesh.vertices {
