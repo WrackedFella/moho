@@ -20,7 +20,7 @@ The generic flow is in the devflow [overview](https://github.com/WrackedFella/cl
 | 1. Shape a feature | You + Business Analyst | `/devflow:business-analyst <topic>` | Draft `_feature.md`; on approval the feature issue is filed and the draft deleted |
 | 2. Write work items | You + Business Analyst | same session | Cards with Gherkin acceptance criteria |
 | 3. Specify | You + Tech Lead | `/devflow:tech-lead <item>` | Tech spec, test map, gate class; ADR if needed |
-| 4. Queue | You approve; Tech Lead publishes | You approve the draft (a local file, or a `plan/` branch from a cloud thread). The same thread files the issue (`[ID] title`, full spec; cloud threads use `gh`) and deletes the draft. You set Ready and Agent-eligible on the board, or the Tech Lead does through `scripts/board` in a local terminal | Issue |
+| 4. Queue | You approve; Tech Lead publishes | You approve the draft (a local file, or a `plan/` branch from a cloud thread). The same thread files the issue (`[ID] title`, full spec; cloud threads use `gh`) and deletes the draft. The Board sync workflow sets Ready from the tech spec and gate class; Agent-eligible comes from the card's board header | Issue |
 | 5. Implement | Orchestrator | `/devflow:orchestrate <issue>` | Branch from `dev`, PR into `dev` |
 | 6. Review and merge | You | Review the PR; merge | Board Status → Done (Board sync workflow) |
 

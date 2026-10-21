@@ -11,17 +11,8 @@ owner=WrackedFella
 number=1
 target=${1:?usage: board-sync.sh <Status> <issue-number>...}
 shift
-
-rank() {
-  case $1 in
-    Backlog | "") echo 0 ;;
-    Ready) echo 1 ;;
-    "In progress") echo 2 ;;
-    "In review") echo 3 ;;
-    Done) echo 4 ;;
-    *) echo 0 ;;
-  esac
-}
+# shellcheck source=board-lib.sh
+source "$(dirname "$0")/board-lib.sh"
 
 proj=$(gh api graphql -f o="$owner" -F n="$number" -f query='
   query($o:String!,$n:Int!){ user(login:$o){ projectV2(number:$n){

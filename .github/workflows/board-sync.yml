@@ -2,14 +2,25 @@ name: Board sync
 
 # Keeps the project board Status in step with PR and issue events, so agents running
 # without GraphQL access (cloud sessions) need not write it. Status moves forward only.
-# Ready and Agent-eligible stay human-set. Labeling a work item `agent-ready` starts a
-# remote run, so it moves to In progress then; the PR it opens would otherwise be the
-# first event and the item would skip from Ready to In review.
+# Labeling a work item `agent-ready` starts a remote run, so it moves to In progress then;
+# the PR it opens would otherwise be the first event and the item would skip from Ready
+# to In review. Agent-eligible stays human-set.
 #
 # A work item may also carry a `<!-- board: gate=domain; eligible=yes; priority=P2 -->`
 # header in its body; the Fields job applies it when the issue is opened or its body is
-# edited, so nobody sets those fields by hand. Both jobs log the token's remaining quota.
+# edited, so nobody sets those fields by hand. The same job moves a card to Ready once its
+# body carries a tech spec and its header a gate (.github/scripts/board-lib.sh).
+#
+# Run the workflow by hand for the Backfill job: it moves every item forward to the Status
+# its issue implies, for drift the event-driven jobs missed. Every job logs the token's
+# remaining quota.
 on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List the moves without making them
+        type: boolean
+        default: true
   pull_request:
     types: [opened, reopened, ready_for_review, converted_to_draft, closed]
   issues:
@@ -111,3 +122,31 @@ jobs:
           .github/scripts/rate-log.sh "Before fields"
           .github/scripts/board-fields.sh "$ISSUE_NODE_ID"
           .github/scripts/rate-log.sh "After fields"
+
+  backfill:
+    name: Backfill
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: board-backfill
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Move items forward
+        env:
+          GH_TOKEN: ${{ secrets.BOARD_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [[ -z $GH_TOKEN ]]; then
+            echo "BOARD_TOKEN secret is not set; skipping"
+            exit 0
+          fi
+          source .github/scripts/gh-retry.sh
+          .github/scripts/rate-log.sh "Before backfill"
+          if [[ $DRY_RUN == true ]]; then
+            .github/scripts/board-backfill.sh --dry-run
+          else
+            .github/scripts/board-backfill.sh
+          fi | tee -a "$GITHUB_STEP_SUMMARY"
+          .github/scripts/rate-log.sh "After backfill"

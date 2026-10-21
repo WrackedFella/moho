@@ -37,10 +37,11 @@ the only record of item state. Nothing in the repository mirrors them.
 
 - **Board:** Status, Priority, Gate class and Agent-eligible. The Board sync workflow
   moves Status forward on PR and issue events (In progress when `agent-ready` is applied
-  to a work item or a draft PR opens, In review on a ready PR, Done on merge or close).
-  Ready is set by a human. Gate class, Agent-eligible and Priority come from the card:
-  an issue body may start with `<!-- board: gate=domain; eligible=yes; priority=P2 -->`,
-  which the Board sync workflow applies when the issue is opened or its body edited
+  to a work item or a draft PR opens, In review on a ready PR, Done on merge or close),
+  and to Ready once the body has a `Tech spec` heading and the header names the gate.
+  Gate class, Agent-eligible and Priority come from the card: an issue body may start
+  with `<!-- board: gate=domain; eligible=yes; priority=P2 -->`, which the Board sync
+  workflow applies when the issue is opened or its body edited
   (Agent-eligible stays the approver's decision, recorded in the card). Parent and
   milestone label are set at filing over REST. A cloud thread does not touch the board
   itself, and an item in the wrong state is a workflow bug to report. Local sessions may
