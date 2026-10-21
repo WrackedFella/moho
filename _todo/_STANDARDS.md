@@ -75,6 +75,11 @@ not in a sweep.
 an **Intent** line and a **Gate** list; a milestone closes when every gate item
 holds.
 
+A game line's milestones carry its ID prefix (FPS-M1, FPS-M1.1) so they never collide with the
+engine's M0, M1, ... Numbers and document headings follow ISO 2145: Arabic numerals, dots
+between levels, no trailing dot ("4.11"). A milestone inserted between two others takes a
+sub-number (FPS-M1.1) rather than renumbering the rest.
+
 Only the next open milestone is carded. Later milestones hold intent and gate
 only (their features may exist as drafts, without cards) and are detailed
 when the previous gate closes.
