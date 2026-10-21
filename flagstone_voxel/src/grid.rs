@@ -54,6 +54,12 @@ impl MaterialLighting {
     pub fn is_emissive(&self) -> bool {
         self.emission != [0, 0, 0]
     }
+
+    /// Whether light stops at this material instead of passing through it.
+    #[inline]
+    pub fn is_opaque(&self) -> bool {
+        self.opacity_cost >= 15
+    }
 }
 
 /// Material registry - maps material IDs to actual material data

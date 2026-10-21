@@ -88,8 +88,8 @@ impl LightSystem {
     /// light: it emits, or it is opaque, or the position is empty.
     fn affects_light(&self, material_id: Option<u32>) -> bool {
         material_id.is_none_or(|id| {
-            let registry = &self.grid.material_registry;
-            registry.emission(id) != [0u8, 0, 0] || registry.opacity_cost(id) >= 15
+            let lighting = self.grid.material_registry.lighting(id);
+            lighting.is_emissive() || lighting.is_opaque()
         })
     }
 

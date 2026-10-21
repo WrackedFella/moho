@@ -101,23 +101,33 @@ impl LightPropagator {
         if !grid.supports_lighting() {
             return vec![];
         }
-        let opaque = grid
+        let lighting = grid
             .material_at(pos)
-            .is_some_and(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15);
-        let emission = grid
-            .material_at(pos)
-            .map_or([0; 3], |mat_id| grid.material_registry.emission(mat_id));
+            .map(|mat_id| grid.material_registry.lighting(mat_id));
+        let opaque = lighting.is_some_and(|l| l.is_opaque());
+        let emission = lighting.map_or([0; 3], |l| l.emission);
         let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
         let mut affected = std::collections::HashSet::new();
         for ch in [LightChannel::R, LightChannel::G, LightChannel::B] {
-            self.two_queue_remove(grid, pos, ch, &mut affected);
-            if !opaque {
-                self.refill(grid, pos, ch, &mut affected);
+            let target = |grid: &VoxelGrid| {
+                let through = if opaque {
+                    0
+                } else {
+                    neighbours(pos)
+                        .map(|nb| Self::read_world(grid, nb, ch).saturating_sub(1))
+                        .max()
+                        .unwrap_or(0)
+                };
+                emission[ch as usize].max(through)
+            };
+            // A voxel's light alone decides what it passes on, so a dark wave is
+            // only needed when the level here must fall.
+            let mut level = target(grid);
+            if Self::read_ch(grid, chunk_pos, idx, ch) > level {
+                self.two_queue_remove(grid, pos, ch, &mut affected);
+                level = target(grid);
             }
-            let level = emission[ch as usize];
-            if level > Self::read_ch(grid, chunk_pos, idx, ch) {
-                self.bfs_add(grid, pos, level, ch, &mut affected);
-            }
+            self.bfs_add(grid, pos, level, ch, &mut affected);
         }
         affected.into_iter().collect()
     }
@@ -182,6 +192,12 @@ impl LightPropagator {
     }
 
     #[inline]
+    fn read_world(grid: &VoxelGrid, world: IVec3, ch: LightChannel) -> u8 {
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(world);
+        Self::read_ch(grid, chunk_pos, idx, ch)
+    }
+
+    #[inline]
     fn write_ch(grid: &mut VoxelGrid, chunk_pos: IVec3, idx: usize, ch: LightChannel, v: u8) {
         let cl = grid.chunk_light_mut(chunk_pos);
         match ch {
@@ -207,30 +223,6 @@ impl LightPropagator {
             idx,
             level,
         });
-        self.drain(grid, ch, affected);
-    }
-
-    /// Light `pos` from the brightest face neighbour, then spread onward.
-    fn refill(
-        &mut self,
-        grid: &mut VoxelGrid,
-        pos: IVec3,
-        ch: LightChannel,
-        affected: &mut std::collections::HashSet<IVec3>,
-    ) {
-        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
-        self.queue.clear();
-        for nb_world in neighbours(pos) {
-            let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
-            let level = Self::read_ch(grid, nb_chunk, nb_idx, ch).saturating_sub(1);
-            if level > 0 {
-                self.queue.push_back(PropNode {
-                    chunk_pos,
-                    idx,
-                    level,
-                });
-            }
-        }
         self.drain(grid, ch, affected);
     }
 
@@ -266,7 +258,7 @@ impl LightPropagator {
             // Fully opaque blocks absorb — no propagation through them.
             if grid
                 .material_at(nb_world)
-                .is_some_and(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
+                .is_some_and(|mat_id| grid.material_registry.lighting(mat_id).is_opaque())
             {
                 continue;
             }
