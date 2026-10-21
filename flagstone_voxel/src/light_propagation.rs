@@ -279,12 +279,10 @@ impl LightPropagator {
             affected.insert(node.chunk_pos);
 
             let world = node.chunk_pos * CHUNK_SIZE + idx_to_local(node.idx);
-            // A surviving emitter's own voxel must read its emission again.
-            if let Some(level) = grid
-                .material_at(world)
-                .map(|mat_id| grid.material_registry.emission(mat_id)[ch as usize])
-                .filter(|&level| level > 0)
-            {
+            // A surviving emitter's own voxel must read its emission again; a
+            // block that emits nothing on `ch` seeds 0, which `drain` skips.
+            if let Some(mat_id) = grid.material_at(world) {
+                let level = grid.material_registry.emission(mat_id)[ch as usize];
                 emitters.push(PropNode { level, ..node });
             }
             for nb_world in neighbours(world) {
