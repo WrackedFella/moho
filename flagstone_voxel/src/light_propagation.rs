@@ -10,7 +10,8 @@
 //! # Algorithms
 //! - **add_light_rgb**: standard BFS; only updates voxels where new level > stored.
 //! - **remove_light**: two-queue removal — dark wave clears source-lit voxels,
-//!   then re-seeds from any adjacent voxels still lit by surviving sources.
+//!   then re-seeds cleared emitter blocks from their emission and relights from
+//!   adjacent voxels still lit by surviving sources.
 
 use super::grid::VoxelGrid;
 use super::light_storage::{self, CHUNK_SIZE, idx_to_local};
@@ -174,19 +175,26 @@ impl LightPropagator {
         self.drain(grid, ch, affected);
     }
 
-    /// Re-seed BFS from a set of nodes whose values are already written in the grid.
-    /// Unlike `bfs_add`, we do not try to re-write seed positions — we start by
-    /// immediately propagating each seed's stored value into its neighbors.
+    /// Re-seed BFS after a dark wave. `emitters` are written at their level;
+    /// `relight` voxels keep their stored value, and each spreads at the level it
+    /// reads now (a later dark node may have cleared it, in which case it spreads
+    /// nothing).
     fn bfs_add_nodes(
         &mut self,
         grid: &mut VoxelGrid,
-        seeds: &[PropNode],
+        emitters: &[PropNode],
+        relight: &[PropNode],
         ch: LightChannel,
         affected: &mut std::collections::HashSet<IVec3>,
     ) {
         self.queue.clear();
-        for &seed in seeds {
-            self.enqueue_neighbours(grid, seed, ch);
+        self.queue.extend(emitters.iter().copied());
+        for &seed in relight {
+            let level = Self::read_ch(grid, seed.chunk_pos, seed.idx, ch);
+            if level == 0 {
+                continue;
+            }
+            self.enqueue_neighbours(grid, PropNode { level, ..seed }, ch);
         }
         self.drain(grid, ch, affected);
     }
@@ -251,6 +259,7 @@ impl LightPropagator {
 
         let mut dark: VecDeque<PropNode> = VecDeque::with_capacity(512);
         let mut relight: Vec<PropNode> = Vec::new();
+        let mut emitters: Vec<PropNode> = Vec::new();
         let mut relight_seen: std::collections::HashSet<(IVec3, usize)> =
             std::collections::HashSet::new();
 
@@ -273,6 +282,13 @@ impl LightPropagator {
             affected.insert(node.chunk_pos);
 
             let world = node.chunk_pos * CHUNK_SIZE + idx_to_local(node.idx);
+            // A surviving emitter's own voxel must read its emission again.
+            if let Some(mat_id) = grid.material_at(world) {
+                let level = grid.material_registry.emission(mat_id)[ch as usize];
+                if level > 0 {
+                    emitters.push(PropNode { level, ..node });
+                }
+            }
             for nb_world in neighbours(world) {
                 let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
                 let nb_stored = Self::read_ch(grid, nb_chunk, nb_idx, ch);
@@ -299,8 +315,8 @@ impl LightPropagator {
             }
         }
 
-        if !relight.is_empty() {
-            self.bfs_add_nodes(grid, &relight, ch, affected);
+        if !emitters.is_empty() || !relight.is_empty() {
+            self.bfs_add_nodes(grid, &emitters, &relight, ch, affected);
         }
     }
 }
