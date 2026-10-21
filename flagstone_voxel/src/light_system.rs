@@ -183,7 +183,8 @@ impl LightSystem {
     /// Synchronous, so the chunks are lit when this returns. Chunks whose light
     /// or sky changed are queued for [`Self::emit_dirty_events`].
     pub fn light_arrived_chunks(&mut self, chunks: &[IVec3]) {
-        if !self.grid.supports_lighting() {
+        // Streaming calls this every tick, mostly with nothing arriving.
+        if chunks.is_empty() || !self.grid.supports_lighting() {
             return;
         }
         let mut highest: HashMap<(i32, i32), i32> = HashMap::new();

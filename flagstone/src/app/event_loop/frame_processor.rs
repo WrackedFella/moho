@@ -171,10 +171,9 @@ impl FrameProcessor {
             // Light first, so the meshes the publishes below trigger read it.
             ls.light_arrived_chunks(&loaded);
 
-            // Directly publish ChunkMeshDirty for every loaded chunk. The light
-            // system's emit_dirty_events only covers chunks that went through a
-            // light-processing job, so freshly placed terrain blocks would never
-            // reach the event processor otherwise.
+            // Directly publish ChunkMeshDirty for every loaded chunk: arrival only
+            // records chunks whose light or sky changed, and a new chunk needs its
+            // first mesh either way.
             //
             // Also re-mesh each new chunk's 6 face neighbors: when neighbor N
             // was previously meshed without this chunk present, it generated an
