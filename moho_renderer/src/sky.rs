@@ -159,6 +159,34 @@ mod tests {
     }
 
     #[test]
+    fn palette_has_no_jump_at_any_period_boundary() {
+        for hour in [5.0_f32, 7.0, 8.0, 17.0, 21.0, 22.0] {
+            let distance = max_channel_distance(sky_palette(hour - 1e-4), sky_palette(hour));
+            assert!(distance < 1e-3, "palette jumps {distance} at {hour} h");
+        }
+    }
+
+    #[test]
+    fn palette_blends_dawn_into_day_and_dusk_into_night_over_an_hour() {
+        let half = |a: [f32; 3], b: [f32; 3]| [0, 1, 2].map(|i| (a[i] + b[i]) / 2.0);
+        let dawn_zenith = [0.3_f32, 0.5, 0.7];
+        let dusk_horizon = [1.0_f32, 0.5, 0.3];
+
+        assert_colour_eq(
+            sky_palette(7.5).zenith,
+            half(dawn_zenith, DAY.zenith),
+            "7.5 h zenith",
+        );
+        assert_palette_eq(sky_palette(8.0), DAY, "8 h");
+        assert_colour_eq(
+            sky_palette(21.5).horizon,
+            half(dusk_horizon, NIGHT.horizon),
+            "21.5 h horizon",
+        );
+        assert_palette_eq(sky_palette(22.0), NIGHT, "22 h");
+    }
+
+    #[test]
     fn palette_wraps_hours_into_a_day() {
         for (hour, same_as) in [
             (26.0, 2.0),
@@ -201,8 +229,8 @@ mod tests {
 
             let distance = max_channel_distance(sky_palette(t), sky_palette(t + step));
 
-            // The steepest blend moves under 1 unit per hour, so a thousandth of an
-            // hour moves a channel by far less than this.
+            // The steepest blend (dusk to night horizon over one hour) moves 1.35 units
+            // per hour at its peak, so a thousandth of an hour stays under this.
             prop_assert!(distance < 5e-3, "palette jumps {distance} between {t} and {}", t + step);
         }
     }
