@@ -30,23 +30,30 @@ pub fn local_index(x: i32, y: i32, z: i32) -> usize {
     (x as usize) + (y as usize) * CHUNK_USIZE + (z as usize) * CHUNK_USIZE * CHUNK_USIZE
 }
 
-/// Chunk-local (x, y, z) of a linear index; the inverse of [`local_index`].
-#[inline]
-/// Offsets of the face-neighbour chunks whose surfaces read the voxel at chunk-local
-/// `local`: one per face layer the voxel lies on.
-pub(crate) fn border_offsets(local: IVec3) -> impl Iterator<Item = IVec3> {
-    (0..3).flat_map(move |axis| {
-        let mut offsets = [None, None];
-        if local[axis] == 0 {
-            offsets[0] = Some(-IVec3::AXES[axis]);
-        }
-        if local[axis] == CHUNK_SIZE - 1 {
-            offsets[1] = Some(IVec3::AXES[axis]);
-        }
-        offsets.into_iter().flatten()
-    })
+/// Offsets of the neighbour chunks whose meshes read the voxel at chunk-local `local`.
+/// The smooth mesher reads one voxel past its chunk on every side, so a voxel on an edge
+/// or corner is read by the diagonal chunks too, not only the face neighbours.
+pub(crate) fn reading_chunk_offsets(local: IVec3) -> impl Iterator<Item = IVec3> {
+    let axis_offsets = move |axis: usize| {
+        [
+            0,
+            -i32::from(local[axis] == 0),
+            i32::from(local[axis] == CHUNK_SIZE - 1),
+        ]
+    };
+    let [xs, ys, zs] = [0, 1, 2].map(axis_offsets);
+    xs.into_iter()
+        .flat_map(move |x| {
+            ys.into_iter()
+                .flat_map(move |y| zs.into_iter().map(move |z| IVec3::new(x, y, z)))
+        })
+        .filter(|offset| *offset != IVec3::ZERO)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
 }
 
+/// Chunk-local (x, y, z) of a linear index; the inverse of [`local_index`].
+#[inline]
 pub(crate) fn idx_to_local(idx: usize) -> IVec3 {
     IVec3::new(
         (idx % CHUNK_USIZE) as i32,

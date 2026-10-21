@@ -15,7 +15,7 @@
 
 use super::grid::VoxelGrid;
 use super::light_storage::{
-    self, CHUNK_SIZE, CHUNK_VOLUME, ChunkLight, border_offsets, idx_to_local, local_index,
+    self, CHUNK_SIZE, CHUNK_VOLUME, ChunkLight, idx_to_local, local_index, reading_chunk_offsets,
 };
 use glam::IVec3;
 use std::collections::{HashSet, VecDeque};
@@ -381,7 +381,7 @@ impl LightPropagator {
 fn mark_light_write(grid: &VoxelGrid, chunk_pos: IVec3, idx: usize, affected: &mut HashSet<IVec3>) {
     affected.insert(chunk_pos);
     affected.extend(
-        border_offsets(idx_to_local(idx))
+        reading_chunk_offsets(idx_to_local(idx))
             .map(|offset| chunk_pos + offset)
             .filter(|&across| grid.has_chunk(across)),
     );

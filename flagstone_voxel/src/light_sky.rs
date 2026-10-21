@@ -13,7 +13,7 @@
 //! and gates only the sky-hemisphere ambient term in the renderer.
 
 use super::grid::VoxelGrid;
-use super::light_storage::{self, CHUNK_SIZE, CHUNK_USIZE, border_offsets};
+use super::light_storage::{self, CHUNK_SIZE, CHUNK_USIZE, reading_chunk_offsets};
 use glam::IVec3;
 use std::collections::HashSet;
 
@@ -85,7 +85,7 @@ pub(crate) fn recompute_sky_change(grid: &mut VoxelGrid, chunk_pos: IVec3) -> Sk
                     change.any = true;
                     change
                         .borders
-                        .extend(border_offsets(IVec3::new(lx, ly, lz)));
+                        .extend(reading_chunk_offsets(IVec3::new(lx, ly, lz)));
                 }
                 cl.set_sky_exposed(idx, exposed);
             }
