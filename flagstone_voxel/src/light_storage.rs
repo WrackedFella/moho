@@ -12,7 +12,7 @@
 //!
 //! `CHUNK_SIZE = 16` is hardcoded; non-16 grids do not get lighting.
 
-use glam::IVec3;
+use glam::{IVec3, UVec3};
 
 pub const CHUNK_SIZE: i32 = 16;
 pub const CHUNK_USIZE: usize = CHUNK_SIZE as usize;
@@ -31,24 +31,21 @@ pub fn local_index(x: i32, y: i32, z: i32) -> usize {
 }
 
 /// Offsets of the neighbour chunks whose meshes read the voxel at chunk-local `local`.
-/// The smooth mesher reads one voxel past its chunk on every side, so a voxel on an edge
-/// or corner is read by the diagonal chunks too, not only the face neighbours.
+///
+/// A blocky face reads the voxel in front of it, so a voxel on an outer layer is read by
+/// the face neighbour across that layer. The smooth mesher reads its chunk plus one voxel
+/// past each positive face, so a voxel on a low layer is also read by the chunks below it
+/// on any combination of those axes, diagonals included.
 pub(crate) fn reading_chunk_offsets(local: IVec3) -> impl Iterator<Item = IVec3> {
-    let across = |axis: usize| match local[axis] {
-        0 => Some(-1),
-        l if l == CHUNK_SIZE - 1 => Some(1),
-        _ => None,
-    };
-    // Each axis offers distinct offsets, so the product has no duplicates.
-    let [xs, ys, zs] = [0, 1, 2].map(|axis| [Some(0), across(axis)]);
-    xs.into_iter()
-        .flatten()
-        .flat_map(move |x| {
-            ys.into_iter()
-                .flatten()
-                .flat_map(move |y| zs.into_iter().flatten().map(move |z| IVec3::new(x, y, z)))
-        })
-        .filter(|offset| *offset != IVec3::ZERO)
+    let low = local.cmpeq(IVec3::ZERO).bitmask();
+    let high = local.cmpeq(IVec3::splat(CHUNK_SIZE - 1)).bitmask();
+    let below = (1..8)
+        .filter(move |&axes| axes & low == axes)
+        .map(|axes| -UVec3::new(axes & 1, (axes >> 1) & 1, (axes >> 2) & 1).as_ivec3());
+    let above = (0..3)
+        .filter(move |&axis| high & (1 << axis) != 0)
+        .map(|axis| IVec3::AXES[axis]);
+    below.chain(above)
 }
 
 /// Chunk-local (x, y, z) of a linear index; the inverse of [`local_index`].
@@ -224,11 +221,7 @@ mod tests {
         ];
         for (local, expected) in rows {
             let got: Vec<IVec3> = reading_chunk_offsets(IVec3::from_array(local)).collect();
-            assert_eq!(
-                got.len(),
-                expected.len(),
-                "{local:?}: {got:?}"
-            );
+            assert_eq!(got.len(), expected.len(), "{local:?}: {got:?}");
             assert_eq!(
                 got.into_iter().collect::<HashSet<_>>(),
                 expected,
