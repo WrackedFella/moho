@@ -152,7 +152,6 @@ mod tests {
     #[test]
     fn new_rejects_rounds_over_capacity() {
         let over = Magazine::new(30, 31);
-        let exact = Magazine::new(30, 30);
 
         assert_eq!(
             over,
@@ -161,7 +160,14 @@ mod tests {
                 capacity: 30
             })
         );
-        assert!(exact.is_ok());
+    }
+
+    #[test]
+    fn new_accepts_a_full_magazine() {
+        let full = Magazine::new(30, 30).expect("a full magazine fits its capacity");
+
+        assert_eq!(full.capacity(), 30);
+        assert_eq!(full.rounds(), 30);
     }
 
     #[test]

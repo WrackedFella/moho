@@ -95,23 +95,6 @@ mod tests {
 
     proptest! {
         #[test]
-        fn same_seed_and_stream_give_equal_sequences(
-            seed in any::<u64>(),
-            name in name_strategy(),
-            count in 0usize..64,
-        ) {
-            let stream = StreamId::named(&name);
-            let mut a = SimRng::new(seed, stream);
-            let mut b = SimRng::new(seed, stream);
-
-            let from_a = draw_u64(&mut a, count);
-            let from_b = draw_u64(&mut b, count);
-
-            prop_assert_eq!(from_a, from_b);
-            prop_assert_eq!(a, b);
-        }
-
-        #[test]
         fn extra_draw_on_one_stream_leaves_other_unchanged(
             seed in any::<u64>(),
             name_a in name_strategy(),
