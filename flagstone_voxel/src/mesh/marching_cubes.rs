@@ -143,12 +143,7 @@ impl MarchingCubes {
             }
         }
 
-        // Skip if cube is entirely inside or outside
-        if cube_index == 0 || cube_index == 255 {
-            return;
-        }
-
-        // Get triangulation for this cube configuration
+        // Edges the surface crosses; none when the cube is entirely inside or outside.
         let edge_flags = EDGE_TABLE[cube_index as usize];
         if edge_flags == 0 {
             return;
@@ -167,12 +162,9 @@ impl MarchingCubes {
                 let d0 = corners[v0_idx];
                 let d1 = corners[v1_idx];
 
-                // Linear interpolation
-                let t = if (d1 - d0).abs() < 0.00001 {
-                    0.5
-                } else {
-                    (iso_level - d0) / (d1 - d0)
-                };
+                // A crossed edge has one end above the iso level and one at or below it, so
+                // `d1 != d0`.
+                let t = (iso_level - d0) / (d1 - d0);
 
                 edge_vertices[i] = lerp3(
                     Self::corner_position(x, y, z, v0_idx),
@@ -300,25 +292,6 @@ impl MarchingCubes {
         let len = gradient.iter().map(|g| g * g).sum::<f32>().sqrt();
         // Density rises into the solid, so outward is the negated gradient.
         gradient.map(|g| -g / len)
-    }
-
-    /// Convert voxel block data to density field
-    ///
-    /// This creates a 18x18x18 field (16x16x16 chunk + 1 padding on each side)
-    /// for proper gradient computation at boundaries.
-    pub fn create_density_field(blocks: &[[[bool; 16]; 16]; 16]) -> [[[f32; 18]; 18]; 18] {
-        let mut field = [[[0.0f32; 18]; 18]; 18];
-
-        for x in 0..16 {
-            for y in 0..16 {
-                for z in 0..16 {
-                    // Center the blocks in the field (skip padding)
-                    field[x + 1][y + 1][z + 1] = if blocks[x][y][z] { 1.0 } else { 0.0 };
-                }
-            }
-        }
-
-        field
     }
 }
 
@@ -894,25 +867,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_create_density_field() {
-        let mut blocks = [[[false; 16]; 16]; 16];
-        blocks[0][0][0] = true;
-        blocks[1][1][1] = true;
+    fn sample_density_interpolates_trilinearly_inside_a_cell() {
+        // Corner (dx, dy, dz) holds 2^(4dx + 2dy + dz), so every corner is distinct
+        // and the result identifies each corner's weight.
+        let mut field = [[[0.0f32; 18]; 18]; 18];
+        let (ox, oy, oz) = (8, 8, 8);
+        for dx in 0..2 {
+            for dy in 0..2 {
+                for dz in 0..2 {
+                    field[ox + dx][oy + dy][oz + dz] = (1u32 << (4 * dx + 2 * dy + dz)) as f32;
+                }
+            }
+        }
+        let expected = |fx: f32, fy: f32, fz: f32| -> f32 {
+            let mut sum = 0.0;
+            for dx in 0..2 {
+                for dy in 0..2 {
+                    for dz in 0..2 {
+                        let wx = if dx == 1 { fx } else { 1.0 - fx };
+                        let wy = if dy == 1 { fy } else { 1.0 - fy };
+                        let wz = if dz == 1 { fz } else { 1.0 - fz };
+                        sum += (1u32 << (4 * dx + 2 * dy + dz)) as f32 * wx * wy * wz;
+                    }
+                }
+            }
+            sum
+        };
 
-        let field = MarchingCubes::create_density_field(&blocks);
+        for (fx, fy, fz) in [(0.25, 0.5, 0.75), (0.75, 0.25, 0.5), (0.5, 0.75, 0.25)] {
+            let actual = MarchingCubes::sample_density(&field, 8.0 + fx, 8.0 + fy, 8.0 + fz);
 
-        // Check padding is zero
-        assert_eq!(field[0][0][0], 0.0);
-
-        // Check interior blocks are set
-        assert_eq!(field[1][1][1], 1.0); // blocks[0][0][0]
-        assert_eq!(field[2][2][2], 1.0); // blocks[1][1][1]
+            assert!(
+                (actual - expected(fx, fy, fz)).abs() < 1e-3,
+                "at ({fx}, {fy}, {fz}): got {actual}, expected {}",
+                expected(fx, fy, fz)
+            );
+        }
     }
 
     #[test]
     fn test_empty_density_field() {
-        let blocks = [[[false; 16]; 16]; 16];
-        let field = MarchingCubes::create_density_field(&blocks);
+        let field = [[[0.0f32; 18]; 18]; 18];
         let mesh = MarchingCubes::generate_mesh(&field, 16);
 
         // Empty field should produce no geometry
@@ -950,6 +945,17 @@ mod tests {
             );
         }
         assert_normals_point_away_from(&mesh, [6.5, 6.5, 6.5]);
+    }
+
+    #[test]
+    fn sample_at_iso_level_is_not_solid() {
+        let mut field = [[[0.0f32; 18]; 18]; 18];
+        field[8][8][8] = 0.5;
+
+        let mesh = MarchingCubes::generate_mesh(&field, 16);
+
+        assert!(mesh.vertices.is_empty());
+        assert!(mesh.indices.is_empty());
     }
 
     fn solid_samples_field(
@@ -1054,8 +1060,9 @@ mod tests {
     #[test]
     fn all_indices_in_range() {
         // Regression guard: out-of-range indices cause silent GPU crashes on some hardware.
-        let blocks = [[[true; 16]; 16]; 16];
-        let field = MarchingCubes::create_density_field(&blocks);
+        let solid =
+            (1..=16).flat_map(|x| (1..=16).flat_map(move |y| (1..=16).map(move |z| (x, y, z))));
+        let field = solid_samples_field(solid);
         let mesh = MarchingCubes::generate_mesh(&field, 16);
 
         let vertex_count = mesh.vertices.len() as u32;
@@ -1137,6 +1144,62 @@ mod tests {
                 unmatched.is_empty(),
                 "index {cube_index}: cell_triangles has extra triangles {unmatched:?}"
             );
+        }
+    }
+
+    /// Samples (8,8,8) and (9,8,8) at the given densities, everything else empty.
+    fn mesh_of_two_samples(d0: f32, d1: f32) -> VoxelMesh {
+        let mut field = [[[0.0f32; 18]; 18]; 18];
+        field[8][8][8] = d0;
+        field[9][8][8] = d1;
+        MarchingCubes::generate_mesh(&field, 16)
+    }
+
+    #[test]
+    fn edge_vertex_sits_at_iso_crossing() {
+        // (density at x=8, density at x=9, x of the crossing between them)
+        let rows = [
+            (0.2, 0.8, 8.5),
+            (0.0, 0.8, 8.625),
+            (0.2, 0.6, 8.75),
+            (0.8, 0.0, 8.375),
+            (0.9, 0.3, 8.0 + 0.4 / 0.6),
+        ];
+
+        for (d0, d1, crossing) in rows {
+            let mesh = mesh_of_two_samples(d0, d1);
+
+            let on_edge: Vec<[f32; 3]> = mesh
+                .vertices
+                .iter()
+                .copied()
+                .filter(|v| v[0] > 8.0 && v[0] < 9.0 && v[1] == 8.0 && v[2] == 8.0)
+                .collect();
+            assert!(!on_edge.is_empty(), "{d0}/{d1}: no vertex on the edge");
+            for v in on_edge {
+                assert!(
+                    (v[0] - crossing).abs() < 1e-5,
+                    "{d0}/{d1}: vertex at x={}, expected {crossing}",
+                    v[0]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ao_follows_density_at_vertex() {
+        // Every vertex sits on the 0.5 isosurface, where AO is 0.6 + 0.4 * (1 - 0.5).
+        for (d0, d1) in [(0.2, 0.8), (0.0, 0.8), (0.9, 0.3)] {
+            let mesh = mesh_of_two_samples(d0, d1);
+
+            assert!(!mesh.vertices.is_empty());
+            assert_eq!(mesh.ambient_occlusion.len(), mesh.vertices.len());
+            for (v, ao) in mesh.vertices.iter().zip(&mesh.ambient_occlusion) {
+                assert!(
+                    (ao - 0.8).abs() < 1e-5,
+                    "{d0}/{d1}: vertex {v:?} has AO {ao}, expected 0.8"
+                );
+            }
         }
     }
 }
