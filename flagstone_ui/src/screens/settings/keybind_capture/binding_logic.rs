@@ -134,7 +134,7 @@ impl KeybindCaptureHandler {
                 conflicting: Some(conflicting),
             };
             let conflict_key_name = Self::get_key_name(conflicting).to_string();
-            let conflict_binding_desc = binding_label(&[Binding::Key(key)]);
+            let conflict_binding_desc = binding_label(&[Binding::key(key)]);
             self.conflict_modal
                 .show(pending, conflict_key_name, conflict_binding_desc);
             false

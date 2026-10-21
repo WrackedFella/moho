@@ -95,6 +95,7 @@ struct VertexIn {
     @location(10) light_level: f32,
     @location(11) block_light_rgb: vec3<f32>,
     @location(12) sky_exposed: f32,
+    @location(13) material: u32,
 }
 
 struct InstanceIn {

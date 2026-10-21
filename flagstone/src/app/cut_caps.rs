@@ -7,7 +7,7 @@ use moho_renderer::WorldMeshes;
 use std::collections::HashSet;
 use std::time::Instant;
 
-use super::world_geometry::chunk_mesh_id;
+use super::world_geometry::{TerrainPalette, chunk_mesh_id};
 
 /// Which chunks carry a cap at the view height and which must be rebuilt.
 #[derive(Debug, Default)]
@@ -62,6 +62,7 @@ impl CutCaps {
         chunks: &ChunkStore,
         world_meshes: &mut WorldMeshes,
         cap_material: u32,
+        palette: &TerrainPalette,
     ) {
         let Some(cut) = self.cut else {
             for pos in self.capped.drain() {
@@ -92,7 +93,11 @@ impl CutCaps {
             let mesh = chunk.map(|chunk| cut_cap_mesh(grid, pos, chunk.lod(), cut));
             match mesh.filter(|mesh| !mesh.indices.is_empty()) {
                 Some(mesh) => {
-                    world_meshes.upsert(cap_mesh_id(pos), cap_world_mesh(mesh), cap_material);
+                    world_meshes.upsert(
+                        cap_mesh_id(pos),
+                        cap_world_mesh(mesh, palette),
+                        cap_material,
+                    );
                     self.capped.insert(pos);
                 }
                 None => self.uncap(pos, world_meshes),
@@ -107,7 +112,7 @@ impl CutCaps {
 }
 
 /// The cap in the world-geometry contract's form.
-fn cap_world_mesh(mesh: VoxelMesh) -> WorldMesh {
+fn cap_world_mesh(mesh: VoxelMesh, palette: &TerrainPalette) -> WorldMesh {
     WorldMesh::new(
         mesh.vertices,
         mesh.normals,
@@ -117,6 +122,7 @@ fn cap_world_mesh(mesh: VoxelMesh) -> WorldMesh {
         mesh.geometry_type,
         mesh.indices,
     )
+    .and_then(|world| palette.apply(world, &mesh.material))
     .expect("cut_cap_mesh fills every vertex channel and indexes only its own vertices")
 }
 
@@ -154,6 +160,8 @@ pub(crate) mod tests {
     pub(crate) struct CaptureBackend {
         next_handle: u32,
         live: BTreeMap<u32, (Vec<[f32; 3]>, Vec<u32>)>,
+        /// The `material` argument each live mesh was registered with.
+        live_materials: BTreeMap<u32, Vec<u32>>,
         pub(crate) unregistered: Vec<u32>,
     }
 
@@ -171,15 +179,19 @@ pub(crate) mod tests {
             _light_level: &[f32],
             _block_light_rgb: &[[f32; 3]],
             _sky_exposed: &[f32],
+            material: &[u32],
             indices: &[u32],
         ) -> u32 {
             self.next_handle += 1;
+            self.live_materials
+                .insert(self.next_handle, material.to_vec());
             self.live
                 .insert(self.next_handle, (vertices.to_vec(), indices.to_vec()));
             self.next_handle
         }
         fn unregister_mesh(&mut self, mesh: u32) {
             self.live.remove(&mesh);
+            self.live_materials.remove(&mesh);
             self.unregistered.push(mesh);
         }
         fn begin_frame(
@@ -216,6 +228,8 @@ pub(crate) mod tests {
         pub(crate) material: u32,
         pub(crate) y: f32,
         pub(crate) vertices: Vec<[f32; 3]>,
+        /// Per-vertex material-table index, as uploaded.
+        pub(crate) vertex_materials: Vec<u32>,
         indices: Vec<u32>,
     }
 
@@ -254,6 +268,7 @@ pub(crate) mod tests {
                     material: instance.material,
                     y,
                     vertices: vertices.clone(),
+                    vertex_materials: backend.live_materials[&handle].clone(),
                     indices: indices.clone(),
                 })
             })
@@ -523,6 +538,95 @@ pub(crate) mod tests {
             prop_assert_eq!(a == b, cap_mesh_id(a) == cap_mesh_id(b));
             prop_assert_eq!(a == near, cap_mesh_id(a) == cap_mesh_id(near));
             prop_assert_eq!(cap_mesh_id(a).0, chunk_mesh_id(a).0 | 1 << 63);
+        }
+    }
+
+    /// Restarts the app's material table with an unrelated material first, then the
+    /// terrain, cut-face and palette entries after it, so a voxel id and its table
+    /// index differ. Call before any mesh is queued.
+    pub(crate) fn offset_palette(app: &mut App) {
+        app.scene = moho_renderer::Scene::new();
+        app.scene
+            .material_table
+            .find_or_push(&flagstone_voxel::MaterialType::Lambertian {
+                albedo: glam::Vec3::new(0.9, 0.1, 0.8),
+            });
+        app.terrain_material_idx =
+            crate::app::world_geometry::register_terrain_material(&mut app.scene);
+        app.cut_face_material_idx =
+            crate::app::world_geometry::register_cut_face_material(&mut app.scene);
+        let registry = flagstone_voxel::MaterialRegistry::new();
+        app.terrain_palette = crate::app::world_geometry::TerrainPalette::new(
+            &registry,
+            &mut app.scene.material_table,
+            app.terrain_material_idx,
+        );
+    }
+
+    #[test]
+    fn caps_carry_block_materials_through_the_palette() {
+        let mut app = App::headless();
+        offset_palette(&mut app);
+        let grid = app.light_system.as_mut().expect("light system").grid_mut();
+        let mut mutator = grid.mutator();
+        mutator.fill_region(IVec3::new(0, 0, 0), IVec3::new(7, 7, 15), 2);
+        mutator.fill_region(IVec3::new(8, 0, 0), IVec3::new(15, 7, 15), 1);
+        mutator.place(IVec3::new(3, 4, 6), 2, Some(1));
+        let chunk = VoxelChunk::from_grid_lod(grid, IVec3::ZERO, 0);
+        insert_chunk(&mut app, chunk);
+        let mut backend = CaptureBackend::default();
+
+        cut_and_draw(&mut app, &mut backend, Some(4.5));
+
+        let caps = drawn_caps(&mut app, &backend);
+        assert_eq!(caps.len(), 1, "the chunk is capped");
+        let cap = &caps[0];
+        assert_eq!(cap.vertex_materials.len(), cap.vertices.len());
+        assert_ne!(
+            app.terrain_palette.index(2),
+            2,
+            "the palette is not the identity"
+        );
+        assert_ne!(
+            app.terrain_palette.index(3),
+            3,
+            "the palette is not the identity"
+        );
+        let (stone, soil, ore) = (
+            app.terrain_palette.index(2),
+            app.terrain_palette.index(1),
+            app.terrain_palette.index(3),
+        );
+        let drawn: std::collections::BTreeSet<u32> = cap.vertex_materials.iter().copied().collect();
+        assert_eq!(
+            drawn,
+            std::collections::BTreeSet::from([stone, soil, ore]),
+            "stone, soil and ore each show on the cap"
+        );
+        assert_eq!(
+            [stone, soil, ore]
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            3,
+            "three different table entries"
+        );
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        for tri in cap.indices.as_chunks::<3>().0 {
+            let corners = tri.map(|i| cap.vertices[i as usize]);
+            let x = corners.iter().map(|v| v[0]).sum::<f32>() / 3.0;
+            let z = corners.iter().map(|v| v[2]).sum::<f32>() / 3.0;
+            // The block whose column is nearest the triangle, unless it is air.
+            let block = IVec3::new(x.floor() as i32, 4, z.floor() as i32);
+            let Some(voxel) = grid.material_at(block) else {
+                continue;
+            };
+            let expected = app.terrain_palette.index(
+                grid.material_registry
+                    .face_material(voxel, grid.resource_at(block)),
+            );
+            let drawn = tri.map(|i| cap.vertex_materials[i as usize]);
+            assert_eq!(drawn, [expected; 3], "cap triangle over block {block}");
         }
     }
 }

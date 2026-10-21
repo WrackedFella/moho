@@ -86,10 +86,13 @@ pub fn load_scene(
                 "Reconstructed VoxelGrid blocks for LightSystem"
             );
         }
-        app.light_system = Some(flagstone_voxel::LightSystem::with_default_budget(
-            grid,
-            app.event_bus.clone(),
-        ));
+        let mut light_system =
+            flagstone_voxel::LightSystem::with_default_budget(grid, app.event_bus.clone());
+        // Lit before the first tick; the dirty events re-mesh the scene from the lit grid.
+        let loaded: Vec<glam::IVec3> = light_system.grid().chunk_positions().collect();
+        light_system.light_arrived_chunks(&loaded);
+        light_system.emit_dirty_events();
+        app.light_system = Some(light_system);
 
         // Initialize ChunkStreamer so the loaded world can stream additional chunks
         let mut terrain_config = flagstone_game::scene_builders::TerrainConfig::default();
@@ -135,4 +138,62 @@ pub fn load_scene(
 
     tracing::info!("Scene loading complete - switched to game mode");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flagstone_voxel::{BlockPos, WorldEvent};
+
+    #[test]
+    fn loading_a_world_lights_it_before_the_first_tick() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut saved = crate::App::headless();
+        let grid = saved
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        grid.mutator()
+            .fill_region(BlockPos::new(0, 0, 0), BlockPos::new(15, 7, 15), 0);
+        grid.mutator().place(BlockPos::new(5, 12, 5), 0, None);
+        crate::app::autosave::auto_save_on_shutdown(
+            &mut saved,
+            &moho_app::GameClock::default(),
+            temp.path(),
+            &[],
+        )
+        .expect("autosave");
+        let mut app = crate::App::headless();
+        let _ = app.world_event_rx.try_iter().count();
+
+        load_scene(
+            &mut app,
+            &mut moho_app::GameClock::default(),
+            &temp.path().join("scene.bin"),
+        )
+        .expect("load");
+
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        assert!(
+            grid.sky_exposed_at(BlockPos::new(8, 10, 8)),
+            "open air above the ground sees the sky"
+        );
+        assert!(
+            !grid.sky_exposed_at(BlockPos::new(5, 10, 5)),
+            "air under the roof block does not"
+        );
+        let dirtied: Vec<glam::IVec3> = app
+            .world_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                WorldEvent::ChunkMeshDirty { chunk_pos, .. } => Some(chunk_pos),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            dirtied.contains(&glam::IVec3::ZERO),
+            "the loaded chunk is queued for re-meshing: {dirtied:?}"
+        );
+    }
 }

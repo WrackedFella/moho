@@ -207,6 +207,7 @@ fn register_entity_mesh(
         &vec![1.0; n],
         &vec![[0.0; 3]; n],
         &vec![1.0; n],
+        &[],
         indices,
     )
 }
@@ -259,6 +260,7 @@ mod tests {
             _light_level: &[f32],
             block_light_rgb: &[[f32; 3]],
             sky_exposed: &[f32],
+            _material: &[u32],
             _indices: &[u32],
         ) -> u32 {
             self.meshes.push(RecordedMesh {

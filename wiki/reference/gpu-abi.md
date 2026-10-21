@@ -12,8 +12,9 @@
 
 All structs are `#[repr(C)]`, `bytemuck::{Pod, Zeroable}`, and built from `vec4`-sized
 fields so std140/std430 padding never differs between the two sides. Size matches
-`size_of::<T>()`. `UiVertex` is the exception: it is only read as a vertex buffer
-(`Float32x2`, `Float32x2`, `Uint32`), so it is packed to 20 B with no padding.
+`size_of::<T>()`. `UiVertex` and `Vertex` are the exceptions: they are only read as
+vertex buffers, so they are packed with no padding (`UiVertex`: `Float32x2`, `Float32x2`,
+`Uint32`, 20 B; `Vertex`: see the layout below, 56 B).
 
 ## Sizes
 
@@ -28,6 +29,7 @@ fields so std140/std430 padding never differs between the two sides. Size matche
 | `ShadowMatrixGpu` | 64 B | legacy single shadow map |
 | `InstanceGpu` | 80 B (mat4 + 4 × u32) | per-instance vertex buffer |
 | `MarkerGpu` | 48 B (3 × vec4) | per-instance vertex buffer, marker pass |
+| `Vertex` (`moho_renderer/src/types.rs`) | 56 B (packed, 14 × 4 B) | per-vertex buffer, main pass |
 | `UiVertex` | 20 B (f32×2 pos, f32×2 uv, u8×4 colour) | UI pass vertex buffer |
 
 Group 0 also binds the SSAO texture and sampler (bindings 3, 4). Group 1 binds the
@@ -57,6 +59,10 @@ nearest sampler for the PCSS blocker search (3).
 | | `lights` | `[PointLightGpu; 64]` |
 | `MarkerGpu` | `min`, `max` | xyz box corners in world metres, w unused |
 | | `color` | linear RGBA, straight alpha |
+| `Vertex` | `position`, `normal` | `Float32x3` at locations 0, 1 |
+| | `ao`, `geometry_type` | `Float32`, `Uint32` at locations 2, 3 |
+| | `light_level`, `block_light_rgb`, `sky_exposed` | `Float32`, `Float32x3`, `Float32` at locations 10, 11, 12 |
+| | `material` | `Uint32` at location 13: material-table index; `u32::MAX` means draw in the instance's material |
 | `InstanceGpu` | `model` | column-major mat4 |
 | | `material`, `object_type` | `u32` material index, object kind |
 | | `padding` | `[u32; 2]` |

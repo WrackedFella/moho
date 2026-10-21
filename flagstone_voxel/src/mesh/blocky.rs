@@ -21,26 +21,33 @@ impl BlockyMeshGenerator {
     ///
     /// # Returns
     /// A `VoxelMesh` with 24 vertices (4 per face), normals, and AO values
+    ///
+    /// # Panics
+    /// If `position` is air.
     pub fn generate_mesh(grid: &VoxelGrid, position: BlockPos) -> VoxelMesh {
         let mut mesh = VoxelMesh::empty();
 
+        let material = grid
+            .face_material_at(position)
+            .expect("the block at `position` is solid");
+
         // +X face (right): check neighbors in +X direction
-        Self::add_face(&mut mesh, grid, position, FaceDirection::PosX);
+        Self::add_face(&mut mesh, grid, position, FaceDirection::PosX, material);
 
         // -X face (left): check neighbors in -X direction
-        Self::add_face(&mut mesh, grid, position, FaceDirection::NegX);
+        Self::add_face(&mut mesh, grid, position, FaceDirection::NegX, material);
 
         // +Y face (top): check neighbors in +Y direction
-        Self::add_face(&mut mesh, grid, position, FaceDirection::PosY);
+        Self::add_face(&mut mesh, grid, position, FaceDirection::PosY, material);
 
         // -Y face (bottom): check neighbors in -Y direction
-        Self::add_face(&mut mesh, grid, position, FaceDirection::NegY);
+        Self::add_face(&mut mesh, grid, position, FaceDirection::NegY, material);
 
         // +Z face (front): check neighbors in +Z direction
-        Self::add_face(&mut mesh, grid, position, FaceDirection::PosZ);
+        Self::add_face(&mut mesh, grid, position, FaceDirection::PosZ, material);
 
         // -Z face (back): check neighbors in -Z direction
-        Self::add_face(&mut mesh, grid, position, FaceDirection::NegZ);
+        Self::add_face(&mut mesh, grid, position, FaceDirection::NegZ, material);
 
         mesh
     }
@@ -51,6 +58,7 @@ impl BlockyMeshGenerator {
         grid: &VoxelGrid,
         position: BlockPos,
         direction: FaceDirection,
+        face_material: u32,
     ) {
         let base_index = mesh.vertices.len() as u32;
 
@@ -72,6 +80,8 @@ impl BlockyMeshGenerator {
                 .iter()
                 .map(|&vert| FaceDirection::vertex_ao(grid, position, vert, normal)),
         );
+
+        mesh.material.extend([face_material; 4]);
 
         // Mark as blocky geometry (0 = smooth, 1 = blocky)
         for _ in 0..4 {
@@ -403,6 +413,26 @@ mod tests {
                 }
                 assert_eq!(mesh.sky_exposed[i], expected_sky);
             }
+        }
+    }
+
+    #[test]
+    fn every_face_carries_the_block_face_material() {
+        let rows = [
+            (100, None, 100, "unmapped blocky block keeps its id"),
+            (105, None, 105, "another blocky id"),
+            (100, Some(1), 3, "iron ore draws in the ore material"),
+            (100, Some(9), 100, "an unmapped resource keeps the block id"),
+        ];
+
+        for (material, resource, expected, why) in rows {
+            let mut grid = VoxelGrid::new(16);
+            let pos = IVec3::new(16, 16, 16);
+            grid.place_block(pos, material, resource);
+
+            let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
+
+            assert_eq!(mesh.material, vec![expected; 24], "{why}");
         }
     }
 }

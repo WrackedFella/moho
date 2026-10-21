@@ -41,7 +41,7 @@ flowchart LR
     P -->|"Prefs::save"| F
 ```
 
-## Running prefs and saving
+## 1 Running prefs and saving
 
 `App::prefs` is the running copy; `App::prefs_path` is where the app saves it (`None` for
 a headless `App`, so its console commands never touch the user's file; a Settings screen
@@ -62,7 +62,7 @@ opened there still saves to the default path).
 - **Startup** builds the same `AudioSettings` from the loaded prefs and applies it on the
   first frame. Each category volume is its pref divided by ten and clamped to 0..=1; 0 is silent.
 
-## Keys
+## 2 Keys
 
 | Section | Key | Accepted values | Default |
 |---|---|---|---|
@@ -90,12 +90,12 @@ action, defaults included. Line problems are returned as `BindingWarning`s and t
 action keeps its default (`flagstone_ui::actions::load_bindings` logs them): an unknown
 action id, or a value with any unrecognised key. A `[bindings]` line with no `=` is a
 malformed prefs line. `console` is reserved in every game's `[bindings]`: it is the
-engine console's key (`moho_ui_shell`, default backtick; an unbound or unreadable value
-falls back to backtick), not a game action. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
+engine console's key (`moho_ui_shell`, default backtick; an unbound or unreadable value, or one
+with a `Hold ` item, falls back to backtick), not a game action. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
 keys and ignored.
 
 A binding list is comma-separated key names (`W`, `Spacebar, Enter`); an action may
-have several, and is active when any is held. Empty or `Unbound` (any case) is an empty list. Names are
+have several, and is active when any of them is (see `Hold ` below). Empty or `Unbound` (any case) is an empty list. Names are
 case-insensitive and come from `Key::name` in `moho_input/src/key.rs`: letters, digits,
 punctuation spelled as a word (`Comma`, `Semicolon`, `LeftBracket`, ...), `ArrowUp`..,
 `Escape`, `Tab`, `Backspace`, `Enter`, `Spacebar`, and the modifiers `Shift`, `Ctrl`,
@@ -111,6 +111,8 @@ and no numeric key codes.
 that would not read back exactly. Names are non-empty lowercase letters, digits and
 underscores. Values are non-empty, have no leading or trailing whitespace, and contain no
 `;`, `#` or line break. The Settings screen's save keeps them.
+
+A `Hold ` prefix (any case) makes a binding fire only after the input has been held for the game's hold threshold, e.g. `Hold R`, `Hold Pad West`; without it the binding fires on press, or on a quick release when the same input also has a `Hold` binding ([input](../architecture/input-and-state.md)). `Binding::name` writes the prefix back.
 
 Gamepad bindings are written `Pad <name>` and mix freely with keys in one list
 (`jump=Spacebar, Pad South`). Buttons (`PadButton`): `South` `East` `North` `West`
@@ -137,7 +139,7 @@ Audio sections map to `AudioCategory` in `moho_audio/src/audio_source.rs`: `Soun
 
 World keys drive [world streaming](../architecture/world-streaming.md).
 
-## Example
+## 3 Example
 
 ```ini
 [prefs]

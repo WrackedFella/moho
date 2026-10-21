@@ -6,7 +6,7 @@
 **Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
 [ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md).
 
-## Boundary
+## 1 Boundary
 
 The renderer never names a game type. Game types implement `Renderable` and
 `RenderMaterial` from `moho_render_api`, and the renderer only sees `InstanceGpu` and
@@ -39,13 +39,18 @@ flowchart LR
 `Scene::render` is generic over the actor types, so `moho_renderer` compiles without
 `flagstone_game`.
 
-## World geometry
+## 2 World geometry
 
 World geometry reaches the renderer as meshes ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md)),
 not as voxel types. `moho_render_api::WorldMesh` is an owned indexed mesh with one
 `Vec` per vertex channel (position, normal, ao, light rgb, sky exposure, surface);
 `WorldMesh::new` refuses mismatched channel lengths, out-of-range indices and partial
-triangles (`WorldMeshError`). A `WorldMeshId` is the game-chosen stable key.
+triangles (`WorldMeshError`). A `WorldMeshId` is the game-chosen stable key. An optional
+per-vertex `materials` channel (`with_materials`, one material-table index per vertex,
+one material per triangle) lets a single mesh draw in several materials; without it
+every vertex takes the `upsert` material. The renderer uploads the channel as `Vertex::material`,
+and `shaders/vertex.wgsl` uses it unless it is `u32::MAX`, which defers to the instance's
+material ([GPU ABI](../reference/gpu-abi.md)).
 
 `moho_renderer::WorldMeshes` (reached via `Scene::world_meshes_mut`) queues
 `upsert(id, mesh, material_idx)` and `remove(id)`. `Scene::render` calls `flush`
@@ -56,10 +61,12 @@ draw per mesh in id order.
 The binary adapts voxel chunks in `flagstone/src/app/world_geometry.rs`: `chunk_mesh_id` packs
 the chunk position at 21 bits per signed axis, `chunk_world_mesh` converts a
 `VoxelChunk`, and `insert_chunk` / `remove_chunk` keep the `ChunkStore`, the
-renderer and the physics colliders in step, along with the chunk's [cut-face cap](#cut-face-caps). The same `WorldMesh` and `WorldMeshId` go to
+renderer and the physics colliders in step, along with the chunk's [cut-face cap](#3-cut-face-caps). The same `WorldMesh` and `WorldMeshId` go to
 `PhysicsWorld::set_world_mesh` / `remove_world_mesh` (`moho_physics/src/world.rs`), which
 holds one static trimesh collider per id; an empty mesh holds none. A refused mesh is
-logged and the chunk is neither drawn nor solid.
+logged and the chunk is neither drawn nor solid. When a chunk carries per-vertex voxel
+materials, `TerrainPalette` (same file) maps each voxel material id to its material-table
+index and `apply` writes the result into the mesh's `materials` channel.
 
 Each registration carries a `HitTag`, the game's own meaning for the surface (material,
 team, body part), which the engine stores and never interprets. `PhysicsWorld::cast_ray`
@@ -76,7 +83,7 @@ Volumes are sensors parented to the character's body: they follow its position a
 (never pitch) on `step`, are removed with the character, never block movement or props,
 and only rays see them. A ray ignoring a character skips its volumes too.
 
-### Level files
+### 2.1 Level files
 
 `moho_level::load(path)` reads a `.gltf` or `.glb` file into a `Level`: one `LevelMesh`
 (a `WorldMesh` plus the glTF material name) per triangle primitive reachable from the
@@ -101,7 +108,7 @@ default scene, plus a `LevelMarker` per named node without a mesh
 The loader does not register meshes: the caller assigns `WorldMeshId`s and sends each
 mesh to `WorldMeshes` and `PhysicsWorld` as above.
 
-## Cut-face caps
+## 3 Cut-face caps
 
 The strategy HUD's view-height slider (`RtsHud`, `ViewHeightHud`) chooses the cut as a block
 layer. `flagstone/src/app/view_level.rs` (`ViewLevel`, `LayerExtent`) holds the pick: the
@@ -119,7 +126,9 @@ The binary closes it with flat caps built from the voxels, not by the renderer.
 `refresh` rebuilds caps only for dirty chunks, plus, when the cut moved, every chunk in
 `cap_chunk_layers` and every chunk already capped. A cap is an ordinary world mesh queued
 under `cap_mesh_id` (the chunk's id with bit 63 set) with the cut-face material
-(`register_cut_face_material`: terrain dirt on both faces). Caps get no collider and are
+(`register_cut_face_material`: terrain dirt on both faces) as its default; each cap triangle
+carries the face material of the ground it cuts, picked by the same nearest-solid-block
+rule as the walls (`nearest_solid_corner`), so cap and wall edges line up. Caps get no collider and are
 removed with their chunk or when the cut clears.
 
 `flagstone_voxel::cut_cap_mesh` (`mesh/cap.rs`) builds the `+Y` face at `y = cut` over
@@ -128,7 +137,7 @@ neighbouring caps tile. Solidity is sampled at `cut + CAP_PROBE`. A marker whose
 on the cut keeps its lid: `shaders/marker.wgsl` discards above the cut plus the
 `marker_inflate` pipeline constant, set from `MARKER_INFLATE`.
 
-## Submission
+## 4 Submission
 
 `Scene::render` (called from the redraw handler) does CPU-side collection, then calls
 the backend in a fixed sequence:
@@ -148,7 +157,7 @@ sequenceDiagram
 `begin_frame` returns `FrameError` if the surface can't be acquired; the frame is
 skipped with a warning.
 
-## Pass order
+## 5 Pass order
 
 `submit_frame` flattens all pending draws into one instance buffer, then records one
 command encoder:
@@ -167,7 +176,7 @@ The egui UI is drawn by the UI pass from paint data (below); `finish_frame` only
 and presents. Shader sources are `shaders/*.wgsl` (`common`, `vertex`,
 `fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`, `marker`).
 
-### Light composition
+### 5.1 Light composition
 
 The last lighting step in `shaders/fragment.wgsl` combines the two per-vertex light
 channels:
@@ -184,7 +193,7 @@ leaves dark. A surface with no block light (entity meshes, level files) draws as
 exposure alone. Block light next to a strong emitter can push a channel past 1;
 `BLOCK_LIGHT_GAIN` (1.0) is the tuning knob.
 
-## Markers
+## 6 Markers
 
 Markers are axis-aligned boxes a game places over the world (selection and mining
 marks). `moho_render_api::Marker` holds `min`, `max` (world metres), a linear RGBA colour
@@ -208,7 +217,7 @@ indices. Layout: [GPU ABI](../reference/gpu-abi.md).
 The console drives them with `marker` and `marker_clear`
 ([console](console.md)).
 
-## UI paint data
+## 7 UI paint data
 
 UI reaches the renderer as plain data ([ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md)),
 not as wgpu or egui types. `moho_render_api::UiFrame` holds `pixels_per_point`, texture
@@ -228,14 +237,14 @@ skipped; a non-finite or non-positive `pixels_per_point` skips the whole frame. 
 painter and `shaders/ui.wgsl` are a port of `egui-wgpu` 0.34 (unchanged through 0.36): premultiplied-alpha
 blending, sRGB vertex colours, no custom paint callbacks.
 
-## Tunables
+## 8 Tunables
 
 | Setting | Where | Notes |
 |---|---|---|
 | Shadow quality 0–4 | `graphics.shadow_quality`, `r_shadow_quality` | Off/Low/Med/High/Ultra |
 | SSAO quality 0–4 | `graphics.ssao_quality`, `r_ssao_quality` | Samples 0/4/8/16/32 |
 | Debug view | `r_debug_view <mode>` | `Lighting.params.y` |
-| View-height cut | `r_view_height <metres\|off>` | `Renderer::set_view_height`; sticky; cuts world, markers and shadows; the binary caps the cut ([below](#cut-face-caps)) |
+| View-height cut | `r_view_height <metres\|off>` | `Renderer::set_view_height`; sticky; cuts world, markers and shadows; the binary caps the cut ([below](#3-cut-face-caps)) |
 | Shadow map size | `SHADOW_MAP_SIZE` = 4096 | `shadow.rs` |
 | Shadow distance | `SHADOW_DISTANCE` = 1000 | `shadow.rs` |
 

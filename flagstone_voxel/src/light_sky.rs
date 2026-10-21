@@ -25,12 +25,15 @@ use glam::IVec3;
 /// taken from their existing `column_max_y` snapshot — those chunks must have
 /// been brought up-to-date first via their own `sky_dirty` flow if they
 /// changed.
-pub fn recompute_sky_exposure(grid: &mut VoxelGrid, chunk_pos: IVec3) {
+///
+/// Returns whether any `sky_exposed` bit changed; a freshly allocated chunk
+/// light starts with every bit clear.
+pub fn recompute_sky_exposure(grid: &mut VoxelGrid, chunk_pos: IVec3) -> bool {
     if !grid.supports_lighting() {
-        return;
+        return false;
     }
     if !grid.chunk_light(chunk_pos).is_none_or(|cl| cl.sky_dirty) {
-        return;
+        return false;
     }
 
     // Step 1: rebuild this chunk's column_max_y from authoritative block data.
@@ -51,6 +54,7 @@ pub fn recompute_sky_exposure(grid: &mut VoxelGrid, chunk_pos: IVec3) {
 
     // Step 3: write sky_exposed bits.
     let cl = grid.chunk_light_mut(chunk_pos);
+    let mut changed = false;
     for lx in 0..CHUNK_SIZE {
         for lz in 0..CHUNK_SIZE {
             let col_h_world = world_column_height(&stacked, lx, lz);
@@ -61,11 +65,13 @@ pub fn recompute_sky_exposure(grid: &mut VoxelGrid, chunk_pos: IVec3) {
                     None => true,
                 };
                 let idx = light_storage::local_index(lx, ly, lz);
+                changed |= cl.sky_exposed_at(idx) != exposed;
                 cl.set_sky_exposed(idx, exposed);
             }
         }
     }
     cl.sky_dirty = false;
+    changed
 }
 
 /// Scan blocks in `chunk_pos`'s footprint and compute per-(x,z) chunk-local

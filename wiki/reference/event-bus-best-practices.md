@@ -2,9 +2,9 @@
 
 **Source:** `moho_core/src/events/`. Model and diagrams: [architecture/events](../architecture/events.md).
 
-## Quick Start
+## 1 Quick Start
 
-### Basic Usage
+### 1.1 Basic Usage
 
 ```rust
 use moho_core::events::{EventBus, UiEvent};
@@ -23,7 +23,7 @@ bus_clone.subscribe(move |event: &UiEvent| {
 bus.publish(UiEvent::MenuShown { name: "main".to_string() });
 ```
 
-### With Priority
+### 1.2 With Priority
 
 ```rust
 // High priority handler (runs first)
@@ -48,7 +48,7 @@ bus.subscribe_with_priority(
 );
 ```
 
-### With History (Debugging)
+### 1.3 With History (Debugging)
 
 ```rust
 // Enable history for debugging
@@ -65,9 +65,9 @@ for event in history {
 
 ---
 
-## Design Patterns
+## 2 Design Patterns
 
-### ✅ Pattern 1: Channel Collection (Recommended for Cascading)
+### 2.1 ✅ Pattern 1: Channel Collection (Recommended for Cascading)
 
 **Problem**: Publishing from a handler causes deadlock.
 
@@ -91,7 +91,7 @@ for audio_event in rx.try_iter() {
 }
 ```
 
-### ✅ Pattern 2: Atomic Counters for State
+### 2.2 ✅ Pattern 2: Atomic Counters for State
 
 ```rust
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -107,7 +107,7 @@ bus.subscribe(move |_event: &UiEvent| {
 println!("UI events: {}", counter.load(Ordering::Relaxed));
 ```
 
-### ✅ Pattern 3: Frame-Consistent Processing
+### 2.3 ✅ Pattern 3: Frame-Consistent Processing
 
 ```rust
 // At start of frame
@@ -123,7 +123,7 @@ bus.publish(SystemEvent::FrameEnd { frame_number: frame });
 bus.process_deferred();  // Future: will execute deferred events
 ```
 
-### ✅ Pattern 4: Non-Send Types (Audio System)
+### 2.4 ✅ Pattern 4: Non-Send Types (Audio System)
 
 **Problem**: `AudioSystem` is not `Send + Sync` (rodio limitation).
 
@@ -146,9 +146,9 @@ for audio_event in audio_rx.try_iter() {
 
 ---
 
-## Event Design Guidelines
+## 3 Event Design Guidelines
 
-### ✅ DO: Use Small Payloads for High-Frequency Events
+### 3.1 ✅ DO: Use Small Payloads for High-Frequency Events
 
 ```rust
 // Good - small, fast to clone
@@ -159,7 +159,7 @@ pub enum InputEvent {
 }
 ```
 
-### ✅ DO: Use Static Strings When Possible
+### 3.2 ✅ DO: Use Static Strings When Possible
 
 ```rust
 // Good - no allocation
@@ -171,7 +171,7 @@ pub enum AudioEvent {
 bus.publish(AudioEvent::PlaySound { sound_id: "button_click" });
 ```
 
-### ❌ DON'T: Use Large Strings in High-Frequency Events
+### 3.3 ❌ DON'T: Use Large Strings in High-Frequency Events
 
 ```rust
 // Bad - allocates every frame
@@ -187,7 +187,7 @@ pub enum DebugEvent {
 }
 ```
 
-### ✅ DO: Disable History for High-Frequency Events
+### 3.4 ✅ DO: Disable History for High-Frequency Events
 
 ```rust
 impl Event for SystemEvent {
@@ -198,7 +198,7 @@ impl Event for SystemEvent {
 }
 ```
 
-### ✅ DO: Use Entity IDs Instead of Full Objects
+### 3.5 ✅ DO: Use Entity IDs Instead of Full Objects
 
 ```rust
 // Good - just an ID
@@ -214,9 +214,9 @@ pub enum GameEvent {
 
 ---
 
-## Performance Best Practices
+## 4 Performance Best Practices
 
-### Frame Budget Awareness
+### 4.1 Frame Budget Awareness
 
 At 60 FPS (16.66ms per frame):
 - Event bus overhead: **~0.9 µs per 5 events** (0.0054% of frame)
@@ -224,7 +224,7 @@ At 60 FPS (16.66ms per frame):
 
 **Guideline**: Keep events under 1000/frame for <1% overhead.
 
-### History Overhead
+### 4.2 History Overhead
 
 ```rust
 // Disable history in production
@@ -238,14 +238,14 @@ let bus = EventBus::with_history(true, 100);
 let bus = EventBus::new();
 ```
 
-### Subscriber Counts
+### 4.3 Subscriber Counts
 
 - **1-5 subscribers**: Optimal (~400-450 ns per event)
 - **10 subscribers**: Good (~480 ns per event)
 - **20 subscribers**: Acceptable (~590 ns per event)
 - **50+ subscribers**: Consider event filtering or redesign
 
-### Thread Safety
+### 4.4 Thread Safety
 
 ```rust
 // Event bus is Send + Sync, safe to share
@@ -260,9 +260,9 @@ std::thread::spawn(move || {
 
 ---
 
-## Common Pitfalls
+## 5 Common Pitfalls
 
-### ❌ PITFALL 1: Publishing from Handler (Deadlock)
+### 5.1 ❌ PITFALL 1: Publishing from Handler (Deadlock)
 
 ```rust
 // DON'T DO THIS - DEADLOCK!
@@ -274,7 +274,7 @@ bus.subscribe(move |_event: &UiEvent| {
 
 **Solution**: Use channel pattern (see Pattern 1 above).
 
-### ❌ PITFALL 2: Capturing Mutable State
+### 5.2 ❌ PITFALL 2: Capturing Mutable State
 
 ```rust
 // DON'T DO THIS - Won't compile
@@ -286,7 +286,7 @@ bus.subscribe(move |_event: &UiEvent| {
 
 **Solution**: Use Arc<AtomicU32> (see Pattern 2 above).
 
-### ❌ PITFALL 3: Forgetting to Clone Arc
+### 5.3 ❌ PITFALL 3: Forgetting to Clone Arc
 
 ```rust
 // DON'T DO THIS
@@ -302,7 +302,7 @@ fn setup_handlers(bus: Arc<EventBus>) {  // Shared ownership
 }
 ```
 
-### ❌ PITFALL 4: Over-using History
+### 5.4 ❌ PITFALL 4: Over-using History
 
 ```rust
 // DON'T DO THIS in production
@@ -314,9 +314,9 @@ let bus = EventBus::new();  // Or small history for debugging
 
 ---
 
-## Testing Patterns
+## 6 Testing Patterns
 
-### Unit Test with Atomic Counter
+### 6.1 Unit Test with Atomic Counter
 
 ```rust
 #[test]
@@ -335,7 +335,7 @@ fn test_my_event() {
 }
 ```
 
-### Integration Test with Multiple Systems
+### 6.2 Integration Test with Multiple Systems
 
 ```rust
 #[test]
@@ -359,9 +359,9 @@ fn test_ui_to_audio_flow() {
 
 ---
 
-## Debugging Tips
+## 7 Debugging Tips
 
-### 1. Enable History
+### 7.1 Enable History
 
 ```rust
 let bus = EventBus::with_history(true, 100);
@@ -374,7 +374,7 @@ for event in bus.history() {
 }
 ```
 
-### 2. Check Metrics
+### 7.2 Check Metrics
 
 ```rust
 let metrics = bus.metrics();
@@ -384,7 +384,7 @@ println!("Processed: {}", metrics.total_processed);
 // If processed < published, some events have no subscribers
 ```
 
-### 3. Priority Debugging
+### 7.3 Priority Debugging
 
 ```rust
 // Add debug handlers at different priorities
@@ -401,9 +401,9 @@ bus.subscribe_with_priority(|e: &UiEvent| {
 
 ---
 
-## Migration Guide
+## 8 Migration Guide
 
-### From Manual Channels
+### 8.1 From Manual Channels
 
 **Before**:
 ```rust
@@ -433,7 +433,7 @@ bus.publish(UiEvent::MenuShown { name: "menu".to_string() });
 
 ---
 
-## Performance Targets
+## 9 Performance Targets
 
 Based on benchmark results:
 
@@ -449,7 +449,7 @@ Based on benchmark results:
 
 ---
 
-## Further Reading
+## 10 Further Reading
 
 - [Event bus performance](event-bus-performance.md)
 - [Event bus architecture](../architecture/events.md)
