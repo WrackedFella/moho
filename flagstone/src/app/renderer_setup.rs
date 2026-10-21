@@ -204,7 +204,7 @@ fn register_entity_mesh(
         &vec![1.0; n],
         &vec![1; n],
         &vec![1.0; n],
-        &vec![[1.0, 1.0, 1.0]; n],
+        &vec![[0.0; 3]; n],
         &vec![1.0; n],
         indices,
     )
