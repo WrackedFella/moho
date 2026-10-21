@@ -191,9 +191,6 @@ impl LightPropagator {
         self.queue.extend(emitters.iter().copied());
         for &seed in relight {
             let level = Self::read_ch(grid, seed.chunk_pos, seed.idx, ch);
-            if level == 0 {
-                continue;
-            }
             self.enqueue_neighbours(grid, PropNode { level, ..seed }, ch);
         }
         self.drain(grid, ch, affected);
@@ -283,11 +280,12 @@ impl LightPropagator {
 
             let world = node.chunk_pos * CHUNK_SIZE + idx_to_local(node.idx);
             // A surviving emitter's own voxel must read its emission again.
-            if let Some(mat_id) = grid.material_at(world) {
-                let level = grid.material_registry.emission(mat_id)[ch as usize];
-                if level > 0 {
-                    emitters.push(PropNode { level, ..node });
-                }
+            if let Some(level) = grid
+                .material_at(world)
+                .map(|mat_id| grid.material_registry.emission(mat_id)[ch as usize])
+                .filter(|&level| level > 0)
+            {
+                emitters.push(PropNode { level, ..node });
             }
             for nb_world in neighbours(world) {
                 let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
@@ -315,9 +313,7 @@ impl LightPropagator {
             }
         }
 
-        if !emitters.is_empty() || !relight.is_empty() {
-            self.bfs_add_nodes(grid, &emitters, &relight, ch, affected);
-        }
+        self.bfs_add_nodes(grid, &emitters, &relight, ch, affected);
     }
 }
 
