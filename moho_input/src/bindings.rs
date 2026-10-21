@@ -321,6 +321,15 @@ mod tests {
     }
 
     #[test]
+    fn only_pad_inputs_are_pad_bindings() {
+        let pad = Binding::pad(PadInput::Button(PadButton::West));
+        assert!(pad.is_pad());
+        assert!(pad.held().is_pad());
+        assert!(!Binding::key(Key::R).is_pad());
+        assert!(!Binding::mouse(MouseButton::Right).held().is_pad());
+    }
+
+    #[test]
     fn label_is_the_key_label_or_the_mouse_button_name() {
         assert_eq!(Binding::key(Key::Space).label(), "Spacebar");
         assert_eq!(Binding::mouse(MouseButton::Left).label(), "Mouse Left");

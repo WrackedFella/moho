@@ -2129,6 +2129,48 @@ mod tests {
         }
     }
 
+    /// `Weapon` with the hold action first, so the tapped action is not at index 0.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum HoldFirst {
+        Check,
+        Reload,
+    }
+
+    impl Action for HoldFirst {
+        const ALL: &'static [Self] = &[HoldFirst::Check, HoldFirst::Reload];
+
+        fn name(self) -> &'static str {
+            match self {
+                HoldFirst::Check => "check",
+                HoldFirst::Reload => "reload",
+            }
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            match self {
+                HoldFirst::Check => const { &[Binding::key(Key::R).held()] },
+                HoldFirst::Reload => const { &[Binding::key(Key::R)] },
+            }
+        }
+    }
+
+    #[test]
+    fn a_tap_presses_only_the_tapped_action() {
+        let (bindings, warnings) = ActionBindings::<HoldFirst>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        let mut map = ActionMap::new(bindings, 1.0);
+
+        map.key(Key::R, true);
+        ticks(&mut map, 3);
+        map.key(Key::R, false);
+        let up = map.end_tick();
+
+        assert!(up.pressed(HoldFirst::Reload));
+        assert!(up.released(HoldFirst::Reload));
+        assert!(!up.pressed(HoldFirst::Check));
+        assert!(!up.released(HoldFirst::Check));
+    }
+
     #[test]
     fn tap_does_not_press_an_action_already_held() {
         let (mut bindings, _) = ActionBindings::<Weapon>::load(&BTreeMap::new());
