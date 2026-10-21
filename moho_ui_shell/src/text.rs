@@ -89,7 +89,6 @@ mod tests {
         Anchor::BottomRight,
     ];
 
-    /// What a painted text looks like in the output.
     #[derive(Debug)]
     struct Painted {
         text: String,
