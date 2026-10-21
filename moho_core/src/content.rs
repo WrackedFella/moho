@@ -10,7 +10,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ContentError {
-    /// The base content folder is absent.
+    /// A content root folder, base or mod, is absent.
     #[error("content folder {} does not exist", path.display())]
     MissingRoot {
         /// The folder that was asked for.

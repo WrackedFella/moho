@@ -128,7 +128,8 @@ impl Prefs {
         &self.content_mods
     }
 
-    /// Replaces the content mod list.
+    /// Replaces the content mod list. Names are saved comma-separated, so a name holding a
+    /// comma or edge whitespace does not read back as itself.
     pub fn set_content_mods(&mut self, mods: Vec<String>) {
         self.content_mods = mods;
     }
