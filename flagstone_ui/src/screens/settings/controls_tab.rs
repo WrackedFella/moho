@@ -4,6 +4,7 @@
 use super::key_mapping::binding_label;
 use super::types::{BINDING_ROWS, display_name};
 use super::{FormControls, SettingsField, SettingsMenu};
+use crate::prefs::Prefs;
 
 pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
     ui.vertical_centered(|ui| {
@@ -91,30 +92,57 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
 
         ui.add_space(12.0);
 
-        {
-            let saved_smoothing = menu.state.prefs().mouse_smoothing();
-            let is_dirty = menu.state.staged().mouse_smoothing() != saved_smoothing;
-
-            ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(
-                    egui::vec2(label_width, 28.0),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.label("Mouse smoothing:");
-                    },
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let checkbox =
-                        ui.checkbox(menu.state.staged_mut().mouse_smoothing_mut(), "Enable");
-                    SettingsMenu::paint_dirty_decor(ui, &checkbox, is_dirty);
-                });
-            });
-
-            if is_dirty {
-                menu.state.mark_dirty(SettingsField::MouseSmoothing);
-            }
-        }
+        toggle_row(
+            menu,
+            ui,
+            label_width,
+            "Invert mouse Y:",
+            SettingsField::InvertMouseY,
+            Prefs::invert_mouse_y,
+            Prefs::invert_mouse_y_mut,
+        );
+        toggle_row(
+            menu,
+            ui,
+            label_width,
+            "Mouse smoothing:",
+            SettingsField::MouseSmoothing,
+            Prefs::mouse_smoothing,
+            Prefs::mouse_smoothing_mut,
+        );
     });
+}
+
+/// A labelled "Enable" checkbox for one boolean pref, decorated and marked dirty
+/// while it differs from the saved value.
+fn toggle_row(
+    menu: &mut SettingsMenu,
+    ui: &mut egui::Ui,
+    label_width: f32,
+    label: &str,
+    field: SettingsField,
+    value: fn(&Prefs) -> bool,
+    value_mut: fn(&mut Prefs) -> &mut bool,
+) {
+    let is_dirty = value(menu.state.staged()) != value(menu.state.prefs());
+
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(label_width, 28.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.label(label);
+            },
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let checkbox = ui.checkbox(value_mut(menu.state.staged_mut()), "Enable");
+            SettingsMenu::paint_dirty_decor(ui, &checkbox, is_dirty);
+        });
+    });
+
+    if is_dirty {
+        menu.state.mark_dirty(field);
+    }
 }
 
 #[cfg(test)]
@@ -175,6 +203,18 @@ mod tests {
         assert!(menu.has_unsaved_changes());
         assert!(has_dirty_decor(&output));
         assert!(has_text(&output, "Mouse smoothing"));
+    }
+
+    #[test]
+    fn changed_invert_y_is_dirty_and_decorated() {
+        let mut menu = SettingsMenu::with_prefs(Prefs::default());
+        *menu.state.staged_mut().invert_mouse_y_mut() = true;
+
+        let output = render_menu(&mut menu);
+
+        assert!(menu.has_unsaved_changes());
+        assert!(has_dirty_decor(&output));
+        assert!(has_text(&output, "Invert mouse Y"));
     }
 
     #[test]
