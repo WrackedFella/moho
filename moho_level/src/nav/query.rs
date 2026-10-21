@@ -29,26 +29,11 @@ impl Polygon {
         (0..n).map(move |i| (self.vertices[i], self.vertices[(i + 1) % n]))
     }
 
-    /// `1.0` for a polygon wound counter-clockwise on the ground plane (x right, z up),
-    /// `-1.0` clockwise, `0.0` degenerate.
-    fn winding(&self) -> f32 {
-        let area: f32 = self.corners().map(|(a, b)| a.x * b.z - b.x * a.z).sum();
-        if area > 0.0 {
-            1.0
-        } else if area < 0.0 {
-            -1.0
-        } else {
-            0.0
-        }
-    }
-
     /// The point of the polygon nearest `p` on the ground plane.
     fn closest_ground_point(&self, p: Vec2) -> Vec2 {
-        let winding = self.winding();
-        let inside = winding != 0.0
-            && self
-                .corners()
-                .all(|(a, b)| winding * cross(a, b, Vec3::new(p.x, 0.0, p.y)) >= 0.0);
+        let inside = self
+            .corners()
+            .all(|(a, b)| cross(a, b, Vec3::new(p.x, 0.0, p.y)) >= 0.0);
         if inside {
             return p;
         }
@@ -101,45 +86,41 @@ impl Polygon {
 
     /// The portal across edge `edge` as (left, right) for a traveller leaving the polygon.
     fn portal(&self, edge: usize) -> (Vec3, Vec3) {
-        let (a, b) = self.corners().nth(edge).expect("edge index is in range");
-        if self.winding() >= 0.0 {
-            (b, a)
-        } else {
-            (a, b)
-        }
+        (
+            self.vertices[(edge + 1) % self.vertices.len()],
+            self.vertices[edge],
+        )
     }
 }
 
 fn snap(mesh: &NavMesh, p: Vec3) -> Option<Snapped> {
     let limits = mesh.limits;
-    let mut best: Option<(f32, f32, Snapped)> = None;
-    for (index, polygon) in mesh.polygons.iter().enumerate() {
-        let q = polygon.closest_ground_point(ground(p));
-        let distance = q.distance(ground(p));
-        if distance > limits.radius {
-            continue;
-        }
-        let surface = polygon.height_at(q);
-        if p.y - surface > limits.below || surface - p.y > limits.above {
-            continue;
-        }
-        let gap = (p.y - surface).abs();
-        let better = best
-            .as_ref()
-            .is_none_or(|(d, g, _)| distance.total_cmp(d).then(gap.total_cmp(g)).is_lt());
-        if better {
+    mesh.polygons
+        .iter()
+        .enumerate()
+        .filter_map(|(index, polygon)| {
+            let q = polygon.closest_ground_point(ground(p));
+            let distance = q.distance(ground(p));
+            if distance > limits.radius {
+                return None;
+            }
+            let surface = polygon.height_at(q);
+            if p.y - surface > limits.below || surface - p.y > limits.above {
+                return None;
+            }
+            let gap = (p.y - surface).abs();
             let point = Vec3::new(q.x, surface, q.y);
-            best = Some((
+            Some((
                 distance,
                 gap,
                 Snapped {
                     polygon: index,
                     point,
                 },
-            ));
-        }
-    }
-    best.map(|(_, _, snapped)| snapped)
+            ))
+        })
+        .min_by(|(d1, g1, _), (d2, g2, _)| d1.total_cmp(d2).then(g1.total_cmp(g2)))
+        .map(|(_, _, snapped)| snapped)
 }
 
 /// An open-list entry; the heap pops the lowest cost, then the lowest polygon index.
@@ -171,12 +152,14 @@ impl Ord for Open {
     }
 }
 
-/// The polygons from `start` to `goal`, found by A* over portal midpoints.
-fn route(mesh: &NavMesh, start: &Snapped, goal: &Snapped) -> Option<Vec<usize>> {
+/// The portals, as (left, right), crossed from `start` to `goal` along the route found by A*
+/// over portal midpoints.
+fn route(mesh: &NavMesh, start: &Snapped, goal: &Snapped) -> Option<Vec<(Vec3, Vec3)>> {
     let count = mesh.polygons.len();
     let mut cost = vec![f32::INFINITY; count];
     let mut position = vec![Vec3::ZERO; count];
-    let mut parent: Vec<Option<usize>> = vec![None; count];
+    // Per polygon: the polygon it was reached from and the portal crossed.
+    let mut parent: Vec<Option<(usize, (Vec3, Vec3))>> = vec![None; count];
     let mut closed = vec![false; count];
     let mut open = BinaryHeap::new();
     cost[start.polygon] = 0.0;
@@ -191,14 +174,14 @@ fn route(mesh: &NavMesh, start: &Snapped, goal: &Snapped) -> Option<Vec<usize>> 
         }
         closed[polygon] = true;
         if polygon == goal.polygon {
-            let mut path = vec![polygon];
+            let mut portals = Vec::new();
             let mut at = polygon;
-            while let Some(before) = parent[at] {
-                path.push(before);
+            while let Some((before, portal)) = parent[at] {
+                portals.push(portal);
                 at = before;
             }
-            path.reverse();
-            return Some(path);
+            portals.reverse();
+            return Some(portals);
         }
         let current = &mesh.polygons[polygon];
         for (edge, neighbour) in current.neighbours.iter().enumerate() {
@@ -206,13 +189,13 @@ fn route(mesh: &NavMesh, start: &Snapped, goal: &Snapped) -> Option<Vec<usize>> 
             if closed[next] {
                 continue;
             }
-            let (left, right) = current.portal(edge);
-            let midpoint = (left + right) * 0.5;
+            let portal = current.portal(edge);
+            let midpoint = (portal.0 + portal.1) * 0.5;
             let through = cost[polygon] + position[polygon].distance(midpoint);
             if through < cost[next] {
                 cost[next] = through;
                 position[next] = midpoint;
-                parent[next] = Some(polygon);
+                parent[next] = Some((polygon, portal));
                 open.push(Open {
                     cost: through + midpoint.distance(goal.point),
                     polygon: next,
@@ -281,18 +264,6 @@ fn push_corner(path: &mut Vec<Vec3>, corner: Vec3) {
 pub(super) fn path(mesh: &NavMesh, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
     let start = snap(mesh, from)?;
     let goal = snap(mesh, to)?;
-    let polygons = route(mesh, &start, &goal)?;
-    let portals: Vec<(Vec3, Vec3)> = polygons
-        .windows(2)
-        .map(|pair| {
-            let from = &mesh.polygons[pair[0]];
-            let edge = from
-                .neighbours
-                .iter()
-                .position(|n| *n == Some(pair[1]))
-                .expect("route steps follow neighbour links");
-            from.portal(edge)
-        })
-        .collect();
+    let portals = route(mesh, &start, &goal)?;
     Some(funnel(start.point, goal.point, &portals))
 }

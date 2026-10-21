@@ -160,7 +160,7 @@ pub(crate) fn arena_with(
         .chain(boxes)
         .map(|&(min, max)| box_mesh(min, max))
         .collect();
-    let nav = NavMesh::build(&meshes, nav_profile()).expect("box worlds build a navmesh");
+    let nav = Arc::new(NavMesh::build(&meshes, nav_profile()).expect("box worlds build a navmesh"));
     Arc::new(Arena {
         meshes,
         nav,

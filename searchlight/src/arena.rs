@@ -2,6 +2,7 @@
 //! spawn, dummy, enemy, waypoint and cover points.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use glam::Vec3;
 use moho_level::{AgentProfile, Level, LevelError, LevelMarker, NavBuildError, NavMesh};
@@ -155,7 +156,7 @@ pub struct Arena {
     pub route: Vec<Vec3>,
     pub covers: Vec<Vec3>,
     /// Where an enemy of [`nav_profile`] size can walk.
-    pub nav: NavMesh,
+    pub nav: Arc<NavMesh>,
 }
 
 /// Extra metres of clearance on top of the capsule radius, so paths do not graze corners.
@@ -179,7 +180,7 @@ impl Arena {
     pub fn from_level(level: &Level, markers: &ArenaMarkers) -> Result<Self, ArenaError> {
         let positions = |list: &[LevelMarker]| list.iter().map(|marker| marker.position).collect();
         let meshes: Vec<WorldMesh> = level.meshes.iter().map(|m| m.mesh.clone()).collect();
-        let nav = NavMesh::build(&meshes, nav_profile())?;
+        let nav = Arc::new(NavMesh::build(&meshes, nav_profile())?);
         Ok(Self {
             meshes,
             nav,

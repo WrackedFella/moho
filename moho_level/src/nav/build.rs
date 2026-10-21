@@ -66,26 +66,18 @@ pub(super) fn polygons<'a>(
     let Some(trimesh) = collect_triangles(meshes, profile.max_slope)? else {
         return Ok(Vec::new());
     };
-    let mut builder = ConfigBuilder {
+    let aabb = trimesh
+        .compute_aabb()
+        .ok_or_else(|| fail("input", "triangles have no bounds"))?;
+    let config = ConfigBuilder {
         agent_radius: profile.radius,
         agent_height: profile.height,
         walkable_climb: profile.max_climb,
         walkable_slope_angle: profile.max_slope,
-        aabb: trimesh
-            .compute_aabb()
-            .ok_or_else(|| fail("input", "triangles have no bounds"))?,
+        aabb,
         ..Default::default()
-    };
-    // Regions never reach the field's border strip, so the field is padded by it; otherwise
-    // floor that ends at the level's edge would lose that strip as well.
-    let probe = builder.clone().build();
-    let pad = f32::from(probe.border_size) * probe.cell_size;
-    builder.aabb.min.x -= pad;
-    builder.aabb.min.z -= pad;
-    builder.aabb.max.x += pad;
-    builder.aabb.max.z += pad;
-    let aabb = builder.aabb;
-    let config = builder.build();
+    }
+    .build();
 
     let mut heightfield = HeightfieldBuilder {
         aabb,
@@ -106,12 +98,9 @@ pub(super) fn polygons<'a>(
         .map_err(|e| fail("compact heightfield", e))?;
     compact.erode_walkable_area(config.walkable_radius);
     compact.build_distance_field();
+    // The border strip only serves tiled builds; this one covers the whole level.
     compact
-        .build_regions(
-            config.border_size,
-            config.min_region_area,
-            config.merge_region_area,
-        )
+        .build_regions(0, config.min_region_area, config.merge_region_area)
         .map_err(|e| fail("regions", e))?;
     let contours = compact.build_contours(
         config.max_simplification_error,
@@ -138,16 +127,32 @@ fn convert(mesh: &PolygonNavmesh) -> Vec<Polygon> {
     mesh.polygons()
         .zip(mesh.polygon_neighbors.chunks_exact(per_polygon))
         .map(|(indices, neighbours)| {
-            let vertices: Vec<Vec3> = indices.map(|i| world[usize::from(i)]).collect();
-            let neighbours = neighbours
+            let mut vertices: Vec<Vec3> = indices.map(|i| world[usize::from(i)]).collect();
+            let mut neighbours: Vec<Option<usize>> = neighbours
                 .iter()
                 .take(vertices.len())
                 .map(|&n| Some(usize::from(n)).filter(|&n| n < count))
                 .collect();
+            if signed_area(&vertices) < 0.0 {
+                // Reversed, edge `k` is old edge `n - 2 - k` walked backwards.
+                vertices.reverse();
+                neighbours.reverse();
+                neighbours.rotate_left(1);
+            }
             Polygon {
                 vertices,
                 neighbours,
             }
         })
         .collect()
+}
+
+/// Twice the signed area on the ground plane (x right, z up); positive when counter-clockwise.
+fn signed_area(vertices: &[Vec3]) -> f32 {
+    let next = vertices.iter().cycle().skip(1);
+    vertices
+        .iter()
+        .zip(next)
+        .map(|(a, b)| a.x * b.z - b.x * a.z)
+        .sum()
 }

@@ -22,6 +22,9 @@ pub struct AgentProfile {
 
 /// A convex walkable polygon: world-space corners, and for edge `i` (corner `i` to corner
 /// `i + 1`, wrapping) the polygon on the other side, if any.
+///
+/// Corners wind counter-clockwise on the ground plane (x right, z up), as `cross` in the
+/// queries measures it. A zero-area polygon is kept as built, so neighbour indices stay valid.
 #[derive(Clone, Debug, PartialEq)]
 struct Polygon {
     vertices: Vec<Vec3>,

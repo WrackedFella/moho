@@ -715,7 +715,7 @@ impl SearchlightSim {
             markers: arena.enemy_spawns.clone(),
             route: arena.route.clone(),
             covers: arena.covers.clone(),
-            nav: Arc::new(arena.nav.clone()),
+            nav: Arc::clone(&arena.nav),
         };
         Self::assemble(arena.physics_world(), spawns, config)
     }
