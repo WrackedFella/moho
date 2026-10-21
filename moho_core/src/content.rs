@@ -99,11 +99,7 @@ impl ContentRoots {
     pub fn with_mods(self, mods_dir: &Path, names: &[String]) -> Result<Self, ContentError> {
         let mut roots = self.roots;
         for name in names {
-            let plain = !name.is_empty()
-                && name
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
-            if !plain {
+            if !is_plain_folder_name(name) {
                 return Err(ContentError::InvalidRootName { name: name.clone() });
             }
             let path = mods_dir.join(name);
@@ -117,6 +113,14 @@ impl ContentRoots {
         }
         Ok(Self { roots })
     }
+}
+
+/// Non-empty ASCII letters, digits, `_` and `-`, so a name cannot leave `mods_dir`.
+fn is_plain_folder_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 /// Typed definitions of one kind, keyed by id.
