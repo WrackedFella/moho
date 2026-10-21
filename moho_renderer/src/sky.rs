@@ -8,6 +8,13 @@ pub struct SkyPalette {
     pub ground: [f32; 3],
 }
 
+impl SkyPalette {
+    /// Zenith, horizon and ground as uniform `vec4`s, w unused.
+    pub(crate) fn to_gpu(self) -> [[f32; 4]; 3] {
+        [self.zenith, self.horizon, self.ground].map(|[r, g, b]| [r, g, b, 0.0])
+    }
+}
+
 const NIGHT: SkyPalette = SkyPalette {
     zenith: [0.05, 0.05, 0.15],
     horizon: [0.1, 0.1, 0.2],

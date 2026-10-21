@@ -233,7 +233,7 @@ impl Default for CascadedShadowMatrixGpu {
 
 impl Default for LightingGpu {
     fn default() -> Self {
-        let palette = crate::sky::sky_palette(6.0);
+        let [sky_zenith, sky_horizon, sky_ground] = crate::sky::sky_palette(6.0).to_gpu();
         Self {
             // Default sun direction: lower in the sky (morning/evening light)
             // Normalized from approximately (0.7, 0.3, 0.6) for ~20° elevation
@@ -247,14 +247,9 @@ impl Default for LightingGpu {
             ambient: [0.0, 0.0, 0.0, 0.1],
             // Default to dawn (6:00)
             params: [6.0, 0.0, 0.0, 0.0],
-            sky_zenith: [palette.zenith[0], palette.zenith[1], palette.zenith[2], 0.0],
-            sky_horizon: [
-                palette.horizon[0],
-                palette.horizon[1],
-                palette.horizon[2],
-                0.0,
-            ],
-            sky_ground: [palette.ground[0], palette.ground[1], palette.ground[2], 0.0],
+            sky_zenith,
+            sky_horizon,
+            sky_ground,
         }
     }
 }

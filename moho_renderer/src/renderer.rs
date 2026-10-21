@@ -693,12 +693,12 @@ impl<'a> Renderer<'a> {
 fn lighting_with_sky_palette(
     lighting: crate::gpu_types::LightingGpu,
 ) -> crate::gpu_types::LightingGpu {
-    let palette = crate::sky::sky_palette(lighting.params[0]);
-    let vec4 = |c: [f32; 3]| [c[0], c[1], c[2], 0.0];
+    let [sky_zenith, sky_horizon, sky_ground] =
+        crate::sky::sky_palette(lighting.params[0]).to_gpu();
     crate::gpu_types::LightingGpu {
-        sky_zenith: vec4(palette.zenith),
-        sky_horizon: vec4(palette.horizon),
-        sky_ground: vec4(palette.ground),
+        sky_zenith,
+        sky_horizon,
+        sky_ground,
         ..lighting
     }
 }
