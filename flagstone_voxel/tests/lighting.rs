@@ -1083,6 +1083,55 @@ fn removing_a_wall_block_lets_light_through_as_a_fresh_fill() {
     );
 }
 
+/// The wall block in line with a level 15 emitter becomes a dimmer emitter of its
+/// own: its neighbour's light refills it first, and its emission must still win.
+#[test]
+fn replacing_a_wall_block_with_an_emitter_lights_it_at_its_emission() {
+    let emitter = IVec3::new(14, 16, 16);
+    let replaced = IVec3::new(16, 16, 16);
+    let mut blocks = vec![blue_emitter(emitter, 15)];
+    for y in 0..=32 {
+        for z in 0..=32 {
+            blocks.push(TestBlock {
+                pos: IVec3::new(16, y, z),
+                emission: [0; 3],
+                opacity_cost: 15,
+            });
+        }
+    }
+    let mut grid = fresh_fill(&blocks);
+    for block in &mut blocks {
+        if block.pos == replaced {
+            *block = blue_emitter(replaced, 14);
+        }
+    }
+    let lamp = grid.material_registry.register(MaterialType::Lambertian {
+        albedo: Vec3::splat(0.5),
+    });
+    grid.material_registry.set_lighting(
+        lamp,
+        MaterialLighting {
+            emission: [0, 0, 14],
+            opacity_cost: 0,
+        },
+    );
+
+    grid.mutator().place(replaced, lamp, None);
+    LightPropagator::new().update_at(&mut grid, replaced);
+
+    assert_eq!(
+        rgb(&grid, replaced),
+        [0, 0, 14],
+        "the emitter reads its emission"
+    );
+    assert_same_light(
+        &grid,
+        &fresh_fill(&blocks),
+        IVec3::splat(16 - 20),
+        IVec3::splat(16 + 20),
+    );
+}
+
 #[test]
 fn reconciling_far_from_light_changes_nothing_and_reports_no_chunk() {
     let far = IVec3::new(60, 60, 60);

@@ -258,6 +258,7 @@ mod tests {
     use super::*;
     use crate::grid::MaterialLighting;
     use crate::light_storage;
+    use crate::materials::MaterialType;
 
     #[test]
     fn test_job_id_uniqueness() {
@@ -286,8 +287,12 @@ mod tests {
                 opacity_cost: 0,
             },
         );
+        let dim = grid.material_registry.register(MaterialType::Lambertian {
+            albedo: Vec3::splat(0.5),
+        });
+        assert_eq!(dim, DIM, "the registry starts with ids 0 to 2");
         grid.material_registry.set_lighting(
-            3,
+            dim,
             MaterialLighting {
                 emission: [1, 0, 0],
                 opacity_cost: 0,
