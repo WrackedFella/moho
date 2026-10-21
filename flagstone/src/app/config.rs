@@ -9,13 +9,18 @@ use moho_input::LookSettings;
 use moho_input::action_map::source_look_per_count;
 
 /// The look settings `prefs` ask for: its Source-scale sensitivity as radians per
-/// count, its mouse-smoothing switch and its invert-Y switch.
+/// count, its mouse-smoothing switch, its invert-Y switch and its mouse acceleration
+/// (zero while off or when the strength is negative).
 pub fn look_settings(prefs: &Prefs) -> LookSettings {
     LookSettings {
         look_per_count: source_look_per_count(prefs.mouse_sensitivity()),
         smoothing: prefs.mouse_smoothing(),
         invert_y: prefs.invert_mouse_y(),
-        acceleration: 0.0,
+        acceleration: if prefs.mouse_acceleration() {
+            source_look_per_count(prefs.mouse_acceleration_strength().max(0.0))
+        } else {
+            0.0
+        },
     }
 }
 
@@ -48,6 +53,9 @@ pub struct AppConfig {
 
     /// Whether the mouse's Y axis is inverted.
     pub invert_mouse_y: bool,
+
+    /// Extra look units per count for each count per millisecond; 0 is off.
+    pub mouse_acceleration: f32,
 
     /// Preferences object (contains keybindings and other settings)
     pub prefs: Prefs,
@@ -86,6 +94,7 @@ impl AppConfig {
             mouse_sensitivity: look.look_per_count,
             mouse_smoothing: look.smoothing,
             invert_mouse_y: look.invert_y,
+            mouse_acceleration: look.acceleration,
             prefs,
         }
     }
@@ -153,6 +162,7 @@ impl AppConfigBuilder {
             mouse_sensitivity: self.mouse_sensitivity.unwrap_or(base.mouse_sensitivity),
             mouse_smoothing: self.mouse_smoothing.unwrap_or(base.mouse_smoothing),
             invert_mouse_y: base.invert_mouse_y,
+            mouse_acceleration: base.mouse_acceleration,
             prefs: base.prefs,
         }
     }

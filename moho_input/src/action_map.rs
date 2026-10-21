@@ -36,7 +36,10 @@ pub struct LookSettings {
     pub smoothing: bool,
     /// Negates the mouse's Y counts; the stick is unaffected.
     pub invert_y: bool,
-    /// Extra look per count for each count per millisecond of speed; 0 is off.
+    /// Extra look units per count for each count per millisecond of mouse speed; 0 is off.
+    ///
+    /// Linear in speed like Source's `m_customaccel 1` with exponent 1; the speed is the
+    /// smoothed counts' length over the frame duration. The stick is unaffected.
     pub acceleration: f32,
 }
 
@@ -314,10 +317,14 @@ impl<A: Action> ActionMap<A> {
         } else {
             counts
         };
-        let mouse = (
-            counts.0 * self.look.look_per_count,
-            counts.1 * self.look.look_per_count,
-        );
+        let frame_ms = frame_dt.as_secs_f32() * 1000.0;
+        let speed = if frame_ms > 0.0 {
+            counts.0.hypot(counts.1) / frame_ms
+        } else {
+            0.0
+        };
+        let per_count = self.look.look_per_count + self.look.acceleration * speed;
+        let mouse = (counts.0 * per_count, counts.1 * per_count);
         let (stick_x, stick_y) = self.stick_look(frame_dt);
         (mouse.0 + stick_x, mouse.1 + stick_y)
     }

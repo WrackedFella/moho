@@ -90,6 +90,17 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
             }
         });
 
+        toggle_row(
+            menu,
+            ui,
+            label_width,
+            "Mouse acceleration:",
+            SettingsField::MouseAcceleration,
+            Prefs::mouse_acceleration,
+            Prefs::mouse_acceleration_mut,
+        );
+        strength_row(menu, ui, label_width);
+
         ui.add_space(12.0);
 
         toggle_row(
@@ -111,6 +122,61 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
             Prefs::mouse_smoothing_mut,
         );
     });
+}
+
+/// The "Acceleration strength" slider and value box, editable only while the staged
+/// acceleration is on.
+fn strength_row(menu: &mut SettingsMenu, ui: &mut egui::Ui, label_width: f32) {
+    let enabled = menu.state.staged().mouse_acceleration();
+    let is_dirty = (menu.state.staged().mouse_acceleration_strength()
+        - menu.state.prefs().mouse_acceleration_strength())
+    .abs()
+        > f32::EPSILON;
+
+    ui.add_enabled_ui(enabled, |ui| {
+        ui.horizontal(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(label_width, 28.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.label("Acceleration strength:");
+                },
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(120.0, 20.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.spacing_mut().slider_width = 120.0;
+                        let slider = ui.add(
+                            egui::Slider::new(
+                                menu.state.staged_mut().mouse_acceleration_strength_mut(),
+                                0.0..=1.0,
+                            )
+                            .show_value(false)
+                            .min_decimals(0)
+                            .max_decimals(2),
+                        );
+                        SettingsMenu::paint_dirty_decor(ui, &slider, is_dirty);
+                    },
+                );
+                ui.add_space(8.0);
+                let drag = ui.add(
+                    egui::DragValue::new(menu.state.staged_mut().mouse_acceleration_strength_mut())
+                        .range(0.0..=1.0)
+                        .speed(0.01)
+                        .min_decimals(2)
+                        .max_decimals(2),
+                );
+                SettingsMenu::paint_dirty_decor(ui, &drag, is_dirty);
+            });
+        });
+    });
+
+    if is_dirty {
+        menu.state
+            .mark_dirty(SettingsField::MouseAccelerationStrength);
+    }
 }
 
 /// A labelled "Enable" checkbox for one boolean pref, decorated and marked dirty
