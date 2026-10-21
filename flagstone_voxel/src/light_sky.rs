@@ -25,12 +25,12 @@ use glam::IVec3;
 /// taken from their existing `column_max_y` snapshot — those chunks must have
 /// been brought up-to-date first via their own `sky_dirty` flow if they
 /// changed.
-pub fn recompute_sky_exposure(grid: &mut VoxelGrid, chunk_pos: IVec3) {
+pub fn recompute_sky_exposure(grid: &mut VoxelGrid, chunk_pos: IVec3) -> bool {
     if !grid.supports_lighting() {
-        return;
+        return false;
     }
     if !grid.chunk_light(chunk_pos).is_none_or(|cl| cl.sky_dirty) {
-        return;
+        return false;
     }
 
     // Step 1: rebuild this chunk's column_max_y from authoritative block data.
@@ -66,6 +66,7 @@ pub fn recompute_sky_exposure(grid: &mut VoxelGrid, chunk_pos: IVec3) {
         }
     }
     cl.sky_dirty = false;
+    false
 }
 
 /// Scan blocks in `chunk_pos`'s footprint and compute per-(x,z) chunk-local

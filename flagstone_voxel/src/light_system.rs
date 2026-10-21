@@ -156,6 +156,10 @@ impl LightSystem {
         completed
     }
 
+    /// Light chunks that have just entered the grid (world load, generation
+    /// preload, streaming): refresh their sky exposure and block light.
+    pub fn light_arrived_chunks(&mut self, _chunks: &[IVec3]) {}
+
     /// Emit ChunkMeshDirty events for all affected chunks
     ///
     /// This should be called after process_frame() to notify the mesh system
@@ -461,5 +465,241 @@ mod tests {
         assert_eq!(light_system.pending_jobs(), 1);
         assert_eq!(light_system.grid().block_light_rgb_at(near), TORCH);
         assert_eq!(light_system.grid().block_light_rgb_at(far), [0, 0, 0]);
+    }
+
+    fn unbounded_system() -> (LightSystem, DirtyLog) {
+        system_with_budget(LightFrameBudget {
+            max_blocks_per_frame: usize::MAX,
+            max_time_us: u64::MAX,
+        })
+    }
+
+    /// Runs one frame and publishes its dirty events, then forgets them, so a
+    /// test starts from a settled world.
+    fn settle(light_system: &mut LightSystem, received: &DirtyLog) {
+        light_system.process_frame();
+        light_system.emit_dirty_events();
+        received.lock().unwrap().clear();
+    }
+
+    fn removed(position: IVec3) -> WorldEvent {
+        WorldEvent::BlockRemoved {
+            position,
+            old_material_id: 0,
+            reason: BlockChangeReason::Player,
+        }
+    }
+
+    /// Digs `column` from `top` down to `bottom` (inclusive) the way the game
+    /// does: edit the grid, then publish the removal.
+    fn dig(light_system: &mut LightSystem, column: (i32, i32), top: i32, bottom: i32) {
+        for y in (bottom..=top).rev() {
+            let pos = IVec3::new(column.0, y, column.1);
+            assert!(light_system.grid_mut().mutator().remove(pos));
+            light_system.handle_event(&removed(pos));
+        }
+    }
+
+    /// Solid ground in a 4x4 footprint, 34 blocks tall: chunk layers 0 and 1
+    /// full, layer 2 holding two block layers.
+    fn solid_ground(light_system: &mut LightSystem) {
+        light_system
+            .grid_mut()
+            .mutator()
+            .fill_region(IVec3::ZERO, IVec3::new(3, 33, 3), 0);
+    }
+
+    fn chunks_of(positions: &[IVec3]) -> HashSet<IVec3> {
+        positions
+            .iter()
+            .map(|p| crate::light_storage::world_to_chunk_local(*p).0)
+            .collect()
+    }
+
+    #[test]
+    fn digging_a_shaft_exposes_its_floor_after_one_frame() {
+        let (mut light_system, received) = unbounded_system();
+        solid_ground(&mut light_system);
+        settle(&mut light_system, &received);
+        let floor = IVec3::new(1, 29, 1);
+        assert!(!light_system.grid().sky_exposed_at(floor), "ground is dark");
+
+        dig(&mut light_system, (1, 1), 33, 29);
+        light_system.process_frame();
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        assert!(grid.sky_exposed_at(floor), "the shaft floor sees the sky");
+        assert!(grid.sky_exposed_at(IVec3::new(1, 33, 1)), "so does the top");
+        assert!(
+            !grid.sky_exposed_at(IVec3::new(1, 28, 1)),
+            "the ground under the shaft stays shadowed"
+        );
+        assert!(
+            !grid.sky_exposed_at(IVec3::new(2, 29, 1)),
+            "the wall beside the shaft stays shadowed"
+        );
+        let crossed = chunks_of(&[IVec3::new(1, 33, 1), floor]);
+        assert_eq!(crossed.len(), 2, "the shaft crosses a chunk border");
+        assert_published_once_each(&received, &crossed);
+    }
+
+    #[test]
+    fn sealing_a_shaft_hides_its_floor_from_the_sky() {
+        let (mut light_system, received) = unbounded_system();
+        solid_ground(&mut light_system);
+        dig(&mut light_system, (1, 1), 33, 29);
+        settle(&mut light_system, &received);
+        let floor = IVec3::new(1, 29, 1);
+        let cap = IVec3::new(1, 33, 1);
+        assert!(light_system.grid().sky_exposed_at(floor), "open shaft");
+
+        light_system.grid_mut().mutator().place(cap, 0, None);
+        light_system.handle_event(&placed(cap, 0));
+        light_system.process_frame();
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        assert!(!grid.sky_exposed_at(floor), "the roof hides the floor");
+        assert!(!grid.sky_exposed_at(IVec3::new(1, 31, 1)));
+        assert!(
+            grid.sky_exposed_at(IVec3::new(1, 34, 1)),
+            "above the roof is open"
+        );
+        assert_published_once_each(&received, &chunks_of(&[cap, floor]));
+    }
+
+    #[test]
+    fn sky_refresh_runs_top_down_across_chunk_layers() {
+        let (mut light_system, received) = unbounded_system();
+        let cap = IVec3::new(1, 4 * 16 + 3, 1);
+        for layer in 0..=4 {
+            // A filler block in another column keeps every layer loaded.
+            let filler = IVec3::new(8, layer * 16 + 5, 8);
+            light_system.grid_mut().mutator().place(filler, 0, None);
+        }
+        light_system.grid_mut().mutator().place(cap, 0, None);
+        settle(&mut light_system, &received);
+        let probes: Vec<IVec3> = (0..=4)
+            .map(|layer| IVec3::new(1, layer * 16 + 1, 1))
+            .collect();
+        for probe in &probes {
+            assert!(
+                !light_system.grid().sky_exposed_at(*probe),
+                "{probe:?} roofed"
+            );
+        }
+
+        assert!(light_system.grid_mut().mutator().remove(cap));
+        light_system.handle_event(&removed(cap));
+        light_system.process_frame();
+        light_system.emit_dirty_events();
+
+        for probe in &probes {
+            assert!(
+                light_system.grid().sky_exposed_at(*probe),
+                "{probe:?} sees the sky once the roof is gone"
+            );
+        }
+        assert_published_once_each(&received, &chunks_of(&probes));
+    }
+
+    /// Brings the chunk at `chunk` into the grid the way streaming does: from
+    /// serialized bytes, then handed to the light system. `build` places the
+    /// chunk's blocks in a throwaway grid.
+    fn arrive(light_system: &mut LightSystem, chunk: IVec3, build: impl FnOnce(&mut VoxelGrid)) {
+        let mut donor = test_grid();
+        build(&mut donor);
+        let bytes = donor
+            .serialize_chunk(chunk)
+            .expect("the chunk holds blocks");
+        light_system
+            .grid_mut()
+            .deserialize_chunk_into(chunk, &bytes)
+            .expect("valid chunk bytes");
+        light_system.light_arrived_chunks(&[chunk]);
+    }
+
+    #[test]
+    fn arrived_chunk_with_an_emitter_lights_itself_and_its_neighbours() {
+        let (mut light_system, received) = unbounded_system();
+        let source = IVec3::new(15, 5, 5);
+        let next_chunk = IVec3::new(1, 0, 0);
+
+        arrive(&mut light_system, IVec3::ZERO, |donor| {
+            donor.mutator().place(source, 1, None);
+        });
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        assert_eq!(grid.block_light_rgb_at(source), TORCH);
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(14, 5, 5)), [14, 7, 1]);
+        assert_eq!(
+            grid.block_light_rgb_at(IVec3::new(16, 5, 5)),
+            [14, 7, 1],
+            "light crosses into the next chunk"
+        );
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(18, 5, 5)), [12, 5, 0]);
+        let got = received.lock().unwrap().clone();
+        let unique: HashSet<IVec3> = got.iter().copied().collect();
+        assert_eq!(unique.len(), got.len(), "one event per chunk: {got:?}");
+        assert!(unique.contains(&IVec3::ZERO), "the arrived chunk: {got:?}");
+        assert!(unique.contains(&next_chunk), "the lit neighbour: {got:?}");
+    }
+
+    #[test]
+    fn arrival_refills_from_lit_neighbours() {
+        let (mut light_system, received) = unbounded_system();
+        let neighbour = IVec3::new(1, 0, 0);
+        LightPropagator::new().add_light_rgb(light_system.grid_mut(), IVec3::new(14, 5, 5), TORCH);
+        light_system.grid_mut().remove_chunk(neighbour);
+        assert_eq!(
+            light_system.grid().block_light_rgb_at(IVec3::new(16, 5, 5)),
+            [0, 0, 0],
+            "the neighbour's light state is gone"
+        );
+
+        arrive(&mut light_system, neighbour, |donor| {
+            donor.mutator().place(IVec3::new(30, 10, 10), 0, None);
+        });
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(16, 5, 5)), [13, 6, 0]);
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(17, 5, 5)), [12, 5, 0]);
+        assert!(received.lock().unwrap().contains(&neighbour));
+    }
+
+    #[test]
+    fn arrival_clears_light_that_spread_before_the_blocks_loaded() {
+        let (mut light_system, received) = unbounded_system();
+        let wall_chunk = IVec3::new(1, 0, 0);
+        LightPropagator::new().add_light_rgb(light_system.grid_mut(), IVec3::new(14, 5, 5), TORCH);
+        assert_eq!(
+            light_system.grid().block_light_rgb_at(IVec3::new(17, 5, 5)),
+            [12, 5, 0],
+            "light has spread into the unloaded chunk"
+        );
+
+        arrive(&mut light_system, wall_chunk, |donor| {
+            donor
+                .mutator()
+                .fill_region(IVec3::new(16, 0, 0), IVec3::new(16, 15, 15), 0);
+        });
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(16, 5, 5)), [0, 0, 0]);
+        assert_eq!(
+            grid.block_light_rgb_at(IVec3::new(17, 5, 5)),
+            [0, 0, 0],
+            "the wall now shades what lies behind it"
+        );
+        assert_eq!(
+            grid.block_light_rgb_at(IVec3::new(15, 5, 5)),
+            [14, 7, 1],
+            "light on the open side is kept"
+        );
+        assert!(received.lock().unwrap().contains(&wall_chunk));
     }
 }

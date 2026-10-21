@@ -754,6 +754,101 @@ mod tests {
     }
 
     #[test]
+    fn mined_block_queues_a_light_job_at_its_position() {
+        let mut app = App::headless();
+        app.game_state = crate::game_state::GameState::Playing;
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
+        app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+        app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for x in 2..=6 {
+            for y in 68..=72 {
+                for z in 1..=3 {
+                    grid.mutator()
+                        .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                }
+            }
+        }
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&removed);
+        app.event_bus.subscribe(move |e: &WorldEvent| {
+            if let WorldEvent::BlockRemoved { position, .. } = e {
+                sink.lock().unwrap().push(*position);
+            }
+        });
+        let processor = EventProcessor::new();
+        processor.handle_input_event(&mut app, InputEvent::MineRequested);
+        let mined = removed.lock().unwrap()[0];
+        // Light left behind by the mined block: only a job at that position clears it.
+        let light_system = app.light_system.as_mut().expect("light system");
+        light_system
+            .grid_mut()
+            .set_block_light_rgb(mined, [10, 0, 0]);
+        assert_eq!(
+            light_system.pending_jobs(),
+            0,
+            "nothing queued before routing"
+        );
+
+        processor.process_world_events(&mut app);
+
+        let light_system = app.light_system.as_mut().expect("light system");
+        assert_eq!(light_system.pending_jobs(), 1, "one job for the one block");
+        assert_eq!(light_system.process_frame(), 1);
+        assert_eq!(
+            light_system.grid().block_light_rgb_at(mined),
+            [0, 0, 0],
+            "the job ran at the mined position"
+        );
+        assert!(
+            light_system.emit_dirty_events() > 0,
+            "the cleared light dirties its chunk"
+        );
+    }
+
+    #[test]
+    fn duplicate_mesh_dirty_events_mesh_a_chunk_once() {
+        let chunk_pos = glam::IVec3::new(0, 4, 0);
+        let meshed_collider = |dirty_flags: &[(bool, bool)]| {
+            let mut app = App::headless();
+            app.light_system
+                .as_mut()
+                .expect("App starts with a light system")
+                .grid_mut()
+                .mutator()
+                .place(flagstone_voxel::BlockPos::new(3, 70, 3), 1, None);
+            for &(terrain_dirty, structure_dirty) in dirty_flags {
+                app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+                    chunk_pos,
+                    terrain_dirty,
+                    structure_dirty,
+                });
+            }
+
+            EventProcessor::new().process_world_events(&mut app);
+
+            let id = crate::app::world_geometry::chunk_mesh_id(chunk_pos);
+            app.physics
+                .world
+                .as_ref()
+                .expect("physics world")
+                .world_mesh_collider(id)
+                .expect("the chunk is meshed")
+        };
+
+        let once = meshed_collider(&[(true, false)]);
+        let thrice = meshed_collider(&[(true, false), (false, true), (true, true)]);
+
+        // Each meshing replaces the collider, so a repeat would hand out a newer handle.
+        assert_eq!(thrice, once, "the chunk was meshed once, not three times");
+    }
+
+    #[test]
     fn mine_request_while_playing_outside_first_person_leaves_aimed_block() {
         let mut app = App::headless();
         app.game_state = crate::game_state::GameState::Playing;

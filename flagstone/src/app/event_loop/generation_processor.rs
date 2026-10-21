@@ -496,4 +496,64 @@ mod tests {
             "one draw per chunk with geometry"
         );
     }
+
+    #[test]
+    fn completed_generation_lights_preloaded_chunks() {
+        const EMITTER_MATERIAL: u32 = 7;
+        let mut app = App::headless();
+        let spec = flagstone_game::scene_builders::WorldSpec {
+            name: "headless-test-completed-lit".to_string(),
+            seed: Some(7),
+            size_xz: 64,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+            initial_time_of_day: 6.0,
+        };
+        let scene_bytes = flagstone_game::scene_persistence::encode_to_bytes(
+            &flagstone_game::scene::SceneEntities::default(),
+            None,
+            &[],
+        )
+        .expect("encode empty scene");
+        // Above the preloaded terrain, so only the handed-in grid holds this chunk.
+        let emitter = glam::IVec3::new(3, 200, 3);
+        let mut grid = flagstone_voxel::VoxelGrid::new(16);
+        grid.material_registry.set_lighting(
+            EMITTER_MATERIAL,
+            flagstone_voxel::MaterialLighting {
+                emission: [15, 8, 2],
+                opacity_cost: 0,
+            },
+        );
+        grid.mutator().place(emitter, EMITTER_MATERIAL, None);
+        let _ = app.world_event_rx.try_iter().count();
+
+        GenerationProcessor::new().handle_completed(
+            &mut app,
+            scene_bytes,
+            spec,
+            flagstone_game::scene_builders::TerrainConfig::default(),
+            grid,
+        );
+
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        assert_eq!(grid.block_light_rgb_at(emitter), [15, 8, 2]);
+        assert_eq!(
+            grid.block_light_rgb_at(emitter + glam::IVec3::X),
+            [14, 7, 1],
+            "the emitter's neighbour is lit before the first tick"
+        );
+        let dirtied: Vec<glam::IVec3> = app
+            .world_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                flagstone_voxel::WorldEvent::ChunkMeshDirty { chunk_pos, .. } => Some(chunk_pos),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            dirtied.contains(&glam::IVec3::new(0, 12, 0)),
+            "the lit chunk is queued for re-meshing: {dirtied:?}"
+        );
+    }
 }

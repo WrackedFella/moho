@@ -4,9 +4,13 @@
 //! property. Failing tests identify exactly which guarantee broke.
 
 use flagstone_voxel::{
-    LightPropagator, MaterialLighting, VoxelGrid, dirty_chunks_below, recompute_sky_exposure,
+    LightFrameBudget, LightPropagator, LightSystem, MaterialLighting, VoxelGrid,
+    dirty_chunks_below, recompute_sky_exposure,
 };
 use glam::IVec3;
+use moho_core::events::EventBus;
+use proptest::prelude::*;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -785,4 +789,124 @@ fn transparent_block_does_not_occlude_sky() {
         sky(&grid, IVec3::new(3, 7, 3)),
         "below a transparent block must stay exposed"
     );
+}
+
+#[test]
+fn sky_recompute_reports_whether_any_exposure_bit_changed() {
+    let mut grid = grid_16();
+    let cp = IVec3::ZERO;
+    let block = IVec3::new(3, 8, 3);
+    grid.chunk_light_mut(cp);
+
+    let first = recompute_sky_exposure(&mut grid, cp);
+    grid.chunk_light_mut(cp).sky_dirty = true;
+    let unchanged = recompute_sky_exposure(&mut grid, cp);
+    grid.mutator().place(block, 0, None);
+    let shadowed = recompute_sky_exposure(&mut grid, cp);
+    grid.chunk_light_mut(cp).sky_dirty = true;
+    let shadowed_again = recompute_sky_exposure(&mut grid, cp);
+    grid.mutator().remove(block);
+    let uncovered = recompute_sky_exposure(&mut grid, cp);
+    let clean = recompute_sky_exposure(&mut grid, cp);
+
+    assert!(first, "a fresh chunk light gains its exposed bits");
+    assert!(!unchanged, "the same blocks give the same bits");
+    assert!(shadowed, "a new roof shadows voxels");
+    assert!(!shadowed_again, "recomputing the same roof changes nothing");
+    assert!(uncovered, "removing the roof exposes voxels again");
+    assert!(!clean, "a chunk that is not sky_dirty reports no change");
+}
+
+// ---------------------------------------------------------------------------
+// Chunk arrival
+// ---------------------------------------------------------------------------
+
+const REGION_X: i32 = 3;
+const REGION_Y: i32 = 2;
+const REGION_Z: i32 = 3;
+const REGION_CHUNKS: usize = (REGION_X * REGION_Y * REGION_Z) as usize;
+
+/// Material 0 is opaque, 1 a transparent marker, 2 a torch.
+fn region_grid() -> VoxelGrid {
+    let mut grid = grid_16();
+    make_transparent(&mut grid);
+    make_torch(&mut grid);
+    for index in 0..REGION_CHUNKS {
+        grid.chunk_light_mut(region_chunk(index));
+    }
+    grid
+}
+
+fn region_chunk(index: usize) -> IVec3 {
+    let index = index as i32;
+    IVec3::new(
+        index % REGION_X,
+        (index / REGION_X) % REGION_Y,
+        index / (REGION_X * REGION_Y),
+    )
+}
+
+/// One random block: local position, then whether it emits (else it is opaque).
+type RandomBlock = (i32, i32, i32, bool);
+
+fn random_blocks() -> impl Strategy<Value = Vec<RandomBlock>> {
+    proptest::collection::vec((0..16, 0..16, 0..16, any::<bool>()), 0..6)
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+
+    /// Whatever order chunks stream in, light and sky end up as if the whole
+    /// world had been built first and lit in one pass.
+    #[test]
+    fn prop_chunks_arriving_in_any_order_match_a_fresh_fill(
+        per_chunk in proptest::collection::vec(random_blocks(), REGION_CHUNKS),
+        order in Just((0..REGION_CHUNKS).collect::<Vec<usize>>()).prop_shuffle(),
+    ) {
+        // Every chunk holds a transparent marker so none is an absent all-air chunk.
+        let mut reference = region_grid();
+        for (index, blocks) in per_chunk.iter().enumerate() {
+            let min = region_chunk(index) * 16;
+            reference.mutator().place(min, 1, None);
+            for &(x, y, z, emits) in blocks {
+                reference.mutator().place(min + IVec3::new(x, y, z), if emits { 2 } else { 0 }, None);
+            }
+        }
+        let bytes: Vec<Vec<u8>> = (0..REGION_CHUNKS)
+            .map(|index| reference.serialize_chunk(region_chunk(index)).expect("chunk holds blocks"))
+            .collect();
+
+        let mut light_system = LightSystem::new(
+            region_grid(),
+            Arc::new(EventBus::new()),
+            LightFrameBudget::default(),
+        );
+        for index in order {
+            let chunk = region_chunk(index);
+            light_system.grid_mut().deserialize_chunk_into(chunk, &bytes[index]).unwrap();
+            light_system.light_arrived_chunks(&[chunk]);
+        }
+        light_system.process_frame();
+
+        LightPropagator::new().flood_fill_block_lights(&mut reference);
+        for layer in (0..REGION_Y).rev() {
+            for index in 0..REGION_CHUNKS {
+                let chunk = region_chunk(index);
+                if chunk.y == layer {
+                    recompute_sky_exposure(&mut reference, chunk);
+                }
+            }
+        }
+
+        let grid = light_system.grid();
+        for x in 0..REGION_X * 16 {
+            for y in 0..REGION_Y * 16 {
+                for z in 0..REGION_Z * 16 {
+                    let pos = IVec3::new(x, y, z);
+                    prop_assert_eq!(rgb(grid, pos), rgb(&reference, pos), "block light at {:?}", pos);
+                    prop_assert_eq!(sky(grid, pos), sky(&reference, pos), "sky at {:?}", pos);
+                }
+            }
+        }
+    }
 }
