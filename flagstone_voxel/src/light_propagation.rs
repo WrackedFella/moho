@@ -13,7 +13,7 @@
 //!   then re-seeds from any adjacent voxels still lit by surviving sources.
 
 use super::grid::VoxelGrid;
-use super::light_storage::{self, CHUNK_SIZE, CHUNK_VOLUME, idx_to_local, local_index};
+use super::light_storage::{self, CHUNK_SIZE, CHUNK_VOLUME, ChunkLight, idx_to_local, local_index};
 use glam::IVec3;
 use std::collections::{HashSet, VecDeque};
 
@@ -68,7 +68,7 @@ impl LightPropagator {
         if !grid.supports_lighting() {
             return vec![];
         }
-        let mut affected = std::collections::HashSet::new();
+        let mut affected = HashSet::new();
         self.add_rgb(grid, pos, rgb, &mut affected);
         affected.into_iter().collect()
     }
@@ -80,7 +80,7 @@ impl LightPropagator {
         if !grid.supports_lighting() {
             return vec![];
         }
-        let mut affected = std::collections::HashSet::new();
+        let mut affected = HashSet::new();
         for ch in [LightChannel::R, LightChannel::G, LightChannel::B] {
             self.two_queue_remove(grid, pos, ch, &mut affected);
         }
@@ -93,24 +93,9 @@ impl LightPropagator {
         if !grid.supports_lighting() {
             return vec![];
         }
-        let seeds: Vec<(IVec3, [u8; 3])> = grid
-            .block_positions()
-            .filter_map(|pos| {
-                let mat_id = grid.material_at(pos)?;
-                let emission = grid.material_registry.emission(mat_id);
-                if emission == [0, 0, 0] {
-                    None
-                } else {
-                    Some((pos, emission))
-                }
-            })
-            .collect();
-
-        // Order does not matter: each voxel ends at the brightest level any seed reaches it with.
-        let mut affected = std::collections::HashSet::new();
-        for (pos, rgb) in seeds {
-            self.add_rgb(grid, pos, rgb, &mut affected);
-        }
+        let positions: Vec<IVec3> = grid.block_positions().collect();
+        let mut affected = HashSet::new();
+        self.seed_emitters(grid, &positions, &mut affected);
         affected.into_iter().collect()
     }
 
@@ -128,6 +113,8 @@ impl LightPropagator {
             return affected;
         }
         let arrived_set: HashSet<IVec3> = arrived.iter().copied().collect();
+        let arrived: Vec<IVec3> = arrived_set.iter().copied().collect();
+        let arrived = arrived.as_slice();
 
         for ch in CHANNELS {
             let stale = stale_light(grid, arrived, ch);
@@ -135,12 +122,12 @@ impl LightPropagator {
         }
 
         for &chunk in arrived {
-            for block in grid.chunk_block_data(chunk) {
-                let emission = grid.material_registry.emission(block.material_id);
-                if emission != [0, 0, 0] {
-                    self.add_rgb(grid, block.position, emission, &mut affected);
-                }
-            }
+            let positions: Vec<IVec3> = grid
+                .chunk_block_data(chunk)
+                .iter()
+                .map(|block| block.position)
+                .collect();
+            self.seed_emitters(grid, &positions, &mut affected);
         }
 
         for ch in CHANNELS {
@@ -152,13 +139,34 @@ impl LightPropagator {
         affected
     }
 
+    /// Flood-fill the light of every emissive block among `positions`.
+    fn seed_emitters(
+        &mut self,
+        grid: &mut VoxelGrid,
+        positions: &[IVec3],
+        affected: &mut HashSet<IVec3>,
+    ) {
+        let seeds: Vec<(IVec3, [u8; 3])> = positions
+            .iter()
+            .filter_map(|&pos| {
+                let emission = grid.material_registry.emission(grid.material_at(pos)?);
+                (emission != [0, 0, 0]).then_some((pos, emission))
+            })
+            .collect();
+
+        // Order does not matter: each voxel ends at the brightest level any seed reaches it with.
+        for (pos, rgb) in seeds {
+            self.add_rgb(grid, pos, rgb, affected);
+        }
+    }
+
     /// One BFS pass per lit channel of `rgb`, recording touched chunks in `affected`.
     fn add_rgb(
         &mut self,
         grid: &mut VoxelGrid,
         pos: IVec3,
         rgb: [u8; 3],
-        affected: &mut std::collections::HashSet<IVec3>,
+        affected: &mut HashSet<IVec3>,
     ) {
         for (ch, level) in [LightChannel::R, LightChannel::G, LightChannel::B]
             .into_iter()
@@ -201,7 +209,7 @@ impl LightPropagator {
         pos: IVec3,
         level: u8,
         ch: LightChannel,
-        affected: &mut std::collections::HashSet<IVec3>,
+        affected: &mut HashSet<IVec3>,
     ) {
         let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
         self.queue.clear();
@@ -222,7 +230,7 @@ impl LightPropagator {
         grid: &mut VoxelGrid,
         seeds: &[PropNode],
         ch: LightChannel,
-        affected: &mut std::collections::HashSet<IVec3>,
+        affected: &mut HashSet<IVec3>,
     ) {
         self.queue.clear();
         for &seed in seeds {
@@ -258,12 +266,7 @@ impl LightPropagator {
     }
 
     /// BFS over the queued nodes that only overwrites dimmer voxels.
-    fn drain(
-        &mut self,
-        grid: &mut VoxelGrid,
-        ch: LightChannel,
-        affected: &mut std::collections::HashSet<IVec3>,
-    ) {
+    fn drain(&mut self, grid: &mut VoxelGrid, ch: LightChannel, affected: &mut HashSet<IVec3>) {
         while let Some(node) = self.queue.pop_front() {
             let stored = Self::read_ch(grid, node.chunk_pos, node.idx, ch);
             if node.level <= stored {
@@ -281,7 +284,7 @@ impl LightPropagator {
         grid: &mut VoxelGrid,
         pos: IVec3,
         ch: LightChannel,
-        affected: &mut std::collections::HashSet<IVec3>,
+        affected: &mut HashSet<IVec3>,
     ) {
         let (start_chunk, start_idx, _) = light_storage::world_to_chunk_local(pos);
         let start_level = Self::read_ch(grid, start_chunk, start_idx, ch);
@@ -303,12 +306,11 @@ impl LightPropagator {
         grid: &mut VoxelGrid,
         starts: Vec<PropNode>,
         ch: LightChannel,
-        affected: &mut std::collections::HashSet<IVec3>,
+        affected: &mut HashSet<IVec3>,
     ) {
         let mut dark: VecDeque<PropNode> = VecDeque::with_capacity(512);
         let mut relight: Vec<PropNode> = Vec::new();
-        let mut relight_seen: std::collections::HashSet<(IVec3, usize)> =
-            std::collections::HashSet::new();
+        let mut relight_seen: HashSet<(IVec3, usize)> = HashSet::new();
 
         dark.extend(starts);
 
@@ -373,22 +375,56 @@ fn is_light_source(grid: &VoxelGrid, node: PropNode) -> bool {
     })
 }
 
+/// The node for `idx` of `chunk_pos` if it holds light in `levels`.
+fn lit_node(chunk_pos: IVec3, levels: &[u8; CHUNK_VOLUME], idx: usize) -> Option<PropNode> {
+    let level = levels[idx];
+    (level > 0).then_some(PropNode {
+        chunk_pos,
+        idx,
+        level,
+    })
+}
+
+/// The channel's level array of a chunk's light state.
+fn channel_levels(light: &ChunkLight, ch: LightChannel) -> &[u8; CHUNK_VOLUME] {
+    match ch {
+        LightChannel::R => &light.block_light_r,
+        LightChannel::G => &light.block_light_g,
+        LightChannel::B => &light.block_light_b,
+    }
+}
+
 /// Every voxel of the `arrived` chunks that holds light in `ch`.
 fn stale_light(grid: &VoxelGrid, arrived: &[IVec3], ch: LightChannel) -> Vec<PropNode> {
     let mut stale = Vec::new();
     for &chunk_pos in arrived {
-        for idx in 0..CHUNK_VOLUME {
-            let level = LightPropagator::read_ch(grid, chunk_pos, idx, ch);
-            if level > 0 {
-                stale.push(PropNode {
-                    chunk_pos,
-                    idx,
-                    level,
-                });
-            }
-        }
+        let Some(light) = grid.chunk_light(chunk_pos) else {
+            continue;
+        };
+        let levels = channel_levels(light, ch);
+        stale.extend((0..CHUNK_VOLUME).filter_map(|idx| lit_node(chunk_pos, levels, idx)));
     }
     stale
+}
+
+/// Chunk-local indices of the 16x16 layer of a chunk that touches the chunk
+/// lying in direction `-dir` from it.
+fn face_layer(dir: IVec3) -> impl Iterator<Item = usize> {
+    let face = if dir.x + dir.y + dir.z > 0 {
+        0
+    } else {
+        CHUNK_SIZE - 1
+    };
+    let axis = dir.abs().max_position();
+    (0..CHUNK_SIZE).flat_map(move |a| {
+        (0..CHUNK_SIZE).map(move |b| {
+            let mut cell = IVec3::ZERO;
+            cell[axis] = face;
+            cell[(axis + 1) % 3] = a;
+            cell[(axis + 2) % 3] = b;
+            local_index(cell.x, cell.y, cell.z)
+        })
+    })
 }
 
 /// Lit voxels on the face layers of loaded chunks (outside `arrived_set`) that
@@ -403,38 +439,27 @@ fn neighbour_face_light(
     for &chunk in arrived {
         for dir in OFFSETS {
             let chunk_pos = chunk + dir;
-            if arrived_set.contains(&chunk_pos) || grid.chunk_light(chunk_pos).is_none() {
-                continue;
-            }
-            // The layer of the neighbour that faces `chunk`.
-            let face = if dir.x + dir.y + dir.z > 0 {
-                0
-            } else {
-                CHUNK_SIZE - 1
-            };
-            for a in 0..CHUNK_SIZE {
-                for b in 0..CHUNK_SIZE {
-                    let local = if dir.x != 0 {
-                        IVec3::new(face, a, b)
-                    } else if dir.y != 0 {
-                        IVec3::new(a, face, b)
-                    } else {
-                        IVec3::new(a, b, face)
-                    };
-                    let idx = local_index(local.x, local.y, local.z);
-                    let level = LightPropagator::read_ch(grid, chunk_pos, idx, ch);
-                    if level > 0 {
-                        seeds.push(PropNode {
-                            chunk_pos,
-                            idx,
-                            level,
-                        });
-                    }
-                }
+            if !arrived_set.contains(&chunk_pos) {
+                scan_face(grid, chunk_pos, dir, ch, &mut seeds);
             }
         }
     }
     seeds
+}
+
+/// Push the lit voxels of `chunk_pos`'s layer facing its neighbour in `-dir`.
+fn scan_face(
+    grid: &VoxelGrid,
+    chunk_pos: IVec3,
+    dir: IVec3,
+    ch: LightChannel,
+    seeds: &mut Vec<PropNode>,
+) {
+    let Some(light) = grid.chunk_light(chunk_pos) else {
+        return;
+    };
+    let levels = channel_levels(light, ch);
+    seeds.extend(face_layer(dir).filter_map(|idx| lit_node(chunk_pos, levels, idx)));
 }
 
 /// The six face neighbours of `world`.

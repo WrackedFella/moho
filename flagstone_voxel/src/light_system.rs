@@ -32,11 +32,11 @@
 use super::grid::VoxelGrid;
 use super::light_jobs::{LightFrameBudget, LightJobQueue, LightUpdateJob};
 use super::light_propagation::LightPropagator;
-use super::light_sky::{dirty_chunks_below, recompute_sky_exposure};
+use super::light_sky::recompute_sky_exposure;
 use crate::events::{BlockChangeReason, WorldEvent};
 use glam::{IVec3, Vec3};
 use moho_core::events::EventBus;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// Light system manager coordinating light propagation with events
@@ -186,9 +186,21 @@ impl LightSystem {
         if !self.grid.supports_lighting() {
             return;
         }
+        let mut highest: HashMap<(i32, i32), i32> = HashMap::new();
         for &chunk_pos in chunks {
             self.grid.chunk_light_mut(chunk_pos).sky_dirty = true;
-            dirty_chunks_below(&mut self.grid, chunk_pos);
+            let top = highest
+                .entry((chunk_pos.x, chunk_pos.z))
+                .or_insert(chunk_pos.y);
+            *top = (*top).max(chunk_pos.y);
+        }
+        let lower: Vec<IVec3> = self
+            .grid
+            .lit_chunk_positions()
+            .filter(|cp| highest.get(&(cp.x, cp.z)).is_some_and(|&top| cp.y < top))
+            .collect();
+        for cp in lower {
+            self.grid.chunk_light_mut(cp).sky_dirty = true;
         }
         self.refresh_sky();
         let changed = LightPropagator::new().light_arrived(&mut self.grid, chunks);

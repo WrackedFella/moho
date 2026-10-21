@@ -11,6 +11,7 @@ use crate::{App, RenderRequest};
 use flagstone_voxel::{BlockChangeReason, VoxelChunk, WorldEvent};
 use moho_core::events::{GraphicsEvent, UiEvent};
 use moho_render_api::{Marker, MarkerId};
+use std::collections::HashSet;
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
@@ -282,7 +283,7 @@ impl EventProcessor {
     /// Process all pending world events: every one reaches the light system,
     /// then each chunk marked dirty is re-meshed once however many events named it.
     pub fn process_world_events(&self, app: &mut App) {
-        let mut dirty_chunks = std::collections::HashSet::new();
+        let mut dirty_chunks: HashSet<glam::IVec3> = HashSet::new();
         while let Ok(event) = app.world_event_rx.try_recv() {
             if let Some(light_system) = app.light_system.as_mut() {
                 light_system.handle_event(&event);
@@ -292,13 +293,21 @@ impl EventProcessor {
             }
         }
 
+        let Some(light_system) = &app.light_system else {
+            return;
+        };
         let player_chunk = lod_player_chunk(app.simulation.position());
-        for chunk_pos in dirty_chunks {
-            let lod = lod_for_chunk(chunk_pos, player_chunk);
-            let Some(light_system) = &app.light_system else {
-                continue;
-            };
-            let chunk = VoxelChunk::from_grid_lod(light_system.grid(), chunk_pos, lod);
+        let chunks: Vec<(glam::IVec3, VoxelChunk)> = dirty_chunks
+            .into_iter()
+            .map(|chunk_pos| {
+                let lod = lod_for_chunk(chunk_pos, player_chunk);
+                (
+                    chunk_pos,
+                    VoxelChunk::from_grid_lod(light_system.grid(), chunk_pos, lod),
+                )
+            })
+            .collect();
+        for (chunk_pos, chunk) in chunks {
             if crate::app::world_geometry::insert_chunk(app, chunk).is_some() {
                 tracing::trace!(chunk = ?chunk_pos, "Updated mesh for chunk");
             } else {

@@ -21,11 +21,13 @@ use glam::IVec3;
 /// when the grid does not support lighting).
 ///
 /// Rebuilds the chunk's `column_max_y` from its block map then writes the
-/// `sky_exposed` bitmask. Returns whether any `sky_exposed` bit changed; a
-/// freshly allocated chunk light starts with every bit clear. Cross-chunk column heights from chunks above are
+/// `sky_exposed` bitmask. Cross-chunk column heights from chunks above are
 /// taken from their existing `column_max_y` snapshot — those chunks must have
 /// been brought up-to-date first via their own `sky_dirty` flow if they
 /// changed.
+///
+/// Returns whether any `sky_exposed` bit changed; a freshly allocated chunk
+/// light starts with every bit clear.
 pub fn recompute_sky_exposure(grid: &mut VoxelGrid, chunk_pos: IVec3) -> bool {
     if !grid.supports_lighting() {
         return false;
