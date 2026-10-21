@@ -291,21 +291,26 @@ pub(crate) fn cube_index(
         .fold(0u8, |index, (corner, _)| index | 1 << corner)
 }
 
+/// Squared distances within this of the nearest count as a tie. Callers compute a
+/// triangle's centroid in different frames (cell, field or world coordinates), so a
+/// geometric tie arrives a few ULPs apart; this is well above that rounding and well
+/// below the smallest real gap between corner distances.
+const CORNER_TIE_EPSILON: f32 = 1e-4;
+
 /// The corner of a cell (in `MarchingCubes::CORNER_OFFSETS` order) that is solid in
-/// `cube_index` and nearest `centroid`, given in cell coordinates. Ties go to the lowest
-/// corner index. `cube_index` must have a solid corner.
+/// `cube_index` and nearest `centroid`, given in cell coordinates. Corners within
+/// `CORNER_TIE_EPSILON` of the nearest tie, and ties go to the lowest corner index.
+/// `cube_index` must have a solid corner.
 pub(crate) fn nearest_solid_corner(cube_index: u8, centroid: Vec3) -> usize {
-    let mut best = (f32::MAX, 0);
-    for k in 0..8 {
-        if cube_index & (1 << k) != 0 {
-            let d = Vec3::from_array(MarchingCubes::CORNER_OFFSETS[k].map(|c| c as f32))
-                .distance_squared(centroid);
-            if d < best.0 {
-                best = (d, k);
-            }
-        }
-    }
-    best.1
+    let distance = |k: usize| {
+        Vec3::from_array(MarchingCubes::CORNER_OFFSETS[k].map(|c| c as f32))
+            .distance_squared(centroid)
+    };
+    let solid = || (0..8).filter(|k| cube_index & (1 << k) != 0);
+    let nearest = solid().map(distance).fold(f32::MAX, f32::min);
+    solid()
+        .find(|&k| distance(k) <= nearest + CORNER_TIE_EPSILON)
+        .unwrap_or(0)
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
@@ -1260,6 +1265,35 @@ mod tests {
                 "cube index {cube_index:#010b}, centroid {centroid:?}"
             );
         }
+    }
+
+    #[test]
+    fn nearest_solid_corner_breaks_a_tie_rounded_a_few_ulps_apart_to_the_lowest_index() {
+        // Corner 4 is air; corners 5 and 7 are equally near any centroid with x == z.
+        let tie = Vec3::new(0.380_208_5, 0.640_625, 0.380_208_5);
+        let ulps = |v: f32, n: i32| f32::from_bits(v.to_bits().wrapping_add_signed(n));
+
+        for nudged in [
+            tie,
+            Vec3::new(ulps(tie.x, 4), tie.y, tie.z),
+            Vec3::new(tie.x, tie.y, ulps(tie.z, 4)),
+            Vec3::new(ulps(tie.x, -4), tie.y, tie.z),
+        ] {
+            assert_eq!(
+                nearest_solid_corner(0b1110_1111, nudged),
+                5,
+                "centroid {nudged:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn nearest_solid_corner_takes_a_corner_nearer_by_more_than_the_tie_tolerance() {
+        // Corners 5 and 7 again, now with corner 7 nearer by twice the tolerance.
+        let gap = 2.0 * CORNER_TIE_EPSILON;
+        let centroid = Vec3::new(0.38 - gap / 4.0, 0.64, 0.38 + gap / 4.0);
+
+        assert_eq!(nearest_solid_corner(0b1110_1111, centroid), 7);
     }
 
     #[test]
