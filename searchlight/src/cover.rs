@@ -107,7 +107,9 @@ pub(crate) fn floor_below(world: &PhysicsWorld, from: Vec3) -> Vec3 {
         if strike.tag == SurfaceTag::World {
             return strike.point;
         }
-        origin = strike.point + Vec3::NEG_Y * STEP_PAST_CHARACTER;
+        let next = strike.point + Vec3::NEG_Y * STEP_PAST_CHARACTER;
+        debug_assert!(next.y < origin.y, "the floor probe must keep falling");
+        origin = next;
     }
 }
 

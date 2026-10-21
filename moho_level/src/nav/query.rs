@@ -55,7 +55,8 @@ impl Polygon {
     }
 
     /// The surface height above `ground_point`, interpolated over the triangle fan from the
-    /// first corner (polygons are not guaranteed planar).
+    /// first corner (polygons are not guaranteed planar); a degenerate polygon reports its
+    /// first corner's height.
     fn height_at(&self, ground_point: Vec2) -> f32 {
         let corners = &self.vertices;
         let at = Vec3::new(ground_point.x, 0.0, ground_point.y);
@@ -76,10 +77,7 @@ impl Polygon {
                 best = Some((inside, height));
             }
         }
-        best.map_or_else(
-            || corners.iter().map(|p| p.y).sum::<f32>() / corners.len() as f32,
-            |(_, height)| height,
-        )
+        best.map_or(corners[0].y, |(_, height)| height)
     }
 
     /// The portal across edge `edge` as (left, right) for a traveller leaving the polygon.
@@ -150,6 +148,11 @@ impl Ord for Open {
     }
 }
 
+/// A* order: cost so far plus the straight-line distance still to go.
+fn priority(cost: f32, at: Vec3, goal: Vec3) -> f32 {
+    cost + at.distance(goal)
+}
+
 /// The portals, as (left, right), crossed from `start` to `goal` along the route found by A*
 /// over portal midpoints.
 fn route(mesh: &NavMesh, start: &Snapped, goal: &Snapped) -> Option<Vec<(Vec3, Vec3)>> {
@@ -163,7 +166,7 @@ fn route(mesh: &NavMesh, start: &Snapped, goal: &Snapped) -> Option<Vec<(Vec3, V
     cost[start.polygon] = 0.0;
     position[start.polygon] = start.point;
     open.push(Open {
-        cost: start.point.distance(goal.point),
+        cost: priority(0.0, start.point, goal.point),
         polygon: start.polygon,
     });
     while let Some(Open { polygon, .. }) = open.pop() {
@@ -195,7 +198,7 @@ fn route(mesh: &NavMesh, start: &Snapped, goal: &Snapped) -> Option<Vec<(Vec3, V
                 position[next] = midpoint;
                 parent[next] = Some((polygon, portal));
                 open.push(Open {
-                    cost: through + midpoint.distance(goal.point),
+                    cost: priority(through, midpoint, goal.point),
                     polygon: next,
                 });
             }
@@ -217,7 +220,14 @@ fn funnel(start: Vec3, goal: Vec3, portals: &[(Vec3, Vec3)]) -> Vec<Vec3> {
     let (mut apex, mut left, mut right) = (start, start, start);
     let (mut left_at, mut right_at) = (0, 0);
     let mut i = 1;
+    let mut steps = 0;
     while i < all.len() {
+        // Each restart moves the apex to a later portal, so the scan is at most quadratic.
+        steps += 1;
+        debug_assert!(
+            steps <= all.len() * all.len(),
+            "the funnel stopped advancing"
+        );
         let (next_left, next_right) = all[i];
         if cross(apex, right, next_right) >= 0.0 {
             if same(apex, right) || cross(apex, left, next_right) < 0.0 {
