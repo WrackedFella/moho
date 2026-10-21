@@ -378,7 +378,7 @@ fn is_light_source(grid: &VoxelGrid, node: PropNode) -> bool {
 /// The node for `idx` of `chunk_pos` if it holds light in `levels`.
 fn lit_node(chunk_pos: IVec3, levels: &[u8; CHUNK_VOLUME], idx: usize) -> Option<PropNode> {
     let level = levels[idx];
-    (level > 0).then_some(PropNode {
+    (level != 0).then_some(PropNode {
         chunk_pos,
         idx,
         level,
@@ -410,12 +410,8 @@ fn stale_light(grid: &VoxelGrid, arrived: &[IVec3], ch: LightChannel) -> Vec<Pro
 /// Chunk-local indices of the 16x16 layer of a chunk that touches the chunk
 /// lying in direction `-dir` from it.
 fn face_layer(dir: IVec3) -> impl Iterator<Item = usize> {
-    let face = if dir.x + dir.y + dir.z > 0 {
-        0
-    } else {
-        CHUNK_SIZE - 1
-    };
     let axis = dir.abs().max_position();
+    let face = if dir[axis] == 1 { 0 } else { CHUNK_SIZE - 1 };
     (0..CHUNK_SIZE).flat_map(move |a| {
         (0..CHUNK_SIZE).map(move |b| {
             let mut cell = IVec3::ZERO;
