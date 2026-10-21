@@ -31,7 +31,7 @@ pub struct CharacterCommand {
 pub struct MoveSettings {
     /// Ground speed at full input, m/s.
     pub max_speed: f32,
-    /// Most speed ground input adds per second, m/s².
+    /// Most speed ground input adds along the wish direction per second, m/s².
     pub ground_accel: f32,
     /// Ground speed lost per second as a fraction of speed, 1/s.
     pub friction: f32,
@@ -109,9 +109,7 @@ fn accelerate(velocity: &mut Vec3, wish: Vec3, limit: f32, accel: f32, dt: f32) 
     *velocity += wish * gap.min(accel * dt).max(0.0);
 }
 
-/// Friction on the horizontal speed, then acceleration toward the wished ground velocity.
-///
-/// Held input also pulls an overspeed back toward `max_speed`, by up to `ground_accel * dt`.
+/// Friction on the horizontal speed, then Source acceleration along the wish direction.
 fn ground_move(velocity: &mut Vec3, wish: Vec3, magnitude: f32, settings: &MoveSettings, dt: f32) {
     let speed = velocity.with_y(0.0).length();
     if speed > 0.0 {
@@ -120,15 +118,13 @@ fn ground_move(velocity: &mut Vec3, wish: Vec3, magnitude: f32, settings: &MoveS
         velocity.x *= scale;
         velocity.z *= scale;
     }
-    if magnitude > 0.0 {
-        let target = wish * settings.max_speed * magnitude;
-        let to_target = (target - *velocity).with_y(0.0);
-        let distance = to_target.length();
-        if distance > 0.0 {
-            let gain = distance.min(settings.ground_accel * dt);
-            *velocity += to_target * (gain / distance);
-        }
-    }
+    accelerate(
+        velocity,
+        wish,
+        settings.max_speed * magnitude,
+        settings.ground_accel,
+        dt,
+    );
 }
 
 /// Remove the velocity into every surface that blocked the slide, reporting each as an impact.
