@@ -438,6 +438,49 @@ mod tests {
     }
 
     #[test]
+    fn a_listed_mod_that_is_a_file_is_refused_naming_it() {
+        let (_base, roots) = base_with(&thing(30, "base"));
+        let mods = tempfile::tempdir().unwrap();
+        std::fs::write(mods.path().join("heavy"), "").unwrap();
+
+        let error = roots
+            .with_mods(mods.path(), &names(&["heavy"]))
+            .unwrap_err();
+
+        let ContentError::MissingRoot { path } = &error else {
+            panic!("expected MissingRoot, got {error:?}");
+        };
+        assert_eq!(path, &mods.path().join("heavy"));
+    }
+
+    #[test]
+    fn a_mod_without_the_kind_file_keeps_the_base_entry() {
+        let (_base, roots) = base_with(&thing(30, "base"));
+        let mods = tempfile::tempdir().unwrap();
+        std::fs::create_dir(mods.path().join("cosmetic")).unwrap();
+
+        let roots = roots.with_mods(mods.path(), &names(&["cosmetic"])).unwrap();
+        let definitions = load_kind::<Thing>(&roots, "weapons").unwrap();
+
+        assert_eq!(definitions.require("thing").unwrap().count, 30);
+    }
+
+    #[test]
+    fn a_mod_with_bad_toml_names_the_mods_file() {
+        let (_base, roots) = base_with(&thing(30, "base"));
+        let mods = tempfile::tempdir().unwrap();
+        write_mod(mods.path(), "heavy", "[thing\ncount = 40\n");
+
+        let roots = roots.with_mods(mods.path(), &names(&["heavy"])).unwrap();
+        let error = load_kind::<Thing>(&roots, "weapons").unwrap_err();
+
+        let ContentError::Syntax { file, .. } = &error else {
+            panic!("expected Syntax, got {error:?}");
+        };
+        assert_eq!(file, &mods.path().join("heavy").join("weapons.toml"));
+    }
+
+    #[test]
     fn a_mod_adds_new_ids_beside_base_ones() {
         let (_base, roots) = base_with(&thing(30, "base"));
         let mods = tempfile::tempdir().unwrap();
