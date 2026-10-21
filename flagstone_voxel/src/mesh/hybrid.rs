@@ -77,8 +77,7 @@ fn sample_block(chunk_base: IVec3, sample: [usize; 3]) -> BlockPos {
 }
 
 /// The face material of the block that field sample `sample` of chunk `chunk_base`'s
-/// padded density field stands for. The field is padded by one block, so sample `i` is
-/// block `chunk_base + i - 1`.
+/// padded density field stands for (see [`sample_block`]).
 ///
 /// # Panics
 /// If the sample is air: only solid samples are looked up.
@@ -291,7 +290,7 @@ impl HybridMeshGenerator {
         for (x, plane) in field.iter_mut().enumerate() {
             for (y, row) in plane.iter_mut().enumerate() {
                 for (z, col) in row.iter_mut().enumerate() {
-                    let world_pos = base_pos + IVec3::new(x as i32 - 1, y as i32 - 1, z as i32 - 1);
+                    let world_pos = sample_block(base_pos, [x, y, z]);
 
                     let is_solid = match grid.is_smooth_at(world_pos) {
                         Some(smooth) => !only_smooth || smooth,

@@ -122,7 +122,7 @@ impl MarchingCubes {
         // Find vertices along edges where surface crosses
         let mut edge_vertices = [[0.0f32; 3]; 12];
         let mut edge_gradients = [[0.0f32; 3]; 12];
-        let mut edge_air = [[0usize; 3]; 12];
+        let mut edge_light = [([0u8; 3], false); 12];
         let iso_level = 0.5;
 
         for i in 0..12 {
@@ -143,7 +143,7 @@ impl MarchingCubes {
                     t,
                 );
                 edge_gradients[i] = Self::edge_gradient(density_field, (s0, d0), (s1, d1), t);
-                edge_air[i] = if d0 <= iso_level { s0 } else { s1 };
+                edge_light[i] = light_at(if d0 <= iso_level { s0 } else { s1 });
             }
         }
 
@@ -160,7 +160,7 @@ impl MarchingCubes {
                 mesh.normals
                     .push(Self::outward_normal(edge_gradients[edge_idx as usize]));
 
-                let (block_light, sky_exposed) = light_at(edge_air[edge_idx as usize]);
+                let (block_light, sky_exposed) = edge_light[edge_idx as usize];
                 mesh.push_light(block_light, sky_exposed);
 
                 // Smooth terrain doesn't need complex AO - use density as simple approximation

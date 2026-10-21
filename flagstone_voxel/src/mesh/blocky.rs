@@ -90,8 +90,10 @@ impl BlockyMeshGenerator {
 
         // The block itself is opaque and always dark; the face shows the air it faces.
         let front = position + IVec3::from_array(normal.map(|c| c as i32));
+        let (block_light, sky_exposed) =
+            (grid.block_light_rgb_at(front), grid.sky_exposed_at(front));
         for _ in 0..4 {
-            mesh.push_light(grid.block_light_rgb_at(front), grid.sky_exposed_at(front));
+            mesh.push_light(block_light, sky_exposed);
         }
 
         // Add indices (2 triangles per face)

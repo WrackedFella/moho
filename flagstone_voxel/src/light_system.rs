@@ -176,7 +176,7 @@ impl LightSystem {
             if change.any && self.grid.has_chunk(chunk_pos) {
                 self.affected_chunks.insert(chunk_pos);
             }
-            if !arriving.contains(&chunk_pos) {
+            if !change.borders.is_empty() && !arriving.contains(&chunk_pos) {
                 self.affected_chunks.extend(
                     change
                         .borders
