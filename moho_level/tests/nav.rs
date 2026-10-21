@@ -177,6 +177,24 @@ proptest! {
             );
         }
     }
+
+    #[test]
+    fn a_path_between_two_points_never_repeats_a_corner(
+        ax in -9.0_f32..9.0, az in -9.0_f32..9.0,
+        bx in -9.0_f32..9.0, bz in -9.0_f32..9.0,
+    ) {
+        let a = Vec3::new(ax, 0.0, az);
+        let b = Vec3::new(bx, 0.0, bz);
+        prop_assume!(flat_gap(a, b) > 0.1);
+
+        let Some(path) = WALLED.path(a, b) else {
+            return Ok(());
+        };
+
+        for pair in path.windows(2) {
+            prop_assert!(flat_gap(pair[0], pair[1]) > 0.0, "repeated corner in {path:?}");
+        }
+    }
 }
 
 #[test]
