@@ -247,17 +247,6 @@ mod tests {
     }
 
     #[test]
-    fn binding_label_names_chords() {
-        let chord = Binding::key(Key::R).with(Modifiers::CTRL.and(Modifiers::ALT));
-
-        assert_eq!(binding_label(&[chord]), "Ctrl+Alt+R");
-        assert_eq!(
-            binding_label(&[Binding::key(Key::W), chord]),
-            "W, Ctrl+Alt+R"
-        );
-    }
-
-    #[test]
     fn binding_label_unbound() {
         assert_eq!(binding_label(&[]), "Unbound");
     }

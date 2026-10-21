@@ -655,6 +655,7 @@ mod tests {
                 Binding::key(Key::R).with(Modifiers::CTRL).held(),
                 "Hold Ctrl+R",
             ),
+            (Binding::key(Key::Ctrl).with(Modifiers::SHIFT), "Shift+Ctrl"),
             (
                 Binding::key(Key::Q)
                     .with(Modifiers::CTRL.and(Modifiers::SHIFT).and(Modifiers::ALT)),
@@ -689,47 +690,54 @@ mod tests {
 
     #[test]
     fn chord_modifiers_parse_in_any_order_and_case_and_read_back_canonical() {
+        let ctrl_alt = Modifiers::CTRL.and(Modifiers::ALT);
+        let all_three = ctrl_alt.and(Modifiers::SHIFT);
         let cases = [
-            ("ctrl+alt+r", "Ctrl+Alt+R"),
-            ("alt+ctrl+r", "Ctrl+Alt+R"),
-            ("ALT+SHIFT+CTRL+R", "Ctrl+Shift+Alt+R"),
-            ("shift+mouse left", "Shift+Mouse Left"),
-            ("hold alt+ctrl+r", "Hold Ctrl+Alt+R"),
+            (
+                "ctrl+alt+r",
+                Binding::key(Key::R).with(ctrl_alt),
+                "Ctrl+Alt+R",
+            ),
+            (
+                "alt+ctrl+r",
+                Binding::key(Key::R).with(ctrl_alt),
+                "Ctrl+Alt+R",
+            ),
+            (
+                "ALT+SHIFT+CTRL+R",
+                Binding::key(Key::R).with(all_three),
+                "Ctrl+Shift+Alt+R",
+            ),
+            (
+                "shift+mouse left",
+                Binding::mouse(MouseButton::Left).with(Modifiers::SHIFT),
+                "Shift+Mouse Left",
+            ),
+            (
+                "Alt+Ctrl+Mouse Right",
+                Binding::mouse(MouseButton::Right).with(ctrl_alt),
+                "Ctrl+Alt+Mouse Right",
+            ),
+            (
+                "hold alt+ctrl+r",
+                Binding::key(Key::R).with(ctrl_alt).held(),
+                "Hold Ctrl+Alt+R",
+            ),
+            (
+                "Hold Shift+Space",
+                Binding::key(Key::Space).with(Modifiers::SHIFT).held(),
+                "Hold Shift+Spacebar",
+            ),
         ];
 
-        for (written, canonical) in cases {
+        for (written, binding, canonical) in cases {
             let (bindings, warnings) =
                 ActionBindings::<TestAction>::load(&section(&[("jump", written)]));
 
             assert_eq!(warnings, vec![], "{written}");
+            assert_eq!(bindings.get(TestAction::Jump), [binding], "{written}");
             assert_eq!(bindings.to_section()["jump"], canonical, "{written}");
         }
-    }
-
-    #[test]
-    fn parsed_chord_carries_its_modifiers() {
-        let (bindings, warnings) = ActionBindings::<TestAction>::load(&section(&[(
-            "jump",
-            "Ctrl+R, Alt+Ctrl+Mouse Right, Hold Shift+Space",
-        )]));
-
-        assert_eq!(warnings, vec![]);
-        assert_eq!(
-            bindings.get(TestAction::Jump),
-            [
-                Binding::key(Key::R).with(Modifiers::CTRL),
-                Binding::mouse(MouseButton::Right).with(Modifiers::CTRL.and(Modifiers::ALT)),
-                Binding::key(Key::Space).with(Modifiers::SHIFT).held(),
-            ]
-        );
-        assert_ne!(
-            Binding::key(Key::R).with(Modifiers::CTRL),
-            Binding::key(Key::R)
-        );
-        assert_ne!(
-            Binding::key(Key::R).with(Modifiers::CTRL),
-            Binding::key(Key::R).with(Modifiers::SHIFT)
-        );
     }
 
     #[test]
@@ -763,6 +771,8 @@ mod tests {
             "Ctrl+Ctrl+R",
             "Ctrl+Pad West",
             "Ctrl+",
+            "Control+R",
+            "Ctrl+Hold R",
             "Hold Q+R",
             "F, Ctrl+R, Q+R",
         ];
