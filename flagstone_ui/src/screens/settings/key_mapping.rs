@@ -100,6 +100,7 @@ pub fn rebind_key(existing: &[Binding], key: Key) -> Vec<Binding> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moho_input::Modifiers;
     use moho_input::key::MouseButton;
     use moho_input::pad::{PadButton, PadInput};
 
@@ -219,6 +220,41 @@ mod tests {
             ]
         );
         assert_eq!(binding_label(&rebound), "E, Hold Q, Hold Mouse Right");
+    }
+
+    #[test]
+    fn rebind_key_keeps_chord_bindings() {
+        let ctrl_q = Binding::key(Key::Q).with(Modifiers::CTRL);
+        let shift_right = Binding::mouse(MouseButton::Right).with(Modifiers::SHIFT);
+        let existing = [
+            Binding::key(Key::W),
+            ctrl_q,
+            Binding::mouse(MouseButton::Right),
+            shift_right,
+            ctrl_q.held(),
+        ];
+
+        let rebound = rebind_key(&existing, Key::E);
+
+        assert_eq!(
+            rebound,
+            [Binding::key(Key::E), ctrl_q, shift_right, ctrl_q.held()]
+        );
+        assert_eq!(
+            binding_label(&rebound),
+            "E, Ctrl+Q, Shift+Mouse Right, Hold Ctrl+Q"
+        );
+    }
+
+    #[test]
+    fn binding_label_names_chords() {
+        let chord = Binding::key(Key::R).with(Modifiers::CTRL.and(Modifiers::ALT));
+
+        assert_eq!(binding_label(&[chord]), "Ctrl+Alt+R");
+        assert_eq!(
+            binding_label(&[Binding::key(Key::W), chord]),
+            "W, Ctrl+Alt+R"
+        );
     }
 
     #[test]

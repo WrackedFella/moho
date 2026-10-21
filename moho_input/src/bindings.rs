@@ -45,10 +45,27 @@ pub enum Trigger {
     Hold,
 }
 
+/// A set of Ctrl, Shift and Alt that must be held with a binding's input.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Modifiers(u8);
+
+impl Modifiers {
+    pub const NONE: Self = Self(0);
+    pub const CTRL: Self = Self(1);
+    pub const SHIFT: Self = Self(2);
+    pub const ALT: Self = Self(4);
+
+    /// Every modifier in `self` or `other`.
+    pub const fn and(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Binding {
     pub input: Input,
     pub trigger: Trigger,
+    pub modifiers: Modifiers,
 }
 
 impl Binding {
@@ -68,7 +85,13 @@ impl Binding {
         Self {
             input,
             trigger: Trigger::Press,
+            modifiers: Modifiers::NONE,
         }
+    }
+
+    /// The same input, firing only while `modifiers` are held with it.
+    pub const fn with(self, modifiers: Modifiers) -> Self {
+        Self { modifiers, ..self }
     }
 
     /// The same input, firing once it has been down for the action's hold threshold.
@@ -617,6 +640,140 @@ mod tests {
             assert_eq!(warnings, vec![], "{spelling:?}");
             assert_eq!(bindings.get(TestAction::Jump), [], "{spelling:?}");
             assert_defaults_except(&bindings, &[TestAction::Jump]);
+        }
+    }
+
+    #[test]
+    fn chord_bindings_round_trip() {
+        let chords = [
+            (Binding::key(Key::R).with(Modifiers::CTRL), "Ctrl+R"),
+            (
+                Binding::mouse(MouseButton::Left).with(Modifiers::SHIFT),
+                "Shift+Mouse Left",
+            ),
+            (
+                Binding::key(Key::R).with(Modifiers::CTRL).held(),
+                "Hold Ctrl+R",
+            ),
+            (
+                Binding::key(Key::Q)
+                    .with(Modifiers::CTRL.and(Modifiers::SHIFT).and(Modifiers::ALT)),
+                "Ctrl+Shift+Alt+Q",
+            ),
+        ];
+
+        for (binding, name) in chords {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("prefs.ini");
+            let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+            bindings.set(TestAction::Jump, vec![Binding::key(Key::F), binding]);
+            let mut prefs = Prefs::default();
+            prefs.set_bindings(bindings.to_section());
+            std::fs::write(&path, prefs.to_ini_string()).unwrap();
+
+            let (reloaded, prefs_warnings) = Prefs::load_from(&path);
+            let (restored, binding_warnings) =
+                ActionBindings::<TestAction>::load(reloaded.bindings());
+
+            assert_eq!(binding.name(), name);
+            assert_eq!(bindings.to_section()["jump"], format!("F, {name}"));
+            assert_eq!(prefs_warnings, vec![], "{name}");
+            assert_eq!(binding_warnings, vec![], "{name}");
+            assert_eq!(
+                restored.get(TestAction::Jump),
+                [Binding::key(Key::F), binding],
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn chord_modifiers_parse_in_any_order_and_case_and_read_back_canonical() {
+        let cases = [
+            ("ctrl+alt+r", "Ctrl+Alt+R"),
+            ("alt+ctrl+r", "Ctrl+Alt+R"),
+            ("ALT+SHIFT+CTRL+R", "Ctrl+Shift+Alt+R"),
+            ("shift+mouse left", "Shift+Mouse Left"),
+            ("hold alt+ctrl+r", "Hold Ctrl+Alt+R"),
+        ];
+
+        for (written, canonical) in cases {
+            let (bindings, warnings) =
+                ActionBindings::<TestAction>::load(&section(&[("jump", written)]));
+
+            assert_eq!(warnings, vec![], "{written}");
+            assert_eq!(bindings.to_section()["jump"], canonical, "{written}");
+        }
+    }
+
+    #[test]
+    fn parsed_chord_carries_its_modifiers() {
+        let (bindings, warnings) = ActionBindings::<TestAction>::load(&section(&[(
+            "jump",
+            "Ctrl+R, Alt+Ctrl+Mouse Right, Hold Shift+Space",
+        )]));
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(
+            bindings.get(TestAction::Jump),
+            [
+                Binding::key(Key::R).with(Modifiers::CTRL),
+                Binding::mouse(MouseButton::Right).with(Modifiers::CTRL.and(Modifiers::ALT)),
+                Binding::key(Key::Space).with(Modifiers::SHIFT).held(),
+            ]
+        );
+        assert_ne!(
+            Binding::key(Key::R).with(Modifiers::CTRL),
+            Binding::key(Key::R)
+        );
+        assert_ne!(
+            Binding::key(Key::R).with(Modifiers::CTRL),
+            Binding::key(Key::R).with(Modifiers::SHIFT)
+        );
+    }
+
+    #[test]
+    fn chord_label_prefixes_the_modifiers_in_canonical_order() {
+        let ctrl_alt = Modifiers::ALT.and(Modifiers::CTRL);
+
+        assert_eq!(Binding::key(Key::R).with(Modifiers::CTRL).label(), "Ctrl+R");
+        assert_eq!(
+            Binding::key(Key::Space).with(Modifiers::SHIFT).label(),
+            "Shift+Spacebar"
+        );
+        assert_eq!(Binding::key(Key::R).with(ctrl_alt).label(), "Ctrl+Alt+R");
+        assert_eq!(
+            Binding::mouse(MouseButton::Left)
+                .with(Modifiers::ALT)
+                .label(),
+            "Alt+Mouse Left"
+        );
+        assert_eq!(
+            Binding::key(Key::R).with(Modifiers::CTRL).held().label(),
+            "Hold Ctrl+R"
+        );
+        assert_eq!(Binding::key(Key::R).label(), "R");
+    }
+
+    #[test]
+    fn bad_chord_warns_and_keeps_default() {
+        let bad_values = [
+            "Q+R",
+            "Ctrl+Ctrl",
+            "Ctrl+Ctrl+R",
+            "Ctrl+Pad West",
+            "Ctrl+",
+            "Hold Q+R",
+            "F, Ctrl+R, Q+R",
+        ];
+
+        for bad in bad_values {
+            let (bindings, warnings) =
+                ActionBindings::<TestAction>::load(&section(&[("jump", bad)]));
+
+            let names: Vec<_> = warnings.iter().map(|w| w.name.as_str()).collect();
+            assert_eq!(names, ["jump"], "{bad}");
+            assert_defaults_except(&bindings, &[]);
         }
     }
 }

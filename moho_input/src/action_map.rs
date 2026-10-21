@@ -395,8 +395,9 @@ pub fn handle_device_event<A: Action>(map: &mut ActionMap<A>, event: &DeviceEven
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bindings::Binding;
+    use crate::bindings::{Binding, Modifiers};
     use std::collections::BTreeMap;
+    use winit::keyboard::{KeyCode, PhysicalKey};
 
     /// A power-of-two fraction of a second, so stick arithmetic is exact in f32.
     const FRAME: Duration = Duration::from_micros(15_625);
@@ -2209,6 +2210,320 @@ mod tests {
         assert!(!frames[HOLD - 2].held(Weapon::Check));
         assert!(frames[HOLD - 1].pressed(Weapon::Check));
         assert!(frames.iter().all(|f| !f.pressed(Weapon::Reload)));
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum Gun {
+        Reload,
+        Unjam,
+        Check,
+        Fire,
+        Bash,
+        Descend,
+    }
+
+    impl Action for Gun {
+        const ALL: &'static [Self] = &[
+            Gun::Reload,
+            Gun::Unjam,
+            Gun::Check,
+            Gun::Fire,
+            Gun::Bash,
+            Gun::Descend,
+        ];
+
+        fn name(self) -> &'static str {
+            match self {
+                Gun::Reload => "reload",
+                Gun::Unjam => "unjam",
+                Gun::Check => "check",
+                Gun::Fire => "fire",
+                Gun::Bash => "bash",
+                Gun::Descend => "descend",
+            }
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            &[]
+        }
+    }
+
+    const CTRL: Modifiers = Modifiers::CTRL;
+    const SHIFT: Modifiers = Modifiers::SHIFT;
+    const ALT: Modifiers = Modifiers::ALT;
+
+    fn gun_map(bound: &[(Gun, Vec<Binding>)]) -> ActionMap<Gun> {
+        let (mut bindings, warnings) = ActionBindings::<Gun>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        for (action, list) in bound {
+            bindings.set(*action, list.clone());
+        }
+        ActionMap::new(bindings, 1.0)
+    }
+
+    fn reload_and_unjam(unjam: Binding) -> ActionMap<Gun> {
+        gun_map(&[
+            (Gun::Reload, vec![Binding::key(Key::R)]),
+            (Gun::Unjam, vec![unjam]),
+        ])
+    }
+
+    fn physical(code: KeyCode) -> Key {
+        Key::from_winit(PhysicalKey::Code(code)).expect("a named key")
+    }
+
+    #[test]
+    fn chord_fires_instead_of_the_plain_action() {
+        let rows = [
+            ("left Ctrl", CTRL, physical(KeyCode::ControlLeft)),
+            ("right Ctrl", CTRL, physical(KeyCode::ControlRight)),
+            ("Shift", SHIFT, Key::Shift),
+            ("Alt", ALT, Key::Alt),
+        ];
+
+        for (name, modifiers, modifier_key) in rows {
+            let mut map = reload_and_unjam(Binding::key(Key::R).with(modifiers));
+
+            map.key(modifier_key, true);
+            map.key(Key::R, true);
+            let frame = map.end_tick();
+
+            assert!(frame.pressed(Gun::Unjam), "{name}");
+            assert!(frame.held(Gun::Unjam), "{name}");
+            assert!(!frame.pressed(Gun::Reload), "{name}");
+            assert!(!frame.held(Gun::Reload), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_chord_needs_its_modifier() {
+        let mut map = reload_and_unjam(Binding::key(Key::R).with(CTRL));
+
+        map.key(Key::R, true);
+        let frame = map.end_tick();
+
+        assert!(frame.pressed(Gun::Reload));
+        assert!(frame.held(Gun::Reload));
+        assert!(!frame.pressed(Gun::Unjam));
+        assert!(!frame.held(Gun::Unjam));
+    }
+
+    #[test]
+    fn a_different_modifier_does_not_fire_the_chord() {
+        let mut map = reload_and_unjam(Binding::key(Key::R).with(CTRL));
+
+        map.key(Key::Shift, true);
+        map.key(Key::R, true);
+        let frame = map.end_tick();
+
+        assert!(frame.pressed(Gun::Reload));
+        assert!(!frame.pressed(Gun::Unjam));
+        assert!(!frame.held(Gun::Unjam));
+    }
+
+    #[test]
+    fn chord_works_on_a_mouse_button() {
+        let mut map = gun_map(&[
+            (Gun::Fire, vec![Binding::mouse(MouseButton::Left)]),
+            (
+                Gun::Bash,
+                vec![Binding::mouse(MouseButton::Left).with(CTRL)],
+            ),
+        ]);
+
+        map.key(Key::Ctrl, true);
+        map.mouse_button(MouseButton::Left, true);
+        let frame = map.end_tick();
+
+        assert!(frame.pressed(Gun::Bash));
+        assert!(frame.held(Gun::Bash));
+        assert!(!frame.pressed(Gun::Fire));
+        assert!(!frame.held(Gun::Fire));
+    }
+
+    #[test]
+    fn unbound_chord_falls_through_to_the_plain_action() {
+        let mut map = gun_map(&[(Gun::Reload, vec![Binding::key(Key::R)])]);
+
+        map.key(Key::Shift, true);
+        map.key(Key::R, true);
+        let frame = map.end_tick();
+        map.key(Key::R, false);
+        let up = map.end_tick();
+
+        assert!(frame.pressed(Gun::Reload));
+        assert!(frame.held(Gun::Reload));
+        assert!(up.released(Gun::Reload));
+        assert!(!up.held(Gun::Reload));
+    }
+
+    #[test]
+    fn modifier_keeps_its_own_action_during_a_chord() {
+        let mut map = gun_map(&[
+            (Gun::Descend, vec![Binding::key(Key::Ctrl)]),
+            (Gun::Unjam, vec![Binding::key(Key::R).with(CTRL)]),
+            (Gun::Reload, vec![Binding::key(Key::R)]),
+        ]);
+
+        map.key(Key::Ctrl, true);
+        map.key(Key::R, true);
+        let frame = map.end_tick();
+        let next = map.end_tick();
+
+        assert!(frame.held(Gun::Descend));
+        assert!(next.held(Gun::Descend));
+        assert!(frame.pressed(Gun::Unjam));
+        assert!(frame.held(Gun::Unjam));
+        assert!(!frame.pressed(Gun::Reload));
+    }
+
+    #[test]
+    fn releasing_the_modifier_first_does_not_refire() {
+        let mut map = reload_and_unjam(Binding::key(Key::R).with(CTRL));
+
+        map.key(Key::Ctrl, true);
+        map.key(Key::R, true);
+        let both_down = map.end_tick();
+        map.key(Key::Ctrl, false);
+        let ctrl_up = map.end_tick();
+        map.key(Key::R, false);
+        let r_up = map.end_tick();
+        let after = map.end_tick();
+
+        let frames = [&both_down, &ctrl_up, &r_up, &after];
+        let unjam_presses = frames.iter().filter(|f| f.pressed(Gun::Unjam)).count();
+        assert_eq!(unjam_presses, 1);
+        assert!(both_down.pressed(Gun::Unjam));
+        assert!(ctrl_up.held(Gun::Unjam), "unjam outlives its modifier");
+        assert!(!ctrl_up.released(Gun::Unjam));
+        assert!(r_up.released(Gun::Unjam));
+        assert!(!r_up.held(Gun::Unjam));
+        for frame in frames {
+            assert!(!frame.pressed(Gun::Reload));
+            assert!(!frame.held(Gun::Reload));
+        }
+    }
+
+    #[test]
+    fn most_specific_bound_chord_wins() {
+        let plain = Binding::key(Key::R);
+        let on = |modifiers: Modifiers| Binding::key(Key::R).with(modifiers);
+        // (name, binding that should lose, binding that should win, modifier keys held in order)
+        let cases = [
+            (
+                "Ctrl+R over R",
+                plain,
+                on(CTRL),
+                [Key::Ctrl, Key::Shift].as_slice(),
+            ),
+            (
+                "Ctrl+Shift+R over Ctrl+R",
+                on(CTRL),
+                on(CTRL.and(SHIFT)),
+                &[Key::Ctrl, Key::Shift],
+            ),
+            (
+                "Ctrl+Shift+R over Ctrl+R, modifiers held in the other order",
+                on(CTRL),
+                on(CTRL.and(SHIFT)),
+                &[Key::Shift, Key::Ctrl],
+            ),
+            (
+                "Ctrl+R over Shift+R",
+                on(SHIFT),
+                on(CTRL),
+                &[Key::Shift, Key::Ctrl],
+            ),
+            (
+                "Shift+R over Alt+R",
+                on(ALT),
+                on(SHIFT),
+                &[Key::Alt, Key::Shift],
+            ),
+        ];
+
+        for (name, loser, winner, held) in cases {
+            let mut map = gun_map(&[(Gun::Reload, vec![loser]), (Gun::Unjam, vec![winner])]);
+            for &key in held {
+                map.key(key, true);
+            }
+
+            map.key(Key::R, true);
+            let frame = map.end_tick();
+
+            assert!(frame.pressed(Gun::Unjam), "{name}");
+            assert!(frame.held(Gun::Unjam), "{name}");
+            assert!(!frame.pressed(Gun::Reload), "{name}");
+            assert!(!frame.held(Gun::Reload), "{name}");
+        }
+    }
+
+    #[test]
+    fn modifier_pressed_after_the_key_does_not_rechord() {
+        let mut map = reload_and_unjam(Binding::key(Key::R).with(CTRL));
+
+        map.key(Key::R, true);
+        let first = map.end_tick();
+        map.key(Key::Ctrl, true);
+        let second = map.end_tick();
+        map.key(Key::Ctrl, false);
+        let third = map.end_tick();
+
+        assert!(first.pressed(Gun::Reload));
+        for frame in [&first, &second, &third] {
+            assert!(frame.held(Gun::Reload));
+            assert!(!frame.held(Gun::Unjam));
+            assert!(!frame.pressed(Gun::Unjam));
+        }
+        assert!(!second.pressed(Gun::Reload));
+    }
+
+    #[test]
+    fn hold_of_a_chord_is_its_own_binding() {
+        let chord = Binding::key(Key::R).with(CTRL);
+        let bound = [
+            (Gun::Reload, vec![Binding::key(Key::R)]),
+            (Gun::Unjam, vec![chord]),
+            (Gun::Check, vec![chord.held()]),
+        ];
+
+        let mut tapped = gun_map(&bound);
+        tapped.key(Key::Ctrl, true);
+        tapped.key(Key::R, true);
+        let tap_down = ticks(&mut tapped, 3);
+        tapped.key(Key::R, false);
+        let tap_up = tapped.end_tick();
+
+        let mut held = gun_map(&bound);
+        held.key(Key::Ctrl, true);
+        held.key(Key::R, true);
+        let hold_down = ticks(&mut held, HOLD);
+        held.key(Key::R, false);
+        let hold_up = held.end_tick();
+
+        let mut plain = gun_map(&bound);
+        plain.key(Key::R, true);
+        let plain_down = plain.end_tick();
+
+        for frame in &tap_down {
+            assert!(!frame.pressed(Gun::Unjam) && !frame.held(Gun::Unjam));
+        }
+        assert!(tap_up.pressed(Gun::Unjam), "a quick release taps the chord");
+        assert!(tap_up.released(Gun::Unjam));
+        assert!(!tap_up.pressed(Gun::Check));
+        assert!(!tap_up.pressed(Gun::Reload));
+        let matured = hold_down.last().unwrap();
+        assert!(matured.pressed(Gun::Check));
+        assert!(matured.held(Gun::Check));
+        assert!(hold_down.iter().all(|f| !f.pressed(Gun::Unjam)));
+        assert!(hold_down.iter().all(|f| !f.pressed(Gun::Reload)));
+        assert!(hold_up.released(Gun::Check));
+        assert!(!hold_up.pressed(Gun::Unjam), "a matured hold is not a tap");
+        assert!(
+            plain_down.pressed(Gun::Reload),
+            "the plain key is not split by the chord's hold"
+        );
+        assert!(plain_down.held(Gun::Reload));
     }
 
     /// The spec's rules for one split key, written independently of `ActionMap`.
