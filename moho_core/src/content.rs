@@ -152,6 +152,7 @@ mod tests {
         assert_eq!(id, "thing");
         assert!(reason.contains("count"), "{reason}");
         assert!(!reason.ends_with('\n'), "{reason:?}");
+        assert!(!reason.contains('\n'), "{reason:?}");
     }
 
     #[test]
@@ -167,6 +168,7 @@ mod tests {
         assert_eq!(id, "thing");
         assert!(reason.contains("lots"), "{reason}");
         assert!(reason.contains("count"), "{reason}");
+        assert!(!reason.contains('\n'), "{reason:?}");
     }
 
     #[test]
@@ -211,8 +213,23 @@ mod tests {
 
         let error = load_kind::<Thing>(&roots, "weapons").unwrap_err();
 
-        let ContentError::Syntax { file, .. } = &error else {
+        let ContentError::Syntax { file, reason } = &error else {
             panic!("expected Syntax, got {error:?}");
+        };
+        assert_eq!(file, &dir.path().join("weapons.toml"));
+        assert!(reason.contains("line"), "{reason}");
+    }
+
+    #[test]
+    fn a_kind_file_that_cannot_be_read_is_refused_naming_it() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("weapons.toml")).unwrap();
+        let roots = ContentRoots::base(dir.path()).unwrap();
+
+        let error = load_kind::<Thing>(&roots, "weapons").unwrap_err();
+
+        let ContentError::Unreadable { file, .. } = &error else {
+            panic!("expected Unreadable, got {error:?}");
         };
         assert_eq!(file, &dir.path().join("weapons.toml"));
     }
@@ -247,9 +264,9 @@ mod tests {
         let table = [
             (
                 ContentError::MissingRoot {
-                    path: PathBuf::from("content"),
+                    path: PathBuf::from("mods/xyz"),
                 },
-                vec!["content", "does not exist"],
+                vec!["mods/xyz", "does not exist"],
             ),
             (
                 ContentError::Unreadable {

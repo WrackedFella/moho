@@ -19,6 +19,7 @@ mod tests {
     use super::*;
     use crate::{RIFLE_ID, content_root};
     use moho_core::content::{ContentError, ContentRoots, load_kind};
+    use searchlight_rules::FireBehaviour;
 
     fn load_rifle(weapons: &str) -> (tempfile::TempDir, Result<RifleDef, ContentError>) {
         let dir = tempfile::tempdir().unwrap();
@@ -44,6 +45,32 @@ mod tests {
         for spare in &config.spares {
             assert_eq!(spare.capacity(), 20);
             assert_eq!(spare.rounds(), 20);
+        }
+    }
+
+    #[test]
+    fn every_rifle_number_comes_from_the_definition() {
+        let def = RifleDef {
+            magazine_capacity: 17,
+            damage: 41,
+            fire: FireBehaviour::SemiAuto,
+            cooldown_ticks: 9,
+            reload_ticks: 77,
+            range: 55.5,
+        };
+
+        let config = tuning(&def).unwrap();
+
+        assert_eq!(config.damage, 41);
+        assert_eq!(config.cooldown_ticks, 9);
+        assert_eq!(config.reload_ticks, 77);
+        assert!((config.range - 55.5).abs() < f32::EPSILON);
+        assert_eq!(config.rifle.magazine().capacity(), 17);
+        assert_eq!(config.rifle.magazine().rounds(), 17);
+        assert_eq!(config.spares.len(), 3);
+        for spare in &config.spares {
+            assert_eq!(spare.capacity(), 17);
+            assert_eq!(spare.rounds(), 17);
         }
     }
 
