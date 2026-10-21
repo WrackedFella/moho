@@ -274,6 +274,22 @@ mod tests {
     }
 
     #[test]
+    fn the_nav_profile_is_the_player_capsule_with_clearance_and_the_specified_limits() {
+        let profile = nav_profile();
+
+        assert!(
+            (profile.radius - (CAPSULE_RADIUS + 0.1)).abs() < 1e-6,
+            "{profile:?}"
+        );
+        assert!((profile.height - 2.3).abs() < 1e-6, "{profile:?}");
+        assert!((profile.max_climb - 0.5).abs() < 1e-6, "{profile:?}");
+        assert!(
+            (profile.max_slope - std::f32::consts::FRAC_PI_4).abs() < 1e-6,
+            "{profile:?}"
+        );
+    }
+
+    #[test]
     fn the_shipped_arena_navmesh_joins_every_spawn_and_waypoint() {
         let (level, markers) = load(&shipped_arena()).expect("the shipped arena loads");
         let arena = Arena::from_level(&level, &markers).expect("the shipped arena builds");

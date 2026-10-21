@@ -440,6 +440,100 @@ mod tests {
     }
 
     #[test]
+    fn floor_below_drops_a_point_through_a_standing_character_to_the_floor() {
+        let world = world_with_player_and_wall(8.0, 0.5);
+        let apex = Vec3::new(0.0, 3.0, 0.0);
+
+        let dropped = floor_below(&world, apex);
+
+        assert!(dropped.distance(Vec3::ZERO) < 1e-3, "landed at {dropped:?}");
+    }
+
+    #[test]
+    fn floor_below_keeps_the_horizontal_position_over_open_floor() {
+        let world = world_with(&[FLOOR]);
+
+        let dropped = floor_below(&world, Vec3::new(4.0, 1.5, -7.0));
+
+        assert!(
+            dropped.distance(Vec3::new(4.0, 0.0, -7.0)) < 1e-3,
+            "landed at {dropped:?}"
+        );
+    }
+
+    /// A floor whose top is at `floor_top` and a player's hit volumes around a body centred at
+    /// `height`.
+    fn world_with_character_over(floor_top: f32, height: f32) -> PhysicsWorld {
+        let mut world = world_with(&[(
+            Vec3::new(-30.0, floor_top - 1.0, -30.0),
+            Vec3::new(30.0, floor_top, 30.0),
+        )]);
+        let body = world.add_character(Vec3::new(0.0, height, 0.0));
+        for volume in crate::sim::player_hit_volumes() {
+            world
+                .add_hit_volume(body, volume)
+                .expect("the body was added a moment ago");
+        }
+        world.step(crate::test_support::DT);
+        world
+    }
+
+    #[test]
+    fn floor_below_counts_the_whole_fall_through_a_hovering_character_against_its_range() {
+        let world = world_with_character_over(0.0, 14.0);
+        let apex = Vec3::new(0.0, 40.0, 0.0);
+
+        let dropped = floor_below(&world, apex);
+
+        assert!(dropped.distance(Vec3::ZERO) < 1e-3, "landed at {dropped:?}");
+    }
+
+    #[test]
+    fn floor_below_finds_a_floor_just_inside_its_range_measured_from_the_start_point() {
+        let probe = world_with_character_over(0.0, 0.0);
+        let down = ShotRay {
+            origin: Vec3::new(0.0, 5.0, 0.0),
+            direction: Vec3::NEG_Y,
+            range: 10.0,
+            ignore: None,
+        };
+        let top = resolve_shot(&probe, down)
+            .expect("the character is below the probe")
+            .point
+            .y;
+        let from = Vec3::new(0.0, top + 0.5, 0.0);
+        let floor_top = top - (FLOOR_PROBE_RANGE - 0.75);
+        let world = world_with_character_over(floor_top, 0.0);
+
+        let dropped = floor_below(&world, from);
+
+        assert!(
+            (dropped.y - floor_top).abs() < 1e-3,
+            "found {dropped:?}, the floor is at {floor_top}"
+        );
+    }
+
+    #[test]
+    fn floor_below_gives_up_on_a_floor_beyond_its_range_even_after_passing_a_character() {
+        let world = world_with_character_over(0.0, 1.15);
+        let too_high = Vec3::new(0.0, FLOOR_PROBE_RANGE + 1.0, 0.0);
+
+        let dropped = floor_below(&world, too_high);
+
+        assert_eq!(dropped, too_high);
+    }
+
+    #[test]
+    fn floor_below_returns_the_input_when_nothing_is_below() {
+        let world = world_with(&[FLOOR]);
+        let off_the_floor = Vec3::new(100.0, 2.0, 0.0);
+        let beyond_range = Vec3::new(0.0, FLOOR_PROBE_RANGE + 5.0, 0.0);
+
+        assert_eq!(floor_below(&world, off_the_floor), off_the_floor);
+        assert_eq!(floor_below(&world, beyond_range), beyond_range);
+    }
+
+    #[test]
     fn the_nearest_of_two_firing_positions_is_offered() {
         let boxes = [FLOOR, wall_of_height(1.2)];
         let world = world_with(&boxes);
