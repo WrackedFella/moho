@@ -194,6 +194,48 @@ impl Default for ChunkLight {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn reading_chunks_are_the_blocky_face_neighbours_and_the_smooth_chunks_below() {
+        let set = |offsets: &[[i32; 3]]| -> HashSet<IVec3> {
+            offsets.iter().map(|&o| IVec3::from_array(o)).collect()
+        };
+        // (chunk-local voxel, chunks that read it)
+        let rows = [
+            ([8, 8, 8], set(&[])),
+            ([15, 8, 8], set(&[[1, 0, 0]])),
+            ([15, 15, 15], set(&[[1, 0, 0], [0, 1, 0], [0, 0, 1]])),
+            ([0, 8, 8], set(&[[-1, 0, 0]])),
+            ([0, 0, 8], set(&[[-1, 0, 0], [0, -1, 0], [-1, -1, 0]])),
+            (
+                [0, 0, 0],
+                set(&[
+                    [-1, 0, 0],
+                    [0, -1, 0],
+                    [0, 0, -1],
+                    [-1, -1, 0],
+                    [-1, 0, -1],
+                    [0, -1, -1],
+                    [-1, -1, -1],
+                ]),
+            ),
+            ([0, 15, 8], set(&[[-1, 0, 0], [0, 1, 0]])),
+        ];
+        for (local, expected) in rows {
+            let got: Vec<IVec3> = reading_chunk_offsets(IVec3::from_array(local)).collect();
+            assert_eq!(
+                got.len(),
+                expected.len(),
+                "{local:?}: {got:?}"
+            );
+            assert_eq!(
+                got.into_iter().collect::<HashSet<_>>(),
+                expected,
+                "{local:?}"
+            );
+        }
+    }
 
     #[test]
     fn local_index_corners() {
