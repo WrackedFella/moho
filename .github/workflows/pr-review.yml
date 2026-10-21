@@ -4,12 +4,13 @@ name: PR review
 # the verdict is `changes`, devflow:respond fixes the findings and the workflow
 # re-dispatches itself for another review. At most two fix rounds, then a third review
 # with no fixes. The review is posted as a comment (`PR approval` is unset); a human
-# approves and merges. Each review waits for CI on the PR head to finish. Pushes and PRs
-# made with the default token start no workflow, so the orchestrate job in claude.yml
-# dispatches round 1 itself and this workflow dispatches each later round.
+# approves and merges. A PR opened ready, or turned ready, starts round 1. Each review waits
+# for CI on the PR head to finish, and a head that already has a review is skipped. Pushes
+# and PRs made with the default token start no workflow, so the orchestrate job in
+# claude.yml dispatches round 1 itself and this workflow dispatches each later round.
 on:
   pull_request:
-    types: [ready_for_review]
+    types: [opened, ready_for_review]
   workflow_dispatch:
     inputs:
       pr:
@@ -35,7 +36,8 @@ jobs:
     name: Review and fix
     if: >-
       github.event_name == 'workflow_dispatch'
-      || github.event.pull_request.head.repo.full_name == github.repository
+      || (github.event.pull_request.head.repo.full_name == github.repository
+          && !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -50,13 +52,17 @@ jobs:
       - name: Resolve the PR
         id: pr
         run: |
-          read -r state repo ref < <(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" \
-            --jq '[.state, (.head.repo.full_name // ""), .head.ref] | @tsv')
+          read -r state repo ref head_sha < <(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" \
+            --jq '[.state, (.head.repo.full_name // ""), .head.ref, .head.sha] | @tsv')
+          reviewed=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --paginate \
+            --jq "[.[] | select(.commit_id == \"$head_sha\" and (.body | startswith(\"Verdict:\")))] | length" | awk '{ n += $1 } END { print n + 0 }')
           reason=""
           if [ "$state" != "open" ]; then
             reason="PR #$PR is $state."
           elif [ -z "$repo" ] || ! gh api "repos/$repo/branches/$ref" --silent 2>/dev/null; then
             reason="The head branch \`$ref\` of PR #$PR no longer exists."
+          elif [ "$reviewed" -gt 0 ]; then
+            reason="PR #$PR head $head_sha already has a review."
           fi
           if [ -n "$reason" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
