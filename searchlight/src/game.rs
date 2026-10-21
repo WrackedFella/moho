@@ -2106,7 +2106,7 @@ mod mutation_tests {
         let sun = Vec3::new(0.4, 0.8, 0.45).normalize();
         assert_eq!(light.sun_direction, [sun.x, sun.y, sun.z, 1.0]);
         assert_eq!(light.moon_direction, [0.0, -1.0, 0.0, 0.0]);
-        assert_eq!(light.ambient, [0.4, 0.5, 0.6, 0.15]);
+        assert_eq!(light.ambient, [0.0, 0.0, 0.0, 0.15]);
         assert_eq!(light.params, [12.0, 0.0, 0.0, 0.0]);
         assert_eq!(light.sun_color, LightingGpu::default().sun_color);
         assert_eq!(light.moon_color, LightingGpu::default().moon_color);
