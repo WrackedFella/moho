@@ -40,7 +40,8 @@ mod tests {
         let config = tuning(&rifle).unwrap();
 
         assert_eq!(config.rifle.magazine().capacity(), 20);
-        assert_eq!(config.rifle.magazine().rounds(), 20);
+        assert!(config.rifle.is_chambered());
+        assert_eq!(config.rifle.magazine().rounds(), 19);
         assert!(!config.spares.is_empty());
         for spare in &config.spares {
             assert_eq!(spare.capacity(), 20);
@@ -66,7 +67,8 @@ mod tests {
         assert_eq!(config.reload_ticks, 77);
         assert!((config.range - 55.5).abs() < f32::EPSILON);
         assert_eq!(config.rifle.magazine().capacity(), 17);
-        assert_eq!(config.rifle.magazine().rounds(), 17);
+        assert!(config.rifle.is_chambered());
+        assert_eq!(config.rifle.magazine().rounds(), 16);
         assert_eq!(config.spares.len(), 3);
         for spare in &config.spares {
             assert_eq!(spare.capacity(), 17);
