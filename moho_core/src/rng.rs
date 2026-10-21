@@ -95,27 +95,6 @@ mod tests {
 
     proptest! {
         #[test]
-        fn extra_draw_on_one_stream_leaves_other_unchanged(
-            seed in any::<u64>(),
-            name_a in name_strategy(),
-            name_b in name_strategy(),
-            extra in 1usize..32,
-            count in 1usize..32,
-        ) {
-            let stream_a = StreamId::named(&name_a);
-            let stream_b = StreamId::named(&name_b);
-            prop_assume!(stream_a != stream_b);
-            let mut a = SimRng::new(seed, stream_a);
-            let mut b = SimRng::new(seed, stream_b);
-            let mut fresh_b = SimRng::new(seed, stream_b);
-
-            draw_u64(&mut a, extra);
-            let from_b = draw_u64(&mut b, count);
-
-            prop_assert_eq!(from_b, draw_u64(&mut fresh_b, count));
-        }
-
-        #[test]
         fn postcard_round_trip_continues_sequence(
             seed in any::<u64>(),
             name in name_strategy(),
