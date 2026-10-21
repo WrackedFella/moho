@@ -41,7 +41,7 @@ flowchart LR
     P -->|"Prefs::save"| F
 ```
 
-## Running prefs and saving
+## 1 Running prefs and saving
 
 `App::prefs` is the running copy; `App::prefs_path` is where the app saves it (`None` for
 a headless `App`, so its console commands never touch the user's file; a Settings screen
@@ -62,7 +62,7 @@ opened there still saves to the default path).
 - **Startup** builds the same `AudioSettings` from the loaded prefs and applies it on the
   first frame. Each category volume is its pref divided by ten and clamped to 0..=1; 0 is silent.
 
-## Keys
+## 2 Keys
 
 | Section | Key | Accepted values | Default |
 |---|---|---|---|
@@ -139,7 +139,7 @@ Audio sections map to `AudioCategory` in `moho_audio/src/audio_source.rs`: `Soun
 
 World keys drive [world streaming](../architecture/world-streaming.md).
 
-## Example
+## 3 Example
 
 ```ini
 [prefs]

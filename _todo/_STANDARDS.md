@@ -2,7 +2,7 @@
 
 How work items are organized and written. Applies to every project line.
 
-## Structure
+## 1 Structure
 
 ```
 _todo/
@@ -24,13 +24,13 @@ item only while it is an unapproved draft; filing the issue deletes the file.
 A work item belongs to the line whose crates it changes. Cross-line work goes
 in `engine/`.
 
-## IDs
+## 2 IDs
 
 `<LINE>-F<n>` is a feature, `<LINE>-F<n>-<NN>` a card: `SG-F1-04`,
 `ENG-F3-01`, `FPS-F1`. IDs are unique across the repo and never reused; use
 them verbatim in issue titles and branch names, never in code comments.
 
-## Item state: the board and the issue
+## 3 Item state: the board and the issue
 
 The [project board](https://github.com/users/WrackedFella/projects/1) and the issue are
 the only record of item state. Nothing in the repository mirrors them.
@@ -38,9 +38,13 @@ the only record of item state. Nothing in the repository mirrors them.
 - **Board:** Status, Priority, Gate class and Agent-eligible. The Board sync workflow
   moves Status forward on PR and issue events (In progress when `agent-ready` is applied
   to a work item or a draft PR opens, In review on a ready PR, Done on merge or close).
-  Ready and Agent-eligible are set by a human. Agents change board fields only through
-  devflow's `scripts/board` (local terminal only); a cloud thread does not touch the
-  board, and an item in the wrong state is a workflow bug to report.
+  Ready is set by a human. Gate class, Agent-eligible and Priority come from the card:
+  an issue body may start with `<!-- board: gate=domain; eligible=yes; priority=P2 -->`,
+  which the Board sync workflow applies when the issue is opened or its body edited
+  (Agent-eligible stays the approver's decision, recorded in the card). Parent and
+  milestone label are set at filing over REST. A cloud thread does not touch the board
+  itself, and an item in the wrong state is a workflow bug to report. Local sessions may
+  still use devflow's `scripts/board`.
 - **Issue:** the spec (body), labels, and the history of decisions (comments).
 - **Draft files** carry a header for the thread that will file them: `**Status:** Draft`,
   the intended `**Gate class:**` (`domain`, `glue` or `unset`) and `**Labels:**`
@@ -50,7 +54,7 @@ the only record of item state. Nothing in the repository mirrors them.
 The README index and the roadmap carry no status. Reasons an item is paused or blocked go
 in an issue comment (or a draft's `**Note:**` line), not in `Status`.
 
-## Features first
+## 4 Features first
 
 Planning produces a feature before any cards. A feature is the unit of
 planning and the gate for progress; cards are how it gets built.
@@ -69,22 +73,20 @@ planning and the gate for progress; cards are how it gets built.
 A feature written without exit criteria or scope gets them the next time it is planned,
 not in a sweep.
 
-## Milestones
+## 5 Milestones
 
 [`ROADMAP.md`](ROADMAP.md) orders work as milestones (M0, M1, ...). Each has
 an **Intent** line and a **Gate** list; a milestone closes when every gate item
 holds.
 
-A game line's milestones carry its ID prefix (FPS-M1, FPS-M1.1) so they never collide with the
-engine's M0, M1, ... Numbers and document headings follow ISO 2145: Arabic numerals, dots
-between levels, no trailing dot ("4.11"). A milestone inserted between two others takes a
-sub-number (FPS-M1.1) rather than renumbering the rest.
+Numbering follows `devflow:engineering-standards` (Document numbering). The engine's milestones
+stay bare (M0, M1, ...); a game line's carry its prefix (`FPS-M1`) so the series never collide.
 
 Only the next open milestone is carded. Later milestones hold intent and gate
 only (their features may exist as drafts, without cards) and are detailed
 when the previous gate closes.
 
-## Feature template
+## 6 Feature template
 
 ```markdown
 # <LINE>-F<n> — <observable outcome>
@@ -122,7 +124,7 @@ One paragraph: what the player/caller can do when this ships, and why it matters
 ## Notes                      <!-- cross-item constraints only -->
 ```
 
-## Card readiness
+## 7 Card readiness
 
 A card's readiness is its board Status. What each state needs in the issue body:
 
@@ -141,7 +143,7 @@ of an item that is Ready and Agent-eligible Yes, and that starts a remote run
 removes it. The issue type picks the run: on a work item the orchestrator implements it,
 and on a `feature` issue the refine skill splits it into work items.
 
-## Card template
+## 8 Card template
 
 ```markdown
 # <observable outcome, not the component touched>
@@ -163,7 +165,7 @@ and on a `feature` issue the refine skill splits it into work items.
 ## Notes                      <!-- only for a gotcha that would be re-litigated -->
 ```
 
-### Acceptance criteria (Business Analyst)
+### 8.1 Acceptance criteria (Business Analyst)
 
 Behavior only, from the player's or caller's point of view. Use Gherkin when
 the item has observable behavior; a checklist otherwise (refactors, upgrades).
@@ -180,7 +182,7 @@ One behavior per scenario; outcomes must be observable or assertable. Use
 `Scenario Outline` + `Examples` for tables of cases. Rendering and feel can't
 be asserted, so those go under Verification instead.
 
-### Tech spec (Tech Lead)
+### 8.2 Tech spec (Tech Lead)
 
 - Crates/modules and public interfaces touched; anything out of scope.
 - Footprint: the files and modules the implementation edits, one line each, tests
@@ -196,7 +198,7 @@ be asserted, so those go under Verification instead.
   (adapters/wiring: tests and code together).
 - ADR link if the item makes or relies on an architectural decision.
 
-## Writing rules
+## 9 Writing rules
 
 Terse; a card is not a design doc. Cut narration, draft history, and
 file:line citations (they rot; name types and modules instead). A card over
@@ -207,7 +209,7 @@ Name features and cards after the behavior delivered ("Hotbar displays mined
 resources"), not the component touched. A feature is a vertical slice:
 something observable when finished.
 
-## Issues and branches
+## 10 Issues and branches
 
 - Issue title: `[<ID>] <title>`. The issue is the record: once it is filed, the spec
   lives only in its body and nothing in `_todo/` copies it.
@@ -236,7 +238,7 @@ something observable when finished.
 - Branch from `dev`: `<type>/<ID>-<slug>` (e.g. `feat/SG-F1-04-pickup-feedback`);
   PR back into `dev`. `main` receives promotions from `dev` only.
 
-## Drafts
+## 11 Drafts
 
 - A card or feature starts as a draft file in `_todo/`. Drafts are not on the board.
 - **Where the draft lives while it is reviewed.** In a local terminal the user reads the
@@ -262,7 +264,7 @@ something observable when finished.
   stay. A feature directory is deleted once it holds neither drafts nor reference files.
   Links to items point at their issues, never at `_todo/` files.
 
-## Definition of Done (shared; don't repeat per card)
+## 12 Definition of Done (shared; don't repeat per card)
 
 - `just check` passes.
 - Agent-written tests survive mutation testing on the changed code (`just mutants`).
