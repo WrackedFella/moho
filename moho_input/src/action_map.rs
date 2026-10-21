@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 
-use crate::bindings::{Action, ActionBindings, Input, Trigger};
+use crate::bindings::{Action, ActionBindings, Binding, Input, Trigger};
 use crate::filter::{DeadzoneFilter, MouseSmoothing};
 use crate::key::{Key, MouseButton};
 use crate::pad::{PadButton, PadInput, Stick, StickAxis, StickDir};
@@ -277,13 +277,11 @@ impl<A: Action> ActionMap<A> {
     /// actions of an input released before its hold matured.
     fn apply(&mut self, input: Input, down: bool) -> Option<u64> {
         if down {
-            return match self.down.entry(input) {
-                std::collections::hash_map::Entry::Occupied(_) => None,
-                std::collections::hash_map::Entry::Vacant(slot) => {
-                    slot.insert(0);
-                    Some(0)
-                }
-            };
+            if self.down.contains_key(&input) {
+                return None;
+            }
+            self.down.insert(input, 0);
+            return Some(0);
         }
         let ticks = self.down.remove(&input)?;
         let quick = self.split.contains(&input) && ticks < A::HOLD_TICKS;
@@ -291,15 +289,15 @@ impl<A: Action> ActionMap<A> {
     }
 
     fn press_actions(&self, input: Input) -> u64 {
+        self.actions_where(|b| b.input == input && b.trigger == Trigger::Press)
+    }
+
+    /// Mask of the actions with at least one binding matching `matches`.
+    fn actions_where(&self, matches: impl Fn(&Binding) -> bool) -> u64 {
         A::ALL
             .iter()
             .enumerate()
-            .filter(|&(_, &action)| {
-                self.bindings
-                    .get(action)
-                    .iter()
-                    .any(|b| b.input == input && b.trigger == Trigger::Press)
-            })
+            .filter(|&(_, &action)| self.bindings.get(action).iter().any(&matches))
             .fold(0, |mask, (index, _)| mask | 1 << index)
     }
 
@@ -312,16 +310,7 @@ impl<A: Action> ActionMap<A> {
 
     /// Recomputes the held mask; `taps` are actions that press and release in this tick.
     fn refresh_held(&mut self, taps: u64) {
-        let held = A::ALL
-            .iter()
-            .enumerate()
-            .filter(|&(_, &action)| {
-                self.bindings
-                    .get(action)
-                    .iter()
-                    .any(|binding| self.binding_down(binding.input, binding.trigger))
-            })
-            .fold(0, |mask, (index, _)| mask | 1 << index);
+        let held = self.actions_where(|b| self.binding_down(b.input, b.trigger));
         let taps = taps & !held;
         self.pressed |= (held & !self.held) | taps;
         self.released |= (self.held & !held) | taps;

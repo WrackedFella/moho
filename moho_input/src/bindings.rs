@@ -109,7 +109,7 @@ impl From<Input> for Binding {
     }
 }
 
-/// Ticks an input must stay down before a `Hold` binding fires, unless the action overrides it.
+/// Ticks an input must stay down before a `Hold` binding fires, unless the game overrides it.
 pub const DEFAULT_HOLD_TICKS: u32 = 18;
 
 /// A game's action enum: stable names and default bindings, as data.
@@ -122,7 +122,7 @@ pub trait Action: Copy + Eq + Hash + Debug + 'static {
 
     fn default_bindings(self) -> &'static [Binding];
 
-    /// Ticks an input must stay down before this action's `Hold` bindings fire; at least 1.
+    /// Ticks an input must stay down before a `Hold` binding fires, one value per game; at least 1.
     const HOLD_TICKS: u32 = DEFAULT_HOLD_TICKS;
 }
 
