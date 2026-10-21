@@ -73,8 +73,6 @@ pub(super) fn polygons<'a>(
         agent_radius: profile.radius,
         agent_height: profile.height,
         walkable_climb: profile.max_climb,
-        walkable_slope_angle: profile.max_slope,
-        aabb,
         ..Default::default()
     }
     .build();
@@ -123,7 +121,6 @@ fn convert(mesh: &PolygonNavmesh) -> Vec<Polygon> {
         .map(|v| origin + Vec3::new(f32::from(v.x), f32::from(v.y), f32::from(v.z)) * cell)
         .collect();
     let per_polygon = usize::from(mesh.max_vertices_per_polygon);
-    let count = mesh.polygon_count();
     mesh.polygons()
         .zip(mesh.polygon_neighbors.chunks_exact(per_polygon))
         .map(|(indices, neighbours)| {
@@ -131,14 +128,17 @@ fn convert(mesh: &PolygonNavmesh) -> Vec<Polygon> {
             let mut neighbours: Vec<Option<usize>> = neighbours
                 .iter()
                 .take(vertices.len())
-                .map(|&n| Some(usize::from(n)).filter(|&n| n < count))
+                .map(|&n| (n != PolygonNavmesh::NO_CONNECTION).then_some(usize::from(n)))
                 .collect();
-            if signed_area(&vertices) < 0.0 {
-                // Reversed, edge `k` is old edge `n - 2 - k` walked backwards.
-                vertices.reverse();
-                neighbours.reverse();
-                neighbours.rotate_left(1);
-            }
+            // `rerecast` winds every polygon clockwise in our x-right, z-up convention.
+            debug_assert!(
+                signed_area(&vertices) < 0.0,
+                "rerecast polygon is not clockwise"
+            );
+            // Reversed, edge `k` is old edge `n - 2 - k` walked backwards.
+            vertices.reverse();
+            neighbours.reverse();
+            neighbours.rotate_left(1);
             Polygon {
                 vertices,
                 neighbours,
