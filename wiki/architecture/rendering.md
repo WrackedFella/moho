@@ -150,7 +150,8 @@ color = color * max(sky_exposed, MIN_SKY_AMBIENT)
       + albedo * ao * block_light_rgb * BLOCK_LIGHT_GAIN
 ```
 
-Sky exposure gates sun, moon and ambient (floor `MIN_SKY_AMBIENT` = 0.1); block light
+Sky exposure gates everything lit before this step, sun, moon, ambient and point lights
+(floor `MIN_SKY_AMBIENT` = 0.1); block light
 adds on top, so torches and emissive blocks light caves and night surfaces the sky
 leaves dark. A surface with no block light (entity meshes, level files) draws as sky
 exposure alone. Block light next to a strong emitter can push a channel past 1;

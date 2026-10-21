@@ -790,8 +790,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Color gradient = inside bounds (shows UV coords)
     // return vec4<f32>(debug_shadow_coords(in.light_space_pos), 1.0);
     
-    // Sky exposure gates sun and ambient; block light adds on top so it can light
-    // surfaces the sky leaves dark.
+    // Sky exposure gates everything lit above (sun, moon, ambient, point lights); block
+    // light adds on top so it can light surfaces the sky leaves dark.
+    // TODO: Implement proper light occlusion - blocks should prevent light from
+    // reaching surfaces in crevices/caves (requires transparency checks in propagation)
     let sky_gate = max(vec3<f32>(in.sky_exposed), vec3<f32>(MIN_SKY_AMBIENT));
     color = color * sky_gate + final_albedo * ao * in.block_light_rgb * BLOCK_LIGHT_GAIN;
     
