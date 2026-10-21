@@ -208,6 +208,9 @@ one is approved.
 | Characters and bodies move each other: push, weight, moving ground, char-vs-char, lookahead, contact events, CCD ([ENG-F34](https://github.com/WrackedFella/moho/issues/493)) | The biggest physics effort; needs ENG-F32's ground collider and effects | M3 |
 | Fire-time fraction (Q1) and sub-tick jump (Q2, last, only if Q1 proves useful) | Q2 changes the step's shape; neither is needed for feel at one fixed rate | M5+ |
 | Netcode ADR and a co-op session | Co-op only, may never ship; ADR-0011 plus ENG-F32-04 and -09 keep it open at near-zero cost | M5+, pulled by the first co-op GDD |
+| Engine perception (sight, hearing, factions) | One consumer | Strategy pawns fight |
+| AI and nav debug draw | No request | First AI or nav debugging pain on either line |
+| Per-tick AI budget | Not measured | Cost at 50 pawns or Director handover |
 
 ## M3 — Seams land, then v1.0 and split
 
@@ -314,4 +317,5 @@ process-wide counters (ADR-0011 rule 3) are fixed where SG-F4 and SG-F7 rework t
 | 2026-10-21 | Lowest target GPU is a GTX 1080; every renderer perf criterion is measured on it at 1080p | M2 and M3 sections |
 | 2026-10-21 | Physics floor and API fixes in M2 as [ENG-F32](https://github.com/WrackedFella/moho/issues/491) (Source `accelerate` reverses #271 deviation 1; overbounce 1.0; queued effects supersede ADR-0014 in one card; Q2 last and only if Q1 proves useful); movement rules as data ([ENG-F33](https://github.com/WrackedFella/moho/issues/492)) and characters and bodies ([ENG-F34](https://github.com/WrackedFella/moho/issues/493)) in M3. Bloom in M2 ([ENG-F29-05](https://github.com/WrackedFella/moho/issues/503)), auto-exposure opens M3 ([ENG-F29-06](https://github.com/WrackedFella/moho/issues/504)) | [ENG-F32](https://github.com/WrackedFella/moho/issues/491) |
 | 2026-10-21 | M3 widens to "seams land, then split": ENG-F30, F33, F34 and the ADR-0011 two-sim proof precede ENG-F5. Multiplayer is co-op only; its enablers are ENG-F32-04 and -09 and the M3 proof; the netcode ADR and a co-op session are M5+, pulled by the first co-op GDD | M3 section, M5+ |
+| 2026-10-21 | Game AI stays in the lines; the engine offers queries (navigation, rays, gameplay light) | [AI direction](https://github.com/WrackedFella/moho/issues/229) |
 | 2026-10-21 | Lighting is one dynamic engine path for both lines; baked lightmaps only as an FPS tier on a measured gap. Short-term light composition in M2 (ENG-F29); mirrors, SSR and water in M2 wave 4 (ENG-F31, must-have), bounce light after M2 (ENG-F30); every effect has a player-facing on/off and detail setting in the Video tab | [ENG-F29](https://github.com/WrackedFella/moho/issues/479), [ENG-F30](https://github.com/WrackedFella/moho/issues/480), [ENG-F31](https://github.com/WrackedFella/moho/issues/481) |
