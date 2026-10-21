@@ -97,8 +97,25 @@ impl ContentRoots {
     /// [`ContentError::InvalidRootName`] for a name that is not a plain folder name;
     /// [`ContentError::MissingRoot`] for a folder that does not exist.
     pub fn with_mods(self, mods_dir: &Path, names: &[String]) -> Result<Self, ContentError> {
-        let _ = (mods_dir, names);
-        Ok(self)
+        let mut roots = self.roots;
+        for name in names {
+            let plain = !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+            if !plain {
+                return Err(ContentError::InvalidRootName { name: name.clone() });
+            }
+            let path = mods_dir.join(name);
+            if !path.is_dir() {
+                return Err(ContentError::MissingRoot { path });
+            }
+            roots.push(ContentRoot {
+                name: name.clone(),
+                path,
+            });
+        }
+        Ok(Self { roots })
     }
 }
 

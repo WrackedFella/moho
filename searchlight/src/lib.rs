@@ -38,7 +38,7 @@ pub fn prefs_path() -> PathBuf {
 
 /// Where mod content roots live, relative to the working directory.
 pub fn mods_dir() -> PathBuf {
-    PathBuf::new()
+    PathBuf::from("mods")
 }
 
 /// Splits a `[bindings]` section into the `console` entry and the game's own actions,

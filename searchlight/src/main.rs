@@ -19,15 +19,15 @@ use searchlight::game::{SearchlightGame, WINDOW_TITLE};
 use searchlight::mode::ArenaMode;
 use searchlight::tuning::tuning;
 use searchlight::wave::WaveTuning;
-use searchlight::{RIFLE_ID, TICK_HZ, content_root, prefs_path, split_console_binding};
+use searchlight::{RIFLE_ID, TICK_HZ, content_root, mods_dir, prefs_path, split_console_binding};
 use searchlight_rules::RifleDef;
 
 /// Radians of turn per mouse count, at Source sensitivity 3.0.
 const LOOK_PER_PIXEL: f32 = source_look_per_count(3.0);
 
-/// Loads the rifle definition from the base content folder.
-fn load_rifle() -> Result<RifleDef, ContentError> {
-    let roots = ContentRoots::base(&content_root())?;
+/// Loads the rifle definition from the base content folder and the listed mod roots.
+fn load_rifle(mods: &[String]) -> Result<RifleDef, ContentError> {
+    let roots = ContentRoots::base(&content_root())?.with_mods(&mods_dir(), mods)?;
     let weapons = load_kind::<RifleDef>(&roots, "weapons")?;
     weapons.require(RIFLE_ID).cloned()
 }
@@ -41,7 +41,11 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let rifle = match load_rifle() {
+    let (prefs, prefs_warnings) = Prefs::load_from(&prefs_path());
+    for warning in prefs_warnings {
+        tracing::warn!(%warning, "Preferences load fallback");
+    }
+    let rifle = match load_rifle(prefs.content_mods()) {
         Ok(rifle) => rifle,
         Err(error) => {
             tracing::error!(%error, "Content failed to load");
@@ -55,10 +59,6 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
     let (level, markers) = arena::load(&arena_path)?;
     let arena = Arc::new(Arena::from_level(&level, &markers));
     let mode = ArenaMode::new(arena.clone(), tuning(&rifle)?, WaveTuning::default());
-    let (prefs, prefs_warnings) = Prefs::load_from(&prefs_path());
-    for warning in prefs_warnings {
-        tracing::warn!(%warning, "Preferences load fallback");
-    }
     let (console_section, game_section) = split_console_binding(prefs.bindings());
     let debug_settings = DebugSettings::new(prefs, prefs_path());
     let (bindings, warnings) = ActionBindings::load(&game_section);

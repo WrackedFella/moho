@@ -145,6 +145,15 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
             parse_u32(s).filter(|&v| v > 0),
         )
     }),
+    ("content", "mods", |p, s| {
+        p.content_mods = s
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect();
+        Some(())
+    }),
 ];
 
 type SectionKeys = HashMap<String, Option<String>>;

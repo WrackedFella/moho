@@ -71,6 +71,7 @@ pub struct Prefs {
     world_chunks_per_frame: u32,
     bindings: BTreeMap<String, String>,
     debug: BTreeMap<String, String>,
+    content_mods: Vec<String>,
 }
 
 const MAX_GRAPHICS_QUALITY: u32 = 4;
@@ -124,12 +125,12 @@ impl Prefs {
 
     /// The content mod names to load after the base root, in load order.
     pub fn content_mods(&self) -> &[String] {
-        &[]
+        &self.content_mods
     }
 
     /// Replaces the content mod list.
     pub fn set_content_mods(&mut self, mods: Vec<String>) {
-        let _ = mods;
+        self.content_mods = mods;
     }
 
     // --- Scalar getters ---
@@ -258,6 +259,7 @@ impl Default for Prefs {
             world_chunks_per_frame: 4,
             bindings: BTreeMap::new(),
             debug: BTreeMap::new(),
+            content_mods: Vec::new(),
         }
     }
 }
@@ -314,6 +316,11 @@ impl Prefs {
             unload = self.world_unload_radius,
             chunks = self.world_chunks_per_frame,
         );
+        if !self.content_mods.is_empty() {
+            text.push_str("\n[content]\nmods=");
+            text.push_str(&self.content_mods.join(","));
+            text.push('\n');
+        }
         if !self.bindings.is_empty() {
             text.push_str("\n[bindings]\n");
             text.extend(
