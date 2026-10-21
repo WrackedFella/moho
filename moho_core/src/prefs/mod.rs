@@ -156,15 +156,6 @@ impl Prefs {
     pub fn world_chunks_per_frame(&self) -> u32 {
         self.world_chunks_per_frame
     }
-    pub fn set_world_load_radius(&mut self, v: u32) {
-        self.world_load_radius = v;
-    }
-    pub fn set_world_unload_radius(&mut self, v: u32) {
-        self.world_unload_radius = v;
-    }
-    pub fn set_world_chunks_per_frame(&mut self, v: u32) {
-        self.world_chunks_per_frame = v.max(1);
-    }
     pub fn window_mode(&self) -> WindowMode {
         self.window_mode
     }
