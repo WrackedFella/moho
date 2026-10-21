@@ -171,15 +171,15 @@ impl<G> UiFrameSource for UiShell<G> {
         if !self.console.is_open() && self.texts.is_empty() {
             return None;
         }
-        let texts = std::mem::take(&mut self.texts);
         let context = self.context.clone();
         let output = context.run_ui(input, |ui| {
             // Game text first, so the console paints over it.
-            text::paint(ui.ctx(), &texts);
+            text::paint(ui.ctx(), &self.texts);
             if self.console.is_open() {
                 self.console.show(ui.ctx());
             }
         });
+        self.texts.clear();
         // Platform output is dropped: handing it to egui-winit would show the cursor the game
         // grabbed. Copy, IME and cursor icons in the console go with it.
         let primitives = context.tessellate(output.shapes, output.pixels_per_point);

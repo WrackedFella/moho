@@ -30,23 +30,8 @@ pub struct ScreenText {
     pub color: [u8; 4],
 }
 
-/// The point of `screen` that `anchor` names.
-pub(crate) fn anchor_point(anchor: Anchor, screen: egui::Rect) -> egui::Pos2 {
-    match anchor {
-        Anchor::TopLeft => screen.left_top(),
-        Anchor::Top => screen.center_top(),
-        Anchor::TopRight => screen.right_top(),
-        Anchor::Left => screen.left_center(),
-        Anchor::Center => screen.center(),
-        Anchor::Right => screen.right_center(),
-        Anchor::BottomLeft => screen.left_bottom(),
-        Anchor::Bottom => screen.center_bottom(),
-        Anchor::BottomRight => screen.right_bottom(),
-    }
-}
-
-/// The text alignment that puts a text's matching point on the anchor point, so it grows away
-/// from the screen edge.
+/// The alignment that names both the anchor's point on the screen and the matching point of the
+/// text placed there, so the text grows away from the screen edge.
 fn align(anchor: Anchor) -> egui::Align2 {
     match anchor {
         Anchor::TopLeft => egui::Align2::LEFT_TOP,
@@ -71,9 +56,10 @@ pub fn paint(ctx: &egui::Context, texts: &[ScreenText]) {
     // egui asserts on a font size that is not finite and positive; such a text has nothing to show.
     for t in texts.iter().filter(|t| t.size.is_finite() && t.size > 0.0) {
         let [r, g, b, a] = t.color;
+        let align = align(t.anchor);
         painter.text(
-            anchor_point(t.anchor, screen) + egui::vec2(t.offset[0], t.offset[1]),
-            align(t.anchor),
+            align.pos_in_rect(&screen) + egui::Vec2::from(t.offset),
+            align,
             &t.text,
             egui::FontId::proportional(t.size),
             egui::Color32::from_rgba_unmultiplied(r, g, b, a),
