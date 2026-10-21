@@ -1065,13 +1065,16 @@ mod tests {
     fn a_chase_with_no_path_resumes_the_patrol() {
         let route = square();
         let tuning = tuning();
-        let mut brain = chasing(Vec3::new(0.0, 0.0, 10.0), 0);
+        let last_seen = Vec3::new(-10.0, 0.0, 0.0);
+        let mut brain = chasing(last_seen, 0);
         let nowhere = |_: Vec3| None;
 
         let intent = brain.think(&route, &at_origin(0.0, None), &tuning, &nowhere, DT);
 
         assert_eq!(brain, Brain::Patrol { next: 2 });
         let to_waypoint = turn_towards(&at_origin(0.0, None), route[2], tuning.turn_rate * DT).0;
+        let to_last_seen = turn_towards(&at_origin(0.0, None), last_seen, tuning.turn_rate * DT).0;
+        assert_ne!(to_waypoint, to_last_seen, "the bearings must differ");
         assert_eq!(intent.forward, tuning.patrol_speed);
         assert_eq!(intent.yaw_delta, to_waypoint);
         assert!(!intent.fire);
@@ -1083,21 +1086,38 @@ mod tests {
         let tuning = tuning();
         let goal = Vec3::new(0.0, 0.0, 10.0);
         let corner = Vec3::new(10.0, 0.0, 0.0);
-        let asked = std::cell::Cell::new(None);
-        let around = |goal: Vec3| {
-            asked.set(Some(goal));
-            Some(corner)
-        };
+        let around = |asked: Vec3| (asked == goal).then_some(corner);
         let mut brain = chasing(goal, 0);
 
         let intent = brain.think(&route, &at_origin(0.0, None), &tuning, &around, DT);
 
-        assert_eq!(asked.get(), Some(goal));
         assert!(
             matches!(brain, Brain::Chase { last_seen, .. } if last_seen == goal),
             "{brain:?}"
         );
         assert_eq!(intent.yaw_delta, tuning.turn_rate * DT);
+        assert_eq!(intent.forward, tuning.patrol_speed);
+    }
+
+    #[test]
+    fn a_chase_measures_arrival_to_the_last_seen_position_not_the_steered_corner() {
+        let route = square();
+        let tuning = tuning();
+        let last_seen = Vec3::new(0.0, 0.0, 30.0);
+        let beside_us = Vec3::new(0.5, 0.0, 0.0);
+        let around = |_: Vec3| Some(beside_us);
+        let mut brain = chasing(last_seen, 0);
+
+        let intent = brain.think(&route, &at_origin(0.0, None), &tuning, &around, DT);
+
+        assert_eq!(
+            brain,
+            Brain::Chase {
+                next: 2,
+                last_seen,
+                ticks: 1
+            }
+        );
         assert_eq!(intent.forward, tuning.patrol_speed);
     }
 }

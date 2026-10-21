@@ -3094,6 +3094,10 @@ mod enemy_tests {
     /// line between the enemy and the player, and ending well short of both sides' spawns.
     const LOW_BARRIER: (Vec3, Vec3) = (Vec3::new(-3.0, 0.0, 4.9), Vec3::new(3.0, 1.0, 5.1));
 
+    /// How far the position the enemy remembers may sit from the player's centre where it lost
+    /// sight: the aim offset to the torso, plus a tick of the player's running.
+    const LAST_SEEN_SLACK: f32 = 0.5;
+
     #[test]
     fn a_chasing_enemy_walks_around_a_wall_to_the_last_seen_position() {
         let mut config = cover_config();
@@ -3113,12 +3117,22 @@ mod enemy_tests {
         sim.drain_feedback();
 
         let mut closest_z = f32::MAX;
+        let mut lost_at = None;
+        let mut closest_to_lost = f32::MAX;
         for tick in 0..500 {
             sim.tick(&flee(tick == 0), DT);
             sim.drain_feedback();
-            closest_z = closest_z.min(enemy_at(&sim, 0).z);
+            let enemy = enemy_at(&sim, 0);
+            closest_z = closest_z.min(enemy.z);
+            if lost_at.is_none() && matches!(sim.targets[0].brain, Some(Brain::Chase { .. })) {
+                lost_at = Some(sim.player().position);
+            }
+            if let Some(lost) = lost_at {
+                closest_to_lost = closest_to_lost.min(horizontal(enemy, lost));
+            }
         }
 
+        assert!(lost_at.is_some(), "the enemy never lost the player");
         assert!(
             sim.player().position.z < -10.0,
             "the player never ran out of the enemy's range: {:?}",
@@ -3127,6 +3141,54 @@ mod enemy_tests {
         assert!(
             closest_z < 0.0,
             "the enemy never got past the barrier at z = 5, closest z {closest_z}"
+        );
+        let reach = sim.enemy.arrive_radius + LAST_SEEN_SLACK;
+        assert!(
+            closest_to_lost <= reach,
+            "the enemy never reached the place it lost the player {lost_at:?}, closest {closest_to_lost} m"
+        );
+    }
+
+    /// A box the player can stand on but no enemy can climb: taller than the 0.5 m autostep.
+    const PLATEAU: (Vec3, Vec3) = (Vec3::new(-2.0, 0.0, -2.0), Vec3::new(2.0, 1.5, 2.0));
+
+    #[test]
+    fn an_enemy_that_loses_a_player_it_cannot_reach_resumes_its_patrol() {
+        let top = Vec3::new(0.0, PLATEAU.1.y, 0.0);
+        let arena = arena_with(&[PLATEAU], top, &[ENEMY_SPAWN], &[TOWARD_PLAYER]);
+        let mut sim = SearchlightSim::start(arena, cover_config());
+        run(&mut sim, &script(10, &[]));
+        let engaged = matches!(sim.targets[0].brain, Some(Brain::Engage { .. }));
+        // Nothing can be seen beyond a metre from now on.
+        sim.enemy.sight_range = 1.0;
+
+        sim.tick(&idle(), DT);
+        sim.drain_feedback();
+        let after_losing_sight = sim.targets[0].brain;
+        let mut closest_z = f32::MAX;
+        for _ in 0..600 {
+            sim.tick(&idle(), DT);
+            sim.drain_feedback();
+            closest_z = closest_z.min(enemy_at(&sim, 0).z);
+        }
+
+        assert!(
+            sim.player().position.y > 1.0,
+            "the player is not on the box"
+        );
+        assert!(engaged, "the enemy never engaged the player on the box");
+        assert!(
+            matches!(after_losing_sight, Some(Brain::Patrol { .. })),
+            "the enemy should give up at once: {after_losing_sight:?}"
+        );
+        assert!(
+            closest_z > TOWARD_PLAYER.z - 1.0,
+            "the enemy walked toward the box, closest z {closest_z}"
+        );
+        assert!(
+            horizontal(enemy_at(&sim, 0), TOWARD_PLAYER) < 1.0,
+            "the enemy is not at its waypoint: {:?}",
+            enemy_at(&sim, 0)
         );
     }
 

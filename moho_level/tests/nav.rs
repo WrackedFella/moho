@@ -15,9 +15,9 @@ const PROFILE: AgentProfile = AgentProfile {
     max_slope: std::f32::consts::FRAC_PI_4,
 };
 
-/// The coarsest voxel size the navmesh generator may use, which bounds how far a corner can
-/// stray inside the radius clearance.
-const CELL: f32 = 0.3;
+/// The navmesh generator's voxel size: a third of the agent radius. It bounds how far a corner
+/// can stray inside the radius clearance.
+const CELL: f32 = PROFILE.radius / 3.0;
 
 /// An axis-aligned box on the XZ plane.
 #[derive(Clone, Copy)]
@@ -158,21 +158,6 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(8))]
 
     #[test]
-    fn a_repeated_query_returns_the_same_path(
-        ax in -9.0_f32..-1.0, az in -9.0_f32..9.0,
-        bx in 1.0_f32..9.0, bz in -9.0_f32..9.0,
-    ) {
-        let a = Vec3::new(ax, 0.0, az);
-        let b = Vec3::new(bx, 0.0, bz);
-
-        let first = WALLED.path(a, b);
-        let second = WALLED.path(a, b);
-
-        prop_assert!(first.is_some(), "no path from {a:?} to {b:?}");
-        prop_assert_eq!(first, second);
-    }
-
-    #[test]
     fn path_corners_keep_the_agent_radius_from_walls(
         ax in -9.0_f32..-1.0, az in -9.0_f32..9.0,
         bx in 1.0_f32..9.0, bz in -9.0_f32..9.0,
@@ -183,6 +168,7 @@ proptest! {
         let path = WALLED.path(a, b);
 
         let path = path.ok_or_else(|| TestCaseError::fail(format!("no path {a:?} to {b:?}")))?;
+        prop_assert_eq!(WALLED.path(a, b), Some(path.clone()));
         for corner in path {
             prop_assert!(
                 distance_to(corner, WALL) >= PROFILE.radius - CELL,
@@ -206,12 +192,17 @@ fn a_point_inside_a_closed_room_has_no_path() {
     let navmesh = build(&world);
     let outside = Vec3::new(-5.0, 0.0, 0.0);
     let inside = Vec3::new(6.0, 0.0, 0.0);
+    let inside_too = Vec3::new(7.0, 0.0, 1.0);
 
     let to_room = navmesh.path(outside, inside);
 
     assert!(
         navmesh.path(outside, Vec3::new(0.0, 0.0, 5.0)).is_some(),
         "open floor outside the room is reachable"
+    );
+    assert!(
+        navmesh.path(inside, inside_too).is_some(),
+        "the room's own floor is on the mesh"
     );
     assert_eq!(to_room, None);
 }
@@ -262,15 +253,29 @@ fn a_goal_beside_a_raised_block_snaps_to_the_floor_not_the_block_top() {
 #[test]
 fn a_point_off_the_mesh_beyond_the_radius_has_no_path() {
     let start = Vec3::new(-5.0, 0.0, 0.0);
+    let goal = Vec3::new(5.0, 0.0, 0.0);
+    let floor_edge = 10.0 - PROFILE.radius;
+    let drop = PROFILE.max_climb + 0.2;
 
-    let on_floor = WALLED.path(start, Vec3::new(5.0, 0.0, 0.0));
-    let beyond_the_edge = WALLED.path(start, Vec3::new(15.0, 0.0, 0.0));
-    let too_high = WALLED.path(start, Vec3::new(5.0, 5.0, 0.0));
-    let from_off = WALLED.path(Vec3::new(0.0, 0.0, 30.0), Vec3::new(5.0, 0.0, 0.0));
+    let on_floor = WALLED.path(start, goal);
+    let near_edge = WALLED.path(start, Vec3::new(floor_edge + 0.2, 0.0, 0.0));
+    let past_edge = WALLED.path(start, Vec3::new(floor_edge + 0.9, 0.0, 0.0));
+    let head_high = WALLED.path(start, Vec3::new(5.0, PROFILE.height - 0.1, 0.0));
+    let too_high = WALLED.path(start, Vec3::new(5.0, PROFILE.height + 0.3, 0.0));
+    let within_climb = WALLED.path(start, Vec3::new(5.0, -(PROFILE.max_climb - 0.2), 0.0));
+    let beneath = WALLED.path(start, Vec3::new(5.0, -drop, 0.0));
+    let from_off = WALLED.path(Vec3::new(0.0, 0.0, 30.0), goal);
 
     assert!(on_floor.is_some(), "the control point is reachable");
-    assert_eq!(beyond_the_edge, None);
+    assert!(near_edge.is_some(), "a point within the radius snaps on");
+    assert_eq!(past_edge, None);
+    assert!(head_high.is_some(), "a point under head height snaps down");
     assert_eq!(too_high, None);
+    assert!(
+        within_climb.is_some(),
+        "a point within climb of the floor snaps up"
+    );
+    assert_eq!(beneath, None);
     assert_eq!(from_off, None);
 }
 
