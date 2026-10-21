@@ -56,16 +56,13 @@ impl Overlay for RtsHud {
     }
 
     fn take_intents(&mut self, out: &mut HudIntents) {
-        out.view_level = self.chosen.take();
+        out.view_level = self.chosen.take().or(out.view_level);
     }
 }
 
 /// Vertical view-height slider on the right edge, below the minimap and the clock.
 /// Returns the step the player moved it to this frame, if any.
 fn render_view_height(ui: &mut egui::Ui, view: ViewHeightHud) -> Option<i32> {
-    let mut level = view.level;
-    let mut moved = false;
-
     egui::Area::new("rts_view_height".into())
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 200.0))
         .show(ui.ctx(), |ui| {
@@ -73,27 +70,28 @@ fn render_view_height(ui: &mut egui::Ui, view: ViewHeightHud) -> Option<i32> {
                 .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 120))
                 .inner_margin(egui::Margin::same(6))
                 .show(ui, |ui| {
-                    let text = if level >= view.top {
+                    let text = if view.level >= view.top {
                         "All".to_owned()
                     } else {
-                        level.to_string()
+                        view.level.to_string()
                     };
                     ui.label(
                         egui::RichText::new(text).color(egui::Color32::from_rgb(220, 220, 200)),
                     );
                     ui.spacing_mut().slider_width = SLIDER_LENGTH;
-                    moved = ui
-                        .add(
-                            egui::Slider::new(&mut level, view.floor + 1..=view.top)
-                                .vertical()
-                                .integer()
-                                .show_value(false),
-                        )
-                        .changed();
-                });
-        });
-
-    moved.then_some(level)
+                    let mut level = view.level;
+                    ui.add(
+                        egui::Slider::new(&mut level, view.floor + 1..=view.top)
+                            .vertical()
+                            .integer()
+                            .show_value(false),
+                    )
+                    .changed()
+                    .then_some(level)
+                })
+                .inner
+        })
+        .inner
 }
 
 /// Time-of-day badge in the top-right corner.

@@ -109,13 +109,15 @@ impl ViewLevel {
     }
 }
 
+/// The loaded world's layer extent; `None` without a world or with no chunks loaded.
+pub fn layer_extent(app: &App) -> Option<LayerExtent> {
+    let grid = app.light_system.as_ref()?.grid();
+    LayerExtent::of_chunks(grid.chunk_positions(), grid.chunk_size())
+}
+
 /// Apply the HUD's pick and hand a changed cut to the caps and the renderer.
 pub fn update(app: &mut App, chosen: Option<i32>) {
-    let Some(light_system) = app.light_system.as_ref() else {
-        return;
-    };
-    let grid = light_system.grid();
-    let Some(extent) = LayerExtent::of_chunks(grid.chunk_positions(), grid.chunk_size()) else {
+    let Some(extent) = layer_extent(app) else {
         return;
     };
     if let Some(level) = chosen {

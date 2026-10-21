@@ -405,15 +405,7 @@ impl FrameProcessor {
             hotbar,
             equipped_tool_label,
             selected_slot: app.pawn.selected_slot,
-            view_height: app
-                .light_system
-                .as_ref()
-                .and_then(|ls| {
-                    crate::app::view_level::LayerExtent::of_chunks(
-                        ls.grid().chunk_positions(),
-                        ls.grid().chunk_size(),
-                    )
-                })
+            view_height: crate::app::view_level::layer_extent(app)
                 .map(|extent| app.view_level.hud(extent)),
         };
 
