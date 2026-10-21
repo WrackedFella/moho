@@ -98,7 +98,9 @@ impl LightSystem {
         self.job_queue.submit(job);
     }
 
-    /// Handle a block placed event.
+    /// Handle a block placed event. The job reads the grid when it runs, so the
+    /// block must already be in the grid. A transparent, non-emissive block queues
+    /// nothing, which assumes it was placed into an empty position.
     pub fn on_block_placed(&mut self, position: IVec3, material_id: u32) {
         if self.affects_light(Some(material_id)) {
             self.submit_reconcile(position);
@@ -169,9 +171,8 @@ impl LightSystem {
         self.job_queue.pending_jobs()
     }
 
-    /// Process a WorldEvent
-    ///
-    /// Helper method to handle events polymorphically
+    /// Queue light work for a world event. The grid must already hold the edit
+    /// the event describes.
     pub fn handle_event(&mut self, event: &WorldEvent) {
         match event {
             WorldEvent::BlockPlaced {
@@ -231,7 +232,7 @@ mod tests {
         let event_bus = Arc::new(EventBus::new());
         let mut light_system = LightSystem::with_default_budget(grid, event_bus);
 
-        // Placing an emissive block should enqueue an add-light job.
+        // Placing an emissive block should enqueue a job.
         light_system.on_block_placed(IVec3::new(2, 2, 2), 1);
         assert_eq!(light_system.pending_jobs(), 1);
     }

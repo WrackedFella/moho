@@ -849,8 +849,8 @@ fn fresh_fill(blocks: &[TestBlock]) -> VoxelGrid {
     grid
 }
 
-/// Light `blocks`, mine `blocks[removed]` out of the grid, then run the removal
-/// job for its position, as the game does. Returns the grid after removal and
+/// Light `blocks`, mine `blocks[removed]` out of the grid, then run
+/// `remove_light` for its position. Returns the grid after removal and
 /// the reference fill of the remaining blocks.
 fn remove_block_light(blocks: &[TestBlock], removed: usize) -> (VoxelGrid, VoxelGrid) {
     let mut grid = fresh_fill(blocks);
