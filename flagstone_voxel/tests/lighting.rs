@@ -1132,6 +1132,41 @@ fn replacing_a_wall_block_with_an_emitter_lights_it_at_its_emission() {
     );
 }
 
+/// Reconcile is idempotent: a second pass over a lit position (in the light, at
+/// the emitter, and with the emitter mined) writes nothing and reports no chunk.
+#[test]
+fn reconciling_a_settled_position_again_writes_nothing() {
+    let emitter = IVec3::new(15, 15, 15);
+    let lit = IVec3::new(17, 15, 15);
+    let mut grid = fresh_fill(&[blue_emitter(emitter, 15)]);
+    let mut prop = LightPropagator::new();
+
+    for pos in [lit, emitter] {
+        let before = grid_snapshot(&grid, emitter);
+        assert!(prop.update_at(&mut grid, pos).is_empty(), "{pos:?}");
+        assert_eq!(grid_snapshot(&grid, emitter), before, "{pos:?}");
+    }
+    grid.mutator().remove(emitter);
+    assert!(!prop.update_at(&mut grid, emitter).is_empty());
+    assert!(
+        prop.update_at(&mut grid, emitter).is_empty(),
+        "mined emitter"
+    );
+}
+
+/// Light of every voxel within 16 blocks of `center`.
+fn grid_snapshot(grid: &VoxelGrid, center: IVec3) -> Vec<[u8; 3]> {
+    let mut light = Vec::new();
+    for x in -16..=16 {
+        for y in -16..=16 {
+            for z in -16..=16 {
+                light.push(rgb(grid, center + IVec3::new(x, y, z)));
+            }
+        }
+    }
+    light
+}
+
 #[test]
 fn reconciling_far_from_light_changes_nothing_and_reports_no_chunk() {
     let far = IVec3::new(60, 60, 60);
