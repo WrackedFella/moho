@@ -10,6 +10,7 @@ use winit::window::Window;
 
 use crate::console::{Console, Routing};
 use crate::paint_map::to_ui_frame;
+use crate::text::ScreenText;
 
 /// Owns the egui context and the console it draws.
 pub struct UiShell<G> {
@@ -96,6 +97,9 @@ impl<G> UiShell<G> {
     pub fn console_mut(&mut self) -> &mut Console<G> {
         &mut self.console
     }
+
+    /// Queues `text` for the next `ui_frame`, which paints it and clears the queue.
+    pub fn draw_text(&mut self, _text: ScreenText) {}
 
     fn feed_egui(&mut self, event: &WindowEvent) {
         if let (Some(state), Some(window)) = (&mut self.state, &self.window) {
@@ -286,6 +290,40 @@ mod tests {
         assert!((height - 234.0).abs() <= 1.0, "log window is {height} tall");
         assert!(log.clip_rect.min[1] >= 300.0, "log starts above the panel");
         assert!(log.clip_rect.max[1] <= 600.0, "log ends below the panel");
+    }
+
+    fn ammo() -> ScreenText {
+        ScreenText {
+            text: "30 / 30".to_owned(),
+            anchor: crate::text::Anchor::BottomRight,
+            offset: [-10.0, -10.0],
+            size: 24.0,
+            color: [255, 255, 255, 255],
+        }
+    }
+
+    #[test]
+    fn queued_text_yields_meshes_on_the_font_texture() {
+        let mut shell = shell();
+        shell.draw_text(ammo());
+
+        let frame = shell.ui_frame([800, 600]);
+
+        let frame = frame.expect("queued text draws a frame with the console closed");
+        assert!(!frame.meshes.is_empty());
+        assert!(!frame.textures_set.is_empty());
+        assert!(frame.meshes.iter().all(|m| !m.vertices.is_empty()));
+    }
+
+    #[test]
+    fn queued_text_is_cleared_by_the_frame_that_paints_it() {
+        let mut shell = shell();
+        shell.draw_text(ammo());
+        assert!(shell.ui_frame([800, 600]).is_some());
+
+        let next = shell.ui_frame([800, 600]);
+
+        assert_eq!(next, None);
     }
 
     #[test]
