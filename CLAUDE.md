@@ -35,6 +35,7 @@ cargo run -p searchlight           # the FPS prototype
   don't auto-close issues there. The feature's issue names its integration branch,
   which is deleted once that PR merges. Current: none.
 - **Project board:** WrackedFella, project 1 (https://github.com/users/WrackedFella/projects/1).
+  **Board header:** yes (the Board sync `Fields` job applies it).
   The board and issue are the only record of item state; nothing in `_todo/` mirrors
   them. Agents change the board only through devflow's `scripts/board`.
 - **The issue is the record of an item.** When scope changes, edit the issue body;
