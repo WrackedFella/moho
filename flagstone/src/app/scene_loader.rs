@@ -86,10 +86,13 @@ pub fn load_scene(
                 "Reconstructed VoxelGrid blocks for LightSystem"
             );
         }
-        app.light_system = Some(flagstone_voxel::LightSystem::with_default_budget(
-            grid,
-            app.event_bus.clone(),
-        ));
+        let mut light_system =
+            flagstone_voxel::LightSystem::with_default_budget(grid, app.event_bus.clone());
+        // Lit before the first tick; the dirty events re-mesh the scene from the lit grid.
+        let loaded: Vec<glam::IVec3> = light_system.grid().chunk_positions().collect();
+        light_system.light_arrived_chunks(&loaded);
+        light_system.emit_dirty_events();
+        app.light_system = Some(light_system);
 
         // Initialize ChunkStreamer so the loaded world can stream additional chunks
         let mut terrain_config = flagstone_game::scene_builders::TerrainConfig::default();

@@ -13,9 +13,9 @@
 //!   then re-seeds from any adjacent voxels still lit by surviving sources.
 
 use super::grid::VoxelGrid;
-use super::light_storage::{self, CHUNK_SIZE, idx_to_local};
+use super::light_storage::{self, CHUNK_SIZE, CHUNK_VOLUME, idx_to_local, local_index};
 use glam::IVec3;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 /// One of the three block-light color channels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +31,8 @@ struct PropNode {
     idx: usize,
     level: u8,
 }
+
+const CHANNELS: [LightChannel; 3] = [LightChannel::R, LightChannel::G, LightChannel::B];
 
 const OFFSETS: [IVec3; 6] = [
     IVec3::new(1, 0, 0),
@@ -110,6 +112,44 @@ impl LightPropagator {
             self.add_rgb(grid, pos, rgb, &mut affected);
         }
         affected.into_iter().collect()
+    }
+
+    /// Block light for chunks that just entered the grid: clears light that
+    /// spread into their area before their blocks were known, seeds their
+    /// emitters, and refills from the lit face-neighbour chunks. Returns every
+    /// chunk whose light changed.
+    pub(crate) fn light_arrived(
+        &mut self,
+        grid: &mut VoxelGrid,
+        arrived: &[IVec3],
+    ) -> HashSet<IVec3> {
+        let mut affected = HashSet::new();
+        if !grid.supports_lighting() {
+            return affected;
+        }
+        let arrived_set: HashSet<IVec3> = arrived.iter().copied().collect();
+
+        for ch in CHANNELS {
+            let stale = stale_light(grid, arrived, ch);
+            self.remove_nodes(grid, stale, ch, &mut affected);
+        }
+
+        for &chunk in arrived {
+            for block in grid.chunk_block_data(chunk) {
+                let emission = grid.material_registry.emission(block.material_id);
+                if emission != [0, 0, 0] {
+                    self.add_rgb(grid, block.position, emission, &mut affected);
+                }
+            }
+        }
+
+        for ch in CHANNELS {
+            let seeds = neighbour_face_light(grid, arrived, &arrived_set, ch);
+            if !seeds.is_empty() {
+                self.bfs_add_nodes(grid, &seeds, ch, &mut affected);
+            }
+        }
+        affected
     }
 
     /// One BFS pass per lit channel of `rgb`, recording touched chunks in `affected`.
@@ -248,17 +288,29 @@ impl LightPropagator {
         if start_level == 0 {
             return;
         }
+        let start = PropNode {
+            chunk_pos: start_chunk,
+            idx: start_idx,
+            level: start_level,
+        };
+        self.remove_nodes(grid, vec![start], ch, affected);
+    }
 
+    /// Two-queue removal of the light at every node of `starts`, each carrying
+    /// the level currently stored there.
+    fn remove_nodes(
+        &mut self,
+        grid: &mut VoxelGrid,
+        starts: Vec<PropNode>,
+        ch: LightChannel,
+        affected: &mut std::collections::HashSet<IVec3>,
+    ) {
         let mut dark: VecDeque<PropNode> = VecDeque::with_capacity(512);
         let mut relight: Vec<PropNode> = Vec::new();
         let mut relight_seen: std::collections::HashSet<(IVec3, usize)> =
             std::collections::HashSet::new();
 
-        dark.push_back(PropNode {
-            chunk_pos: start_chunk,
-            idx: start_idx,
-            level: start_level,
-        });
+        dark.extend(starts);
 
         while let Some(node) = dark.pop_front() {
             let stored = Self::read_ch(grid, node.chunk_pos, node.idx, ch);
@@ -299,10 +351,90 @@ impl LightPropagator {
             }
         }
 
+        // A re-seed candidate may have been darkened after it was recorded, and
+        // light held inside an opaque block that does not emit is a leftover,
+        // not a source.
+        relight.retain(|n| {
+            Self::read_ch(grid, n.chunk_pos, n.idx, ch) == n.level && is_light_source(grid, *n)
+        });
         if !relight.is_empty() {
             self.bfs_add_nodes(grid, &relight, ch, affected);
         }
     }
+}
+
+/// Whether the light stored at `node` can spread: it sits in a transparent
+/// voxel or in an emitting block.
+fn is_light_source(grid: &VoxelGrid, node: PropNode) -> bool {
+    let world = node.chunk_pos * CHUNK_SIZE + idx_to_local(node.idx);
+    grid.material_at(world).is_none_or(|mat_id| {
+        grid.material_registry.opacity_cost(mat_id) < 15
+            || grid.material_registry.emission(mat_id) != [0, 0, 0]
+    })
+}
+
+/// Every voxel of the `arrived` chunks that holds light in `ch`.
+fn stale_light(grid: &VoxelGrid, arrived: &[IVec3], ch: LightChannel) -> Vec<PropNode> {
+    let mut stale = Vec::new();
+    for &chunk_pos in arrived {
+        for idx in 0..CHUNK_VOLUME {
+            let level = LightPropagator::read_ch(grid, chunk_pos, idx, ch);
+            if level > 0 {
+                stale.push(PropNode {
+                    chunk_pos,
+                    idx,
+                    level,
+                });
+            }
+        }
+    }
+    stale
+}
+
+/// Lit voxels on the face layers of loaded chunks (outside `arrived_set`) that
+/// touch an arrived chunk.
+fn neighbour_face_light(
+    grid: &VoxelGrid,
+    arrived: &[IVec3],
+    arrived_set: &HashSet<IVec3>,
+    ch: LightChannel,
+) -> Vec<PropNode> {
+    let mut seeds = Vec::new();
+    for &chunk in arrived {
+        for dir in OFFSETS {
+            let chunk_pos = chunk + dir;
+            if arrived_set.contains(&chunk_pos) || grid.chunk_light(chunk_pos).is_none() {
+                continue;
+            }
+            // The layer of the neighbour that faces `chunk`.
+            let face = if dir.x + dir.y + dir.z > 0 {
+                0
+            } else {
+                CHUNK_SIZE - 1
+            };
+            for a in 0..CHUNK_SIZE {
+                for b in 0..CHUNK_SIZE {
+                    let local = if dir.x != 0 {
+                        IVec3::new(face, a, b)
+                    } else if dir.y != 0 {
+                        IVec3::new(a, face, b)
+                    } else {
+                        IVec3::new(a, b, face)
+                    };
+                    let idx = local_index(local.x, local.y, local.z);
+                    let level = LightPropagator::read_ch(grid, chunk_pos, idx, ch);
+                    if level > 0 {
+                        seeds.push(PropNode {
+                            chunk_pos,
+                            idx,
+                            level,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    seeds
 }
 
 /// The six face neighbours of `world`.

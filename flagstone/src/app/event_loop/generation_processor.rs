@@ -91,6 +91,12 @@ impl GenerationProcessor {
         // Pre-generate the spawn-column chunks synchronously so that get_height and
         // physics colliders are ready before the character controller is placed.
         let preloaded = self.preload_spawn_area(&terrain_config, app);
+        // Light the grid before anything meshes it.
+        if let Some(ls) = app.light_system.as_mut() {
+            let loaded: Vec<glam::IVec3> = ls.grid().chunk_positions().collect();
+            ls.light_arrived_chunks(&loaded);
+            ls.emit_dirty_events();
+        }
         // Also publish events so the streaming pipeline keeps them in sync.
         for pos in &preloaded {
             app.event_bus
@@ -499,7 +505,6 @@ mod tests {
 
     #[test]
     fn completed_generation_lights_preloaded_chunks() {
-        const EMITTER_MATERIAL: u32 = 7;
         let mut app = App::headless();
         let spec = flagstone_game::scene_builders::WorldSpec {
             name: "headless-test-completed-lit".to_string(),
@@ -518,14 +523,19 @@ mod tests {
         // Above the preloaded terrain, so only the handed-in grid holds this chunk.
         let emitter = glam::IVec3::new(3, 200, 3);
         let mut grid = flagstone_voxel::VoxelGrid::new(16);
+        let emitter_material =
+            grid.material_registry
+                .register(flagstone_voxel::MaterialType::Lambertian {
+                    albedo: glam::Vec3::ONE,
+                });
         grid.material_registry.set_lighting(
-            EMITTER_MATERIAL,
+            emitter_material,
             flagstone_voxel::MaterialLighting {
                 emission: [15, 8, 2],
                 opacity_cost: 0,
             },
         );
-        grid.mutator().place(emitter, EMITTER_MATERIAL, None);
+        grid.mutator().place(emitter, emitter_material, None);
         let _ = app.world_event_rx.try_iter().count();
 
         GenerationProcessor::new().handle_completed(

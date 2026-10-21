@@ -31,6 +31,8 @@
 
 use super::grid::VoxelGrid;
 use super::light_jobs::{LightFrameBudget, LightJobQueue, LightUpdateJob};
+use super::light_propagation::LightPropagator;
+use super::light_sky::{dirty_chunks_below, recompute_sky_exposure};
 use crate::events::{BlockChangeReason, WorldEvent};
 use glam::{IVec3, Vec3};
 use moho_core::events::EventBus;
@@ -152,13 +154,46 @@ impl LightSystem {
                 .into_iter()
                 .flat_map(|r| r.affected_chunks),
         );
+        self.refresh_sky();
 
         completed
     }
 
+    /// Recompute sky exposure of every `sky_dirty` chunk, topmost first within
+    /// each column so a lower chunk reads current heights above it. Chunks with
+    /// blocks whose exposure changed join the affected set; a chunk without
+    /// blocks has no mesh to rebuild.
+    fn refresh_sky(&mut self) {
+        let mut dirty: Vec<IVec3> = self
+            .grid
+            .lit_chunk_positions()
+            .filter(|&cp| self.grid.chunk_light(cp).is_some_and(|cl| cl.sky_dirty))
+            .collect();
+        dirty.sort_unstable_by_key(|cp| (cp.x, cp.z, std::cmp::Reverse(cp.y)));
+        for chunk_pos in dirty {
+            if recompute_sky_exposure(&mut self.grid, chunk_pos) && self.grid.has_chunk(chunk_pos) {
+                self.affected_chunks.insert(chunk_pos);
+            }
+        }
+    }
+
     /// Light chunks that have just entered the grid (world load, generation
     /// preload, streaming): refresh their sky exposure and block light.
-    pub fn light_arrived_chunks(&mut self, _chunks: &[IVec3]) {}
+    ///
+    /// Synchronous, so the chunks are lit when this returns. Chunks whose light
+    /// or sky changed are queued for [`Self::emit_dirty_events`].
+    pub fn light_arrived_chunks(&mut self, chunks: &[IVec3]) {
+        if !self.grid.supports_lighting() {
+            return;
+        }
+        for &chunk_pos in chunks {
+            self.grid.chunk_light_mut(chunk_pos).sky_dirty = true;
+            dirty_chunks_below(&mut self.grid, chunk_pos);
+        }
+        self.refresh_sky();
+        let changed = LightPropagator::new().light_arrived(&mut self.grid, chunks);
+        self.affected_chunks.extend(changed);
+    }
 
     /// Emit ChunkMeshDirty events for all affected chunks
     ///

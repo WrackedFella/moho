@@ -168,6 +168,8 @@ impl FrameProcessor {
             ];
             let loaded;
             (loaded, evicted) = streamer.update(ls.grid_mut(), player_pos);
+            // Light first, so the meshes the publishes below trigger read it.
+            ls.light_arrived_chunks(&loaded);
 
             // Directly publish ChunkMeshDirty for every loaded chunk. The light
             // system's emit_dirty_events only covers chunks that went through a

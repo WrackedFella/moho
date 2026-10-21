@@ -279,28 +279,30 @@ impl EventProcessor {
         }
     }
 
-    /// Process all pending world events (chunk updates, etc.)
+    /// Process all pending world events: every one reaches the light system,
+    /// then each chunk marked dirty is re-meshed once however many events named it.
     pub fn process_world_events(&self, app: &mut App) {
+        let mut dirty_chunks = std::collections::HashSet::new();
         while let Ok(event) = app.world_event_rx.try_recv() {
+            if let Some(light_system) = app.light_system.as_mut() {
+                light_system.handle_event(&event);
+            }
             if let WorldEvent::ChunkMeshDirty { chunk_pos, .. } = event {
-                // Regenerate chunk mesh
-                // We need to scope the borrow of light_system so we can access world later
-                let player_chunk = lod_player_chunk(app.simulation.position());
-                let lod = lod_for_chunk(chunk_pos, player_chunk);
-                let new_chunk = if let Some(light_system) = &app.light_system {
-                    let grid = light_system.grid();
-                    Some(VoxelChunk::from_grid_lod(grid, chunk_pos, lod))
-                } else {
-                    None
-                };
+                dirty_chunks.insert(chunk_pos);
+            }
+        }
 
-                if let Some(chunk) = new_chunk {
-                    if crate::app::world_geometry::insert_chunk(app, chunk).is_some() {
-                        tracing::trace!(chunk = ?chunk_pos, "Updated mesh for chunk");
-                    } else {
-                        tracing::trace!(chunk = ?chunk_pos, "Created new mesh for chunk");
-                    }
-                }
+        let player_chunk = lod_player_chunk(app.simulation.position());
+        for chunk_pos in dirty_chunks {
+            let lod = lod_for_chunk(chunk_pos, player_chunk);
+            let Some(light_system) = &app.light_system else {
+                continue;
+            };
+            let chunk = VoxelChunk::from_grid_lod(light_system.grid(), chunk_pos, lod);
+            if crate::app::world_geometry::insert_chunk(app, chunk).is_some() {
+                tracing::trace!(chunk = ?chunk_pos, "Updated mesh for chunk");
+            } else {
+                tracing::trace!(chunk = ?chunk_pos, "Created new mesh for chunk");
             }
         }
     }
