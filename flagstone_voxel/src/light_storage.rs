@@ -30,6 +30,16 @@ pub fn local_index(x: i32, y: i32, z: i32) -> usize {
     (x as usize) + (y as usize) * CHUNK_USIZE + (z as usize) * CHUNK_USIZE * CHUNK_USIZE
 }
 
+/// Chunk-local (x, y, z) of a linear index; the inverse of [`local_index`].
+#[inline]
+pub(crate) fn idx_to_local(idx: usize) -> IVec3 {
+    IVec3::new(
+        (idx % CHUNK_USIZE) as i32,
+        ((idx / CHUNK_USIZE) % CHUNK_USIZE) as i32,
+        (idx / (CHUNK_USIZE * CHUNK_USIZE)) as i32,
+    )
+}
+
 /// Convert a world-space block position to (chunk_pos, chunk-local index, chunk-local xyz).
 #[inline]
 pub fn world_to_chunk_local(pos: IVec3) -> (IVec3, usize, IVec3) {
@@ -104,11 +114,6 @@ impl ChunkLight {
         }
     }
 
-    /// Clear all sky-exposed bits.
-    pub fn clear_sky(&mut self) {
-        self.sky_exposed.fill(0);
-    }
-
     // --- RGB block-light ---
 
     #[inline]
@@ -125,13 +130,6 @@ impl ChunkLight {
         self.block_light_r[idx] = rgb[0].min(15);
         self.block_light_g[idx] = rgb[1].min(15);
         self.block_light_b[idx] = rgb[2].min(15);
-    }
-
-    /// Zero all block-light channels.
-    pub fn clear_block_light(&mut self) {
-        self.block_light_r.fill(0);
-        self.block_light_g.fill(0);
-        self.block_light_b.fill(0);
     }
 
     // --- column heightmap ---
@@ -186,6 +184,20 @@ mod tests {
     }
 
     #[test]
+    fn idx_to_local_inverts_local_index() {
+        for (x, y, z) in [
+            (0, 0, 0),
+            (15, 0, 0),
+            (0, 15, 0),
+            (0, 0, 15),
+            (3, 9, 14),
+            (15, 15, 15),
+        ] {
+            assert_eq!(idx_to_local(local_index(x, y, z)), IVec3::new(x, y, z));
+        }
+    }
+
+    #[test]
     fn world_to_chunk_local_negative() {
         let (cp, idx, local) = world_to_chunk_local(IVec3::new(-1, -1, -1));
         assert_eq!(cp, IVec3::new(-1, -1, -1));
@@ -208,6 +220,33 @@ mod tests {
         assert!(!cl.sky_exposed_at(1));
         cl.set_sky_exposed(0, false);
         assert!(!cl.sky_exposed_at(0));
+    }
+
+    #[test]
+    fn clearing_a_sky_bit_leaves_the_bits_around_it_in_the_word_set() {
+        let mut cl = ChunkLight::new();
+        for idx in [5, 6, 7, 63, 64] {
+            cl.set_sky_exposed(idx, true);
+        }
+
+        cl.set_sky_exposed(6, false);
+
+        assert!(!cl.sky_exposed_at(6));
+        for idx in [5, 7, 63, 64] {
+            assert!(cl.sky_exposed_at(idx), "bit {idx} must stay set");
+        }
+    }
+
+    #[test]
+    fn placing_at_the_current_max_height_leaves_sky_clean() {
+        let mut cl = ChunkLight::new();
+        cl.note_opaque_placed(5, 3, 5);
+        cl.sky_dirty = false;
+
+        cl.note_opaque_placed(5, 3, 5);
+
+        assert_eq!(cl.column_max_y(5, 5), 3);
+        assert!(!cl.sky_dirty, "an equal height changes nothing");
     }
 
     #[test]

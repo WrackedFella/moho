@@ -9,7 +9,7 @@ mod paletted;
 
 pub use self::paletted::CHUNK_FILE;
 use self::paletted::PalettedChunk;
-use super::light_storage::{self, CHUNK_SIZE as LIGHT_CHUNK_SIZE, CHUNK_USIZE, ChunkLight};
+use super::light_storage::{self, CHUNK_SIZE as LIGHT_CHUNK_SIZE, ChunkLight, idx_to_local};
 use crate::materials::MaterialType;
 use glam::{IVec3, Vec3};
 use std::collections::HashMap;
@@ -538,17 +538,6 @@ impl VoxelGrid {
 // -------------------------------------------------------------------------
 // Private helpers
 // -------------------------------------------------------------------------
-
-/// Reconstruct chunk-local (x, y, z) from a dense linear index.
-/// Index layout: `idx = x + y*16 + z*256`.
-#[inline]
-fn idx_to_local(idx: usize) -> IVec3 {
-    IVec3::new(
-        (idx % CHUNK_USIZE) as i32,
-        ((idx / CHUNK_USIZE) % CHUNK_USIZE) as i32,
-        (idx / (CHUNK_USIZE * CHUNK_USIZE)) as i32,
-    )
-}
 
 /// Compact, copyable snapshot of a block's stored state.
 ///

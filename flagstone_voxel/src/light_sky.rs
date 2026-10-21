@@ -82,9 +82,7 @@ fn build_column_max_y(grid: &VoxelGrid, chunk_pos: IVec3) -> [[i8; CHUNK_USIZE];
         let lx = (b.position.x - chunk_min.x) as usize;
         let ly = (b.position.y - chunk_min.y) as i8;
         let lz = (b.position.z - chunk_min.z) as usize;
-        if ly > col[lx][lz] {
-            col[lx][lz] = ly;
-        }
+        col[lx][lz] = col[lx][lz].max(ly);
     }
     col
 }
@@ -120,11 +118,6 @@ fn world_column_height(
         });
     }
     highest
-}
-
-/// Convenience: ensure sky-exposure is computed for the chunk containing `pos`.
-pub fn ensure_chunk_sky_ready(grid: &mut VoxelGrid, chunk_pos: IVec3) {
-    recompute_sky_exposure(grid, chunk_pos);
 }
 
 /// Mark all loaded chunks below `chunk_pos` (in the same xz-column-of-chunks)

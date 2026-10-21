@@ -2,7 +2,7 @@
 //!
 //! Generates cube-based meshes for blocks classified as "blocky" (crafted materials
 //! like planks, bricks, etc.). Each vertex has ambient occlusion computed based on
-//! the occupancy of its 4 neighboring corner blocks.
+//! the blocks beside it (two edge neighbors and the diagonal one).
 
 use super::VoxelMesh;
 use crate::face::FaceDirection;
@@ -23,9 +23,6 @@ impl BlockyMeshGenerator {
     /// A `VoxelMesh` with 24 vertices (4 per face), normals, and AO values
     pub fn generate_mesh(grid: &VoxelGrid, position: BlockPos) -> VoxelMesh {
         let mut mesh = VoxelMesh::empty();
-
-        // Face directions and their vertex configurations
-        // For each face, we need to determine which 4 corner neighbors to check for AO
 
         // +X face (right): check neighbors in +X direction
         Self::add_face(&mut mesh, grid, position, FaceDirection::PosX);
@@ -70,9 +67,11 @@ impl BlockyMeshGenerator {
             mesh.normals.push(normal);
         }
 
-        // Compute AO for each vertex based on corner neighbors
-        let ao_values = direction.compute_ao(grid, position);
-        mesh.ambient_occlusion.extend_from_slice(&ao_values);
+        mesh.ambient_occlusion.extend(
+            verts
+                .iter()
+                .map(|&vert| FaceDirection::vertex_ao(grid, position, vert, normal)),
+        );
 
         // Mark as blocky geometry (0 = smooth, 1 = blocky)
         for _ in 0..4 {
@@ -111,7 +110,7 @@ impl BlockyMeshGenerator {
     }
 }
 
-/// Blocky-mesh geometry and AO methods for `FaceDirection`.
+/// Blocky-mesh geometry and per-vertex AO for `FaceDirection`.
 impl FaceDirection {
     /// Get the 4 vertices and normal for this face
     fn vertices_and_normal(&self) -> ([[f32; 3]; 4], [f32; 3]) {
@@ -145,10 +144,10 @@ impl FaceDirection {
             ),
             FaceDirection::NegY => (
                 [
-                    [0.0, 0.0, 1.0], // front-left
-                    [1.0, 0.0, 1.0], // front-right
-                    [1.0, 0.0, 0.0], // back-right
                     [0.0, 0.0, 0.0], // back-left
+                    [1.0, 0.0, 0.0], // back-right
+                    [1.0, 0.0, 1.0], // front-right
+                    [0.0, 0.0, 1.0], // front-left
                 ],
                 [0.0, -1.0, 0.0],
             ),
@@ -173,269 +172,37 @@ impl FaceDirection {
         }
     }
 
-    /// Compute ambient occlusion for each of the 4 vertices on this face
+    /// Ambient occlusion for one face vertex, from the blocks around that vertex.
     ///
-    /// AO is computed using the 4-corner method: for each vertex, check the 3 blocks
-    /// that form its corner (2 edge neighbors + 1 diagonal).
+    /// `vertex` is a unit-cube corner on the face and `normal` the face normal. On each
+    /// in-plane axis the vertex lies on the `+` or `-` side of the block, which picks
+    /// the two edge neighbours (`side1`, `side2`) and the diagonal one in front of the
+    /// face. Two solid sides give maximum occlusion; otherwise each solid neighbour adds
+    /// one step.
     ///
-    /// AO formula: 1.0 - (side1 + side2 + corner * side1 * side2) * 0.2
-    /// This gives darker values when more neighbors are present.
-    fn compute_ao(&self, grid: &VoxelGrid, pos: BlockPos) -> [f32; 4] {
-        match self {
-            FaceDirection::PosX => {
-                // Right face: vertices see +X direction
-                let v0 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(1, -1, -1), // bottom-back
-                    IVec3::new(1, 0, -1),
-                    IVec3::new(1, -1, 0),
-                    IVec3::new(1, -1, -1),
-                );
-                let v1 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(1, 1, -1), // top-back
-                    IVec3::new(1, 1, 0),
-                    IVec3::new(1, 0, -1),
-                    IVec3::new(1, 1, -1),
-                );
-                let v2 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(1, 1, 1), // top-front
-                    IVec3::new(1, 0, 1),
-                    IVec3::new(1, 1, 0),
-                    IVec3::new(1, 1, 1),
-                );
-                let v3 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(1, -1, 1), // bottom-front
-                    IVec3::new(1, -1, 0),
-                    IVec3::new(1, 0, 1),
-                    IVec3::new(1, -1, 1),
-                );
-                [v0, v1, v2, v3]
-            }
-            FaceDirection::NegX => {
-                // Left face: vertices see -X direction
-                let v0 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(-1, -1, 1),
-                    IVec3::new(-1, 0, 1),
-                    IVec3::new(-1, -1, 0),
-                    IVec3::new(-1, -1, 1),
-                );
-                let v1 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(-1, 1, 1),
-                    IVec3::new(-1, 1, 0),
-                    IVec3::new(-1, 0, 1),
-                    IVec3::new(-1, 1, 1),
-                );
-                let v2 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(-1, 1, -1),
-                    IVec3::new(-1, 0, -1),
-                    IVec3::new(-1, 1, 0),
-                    IVec3::new(-1, 1, -1),
-                );
-                let v3 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(-1, -1, -1),
-                    IVec3::new(-1, -1, 0),
-                    IVec3::new(-1, 0, -1),
-                    IVec3::new(-1, -1, -1),
-                );
-                [v0, v1, v2, v3]
-            }
-            FaceDirection::PosY => {
-                // Top face: vertices see +Y direction
-                let v0 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(-1, 1, -1),
-                    IVec3::new(-1, 1, 0),
-                    IVec3::new(0, 1, -1),
-                    IVec3::new(-1, 1, -1),
-                );
-                let v1 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(-1, 1, 1),
-                    IVec3::new(0, 1, 1),
-                    IVec3::new(-1, 1, 0),
-                    IVec3::new(-1, 1, 1),
-                );
-                let v2 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(1, 1, 1),
-                    IVec3::new(1, 1, 0),
-                    IVec3::new(0, 1, 1),
-                    IVec3::new(1, 1, 1),
-                );
-                let v3 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(1, 1, -1),
-                    IVec3::new(0, 1, -1),
-                    IVec3::new(1, 1, 0),
-                    IVec3::new(1, 1, -1),
-                );
-                [v0, v1, v2, v3]
-            }
-            FaceDirection::NegY => {
-                // Bottom face: vertices see -Y direction
-                let v0 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(-1, -1, 1),
-                    IVec3::new(0, -1, 1),
-                    IVec3::new(-1, -1, 0),
-                    IVec3::new(-1, -1, 1),
-                );
-                let v1 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(1, -1, 1),
-                    IVec3::new(1, -1, 0),
-                    IVec3::new(0, -1, 1),
-                    IVec3::new(1, -1, 1),
-                );
-                let v2 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(1, -1, -1),
-                    IVec3::new(0, -1, -1),
-                    IVec3::new(1, -1, 0),
-                    IVec3::new(1, -1, -1),
-                );
-                let v3 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(-1, -1, -1),
-                    IVec3::new(-1, -1, 0),
-                    IVec3::new(0, -1, -1),
-                    IVec3::new(-1, -1, -1),
-                );
-                [v0, v1, v2, v3]
-            }
-            FaceDirection::PosZ => {
-                // Front face: vertices see +Z direction
-                let v0 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(-1, -1, 1),
-                    IVec3::new(-1, 0, 1),
-                    IVec3::new(0, -1, 1),
-                    IVec3::new(-1, -1, 1),
-                );
-                let v1 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(1, -1, 1),
-                    IVec3::new(0, -1, 1),
-                    IVec3::new(1, 0, 1),
-                    IVec3::new(1, -1, 1),
-                );
-                let v2 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(1, 1, 1),
-                    IVec3::new(1, 0, 1),
-                    IVec3::new(0, 1, 1),
-                    IVec3::new(1, 1, 1),
-                );
-                let v3 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(-1, 1, 1),
-                    IVec3::new(0, 1, 1),
-                    IVec3::new(-1, 0, 1),
-                    IVec3::new(-1, 1, 1),
-                );
-                [v0, v1, v2, v3]
-            }
-            FaceDirection::NegZ => {
-                // Back face: vertices see -Z direction
-                let v0 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(1, -1, -1),
-                    IVec3::new(0, -1, -1),
-                    IVec3::new(1, 0, -1),
-                    IVec3::new(1, -1, -1),
-                );
-                let v1 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(-1, -1, -1),
-                    IVec3::new(-1, 0, -1),
-                    IVec3::new(0, -1, -1),
-                    IVec3::new(-1, -1, -1),
-                );
-                let v2 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(-1, 1, -1),
-                    IVec3::new(0, 1, -1),
-                    IVec3::new(-1, 0, -1),
-                    IVec3::new(-1, 1, -1),
-                );
-                let v3 = Self::vertex_ao(
-                    grid,
-                    pos,
-                    IVec3::new(1, 1, -1),
-                    IVec3::new(1, 0, -1),
-                    IVec3::new(0, 1, -1),
-                    IVec3::new(1, 1, -1),
-                );
-                [v0, v1, v2, v3]
-            }
+    /// Returns a value in `[0.0, 1.0]`: 1.0 is unoccluded, 0.4 fully occluded.
+    fn vertex_ao(grid: &VoxelGrid, pos: BlockPos, vertex: [f32; 3], normal: [f32; 3]) -> f32 {
+        let n = IVec3::from_array(normal.map(|c| c as i32));
+        let mut steps = [IVec3::ZERO; 2];
+        let mut in_plane = (0..3).filter(|&axis| n[axis] == 0);
+        for step in &mut steps {
+            let axis = in_plane
+                .next()
+                .expect("a face normal is axis-aligned, leaving two in-plane axes");
+            step[axis] = if vertex[axis] == 1.0 { 1 } else { -1 };
         }
-    }
+        let [e1, e2] = steps;
 
-    /// Compute AO value for a single vertex using the 4-corner method
-    ///
-    /// # Arguments
-    /// * `grid` - The voxel grid
-    /// * `pos` - Base block position
-    /// * `_corner` - Corner offset (unused, kept for documentation)
-    /// * `side1` - First edge neighbor offset
-    /// * `side2` - Second edge neighbor offset
-    /// * `diagonal` - Diagonal corner neighbor offset
-    ///
-    /// # Returns
-    /// AO value in range [0.0, 1.0] where 1.0 = no occlusion, 0.0 = fully occluded
-    fn vertex_ao(
-        grid: &VoxelGrid,
-        pos: BlockPos,
-        _corner: IVec3,
-        side1: IVec3,
-        side2: IVec3,
-        diagonal: IVec3,
-    ) -> f32 {
-        // Check if each neighbor position is occupied
-        let s1 = u8::from(grid.is_solid_at(pos + side1));
-        let s2 = u8::from(grid.is_solid_at(pos + side2));
-        let d = u8::from(grid.is_solid_at(pos + diagonal));
+        let s1 = u8::from(grid.is_solid_at(pos + n + e1));
+        let s2 = u8::from(grid.is_solid_at(pos + n + e2));
+        let d = u8::from(grid.is_solid_at(pos + n + e1 + e2));
 
-        // AO formula: darken based on number of occupied neighbors
-        // If both sides are occupied, diagonal doesn't matter (maximum occlusion)
         let occlusion = if s1 == 1 && s2 == 1 {
-            3.0 // Both sides block -> maximum darkening
+            3.0
         } else {
             f32::from(s1 + s2 + d)
         };
 
-        // Convert to [0.0, 1.0] range with darkening factor
-        // 0 neighbors = 1.0 (bright), 3 neighbors = 0.4 (dark)
         1.0 - (occlusion * 0.2)
     }
 }
@@ -539,5 +306,103 @@ mod tests {
 
         let referenced: std::collections::BTreeSet<u32> = mesh.indices.iter().copied().collect();
         assert_eq!(referenced, (0..24).collect());
+    }
+
+    /// Expected AO of a block's vertex, from geometry alone: the occluders are the three
+    /// blocks diagonally outside the face beside that vertex.
+    fn expected_ao(grid: &VoxelGrid, pos: BlockPos, vertex: [f32; 3], normal: [f32; 3]) -> f32 {
+        let n = IVec3::new(normal[0] as i32, normal[1] as i32, normal[2] as i32);
+        let in_plane: Vec<usize> = (0..3).filter(|&a| normal[a] == 0.0).collect();
+        let step = |axis: usize| {
+            let mut e = IVec3::ZERO;
+            e[axis] = if vertex[axis] == 0.0 { -1 } else { 1 };
+            e
+        };
+        let (e1, e2) = (step(in_plane[0]), step(in_plane[1]));
+        let solid = |offset: IVec3| grid.is_solid_at(pos + offset);
+        let (side1, side2, corner) = (solid(n + e1), solid(n + e2), solid(n + e1 + e2));
+
+        if side1 && side2 {
+            0.4
+        } else {
+            1.0 - 0.2 * [side1, side2, corner].iter().filter(|&&s| s).count() as f32
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn vertex_ao_matches_occluders_beside_each_vertex(
+            occupied in proptest::collection::vec(proptest::bool::ANY, 27),
+        ) {
+            let mut grid = VoxelGrid::new(16);
+            let pos = IVec3::new(16, 16, 16);
+            grid.place_block(pos, 100, None);
+            for (i, solid) in occupied.iter().enumerate() {
+                let offset = IVec3::new(i as i32 % 3 - 1, (i as i32 / 3) % 3 - 1, i as i32 / 9 - 1);
+                if *solid && offset != IVec3::ZERO {
+                    grid.place_block(pos + offset, 100, None);
+                }
+            }
+
+            let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
+
+            proptest::prop_assert_eq!(mesh.vertices.len(), 24);
+            for ((vertex, normal), ao) in mesh
+                .vertices
+                .iter()
+                .zip(&mesh.normals)
+                .zip(&mesh.ambient_occlusion)
+            {
+                let expected = expected_ao(&grid, pos, *vertex, *normal);
+                proptest::prop_assert!(
+                    (ao - expected).abs() < 1e-6,
+                    "vertex {:?} on face {:?}: AO {}, expected {}",
+                    vertex, normal, ao, expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn face_vertices_carry_scaled_block_and_sky_light() {
+        // (block light, sky exposed, expected combined light)
+        let rows = [
+            ([3u8, 6, 9], false, 0.6),
+            ([3, 6, 9], true, 0.7),
+            ([15, 0, 0], true, 1.0),
+            ([0, 0, 0], true, 0.1),
+            ([0, 0, 0], false, 0.0),
+        ];
+
+        for (rgb, sky, expected_light) in rows {
+            let mut grid = VoxelGrid::new(16);
+            let pos = IVec3::new(16, 16, 16);
+            grid.place_block(pos, 100, None);
+            grid.set_block_light_rgb(pos, rgb);
+            grid.set_sky_exposed(pos, sky);
+
+            let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
+
+            let expected_rgb = rgb.map(|c| f32::from(c) / 15.0);
+            let expected_sky = if sky { 1.0 } else { 0.0 };
+            assert_eq!(mesh.light_level.len(), 24);
+            assert_eq!(mesh.block_light_rgb.len(), 24);
+            assert_eq!(mesh.sky_exposed.len(), 24);
+            for i in 0..24 {
+                assert!(
+                    (mesh.light_level[i] - expected_light).abs() < 1e-6,
+                    "{rgb:?} sky {sky}: light {} not {expected_light}",
+                    mesh.light_level[i]
+                );
+                for (got, want) in mesh.block_light_rgb[i].iter().zip(&expected_rgb) {
+                    assert!(
+                        (got - want).abs() < 1e-6,
+                        "{rgb:?} sky {sky}: channels {:?}, expected {expected_rgb:?}",
+                        mesh.block_light_rgb[i]
+                    );
+                }
+                assert_eq!(mesh.sky_exposed[i], expected_sky);
+            }
+        }
     }
 }

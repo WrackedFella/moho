@@ -357,10 +357,10 @@ impl HybridMeshGenerator {
                     if !cell_solid(cx, cy - 1, cz) {
                         Self::emit_coarse_quad(
                             &mut mesh,
-                            [wx, wy, wz + STRIDE],
-                            [wx + STRIDE, wy, wz + STRIDE],
-                            [wx + STRIDE, wy, wz],
                             [wx, wy, wz],
+                            [wx + STRIDE, wy, wz],
+                            [wx + STRIDE, wy, wz + STRIDE],
+                            [wx, wy, wz + STRIDE],
                             [0.0, -1.0, 0.0],
                         );
                     }
@@ -522,6 +522,26 @@ mod tests {
     }
 
     #[test]
+    fn blocky_chunk_mesh_sits_at_its_chunk_origin() {
+        let mut grid = VoxelGrid::new(16);
+        grid.place_block(IVec3::new(17, 3, -14), 100, None);
+
+        let mesh = HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::new(1, 0, -1), 16);
+
+        assert_eq!(mesh.vertices.len(), 24);
+        let min = mesh
+            .vertices
+            .iter()
+            .fold(Vec3::splat(f32::MAX), |acc, v| acc.min(Vec3::from(*v)));
+        let max = mesh
+            .vertices
+            .iter()
+            .fold(Vec3::splat(f32::MIN), |acc, v| acc.max(Vec3::from(*v)));
+        assert_eq!(min, Vec3::new(17.0, 3.0, -14.0));
+        assert_eq!(max, Vec3::new(18.0, 4.0, -13.0));
+    }
+
+    #[test]
     fn test_generate_coarse_mesh_empty_grid() {
         let grid = VoxelGrid::new(16);
         let mesh = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
@@ -572,5 +592,122 @@ mod tests {
         assert!(!sparse.vertices.is_empty());
         assert_eq!(sparse.vertices, dense.vertices);
         assert_eq!(sparse.indices, dense.indices);
+    }
+
+    type Quad = ([i32; 3], [i32; 3], [i32; 3]);
+
+    /// The 2x2-block quads covering the outside of the box `lo..hi`, as (normal, min, max).
+    fn box_quads(lo: [i32; 3], hi: [i32; 3]) -> Vec<Quad> {
+        let mut quads = Vec::new();
+        for axis in 0..3 {
+            let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+            for sign in [-1, 1] {
+                let plane = if sign < 0 { lo[axis] } else { hi[axis] };
+                for a in (lo[u]..hi[u]).step_by(2) {
+                    for b in (lo[v]..hi[v]).step_by(2) {
+                        let (mut normal, mut min, mut max) = ([0; 3], [0; 3], [0; 3]);
+                        normal[axis] = sign;
+                        (min[axis], max[axis]) = (plane, plane);
+                        (min[u], max[u]) = (a, a + 2);
+                        (min[v], max[v]) = (b, b + 2);
+                        quads.push((normal, min, max));
+                    }
+                }
+            }
+        }
+        quads
+    }
+
+    fn mesh_quads(mesh: &VoxelMesh) -> Vec<Quad> {
+        assert_eq!(mesh.vertices.len() % 4, 0);
+        let mut quads: Vec<Quad> = mesh
+            .vertices
+            .chunks(4)
+            .zip(mesh.normals.chunks(4))
+            .map(|(verts, normals)| {
+                assert!(normals.iter().all(|n| *n == normals[0]));
+                let mut min = [i32::MAX; 3];
+                let mut max = [i32::MIN; 3];
+                for v in verts {
+                    for a in 0..3 {
+                        assert_eq!(v[a].fract(), 0.0, "vertex {v:?} off the integer lattice");
+                        min[a] = min[a].min(v[a] as i32);
+                        max[a] = max[a].max(v[a] as i32);
+                    }
+                }
+                let mut corners: Vec<[i32; 3]> =
+                    verts.iter().map(|v| v.map(|c| c as i32)).collect();
+                assert!(
+                    corners
+                        .iter()
+                        .all(|c| (0..3).all(|a| c[a] == min[a] || c[a] == max[a])),
+                    "quad {verts:?} has a vertex off its bounding rectangle's corners"
+                );
+                corners.sort_unstable();
+                corners.dedup();
+                assert_eq!(corners.len(), 4, "quad {verts:?} repeats a corner");
+                (normals[0].map(|c| c as i32), min, max)
+            })
+            .collect();
+        quads.sort_unstable();
+        quads
+    }
+
+    fn assert_coarse_fixture_in_chunk(chunk_pos: IVec3) {
+        let origin = chunk_pos * 16;
+        let mut grid = VoxelGrid::new(16);
+        let mut place = |local: [i32; 3]| {
+            grid.place_block(origin + IVec3::from(local), 0, None);
+        };
+        for x in 4..8 {
+            for y in 4..8 {
+                for z in 4..8 {
+                    place([x, y, z]);
+                }
+            }
+        }
+        place([11, 11, 11]);
+        // Blocks against each horizontal chunk edge, where a skirt quad hangs one cell below.
+        place([0, 8, 8]);
+        place([15, 8, 8]);
+        place([8, 8, 15]);
+        place([8, 8, 0]);
+
+        let mesh = HybridMeshGenerator::generate_coarse_mesh(&grid, chunk_pos, 16);
+
+        let mut expected = box_quads([4, 4, 4], [8, 8, 8]);
+        expected.extend(box_quads([10, 10, 10], [12, 12, 12]));
+        expected.extend(box_quads([0, 8, 8], [2, 10, 10]));
+        expected.extend(box_quads([14, 8, 8], [16, 10, 10]));
+        expected.extend(box_quads([8, 8, 14], [10, 10, 16]));
+        expected.extend(box_quads([8, 8, 0], [10, 10, 2]));
+        expected.push(([-1, 0, 0], [0, 6, 8], [0, 8, 10]));
+        expected.push(([1, 0, 0], [16, 6, 8], [16, 8, 10]));
+        expected.push(([0, 0, 1], [8, 6, 16], [10, 8, 16]));
+        expected.push(([0, 0, -1], [8, 6, 0], [10, 8, 0]));
+        let o = origin.to_array();
+        let mut expected: Vec<Quad> = expected
+            .into_iter()
+            .map(|(n, min, max)| {
+                (
+                    n,
+                    [0, 1, 2].map(|a| min[a] + o[a]),
+                    [0, 1, 2].map(|a| max[a] + o[a]),
+                )
+            })
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(mesh_quads(&mesh), expected);
+        assert_eq!(mesh.indices.len(), mesh.vertices.len() / 4 * 6);
+    }
+
+    #[test]
+    fn coarse_mesh_emits_exposed_faces_on_the_stride_lattice() {
+        assert_coarse_fixture_in_chunk(IVec3::ZERO);
+    }
+
+    #[test]
+    fn coarse_mesh_offsets_quads_by_the_chunk_origin() {
+        assert_coarse_fixture_in_chunk(IVec3::new(1, 0, -1));
     }
 }
