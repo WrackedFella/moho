@@ -109,8 +109,8 @@ by `SimConfig::enemy_aim_at`) and sets `Percept::target` only when that ray stri
 fraction, yaw delta, fire). `Patrol` walks the route in order, wrapping; a target inside
 `sight_range` and `view_half_angle` starts `Engage`, which stands and faces the target while it
 stays visible, fires after `reaction_ticks` of continuous sight, within `fire_cone` of the
-bearing and off cooldown. Aim error comes from a seeded generator (`EnemyTuning::seed`), so
-runs repeat.
+bearing and off cooldown. Aim error comes from the `searchlight.enemy_spread` `SimRng` stream, started from
+`EnemyTuning::seed`, so runs repeat and a restart replays a fresh start.
 
 When the player wounds an enemy (a non-lethal hit), the sim records the player's position on
 that enemy (`Target::hurt`) and, from the `Arena` cover points, asks `cover::offer` for a
