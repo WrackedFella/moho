@@ -51,6 +51,7 @@ jobs:
             echo "BOARD_TOKEN secret is not set; skipping"
             exit 0
           fi
+          source .github/scripts/gh-retry.sh
           if [[ $EVENT == issues ]]; then
             status=Done
             if [[ $ACTION == labeled ]]; then
@@ -106,6 +107,7 @@ jobs:
             echo "BOARD_TOKEN secret is not set; skipping"
             exit 0
           fi
+          source .github/scripts/gh-retry.sh
           .github/scripts/rate-log.sh "Before fields"
           .github/scripts/board-fields.sh "$ISSUE_NODE_ID"
           .github/scripts/rate-log.sh "After fields"
