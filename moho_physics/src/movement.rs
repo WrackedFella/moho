@@ -186,9 +186,19 @@ pub(crate) fn turned_look(look: (f32, f32), delta: (f32, f32)) -> (f32, f32) {
 /// `slide` receives the displacement the tick asks for and reports what the world
 /// allowed. The look turns first, so a turn and a move in one command face the new way.
 ///
-/// A jump adds `jump_speed` to the vertical velocity. A walker that ends the tick grounded
-/// moves along its ground, keeping its horizontal velocity; a landing zeroes the vertical
-/// velocity.
+/// The order within a tick:
+/// 1. the look turns;
+/// 2. a jump adds `jump_speed` to the vertical velocity;
+/// 3. half a tick of gravity (`v.y -= g·dt/2`), unless walking;
+/// 4. friction and acceleration (walking) or air acceleration;
+/// 5. `slide` receives `asked = v·dt`;
+/// 6. the velocity is clipped against what the slide hit;
+/// 7. the other half of gravity, unless walking;
+/// 8. settle: a walker that ends the tick grounded moves along its ground, keeping its
+///    horizontal velocity; a landing zeroes the vertical velocity.
+///
+/// The two halves around the move give the exact displacement under constant gravity at any
+/// tick rate. A landing's impact speed is therefore the mid-tick downward speed.
 pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
@@ -218,9 +228,11 @@ pub fn step(
     let walking = state.grounded
         && !jumped
         && state.velocity.y <= state.velocity.with_y(0.0).length() + REST_SPEED;
+    let half_gravity = settings.gravity * dt / 2.0;
     if walking {
         ground_move(&mut state.velocity, wish, magnitude, settings, dt);
     } else {
+        state.velocity.y -= half_gravity;
         accelerate(
             &mut state.velocity,
             wish,
@@ -228,7 +240,6 @@ pub fn step(
             settings.air_accel,
             dt,
         );
-        state.velocity.y -= settings.gravity * dt;
     }
 
     let asked = state.velocity * dt;
@@ -236,6 +247,9 @@ pub fn step(
     state.position += slid.translation;
 
     let impacts = clip(&mut state.velocity, asked, &slid, walking, airborne_before);
+    if !walking {
+        state.velocity.y -= half_gravity;
+    }
 
     settle(state, &slid, walking);
     impacts
