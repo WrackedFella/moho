@@ -31,6 +31,7 @@ flowchart LR
 | Change rendering or a shader struct | [architecture/rendering](architecture/rendering.md), [reference/gpu-abi](reference/gpu-abi.md) |
 | Add a debug-console command | [guides/adding-console-commands](guides/adding-console-commands.md) |
 | Read or change a save file | [reference/save-format](reference/save-format.md) |
+| Edit tunable game numbers (weapons) | [reference/content-format](reference/content-format.md) |
 | Edit `config/prefs.ini` | [reference/prefs-format](reference/prefs-format.md) |
 | Run the agentic workflow | [process/agentic-workflow](process/agentic-workflow.md) |
 | Know what the games should become | [flagstone/vision](flagstone/vision.md), [searchlight/game-design-document](searchlight/game-design-document.md) |
@@ -54,6 +55,7 @@ flowchart LR
 - [GPU ABI](reference/gpu-abi.md): Rust ↔ WGSL struct layouts.
 - [Prefs format](reference/prefs-format.md): `config/prefs.ini`.
 - [Save format](reference/save-format.md): file envelope, world, scene and chunk files.
+- [Content format](reference/content-format.md): definition files and their loader.
 - [Console commands](reference/console-commands.md)
 - [Event bus best practices](reference/event-bus-best-practices.md)
 - [Event bus performance](reference/event-bus-performance.md): benchmarks.
