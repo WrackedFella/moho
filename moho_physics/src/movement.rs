@@ -981,7 +981,7 @@ mod tests {
 
             assert!(!after.grounded, "{after:?}");
             assert!(
-                (after.position.y - (START_Y - 18.0 * DT * DT)).abs() < 1e-5,
+                (after.position.y - (START_Y - 18.0 * DT * DT / 2.0)).abs() < 1e-5,
                 "only gravity moved it: {after:?}"
             );
         }
@@ -1176,6 +1176,33 @@ mod tests {
 
             assert!(
                 (state.velocity.x + 3.0).abs() < 1e-4,
+                "{:?}",
+                state.velocity
+            );
+        }
+
+        #[test]
+        fn jump_tick_asks_the_average_of_impulse_and_end_velocity() {
+            let settings = test_settings();
+            let mut state = standing();
+            let jump = CharacterCommand {
+                jump: true,
+                ..CharacterCommand::default()
+            };
+            let mut asked = Vec3::ZERO;
+
+            step(&mut state, &jump, &settings, DT, |wanted| {
+                asked = wanted;
+                open_air(wanted)
+            });
+
+            assert!(
+                (asked.y - (settings.jump_speed - settings.gravity * DT / 2.0) * DT).abs() < 1e-6,
+                "the jump tick asks (jump - g*dt/2)*dt, asked y = {}",
+                asked.y
+            );
+            assert!(
+                (state.velocity.y - (settings.jump_speed - settings.gravity * DT)).abs() < 1e-5,
                 "{:?}",
                 state.velocity
             );
@@ -1677,6 +1704,29 @@ mod tests {
 
             assert!(impacts.is_empty(), "{impacts:?}");
             assert_eq!(velocity, Vec3::new(1.0, 0.0, -1.0));
+        }
+
+        #[test]
+        fn landing_impact_reports_the_mid_tick_fall_speed() {
+            let settings = test_settings();
+            let mut state = state_at(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.0, -12.0, 0.0), false);
+
+            let impacts = step(
+                &mut state,
+                &CharacterCommand::default(),
+                &settings,
+                DT,
+                flat_floor(0.1),
+            );
+
+            assert_eq!(impacts.len(), 1, "{impacts:?}");
+            assert!(
+                (impacts[0].speed - (12.0 + settings.gravity * DT / 2.0)).abs() < 1e-4,
+                "half gravity before the slide, so the impact is 12.15: {:?}",
+                impacts[0]
+            );
+            assert_eq!(state.velocity.y, 0.0);
+            assert!(state.grounded);
         }
 
         #[test]
