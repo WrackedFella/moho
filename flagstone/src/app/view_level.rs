@@ -182,6 +182,19 @@ mod tests {
     }
 
     #[test]
+    fn the_cut_sits_a_hairline_above_the_chosen_layer() {
+        let mut level = ViewLevel::default();
+        level.choose(50, EXTENT);
+
+        let height = level
+            .renderer_height(CameraMode::Isometric, EXTENT)
+            .expect("a level below the top cuts");
+
+        assert!(height > 50.0, "{height} does not clear the layer top");
+        assert!(height - 50.0 <= 0.01, "{height} shows the next layer");
+    }
+
+    #[test]
     fn choosing_the_top_clears_the_cut() {
         let mut level = ViewLevel::default();
         level.choose(EXTENT.top - 3, EXTENT);

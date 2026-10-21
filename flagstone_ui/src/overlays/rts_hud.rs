@@ -127,6 +127,8 @@ mod tests {
     const TOP: i32 = 20;
     /// The handle is the only drawn rectangle with both sides under this.
     const HANDLE_MAX_SIDE: f32 = 20.0;
+    /// The 12 px screen gap plus the 6 px frame margin the handle sits inside.
+    const RIGHT_GAP: f32 = 18.0;
 
     fn strategy_data(level: i32) -> HudData {
         HudData {
@@ -204,6 +206,29 @@ mod tests {
             again,
             HudIntents::default(),
             "the choice is handed over once"
+        );
+    }
+
+    #[test]
+    fn dragging_past_the_bottom_stops_one_layer_above_the_floor() {
+        let lowest = handle_at(FLOOR + 1);
+        let past_bottom = egui::pos2(lowest.x, lowest.y + 150.0);
+
+        let (_ctx, _hud, intents) = drag_from_level(TOP - 3, past_bottom);
+
+        assert_eq!(intents.view_level, Some(FLOOR + 1));
+    }
+
+    #[test]
+    fn the_slider_sits_inside_the_screen() {
+        let screen = input(Vec::new()).screen_rect.expect("tests set a screen");
+
+        let handle = handle_at(TOP - 3);
+
+        assert!(screen.contains(handle), "{handle:?} outside {screen:?}");
+        assert!(
+            handle.x <= screen.right() - RIGHT_GAP,
+            "{handle:?} is pressed against the right edge of {screen:?}"
         );
     }
 
