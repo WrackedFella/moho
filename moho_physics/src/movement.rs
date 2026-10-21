@@ -284,6 +284,7 @@ fn settle(state: &mut CharacterState, slid: &Slide, walking: bool) {
 mod tests {
     use super::*;
     use crate::world::test_support::test_settings;
+    use glam::Vec2;
     use proptest::prelude::*;
 
     const DT: f32 = 1.0 / 60.0;
@@ -497,6 +498,136 @@ mod tests {
                 ((state.position - before).z - 0.1).abs() < 1e-4,
                 "{:?}",
                 state.position - before
+            );
+        }
+
+        /// Audit row I, the Counter-Strike values Source's rules were tuned for.
+        fn source_like() -> MoveSettings {
+            MoveSettings {
+                max_speed: 6.35,
+                ground_accel: 63.5,
+                friction: 4.0,
+                stop_speed: 2.54,
+                ..test_settings()
+            }
+        }
+
+        /// The factor friction scales horizontal velocity by in one tick.
+        fn friction_scale(speed: f32, settings: &MoveSettings) -> f32 {
+            let drop = speed.max(settings.stop_speed) * settings.friction * DT;
+            (speed - drop).max(0.0) / speed
+        }
+
+        fn assert_close(actual: f32, expected: f32, tick: usize, what: &str) {
+            assert!(
+                (actual - expected).abs() <= 1e-5 * expected.abs() + 1e-6,
+                "tick {tick}: {what} {actual}, expected {expected}"
+            );
+        }
+
+        #[test]
+        fn sideways_speed_decays_by_friction_only_while_forward_is_held() {
+            let settings = source_like();
+            let mut state = state_at(Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0), true);
+
+            for tick in 0..60 {
+                let before = state.velocity;
+                let scale = friction_scale(horizontal(before).length(), &settings);
+
+                walk(&mut state, &forward(), &settings);
+
+                assert_close(state.velocity.x, before.x * scale, tick, "sideways speed");
+            }
+        }
+
+        #[test]
+        fn turning_keeps_the_old_directions_speed_to_friction() {
+            let settings = source_like();
+            let turn_right = CharacterCommand {
+                right: 1.0,
+                ..CharacterCommand::default()
+            };
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, settings.max_speed), true);
+
+            for tick in 0..30 {
+                let before = state.velocity;
+                let scale = friction_scale(horizontal(before).length(), &settings);
+                let new_axis = -before.x * scale;
+                let gain = (settings.max_speed - new_axis)
+                    .min(settings.ground_accel * DT)
+                    .max(0.0);
+
+                walk(&mut state, &turn_right, &settings);
+
+                assert_close(state.velocity.z, before.z * scale, tick, "old direction");
+                assert_close(-state.velocity.x, new_axis + gain, tick, "new direction");
+                assert!(
+                    -state.velocity.x <= settings.max_speed + 1e-4,
+                    "tick {tick}: new direction {} passed max speed",
+                    -state.velocity.x
+                );
+            }
+        }
+
+        #[test]
+        fn strategy_settings_reach_max_speed_in_one_tick_and_stop_in_one_tick() {
+            for max_speed in [4.0, 6.0] {
+                let settings = MoveSettings {
+                    max_speed,
+                    ground_accel: 360.0,
+                    friction: 60.0,
+                    stop_speed: 1.0,
+                    air_accel: 360.0,
+                    air_speed_cap: max_speed,
+                    gravity: 18.0,
+                    jump_speed: 8.0,
+                };
+                let mut state = standing();
+
+                walk(&mut state, &forward(), &settings);
+                let pressed = horizontal(state.velocity).length();
+                walk(&mut state, &CharacterCommand::default(), &settings);
+                let released = horizontal(state.velocity).length();
+
+                assert!(
+                    (pressed - max_speed).abs() < 1e-4,
+                    "max {max_speed}: after one tick of forward {pressed}"
+                );
+                assert!(
+                    released < 1e-4,
+                    "max {max_speed}: after one tick released {released}"
+                );
+            }
+        }
+
+        /// Source's ground strafe (prestrafe): input adds along the wish without removing the
+        /// old speed, so a turn at max speed can overshoot it for a tick. Kept on purpose.
+        #[test]
+        fn a_45_degree_turn_at_max_speed_briefly_exceeds_it() {
+            let settings = MoveSettings {
+                max_speed: 6.0,
+                ground_accel: 80.0,
+                friction: 10.0,
+                stop_speed: 1.0,
+                air_accel: 20.0,
+                air_speed_cap: 1.0,
+                gravity: 18.0,
+                jump_speed: 6.5,
+            };
+            let diagonal = CharacterCommand {
+                forward: 1.0,
+                right: 1.0,
+                ..CharacterCommand::default()
+            };
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 6.0), true);
+
+            walk(&mut state, &diagonal, &settings);
+
+            let speed = horizontal(state.velocity).length();
+            assert!(speed > 6.0 + 1e-3, "speed {speed} did not exceed max 6");
+            assert!(
+                speed < 6.05,
+                "speed {speed} overshoots more than a prestrafe"
             );
         }
 
@@ -1473,24 +1604,30 @@ mod tests {
 
     proptest! {
         #[test]
-        fn ground_speed_from_input_never_exceeds_max_speed(
+        fn ground_speed_from_rest_never_exceeds_max_speed_times_input(
             forward in -2.0f32..2.0,
             right in -2.0f32..2.0,
             yaw in -7.0f32..7.0,
-            start_speed in 0.0f32..4.0,
-            start_angle in -7.0f32..7.0,
+            ticks in 1usize..=120,
         ) {
             let settings = test_settings();
             let command = CharacterCommand { forward, right, ..CharacterCommand::default() };
-            let velocity = Vec3::new(start_angle.sin(), 0.0, start_angle.cos()) * start_speed;
-            let mut state = state_at(Vec3::ZERO, velocity, true);
+            let limit = settings.max_speed * Vec2::new(forward, right).length().min(1.0);
+            let mut state = standing();
             state.yaw = yaw;
 
-            for _ in 0..120 {
+            for _ in 0..ticks {
                 walk(&mut state, &command, &settings);
                 prop_assert!(
-                    horizontal(state.velocity).length() <= settings.max_speed + 1e-3,
-                    "{:?}", state.velocity
+                    horizontal(state.velocity).length() <= limit + 1e-3,
+                    "{:?} over limit {limit}", state.velocity
+                );
+            }
+
+            if ticks >= 30 {
+                prop_assert!(
+                    (horizontal(state.velocity).length() - limit).abs() <= 1e-3,
+                    "{:?} did not settle at {limit}", state.velocity
                 );
             }
         }
