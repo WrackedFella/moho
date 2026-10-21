@@ -12,9 +12,7 @@
 //! - **remove_light**: two-queue removal — dark wave clears source-lit voxels,
 //!   then re-seeds cleared emitter blocks from their emission and relights from
 //!   adjacent voxels still lit by surviving sources.
-//! - **update_at**: reconcile one position with the grid: removal, then a refill
-//!   from lit neighbours if the block lets light through, then the block's own
-//!   emission.
+//! - **update_at**: reconcile one position with the grid after any edit there.
 
 use super::grid::VoxelGrid;
 use super::light_storage::{self, CHUNK_SIZE, idx_to_local};
