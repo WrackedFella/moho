@@ -12,6 +12,7 @@ tracing = { workspace = true }
 gltf = { workspace = true }
 
 [dev-dependencies]
+proptest = { workspace = true }
 moho_physics = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

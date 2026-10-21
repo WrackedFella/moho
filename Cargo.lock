@@ -1761,6 +1761,7 @@ dependencies = [
  "gltf",
  "moho_physics",
  "moho_render_api",
+ "proptest",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",

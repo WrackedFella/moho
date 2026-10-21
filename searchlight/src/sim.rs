@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use glam::{Quat, Vec3};
+use moho_level::NavMesh;
 use moho_physics::{
     CharacterCommand, CharacterHandle, CharacterState, HitVolume, MoveSettings, PhysicsWorld,
     first_person_view,
@@ -229,6 +230,8 @@ pub struct SearchlightSim {
     player_max_health: u32,
     route: Vec<Vec3>,
     covers: Vec<Vec3>,
+    /// The arena's walkable area; empty for a sim without enemies.
+    nav: Arc<NavMesh>,
     enemy: EnemyTuning,
     /// Offset from the player's capsule centre to the part the enemies aim at, before the
     /// player's yaw is applied.
@@ -253,6 +256,7 @@ struct Spawns {
     markers: Vec<Vec3>,
     route: Vec<Vec3>,
     covers: Vec<Vec3>,
+    nav: Arc<NavMesh>,
 }
 
 /// A target standing on the floor point `spawn` as target number `index`. With a `route` it is
@@ -306,6 +310,7 @@ impl SearchlightSim {
             markers: Vec::new(),
             route: Vec::new(),
             covers: Vec::new(),
+            nav: Arc::default(),
         };
         Self::assemble(world, spawns, config)
     }
@@ -347,6 +352,7 @@ impl SearchlightSim {
             player_max_health: config.body.max_health,
             route: spawns.route.clone(),
             covers: spawns.covers.clone(),
+            nav: spawns.nav.clone(),
             enemy: config.enemy,
             aim_offset,
             rng: SplitMix64(config.enemy.seed),
@@ -437,6 +443,7 @@ impl SearchlightSim {
             })
             .collect();
         let mut firing = Vec::new();
+        let nav = &self.nav;
         for (index, target) in self.targets.iter_mut().enumerate().skip(self.dummy_count) {
             let (Some(handle), Some(brain)) = (target.handle, target.brain.as_mut()) else {
                 continue;
@@ -481,7 +488,12 @@ impl SearchlightSim {
                 hurt,
                 offer,
             };
-            let intent = brain.think(&self.route, &percept, &self.enemy, dt);
+            let position = state.position;
+            let steer = |goal| {
+                nav.path(position, goal)
+                    .and_then(|path| path.get(1).copied())
+            };
+            let intent = brain.think(&self.route, &percept, &self.enemy, &steer, dt);
             claims[index] = brain.claim();
             let command = CharacterCommand {
                 forward: intent.forward,
@@ -703,6 +715,7 @@ impl SearchlightSim {
             markers: arena.enemy_spawns.clone(),
             route: arena.route.clone(),
             covers: arena.covers.clone(),
+            nav: Arc::new(arena.nav.clone()),
         };
         Self::assemble(arena.physics_world(), spawns, config)
     }
@@ -2158,7 +2171,7 @@ mod enemy_tests {
     fn an_enemy_walks_a_full_lap_of_the_shipped_arena() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/arena.glb");
         let (level, markers) = arena::load(&path).expect("the shipped arena loads");
-        let mut arena = Arena::from_level(&level, &markers);
+        let mut arena = Arena::from_level(&level, &markers).expect("the shipped arena builds");
         arena.enemy_spawns.truncate(1);
         let route = arena.route.clone();
         let mut config = config();
@@ -2819,7 +2832,7 @@ mod enemy_tests {
     fn an_enemy_in_the_shipped_arena_takes_cover_when_shot() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/arena.glb");
         let (level, markers) = arena::load(&path).expect("the shipped arena loads");
-        let mut arena = Arena::from_level(&level, &markers);
+        let mut arena = Arena::from_level(&level, &markers).expect("the shipped arena builds");
         arena.enemy_spawns.retain(|spawn| spawn.x.abs() < 0.1);
         assert_eq!(
             arena.enemy_spawns.len(),
@@ -3074,6 +3087,46 @@ mod enemy_tests {
             patrolling_again,
             "the enemy never walked its route again: {:?}",
             enemy_at(&sim, 0)
+        );
+    }
+
+    /// Waist high: sight and shot rays pass over it, a walking enemy cannot. Across the straight
+    /// line between the enemy and the player, and ending well short of both sides' spawns.
+    const LOW_BARRIER: (Vec3, Vec3) = (Vec3::new(-3.0, 0.0, 4.9), Vec3::new(3.0, 1.0, 5.1));
+
+    #[test]
+    fn a_chasing_enemy_walks_around_a_wall_to_the_last_seen_position() {
+        let mut config = cover_config();
+        // The player is lost by running out of range, not by a wall in the way.
+        config.enemy.sight_range = 13.0;
+        let mut sim = SearchlightSim::start(duel(&[LOW_BARRIER]), config);
+        let flee = |first: bool| SearchlightCommand {
+            movement: CharacterCommand {
+                forward: 1.0,
+                yaw_delta: if first { std::f32::consts::PI } else { 0.0 },
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        let first_shot = shoot_at(&sim, 0);
+        sim.tick(&first_shot, DT);
+        sim.drain_feedback();
+
+        let mut closest_z = f32::MAX;
+        for tick in 0..500 {
+            sim.tick(&flee(tick == 0), DT);
+            sim.drain_feedback();
+            closest_z = closest_z.min(enemy_at(&sim, 0).z);
+        }
+
+        assert!(
+            sim.player().position.z < -10.0,
+            "the player never ran out of the enemy's range: {:?}",
+            sim.player().position
+        );
+        assert!(
+            closest_z < 0.0,
+            "the enemy never got past the barrier at z = 5, closest z {closest_z}"
         );
     }
 

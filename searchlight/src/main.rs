@@ -70,7 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .nth(1)
         .map_or_else(|| assets().join("arena.glb"), PathBuf::from);
     let (level, markers) = arena::load(&arena_path)?;
-    let arena = Arc::new(Arena::from_level(&level, &markers));
+    let arena = Arc::new(Arena::from_level(&level, &markers)?);
     let mode = ArenaMode::new(arena.clone(), tuning()?, WaveTuning::default());
     let (prefs, prefs_warnings) = Prefs::load_from(&prefs_path());
     for warning in prefs_warnings {

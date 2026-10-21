@@ -5,6 +5,7 @@ mod buffers;
 mod error;
 mod marker;
 mod mesh;
+pub mod nav;
 
 use std::borrow::Cow;
 use std::path::Path;
@@ -14,6 +15,7 @@ use glam::Mat4;
 pub use error::{LevelError, LevelErrorKind};
 pub use marker::LevelMarker;
 use moho_render_api::WorldMesh;
+pub use nav::{AgentProfile, NavBuildError, NavMesh};
 
 /// A loaded level: one mesh per triangle primitive and one marker per named,
 /// mesh-less node reached from the default scene.
