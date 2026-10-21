@@ -1,22 +1,21 @@
 //! The rifle's tunable numbers, as a definition a content file can supply.
 
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 
 /// How a trigger pull becomes shots, named by id in definition files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The snake_case id is the stable seam: a registry can later resolve ids to
+/// behaviour without changing the file schema. The sim does not branch on it yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FireBehaviour {
     /// One shot per pull.
     SemiAuto,
 }
 
-impl<'de> Deserialize<'de> for FireBehaviour {
-    fn deserialize<D: Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
-        todo!()
-    }
-}
-
-/// The rifle's definition.
-#[derive(Debug, Clone, PartialEq)]
+/// The rifle's definition. A misspelt field is refused, not ignored.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RifleDef {
     /// Rounds a full magazine holds.
     pub magazine_capacity: u32,
@@ -30,12 +29,6 @@ pub struct RifleDef {
     pub reload_ticks: u32,
     /// How far a shot reaches, in metres.
     pub range: f32,
-}
-
-impl<'de> Deserialize<'de> for RifleDef {
-    fn deserialize<D: Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
-        todo!()
-    }
 }
 
 #[cfg(test)]
