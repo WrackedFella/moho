@@ -446,6 +446,12 @@ impl moho_app::Game for App {
         {
             self.input.actions.sample_frame(ctx.frame_dt);
         }
+        let chosen = self
+            .ui_adapter
+            .as_ref()
+            .and_then(|adapter| adapter.lock().ok())
+            .and_then(|mut adapter| adapter.take_hud_intents().view_level);
+        crate::app::view_level::update(self, chosen);
         if let Some(renderer) = ctx.renderer() {
             self.apply_pending_render(renderer);
         }
@@ -1549,6 +1555,7 @@ mod tests {
                     app.input.actions.set_look(LookSettings {
                         look_per_count: 0.002,
                         smoothing,
+                        invert_y: false,
                     });
                     let mut fake = FakeRenderer::default();
                     let (yaw_before, pitch_before) = sim_look(&app, rig);
@@ -1588,6 +1595,7 @@ mod tests {
                     app.input.actions.set_look(LookSettings {
                         look_per_count: 0.002,
                         smoothing,
+                        invert_y: false,
                     });
                     let mut fake = FakeRenderer::default();
                     run_frame(&mut app, &mut fake);
@@ -1674,6 +1682,7 @@ mod tests {
                     app.input.actions.set_look(LookSettings {
                         look_per_count: LOOK_PER_COUNT,
                         smoothing: false,
+                        invert_y: false,
                     });
                     app.input
                         .actions
@@ -1689,7 +1698,9 @@ mod tests {
                 let full = pending_after(tick());
                 let half = pending_after(tick() / 2);
 
-                let by_hand = 1560.0 * tick().as_secs_f32() * LOOK_PER_COUNT;
+                let by_hand = moho_input::action_map::PAD_LOOK_PER_SECOND
+                    * tick().as_secs_f32()
+                    * LOOK_PER_COUNT;
                 assert!(
                     (full - by_hand).abs() < 1e-5,
                     "{rig:?}: {full} vs {by_hand}"

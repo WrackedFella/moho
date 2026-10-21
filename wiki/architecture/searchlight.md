@@ -1,6 +1,6 @@
 # Searchlight
 
-**Source:** `searchlight/src/`, `searchlight/assets/`, `moho_ui_shell/src/`.
+**Source:** `searchlight/src/`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
 **Decisions:** [ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md),
 [ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md).
 
@@ -13,7 +13,8 @@ strategy crate ([overview](overview.md#lines-and-rules)).
 
 ```mermaid
 flowchart LR
-    main["main.rs<br/>tuning, wiring"] --> game["game.rs<br/>SearchlightGame: Game impl"]
+    main["main.rs<br/>content load, wiring"] --> tuning["tuning.rs<br/>SimConfig"]
+    main --> game["game.rs<br/>SearchlightGame: Game impl"]
     game --> mode["mode.rs<br/>ArenaMode"]
     mode --> wave["wave.rs<br/>WaveTuning, WaveState"]
     mode --> sim["sim.rs<br/>SearchlightSim"]
@@ -30,6 +31,7 @@ flowchart LR
 | Module | Role |
 |---|---|
 | `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes, spawns, route, cover points) and builds the world colliders |
+| `tuning` | `tuning(&RifleDef)`: builds the `SimConfig`, taking the rifle's numbers from the definition |
 | `input` | `SearchlightAction` set and default bindings; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on Enter) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }` or `Player(part)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld` |
@@ -45,8 +47,10 @@ flowchart LR
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
-(`drain_feedback`) and reacts. `TICK_HZ` is 60. Tuning values (speeds, damage, cooldown,
-magazine size, body profile, `EnemyTuning`, the player part enemies aim at) live in `main.rs` as a `SimConfig`.
+(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, range, magazine size) load from
+`content/weapons.toml` at start ([content format](../reference/content-format.md)); a load failure
+exits the binary. `tuning::tuning` combines them with the numbers still set in code (speeds, body
+profile, `EnemyTuning`, the player part enemies aim at) as a `SimConfig`.
 
 ## Console
 
@@ -59,6 +63,11 @@ exiting. Engine commands typed in the console (`quit`, `r_debug_view`, `r_shadow
 frame through `apply_engine_command`, which reaches the renderer (`RendererBackend`) and audio
 through `FrameContext`; with neither present the command is dropped. Console commands are hidden debug commands
 ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
+
+The shell can also draw game text (searchlight does not use it yet): `UiShell::set_texts(Vec<ScreenText>)`
+replaces the anchored lines the next `ui_frame` paints under the console, and that frame clears them, so a
+game sets its full text every `Game::frame`. A frame the renderer skips leaves no stale text. Use a few
+fixed sizes; each new size grows the font atlas.
 
 Game commands (`tgm [0|1]`) queue as `ConsoleCommand` on the console. `SearchlightGame` drains them
 at the start of each `command()` sample (`apply_console_commands`), applies them in order, saves

@@ -98,7 +98,7 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
 
 1. `poll_gamepads`: apply pad events while playing with focus, otherwise discard them
    and release pad actions;
-2. apply queued `RenderRequest`s; when an audio system exists, apply queued
+2. apply the HUD's view-height pick (`view_level::update`, [cut](rendering.md#cut-face-caps)), then queued `RenderRequest`s; when an audio system exists, apply queued
    `AudioSettings` (they stay queued without one) and set the listener from the frame
    camera (`Listener::from_view`); then drain audio events;
 3. if the UI asked to quit: auto-save, `request_exit`, stop;

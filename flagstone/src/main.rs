@@ -80,6 +80,7 @@ struct App {
     /// Material table index of the cut-face caps' colour.
     cut_face_material_idx: u32,
     cut_caps: app::cut_caps::CutCaps,
+    view_level: app::view_level::ViewLevel,
     camera: (glam::Mat4, glam::Mat4, glam::Vec3),
 
     // Light propagation system (owns the voxel grid internally)
@@ -195,6 +196,7 @@ impl App {
             terrain_material_idx: initialized.terrain_material_idx,
             cut_face_material_idx: initialized.cut_face_material_idx,
             cut_caps: app::cut_caps::CutCaps::default(),
+            view_level: app::view_level::ViewLevel::default(),
             camera: initialized.camera,
 
             light_system: Some(light_system),

@@ -33,7 +33,7 @@ Two properties that bite:
 - Each input kind gets its own `register` call (wheel and mine-click are separate
   handlers), so a new input type is a new registration, not a new branch.
 - A forwarder drops the event rather than blocking if it can't take the UI adapter lock.
-- During gameplay egui sees only pointer motion (`EguiAdapter::handle_gameplay_event`), so it knows what lies under the pointer. While the cursor is free (strategy view), a mouse press over a panel is consumed and never reaches the game; in first person egui gets no pointer input. The mine-click forwarder leaves the press unconsumed, so the action map sees it too.
+- During gameplay, with a free cursor, egui sees pointer motion and mouse buttons (`EguiAdapter::handle_gameplay_event`, `feeds_egui`), so it knows what lies under the pointer and widgets such as the view-height slider can be dragged. While the cursor is free (strategy view), a mouse press over a panel is consumed and never reaches the game; in first person egui gets no pointer input. The mine-click forwarder leaves the press unconsumed, so the action map sees it too.
 
 Global hotkeys in `handle_keyboard_input`, checked before game keys:
 
@@ -67,9 +67,9 @@ which returns an `ActionFrame` and resets the per-tick state:
 - `held`: down at the end of the tick; `pressed` / `released`: edges at any point in the
   tick, so a tap shorter than a tick is not lost.
 - `look`: the pending look that rendered frames sampled with `ActionMap::sample_frame(frame_dt)` since the last tick (read with `pending_look`); a tick consumes exactly what the last frame showed. The right stick adds `PAD_LOOK_PER_SECOND` times its deflection per second of frame time (after a
-  small dead zone), on top of the mouse input below. The mouse part is the motion accumulated since the previous frame, smoothed when `LookSettings::smoothing`
+  small dead zone), on top of the mouse input below. The mouse part is the motion accumulated since the previous frame, its vertical part negated first when `LookSettings::invert_y` is on (the stick share is never inverted), smoothed when `LookSettings::smoothing`
   is on (a two-sample mean of raw counts, `MouseSmoothing` in `moho_input/src/filter.rs`, which loses no motion),
-  then scaled by `LookSettings::look_per_count`. `ActionMap::set_look` applies new settings. Motion is unnegated; `App::command` inverts it for
+  then scaled by `LookSettings::look_per_count` (radians per count, from the Source-scale sensitivity pref via `source_look_per_count`). `PAD_LOOK_PER_SECOND` is a half turn per second at the default sensitivity. `ActionMap::set_look` applies new settings. Motion is unnegated; `App::command` inverts it for
   yaw and pitch.
 
 A stick direction binding is down while its axis is at or past `STICK_DIRECTION_THRESHOLD`.

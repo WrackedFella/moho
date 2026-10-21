@@ -406,6 +406,8 @@ impl FrameProcessor {
             hotbar,
             equipped_tool_label,
             selected_slot: app.pawn.selected_slot,
+            view_height: crate::app::view_level::layer_extent(app)
+                .map(|extent| app.view_level.hud(extent)),
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
@@ -895,6 +897,73 @@ mod tests {
         let expected = reference.ui_frame([800, 600]).expect("playing paints");
 
         produced == expected
+    }
+
+    /// The overlay frame `update_hud_data` produces for `app`, and the frame painted from
+    /// the same world's HUD data with `view_height` in place of what the app reports.
+    fn hud_frames_with(
+        app: &mut App,
+        view_height: Option<flagstone_ui::overlays::ViewHeightHud>,
+    ) -> (moho_render_api::UiFrame, moho_render_api::UiFrame) {
+        use moho_render_api::UiFrameSource;
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::Isometric);
+        let clock = moho_app::GameClock::default();
+        let adapter = std::sync::Arc::new(std::sync::Mutex::new(hud_adapter()));
+        app.ui_adapter = Some(std::sync::Arc::clone(&adapter));
+        FrameProcessor::new().update_hud_data(app, &clock, Duration::from_secs_f32(DT));
+        let produced = adapter
+            .lock()
+            .unwrap()
+            .ui_frame([800, 600])
+            .expect("playing paints");
+
+        let pos = app.simulation.position();
+        let cp = lod_player_chunk(pos);
+        let mut reference = hud_adapter();
+        reference.update_hud_data(flagstone_ui::overlays::HudData {
+            player_position: [pos.x, pos.y, pos.z],
+            chunk_position: [cp.x, cp.y, cp.z],
+            camera_mode: "Isometric".to_string(),
+            is_fps_mode: false,
+            frame_time_secs: DT,
+            time_of_day: clock.time_of_day(),
+            camera_yaw: app.simulation.yaw_pitch().0,
+            equipped_tool_label: Some("Pickaxe".to_string()),
+            view_height,
+            ..Default::default()
+        });
+        let expected = reference.ui_frame([800, 600]).expect("playing paints");
+        (produced, expected)
+    }
+
+    #[test]
+    fn update_hud_data_carries_the_view_height() {
+        use crate::app::cut_caps::tests::ground_app;
+        use flagstone_ui::overlays::ViewHeightHud;
+        let cases = [(None, 32), (Some(27), 27), (Some(1), 1)];
+
+        for (chosen, level) in cases {
+            let mut app = ground_app();
+            crate::app::view_level::update(&mut app, chosen);
+            let shown = ViewHeightHud {
+                floor: 0,
+                top: 32,
+                level,
+            };
+
+            let (produced, expected) = hud_frames_with(&mut app, Some(shown));
+            let (_, without_slider) = hud_frames_with(&mut app, None);
+
+            assert!(
+                produced == expected,
+                "level {level}: not the slider's frame"
+            );
+            assert!(
+                produced != without_slider,
+                "level {level}: the HUD data carries no slider"
+            );
+        }
     }
 
     #[test]
