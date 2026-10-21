@@ -306,3 +306,118 @@ fn a_path_within_one_polygon_is_start_and_goal() {
     assert!(flat_gap(path[0], a) <= 0.05, "{path:?}");
     assert!(flat_gap(path[1], b) <= 0.05, "{path:?}");
 }
+
+fn flat_length(path: &[Vec3]) -> f32 {
+    path.windows(2).map(|pair| flat_gap(pair[0], pair[1])).sum()
+}
+
+#[test]
+fn a_clear_line_beside_a_pillar_stays_two_corners_while_a_blocked_one_bends() {
+    let pillar = Rect {
+        min: [2.0, 3.0],
+        max: [4.0, 5.0],
+    };
+    let navmesh = build(&[floor(), block(pillar, 3.0)]);
+    let start = Vec3::new(-5.0, 0.0, 0.0);
+    let goal = Vec3::new(5.0, 0.0, 0.0);
+    let blocked_start = Vec3::new(-5.0, 0.0, 4.0);
+    let blocked_goal = Vec3::new(8.0, 0.0, 4.0);
+
+    let clear = navmesh
+        .path(start, goal)
+        .expect("open floor joins the points");
+    let around = navmesh
+        .path(blocked_start, blocked_goal)
+        .expect("the pillar can be walked around");
+
+    assert!(
+        distance_to(Vec3::new(0.0, 0.0, 0.0), pillar) >= 1.0 + PROFILE.radius,
+        "the fixture line must clear the pillar's eroded edge"
+    );
+    assert_eq!(clear.len(), 2, "spurious corners: {clear:?}");
+    assert!(flat_gap(clear[0], start) <= 0.05, "{clear:?}");
+    assert!(flat_gap(clear[1], goal) <= 0.05, "{clear:?}");
+    assert!(
+        around.len() > 2,
+        "the pillar should split the navmesh and force a bend: {around:?}"
+    );
+}
+
+#[test]
+fn a_path_through_two_staggered_walls_bends_at_both_gaps_and_crosses_neither() {
+    let west = Rect {
+        min: [-3.25, -10.0],
+        max: [-2.75, 6.0],
+    };
+    let east = Rect {
+        min: [2.75, -6.0],
+        max: [3.25, 10.0],
+    };
+    let navmesh = build(&[floor(), block(west, 3.0), block(east, 3.0)]);
+    let start = Vec3::new(-6.0, 0.0, 0.0);
+    let goal = Vec3::new(6.0, 0.0, 0.0);
+
+    let path = navmesh.path(start, goal).expect("the S-route is open");
+
+    let end = *path.last().expect("a path has corners");
+    assert!(flat_gap(end, goal) <= 0.05, "ends at {end:?}");
+    assert!(
+        path.len() >= 4,
+        "start, two bends and goal expected: {path:?}"
+    );
+    for pair in path.windows(2) {
+        for wall in [west, east] {
+            assert!(
+                !segment_touches(pair[0], pair[1], wall),
+                "{:?} -> {:?} crosses a wall",
+                pair[0],
+                pair[1]
+            );
+        }
+    }
+}
+
+#[test]
+fn a_path_takes_the_near_gap_rather_than_the_far_one() {
+    let pieces = [[-10.0, -8.0], [-5.0, 1.0], [4.0, 10.0]];
+    let mut meshes = vec![floor()];
+    for [z0, z1] in pieces {
+        meshes.push(block(
+            Rect {
+                min: [-0.25, z0],
+                max: [0.25, z1],
+            },
+            3.0,
+        ));
+    }
+    let navmesh = build(&meshes);
+    let a = Vec3::new(-5.0, 0.0, 2.5);
+    let b = Vec3::new(5.0, 0.0, 2.5);
+    let far_gap_edge = Vec3::new(0.0, 0.0, -5.0);
+
+    let path = navmesh.path(a, b).expect("the near gap is open");
+
+    let detour_bound = flat_gap(a, far_gap_edge) + flat_gap(far_gap_edge, b);
+    assert!(
+        flat_length(&path) < detour_bound,
+        "path of {} m is no shorter than the {detour_bound} m far-gap route: {path:?}",
+        flat_length(&path)
+    );
+}
+
+#[test]
+fn a_path_from_a_point_to_itself_is_that_point_snapped() {
+    let navmesh = build(&[floor()]);
+    let p = Vec3::new(2.0, 0.0, 3.0);
+
+    let path = navmesh.path(p, p).expect("a floor point reaches itself");
+
+    let first = *path.first().expect("a path has corners");
+    let last = *path.last().expect("a path has corners");
+    assert_eq!(first, last, "{path:?}");
+    assert!(flat_gap(first, p) <= 0.05, "{path:?}");
+    assert!(
+        path.iter().all(|corner| corner.is_finite()),
+        "non-finite corner in {path:?}"
+    );
+}
