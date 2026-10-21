@@ -133,7 +133,7 @@ impl KeybindCaptureHandler {
                 let remaining = bindings
                     .get_binding(conflicting)
                     .iter()
-                    .filter(|b| **b != Binding::Key(pending.key))
+                    .filter(|b| **b != Binding::key(pending.key))
                     .copied()
                     .collect();
                 on_binding_changed(conflicting, remaining);
@@ -177,9 +177,9 @@ mod tests {
     use crate::prefs::Prefs;
     use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
 
-    const THUMB: Binding = Binding::Pad(PadInput::Button(PadButton::LeftThumb));
-    const LEFT_PAD: Binding = Binding::Pad(PadInput::Stick(Stick::LeftStick, StickDir::Left));
-    const DESCEND_PAD: Binding = Binding::Pad(PadInput::Button(PadButton::LeftTrigger));
+    const THUMB: Binding = Binding::pad(PadInput::Button(PadButton::LeftThumb));
+    const LEFT_PAD: Binding = Binding::pad(PadInput::Stick(Stick::LeftStick, StickDir::Left));
+    const DESCEND_PAD: Binding = Binding::pad(PadInput::Button(PadButton::LeftTrigger));
 
     fn registry() -> BindingRegistry {
         BindingRegistry::from_prefs(&Prefs::default())
@@ -205,8 +205,8 @@ mod tests {
             vec![(
                 StrategyAction::MoveForward,
                 vec![
-                    Binding::Key(Key::Alt),
-                    Binding::Pad(PadInput::Stick(Stick::LeftStick, StickDir::Up))
+                    Binding::key(Key::Alt),
+                    Binding::pad(PadInput::Stick(Stick::LeftStick, StickDir::Up))
                 ]
             )]
         );
@@ -263,7 +263,7 @@ mod tests {
         assert!(changes.contains(&(StrategyAction::Sprint, vec![THUMB])));
         assert!(changes.contains(&(
             StrategyAction::Descend,
-            vec![Binding::Key(Key::Shift), DESCEND_PAD]
+            vec![Binding::key(Key::Shift), DESCEND_PAD]
         )));
     }
 
@@ -273,7 +273,47 @@ mod tests {
 
         assert_eq!(changes.len(), 2);
         assert!(changes.contains(&(StrategyAction::MoveLeft, vec![LEFT_PAD])));
-        assert!(changes.contains(&(StrategyAction::Sprint, vec![Binding::Key(Key::A), THUMB])));
+        assert!(changes.contains(&(StrategyAction::Sprint, vec![Binding::key(Key::A), THUMB])));
+    }
+
+    /// Descend holds Ctrl by default; freeing it lets Ctrl be captured without a conflict.
+    fn registry_without_ctrl_holder() -> BindingRegistry {
+        let mut registry = registry();
+        registry.set_binding(StrategyAction::Descend, vec![Binding::key(Key::Z)]);
+        registry
+    }
+
+    #[test]
+    fn modifier_only_conflict_shows_modal() {
+        let mut handler = KeybindCaptureHandler::new();
+        let mut bindings = registry_without_ctrl_holder();
+        bindings.set_binding(StrategyAction::MoveLeft, vec![Binding::key(Key::Ctrl)]);
+        handler.start_listening(0);
+
+        let applied = handler.capture_modifier_if_listening(1, &bindings, |_, _| {});
+
+        assert!(applied, "modifier conflict should be processed");
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Move Left".to_string(), "Ctrl".to_string()))
+        );
+    }
+
+    #[test]
+    fn modifier_multiple_mods_ignored() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry();
+        let mut changed = vec![];
+        handler.start_listening(0);
+
+        // ctrl+shift (bits 1 and 2) is not a modifier-only binding
+        let applied = handler.capture_modifier_if_listening(3, &bindings, |action, b| {
+            changed.push((action, b));
+        });
+
+        assert!(!applied, "combined modifiers should not be captured");
+        assert!(handler.is_listening());
+        assert!(changed.is_empty());
     }
 
     #[test]

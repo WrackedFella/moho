@@ -29,7 +29,7 @@ const ROW_ACTIONS: [StrategyAction; 7] = [
 ];
 
 fn pad_stick(dir: StickDir) -> Binding {
-    Binding::Pad(PadInput::Stick(Stick::LeftStick, dir))
+    Binding::pad(PadInput::Stick(Stick::LeftStick, dir))
 }
 
 /// Test 2: Escaping while listening cancels binding
@@ -71,7 +71,7 @@ fn staged_changes_tracked_and_cleared_on_save() {
     menu.revert_staged_changes();
     assert_eq!(
         menu.get_staged_binding(0),
-        [Binding::Key(Key::Q), pad_stick(StickDir::Up)],
+        [Binding::key(Key::Q), pad_stick(StickDir::Up)],
         "save updates the saved snapshot, so revert keeps it"
     );
     let (saved, issues) = Prefs::load_from(&path);
@@ -79,7 +79,7 @@ fn staged_changes_tracked_and_cleared_on_save() {
     let reloaded = SettingsMenu::with_prefs(saved);
     assert_eq!(
         reloaded.get_staged_binding(0),
-        [Binding::Key(Key::Q), pad_stick(StickDir::Up)]
+        [Binding::key(Key::Q), pad_stick(StickDir::Up)]
     );
 }
 
@@ -104,7 +104,7 @@ fn revert_changes_works() {
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
     assert_eq!(
         menu.get_staged_binding(0),
-        [Binding::Key(Key::W), pad_stick(StickDir::Up)]
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
     );
 
     menu.start_listening(0);
@@ -116,7 +116,7 @@ fn revert_changes_works() {
     );
     assert_eq!(
         menu.get_staged_binding(0),
-        [Binding::Key(Key::Q), pad_stick(StickDir::Up)]
+        [Binding::key(Key::Q), pad_stick(StickDir::Up)]
     );
     assert!(menu.has_unsaved_changes());
 
@@ -124,7 +124,7 @@ fn revert_changes_works() {
 
     assert_eq!(
         menu.get_staged_binding(0),
-        [Binding::Key(Key::W), pad_stick(StickDir::Up)]
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
     );
     assert!(!menu.has_unsaved_changes());
 }
@@ -149,7 +149,7 @@ fn confirming_conflict_through_modal_flow_replaces_binding() {
 
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::W), pad_stick(StickDir::Left)]
+        [Binding::key(Key::W), pad_stick(StickDir::Left)]
     );
     assert_eq!(menu.get_staged_binding(0), [pad_stick(StickDir::Up)]);
 }
@@ -170,43 +170,11 @@ fn cancelling_conflict_through_modal_flow_keeps_bindings() {
     assert!(modal.is_some(), "conflict should produce a modal");
     Screen::on_modal_cancel(&mut menu);
 
+    assert!(!menu.conflict_modal().is_visible());
     let after: Vec<Vec<Binding>> = (0..7)
         .map(|i| menu.get_staged_binding(i).to_vec())
         .collect();
     assert_eq!(before, after);
-}
-
-/// Test 7: Canceling conflict preserves original binding
-#[test]
-fn canceling_conflict_preserves_original() {
-    let mut menu = SettingsMenu::with_prefs(Prefs::default());
-
-    // Bind key_w to 'W'
-    menu.start_listening(0);
-    menu.apply_key_while_listening(Key::W);
-    let key_w_binding = menu.get_staged_binding(0).to_vec();
-
-    // Bind key_a to 'A'
-    menu.start_listening(1);
-    menu.apply_key_while_listening(Key::A);
-    let key_a_binding = menu.get_staged_binding(1).to_vec();
-
-    // Try to bind key_a to 'W' again (will conflict)
-    menu.start_listening(1);
-    menu.apply_key_while_listening(Key::W);
-
-    // Should show conflict modal
-    assert!(menu.conflict_modal().is_visible());
-
-    // Cancel the conflict
-    menu.cancel_pending_binding();
-
-    // Modal should be closed
-    assert!(!menu.conflict_modal().is_visible());
-
-    // Original bindings should be preserved
-    assert_eq!(menu.get_staged_binding(0), key_w_binding.as_slice());
-    assert_eq!(menu.get_staged_binding(1), key_a_binding.as_slice());
 }
 
 /// Test 8: Multiple bindings don't interfere with each other
@@ -231,9 +199,9 @@ fn multiple_unique_bindings_work() {
         let pads: Vec<Binding> = moho_input::Action::default_bindings(ROW_ACTIONS[id])
             .iter()
             .copied()
-            .filter(|b| matches!(b, Binding::Pad(_)))
+            .filter(|b| b.is_pad())
             .collect();
-        let expected: Vec<Binding> = std::iter::once(Binding::Key(key)).chain(pads).collect();
+        let expected: Vec<Binding> = std::iter::once(Binding::key(key)).chain(pads).collect();
         assert_eq!(binding, expected, "binding {id} should have correct key");
     }
 }
@@ -273,7 +241,7 @@ fn modifier_key_can_be_bound() {
     assert!(!menu.conflict_modal().is_visible());
     assert_eq!(
         menu.get_staged_binding(0),
-        [Binding::Key(Key::Ctrl), pad_stick(StickDir::Up)]
+        [Binding::key(Key::Ctrl), pad_stick(StickDir::Up)]
     );
 }
 
@@ -291,10 +259,10 @@ fn confirming_conflict_removes_only_the_contested_key_from_a_multi_key_row() {
     assert!(Screen::take_pending_modal(&mut menu).is_some());
     Screen::on_modal_confirm(&mut menu);
 
-    assert_eq!(menu.get_staged_binding(0), [Binding::Key(Key::ArrowUp)]);
+    assert_eq!(menu.get_staged_binding(0), [Binding::key(Key::ArrowUp)]);
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::W), pad_stick(StickDir::Left)]
+        [Binding::key(Key::W), pad_stick(StickDir::Left)]
     );
 }
 
@@ -348,7 +316,7 @@ fn egui_key_press_while_listening_binds_the_row() {
 
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::Q), pad_stick(StickDir::Left)]
+        [Binding::key(Key::Q), pad_stick(StickDir::Left)]
     );
     assert!(!menu.is_listening());
 }
@@ -363,7 +331,7 @@ fn egui_key_release_while_listening_is_ignored() {
 
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::A), pad_stick(StickDir::Left)]
+        [Binding::key(Key::A), pad_stick(StickDir::Left)]
     );
     assert!(menu.is_listening());
 }
@@ -378,7 +346,7 @@ fn egui_escape_while_listening_cancels_without_binding() {
 
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::A), pad_stick(StickDir::Left)]
+        [Binding::key(Key::A), pad_stick(StickDir::Left)]
     );
     assert!(!menu.is_listening());
     assert!(!menu.has_unsaved_changes());
@@ -394,7 +362,7 @@ fn egui_unnamed_key_while_listening_keeps_listening() {
 
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::A), pad_stick(StickDir::Left)]
+        [Binding::key(Key::A), pad_stick(StickDir::Left)]
     );
     assert!(menu.is_listening());
 }
@@ -408,7 +376,7 @@ fn egui_key_press_when_not_listening_changes_nothing() {
 
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::A), pad_stick(StickDir::Left)]
+        [Binding::key(Key::A), pad_stick(StickDir::Left)]
     );
     assert!(!menu.has_unsaved_changes());
 }
@@ -529,28 +497,12 @@ fn cancel_then_confirm_applies_nothing() {
 
     assert_eq!(
         menu.get_staged_binding(0),
-        [Binding::Key(Key::W), pad_stick(StickDir::Up)]
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
     );
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::A), pad_stick(StickDir::Left)]
+        [Binding::key(Key::A), pad_stick(StickDir::Left)]
     );
-}
-
-#[test]
-fn confirm_pending_binding_moves_the_key() {
-    let mut menu = SettingsMenu::with_prefs(Prefs::default());
-    menu.start_listening(1);
-    menu.apply_key_while_listening(Key::W);
-    assert!(menu.conflict_modal().is_visible());
-
-    menu.confirm_pending_binding();
-
-    assert_eq!(
-        menu.get_staged_binding(1),
-        [Binding::Key(Key::W), pad_stick(StickDir::Left)]
-    );
-    assert_eq!(menu.get_staged_binding(0), [pad_stick(StickDir::Up)]);
 }
 
 #[test]
@@ -563,8 +515,8 @@ fn rebinding_ascend_to_f_keeps_its_pad_binding() {
     assert_eq!(
         menu.get_staged_binding(4),
         [
-            Binding::Key(Key::F),
-            Binding::Pad(PadInput::Button(PadButton::RightTrigger))
+            Binding::key(Key::F),
+            Binding::pad(PadInput::Button(PadButton::RightTrigger))
         ]
     );
 }
@@ -580,13 +532,13 @@ fn conflict_confirm_keeps_pad_bindings_on_both_actions() {
     assert_eq!(
         menu.get_staged_binding(6),
         [
-            Binding::Key(Key::Ctrl),
-            Binding::Pad(PadInput::Button(PadButton::LeftThumb))
+            Binding::key(Key::Ctrl),
+            Binding::pad(PadInput::Button(PadButton::LeftThumb))
         ]
     );
     assert_eq!(
         menu.get_staged_binding(5),
-        [Binding::Pad(PadInput::Button(PadButton::LeftTrigger))]
+        [Binding::pad(PadInput::Button(PadButton::LeftTrigger))]
     );
 }
 
@@ -610,6 +562,52 @@ fn pad_only_action_row_shows_unbound() {
 
     assert_eq!(text.lines().filter(|l| *l == "Unbound").count(), 1);
     assert!(!text.contains("Pad"), "pad label shown in:\n{text}");
+}
+
+/// A modifier pressed alone during a frame binds the listening row.
+#[test]
+fn egui_lone_modifier_while_listening_binds_the_row() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    // Move Down holds Ctrl by default; free it first.
+    menu.start_listening(5);
+    menu.apply_key_while_listening(Key::Z);
+    menu.start_listening(0);
+
+    render_frame(
+        &mut menu,
+        vec![egui::Event::ModifiersChanged(egui::Modifiers::CTRL)],
+    );
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Ctrl), pad_stick(StickDir::Up)]
+    );
+    assert!(!menu.is_listening());
+}
+
+/// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
+#[test]
+fn rebinding_sprint_keeps_its_hold_bindings() {
+    let (prefs, issues) = Prefs::parse("[bindings]\nsprint = Shift, Hold Q, Hold Pad West\n");
+    assert_eq!(issues, vec![]);
+    let mut menu = SettingsMenu::with_prefs(prefs);
+    menu.start_listening(6);
+
+    menu.apply_key_while_listening(Key::E);
+
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [
+            Binding::key(Key::E),
+            Binding::key(Key::Q).held(),
+            Binding::pad(PadInput::Button(PadButton::West)).held()
+        ]
+    );
+    let text = rendered_text(&render_frame(&mut menu, vec![]));
+    assert!(
+        text.lines().any(|l| l == "E, Hold Q"),
+        "sprint row missing in:\n{text}"
+    );
 }
 
 /// Runs one frame and clears its texture delta; egui asserts in debug builds

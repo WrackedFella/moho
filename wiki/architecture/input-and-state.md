@@ -72,8 +72,10 @@ which returns an `ActionFrame` and resets the per-tick state:
   then scaled by `LookSettings::look_per_count` (radians per count, from the Source-scale sensitivity pref via `source_look_per_count`). `PAD_LOOK_PER_SECOND` is a half turn per second at the default sensitivity. `ActionMap::set_look` applies new settings. Motion is unnegated; `App::command` inverts it for
   yaw and pitch.
 
+A `Binding` is an `Input` (key, mouse button or pad input) plus a `Trigger`: `Press` or `Hold`. A `Hold` binding fires once its input has been down `Action::HOLD_TICKS` ticks (default `DEFAULT_HOLD_TICKS`, 18; one value per game, at least 1) and the action then stays held until release. An input that any action binds with `Hold` is split: its `Press` bindings no longer fire on press but as a tap (pressed and released in the same tick) when the input is released before the threshold; a release at or after maturing is not a tap. An input with no `Hold` binding fires `Press` bindings on press as usual. Searchlight uses this on `R`: tap reloads, hold checks the magazine.
+
 A stick direction binding is down while its axis is at or past `STICK_DIRECTION_THRESHOLD`.
-An action is held when any of its bindings is down. A frame holds at most 64 actions.
+An action is held when any of its bindings is active under the rules above. A frame holds at most 64 actions.
 The map also tracks the pointer in physical pixels: `ActionFrame::pointer` is its position at the end of the tick (`None` outside the window), and `press_pointer` is its position at the last mouse press in the tick. `StrategyAction::Select` (left mouse by default) is the strategy view's primary pointer action.
 
 Bindings persist in the `[bindings]` section of [prefs](../reference/prefs-format.md).

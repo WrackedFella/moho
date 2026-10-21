@@ -5,7 +5,7 @@ use std::sync::Arc;
 use glam::Vec3;
 use moho_input::Action;
 use moho_input::action_map::ActionMap;
-use moho_input::bindings::Binding;
+use moho_input::bindings::Input;
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{BodyPart, BodyProfile, Magazine, Rifle};
@@ -175,9 +175,9 @@ pub(crate) fn wave_tuning(first_size: u32) -> WaveTuning {
 
 /// Presses the first default binding of `action` on `map`.
 pub(crate) fn press(map: &mut ActionMap<SearchlightAction>, action: SearchlightAction) {
-    match action.default_bindings()[0] {
-        Binding::Key(key) => map.key(key, true),
-        Binding::Mouse(button) => map.mouse_button(button, true),
-        Binding::Pad(_) => panic!("the first default binding of {action:?} is a pad input"),
+    match action.default_bindings()[0].input {
+        Input::Key(key) => map.key(key, true),
+        Input::Mouse(button) => map.mouse_button(button, true),
+        Input::Pad(_) => panic!("the first default binding of {action:?} is a pad input"),
     }
 }

@@ -8,23 +8,23 @@ use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
 use moho_ui_shell::CONSOLE_BINDING;
 
 const fn stick(dir: StickDir) -> Binding {
-    Binding::Pad(PadInput::Stick(Stick::LeftStick, dir))
+    Binding::pad(PadInput::Stick(Stick::LeftStick, dir))
 }
 
 const fn button(button: PadButton) -> Binding {
-    Binding::Pad(PadInput::Button(button))
+    Binding::pad(PadInput::Button(button))
 }
 
-const FORWARD: [Binding; 2] = [Binding::Key(Key::W), stick(StickDir::Up)];
-const BACK: [Binding; 2] = [Binding::Key(Key::S), stick(StickDir::Down)];
-const LEFT: [Binding; 2] = [Binding::Key(Key::A), stick(StickDir::Left)];
-const RIGHT: [Binding; 2] = [Binding::Key(Key::D), stick(StickDir::Right)];
-const ASCEND: [Binding; 2] = [Binding::Key(Key::Space), button(PadButton::RightTrigger)];
-const JUMP: [Binding; 2] = [Binding::Key(Key::Space), button(PadButton::South)];
-const DESCEND: [Binding; 2] = [Binding::Key(Key::Ctrl), button(PadButton::LeftTrigger)];
-const SPRINT: [Binding; 2] = [Binding::Key(Key::Shift), button(PadButton::LeftThumb)];
+const FORWARD: [Binding; 2] = [Binding::key(Key::W), stick(StickDir::Up)];
+const BACK: [Binding; 2] = [Binding::key(Key::S), stick(StickDir::Down)];
+const LEFT: [Binding; 2] = [Binding::key(Key::A), stick(StickDir::Left)];
+const RIGHT: [Binding; 2] = [Binding::key(Key::D), stick(StickDir::Right)];
+const ASCEND: [Binding; 2] = [Binding::key(Key::Space), button(PadButton::RightTrigger)];
+const JUMP: [Binding; 2] = [Binding::key(Key::Space), button(PadButton::South)];
+const DESCEND: [Binding; 2] = [Binding::key(Key::Ctrl), button(PadButton::LeftTrigger)];
+const SPRINT: [Binding; 2] = [Binding::key(Key::Shift), button(PadButton::LeftThumb)];
 
-const SELECT: [Binding; 1] = [Binding::Mouse(MouseButton::Left)];
+const SELECT: [Binding; 1] = [Binding::mouse(MouseButton::Left)];
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StrategyAction {
@@ -102,8 +102,8 @@ mod tests {
 
     #[test]
     fn strategy_actions_keep_their_ids_and_defaults() {
-        let stick = |dir| Binding::Pad(PadInput::Stick(Stick::LeftStick, dir));
-        let button = |b| Binding::Pad(PadInput::Button(b));
+        let stick = |dir| Binding::pad(PadInput::Stick(Stick::LeftStick, dir));
+        let button = |b| Binding::pad(PadInput::Button(b));
         let expected = [
             (
                 StrategyAction::MoveForward,
@@ -163,7 +163,7 @@ mod tests {
 
         let want: Vec<_> = expected
             .iter()
-            .map(|&(a, n, k, p)| (a, n, vec![Binding::Key(k), p]))
+            .map(|&(a, n, k, p)| (a, n, vec![Binding::key(k), p]))
             .collect();
         assert_eq!(actual, want);
     }
@@ -173,7 +173,7 @@ mod tests {
         assert_eq!(StrategyAction::Select.name(), "select");
         assert_eq!(
             StrategyAction::Select.default_bindings(),
-            [Binding::Mouse(MouseButton::Left)]
+            [Binding::mouse(MouseButton::Left)]
         );
         assert!(StrategyAction::ALL.contains(&StrategyAction::Select));
     }
@@ -186,7 +186,7 @@ mod tests {
 
         assert_eq!(
             bindings.get(StrategyAction::Select),
-            [Binding::Mouse(MouseButton::Left)]
+            [Binding::mouse(MouseButton::Left)]
         );
     }
 
@@ -198,7 +198,7 @@ mod tests {
 
         assert_eq!(
             bindings.get(StrategyAction::MoveForward),
-            [Binding::Key(Key::W), stick(StickDir::Up)]
+            [Binding::key(Key::W), stick(StickDir::Up)]
         );
     }
 
@@ -240,7 +240,7 @@ mod tests {
         assert!(!log.contains("console"), "warned about the console: {log}");
         assert_eq!(
             bindings.get(StrategyAction::MoveForward),
-            [Binding::Key(Key::Q)]
+            [Binding::key(Key::Q)]
         );
         assert_eq!(
             bindings.get(StrategyAction::Jump),
