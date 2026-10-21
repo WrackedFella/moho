@@ -9,7 +9,7 @@ use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
 use moho_core::pointer::{Ray, screen_ray};
 use moho_input::action_map;
-use moho_input::bindings::Binding;
+use moho_input::bindings::Input;
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{EngineCommand, Routing};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -98,8 +98,8 @@ impl App {
     /// Where one key or mouse button press or release goes. The console sees it before egui or
     /// the action map; `Opened` and `Closed` also enter and leave `GameState::ConsoleOpen`.
     /// Outside `Playing` and `ConsoleOpen` the console is skipped and the input is the game's.
-    /// Takes a `Binding` so it is testable without a winit `KeyEvent`.
-    fn route_console_input(&mut self, input: Binding, pressed: bool, repeat: bool) -> Routing {
+    /// Takes an `Input` so it is testable without a winit `KeyEvent`.
+    fn route_console_input(&mut self, input: Input, pressed: bool, repeat: bool) -> Routing {
         if !matches!(self.game_state, GameState::Playing | GameState::ConsoleOpen) {
             return Routing::Game;
         }
@@ -446,6 +446,12 @@ impl moho_app::Game for App {
         {
             self.input.actions.sample_frame(ctx.frame_dt);
         }
+        let chosen = self
+            .ui_adapter
+            .as_ref()
+            .and_then(|adapter| adapter.lock().ok())
+            .and_then(|mut adapter| adapter.take_hud_intents().view_level);
+        crate::app::view_level::update(self, chosen);
         if let Some(renderer) = ctx.renderer() {
             self.apply_pending_render(renderer);
         }
@@ -488,7 +494,7 @@ mod tests {
     use flagstone_game::TICK_HZ;
     use flagstone_ui::actions::StrategyAction;
     use moho_app::{Game, GameClock, HeadlessLoop, LoopConfig, TickContext};
-    use moho_input::bindings::Binding;
+    use moho_input::bindings::Input;
     use moho_physics::HitTag;
 
     fn playing_app() -> App {
@@ -529,9 +535,9 @@ mod tests {
             .bindings()
             .get(action)
             .iter()
-            .find_map(|binding| match binding {
-                Binding::Key(key) => Some(*key),
-                Binding::Mouse(_) | Binding::Pad(_) => None,
+            .find_map(|binding| match binding.input {
+                Input::Key(key) => Some(key),
+                Input::Mouse(_) | Input::Pad(_) => None,
             })
             .expect("the action has a default key binding")
     }
@@ -734,6 +740,7 @@ mod tests {
             _light_level: &[f32],
             _block_light_rgb: &[[f32; 3]],
             _sky_exposed: &[f32],
+            _material: &[u32],
             _indices: &[u32],
         ) -> u32 {
             0
@@ -1549,6 +1556,7 @@ mod tests {
                     app.input.actions.set_look(LookSettings {
                         look_per_count: 0.002,
                         smoothing,
+                        invert_y: false,
                     });
                     let mut fake = FakeRenderer::default();
                     let (yaw_before, pitch_before) = sim_look(&app, rig);
@@ -1588,6 +1596,7 @@ mod tests {
                     app.input.actions.set_look(LookSettings {
                         look_per_count: 0.002,
                         smoothing,
+                        invert_y: false,
                     });
                     let mut fake = FakeRenderer::default();
                     run_frame(&mut app, &mut fake);
@@ -1674,6 +1683,7 @@ mod tests {
                     app.input.actions.set_look(LookSettings {
                         look_per_count: LOOK_PER_COUNT,
                         smoothing: false,
+                        invert_y: false,
                     });
                     app.input
                         .actions
@@ -1689,7 +1699,9 @@ mod tests {
                 let full = pending_after(tick());
                 let half = pending_after(tick() / 2);
 
-                let by_hand = 1560.0 * tick().as_secs_f32() * LOOK_PER_COUNT;
+                let by_hand = moho_input::action_map::PAD_LOOK_PER_SECOND
+                    * tick().as_secs_f32()
+                    * LOOK_PER_COUNT;
                 assert!(
                     (full - by_hand).abs() < 1e-5,
                     "{rig:?}: {full} vs {by_hand}"
@@ -2448,7 +2460,7 @@ mod tests {
         }
 
         fn press(app: &mut App, key: Key) -> Routing {
-            app.route_console_input(Binding::Key(key), true, false)
+            app.route_console_input(Input::Key(key), true, false)
         }
 
         fn type_line(adapter: &SharedAdapter, line: &str) {

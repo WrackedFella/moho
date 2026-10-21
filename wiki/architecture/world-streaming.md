@@ -14,6 +14,8 @@ flowchart TD
         S -->|"beyond unload_radius"| EV["evict: save if modified,<br/>remove mesh + collider"]
         S -->|"within load_radius,<br/>≤ chunks_per_frame columns"| LD["generate column<br/>chunk Y 0..=8"]
         LD --> D1["publish ChunkMeshDirty<br/>for chunk and its 6 neighbours"]
+        LA["chunks enter the grid"] --> LL["LightSystem::light_arrived_chunks<br/>(synchronous)"]
+        LL --> D2
         LS["LightSystem::process_frame<br/>(budgeted)"] --> D2["emit_dirty_events →<br/>ChunkMeshDirty"]
         EDIT["block edit (mine, place)"] --> D3["ChunkMeshDirty"]
     end
@@ -48,7 +50,15 @@ Chunks are 16³ voxels; columns span chunk Y 0..=8.
 - Freshly generated, unmodified chunks are not persisted on eviction. Only player edits
   are saved ([ADR-0006](../../_todo/adr/0006-save-format-contract.md) covers the format).
 - Eviction saves run synchronously in the frame, bounded by `chunks_per_frame`.
-- The light system processes within a per-frame block budget, prioritised by distance to
+- Chunks that enter the grid (streamed in, preloaded by generation, loaded from a save) are
+  lit synchronously by `LightSystem::light_arrived_chunks` before the next tick: sky
+  exposure is refreshed, stale block light that spread in before their blocks were known is
+  cleared, emitters are seeded, and light is refilled from lit neighbour chunks, so their
+  first mesh is built from lit data.
+- Sky exposure of edited columns is recomputed once per frame, topmost chunk first.
+- `process_world_events` forwards every world event to the light system, then re-meshes each
+  dirty chunk once per batch, however many events named it.
+- The light system processes edits within a per-frame block budget, prioritised by distance to
   the player; large edits spread over several frames.
 
 ## Related

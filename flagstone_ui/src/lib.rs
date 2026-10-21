@@ -60,7 +60,8 @@ pub use screens::{
 };
 
 pub use overlays::{
-    ChunkDebugOverlay, DebugHud, FpsHud, GameplayHud, HudData, Overlay, OverlayManager, RtsHud,
+    ChunkDebugOverlay, DebugHud, FpsHud, GameplayHud, HudData, HudIntents, Overlay, OverlayManager,
+    RtsHud, ViewHeightHud,
 };
 
 pub use modal::{Modal, ModalManager, ModalResult};

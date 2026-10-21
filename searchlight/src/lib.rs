@@ -13,6 +13,7 @@ pub mod mode;
 pub mod shot;
 pub mod sim;
 pub mod tag;
+pub mod tuning;
 pub mod wave;
 
 use std::collections::BTreeMap;
@@ -22,6 +23,13 @@ use moho_ui_shell::CONSOLE_BINDING;
 
 /// Ticks per second the prototype runs at.
 pub const TICK_HZ: u32 = 60;
+
+pub const RIFLE_ID: &str = "rifle";
+
+/// The base content folder, beside the crate like `assets`.
+pub fn content_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("content")
+}
 
 /// Where the FPS keeps its preferences.
 pub fn prefs_path() -> PathBuf {
@@ -51,7 +59,7 @@ mod tests {
     use crate::console_commands;
     use crate::input::SearchlightAction;
     use moho_core::prefs::Prefs;
-    use moho_input::bindings::{ActionBindings, Binding};
+    use moho_input::bindings::{ActionBindings, Binding, Input};
     use moho_input::key::Key;
     use moho_ui_shell::console::Routing;
 
@@ -80,11 +88,11 @@ mod tests {
         assert_eq!(warnings, vec![]);
         assert_eq!(console_warnings, vec![]);
         assert_eq!(
-            console.on_key(Binding::Key(Key::Backslash), true, false),
+            console.on_key(Input::Key(Key::Backslash), true, false),
             Routing::Game
         );
         assert_eq!(
-            console.on_key(Binding::Key(Key::Backtick), true, false),
+            console.on_key(Input::Key(Key::Backtick), true, false),
             Routing::Opened
         );
     }
@@ -103,12 +111,12 @@ mod tests {
         assert_eq!(console_warnings, vec![]);
         assert_eq!(game_warnings, vec![]);
         assert_eq!(
-            console.on_key(Binding::Key(Key::Backslash), true, false),
+            console.on_key(Input::Key(Key::Backslash), true, false),
             Routing::Opened
         );
         assert_eq!(
             bindings.get(SearchlightAction::Jump),
-            [Binding::Key(Key::F)]
+            [Binding::key(Key::F)]
         );
     }
 }

@@ -4,7 +4,7 @@
 `moho_core/src/pointer.rs`, `flagstone/src/app/game.rs` (`Game::event`, `poll_gamepads`), `flagstone/src/main.rs` (`handle_keyboard_input`), `flagstone_ui/src/app_state/game_state.rs`,
 `flagstone_ui/src/app_state/state_coordinator.rs`, `flagstone_ui/src/screens/pause.rs`, `moho_ui_shell/src/console/` (console key routing).
 
-## Input routing
+## 1 Input routing
 
 Every `WindowEvent` the runner forwards reaches `Game::event` (`App::handle_window_event`) and goes through this order. The first stage that
 consumes the event ends the path.
@@ -33,7 +33,7 @@ Two properties that bite:
 - Each input kind gets its own `register` call (wheel and mine-click are separate
   handlers), so a new input type is a new registration, not a new branch.
 - A forwarder drops the event rather than blocking if it can't take the UI adapter lock.
-- During gameplay egui sees only pointer motion (`EguiAdapter::handle_gameplay_event`), so it knows what lies under the pointer. While the cursor is free (strategy view), a mouse press over a panel is consumed and never reaches the game; in first person egui gets no pointer input. The mine-click forwarder leaves the press unconsumed, so the action map sees it too.
+- During gameplay, with a free cursor, egui sees pointer motion and mouse buttons (`EguiAdapter::handle_gameplay_event`, `feeds_egui`), so it knows what lies under the pointer and widgets such as the view-height slider can be dragged. While the cursor is free (strategy view), a mouse press over a panel is consumed and never reaches the game; in first person egui gets only mouse releases, so a press on a widget before the cursor is grabbed does not leave it held. The mine-click forwarder leaves the press unconsumed, so the action map sees it too.
 
 Global hotkeys in `handle_keyboard_input`, checked before game keys:
 
@@ -67,22 +67,24 @@ which returns an `ActionFrame` and resets the per-tick state:
 - `held`: down at the end of the tick; `pressed` / `released`: edges at any point in the
   tick, so a tap shorter than a tick is not lost.
 - `look`: the pending look that rendered frames sampled with `ActionMap::sample_frame(frame_dt)` since the last tick (read with `pending_look`); a tick consumes exactly what the last frame showed. The right stick adds `PAD_LOOK_PER_SECOND` times its deflection per second of frame time (after a
-  small dead zone), on top of the mouse input below. The mouse part is the motion accumulated since the previous frame, smoothed when `LookSettings::smoothing`
+  small dead zone), on top of the mouse input below. The mouse part is the motion accumulated since the previous frame, its vertical part negated first when `LookSettings::invert_y` is on (the stick share is never inverted), smoothed when `LookSettings::smoothing`
   is on (a two-sample mean of raw counts, `MouseSmoothing` in `moho_input/src/filter.rs`, which loses no motion),
-  then scaled by `LookSettings::look_per_count`. `ActionMap::set_look` applies new settings. Motion is unnegated; `App::command` inverts it for
+  then scaled by `LookSettings::look_per_count` (radians per count, from the Source-scale sensitivity pref via `source_look_per_count`). `PAD_LOOK_PER_SECOND` is a half turn per second at the default sensitivity. `ActionMap::set_look` applies new settings. Motion is unnegated; `App::command` inverts it for
   yaw and pitch.
 
+A `Binding` is an `Input` (key, mouse button or pad input) plus a `Trigger`: `Press` or `Hold`. A `Hold` binding fires once its input has been down `Action::HOLD_TICKS` ticks (default `DEFAULT_HOLD_TICKS`, 18; one value per game, at least 1) and the action then stays held until release. An input that any action binds with `Hold` is split: its `Press` bindings no longer fire on press but as a tap (pressed and released in the same tick) when the input is released before the threshold; a release at or after maturing is not a tap. An input with no `Hold` binding fires `Press` bindings on press as usual. Searchlight uses this on `R`: tap reloads, hold checks the magazine.
+
 A stick direction binding is down while its axis is at or past `STICK_DIRECTION_THRESHOLD`.
-An action is held when any of its bindings is down. A frame holds at most 64 actions.
+An action is held when any of its bindings is active under the rules above. A frame holds at most 64 actions.
 The map also tracks the pointer in physical pixels: `ActionFrame::pointer` is its position at the end of the tick (`None` outside the window), and `press_pointer` is its position at the last mouse press in the tick. `StrategyAction::Select` (left mouse by default) is the strategy view's primary pointer action.
 
 Bindings persist in the `[bindings]` section of [prefs](../reference/prefs-format.md).
 
-## Pointer picking
+## 2 Pointer picking
 
 In the isometric view, a tick with `Select` pressed turns `press_pointer` into a world `Ray` with `moho_core::pointer::screen_ray` (view and projection of the frame the player saw, window size as viewport) and carries it in the command as `select`. The ray, not the pixel, is the command, so it replays without a window. The apply step casts it with `flagstone_game::raycast::raycast_surface` over `POINTER_RAY_RANGE` and stores the result in `App::pointer_hit`; a miss clears it. First-person never selects.
 
-## GameState
+## 3 GameState
 
 `flagstone_ui::GameState` decides input routing, rendering, cursor and whether the
 simulation runs. `can_transition_to` is the legality table; `StateTransitionCoordinator`

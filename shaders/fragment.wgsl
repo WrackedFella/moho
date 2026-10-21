@@ -1,3 +1,8 @@
+// Keeps a surface with no sky exposure and no block light from going black.
+const MIN_SKY_AMBIENT: f32 = 0.1;
+// Scales block light's additive term; can push colour past 1 next to strong emitters.
+const BLOCK_LIGHT_GAIN: f32 = 1.0;
+
 // Debug: Returns color-coded visualization of shadow coordinates
 fn debug_shadow_coords(light_space_pos: vec4<f32>) -> vec3<f32> {
     var proj_coords = light_space_pos.xyz / light_space_pos.w;
@@ -785,16 +790,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Color gradient = inside bounds (shows UV coords)
     // return vec4<f32>(debug_shadow_coords(in.light_space_pos), 1.0);
     
-    // Apply per-channel block light (colored, from torches/emissive blocks) blended
-    // with sky exposure (white ambient from open sky). Take the max of the two so a
-    // brightly lit block underground isn't dimmed by low sky exposure, and open-sky
-    // surfaces with no nearby light source still get full ambient brightness.
-    // Ensure minimum brightness so geometry isn't completely black if both are 0.
+    // Sky exposure gates everything lit above (sun, moon, ambient, point lights); block
+    // light adds on top so it can light surfaces the sky leaves dark.
     // TODO: Implement proper light occlusion - blocks should prevent light from
     // reaching surfaces in crevices/caves (requires transparency checks in propagation)
-    let sky_ambient = vec3<f32>(in.sky_exposed);
-    let total_light = max(in.block_light_rgb, sky_ambient);
-    color = color * max(total_light, vec3<f32>(0.1));
+    let sky_gate = max(vec3<f32>(in.sky_exposed), vec3<f32>(MIN_SKY_AMBIENT));
+    color = color * sky_gate + final_albedo * ao * in.block_light_rgb * BLOCK_LIGHT_GAIN;
     
     // For dielectrics we computed `alpha` above; otherwise alpha is opaque.
     var out_alpha: f32 = 1.0;

@@ -147,6 +147,7 @@ impl FrameProcessor {
             &app.entities.chunks,
             app.scene.world_meshes_mut(),
             app.cut_face_material_idx,
+            &app.terrain_palette,
         );
     }
 
@@ -168,11 +169,12 @@ impl FrameProcessor {
             ];
             let loaded;
             (loaded, evicted) = streamer.update(ls.grid_mut(), player_pos);
+            // Light first, so the meshes the publishes below trigger read it.
+            ls.light_arrived_chunks(&loaded);
 
-            // Directly publish ChunkMeshDirty for every loaded chunk. The light
-            // system's emit_dirty_events only covers chunks that went through a
-            // light-processing job, so freshly placed terrain blocks would never
-            // reach the event processor otherwise.
+            // Directly publish ChunkMeshDirty for every loaded chunk: arrival only
+            // records chunks whose light or sky changed, and a new chunk needs its
+            // first mesh either way.
             //
             // Also re-mesh each new chunk's 6 face neighbors: when neighbor N
             // was previously meshed without this chunk present, it generated an
@@ -405,6 +407,8 @@ impl FrameProcessor {
             hotbar,
             equipped_tool_label,
             selected_slot: app.pawn.selected_slot,
+            view_height: crate::app::view_level::layer_extent(app)
+                .map(|extent| app.view_level.hud(extent)),
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
@@ -540,6 +544,64 @@ mod tests {
         assert!(
             app.entities.chunks.get(far).is_none(),
             "evicted chunk is dropped from the store"
+        );
+    }
+
+    #[test]
+    fn streamed_chunks_arrive_lit() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_position_yaw_pitch(glam::Vec3::new(8.0, 80.0, 8.0), 0.0, 0.0);
+        app.chunk_streamer = Some(crate::app::chunk_streamer::ChunkStreamer::new(
+            flagstone_game::scene_builders::TerrainConfig::default(),
+            flagstone_voxel::StreamingConfig {
+                load_radius_chunks: 0,
+                unload_radius_chunks: 1,
+                chunks_per_frame: 16,
+            },
+            "headless-test-streamed-lit",
+        ));
+        // Light left over from before the chunks' blocks existed, one voxel per layer.
+        let planted: Vec<glam::IVec3> = (0..=8)
+            .map(|layer| glam::IVec3::new(1, layer * 16 + 1, 1))
+            .collect();
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for pos in &planted {
+            grid.set_block_light_rgb(*pos, [9, 9, 9]);
+        }
+
+        FrameProcessor::new().update_chunk_streaming(&mut app);
+
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        let loaded: Vec<glam::IVec3> = grid.chunk_positions().collect();
+        assert!(!loaded.is_empty(), "the player's column is loaded");
+        for pos in planted {
+            if loaded.contains(&(pos >> 4)) {
+                assert_eq!(
+                    grid.block_light_rgb_at(pos),
+                    [0, 0, 0],
+                    "stale light at {pos}"
+                );
+            }
+        }
+        let open_air = (0..16)
+            .flat_map(|x| (0..16).map(move |z| (x, z)))
+            .filter_map(|(x, z)| grid.get_height(x, z).map(|h| glam::IVec3::new(x, h + 1, z)))
+            .find(|above| above.y.rem_euclid(16) != 0 && loaded.contains(&(*above >> 4)))
+            .expect("some loaded column has open air above its surface in the same chunk");
+        assert!(
+            grid.sky_exposed_at(open_air),
+            "air above terrain at {open_air} sees the sky"
+        );
+        let buried = open_air - glam::IVec3::Y;
+        assert!(
+            !grid.sky_exposed_at(buried),
+            "the surface block itself does not"
         );
     }
 
@@ -836,6 +898,73 @@ mod tests {
         let expected = reference.ui_frame([800, 600]).expect("playing paints");
 
         produced == expected
+    }
+
+    /// The overlay frame `update_hud_data` produces for `app`, and the frame painted from
+    /// the same world's HUD data with `view_height` in place of what the app reports.
+    fn hud_frames_with(
+        app: &mut App,
+        view_height: Option<flagstone_ui::overlays::ViewHeightHud>,
+    ) -> (moho_render_api::UiFrame, moho_render_api::UiFrame) {
+        use moho_render_api::UiFrameSource;
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::Isometric);
+        let clock = moho_app::GameClock::default();
+        let adapter = std::sync::Arc::new(std::sync::Mutex::new(hud_adapter()));
+        app.ui_adapter = Some(std::sync::Arc::clone(&adapter));
+        FrameProcessor::new().update_hud_data(app, &clock, Duration::from_secs_f32(DT));
+        let produced = adapter
+            .lock()
+            .unwrap()
+            .ui_frame([800, 600])
+            .expect("playing paints");
+
+        let pos = app.simulation.position();
+        let cp = lod_player_chunk(pos);
+        let mut reference = hud_adapter();
+        reference.update_hud_data(flagstone_ui::overlays::HudData {
+            player_position: [pos.x, pos.y, pos.z],
+            chunk_position: [cp.x, cp.y, cp.z],
+            camera_mode: "Isometric".to_string(),
+            is_fps_mode: false,
+            frame_time_secs: DT,
+            time_of_day: clock.time_of_day(),
+            camera_yaw: app.simulation.yaw_pitch().0,
+            equipped_tool_label: Some("Pickaxe".to_string()),
+            view_height,
+            ..Default::default()
+        });
+        let expected = reference.ui_frame([800, 600]).expect("playing paints");
+        (produced, expected)
+    }
+
+    #[test]
+    fn update_hud_data_carries_the_view_height() {
+        use crate::app::cut_caps::tests::ground_app;
+        use flagstone_ui::overlays::ViewHeightHud;
+        let cases = [(None, 32), (Some(27), 27), (Some(1), 1)];
+
+        for (chosen, level) in cases {
+            let mut app = ground_app();
+            crate::app::view_level::update(&mut app, chosen);
+            let shown = ViewHeightHud {
+                floor: 0,
+                top: 32,
+                level,
+            };
+
+            let (produced, expected) = hud_frames_with(&mut app, Some(shown));
+            let (_, without_slider) = hud_frames_with(&mut app, None);
+
+            assert!(
+                produced == expected,
+                "level {level}: not the slider's frame"
+            );
+            assert!(
+                produced != without_slider,
+                "level {level}: the HUD data carries no slider"
+            );
+        }
     }
 
     #[test]

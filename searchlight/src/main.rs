@@ -2,76 +2,59 @@
 
 use std::error::Error;
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use moho_app::{AppConfig, LoopConfig};
+use moho_core::content::{ContentError, ContentRoots, load_kind};
 use moho_core::prefs::Prefs;
 use moho_input::action_map::ActionMap;
+use moho_input::action_map::source_look_per_count;
 use moho_input::bindings::ActionBindings;
-use moho_physics::MoveSettings;
 use moho_ui_shell::UiShell;
 use searchlight::arena::{self, Arena};
-use searchlight::brain::EnemyTuning;
 use searchlight::console_commands;
 use searchlight::debug_settings::DebugSettings;
 use searchlight::game::{SearchlightGame, WINDOW_TITLE};
 use searchlight::mode::ArenaMode;
-use searchlight::sim::SimConfig;
+use searchlight::tuning::tuning;
 use searchlight::wave::WaveTuning;
-use searchlight::{TICK_HZ, prefs_path, split_console_binding};
-use searchlight_rules::{BodyPart, BodyProfile, Magazine, Rifle};
+use searchlight::{RIFLE_ID, TICK_HZ, content_root, prefs_path, split_console_binding};
+use searchlight_rules::RifleDef;
 
-/// Radians of turn per pixel of mouse motion.
-const LOOK_PER_PIXEL: f32 = 0.002;
-const MAGAZINE_CAPACITY: u32 = 30;
-const SPARE_MAGAZINES: usize = 3;
+/// Radians of turn per mouse count, at Source sensitivity 3.0.
+const LOOK_PER_PIXEL: f32 = source_look_per_count(3.0);
 
-fn tuning() -> Result<SimConfig, Box<dyn Error>> {
-    let full = Magazine::new(MAGAZINE_CAPACITY, MAGAZINE_CAPACITY)?;
-    Ok(SimConfig {
-        move_settings: MoveSettings {
-            max_speed: 6.0,
-            ground_accel: 80.0,
-            friction: 10.0,
-            stop_speed: 1.0,
-            air_accel: 20.0,
-            air_speed_cap: 1.0,
-            gravity: 18.0,
-            jump_speed: 6.5,
-        },
-        eye_height: 0.7,
-        range: 100.0,
-        damage: 30,
-        cooldown_ticks: 6,
-        reload_ticks: 120,
-        body: BodyProfile {
-            max_health: 100,
-            head_status: 30,
-            arm_status: 60,
-            leg_status: 60,
-        },
-        rifle: Rifle::loaded(full.clone()),
-        spares: vec![full; SPARE_MAGAZINES],
-        enemy: EnemyTuning::default(),
-        enemy_aim_at: BodyPart::Torso,
-    })
+/// Loads the rifle definition from the base content folder.
+fn load_rifle() -> Result<RifleDef, ContentError> {
+    let roots = ContentRoots::base(&content_root())?;
+    let weapons = load_kind::<RifleDef>(&roots, "weapons")?;
+    weapons.require(RIFLE_ID).cloned()
 }
 
 fn assets() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<ExitCode, Box<dyn Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+
+    let rifle = match load_rifle() {
+        Ok(rifle) => rifle,
+        Err(error) => {
+            tracing::error!(%error, "Content failed to load");
+            return Ok(ExitCode::FAILURE);
+        }
+    };
 
     let arena_path = std::env::args_os()
         .nth(1)
         .map_or_else(|| assets().join("arena.glb"), PathBuf::from);
     let (level, markers) = arena::load(&arena_path)?;
     let arena = Arc::new(Arena::from_level(&level, &markers)?);
-    let mode = ArenaMode::new(arena.clone(), tuning()?, WaveTuning::default());
+    let mode = ArenaMode::new(arena.clone(), tuning(&rifle)?, WaveTuning::default());
     let (prefs, prefs_warnings) = Prefs::load_from(&prefs_path());
     for warning in prefs_warnings {
         tracing::warn!(%warning, "Preferences load fallback");
@@ -100,5 +83,5 @@ fn main() -> Result<(), Box<dyn Error>> {
             init_audio: true,
         },
     )?;
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }

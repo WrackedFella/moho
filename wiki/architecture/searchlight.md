@@ -1,6 +1,6 @@
 # Searchlight
 
-**Source:** `searchlight/src/`, `moho_level/src/nav.rs`, `searchlight/assets/`, `moho_ui_shell/src/`.
+**Source:** `searchlight/src/`, `moho_level/src/nav.rs`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
 **Decisions:** [ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md),
 [ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md),
 [ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md).
@@ -8,13 +8,14 @@
 `searchlight` is the FPS line's engine adapter: a library and the `searchlight` binary. Rules
 (`Rifle`, `Magazine`, `Body`, `BodyProfile`) come from `searchlight_rules`; windowing, loop,
 physics, level loading, input, audio and rendering come from engine crates. It depends on no
-strategy crate ([overview](overview.md#lines-and-rules)).
+strategy crate ([overview](overview.md#2-lines-and-rules)).
 
-## Layers
+## 1 Layers
 
 ```mermaid
 flowchart LR
-    main["main.rs<br/>tuning, wiring"] --> game["game.rs<br/>SearchlightGame: Game impl"]
+    main["main.rs<br/>content load, wiring"] --> tuning["tuning.rs<br/>SimConfig"]
+    main --> game["game.rs<br/>SearchlightGame: Game impl"]
     game --> mode["mode.rs<br/>ArenaMode"]
     mode --> wave["wave.rs<br/>WaveTuning, WaveState"]
     mode --> sim["sim.rs<br/>SearchlightSim"]
@@ -31,6 +32,7 @@ flowchart LR
 | Module | Role |
 |---|---|
 | `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes, spawns, route, cover points, `nav`) and builds the world colliders; `Arena::from_level` also builds the `NavMesh` for `nav_profile` (the player-sized capsule plus clearance) and fails with `ArenaError::Nav` when that fails |
+| `tuning` | `tuning(&RifleDef)`: builds the `SimConfig`, taking the rifle's numbers from the definition |
 | `input` | `SearchlightAction` set and default bindings; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on Enter) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }` or `Player(part)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld` |
@@ -46,10 +48,12 @@ flowchart LR
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
-(`drain_feedback`) and reacts. `TICK_HZ` is 60. Tuning values (speeds, damage, cooldown,
-magazine size, body profile, `EnemyTuning`, the player part enemies aim at) live in `main.rs` as a `SimConfig`.
+(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, range, magazine size) load from
+`content/weapons.toml` at start ([content format](../reference/content-format.md)); a load failure
+exits the binary. `tuning::tuning` combines them with the numbers still set in code (speeds, body
+profile, `EnemyTuning`, the player part enemies aim at) as a `SimConfig`.
 
-## Console
+## 2 Console
 
 `SearchlightGame` owns a `moho_ui_shell::UiShell` behind an `Arc<Mutex<_>>` and composes it with the
 crosshair through `UiLayers` as the renderer's one UI source. Every key and button goes to the
@@ -61,6 +65,11 @@ frame through `apply_engine_command`, which reaches the renderer (`RendererBacke
 through `FrameContext`; with neither present the command is dropped. Console commands are hidden debug commands
 ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
 
+The shell can also draw game text (searchlight does not use it yet): `UiShell::set_texts(Vec<ScreenText>)`
+replaces the anchored lines the next `ui_frame` paints under the console, and that frame clears them, so a
+game sets its full text every `Game::frame`. A frame the renderer skips leaves no stale text. Use a few
+fixed sizes; each new size grows the font atlas.
+
 Game commands (`tgm [0|1]`) queue as `ConsoleCommand` on the console. `SearchlightGame` drains them
 at the start of each `command()` sample (`apply_console_commands`), applies them in order, saves
 a changed value through `DebugSettings` (a failed save is logged, not fatal) and echoes a bare
@@ -69,7 +78,7 @@ and carried on every tick as `SearchlightCommand::god_mode`. While on, enemy hit
 `Feedback::PlayerHit` but do not damage the player's `Body`; it does not revive a dead player.
 The title status line appends `GOD MODE` (`hud::god_mode_text`).
 
-## Tick
+## 3 Tick
 
 `SearchlightSim::tick(command, dt)` lets the enemies perceive and move, moves the player character,
 steps the physics world, applies weapon actions, then resolves the shots the enemies decided
@@ -81,7 +90,7 @@ enemies. `SearchlightSim::new` builds one with dummies only. A sim started from 
 `Arena` and `SimConfig`; once the player is dead, `tick` reads only `SearchlightCommand::restart` and
 rebuilds the sim from them.
 
-## Waves
+## 4 Waves
 
 `ArenaMode::new(arena, config, waves)` builds the sim with `Start::Empty` (`SearchlightSim::with_start`):
 dummies and the player stand, enemy markers are remembered but unoccupied. Each
@@ -93,7 +102,7 @@ none alive. Spawned enemies take the next target number after the dummies; the d
 Nothing spawns while the player is dead; the restart rebuilds the sim empty and begins wave 1
 with no score. `SearchlightGame` reads `wave()` and `score()` for the HUD.
 
-## Enemies
+## 5 Enemies
 
 Each tick an enemy casts a sight ray from its eye to the player's aim point (the part chosen
 by `SimConfig::enemy_aim_at`) and sets `Percept::target` only when that ray strikes a
@@ -120,7 +129,7 @@ position. With no path (the position is off the mesh or unreachable) the enemy r
 at once. Sight and shot rays are not affected by the navmesh. Enemy shots use the shot path below; a hit on the player emits
 `Feedback::PlayerHit`, and a dead player emits `Feedback::PlayerDied`.
 
-## Shot path
+## 6 Shot path
 
 Player and enemy shots go through one route:
 
@@ -135,7 +144,7 @@ Tag encoding: `0` is `World`; a `Part` is `1 + ((target << 3) | part_index)`, wi
 (`dummy_hit_volumes`), one per `BodyPart`, tagged with the target number; the player carries the
 same boxes tagged `Player` (`player_hit_volumes`).
 
-## Arena contract
+## 7 Arena contract
 
 Markers are node names in the glTF file. `player_spawn` is required and unique; at least one
 `dummy_NN` is required; `enemy_spawn_NN` and `cover_NN` are optional (cover points feed `Arena::covers`; without them hurt enemies stand and fight; full-height `screen_NN` walls are plain geometry with no marker). `waypoint_NN` is optional

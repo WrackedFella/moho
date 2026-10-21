@@ -28,7 +28,7 @@ flowchart LR
 | `with_history(true, n)` | Records `Debug` strings. ~4.9× per-publish cost; off by default. |
 
 `InputDispatcher` uses the **opposite** priority convention (higher first). See
-[input](input-and-state.md#input-routing).
+[input](input-and-state.md#1-input-routing).
 
 ## The channel hand-off
 
@@ -53,7 +53,7 @@ sequenceDiagram
 ```
 
 Cascading effects (event A causes event B) therefore resolve on a later drain, never
-inside a handler. Drain order is fixed: [frame-loop](frame-loop.md#event-drain).
+inside a handler. Drain order is fixed: [frame-loop](frame-loop.md#3-event-drain).
 
 ## Event families
 

@@ -35,6 +35,7 @@ cargo run -p searchlight           # the FPS prototype
   don't auto-close issues there. The feature's issue names its integration branch,
   which is deleted once that PR merges. Current: none.
 - **Project board:** WrackedFella, project 1 (https://github.com/users/WrackedFella/projects/1).
+  **Board header:** yes (the Board sync `Fields` job applies it).
   The board and issue are the only record of item state; nothing in `_todo/` mirrors
   them. Agents change the board only through devflow's `scripts/board`.
 - **The issue is the record of an item.** When scope changes, edit the issue body;
@@ -46,7 +47,7 @@ cargo run -p searchlight           # the FPS prototype
 - **Environment setup command:** `bash scripts/cloud-tools.sh` (cloud threads only;
   text-only threads skip it).
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
-- **Domain-logic paths** (gate class `domain`): rules in `flagstone_game`, `moho_core`, `flagstone_voxel`, `searchlight_rules`.
+- **Domain-logic paths** (gate class `domain`): rules in `flagstone_game`, `moho_core`, `flagstone_voxel`, `searchlight_rules`, and the movement step in `moho_physics` (ADR-0014).
   Adapters, UI wiring and config are glue.
 - **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
   `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing

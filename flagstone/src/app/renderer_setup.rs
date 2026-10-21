@@ -30,41 +30,12 @@ pub fn init_renderer_and_ui(
     renderer.set_shadow_quality(app.prefs.shadow_quality() as u8);
     renderer.set_ssao_quality(app.prefs.ssao_quality() as u8);
 
-    // Create sphere mesh data using the proper sphere geometry
     let (vertices, normals, indices) = flagstone_game::actors::Sphere::unit_sphere_indexed(16, 16);
-    let ao_data = vec![1.0; vertices.len()]; // Full brightness for non-voxel geometry
-    let geo_type = vec![1; vertices.len()]; // Type 1 (blocky/non-voxel)
-    let light_level = vec![1.0; vertices.len()]; // Full light for non-voxel geometry
-    let block_light_rgb = vec![[1.0, 1.0, 1.0]; vertices.len()]; // Full white, non-voxel
-    let sky_exposed = vec![1.0; vertices.len()]; // Fully sky-exposed, non-voxel
-    let mesh_handle = renderer.register_indexed_mesh(
-        &vertices,
-        &normals,
-        &ao_data,
-        &geo_type,
-        &light_level,
-        &block_light_rgb,
-        &sky_exposed,
-        &indices,
-    );
-
+    let mesh_handle = register_entity_mesh(renderer, &vertices, &normals, &indices);
     let (cube_vertices, cube_normals, cube_indices) =
         flagstone_game::actors::Cube::unit_cube_indexed();
-    let cube_ao = vec![1.0; cube_vertices.len()];
-    let cube_geo_type = vec![1; cube_vertices.len()];
-    let cube_light_level = vec![1.0; cube_vertices.len()];
-    let cube_block_light_rgb = vec![[1.0, 1.0, 1.0]; cube_vertices.len()];
-    let cube_sky_exposed = vec![1.0; cube_vertices.len()];
-    let cube_mesh_handle = renderer.register_indexed_mesh(
-        &cube_vertices,
-        &cube_normals,
-        &cube_ao,
-        &cube_geo_type,
-        &cube_light_level,
-        &cube_block_light_rgb,
-        &cube_sky_exposed,
-        &cube_indices,
-    );
+    let cube_mesh_handle =
+        register_entity_mesh(renderer, &cube_vertices, &cube_normals, &cube_indices);
 
     // UI setup
     {
@@ -96,7 +67,8 @@ pub fn init_renderer_and_ui(
 
         // Register UI adapter as a normal UI subscriber.
         // Menus and the console get every event. During gameplay egui only tracks the
-        // pointer and takes a press that lands on a panel.
+        // pointer and mouse buttons (so HUD widgets can be dragged) and takes a press that
+        // lands on a panel.
         let ui_adapter_clone = ui_adapter.clone();
         app.dispatcher
             .register(100, move |event: &winit::event::WindowEvent| {
@@ -218,6 +190,28 @@ pub fn init_renderer_and_ui(
     app.cube_mesh_handle = cube_mesh_handle;
 }
 
+/// Registers a non-voxel entity mesh: no vertex AO, blocky shading, full sky exposure
+/// and no block light, so it draws under sun and ambient alone.
+fn register_entity_mesh(
+    renderer: &mut dyn moho_renderer::RendererBackend,
+    vertices: &[[f32; 3]],
+    normals: &[[f32; 3]],
+    indices: &[u32],
+) -> u32 {
+    let n = vertices.len();
+    renderer.register_indexed_mesh(
+        vertices,
+        normals,
+        &vec![1.0; n],
+        &vec![1; n],
+        &vec![1.0; n],
+        &vec![[0.0; 3]; n],
+        &vec![1.0; n],
+        &[],
+        indices,
+    )
+}
+
 pub fn apply_video_settings(prefs: &moho_core::prefs::Prefs, window: &Window) {
     use moho_core::prefs::WindowMode;
     use winit::dpi::PhysicalSize;
@@ -231,5 +225,97 @@ pub fn apply_video_settings(prefs: &moho_core::prefs::Prefs, window: &Window) {
             let (w, h) = prefs.window_resolution();
             let _ = window.request_inner_size(PhysicalSize::new(w, h));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::register_entity_mesh;
+    use moho_renderer::{FrameError, InstanceGpu, LightingGpu, MaterialGpu, RendererBackend};
+
+    /// Records the per-vertex channels of each indexed-mesh registration.
+    #[derive(Default)]
+    struct ChannelRecorder {
+        meshes: Vec<RecordedMesh>,
+    }
+
+    struct RecordedMesh {
+        vertex_count: usize,
+        ao: Vec<f32>,
+        block_light_rgb: Vec<[f32; 3]>,
+        sky_exposed: Vec<f32>,
+    }
+
+    impl RendererBackend for ChannelRecorder {
+        fn resize(&mut self, _width: u32, _height: u32) {}
+        fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+            unreachable!("entity meshes are indexed")
+        }
+        fn register_indexed_mesh(
+            &mut self,
+            vertices: &[[f32; 3]],
+            _normals: &[[f32; 3]],
+            ao: &[f32],
+            _geometry_type: &[u32],
+            _light_level: &[f32],
+            block_light_rgb: &[[f32; 3]],
+            sky_exposed: &[f32],
+            _material: &[u32],
+            _indices: &[u32],
+        ) -> u32 {
+            self.meshes.push(RecordedMesh {
+                vertex_count: vertices.len(),
+                ao: ao.to_vec(),
+                block_light_rgb: block_light_rgb.to_vec(),
+                sky_exposed: sky_exposed.to_vec(),
+            });
+            u32::try_from(self.meshes.len()).expect("few meshes")
+        }
+        fn unregister_mesh(&mut self, _mesh: u32) {}
+        fn begin_frame(
+            &mut self,
+            _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+        ) -> Result<(), FrameError> {
+            Ok(())
+        }
+        fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
+        fn submit_frame(&mut self) {}
+        fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
+        fn update_lighting(&mut self, _lighting: LightingGpu) {}
+        fn add_point_light(
+            &mut self,
+            _position: glam::Vec3,
+            _color: glam::Vec3,
+            _intensity: f32,
+            _range: f32,
+        ) -> u32 {
+            0
+        }
+        fn remove_light(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
+        fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_ssao_quality(&mut self, _quality: u8) {}
+    }
+
+    /// Block light adds to surface colour, so an entity carrying any would draw
+    /// brighter than the sun and ambient light it.
+    #[test]
+    fn entity_meshes_carry_no_block_light_and_full_sky() {
+        let (vertices, normals, indices) = flagstone_game::actors::Cube::unit_cube_indexed();
+        let mut renderer = ChannelRecorder::default();
+
+        let handle = register_entity_mesh(&mut renderer, &vertices, &normals, &indices);
+
+        assert_eq!(handle, 1);
+        let [mesh] = renderer.meshes.as_slice() else {
+            panic!("one registration, got {}", renderer.meshes.len());
+        };
+        assert_eq!(mesh.vertex_count, vertices.len());
+        assert_eq!(mesh.block_light_rgb, vec![[0.0; 3]; vertices.len()]);
+        assert_eq!(mesh.sky_exposed, vec![1.0; vertices.len()]);
+        assert_eq!(mesh.ao, vec![1.0; vertices.len()]);
     }
 }

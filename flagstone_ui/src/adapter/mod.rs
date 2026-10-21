@@ -229,26 +229,18 @@ impl EguiAdapter {
 
     /// Handles a window event while no menu is visible (gameplay).
     ///
-    /// With a free cursor, pointer motion feeds egui so it knows what is under the pointer,
-    /// and a mouse press that lands on a panel is returned as true, which the game must not
-    /// see. With a grabbed cursor nothing is fed or consumed: the pointer is hidden, so
-    /// panels cannot be aimed at.
+    /// With a free cursor, pointer motion and mouse buttons feed egui, so it knows what is
+    /// under the pointer and widgets can be dragged; a mouse press that lands on a panel is
+    /// returned as true, which the game must not see. With a grabbed cursor only a mouse
+    /// release is fed, so egui never holds a button pressed before the grab; nothing is
+    /// consumed: the pointer is hidden, so panels cannot be aimed at.
     pub fn handle_gameplay_event(&mut self, event: &WindowEvent) -> bool {
         let cursor_free = self.cursor_free();
-        if !cursor_free {
-            return false;
+        let input = GameplayInput::from(event);
+        if feeds_egui(input, cursor_free) {
+            self.handle_winit_event(event);
         }
-        match event {
-            WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } => {
-                self.handle_winit_event(event);
-                false
-            }
-            WindowEvent::MouseInput {
-                state: winit::event::ElementState::Pressed,
-                ..
-            } => press_consumed(self.pointer_over_ui(), cursor_free),
-            _ => false,
-        }
+        input == GameplayInput::Press && press_consumed(self.pointer_over_ui(), cursor_free)
     }
 
     /// Return true if the active menu/screen captures raw input events.
@@ -341,10 +333,15 @@ impl EguiAdapter {
         self.ui_state.overlay_manager.update_data(data);
     }
 
+    /// What the player asked for through the HUD since the last call.
+    pub fn take_hud_intents(&mut self) -> crate::overlays::HudIntents {
+        self.ui_state.overlay_manager.take_intents()
+    }
+
     /// Routes one key or button through the console before egui sees it.
     pub fn on_key(
         &mut self,
-        input: moho_input::bindings::Binding,
+        input: moho_input::bindings::Input,
         pressed: bool,
         repeat: bool,
     ) -> moho_ui_shell::Routing {
@@ -483,6 +480,46 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
     }
 }
 
+/// The kinds of window event `feeds_egui` tells apart. winit builds its events from a device
+/// id that tests cannot construct under `unsafe_code = "deny"`, so the rule sits on the kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameplayInput {
+    Press,
+    Release,
+    /// The pointer moves or leaves the window.
+    Motion,
+    /// Anything else, keyboard included.
+    Other,
+}
+
+/// Whether egui is given a window event during gameplay: pointer motion and buttons with a
+/// free cursor, and a release always, so a press on a widget followed by a cursor grab
+/// does not leave egui holding the button.
+pub fn feeds_egui(input: GameplayInput, cursor_free: bool) -> bool {
+    match input {
+        GameplayInput::Release => true,
+        GameplayInput::Press | GameplayInput::Motion => cursor_free,
+        GameplayInput::Other => false,
+    }
+}
+
+impl From<&WindowEvent> for GameplayInput {
+    fn from(event: &WindowEvent) -> Self {
+        match event {
+            WindowEvent::MouseInput {
+                state: winit::event::ElementState::Pressed,
+                ..
+            } => Self::Press,
+            WindowEvent::MouseInput {
+                state: winit::event::ElementState::Released,
+                ..
+            } => Self::Release,
+            WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } => Self::Motion,
+            _ => Self::Other,
+        }
+    }
+}
+
 /// Whether a mouse press is taken by the UI: it lands on a panel and the cursor is free.
 fn press_consumed(pointer_over_ui: bool, cursor_free: bool) -> bool {
     pointer_over_ui && cursor_free
@@ -569,6 +606,65 @@ mod tests {
         gameplay_frame_with_pointer_at(&mut adapter, egui::pos2(100.0, 300.0));
 
         assert!(!adapter.pointer_over_ui());
+    }
+
+    #[test]
+    fn press_over_the_view_height_slider_is_consumed() {
+        use crate::overlays::test_support::{input, run_ui, second_frame, small_rect_centers};
+        use crate::overlays::{HudData, Overlay, RtsHud, ViewHeightHud};
+        let data = |view_height| HudData {
+            is_fps_mode: false,
+            view_height,
+            ..Default::default()
+        };
+        let slider = Some(ViewHeightHud {
+            floor: 0,
+            top: 144,
+            level: 100,
+        });
+        let mut hud = RtsHud::new();
+        let handle = small_rect_centers(
+            &second_frame(&egui::Context::default(), |ui| {
+                hud.render(ui, &data(slider));
+            }),
+            20.0,
+        )
+        .first()
+        .copied()
+        .expect("the slider draws its handle");
+        let mut adapter = adapter();
+        adapter.set_game_state(GameState::Playing);
+        adapter.update_hud_data(data(slider));
+
+        for events in [Vec::new(), vec![egui::Event::PointerMoved(handle)]] {
+            let _ = run_ui(&adapter.context, input(events), |ui| {
+                rendering::render_game_state(ui, &mut adapter.ui_state, GameState::Playing);
+            });
+        }
+
+        assert!(adapter.pointer_over_ui());
+    }
+
+    #[test]
+    fn pointer_input_reaches_egui_with_a_free_cursor_and_a_release_always_does() {
+        let rows = [
+            (GameplayInput::Press, true, true),
+            (GameplayInput::Release, true, true),
+            (GameplayInput::Motion, true, true),
+            (GameplayInput::Other, true, false),
+            (GameplayInput::Press, false, false),
+            (GameplayInput::Release, false, true),
+            (GameplayInput::Motion, false, false),
+            (GameplayInput::Other, false, false),
+        ];
+
+        for (input, cursor_free, fed) in rows {
+            assert_eq!(
+                feeds_egui(input, cursor_free),
+                fed,
+                "{input:?}, cursor_free {cursor_free}"
+            );
+        }
     }
 
     #[test]
@@ -709,7 +805,7 @@ mod tests {
             .expect("the settings screen is registered");
         assert_eq!(
             menu.get_staged_binding(0).first(),
-            Some(&Binding::Key(Key::Q))
+            Some(&Binding::key(Key::Q))
         );
         menu.apply_staged_changes().unwrap();
         let saved = Prefs::load_from(&path).0;

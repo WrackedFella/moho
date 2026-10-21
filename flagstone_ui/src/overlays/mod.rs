@@ -23,7 +23,7 @@ pub use chunk_debug::ChunkDebugOverlay;
 pub use debug_hud::DebugHud;
 pub use fps_hud::FpsHud;
 pub use gameplay_hud::GameplayHud;
-pub use overlay_manager::{HudData, Overlay, OverlayManager};
+pub use overlay_manager::{HudData, HudIntents, Overlay, OverlayManager, ViewHeightHud};
 pub use rts_hud::RtsHud;
 
 #[cfg(test)]
@@ -111,6 +111,31 @@ pub(crate) mod test_support {
         let mut out = Vec::new();
         for clipped in &output.shapes {
             collect_lines(&clipped.shape, &mut out);
+        }
+        out
+    }
+
+    fn collect_small_rects(shape: &Shape, max_side: f32, out: &mut Vec<egui::Pos2>) {
+        match shape {
+            Shape::Rect(rect) => {
+                let size = rect.rect.size();
+                if size.x < max_side && size.y < max_side {
+                    out.push(rect.rect.center());
+                }
+            }
+            Shape::Vec(shapes) => shapes
+                .iter()
+                .for_each(|s| collect_small_rects(s, max_side, out)),
+            _ => {}
+        }
+    }
+
+    /// Centre of every rectangle drawn with both sides under `max_side`. A slider's handle is
+    /// the one such shape in the strategy HUD at 20 px, its rail and boxes being longer.
+    pub(crate) fn small_rect_centers(output: &egui::FullOutput, max_side: f32) -> Vec<egui::Pos2> {
+        let mut out = Vec::new();
+        for clipped in &output.shapes {
+            collect_small_rects(&clipped.shape, max_side, &mut out);
         }
         out
     }

@@ -11,6 +11,7 @@ use crate::{App, RenderRequest};
 use flagstone_voxel::{BlockChangeReason, VoxelChunk, WorldEvent};
 use moho_core::events::{GraphicsEvent, UiEvent};
 use moho_render_api::{Marker, MarkerId};
+use std::collections::HashSet;
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
@@ -279,28 +280,38 @@ impl EventProcessor {
         }
     }
 
-    /// Process all pending world events (chunk updates, etc.)
+    /// Process all pending world events: every one reaches the light system,
+    /// then each chunk marked dirty is re-meshed once however many events named it.
     pub fn process_world_events(&self, app: &mut App) {
+        let mut dirty_chunks: HashSet<glam::IVec3> = HashSet::new();
         while let Ok(event) = app.world_event_rx.try_recv() {
+            if let Some(light_system) = app.light_system.as_mut() {
+                light_system.handle_event(&event);
+            }
             if let WorldEvent::ChunkMeshDirty { chunk_pos, .. } = event {
-                // Regenerate chunk mesh
-                // We need to scope the borrow of light_system so we can access world later
-                let player_chunk = lod_player_chunk(app.simulation.position());
-                let lod = lod_for_chunk(chunk_pos, player_chunk);
-                let new_chunk = if let Some(light_system) = &app.light_system {
-                    let grid = light_system.grid();
-                    Some(VoxelChunk::from_grid_lod(grid, chunk_pos, lod))
-                } else {
-                    None
-                };
+                dirty_chunks.insert(chunk_pos);
+            }
+        }
 
-                if let Some(chunk) = new_chunk {
-                    if crate::app::world_geometry::insert_chunk(app, chunk).is_some() {
-                        tracing::trace!(chunk = ?chunk_pos, "Updated mesh for chunk");
-                    } else {
-                        tracing::trace!(chunk = ?chunk_pos, "Created new mesh for chunk");
-                    }
-                }
+        let Some(light_system) = &app.light_system else {
+            return;
+        };
+        let player_chunk = lod_player_chunk(app.simulation.position());
+        let chunks: Vec<(glam::IVec3, VoxelChunk)> = dirty_chunks
+            .into_iter()
+            .map(|chunk_pos| {
+                let lod = lod_for_chunk(chunk_pos, player_chunk);
+                (
+                    chunk_pos,
+                    VoxelChunk::from_grid_lod(light_system.grid(), chunk_pos, lod),
+                )
+            })
+            .collect();
+        for (chunk_pos, chunk) in chunks {
+            if crate::app::world_geometry::insert_chunk(app, chunk).is_some() {
+                tracing::trace!(chunk = ?chunk_pos, "Updated mesh for chunk");
+            } else {
+                tracing::trace!(chunk = ?chunk_pos, "Created new mesh for chunk");
             }
         }
     }
@@ -754,6 +765,146 @@ mod tests {
     }
 
     #[test]
+    fn mined_block_queues_a_light_job_at_its_position() {
+        let mut app = App::headless();
+        app.game_state = crate::game_state::GameState::Playing;
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
+        app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+        app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for x in 2..=6 {
+            for y in 68..=72 {
+                for z in 1..=3 {
+                    grid.mutator()
+                        .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                }
+            }
+        }
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&removed);
+        app.event_bus.subscribe(move |e: &WorldEvent| {
+            if let WorldEvent::BlockRemoved { position, .. } = e {
+                sink.lock().unwrap().push(*position);
+            }
+        });
+        let processor = EventProcessor::new();
+        processor.handle_input_event(&mut app, InputEvent::MineRequested);
+        let mined = removed.lock().unwrap()[0];
+        // Light left behind by the mined block: only a job at that position clears it.
+        let light_system = app.light_system.as_mut().expect("light system");
+        light_system
+            .grid_mut()
+            .set_block_light_rgb(mined, [10, 0, 0]);
+        assert_eq!(
+            light_system.pending_jobs(),
+            0,
+            "nothing queued before routing"
+        );
+
+        processor.process_world_events(&mut app);
+
+        let light_system = app.light_system.as_mut().expect("light system");
+        assert_eq!(light_system.pending_jobs(), 1, "one job for the one block");
+        assert_eq!(light_system.process_frame(), 1);
+        assert_eq!(
+            light_system.grid().block_light_rgb_at(mined),
+            [0, 0, 0],
+            "the job ran at the mined position"
+        );
+        assert!(
+            light_system.emit_dirty_events() > 0,
+            "the cleared light dirties its chunk"
+        );
+    }
+
+    #[test]
+    fn placed_and_batch_modified_events_reach_the_light_system() {
+        let mut app = App::headless();
+        let placed_at = flagstone_voxel::BlockPos::new(3, 70, 3);
+        let batch = [
+            flagstone_voxel::BlockPos::new(20, 70, 3),
+            flagstone_voxel::BlockPos::new(21, 70, 3),
+            flagstone_voxel::BlockPos::new(40, 70, 3),
+        ];
+        let light_system = app.light_system.as_mut().expect("light system");
+        let grid = light_system.grid_mut();
+        for pos in &batch[..2] {
+            grid.mutator().place(*pos, 1, None);
+        }
+        for pos in [placed_at, batch[0], batch[1], batch[2]] {
+            grid.set_block_light_rgb(pos, [10, 0, 0]);
+        }
+        let _ = app.world_event_rx.try_iter().count();
+        app.event_bus.publish(WorldEvent::BlockPlaced {
+            position: placed_at,
+            material_id: 1,
+            reason: BlockChangeReason::Player,
+        });
+        app.event_bus.publish(WorldEvent::BlocksBatchModified {
+            chunk_pos: glam::IVec3::new(1, 4, 0),
+            positions: batch.to_vec(),
+            reason: BlockChangeReason::Explosion,
+        });
+
+        EventProcessor::new().process_world_events(&mut app);
+
+        let light_system = app.light_system.as_mut().expect("light system");
+        assert_eq!(
+            light_system.pending_jobs(),
+            3,
+            "one for the opaque placement, one per batched block, none for the empty position"
+        );
+        assert_eq!(light_system.process_frame(), 3);
+        let grid = light_system.grid();
+        for pos in [placed_at, batch[0], batch[1]] {
+            assert_eq!(grid.block_light_rgb_at(pos), [0, 0, 0], "{pos} cleared");
+        }
+        assert_eq!(grid.block_light_rgb_at(batch[2]), [10, 0, 0]);
+    }
+
+    #[test]
+    fn duplicate_mesh_dirty_events_mesh_a_chunk_once() {
+        let chunk_pos = glam::IVec3::new(0, 4, 0);
+        let meshed_collider = |dirty_flags: &[(bool, bool)]| {
+            let mut app = App::headless();
+            app.light_system
+                .as_mut()
+                .expect("App starts with a light system")
+                .grid_mut()
+                .mutator()
+                .place(flagstone_voxel::BlockPos::new(3, 70, 3), 1, None);
+            for &(terrain_dirty, structure_dirty) in dirty_flags {
+                app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+                    chunk_pos,
+                    terrain_dirty,
+                    structure_dirty,
+                });
+            }
+
+            EventProcessor::new().process_world_events(&mut app);
+
+            let id = crate::app::world_geometry::chunk_mesh_id(chunk_pos);
+            app.physics
+                .world
+                .as_ref()
+                .expect("physics world")
+                .world_mesh_collider(id)
+                .expect("the chunk is meshed")
+        };
+
+        let once = meshed_collider(&[(true, false)]);
+        let thrice = meshed_collider(&[(true, false), (false, true), (true, true)]);
+
+        // Each meshing replaces the collider, so a repeat would hand out a newer handle.
+        assert_eq!(thrice, once, "the chunk was meshed once, not three times");
+    }
+
+    #[test]
     fn mine_request_while_playing_outside_first_person_leaves_aimed_block() {
         let mut app = App::headless();
         app.game_state = crate::game_state::GameState::Playing;
@@ -958,8 +1109,8 @@ mod tests {
             on_disk.bindings().get("move_forward")
         );
         assert_eq!(app.prefs.shadow_quality(), 1);
-        assert!(forward_keys(&app).contains(&Binding::Key(Key::Q)));
-        assert!(!forward_keys(&app).contains(&Binding::Key(Key::W)));
+        assert!(forward_keys(&app).contains(&Binding::key(Key::Q)));
+        assert!(!forward_keys(&app).contains(&Binding::key(Key::W)));
     }
 
     #[test]
@@ -978,8 +1129,8 @@ mod tests {
         ));
 
         let keys = forward_keys(&restarted);
-        assert!(keys.contains(&Binding::Key(Key::Q)), "bindings: {keys:?}");
-        assert!(!keys.contains(&Binding::Key(Key::W)), "bindings: {keys:?}");
+        assert!(keys.contains(&Binding::key(Key::Q)), "bindings: {keys:?}");
+        assert!(!keys.contains(&Binding::key(Key::W)), "bindings: {keys:?}");
         assert_eq!(restarted.prefs.shadow_quality(), 1);
     }
 
@@ -988,17 +1139,60 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = prefs_file(&dir);
         let mut app = headless_saving_to(&path);
-        assert!(forward_keys(&app).contains(&Binding::Key(Key::W)));
+        assert!(forward_keys(&app).contains(&Binding::key(Key::W)));
         let mut adopted = Prefs::default();
         forward_bound_to_q(&mut adopted);
 
         app.adopt_settings(adopted.clone());
 
         let keys = forward_keys(&app);
-        assert!(keys.contains(&Binding::Key(Key::Q)), "bindings: {keys:?}");
-        assert!(!keys.contains(&Binding::Key(Key::W)), "bindings: {keys:?}");
+        assert!(keys.contains(&Binding::key(Key::Q)), "bindings: {keys:?}");
+        assert!(!keys.contains(&Binding::key(Key::W)), "bindings: {keys:?}");
         assert_eq!(app.prefs, adopted);
         assert!(!path.exists(), "adopting does not write the file");
+    }
+
+    fn look_after_mouse_up(app: &mut App) -> (f32, f32) {
+        app.input.actions.mouse_motion(100.0, -100.0);
+        app.input
+            .actions
+            .sample_frame(std::time::Duration::from_millis(16));
+        app.input.actions.end_tick().look()
+    }
+
+    #[test]
+    fn adopted_sensitivity_and_invert_apply_to_the_next_motion() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = prefs_file(&dir);
+        let mut app = headless_saving_to(&path);
+        let before = look_after_mouse_up(&mut app);
+        assert!(before.1 < 0.0, "mouse up pitches up by default: {before:?}");
+        let saved = Prefs::default()
+            .with_mouse_sensitivity(1.8)
+            .with_invert_mouse_y(true);
+        saved.save_to(&path).unwrap();
+
+        app.adopt_settings(saved);
+        let after = look_after_mouse_up(&mut app);
+
+        let per_count = moho_input::action_map::source_look_per_count(1.8);
+        assert!((after.0 - 100.0 * per_count).abs() < 1e-5, "yaw {after:?}");
+        assert!(
+            (after.1 - 100.0 * per_count).abs() < 1e-5,
+            "pitch {after:?}"
+        );
+
+        let restarted_prefs = Prefs::load_from(&path).0;
+        assert_eq!(restarted_prefs.mouse_sensitivity(), 1.8);
+        assert!(restarted_prefs.invert_mouse_y());
+        let mut restarted = App::from_config(crate::app::config::AppConfig::from_prefs_struct(
+            restarted_prefs,
+        ));
+        let again = look_after_mouse_up(&mut restarted);
+        assert!(
+            (again.1 - 100.0 * per_count).abs() < 1e-5,
+            "restart {again:?}"
+        );
     }
 
     #[test]

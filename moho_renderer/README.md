@@ -2,7 +2,7 @@
 
 Backend-agnostic 3D renderer for the Moho engine. Provides instance-based mesh rendering, cascaded shadow mapping, dynamic lighting, and skybox rendering using wgpu.
 
-## Features
+## 1 Features
 
 - **Instance Rendering** - Efficient batched rendering of multiple instances per mesh
 - **Custom Mesh Support** - Register arbitrary vertex/index buffers
@@ -12,7 +12,7 @@ Backend-agnostic 3D renderer for the Moho engine. Provides instance-based mesh r
 - **Material System** - PBR-style materials with transparency support
 - **Scene Serialization** - Save/load scene data to disk
 
-## Architecture
+## 2 Architecture
 
 The renderer is built with a clean separation between scene data and GPU backend:
 
@@ -21,7 +21,7 @@ The renderer is built with a clean separation between scene data and GPU backend
 - **`MaterialTable`** - Material management with deduplication
 - **`ShadowSystem`** - Cascaded shadow map generation and management
 
-### Rendering Pipeline
+### 2.1 Rendering Pipeline
 
 The frame rendering workflow is organized into three phases:
 
@@ -45,9 +45,9 @@ The frame rendering workflow is organized into three phases:
 
 > **Note**: The phase names (blocking, principal photography, compositing) are inspired by film production workflow to help organize the mental model. All code uses standard graphics terminology.
 
-## Quick Start
+## 3 Quick Start
 
-### Creating a Renderer
+### 3.1 Creating a Renderer
 
 ```rust
 use moho_renderer::create_renderer;
@@ -58,7 +58,7 @@ let mut renderer = create_renderer(Some(&window))?;
 
 **Lifetime Constraint:** The `wgpu::Surface` borrows the window, so the renderer lifetime is tied to the window. Keep the window alive for the renderer's lifetime.
 
-### Registering Meshes
+### 3.2 Registering Meshes
 
 ```rust
 // Simple triangle list
@@ -74,7 +74,7 @@ let indices = vec![0, 1, 2, 2, 3, 0];
 let mesh_id = renderer.register_indexed_mesh(&vertices, &indices);
 ```
 
-### Setting Materials
+### 3.3 Setting Materials
 
 ```rust
 use moho_renderer::MaterialGpu;
@@ -93,7 +93,7 @@ let materials = vec![
 renderer.set_material_table(&materials);
 ```
 
-### Rendering Instances
+### 3.4 Rendering Instances
 
 ```rust
 // Render 100 cubes at different positions
@@ -104,7 +104,7 @@ renderer.render_mesh(
 );
 ```
 
-### Updating Lighting
+### 3.5 Updating Lighting
 
 ```rust
 use moho_renderer::LightingGpu;
@@ -121,7 +121,7 @@ let lighting = LightingGpu {
 renderer.update_lighting(lighting);
 ```
 
-### Frame Rendering
+### 3.6 Frame Rendering
 
 ```rust
 // Called each frame by the rendering system
@@ -130,7 +130,7 @@ renderer.render_scene(&scene)?;
 renderer.present_frame()?;
 ```
 
-## Cascaded Shadow Maps
+## 4 Cascaded Shadow Maps
 
 The renderer implements 4-cascade CSM for high-quality shadows across large view distances.
 
@@ -149,11 +149,11 @@ The renderer implements 4-cascade CSM for high-quality shadows across large view
 
 Only the sun casts shadows. Moon does not cast shadows for performance reasons.
 
-## GPU Data Structures
+## 5 GPU Data Structures
 
 See `../wiki/reference/gpu-abi.md` for detailed structure layouts. Key types:
 
-### MaterialGpu (32 bytes)
+### 5.1 MaterialGpu (32 bytes)
 ```rust
 pub struct MaterialGpu {
     pub albedo: [f32; 4],    // RGBA color
@@ -161,7 +161,7 @@ pub struct MaterialGpu {
 }
 ```
 
-### LightingGpu (96 bytes)
+### 5.2 LightingGpu (96 bytes)
 ```rust
 pub struct LightingGpu {
     pub sun_direction: [f32; 4],   // xyz + intensity
@@ -173,7 +173,7 @@ pub struct LightingGpu {
 }
 ```
 
-### CameraGpu (80 bytes)
+### 5.3 CameraGpu (80 bytes)
 ```rust
 pub struct CameraGpu {
     pub view_proj: [[f32; 4]; 4],  // 4×4 view-projection matrix
@@ -181,7 +181,7 @@ pub struct CameraGpu {
 }
 ```
 
-## Skybox System
+## 6 Skybox System
 
 Dynamic skybox with time-of-day color transitions.
 
@@ -193,7 +193,7 @@ Dynamic skybox with time-of-day color transitions.
 
 Transitions use smoothstep for natural blending between periods.
 
-## Scene Serialization
+## 7 Scene Serialization
 
 Save and load complete scene state:
 
@@ -211,21 +211,21 @@ let scene = Scene::load_from_file("scene.bin")?;
 
 Scene data includes materials, mesh references, and instance transforms.
 
-## Performance Characteristics
+## 8 Performance Characteristics
 
 - **Instance Rendering**: 10,000+ instances at 60 FPS
 - **Shadow Map Generation**: 4 cascades in ~2-3ms
 - **Material Switches**: Minimal overhead (single buffer)
 - **Mesh Registration**: One-time CPU→GPU transfer
 
-## Backend Support
+## 9 Backend Support
 
 Currently supports:
 - **wgpu** (default) - Vulkan, Metal, DirectX 12, WebGPU
 
 Enable with cargo feature: `backend-wgpu` (enabled by default)
 
-## Logging
+## 10 Logging
 
 The crate emits `tracing` events. Install a subscriber to see renderer output:
 
@@ -238,7 +238,7 @@ Set log level:
 RUST_LOG=moho_renderer=debug cargo run -p flagstone
 ```
 
-## Testing
+## 11 Testing
 
 ```bash
 # Run all tests (including shader validation)
@@ -251,7 +251,7 @@ cargo test --test save_load
 cargo test --test shaders_validation
 ```
 
-## Shader Files
+## 12 Shader Files
 
 Located in `shaders/`:
 - `common.wgsl` - Shared structures (Camera, Lighting, Material)
@@ -260,7 +260,7 @@ Located in `shaders/`:
 - `skybox.wgsl` - Skybox vertex/fragment shaders
 - `shadow.wgsl` - Shadow map generation
 
-## Thread Safety
+## 13 Thread Safety
 
 - **`Renderer`**: Not `Send` or `Sync` (wgpu requires main thread)
 - **`Scene`**: `Send + Sync` (can be constructed on worker threads)
@@ -268,7 +268,7 @@ Located in `shaders/`:
 
 Always create and use the renderer on the main thread with the winit event loop.
 
-## Future Plans
+## 14 Future Plans
 
 - Deferred rendering pipeline
 - Point and spot lights

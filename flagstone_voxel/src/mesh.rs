@@ -32,6 +32,9 @@ pub struct VoxelMesh {
     pub block_light_rgb: Vec<[f32; 3]>,
     /// Per-vertex sky-exposure factor (0.0 = underground, 1.0 = open sky).
     pub sky_exposed: Vec<f32>,
+    /// Per-vertex voxel material id (resource-mapped, see
+    /// `MaterialRegistry::face_material`). One material per triangle.
+    pub material: Vec<u32>,
 }
 
 impl VoxelMesh {
@@ -45,6 +48,7 @@ impl VoxelMesh {
             light_level: Vec::new(),
             block_light_rgb: Vec::new(),
             sky_exposed: Vec::new(),
+            material: Vec::new(),
         }
     }
 }
