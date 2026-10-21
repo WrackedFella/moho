@@ -388,8 +388,17 @@ mod tests {
             let mut grid = VoxelGrid::new(16);
             let pos = IVec3::new(16, 16, 16);
             grid.place_block(pos, 100, None);
-            grid.set_block_light_rgb(pos, rgb);
-            grid.set_sky_exposed(pos, sky);
+            for step in [
+                IVec3::X,
+                IVec3::NEG_X,
+                IVec3::Y,
+                IVec3::NEG_Y,
+                IVec3::Z,
+                IVec3::NEG_Z,
+            ] {
+                grid.set_block_light_rgb(pos + step, rgb);
+                grid.set_sky_exposed(pos + step, sky);
+            }
 
             let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
 
@@ -412,6 +421,53 @@ mod tests {
                     );
                 }
                 assert_eq!(mesh.sky_exposed[i], expected_sky);
+            }
+        }
+    }
+
+    #[test]
+    fn each_face_carries_the_light_in_front_of_it() {
+        // (face normal, light in front of the face, sky exposed in front of it)
+        let fronts = [
+            ([1.0f32, 0.0, 0.0], [10u8, 0, 0], false),
+            ([-1.0, 0.0, 0.0], [1, 2, 3], true),
+            ([0.0, 1.0, 0.0], [4, 5, 6], false),
+            ([0.0, -1.0, 0.0], [7, 8, 9], true),
+            ([0.0, 0.0, 1.0], [11, 12, 13], false),
+            ([0.0, 0.0, -1.0], [14, 15, 0], true),
+        ];
+        let mut grid = VoxelGrid::new(16);
+        let pos = IVec3::new(16, 16, 16);
+        grid.place_block(pos, 100, None);
+        grid.set_block_light_rgb(pos, [15, 15, 15]);
+        grid.set_sky_exposed(pos, true);
+        for (normal, rgb, sky) in fronts {
+            let front = pos + IVec3::new(normal[0] as i32, normal[1] as i32, normal[2] as i32);
+            grid.set_block_light_rgb(front, rgb);
+            grid.set_sky_exposed(front, sky);
+        }
+
+        let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
+
+        for (normal, rgb, sky) in fronts {
+            let face: Vec<usize> = (0..mesh.normals.len())
+                .filter(|&i| mesh.normals[i] == normal)
+                .collect();
+            assert_eq!(face.len(), 4, "four vertices on the {normal:?} face");
+            for i in face {
+                let expected_rgb = rgb.map(|c| f32::from(c) / 15.0);
+                for (got, want) in mesh.block_light_rgb[i].iter().zip(&expected_rgb) {
+                    assert!(
+                        (got - want).abs() < 1e-6,
+                        "{normal:?} face: block light {:?}, expected {expected_rgb:?}",
+                        mesh.block_light_rgb[i]
+                    );
+                }
+                assert_eq!(
+                    mesh.sky_exposed[i],
+                    if sky { 1.0 } else { 0.0 },
+                    "{normal:?} face sky exposure"
+                );
             }
         }
     }

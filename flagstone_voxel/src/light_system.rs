@@ -905,4 +905,53 @@ mod tests {
         }
         assert!(received.lock().unwrap().contains(&arriving));
     }
+
+    #[test]
+    fn light_change_on_a_chunk_face_dirties_the_chunk_across_it() {
+        let (mut light_system, received) = unbounded_system();
+        let source = IVec3::new(13, 8, 8);
+        LightPropagator::new().add_light_rgb(light_system.grid_mut(), source, [3, 0, 0]);
+        let face_voxel = IVec3::new(15, 8, 8);
+        assert_eq!(
+            light_system.grid().block_light_rgb_at(face_voxel),
+            [1, 0, 0],
+            "the light reaches the chunk's +x face layer"
+        );
+        assert_eq!(
+            light_system.grid().block_light_rgb_at(IVec3::new(16, 8, 8)),
+            [0, 0, 0],
+            "and stops there"
+        );
+
+        light_system.handle_event(&removed(source));
+        light_system.process_frame();
+        light_system.emit_dirty_events();
+
+        assert_eq!(
+            light_system.grid().block_light_rgb_at(face_voxel),
+            [0, 0, 0]
+        );
+        assert_published_once_each(
+            &received,
+            &HashSet::from([IVec3::ZERO, IVec3::new(1, 0, 0)]),
+        );
+    }
+
+    #[test]
+    fn sky_change_on_a_chunk_face_dirties_the_chunk_across_it() {
+        let (mut light_system, received) = unbounded_system();
+        solid_ground(&mut light_system);
+        settle(&mut light_system, &received);
+
+        dig(&mut light_system, (1, 1), 33, 16);
+        light_system.process_frame();
+        light_system.emit_dirty_events();
+
+        assert!(light_system.grid().sky_exposed_at(IVec3::new(1, 16, 1)));
+        assert!(!light_system.grid().sky_exposed_at(IVec3::new(1, 15, 1)));
+        assert_published_once_each(
+            &received,
+            &HashSet::from([IVec3::ZERO, IVec3::new(0, 1, 0), IVec3::new(0, 2, 0)]),
+        );
+    }
 }
