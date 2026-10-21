@@ -182,7 +182,9 @@ The last lighting step in `shaders/fragment.wgsl` combines the two per-vertex li
 channels:
 
 ```wgsl
-color = color * max(sky_exposed, MIN_SKY_AMBIENT)
+color = celestial * max(sky_exposed, MIN_SKY_AMBIENT)   // sun and moon
+      + ao * point_light_contrib
+      + sky_ambient
       + albedo * ao * block_light_rgb * BLOCK_LIGHT_GAIN
 ```
 

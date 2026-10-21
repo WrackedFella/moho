@@ -114,8 +114,9 @@ let lighting = LightingGpu {
     sun_color: [1.0, 0.95, 0.8, 0.0],         // Warm sunlight
     moon_direction: [0.0, 1.0, 0.0, 0.3],     // Up, intensity 0.3
     moon_color: [0.7, 0.8, 0.9, 0.0],         // Cool moonlight
-    ambient: [0.1, 0.1, 0.15, 0.15],          // Ambient color + intensity
-    time_of_day: [12.0, 0.0, 0.0, 0.0],       // Noon
+    ambient: [0.0, 0.0, 0.0, 0.15],           // Sky-ambient strength (w)
+    params: [12.0, 0.0, 0.0, 0.0],            // Noon
+    ..LightingGpu::default()                  // Sky palette: filled by the renderer
 };
 
 renderer.update_lighting(lighting);
@@ -161,15 +162,18 @@ pub struct MaterialGpu {
 }
 ```
 
-### LightingGpu (96 bytes)
+### LightingGpu (144 bytes)
 ```rust
 pub struct LightingGpu {
     pub sun_direction: [f32; 4],   // xyz + intensity
     pub sun_color: [f32; 4],       // RGB + unused
     pub moon_direction: [f32; 4],  // xyz + intensity
     pub moon_color: [f32; 4],      // RGB + unused
-    pub ambient: [f32; 4],         // RGB + intensity
-    pub time_of_day: [f32; 4],     // hours (0-24) + unused
+    pub ambient: [f32; 4],         // unused + sky-ambient strength (w)
+    pub params: [f32; 4],          // hours (0-24), debug view, unused
+    pub sky_zenith: [f32; 4],      // RGB + unused; filled by the renderer
+    pub sky_horizon: [f32; 4],     // RGB + unused; filled by the renderer
+    pub sky_ground: [f32; 4],      // RGB + unused; filled by the renderer
 }
 ```
 
@@ -186,12 +190,13 @@ pub struct CameraGpu {
 Dynamic skybox with time-of-day color transitions.
 
 **Sky Color Periods:**
-- **Night** (0-5h, 21-24h): Dark blue atmosphere
-- **Dawn** (5-7h): Orange/pink sunrise gradient
-- **Day** (7-17h): Bright blue sky
-- **Dusk** (17-21h): Red/orange sunset gradient
+- **Night** (0-5h, 22-24h): Dark blue atmosphere
+- **Dawn** (5-7h night to dawn, 7-8h dawn to day): Orange/pink sunrise gradient
+- **Day** (8-17h): Bright blue sky
+- **Dusk** (17-21h day to dusk, 21-22h dusk to night): Red/orange sunset gradient
 
-Transitions use smoothstep for natural blending between periods.
+Transitions use smoothstep. The palette is computed on the CPU (`src/sky.rs`) and shared
+with the main shader's sky ambient through `LightingGpu`.
 
 ## Scene Serialization
 
