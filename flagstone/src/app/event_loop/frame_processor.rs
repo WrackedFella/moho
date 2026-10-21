@@ -288,7 +288,10 @@ impl FrameProcessor {
             moon_color: [0.7, 0.8, 0.9, 0.0],
             ambient: self.calculate_ambient_lighting(time),
             params: [time, app.debug_mode as f32, 0.0, 0.0],
-            ..moho_renderer::LightingGpu::default()
+            // The renderer fills the sky palette from the time of day.
+            sky_zenith: [0.0; 4],
+            sky_horizon: [0.0; 4],
+            sky_ground: [0.0; 4],
         };
         renderer.update_lighting(lighting);
     }
