@@ -644,14 +644,14 @@ mod tests {
     }
 
     #[test]
-    fn pointer_buttons_reach_egui_only_with_a_free_cursor() {
+    fn pointer_input_reaches_egui_with_a_free_cursor_and_a_release_always_does() {
         let rows = [
             (GameplayInput::Press, true, true),
             (GameplayInput::Release, true, true),
             (GameplayInput::Motion, true, true),
             (GameplayInput::Other, true, false),
             (GameplayInput::Press, false, false),
-            (GameplayInput::Release, false, false),
+            (GameplayInput::Release, false, true),
             (GameplayInput::Motion, false, false),
             (GameplayInput::Other, false, false),
         ];
