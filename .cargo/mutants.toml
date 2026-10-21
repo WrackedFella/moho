@@ -168,4 +168,22 @@ exclude_re = [
     'replace > with >= in LightPropagator::enqueue_neighbours',
     # The condition only gates a debug log line.
     'replace > with [<=>]+ in LightJobQueue::process_frame',
+    # flagstone_game world generation (#462). Equivalent: at raw == 0 both branches give the
+    # same signed zero.
+    'replace < with <= in BiomeType::shape',
+    # Equivalent: pos_hash returns k/2^24, which never equals f32 0.1. Anchored to the column of
+    # the `pos_hash(..) < 0.1` test: the `y < column_height - 3` mutant on the same line is caught.
+    'scene_builders\.rs:\d+:66: replace < with <= in determine_resource_id',
+    # Debug output is diagnostics only; ENG-F9 allows excluding debug code (#463).
+    'replace <impl (std::)?fmt::Debug for \w+>::fmt',
+    # flagstone cut caps (#467). Equivalent: chunk ids use the low 63 bits, so OR and XOR agree.
+    'replace \| with \^ in cap_mesh_id',
+    # Equivalent: only which side a vertex exactly on the slice counts as; same segment.
+    'replace >= with < in slice_walls',
+    # Equivalent: the orientation dot is zero only for a horizontal triangle, which has no segment.
+    'replace < with <= in slice_walls',
+    # Equivalent: zero-turn vertices are dropped before the ear test.
+    'replace > with >= in ear_clip',
+    # Equivalent on the two ring edges; also hides the caught diagonal-edge mutant.
+    'replace < with <= in ear_clip',
 ]
