@@ -10,6 +10,7 @@ glam = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 gltf = { workspace = true }
+rerecast = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

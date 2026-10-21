@@ -125,6 +125,7 @@ struct Tick<'a> {
     route: &'a [Vec3],
     percept: &'a Percept,
     tuning: &'a EnemyTuning,
+    steer: &'a dyn Fn(Vec3) -> Option<Vec3>,
     max_turn: f32,
 }
 
@@ -230,12 +231,15 @@ impl Tick<'_> {
         if arrived || ticks >= self.tuning.chase_ticks {
             return self.patrol(next);
         }
+        let Some(corner) = (self.steer)(last_seen) else {
+            return self.patrol(next);
+        };
         let brain = Brain::Chase {
             next,
             last_seen,
             ticks: ticks + 1,
         };
-        (brain, self.walk_to(last_seen, self.tuning.patrol_speed))
+        (brain, self.walk_to(corner, self.tuning.patrol_speed))
     }
 
     fn cover(
@@ -315,7 +319,7 @@ impl Brain {
         route: &[Vec3],
         percept: &Percept,
         tuning: &EnemyTuning,
-        _steer: &dyn Fn(Vec3) -> Option<Vec3>,
+        steer: &dyn Fn(Vec3) -> Option<Vec3>,
         dt: f32,
     ) -> Intent {
         if let Some(shooter) = percept.hurt {
@@ -329,6 +333,7 @@ impl Brain {
             route,
             percept,
             tuning,
+            steer,
             max_turn: tuning.turn_rate * dt,
         };
         let (brain, intent) = match *self {
