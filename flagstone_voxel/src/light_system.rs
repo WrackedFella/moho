@@ -84,56 +84,47 @@ impl LightSystem {
         self.player_pos = pos;
     }
 
+    /// Whether a block of `material_id` (`None` for no block) can change any
+    /// light: it emits, or it is opaque, or the position is empty.
+    fn affects_light(&self, material_id: Option<u32>) -> bool {
+        material_id.is_none_or(|id| {
+            let registry = &self.grid.material_registry;
+            registry.emission(id) != [0u8, 0, 0] || registry.opacity_cost(id) >= 15
+        })
+    }
+
+    fn submit_reconcile(&mut self, position: IVec3) {
+        let job = LightUpdateJob::at(position).with_player_distance(self.player_pos);
+        self.job_queue.submit(job);
+    }
+
     /// Handle a block placed event.
     pub fn on_block_placed(&mut self, position: IVec3, material_id: u32) {
-        let emission = self.grid.material_registry.emission(material_id);
-        if emission == [0u8, 0, 0] {
-            // Opaque block placed — any existing light at this position must be removed.
-            let opacity = self.grid.material_registry.opacity_cost(material_id);
-            if opacity >= 15 {
-                let job = LightUpdateJob::at(position).with_player_distance(self.player_pos);
-                self.job_queue.submit(job);
-            }
-        } else {
-            let job = LightUpdateJob::at(position).with_player_distance(self.player_pos);
-            self.job_queue.submit(job);
+        if self.affects_light(Some(material_id)) {
+            self.submit_reconcile(position);
         }
     }
 
     /// Handle a block removed event.
     pub fn on_block_removed(&mut self, position: IVec3, old_material_id: u32) {
-        // Remove any block-light the removed block was contributing or blocking.
-        let job = LightUpdateJob::at(position).with_player_distance(self.player_pos);
-        self.job_queue.submit(job);
+        self.submit_reconcile(position);
 
         tracing::debug!(
             pos = ?position,
             material_id = old_material_id,
-            "Block removed, enqueued light removal job"
+            "Block removed, enqueued light reconcile job"
         );
     }
 
     /// Handle a batch block modification event
     ///
-    /// Enqueues light update jobs for all affected positions
+    /// Enqueues a reconcile job for every position the edit left empty, opaque or emissive.
     pub fn on_blocks_batch_modified(&mut self, positions: &[IVec3], reason: &BlockChangeReason) {
         tracing::debug!(count = positions.len(), reason = ?reason, "Batch modification of blocks");
 
-        // For batch operations, we can optimize by:
-        // 1. Collecting all affected chunks
-        // 2. Submitting fewer, larger jobs
-
-        // For now, simple approach: submit individual jobs for each position
         for &position in positions {
-            if let Some(mat_id) = self.grid.material_at(position) {
-                let emission = self.grid.material_registry.emission(mat_id);
-                let job = if emission == [0u8, 0, 0] {
-                    LightUpdateJob::at(position)
-                } else {
-                    LightUpdateJob::at(position)
-                };
-                self.job_queue
-                    .submit(job.with_player_distance(self.player_pos));
+            if self.affects_light(self.grid.material_at(position)) {
+                self.submit_reconcile(position);
             }
         }
     }

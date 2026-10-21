@@ -12,6 +12,9 @@
 //! - **remove_light**: two-queue removal — dark wave clears source-lit voxels,
 //!   then re-seeds cleared emitter blocks from their emission and relights from
 //!   adjacent voxels still lit by surviving sources.
+//! - **update_at**: reconcile one position with the grid: removal, then a refill
+//!   from lit neighbours if the block lets light through, then the block's own
+//!   emission.
 
 use super::grid::VoxelGrid;
 use super::light_storage::{self, CHUNK_SIZE, idx_to_local};
@@ -88,10 +91,35 @@ impl LightPropagator {
         affected.into_iter().collect()
     }
 
-    /// Reconcile the light at `pos` with the grid as it is now.
+    /// Reconcile the light at `pos` with the grid as it is now, whatever edit
+    /// was made there: light the old block held or blocked is cleared, a block
+    /// that lets light through is refilled from its brighter neighbours, and an
+    /// emitter is lit at its emission.
+    /// Idempotent, so jobs for the same position may repeat or run in any order.
     /// Returns the chunk positions where a value was written.
     pub fn update_at(&mut self, grid: &mut VoxelGrid, pos: IVec3) -> Vec<IVec3> {
-        self.remove_light(grid, pos)
+        if !grid.supports_lighting() {
+            return vec![];
+        }
+        let opaque = grid
+            .material_at(pos)
+            .is_some_and(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15);
+        let emission = grid
+            .material_at(pos)
+            .map_or([0; 3], |mat_id| grid.material_registry.emission(mat_id));
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
+        let mut affected = std::collections::HashSet::new();
+        for ch in [LightChannel::R, LightChannel::G, LightChannel::B] {
+            self.two_queue_remove(grid, pos, ch, &mut affected);
+            if !opaque {
+                self.refill(grid, pos, ch, &mut affected);
+            }
+            let level = emission[ch as usize];
+            if level > Self::read_ch(grid, chunk_pos, idx, ch) {
+                self.bfs_add(grid, pos, level, ch, &mut affected);
+            }
+        }
+        affected.into_iter().collect()
     }
 
     /// Scan all blocks for non-zero emission and flood-fill their RGB light.
@@ -179,7 +207,30 @@ impl LightPropagator {
             idx,
             level,
         });
-        affected.insert(chunk_pos);
+        self.drain(grid, ch, affected);
+    }
+
+    /// Light `pos` from the brightest face neighbour, then spread onward.
+    fn refill(
+        &mut self,
+        grid: &mut VoxelGrid,
+        pos: IVec3,
+        ch: LightChannel,
+        affected: &mut std::collections::HashSet<IVec3>,
+    ) {
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
+        self.queue.clear();
+        for nb_world in neighbours(pos) {
+            let (nb_chunk, nb_idx, _) = light_storage::world_to_chunk_local(nb_world);
+            let level = Self::read_ch(grid, nb_chunk, nb_idx, ch).saturating_sub(1);
+            if level > 0 {
+                self.queue.push_back(PropNode {
+                    chunk_pos,
+                    idx,
+                    level,
+                });
+            }
+        }
         self.drain(grid, ch, affected);
     }
 
