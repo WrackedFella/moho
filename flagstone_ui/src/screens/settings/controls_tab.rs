@@ -377,6 +377,24 @@ mod tests {
     }
 
     #[test]
+    fn acceleration_strength_difference_of_exactly_one_epsilon_is_not_dirty() {
+        let saved = 0.5_f32;
+        let staged = saved + f32::EPSILON;
+        assert_eq!(staged - saved, f32::EPSILON);
+        let mut menu = SettingsMenu::with_prefs(
+            Prefs::default()
+                .with_mouse_acceleration(true)
+                .with_mouse_acceleration_strength(saved),
+        );
+        *menu.state.staged_mut().mouse_acceleration_strength_mut() = staged;
+
+        let output = render_menu(&mut menu);
+
+        assert!(!menu.has_unsaved_changes());
+        assert!(!has_dirty_decor(&output));
+    }
+
+    #[test]
     fn mouse_sensitivity_difference_of_one_epsilon_is_not_dirty() {
         let mut menu = SettingsMenu::with_prefs(Prefs::default());
         *menu.state.staged_mut().mouse_sensitivity_mut() += f32::EPSILON;

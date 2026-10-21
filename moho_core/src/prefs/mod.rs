@@ -443,6 +443,27 @@ mod tests {
     }
 
     #[test]
+    fn mouse_acceleration_mut_edits_the_flag() {
+        let mut prefs = Prefs::default().with_mouse_acceleration(false);
+
+        *prefs.mouse_acceleration_mut() = true;
+        let after_enable = prefs.mouse_acceleration();
+        *prefs.mouse_acceleration_mut() = false;
+
+        assert!(after_enable);
+        assert!(!prefs.mouse_acceleration());
+    }
+
+    #[test]
+    fn mouse_acceleration_strength_mut_edits_the_value() {
+        let mut prefs = Prefs::default();
+
+        *prefs.mouse_acceleration_strength_mut() = 0.25;
+
+        assert_eq!(prefs.mouse_acceleration_strength(), 0.25);
+    }
+
+    #[test]
     fn with_mouse_sensitivity_sets_the_value() {
         let prefs = Prefs::default().with_mouse_sensitivity(2.5);
 
