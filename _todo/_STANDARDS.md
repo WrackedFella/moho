@@ -38,9 +38,13 @@ the only record of item state. Nothing in the repository mirrors them.
 - **Board:** Status, Priority, Gate class and Agent-eligible. The Board sync workflow
   moves Status forward on PR and issue events (In progress when `agent-ready` is applied
   to a work item or a draft PR opens, In review on a ready PR, Done on merge or close).
-  Ready and Agent-eligible are set by a human. Agents change board fields only through
-  devflow's `scripts/board` (local terminal only); a cloud thread does not touch the
-  board, and an item in the wrong state is a workflow bug to report.
+  Ready is set by a human. Gate class, Agent-eligible and Priority come from the card:
+  an issue body may start with `<!-- board: gate=domain; eligible=yes; priority=P2 -->`,
+  which the Board sync workflow applies when the issue is opened or its body edited
+  (Agent-eligible stays the approver's decision, recorded in the card). Parent and
+  milestone label are set at filing over REST. A cloud thread does not touch the board
+  itself, and an item in the wrong state is a workflow bug to report. Local sessions may
+  still use devflow's `scripts/board`.
 - **Issue:** the spec (body), labels, and the history of decisions (comments).
 - **Draft files** carry a header for the thread that will file them: `**Status:** Draft`,
   the intended `**Gate class:**` (`domain`, `glue` or `unset`) and `**Labels:**`
