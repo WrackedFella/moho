@@ -58,10 +58,11 @@ Chunks are 16³ voxels; columns span chunk Y 0..=8.
 - Sky exposure of edited columns is recomputed once per frame, topmost chunk first.
 - Meshes bake light per vertex (`VoxelMesh::push_light`: block light, sky exposure, and the
   blended `light_level`) from the air each surface faces: a blocky face reads the voxel in
-  front of it, a smooth vertex the air sample of its edge. The smooth mesher samples one voxel past its chunk on every
-  side. A light or sky-exposure change on a chunk's outer layer therefore also dirties the
-  loaded chunks that read that voxel: face neighbours and, on an edge or corner, diagonal
-  ones (`light_storage::reading_chunk_offsets`). Chunks arriving in the grid are exempt from
+  front of it, a smooth vertex the air sample of its edge. A light or sky-exposure change
+  on a chunk's outer layer therefore also dirties the loaded chunks that read that voxel:
+  the face neighbour across the layer (blocky faces), and, because the smooth mesher reads
+  one voxel past each positive face, the chunks below it on every low axis, diagonals
+  included (`light_storage::reading_chunk_offsets`). Chunks arriving in the grid are exempt from
   the sky part; their neighbours are re-meshed by the arrival itself.
 - `process_world_events` forwards every world event to the light system, then re-meshes each
   dirty chunk once per batch, however many events named it.
