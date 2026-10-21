@@ -327,8 +327,18 @@ pub(crate) fn cube_index(
 /// The corner of a cell (in `MarchingCubes::CORNER_OFFSETS` order) that is solid in
 /// `cube_index` and nearest `centroid`, given in cell coordinates. Ties go to the lowest
 /// corner index. `cube_index` must have a solid corner.
-pub(crate) fn nearest_solid_corner(_cube_index: u8, _centroid: Vec3) -> usize {
-    0
+pub(crate) fn nearest_solid_corner(cube_index: u8, centroid: Vec3) -> usize {
+    let mut best = (f32::MAX, 0);
+    for k in 0..8 {
+        if cube_index & (1 << k) != 0 {
+            let d = Vec3::from_array(MarchingCubes::CORNER_OFFSETS[k].map(|c| c as f32))
+                .distance_squared(centroid);
+            if d < best.0 {
+                best = (d, k);
+            }
+        }
+    }
+    best.1
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {

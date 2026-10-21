@@ -119,7 +119,15 @@ impl WorldMesh {
     /// as the `material_idx` given to world-mesh upserts). One material per
     /// triangle: all three vertices should agree; a mixed triangle draws in
     /// one of its vertices' materials, unspecified.
-    pub fn with_materials(self, _materials: Vec<u32>) -> Result<Self, WorldMeshError> {
+    pub fn with_materials(mut self, materials: Vec<u32>) -> Result<Self, WorldMeshError> {
+        if materials.len() != self.positions.len() {
+            return Err(WorldMeshError::ChannelLengthMismatch {
+                channel: "materials",
+                expected: self.positions.len(),
+                actual: materials.len(),
+            });
+        }
+        self.materials = Some(materials);
         Ok(self)
     }
 

@@ -36,11 +36,40 @@ pub(crate) fn coarse_cell_solid(grid: &VoxelGrid, base: IVec3, cell: IVec3) -> b
 /// shows: the face material of the first solid block, in x-then-z-then-y order, in the
 /// 2x2 layer of the cell touching `face`; when that layer is empty, of the opposite layer.
 pub(crate) fn coarse_face_material(
-    _grid: &VoxelGrid,
-    _base: IVec3,
-    _cell: IVec3,
-    _face: FaceDirection,
+    grid: &VoxelGrid,
+    base: IVec3,
+    cell: IVec3,
+    face: FaceDirection,
 ) -> u32 {
+    let origin = base + cell * COARSE_STRIDE;
+    let (axis, positive) = match face {
+        FaceDirection::PosX => (0, true),
+        FaceDirection::NegX => (0, false),
+        FaceDirection::PosY => (1, true),
+        FaceDirection::NegY => (1, false),
+        FaceDirection::PosZ => (2, true),
+        FaceDirection::NegZ => (2, false),
+    };
+    for inner in [false, true] {
+        let layer = if positive == inner {
+            0
+        } else {
+            COARSE_STRIDE - 1
+        };
+        for x in 0..COARSE_STRIDE {
+            for z in 0..COARSE_STRIDE {
+                for y in 0..COARSE_STRIDE {
+                    let offset = IVec3::new(x, y, z);
+                    if offset[axis] != layer {
+                        continue;
+                    }
+                    if let Some(material) = grid.face_material_at(origin + offset) {
+                        return material;
+                    }
+                }
+            }
+        }
+    }
     0
 }
 
@@ -170,7 +199,12 @@ impl HybridMeshGenerator {
     ) -> VoxelMesh {
         let density_field =
             Self::create_selective_density_field(grid, chunk_pos, chunk_size, only_smooth);
-        let mut mesh = MarchingCubes::generate_mesh(&density_field, chunk_size as usize, |_| 0);
+        // Only solid samples are ever looked up, so air's `0` is never used.
+        let base = chunk_pos * chunk_size - IVec3::ONE;
+        let mut mesh = MarchingCubes::generate_mesh(&density_field, chunk_size as usize, |s| {
+            let sample = IVec3::new(s[0] as i32, s[1] as i32, s[2] as i32);
+            grid.face_material_at(base + sample).unwrap_or(0)
+        });
 
         let offset = (chunk_pos * chunk_size).as_vec3() + Vec3::splat(DENSITY_SAMPLE_TO_WORLD);
         for vertex in &mut mesh.vertices {

@@ -723,7 +723,7 @@ pub(crate) fn interleave_vertices(
             light_level: light_level.get(i).copied().unwrap_or(1.0),
             block_light_rgb: block_light_rgb.get(i).copied().unwrap_or([0.0; 3]),
             sky_exposed: sky_exposed.get(i).copied().unwrap_or(1.0),
-            material: material.get(i).copied().unwrap_or(NO_VERTEX_MATERIAL - 1),
+            material: material.get(i).copied().unwrap_or(NO_VERTEX_MATERIAL),
         })
         .collect()
 }

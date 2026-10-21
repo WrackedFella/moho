@@ -33,14 +33,14 @@ impl TerrainPalette {
     /// Register every material of `registry` in `material_table` and remember where each
     /// landed; ids outside the registry map to `fallback`.
     pub fn new(
-        _registry: &MaterialRegistry,
-        _material_table: &mut MaterialTable,
+        registry: &MaterialRegistry,
+        material_table: &mut MaterialTable,
         fallback: u32,
     ) -> Self {
-        Self {
-            indices: Vec::new(),
-            fallback,
-        }
+        let indices = (0..registry.len() as u32)
+            .map(|id| material_table.find_or_push(registry.material(id).expect("registered")))
+            .collect();
+        Self { indices, fallback }
     }
 
     /// The material-table index voxel material `voxel_material` draws with.

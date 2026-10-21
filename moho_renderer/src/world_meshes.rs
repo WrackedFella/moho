@@ -56,6 +56,10 @@ impl WorldMeshes {
                 .iter()
                 .map(|rgb| rgb[0].max(rgb[1]).max(rgb[2]))
                 .collect();
+            let material: Vec<u32> = mesh.materials().map_or_else(
+                || vec![material_idx; mesh.positions().len()],
+                <[u32]>::to_vec,
+            );
             let handle = backend.register_indexed_mesh(
                 mesh.positions(),
                 mesh.normals(),
@@ -64,7 +68,7 @@ impl WorldMeshes {
                 &light_level,
                 mesh.light_rgb(),
                 mesh.sky_exposure(),
-                &[],
+                &material,
                 mesh.indices(),
             );
             self.live.insert(

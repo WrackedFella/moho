@@ -3,13 +3,14 @@
 //! A cap covers exactly the cells the chunk's own mesher drew, cut the way that mesher
 //! cut them, so its edge meets the chunk's walls and caps of neighbouring chunks tile.
 
+use super::super::face::FaceDirection;
 use super::super::grid::VoxelGrid;
 use super::VoxelMesh;
 use super::hybrid::{
     COARSE_STRIDE, ChunkContent, DENSITY_SAMPLE_TO_WORLD, HybridMeshGenerator, MeshPlan,
-    coarse_cell_solid, is_meshed_blocky_in_mixed, mesh_plan,
+    coarse_cell_solid, coarse_face_material, is_meshed_blocky_in_mixed, mesh_plan,
 };
-use super::marching_cubes::{MarchingCubes, cube_index};
+use super::marching_cubes::{MarchingCubes, cube_index, nearest_solid_corner};
 use glam::{IVec3, Vec2, Vec3};
 use std::ops::RangeInclusive;
 
@@ -106,7 +107,14 @@ fn cap_smooth_cells(
                 .into_iter()
                 .flat_map(ear_clip)
             {
-                cap.triangle(tri.map(|p| p + origin), 0);
+                let c = (tri[0] + tri[1] + tri[2]) / 3.0;
+                let k = nearest_solid_corner(cube_index, Vec3::new(c.x, height, c.y));
+                let [dx, dy, dz] = MarchingCubes::CORNER_OFFSETS[k];
+                let sample = IVec3::new((x + dx) as i32, (y + dy) as i32, (z + dz) as i32);
+                let material = grid
+                    .face_material_at(base + sample - IVec3::ONE)
+                    .unwrap_or(0);
+                cap.triangle(tri.map(|p| p + origin), material);
             }
         }
     }
@@ -129,7 +137,8 @@ fn cap_blocks(
         for z in base.z..base.z + chunk_size {
             let pos = IVec3::new(x, y, z);
             if grid.is_solid_at(pos) && meshed_blocky(pos) {
-                cap.square(Vec2::new(x as f32, z as f32), 1, 0);
+                let material = grid.face_material_at(pos).unwrap_or(0);
+                cap.square(Vec2::new(x as f32, z as f32), 1, material);
             }
         }
     }
@@ -155,7 +164,13 @@ fn cap_coarse_cells(
                     (base.x + cx * COARSE_STRIDE) as f32,
                     (base.z + cz * COARSE_STRIDE) as f32,
                 );
-                cap.square(corner, COARSE_STRIDE, 0);
+                let face = if probe - base.y as f32 >= (cy * COARSE_STRIDE + 1) as f32 {
+                    FaceDirection::PosY
+                } else {
+                    FaceDirection::NegY
+                };
+                let material = coarse_face_material(grid, base, IVec3::new(cx, cy, cz), face);
+                cap.square(corner, COARSE_STRIDE, material);
             }
         }
     }

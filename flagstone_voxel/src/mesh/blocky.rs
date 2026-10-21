@@ -73,6 +73,9 @@ impl BlockyMeshGenerator {
                 .map(|&vert| FaceDirection::vertex_ao(grid, position, vert, normal)),
         );
 
+        let face_material = grid.face_material_at(position).unwrap_or(0);
+        mesh.material.extend([face_material; 4]);
+
         // Mark as blocky geometry (0 = smooth, 1 = blocky)
         for _ in 0..4 {
             mesh.geometry_type.push(1);
