@@ -1355,6 +1355,151 @@ mod tests {
         assert_eq!(map.end_tick().look(), (0.0, 0.0));
     }
 
+    #[test]
+    fn source_sensitivity_turns_like_source() {
+        let rows = [
+            (1.0f32, 1000.0f64, 22.0f32),
+            (3.0, 1000.0, 66.0),
+            (2.5, 400.0, 22.0),
+        ];
+
+        for (sensitivity, counts, degrees) in rows {
+            let mut map = map(source_look_per_count(sensitivity));
+
+            map.mouse_motion(counts, 0.0);
+            map.sample_frame(FRAME);
+            let (yaw, pitch) = map.end_tick().look();
+
+            let turned = yaw.to_degrees();
+            assert!(
+                (turned - degrees).abs() < 1e-3,
+                "sensitivity {sensitivity}, {counts} counts: turned {turned} degrees, want {degrees}"
+            );
+            assert_eq!(pitch, 0.0, "sensitivity {sensitivity}");
+        }
+    }
+
+    #[test]
+    fn source_sensitivity_scales_vertical_counts_the_same() {
+        let mut map = map(source_look_per_count(3.0));
+
+        map.mouse_motion(0.0, 1000.0);
+        map.sample_frame(FRAME);
+        let (yaw, pitch) = map.end_tick().look();
+
+        assert_eq!(yaw, 0.0);
+        assert!((pitch.to_degrees() - 66.0).abs() < 1e-3, "pitch {pitch}");
+    }
+
+    #[test]
+    fn source_degrees_per_count_is_point_zero_two_two() {
+        assert_eq!(SOURCE_DEGREES_PER_COUNT, 0.022);
+        assert!((source_look_per_count(1.0).to_degrees() - 0.022).abs() < 1e-6);
+    }
+
+    fn inverted_map(look_per_count: f32) -> ActionMap<TestAction> {
+        let mut map = pad_map(look_per_count);
+        map.set_look(LookSettings {
+            invert_y: true,
+            ..LookSettings::raw(look_per_count)
+        });
+        map
+    }
+
+    #[test]
+    fn invert_y_flips_mouse_pitch() {
+        let mut normal = map(1.0);
+        let mut inverted = inverted_map(1.0);
+        for map in [&mut normal, &mut inverted] {
+            map.mouse_motion(2.0, -10.0);
+            map.sample_frame(FRAME);
+        }
+
+        let normal_look = normal.end_tick().look();
+        let inverted_look = inverted.end_tick().look();
+
+        assert_eq!(normal_look, (2.0, -10.0), "mouse up pitches up by default");
+        assert_eq!(inverted_look, (2.0, 10.0), "mouse up pitches down inverted");
+    }
+
+    #[test]
+    fn invert_y_flips_mouse_down_to_pitch_up() {
+        let mut map = inverted_map(2.0);
+
+        map.mouse_motion(0.0, 3.0);
+        map.sample_frame(FRAME);
+
+        assert_eq!(map.end_tick().look(), (0.0, -6.0));
+    }
+
+    #[test]
+    fn invert_y_flips_smoothed_mouse_pitch_on_every_tick() {
+        let mut normal = smoothed(0.5);
+        let mut inverted = smoothed(0.5);
+        inverted.set_look(LookSettings {
+            look_per_count: 0.5,
+            smoothing: true,
+            invert_y: true,
+        });
+        for map in [&mut normal, &mut inverted] {
+            map.mouse_motion(40.0, -100.0);
+        }
+
+        for _ in 0..3 {
+            normal.sample_frame(FRAME);
+            inverted.sample_frame(FRAME);
+            let want = normal.end_tick().look();
+            let got = inverted.end_tick().look();
+            assert_eq!(got, (want.0, -want.1));
+        }
+    }
+
+    #[test]
+    fn invert_y_leaves_stick_pitch() {
+        let mut map = inverted_map(1.0);
+
+        map.pad_axis(Stick::RightStick, StickAxis::Y, 0.5);
+        map.sample_frame(FRAME);
+        let look = map.end_tick().look();
+
+        assert_close(look, (0.0, -0.5 * stick_per_frame()));
+    }
+
+    #[test]
+    fn invert_y_flips_only_the_mouse_share_of_mixed_look() {
+        let mut map = inverted_map(1.0);
+
+        map.pad_axis(Stick::RightStick, StickAxis::Y, 1.0);
+        map.mouse_motion(0.0, -10.0);
+        map.sample_frame(FRAME);
+        let look = map.end_tick().look();
+
+        assert_close(look, (0.0, 10.0 - stick_per_frame()));
+    }
+
+    #[test]
+    fn invert_y_off_by_default_in_raw_settings() {
+        assert!(!LookSettings::raw(1.0).invert_y);
+    }
+
+    #[test]
+    fn full_stick_turns_half_a_turn_per_second_at_default_sensitivity() {
+        let mut map = pad_map(source_look_per_count(3.0));
+        map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+
+        // 64 frames of 15.625 ms make exactly one second.
+        for _ in 0..64 {
+            map.sample_frame(FRAME);
+        }
+        let (yaw, _) = map.end_tick().look();
+
+        assert!(
+            (yaw - std::f32::consts::PI).abs() < 0.01,
+            "turned {} degrees in one second",
+            yaw.to_degrees()
+        );
+    }
+
     mod proptests {
         use super::*;
         use proptest::prelude::*;

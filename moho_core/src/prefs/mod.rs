@@ -372,6 +372,36 @@ mod tests {
     }
 
     #[test]
+    fn defaults_hold_source_sensitivity_three() {
+        assert_eq!(Prefs::default().mouse_sensitivity(), 3.0);
+    }
+
+    #[test]
+    fn default_prefs_have_invert_mouse_y_off() {
+        assert!(!Prefs::default().invert_mouse_y());
+    }
+
+    #[test]
+    fn with_invert_mouse_y_sets_the_flag() {
+        assert!(Prefs::default().with_invert_mouse_y(true).invert_mouse_y());
+        assert!(
+            !Prefs::default()
+                .with_invert_mouse_y(true)
+                .with_invert_mouse_y(false)
+                .invert_mouse_y()
+        );
+    }
+
+    #[test]
+    fn invert_mouse_y_mut_edits_the_flag() {
+        let mut prefs = Prefs::default();
+
+        *prefs.invert_mouse_y_mut() = true;
+
+        assert!(prefs.invert_mouse_y());
+    }
+
+    #[test]
     fn with_mouse_sensitivity_sets_the_value() {
         let prefs = Prefs::default().with_mouse_sensitivity(2.5);
 

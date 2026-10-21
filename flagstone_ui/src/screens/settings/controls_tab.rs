@@ -178,6 +178,18 @@ mod tests {
     }
 
     #[test]
+    fn changed_invert_y_is_dirty_and_decorated() {
+        let mut menu = SettingsMenu::with_prefs(Prefs::default());
+        *menu.state.staged_mut().invert_mouse_y_mut() = true;
+
+        let output = render_menu(&mut menu);
+
+        assert!(menu.has_unsaved_changes());
+        assert!(has_dirty_decor(&output));
+        assert!(has_text(&output, "Invert mouse Y"));
+    }
+
+    #[test]
     fn untouched_controls_are_not_dirty_or_decorated() {
         let mut menu = SettingsMenu::with_prefs(Prefs::default());
 
