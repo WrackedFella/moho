@@ -109,7 +109,7 @@ fn accelerate(velocity: &mut Vec3, wish: Vec3, limit: f32, accel: f32, dt: f32) 
     *velocity += wish * gap.min(accel * dt).max(0.0);
 }
 
-/// Friction on the horizontal speed, then Source acceleration along the wish direction.
+/// Friction on the horizontal speed, then acceleration along the wish direction.
 fn ground_move(velocity: &mut Vec3, wish: Vec3, magnitude: f32, settings: &MoveSettings, dt: f32) {
     let speed = velocity.with_y(0.0).length();
     if speed > 0.0 {
@@ -496,7 +496,7 @@ mod tests {
             );
         }
 
-        /// Audit row I, the Counter-Strike values Source's rules were tuned for.
+        /// Counter-Strike values, which Source's rules were tuned for.
         fn source_like() -> MoveSettings {
             MoveSettings {
                 max_speed: 6.35,
@@ -507,7 +507,7 @@ mod tests {
             }
         }
 
-        /// The factor friction scales horizontal velocity by in one tick; 1 at rest.
+        /// Per-tick horizontal friction factor; 1 at rest.
         fn friction_scale(speed: f32, settings: &MoveSettings) -> f32 {
             if speed <= 0.0 {
                 return 1.0;
@@ -598,9 +598,9 @@ mod tests {
             }
         }
 
-        /// Source's ground strafe (prestrafe): input adds along the wish without removing the
-        /// old speed, so a turn at max speed overshoots it. Kept on purpose. Speed peaks at
-        /// about 6.34 m/s three ticks in and settles back to max_speed over roughly 20 ticks.
+        /// Source prestrafe, kept on purpose: input adds along the wish without removing old
+        /// speed, so a turn at max speed overshoots (peak about 6.34 m/s after three ticks)
+        /// and settles back over roughly 20 ticks.
         #[test]
         fn a_45_degree_turn_at_max_speed_overshoots_it_then_settles() {
             let settings = MoveSettings {
