@@ -9,7 +9,7 @@ renderer and audio handles. A game implements the `Game` trait; the binary's `Ap
 implements it in `flagstone/src/app/game.rs`. Simulation runs in fixed ticks from `new_events`,
 window and device input go to `Game::event`, drawing is `Game::frame` on `RedrawRequested`.
 
-## Callbacks
+## 1 Callbacks
 
 ```mermaid
 flowchart TD
@@ -34,10 +34,10 @@ A game stops the loop with `request_exit` on its `FrameContext` or `EventContext
 Init failures (window, renderer) end `run` with an `AppError`; audio failure only logs.
 `FrameContext::renderer` and `audio` are `None` under `HeadlessLoop`, which drives the
 same `command`/`tick`/`frame` without a window (`init` and `event` never run).
-Every frame requests the next redraw, so frames run at the presentation rate and look turns the view on each one; `FrameContext::frame_dt` is the time since the previous frame, capped at `tick_length` times `max_catch_up_ticks`. Time beyond `max_catch_up_ticks` is dropped ([overview](overview.md#fixed-step-loop-moho_app)).
+Every frame requests the next redraw, so frames run at the presentation rate and look turns the view on each one; `FrameContext::frame_dt` is the time since the previous frame, capped at `tick_length` times `max_catch_up_ticks`. Time beyond `max_catch_up_ticks` is dropped ([overview](overview.md#4-fixed-step-loop-moho_app)).
 A game pauses or changes `SimSpeed` through `set_paused` / `set_speed` on its event or frame context; the loop applies the request after the callback returns, from the next tick. While paused the loop runs no tick and still renders every frame ([ADR-0018](../../_todo/adr/0018-paused-commands-apply-at-the-tick-boundary.md)).
 
-## `Game::tick` order (`App`)
+## 2 `Game::tick` order (`App`)
 
 `tick` receives the `StrategyCommand` sampled by `command()` (movement, jump and look from the
 tick's `ActionFrame`; default outside `GameState::Playing`). Steps, in order:
@@ -70,7 +70,7 @@ Mining publishes its block event while `process_input_events` drains, after
 `process_world_events`, so the light system queues the edit on the next tick and lights it in
 the tick after (two ticks, about 33 ms at 60 Hz).
 
-## Event drain
+## 3 Event drain
 
 The tick drains one channel per event family, in this order:
 
@@ -90,7 +90,7 @@ constant-power panned by direction relative to the listener's facing (centred so
 3 dB quieter per ear; stereo files are folded to mono). A rear cue scales volume by 1.0 at
 or in front of the listener's side, falling linearly to half straight behind. Why channels instead of handling inside bus handlers: [events](events.md#the-channel-hand-off).
 
-## Frame
+## 4 Frame
 
 The renderer is reachable only through the contexts, so ticks queue renderer changes
 (`RenderRequest`: point lights, shadow and SSAO quality) and `Game::frame` applies them.
@@ -98,18 +98,18 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
 
 1. `poll_gamepads`: apply pad events while playing with focus, otherwise discard them
    and release pad actions;
-2. apply the HUD's view-height pick (`view_level::update`, [cut](rendering.md#cut-face-caps)), then queued `RenderRequest`s; when an audio system exists, apply queued
+2. apply the HUD's view-height pick (`view_level::update`, [cut](rendering.md#3-cut-face-caps)), then queued `RenderRequest`s; when an audio system exists, apply queued
    `AudioSettings` (they stay queued without one) and set the listener from the frame
    camera (`Listener::from_view`); then drain audio events;
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
 4. if the UI asked for the main menu (Exit to main menu): auto-save, then `show_menu`, and go on;
-5. `update_hud_data`, `update_cut_caps` (rebuild [cut-face caps](rendering.md#cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
+5. `update_hud_data`, `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
    with actors, the sphere and cube mesh handles and the frame camera (below).
 
 A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
-[rendering](rendering.md#pass-order).
+[rendering](rendering.md#5-pass-order).
 
-### Frame camera
+### 4.1 Frame camera
 
 `App::render_camera(alpha)` picks the camera per frame. While `App::is_kcc_walking`
 (Playing, first person, character controller active and not noclip) the eye is blended

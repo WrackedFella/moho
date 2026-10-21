@@ -2,7 +2,7 @@
 
 # Moho — A Modular Voxel Game Engine (Rust)
 
-## Overview
+## 1 Overview
 
 Moho is a modular Rust workspace containing engine components and the games built on them.
 
@@ -20,7 +20,7 @@ Flagstone (the strategy game):
 
 The project emphasizes **separation of concerns** between simulation and rendering, making testing, snapshots, and future multiplayer functionality easier.
 
-### Key Features
+### 1.1 Key Features
 
 ✅ **Day/Night Cycle** - 24-hour clock with moving sun/moon, dynamic sky colors, and moonlight  
 ✅ **Event Bus System** - Type-safe pub/sub for decoupled system communication  
@@ -30,19 +30,19 @@ The project emphasizes **separation of concerns** between simulation and renderi
 ✅ **ECS Architecture** - Legion-based entity component system  
 ✅ **Cross-platform** - Windows, macOS, Linux support via WGPU
 
-## Quick Start
+## 2 Quick Start
 
-### Prerequisites
+### 2.1 Prerequisites
 - Rust toolchain (stable 2024 edition or later)
 - Vulkan/WGPU-compatible graphics drivers
 
-### Running the Game
+### 2.2 Running the Game
 
 ```sh
 cargo run -p flagstone
 ```
 
-### Testing
+### 2.3 Testing
 
 ```sh
 # Run all tests
@@ -52,7 +52,7 @@ cargo test --workspace
 cargo test --package moho_core
 ```
 
-### Performance Benchmarks
+### 2.4 Performance Benchmarks
 
 ```sh
 # Run benchmarks (requires criterion)
@@ -62,7 +62,7 @@ cargo bench --bench event_bus_bench
 start target/criterion/report/index.html
 ```
 
-### Code Quality
+### 2.5 Code Quality
 
 ```sh
 # Format code
@@ -72,9 +72,9 @@ cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-## Documentation
+## 3 Documentation
 
-### Library Documentation
+### 3.1 Library Documentation
 Each workspace crate has comprehensive documentation in its README:
 - **[moho_core/README.md](moho_core/README.md)** - Event bus, preferences, persistence
 - **[flagstone_voxel/README.md](flagstone_voxel/README.md)** - Voxel grid, chunks, meshing
@@ -83,18 +83,18 @@ Each workspace crate has comprehensive documentation in its README:
 - **[flagstone_ui/README.md](flagstone_ui/README.md)** - egui menus, settings, console, overlays
 - **[moho_input/README.md](moho_input/README.md)** - Input mapping and key bindings
 
-### Architecture Documentation
+### 3.2 Architecture Documentation
 - **[Event Bus Best Practices](wiki/reference/event-bus-best-practices.md)** - Usage patterns and common pitfalls
 - **[Event Bus Performance](wiki/reference/event-bus-performance.md)** - Benchmark results (11M events/sec)
 - **[Console Architecture](wiki/architecture/console.md)** - Debug console system design
 - **[Adding Console Commands](wiki/guides/adding-console-commands.md)** - Extending the console
 
-### Technical Reference
+### 3.3 Technical Reference
 - **[GPU ABI](wiki/reference/gpu-abi.md)** - Shader/CPU data layout requirements (Material, Camera, Lighting, CSM)
 - **[Preferences Format](wiki/reference/prefs-format.md)** - Configuration file structure
 - **[Documentation Index](wiki/README.md)** - Complete documentation overview
 
-### Day/Night Cycle
+### 3.4 Day/Night Cycle
 
 The game features a complete day/night cycle with realistic celestial mechanics:
 
@@ -119,7 +119,7 @@ let spec = moho_core::scene_builders::WorldSpec {
 
 See [moho_core/README.md](moho_core/README.md) for GameClock API details.
 
-### Debug Console (Developer)
+### 3.5 Debug Console (Developer)
 
 - Toggle: Press the backtick (`) while in the Playing state to open the debug console overlay; press Escape to close it.
 - Purpose: Lightweight in-game console for diagnostics, executing debug commands, and publishing events to the application's `EventBus`.
@@ -139,9 +139,9 @@ bus.subscribe(|evt: &moho_core::events::DebugEvent| {
 
 See `wiki/architecture/console.md` and `wiki/guides/adding-console-commands.md` for architecture and extension guidance.
 
-## Architecture
+## 4 Architecture
 
-### Workspace Structure
+### 4.1 Workspace Structure
 
 ```
 moho/
@@ -156,7 +156,7 @@ moho/
 └── moho_input/           # Input handling
 ```
 
-### Event Bus System
+### 4.2 Event Bus System
 
 The event bus provides type-safe, decoupled communication between systems:
 
@@ -178,18 +178,18 @@ bus.publish(UiEvent::MenuShown { name: "main".to_string() });
 
 See [EVENT_BUS_BEST_PRACTICES.md](wiki/reference/event-bus-best-practices.md) for detailed usage patterns.
 
-## Build & Release
+## 5 Build & Release
 
-### Development Build
+### 5.1 Development Build
 ```sh
 cargo build
 ```
 
-### Release Build
+### 5.2 Release Build
 ```sh
 cargo build --release
 ```
 
-## CI
+## 6 CI
 - `.github/workflows/ci.yml` runs the same `just` recipes as local work (`just check`, `just deny`, `just mutants`, `just cov`), with `Swatinem/rust-cache` caching dependencies. PRs into `dev` run the gate on Linux only; `main` and `gh workflow run CI --ref <branch>` run it on all three OSes.
 - For detailed design notes and development guides, see the `wiki/` folder.
