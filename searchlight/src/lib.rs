@@ -24,7 +24,6 @@ use moho_ui_shell::CONSOLE_BINDING;
 /// Ticks per second the prototype runs at.
 pub const TICK_HZ: u32 = 60;
 
-/// The id of the rifle in `weapons.toml`.
 pub const RIFLE_ID: &str = "rifle";
 
 /// The base content folder, beside the crate like `assets`.

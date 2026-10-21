@@ -6,7 +6,6 @@ use searchlight_rules::{BodyPart, BodyProfile, Magazine, MagazineError, Rifle, R
 use crate::brain::EnemyTuning;
 use crate::sim::SimConfig;
 
-/// Spare full magazines the player starts with.
 const SPARE_MAGAZINES: usize = 3;
 
 /// Builds the simulation tuning around `rifle`.

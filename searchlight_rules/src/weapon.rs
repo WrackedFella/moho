@@ -4,8 +4,8 @@ use serde::Deserialize;
 
 /// How a trigger pull becomes shots, named by id in definition files.
 ///
-/// The snake_case id is the stable seam: a registry can later resolve ids to
-/// behaviour without changing the file schema. The sim does not branch on it yet.
+/// The snake_case id is the file's contract, so code may resolve ids to behaviour
+/// however it likes without changing the schema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FireBehaviour {
