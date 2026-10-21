@@ -1458,6 +1458,8 @@ mod tests {
     fn a_press_made_as_the_console_opens_does_not_act_on_close() {
         for press_binding in [
             Input::Mouse(moho_input::key::MouseButton::Left),
+            Input::Key(Key::C),
+            // Reload taps on R's release, so the release after close must not tap either.
             Input::Key(Key::R),
         ] {
             let mut game = turning_game(false);
@@ -1479,6 +1481,13 @@ mod tests {
 
             assert!(!command.fire, "{press_binding:?}: fire");
             assert!(!command.reload, "{press_binding:?}: reload");
+            assert!(!command.check, "{press_binding:?}: check");
+
+            game.route_input(&mut ctx, press_binding, false, false);
+            let command = game.command();
+
+            assert!(!command.reload, "{press_binding:?}: reload on release");
+            assert!(!command.check, "{press_binding:?}: check on release");
         }
     }
 

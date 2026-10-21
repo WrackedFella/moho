@@ -76,12 +76,13 @@ impl<A: Action> ActionFrame<A> {
         self.held & bit(action) != 0
     }
 
-    /// Went from not held to held at any point during the tick.
+    /// Went from not held to held at any point during the tick, or was tapped: released
+    /// quickly from an input that also carries a `Hold` binding.
     pub fn pressed(&self, action: A) -> bool {
         self.pressed & bit(action) != 0
     }
 
-    /// Went from held to not held at any point during the tick.
+    /// Went from held to not held at any point during the tick, or was tapped.
     pub fn released(&self, action: A) -> bool {
         self.released & bit(action) != 0
     }

@@ -70,9 +70,9 @@ pub struct SearchlightCommand {
     pub movement: CharacterCommand,
     /// The fire input went down this tick (semi-auto: holding does not repeat).
     pub fire: bool,
-    /// The reload input went down this tick.
+    /// Reload was pressed this tick; on a key that also carries a hold, that is a tap's release.
     pub reload: bool,
-    /// The check-magazine input went down this tick.
+    /// Check magazine was pressed this tick.
     pub check: bool,
     /// The restart input went down this tick.
     pub restart: bool,

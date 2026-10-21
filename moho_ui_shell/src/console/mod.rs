@@ -9,7 +9,7 @@ mod view;
 
 use std::collections::BTreeMap;
 
-use moho_input::bindings::{Action, ActionBindings, Binding, BindingWarning, Input};
+use moho_input::bindings::{Action, ActionBindings, Binding, BindingWarning, Input, Trigger};
 use moho_input::key::Key;
 
 use output::ConsoleOutput;
@@ -63,7 +63,8 @@ pub struct Console<G> {
 
 impl<G> Console<G> {
     /// Reads only the `console` entry of the game's `[bindings]` section. The console always has
-    /// a key: an entry that is unbound or unreadable falls back to backtick, with a warning.
+    /// a key: an entry that is unbound, unreadable or holds a `Hold` binding falls back to
+    /// backtick, with a warning.
     pub fn new(bindings: &BTreeMap<String, String>) -> (Self, Vec<BindingWarning>) {
         let entry = bindings.get(CONSOLE_BINDING);
         let section: BTreeMap<String, String> = entry
@@ -72,7 +73,8 @@ impl<G> Console<G> {
             .collect();
         let (loaded, mut warnings) = ActionBindings::<ConsoleKey>::load(&section);
         let mut toggle = loaded.get(ConsoleKey).to_vec();
-        if toggle.is_empty() {
+        // Routing sees raw key events with no tick count, so a hold binding could never toggle.
+        if toggle.is_empty() || toggle.iter().any(|b| b.trigger != Trigger::Press) {
             toggle = ConsoleKey.default_bindings().to_vec();
             if let Some(value) = entry {
                 warnings.push(BindingWarning {
@@ -371,7 +373,14 @@ pub(crate) mod tests {
 
     #[test]
     fn an_unbound_or_bad_console_entry_falls_back_to_backtick() {
-        for entry in ["Unbound", "", "Nonsense"] {
+        // The console reads raw key events, so a hold binding could never toggle it.
+        for entry in [
+            "Unbound",
+            "",
+            "Nonsense",
+            "Hold Backtick",
+            "Backtick, Hold Backslash",
+        ] {
             let (mut console, warnings) = Console::<Cmd>::new(&bindings(entry));
 
             let routing = console.on_key(BACKTICK, true, false);
