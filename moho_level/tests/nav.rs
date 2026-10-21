@@ -68,7 +68,6 @@ fn floor() -> WorldMesh {
     box_mesh(Vec3::new(-10.0, -1.0, -10.0), Vec3::new(10.0, 0.0, 10.0))
 }
 
-/// A box standing on the floor over `rect`, `top` metres high.
 fn block(rect: Rect, top: f32) -> WorldMesh {
     box_mesh(
         Vec3::new(rect.min[0], 0.0, rect.min[1]),

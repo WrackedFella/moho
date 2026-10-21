@@ -7,7 +7,6 @@ use glam::{Vec2, Vec3};
 
 use super::{NavMesh, Polygon};
 
-/// A query point moved onto a polygon.
 struct Snapped {
     polygon: usize,
     point: Vec3,
@@ -29,7 +28,6 @@ impl Polygon {
         (0..n).map(move |i| (self.vertices[i], self.vertices[(i + 1) % n]))
     }
 
-    /// The point of the polygon nearest `p` on the ground plane.
     fn closest_ground_point(&self, p: Vec2) -> Vec2 {
         let inside = self
             .corners()
