@@ -14,5 +14,5 @@ non-voxel project.
 |---|
 | [ENG-F4-01 per-chunk-material-vote](ENG-F4-01-per-chunk-material-vote.md) |
 | [ENG-F4-02 mesh-buffers-consolidation](ENG-F4-02-mesh-buffers-consolidation.md) |
-| [ENG-F4-03 smooth-terrain-lighting](ENG-F4-03-smooth-terrain-lighting.md) |
+| ENG-F4-03 smooth-terrain-lighting: dropped 2026-10-21, covered by SG-F7-05 and [SG-F7-06](https://github.com/WrackedFella/moho/issues/482) |
 | [ENG-F4-04 lod1-mesh-holes](ENG-F4-04-lod1-mesh-holes.md) |
