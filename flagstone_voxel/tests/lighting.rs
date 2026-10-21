@@ -495,11 +495,26 @@ fn grid_with_sources(sources: &[(IVec3, [u8; 3])]) -> VoxelGrid {
 
 /// Every voxel in `[min, max]` carries the same light in both grids.
 fn assert_same_light(actual: &VoxelGrid, expected: &VoxelGrid, min: IVec3, max: IVec3) {
+    assert_same_light_in(actual, expected, min, max, "");
+}
+
+/// As [`assert_same_light`]; a failure also names `context`.
+fn assert_same_light_in(
+    actual: &VoxelGrid,
+    expected: &VoxelGrid,
+    min: IVec3,
+    max: IVec3,
+    context: &str,
+) {
     for x in min.x..=max.x {
         for y in min.y..=max.y {
             for z in min.z..=max.z {
                 let pos = IVec3::new(x, y, z);
-                assert_eq!(rgb(actual, pos), rgb(expected, pos), "light at {pos:?}");
+                assert_eq!(
+                    rgb(actual, pos),
+                    rgb(expected, pos),
+                    "light at {pos:?} {context}"
+                );
             }
         }
     }
@@ -868,17 +883,15 @@ fn removing_a_brighter_light_keeps_the_dimmer_survivors_area() {
 
         let (grid, expected) = remove_block_light(&blocks, 1);
 
-        assert_same_light(
+        let row = format!("survivor {survivor}, removed {removed}, distance {distance}");
+        assert_same_light_in(
             &grid,
             &expected,
             survivor_pos.min(removed_pos) - IVec3::splat(16),
             survivor_pos.max(removed_pos) + IVec3::splat(16),
+            &row,
         );
-        assert_eq!(
-            rgb(&grid, survivor_pos)[2],
-            survivor,
-            "survivor {survivor} with removed {removed} at distance {distance}"
-        );
+        assert_eq!(rgb(&grid, survivor_pos)[2], survivor, "{row}");
     }
 }
 
@@ -896,78 +909,131 @@ fn removing_a_light_keeps_a_nearby_emitter_at_full_strength() {
     assert_eq!(rgb(&grid, emitter), [0, 0, 10]);
 }
 
-/// The survivor is re-seeded whether it blocks light (opacity 15) or not (0).
+/// An opaque survivor is re-seeded too, though no light can reach it from outside.
 #[test]
-fn removal_re_seeds_opaque_and_transparent_emitters() {
+fn removal_re_seeds_an_opaque_emitter() {
     let survivor_pos = IVec3::new(19, 19, 19);
-    for opacity_cost in [15u8, 0] {
-        let blocks = [
-            TestBlock {
-                opacity_cost,
-                ..blue_emitter(survivor_pos, 8)
-            },
-            blue_emitter(survivor_pos + IVec3::new(0, 0, 6), 15),
-        ];
+    let blocks = [
+        TestBlock {
+            opacity_cost: 15,
+            ..blue_emitter(survivor_pos, 8)
+        },
+        blue_emitter(survivor_pos + IVec3::new(0, 0, 6), 15),
+    ];
 
-        let (grid, expected) = remove_block_light(&blocks, 1);
+    let (grid, expected) = remove_block_light(&blocks, 1);
 
-        assert_eq!(
-            rgb(&grid, survivor_pos),
-            [0, 0, 8],
-            "opacity {opacity_cost}: survivor's own voxel"
-        );
-        assert_same_light(
-            &grid,
-            &expected,
-            survivor_pos - IVec3::splat(16),
-            survivor_pos + IVec3::new(16, 16, 22),
-        );
-    }
+    assert_eq!(rgb(&grid, survivor_pos), [0, 0, 8]);
+    assert_same_light(
+        &grid,
+        &expected,
+        survivor_pos - IVec3::splat(16),
+        survivor_pos + IVec3::new(16, 16, 22),
+    );
 }
 
+/// A relight seed that the dark wave clears afterwards must not spread light.
+#[test]
+fn removal_does_not_spread_light_from_a_relight_seed_that_was_cleared() {
+    let removed_pos = IVec3::new(15, 12, 12);
+    let opaque_pos = IVec3::new(19, 12, 13);
+    let blocks = [
+        blue_emitter(removed_pos, 8),
+        TestBlock {
+            opacity_cost: 15,
+            ..blue_emitter(opaque_pos, 1)
+        },
+    ];
+
+    let (grid, expected) = remove_block_light(&blocks, 0);
+
+    assert_same_light(
+        &grid,
+        &expected,
+        removed_pos.min(opaque_pos) - IVec3::splat(16),
+        removed_pos.max(opaque_pos) + IVec3::splat(16),
+    );
+}
+
+/// Each channel is restored from that channel's own emission.
+#[test]
+fn removal_restores_each_channel_from_its_own_emission() {
+    let survivor_pos = IVec3::new(19, 19, 19);
+    let removed_pos = survivor_pos + IVec3::new(0, 0, 6);
+    let blocks = [
+        TestBlock {
+            pos: survivor_pos,
+            emission: [8, 3, 0],
+            opacity_cost: 0,
+        },
+        TestBlock {
+            pos: removed_pos,
+            emission: [15, 0, 12],
+            opacity_cost: 0,
+        },
+    ];
+
+    let (grid, expected) = remove_block_light(&blocks, 1);
+
+    assert_eq!(rgb(&grid, survivor_pos), [8, 3, 0]);
+    assert_same_light(
+        &grid,
+        &expected,
+        survivor_pos - IVec3::splat(16),
+        survivor_pos + IVec3::new(16, 16, 22),
+    );
+}
+
+const CASES: u32 = 12;
+
 fn box_pos() -> impl Strategy<Value = (i32, i32, i32)> {
-    // [8, 32) spans chunks 0 and 1 on every axis.
-    (8..32i32, 8..32i32, 8..32i32)
+    // [10, 22) straddles the chunk border at 16 on every axis.
+    (10..22i32, 10..22i32, 10..22i32)
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(12))]
+    #![proptest_config(ProptestConfig::with_cases(CASES))]
 
-    /// Removing any one emitter leaves exactly the light a fresh fill of the
-    /// remaining blocks gives, everywhere within reach.
+    /// Removing any one transparent emitter leaves exactly the light a fresh fill
+    /// of the remaining blocks gives, everywhere within reach. Survivors are
+    /// opaque or transparent; removing an opaque block is a separate rule.
     #[test]
     fn prop_removal_matches_a_fresh_fill(
-        emitter_cells in prop::collection::hash_set(box_pos(), 2..=5),
-        emissions in prop::collection::vec([0u8..=15, 0u8..=15, 0u8..=15], 5),
-        wall_cells in prop::collection::hash_set(box_pos(), 0..=6),
+        emitter_cells in prop::collection::btree_map(
+            box_pos(),
+            ([0u8..=15, 0u8..=15, 0u8..=15], prop::bool::ANY),
+            2..=5,
+        ),
+        wall_cells in prop::collection::btree_set(box_pos(), 0..=6),
         removed_pick in 0usize..5,
     ) {
+        let removed = removed_pick % emitter_cells.len();
         let emitters: Vec<TestBlock> = emitter_cells
             .iter()
-            .zip(&emissions)
-            .map(|(&(x, y, z), &emission)| TestBlock {
+            .enumerate()
+            .map(|(i, (&(x, y, z), &(emission, opaque)))| TestBlock {
                 pos: IVec3::new(x, y, z),
                 emission,
-                opacity_cost: 0,
+                opacity_cost: if opaque && i != removed { 15 } else { 0 },
             })
             .collect();
         let walls = wall_cells
-            .difference(&emitter_cells)
+            .iter()
+            .filter(|cell| !emitter_cells.contains_key(*cell))
             .map(|&(x, y, z)| TestBlock {
                 pos: IVec3::new(x, y, z),
                 emission: [0; 3],
                 opacity_cost: 15,
             });
         let blocks: Vec<TestBlock> = emitters.iter().copied().chain(walls).collect();
-        let removed = removed_pick % emitters.len();
 
         let (grid, expected) = remove_block_light(&blocks, removed);
 
         assert_same_light(
             &grid,
             &expected,
-            IVec3::splat(8 - 16),
-            IVec3::splat(31 + 16),
+            IVec3::splat(10 - 16),
+            IVec3::splat(21 + 16),
         );
     }
 }
