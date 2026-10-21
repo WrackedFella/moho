@@ -1182,19 +1182,39 @@ mod tests {
         }
 
         #[test]
-        fn airborne_character_gains_downward_speed_from_gravity() {
-            let mut state = state_at(Vec3::new(0.0, 50.0, 0.0), Vec3::ZERO, false);
+        fn airborne_tick_asks_the_average_of_start_and_end_velocity() {
+            let start_vy = 3.0;
+            let mut state = state_at(
+                Vec3::new(0.0, 50.0, 0.0),
+                Vec3::new(0.0, start_vy, 0.0),
+                false,
+            );
+            let mut asked = Vec3::ZERO;
 
-            drift(&mut state, &CharacterCommand::default());
+            step(
+                &mut state,
+                &CharacterCommand::default(),
+                &test_settings(),
+                DT,
+                |wanted| {
+                    asked = wanted;
+                    open_air(wanted)
+                },
+            );
 
             assert!(
-                (state.velocity.y + 18.0 * DT).abs() < 1e-4,
-                "{:?}",
+                (asked.y - (start_vy - 18.0 * DT / 2.0) * DT).abs() < 1e-6,
+                "the slide asks (v - g*dt/2)*dt, asked y = {}",
+                asked.y
+            );
+            assert!(
+                (state.velocity.y - (start_vy - 18.0 * DT)).abs() < 1e-5,
+                "full gravity by the end of the tick, {:?}",
                 state.velocity
             );
             assert!(
-                (state.position.y - (50.0 - 18.0 * DT * DT)).abs() < 1e-4,
-                "gravity applies before the slide, y = {}",
+                (state.position.y - (50.0 + asked.y)).abs() < 1e-6,
+                "y = {}",
                 state.position.y
             );
         }
