@@ -161,6 +161,24 @@ Each system states the question its prototype must answer, the design, and its c
 - **Handover:** an actor entering the active zone is materialized at the boundary or at its sim position; an actor leaving is folded back into the abstract sim with its current state.
 - **Cut lines:** diplomacy and dialogue trees (faction standing changes only); emergent quests beyond templated jobs; more than ~5 zones.
 
+### 4.11 Enemy AI: grades, groups and factions
+
+- **Question:** can enemies who differ in skill, and act as units, produce fights that read as people, not turrets?
+- **Rule that bounds everything:** skill changes *behavior*, never toughness. Enemies of every grade take the same hits to kill (§6, no bullet sponges). Difficulty may change the mix of grades, not their damage or health.
+- **Grade (veterancy):** each human enemy has one of five grades: **rookie, novice, experienced, veteran, professional**. A sixth, **legend**, is reserved for named NPCs and deferred. A grade is one data profile with three layers:
+  - *Execution:* aim error, reaction time from spotting to first shot, how often it pauses before or between bursts.
+  - *Tactics:* how early it takes cover, whether it relocates under fire, whether it pushes or holds. Rookies stand in the open and freeze; veterans cover, flank and use suppressing fire.
+  - *Strength:* one number derived from the profile, used by the offline sim (§4.10) so live fights and dice-rolled fights agree on who is tougher.
+- **Readability:** the player can tell grades two or more steps apart from behavior and gear in the first fight, without a label. Neighbouring grades show over several fights. Tactics are announced (callouts, visible moves), so a push or a flank is fair, not clairvoyant.
+- **Fixed for life** until Phase 7. Enemies ranking up over time is a nice-to-have for the Director; players will rarely see it.
+- **Encounter group:** a small unit (2 to 4 at first) that acts as one. Members share alerts; a gunshot or a sighting alerts nearby groups. A group coordinator chooses the group's stance (push, hold, fall back) from its strength against the threat and its state (ammo, wounded). Fire and maneuver is the base tactic: some members suppress while others move.
+- **Leader:** one member per group, normally its highest grade. While a member is near and in sight of the leader, its effective grade is raised one step, never above the leader's own grade. Kill the leader and the lift ends at once.
+- **Two tiers:** the Director (§4.10) is strategic: it decides which groups exist, where, and what they are after. The group coordinator is tactical and runs only while the group is live. A group is one object in both: live behavior when the player is present, one strength-weighted dice roll when not.
+- **Factions:** a faction sets a group's relations (the §4.10 matrix) and its grade mix and gear. Relations first matter between faction and player. Enemy-versus-enemy fights come with the live zone in Phase 7.
+- **Wildlife:** the same group model, simplified: a pack with an alpha as leader, surround and flank, flee when the alpha dies or the pack is hurt. No cover, grenades or suppression. Packs differ by species data, not code.
+- **Grenades:** veterans use them to flush a player from cover. Gated on thrown objects and area damage, so cut until after Phase 4.
+- **Cut lines:** morale and surrender, dialogue, voice lines beyond a few callouts, enemies that open doors or use vehicles, learning from the player, a player-side suppression effect (first version is AI behavior only), predator-prey ecosystems.
+
 ## 5. Modes and levels: how maps are made
 
 | Mode / level | Map source | Notes |
@@ -180,7 +198,7 @@ No procedural geometry in scope. Generation is limited to *what* is placed *wher
 - Not a seamless open world: discrete zones with transitions.
 - Not a score-chasing game: score, waves and match timers exist only in the arena mode layer.
 - Not story-driven: no authored campaign, no dialogue trees in scope.
-- Not an RPG with levels: no XP, no skill trees, no stat points.
+- Not an RPG with levels: no XP, no skill trees, no stat points for the player. (Enemy grades, §4.11, are not player levels.)
 - No vehicles, base building, or crafting of weapons from scratch.
 - No bullet sponges and no damage scaling with difficulty by default.
 
@@ -199,6 +217,13 @@ Principle: build the cheapest playable baseline first, then add systems in the o
 | 7 | **Director** | Zone graph, factions, offline dice sim, daily planning, live handover | Does the world feel alive with this little machinery? | 3–5 pre-made zones |
 | Later | Depth | Attachments, ammo crafting, armor depth, damage types, anomalies/artifacts | — | — |
 
+Enemy AI (§4.11) is not a phase of its own; it lands in slices alongside the phases:
+- **After Phase 1 approval, parallel to Phase 2:** enemy grades (five grades as data; accuracy, reaction time, pauses, cover use; waves shift up the ladder). Needs no items, UI or navigation.
+- **Before Phase 3:** group alerts, leader lift, fire and maneuver. Needs cover and exposure queries over the map (§10 item 4).
+- **Phase 6:** faction relations toward the player, wildlife packs with the first mutant type.
+- **Phase 7:** groups as the Director's unit, enemy-versus-enemy fights, optional rank-up.
+- **After Phase 4:** grenades.
+
 Why this order:
 - **Mags and hit volumes in Phase 1:** both are expensive to retrofit (they shape weapon code and character setup) and cheap to include at the start.
 - **Items before wear:** repair parts, mags and meds are all items; building them without the item model means rebuilding them.
@@ -215,6 +240,7 @@ Why this order:
 | Maps | 1 arena | 1 hub + 2 zones + range | 1 hub + 4–5 zones |
 | Weapons | 1 rifle | 5 (pistol, SMG, 2 rifles, shotgun) in 3 calibers | 12–15 across 5–6 calibers |
 | Enemy types | 1 human | 2 humans + 1 mutant | 4 human factions + 4–5 mutant types |
+| Enemy grades (§4.11) | 5 as data on a type, once approved | 5 | 5 (+ legend for named NPCs) |
 | Meds | — | 6–8 | 15–20 |
 | Food/drink | — | 4–6 | 10–15 |
 | Jobs | — | 3 templates | 6–8 templates |
@@ -230,6 +256,10 @@ Why this order:
 7. ~~**Ballistics:**~~ Decided: hitscan in Phase 1; physics-based projectiles are a long-term goal.
 8. **Difficulty:** your idea of difficulty toggling complexity rather than damage fits pillar 3; sliders per system make modding easier too. Confirm before Phase 5.
 9. **Director name:** placeholder "the Director".
+10. ~~**Enemy grades:**~~ Decided: five (rookie, novice, experienced, veteran, professional), fixed for life until Phase 7; legend for named NPCs deferred; grades change behavior, never HP or damage.
+11. **Suppression:** AI behavior only at first. Does it get a player-side effect (blurred view, spread penalty) once wounds exist (Phase 4)?
+12. **Difficulty and AI:** is AI sophistication (grade mix, tactics on or off) part of the complexity toggles in Q8? Decide with Q8.
+13. **Rank-up:** may the Director raise an enemy's grade over time (Phase 7 nice-to-have)?
 
 ## 10. Engine fit and engine requests
 
@@ -246,8 +276,8 @@ What the game must be able to do (needs, not solutions). Generic needs belong in
 1. **Load a static level from a file:** render meshes, build colliders, and expose named markers (spawns, loot points, boundaries, safe spots). Meshes and colliders are covered by [ENG-F10](https://github.com/WrackedFella/moho/issues/80); the file format and markers are not. *(Phase 1)*
 2. **Hit a specific body part:** raycast against world geometry and against named hit volumes attached to a character, returning which part was hit. *(Phase 1)*
 3. **Render characters:** at minimum rigid segmented bodies (Phase 1); skeletal animation later. *(Phase 1 / later)*
-4. **AI navigation on non-voxel maps:** compute walkable paths and cover points over an arbitrary static level. *(Phase 1)*
-5. **Positional 3D audio:** gunshots and footsteps located and attenuated in space. *(Phase 1)*
+4. **AI navigation on non-voxel maps:** compute walkable paths and cover points over an arbitrary static level, and tell whether a spot is exposed to a given position (group tactics, §4.11). *(Phase 1 stopgap; group tactics need it)*
+5. **Positional 3D audio:** gunshots and footsteps located and attenuated in space, so players can place fire and callouts and enemies can hear shots. *(Phase 1)*
 6. **FPS-owned UI:** HUD, inventory, and menus that don't depend on the strategy game's UI; the generic parts move to the engine. *(Phase 1–2)*
 7. **Data-driven definitions from files:** load item, weapon, med and faction definitions from data, so mods can add or override them. *(Phase 2)*
 8. **Game time separate from the sim tick:** a game clock that can scale and skip (sleep fast-forward) on top of the fixed 60 Hz tick (ADR-0009). *(Phase 5)*
