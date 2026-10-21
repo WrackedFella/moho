@@ -9,6 +9,9 @@ struct Camera {
     cam_pos: vec4<f32>,  // w = view-height cut
 }
 
+// Lets a marker box whose top face sits on the cut keep its lid.
+override marker_inflate: f32;
+
 @group(0) @binding(0)
 var<uniform> camera: Camera;
 
@@ -38,7 +41,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    if (in.world_y > camera.cam_pos.w) {
+    // 1.5x leaves headroom so interpolation error on a lid at cut + inflate is not discarded.
+    if (in.world_y > camera.cam_pos.w + marker_inflate * 1.5) {
         discard;
     }
     return in.color;

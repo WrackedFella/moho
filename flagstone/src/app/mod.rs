@@ -8,6 +8,7 @@ pub mod camera;
 pub mod chunk_streamer;
 pub mod config;
 pub mod console;
+pub mod cut_caps;
 pub mod event_loop;
 pub mod event_setup;
 pub mod game;

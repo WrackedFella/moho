@@ -88,8 +88,8 @@ impl VoxelChunk {
     /// - `lod == 0`: full 16³ hybrid mesh (Marching Cubes + blocky), same as `from_grid_hybrid`
     /// - `lod == 1`: coarse 8³ blocky mesh (1 sample per 2-block cell), lower quality, cheaper
     pub fn from_grid_lod(grid: &VoxelGrid, chunk_pos: IVec3, lod: u8) -> Self {
-        use super::mesh::HybridMeshGenerator;
-        if lod == 0 {
+        use super::mesh::{HybridMeshGenerator, is_fine_lod};
+        if is_fine_lod(lod) {
             return Self::from_grid_hybrid(grid, chunk_pos);
         }
 

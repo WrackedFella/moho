@@ -1,7 +1,7 @@
 # Rendering
 
 **Source:** `moho_render_api/src/` (`world_geometry.rs`), `moho_renderer/src/` (`scene.rs`,
-`world_meshes.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`,
+`world_meshes.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone_voxel/src/mesh/cap.rs`,
 `shaders/`, `moho_level/src/`.
 **Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
 [ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md).
@@ -56,7 +56,7 @@ draw per mesh in id order.
 The binary adapts voxel chunks in `flagstone/src/app/world_geometry.rs`: `chunk_mesh_id` packs
 the chunk position at 21 bits per signed axis, `chunk_world_mesh` converts a
 `VoxelChunk`, and `insert_chunk` / `remove_chunk` keep the `ChunkStore`, the
-renderer and the physics colliders in step. The same `WorldMesh` and `WorldMeshId` go to
+renderer and the physics colliders in step, along with the chunk's [cut-face cap](#cut-face-caps). The same `WorldMesh` and `WorldMeshId` go to
 `PhysicsWorld::set_world_mesh` / `remove_world_mesh` (`moho_physics/src/world.rs`), which
 holds one static trimesh collider per id; an empty mesh holds none. A refused mesh is
 logged and the chunk is neither drawn nor solid.
@@ -100,6 +100,25 @@ default scene, plus a `LevelMarker` per named node without a mesh
 
 The loader does not register meshes: the caller assigns `WorldMeshId`s and sends each
 mesh to `WorldMeshes` and `PhysicsWorld` as above.
+
+## Cut-face caps
+
+The view-height cut discards geometry above the plane and leaves the ground hollow.
+The binary closes it with flat caps built from the voxels, not by the renderer.
+`flagstone/src/app/cut_caps.rs` (`CutCaps`) follows the cut: `SetViewHeight` sets it
+(`set_cut`), chunk insert and upsert mark the chunk dirty, remove drops its cap at once, and
+`FrameProcessor::update_cut_caps` runs `refresh` each frame before lighting and render.
+`refresh` rebuilds caps only for dirty chunks, plus, when the cut moved, every chunk in
+`cap_chunk_layers` and every chunk already capped. A cap is an ordinary world mesh queued
+under `cap_mesh_id` (the chunk's id with bit 63 set) with the cut-face material
+(`register_cut_face_material`: terrain dirt on both faces). Caps get no collider and are
+removed with their chunk or when the cut clears.
+
+`flagstone_voxel::cut_cap_mesh` (`mesh/cap.rs`) builds the `+Y` face at `y = cut` over
+the cells the chunk's own mesher drew, at the chunk's LOD, so the cap meets the walls and
+neighbouring caps tile. Solidity is sampled at `cut + CAP_PROBE`. A marker whose top sits
+on the cut keeps its lid: `shaders/marker.wgsl` discards above the cut plus the
+`marker_inflate` pipeline constant, set from `MARKER_INFLATE`.
 
 ## Submission
 
@@ -191,7 +210,7 @@ blending, sRGB vertex colours, no custom paint callbacks.
 | Shadow quality 0–4 | `graphics.shadow_quality`, `r_shadow_quality` | Off/Low/Med/High/Ultra |
 | SSAO quality 0–4 | `graphics.ssao_quality`, `r_ssao_quality` | Samples 0/4/8/16/32 |
 | Debug view | `r_debug_view <mode>` | `Lighting.params.y` |
-| View-height cut | `r_view_height <metres\|off>` | `Renderer::set_view_height`; sticky; cuts world, markers and shadows |
+| View-height cut | `r_view_height <metres\|off>` | `Renderer::set_view_height`; sticky; cuts world, markers and shadows; the binary caps the cut ([below](#cut-face-caps)) |
 | Shadow map size | `SHADOW_MAP_SIZE` = 4096 | `shadow.rs` |
 | Shadow distance | `SHADOW_DISTANCE` = 1000 | `shadow.rs` |
 

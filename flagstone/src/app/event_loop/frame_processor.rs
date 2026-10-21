@@ -137,6 +137,19 @@ impl FrameProcessor {
         }
     }
 
+    /// Build the cut-face caps of chunks whose ground changed since the last frame.
+    pub fn update_cut_caps(&self, app: &mut App) {
+        let Some(light_system) = app.light_system.as_ref() else {
+            return;
+        };
+        app.cut_caps.refresh(
+            light_system.grid(),
+            &app.entities.chunks,
+            app.scene.world_meshes_mut(),
+            app.cut_face_material_idx,
+        );
+    }
+
     /// Update chunk streaming: evict distant chunks, load nearby ones.
     pub fn update_chunk_streaming(&self, app: &mut App) {
         if app.game_state != crate::game_state::GameState::Playing {

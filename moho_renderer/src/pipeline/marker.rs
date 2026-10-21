@@ -2,7 +2,14 @@
 
 use moho_render_api::MarkerGpu;
 
+use crate::MARKER_INFLATE;
+
 const MARKER_SHADER: &str = include_str!("../../../shaders/marker.wgsl");
+
+/// The pipeline-overridable constants of `marker.wgsl`, name and value.
+pub(super) fn marker_constants() -> [(&'static str, f64); 1] {
+    [("marker_inflate", f64::from(MARKER_INFLATE))]
+}
 
 /// Alpha-blended, back-face-culled, depth-tested but depth-write-free pipeline
 /// drawing a unit cube instanced by [`MarkerGpu`]: solid triangles for
@@ -21,6 +28,7 @@ pub(super) fn create_marker_pipeline(
         label: Some("marker-shader"),
         source: wgpu::ShaderSource::Wgsl(MARKER_SHADER.into()),
     });
+    let constants = marker_constants();
     let label = match topology {
         wgpu::PrimitiveTopology::LineList => "marker-outline-pipeline",
         _ => "marker-pipeline",
@@ -53,7 +61,10 @@ pub(super) fn create_marker_pipeline(
         fragment: Some(wgpu::FragmentState {
             module: &shader,
             entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &constants,
+                ..Default::default()
+            },
             targets: &[Some(wgpu::ColorTargetState {
                 format: surface_format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -80,4 +91,16 @@ pub(super) fn create_marker_pipeline(
         multiview_mask: None,
         cache: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marker_pipeline_sets_inflate_from_marker_inflate() {
+        let constants = marker_constants();
+
+        assert_eq!(constants, [("marker_inflate", f64::from(MARKER_INFLATE))]);
+    }
 }

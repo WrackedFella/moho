@@ -135,13 +135,7 @@ impl MarchingCubes {
             density_field[x][y + 1][z + 1],
         ];
 
-        // Compute cube index (which corners are inside/outside)
-        let mut cube_index = 0u8;
-        for (i, &corner) in corners.iter().enumerate() {
-            if corner > 0.5 {
-                cube_index |= 1 << i;
-            }
-        }
+        let cube_index = cube_index(density_field, x, y, z);
 
         // Edges the surface crosses; none when the cube is entirely inside or outside.
         let edge_flags = EDGE_TABLE[cube_index as usize];
@@ -293,6 +287,21 @@ impl MarchingCubes {
         // Density rises into the solid, so outward is the negated gradient.
         gradient.map(|g| -g / len)
     }
+}
+
+/// Bit `i` is set when corner `i` (in `MarchingCubes::CORNER_OFFSETS` order) of the cell
+/// at field index `(x, y, z)` is inside the surface, that is, denser than 0.5.
+pub(crate) fn cube_index(
+    density_field: &[[[f32; 18]; 18]; 18],
+    x: usize,
+    y: usize,
+    z: usize,
+) -> u8 {
+    MarchingCubes::CORNER_OFFSETS
+        .iter()
+        .enumerate()
+        .filter(|(_, [dx, dy, dz])| density_field[x + dx][y + dy][z + dz] > 0.5)
+        .fold(0u8, |index, (corner, _)| index | 1 << corner)
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
@@ -865,6 +874,27 @@ const TRI_TABLE: [[u8; 16]; 256] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_corner_at_exactly_the_iso_level_is_air() {
+        let mut field = [[[0.0f32; 18]; 18]; 18];
+        field[5][5][5] = 0.5;
+
+        let mesh = MarchingCubes::generate_mesh(&field, 16);
+
+        assert!(
+            mesh.indices.is_empty(),
+            "{} triangles",
+            mesh.indices.len() / 3
+        );
+        assert_eq!(cube_index(&field, 5, 5, 5), 0);
+        field[5][5][5] = 0.5001;
+        assert_eq!(
+            cube_index(&field, 5, 5, 5),
+            1,
+            "just over the iso level is solid"
+        );
+    }
 
     #[test]
     fn sample_density_interpolates_trilinearly_inside_a_cell() {

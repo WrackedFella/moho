@@ -528,6 +528,7 @@ impl EventProcessor {
                 None => app.scene.markers_mut().clear(),
             },
             DebugEvent::SetViewHeight { height } => {
+                app.cut_caps.set_cut(height);
                 app.pending_render.push(RenderRequest::ViewHeight(height));
             }
             _ => {}
@@ -1043,6 +1044,34 @@ mod tests {
             ),
             "queued {} requests",
             app.pending_render.len()
+        );
+    }
+
+    #[test]
+    fn view_height_event_sets_the_cut() {
+        let mut app = App::headless();
+        app.event_bus
+            .publish(DebugEvent::SetViewHeight { height: Some(12.5) });
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert_eq!(app.cut_caps.cut(), Some(12.5));
+        assert!(
+            matches!(
+                app.pending_render.as_slice(),
+                [RenderRequest::ViewHeight(Some(h))] if *h == 12.5
+            ),
+            "the renderer request is still queued"
+        );
+
+        app.event_bus
+            .publish(DebugEvent::SetViewHeight { height: None });
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert_eq!(
+            app.cut_caps.cut(),
+            None,
+            "clearing the height clears the cut"
         );
     }
 

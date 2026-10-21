@@ -69,7 +69,7 @@ Notes:
   ([console commands](console-commands.md)).
 - View-height cut (`r_view_height`): `view_height_uniform` maps `None` and non-finite
   heights to `f32::MAX` (no cut, not infinity: WGSL may assume none). The main and
-  marker fragment shaders discard world y above `CameraGpu.cam_pos.w`; the shadow pass
+  marker fragment shaders discard world y above `CameraGpu.cam_pos.w` (the marker shader adds the `marker_inflate` override constant, `MARKER_INFLATE`, so a box grown onto the cut keeps its top); the shadow pass
   has a fragment stage that discards on `metadata.w`, so shadows follow drawn geometry.
 - Shadow constants (`shadow.rs`): map size 4096, shadow distance 1000.
   `MAX_SHADOW_LIGHTS` = 4, `MAX_DYNAMIC_LIGHTS` = 64.

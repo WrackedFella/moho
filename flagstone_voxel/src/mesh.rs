@@ -5,10 +5,13 @@
 //! - `MarchingCubes`: smooth isosurface extraction for terrain
 
 mod blocky;
+mod cap;
 mod hybrid;
 mod marching_cubes;
 
 pub use blocky::BlockyMeshGenerator;
+pub use cap::{CAP_PROBE, cap_chunk_layers, cut_cap_mesh};
+pub(crate) use hybrid::is_fine_lod;
 pub use hybrid::{ChunkContent, HybridMeshGenerator};
 pub use marching_cubes::MarchingCubes;
 
