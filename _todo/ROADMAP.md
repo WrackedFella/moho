@@ -196,7 +196,7 @@ one is approved.
 | Source-style baked FPS lighting tier | A second pipeline for one line | A measured FPS interior quality gap, or a target GPU that can't afford the dynamic path |
 | DDGI-style probes | Leaks and blur aren't measured yet | ENG-F30 shows unacceptable leaks or blur |
 | Box-projected room probes; Hi-Z, stochastic and temporal SSR | SSR cost, noise and indoor misses not measured | SSR exists and misses or noise look wrong |
-| Strategy water | No strategy card has water | A strategy card names water |
+| Strategy water | Needs voxel water in strategy terrain first | Justin schedules it |
 | One global Low/Medium/High graphics preset | Too few Video rows yet | Four or more renderer quality rows (after ENG-F30) |
 
 ## M3 — v1.0 and split
