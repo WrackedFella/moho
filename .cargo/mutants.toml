@@ -1,4 +1,8 @@
 test_tool = "nextest"
+# The auto-set floor is 20 s. With the voxel lighting suite, some caught mutants make the light
+# spread into far more chunks and the package's tests then need about 25 s to all finish, so they
+# read as timeouts. Genuine hangs are excluded below, so the higher floor costs little.
+minimum_test_timeout = 60
 # GPU, windowing and egui-adapter code has no headless tests, so every mutant
 # there would read as missed without telling us anything.
 exclude_globs = [
@@ -146,4 +150,19 @@ exclude_re = [
     'replace input_of -> Option<\(Binding, bool, bool\)> with None',
     'delete match arm WindowEvent::KeyboardInput\{event:KeyEvent\{physical_key, state, repeat, \.\.\}, \.\.\} in input_of',
     'delete match arm WindowEvent::MouseInput\{state, button, \.\.\} in input_of',
+    # flagstone_voxel lighting. Hangs rather than survives: a light BFS that cannot read back its
+    # own writes re-queues the same voxels forever, and only the timeout stops it.
+    'replace LightPropagator::read_ch -> u8 with',
+    'replace LightPropagator::write_ch with \(\)',
+    # A broken index inverse sends the light BFS into the same endless re-queue. The round-trip
+    # test fails at once, but nextest waits for the hung lighting tests already running.
+    'replace % with \+ in idx_to_local',
+    'replace / with \* in idx_to_local',
+    'replace \* with [+/] in idx_to_local',
+    # Equivalent: the six offsets come in opposite pairs, so subtracting them visits the same voxels.
+    'replace \+ with - in neighbours',
+    # Equivalent: a neighbour already at `next` is pushed, then skipped when popped.
+    'replace > with >= in LightPropagator::enqueue_neighbours',
+    # The condition only gates a debug log line.
+    'replace > with [<=>]+ in LightJobQueue::process_frame',
 ]

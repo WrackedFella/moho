@@ -4,8 +4,7 @@
 //! property. Failing tests identify exactly which guarantee broke.
 
 use flagstone_voxel::{
-    LightPropagator, MaterialLighting, VoxelGrid, dirty_chunks_below, ensure_chunk_sky_ready,
-    recompute_sky_exposure,
+    LightPropagator, MaterialLighting, VoxelGrid, dirty_chunks_below, recompute_sky_exposure,
 };
 use glam::IVec3;
 
@@ -150,7 +149,7 @@ fn sky_dirty_chunks_below_propagates() {
 }
 
 #[test]
-fn sky_ensure_ready_noop_when_clean() {
+fn sky_recompute_noop_when_clean() {
     let mut grid = grid_16();
     let cp = IVec3::ZERO;
     let below = IVec3::new(3, 7, 3);
@@ -158,9 +157,65 @@ fn sky_ensure_ready_noop_when_clean() {
     grid.mutator().place(IVec3::new(3, 8, 3), 0, None);
     grid.chunk_light_mut(cp).sky_dirty = false;
 
-    ensure_chunk_sky_ready(&mut grid, cp);
+    recompute_sky_exposure(&mut grid, cp);
 
     assert!(sky(&grid, below), "a clean chunk keeps its stale exposure");
+}
+
+/// In any chunk layer the block's own voxel and everything below it in the
+/// column are shadowed, everything above it is exposed.
+#[test]
+fn sky_occlusion_shadows_the_block_and_below_in_any_chunk_layer() {
+    // (chunk, block position, probes as (position, exposed))
+    let cases = [
+        (
+            IVec3::ZERO,
+            IVec3::new(3, 8, 3),
+            [
+                (IVec3::new(3, 9, 3), true),
+                (IVec3::new(3, 8, 3), false),
+                (IVec3::new(3, 7, 3), false),
+                (IVec3::new(4, 8, 3), true),
+                (IVec3::new(3, 15, 3), true),
+                (IVec3::new(3, 0, 3), false),
+            ],
+        ),
+        (
+            IVec3::new(0, 2, 0),
+            IVec3::new(3, 34, 3),
+            [
+                (IVec3::new(3, 35, 3), true),
+                (IVec3::new(3, 47, 3), true),
+                (IVec3::new(3, 34, 3), false),
+                (IVec3::new(3, 33, 3), false),
+                (IVec3::new(3, 32, 3), false),
+                (IVec3::new(4, 33, 3), true),
+            ],
+        ),
+        (
+            IVec3::new(0, -1, 0),
+            IVec3::new(3, -10, 3),
+            [
+                (IVec3::new(3, -9, 3), true),
+                (IVec3::new(3, -1, 3), true),
+                (IVec3::new(3, -10, 3), false),
+                (IVec3::new(3, -11, 3), false),
+                (IVec3::new(3, -16, 3), false),
+                (IVec3::new(4, -11, 3), true),
+            ],
+        ),
+    ];
+
+    for (chunk, block, probes) in cases {
+        let mut grid = grid_16();
+        grid.mutator().place(block, 0, None);
+
+        recompute_sky_exposure(&mut grid, chunk);
+
+        for (pos, exposed) in probes {
+            assert_eq!(sky(&grid, pos), exposed, "chunk {chunk:?}, probe {pos:?}");
+        }
+    }
 }
 
 #[test]
@@ -424,6 +479,138 @@ fn removal_clears_light_along_every_axis() {
     for p in arms {
         assert_eq!(rgb(&grid, p)[0], 0, "arm block at {p:?} should be dark");
     }
+}
+
+/// A grid that only ever held `sources`, as the reference for a removal.
+fn grid_with_sources(sources: &[(IVec3, [u8; 3])]) -> VoxelGrid {
+    let mut grid = grid_16();
+    let mut prop = LightPropagator::new();
+    for &(pos, emission) in sources {
+        prop.add_light_rgb(&mut grid, pos, emission);
+    }
+    grid
+}
+
+/// Every voxel in `[min, max]` carries the same light in both grids.
+fn assert_same_light(actual: &VoxelGrid, expected: &VoxelGrid, min: IVec3, max: IVec3) {
+    for x in min.x..=max.x {
+        for y in min.y..=max.y {
+            for z in min.z..=max.z {
+                let pos = IVec3::new(x, y, z);
+                assert_eq!(rgb(actual, pos), rgb(expected, pos), "light at {pos:?}");
+            }
+        }
+    }
+}
+
+/// Light every source, remove `sources[removed]`, and require the whole
+/// neighbourhood to equal a grid that only ever held the survivors.
+fn assert_removal_leaves_only_survivors(sources: &[(IVec3, [u8; 3])], removed: usize) {
+    let mut grid = grid_with_sources(sources);
+    let mut prop = LightPropagator::new();
+    let survivors: Vec<_> = sources
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| i != removed)
+        .map(|(_, &s)| s)
+        .collect();
+    let expected = grid_with_sources(&survivors);
+    let min = sources.iter().map(|s| s.0).reduce(IVec3::min).unwrap() - IVec3::splat(16);
+    let max = sources.iter().map(|s| s.0).reduce(IVec3::max).unwrap() + IVec3::splat(16);
+
+    prop.remove_light(&mut grid, sources[removed].0);
+
+    assert_same_light(&grid, &expected, min, max);
+}
+
+/// Each case lights every source, then removes each in turn. The first case sits in
+/// chunks with non-zero coordinates on every axis; the second keeps both sources
+/// in one chunk; the third is a ring of four.
+#[test]
+fn removing_one_of_two_lights_leaves_the_other_area_lit() {
+    let cases: [&[(IVec3, [u8; 3])]; 3] = [
+        &[
+            (IVec3::new(20, 18, 33), [15, 10, 5]),
+            (IVec3::new(14, 14, 30), [12, 15, 3]),
+        ],
+        &[
+            (IVec3::new(17, 17, 17), [15, 15, 15]),
+            (IVec3::new(21, 19, 18), [13, 14, 15]),
+        ],
+        &[
+            (IVec3::new(19, 19, 19), [15, 15, 12]),
+            (IVec3::new(25, 19, 19), [14, 15, 13]),
+            (IVec3::new(19, 25, 19), [15, 14, 12]),
+            (IVec3::new(19, 19, 25), [13, 15, 14]),
+        ],
+    ];
+
+    for sources in cases {
+        for removed in 0..sources.len() {
+            assert_removal_leaves_only_survivors(sources, removed);
+        }
+    }
+}
+
+/// The removed light's boundary meets both survivors at the same chunk-local
+/// index in different chunks (x = 16 and x = 32).
+#[test]
+fn removing_the_middle_of_three_lights_one_chunk_apart_keeps_both_survivors() {
+    let left = (IVec3::new(10, 8, 8), [15, 15, 15]);
+    let middle = (IVec3::new(24, 8, 8), [15, 15, 15]);
+    let right = (IVec3::new(38, 8, 8), [15, 15, 15]);
+
+    assert_removal_leaves_only_survivors(&[left, middle, right], 1);
+}
+
+#[test]
+fn light_falls_off_one_per_block_through_a_gap() {
+    let mut grid = grid_16();
+    let mut prop = LightPropagator::new();
+    let source = IVec3::new(30, 18, 34);
+    let gap = IVec3::new(34, 18, 34);
+    for y in 10..=26i32 {
+        for z in 26..=42i32 {
+            let wall = IVec3::new(34, y, z);
+            if wall != gap {
+                grid.mutator().place(wall, 0, None);
+            }
+        }
+    }
+
+    prop.add_light_rgb(&mut grid, source, [15, 0, 0]);
+
+    for x in 30..=40i32 {
+        let expected = (15 - (x - 30)) as u8;
+        assert_eq!(rgb(&grid, IVec3::new(x, 18, 34))[0], expected, "x={x}");
+    }
+    for (pos, expected) in [
+        (IVec3::new(35, 19, 34), 9u8),
+        (IVec3::new(35, 20, 34), 8),
+        (IVec3::new(36, 18, 38), 5),
+    ] {
+        assert_eq!(rgb(&grid, pos)[0], expected, "behind the wall at {pos:?}");
+    }
+    for wall in [
+        IVec3::new(34, 18, 35),
+        IVec3::new(34, 19, 34),
+        IVec3::new(34, 22, 30),
+    ] {
+        assert_eq!(rgb(&grid, wall)[0], 0, "wall cell {wall:?} stays dark");
+    }
+}
+
+#[test]
+fn adding_zero_emission_lights_nothing_and_affects_no_chunk() {
+    let mut grid = grid_16();
+    let mut prop = LightPropagator::new();
+    let pos = IVec3::new(20, 18, 33);
+
+    let affected = prop.add_light_rgb(&mut grid, pos, [0, 0, 0]);
+
+    assert!(affected.is_empty(), "{affected:?}");
+    assert_eq!(rgb(&grid, pos), [0, 0, 0]);
+    assert!(grid.chunk_light(IVec3::new(1, 1, 2)).is_none());
 }
 
 // ---------------------------------------------------------------------------
