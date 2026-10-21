@@ -168,6 +168,23 @@ The egui UI is drawn by the UI pass from paint data (below); `finish_frame` only
 and presents. Shader sources are `shaders/*.wgsl` (`common`, `vertex`,
 `fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`, `marker`).
 
+### Light composition
+
+The last lighting step in `shaders/fragment.wgsl` combines the two per-vertex light
+channels:
+
+```wgsl
+color = color * max(sky_exposed, MIN_SKY_AMBIENT)
+      + albedo * ao * block_light_rgb * BLOCK_LIGHT_GAIN
+```
+
+Sky exposure gates everything lit before this step, sun, moon, ambient and point lights
+(floor `MIN_SKY_AMBIENT` = 0.1); block light
+adds on top, so torches and emissive blocks light caves and night surfaces the sky
+leaves dark. A surface with no block light (entity meshes, level files) draws as sky
+exposure alone. Block light next to a strong emitter can push a channel past 1;
+`BLOCK_LIGHT_GAIN` (1.0) is the tuning knob.
+
 ## Markers
 
 Markers are axis-aligned boxes a game places over the world (selection and mining

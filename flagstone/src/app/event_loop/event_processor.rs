@@ -1001,6 +1001,49 @@ mod tests {
         assert!(!path.exists(), "adopting does not write the file");
     }
 
+    fn look_after_mouse_up(app: &mut App) -> (f32, f32) {
+        app.input.actions.mouse_motion(100.0, -100.0);
+        app.input
+            .actions
+            .sample_frame(std::time::Duration::from_millis(16));
+        app.input.actions.end_tick().look()
+    }
+
+    #[test]
+    fn adopted_sensitivity_and_invert_apply_to_the_next_motion() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = prefs_file(&dir);
+        let mut app = headless_saving_to(&path);
+        let before = look_after_mouse_up(&mut app);
+        assert!(before.1 < 0.0, "mouse up pitches up by default: {before:?}");
+        let saved = Prefs::default()
+            .with_mouse_sensitivity(1.8)
+            .with_invert_mouse_y(true);
+        saved.save_to(&path).unwrap();
+
+        app.adopt_settings(saved);
+        let after = look_after_mouse_up(&mut app);
+
+        let per_count = moho_input::action_map::source_look_per_count(1.8);
+        assert!((after.0 - 100.0 * per_count).abs() < 1e-5, "yaw {after:?}");
+        assert!(
+            (after.1 - 100.0 * per_count).abs() < 1e-5,
+            "pitch {after:?}"
+        );
+
+        let restarted_prefs = Prefs::load_from(&path).0;
+        assert_eq!(restarted_prefs.mouse_sensitivity(), 1.8);
+        assert!(restarted_prefs.invert_mouse_y());
+        let mut restarted = App::from_config(crate::app::config::AppConfig::from_prefs_struct(
+            restarted_prefs,
+        ));
+        let again = look_after_mouse_up(&mut restarted);
+        assert!(
+            (again.1 - 100.0 * per_count).abs() < 1e-5,
+            "restart {again:?}"
+        );
+    }
+
     #[test]
     fn console_prefs_command_updates_prefs_without_a_window() {
         let dir = tempfile::tempdir().unwrap();

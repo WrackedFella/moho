@@ -1550,6 +1550,7 @@ mod tests {
                     app.input.actions.set_look(LookSettings {
                         look_per_count: 0.002,
                         smoothing,
+                        invert_y: false,
                     });
                     let mut fake = FakeRenderer::default();
                     let (yaw_before, pitch_before) = sim_look(&app, rig);
@@ -1589,6 +1590,7 @@ mod tests {
                     app.input.actions.set_look(LookSettings {
                         look_per_count: 0.002,
                         smoothing,
+                        invert_y: false,
                     });
                     let mut fake = FakeRenderer::default();
                     run_frame(&mut app, &mut fake);
@@ -1675,6 +1677,7 @@ mod tests {
                     app.input.actions.set_look(LookSettings {
                         look_per_count: LOOK_PER_COUNT,
                         smoothing: false,
+                        invert_y: false,
                     });
                     app.input
                         .actions
@@ -1690,7 +1693,9 @@ mod tests {
                 let full = pending_after(tick());
                 let half = pending_after(tick() / 2);
 
-                let by_hand = 1560.0 * tick().as_secs_f32() * LOOK_PER_COUNT;
+                let by_hand = moho_input::action_map::PAD_LOOK_PER_SECOND
+                    * tick().as_secs_f32()
+                    * LOOK_PER_COUNT;
                 assert!(
                     (full - by_hand).abs() < 1e-5,
                     "{rig:?}: {full} vs {by_hand}"

@@ -1,4 +1,5 @@
-//! The engine's own egui host: one egui pass per frame, drawing the console.
+//! The engine's own egui host: one egui pass per frame, drawing the console and
+//! the screen text a game queues.
 
 use std::sync::Arc;
 
@@ -10,6 +11,7 @@ use winit::window::Window;
 
 use crate::console::{Console, Routing};
 use crate::paint_map::to_ui_frame;
+use crate::text::{self, ScreenText, ScreenTextError};
 
 /// Owns the egui context and the console it draws.
 pub struct UiShell<G> {
@@ -17,6 +19,7 @@ pub struct UiShell<G> {
     window: Option<Arc<Window>>,
     state: Option<egui_winit::State>,
     console: Console<G>,
+    texts: Vec<ScreenText>,
 }
 
 impl<G> std::fmt::Debug for UiShell<G> {
@@ -34,6 +37,7 @@ impl<G> UiShell<G> {
             window: None,
             state: None,
             console,
+            texts: Vec::new(),
         }
     }
 
@@ -95,6 +99,20 @@ impl<G> UiShell<G> {
 
     pub fn console_mut(&mut self) -> &mut Console<G> {
         &mut self.console
+    }
+
+    /// Replaces the text the next `ui_frame` paints; that frame clears it. Call once per
+    /// `Game::frame` with everything to show, so a frame the renderer skips leaves no stale text.
+    ///
+    /// # Errors
+    ///
+    /// [`ScreenTextError::BadSize`] when a text's size is not finite and positive; the shell then
+    /// holds no text.
+    pub fn set_texts(&mut self, texts: Vec<ScreenText>) -> Result<(), ScreenTextError> {
+        self.texts.clear();
+        text::validate(&texts)?;
+        self.texts = texts;
+        Ok(())
     }
 
     fn feed_egui(&mut self, event: &WindowEvent) {
@@ -159,11 +177,18 @@ impl<G> UiFrameSource for UiShell<G> {
     fn ui_frame(&mut self, size_in_pixels: [u32; 2]) -> Option<UiFrame> {
         // Taken even while closed, so events fed to egui do not pile up unread.
         let input = self.take_input(size_in_pixels);
-        if !self.console.is_open() {
+        if !self.console.is_open() && self.texts.is_empty() {
             return None;
         }
         let context = self.context.clone();
-        let output = context.run_ui(input, |ui| self.console.show(ui.ctx()));
+        let output = context.run_ui(input, |ui| {
+            // Game text first, so the console paints over it.
+            text::paint(ui.ctx(), &self.texts);
+            if self.console.is_open() {
+                self.console.show(ui.ctx());
+            }
+        });
+        self.texts.clear();
         // Platform output is dropped: handing it to egui-winit would show the cursor the game
         // grabbed. Copy, IME and cursor icons in the console go with it.
         let primitives = context.tessellate(output.shapes, output.pixels_per_point);
@@ -286,6 +311,141 @@ mod tests {
         assert!((height - 234.0).abs() <= 1.0, "log window is {height} tall");
         assert!(log.clip_rect.min[1] >= 300.0, "log starts above the panel");
         assert!(log.clip_rect.max[1] <= 600.0, "log ends below the panel");
+    }
+
+    fn ammo() -> ScreenText {
+        ScreenText {
+            text: "30 / 30".to_owned(),
+            anchor: crate::text::Anchor::BottomRight,
+            offset: [-10.0, -10.0],
+            size: 24.0,
+            color: [255, 255, 255, 255],
+        }
+    }
+
+    #[test]
+    fn set_text_yields_meshes_on_the_font_texture() {
+        let mut shell = shell();
+        shell.set_texts(vec![ammo()]).expect("valid texts");
+
+        let frame = shell.ui_frame([800, 600]);
+
+        let frame = frame.expect("set text draws a frame with the console closed");
+        assert!(!frame.meshes.is_empty());
+        assert!(!frame.textures_set.is_empty());
+        assert!(frame.meshes.iter().all(|m| !m.vertices.is_empty()));
+        assert!(
+            frame
+                .meshes
+                .iter()
+                .all(|m| frame.textures_set.iter().any(|s| s.id == m.texture))
+        );
+    }
+
+    #[test]
+    fn set_text_is_cleared_by_the_frame_that_paints_it() {
+        let mut shell = shell();
+        shell.set_texts(vec![ammo()]).expect("valid texts");
+        assert!(shell.ui_frame([800, 600]).is_some());
+
+        let next = shell.ui_frame([800, 600]);
+
+        assert_eq!(next, None);
+    }
+
+    #[test]
+    fn a_skipped_frame_leaves_only_the_latest_text() {
+        let mut fresh = shell();
+        let mut shell = shell();
+        let latest = ScreenText {
+            text: "29 / 30".to_owned(),
+            ..ammo()
+        };
+        shell
+            .set_texts(vec![ScreenText {
+                text: "30 / 30".to_owned(),
+                ..ammo()
+            }])
+            .expect("valid texts");
+        shell.set_texts(vec![latest.clone()]).expect("valid texts");
+        fresh.set_texts(vec![latest]).expect("valid texts");
+
+        let frame = shell.ui_frame([800, 600]).expect("the latest text draws");
+
+        let expected = fresh.ui_frame([800, 600]).expect("the fresh shell draws");
+        assert!(!frame.meshes.is_empty());
+        assert_eq!(frame.meshes, expected.meshes);
+    }
+
+    fn text_of(text: &str, anchor: crate::text::Anchor) -> ScreenText {
+        ScreenText {
+            text: text.to_owned(),
+            anchor,
+            offset: [0.0, 0.0],
+            size: 24.0,
+            color: [255, 255, 255, 255],
+        }
+    }
+
+    #[test]
+    fn every_text_set_this_frame_is_drawn() {
+        use crate::text::Anchor;
+        let mut shell = shell();
+        shell
+            .set_texts(vec![
+                text_of("alpha", Anchor::TopLeft),
+                text_of("bravo", Anchor::Top),
+                text_of("charlie", Anchor::BottomRight),
+            ])
+            .expect("valid texts");
+
+        let frame = shell.ui_frame([800, 600]);
+
+        let frame = frame.expect("set texts draw a frame");
+        assert!(!frame.meshes.is_empty());
+        assert!(frame.meshes.iter().all(|m| !m.vertices.is_empty()));
+    }
+
+    #[test]
+    fn set_text_clears_when_the_console_is_open_too() {
+        let mut shell = shell();
+        shell.set_texts(vec![ammo()]).expect("valid texts");
+        shell.console_mut().open();
+        assert!(shell.ui_frame([800, 600]).is_some());
+        shell.console_mut().close();
+
+        let next = shell.ui_frame([800, 600]);
+
+        assert_eq!(next, None);
+    }
+
+    #[test]
+    fn a_refused_list_replaces_the_text_with_none() {
+        for size in [0.0, -5.0, f32::NAN] {
+            let mut shell = shell();
+            shell.set_texts(vec![ammo()]).expect("a valid list is set");
+
+            let refused = shell.set_texts(vec![ammo(), ScreenText { size, ..ammo() }]);
+
+            assert!(refused.is_err(), "size {size} was accepted");
+            assert_eq!(shell.ui_frame([800, 600]), None, "size {size}");
+        }
+    }
+
+    #[test]
+    fn empty_text_draws_no_meshes_and_does_not_panic_the_frame() {
+        let mut shell = shell();
+        shell
+            .set_texts(vec![ScreenText {
+                text: String::new(),
+                ..ammo()
+            }])
+            .expect("valid texts");
+
+        let frame = shell.ui_frame([800, 600]);
+
+        let frame = frame.expect("a set text still runs the frame");
+        assert!(frame.meshes.is_empty());
     }
 
     #[test]
