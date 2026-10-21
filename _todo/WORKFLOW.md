@@ -15,9 +15,9 @@ Feature → Cards (spec per card) → Implementation (one card per run) → PR �
 
 | Switch | Where | Values | Effect |
 |---|---|---|---|
-| `Card review` | [`CLAUDE.md`](../CLAUDE.md) | `required` (now), `not required` | `required`: refine and the Tech Lead leave cards unlabeled and a human approves each one (applies `agent-ready`). `not required`: refine labels the cards that need no person, and the workflow dispatches a run per card. Approving the feature is then enough to start work |
+| `Card review` | [`CLAUDE.md`](../CLAUDE.md) | `required` (now), `not required` | `required`: refine and the Tech Lead leave cards unlabeled and a human approves each one (applies `agent-ready`). `not required`: the Tech Lead, refine and publish label the cards that pass the promotion checks (Gherkin criteria, test map, gate class, footprint, no open question, not human-driven), and the workflow dispatches a run per card. Approving the feature is then enough to start work |
 | `Domain-test review` | [`CLAUDE.md`](../CLAUDE.md) | `agent` (now), `required`, `not required` | Applies to `domain` cards. `agent`: no pause; `devflow:test-critic` attacks the pushed failing tests (max 2 rounds) and the PR lists its findings. `required`: the orchestrator stops after the tests for a human to approve. `not required`: no review; the PR lists the tests as unreviewed |
-| `agent-ready` label | Issue | applied by a human (or by refine under `Card review: not required`) | Starts a run. A `feature` issue goes to `/devflow:refine`; any other issue goes to `/devflow:orchestrate`. Not a status |
+| `agent-ready` label | Issue | applied by a human (or by the Tech Lead, refine or publish under `Card review: not required`) | Starts a run. A `feature` issue goes to `/devflow:refine`; any other issue goes to `/devflow:orchestrate`. Not a status |
 | `Agent-eligible` | Board | Yes / No | `No` keeps the card for a human to drive. Set by hand, with Ready |
 | Gate class | Card | `domain`, `glue` | Decides whether `Domain-test review` applies |
 | Where it runs | — | Actions, Project thread, local terminal | See below |
