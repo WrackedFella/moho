@@ -46,7 +46,7 @@ cargo run -p searchlight           # the FPS prototype
 - **Environment setup command:** `bash scripts/cloud-tools.sh` (cloud threads only;
   text-only threads skip it).
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
-- **Domain-logic paths** (gate class `domain`): rules in `flagstone_game`, `moho_core`, `flagstone_voxel`, `searchlight_rules`.
+- **Domain-logic paths** (gate class `domain`): rules in `flagstone_game`, `moho_core`, `flagstone_voxel`, `searchlight_rules`, and the movement step in `moho_physics` (ADR-0014).
   Adapters, UI wiring and config are glue.
 - **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
   `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing
