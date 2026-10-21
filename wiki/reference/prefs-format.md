@@ -112,6 +112,8 @@ that would not read back exactly. Names are non-empty lowercase letters, digits 
 underscores. Values are non-empty, have no leading or trailing whitespace, and contain no
 `;`, `#` or line break. The Settings screen's save keeps them.
 
+A `Hold ` prefix (any case) makes a binding fire only after the input has been held for the game's hold threshold, e.g. `Hold R`, `Hold Pad West`; without it the binding fires on press, or on a quick release when the same input also has a `Hold` binding ([input](../architecture/input-and-state.md)). `Binding::name` writes the prefix back.
+
 Gamepad bindings are written `Pad <name>` and mix freely with keys in one list
 (`jump=Spacebar, Pad South`). Buttons (`PadButton`): `South` `East` `North` `West`
 `LeftBumper` `RightBumper` `LeftTrigger` `RightTrigger` `Select` `Start` `Mode`
