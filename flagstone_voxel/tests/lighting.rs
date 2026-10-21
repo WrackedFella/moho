@@ -1123,12 +1123,17 @@ fn reconciling_a_removed_emitter_darkens_its_whole_area() {
     );
 }
 
+/// Light cost of a test block: transparent, partly absorbing, or fully opaque.
+const OPACITY_COSTS: [u8; 3] = [0, 7, 15];
+
 /// What a test edit puts at a position: `None` mines it; `Some((emission,
-/// opaque))` places a block with that emission, fully opaque or transparent.
-type EditSpec = Option<([u8; 3], bool)>;
+/// opacity_cost))` places a block with that emission and opacity.
+type EditSpec = Option<([u8; 3], u8)>;
+
+type BlockState = std::collections::BTreeMap<(i32, i32, i32), ([u8; 3], u8)>;
 
 fn apply_edit(grid: &mut VoxelGrid, pos: IVec3, spec: EditSpec) {
-    let Some((emission, opaque)) = spec else {
+    let Some((emission, opacity_cost)) = spec else {
         grid.mutator().remove(pos);
         return;
     };
@@ -1139,46 +1144,100 @@ fn apply_edit(grid: &mut VoxelGrid, pos: IVec3, spec: EditSpec) {
         material,
         MaterialLighting {
             emission,
-            opacity_cost: if opaque { 15 } else { 0 },
+            opacity_cost,
         },
     );
     grid.mutator().place(pos, material, None);
 }
 
-fn current_blocks(
-    state: &std::collections::BTreeMap<(i32, i32, i32), ([u8; 3], bool)>,
-) -> Vec<TestBlock> {
+fn current_blocks(state: &BlockState) -> Vec<TestBlock> {
     state
         .iter()
-        .map(|(&(x, y, z), &(emission, opaque))| TestBlock {
+        .map(|(&(x, y, z), &(emission, opacity_cost))| TestBlock {
             pos: IVec3::new(x, y, z),
             emission,
-            opacity_cost: if opaque { 15 } else { 0 },
+            opacity_cost,
         })
         .collect()
 }
 
-/// 24 blocks along each axis, straddling the chunk borders at 16 and 32.
+/// A small box straddling the chunk border at 16, so edits revisit cells, remove
+/// real blocks and open walls.
 fn edit_pos() -> impl Strategy<Value = (i32, i32, i32)> {
-    (8..32i32, 8..32i32, 8..32i32)
+    (14..18i32, 14..18i32, 14..18i32)
+}
+
+/// Most blocks emit nothing, so walls and openings matter more than sources.
+fn edit_emission() -> impl Strategy<Value = [u8; 3]> {
+    prop_oneof![
+        3 => Just([0u8; 3]),
+        1 => prop::array::uniform3(0u8..=15),
+    ]
+}
+
+fn edit_block() -> impl Strategy<Value = ([u8; 3], u8)> {
+    (
+        edit_emission(),
+        prop::sample::select(OPACITY_COSTS.to_vec()),
+    )
 }
 
 fn edit_spec() -> impl Strategy<Value = EditSpec> {
-    prop::option::of(([0u8..=15, 0u8..=15, 0u8..=15], prop::bool::ANY))
+    prop::option::of(edit_block())
+}
+
+/// A world that is already lit, so there is light to block and to let through.
+fn initial_world() -> impl Strategy<Value = BlockState> {
+    prop::collection::btree_map(edit_pos(), edit_block(), 0..=10)
+}
+
+/// The light-relevant region: the edit box plus the 16-block reach of light.
+const REGION_MIN: IVec3 = IVec3::splat(14 - 16);
+const REGION_MAX: IVec3 = IVec3::splat(17 + 16);
+
+/// A placed opaque block that sat in real light goes dark, light behind it
+/// matches a fresh fill, and nothing is refilled into it.
+#[test]
+fn reconciling_a_placed_opaque_block_shadows_and_does_not_refill_it() {
+    let emitter = IVec3::new(14, 16, 16);
+    let placed = IVec3::new(16, 16, 16);
+    let behind = IVec3::new(17, 16, 16);
+    let mut blocks = vec![blue_emitter(emitter, 15)];
+    let mut grid = fresh_fill(&blocks);
+    assert_eq!(rgb(&grid, placed), [0, 0, 13], "lit before the block");
+    let lit_behind = rgb(&grid, behind);
+    blocks.push(TestBlock {
+        pos: placed,
+        emission: [0; 3],
+        opacity_cost: 15,
+    });
+
+    apply_edit(&mut grid, placed, Some(([0; 3], 15)));
+    LightPropagator::new().update_at(&mut grid, placed);
+
+    assert_eq!(rgb(&grid, placed), [0; 3], "no light is refilled into it");
+    assert_ne!(rgb(&grid, behind), lit_behind, "the block casts a shadow");
+    assert_same_light(
+        &grid,
+        &fresh_fill(&blocks),
+        IVec3::splat(16 - 20),
+        IVec3::splat(16 + 20),
+    );
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(8))]
+    #![proptest_config(ProptestConfig::with_cases(CASES))]
 
     /// Whatever the edit sequence, reconciling each edited position leaves the
-    /// box (and everything light can reach from it) equal to a fresh fill.
+    /// region equal to a fresh fill of the blocks as they now stand.
     #[test]
     fn prop_edits_then_reconcile_match_a_fresh_fill(
-        edits in prop::collection::vec((edit_pos(), edit_spec()), 1..=8),
+        initial in initial_world(),
+        edits in prop::collection::vec((edit_pos(), edit_spec()), 1..=10),
     ) {
-        let mut grid = grid_16();
+        let mut state = initial;
+        let mut grid = fresh_fill(&current_blocks(&state));
         let mut prop = LightPropagator::new();
-        let mut state = std::collections::BTreeMap::new();
 
         for (i, &((x, y, z), spec)) in edits.iter().enumerate() {
             let pos = IVec3::new(x, y, z);
@@ -1192,38 +1251,39 @@ proptest! {
             assert_same_light_in(
                 &grid,
                 &fresh_fill(&current_blocks(&state)),
-                IVec3::splat(8),
-                IVec3::splat(31),
+                REGION_MIN,
+                REGION_MAX,
                 &format!("after edit {i}: {spec:?} at {pos:?}"),
             );
         }
-
-        assert_same_light(
-            &grid,
-            &fresh_fill(&current_blocks(&state)),
-            IVec3::splat(8 - 16),
-            IVec3::splat(31 + 16),
-        );
     }
 
-    /// Apply a whole batch of edits first, then reconcile every edited position
-    /// in an arbitrary order: the result is still a fresh fill.
+    /// Apply a whole batch of edits (removals and replacements of existing blocks
+    /// among them) first, then reconcile the edited positions in an arbitrary
+    /// order, some more than once: the result is still a fresh fill.
     #[test]
     fn prop_batch_reconciled_in_any_order_matches_a_fresh_fill(
-        (edits, order) in prop::collection::btree_map(edit_pos(), edit_spec(), 1..=8)
-            .prop_flat_map(|edits| {
-                let order: Vec<usize> = (0..edits.len()).collect();
-                (Just(edits), Just(order).prop_shuffle())
+        (initial, edits, order) in (
+            initial_world(),
+            prop::collection::btree_map(edit_pos(), edit_spec(), 1..=10),
+        )
+            .prop_flat_map(|(initial, edits)| {
+                let count = edits.len();
+                let order = prop::collection::vec(0..count, 0..=4)
+                    .prop_map(move |repeats| (0..count).chain(repeats).collect::<Vec<_>>())
+                    .prop_shuffle();
+                (Just(initial), Just(edits), order)
             }),
     ) {
-        let mut grid = grid_16();
-        let mut state = std::collections::BTreeMap::new();
+        let mut state = initial;
+        let mut grid = fresh_fill(&current_blocks(&state));
         let edited: Vec<((i32, i32, i32), EditSpec)> = edits.into_iter().collect();
         for &((x, y, z), spec) in &edited {
             apply_edit(&mut grid, IVec3::new(x, y, z), spec);
-            if let Some(block) = spec {
-                state.insert((x, y, z), block);
-            }
+            match spec {
+                Some(block) => state.insert((x, y, z), block),
+                None => state.remove(&(x, y, z)),
+            };
         }
 
         let mut prop = LightPropagator::new();
@@ -1235,8 +1295,8 @@ proptest! {
         assert_same_light(
             &grid,
             &fresh_fill(&current_blocks(&state)),
-            IVec3::splat(8 - 16),
-            IVec3::splat(31 + 16),
+            REGION_MIN,
+            REGION_MAX,
         );
     }
 }

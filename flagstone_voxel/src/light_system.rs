@@ -316,6 +316,7 @@ mod tests {
     fn placing_an_emissive_block_emits_dirty_events_for_reached_chunks() {
         let (mut light_system, received) = system();
         let source = IVec3::new(15, 15, 15);
+        light_system.grid_mut().place_block(source, 1, None);
 
         light_system.handle_event(&placed(source, 1));
         let completed = light_system.process_frame();
@@ -339,11 +340,19 @@ mod tests {
     fn removing_an_emissive_block_darkens_it_and_emits_dirty_events_for_those_chunks() {
         let (mut light_system, received) = system();
         let source = IVec3::new(15, 15, 15);
+        light_system.grid_mut().place_block(source, 1, None);
         light_system.handle_event(&placed(source, 1));
         light_system.process_frame();
         light_system.emit_dirty_events();
         let lit = lit_chunks(light_system.grid(), source);
+        assert_eq!(
+            light_system.grid().block_light_rgb_at(source),
+            TORCH,
+            "the emitter starts lit"
+        );
+        assert!(!lit.is_empty(), "the removal starts from a lit area");
         received.lock().unwrap().clear();
+        light_system.grid_mut().mutator().remove(source);
 
         light_system.handle_event(&WorldEvent::BlockRemoved {
             position: source,
@@ -369,7 +378,7 @@ mod tests {
         let stone_pos = IVec3::new(40, 5, 5);
         let empty_pos = IVec3::new(70, 5, 5);
         light_system.grid_mut().place_block(torch_pos, 1, None);
-        light_system.grid_mut().place_block(stone_pos, 2, None);
+        light_system.grid_mut().place_block(stone_pos, 0, None);
         for pos in [stone_pos, empty_pos] {
             LightPropagator::new().add_light_rgb(light_system.grid_mut(), pos, [10, 0, 0]);
         }
@@ -406,26 +415,51 @@ mod tests {
 
     #[test]
     fn a_batch_queues_every_changed_position() {
-        let (mut light_system, _received) = system();
+        let (mut light_system, _received) = system_with_budget(LightFrameBudget {
+            max_blocks_per_frame: usize::MAX,
+            max_time_us: u64::MAX,
+        });
         let torch_pos = IVec3::new(5, 5, 5);
+        let lit_stone_pos = IVec3::new(7, 5, 5);
         let stone_pos = IVec3::new(40, 5, 5);
-        let empty_pos = IVec3::new(70, 5, 5);
-        let second_empty_pos = IVec3::new(85, 5, 5);
-        let glass_pos = IVec3::new(100, 5, 5);
+        let empty_positions = [IVec3::new(70, 5, 5), IVec3::new(85, 5, 5)];
+        let glass_positions = [
+            IVec3::new(100, 5, 5),
+            IVec3::new(115, 5, 5),
+            IVec3::new(130, 5, 5),
+        ];
         light_system.grid_mut().place_block(torch_pos, 1, None);
+        LightPropagator::new().add_light_rgb(light_system.grid_mut(), torch_pos, TORCH);
+        light_system.grid_mut().place_block(lit_stone_pos, 0, None);
         light_system.grid_mut().place_block(stone_pos, 0, None);
-        light_system.grid_mut().place_block(glass_pos, 2, None);
+        for pos in glass_positions {
+            light_system.grid_mut().place_block(pos, 2, None);
+        }
+        assert_ne!(
+            light_system.grid().block_light_rgb_at(lit_stone_pos),
+            [0, 0, 0],
+            "the stone is placed into real light"
+        );
+        let mut positions = vec![torch_pos, lit_stone_pos, stone_pos];
+        positions.extend(empty_positions);
+        positions.extend(glass_positions);
 
         light_system.handle_event(&WorldEvent::BlocksBatchModified {
             chunk_pos: IVec3::ZERO,
-            positions: vec![torch_pos, stone_pos, empty_pos, second_empty_pos, glass_pos],
+            positions,
             reason: BlockChangeReason::Explosion,
         });
 
         assert_eq!(
             light_system.pending_jobs(),
-            4,
-            "emitter, opaque and emptied positions queue; the transparent placement does not"
+            5,
+            "emitter, two opaque and two emptied positions queue; the three transparent placements do not"
+        );
+        assert_eq!(light_system.process_frame(), 5);
+        assert_eq!(
+            light_system.grid().block_light_rgb_at(lit_stone_pos),
+            [0, 0, 0],
+            "the stone placed into light is darkened"
         );
     }
 
@@ -477,13 +511,22 @@ mod tests {
     fn placing_an_opaque_non_emissive_block_queues_one_job_that_clears_its_light() {
         let (mut light_system, _received) = system();
         let pos = IVec3::new(5, 5, 5);
-        LightPropagator::new().add_light_rgb(light_system.grid_mut(), pos, [10, 0, 0]);
+        let emitter = IVec3::new(6, 5, 5);
+        light_system.grid_mut().place_block(emitter, 1, None);
+        LightPropagator::new().add_light_rgb(light_system.grid_mut(), emitter, TORCH);
+        light_system.grid_mut().place_block(pos, 0, None);
+        assert_ne!(
+            light_system.grid().block_light_rgb_at(pos),
+            [0, 0, 0],
+            "the block is placed into real light"
+        );
 
         light_system.handle_event(&placed(pos, 0));
 
         assert_eq!(light_system.pending_jobs(), 1);
         light_system.process_frame();
         assert_eq!(light_system.grid().block_light_rgb_at(pos), [0, 0, 0]);
+        assert_eq!(light_system.grid().block_light_rgb_at(emitter), TORCH);
     }
 
     #[test]
@@ -521,6 +564,8 @@ mod tests {
         let far = IVec3::new(0, 8, 8);
         let near = IVec3::new(100, 8, 8);
         light_system.set_player_position(Vec3::new(100.0, 8.0, 8.0));
+        light_system.grid_mut().place_block(far, 1, None);
+        light_system.grid_mut().place_block(near, 1, None);
         light_system.handle_event(&placed(far, 1));
         light_system.handle_event(&placed(near, 1));
 
