@@ -40,55 +40,21 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
         }
         ui.add_space(8.0);
 
-        // Mouse Sensitivity
-        ui.horizontal(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(label_width, 28.0),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.label("Mouse Sensitivity:");
-                },
-            );
-
-            let saved_sensitivity = menu.state.prefs().mouse_sensitivity();
-            let is_dirty =
-                (menu.state.staged().mouse_sensitivity() - saved_sensitivity).abs() > f32::EPSILON;
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Slider matching keybind button width (120px)
-                ui.allocate_ui_with_layout(
-                    egui::vec2(120.0, 20.0),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.spacing_mut().slider_width = 120.0;
-                        let slider = ui.add(
-                            egui::Slider::new(
-                                menu.state.staged_mut().mouse_sensitivity_mut(),
-                                0.01..=10.0,
-                            )
-                            .show_value(false)
-                            .min_decimals(0)
-                            .max_decimals(2),
-                        );
-                        SettingsMenu::paint_dirty_decor(ui, &slider, is_dirty);
-                    },
-                );
-                ui.add_space(8.0);
-                // Drag value input
-                let drag = ui.add(
-                    egui::DragValue::new(menu.state.staged_mut().mouse_sensitivity_mut())
-                        .range(0.01..=10.0)
-                        .speed(0.1)
-                        .min_decimals(2)
-                        .max_decimals(2),
-                );
-                SettingsMenu::paint_dirty_decor(ui, &drag, is_dirty);
-            });
-
-            if is_dirty {
-                menu.state.mark_dirty(SettingsField::MouseSensitivity);
-            }
-        });
+        let acceleration_on = menu.state.staged().mouse_acceleration();
+        slider_row(
+            menu,
+            ui,
+            label_width,
+            true,
+            &SliderRow {
+                label: "Mouse Sensitivity:",
+                field: SettingsField::MouseSensitivity,
+                range: 0.01..=10.0,
+                speed: 0.1,
+                value: Prefs::mouse_sensitivity,
+                value_mut: Prefs::mouse_sensitivity_mut,
+            },
+        );
 
         toggle_row(
             menu,
@@ -99,7 +65,20 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
             Prefs::mouse_acceleration,
             Prefs::mouse_acceleration_mut,
         );
-        strength_row(menu, ui, label_width);
+        slider_row(
+            menu,
+            ui,
+            label_width,
+            acceleration_on,
+            &SliderRow {
+                label: "Acceleration strength:",
+                field: SettingsField::MouseAccelerationStrength,
+                range: 0.0..=1.0,
+                speed: 0.01,
+                value: Prefs::mouse_acceleration_strength,
+                value_mut: Prefs::mouse_acceleration_strength_mut,
+            },
+        );
 
         ui.add_space(12.0);
 
@@ -124,14 +103,26 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
     });
 }
 
-/// The "Acceleration strength" slider and value box, editable only while the staged
-/// acceleration is on.
-fn strength_row(menu: &mut SettingsMenu, ui: &mut egui::Ui, label_width: f32) {
-    let enabled = menu.state.staged().mouse_acceleration();
-    let is_dirty = (menu.state.staged().mouse_acceleration_strength()
-        - menu.state.prefs().mouse_acceleration_strength())
-    .abs()
-        > f32::EPSILON;
+/// One float pref's labelled slider and value box, decorated and marked dirty while it
+/// differs from the saved value.
+struct SliderRow {
+    label: &'static str,
+    field: SettingsField,
+    range: std::ops::RangeInclusive<f32>,
+    speed: f64,
+    value: fn(&Prefs) -> f32,
+    value_mut: fn(&mut Prefs) -> &mut f32,
+}
+
+fn slider_row(
+    menu: &mut SettingsMenu,
+    ui: &mut egui::Ui,
+    label_width: f32,
+    enabled: bool,
+    row: &SliderRow,
+) {
+    let is_dirty =
+        ((row.value)(menu.state.staged()) - (row.value)(menu.state.prefs())).abs() > f32::EPSILON;
 
     ui.add_enabled_ui(enabled, |ui| {
         ui.horizontal(|ui| {
@@ -139,10 +130,11 @@ fn strength_row(menu: &mut SettingsMenu, ui: &mut egui::Ui, label_width: f32) {
                 egui::vec2(label_width, 28.0),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
-                    ui.label("Acceleration strength:");
+                    ui.label(row.label);
                 },
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Slider matching keybind button width (120px)
                 ui.allocate_ui_with_layout(
                     egui::vec2(120.0, 20.0),
                     egui::Layout::left_to_right(egui::Align::Center),
@@ -150,8 +142,8 @@ fn strength_row(menu: &mut SettingsMenu, ui: &mut egui::Ui, label_width: f32) {
                         ui.spacing_mut().slider_width = 120.0;
                         let slider = ui.add(
                             egui::Slider::new(
-                                menu.state.staged_mut().mouse_acceleration_strength_mut(),
-                                0.0..=1.0,
+                                (row.value_mut)(menu.state.staged_mut()),
+                                row.range.clone(),
                             )
                             .show_value(false)
                             .min_decimals(0)
@@ -162,9 +154,9 @@ fn strength_row(menu: &mut SettingsMenu, ui: &mut egui::Ui, label_width: f32) {
                 );
                 ui.add_space(8.0);
                 let drag = ui.add(
-                    egui::DragValue::new(menu.state.staged_mut().mouse_acceleration_strength_mut())
-                        .range(0.0..=1.0)
-                        .speed(0.01)
+                    egui::DragValue::new((row.value_mut)(menu.state.staged_mut()))
+                        .range(row.range.clone())
+                        .speed(row.speed)
                         .min_decimals(2)
                         .max_decimals(2),
                 );
@@ -174,8 +166,7 @@ fn strength_row(menu: &mut SettingsMenu, ui: &mut egui::Ui, label_width: f32) {
     });
 
     if is_dirty {
-        menu.state
-            .mark_dirty(SettingsField::MouseAccelerationStrength);
+        menu.state.mark_dirty(row.field);
     }
 }
 
