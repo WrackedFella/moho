@@ -338,6 +338,65 @@ mod tests {
         assert_eq!(next, None);
     }
 
+    fn text_of(text: &str, anchor: crate::text::Anchor) -> ScreenText {
+        ScreenText {
+            text: text.to_owned(),
+            anchor,
+            offset: [0.0, 0.0],
+            size: 24.0,
+            color: [255, 255, 255, 255],
+        }
+    }
+
+    #[test]
+    fn every_text_queued_this_frame_is_drawn() {
+        use crate::text::Anchor;
+        let mut shell = shell();
+        shell.draw_text(text_of("alpha", Anchor::TopLeft));
+        shell.draw_text(text_of("bravo", Anchor::Top));
+        shell.draw_text(text_of("charlie", Anchor::BottomRight));
+
+        let frame = shell.ui_frame([800, 600]);
+
+        let frame = frame.expect("queued texts draw a frame");
+        assert!(!frame.meshes.is_empty());
+        assert!(frame.meshes.iter().all(|m| !m.vertices.is_empty()));
+    }
+
+    #[test]
+    fn queued_text_clears_when_the_console_is_open_too() {
+        let mut shell = shell();
+        shell.draw_text(ammo());
+        shell.console_mut().open();
+        assert!(shell.ui_frame([800, 600]).is_some());
+        shell.console_mut().close();
+
+        let next = shell.ui_frame([800, 600]);
+
+        assert_eq!(next, None);
+    }
+
+    #[test]
+    fn degenerate_sizes_do_not_panic_the_frame() {
+        for size in [0.0, -5.0, f32::NAN] {
+            let mut shell = shell();
+            shell.draw_text(ScreenText { size, ..ammo() });
+
+            let _ = shell.ui_frame([800, 600]);
+        }
+    }
+
+    #[test]
+    fn empty_text_does_not_panic_the_frame() {
+        let mut shell = shell();
+        shell.draw_text(ScreenText {
+            text: String::new(),
+            ..ammo()
+        });
+
+        let _ = shell.ui_frame([800, 600]);
+    }
+
     #[test]
     fn the_console_shell_debug_names_the_shell_and_whether_the_console_is_open() {
         let mut shell = shell();

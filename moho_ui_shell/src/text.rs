@@ -20,7 +20,7 @@ pub enum Anchor {
 /// is straight-alpha sRGBA.
 ///
 /// Use a few fixed `size`s: egui rasterises each new size into its font atlas, so varying sizes
-/// grow the texture and cost upload deltas.
+/// grow the texture and cost upload deltas. A `size` that is not finite and positive draws nothing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScreenText {
     pub text: String,
@@ -68,7 +68,8 @@ pub fn paint(ctx: &egui::Context, texts: &[ScreenText]) {
         egui::Id::new("moho_ui_shell_screen_text"),
     ));
     let screen = ctx.content_rect();
-    for t in texts {
+    // egui asserts on a font size that is not finite and positive; such a text has nothing to show.
+    for t in texts.iter().filter(|t| t.size.is_finite() && t.size > 0.0) {
         let [r, g, b, a] = t.color;
         painter.text(
             anchor_point(t.anchor, screen) + egui::vec2(t.offset[0], t.offset[1]),
@@ -216,6 +217,19 @@ mod tests {
     }
 
     #[test]
+    fn a_size_that_is_not_finite_and_positive_draws_nothing() {
+        let ctx = egui::Context::default();
+        let texts = [0.0, -5.0, f32::NAN, f32::INFINITY].map(|size| ScreenText {
+            size,
+            ..fps("30 / 30", Anchor::Center, [0.0, 0.0])
+        });
+
+        let shapes = pass(&ctx, screen(800.0, 600.0), &texts);
+
+        assert!(shapes.is_empty(), "{shapes:?}");
+    }
+
+    #[test]
     fn frame_without_draws_holds_no_text() {
         let ctx = egui::Context::default();
 
@@ -274,6 +288,53 @@ mod tests {
             "game text is not the first shape: {order:?}"
         );
         assert!(order.len() > 1, "the console painted nothing after it");
+    }
+
+    #[test]
+    fn translucent_colour_is_straight_alpha() {
+        let ctx = egui::Context::default();
+        let texts = [ScreenText {
+            color: [255, 64, 0, 128],
+            ..fps("ghost", Anchor::Center, [0.0, 0.0])
+        }];
+
+        let shapes = pass(&ctx, screen(800.0, 600.0), &texts);
+
+        assert_eq!(shapes.len(), 1, "{shapes:?}");
+        let expected = [255u8, 64, 0, 128];
+        for (got, want) in shapes[0].color.iter().zip(expected) {
+            assert!(
+                got.abs_diff(want) <= 1,
+                "{:?} vs {expected:?}",
+                shapes[0].color
+            );
+        }
+    }
+
+    #[test]
+    fn every_text_queued_this_frame_is_drawn() {
+        let ctx = egui::Context::default();
+        let size = screen(800.0, 600.0);
+        let texts = [
+            fps("alpha", Anchor::TopLeft, [0.0, 0.0]),
+            fps("bravo", Anchor::Top, [0.0, 0.0]),
+            fps("charlie", Anchor::BottomRight, [0.0, 0.0]),
+        ];
+
+        let shapes = pass(&ctx, size, &texts);
+
+        let mut strings: Vec<&str> = shapes.iter().map(|p| p.text.as_str()).collect();
+        strings.sort_unstable();
+        assert_eq!(strings, ["alpha", "bravo", "charlie"]);
+        for (text, anchor) in texts.iter().map(|t| (&t.text, t.anchor)) {
+            let drawn = shapes.iter().find(|p| &p.text == text).expect("drawn");
+            let at = aligned_point(drawn.rect, anchor);
+            let want = aligned_point(size, anchor);
+            assert!(
+                (at.x - want.x).abs() <= 1.0 && (at.y - want.y).abs() <= 1.0,
+                "{text}: {at:?} vs {want:?}"
+            );
+        }
     }
 
     proptest! {
