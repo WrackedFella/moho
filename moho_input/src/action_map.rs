@@ -1665,27 +1665,48 @@ mod tests {
 
     #[test]
     fn tap_on_a_split_key_presses_on_release() {
+        for down_ticks in [5, 17] {
+            let mut map = weapon_map();
+            map.key(Key::R, true);
+            let down = ticks(&mut map, down_ticks);
+
+            map.key(Key::R, false);
+            let up = map.end_tick();
+
+            for (index, frame) in down.iter().enumerate() {
+                for action in Weapon::ALL {
+                    assert!(
+                        !frame.held(*action),
+                        "{action:?} held in tick {index} of {down_ticks}"
+                    );
+                    assert!(
+                        !frame.pressed(*action),
+                        "{action:?} pressed in tick {index} of {down_ticks}"
+                    );
+                }
+            }
+            assert!(up.pressed(Weapon::Reload), "{down_ticks} ticks down");
+            assert!(up.released(Weapon::Reload), "{down_ticks} ticks down");
+            assert!(!up.held(Weapon::Reload), "{down_ticks} ticks down");
+            assert!(!up.pressed(Weapon::Check), "{down_ticks} ticks down");
+            assert!(!up.held(Weapon::Check), "{down_ticks} ticks down");
+        }
+    }
+
+    #[test]
+    fn release_in_the_tick_after_maturing_does_not_tap() {
         let mut map = weapon_map();
         map.key(Key::R, true);
-        let down = ticks(&mut map, 5);
+        let down = ticks(&mut map, 18);
 
         map.key(Key::R, false);
         let up = map.end_tick();
 
-        for (index, frame) in down.iter().enumerate() {
-            for action in Weapon::ALL {
-                assert!(!frame.held(*action), "{action:?} held in tick {index}");
-                assert!(
-                    !frame.pressed(*action),
-                    "{action:?} pressed in tick {index}"
-                );
-            }
-        }
-        assert!(up.pressed(Weapon::Reload));
-        assert!(up.released(Weapon::Reload));
-        assert!(!up.held(Weapon::Reload));
-        assert!(!up.pressed(Weapon::Check));
+        assert!(down[17].pressed(Weapon::Check), "pressed in tick 18");
+        assert!(up.released(Weapon::Check));
         assert!(!up.held(Weapon::Check));
+        assert!(!up.pressed(Weapon::Reload));
+        assert!(!up.released(Weapon::Reload));
     }
 
     #[test]
@@ -1707,6 +1728,7 @@ mod tests {
 
     #[test]
     fn hold_presses_in_the_tick_it_matures() {
+        assert_eq!(HOLD, 18, "the engine default threshold");
         let mut map = weapon_map();
         map.key(Key::R, true);
 
@@ -1742,15 +1764,51 @@ mod tests {
         assert!(!up.released(Weapon::Reload));
     }
 
+    /// `Weapon`'s split R beside a plain Jump on Space.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum WeaponAndJump {
+        Reload,
+        Check,
+        Jump,
+    }
+
+    impl Action for WeaponAndJump {
+        const ALL: &'static [Self] = &[
+            WeaponAndJump::Reload,
+            WeaponAndJump::Check,
+            WeaponAndJump::Jump,
+        ];
+
+        fn name(self) -> &'static str {
+            match self {
+                WeaponAndJump::Reload => "reload",
+                WeaponAndJump::Check => "check",
+                WeaponAndJump::Jump => "jump",
+            }
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            match self {
+                WeaponAndJump::Reload => const { &[Binding::key(Key::R)] },
+                WeaponAndJump::Check => const { &[Binding::key(Key::R).held()] },
+                WeaponAndJump::Jump => const { &[Binding::key(Key::Space)] },
+            }
+        }
+    }
+
     #[test]
     fn key_without_a_hold_binding_presses_on_press() {
-        let mut map = map(1.0);
+        let (bindings, warnings) = ActionBindings::<WeaponAndJump>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        let mut map = ActionMap::new(bindings, 1.0);
 
         map.key(Key::Space, true);
         let frame = map.end_tick();
 
-        assert!(frame.pressed(TestAction::Jump));
-        assert!(frame.held(TestAction::Jump));
+        assert!(frame.pressed(WeaponAndJump::Jump));
+        assert!(frame.held(WeaponAndJump::Jump));
+        assert!(!frame.pressed(WeaponAndJump::Reload));
+        assert!(!frame.pressed(WeaponAndJump::Check));
     }
 
     #[test]
@@ -1833,7 +1891,7 @@ mod tests {
     }
 
     #[test]
-    fn hold_matures_on_ticks_without_events() {
+    fn frame_samples_do_not_advance_a_hold() {
         let mut map = weapon_map();
         map.key(Key::R, true);
 
@@ -1847,6 +1905,54 @@ mod tests {
         assert!(!frames[HOLD - 2].held(Weapon::Check));
         assert!(frames[HOLD - 1].pressed(Weapon::Check));
         assert!(frames[HOLD - 1].held(Weapon::Check));
+    }
+
+    #[test]
+    fn pad_disconnected_mid_hold_fires_nothing() {
+        let west = Binding::pad(PadInput::Button(PadButton::West));
+        let (mut bindings, _) = ActionBindings::<Weapon>::load(&BTreeMap::new());
+        bindings.set(Weapon::Reload, vec![west]);
+        bindings.set(Weapon::Check, vec![west.held()]);
+        let mut map = ActionMap::new(bindings, 1.0);
+        map.pad_button(PadButton::West, true);
+        let down = ticks(&mut map, 10);
+
+        map.pad_disconnected();
+        let lost = map.end_tick();
+        let next = map.end_tick();
+        map.pad_button(PadButton::West, false);
+        let after = map.end_tick();
+
+        for frame in down.iter().chain([&lost, &next, &after]) {
+            for action in Weapon::ALL {
+                assert!(!frame.pressed(*action), "{action:?}");
+                assert!(!frame.released(*action), "{action:?}");
+                assert!(!frame.held(*action), "{action:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn tap_does_not_press_an_action_already_held() {
+        let (mut bindings, _) = ActionBindings::<Weapon>::load(&BTreeMap::new());
+        bindings.set(
+            Weapon::Reload,
+            vec![Binding::key(Key::R), Binding::key(Key::T)],
+        );
+        bindings.set(Weapon::Check, vec![Binding::key(Key::R).held()]);
+        let mut map = ActionMap::new(bindings, 1.0);
+        map.key(Key::T, true);
+        let press = map.end_tick();
+        map.key(Key::R, true);
+        ticks(&mut map, 3);
+
+        map.key(Key::R, false);
+        let up = map.end_tick();
+
+        assert!(press.pressed(Weapon::Reload));
+        assert!(up.held(Weapon::Reload), "T keeps reload held");
+        assert!(!up.pressed(Weapon::Reload));
+        assert!(!up.released(Weapon::Reload));
     }
 
     #[test]

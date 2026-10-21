@@ -210,36 +210,47 @@ mod tests {
     }
 
     #[test]
-    fn tap_r_reloads_and_hold_r_checks() {
-        let hold = moho_input::bindings::DEFAULT_HOLD_TICKS;
-        let mut tap = fresh_map();
-        tap.key(Key::R, true);
-        let down = SearchlightCommand::from_frame(&tap.end_tick());
-        tap.key(Key::R, false);
-        let up = SearchlightCommand::from_frame(&tap.end_tick());
-        let after = SearchlightCommand::from_frame(&tap.end_tick());
-        let mut held = fresh_map();
-        held.key(Key::R, true);
-        let frames: Vec<_> = (0..hold)
-            .map(|_| SearchlightCommand::from_frame(&held.end_tick()))
-            .collect();
-        held.key(Key::R, false);
-        let released = SearchlightCommand::from_frame(&held.end_tick());
-        let mut c = fresh_map();
-        press(&mut c, SearchlightAction::CheckMagazine);
-        let c_press = SearchlightCommand::from_frame(&c.end_tick());
-        let c_held = SearchlightCommand::from_frame(&c.end_tick());
+    fn tap_r_reloads_on_release() {
+        let mut map = fresh_map();
+        map.key(Key::R, true);
+        let down = SearchlightCommand::from_frame(&map.end_tick());
+
+        map.key(Key::R, false);
+        let up = SearchlightCommand::from_frame(&map.end_tick());
+        let after = SearchlightCommand::from_frame(&map.end_tick());
 
         assert!(!down.reload && !down.check, "a press alone fires nothing");
         assert!(up.reload && !up.check, "the tap reloads on release");
         assert!(!after.reload && !after.check);
-        let last = frames.len() - 1;
-        assert!(frames[last].check, "the hold checks in tick {hold}");
-        assert!(frames[..last].iter().all(|f| !f.check));
+    }
+
+    #[test]
+    fn hold_r_checks_the_magazine_and_never_reloads() {
+        let mut map = fresh_map();
+        map.key(Key::R, true);
+
+        let frames: Vec<_> = (0..18)
+            .map(|_| SearchlightCommand::from_frame(&map.end_tick()))
+            .collect();
+        map.key(Key::R, false);
+        let released = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert!(frames[17].check, "the hold checks in tick 18");
+        assert!(frames[..17].iter().all(|f| !f.check));
         assert!(frames.iter().all(|f| !f.reload));
         assert!(!released.reload && !released.check);
-        assert!(c_press.check && !c_press.reload, "C still checks on press");
-        assert!(!c_held.check);
+    }
+
+    #[test]
+    fn c_still_checks_on_press() {
+        let mut map = fresh_map();
+        press(&mut map, SearchlightAction::CheckMagazine);
+
+        let pressed = SearchlightCommand::from_frame(&map.end_tick());
+        let held = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert!(pressed.check && !pressed.reload);
+        assert!(!held.check);
     }
 
     #[test]

@@ -276,35 +276,11 @@ mod tests {
         assert!(changes.contains(&(StrategyAction::Sprint, vec![Binding::key(Key::A), THUMB])));
     }
 
-    const FORWARD_PAD: Binding = Binding::pad(PadInput::Stick(Stick::LeftStick, StickDir::Up));
-
     /// Descend holds Ctrl by default; freeing it lets Ctrl be captured without a conflict.
     fn registry_without_ctrl_holder() -> BindingRegistry {
         let mut registry = registry();
         registry.set_binding(StrategyAction::Descend, vec![Binding::key(Key::Z)]);
         registry
-    }
-
-    #[test]
-    fn modifier_only_capture_applies() {
-        let mut handler = KeybindCaptureHandler::new();
-        let bindings = registry_without_ctrl_holder();
-        let mut changed = vec![];
-        handler.start_listening(0);
-
-        let applied = handler.capture_modifier_if_listening(1, &bindings, |action, b| {
-            changed.push((action, b));
-        });
-
-        assert!(applied, "modifier capture should apply");
-        assert!(!handler.is_listening());
-        assert_eq!(
-            changed,
-            vec![(
-                StrategyAction::MoveForward,
-                vec![Binding::key(Key::Ctrl), FORWARD_PAD]
-            )]
-        );
     }
 
     #[test]

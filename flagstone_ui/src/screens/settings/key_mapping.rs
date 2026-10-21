@@ -198,6 +198,7 @@ mod tests {
             south,
             Binding::mouse(MouseButton::Right),
             west.held(),
+            Binding::mouse(MouseButton::Right).held(),
         ];
 
         let rebound = rebind_key(&existing, Key::E);
@@ -208,10 +209,11 @@ mod tests {
                 Binding::key(Key::E),
                 Binding::key(Key::Q).held(),
                 south,
-                west.held()
+                west.held(),
+                Binding::mouse(MouseButton::Right).held()
             ]
         );
-        assert_eq!(binding_label(&rebound), "E, Hold Q");
+        assert_eq!(binding_label(&rebound), "E, Hold Q, Hold Mouse Right");
     }
 
     #[test]
