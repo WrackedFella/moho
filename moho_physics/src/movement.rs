@@ -601,9 +601,10 @@ mod tests {
         }
 
         /// Source's ground strafe (prestrafe): input adds along the wish without removing the
-        /// old speed, so a turn at max speed can overshoot it for a tick. Kept on purpose.
+        /// old speed, so a turn at max speed overshoots it. Kept on purpose. Speed peaks at
+        /// about 6.34 m/s three ticks in and settles back to max_speed over roughly 20 ticks.
         #[test]
-        fn a_45_degree_turn_at_max_speed_briefly_exceeds_it() {
+        fn a_45_degree_turn_at_max_speed_overshoots_it_then_settles() {
             let settings = MoveSettings {
                 max_speed: 6.0,
                 ground_accel: 80.0,
@@ -621,13 +622,32 @@ mod tests {
             };
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 6.0), true);
 
-            walk(&mut state, &diagonal, &settings);
+            let mut speeds = Vec::new();
+            for _ in 0..120 {
+                walk(&mut state, &diagonal, &settings);
+                speeds.push(horizontal(state.velocity).length());
+            }
 
-            let speed = horizontal(state.velocity).length();
-            assert!(speed > 6.0 + 1e-3, "speed {speed} did not exceed max 6");
             assert!(
-                speed < 6.05,
-                "speed {speed} overshoots more than a prestrafe"
+                (speeds[0] - 6.0171).abs() < 1e-3,
+                "first tick speed {}",
+                speeds[0]
+            );
+            assert!(
+                (speeds[3] - 6.3393).abs() < 1e-3,
+                "peak speed at tick 3 was {}",
+                speeds[3]
+            );
+            for (tick, speed) in speeds.iter().enumerate().take(12) {
+                assert!(
+                    *speed > 6.0,
+                    "tick {tick}: speed {speed} did not exceed max 6"
+                );
+            }
+            let last = speeds[119];
+            assert!(
+                (last - 6.0).abs() < 1e-3,
+                "after 120 ticks speed {last} did not settle at 6"
             );
         }
 
@@ -1608,7 +1628,6 @@ mod tests {
             forward in -2.0f32..2.0,
             right in -2.0f32..2.0,
             yaw in -7.0f32..7.0,
-            ticks in 1usize..=120,
         ) {
             let settings = test_settings();
             let command = CharacterCommand { forward, right, ..CharacterCommand::default() };
@@ -1616,7 +1635,7 @@ mod tests {
             let mut state = standing();
             state.yaw = yaw;
 
-            for _ in 0..ticks {
+            for _ in 0..120 {
                 walk(&mut state, &command, &settings);
                 prop_assert!(
                     horizontal(state.velocity).length() <= limit + 1e-3,
@@ -1624,12 +1643,10 @@ mod tests {
                 );
             }
 
-            if ticks >= 30 {
-                prop_assert!(
-                    (horizontal(state.velocity).length() - limit).abs() <= 1e-3,
-                    "{:?} did not settle at {limit}", state.velocity
-                );
-            }
+            prop_assert!(
+                (horizontal(state.velocity).length() - limit).abs() <= 1e-3,
+                "{:?} did not settle at {limit}", state.velocity
+            );
         }
 
         #[test]
