@@ -808,7 +808,6 @@ fn transparent_block_does_not_occlude_sky() {
 // Removal with emitter blocks
 // ---------------------------------------------------------------------------
 
-/// A block with its own material: `emission` and `opacity_cost` describe it.
 #[derive(Clone, Copy, Debug)]
 struct TestBlock {
     pos: IVec3,
@@ -816,7 +815,6 @@ struct TestBlock {
     opacity_cost: u8,
 }
 
-/// A transparent block that emits `level` on the blue channel only.
 fn blue_emitter(pos: IVec3, level: u8) -> TestBlock {
     TestBlock {
         pos,
