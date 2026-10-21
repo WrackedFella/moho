@@ -1809,6 +1809,169 @@ mod tests {
         assert!(!up.released(Weapon::Reload));
     }
 
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum StickWeapon {
+        Reload,
+        Check,
+    }
+
+    impl Action for StickWeapon {
+        const ALL: &'static [Self] = &[StickWeapon::Reload, StickWeapon::Check];
+
+        fn name(self) -> &'static str {
+            match self {
+                StickWeapon::Reload => "reload",
+                StickWeapon::Check => "check",
+            }
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            const UP: PadInput = PadInput::Stick(Stick::LeftStick, StickDir::Up);
+            match self {
+                StickWeapon::Reload => const { &[Binding::pad(UP)] },
+                StickWeapon::Check => const { &[Binding::pad(UP).held()] },
+            }
+        }
+    }
+
+    #[test]
+    fn hold_works_on_a_stick_direction() {
+        let (bindings, warnings) = ActionBindings::<StickWeapon>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        let mut map = ActionMap::new(bindings, 1.0);
+
+        map.pad_axis(Stick::LeftStick, StickAxis::Y, 1.0);
+        let held = ticks(&mut map, HOLD);
+        map.pad_axis(Stick::LeftStick, StickAxis::Y, 0.0);
+        let up = map.end_tick();
+        map.pad_axis(Stick::LeftStick, StickAxis::Y, 1.0);
+        let tap_down = ticks(&mut map, 3);
+        map.pad_axis(Stick::LeftStick, StickAxis::Y, 0.0);
+        let tap_up = map.end_tick();
+
+        for (index, frame) in held.iter().enumerate() {
+            let tick = index + 1;
+            assert_eq!(
+                frame.pressed(StickWeapon::Check),
+                tick == HOLD,
+                "tick {tick}"
+            );
+            assert!(!frame.pressed(StickWeapon::Reload), "tick {tick}");
+        }
+        assert!(up.released(StickWeapon::Check));
+        assert!(
+            !up.pressed(StickWeapon::Reload),
+            "a matured hold is not a tap"
+        );
+        for frame in &tap_down {
+            assert!(!frame.pressed(StickWeapon::Reload));
+            assert!(!frame.pressed(StickWeapon::Check));
+        }
+        assert!(tap_up.pressed(StickWeapon::Reload));
+        assert!(tap_up.released(StickWeapon::Reload));
+        assert!(!tap_up.held(StickWeapon::Reload));
+        assert!(!tap_up.pressed(StickWeapon::Check));
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum Reload {
+        Reload,
+    }
+
+    impl Action for Reload {
+        const ALL: &'static [Self] = &[Reload::Reload];
+
+        fn name(self) -> &'static str {
+            "reload"
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            const { &[Binding::key(Key::R), Binding::key(Key::R).held()] }
+        }
+    }
+
+    #[test]
+    fn one_action_on_a_key_and_its_hold() {
+        let (bindings, warnings) = ActionBindings::<Reload>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        let mut map = ActionMap::new(bindings, 1.0);
+
+        map.key(Key::R, true);
+        let tap_down = ticks(&mut map, 3);
+        map.key(Key::R, false);
+        let tap_up = map.end_tick();
+        map.key(Key::R, true);
+        let hold_down = ticks(&mut map, HOLD + 2);
+        map.key(Key::R, false);
+        let hold_up = map.end_tick();
+
+        for frame in &tap_down {
+            assert!(!frame.pressed(Reload::Reload));
+            assert!(!frame.held(Reload::Reload));
+        }
+        assert!(tap_up.pressed(Reload::Reload));
+        assert!(tap_up.released(Reload::Reload));
+        assert!(!tap_up.held(Reload::Reload));
+        for (index, frame) in hold_down.iter().enumerate() {
+            let tick = index + 1;
+            assert_eq!(frame.pressed(Reload::Reload), tick == HOLD, "tick {tick}");
+            assert_eq!(frame.held(Reload::Reload), tick >= HOLD, "tick {tick}");
+            assert!(!frame.released(Reload::Reload), "tick {tick}");
+        }
+        assert!(hold_up.released(Reload::Reload));
+        assert!(!hold_up.held(Reload::Reload));
+        assert!(
+            !hold_up.pressed(Reload::Reload),
+            "no extra press on release"
+        );
+    }
+
+    #[test]
+    fn repress_in_the_release_tick_starts_a_new_hold() {
+        let mut map = weapon_map();
+        map.key(Key::R, true);
+        ticks(&mut map, 10);
+
+        map.key(Key::R, false);
+        map.key(Key::R, true);
+        let repress = map.end_tick();
+        let rest = ticks(&mut map, HOLD - 1);
+
+        assert!(repress.pressed(Weapon::Reload));
+        assert!(repress.released(Weapon::Reload));
+        assert!(!repress.pressed(Weapon::Check));
+        assert!(!repress.held(Weapon::Check));
+        for (index, frame) in rest.iter().enumerate() {
+            let tick = index + 2;
+            assert_eq!(frame.pressed(Weapon::Check), tick == HOLD, "tick {tick}");
+            assert_eq!(frame.held(Weapon::Check), tick >= HOLD, "tick {tick}");
+            assert!(!frame.pressed(Weapon::Reload), "tick {tick}");
+        }
+    }
+
+    #[test]
+    fn pressed_while_paused_edges_are_discarded_but_counter_waits_for_ticks() {
+        let mut map = weapon_map();
+        map.key(Key::R, true);
+        let before = ticks(&mut map, 5);
+
+        map.discard_edges();
+        map.discard_edges();
+        map.discard_edges();
+        let after = ticks(&mut map, HOLD - 5);
+
+        for frame in &before {
+            assert!(!frame.pressed(Weapon::Check));
+        }
+        let (last, early) = after.split_last().expect("some ticks after the pause");
+        for frame in early {
+            assert!(!frame.pressed(Weapon::Check));
+            assert!(!frame.held(Weapon::Check));
+        }
+        assert!(last.pressed(Weapon::Check), "matures on the 18th end_tick");
+        assert!(last.held(Weapon::Check));
+    }
+
     /// `Weapon`'s split R beside a plain Jump on Space.
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
     enum WeaponAndJump {
