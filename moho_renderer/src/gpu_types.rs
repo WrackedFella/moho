@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn sizes_are_expected() {
         assert_eq!(std::mem::size_of::<CameraGpu>(), 80);
-        assert_eq!(std::mem::size_of::<LightingGpu>(), 144); // 9 vec4s: the six lighting vec4s plus sky zenith, horizon, ground
+        assert_eq!(std::mem::size_of::<LightingGpu>(), 144); // 9 vec4s
         assert_eq!(std::mem::size_of::<ShadowMatrixGpu>(), 64);
         // CascadedShadowMatrixGpu: 2 matrices (2x64 bytes = 128 bytes) + 1 vec4 (16 bytes) = 144 bytes
         assert_eq!(std::mem::size_of::<CascadedShadowMatrixGpu>(), 144);
