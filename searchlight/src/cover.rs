@@ -9,6 +9,8 @@ use crate::shot::{ShotRay, resolve_shot};
 use crate::tag::SurfaceTag;
 
 const STEP_PAST_CHARACTER: f32 = 0.01;
+/// How far below a chase goal `floor_below` looks for the floor, in metres.
+const FLOOR_PROBE_RANGE: f32 = 50.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Threat {
@@ -84,6 +86,28 @@ fn world_blocks(world: &PhysicsWorld, from: Vec3, to: Vec3) -> bool {
             return true;
         }
         origin = strike.point + direction * STEP_PAST_CHARACTER;
+    }
+}
+
+/// The level surface straight below `from`, or `from` itself when none is within
+/// `FLOOR_PROBE_RANGE`. A sighting taken at a jump apex is too high above the floor for the
+/// navmesh to snap, so path queries use this point instead. Characters are passed through.
+pub(crate) fn floor_below(world: &PhysicsWorld, from: Vec3) -> Vec3 {
+    let mut origin = from;
+    loop {
+        let ray = ShotRay {
+            origin,
+            direction: Vec3::NEG_Y,
+            range: FLOOR_PROBE_RANGE - (from.y - origin.y),
+            ignore: None,
+        };
+        let Some(strike) = resolve_shot(world, ray) else {
+            return from;
+        };
+        if strike.tag == SurfaceTag::World {
+            return strike.point;
+        }
+        origin = strike.point + Vec3::NEG_Y * STEP_PAST_CHARACTER;
     }
 }
 

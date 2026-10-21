@@ -489,8 +489,9 @@ impl SearchlightSim {
                 offer,
             };
             let position = state.position;
+            let world = &self.world;
             let steer = |goal| {
-                nav.path(position, goal)
+                nav.path(position, cover::floor_below(world, goal))
                     .and_then(|path| path.get(1).copied())
             };
             let intent = brain.think(&self.route, &percept, &self.enemy, &steer, dt);

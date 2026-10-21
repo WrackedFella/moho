@@ -113,9 +113,9 @@ The next `Percept` carries `hurt` and `offer`. With an offer a `Patrol`, `Chase`
 holding the claim. After `cover_ticks` without arriving it fights where it stands. Without an
 offer it turns to `Engage` on the shooter's position. An `Engage` that loses sight falls to
 `Chase`, walking to the last seen position until it arrives or `chase_ticks` pass, then
-resumes `Patrol`; sight during `Chase` re-engages. `Chase` heads for the first corner of the
-`moho_level::NavMesh` path from the enemy to the last seen position (`SearchlightSim` supplies
-this as `steer`), so enemies walk around obstacles; arrival is still measured to the last seen
+resumes `Patrol`; sight during `Chase` re-engages. `Chase` heads for the next corner (the one after
+its own position) of the `moho_level::NavMesh` path from the enemy to the last seen position (`SearchlightSim` supplies
+this as `steer`, with the goal first dropped onto the floor below it, so a player lost mid-jump is still chased), so enemies walk around obstacles; arrival is still measured to the last seen
 position. With no path (the position is off the mesh or unreachable) the enemy resumes `Patrol`
 at once. Sight and shot rays are not affected by the navmesh. Enemy shots use the shot path below; a hit on the player emits
 `Feedback::PlayerHit`, and a dead player emits `Feedback::PlayerDied`.

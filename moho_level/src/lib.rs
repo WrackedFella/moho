@@ -1,5 +1,6 @@
 //! Level loading: glTF files become world meshes the engine can draw and collide with,
-//! plus named markers (empty nodes) for game code to interpret.
+//! plus named markers (empty nodes) for game code to interpret. The [`nav`] module builds a
+//! navigation mesh from those meshes and finds paths across it.
 
 mod buffers;
 mod error;

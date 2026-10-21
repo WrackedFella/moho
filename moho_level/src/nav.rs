@@ -60,6 +60,7 @@ impl NavMesh {
         if polygons.is_empty() {
             return Ok(Self::default());
         }
+        tracing::debug!(polygons = polygons.len(), "built navmesh");
         Ok(Self {
             polygons,
             limits: SnapLimits {
