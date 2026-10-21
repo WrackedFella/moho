@@ -924,3 +924,45 @@ proptest! {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Removal re-seeding
+// ---------------------------------------------------------------------------
+
+/// Removes the light of an air voxel next to a block that still holds `planted`
+/// light, far from the origin. Returns the light left in the air voxel.
+fn light_left_after_removal(block_material: u32, planted: [u8; 3]) -> [u8; 3] {
+    let mut grid = grid_16();
+    make_transparent(&mut grid);
+    grid.material_registry.set_lighting(
+        2,
+        MaterialLighting {
+            emission: [5, 0, 0],
+            opacity_cost: 15,
+        },
+    );
+    let air = IVec3::new(2, 1, 3) * 16 + IVec3::new(3, 3, 3);
+    let block = air + IVec3::X;
+    grid.mutator().place(block, block_material, None);
+    grid.set_block_light_rgb(air, [9, 0, 0]);
+    grid.set_block_light_rgb(block, planted);
+
+    LightPropagator::new().remove_light(&mut grid, air);
+
+    rgb(&grid, air)
+}
+
+#[test]
+fn removal_does_not_reseed_from_light_left_in_an_opaque_non_emitter() {
+    assert_eq!(light_left_after_removal(0, [10, 0, 0]), [0, 0, 0]);
+}
+
+#[test]
+fn removal_reseeds_from_an_opaque_emitter_holding_its_light() {
+    assert_eq!(light_left_after_removal(2, [10, 0, 0]), [9, 0, 0]);
+}
+
+#[test]
+fn removal_reseeds_from_a_transparent_block_holding_survivor_light() {
+    assert_eq!(light_left_after_removal(1, [10, 0, 0]), [9, 0, 0]);
+}

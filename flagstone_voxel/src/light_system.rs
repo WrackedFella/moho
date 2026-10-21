@@ -32,7 +32,7 @@
 use super::grid::VoxelGrid;
 use super::light_jobs::{LightFrameBudget, LightJobQueue, LightUpdateJob};
 use super::light_propagation::LightPropagator;
-use super::light_sky::recompute_sky_exposure;
+use super::light_sky::{dirty_chunks_below, recompute_sky_exposure};
 use crate::events::{BlockChangeReason, WorldEvent};
 use glam::{IVec3, Vec3};
 use moho_core::events::EventBus;
@@ -184,7 +184,7 @@ impl LightSystem {
     /// or sky changed are queued for [`Self::emit_dirty_events`].
     pub fn light_arrived_chunks(&mut self, chunks: &[IVec3]) {
         // Streaming calls this every tick, mostly with nothing arriving.
-        if chunks.is_empty() || !self.grid.supports_lighting() {
+        if chunks.is_empty() {
             return;
         }
         let mut highest: HashMap<(i32, i32), i32> = HashMap::new();
@@ -195,13 +195,8 @@ impl LightSystem {
                 .or_insert(chunk_pos.y);
             *top = (*top).max(chunk_pos.y);
         }
-        let lower: Vec<IVec3> = self
-            .grid
-            .lit_chunk_positions()
-            .filter(|cp| highest.get(&(cp.x, cp.z)).is_some_and(|&top| cp.y < top))
-            .collect();
-        for cp in lower {
-            self.grid.chunk_light_mut(cp).sky_dirty = true;
+        for (&(x, z), &top) in &highest {
+            dirty_chunks_below(&mut self.grid, IVec3::new(x, top, z));
         }
         self.refresh_sky();
         let changed = LightPropagator::new().light_arrived(&mut self.grid, chunks);
@@ -865,5 +860,49 @@ mod tests {
         light_system.process_frame();
 
         assert!(lit_chunks(light_system.grid(), source).is_empty());
+    }
+
+    #[test]
+    fn arrival_refills_from_lit_neighbours_on_every_face() {
+        let (mut light_system, received) = unbounded_system();
+        let arriving = IVec3::new(2, 1, 3);
+        let axis_cell = |dir: IVec3, along: i32| {
+            let mut cell = IVec3::splat(5);
+            cell[dir.abs().max_position()] = along;
+            cell
+        };
+        let faces = [
+            IVec3::X,
+            IVec3::NEG_X,
+            IVec3::Y,
+            IVec3::NEG_Y,
+            IVec3::Z,
+            IVec3::NEG_Z,
+        ];
+        for dir in faces {
+            let neighbour = arriving + dir;
+            let touching = if dir.max_element() > 0 { 0 } else { 15 };
+            light_system
+                .grid_mut()
+                .set_block_light_rgb(neighbour * 16 + axis_cell(dir, touching), [10, 0, 0]);
+        }
+
+        arrive(&mut light_system, arriving, |donor| {
+            donor
+                .mutator()
+                .place(arriving * 16 + IVec3::splat(8), 0, None);
+        });
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        for dir in faces {
+            let border = if dir.max_element() > 0 { 15 } else { 0 };
+            assert_eq!(
+                grid.block_light_rgb_at(arriving * 16 + axis_cell(dir, border)),
+                [9, 0, 0],
+                "light enters across the {dir} face"
+            );
+        }
+        assert!(received.lock().unwrap().contains(&arriving));
     }
 }
