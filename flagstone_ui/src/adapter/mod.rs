@@ -483,9 +483,7 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
 /// id that tests cannot construct under `unsafe_code = "deny"`, so the rule sits on the kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameplayInput {
-    /// A mouse button goes down.
     Press,
-    /// A mouse button comes up.
     Release,
     /// The pointer moves or leaves the window.
     Motion,

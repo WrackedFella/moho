@@ -5,7 +5,6 @@
 
 use super::overlay_manager::{HudData, HudIntents, Overlay, ViewHeightHud};
 
-/// Slider track length in points.
 const SLIDER_LENGTH: f32 = 200.0;
 
 /// Isometric / RTS gameplay HUD.

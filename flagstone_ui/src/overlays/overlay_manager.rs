@@ -21,7 +21,6 @@ pub struct ViewHeightHud {
 /// What the player asked for through the HUD this frame, for the game to apply.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HudIntents {
-    /// A view-height step the player picked.
     pub view_level: Option<i32>,
 }
 

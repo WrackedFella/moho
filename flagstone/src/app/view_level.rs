@@ -43,7 +43,6 @@ impl LayerExtent {
 /// The cut the renderer was last told, distinct from no news at all.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RendererCut {
-    /// Draw the whole world.
     Whole,
     /// Discard everything above this height.
     At(f32),
