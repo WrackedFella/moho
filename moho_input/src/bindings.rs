@@ -7,7 +7,6 @@ use std::hash::Hash;
 use crate::key::{Key, MouseButton};
 use crate::pad::PadInput;
 
-/// One physical input.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Input {
     Key(Key),
@@ -46,7 +45,6 @@ pub enum Trigger {
     Hold,
 }
 
-/// One input and when it triggers an action.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Binding {
     pub input: Input,

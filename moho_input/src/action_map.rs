@@ -292,7 +292,6 @@ impl<A: Action> ActionMap<A> {
         self.actions_where(|b| b.input == input && b.trigger == Trigger::Press)
     }
 
-    /// Mask of the actions with at least one binding matching `matches`.
     fn actions_where(&self, matches: impl Fn(&Binding) -> bool) -> u64 {
         A::ALL
             .iter()
