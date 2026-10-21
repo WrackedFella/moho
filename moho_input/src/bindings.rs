@@ -59,7 +59,39 @@ impl Modifiers {
     pub const fn and(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }
+
+    /// Every modifier of `other` is in `self`.
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    const fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+
+    /// The modifier `key` is, or `NONE` for any other key.
+    pub(crate) const fn of_key(key: Key) -> Self {
+        match key {
+            Key::Ctrl => Self::CTRL,
+            Key::Shift => Self::SHIFT,
+            Key::Alt => Self::ALT,
+            _ => Self::NONE,
+        }
+    }
+
+    /// Orders sets for chord resolution: more modifiers first, then Ctrl before Shift before
+    /// Alt. The greater rank wins.
+    pub(crate) const fn rank(self) -> (u32, u8) {
+        (self.0.count_ones(), !self.0)
+    }
 }
+
+/// Modifier parts in canonical text order.
+const MODIFIER_NAMES: [(Modifiers, &str); 3] = [
+    (Modifiers::CTRL, "Ctrl"),
+    (Modifiers::SHIFT, "Shift"),
+    (Modifiers::ALT, "Alt"),
+];
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Binding {
@@ -117,10 +149,18 @@ impl Binding {
     }
 
     fn decorate(self, text: &str) -> String {
-        match self.trigger {
-            Trigger::Press => text.to_string(),
-            Trigger::Hold => format!("Hold {text}"),
+        let mut out = String::new();
+        if self.trigger == Trigger::Hold {
+            out.push_str(HOLD_PREFIX);
         }
+        for (modifier, name) in MODIFIER_NAMES {
+            if self.modifiers.contains(modifier) {
+                out.push_str(name);
+                out.push('+');
+            }
+        }
+        out.push_str(text);
+        out
     }
 }
 
@@ -231,9 +271,33 @@ fn parse_binding(item: &str) -> Option<Binding> {
     if let Some(prefix) = item.get(..HOLD_PREFIX.len())
         && prefix.eq_ignore_ascii_case(HOLD_PREFIX)
     {
-        return parse_input(item[HOLD_PREFIX.len()..].trim_start()).map(Binding::held);
+        return parse_chord(item[HOLD_PREFIX.len()..].trim_start()).map(Binding::held);
     }
-    parse_input(item)
+    parse_chord(item)
+}
+
+/// `{Ctrl+}{Shift+}{Alt+}<input>` in any order and case. No input name contains `+`.
+fn parse_chord(item: &str) -> Option<Binding> {
+    let Some((prefix, input)) = item.rsplit_once('+') else {
+        return parse_input(item);
+    };
+    let modifiers = parse_modifiers(prefix)?;
+    let binding = parse_input(input)?;
+    let own = match binding.input {
+        Input::Key(key) => Modifiers::of_key(key),
+        Input::Mouse(_) => Modifiers::NONE,
+        Input::Pad(_) => return None,
+    };
+    (!modifiers.intersects(own)).then(|| binding.with(modifiers))
+}
+
+fn parse_modifiers(prefix: &str) -> Option<Modifiers> {
+    prefix.split('+').try_fold(Modifiers::NONE, |set, part| {
+        let (modifier, _) = MODIFIER_NAMES
+            .iter()
+            .find(|(_, name)| name.eq_ignore_ascii_case(part))?;
+        (!set.contains(*modifier)).then(|| set.and(*modifier))
+    })
 }
 
 fn parse_input(item: &str) -> Option<Binding> {

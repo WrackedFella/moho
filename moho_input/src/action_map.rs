@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 
-use crate::bindings::{Action, ActionBindings, Binding, Input, Trigger};
+use crate::bindings::{Action, ActionBindings, Binding, Input, Modifiers, Trigger};
 use crate::filter::{DeadzoneFilter, MouseSmoothing};
 use crate::key::{Key, MouseButton};
 use crate::pad::{PadButton, PadInput, Stick, StickAxis, StickDir};
@@ -103,14 +103,23 @@ impl<A: Action> ActionFrame<A> {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+struct Down {
+    ticks: u32,
+    /// Fixed at the press and not re-read until release.
+    modifiers: Modifiers,
+}
+
 /// Collects input events; frames sample look, and each tick reports it with the edges.
 #[derive(Debug)]
 pub struct ActionMap<A: Action> {
     bindings: ActionBindings<A>,
-    /// Inputs now down, each with the ticks it has been down.
-    down: HashMap<Input, u32>,
-    /// Inputs some action binds with `Hold`: their `Press` bindings fire on a quick release.
-    split: HashSet<Input>,
+    /// Inputs now down, each with the ticks it has been down and the modifier set its press
+    /// resolved to.
+    down: HashMap<Input, Down>,
+    /// Inputs some action binds with `Hold`, per modifier set: their `Press` bindings with
+    /// that set fire on a quick release.
+    split: HashSet<(Input, Modifiers)>,
     held: u64,
     pressed: u64,
     released: u64,
@@ -134,7 +143,7 @@ impl<A: Action> ActionMap<A> {
             .iter()
             .flat_map(|&action| bindings.get(action))
             .filter(|binding| binding.trigger == Trigger::Hold)
-            .map(|binding| binding.input)
+            .map(|binding| (binding.input, binding.modifiers))
             .collect();
         Self {
             bindings,
@@ -251,8 +260,8 @@ impl<A: Action> ActionMap<A> {
 
     /// The only read: reports this tick's edges and look, then starts the next tick.
     pub fn end_tick(&mut self) -> ActionFrame<A> {
-        for ticks in self.down.values_mut() {
-            *ticks = ticks.saturating_add(1);
+        for down in self.down.values_mut() {
+            down.ticks = down.ticks.saturating_add(1);
         }
         self.refresh_held(0);
         let frame = ActionFrame {
@@ -281,16 +290,52 @@ impl<A: Action> ActionMap<A> {
             if self.down.contains_key(&input) {
                 return None;
             }
-            self.down.insert(input, 0);
+            let modifiers = self.resolve_modifiers(input);
+            self.down.insert(
+                input,
+                Down {
+                    ticks: 0,
+                    modifiers,
+                },
+            );
             return Some(0);
         }
-        let ticks = self.down.remove(&input)?;
-        let quick = self.split.contains(&input) && ticks < A::HOLD_TICKS;
-        Some(if quick { self.press_actions(input) } else { 0 })
+        let Down { ticks, modifiers } = self.down.remove(&input)?;
+        let quick = self.split.contains(&(input, modifiers)) && ticks < A::HOLD_TICKS;
+        Some(if quick {
+            self.press_actions(input, modifiers)
+        } else {
+            0
+        })
     }
 
-    fn press_actions(&self, input: Input) -> u64 {
-        self.actions_where(|b| b.input == input && b.trigger == Trigger::Press)
+    /// The bound modifier set that `input` pressed now acts under: of the sets bound on it
+    /// that are held, the highest ranked; `NONE` when no chord matches.
+    fn resolve_modifiers(&self, input: Input) -> Modifiers {
+        if input.is_pad() {
+            return Modifiers::NONE;
+        }
+        let held = [Key::Ctrl, Key::Shift, Key::Alt]
+            .into_iter()
+            .filter(|&key| Input::Key(key) != input && self.down.contains_key(&Input::Key(key)))
+            .fold(Modifiers::NONE, |set, key| set.and(Modifiers::of_key(key)));
+        A::ALL
+            .iter()
+            .flat_map(|&action| self.bindings.get(action))
+            .filter(|b| b.input == input && held.contains(b.modifiers))
+            .fold(Modifiers::NONE, |best, b| {
+                if b.modifiers.rank() > best.rank() {
+                    b.modifiers
+                } else {
+                    best
+                }
+            })
+    }
+
+    fn press_actions(&self, input: Input, modifiers: Modifiers) -> u64 {
+        self.actions_where(|b| {
+            b.input == input && b.modifiers == modifiers && b.trigger == Trigger::Press
+        })
     }
 
     fn actions_where(&self, matches: impl Fn(&Binding) -> bool) -> u64 {
@@ -301,16 +346,20 @@ impl<A: Action> ActionMap<A> {
             .fold(0, |mask, (index, _)| mask | 1 << index)
     }
 
-    fn binding_down(&self, input: Input, trigger: Trigger) -> bool {
-        self.down.get(&input).is_some_and(|&ticks| match trigger {
-            Trigger::Press => !self.split.contains(&input),
-            Trigger::Hold => ticks >= A::HOLD_TICKS,
+    fn binding_down(&self, binding: &Binding) -> bool {
+        let set = (binding.input, binding.modifiers);
+        self.down.get(&binding.input).is_some_and(|down| {
+            down.modifiers == binding.modifiers
+                && match binding.trigger {
+                    Trigger::Press => !self.split.contains(&set),
+                    Trigger::Hold => down.ticks >= A::HOLD_TICKS,
+                }
         })
     }
 
     /// Recomputes the held mask; `taps` are actions that press and release in this tick.
     fn refresh_held(&mut self, taps: u64) {
-        let held = self.actions_where(|b| self.binding_down(b.input, b.trigger));
+        let held = self.actions_where(|b| self.binding_down(b));
         let taps = taps & !held;
         self.pressed |= (held & !self.held) | taps;
         self.released |= (self.held & !held) | taps;

@@ -9,7 +9,7 @@ mod view;
 
 use std::collections::BTreeMap;
 
-use moho_input::bindings::{Action, ActionBindings, Binding, BindingWarning, Input, Trigger};
+use moho_input::bindings::{Action, ActionBindings, Binding, BindingWarning, Input};
 use moho_input::key::Key;
 
 use output::ConsoleOutput;
@@ -63,8 +63,8 @@ pub struct Console<G> {
 
 impl<G> Console<G> {
     /// Reads only the `console` entry of the game's `[bindings]` section. The console always has
-    /// a key: an entry that is unbound, unreadable or holds a `Hold` binding falls back to
-    /// backtick, with a warning.
+    /// a key: an entry that is unbound, unreadable or holds a `Hold` or chord binding falls back
+    /// to backtick, with a warning.
     pub fn new(bindings: &BTreeMap<String, String>) -> (Self, Vec<BindingWarning>) {
         let entry = bindings.get(CONSOLE_BINDING);
         let section: BTreeMap<String, String> = entry
@@ -73,8 +73,9 @@ impl<G> Console<G> {
             .collect();
         let (loaded, mut warnings) = ActionBindings::<ConsoleKey>::load(&section);
         let mut toggle = loaded.get(ConsoleKey).to_vec();
-        // Routing sees raw key events with no tick count, so a hold binding could never toggle.
-        if toggle.is_empty() || toggle.iter().any(|b| b.trigger != Trigger::Press) {
+        // Routing sees raw key events with no tick count or modifiers, so a hold or chord binding
+        // could never toggle.
+        if toggle.is_empty() || toggle.iter().any(|&b| b != Binding::from(b.input)) {
             toggle = ConsoleKey.default_bindings().to_vec();
             if let Some(value) = entry {
                 warnings.push(BindingWarning {
@@ -390,6 +391,22 @@ pub(crate) mod tests {
             assert_eq!(warnings[0].name, CONSOLE_BINDING, "{entry:?}");
             assert_eq!(warnings[0].value, entry, "{entry:?}");
         }
+    }
+
+    #[test]
+    fn a_chord_console_binding_falls_back_to_backtick() {
+        // The console reads raw key events with no modifiers, so a chord could never toggle it.
+        let entry = "Ctrl+Backtick";
+        let (mut console, warnings) = Console::<Cmd>::new(&bindings(entry));
+
+        let plain_key = console.on_key(BACKTICK, true, false);
+        let default_key = console.on_key(BACKTICK, true, false);
+
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(warnings[0].name, CONSOLE_BINDING);
+        assert_eq!(warnings[0].value, entry);
+        assert_eq!(plain_key, Routing::Opened);
+        assert_eq!(default_key, Routing::Closed);
     }
 
     #[test]
