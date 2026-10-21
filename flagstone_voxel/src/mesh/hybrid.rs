@@ -42,35 +42,42 @@ pub(crate) fn coarse_face_material(
     face: FaceDirection,
 ) -> u32 {
     let origin = base + cell * COARSE_STRIDE;
-    let (axis, positive) = match face {
-        FaceDirection::PosX => (0, true),
-        FaceDirection::NegX => (0, false),
-        FaceDirection::PosY => (1, true),
-        FaceDirection::NegY => (1, false),
-        FaceDirection::PosZ => (2, true),
-        FaceDirection::NegZ => (2, false),
+    let axis = face.axis();
+    // The layer's two free axes, slowest first: x, then z, then y.
+    let (slow, fast) = match axis {
+        0 => (2, 1),
+        1 => (0, 2),
+        _ => (0, 1),
     };
     for inner in [false, true] {
-        let layer = if positive == inner {
+        let layer = if face.is_positive() == inner {
             0
         } else {
             COARSE_STRIDE - 1
         };
-        for x in 0..COARSE_STRIDE {
-            for z in 0..COARSE_STRIDE {
-                for y in 0..COARSE_STRIDE {
-                    let offset = IVec3::new(x, y, z);
-                    if offset[axis] != layer {
-                        continue;
-                    }
-                    if let Some(material) = grid.face_material_at(origin + offset) {
-                        return material;
-                    }
+        for i in 0..COARSE_STRIDE {
+            for j in 0..COARSE_STRIDE {
+                let mut offset = IVec3::ZERO;
+                offset[axis] = layer;
+                offset[slow] = i;
+                offset[fast] = j;
+                if let Some(material) = grid.face_material_at(origin + offset) {
+                    return material;
                 }
             }
         }
     }
     0
+}
+
+/// The face material of the block that field sample `sample` of chunk `chunk_base`'s
+/// padded density field stands for. The field is padded by one block, so sample `i` is
+/// block `chunk_base + i - 1`. Air gives `0`, which is never used: only solid samples
+/// are looked up.
+pub(crate) fn sample_face_material(grid: &VoxelGrid, chunk_base: IVec3, sample: [usize; 3]) -> u32 {
+    let sample = IVec3::new(sample[0] as i32, sample[1] as i32, sample[2] as i32);
+    grid.face_material_at(chunk_base + sample - IVec3::ONE)
+        .unwrap_or(0)
 }
 
 /// Classifies the content of a chunk
@@ -199,11 +206,9 @@ impl HybridMeshGenerator {
     ) -> VoxelMesh {
         let density_field =
             Self::create_selective_density_field(grid, chunk_pos, chunk_size, only_smooth);
-        // Only solid samples are ever looked up, so air's `0` is never used.
-        let base = chunk_pos * chunk_size - IVec3::ONE;
+        let base = chunk_pos * chunk_size;
         let mut mesh = MarchingCubes::generate_mesh(&density_field, chunk_size as usize, |s| {
-            let sample = IVec3::new(s[0] as i32, s[1] as i32, s[2] as i32);
-            grid.face_material_at(base + sample).unwrap_or(0)
+            sample_face_material(grid, base, s)
         });
 
         let offset = (chunk_pos * chunk_size).as_vec3() + Vec3::splat(DENSITY_SAMPLE_TO_WORLD);

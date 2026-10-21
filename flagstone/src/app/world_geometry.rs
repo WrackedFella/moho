@@ -50,6 +50,22 @@ impl TerrainPalette {
             .copied()
             .unwrap_or(self.fallback)
     }
+
+    /// `mesh` with each vertex's voxel material in `voxel_materials` mapped to its table
+    /// index; an empty slice (no per-vertex materials) leaves the mesh unchanged.
+    ///
+    /// # Errors
+    /// `WorldMeshError` when the slice is non-empty and not one entry per vertex.
+    pub fn apply(
+        &self,
+        mesh: WorldMesh,
+        voxel_materials: &[u32],
+    ) -> Result<WorldMesh, WorldMeshError> {
+        if voxel_materials.is_empty() {
+            return Ok(mesh);
+        }
+        mesh.with_materials(voxel_materials.iter().map(|&m| self.index(m)).collect())
+    }
 }
 
 /// The chunk's mesh in the world-geometry contract's form, with each vertex's material
@@ -67,16 +83,7 @@ pub fn chunk_world_mesh(
         chunk.geometry_type().to_vec(),
         chunk.indices().to_vec(),
     )?;
-    if chunk.materials().is_empty() {
-        return Ok(mesh);
-    }
-    mesh.with_materials(
-        chunk
-            .materials()
-            .iter()
-            .map(|&material| palette.index(material))
-            .collect(),
-    )
+    palette.apply(mesh, chunk.materials())
 }
 
 /// The strategy game's terrain tag; it has no ray consumer yet, so the value only satisfies

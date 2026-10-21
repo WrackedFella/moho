@@ -257,7 +257,7 @@ impl MarchingCubes {
         Self::corner_sample(x, y, z, corner_idx).map(|c| c as f32)
     }
 
-    fn corner_sample(x: usize, y: usize, z: usize, corner_idx: usize) -> [usize; 3] {
+    pub(crate) fn corner_sample(x: usize, y: usize, z: usize, corner_idx: usize) -> [usize; 3] {
         let [dx, dy, dz] = Self::CORNER_OFFSETS[corner_idx];
         [x + dx, y + dy, z + dz]
     }

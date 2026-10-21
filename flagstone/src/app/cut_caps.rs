@@ -122,9 +122,7 @@ fn cap_world_mesh(mesh: VoxelMesh, palette: &TerrainPalette) -> WorldMesh {
         mesh.geometry_type,
         mesh.indices,
     )
-    .and_then(|world| {
-        world.with_materials(mesh.material.iter().map(|&m| palette.index(m)).collect())
-    })
+    .and_then(|world| palette.apply(world, &mesh.material))
     .expect("cut_cap_mesh fills every vertex channel and indexes only its own vertices")
 }
 

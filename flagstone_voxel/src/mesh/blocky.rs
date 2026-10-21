@@ -24,23 +24,25 @@ impl BlockyMeshGenerator {
     pub fn generate_mesh(grid: &VoxelGrid, position: BlockPos) -> VoxelMesh {
         let mut mesh = VoxelMesh::empty();
 
+        let material = grid.face_material_at(position).unwrap_or(0);
+
         // +X face (right): check neighbors in +X direction
-        Self::add_face(&mut mesh, grid, position, FaceDirection::PosX);
+        Self::add_face(&mut mesh, grid, position, FaceDirection::PosX, material);
 
         // -X face (left): check neighbors in -X direction
-        Self::add_face(&mut mesh, grid, position, FaceDirection::NegX);
+        Self::add_face(&mut mesh, grid, position, FaceDirection::NegX, material);
 
         // +Y face (top): check neighbors in +Y direction
-        Self::add_face(&mut mesh, grid, position, FaceDirection::PosY);
+        Self::add_face(&mut mesh, grid, position, FaceDirection::PosY, material);
 
         // -Y face (bottom): check neighbors in -Y direction
-        Self::add_face(&mut mesh, grid, position, FaceDirection::NegY);
+        Self::add_face(&mut mesh, grid, position, FaceDirection::NegY, material);
 
         // +Z face (front): check neighbors in +Z direction
-        Self::add_face(&mut mesh, grid, position, FaceDirection::PosZ);
+        Self::add_face(&mut mesh, grid, position, FaceDirection::PosZ, material);
 
         // -Z face (back): check neighbors in -Z direction
-        Self::add_face(&mut mesh, grid, position, FaceDirection::NegZ);
+        Self::add_face(&mut mesh, grid, position, FaceDirection::NegZ, material);
 
         mesh
     }
@@ -51,6 +53,7 @@ impl BlockyMeshGenerator {
         grid: &VoxelGrid,
         position: BlockPos,
         direction: FaceDirection,
+        face_material: u32,
     ) {
         let base_index = mesh.vertices.len() as u32;
 
@@ -73,7 +76,6 @@ impl BlockyMeshGenerator {
                 .map(|&vert| FaceDirection::vertex_ao(grid, position, vert, normal)),
         );
 
-        let face_material = grid.face_material_at(position).unwrap_or(0);
         mesh.material.extend([face_material; 4]);
 
         // Mark as blocky geometry (0 = smooth, 1 = blocky)

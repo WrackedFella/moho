@@ -9,6 +9,7 @@ use super::VoxelMesh;
 use super::hybrid::{
     COARSE_STRIDE, ChunkContent, DENSITY_SAMPLE_TO_WORLD, HybridMeshGenerator, MeshPlan,
     coarse_cell_solid, coarse_face_material, is_meshed_blocky_in_mixed, mesh_plan,
+    sample_face_material,
 };
 use super::marching_cubes::{MarchingCubes, cube_index, nearest_solid_corner};
 use glam::{IVec3, Vec2, Vec3};
@@ -109,11 +110,8 @@ fn cap_smooth_cells(
             {
                 let c = (tri[0] + tri[1] + tri[2]) / 3.0;
                 let k = nearest_solid_corner(cube_index, Vec3::new(c.x, height, c.y));
-                let [dx, dy, dz] = MarchingCubes::CORNER_OFFSETS[k];
-                let sample = IVec3::new((x + dx) as i32, (y + dy) as i32, (z + dz) as i32);
-                let material = grid
-                    .face_material_at(base + sample - IVec3::ONE)
-                    .unwrap_or(0);
+                let material =
+                    sample_face_material(grid, base, MarchingCubes::corner_sample(x, y, z, k));
                 cap.triangle(tri.map(|p| p + origin), material);
             }
         }
