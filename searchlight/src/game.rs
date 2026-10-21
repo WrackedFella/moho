@@ -1289,6 +1289,7 @@ mod tests {
                 look_per_count: 0.002,
                 smoothing,
                 invert_y: false,
+                acceleration: 0.0,
             });
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);

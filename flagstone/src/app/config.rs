@@ -15,6 +15,7 @@ pub fn look_settings(prefs: &Prefs) -> LookSettings {
         look_per_count: source_look_per_count(prefs.mouse_sensitivity()),
         smoothing: prefs.mouse_smoothing(),
         invert_y: prefs.invert_mouse_y(),
+        acceleration: 0.0,
     }
 }
 
@@ -185,6 +186,7 @@ mod tests {
                 look_per_count: source_look_per_count(2.0),
                 smoothing: true,
                 invert_y: false,
+                acceleration: 0.0,
             }
         );
         assert_eq!(
@@ -193,8 +195,26 @@ mod tests {
                 look_per_count: source_look_per_count(2.0),
                 smoothing: false,
                 invert_y: false,
+                acceleration: 0.0,
             }
         );
+    }
+
+    #[test]
+    fn look_settings_pass_strength_only_when_on() {
+        let on = Prefs::default()
+            .with_mouse_acceleration(true)
+            .with_mouse_acceleration_strength(0.3);
+        let off = Prefs::default()
+            .with_mouse_acceleration(false)
+            .with_mouse_acceleration_strength(0.3);
+        let negative = Prefs::default()
+            .with_mouse_acceleration(true)
+            .with_mouse_acceleration_strength(-0.2);
+
+        assert_eq!(look_settings(&on).acceleration, source_look_per_count(0.3));
+        assert_eq!(look_settings(&off).acceleration, 0.0);
+        assert_eq!(look_settings(&negative).acceleration, 0.0);
     }
 
     #[test]

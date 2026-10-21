@@ -26,6 +26,8 @@ pub(super) enum SettingsField {
     MouseSensitivity,
     InvertMouseY,
     MouseSmoothing,
+    MouseAcceleration,
+    MouseAccelerationStrength,
     AudioSoundEffect,
     AudioMusic,
     AudioUI,

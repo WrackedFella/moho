@@ -218,6 +218,98 @@ mod tests {
     }
 
     #[test]
+    fn changed_mouse_acceleration_is_dirty_and_decorated() {
+        let mut menu = SettingsMenu::with_prefs(Prefs::default());
+        *menu.state.staged_mut().mouse_acceleration_mut() = true;
+
+        let output = render_menu(&mut menu);
+
+        assert!(menu.has_unsaved_changes());
+        assert!(menu.state.is_field_dirty(SettingsField::MouseAcceleration));
+        assert!(has_dirty_decor(&output));
+        assert!(has_text(&output, "Mouse acceleration"));
+    }
+
+    #[test]
+    fn changed_mouse_acceleration_strength_is_dirty_and_decorated() {
+        let mut menu = SettingsMenu::with_prefs(Prefs::default());
+        *menu.state.staged_mut().mouse_acceleration_mut() = true;
+        *menu.state.staged_mut().mouse_acceleration_strength_mut() = 0.37;
+
+        let output = render_menu(&mut menu);
+
+        assert!(
+            menu.state
+                .is_field_dirty(SettingsField::MouseAccelerationStrength)
+        );
+        assert!(has_dirty_decor(&output));
+    }
+
+    fn text_center(output: &egui::FullOutput, needle: &str) -> Option<egui::Pos2> {
+        fn find(shape: &egui::epaint::Shape, needle: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::epaint::Shape::Text(t) if t.galley.text().contains(needle) => {
+                    Some(t.pos + t.galley.rect.center().to_vec2())
+                }
+                egui::epaint::Shape::Vec(v) => v.iter().find_map(|s| find(s, needle)),
+                _ => None,
+            }
+        }
+        output.shapes.iter().find_map(|c| find(&c.shape, needle))
+    }
+
+    /// Drags the strength's value box rightwards with the mouse and returns the staged
+    /// strength afterwards.
+    fn strength_after_dragging(acceleration_on: bool) -> f32 {
+        use crate::overlays::test_support::{input, run_ui};
+
+        let mut menu = SettingsMenu::with_prefs(Prefs::default());
+        *menu.state.staged_mut().mouse_acceleration_mut() = acceleration_on;
+        *menu.state.staged_mut().mouse_acceleration_strength_mut() = 0.37;
+        let ctx = egui::Context::default();
+        let mut frame = |events: Vec<egui::Event>| {
+            run_ui(&ctx, input(events), |ui| {
+                menu.render(ui);
+            })
+        };
+        frame(vec![]);
+        let layout = frame(vec![]);
+        let target = text_center(&layout, "0.37").expect("the strength value box is drawn");
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let moved = target + egui::vec2(120.0, 0.0);
+
+        frame(vec![egui::Event::PointerMoved(target)]);
+        frame(vec![button(target, true)]);
+        frame(vec![egui::Event::PointerMoved(
+            target + egui::vec2(60.0, 0.0),
+        )]);
+        frame(vec![egui::Event::PointerMoved(moved)]);
+        frame(vec![button(moved, false)]);
+        frame(vec![]);
+
+        menu.state.staged().mouse_acceleration_strength()
+    }
+
+    #[test]
+    fn strength_is_disabled_while_acceleration_is_off() {
+        let strength = strength_after_dragging(false);
+
+        assert_eq!(strength, 0.37);
+    }
+
+    #[test]
+    fn strength_is_editable_while_acceleration_is_on() {
+        let strength = strength_after_dragging(true);
+
+        assert!(strength > 0.37, "strength after drag: {strength}");
+    }
+
+    #[test]
     fn untouched_controls_are_not_dirty_or_decorated() {
         let mut menu = SettingsMenu::with_prefs(Prefs::default());
 

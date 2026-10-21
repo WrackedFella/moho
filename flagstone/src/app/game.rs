@@ -1556,6 +1556,7 @@ mod tests {
                         look_per_count: 0.002,
                         smoothing,
                         invert_y: false,
+                        acceleration: 0.0,
                     });
                     let mut fake = FakeRenderer::default();
                     let (yaw_before, pitch_before) = sim_look(&app, rig);
@@ -1596,6 +1597,7 @@ mod tests {
                         look_per_count: 0.002,
                         smoothing,
                         invert_y: false,
+                        acceleration: 0.0,
                     });
                     let mut fake = FakeRenderer::default();
                     run_frame(&mut app, &mut fake);
@@ -1683,6 +1685,7 @@ mod tests {
                         look_per_count: LOOK_PER_COUNT,
                         smoothing: false,
                         invert_y: false,
+                        acceleration: 0.0,
                     });
                     app.input
                         .actions

@@ -621,6 +621,52 @@ mod tests {
     }
 
     #[test]
+    fn acceleration_settings_round_trip() {
+        for on in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config").join("prefs.ini");
+            let prefs = Prefs::default()
+                .with_mouse_acceleration(on)
+                .with_mouse_acceleration_strength(0.25);
+
+            prefs.save_to(&path).unwrap();
+            let (loaded, warnings) = Prefs::load_from(&path);
+
+            assert_eq!(warnings, vec![], "acceleration {on}");
+            assert_eq!(loaded.mouse_acceleration(), on);
+            assert_eq!(loaded.mouse_acceleration_strength(), 0.25);
+            let ini = prefs.to_ini_string();
+            assert!(ini.contains(&format!("mouse_acceleration={on}\n")), "{ini}");
+            assert!(ini.contains("mouse_acceleration_strength=0.25\n"), "{ini}");
+        }
+    }
+
+    #[test]
+    fn acceleration_defaults_when_the_keys_are_absent() {
+        let (prefs, issues) = Prefs::parse("[prefs]\nmouse_sensitivity=2\n");
+
+        assert_eq!(issues, vec![]);
+        assert!(!prefs.mouse_acceleration());
+        assert_eq!(prefs.mouse_acceleration_strength(), 0.04);
+    }
+
+    #[test]
+    fn malformed_acceleration_warns_and_keeps_defaults() {
+        let (prefs, issues) =
+            Prefs::parse("[prefs]\nmouse_acceleration=yes\nmouse_acceleration_strength=fast\n");
+
+        assert_eq!(
+            issues,
+            vec![
+                malformed("prefs", "mouse_acceleration", Some("yes")),
+                malformed("prefs", "mouse_acceleration_strength", Some("fast")),
+            ]
+        );
+        assert!(!prefs.mouse_acceleration());
+        assert_eq!(prefs.mouse_acceleration_strength(), 0.04);
+    }
+
+    #[test]
     fn a_saved_sensitivity_is_read_unchanged_on_the_new_scale() {
         let (prefs, issues) = Prefs::parse("[prefs]\nmouse_sensitivity=1\n");
 

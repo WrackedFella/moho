@@ -36,6 +36,8 @@ pub struct LookSettings {
     pub smoothing: bool,
     /// Negates the mouse's Y counts; the stick is unaffected.
     pub invert_y: bool,
+    /// Extra look per count for each count per millisecond of speed; 0 is off.
+    pub acceleration: f32,
 }
 
 impl LookSettings {
@@ -45,6 +47,7 @@ impl LookSettings {
             look_per_count,
             smoothing: false,
             invert_y: false,
+            acceleration: 0.0,
         }
     }
 }
@@ -530,6 +533,7 @@ mod tests {
                 look_per_count: 2.0,
                 smoothing,
                 invert_y: false,
+                acceleration: 0.0,
             });
 
             map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
@@ -808,6 +812,7 @@ mod tests {
             look_per_count,
             smoothing: true,
             invert_y: false,
+            acceleration: 0.0,
         });
         map
     }
@@ -892,6 +897,7 @@ mod tests {
             look_per_count: 1.0,
             smoothing: true,
             invert_y: false,
+            acceleration: 0.0,
         });
         map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
         map.mouse_motion(2.0, 0.0);
@@ -928,6 +934,7 @@ mod tests {
             look_per_count: 1.0,
             smoothing: true,
             invert_y: false,
+            acceleration: 0.0,
         });
         map.sample_frame(FRAME);
         let after = map.end_tick().look();
@@ -960,6 +967,7 @@ mod tests {
             look_per_count: 2.0,
             smoothing: true,
             invert_y: false,
+            acceleration: 0.0,
         });
         map.sample_frame(FRAME);
         let after = map.end_tick().look();
@@ -1420,6 +1428,7 @@ mod tests {
         let mut map = pad_map(look_per_count);
         map.set_look(LookSettings {
             invert_y: true,
+            acceleration: 0.0,
             ..LookSettings::raw(look_per_count)
         });
         map
@@ -1459,6 +1468,7 @@ mod tests {
             look_per_count: 0.5,
             smoothing: true,
             invert_y: true,
+            acceleration: 0.0,
         });
         for map in [&mut normal, &mut inverted] {
             map.mouse_motion(40.0, -100.0);
@@ -1519,11 +1529,181 @@ mod tests {
         );
     }
 
+    const TEN_MS: Duration = Duration::from_millis(10);
+
+    fn accelerated(look_per_count: f32, acceleration: f32) -> ActionMap<TestAction> {
+        let mut map = pad_map(look_per_count);
+        map.set_look(LookSettings {
+            acceleration,
+            ..LookSettings::raw(look_per_count)
+        });
+        map
+    }
+
+    fn assert_near(actual: (f32, f32), expected: (f32, f32)) {
+        let near = |a: f32, e: f32| (a - e).abs() <= 1e-4 * e.abs().max(1.0);
+        assert!(
+            near(actual.0, expected.0) && near(actual.1, expected.1),
+            "expected {expected:?}, got {actual:?}"
+        );
+    }
+
+    /// Total yaw of `counts_per_frame` fed over `frames` frames of `dt` each.
+    fn total_yaw(
+        mut map: ActionMap<TestAction>,
+        counts_per_frame: f64,
+        frames: usize,
+        dt: Duration,
+    ) -> f32 {
+        let mut total = 0.0;
+        for _ in 0..frames {
+            map.mouse_motion(counts_per_frame, 0.0);
+            map.sample_frame(dt);
+            total += map.end_tick().look().0;
+        }
+        total
+    }
+
+    #[test]
+    fn without_acceleration_speed_does_not_change_the_turn() {
+        let fast = total_yaw(map(1.0), 100.0, 1, TEN_MS);
+        let slow = total_yaw(map(1.0), 10.0, 10, TEN_MS);
+
+        assert_eq!(fast, 100.0);
+        assert_eq!(slow, 100.0);
+    }
+
+    #[test]
+    fn acceleration_turns_a_fast_motion_further() {
+        let fast = total_yaw(accelerated(1.0, 0.5), 100.0, 1, TEN_MS);
+        let slow = total_yaw(accelerated(1.0, 0.5), 10.0, 10, TEN_MS);
+
+        assert!(fast > slow, "fast {fast}, slow {slow}");
+        assert_near((fast, slow), (600.0, 150.0));
+    }
+
+    #[test]
+    fn zero_strength_acceleration_matches_off() {
+        let mut off = pad_map(0.7);
+        let mut zero = accelerated(0.7, 0.0);
+        for map in [&mut off, &mut zero] {
+            map.mouse_motion(123.0, -45.0);
+            map.sample_frame(TEN_MS);
+        }
+
+        assert_eq!(zero.end_tick().look(), off.end_tick().look());
+    }
+
+    #[test]
+    fn zero_frame_dt_sample_is_not_accelerated() {
+        let mut map = accelerated(2.0, 1000.0);
+
+        map.mouse_motion(10.0, -5.0);
+        map.sample_frame(Duration::ZERO);
+
+        assert_eq!(map.end_tick().look(), (20.0, -10.0));
+    }
+
+    #[test]
+    fn acceleration_speed_is_the_diagonal_counts_per_millisecond() {
+        let mut map = accelerated(2.0, 0.1);
+
+        map.mouse_motion(-30.0, 40.0);
+        map.sample_frame(TEN_MS);
+
+        // hypot(30, 40) = 50 counts over 10 ms is 5 counts/ms: 2 + 0.1 * 5 per count.
+        assert_near(map.end_tick().look(), (-75.0, 100.0));
+    }
+
+    #[test]
+    fn acceleration_uses_the_smoothed_counts() {
+        let mut map = accelerated(1.0, 0.5);
+        map.set_look(LookSettings {
+            smoothing: true,
+            acceleration: 0.5,
+            ..LookSettings::raw(1.0)
+        });
+
+        map.mouse_motion(10.0, 4.0);
+        map.sample_frame(TEN_MS);
+
+        // Smoothing releases (5, 2) in the first frame.
+        let factor = 1.0 + 0.5 * (5.0f32.hypot(2.0) / 10.0);
+        assert_near(map.end_tick().look(), (5.0 * factor, 2.0 * factor));
+    }
+
+    #[test]
+    fn acceleration_scales_with_the_frame_duration() {
+        let mut short = accelerated(1.0, 0.5);
+        let mut long = accelerated(1.0, 0.5);
+
+        short.mouse_motion(100.0, 0.0);
+        short.sample_frame(Duration::from_millis(5));
+        long.mouse_motion(100.0, 0.0);
+        long.sample_frame(Duration::from_millis(20));
+
+        assert_near(short.end_tick().look(), (100.0 * (1.0 + 0.5 * 20.0), 0.0));
+        assert_near(long.end_tick().look(), (100.0 * (1.0 + 0.5 * 5.0), 0.0));
+    }
+
+    #[test]
+    fn stick_is_not_accelerated() {
+        let mut off = pad_map(1.0);
+        let mut on = accelerated(1.0, 5.0);
+        for map in [&mut off, &mut on] {
+            map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+            map.pad_axis(Stick::RightStick, StickAxis::Y, -0.5);
+            map.sample_frame(FRAME);
+        }
+
+        assert_eq!(on.end_tick().look(), off.end_tick().look());
+    }
+
+    #[test]
+    fn acceleration_applies_only_to_the_mouse_share_of_mixed_look() {
+        let mut map = accelerated(1.0, 0.5);
+
+        map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+        map.mouse_motion(100.0, 0.0);
+        map.sample_frame(TEN_MS);
+        let stick = PAD_LOOK_PER_SECOND * TEN_MS.as_secs_f32();
+
+        assert_near(map.end_tick().look(), (600.0 + stick, 0.0));
+    }
+
+    #[test]
+    fn acceleration_off_by_default_in_raw_settings() {
+        assert_eq!(LookSettings::raw(1.0).acceleration, 0.0);
+    }
+
     mod proptests {
         use super::*;
         use proptest::prelude::*;
 
         proptest! {
+            #[test]
+            fn acceleration_never_reduces_the_turn(
+                dx in -500i32..500,
+                dy in -500i32..500,
+                dt_micros in 0u64..50_000,
+                acceleration in 0.0f32..2.0,
+                look_per_count in 0.001f32..3.0,
+            ) {
+                let dt = Duration::from_micros(dt_micros);
+                let mut plain = map(look_per_count);
+                let mut fast = accelerated(look_per_count, acceleration);
+                for map in [&mut plain, &mut fast] {
+                    map.mouse_motion(f64::from(dx), f64::from(dy));
+                    map.sample_frame(dt);
+                }
+
+                let plain = plain.end_tick().look();
+                let fast = fast.end_tick().look();
+
+                prop_assert!(fast.0.abs() >= plain.0.abs(), "yaw {fast:?} vs {plain:?}");
+                prop_assert!(fast.1.abs() >= plain.1.abs(), "pitch {fast:?} vs {plain:?}");
+            }
+
             #[test]
             fn prop_turn_total_is_independent_of_frame_split(
                 counts in proptest::collection::vec(-40i32..40, 1..24),

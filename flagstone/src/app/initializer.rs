@@ -208,6 +208,7 @@ pub(crate) fn build_actions(config: &AppConfig) -> ActionMap<StrategyAction> {
         look_per_count: config.mouse_sensitivity,
         smoothing: config.mouse_smoothing,
         invert_y: config.invert_mouse_y,
+        acceleration: 0.0,
     });
     actions
 }

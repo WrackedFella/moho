@@ -54,6 +54,8 @@ pub struct Prefs {
     mouse_sensitivity: f32,
     mouse_smoothing: bool,
     invert_mouse_y: bool,
+    mouse_acceleration: bool,
+    mouse_acceleration_strength: f32,
     // Audio settings (values 0.0 to 10.0)
     audio_sound_effect_volume: f32,
     audio_music_volume: f32,
@@ -133,6 +135,12 @@ impl Prefs {
     pub fn invert_mouse_y(&self) -> bool {
         self.invert_mouse_y
     }
+    pub fn mouse_acceleration(&self) -> bool {
+        self.mouse_acceleration
+    }
+    pub fn mouse_acceleration_strength(&self) -> f32 {
+        self.mouse_acceleration_strength
+    }
     pub fn sound_effect_volume(&self) -> f32 {
         self.audio_sound_effect_volume
     }
@@ -177,6 +185,12 @@ impl Prefs {
     }
     pub fn invert_mouse_y_mut(&mut self) -> &mut bool {
         &mut self.invert_mouse_y
+    }
+    pub fn mouse_acceleration_mut(&mut self) -> &mut bool {
+        &mut self.mouse_acceleration
+    }
+    pub fn mouse_acceleration_strength_mut(&mut self) -> &mut f32 {
+        &mut self.mouse_acceleration_strength
     }
     pub fn sound_effect_volume_mut(&mut self) -> &mut f32 {
         &mut self.audio_sound_effect_volume
@@ -223,6 +237,14 @@ impl Prefs {
         self.invert_mouse_y = v;
         self
     }
+    pub fn with_mouse_acceleration(mut self, v: bool) -> Self {
+        self.mouse_acceleration = v;
+        self
+    }
+    pub fn with_mouse_acceleration_strength(mut self, v: f32) -> Self {
+        self.mouse_acceleration_strength = v;
+        self
+    }
 }
 
 impl Default for Prefs {
@@ -231,6 +253,8 @@ impl Default for Prefs {
             mouse_sensitivity: 3.0,
             mouse_smoothing: false,
             invert_mouse_y: false,
+            mouse_acceleration: false,
+            mouse_acceleration_strength: 0.04,
             // Audio volumes use a 0 to 10 scale
             audio_sound_effect_volume: 8.0,
             audio_music_volume: 6.0,
@@ -384,6 +408,29 @@ mod tests {
     #[test]
     fn default_prefs_have_invert_mouse_y_off() {
         assert!(!Prefs::default().invert_mouse_y());
+    }
+
+    #[test]
+    fn acceleration_is_off_by_default() {
+        let prefs = Prefs::default();
+
+        assert!(!prefs.mouse_acceleration());
+        assert_eq!(prefs.mouse_acceleration_strength(), 0.04);
+    }
+
+    #[test]
+    fn acceleration_builders_and_mut_edit_the_values() {
+        let built = Prefs::default()
+            .with_mouse_acceleration(true)
+            .with_mouse_acceleration_strength(0.5);
+        let mut edited = Prefs::default();
+
+        *edited.mouse_acceleration_mut() = true;
+        *edited.mouse_acceleration_strength_mut() = 0.5;
+
+        assert!(built.mouse_acceleration());
+        assert_eq!(built.mouse_acceleration_strength(), 0.5);
+        assert_eq!(edited, built);
     }
 
     #[test]
