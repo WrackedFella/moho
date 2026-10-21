@@ -8,9 +8,8 @@ use moho_core::prefs::Prefs;
 use moho_input::LookSettings;
 use moho_input::action_map::source_look_per_count;
 
-/// The look settings `prefs` ask for: its Source-scale sensitivity as radians per
-/// count, its mouse-smoothing switch, its invert-Y switch and its mouse acceleration
-/// (zero while off or when the strength is negative).
+/// The look settings `prefs` ask for, with sensitivity converted from Source scale to
+/// radians per count. Acceleration is zero while off or when the strength is negative.
 pub fn look_settings(prefs: &Prefs) -> LookSettings {
     LookSettings {
         look_per_count: source_look_per_count(prefs.mouse_sensitivity()),

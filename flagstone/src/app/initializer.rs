@@ -198,10 +198,8 @@ impl AppInitializer {
     }
 }
 
-/// Builds the action map a game runs on from `config`: the prefs' bindings, the
-/// scaled mouse sensitivity, the mouse-smoothing switch, the invert-Y switch and the
-/// mouse acceleration. Shared by startup and by adopting saved settings so the two
-/// can't drift apart.
+/// Builds the action map a game runs on from `config`. Shared by startup and by
+/// adopting saved settings so the two can't drift apart.
 pub(crate) fn build_actions(config: &AppConfig) -> ActionMap<StrategyAction> {
     let mut actions = ActionMap::new(load_bindings(&config.prefs), config.mouse_sensitivity);
     actions.set_look(LookSettings {
