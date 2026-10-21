@@ -231,8 +231,9 @@ impl EguiAdapter {
     ///
     /// With a free cursor, pointer motion and mouse buttons feed egui, so it knows what is
     /// under the pointer and widgets can be dragged; a mouse press that lands on a panel is
-    /// returned as true, which the game must not see. With a grabbed cursor nothing is fed
-    /// or consumed: the pointer is hidden, so panels cannot be aimed at.
+    /// returned as true, which the game must not see. With a grabbed cursor only a mouse
+    /// release is fed, so egui never holds a button pressed before the grab; nothing is
+    /// consumed: the pointer is hidden, so panels cannot be aimed at.
     pub fn handle_gameplay_event(&mut self, event: &WindowEvent) -> bool {
         let cursor_free = self.cursor_free();
         let input = GameplayInput::from(event);
@@ -492,13 +493,14 @@ pub enum GameplayInput {
 }
 
 /// Whether egui is given a window event during gameplay: pointer motion and buttons with a
-/// free cursor, nothing with a grabbed one.
+/// free cursor, and a release always, so a press on a widget followed by a cursor grab
+/// does not leave egui holding the button.
 pub fn feeds_egui(input: GameplayInput, cursor_free: bool) -> bool {
-    cursor_free
-        && matches!(
-            input,
-            GameplayInput::Press | GameplayInput::Release | GameplayInput::Motion
-        )
+    match input {
+        GameplayInput::Release => true,
+        GameplayInput::Press | GameplayInput::Motion => cursor_free,
+        GameplayInput::Other => false,
+    }
 }
 
 impl From<&WindowEvent> for GameplayInput {
@@ -644,14 +646,14 @@ mod tests {
     }
 
     #[test]
-    fn pointer_buttons_reach_egui_only_with_a_free_cursor() {
+    fn pointer_input_reaches_egui_with_a_free_cursor_and_a_release_always_does() {
         let rows = [
             (GameplayInput::Press, true, true),
             (GameplayInput::Release, true, true),
             (GameplayInput::Motion, true, true),
             (GameplayInput::Other, true, false),
             (GameplayInput::Press, false, false),
-            (GameplayInput::Release, false, false),
+            (GameplayInput::Release, false, true),
             (GameplayInput::Motion, false, false),
             (GameplayInput::Other, false, false),
         ];
