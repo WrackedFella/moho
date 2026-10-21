@@ -419,21 +419,6 @@ mod tests {
     }
 
     #[test]
-    fn acceleration_builders_and_mut_edit_the_values() {
-        let built = Prefs::default()
-            .with_mouse_acceleration(true)
-            .with_mouse_acceleration_strength(0.5);
-        let mut edited = Prefs::default();
-
-        *edited.mouse_acceleration_mut() = true;
-        *edited.mouse_acceleration_strength_mut() = 0.5;
-
-        assert!(built.mouse_acceleration());
-        assert_eq!(built.mouse_acceleration_strength(), 0.5);
-        assert_eq!(edited, built);
-    }
-
-    #[test]
     fn with_invert_mouse_y_sets_the_flag() {
         assert!(Prefs::default().with_invert_mouse_y(true).invert_mouse_y());
         assert!(

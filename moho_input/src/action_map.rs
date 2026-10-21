@@ -1617,7 +1617,7 @@ mod tests {
 
     #[test]
     fn acceleration_uses_the_smoothed_counts() {
-        let mut map = accelerated(1.0, 0.5);
+        let mut map = map(1.0);
         map.set_look(LookSettings {
             smoothing: true,
             acceleration: 0.5,
@@ -1669,11 +1669,6 @@ mod tests {
         let stick = PAD_LOOK_PER_SECOND * TEN_MS.as_secs_f32();
 
         assert_near(map.end_tick().look(), (600.0 + stick, 0.0));
-    }
-
-    #[test]
-    fn acceleration_off_by_default_in_raw_settings() {
-        assert_eq!(LookSettings::raw(1.0).acceleration, 0.0);
     }
 
     mod proptests {

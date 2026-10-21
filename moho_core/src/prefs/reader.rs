@@ -642,6 +642,14 @@ mod tests {
     }
 
     #[test]
+    fn negative_acceleration_strength_loads_unchanged() {
+        let (prefs, issues) = Prefs::parse("[prefs]\nmouse_acceleration_strength=-0.2\n");
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.mouse_acceleration_strength(), -0.2);
+    }
+
+    #[test]
     fn acceleration_defaults_when_the_keys_are_absent() {
         let (prefs, issues) = Prefs::parse("[prefs]\nmouse_sensitivity=2\n");
 

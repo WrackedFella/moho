@@ -254,6 +254,33 @@ mod tests {
     }
 
     #[test]
+    fn build_actions_applies_mouse_acceleration_from_prefs() {
+        let base = Prefs::default().with_mouse_acceleration_strength(0.04);
+        let mut on = build_actions(&AppConfig::from_prefs_struct(
+            base.clone().with_mouse_acceleration(true),
+        ));
+        let mut off = build_actions(&AppConfig::from_prefs_struct(
+            base.with_mouse_acceleration(false),
+        ));
+
+        for actions in [&mut on, &mut off] {
+            actions.mouse_motion(10.0, 0.0);
+            actions.sample_frame(Duration::from_millis(10));
+        }
+        let plain = 10.0 * source_look_per_count(3.0);
+        let accelerated = 10.0 * (source_look_per_count(3.0) + source_look_per_count(0.04));
+
+        // 10 counts over 10 ms is 1 count/ms.
+        assert_eq!(off.end_tick().look(), (plain, 0.0));
+        let (yaw, pitch) = on.end_tick().look();
+        assert!(
+            (yaw - accelerated).abs() < 1e-6,
+            "yaw {yaw}, want {accelerated}"
+        );
+        assert_eq!(pitch, 0.0);
+    }
+
+    #[test]
     fn test_build_includes_prefs() {
         let prefs = Prefs::default().with_mouse_sensitivity(2.5);
 
