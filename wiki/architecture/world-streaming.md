@@ -50,6 +50,11 @@ Chunks are 16³ voxels; columns span chunk Y 0..=8.
 - Eviction saves run synchronously in the frame, bounded by `chunks_per_frame`.
 - The light system processes within a per-frame block budget, prioritised by distance to
   the player; large edits spread over several frames.
+- Block edits light through reconciliation, not add/remove deltas. `LightSystem` queues one
+  `LightUpdateJob` per position an edit left empty, opaque or emissive
+  (`MaterialLighting::is_opaque`); `LightPropagator::update_at` then rewrites the light there
+  from the grid as it is when the job runs. Jobs are idempotent and order-independent, so
+  the grid must already hold the edit when the event reaches `LightSystem`.
 
 ## Related
 
