@@ -103,6 +103,9 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
     ("prefs", "mouse_smoothing", |p, s| {
         set(&mut p.mouse_smoothing, parse_bool(s))
     }),
+    ("prefs", "invert_mouse_y", |p, s| {
+        set(&mut p.invert_mouse_y, parse_bool(s))
+    }),
     ("audio", "sound_effect_volume", |p, s| {
         set(&mut p.audio_sound_effect_volume, parse_f32(s))
     }),
@@ -575,6 +578,57 @@ mod tests {
     }
 
     #[test]
+    fn invert_mouse_y_and_sensitivity_round_trip() {
+        for invert in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config").join("prefs.ini");
+            let prefs = Prefs::default()
+                .with_mouse_sensitivity(1.8)
+                .with_invert_mouse_y(invert);
+
+            prefs.save_to(&path).unwrap();
+            let (loaded, warnings) = Prefs::load_from(&path);
+
+            assert_eq!(warnings, vec![], "invert {invert}");
+            assert_eq!(loaded.mouse_sensitivity(), 1.8);
+            assert_eq!(loaded.invert_mouse_y(), invert);
+            assert!(
+                prefs
+                    .to_ini_string()
+                    .contains(&format!("invert_mouse_y={invert}\n"))
+            );
+        }
+    }
+
+    #[test]
+    fn invert_mouse_y_defaults_off_when_the_key_is_absent() {
+        let (prefs, issues) = Prefs::parse("[prefs]\nmouse_sensitivity=2\n");
+
+        assert_eq!(issues, vec![]);
+        assert!(!prefs.invert_mouse_y());
+        assert_eq!(prefs.mouse_sensitivity(), 2.0);
+    }
+
+    #[test]
+    fn malformed_invert_mouse_y_warns_and_stays_off() {
+        let (prefs, issues) = Prefs::parse("[prefs]\ninvert_mouse_y=yes\n");
+
+        assert_eq!(
+            issues,
+            vec![malformed("prefs", "invert_mouse_y", Some("yes"))]
+        );
+        assert!(!prefs.invert_mouse_y());
+    }
+
+    #[test]
+    fn a_saved_sensitivity_is_read_unchanged_on_the_new_scale() {
+        let (prefs, issues) = Prefs::parse("[prefs]\nmouse_sensitivity=1\n");
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.mouse_sensitivity(), 1.0);
+    }
+
+    #[test]
     fn old_input_filtering_key_warns_and_smoothing_is_off() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("prefs.ini");
@@ -842,8 +896,9 @@ mod tests {
     #[test]
     fn to_ini_string_of_defaults_is_the_save_format() {
         let expected = "[prefs]\n\
-             mouse_sensitivity=1\n\
+             mouse_sensitivity=3\n\
              mouse_smoothing=false\n\
+             invert_mouse_y=false\n\
              \n[audio]\n\
              sound_effect_volume=8.0\n\
              music_volume=6.0\n\

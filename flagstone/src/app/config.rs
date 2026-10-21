@@ -6,13 +6,15 @@
 
 use moho_core::prefs::Prefs;
 use moho_input::LookSettings;
+use moho_input::action_map::source_look_per_count;
 
-/// The look settings `prefs` ask for: its sensitivity scaled by 0.002 radians per
-/// count, and its mouse-smoothing switch.
+/// The look settings `prefs` ask for: its Source-scale sensitivity as radians per
+/// count, its mouse-smoothing switch and its invert-Y switch.
 pub fn look_settings(prefs: &Prefs) -> LookSettings {
     LookSettings {
-        look_per_count: prefs.mouse_sensitivity() * 0.002,
+        look_per_count: source_look_per_count(prefs.mouse_sensitivity()),
         smoothing: prefs.mouse_smoothing(),
+        invert_y: prefs.invert_mouse_y(),
     }
 }
 
@@ -37,11 +39,14 @@ pub fn look_settings(prefs: &Prefs) -> LookSettings {
 /// ```
 #[derive(Debug, Clone)]
 pub struct AppConfig {
-    /// Per-pixel look factor: the prefs mouse sensitivity scaled by 0.002.
+    /// Radians of look per mouse count: the prefs sensitivity on Source's scale.
     pub mouse_sensitivity: f32,
 
     /// Whether mouse smoothing is on.
     pub mouse_smoothing: bool,
+
+    /// Whether the mouse's Y axis is inverted.
+    pub invert_mouse_y: bool,
 
     /// Preferences object (contains keybindings and other settings)
     pub prefs: Prefs,
@@ -79,6 +84,7 @@ impl AppConfig {
         Self {
             mouse_sensitivity: look.look_per_count,
             mouse_smoothing: look.smoothing,
+            invert_mouse_y: look.invert_y,
             prefs,
         }
     }
@@ -145,6 +151,7 @@ impl AppConfigBuilder {
         AppConfig {
             mouse_sensitivity: self.mouse_sensitivity.unwrap_or(base.mouse_sensitivity),
             mouse_smoothing: self.mouse_smoothing.unwrap_or(base.mouse_smoothing),
+            invert_mouse_y: base.invert_mouse_y,
             prefs: base.prefs,
         }
     }
@@ -153,6 +160,7 @@ impl AppConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moho_input::action_map::source_look_per_count;
 
     #[test]
     fn prefs_file_stays_config_prefs_ini() {
@@ -174,17 +182,36 @@ mod tests {
         assert_eq!(
             look_settings(&on),
             LookSettings {
-                look_per_count: 2.0 * 0.002,
+                look_per_count: source_look_per_count(2.0),
                 smoothing: true,
+                invert_y: false,
             }
         );
         assert_eq!(
             look_settings(&off),
             LookSettings {
-                look_per_count: 2.0 * 0.002,
+                look_per_count: source_look_per_count(2.0),
                 smoothing: false,
+                invert_y: false,
             }
         );
+    }
+
+    #[test]
+    fn look_settings_take_invert_y_from_prefs() {
+        let inverted = Prefs::default().with_invert_mouse_y(true);
+
+        assert!(look_settings(&inverted).invert_y);
+        assert!(!look_settings(&Prefs::default()).invert_y);
+    }
+
+    #[test]
+    fn default_prefs_look_turns_sixty_six_degrees_per_thousand_counts() {
+        let look = look_settings(&Prefs::default());
+
+        let degrees = (1000.0 * look.look_per_count).to_degrees();
+
+        assert!((degrees - 66.0).abs() < 1e-3, "turned {degrees}");
     }
 
     #[test]
@@ -221,7 +248,7 @@ mod tests {
 
         let config = AppConfig::from_prefs_struct(prefs.clone());
 
-        assert_eq!(config.mouse_sensitivity, 2.0 * 0.002);
+        assert_eq!(config.mouse_sensitivity, source_look_per_count(2.0));
         assert!(config.mouse_smoothing);
         assert_eq!(config.prefs.mouse_sensitivity(), 2.0);
     }
@@ -234,7 +261,7 @@ mod tests {
 
         let config = AppConfig::builder().prefs(prefs).build();
 
-        assert_eq!(config.mouse_sensitivity, 2.5 * 0.002);
+        assert_eq!(config.mouse_sensitivity, source_look_per_count(2.5));
         assert!(config.mouse_smoothing);
     }
 
@@ -262,7 +289,7 @@ mod tests {
             .mouse_smoothing(false)
             .build();
 
-        assert_eq!(config.mouse_sensitivity, 2.5 * 0.002);
+        assert_eq!(config.mouse_sensitivity, source_look_per_count(2.5));
         assert!(!config.mouse_smoothing);
     }
 
