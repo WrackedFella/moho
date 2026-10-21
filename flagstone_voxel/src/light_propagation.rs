@@ -74,6 +74,8 @@ impl LightPropagator {
 
     /// Remove the block-light contributed by the source at `pos` using two-queue
     /// removal. Each channel is processed independently.
+    /// The block at `pos` must already be out of the grid: every emitter block the
+    /// dark wave clears, `pos` included, is re-seeded from its emission.
     /// Returns the set of chunk positions that were modified.
     pub fn remove_light(&mut self, grid: &mut VoxelGrid, pos: IVec3) -> Vec<IVec3> {
         if !grid.supports_lighting() {
