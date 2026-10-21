@@ -5,6 +5,26 @@
 //! [`HudData`] and decides internally whether to draw based on its
 //! visibility flag and the current camera mode.
 
+/// The strategy view-height slider's range and position, in whole metres.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewHeightHud {
+    /// Height of the lowest drawn layer's bottom; the slider's lowest step is `floor + 1`.
+    pub floor: i32,
+
+    /// Height of the topmost step, which means no cut.
+    pub top: i32,
+
+    /// The current step, `top` when nothing is cut.
+    pub level: i32,
+}
+
+/// What the player asked for through the HUD this frame, for the game to apply.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HudIntents {
+    /// A view-height step the player picked.
+    pub view_level: Option<i32>,
+}
+
 /// Per-frame data pushed from the game loop into all overlays.
 #[derive(Debug, Clone)]
 pub struct HudData {
@@ -56,6 +76,9 @@ pub struct HudData {
 
     /// Which hotbar slot (`0..8`) is currently selected, for the highlight.
     pub selected_slot: usize,
+
+    /// The view-height slider's range and level; `None` when no world is loaded.
+    pub view_height: Option<ViewHeightHud>,
 }
 
 impl Default for HudData {
@@ -75,6 +98,7 @@ impl Default for HudData {
             hotbar: Vec::new(),
             equipped_tool_label: Some("Pickaxe".to_string()),
             selected_slot: 0,
+            view_height: None,
         }
     }
 }
@@ -102,6 +126,9 @@ pub trait Overlay: std::fmt::Debug + Send + Sync {
         let v = self.is_visible();
         self.set_visible(!v);
     }
+
+    /// Move what the player asked for since the last call into `out`, leaving none behind.
+    fn take_intents(&mut self, _out: &mut HudIntents) {}
 }
 
 /// Manages a collection of overlay layers, rendering them in registration order.
@@ -152,6 +179,11 @@ impl OverlayManager {
         }
     }
 
+    /// Collect, and clear, what every overlay's player asked for since the last call.
+    pub fn take_intents(&mut self) -> HudIntents {
+        HudIntents::default()
+    }
+
     /// Toggle an overlay by name. No-op if the name is not found.
     pub fn toggle(&mut self, name: &str) {
         if let Some(overlay) = self.overlays.iter_mut().find(|o| o.name() == name) {
@@ -200,6 +232,45 @@ mod tests {
         fn set_visible(&mut self, visible: bool) {
             self.visible = visible;
         }
+    }
+
+    /// An overlay holding a view level the player picked, until it is taken.
+    #[derive(Debug)]
+    struct AskingOverlay {
+        asked: Option<i32>,
+    }
+
+    impl Overlay for AskingOverlay {
+        fn name(&self) -> &'static str {
+            "asking"
+        }
+        fn render(&mut self, _ui: &mut egui::Ui, _data: &HudData) {}
+        fn is_visible(&self) -> bool {
+            true
+        }
+        fn set_visible(&mut self, _visible: bool) {}
+        fn take_intents(&mut self, out: &mut HudIntents) {
+            out.view_level = self.asked.take();
+        }
+    }
+
+    #[test]
+    fn take_intents_collects_and_clears() {
+        let mut mgr = OverlayManager::new();
+        mgr.register(Box::new(StubOverlay::new("silent", true)));
+        mgr.register(Box::new(AskingOverlay { asked: Some(7) }));
+        mgr.register(Box::new(StubOverlay::new("also silent", true)));
+
+        let first = mgr.take_intents();
+        let second = mgr.take_intents();
+
+        assert_eq!(
+            first,
+            HudIntents {
+                view_level: Some(7)
+            }
+        );
+        assert_eq!(second, HudIntents::default(), "a take empties the overlays");
     }
 
     fn visibility(mgr: &OverlayManager) -> Vec<bool> {

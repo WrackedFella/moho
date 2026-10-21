@@ -341,6 +341,11 @@ impl EguiAdapter {
         self.ui_state.overlay_manager.update_data(data);
     }
 
+    /// What the player asked for through the HUD since the last call.
+    pub fn take_hud_intents(&mut self) -> crate::overlays::HudIntents {
+        self.ui_state.overlay_manager.take_intents()
+    }
+
     /// Routes one key or button through the console before egui sees it.
     pub fn on_key(
         &mut self,
@@ -483,6 +488,27 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
     }
 }
 
+/// The kinds of window event `feeds_egui` tells apart. winit builds its events from a device
+/// id that tests cannot construct under `unsafe_code = "deny"`, so the rule sits on the kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameplayInput {
+    /// A mouse button goes down.
+    Press,
+    /// A mouse button comes up.
+    Release,
+    /// The pointer moves or leaves the window.
+    Motion,
+    /// Anything else, keyboard included.
+    Key,
+}
+
+/// Whether egui is given a window event during gameplay: pointer motion and buttons with a
+/// free cursor, nothing with a grabbed one.
+pub fn feeds_egui(input: GameplayInput, cursor_free: bool) -> bool {
+    let _ = (input, cursor_free);
+    false
+}
+
 /// Whether a mouse press is taken by the UI: it lands on a panel and the cursor is free.
 fn press_consumed(pointer_over_ui: bool, cursor_free: bool) -> bool {
     pointer_over_ui && cursor_free
@@ -569,6 +595,65 @@ mod tests {
         gameplay_frame_with_pointer_at(&mut adapter, egui::pos2(100.0, 300.0));
 
         assert!(!adapter.pointer_over_ui());
+    }
+
+    #[test]
+    fn press_over_the_view_height_slider_is_consumed() {
+        use crate::overlays::test_support::{input, run_ui, second_frame, small_rect_centers};
+        use crate::overlays::{HudData, Overlay, RtsHud, ViewHeightHud};
+        let data = |view_height| HudData {
+            is_fps_mode: false,
+            view_height,
+            ..Default::default()
+        };
+        let slider = Some(ViewHeightHud {
+            floor: 0,
+            top: 144,
+            level: 100,
+        });
+        let mut hud = RtsHud::new();
+        let handle = small_rect_centers(
+            &second_frame(&egui::Context::default(), |ui| {
+                hud.render(ui, &data(slider));
+            }),
+            20.0,
+        )
+        .first()
+        .copied()
+        .expect("the slider draws its handle");
+        let mut adapter = adapter();
+        adapter.set_game_state(GameState::Playing);
+        adapter.update_hud_data(data(slider));
+
+        for events in [Vec::new(), vec![egui::Event::PointerMoved(handle)]] {
+            let _ = run_ui(&adapter.context, input(events), |ui| {
+                rendering::render_game_state(ui, &mut adapter.ui_state, GameState::Playing);
+            });
+        }
+
+        assert!(adapter.pointer_over_ui());
+    }
+
+    #[test]
+    fn pointer_buttons_reach_egui_only_with_a_free_cursor() {
+        let rows = [
+            (GameplayInput::Press, true, true),
+            (GameplayInput::Release, true, true),
+            (GameplayInput::Motion, true, true),
+            (GameplayInput::Key, true, false),
+            (GameplayInput::Press, false, false),
+            (GameplayInput::Release, false, false),
+            (GameplayInput::Motion, false, false),
+            (GameplayInput::Key, false, false),
+        ];
+
+        for (input, cursor_free, fed) in rows {
+            assert_eq!(
+                feeds_egui(input, cursor_free),
+                fed,
+                "{input:?}, cursor_free {cursor_free}"
+            );
+        }
     }
 
     #[test]
