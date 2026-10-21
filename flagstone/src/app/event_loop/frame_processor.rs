@@ -319,26 +319,26 @@ impl FrameProcessor {
     /// Calculate ambient lighting based on time of day
     /// Returns the ambient uniform: sky-ambient strength in w, xyz unused
     fn calculate_ambient_lighting(&self, time: f32) -> [f32; 4] {
-        // Night: 0-5, 21-24 (very low, blue-tinted)
-        // Dawn: 5-7 (increasing, warm tint)
-        // Day: 7-17 (full brightness, neutral)
-        // Dusk: 17-21 (decreasing, warm tint)
+        // Night: 0-5, 21-24 (very low)
+        // Dawn: 5-7 (increasing)
+        // Day: 7-17 (full)
+        // Dusk: 17-21 (decreasing)
         if (7.0..17.0).contains(&time) {
-            // Day: full brightness, cool ambient
-            [0.4, 0.5, 0.6, 0.15]
+            // Day: full strength
+            [0.0, 0.0, 0.0, 0.15]
         } else if (5.0..7.0).contains(&time) {
-            // Dawn: increasing brightness, warm tint
+            // Dawn: increasing strength
             let t = (time - 5.0) / 2.0; // 0-1 over 2 hours
             let intensity = 0.05 + t * 0.10; // 0.05 -> 0.15
-            [0.5, 0.45, 0.4, intensity]
+            [0.0, 0.0, 0.0, intensity]
         } else if (17.0..21.0).contains(&time) {
-            // Dusk: decreasing brightness, warm tint
+            // Dusk: decreasing strength
             let t = (time - 17.0) / 4.0; // 0-1 over 4 hours
             let intensity = 0.15 - t * 0.10; // 0.15 -> 0.05
-            [0.5, 0.4, 0.35, intensity]
+            [0.0, 0.0, 0.0, intensity]
         } else {
-            // Night: very low brightness, blue tint
-            [0.3, 0.35, 0.5, 0.05]
+            // Night: very low strength
+            [0.0, 0.0, 0.0, 0.05]
         }
     }
 

@@ -127,7 +127,7 @@ impl ResourcePool {
     ///
     /// This creates:
     /// - Camera buffer (80 bytes for view/proj matrices)
-    /// - Lighting buffer (96 bytes for sun/moon/ambient with defaults)
+    /// - Lighting buffer (144 bytes: sun/moon/ambient and the sky palette, with defaults)
     /// - Material buffer (32 bytes for 1 initial white material)
     /// - Camera bind group (combines above 3 buffers)
     /// - Depth texture (matches surface dimensions)

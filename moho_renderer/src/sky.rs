@@ -8,10 +8,63 @@ pub struct SkyPalette {
     pub ground: [f32; 3],
 }
 
+const NIGHT: SkyPalette = SkyPalette {
+    zenith: [0.05, 0.05, 0.15],
+    horizon: [0.1, 0.1, 0.2],
+    ground: [0.05, 0.05, 0.1],
+};
+const DAWN: SkyPalette = SkyPalette {
+    zenith: [0.3, 0.5, 0.7],
+    horizon: [1.0, 0.6, 0.4],
+    ground: [0.2, 0.15, 0.2],
+};
+const DAY: SkyPalette = SkyPalette {
+    zenith: [0.5, 0.85, 0.95],
+    horizon: [0.85, 0.95, 0.98],
+    ground: [0.6, 0.65, 0.7],
+};
+const DUSK: SkyPalette = SkyPalette {
+    zenith: [0.3, 0.4, 0.6],
+    horizon: [1.0, 0.5, 0.3],
+    ground: [0.2, 0.15, 0.15],
+};
+
+/// Palette keyframes `(hour, palette)`. Between two keys the palette blends by smoothstep;
+/// before the first and after the last it is night. Equal neighbouring palettes hold a period.
+const KEYFRAMES: [(f32, SkyPalette); 6] = [
+    (5.0, NIGHT),
+    (7.0, DAWN),
+    (8.0, DAY),
+    (17.0, DAY),
+    (21.0, DUSK),
+    (22.0, NIGHT),
+];
+
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
+}
+
 /// The sky palette at `time_of_day` hours; hours outside `0..24` wrap into it.
 pub fn sky_palette(time_of_day: f32) -> SkyPalette {
-    let _ = time_of_day;
-    todo!("port skybox.wgsl::get_sky_colors")
+    let hour = time_of_day.rem_euclid(24.0);
+    KEYFRAMES
+        .windows(2)
+        .find(|pair| hour >= pair[0].0 && hour < pair[1].0)
+        .map_or(NIGHT, |pair| {
+            let (start, from) = pair[0];
+            let (end, to) = pair[1];
+            let t = smoothstep(start, end, hour);
+            SkyPalette {
+                zenith: mix(from.zenith, to.zenith, t),
+                horizon: mix(from.horizon, to.horizon, t),
+                ground: mix(from.ground, to.ground, t),
+            }
+        })
 }
 
 #[cfg(test)]

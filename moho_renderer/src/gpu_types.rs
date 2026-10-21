@@ -25,15 +25,15 @@ pub struct LightingGpu {
     pub moon_direction: [f32; 4],
     /// Moon color (rgb) and unused (w)
     pub moon_color: [f32; 4],
-    /// Ambient light color (rgb) and intensity (w)
+    /// Sky-ambient strength (w); xyz unused. The ambient colour comes from the sky palette.
     pub ambient: [f32; 4],
     /// Shader parameters:
     /// x = Time of day (0-24 hours)
-    /// y = Debug Mode (0=None, 1=Normals, 2=Bias, 3=Cascades, 4=Shadows)
+    /// y = Debug Mode (0=None, 1=Normals, 2=Bias, 3=Cascades, 4=Shadows, 5=Point lights, 6=Sky ambient)
     /// zw = Unused
     pub params: [f32; 4],
     /// Sky zenith colour (rgb) and unused (w). The renderer fills it from the time of
-    /// day; a game's value is replaced.
+    /// day in `params[0]`; a game's value is replaced.
     pub sky_zenith: [f32; 4],
     /// Sky horizon colour (rgb) and unused (w). Filled by the renderer.
     pub sky_horizon: [f32; 4],
@@ -233,6 +233,7 @@ impl Default for CascadedShadowMatrixGpu {
 
 impl Default for LightingGpu {
     fn default() -> Self {
+        let palette = crate::sky::sky_palette(6.0);
         Self {
             // Default sun direction: lower in the sky (morning/evening light)
             // Normalized from approximately (0.7, 0.3, 0.6) for ~20° elevation
@@ -243,13 +244,17 @@ impl Default for LightingGpu {
             moon_direction: [0.0, -1.0, 0.0, 0.3], // Pointing down, intensity=0.3
             // Silver-blue moonlight
             moon_color: [0.7, 0.8, 0.9, 0.0],
-            // Reduced ambient light to make shadows more visible
-            ambient: [0.4, 0.5, 0.6, 0.1], // Cool ambient, intensity=0.1 (reduced from 0.3)
+            ambient: [0.0, 0.0, 0.0, 0.1],
             // Default to dawn (6:00)
             params: [6.0, 0.0, 0.0, 0.0],
-            sky_zenith: [0.0; 4],
-            sky_horizon: [0.0; 4],
-            sky_ground: [0.0; 4],
+            sky_zenith: [palette.zenith[0], palette.zenith[1], palette.zenith[2], 0.0],
+            sky_horizon: [
+                palette.horizon[0],
+                palette.horizon[1],
+                palette.horizon[2],
+                0.0,
+            ],
+            sky_ground: [palette.ground[0], palette.ground[1], palette.ground[2], 0.0],
         }
     }
 }

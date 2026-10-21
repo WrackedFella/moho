@@ -331,7 +331,7 @@ fn lighting() -> LightingGpu {
     LightingGpu {
         sun_direction: [sun.x, sun.y, sun.z, 1.0],
         moon_direction: [0.0, -1.0, 0.0, 0.0],
-        ambient: [0.4, 0.5, 0.6, 0.15],
+        ambient: [0.0, 0.0, 0.0, 0.15],
         params: [12.0, 0.0, 0.0, 0.0],
         ..LightingGpu::default()
     }

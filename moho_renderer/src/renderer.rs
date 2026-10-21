@@ -693,7 +693,14 @@ impl<'a> Renderer<'a> {
 fn lighting_with_sky_palette(
     lighting: crate::gpu_types::LightingGpu,
 ) -> crate::gpu_types::LightingGpu {
-    lighting
+    let palette = crate::sky::sky_palette(lighting.params[0]);
+    let vec4 = |c: [f32; 3]| [c[0], c[1], c[2], 0.0];
+    crate::gpu_types::LightingGpu {
+        sky_zenith: vec4(palette.zenith),
+        sky_horizon: vec4(palette.horizon),
+        sky_ground: vec4(palette.ground),
+        ..lighting
+    }
 }
 
 /// `lighting` with the shader's debug mode (`params[1]`) replaced by `debug_view`; `None`

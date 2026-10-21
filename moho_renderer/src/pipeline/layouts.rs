@@ -16,7 +16,7 @@ use crate::gpu_types::{MultiLightShadowGpu, ShadowMatrixGpu};
 /// This layout has 5 bindings:
 /// - Binding 0: Camera uniform buffer (view + projection matrices, 80 bytes)
 /// - Binding 1: Material storage buffer (array of materials, read-only)
-/// - Binding 2: Lighting uniform buffer (sun/moon/ambient lighting, 96 bytes)
+/// - Binding 2: Lighting uniform buffer (sun/moon/ambient lighting and sky palette, 144 bytes)
 /// - Binding 3: SSAO texture (ambient occlusion, R8Unorm)
 /// - Binding 4: SSAO sampler (linear filtering)
 ///
@@ -27,7 +27,7 @@ pub fn create_camera_bind_group_layout(
     device: &wgpu::Device,
 ) -> Result<wgpu::BindGroupLayout, PipelineInitError> {
     let camera_size = std::mem::size_of::<[f32; 20]>() as u64;
-    let lighting_size = std::mem::size_of::<[f32; 24]>() as u64; // 6 vec4s
+    let lighting_size = std::mem::size_of::<crate::gpu_types::LightingGpu>() as u64;
 
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("camera-bgl"),
