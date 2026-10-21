@@ -46,7 +46,29 @@ fn align(anchor: Anchor) -> egui::Align2 {
     }
 }
 
-/// Paints `texts` on the background layer, under the console.
+/// Why `UiShell::set_texts` refused a list.
+#[derive(Debug, thiserror::Error)]
+pub enum ScreenTextError {
+    #[error("screen text {index} has size {size}; a size must be finite and positive")]
+    BadSize { index: usize, size: f32 },
+}
+
+/// Checks the invariant `paint` relies on: egui asserts on a font size that is not finite and
+/// positive.
+pub(crate) fn validate(texts: &[ScreenText]) -> Result<(), ScreenTextError> {
+    match texts
+        .iter()
+        .position(|t| !(t.size.is_finite() && t.size > 0.0))
+    {
+        Some(index) => Err(ScreenTextError::BadSize {
+            index,
+            size: texts[index].size,
+        }),
+        None => Ok(()),
+    }
+}
+
+/// Paints `texts`, which passed `validate`, on the background layer, under the console.
 pub(crate) fn paint(ctx: &egui::Context, texts: &[ScreenText]) {
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Background,
@@ -54,11 +76,6 @@ pub(crate) fn paint(ctx: &egui::Context, texts: &[ScreenText]) {
     ));
     let screen = ctx.content_rect();
     for t in texts {
-        // egui asserts on a font size that is not finite and positive.
-        if !(t.size.is_finite() && t.size > 0.0) {
-            tracing::warn!(text = %t.text, size = t.size, "screen text skipped: size is not finite and positive");
-            continue;
-        }
         let [r, g, b, a] = t.color;
         let align = align(t.anchor);
         painter.text(
@@ -206,16 +223,31 @@ mod tests {
     }
 
     #[test]
-    fn a_size_that_is_not_finite_and_positive_draws_nothing() {
-        let ctx = egui::Context::default();
-        let texts = [0.0, -5.0, f32::NAN, f32::INFINITY].map(|size| ScreenText {
-            size,
+    fn a_size_that_is_not_finite_and_positive_is_refused_by_index() {
+        for size in [0.0, -5.0, f32::NAN, f32::INFINITY] {
+            let good = fps("30 / 30", Anchor::Center, [0.0, 0.0]);
+            let bad = ScreenText {
+                size,
+                ..good.clone()
+            };
+
+            let refused = validate(&[good, bad]);
+
+            assert!(
+                matches!(refused, Err(ScreenTextError::BadSize { index: 1, size: s }) if s.to_bits() == size.to_bits()),
+                "size {size}: {refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_smallest_positive_size_is_accepted() {
+        let text = ScreenText {
+            size: f32::MIN_POSITIVE,
             ..fps("30 / 30", Anchor::Center, [0.0, 0.0])
-        });
+        };
 
-        let shapes = pass(&ctx, screen(800.0, 600.0), &texts);
-
-        assert!(shapes.is_empty(), "{shapes:?}");
+        assert!(validate(&[text]).is_ok());
     }
 
     #[test]
