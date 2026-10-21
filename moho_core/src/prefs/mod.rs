@@ -122,6 +122,16 @@ impl Prefs {
         self.bindings = section;
     }
 
+    /// The content mod names to load after the base root, in load order.
+    pub fn content_mods(&self) -> &[String] {
+        &[]
+    }
+
+    /// Replaces the content mod list.
+    pub fn set_content_mods(&mut self, mods: Vec<String>) {
+        let _ = mods;
+    }
+
     // --- Scalar getters ---
 
     pub fn mouse_sensitivity(&self) -> f32 {
@@ -544,6 +554,32 @@ mod tests {
         let text = Prefs::default().to_ini_string();
 
         assert!(!text.contains("[debug]"), "{text}");
+    }
+
+    #[test]
+    fn content_mods_round_trip_through_ini() {
+        let mods = vec!["heavy".to_owned(), "light".to_owned()];
+        let mut prefs = Prefs::default();
+        prefs.set_content_mods(mods.clone());
+
+        let text = prefs.to_ini_string();
+        let (parsed, issues) = Prefs::parse(&text);
+
+        assert!(text.contains("[content]"), "{text}");
+        assert_eq!(issues, vec![]);
+        assert_eq!(parsed.content_mods(), mods.as_slice());
+        assert_eq!(parsed, prefs);
+    }
+
+    #[test]
+    fn default_prefs_write_no_content_section() {
+        let prefs = Prefs::default();
+
+        let text = prefs.to_ini_string();
+
+        assert!(prefs.content_mods().is_empty());
+        assert!(!text.contains("[content]"), "{text}");
+        assert!(!text.contains("mods"), "{text}");
     }
 
     proptest::proptest! {

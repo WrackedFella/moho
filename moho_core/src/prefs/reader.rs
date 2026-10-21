@@ -296,6 +296,22 @@ mod tests {
     use std::fmt::Write as _;
 
     #[test]
+    fn content_mods_keep_their_order() {
+        let (prefs, issues) = Prefs::parse("[content]\nmods =  b , a,, c ,\n");
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.content_mods(), ["b", "a", "c"]);
+    }
+
+    #[test]
+    fn an_empty_content_mods_value_lists_no_mods() {
+        let (prefs, issues) = Prefs::parse("[content]\nmods = , ,\n");
+
+        assert_eq!(issues, vec![]);
+        assert!(prefs.content_mods().is_empty());
+    }
+
+    #[test]
     fn warning_display_names_file_and_detail_for_each_issue() {
         let issues = [
             (

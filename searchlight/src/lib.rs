@@ -36,6 +36,11 @@ pub fn prefs_path() -> PathBuf {
     PathBuf::from("config/searchlight.ini")
 }
 
+/// Where mod content roots live, relative to the working directory.
+pub fn mods_dir() -> PathBuf {
+    PathBuf::new()
+}
+
 /// Splits a `[bindings]` section into the `console` entry and the game's own actions,
 /// so neither loader warns about the other's name.
 pub fn split_console_binding(
@@ -67,6 +72,12 @@ mod tests {
     fn the_fps_prefs_file_is_not_strategys() {
         assert_eq!(prefs_path(), std::path::Path::new("config/searchlight.ini"));
         assert_ne!(prefs_path(), Prefs::config_path());
+    }
+
+    #[test]
+    fn mods_live_in_a_relative_mods_folder() {
+        assert_eq!(mods_dir(), std::path::Path::new("mods"));
+        assert!(mods_dir().is_relative());
     }
 
     #[test]
