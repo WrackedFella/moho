@@ -472,17 +472,17 @@ mod tests {
 
     #[test]
     fn the_spec_named_mod_names_are_refused_or_accepted() {
-        let (_base, roots) = base_with(&thing(30, "base"));
+        let (base, _roots) = base_with(&thing(30, "base"));
         let mods = tempfile::tempdir().unwrap();
         for accepted in ["heavy", "my-mod_2"] {
             std::fs::create_dir_all(mods.path().join(accepted)).unwrap();
-            let result = ContentRoots::base(roots.roots[0].path.as_path())
+            let result = ContentRoots::base(base.path())
                 .unwrap()
                 .with_mods(mods.path(), &[accepted.to_owned()]);
             assert!(result.is_ok(), "{accepted:?}: {result:?}");
         }
         for refused in ["", ".", "..", "../x", "a/b", "a\\b", " ", "\u{e9}"] {
-            let result = ContentRoots::base(roots.roots[0].path.as_path())
+            let result = ContentRoots::base(base.path())
                 .unwrap()
                 .with_mods(mods.path(), &[refused.to_owned()]);
             assert!(
