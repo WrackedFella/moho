@@ -703,6 +703,113 @@ mod tests {
             assert!(speeds.iter().all(|s| *s >= 0.0), "friction never reverses");
         }
 
+        #[test]
+        fn overspeed_along_the_wish_decays_by_friction_only_down_to_max_speed() {
+            let settings = source_like();
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 12.0), true);
+            let mut settled = false;
+
+            for tick in 0..120 {
+                let before = state.velocity.z;
+                let scale = friction_scale(before, &settings);
+
+                walk(&mut state, &forward(), &settings);
+
+                if before * scale > settings.max_speed {
+                    assert_close(state.velocity.z, before * scale, tick, "overspeed");
+                } else {
+                    settled = true;
+                }
+                if settled {
+                    assert!(
+                        state.velocity.z >= settings.max_speed - 1e-4,
+                        "tick {tick}: speed {} dropped below max",
+                        state.velocity.z
+                    );
+                }
+            }
+
+            assert!(settled, "never came down to max speed");
+            assert!(
+                (state.velocity.z - settings.max_speed).abs() < 1e-4,
+                "{:?}",
+                state.velocity
+            );
+        }
+
+        #[test]
+        fn reversing_input_brakes_then_builds_speed_the_other_way_up_to_max() {
+            let settings = source_like();
+            let backward = CharacterCommand {
+                forward: -1.0,
+                ..CharacterCommand::default()
+            };
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, settings.max_speed), true);
+            let mut crossed_zero = false;
+
+            for tick in 0..120 {
+                let before = state.velocity.z;
+                let scale = if before == 0.0 {
+                    1.0
+                } else {
+                    friction_scale(before.abs(), &settings)
+                };
+                let slowed = before * scale;
+                let expected =
+                    slowed - (settings.ground_accel * DT).min(settings.max_speed + slowed);
+
+                walk(&mut state, &backward, &settings);
+
+                assert_close(state.velocity.z, expected, tick, "reversing speed");
+                assert!(
+                    state.velocity.z >= -settings.max_speed - 1e-4,
+                    "tick {tick}: speed {} passed max backwards",
+                    state.velocity.z
+                );
+                crossed_zero |= state.velocity.z < 0.0;
+            }
+
+            assert!(crossed_zero, "never reversed direction");
+            assert!(
+                (state.velocity.z + settings.max_speed).abs() < 1e-4,
+                "{:?}",
+                state.velocity
+            );
+        }
+
+        #[test]
+        fn lowering_analog_input_at_speed_decays_by_friction_to_the_smaller_limit() {
+            let settings = test_settings();
+            let half = CharacterCommand {
+                forward: 0.5,
+                ..CharacterCommand::default()
+            };
+            let limit = 0.5 * settings.max_speed;
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, settings.max_speed), true);
+
+            for tick in 0..120 {
+                let before = state.velocity.z;
+                let scale = friction_scale(before, &settings);
+
+                walk(&mut state, &half, &settings);
+
+                if before * scale > limit {
+                    assert_close(state.velocity.z, before * scale, tick, "speed above limit");
+                }
+                assert!(
+                    state.velocity.z >= limit - 1e-4 || before * scale > limit,
+                    "tick {tick}: speed {} fell below the limit",
+                    state.velocity.z
+                );
+            }
+
+            assert!(
+                (state.velocity.z - limit).abs() < 1e-4,
+                "{:?}",
+                state.velocity
+            );
+        }
+
         fn slope_normal(degrees: f32) -> Vec3 {
             let angle = degrees.to_radians();
             Vec3::new(0.0, angle.cos(), -angle.sin())
