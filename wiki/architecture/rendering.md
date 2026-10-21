@@ -1,7 +1,7 @@
 # Rendering
 
 **Source:** `moho_render_api/src/` (`world_geometry.rs`), `moho_renderer/src/` (`scene.rs`,
-`world_meshes.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone_voxel/src/mesh/cap.rs`,
+`world_meshes.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone/src/app/view_level.rs`, `flagstone_voxel/src/mesh/cap.rs`,
 `shaders/`, `moho_level/src/`.
 **Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
 [ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md).
@@ -103,10 +103,18 @@ mesh to `WorldMeshes` and `PhysicsWorld` as above.
 
 ## Cut-face caps
 
+The strategy HUD's view-height slider (`RtsHud`, `ViewHeightHud`) chooses the cut as a block
+layer. `flagstone/src/app/view_level.rs` (`ViewLevel`, `LayerExtent`) holds the pick: the
+extent is the layer span of the loaded chunks (`floor + 1 ..= top`), the top means no cut, and
+the cut sits `CUT_ABOVE_LAYER` over the layer boundary. `Game::frame` takes the pick from
+`EguiAdapter::take_hud_intents` and calls `view_level::update`, which sends a changed cut to
+the caps (`set_cut`) and the renderer (`RenderRequest::ViewHeight`). In first person the
+renderer gets no cut. `update_hud_data` feeds the current level back to the slider.
+
 The view-height cut discards geometry above the plane and leaves the ground hollow.
 The binary closes it with flat caps built from the voxels, not by the renderer.
-`flagstone/src/app/cut_caps.rs` (`CutCaps`) follows the cut: `SetViewHeight` sets it
-(`set_cut`), chunk insert and upsert mark the chunk dirty, remove drops its cap at once, and
+`flagstone/src/app/cut_caps.rs` (`CutCaps`) follows the cut: `view_level::update` and
+`SetViewHeight` set it (`set_cut`), chunk insert and upsert mark the chunk dirty, remove drops its cap at once, and
 `FrameProcessor::update_cut_caps` runs `refresh` each frame before lighting and render.
 `refresh` rebuilds caps only for dirty chunks, plus, when the cut moved, every chunk in
 `cap_chunk_layers` and every chunk already capped. A cap is an ordinary world mesh queued
