@@ -3,6 +3,7 @@
 //! This module detects mixed chunks and generates appropriate meshes for each
 //! geometry type, then concatenates them into a unified mesh for rendering.
 
+use super::super::face::FaceDirection;
 use super::super::grid::{BlockPos, VoxelGrid};
 use super::VoxelMesh;
 use super::blocky::BlockyMeshGenerator;
@@ -29,6 +30,18 @@ pub(crate) fn coarse_cell_solid(grid: &VoxelGrid, base: IVec3, cell: IVec3) -> b
             (0..COARSE_STRIDE).any(|dz| grid.is_solid_at(origin + IVec3::new(dx, dy, dz)))
         })
     })
+}
+
+/// The material a face of coarse cell `cell` (of the chunk whose first block is `base`)
+/// shows: the face material of the first solid block, in x-then-z-then-y order, in the
+/// 2x2 layer of the cell touching `face`; when that layer is empty, of the opposite layer.
+pub(crate) fn coarse_face_material(
+    _grid: &VoxelGrid,
+    _base: IVec3,
+    _cell: IVec3,
+    _face: FaceDirection,
+) -> u32 {
+    0
 }
 
 /// Classifies the content of a chunk
@@ -157,7 +170,7 @@ impl HybridMeshGenerator {
     ) -> VoxelMesh {
         let density_field =
             Self::create_selective_density_field(grid, chunk_pos, chunk_size, only_smooth);
-        let mut mesh = MarchingCubes::generate_mesh(&density_field, chunk_size as usize);
+        let mut mesh = MarchingCubes::generate_mesh(&density_field, chunk_size as usize, |_| 0);
 
         let offset = (chunk_pos * chunk_size).as_vec3() + Vec3::splat(DENSITY_SAMPLE_TO_WORLD);
         for vertex in &mut mesh.vertices {
@@ -267,6 +280,7 @@ impl HybridMeshGenerator {
             .block_light_rgb
             .extend_from_slice(&source.block_light_rgb);
         target.sky_exposed.extend_from_slice(&source.sky_exposed);
+        target.material.extend_from_slice(&source.material);
 
         // Add indices with offset
         for &index in &source.indices {
@@ -288,6 +302,9 @@ impl HybridMeshGenerator {
         let mut mesh = VoxelMesh::empty();
         let cell_solid =
             |cx: i32, cy: i32, cz: i32| coarse_cell_solid(grid, base, IVec3::new(cx, cy, cz));
+        let face_material = |cx: i32, cy: i32, cz: i32, face: FaceDirection| {
+            coarse_face_material(grid, base, IVec3::new(cx, cy, cz), face)
+        };
 
         for cx in 0..coarse_size {
             for cy in 0..coarse_size {
@@ -309,6 +326,7 @@ impl HybridMeshGenerator {
                             [wx + STRIDE, wy + STRIDE, wz + STRIDE],
                             [wx + STRIDE, wy, wz + STRIDE],
                             [1.0, 0.0, 0.0],
+                            face_material(cx, cy, cz, FaceDirection::PosX),
                         );
                         if cx == coarse_size - 1 {
                             Self::emit_coarse_quad(
@@ -318,6 +336,7 @@ impl HybridMeshGenerator {
                                 [wx + STRIDE, wy, wz + STRIDE],
                                 [wx + STRIDE, wy - STRIDE, wz + STRIDE],
                                 [1.0, 0.0, 0.0],
+                                face_material(cx, cy, cz, FaceDirection::PosX),
                             );
                         }
                     }
@@ -330,6 +349,7 @@ impl HybridMeshGenerator {
                             [wx, wy + STRIDE, wz],
                             [wx, wy, wz],
                             [-1.0, 0.0, 0.0],
+                            face_material(cx, cy, cz, FaceDirection::NegX),
                         );
                         if cx == 0 {
                             Self::emit_coarse_quad(
@@ -339,6 +359,7 @@ impl HybridMeshGenerator {
                                 [wx, wy, wz],
                                 [wx, wy - STRIDE, wz],
                                 [-1.0, 0.0, 0.0],
+                                face_material(cx, cy, cz, FaceDirection::NegX),
                             );
                         }
                     }
@@ -351,6 +372,7 @@ impl HybridMeshGenerator {
                             [wx + STRIDE, wy + STRIDE, wz + STRIDE],
                             [wx + STRIDE, wy + STRIDE, wz],
                             [0.0, 1.0, 0.0],
+                            face_material(cx, cy, cz, FaceDirection::PosY),
                         );
                     }
                     // -Y
@@ -362,6 +384,7 @@ impl HybridMeshGenerator {
                             [wx + STRIDE, wy, wz + STRIDE],
                             [wx, wy, wz + STRIDE],
                             [0.0, -1.0, 0.0],
+                            face_material(cx, cy, cz, FaceDirection::NegY),
                         );
                     }
                     // +Z
@@ -373,6 +396,7 @@ impl HybridMeshGenerator {
                             [wx + STRIDE, wy + STRIDE, wz + STRIDE],
                             [wx, wy + STRIDE, wz + STRIDE],
                             [0.0, 0.0, 1.0],
+                            face_material(cx, cy, cz, FaceDirection::PosZ),
                         );
                         if cz == coarse_size - 1 {
                             Self::emit_coarse_quad(
@@ -382,6 +406,7 @@ impl HybridMeshGenerator {
                                 [wx + STRIDE, wy, wz + STRIDE],
                                 [wx, wy, wz + STRIDE],
                                 [0.0, 0.0, 1.0],
+                                face_material(cx, cy, cz, FaceDirection::PosZ),
                             );
                         }
                     }
@@ -394,6 +419,7 @@ impl HybridMeshGenerator {
                             [wx, wy + STRIDE, wz],
                             [wx + STRIDE, wy + STRIDE, wz],
                             [0.0, 0.0, -1.0],
+                            face_material(cx, cy, cz, FaceDirection::NegZ),
                         );
                         if cz == 0 {
                             Self::emit_coarse_quad(
@@ -403,6 +429,7 @@ impl HybridMeshGenerator {
                                 [wx, wy, wz],
                                 [wx + STRIDE, wy, wz],
                                 [0.0, 0.0, -1.0],
+                                face_material(cx, cy, cz, FaceDirection::NegZ),
                             );
                         }
                     }
@@ -421,6 +448,7 @@ impl HybridMeshGenerator {
         v2: [i32; 3],
         v3: [i32; 3],
         normal: [f32; 3],
+        material: u32,
     ) {
         let base = mesh.vertices.len() as u32;
         for v in [v0, v1, v2, v3] {
@@ -431,6 +459,7 @@ impl HybridMeshGenerator {
             mesh.light_level.push(1.0);
             mesh.block_light_rgb.push([0.0, 0.0, 0.0]);
             mesh.sky_exposed.push(1.0);
+            mesh.material.push(material);
         }
         mesh.indices.push(base);
         mesh.indices.push(base + 1);
@@ -444,6 +473,7 @@ impl HybridMeshGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_analyze_empty_chunk() {
@@ -709,5 +739,369 @@ mod tests {
     #[test]
     fn coarse_mesh_offsets_quads_by_the_chunk_origin() {
         assert_coarse_fixture_in_chunk(IVec3::new(1, 0, -1));
+    }
+
+    type Block = ([i32; 3], u32, Option<u32>);
+
+    fn grid_with(blocks: impl IntoIterator<Item = Block>) -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        for (pos, material, resource) in blocks {
+            grid.place_block(IVec3::from(pos), material, resource);
+        }
+        grid
+    }
+
+    /// Blocks `lo..=hi` on every axis, all of one material.
+    fn solid_box(lo: [i32; 3], hi: [i32; 3], material: u32) -> Vec<Block> {
+        let mut blocks = Vec::new();
+        for x in lo[0]..=hi[0] {
+            for y in lo[1]..=hi[1] {
+                for z in lo[2]..=hi[2] {
+                    blocks.push(([x, y, z], material, None));
+                }
+            }
+        }
+        blocks
+    }
+
+    /// Each triangle's centroid, its vertex normal's y, and its three vertex materials.
+    fn triangles(mesh: &VoxelMesh) -> Vec<(Vec3, f32, [u32; 3])> {
+        assert_eq!(
+            mesh.material.len(),
+            mesh.vertices.len(),
+            "one material per vertex"
+        );
+        mesh.indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|tri| {
+                let at = |k: usize| Vec3::from(mesh.vertices[tri[k] as usize]);
+                (
+                    (at(0) + at(1) + at(2)) / 3.0,
+                    mesh.normals[tri[0] as usize][1],
+                    tri.map(|i| mesh.material[i as usize]),
+                )
+            })
+            .collect()
+    }
+
+    fn chunk_mesh(grid: &VoxelGrid) -> VoxelMesh {
+        HybridMeshGenerator::generate_chunk_mesh(grid, IVec3::ZERO, 16)
+    }
+
+    #[test]
+    fn exposed_smooth_block_carries_its_face_material() {
+        let rows = [
+            ("soil", 1, None, 1, 2),
+            ("stone", 2, None, 2, 1),
+            ("stone with iron ore", 2, Some(1), 3, 1),
+        ];
+
+        for (name, material, resource, expected, slab) in rows {
+            let mut blocks = solid_box([2, 0, 2], [13, 7, 13], slab);
+            blocks.push(([8, 8, 8], material, resource));
+            let mesh = chunk_mesh(&grid_with(blocks));
+            let probe = Vec3::splat(8.5);
+
+            let all = triangles(&mesh);
+            let near: Vec<_> = all
+                .iter()
+                .filter(|(c, ..)| c.distance(probe) < 0.4)
+                .collect();
+            let far: Vec<_> = all
+                .iter()
+                .filter(|(c, ..)| c.distance(probe) > 2.0)
+                .collect();
+
+            assert!(!near.is_empty(), "{name}: triangles around the block");
+            for (c, _, materials) in &near {
+                assert_eq!(*materials, [expected; 3], "{name}: triangle at {c:?}");
+            }
+            assert!(!far.is_empty(), "{name}: triangles on the slab");
+            for (c, _, materials) in &far {
+                assert_eq!(*materials, [slab; 3], "{name}: slab triangle at {c:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn upward_triangles_over_grass_carry_grass() {
+        let mut blocks = solid_box([2, 0, 2], [13, 5, 13], 2);
+        blocks.extend(solid_box([2, 6, 2], [9, 6, 13], 2));
+        blocks.extend(solid_box([2, 7, 2], [9, 7, 13], 0));
+        let mesh = chunk_mesh(&grid_with(blocks));
+
+        let flat_up = |height: f32| {
+            triangles(&mesh)
+                .into_iter()
+                .filter(|(c, normal_y, _)| *normal_y > 0.9 && (c.y - height).abs() < 1e-3)
+                .collect::<Vec<_>>()
+        };
+        let plateau: Vec<_> = flat_up(8.0)
+            .into_iter()
+            .filter(|(c, ..)| (3.0..9.0).contains(&c.x))
+            .collect();
+        let lower: Vec<_> = flat_up(6.0)
+            .into_iter()
+            .filter(|(c, ..)| c.x > 11.0)
+            .collect();
+
+        assert!(!plateau.is_empty(), "the grass top has flat triangles");
+        for (c, _, materials) in &plateau {
+            assert_eq!(*materials, [0; 3], "grass top at {c:?}");
+        }
+        assert!(!lower.is_empty(), "the lower ground has flat triangles");
+        for (c, _, materials) in &lower {
+            assert_eq!(*materials, [2; 3], "stone top at {c:?}");
+        }
+    }
+
+    #[test]
+    fn mining_soil_exposes_stone_material() {
+        let soil = IVec3::new(8, 6, 8);
+        let mut blocks = solid_box([2, 0, 2], [13, 5, 13], 2);
+        blocks.push(([8, 6, 8], 1, None));
+        let mut grid = grid_with(blocks);
+        let before = chunk_mesh(&grid);
+        assert!(before.material.contains(&1), "the soil block draws as soil");
+
+        assert!(grid.clear_block(soil));
+        let after = chunk_mesh(&grid);
+
+        assert!(!after.material.contains(&1), "no vertex still carries soil");
+        let over_hole: Vec<_> = triangles(&after)
+            .into_iter()
+            .filter(|(c, ..)| (c.x - 8.5).abs() < 0.7 && (c.z - 8.5).abs() < 0.7 && c.y >= 5.9)
+            .collect();
+        assert!(!over_hole.is_empty(), "the hole has a floor");
+        for (c, _, materials) in &over_hole {
+            assert_eq!(*materials, [2; 3], "exposed face at {c:?}");
+        }
+        assert!(after.material.iter().all(|&m| m == 2));
+    }
+
+    #[test]
+    fn smooth_triangles_in_a_mixed_chunk_never_carry_a_blocky_blocks_material() {
+        let mut blocks = solid_box([2, 0, 2], [10, 3, 10], 2);
+        blocks.push(([6, 4, 6], 100, None));
+        blocks.push(([7, 4, 6], 101, None));
+        let mesh = chunk_mesh(&grid_with(blocks));
+
+        assert!(mesh.geometry_type.contains(&0) && mesh.geometry_type.contains(&1));
+        for (material, geometry) in mesh.material.iter().zip(&mesh.geometry_type) {
+            match geometry {
+                0 => assert_eq!(*material, 2, "smooth vertex"),
+                _ => assert!([100, 101].contains(material), "blocky vertex {material}"),
+            }
+        }
+    }
+
+    fn cell(cx: i32, cy: i32, cz: i32) -> IVec3 {
+        IVec3::new(cx, cy, cz)
+    }
+
+    /// The block of coarse cell `(0, 0, 0)` at `offset` (each 0 or 1).
+    fn cell_block(offset: [i32; 3], material: u32, resource: Option<u32>) -> Block {
+        (offset, material, resource)
+    }
+
+    /// The two blocks of the 2x2 layer of cell `(0, 0, 0)` touching `face`, as offsets.
+    fn layer_offsets(face: FaceDirection, inner: bool) -> Vec<[i32; 3]> {
+        let (axis, positive) = match face {
+            FaceDirection::PosX => (0, true),
+            FaceDirection::NegX => (0, false),
+            FaceDirection::PosY => (1, true),
+            FaceDirection::NegY => (1, false),
+            FaceDirection::PosZ => (2, true),
+            FaceDirection::NegZ => (2, false),
+        };
+        let layer = i32::from(positive != inner);
+        let mut offsets = Vec::new();
+        for a in 0..2 {
+            for b in 0..2 {
+                let mut offset = [0; 3];
+                offset[axis] = layer;
+                offset[(axis + 1) % 3] = a;
+                offset[(axis + 2) % 3] = b;
+                offsets.push(offset);
+            }
+        }
+        offsets
+    }
+
+    const FACES: [FaceDirection; 6] = [
+        FaceDirection::PosX,
+        FaceDirection::NegX,
+        FaceDirection::PosY,
+        FaceDirection::NegY,
+        FaceDirection::PosZ,
+        FaceDirection::NegZ,
+    ];
+
+    #[test]
+    fn coarse_face_takes_the_first_solid_block_of_its_face_layer() {
+        for face in FACES {
+            let touching = layer_offsets(face, false);
+            let opposite = layer_offsets(face, true);
+            let mut blocks: Vec<Block> = opposite
+                .iter()
+                .map(|&offset| cell_block(offset, 1, None))
+                .collect();
+            blocks.push(cell_block(touching[2], 2, None));
+            blocks.push(cell_block(touching[3], 100, None));
+            let grid = grid_with(blocks);
+
+            let material = coarse_face_material(&grid, IVec3::ZERO, cell(0, 0, 0), face);
+
+            assert_eq!(material, 2, "{face:?}: skips the empty blocks of the layer");
+        }
+        let ore_on_top = grid_with([cell_block([1, 1, 0], 2, Some(1))]);
+        assert_eq!(
+            coarse_face_material(&ore_on_top, IVec3::ZERO, cell(0, 0, 0), FaceDirection::PosY),
+            3,
+            "an ore block gives its resource's material"
+        );
+    }
+
+    #[test]
+    fn coarse_face_falls_back_to_the_inner_layer() {
+        for face in FACES {
+            let opposite = layer_offsets(face, true);
+            let grid = grid_with([cell_block(opposite[3], 2, None)]);
+
+            let material = coarse_face_material(&grid, IVec3::ZERO, cell(0, 0, 0), face);
+
+            assert_eq!(material, 2, "{face:?}: the touching layer is empty");
+        }
+    }
+
+    #[test]
+    fn coarse_face_layer_order_is_x_then_z_then_y() {
+        let grid = grid_with([
+            cell_block([1, 1, 0], 1, None),
+            cell_block([0, 1, 1], 2, None),
+        ]);
+
+        let top = coarse_face_material(&grid, IVec3::ZERO, cell(0, 0, 0), FaceDirection::PosY);
+
+        assert_eq!(top, 2, "x varies slowest: (0, 1) comes before (1, 0)");
+        let column = grid_with([
+            cell_block([0, 1, 0], 1, None),
+            cell_block([0, 0, 0], 2, None),
+        ]);
+        let side = coarse_face_material(&column, IVec3::ZERO, cell(0, 0, 0), FaceDirection::NegX);
+        assert_eq!(side, 2, "within a layer on x, z then y: y varies fastest");
+    }
+
+    #[test]
+    fn coarse_face_reads_the_cell_at_its_chunk_offset() {
+        let grid = grid_with([([18, -14, 5], 2, None), ([19, -13, 5], 1, None)]);
+        let base = IVec3::new(16, -16, 0);
+
+        let top = coarse_face_material(&grid, base, cell(1, 1, 2), FaceDirection::PosY);
+        let bottom = coarse_face_material(&grid, base, cell(1, 1, 2), FaceDirection::NegY);
+
+        assert_eq!(top, 1);
+        assert_eq!(bottom, 2);
+    }
+
+    #[test]
+    fn coarse_quads_and_skirts_carry_their_faces_material() {
+        let grid = grid_with([([14, 0, 0], 1, None), ([15, 1, 1], 2, None)]);
+
+        let mesh = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
+
+        assert_eq!(mesh.material.len(), mesh.vertices.len());
+        assert!(!mesh.vertices.is_empty());
+        for (normal, material) in mesh.normals.iter().zip(&mesh.material) {
+            let positive = normal.iter().sum::<f32>() > 0.0;
+            assert_eq!(*material, if positive { 2 } else { 1 }, "normal {normal:?}");
+        }
+        let skirts = mesh
+            .vertices
+            .iter()
+            .zip(&mesh.normals)
+            .filter(|(v, n)| **n == [1.0, 0.0, 0.0] && v[1] < 0.0)
+            .count();
+        assert!(skirts > 0, "the +X skirt hangs below the cell");
+    }
+
+    fn block_strategy() -> impl Strategy<Value = Block> {
+        (
+            (0..7i32, 0..7i32, 0..7i32),
+            prop::sample::select(vec![1u32, 2, 100, 101]),
+            prop::sample::select(vec![None, Some(1u32)]),
+        )
+            .prop_map(|((x, y, z), material, resource)| ([x, y, z], material, resource))
+    }
+
+    fn face_materials(grid: &VoxelGrid, blocks: &[Block]) -> Vec<u32> {
+        blocks
+            .iter()
+            .map(|(_, material, resource)| {
+                grid.material_registry.face_material(*material, *resource)
+            })
+            .collect()
+    }
+
+    fn assert_one_material_per_triangle(
+        mesh: &VoxelMesh,
+        allowed: &[u32],
+    ) -> Result<(), TestCaseError> {
+        prop_assert_eq!(mesh.material.len(), mesh.vertices.len());
+        for (k, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
+            let materials = tri.map(|i| mesh.material[i as usize]);
+            prop_assert!(
+                materials[0] == materials[1] && materials[1] == materials[2],
+                "triangle {} mixes {:?}",
+                k,
+                materials
+            );
+            prop_assert!(
+                allowed.contains(&materials[0]),
+                "triangle {} carries {}, not the face material of any placed block {:?}",
+                k,
+                materials[0],
+                allowed
+            );
+        }
+        Ok(())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn every_triangle_has_one_material(
+            blocks in prop::collection::vec(block_strategy(), 1..120),
+        ) {
+            let grid = grid_with(blocks.clone());
+            let allowed = face_materials(&grid, &blocks);
+
+            let fine = chunk_mesh(&grid);
+            let coarse = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
+
+            assert_one_material_per_triangle(&fine, &allowed)?;
+            assert_one_material_per_triangle(&coarse, &allowed)?;
+        }
+
+        #[test]
+        fn material_channel_matches_vertex_count(
+            blocks in prop::collection::vec(block_strategy(), 0..120),
+            cut in 0.0f32..7.0,
+        ) {
+            let grid = grid_with(blocks);
+
+            let fine = chunk_mesh(&grid);
+            let coarse = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
+            let caps = [0u8, 1].map(|lod| crate::mesh::cut_cap_mesh(&grid, IVec3::ZERO, lod, cut));
+
+            prop_assert_eq!(fine.material.len(), fine.vertices.len());
+            prop_assert_eq!(coarse.material.len(), coarse.vertices.len());
+            for cap in &caps {
+                prop_assert_eq!(cap.material.len(), cap.vertices.len());
+            }
+        }
     }
 }

@@ -31,6 +31,8 @@ pub struct VoxelChunk {
     block_light_rgb: Vec<[f32; 3]>,
     /// Per-vertex sky-exposure factor (0.0 = underground, 1.0 = open sky).
     sky_exposed: Vec<f32>,
+    /// Per-vertex voxel material id; empty when the chunk carries none.
+    materials: Vec<u32>,
     indices: Vec<u32>,
     material_id: u32,
     /// LOD tier: 0 = full 16³ hybrid, 1 = coarse 8³ blocky
@@ -61,6 +63,7 @@ impl VoxelChunk {
             light_level,
             block_light_rgb,
             sky_exposed,
+            materials: Vec::new(),
             indices,
             material_id,
             lod: 0,
@@ -107,6 +110,7 @@ impl VoxelChunk {
             light_level: mesh.light_level,
             block_light_rgb: mesh.block_light_rgb,
             sky_exposed: mesh.sky_exposed,
+            materials: mesh.material,
             indices: mesh.indices,
             material_id,
             lod,
@@ -141,6 +145,10 @@ impl VoxelChunk {
     }
     pub fn sky_exposed(&self) -> &[f32] {
         &self.sky_exposed
+    }
+    /// Per-vertex voxel material ids; empty when the chunk carries none.
+    pub fn materials(&self) -> &[u32] {
+        &self.materials
     }
     pub fn indices(&self) -> &[u32] {
         &self.indices
@@ -181,6 +189,7 @@ impl VoxelChunk {
             light_level: mesh.light_level,
             block_light_rgb: mesh.block_light_rgb,
             sky_exposed: mesh.sky_exposed,
+            materials: mesh.material,
             indices: mesh.indices,
             material_id,
             lod: 0,
@@ -354,5 +363,36 @@ mod tests {
             assert_eq!(hybrid.material_id(), 7);
             assert_eq!(coarse.material_id(), 7);
         }
+    }
+
+    #[test]
+    fn chunk_built_from_a_grid_carries_the_meshes_materials() {
+        let mut grid = VoxelGrid::new(16);
+        for x in 2..6 {
+            for z in 2..6 {
+                grid.place_block(IVec3::new(x, 1, z), 2, None);
+            }
+        }
+        grid.place_block(IVec3::new(3, 2, 3), 2, Some(1));
+
+        let fine = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 0);
+        let coarse = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 1);
+
+        for chunk in [&fine, &coarse] {
+            assert!(chunk.has_geometry());
+            assert_eq!(chunk.materials().len(), chunk.vertices().len());
+            assert!(chunk.materials().contains(&2), "stone shows");
+            assert!(chunk.materials().contains(&3), "the ore block shows");
+        }
+        let mesh = crate::mesh::HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::ZERO, 16);
+        assert_eq!(fine.materials(), mesh.material.as_slice());
+    }
+
+    #[test]
+    fn chunk_built_from_raw_data_has_no_materials() {
+        let chunk = chunk_with(3, vec![0, 1, 2]);
+
+        assert!(chunk.materials().is_empty());
+        assert!(VoxelChunk::empty(IVec3::ZERO).materials().is_empty());
     }
 }

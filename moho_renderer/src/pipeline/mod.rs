@@ -41,6 +41,27 @@ pub use shaders::{main_shader_source, ui_shader_source};
 
 use crate::types::{GpuInstance, Vertex};
 
+/// Per-vertex attributes of the main pipeline; order must match `types::Vertex`.
+pub const MAIN_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+    0 => Float32x3,  // position
+    1 => Float32x3,  // normal
+    2 => Float32,    // ao
+    3 => Uint32,     // geometry_type
+    10 => Float32,   // light_level (10+ to avoid the instance buffer's 4-9)
+    11 => Float32x3, // block_light_rgb
+    12 => Float32,   // sky_exposed
+];
+
+/// Per-instance attributes of the main pipeline; order must match `types::GpuInstance`.
+pub const MAIN_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    4 => Float32x4,
+    5 => Float32x4,
+    6 => Float32x4,
+    7 => Float32x4,
+    8 => Uint32,
+    9 => Uint32,
+];
+
 /// Error type for pipeline initialization failures.
 #[derive(Debug)]
 pub enum PipelineInitError {
@@ -231,28 +252,13 @@ impl PipelineSetup {
                     Some(wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![
-                            0 => Float32x3,  // position
-                            1 => Float32x3,  // normal
-                            2 => Float32,    // ao
-                            3 => Uint32,     // geometry_type
-                            10 => Float32,   // light_level (10+ to avoid the instance buffer's 4-9)
-                            11 => Float32x3, // block_light_rgb
-                            12 => Float32,   // sky_exposed
-                        ],
+                        attributes: &MAIN_VERTEX_ATTRIBUTES,
                     }),
                     // Per-instance data: model matrix (4x vec4) + material(u32) + object_type(u32)
                     Some(wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &wgpu::vertex_attr_array![
-                            4 => Float32x4,
-                            5 => Float32x4,
-                            6 => Float32x4,
-                            7 => Float32x4,
-                            8 => Uint32,
-                            9 => Uint32,
-                        ],
+                        attributes: &MAIN_INSTANCE_ATTRIBUTES,
                     }),
                 ],
             },

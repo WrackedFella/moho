@@ -98,6 +98,31 @@ impl MaterialRegistry {
         id
     }
 
+    /// The material registered under `id`.
+    pub fn material(&self, id: u32) -> Option<&MaterialType> {
+        self.materials.get(id as usize)
+    }
+
+    /// How many materials are registered.
+    pub fn len(&self) -> usize {
+        self.materials.len()
+    }
+
+    /// True when no material is registered.
+    pub fn is_empty(&self) -> bool {
+        self.materials.is_empty()
+    }
+
+    /// Draw blocks that carry `resource_id` in `material_id` instead of the
+    /// material they sit in.
+    pub fn set_resource_material(&mut self, _resource_id: u32, _material_id: u32) {}
+
+    /// The material a face of a block shows: the material mapped to the
+    /// block's resource when there is one, else the block's own `material_id`.
+    pub fn face_material(&self, material_id: u32, _resource_id: Option<u32>) -> u32 {
+        material_id
+    }
+
     /// Lighting properties for a material. Falls back to opaque non-emissive
     /// for unknown ids — keeps callers branch-free at the cost of darkening
     /// stray materials, which is the safer default.
@@ -553,6 +578,7 @@ pub struct BlockData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moho_render_api::RenderMaterial;
     use std::collections::HashSet;
 
     #[test]
@@ -969,5 +995,61 @@ mod tests {
 
         assert!(!grid.sky_exposed_at(pos));
         assert!(grid.sky_exposed_at(neighbour));
+    }
+
+    #[test]
+    fn grass_is_grass_on_top_and_dirt_on_its_sides() {
+        let registry = MaterialRegistry::new();
+
+        let grass = registry.material(0).expect("id 0 is registered").to_gpu();
+
+        let top = |c: Vec3| [c.x, c.y, c.z];
+        assert_eq!(grass.albedo[..3], top(crate::GRASS));
+        assert_eq!(grass.params[..3], top(crate::DIRT));
+    }
+
+    #[test]
+    fn default_registry_holds_grass_dirt_stone_and_iron_ore_as_terrain_materials() {
+        let registry = MaterialRegistry::new();
+
+        assert_eq!(registry.len(), 4);
+        let expected = [
+            (crate::GRASS, crate::DIRT),
+            (crate::DIRT, crate::DIRT),
+            (crate::STONE, crate::STONE),
+            (crate::IRON_ORE, crate::IRON_ORE),
+        ];
+        for (id, (top, side)) in expected.into_iter().enumerate() {
+            assert_eq!(
+                registry.material(id as u32),
+                Some(&MaterialType::VoxelTerrain {
+                    top_albedo: top,
+                    side_albedo: side
+                }),
+                "material {id}"
+            );
+        }
+        assert_eq!(registry.material(4), None);
+    }
+
+    #[test]
+    fn face_material_prefers_the_resources_material() {
+        let registry = MaterialRegistry::new();
+
+        assert_eq!(registry.face_material(2, Some(1)), 3, "iron ore in stone");
+        assert_eq!(registry.face_material(1, Some(1)), 3, "iron ore in soil");
+    }
+
+    #[test]
+    fn face_material_falls_back_without_a_mapping() {
+        let mut registry = MaterialRegistry::new();
+
+        assert_eq!(registry.face_material(2, None), 2, "no resource");
+        assert_eq!(registry.face_material(1, Some(9)), 1, "unmapped resource");
+
+        registry.set_resource_material(9, 0);
+
+        assert_eq!(registry.face_material(1, Some(9)), 0, "now mapped");
+        assert_eq!(registry.face_material(1, None), 1);
     }
 }

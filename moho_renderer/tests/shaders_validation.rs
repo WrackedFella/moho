@@ -159,3 +159,45 @@ fn marker_shader_declares_the_inflate_override() {
         "the fragment discard reads marker_inflate"
     );
 }
+
+#[test]
+fn vertex_input_locations_match_the_main_pipeline_layout() {
+    let source = moho_renderer::pipeline::main_shader_source();
+    let module = validate("main shader", &source, Capabilities::empty());
+    let entry = module
+        .entry_points
+        .iter()
+        .find(|e| e.name == "vs_main")
+        .expect("vs_main");
+    let mut shader_locations = Vec::new();
+    for argument in &entry.function.arguments {
+        match &argument.binding {
+            Some(naga::Binding::Location { location, .. }) => shader_locations.push(*location),
+            Some(naga::Binding::BuiltIn(_)) => {}
+            None => {
+                let naga::TypeInner::Struct { members, .. } = &module.types[argument.ty].inner
+                else {
+                    panic!("vs_main argument without a binding is not a struct");
+                };
+                for member in members {
+                    if let Some(naga::Binding::Location { location, .. }) = &member.binding {
+                        shader_locations.push(*location);
+                    }
+                }
+            }
+        }
+    }
+    shader_locations.sort_unstable();
+    let mut pipeline_locations: Vec<u32> = moho_renderer::pipeline::MAIN_VERTEX_ATTRIBUTES
+        .iter()
+        .chain(moho_renderer::pipeline::MAIN_INSTANCE_ATTRIBUTES.iter())
+        .map(|a| a.shader_location)
+        .collect();
+    pipeline_locations.sort_unstable();
+
+    assert_eq!(shader_locations, pipeline_locations);
+    assert!(
+        shader_locations.contains(&13),
+        "the per-vertex material is read at location 13"
+    );
+}

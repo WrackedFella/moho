@@ -405,4 +405,24 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn every_face_carries_the_block_face_material() {
+        let rows = [
+            (100, None, 100, "unmapped blocky block keeps its id"),
+            (105, None, 105, "another blocky id"),
+            (100, Some(1), 3, "iron ore draws in the ore material"),
+            (100, Some(9), 100, "an unmapped resource keeps the block id"),
+        ];
+
+        for (material, resource, expected, why) in rows {
+            let mut grid = VoxelGrid::new(16);
+            let pos = IVec3::new(16, 16, 16);
+            grid.place_block(pos, material, resource);
+
+            let mesh = BlockyMeshGenerator::generate_mesh(&grid, pos);
+
+            assert_eq!(mesh.material, vec![expected; 24], "{why}");
+        }
+    }
 }

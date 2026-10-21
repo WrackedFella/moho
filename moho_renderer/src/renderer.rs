@@ -1,6 +1,6 @@
 use crate::MeshRenderer;
 use crate::shadow::ShadowSystem;
-use crate::types::{GpuInstance, MeshEntry};
+use crate::types::{GpuInstance, MeshEntry, NO_VERTEX_MATERIAL, Vertex};
 use wgpu::util::DeviceExt;
 
 pub struct Renderer<'a> {
@@ -352,20 +352,19 @@ impl<'a> Renderer<'a> {
         light_level: &[f32],
         block_light_rgb: &[[f32; 3]],
         sky_exposed: &[f32],
+        material: &[u32],
         indices: &[u32],
     ) -> u32 {
-        let mut iv: Vec<crate::types::Vertex> = Vec::with_capacity(vertices.len());
-        for i in 0..vertices.len() {
-            iv.push(crate::types::Vertex {
-                position: vertices[i],
-                normal: normals[i],
-                ao: ao.get(i).copied().unwrap_or(1.0),
-                geometry_type: geometry_type.get(i).copied().unwrap_or(0),
-                light_level: light_level.get(i).copied().unwrap_or(1.0),
-                block_light_rgb: block_light_rgb.get(i).copied().unwrap_or([0.0; 3]),
-                sky_exposed: sky_exposed.get(i).copied().unwrap_or(1.0),
-            });
-        }
+        let iv = interleave_vertices(
+            vertices,
+            normals,
+            ao,
+            geometry_type,
+            light_level,
+            block_light_rgb,
+            sky_exposed,
+            material,
+        );
         for (i, v) in iv.iter().enumerate().take(6) {
             tracing::trace!(
                 index = i,
@@ -701,6 +700,34 @@ fn lighting_with_debug_view(
     lighting
 }
 
+/// Interleave the per-channel slices into GPU vertices. A channel shorter than
+/// `vertices` fills the rest with its neutral value; `material` falls back to
+/// `NO_VERTEX_MATERIAL`, so the instance's material draws.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn interleave_vertices(
+    vertices: &[[f32; 3]],
+    normals: &[[f32; 3]],
+    ao: &[f32],
+    geometry_type: &[u32],
+    light_level: &[f32],
+    block_light_rgb: &[[f32; 3]],
+    sky_exposed: &[f32],
+    material: &[u32],
+) -> Vec<Vertex> {
+    (0..vertices.len())
+        .map(|i| Vertex {
+            position: vertices[i],
+            normal: normals[i],
+            ao: ao.get(i).copied().unwrap_or(1.0),
+            geometry_type: geometry_type.get(i).copied().unwrap_or(0),
+            light_level: light_level.get(i).copied().unwrap_or(1.0),
+            block_light_rgb: block_light_rgb.get(i).copied().unwrap_or([0.0; 3]),
+            sky_exposed: sky_exposed.get(i).copied().unwrap_or(1.0),
+            material: material.get(i).copied().unwrap_or(NO_VERTEX_MATERIAL - 1),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::gpu_types::LightingGpu;
@@ -749,5 +776,28 @@ mod tests {
             bytemuck::bytes_of(&lighting),
             "every field is untouched"
         );
+    }
+
+    #[test]
+    fn interleave_without_materials_marks_every_vertex_no_vertex_material() {
+        let vertices = [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let normals = [[0.0, 1.0, 0.0]; 3];
+
+        let interleaved = interleave_vertices(&vertices, &normals, &[], &[], &[], &[], &[], &[]);
+
+        let materials: Vec<u32> = interleaved.iter().map(|v| v.material).collect();
+        assert_eq!(materials, vec![NO_VERTEX_MATERIAL; 3]);
+    }
+
+    #[test]
+    fn interleave_with_materials_carries_each_vertexs_material() {
+        let vertices = [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let normals = [[0.0, 1.0, 0.0]; 3];
+
+        let interleaved =
+            interleave_vertices(&vertices, &normals, &[], &[], &[], &[], &[], &[4, 0, 9]);
+
+        let materials: Vec<u32> = interleaved.iter().map(|v| v.material).collect();
+        assert_eq!(materials, vec![4, 0, 9]);
     }
 }

@@ -64,6 +64,7 @@ impl WorldMeshes {
                 &light_level,
                 mesh.light_rgb(),
                 mesh.sky_exposure(),
+                &[],
                 mesh.indices(),
             );
             self.live.insert(
@@ -104,6 +105,8 @@ mod tests {
         registered: Vec<(u32, usize)>,
         unregistered: Vec<u32>,
         uploads: Vec<Upload>,
+        /// The `material` argument of each `register_indexed_mesh` call.
+        materials: Vec<Vec<u32>>,
     }
 
     /// The channel slices of one `register_indexed_mesh` call, named as the
@@ -152,8 +155,10 @@ mod tests {
             light_level: &[f32],
             block_light_rgb: &[[f32; 3]],
             sky_exposed: &[f32],
+            material: &[u32],
             indices: &[u32],
         ) -> u32 {
+            self.materials.push(material.to_vec());
             self.uploads.push(Upload {
                 vertices: vertices.to_vec(),
                 normals: normals.to_vec(),
@@ -274,6 +279,36 @@ mod tests {
                 sky_exposed: vec![0.75; 3],
                 indices: vec![0, 2, 1],
             }]
+        );
+    }
+
+    #[test]
+    fn mesh_without_materials_uploads_the_upsert_material_on_every_vertex() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert(A, mesh(1), 7);
+
+        meshes.flush(&mut backend);
+
+        assert_eq!(backend.materials, vec![vec![7, 7, 7]]);
+    }
+
+    #[test]
+    fn mesh_with_materials_uploads_them_unchanged() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        let with_materials = mesh(1)
+            .with_materials(vec![2, 5, 9])
+            .expect("one material per vertex");
+        meshes.upsert(A, with_materials, 7);
+
+        meshes.flush(&mut backend);
+
+        assert_eq!(backend.materials, vec![vec![2, 5, 9]]);
+        let drawn = draws(&meshes);
+        assert_eq!(
+            drawn[0].1.material, 7,
+            "the upsert material stays the instance default"
         );
     }
 

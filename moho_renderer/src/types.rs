@@ -17,7 +17,12 @@ pub struct Vertex {
     pub block_light_rgb: [f32; 3],
     /// Per-vertex sky-exposure factor (0.0 = underground, 1.0 = open sky).
     pub sky_exposed: f32,
+    /// Material-table index; `NO_VERTEX_MATERIAL` defers to the instance's material.
+    pub material: u32,
 }
+
+/// Vertex `material` value meaning "draw in the instance's material".
+pub(crate) const NO_VERTEX_MATERIAL: u32 = u32::MAX;
 
 /// GPU-side per-instance data: model matrix + material index + object type
 #[repr(C)]

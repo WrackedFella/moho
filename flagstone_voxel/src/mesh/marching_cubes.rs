@@ -30,7 +30,11 @@ impl MarchingCubes {
     ///
     /// # Returns
     /// A `VoxelMesh` with smooth geometry and computed normals
-    pub fn generate_mesh(density_field: &[[[f32; 18]; 18]; 18], chunk_size: usize) -> VoxelMesh {
+    pub fn generate_mesh(
+        density_field: &[[[f32; 18]; 18]; 18],
+        chunk_size: usize,
+        material_at: impl Fn([usize; 3]) -> u32,
+    ) -> VoxelMesh {
         // Marching Cubes implementation currently requires chunk_size=16
         // because density_field is hardcoded to [18][18][18] (16+2 padding)
         assert_eq!(
@@ -43,6 +47,7 @@ impl MarchingCubes {
         let mut indices = Vec::new();
         let mut ambient_occlusion = Vec::new();
         let mut geometry_type = Vec::new();
+        let mut material = Vec::new();
 
         // Marching cubes processes cells between density samples
         // density_field is [18][18][18] with samples at indices 0..17
@@ -63,6 +68,8 @@ impl MarchingCubes {
                         &mut indices,
                         &mut ambient_occlusion,
                         &mut geometry_type,
+                        &material_at,
+                        &mut material,
                     );
                 }
             }
@@ -83,6 +90,7 @@ impl MarchingCubes {
             light_level,
             block_light_rgb,
             sky_exposed,
+            material,
         }
     }
 
@@ -122,6 +130,8 @@ impl MarchingCubes {
         indices: &mut Vec<u32>,
         ambient_occlusion: &mut Vec<f32>,
         geometry_type: &mut Vec<u32>,
+        material_at: &impl Fn([usize; 3]) -> u32,
+        material: &mut Vec<u32>,
     ) {
         // Get the 8 corner values for this cube
         let corners = [
@@ -190,6 +200,16 @@ impl MarchingCubes {
                 // Mark as smooth terrain (0 = smooth, 1 = blocky)
                 geometry_type.push(0);
             }
+
+            let centroid = tri_edge_indices
+                .map(|edge| Vec3::from(edge_vertices[edge as usize]))
+                .into_iter()
+                .sum::<Vec3>()
+                / 3.0
+                - Vec3::new(x as f32, y as f32, z as f32);
+            let corner = nearest_solid_corner(cube_index, centroid);
+            let face_material = material_at(Self::corner_sample(x, y, z, corner));
+            material.extend([face_material; 3]);
 
             // Add indices (counter-clockwise winding)
             indices.push(base_vertex);
@@ -302,6 +322,13 @@ pub(crate) fn cube_index(
         .enumerate()
         .filter(|(_, [dx, dy, dz])| density_field[x + dx][y + dy][z + dz] > 0.5)
         .fold(0u8, |index, (corner, _)| index | 1 << corner)
+}
+
+/// The corner of a cell (in `MarchingCubes::CORNER_OFFSETS` order) that is solid in
+/// `cube_index` and nearest `centroid`, given in cell coordinates. Ties go to the lowest
+/// corner index. `cube_index` must have a solid corner.
+pub(crate) fn nearest_solid_corner(_cube_index: u8, _centroid: Vec3) -> usize {
+    0
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
@@ -880,7 +907,7 @@ mod tests {
         let mut field = [[[0.0f32; 18]; 18]; 18];
         field[5][5][5] = 0.5;
 
-        let mesh = MarchingCubes::generate_mesh(&field, 16);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
 
         assert!(
             mesh.indices.is_empty(),
@@ -938,7 +965,7 @@ mod tests {
     #[test]
     fn test_empty_density_field() {
         let field = [[[0.0f32; 18]; 18]; 18];
-        let mesh = MarchingCubes::generate_mesh(&field, 16);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
 
         // Empty field should produce no geometry
         assert_eq!(mesh.vertices.len(), 0);
@@ -951,7 +978,7 @@ mod tests {
             (6..=7).flat_map(|x| (6..=7).flat_map(move |y| (6..=7).map(move |z| (x, y, z))));
         let field = solid_samples_field(solid);
 
-        let mesh = MarchingCubes::generate_mesh(&field, 16);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
 
         assert!(!mesh.vertices.is_empty(), "solid must produce geometry");
         assert!(!mesh.indices.is_empty());
@@ -982,7 +1009,7 @@ mod tests {
         let mut field = [[[0.0f32; 18]; 18]; 18];
         field[8][8][8] = 0.5;
 
-        let mesh = MarchingCubes::generate_mesh(&field, 16);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
 
         assert!(mesh.vertices.is_empty());
         assert!(mesh.indices.is_empty());
@@ -1027,7 +1054,7 @@ mod tests {
         for sample in [(8, 8, 8), (16, 16, 16)] {
             let field = solid_samples_field([sample]);
 
-            let mesh = MarchingCubes::generate_mesh(&field, 16);
+            let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
 
             // A lone sample is an octahedron: 8 triangles, none dropped.
             assert_eq!(mesh.vertices.len(), 24, "lone voxel at {sample:?}");
@@ -1041,7 +1068,7 @@ mod tests {
         // Between the two solids, both edge endpoints have a flat central difference.
         let field = solid_samples_field([(6, 8, 8), (8, 8, 8)]);
 
-        let mesh = MarchingCubes::generate_mesh(&field, 16);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
 
         assert_eq!(mesh.vertices.len(), 48, "two separate octahedra");
         for (v, n) in mesh.vertices.iter().zip(&mesh.normals) {
@@ -1061,7 +1088,7 @@ mod tests {
         // (-1, 0, 0), giving (-0.75, 0.25, 0.25): outward (3, -1, -1) / sqrt(11).
         let solid =
             (15..=16).flat_map(|x| (15..=16).flat_map(move |y| (15..=16).map(move |z| (x, y, z))));
-        let mesh = MarchingCubes::generate_mesh(&solid_samples_field(solid), 16);
+        let mesh = MarchingCubes::generate_mesh(&solid_samples_field(solid), 16, |_| 0);
 
         let i = mesh
             .vertices
@@ -1082,7 +1109,7 @@ mod tests {
             (6..=7).flat_map(|x| (6..=7).flat_map(move |y| (6..=7).map(move |z| (x, y, z))));
         let field = solid_samples_field(solid);
 
-        let mesh = MarchingCubes::generate_mesh(&field, 16);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
 
         assert_normals_point_away_from(&mesh, [6.5, 6.5, 6.5]);
     }
@@ -1093,7 +1120,7 @@ mod tests {
         let solid =
             (1..=16).flat_map(|x| (1..=16).flat_map(move |y| (1..=16).map(move |z| (x, y, z))));
         let field = solid_samples_field(solid);
-        let mesh = MarchingCubes::generate_mesh(&field, 16);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
 
         let vertex_count = mesh.vertices.len() as u32;
         for &idx in &mesh.indices {
@@ -1127,7 +1154,7 @@ mod tests {
         }
         let origin = Vec3::new(CELL[0] as f32, CELL[1] as f32, CELL[2] as f32);
 
-        let mesh = MarchingCubes::generate_mesh(&field, 16);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
 
         let vertex = |i: u32| {
             let v = mesh.vertices[i as usize];
@@ -1182,7 +1209,7 @@ mod tests {
         let mut field = [[[0.0f32; 18]; 18]; 18];
         field[8][8][8] = d0;
         field[9][8][8] = d1;
-        MarchingCubes::generate_mesh(&field, 16)
+        MarchingCubes::generate_mesh(&field, 16, |_| 0)
     }
 
     #[test]
@@ -1231,5 +1258,129 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn corner_position(corner: usize) -> Vec3 {
+        Vec3::from_array(MarchingCubes::CORNER_OFFSETS[corner].map(|c| c as f32))
+    }
+
+    #[test]
+    fn nearest_solid_corner_is_the_closest_solid_one() {
+        for solid in 0..8 {
+            let only = 1u8 << solid;
+            for probe in [Vec3::splat(0.5), corner_position((solid + 4) % 8)] {
+                assert_eq!(
+                    nearest_solid_corner(only, probe),
+                    solid,
+                    "the only solid corner is {solid}, probe {probe:?}"
+                );
+            }
+        }
+        let opposite_pair = 0b0100_0001;
+        assert_eq!(
+            nearest_solid_corner(opposite_pair, Vec3::new(0.9, 0.9, 0.9)),
+            6,
+            "near corner 6"
+        );
+        assert_eq!(
+            nearest_solid_corner(opposite_pair, Vec3::new(0.1, 0.1, 0.1)),
+            0,
+            "near corner 0"
+        );
+        let all_but_zero = 0b1111_1110;
+        assert_eq!(
+            nearest_solid_corner(all_but_zero, Vec3::new(0.1, 0.1, 0.1)),
+            1,
+            "corner 0 is air, so the nearest solid one is its lowest-indexed neighbour"
+        );
+    }
+
+    #[test]
+    fn nearest_solid_corner_breaks_ties_to_the_lowest_corner_index() {
+        let cases = [
+            (0b0000_0011u8, Vec3::new(0.5, 0.0, 0.0), 0),
+            (0b0010_0100, Vec3::splat(0.5), 2),
+            (0b1000_0100, Vec3::splat(0.5), 2),
+            (0b1111_1111, Vec3::splat(0.5), 0),
+            (0b1111_1000, Vec3::splat(0.5), 3),
+        ];
+
+        for (cube_index, centroid, expected) in cases {
+            assert_eq!(
+                nearest_solid_corner(cube_index, centroid),
+                expected,
+                "cube index {cube_index:#010b}, centroid {centroid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn nearest_solid_corner_of_every_triangle_is_a_solid_corner_no_farther_than_any_other() {
+        for cube_index in 1..=254u8 {
+            for tri in MarchingCubes::cell_triangles(cube_index) {
+                let centroid = (tri[0] + tri[1] + tri[2]) / 3.0;
+
+                let nearest = nearest_solid_corner(cube_index, centroid);
+
+                assert!(
+                    cube_index & (1 << nearest) != 0,
+                    "cube index {cube_index}: corner {nearest} is air"
+                );
+                let nearest_distance = corner_position(nearest).distance(centroid);
+                for other in (0..8).filter(|k| cube_index & (1 << k) != 0) {
+                    let distance = corner_position(other).distance(centroid);
+                    assert!(
+                        nearest_distance <= distance + 1e-5,
+                        "cube index {cube_index}: corner {other} is nearer than {nearest}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mesh_materials_follow_the_solid_sample_nearest_each_triangle() {
+        let field = solid_samples_field([(8, 8, 8), (9, 8, 8)]);
+        let material_at = |sample: [usize; 3]| if sample == [8, 8, 8] { 1 } else { 2 };
+
+        let mesh = MarchingCubes::generate_mesh(&field, 16, material_at);
+
+        assert_eq!(mesh.material.len(), mesh.vertices.len());
+        let mut left = 0;
+        let mut right = 0;
+        for (tri, materials) in mesh
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(mesh.material.as_chunks::<3>().0)
+        {
+            let x = tri
+                .iter()
+                .map(|&i| mesh.vertices[i as usize][0])
+                .sum::<f32>()
+                / 3.0;
+            assert_eq!(materials[0], materials[1]);
+            assert_eq!(materials[0], materials[2]);
+            if x < 8.5 - 1e-4 {
+                left += 1;
+                assert_eq!(materials[0], 1, "triangle at x {x}");
+            } else if x > 8.5 + 1e-4 {
+                right += 1;
+                assert_eq!(materials[0], 2, "triangle at x {x}");
+            }
+        }
+        assert!(left > 0 && right > 0, "{left} left, {right} right");
+    }
+
+    #[test]
+    fn a_lone_solid_sample_gives_every_triangle_its_material() {
+        let field = solid_samples_field([(5, 9, 7)]);
+        let material_at = |sample: [usize; 3]| if sample == [5, 9, 7] { 7 } else { 9 };
+
+        let mesh = MarchingCubes::generate_mesh(&field, 16, material_at);
+
+        assert!(!mesh.vertices.is_empty());
+        assert_eq!(mesh.material, vec![7; mesh.vertices.len()]);
     }
 }

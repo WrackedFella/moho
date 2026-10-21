@@ -77,6 +77,8 @@ struct App {
     entities: SceneEntities,
     scene: moho_renderer::Scene,
     terrain_material_idx: u32,
+    /// Voxel material id to material-table index.
+    terrain_palette: app::world_geometry::TerrainPalette,
     /// Material table index of the cut-face caps' colour.
     cut_face_material_idx: u32,
     cut_caps: app::cut_caps::CutCaps,
@@ -183,6 +185,12 @@ impl App {
         // Create a minimal voxel grid and light system for testing frame loop integration
         // TODO: Replace with actual terrain grid when scene generation is integrated
         let voxel_grid = flagstone_voxel::VoxelGrid::new(16);
+        let mut scene = initialized.scene;
+        let terrain_palette = app::world_geometry::TerrainPalette::new(
+            &voxel_grid.material_registry,
+            &mut scene.material_table,
+            initialized.terrain_material_idx,
+        );
         let light_system = flagstone_voxel::LightSystem::with_default_budget(
             voxel_grid,
             initialized.event_bus.clone(),
@@ -191,8 +199,9 @@ impl App {
 
         Self {
             entities: initialized.entities,
-            scene: initialized.scene,
+            scene,
             terrain_material_idx: initialized.terrain_material_idx,
+            terrain_palette,
             cut_face_material_idx: initialized.cut_face_material_idx,
             cut_caps: app::cut_caps::CutCaps::default(),
             camera: initialized.camera,

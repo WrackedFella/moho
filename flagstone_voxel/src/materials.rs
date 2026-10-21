@@ -1,6 +1,15 @@
 use glam::Vec3;
 use moho_render_api::{MaterialGpu, MaterialKey, RenderMaterial};
 
+/// Grass: the top colour of the surface layer.
+pub const GRASS: Vec3 = Vec3::new(0.3, 0.6, 0.3);
+/// Soil: the side colour of the surface layer and the colour of bare soil.
+pub const DIRT: Vec3 = Vec3::new(0.6, 0.5, 0.4);
+/// Stone.
+pub const STONE: Vec3 = Vec3::new(0.5, 0.5, 0.5);
+/// Iron ore, drawn instead of the stone it sits in.
+pub const IRON_ORE: Vec3 = Vec3::new(0.62, 0.30, 0.16);
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MaterialType {
     Lambertian {

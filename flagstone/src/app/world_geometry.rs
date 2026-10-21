@@ -2,11 +2,11 @@
 
 use crate::App;
 use crate::app::cut_caps::CutCaps;
-use flagstone_voxel::{MaterialType, VoxelChunk};
+use flagstone_voxel::{DIRT, GRASS, MaterialRegistry, MaterialType, VoxelChunk};
 use glam::IVec3;
 use moho_physics::{HitTag, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshError, WorldMeshId};
-use moho_renderer::Scene;
+use moho_renderer::{MaterialTable, Scene};
 
 const AXIS_BITS: u32 = 21;
 /// Half the 21-bit range: shifts a signed axis into `0..1 << AXIS_BITS`.
@@ -22,9 +22,43 @@ pub fn chunk_mesh_id(pos: IVec3) -> WorldMeshId {
     WorldMeshId((axis(pos.x) << (2 * AXIS_BITS)) | (axis(pos.y) << AXIS_BITS) | axis(pos.z))
 }
 
-/// The chunk's mesh in the world-geometry contract's form.
-pub fn chunk_world_mesh(chunk: &VoxelChunk) -> Result<WorldMesh, WorldMeshError> {
-    WorldMesh::new(
+/// Voxel material id to material-table index; ids it does not know map to the fallback.
+#[derive(Debug, Clone)]
+pub struct TerrainPalette {
+    indices: Vec<u32>,
+    fallback: u32,
+}
+
+impl TerrainPalette {
+    /// Register every material of `registry` in `material_table` and remember where each
+    /// landed; ids outside the registry map to `fallback`.
+    pub fn new(
+        _registry: &MaterialRegistry,
+        _material_table: &mut MaterialTable,
+        fallback: u32,
+    ) -> Self {
+        Self {
+            indices: Vec::new(),
+            fallback,
+        }
+    }
+
+    /// The material-table index voxel material `voxel_material` draws with.
+    pub fn index(&self, voxel_material: u32) -> u32 {
+        self.indices
+            .get(voxel_material as usize)
+            .copied()
+            .unwrap_or(self.fallback)
+    }
+}
+
+/// The chunk's mesh in the world-geometry contract's form, with each vertex's material
+/// mapped through `palette` when the chunk carries per-vertex materials.
+pub fn chunk_world_mesh(
+    chunk: &VoxelChunk,
+    palette: &TerrainPalette,
+) -> Result<WorldMesh, WorldMeshError> {
+    let mesh = WorldMesh::new(
         chunk.vertices().to_vec(),
         chunk.normals().to_vec(),
         chunk.ambient_occlusion().to_vec(),
@@ -32,15 +66,22 @@ pub fn chunk_world_mesh(chunk: &VoxelChunk) -> Result<WorldMesh, WorldMeshError>
         chunk.sky_exposed().to_vec(),
         chunk.geometry_type().to_vec(),
         chunk.indices().to_vec(),
+    )?;
+    if chunk.materials().is_empty() {
+        return Ok(mesh);
+    }
+    mesh.with_materials(
+        chunk
+            .materials()
+            .iter()
+            .map(|&material| palette.index(material))
+            .collect(),
     )
 }
 
 /// The strategy game's terrain tag; it has no ray consumer yet, so the value only satisfies
 /// the registration signature.
 const TERRAIN_TAG: HitTag = HitTag(0);
-
-const GRASS: glam::Vec3 = glam::Vec3::new(0.3, 0.6, 0.3);
-const DIRT: glam::Vec3 = glam::Vec3::new(0.6, 0.5, 0.4);
 
 /// Register the terrain material once and return its table index; idempotent.
 pub fn register_terrain_material(scene: &mut Scene) -> u32 {
@@ -69,10 +110,11 @@ fn upsert_chunk_mesh(
     physics: Option<&mut PhysicsWorld>,
     cut_caps: &mut CutCaps,
     material_idx: u32,
+    palette: &TerrainPalette,
     chunk: &VoxelChunk,
 ) {
     let id = chunk_mesh_id(chunk.chunk_pos());
-    match chunk_world_mesh(chunk) {
+    match chunk_world_mesh(chunk, palette) {
         Ok(mesh) => {
             if let Some(pw) = physics {
                 pw.set_world_mesh(id, &mesh, TERRAIN_TAG);
@@ -114,6 +156,7 @@ pub fn insert_chunk(app: &mut App, chunk: VoxelChunk) -> Option<VoxelChunk> {
         app.physics.world.as_mut(),
         &mut app.cut_caps,
         app.terrain_material_idx,
+        &app.terrain_palette,
         &chunk,
     );
     app.entities.chunks.insert(chunk)
@@ -139,6 +182,7 @@ pub fn upsert_all_chunks(app: &mut App) {
             app.physics.world.as_mut(),
             &mut app.cut_caps,
             app.terrain_material_idx,
+            &app.terrain_palette,
             chunk,
         );
     }
@@ -214,6 +258,8 @@ pub(crate) mod tests {
         next_handle: u32,
         pub(crate) registered: Vec<u32>,
         pub(crate) unregistered: Vec<u32>,
+        /// The `material` argument of each `register_indexed_mesh` call.
+        pub(crate) materials: Vec<Vec<u32>>,
     }
 
     impl RendererBackend for RecordingBackend {
@@ -230,9 +276,11 @@ pub(crate) mod tests {
             _light_level: &[f32],
             _block_light_rgb: &[[f32; 3]],
             _sky_exposed: &[f32],
+            material: &[u32],
             _indices: &[u32],
         ) -> u32 {
             self.next_handle += 1;
+            self.materials.push(material.to_vec());
             self.registered.push(self.next_handle);
             self.next_handle
         }
@@ -275,6 +323,16 @@ pub(crate) mod tests {
             .collect()
     }
 
+    fn palette() -> TerrainPalette {
+        let mut scene = Scene::new();
+        let fallback = register_terrain_material(&mut scene);
+        TerrainPalette::new(
+            &MaterialRegistry::new(),
+            &mut scene.material_table,
+            fallback,
+        )
+    }
+
     /// A chunk with a distinct value in every channel, so a swapped pair of
     /// same-typed channels shows up.
     pub(crate) fn chunk_at(pos: IVec3) -> VoxelChunk {
@@ -296,7 +354,7 @@ pub(crate) mod tests {
     fn chunk_world_mesh_carries_every_channel() {
         let chunk = chunk_at(IVec3::new(1, 2, 3));
 
-        let mesh = chunk_world_mesh(&chunk).expect("well-formed chunk");
+        let mesh = chunk_world_mesh(&chunk, &palette()).expect("well-formed chunk");
 
         assert_eq!(mesh.positions(), chunk.vertices());
         assert_eq!(mesh.normals(), chunk.normals());
@@ -386,7 +444,7 @@ pub(crate) mod tests {
         );
         let malformed = malformed_chunk_at(pos);
         assert!(
-            chunk_world_mesh(&malformed).is_err(),
+            chunk_world_mesh(&malformed, &palette()).is_err(),
             "the mesh is malformed"
         );
 
@@ -767,5 +825,182 @@ pub(crate) mod tests {
         assert!(drawn_handles(&mut app).is_empty(), "nothing is drawn");
         assert!(collider_of(&app, far).is_none(), "its collider was freed");
         assert_eq!(terrain_collider_count(&app), 0);
+    }
+
+    /// Stone with soil on part of its top and an iron-ore block in it, meshed as a chunk.
+    fn stone_soil_ore_chunk() -> VoxelChunk {
+        let mut grid = flagstone_voxel::VoxelGrid::new(16);
+        let mut mutator = grid.mutator();
+        mutator.fill_region(IVec3::new(2, 0, 2), IVec3::new(9, 3, 9), 2);
+        mutator.fill_region(IVec3::new(2, 4, 2), IVec3::new(5, 4, 9), 1);
+        mutator.place(flagstone_voxel::BlockPos::new(8, 4, 8), 2, Some(1));
+        VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 0)
+    }
+
+    #[test]
+    fn chunk_mesh_vertices_map_to_their_block_materials_colours() {
+        let app = App::headless();
+        let chunk = stone_soil_ore_chunk();
+        let registry = flagstone_voxel::MaterialRegistry::new();
+
+        let mesh = chunk_world_mesh(&chunk, &app.terrain_palette).expect("well-formed chunk");
+
+        let drawn = mesh
+            .materials()
+            .expect("the chunk carries per-vertex materials");
+        assert_eq!(drawn.len(), mesh.positions().len());
+        let mut voxel_materials = HashSet::new();
+        for (vertex, (&voxel, &idx)) in chunk.materials().iter().zip(drawn).enumerate() {
+            let expected = registry.material(voxel).expect("registered").to_gpu();
+            let stored = app.scene.material_table.as_slice()[idx as usize];
+            assert_eq!(stored.albedo, expected.albedo, "vertex {vertex} albedo");
+            assert_eq!(stored.params, expected.params, "vertex {vertex} params");
+            voxel_materials.insert(voxel);
+        }
+        assert_eq!(
+            voxel_materials,
+            HashSet::from([1, 2, 3]),
+            "soil, stone and ore all show"
+        );
+    }
+
+    #[test]
+    fn unknown_material_id_draws_in_the_terrain_material() {
+        let app = App::headless();
+        let mut grid = flagstone_voxel::VoxelGrid::new(16);
+        let mut mutator = grid.mutator();
+        mutator.fill_region(IVec3::new(2, 0, 2), IVec3::new(6, 2, 6), 2);
+        mutator.place(flagstone_voxel::BlockPos::new(9, 1, 9), 50, None);
+        mutator.place(flagstone_voxel::BlockPos::new(12, 1, 12), 100, None);
+        let chunk = VoxelChunk::from_grid_lod(&grid, IVec3::ZERO, 0);
+
+        let mesh = chunk_world_mesh(&chunk, &app.terrain_palette).expect("well-formed chunk");
+
+        let drawn = mesh.materials().expect("per-vertex materials");
+        for id in [50, 100, 4, u32::MAX] {
+            assert_eq!(
+                app.terrain_palette.index(id),
+                app.terrain_material_idx,
+                "unregistered id {id}"
+            );
+        }
+        assert_ne!(
+            app.terrain_palette.index(2),
+            app.terrain_material_idx,
+            "stone has its own entry"
+        );
+        let mut unknown = 0;
+        for (&voxel, &idx) in chunk.materials().iter().zip(drawn) {
+            if voxel == 50 || voxel == 100 {
+                unknown += 1;
+                assert_eq!(idx, app.terrain_material_idx, "voxel material {voxel}");
+            }
+        }
+        assert!(unknown > 0, "the unregistered blocks are meshed");
+    }
+
+    #[test]
+    fn terrain_palette_maps_each_registered_material_to_its_table_entry() {
+        let mut scene = Scene::new();
+        let registry = MaterialRegistry::new();
+        let fallback = register_terrain_material(&mut scene);
+
+        let palette = TerrainPalette::new(&registry, &mut scene.material_table, fallback);
+
+        assert_eq!(registry.len(), 4);
+        for id in 0..registry.len() as u32 {
+            let expected = registry.material(id).expect("registered").to_gpu();
+            let stored = scene.material_table.as_slice()[palette.index(id) as usize];
+            assert_eq!(stored.albedo, expected.albedo, "material {id} albedo");
+            assert_eq!(stored.params, expected.params, "material {id} params");
+        }
+        let distinct: HashSet<u32> = (0..4).map(|id| palette.index(id)).collect();
+        assert_eq!(distinct.len(), 4, "four materials, four table entries");
+    }
+
+    #[test]
+    fn terrain_palette_reuses_the_terrain_and_cut_face_entries_for_grass_and_dirt() {
+        let mut scene = Scene::new();
+        let terrain = register_terrain_material(&mut scene);
+        let cut_face = register_cut_face_material(&mut scene);
+
+        let palette =
+            TerrainPalette::new(&MaterialRegistry::new(), &mut scene.material_table, terrain);
+
+        assert_eq!(palette.index(0), terrain, "grass");
+        assert_eq!(palette.index(1), cut_face, "dirt");
+        assert_eq!(
+            scene.material_table.as_slice().len(),
+            4,
+            "stone and ore are new"
+        );
+    }
+
+    #[test]
+    fn chunk_from_scene_file_draws_without_materials() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut saved = App::headless();
+        saved.entities.chunks.insert(chunk_at(IVec3::new(7, 0, 7)));
+        crate::app::autosave::auto_save_on_shutdown(
+            &mut saved,
+            &moho_app::GameClock::default(),
+            temp.path(),
+            &[],
+        )
+        .expect("autosave");
+        let mut app = App::headless();
+
+        crate::app::scene_loader::load_scene(
+            &mut app,
+            &mut moho_app::GameClock::default(),
+            &temp.path().join("scene.bin"),
+        )
+        .expect("load");
+
+        let chunk = app
+            .entities
+            .chunks
+            .get(IVec3::new(7, 0, 7))
+            .expect("the saved chunk is loaded");
+        assert!(
+            chunk.materials().is_empty(),
+            "a scene file stores no materials"
+        );
+        let mesh = chunk_world_mesh(chunk, &app.terrain_palette).expect("well-formed chunk");
+        assert!(mesh.materials().is_none());
+    }
+
+    #[test]
+    fn chunk_without_materials_uploads_the_terrain_material_on_every_vertex() {
+        let mut app = App::headless();
+        insert_chunk(&mut app, chunk_at(IVec3::new(1, 0, 1)));
+        let mut backend = RecordingBackend::default();
+
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        assert_eq!(backend.materials, vec![vec![app.terrain_material_idx; 3]]);
+    }
+
+    #[test]
+    fn chunk_with_materials_uploads_its_palette_indices() {
+        let mut app = App::headless();
+        let chunk = stone_soil_ore_chunk();
+        let expected: Vec<u32> = chunk
+            .materials()
+            .iter()
+            .map(|&voxel| app.terrain_palette.index(voxel))
+            .collect();
+        insert_chunk(&mut app, chunk);
+        let mut backend = RecordingBackend::default();
+
+        app.scene.world_meshes_mut().flush(&mut backend);
+
+        assert_eq!(backend.materials, vec![expected]);
+        assert!(
+            backend.materials[0]
+                .iter()
+                .any(|&idx| idx != app.terrain_material_idx),
+            "not everything falls back to the terrain material"
+        );
     }
 }

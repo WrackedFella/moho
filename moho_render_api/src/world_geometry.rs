@@ -60,6 +60,7 @@ pub struct WorldMesh {
     sky_exposure: Vec<f32>,
     surface: Vec<u32>,
     indices: Vec<u32>,
+    materials: Option<Vec<u32>>,
 }
 
 impl WorldMesh {
@@ -110,7 +111,21 @@ impl WorldMesh {
             sky_exposure,
             surface,
             indices,
+            materials: None,
         })
+    }
+
+    /// Attach a per-vertex material-table index channel (the same index space
+    /// as the `material_idx` given to world-mesh upserts). One material per
+    /// triangle: all three vertices should agree; a mixed triangle draws in
+    /// one of its vertices' materials, unspecified.
+    pub fn with_materials(self, _materials: Vec<u32>) -> Result<Self, WorldMeshError> {
+        Ok(self)
+    }
+
+    /// The per-vertex material channel; `None` when the game never set it.
+    pub fn materials(&self) -> Option<&[u32]> {
+        self.materials.as_deref()
     }
 
     pub fn positions(&self) -> &[[f32; 3]] {
@@ -267,5 +282,37 @@ mod tests {
 
         assert!(!mesh.is_empty());
         assert!(build(0, 0, vec![]).expect("empty mesh is valid").is_empty());
+    }
+
+    #[test]
+    fn with_materials_refuses_a_mismatched_channel() {
+        let mesh = build(3, 3, vec![0, 1, 2]).expect("well-formed triangle");
+
+        let err = mesh
+            .with_materials(vec![1, 1])
+            .expect_err("two materials for three vertices");
+
+        assert!(
+            matches!(
+                err,
+                WorldMeshError::ChannelLengthMismatch {
+                    channel: "materials",
+                    expected: 3,
+                    actual: 2
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn materials_are_none_until_set_and_returned_as_given() {
+        let mesh = build(3, 3, vec![0, 1, 2]).expect("well-formed triangle");
+        assert!(mesh.materials().is_none());
+
+        let mesh = mesh.with_materials(vec![4, 4, 4]).expect("one per vertex");
+
+        assert_eq!(mesh.materials(), Some(&[4, 4, 4][..]));
+        assert_eq!(mesh.indices(), [0, 1, 2]);
     }
 }

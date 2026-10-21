@@ -106,7 +106,7 @@ fn cap_smooth_cells(
                 .into_iter()
                 .flat_map(ear_clip)
             {
-                cap.triangle(tri.map(|p| p + origin));
+                cap.triangle(tri.map(|p| p + origin), 0);
             }
         }
     }
@@ -129,7 +129,7 @@ fn cap_blocks(
         for z in base.z..base.z + chunk_size {
             let pos = IVec3::new(x, y, z);
             if grid.is_solid_at(pos) && meshed_blocky(pos) {
-                cap.square(Vec2::new(x as f32, z as f32), 1);
+                cap.square(Vec2::new(x as f32, z as f32), 1, 0);
             }
         }
     }
@@ -155,7 +155,7 @@ fn cap_coarse_cells(
                     (base.x + cx * COARSE_STRIDE) as f32,
                     (base.z + cz * COARSE_STRIDE) as f32,
                 );
-                cap.square(corner, COARSE_STRIDE);
+                cap.square(corner, COARSE_STRIDE, 0);
             }
         }
     }
@@ -346,18 +346,18 @@ impl CapBuilder {
     /// Adds the axis-aligned square of whole-block `size` with its low corner at
     /// `corner` in `(x, z)`, as one-block-deep strips so no triangle edge crosses a
     /// block centre.
-    fn square(&mut self, corner: Vec2, size: i32) {
+    fn square(&mut self, corner: Vec2, size: i32, material: u32) {
         for row in 0..size {
             let near = corner + Vec2::new(0.0, row as f32);
             let far = near + Vec2::new(size as f32, 1.0);
-            self.triangle([near, Vec2::new(far.x, near.y), far]);
-            self.triangle([near, far, Vec2::new(near.x, far.y)]);
+            self.triangle([near, Vec2::new(far.x, near.y), far], material);
+            self.triangle([near, far, Vec2::new(near.x, far.y)], material);
         }
     }
 
     /// Adds a counter-clockwise triangle in `(x, z)`. Counter-clockwise with `z` up the
     /// page is clockwise seen from `+Y`, so the indices are reversed to face up.
-    fn triangle(&mut self, [a, b, c]: [Vec2; 3]) {
+    fn triangle(&mut self, [a, b, c]: [Vec2; 3], material: u32) {
         let first = self.mesh.vertices.len() as u32;
         for p in [a, b, c] {
             self.mesh
@@ -369,6 +369,7 @@ impl CapBuilder {
             self.mesh.light_level.push(1.0);
             self.mesh.block_light_rgb.push([0.0; 3]);
             self.mesh.sky_exposed.push(1.0);
+            self.mesh.material.push(material);
         }
         self.mesh
             .indices
@@ -377,6 +378,7 @@ impl CapBuilder {
 }
 #[cfg(test)]
 mod tests {
+    use super::super::marching_cubes::nearest_solid_corner;
     use super::*;
     use crate::mesh::HybridMeshGenerator;
     use proptest::prelude::*;
@@ -1429,6 +1431,193 @@ mod tests {
         }
     }
 
+    /// Each cap triangle's centroid and its three vertex materials.
+    fn cap_triangle_materials(mesh: &VoxelMesh) -> Vec<(Vec3, [u32; 3])> {
+        assert_eq!(
+            mesh.material.len(),
+            mesh.vertices.len(),
+            "one material per vertex"
+        );
+        mesh.indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|tri| {
+                let at = |k: usize| Vec3::from(mesh.vertices[tri[k] as usize]);
+                (
+                    (at(0) + at(1) + at(2)) / 3.0,
+                    tri.map(|i| mesh.material[i as usize]),
+                )
+            })
+            .collect()
+    }
+
+    fn face_material_at(grid: &VoxelGrid, pos: IVec3) -> u32 {
+        let material = grid.material_at(pos).expect("a solid block");
+        grid.material_registry
+            .face_material(material, grid.resource_at(pos))
+    }
+
+    #[test]
+    fn cap_carries_the_material_of_the_ground_it_cuts() {
+        let mut grid = VoxelGrid::new(CHUNK);
+        for x in 2..=11 {
+            for y in 2..=5 {
+                for z in 2..=10 {
+                    let soil = x >= 7;
+                    grid.place_block(IVec3::new(x, y, z), if soil { 1 } else { 2 }, None);
+                }
+            }
+        }
+        grid.place_block(IVec3::new(4, 4, 6), 2, Some(1));
+        let cut = 4.5;
+
+        let mesh = cap(&grid, cut);
+
+        let mut seen = std::collections::BTreeSet::new();
+        for (centroid, materials) in cap_triangle_materials(&mesh) {
+            // The block whose column centre is nearest the triangle; it is the one the
+            // cap takes unless it is air, which only happens along the cap's rim.
+            let block = IVec3::new(centroid.x.floor() as i32, 4, centroid.z.floor() as i32);
+            if grid.is_solid_at(block) {
+                let expected = face_material_at(&grid, block);
+                assert_eq!(materials, [expected; 3], "triangle at {centroid:?}");
+                seen.insert(expected);
+            }
+        }
+        assert_eq!(
+            seen,
+            std::collections::BTreeSet::from([1, 2, 3]),
+            "soil, stone and the ore block all show on the cap"
+        );
+    }
+
+    #[test]
+    fn blocky_cap_squares_take_their_blocks_material() {
+        let mut grid = VoxelGrid::new(CHUNK);
+        grid.place_block(IVec3::new(3, 4, 5), 100, None);
+        grid.place_block(IVec3::new(4, 4, 5), 101, Some(1));
+
+        let mesh = cap(&grid, 4.5);
+
+        let triangles = cap_triangle_materials(&mesh);
+        assert_eq!(triangles.len(), 4, "two triangles per block");
+        for (centroid, materials) in triangles {
+            let expected = if centroid.x < 4.0 { 100 } else { 3 };
+            assert_eq!(materials, [expected; 3], "triangle at {centroid:?}");
+        }
+    }
+
+    #[test]
+    fn coarse_cap_squares_take_the_face_material_of_the_cut_layer() {
+        let cases = [
+            (
+                vec![([0, 0, 0], 1), ([0, 1, 0], 2)],
+                1.5,
+                2,
+                "probe in the upper layer",
+            ),
+            (
+                vec![([0, 0, 0], 1), ([0, 1, 0], 2)],
+                0.5,
+                1,
+                "probe in the lower layer",
+            ),
+            (
+                vec![([1, 1, 1], 2)],
+                0.5,
+                2,
+                "empty lower layer falls back to the upper",
+            ),
+        ];
+
+        for (blocks, cut, expected, why) in cases {
+            let mut grid = VoxelGrid::new(CHUNK);
+            for (pos, material) in blocks {
+                grid.place_block(IVec3::from(pos), material, None);
+            }
+
+            let mesh = cut_cap_mesh(&grid, IVec3::ZERO, 1, cut);
+
+            let triangles = cap_triangle_materials(&mesh);
+            assert_eq!(triangles.len(), 4, "{why}: a 2x2 square");
+            for (centroid, materials) in triangles {
+                assert_eq!(materials, [expected; 3], "{why}: triangle at {centroid:?}");
+            }
+        }
+    }
+
+    /// Material id of corner `k` in `cell_grid` is this plus `k`.
+    const CORNER_MATERIAL_BASE: u32 = 10;
+    const CELL_ORIGIN: IVec3 = IVec3::new(6, 6, 6);
+
+    /// One marching-cubes cell whose solid corners (the bits of `cube_index`) are blocks
+    /// of distinct materials, so a triangle's material names the corner it took.
+    fn cell_grid(cube_index: u8) -> VoxelGrid {
+        let mut grid = VoxelGrid::new(CHUNK);
+        for (k, offset) in MarchingCubes::CORNER_OFFSETS.iter().enumerate() {
+            if cube_index & (1 << k) != 0 {
+                let pos = CELL_ORIGIN + IVec3::from(offset.map(|c| c as i32));
+                grid.place_block(pos, CORNER_MATERIAL_BASE + k as u32, None);
+            }
+        }
+        grid
+    }
+
+    /// Triangles whose centroid lies in the cell's square footprint, as
+    /// `(centroid in cell coordinates, materials)`; `y` is `height` for a cap.
+    fn triangles_in_cell(mesh: &VoxelMesh, y: Option<f32>) -> Vec<(Vec3, [u32; 3])> {
+        let origin = Vec3::new(CELL_ORIGIN.x as f32 + 0.5, 0.0, CELL_ORIGIN.z as f32 + 0.5);
+        cap_triangle_materials(mesh)
+            .into_iter()
+            .map(|(c, materials)| {
+                let local = c - Vec3::new(origin.x, CELL_ORIGIN.y as f32 + 0.5, origin.z);
+                (Vec3::new(local.x, y.unwrap_or(local.y), local.z), materials)
+            })
+            .filter(|(c, _)| {
+                (0.0..=1.0).contains(&c.x)
+                    && (0.0..=1.0).contains(&c.z)
+                    && (0.0..=1.0).contains(&c.y)
+            })
+            .collect()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn cap_and_wall_triangles_use_the_same_nearest_block_rule(
+            cube_index in 1..=255u8,
+            sixty_fourths in (1..=63u32).prop_filter("the middle height is lifted", |n| *n != 32),
+        ) {
+            let height = sixty_fourths as f32 / 64.0;
+            let grid = cell_grid(cube_index);
+            let cut = CELL_ORIGIN.y as f32 + 0.5 + height - CAP_PROBE;
+
+            let cap_mesh = cap(&grid, cut);
+            let wall_mesh = HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::ZERO, CHUNK);
+
+            let in_cap = triangles_in_cell(&cap_mesh, Some(height));
+            prop_assume!(!in_cap.is_empty());
+            for (centroid, materials) in in_cap {
+                let corner = nearest_solid_corner(cube_index, centroid);
+                prop_assert_eq!(
+                    materials,
+                    [CORNER_MATERIAL_BASE + corner as u32; 3],
+                    "cap triangle at {:?}, cube index {}", centroid, cube_index
+                );
+            }
+            for (centroid, materials) in triangles_in_cell(&wall_mesh, None) {
+                let corner = nearest_solid_corner(cube_index, centroid);
+                prop_assert_eq!(
+                    materials,
+                    [CORNER_MATERIAL_BASE + corner as u32; 3],
+                    "wall triangle at {:?}, cube index {}", centroid, cube_index
+                );
+            }
+        }
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(24))]
 
@@ -1540,10 +1729,20 @@ mod tests {
 
             let mut tris = Vec::new();
             let mut total = 0.0;
+            let ground_material = if blocky { BLOCKY } else { SMOOTH };
             for (x, y, z) in (0..2).flat_map(|x| (-1..3).flat_map(move |y| (0..2).map(move |z| (x, y, z)))) {
                 let mesh = cut_cap_mesh(&grid, IVec3::new(x, y, z), 0, cut);
                 total += cap_area(&mesh);
                 tris.extend(triangles(&mesh));
+                prop_assert_eq!(mesh.material.len(), mesh.vertices.len(), "one material per vertex");
+                for (k, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
+                    let materials = tri.map(|i| mesh.material[i as usize]);
+                    prop_assert_eq!(
+                        materials, [ground_material; 3],
+                        "cap triangle {} of chunk ({}, {}, {}) is one material, the ground's",
+                        k, x, y, z
+                    );
+                }
             }
 
             prop_assert!(

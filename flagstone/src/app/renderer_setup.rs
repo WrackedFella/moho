@@ -45,6 +45,7 @@ pub fn init_renderer_and_ui(
         &light_level,
         &block_light_rgb,
         &sky_exposed,
+        &[],
         &indices,
     );
 
@@ -63,6 +64,7 @@ pub fn init_renderer_and_ui(
         &cube_light_level,
         &cube_block_light_rgb,
         &cube_sky_exposed,
+        &[],
         &cube_indices,
     );
 

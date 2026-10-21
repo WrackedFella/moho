@@ -147,6 +147,7 @@ impl FrameProcessor {
             &app.entities.chunks,
             app.scene.world_meshes_mut(),
             app.cut_face_material_idx,
+            &app.terrain_palette,
         );
     }
 
