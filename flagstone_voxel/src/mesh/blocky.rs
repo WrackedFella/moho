@@ -21,10 +21,15 @@ impl BlockyMeshGenerator {
     ///
     /// # Returns
     /// A `VoxelMesh` with 24 vertices (4 per face), normals, and AO values
+    ///
+    /// # Panics
+    /// If `position` is air.
     pub fn generate_mesh(grid: &VoxelGrid, position: BlockPos) -> VoxelMesh {
         let mut mesh = VoxelMesh::empty();
 
-        let material = grid.face_material_at(position).unwrap_or(0);
+        let material = grid
+            .face_material_at(position)
+            .expect("the block at `position` is solid");
 
         // +X face (right): check neighbors in +X direction
         Self::add_face(&mut mesh, grid, position, FaceDirection::PosX, material);

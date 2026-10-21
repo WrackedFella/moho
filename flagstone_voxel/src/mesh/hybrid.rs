@@ -67,17 +67,19 @@ pub(crate) fn coarse_face_material(
             }
         }
     }
-    0
+    unreachable!("a solid coarse cell has a solid block in one of its two face layers")
 }
 
 /// The face material of the block that field sample `sample` of chunk `chunk_base`'s
 /// padded density field stands for. The field is padded by one block, so sample `i` is
-/// block `chunk_base + i - 1`. Air gives `0`, which is never used: only solid samples
-/// are looked up.
+/// block `chunk_base + i - 1`.
+///
+/// # Panics
+/// If the sample is air: only solid samples are looked up.
 pub(crate) fn sample_face_material(grid: &VoxelGrid, chunk_base: IVec3, sample: [usize; 3]) -> u32 {
     let sample = IVec3::new(sample[0] as i32, sample[1] as i32, sample[2] as i32);
     grid.face_material_at(chunk_base + sample - IVec3::ONE)
-        .unwrap_or(0)
+        .expect("marching cubes asks for the material of solid samples only")
 }
 
 /// Classifies the content of a chunk

@@ -135,7 +135,7 @@ fn cap_blocks(
         for z in base.z..base.z + chunk_size {
             let pos = IVec3::new(x, y, z);
             if grid.is_solid_at(pos) && meshed_blocky(pos) {
-                let material = grid.face_material_at(pos).unwrap_or(0);
+                let material = grid.face_material_at(pos).expect("guarded by is_solid_at");
                 cap.square(Vec2::new(x as f32, z as f32), 1, material);
             }
         }

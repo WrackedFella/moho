@@ -42,12 +42,7 @@ impl MarchingCubes {
             "MarchingCubes currently only supports chunk_size=16, got {chunk_size}"
         );
 
-        let mut vertices = Vec::new();
-        let mut normals = Vec::new();
-        let mut indices = Vec::new();
-        let mut ambient_occlusion = Vec::new();
-        let mut geometry_type = Vec::new();
-        let mut material = Vec::new();
+        let mut mesh = VoxelMesh::empty();
 
         // Marching cubes processes cells between density samples
         // density_field is [18][18][18] with samples at indices 0..17
@@ -58,40 +53,18 @@ impl MarchingCubes {
         for x in 1..=chunk_size {
             for y in 1..=chunk_size {
                 for z in 1..=chunk_size {
-                    Self::process_cell(
-                        density_field,
-                        x,
-                        y,
-                        z,
-                        &mut vertices,
-                        &mut normals,
-                        &mut indices,
-                        &mut ambient_occlusion,
-                        &mut geometry_type,
-                        &material_at,
-                        &mut material,
-                    );
+                    Self::process_cell(density_field, x, y, z, &mut mesh, &material_at);
                 }
             }
         }
 
         // Smooth terrain: default to fully sky-exposed until trilinear light sampling lands.
-        let n = vertices.len();
-        let light_level = vec![1.0f32; n];
-        let block_light_rgb = vec![[0.0f32; 3]; n];
-        let sky_exposed = vec![1.0f32; n];
+        let n = mesh.vertices.len();
+        mesh.light_level = vec![1.0f32; n];
+        mesh.block_light_rgb = vec![[0.0f32; 3]; n];
+        mesh.sky_exposed = vec![1.0f32; n];
 
-        VoxelMesh {
-            vertices,
-            normals,
-            indices,
-            ambient_occlusion,
-            geometry_type,
-            light_level,
-            block_light_rgb,
-            sky_exposed,
-            material,
-        }
+        mesh
     }
 
     /// Triangles of one unit cell for a 0/1 corner pattern, corner 0 at the origin.
@@ -119,19 +92,13 @@ impl MarchingCubes {
     }
 
     /// Process a single cell in the marching cubes algorithm
-    #[allow(clippy::too_many_arguments)]
     fn process_cell(
         density_field: &[[[f32; 18]; 18]; 18],
         x: usize,
         y: usize,
         z: usize,
-        vertices: &mut Vec<[f32; 3]>,
-        normals: &mut Vec<[f32; 3]>,
-        indices: &mut Vec<u32>,
-        ambient_occlusion: &mut Vec<f32>,
-        geometry_type: &mut Vec<u32>,
+        mesh: &mut VoxelMesh,
         material_at: &impl Fn([usize; 3]) -> u32,
-        material: &mut Vec<u32>,
     ) {
         // Get the 8 corner values for this cube
         let corners = [
@@ -182,23 +149,24 @@ impl MarchingCubes {
         // Generate triangles from the triangle table
         for tri_edge_indices in Self::triangle_edges(cube_index) {
             // Record base vertex for this triangle
-            let base_vertex = vertices.len() as u32;
+            let base_vertex = mesh.vertices.len() as u32;
 
             // Add the three vertices of this triangle
             for edge_idx in tri_edge_indices {
                 let vert = edge_vertices[edge_idx as usize];
-                vertices.push(vert);
+                mesh.vertices.push(vert);
 
-                normals.push(Self::outward_normal(edge_gradients[edge_idx as usize]));
+                mesh.normals
+                    .push(Self::outward_normal(edge_gradients[edge_idx as usize]));
 
                 // Smooth terrain doesn't need complex AO - use density as simple approximation
                 // Lower density (near surface) = less occlusion
                 let density = Self::sample_density(density_field, vert[0], vert[1], vert[2]);
                 let ao = 0.6 + (1.0 - density) * 0.4; // Range [0.6, 1.0]
-                ambient_occlusion.push(ao);
+                mesh.ambient_occlusion.push(ao);
 
                 // Mark as smooth terrain (0 = smooth, 1 = blocky)
-                geometry_type.push(0);
+                mesh.geometry_type.push(0);
             }
 
             let centroid = tri_edge_indices
@@ -209,12 +177,11 @@ impl MarchingCubes {
                 - Vec3::new(x as f32, y as f32, z as f32);
             let corner = nearest_solid_corner(cube_index, centroid);
             let face_material = material_at(Self::corner_sample(x, y, z, corner));
-            material.extend([face_material; 3]);
+            mesh.material.extend([face_material; 3]);
 
             // Add indices (counter-clockwise winding)
-            indices.push(base_vertex);
-            indices.push(base_vertex + 1);
-            indices.push(base_vertex + 2);
+            mesh.indices
+                .extend([base_vertex, base_vertex + 1, base_vertex + 2]);
         }
     }
 

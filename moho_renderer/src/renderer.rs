@@ -355,8 +355,8 @@ impl<'a> Renderer<'a> {
         material: &[u32],
         indices: &[u32],
     ) -> u32 {
-        let iv = interleave_vertices(
-            vertices,
+        let iv = interleave_vertices(&VertexChannels {
+            positions: vertices,
             normals,
             ao,
             geometry_type,
@@ -364,7 +364,7 @@ impl<'a> Renderer<'a> {
             block_light_rgb,
             sky_exposed,
             material,
-        );
+        });
         for (i, v) in iv.iter().enumerate().take(6) {
             tracing::trace!(
                 index = i,
@@ -700,23 +700,37 @@ fn lighting_with_debug_view(
     lighting
 }
 
+/// Per-vertex channels of an indexed mesh. Every channel but `positions` and `normals`
+/// may be shorter than `positions`, or empty.
+#[derive(Default)]
+pub(crate) struct VertexChannels<'a> {
+    pub positions: &'a [[f32; 3]],
+    pub normals: &'a [[f32; 3]],
+    pub ao: &'a [f32],
+    pub geometry_type: &'a [u32],
+    pub light_level: &'a [f32],
+    pub block_light_rgb: &'a [[f32; 3]],
+    pub sky_exposed: &'a [f32],
+    pub material: &'a [u32],
+}
+
 /// Interleave the per-channel slices into GPU vertices. A channel shorter than
-/// `vertices` fills the rest with its neutral value; `material` falls back to
+/// `positions` fills the rest with its neutral value; `material` falls back to
 /// `NO_VERTEX_MATERIAL`, so the instance's material draws.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn interleave_vertices(
-    vertices: &[[f32; 3]],
-    normals: &[[f32; 3]],
-    ao: &[f32],
-    geometry_type: &[u32],
-    light_level: &[f32],
-    block_light_rgb: &[[f32; 3]],
-    sky_exposed: &[f32],
-    material: &[u32],
-) -> Vec<Vertex> {
-    (0..vertices.len())
+pub(crate) fn interleave_vertices(channels: &VertexChannels) -> Vec<Vertex> {
+    let VertexChannels {
+        positions,
+        normals,
+        ao,
+        geometry_type,
+        light_level,
+        block_light_rgb,
+        sky_exposed,
+        material,
+    } = *channels;
+    (0..positions.len())
         .map(|i| Vertex {
-            position: vertices[i],
+            position: positions[i],
             normal: normals[i],
             ao: ao.get(i).copied().unwrap_or(1.0),
             geometry_type: geometry_type.get(i).copied().unwrap_or(0),
@@ -783,7 +797,11 @@ mod tests {
         let vertices = [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
         let normals = [[0.0, 1.0, 0.0]; 3];
 
-        let interleaved = interleave_vertices(&vertices, &normals, &[], &[], &[], &[], &[], &[]);
+        let interleaved = interleave_vertices(&VertexChannels {
+            positions: &vertices,
+            normals: &normals,
+            ..Default::default()
+        });
 
         let materials: Vec<u32> = interleaved.iter().map(|v| v.material).collect();
         assert_eq!(materials, vec![NO_VERTEX_MATERIAL; 3]);
@@ -794,8 +812,12 @@ mod tests {
         let vertices = [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
         let normals = [[0.0, 1.0, 0.0]; 3];
 
-        let interleaved =
-            interleave_vertices(&vertices, &normals, &[], &[], &[], &[], &[], &[4, 0, 9]);
+        let interleaved = interleave_vertices(&VertexChannels {
+            positions: &vertices,
+            normals: &normals,
+            material: &[4, 0, 9],
+            ..Default::default()
+        });
 
         let materials: Vec<u32> = interleaved.iter().map(|v| v.material).collect();
         assert_eq!(materials, vec![4, 0, 9]);

@@ -248,7 +248,7 @@ impl VoxelGrid {
     /// The material a face of the block at `pos` shows (see
     /// [`MaterialRegistry::face_material`]), or `None` for air.
     #[inline]
-    pub fn face_material_at(&self, pos: BlockPos) -> Option<u32> {
+    pub(crate) fn face_material_at(&self, pos: BlockPos) -> Option<u32> {
         let material_id = self.material_at(pos)?;
         Some(
             self.material_registry
