@@ -133,7 +133,7 @@ impl KeybindCaptureHandler {
                 let remaining = bindings
                     .get_binding(conflicting)
                     .iter()
-                    .filter(|b| **b != Binding::Key(pending.key))
+                    .filter(|b| **b != Binding::key(pending.key))
                     .copied()
                     .collect();
                 on_binding_changed(conflicting, remaining);
@@ -177,9 +177,9 @@ mod tests {
     use crate::prefs::Prefs;
     use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
 
-    const THUMB: Binding = Binding::Pad(PadInput::Button(PadButton::LeftThumb));
-    const LEFT_PAD: Binding = Binding::Pad(PadInput::Stick(Stick::LeftStick, StickDir::Left));
-    const DESCEND_PAD: Binding = Binding::Pad(PadInput::Button(PadButton::LeftTrigger));
+    const THUMB: Binding = Binding::pad(PadInput::Button(PadButton::LeftThumb));
+    const LEFT_PAD: Binding = Binding::pad(PadInput::Stick(Stick::LeftStick, StickDir::Left));
+    const DESCEND_PAD: Binding = Binding::pad(PadInput::Button(PadButton::LeftTrigger));
 
     fn registry() -> BindingRegistry {
         BindingRegistry::from_prefs(&Prefs::default())
@@ -205,8 +205,8 @@ mod tests {
             vec![(
                 StrategyAction::MoveForward,
                 vec![
-                    Binding::Key(Key::Alt),
-                    Binding::Pad(PadInput::Stick(Stick::LeftStick, StickDir::Up))
+                    Binding::key(Key::Alt),
+                    Binding::pad(PadInput::Stick(Stick::LeftStick, StickDir::Up))
                 ]
             )]
         );
@@ -263,7 +263,7 @@ mod tests {
         assert!(changes.contains(&(StrategyAction::Sprint, vec![THUMB])));
         assert!(changes.contains(&(
             StrategyAction::Descend,
-            vec![Binding::Key(Key::Shift), DESCEND_PAD]
+            vec![Binding::key(Key::Shift), DESCEND_PAD]
         )));
     }
 
@@ -273,7 +273,7 @@ mod tests {
 
         assert_eq!(changes.len(), 2);
         assert!(changes.contains(&(StrategyAction::MoveLeft, vec![LEFT_PAD])));
-        assert!(changes.contains(&(StrategyAction::Sprint, vec![Binding::Key(Key::A), THUMB])));
+        assert!(changes.contains(&(StrategyAction::Sprint, vec![Binding::key(Key::A), THUMB])));
     }
 
     #[test]

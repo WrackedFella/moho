@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 
-use crate::bindings::{Action, ActionBindings, Binding};
+use crate::bindings::{Action, ActionBindings, Input};
 use crate::filter::{DeadzoneFilter, MouseSmoothing};
 use crate::key::{Key, MouseButton};
 use crate::pad::{PadButton, PadInput, Stick, StickAxis, StickDir};
@@ -106,7 +106,7 @@ impl<A: Action> ActionFrame<A> {
 #[derive(Debug)]
 pub struct ActionMap<A: Action> {
     bindings: ActionBindings<A>,
-    down: HashSet<Binding>,
+    down: HashSet<Input>,
     held: u64,
     pressed: u64,
     released: u64,
@@ -125,6 +125,7 @@ impl<A: Action> ActionMap<A> {
     /// Raw look: no smoothing.
     pub fn new(bindings: ActionBindings<A>, look_per_count: f32) -> Self {
         const { assert!(A::ALL.len() <= 64, "frame masks hold at most 64 actions") };
+        const { assert!(A::HOLD_TICKS >= 1, "a hold lasts at least one tick") };
         Self {
             bindings,
             down: HashSet::new(),
@@ -146,14 +147,14 @@ impl<A: Action> ActionMap<A> {
     }
 
     pub fn key(&mut self, key: Key, down: bool) {
-        self.set_down(Binding::Key(key), down);
+        self.set_down(Input::Key(key), down);
     }
 
     pub fn mouse_button(&mut self, button: MouseButton, down: bool) {
         if down {
             self.press_pointer = self.pointer;
         }
-        self.set_down(Binding::Mouse(button), down);
+        self.set_down(Input::Mouse(button), down);
     }
 
     /// Adds to the motion reported by the next `end_tick`.
@@ -173,7 +174,7 @@ impl<A: Action> ActionMap<A> {
     }
 
     pub fn pad_button(&mut self, button: PadButton, down: bool) {
-        self.set_down(Binding::Pad(PadInput::Button(button)), down);
+        self.set_down(Input::Pad(PadInput::Button(button)), down);
     }
 
     /// `value` is in `-1.0..=1.0` with positive Y up.
@@ -189,7 +190,7 @@ impl<A: Action> ActionMap<A> {
     /// Releases pad bindings only and zeroes stored stick axes.
     pub fn pad_disconnected(&mut self) {
         self.sticks = [(0.0, 0.0); 2];
-        self.down.retain(|binding| !binding.is_pad());
+        self.down.retain(|input| !input.is_pad());
         self.refresh_held();
     }
 
@@ -252,12 +253,12 @@ impl<A: Action> ActionMap<A> {
         frame
     }
 
-    fn set_down(&mut self, binding: Binding, down: bool) {
-        // Re-inserting an already-down binding (OS key repeat) changes nothing.
+    fn set_down(&mut self, input: Input, down: bool) {
+        // Re-inserting an already-down input (OS key repeat) changes nothing.
         let changed = if down {
-            self.down.insert(binding)
+            self.down.insert(input)
         } else {
-            self.down.remove(&binding)
+            self.down.remove(&input)
         };
         if changed {
             self.refresh_held();
@@ -272,7 +273,7 @@ impl<A: Action> ActionMap<A> {
                 self.bindings
                     .get(action)
                     .iter()
-                    .any(|binding| self.down.contains(binding))
+                    .any(|binding| self.down.contains(&binding.input))
             })
             .fold(0, |mask, (index, _)| mask | 1 << index);
         self.pressed |= held & !self.held;
@@ -290,11 +291,11 @@ impl<A: Action> ActionMap<A> {
         ];
         let mut changed = false;
         for (dir, active) in directions {
-            let binding = Binding::Pad(PadInput::Stick(stick, dir));
+            let input = Input::Pad(PadInput::Stick(stick, dir));
             changed |= if active {
-                self.down.insert(binding)
+                self.down.insert(input)
             } else {
-                self.down.remove(&binding)
+                self.down.remove(&input)
             };
         }
         if changed {
@@ -360,6 +361,7 @@ pub fn handle_device_event<A: Action>(map: &mut ActionMap<A>, event: &DeviceEven
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bindings::Binding;
     use std::collections::BTreeMap;
 
     /// A power-of-two fraction of a second, so stick arithmetic is exact in f32.
@@ -389,9 +391,12 @@ mod tests {
 
         fn default_bindings(self) -> &'static [Binding] {
             match self {
-                TestAction::MoveForward => &[Binding::Key(Key::W), Binding::Key(Key::ArrowUp)],
-                TestAction::Jump => &[Binding::Key(Key::Space)],
-                TestAction::Fire => &[Binding::Mouse(MouseButton::Left)],
+                TestAction::MoveForward => &[
+                    const { Binding::key(Key::W) },
+                    const { Binding::key(Key::ArrowUp) },
+                ],
+                TestAction::Jump => const { &[Binding::key(Key::Space)] },
+                TestAction::Fire => const { &[Binding::mouse(MouseButton::Left)] },
             }
         }
     }
@@ -402,11 +407,11 @@ mod tests {
         let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
         bindings.set(
             TestAction::Jump,
-            vec![Binding::Pad(PadInput::Button(PadButton::South))],
+            vec![Binding::pad(PadInput::Button(PadButton::South))],
         );
         bindings.set(
             TestAction::MoveForward,
-            vec![Binding::Pad(PadInput::Stick(
+            vec![Binding::pad(PadInput::Stick(
                 Stick::LeftStick,
                 StickDir::Up,
             ))],
@@ -505,7 +510,7 @@ mod tests {
                     let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
                     bindings.set(
                         TestAction::Fire,
-                        vec![Binding::Pad(PadInput::Stick(stick, dir))],
+                        vec![Binding::pad(PadInput::Stick(stick, dir))],
                     );
                     let mut map = ActionMap::new(bindings, 1.0);
 
@@ -613,18 +618,18 @@ mod tests {
                 let actions = [TestAction::MoveForward, TestAction::Jump, TestAction::Fire];
                 bindings.set(
                     TestAction::MoveForward,
-                    vec![Binding::Pad(PadInput::Stick(stick, StickDir::Up))],
+                    vec![Binding::pad(PadInput::Stick(stick, StickDir::Up))],
                 );
                 bindings.set(
                     TestAction::Jump,
                     vec![
-                        Binding::Pad(PadInput::Stick(stick, StickDir::Down)),
-                        Binding::Pad(PadInput::Stick(stick, StickDir::Left)),
+                        Binding::pad(PadInput::Stick(stick, StickDir::Down)),
+                        Binding::pad(PadInput::Stick(stick, StickDir::Left)),
                     ],
                 );
                 bindings.set(
                     TestAction::Fire,
-                    vec![Binding::Pad(PadInput::Stick(stick, StickDir::Right))],
+                    vec![Binding::pad(PadInput::Stick(stick, StickDir::Right))],
                 );
                 let mut map = ActionMap::new(bindings, 1.0);
 
@@ -668,8 +673,8 @@ mod tests {
         bindings.set(
             TestAction::Jump,
             vec![
-                Binding::Key(Key::Space),
-                Binding::Pad(PadInput::Button(PadButton::South)),
+                Binding::key(Key::Space),
+                Binding::pad(PadInput::Button(PadButton::South)),
             ],
         );
         let mut map = ActionMap::new(bindings, 1.0);
@@ -999,7 +1004,7 @@ mod tests {
     #[test]
     fn one_key_bound_to_two_actions_drives_both() {
         let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
-        bindings.set(TestAction::Jump, vec![Binding::Key(Key::W)]);
+        bindings.set(TestAction::Jump, vec![Binding::key(Key::W)]);
         let mut map = ActionMap::new(bindings, 1.0);
 
         map.key(Key::W, true);

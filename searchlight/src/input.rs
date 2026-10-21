@@ -49,15 +49,15 @@ impl Action for SearchlightAction {
 
     fn default_bindings(self) -> &'static [Binding] {
         match self {
-            SearchlightAction::MoveForward => &[Binding::Key(Key::W)],
-            SearchlightAction::MoveBack => &[Binding::Key(Key::S)],
-            SearchlightAction::MoveLeft => &[Binding::Key(Key::A)],
-            SearchlightAction::MoveRight => &[Binding::Key(Key::D)],
-            SearchlightAction::Jump => &[Binding::Key(Key::Space)],
-            SearchlightAction::Fire => &[Binding::Mouse(MouseButton::Left)],
-            SearchlightAction::Reload => &[Binding::Key(Key::R)],
-            SearchlightAction::CheckMagazine => &[Binding::Key(Key::C)],
-            SearchlightAction::Restart => &[Binding::Key(Key::Enter)],
+            SearchlightAction::MoveForward => const { &[Binding::key(Key::W)] },
+            SearchlightAction::MoveBack => const { &[Binding::key(Key::S)] },
+            SearchlightAction::MoveLeft => const { &[Binding::key(Key::A)] },
+            SearchlightAction::MoveRight => const { &[Binding::key(Key::D)] },
+            SearchlightAction::Jump => const { &[Binding::key(Key::Space)] },
+            SearchlightAction::Fire => const { &[Binding::mouse(MouseButton::Left)] },
+            SearchlightAction::Reload => const { &[Binding::key(Key::R)] },
+            SearchlightAction::CheckMagazine => const { &[Binding::key(Key::C)] },
+            SearchlightAction::Restart => const { &[Binding::key(Key::Enter)] },
         }
     }
 }
@@ -116,7 +116,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use moho_input::action_map::ActionMap;
-    use moho_input::bindings::ActionBindings;
+    use moho_input::bindings::{ActionBindings, Input};
 
     use super::*;
     use crate::test_support::press;
@@ -130,10 +130,10 @@ mod tests {
     }
 
     fn release(map: &mut ActionMap<SearchlightAction>, action: SearchlightAction) {
-        match action.default_bindings()[0] {
-            Binding::Key(key) => map.key(key, false),
-            Binding::Mouse(button) => map.mouse_button(button, false),
-            Binding::Pad(_) => panic!("pad binding"),
+        match action.default_bindings()[0].input {
+            Input::Key(key) => map.key(key, false),
+            Input::Mouse(button) => map.mouse_button(button, false),
+            Input::Pad(_) => panic!("pad binding"),
         }
     }
 
@@ -256,7 +256,7 @@ mod tests {
 
         assert_eq!(
             SearchlightAction::Restart.default_bindings(),
-            [Binding::Key(Key::Enter)]
+            [Binding::key(Key::Enter)]
         );
         assert!(SearchlightAction::ALL.contains(&SearchlightAction::Restart));
         assert_eq!(

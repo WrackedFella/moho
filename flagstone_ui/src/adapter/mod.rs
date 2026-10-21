@@ -340,7 +340,7 @@ impl EguiAdapter {
     /// Routes one key or button through the console before egui sees it.
     pub fn on_key(
         &mut self,
-        input: moho_input::bindings::Binding,
+        input: moho_input::bindings::Input,
         pressed: bool,
         repeat: bool,
     ) -> moho_ui_shell::Routing {
@@ -803,7 +803,7 @@ mod tests {
             .expect("the settings screen is registered");
         assert_eq!(
             menu.get_staged_binding(0).first(),
-            Some(&Binding::Key(Key::Q))
+            Some(&Binding::key(Key::Q))
         );
         menu.apply_staged_changes().unwrap();
         let saved = Prefs::load_from(&path).0;

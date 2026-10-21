@@ -29,7 +29,7 @@ const ROW_ACTIONS: [StrategyAction; 7] = [
 ];
 
 fn pad_stick(dir: StickDir) -> Binding {
-    Binding::Pad(PadInput::Stick(Stick::LeftStick, dir))
+    Binding::pad(PadInput::Stick(Stick::LeftStick, dir))
 }
 
 /// Test 2: Escaping while listening cancels binding
@@ -71,7 +71,7 @@ fn staged_changes_tracked_and_cleared_on_save() {
     menu.revert_staged_changes();
     assert_eq!(
         menu.get_staged_binding(0),
-        [Binding::Key(Key::Q), pad_stick(StickDir::Up)],
+        [Binding::key(Key::Q), pad_stick(StickDir::Up)],
         "save updates the saved snapshot, so revert keeps it"
     );
     let (saved, issues) = Prefs::load_from(&path);
@@ -79,7 +79,7 @@ fn staged_changes_tracked_and_cleared_on_save() {
     let reloaded = SettingsMenu::with_prefs(saved);
     assert_eq!(
         reloaded.get_staged_binding(0),
-        [Binding::Key(Key::Q), pad_stick(StickDir::Up)]
+        [Binding::key(Key::Q), pad_stick(StickDir::Up)]
     );
 }
 
@@ -104,7 +104,7 @@ fn revert_changes_works() {
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
     assert_eq!(
         menu.get_staged_binding(0),
-        [Binding::Key(Key::W), pad_stick(StickDir::Up)]
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
     );
 
     menu.start_listening(0);
@@ -116,7 +116,7 @@ fn revert_changes_works() {
     );
     assert_eq!(
         menu.get_staged_binding(0),
-        [Binding::Key(Key::Q), pad_stick(StickDir::Up)]
+        [Binding::key(Key::Q), pad_stick(StickDir::Up)]
     );
     assert!(menu.has_unsaved_changes());
 
@@ -124,7 +124,7 @@ fn revert_changes_works() {
 
     assert_eq!(
         menu.get_staged_binding(0),
-        [Binding::Key(Key::W), pad_stick(StickDir::Up)]
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
     );
     assert!(!menu.has_unsaved_changes());
 }
@@ -149,7 +149,7 @@ fn confirming_conflict_through_modal_flow_replaces_binding() {
 
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::W), pad_stick(StickDir::Left)]
+        [Binding::key(Key::W), pad_stick(StickDir::Left)]
     );
     assert_eq!(menu.get_staged_binding(0), [pad_stick(StickDir::Up)]);
 }
@@ -231,9 +231,9 @@ fn multiple_unique_bindings_work() {
         let pads: Vec<Binding> = moho_input::Action::default_bindings(ROW_ACTIONS[id])
             .iter()
             .copied()
-            .filter(|b| matches!(b, Binding::Pad(_)))
+            .filter(|b| b.is_pad())
             .collect();
-        let expected: Vec<Binding> = std::iter::once(Binding::Key(key)).chain(pads).collect();
+        let expected: Vec<Binding> = std::iter::once(Binding::key(key)).chain(pads).collect();
         assert_eq!(binding, expected, "binding {id} should have correct key");
     }
 }
@@ -273,7 +273,7 @@ fn modifier_key_can_be_bound() {
     assert!(!menu.conflict_modal().is_visible());
     assert_eq!(
         menu.get_staged_binding(0),
-        [Binding::Key(Key::Ctrl), pad_stick(StickDir::Up)]
+        [Binding::key(Key::Ctrl), pad_stick(StickDir::Up)]
     );
 }
 
@@ -291,10 +291,10 @@ fn confirming_conflict_removes_only_the_contested_key_from_a_multi_key_row() {
     assert!(Screen::take_pending_modal(&mut menu).is_some());
     Screen::on_modal_confirm(&mut menu);
 
-    assert_eq!(menu.get_staged_binding(0), [Binding::Key(Key::ArrowUp)]);
+    assert_eq!(menu.get_staged_binding(0), [Binding::key(Key::ArrowUp)]);
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::W), pad_stick(StickDir::Left)]
+        [Binding::key(Key::W), pad_stick(StickDir::Left)]
     );
 }
 
@@ -348,7 +348,7 @@ fn egui_key_press_while_listening_binds_the_row() {
 
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::Q), pad_stick(StickDir::Left)]
+        [Binding::key(Key::Q), pad_stick(StickDir::Left)]
     );
     assert!(!menu.is_listening());
 }
@@ -363,7 +363,7 @@ fn egui_key_release_while_listening_is_ignored() {
 
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::A), pad_stick(StickDir::Left)]
+        [Binding::key(Key::A), pad_stick(StickDir::Left)]
     );
     assert!(menu.is_listening());
 }
@@ -378,7 +378,7 @@ fn egui_escape_while_listening_cancels_without_binding() {
 
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::A), pad_stick(StickDir::Left)]
+        [Binding::key(Key::A), pad_stick(StickDir::Left)]
     );
     assert!(!menu.is_listening());
     assert!(!menu.has_unsaved_changes());
@@ -394,7 +394,7 @@ fn egui_unnamed_key_while_listening_keeps_listening() {
 
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::A), pad_stick(StickDir::Left)]
+        [Binding::key(Key::A), pad_stick(StickDir::Left)]
     );
     assert!(menu.is_listening());
 }
@@ -408,7 +408,7 @@ fn egui_key_press_when_not_listening_changes_nothing() {
 
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::A), pad_stick(StickDir::Left)]
+        [Binding::key(Key::A), pad_stick(StickDir::Left)]
     );
     assert!(!menu.has_unsaved_changes());
 }
@@ -529,11 +529,11 @@ fn cancel_then_confirm_applies_nothing() {
 
     assert_eq!(
         menu.get_staged_binding(0),
-        [Binding::Key(Key::W), pad_stick(StickDir::Up)]
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
     );
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::A), pad_stick(StickDir::Left)]
+        [Binding::key(Key::A), pad_stick(StickDir::Left)]
     );
 }
 
@@ -548,7 +548,7 @@ fn confirm_pending_binding_moves_the_key() {
 
     assert_eq!(
         menu.get_staged_binding(1),
-        [Binding::Key(Key::W), pad_stick(StickDir::Left)]
+        [Binding::key(Key::W), pad_stick(StickDir::Left)]
     );
     assert_eq!(menu.get_staged_binding(0), [pad_stick(StickDir::Up)]);
 }
@@ -563,8 +563,8 @@ fn rebinding_ascend_to_f_keeps_its_pad_binding() {
     assert_eq!(
         menu.get_staged_binding(4),
         [
-            Binding::Key(Key::F),
-            Binding::Pad(PadInput::Button(PadButton::RightTrigger))
+            Binding::key(Key::F),
+            Binding::pad(PadInput::Button(PadButton::RightTrigger))
         ]
     );
 }
@@ -580,13 +580,13 @@ fn conflict_confirm_keeps_pad_bindings_on_both_actions() {
     assert_eq!(
         menu.get_staged_binding(6),
         [
-            Binding::Key(Key::Ctrl),
-            Binding::Pad(PadInput::Button(PadButton::LeftThumb))
+            Binding::key(Key::Ctrl),
+            Binding::pad(PadInput::Button(PadButton::LeftThumb))
         ]
     );
     assert_eq!(
         menu.get_staged_binding(5),
-        [Binding::Pad(PadInput::Button(PadButton::LeftTrigger))]
+        [Binding::pad(PadInput::Button(PadButton::LeftTrigger))]
     );
 }
 

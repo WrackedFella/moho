@@ -9,7 +9,7 @@ mod view;
 
 use std::collections::BTreeMap;
 
-use moho_input::bindings::{Action, ActionBindings, Binding, BindingWarning};
+use moho_input::bindings::{Action, ActionBindings, Binding, BindingWarning, Input};
 use moho_input::key::Key;
 
 use output::ConsoleOutput;
@@ -31,11 +31,11 @@ impl Action for ConsoleKey {
     }
 
     fn default_bindings(self) -> &'static [Binding] {
-        &[Binding::Key(Key::Backtick)]
+        const { &[Binding::key(Key::Backtick)] }
     }
 }
 
-const ESCAPE: Binding = Binding::Key(Key::Escape);
+const ESCAPE: Input = Input::Key(Key::Escape);
 
 /// Where an input should go after the console has seen it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,12 +104,13 @@ impl<G> Console<G> {
 
     /// Routes one key or button event: a non-repeat press of the console binding toggles; while
     /// open, Escape closes and everything else belongs to the console.
-    pub fn on_key(&mut self, input: Binding, pressed: bool, repeat: bool) -> Routing {
+    pub fn on_key(&mut self, input: Input, pressed: bool, repeat: bool) -> Routing {
         let press = pressed && !repeat;
-        if press && self.open && (self.toggle.contains(&input) || input == ESCAPE) {
+        let toggles = self.toggle.contains(&Binding::from(input));
+        if press && self.open && (toggles || input == ESCAPE) {
             self.close();
             Routing::Closed
-        } else if press && !self.open && self.toggle.contains(&input) {
+        } else if press && !self.open && toggles {
             self.open();
             Routing::Opened
         } else if self.open {
@@ -211,7 +212,7 @@ fn print_reply(output: &mut ConsoleOutput, reply: &str) {
 #[cfg(test)]
 pub(crate) mod tests {
     use moho_app::{Game, HeadlessLoop, LoopConfig, TickContext};
-    use moho_input::bindings::Binding;
+    use moho_input::bindings::Input;
     use moho_input::key::{Key, MouseButton};
 
     use super::*;
@@ -275,8 +276,8 @@ pub(crate) mod tests {
             .map_or_else(Vec::new, |at| all[at + 1..].to_vec())
     }
 
-    const BACKTICK: Binding = Binding::Key(Key::Backtick);
-    const ESCAPE: Binding = Binding::Key(Key::Escape);
+    const BACKTICK: Input = Input::Key(Key::Backtick);
+    const ESCAPE: Input = Input::Key(Key::Escape);
 
     fn bindings(entry: &str) -> BTreeMap<String, String> {
         BTreeMap::from([(CONSOLE_BINDING.to_owned(), entry.to_owned())])
@@ -302,7 +303,7 @@ pub(crate) mod tests {
         let (mut console, _) = Console::<Cmd>::new(&BTreeMap::new());
 
         assert_eq!(
-            console.on_key(Binding::Key(Key::W), true, false),
+            console.on_key(Input::Key(Key::W), true, false),
             Routing::Game
         );
         assert_eq!(console.on_key(ESCAPE, true, false), Routing::Game);
@@ -316,11 +317,11 @@ pub(crate) mod tests {
         console.on_key(BACKTICK, true, false);
 
         assert_eq!(
-            console.on_key(Binding::Key(Key::W), true, false),
+            console.on_key(Input::Key(Key::W), true, false),
             Routing::Console
         );
         assert_eq!(
-            console.on_key(Binding::Mouse(MouseButton::Left), true, false),
+            console.on_key(Input::Mouse(MouseButton::Left), true, false),
             Routing::Console
         );
         assert_eq!(console.on_key(BACKTICK, false, false), Routing::Console);
@@ -356,7 +357,7 @@ pub(crate) mod tests {
     #[test]
     fn a_bound_key_toggles_and_the_default_no_longer_does() {
         let (mut console, warnings) = Console::<Cmd>::new(&bindings("Backslash"));
-        let backslash = Binding::Key(Key::Backslash);
+        let backslash = Input::Key(Key::Backslash);
 
         let default_key = console.on_key(BACKTICK, true, false);
         let rebound = console.on_key(backslash, true, false);

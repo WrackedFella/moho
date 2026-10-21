@@ -279,13 +279,13 @@ impl Screen for SettingsMenu {
 mod tests {
     use super::*;
 
-    const FORWARD_PAD: Binding = Binding::Pad(moho_input::pad::PadInput::Stick(
+    const FORWARD_PAD: Binding = Binding::pad(moho_input::pad::PadInput::Stick(
         moho_input::pad::Stick::LeftStick,
         moho_input::pad::StickDir::Up,
     ));
 
     fn key(k: Key) -> Vec<Binding> {
-        vec![Binding::Key(k)]
+        vec![Binding::key(k)]
     }
 
     #[test]
@@ -311,7 +311,7 @@ mod tests {
         );
         assert_eq!(
             menu.state.get_staged_binding(StrategyAction::MoveForward),
-            [Binding::Key(Key::Ctrl), FORWARD_PAD]
+            [Binding::key(Key::Ctrl), FORWARD_PAD]
         );
     }
 
@@ -389,7 +389,7 @@ mod tests {
 
         assert_eq!(
             menu.state.get_staged_binding(StrategyAction::MoveForward),
-            [Binding::Key(Key::Ctrl), FORWARD_PAD]
+            [Binding::key(Key::Ctrl), FORWARD_PAD]
         );
         assert!(!menu.keybind_capture.is_listening());
     }

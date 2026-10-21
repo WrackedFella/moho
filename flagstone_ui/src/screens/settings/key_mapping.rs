@@ -87,7 +87,7 @@ pub fn binding_label(bindings: &[Binding]) -> String {
 
 /// `key` as the action's only keyboard binding, followed by the pad bindings in `existing`.
 pub fn rebind_key(existing: &[Binding], key: Key) -> Vec<Binding> {
-    std::iter::once(Binding::Key(key))
+    std::iter::once(Binding::key(key))
         .chain(existing.iter().copied().filter(|b| b.is_pad()))
         .collect()
 }
@@ -193,12 +193,12 @@ mod tests {
 
     #[test]
     fn binding_label_names_each_key() {
-        assert_eq!(binding_label(&[Binding::Key(Key::W)]), "W");
-        assert_eq!(binding_label(&[Binding::Key(Key::Shift)]), "Shift");
-        assert_eq!(binding_label(&[Binding::Key(Key::ArrowUp)]), "ArrowUp");
-        assert_eq!(binding_label(&[Binding::Key(Key::Space)]), "Spacebar");
+        assert_eq!(binding_label(&[Binding::key(Key::W)]), "W");
+        assert_eq!(binding_label(&[Binding::key(Key::Shift)]), "Shift");
+        assert_eq!(binding_label(&[Binding::key(Key::ArrowUp)]), "ArrowUp");
+        assert_eq!(binding_label(&[Binding::key(Key::Space)]), "Spacebar");
         assert_eq!(
-            binding_label(&[Binding::Key(Key::F), Binding::Key(Key::Space)]),
+            binding_label(&[Binding::key(Key::F), Binding::key(Key::Space)]),
             "F, Spacebar"
         );
     }

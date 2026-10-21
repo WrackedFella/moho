@@ -7,37 +7,110 @@ use std::hash::Hash;
 use crate::key::{Key, MouseButton};
 use crate::pad::PadInput;
 
-/// One physical input that triggers an action.
+/// One physical input.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Binding {
+pub enum Input {
     Key(Key),
     Mouse(MouseButton),
     Pad(PadInput),
 }
 
-impl Binding {
+impl Input {
     pub fn is_pad(self) -> bool {
-        matches!(self, Binding::Pad(_))
+        matches!(self, Input::Pad(_))
     }
 
     /// Persisted name, e.g. `W` or `Mouse Left`.
     pub fn name(self) -> &'static str {
         match self {
-            Binding::Key(key) => key.name(),
-            Binding::Mouse(button) => button.name(),
-            Binding::Pad(input) => input.name(),
+            Input::Key(key) => key.name(),
+            Input::Mouse(button) => button.name(),
+            Input::Pad(input) => input.name(),
         }
     }
 
     /// Text shown to the player, e.g. `Spacebar` or `Mouse Left`.
     pub fn label(self) -> &'static str {
         match self {
-            Binding::Key(key) => key.label(),
-            Binding::Mouse(button) => button.name(),
-            Binding::Pad(input) => input.name(),
+            Input::Key(key) => key.label(),
+            Input::Mouse(button) => button.name(),
+            Input::Pad(input) => input.name(),
         }
     }
 }
+
+/// When a binding fires: on press, or once its input has been down for the action's hold threshold.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Trigger {
+    Press,
+    Hold,
+}
+
+/// One input and when it triggers an action.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Binding {
+    pub input: Input,
+    pub trigger: Trigger,
+}
+
+impl Binding {
+    pub const fn key(key: Key) -> Self {
+        Self::press(Input::Key(key))
+    }
+
+    pub const fn mouse(button: MouseButton) -> Self {
+        Self::press(Input::Mouse(button))
+    }
+
+    pub const fn pad(input: PadInput) -> Self {
+        Self::press(Input::Pad(input))
+    }
+
+    const fn press(input: Input) -> Self {
+        Self {
+            input,
+            trigger: Trigger::Press,
+        }
+    }
+
+    /// The same input, firing once it has been down for the action's hold threshold.
+    pub const fn held(self) -> Self {
+        Self {
+            trigger: Trigger::Hold,
+            ..self
+        }
+    }
+
+    pub fn is_pad(self) -> bool {
+        self.input.is_pad()
+    }
+
+    /// Persisted name: the input's, prefixed by `Hold ` for a hold binding.
+    pub fn name(self) -> String {
+        self.decorate(self.input.name())
+    }
+
+    /// Text shown to the player: the input's label, prefixed by `Hold ` for a hold binding.
+    pub fn label(self) -> String {
+        self.decorate(self.input.label())
+    }
+
+    fn decorate(self, text: &str) -> String {
+        match self.trigger {
+            Trigger::Press => text.to_string(),
+            Trigger::Hold => format!("Hold {text}"),
+        }
+    }
+}
+
+impl From<Input> for Binding {
+    fn from(input: Input) -> Self {
+        Self::press(input)
+    }
+}
+
+/// Ticks an input must stay down before a `Hold` binding fires, unless the action overrides it.
+pub const DEFAULT_HOLD_TICKS: u32 = 18;
 
 /// A game's action enum: stable names and default bindings, as data.
 pub trait Action: Copy + Eq + Hash + Debug + 'static {
@@ -48,6 +121,9 @@ pub trait Action: Copy + Eq + Hash + Debug + 'static {
     fn name(self) -> &'static str;
 
     fn default_bindings(self) -> &'static [Binding];
+
+    /// Ticks an input must stay down before this action's `Hold` bindings fire; at least 1.
+    const HOLD_TICKS: u32 = DEFAULT_HOLD_TICKS;
 }
 
 /// A line of the `[bindings]` section that could not be used.
@@ -127,9 +203,9 @@ fn parse_list(value: &str) -> Option<Vec<Binding>> {
         .map(|item| {
             let item = item.trim();
             Key::parse(item)
-                .map(Binding::Key)
-                .or_else(|| MouseButton::parse(item).map(Binding::Mouse))
-                .or_else(|| PadInput::parse(item).map(Binding::Pad))
+                .map(Binding::key)
+                .or_else(|| MouseButton::parse(item).map(Binding::mouse))
+                .or_else(|| PadInput::parse(item).map(Binding::pad))
         })
         .collect()
 }
@@ -169,8 +245,8 @@ mod tests {
 
         fn default_bindings(self) -> &'static [Binding] {
             match self {
-                TestAction::MoveForward => &[Binding::Key(Key::W)],
-                TestAction::Jump => &[Binding::Key(Key::Space)],
+                TestAction::MoveForward => const { &[Binding::key(Key::W)] },
+                TestAction::Jump => const { &[Binding::key(Key::Space)] },
             }
         }
     }
@@ -194,7 +270,7 @@ mod tests {
     }
 
     fn keys(keys: &[Key]) -> Vec<Binding> {
-        keys.iter().map(|&k| Binding::Key(k)).collect()
+        keys.iter().map(|&k| Binding::key(k)).collect()
     }
 
     #[test]
@@ -236,8 +312,8 @@ mod tests {
 
     #[test]
     fn label_is_the_key_label_or_the_mouse_button_name() {
-        assert_eq!(Binding::Key(Key::Space).label(), "Spacebar");
-        assert_eq!(Binding::Mouse(MouseButton::Left).label(), "Mouse Left");
+        assert_eq!(Binding::key(Key::Space).label(), "Spacebar");
+        assert_eq!(Binding::mouse(MouseButton::Left).label(), "Mouse Left");
     }
 
     #[test]
@@ -252,7 +328,7 @@ mod tests {
             let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
             bindings.set(
                 TestAction::Jump,
-                vec![Binding::Key(Key::F), Binding::Mouse(button)],
+                vec![Binding::key(Key::F), Binding::mouse(button)],
             );
 
             let written = bindings.to_section();
@@ -262,7 +338,7 @@ mod tests {
             assert_eq!(warnings, vec![], "{name}");
             assert_eq!(
                 restored.get(TestAction::Jump),
-                [Binding::Key(Key::F), Binding::Mouse(button)],
+                [Binding::key(Key::F), Binding::mouse(button)],
                 "{name}"
             );
         }
@@ -288,7 +364,7 @@ mod tests {
             let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
             bindings.set(
                 TestAction::Jump,
-                vec![Binding::Key(Key::F), Binding::Pad(input)],
+                vec![Binding::key(Key::F), Binding::pad(input)],
             );
 
             let written = bindings.to_section();
@@ -298,10 +374,10 @@ mod tests {
             assert_eq!(warnings, vec![], "{name}");
             assert_eq!(
                 restored.get(TestAction::Jump),
-                [Binding::Key(Key::F), Binding::Pad(input)],
+                [Binding::key(Key::F), Binding::pad(input)],
                 "{name}"
             );
-            assert_eq!(Binding::Pad(input).name(), name);
+            assert_eq!(Binding::pad(input).name(), name);
         }
     }
 
@@ -316,13 +392,13 @@ mod tests {
         assert_eq!(
             bindings.get(TestAction::Jump),
             [
-                Binding::Pad(PadInput::Button(PadButton::South)),
-                Binding::Pad(PadInput::Button(PadButton::DPadUp)),
+                Binding::pad(PadInput::Button(PadButton::South)),
+                Binding::pad(PadInput::Button(PadButton::DPadUp)),
             ]
         );
         assert_eq!(
             bindings.get(TestAction::MoveForward),
-            [Binding::Pad(PadInput::Stick(
+            [Binding::pad(PadInput::Stick(
                 Stick::LeftStick,
                 StickDir::Up
             ))]
@@ -358,14 +434,14 @@ mod tests {
             assert_eq!(warnings, vec![], "{raw:?}");
             assert_eq!(
                 bindings.get(TestAction::Jump),
-                [Binding::Key(Key::Space)],
+                [Binding::key(Key::Space)],
                 "{raw:?}"
             );
         }
         let (bindings, _) = ActionBindings::<TestAction>::load(&section(&[("jump", "F")]));
         assert_eq!(
             bindings.get(TestAction::MoveForward),
-            [Binding::Key(Key::W)]
+            [Binding::key(Key::W)]
         );
     }
 
