@@ -101,9 +101,10 @@ impl<G> UiShell<G> {
         &mut self.console
     }
 
-    /// Queues `text` for the next `ui_frame`, which paints it and clears the queue.
-    pub fn draw_text(&mut self, text: ScreenText) {
-        self.texts.push(text);
+    /// Replaces the text the next `ui_frame` paints; that frame clears it. Call once per
+    /// `Game::frame` with everything to show, so a frame the renderer skips leaves no stale text.
+    pub fn set_texts(&mut self, texts: Vec<ScreenText>) {
+        self.texts = texts;
     }
 
     fn feed_egui(&mut self, event: &WindowEvent) {
@@ -315,27 +316,55 @@ mod tests {
     }
 
     #[test]
-    fn queued_text_yields_meshes_on_the_font_texture() {
+    fn set_text_yields_meshes_on_the_font_texture() {
         let mut shell = shell();
-        shell.draw_text(ammo());
+        shell.set_texts(vec![ammo()]);
 
         let frame = shell.ui_frame([800, 600]);
 
-        let frame = frame.expect("queued text draws a frame with the console closed");
+        let frame = frame.expect("set text draws a frame with the console closed");
         assert!(!frame.meshes.is_empty());
         assert!(!frame.textures_set.is_empty());
         assert!(frame.meshes.iter().all(|m| !m.vertices.is_empty()));
+        assert!(
+            frame
+                .meshes
+                .iter()
+                .all(|m| frame.textures_set.iter().any(|s| s.id == m.texture))
+        );
     }
 
     #[test]
-    fn queued_text_is_cleared_by_the_frame_that_paints_it() {
+    fn set_text_is_cleared_by_the_frame_that_paints_it() {
         let mut shell = shell();
-        shell.draw_text(ammo());
+        shell.set_texts(vec![ammo()]);
         assert!(shell.ui_frame([800, 600]).is_some());
 
         let next = shell.ui_frame([800, 600]);
 
         assert_eq!(next, None);
+    }
+
+    #[test]
+    fn a_skipped_frame_leaves_only_the_latest_text() {
+        let mut fresh = shell();
+        let mut shell = shell();
+        let latest = ScreenText {
+            text: "29 / 30".to_owned(),
+            ..ammo()
+        };
+        shell.set_texts(vec![ScreenText {
+            text: "30 / 30".to_owned(),
+            ..ammo()
+        }]);
+        shell.set_texts(vec![latest.clone()]);
+        fresh.set_texts(vec![latest]);
+
+        let frame = shell.ui_frame([800, 600]).expect("the latest text draws");
+
+        let expected = fresh.ui_frame([800, 600]).expect("the fresh shell draws");
+        assert!(!frame.meshes.is_empty());
+        assert_eq!(frame.meshes, expected.meshes);
     }
 
     fn text_of(text: &str, anchor: crate::text::Anchor) -> ScreenText {
@@ -349,24 +378,26 @@ mod tests {
     }
 
     #[test]
-    fn every_text_queued_this_frame_is_drawn() {
+    fn every_text_set_this_frame_is_drawn() {
         use crate::text::Anchor;
         let mut shell = shell();
-        shell.draw_text(text_of("alpha", Anchor::TopLeft));
-        shell.draw_text(text_of("bravo", Anchor::Top));
-        shell.draw_text(text_of("charlie", Anchor::BottomRight));
+        shell.set_texts(vec![
+            text_of("alpha", Anchor::TopLeft),
+            text_of("bravo", Anchor::Top),
+            text_of("charlie", Anchor::BottomRight),
+        ]);
 
         let frame = shell.ui_frame([800, 600]);
 
-        let frame = frame.expect("queued texts draw a frame");
+        let frame = frame.expect("set texts draw a frame");
         assert!(!frame.meshes.is_empty());
         assert!(frame.meshes.iter().all(|m| !m.vertices.is_empty()));
     }
 
     #[test]
-    fn queued_text_clears_when_the_console_is_open_too() {
+    fn set_text_clears_when_the_console_is_open_too() {
         let mut shell = shell();
-        shell.draw_text(ammo());
+        shell.set_texts(vec![ammo()]);
         shell.console_mut().open();
         assert!(shell.ui_frame([800, 600]).is_some());
         shell.console_mut().close();
@@ -377,24 +408,30 @@ mod tests {
     }
 
     #[test]
-    fn degenerate_sizes_do_not_panic_the_frame() {
+    fn degenerate_sizes_draw_no_meshes_and_do_not_panic_the_frame() {
         for size in [0.0, -5.0, f32::NAN] {
             let mut shell = shell();
-            shell.draw_text(ScreenText { size, ..ammo() });
+            shell.set_texts(vec![ScreenText { size, ..ammo() }]);
 
-            let _ = shell.ui_frame([800, 600]);
+            let frame = shell.ui_frame([800, 600]);
+
+            let frame = frame.expect("a set text still runs the frame");
+            assert!(frame.meshes.is_empty(), "size {size} painted meshes");
         }
     }
 
     #[test]
-    fn empty_text_does_not_panic_the_frame() {
+    fn empty_text_draws_no_meshes_and_does_not_panic_the_frame() {
         let mut shell = shell();
-        shell.draw_text(ScreenText {
+        shell.set_texts(vec![ScreenText {
             text: String::new(),
             ..ammo()
-        });
+        }]);
 
-        let _ = shell.ui_frame([800, 600]);
+        let frame = shell.ui_frame([800, 600]);
+
+        let frame = frame.expect("a set text still runs the frame");
+        assert!(frame.meshes.is_empty());
     }
 
     #[test]

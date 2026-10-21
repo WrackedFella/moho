@@ -47,14 +47,18 @@ fn align(anchor: Anchor) -> egui::Align2 {
 }
 
 /// Paints `texts` on the background layer, under the console.
-pub fn paint(ctx: &egui::Context, texts: &[ScreenText]) {
+pub(crate) fn paint(ctx: &egui::Context, texts: &[ScreenText]) {
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Background,
         egui::Id::new("moho_ui_shell_screen_text"),
     ));
     let screen = ctx.content_rect();
-    // egui asserts on a font size that is not finite and positive; such a text has nothing to show.
-    for t in texts.iter().filter(|t| t.size.is_finite() && t.size > 0.0) {
+    for t in texts {
+        // egui asserts on a font size that is not finite and positive.
+        if !(t.size.is_finite() && t.size > 0.0) {
+            tracing::warn!(text = %t.text, size = t.size, "screen text skipped: size is not finite and positive");
+            continue;
+        }
         let [r, g, b, a] = t.color;
         let align = align(t.anchor);
         painter.text(

@@ -56,7 +56,7 @@ with no engine dependency. `searchlight` is the only searchlight-line crate that
 plus the `searchlight` binary, described in [Searchlight](searchlight.md). Every shot resolves
 through one path (ray, surface tag, part, rule call) for player and enemy alike
 ([ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md)).
-`moho_ui_shell` is the engine's only egui-facing crate: the console every game opens and adds commands to, the egui host that draws it, and the screen text a game queues each frame (`UiShell::draw_text` with `ScreenText` and `Anchor`, `moho_ui_shell/src/text.rs`; painted under the console, cleared by the frame that paints it) ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
+`moho_ui_shell` is the engine's only egui-facing crate: the console every game opens and adds commands to, the egui host that draws it, and the screen text a game queues each frame (`UiShell::set_texts` with `ScreenText` and `Anchor`, `moho_ui_shell/src/text.rs`; each call replaces the list, painted under the console and cleared by the frame that paints it) ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
 `moho_app` owns the window and winit event loop; the binary implements its `Game` trait and hands it
 to `moho_app::run` ([frame loop](frame-loop.md)).
 
