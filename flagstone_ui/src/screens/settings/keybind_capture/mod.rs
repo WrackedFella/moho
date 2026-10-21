@@ -276,6 +276,70 @@ mod tests {
         assert!(changes.contains(&(StrategyAction::Sprint, vec![Binding::key(Key::A), THUMB])));
     }
 
+    const FORWARD_PAD: Binding = Binding::pad(PadInput::Stick(Stick::LeftStick, StickDir::Up));
+
+    /// Descend holds Ctrl by default; freeing it lets Ctrl be captured without a conflict.
+    fn registry_without_ctrl_holder() -> BindingRegistry {
+        let mut registry = registry();
+        registry.set_binding(StrategyAction::Descend, vec![Binding::key(Key::Z)]);
+        registry
+    }
+
+    #[test]
+    fn modifier_only_capture_applies() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry_without_ctrl_holder();
+        let mut changed = vec![];
+        handler.start_listening(0);
+
+        let applied = handler.capture_modifier_if_listening(1, &bindings, |action, b| {
+            changed.push((action, b));
+        });
+
+        assert!(applied, "modifier capture should apply");
+        assert!(!handler.is_listening());
+        assert_eq!(
+            changed,
+            vec![(
+                StrategyAction::MoveForward,
+                vec![Binding::key(Key::Ctrl), FORWARD_PAD]
+            )]
+        );
+    }
+
+    #[test]
+    fn modifier_only_conflict_shows_modal() {
+        let mut handler = KeybindCaptureHandler::new();
+        let mut bindings = registry_without_ctrl_holder();
+        bindings.set_binding(StrategyAction::MoveLeft, vec![Binding::key(Key::Ctrl)]);
+        handler.start_listening(0);
+
+        let applied = handler.capture_modifier_if_listening(1, &bindings, |_, _| {});
+
+        assert!(applied, "modifier conflict should be processed");
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Move Left".to_string(), "Ctrl".to_string()))
+        );
+    }
+
+    #[test]
+    fn modifier_multiple_mods_ignored() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry();
+        let mut changed = vec![];
+        handler.start_listening(0);
+
+        // ctrl+shift (bits 1 and 2) is not a modifier-only binding
+        let applied = handler.capture_modifier_if_listening(3, &bindings, |action, b| {
+            changed.push((action, b));
+        });
+
+        assert!(!applied, "combined modifiers should not be captured");
+        assert!(handler.is_listening());
+        assert!(changed.is_empty());
+    }
+
     #[test]
     fn new_handler_has_no_pending_binding() {
         assert!(!KeybindCaptureHandler::new().has_pending_binding());

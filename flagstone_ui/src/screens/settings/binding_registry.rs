@@ -150,6 +150,24 @@ mod tests {
     }
 
     #[test]
+    fn find_conflict_ignores_a_hold_on_the_key() {
+        let mut registry = registry();
+        registry.set_binding(
+            StrategyAction::MoveForward,
+            vec![Binding::key(Key::W), Binding::key(Key::R).held()],
+        );
+
+        assert_eq!(
+            registry.find_conflict(Key::R, StrategyAction::MoveLeft),
+            None
+        );
+        assert_eq!(
+            registry.find_conflict(Key::W, StrategyAction::MoveLeft),
+            Some(StrategyAction::MoveForward)
+        );
+    }
+
+    #[test]
     fn unbound_row_conflicts_with_nothing() {
         let mut registry = registry();
         registry.set_binding(StrategyAction::MoveForward, vec![]);

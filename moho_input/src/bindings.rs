@@ -513,6 +513,83 @@ mod tests {
     }
 
     #[test]
+    fn hold_bindings_round_trip() {
+        let held = [
+            (Binding::key(Key::R).held(), "Hold R"),
+            (
+                Binding::mouse(MouseButton::Right).held(),
+                "Hold Mouse Right",
+            ),
+            (
+                Binding::pad(PadInput::Button(PadButton::West)).held(),
+                "Hold Pad West",
+            ),
+        ];
+
+        for (binding, name) in held {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("prefs.ini");
+            let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+            bindings.set(TestAction::Jump, vec![Binding::key(Key::F), binding]);
+            let mut prefs = Prefs::default();
+            prefs.set_bindings(bindings.to_section());
+            std::fs::write(&path, prefs.to_ini_string()).unwrap();
+
+            let (reloaded, prefs_warnings) = Prefs::load_from(&path);
+            let (restored, binding_warnings) =
+                ActionBindings::<TestAction>::load(reloaded.bindings());
+
+            assert_eq!(binding.name(), name);
+            assert_eq!(bindings.to_section()["jump"], format!("F, {name}"));
+            assert_eq!(prefs_warnings, vec![], "{name}");
+            assert_eq!(binding_warnings, vec![], "{name}");
+            assert_eq!(
+                restored.get(TestAction::Jump),
+                [Binding::key(Key::F), binding],
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn hold_prefix_is_case_insensitive_and_distinct_from_the_plain_input() {
+        let (bindings, warnings) =
+            ActionBindings::<TestAction>::load(&section(&[("jump", "hold r, HOLD Space, R")]));
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(
+            bindings.get(TestAction::Jump),
+            [
+                Binding::key(Key::R).held(),
+                Binding::key(Key::Space).held(),
+                Binding::key(Key::R),
+            ]
+        );
+        assert_ne!(Binding::key(Key::R), Binding::key(Key::R).held());
+    }
+
+    #[test]
+    fn hold_label_prefixes_the_input_label() {
+        assert_eq!(Binding::key(Key::Space).held().label(), "Hold Spacebar");
+        assert_eq!(
+            Binding::mouse(MouseButton::Left).held().label(),
+            "Hold Mouse Left"
+        );
+    }
+
+    #[test]
+    fn bad_hold_value_warns_and_keeps_default() {
+        for bad in ["Hold Nonsense", "Hold", "Hold Hold R"] {
+            let (bindings, warnings) =
+                ActionBindings::<TestAction>::load(&section(&[("jump", bad)]));
+
+            let names: Vec<_> = warnings.iter().map(|w| w.name.as_str()).collect();
+            assert_eq!(names, ["jump"], "{bad}");
+            assert_defaults_except(&bindings, &[]);
+        }
+    }
+
+    #[test]
     fn unbound_leaves_action_without_binding() {
         for spelling in ["Unbound", "unbound", "UNBOUND", ""] {
             let (bindings, warnings) =

@@ -95,6 +95,8 @@ pub fn rebind_key(existing: &[Binding], key: Key) -> Vec<Binding> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moho_input::key::MouseButton;
+    use moho_input::pad::{PadButton, PadInput};
 
     #[test]
     fn every_mapped_egui_key_maps_to_its_key() {
@@ -184,6 +186,32 @@ mod tests {
         assert_eq!(lone_modifier_key(4), Some(Key::Alt));
         assert_eq!(lone_modifier_key(0), None);
         assert_eq!(lone_modifier_key(3), None);
+    }
+
+    #[test]
+    fn rebind_key_keeps_hold_and_pad_bindings() {
+        let west = Binding::pad(PadInput::Button(PadButton::West));
+        let south = Binding::pad(PadInput::Button(PadButton::South));
+        let existing = [
+            Binding::key(Key::Shift),
+            Binding::key(Key::Q).held(),
+            south,
+            Binding::mouse(MouseButton::Right),
+            west.held(),
+        ];
+
+        let rebound = rebind_key(&existing, Key::E);
+
+        assert_eq!(
+            rebound,
+            [
+                Binding::key(Key::E),
+                Binding::key(Key::Q).held(),
+                south,
+                west.held()
+            ]
+        );
+        assert_eq!(binding_label(&rebound), "E, Hold Q");
     }
 
     #[test]

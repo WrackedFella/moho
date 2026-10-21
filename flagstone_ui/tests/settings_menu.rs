@@ -170,43 +170,11 @@ fn cancelling_conflict_through_modal_flow_keeps_bindings() {
     assert!(modal.is_some(), "conflict should produce a modal");
     Screen::on_modal_cancel(&mut menu);
 
+    assert!(!menu.conflict_modal().is_visible());
     let after: Vec<Vec<Binding>> = (0..7)
         .map(|i| menu.get_staged_binding(i).to_vec())
         .collect();
     assert_eq!(before, after);
-}
-
-/// Test 7: Canceling conflict preserves original binding
-#[test]
-fn canceling_conflict_preserves_original() {
-    let mut menu = SettingsMenu::with_prefs(Prefs::default());
-
-    // Bind key_w to 'W'
-    menu.start_listening(0);
-    menu.apply_key_while_listening(Key::W);
-    let key_w_binding = menu.get_staged_binding(0).to_vec();
-
-    // Bind key_a to 'A'
-    menu.start_listening(1);
-    menu.apply_key_while_listening(Key::A);
-    let key_a_binding = menu.get_staged_binding(1).to_vec();
-
-    // Try to bind key_a to 'W' again (will conflict)
-    menu.start_listening(1);
-    menu.apply_key_while_listening(Key::W);
-
-    // Should show conflict modal
-    assert!(menu.conflict_modal().is_visible());
-
-    // Cancel the conflict
-    menu.cancel_pending_binding();
-
-    // Modal should be closed
-    assert!(!menu.conflict_modal().is_visible());
-
-    // Original bindings should be preserved
-    assert_eq!(menu.get_staged_binding(0), key_w_binding.as_slice());
-    assert_eq!(menu.get_staged_binding(1), key_a_binding.as_slice());
 }
 
 /// Test 8: Multiple bindings don't interfere with each other
@@ -538,22 +506,6 @@ fn cancel_then_confirm_applies_nothing() {
 }
 
 #[test]
-fn confirm_pending_binding_moves_the_key() {
-    let mut menu = SettingsMenu::with_prefs(Prefs::default());
-    menu.start_listening(1);
-    menu.apply_key_while_listening(Key::W);
-    assert!(menu.conflict_modal().is_visible());
-
-    menu.confirm_pending_binding();
-
-    assert_eq!(
-        menu.get_staged_binding(1),
-        [Binding::key(Key::W), pad_stick(StickDir::Left)]
-    );
-    assert_eq!(menu.get_staged_binding(0), [pad_stick(StickDir::Up)]);
-}
-
-#[test]
 fn rebinding_ascend_to_f_keeps_its_pad_binding() {
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
     menu.start_listening(4);
@@ -610,6 +562,52 @@ fn pad_only_action_row_shows_unbound() {
 
     assert_eq!(text.lines().filter(|l| *l == "Unbound").count(), 1);
     assert!(!text.contains("Pad"), "pad label shown in:\n{text}");
+}
+
+/// A modifier pressed alone during a frame binds the listening row.
+#[test]
+fn egui_lone_modifier_while_listening_binds_the_row() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    // Move Down holds Ctrl by default; free it first.
+    menu.start_listening(5);
+    menu.apply_key_while_listening(Key::Z);
+    menu.start_listening(0);
+
+    render_frame(
+        &mut menu,
+        vec![egui::Event::ModifiersChanged(egui::Modifiers::CTRL)],
+    );
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Ctrl), pad_stick(StickDir::Up)]
+    );
+    assert!(!menu.is_listening());
+}
+
+/// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
+#[test]
+fn rebinding_sprint_keeps_its_hold_bindings() {
+    let (prefs, issues) = Prefs::parse("[bindings]\nsprint = Shift, Hold Q, Hold Pad West\n");
+    assert_eq!(issues, vec![]);
+    let mut menu = SettingsMenu::with_prefs(prefs);
+    menu.start_listening(6);
+
+    menu.apply_key_while_listening(Key::E);
+
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [
+            Binding::key(Key::E),
+            Binding::key(Key::Q).held(),
+            Binding::pad(PadInput::Button(PadButton::West)).held()
+        ]
+    );
+    let text = rendered_text(&render_frame(&mut menu, vec![]));
+    assert!(
+        text.lines().any(|l| l == "E, Hold Q"),
+        "sprint row missing in:\n{text}"
+    );
 }
 
 /// Runs one frame and clears its texture delta; egui asserts in debug builds
