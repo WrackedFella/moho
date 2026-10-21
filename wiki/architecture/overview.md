@@ -122,8 +122,11 @@ Changes from today:
 
 - Scene import (ENG-F14) is its own crate, `moho_level`: a headless server needs level
   collision without linking `wgpu` or `winit`.
-- Navigation (ENG-F17) and the character controller and camera (ENG-F21) are modules of
-  an engine crate unless their specs name a boundary.
+- Navigation (`moho_level::NavMesh`: walkable polygons built from world meshes for an
+  `AgentProfile`, and corner paths between points) is a module of `moho_level`
+  ([ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md)). The character
+  controller and camera (ENG-F21) are modules of an engine crate unless their specs name a
+  boundary.
 
 The searchlight line sits beside the flagstone line and depends only on engine crates.
 
@@ -131,7 +134,8 @@ The searchlight line sits beside the flagstone line and depends only on engine c
 
 The public APIs the [ENG-F5](https://github.com/WrackedFella/moho/issues/232)
 gate holds fixed: game plug-in interface, world-geometry contract, action map, physics
-queries, spatial audio, content roots, save envelope, scene import. Adding or changing
+queries, spatial audio, content roots, save envelope, scene import, navigation
+([ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md)). Adding or changing
 one is an ADR-level change.
 
 ## Fixed-step loop (`moho_app`)
