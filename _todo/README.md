@@ -57,6 +57,9 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 | [ENG-F29 Light reads true in caves, at night and under open sky](https://github.com/WrackedFella/moho/issues/479) |
 | [ENG-F30 Light bounces off what's around it](https://github.com/WrackedFella/moho/issues/480) |
 | [ENG-F31 Mirrors and water reflect the world](https://github.com/WrackedFella/moho/issues/481) |
+| [ENG-F32 Movement keeps its momentum and its footing](https://github.com/WrackedFella/moho/issues/491) |
+| [ENG-F33 Movement rules are game data](https://github.com/WrackedFella/moho/issues/492) |
+| [ENG-F34 Characters and bodies move each other](https://github.com/WrackedFella/moho/issues/493) |
 
 ## flagstone/
 
