@@ -8,12 +8,15 @@
 #   <!-- board: gate=domain; eligible=yes; priority=P2 -->
 # Keys: gate -> Gate class, eligible -> Agent-eligible, priority -> Priority. Values match
 # the board's option names case-insensitively. Unknown keys and values are errors, so a
-# typo fails the run instead of silently leaving a field unset. Status is set to Backlog
-# only when the item has none; Ready and every later Status stay with the human and
-# board-sync.sh. Three requests per card at most: project, add-and-read, one batched update.
+# typo fails the run instead of silently leaving a field unset. Status moves to Ready when
+# the body carries a tech spec and the header a gate (board-lib.sh), and to Backlog when
+# the item has none; it never moves back, and every later Status stays with board-sync.sh.
+# Three requests per card at most: project, add-and-read, one batched update.
 #
 # Needs GH_TOKEN (classic PAT with repo + project scopes).
 set -euo pipefail
+# shellcheck source=board-lib.sh
+source "$(dirname "$0")/board-lib.sh"
 
 owner=WrackedFella
 number=1
@@ -53,8 +56,13 @@ item=$(gh api graphql -f c="$node" -f p="$pid" -f query='
 iid=$(jq -r .id <<<"$item")
 current() { jq -r --arg f "$1" '[.fieldValues.nodes[] | select(.field.name==$f) | .name][0] // ""' <<<"$item"; }
 
-# Fields to set, with Status defaulting to Backlog on an item that has none.
-[[ -n $(current Status) ]] || want["Status"]=Backlog
+status=$(current Status)
+if [[ -v want["Gate class"] ]] && (($(rank "$status") < $(rank Ready))) \
+  && grep -qE "$spec_heading_re" <<<"${ISSUE_BODY:-}"; then
+  want["Status"]=Ready
+elif [[ -z $status ]]; then
+  want["Status"]=Backlog
+fi
 
 mutation='mutation($p:ID!,$i:ID!'
 vars=()

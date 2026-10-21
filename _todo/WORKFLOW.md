@@ -39,8 +39,10 @@ resolve threads; a feature is planned by a human before agents implement any of 
 
 Board Status is the record of item state and moves by event (Board sync workflow, secret
 `BOARD_TOKEN`): `agent-ready` on a work item or a draft PR → In progress; PR ready for
-review → In review; merged PR or closed issue → Done. Status only moves forward. Ready
-and Agent-eligible are set by a human.
+review → In review; merged PR or closed issue → Done; an issue body with a `Tech spec`
+heading and a board header naming the gate → Ready. Status only moves forward. Running
+the workflow by hand (Backfill, dry run by default) moves every item to the Status its
+issue implies. Agent-eligible is set by a human, through the card's board header.
 
 ## Todo
 
