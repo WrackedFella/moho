@@ -63,19 +63,18 @@ impl Action for SearchlightAction {
     }
 }
 
-/// Source sensitivity used when the saved one is unusable.
-const DEFAULT_SENSITIVITY: f32 = 3.0;
-
-/// The look settings `prefs` ask for.
-///
-/// A sensitivity that is not above zero would freeze or reverse the view, so it counts as
-/// unreadable and uses the default; smoothing and invert Y are unaffected.
+/// Look settings from `prefs`. A sensitivity not above zero would freeze or reverse the
+/// view, so it falls back to the preferences default; smoothing and invert Y are unaffected.
 pub fn look_settings(prefs: &Prefs) -> LookSettings {
-    let sensitivity = prefs.mouse_sensitivity();
-    let sensitivity = if sensitivity > 0.0 {
-        sensitivity
+    let saved = prefs.mouse_sensitivity();
+    let sensitivity = if saved > 0.0 {
+        saved
     } else {
-        DEFAULT_SENSITIVITY
+        tracing::warn!(
+            saved,
+            "Mouse sensitivity must be above zero; using the default"
+        );
+        Prefs::default().mouse_sensitivity()
     };
     LookSettings {
         look_per_count: source_look_per_count(sensitivity),
