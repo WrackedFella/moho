@@ -862,6 +862,7 @@ proptest! {
     fn prop_chunks_arriving_in_any_order_match_a_fresh_fill(
         per_chunk in proptest::collection::vec(random_blocks(), REGION_CHUNKS),
         order in Just((0..REGION_CHUNKS).collect::<Vec<usize>>()).prop_shuffle(),
+        batch_sizes in proptest::collection::vec(1usize..=6, REGION_CHUNKS),
     ) {
         // Every chunk holds a transparent marker so none is an absent all-air chunk.
         let mut reference = region_grid();
@@ -881,12 +882,25 @@ proptest! {
             Arc::new(EventBus::new()),
             LightFrameBudget::default(),
         );
-        for index in order {
-            let chunk = region_chunk(index);
-            light_system.grid_mut().deserialize_chunk_into(chunk, &bytes[index]).unwrap();
-            light_system.light_arrived_chunks(&[chunk]);
+        let mut remaining = order.as_slice();
+        for size in batch_sizes {
+            if remaining.is_empty() {
+                break;
+            }
+            let (batch, rest) = remaining.split_at(size.min(remaining.len()));
+            remaining = rest;
+            let mut chunks = Vec::new();
+            for &index in batch {
+                let chunk = region_chunk(index);
+                light_system
+                    .grid_mut()
+                    .deserialize_chunk_into(chunk, &bytes[index])
+                    .unwrap();
+                chunks.push(chunk);
+            }
+            light_system.light_arrived_chunks(&chunks);
         }
-        light_system.process_frame();
+        prop_assert!(remaining.is_empty(), "every chunk arrived");
 
         LightPropagator::new().flood_fill_block_lights(&mut reference);
         for layer in (0..REGION_Y).rev() {

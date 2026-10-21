@@ -702,4 +702,31 @@ mod tests {
         );
         assert!(received.lock().unwrap().contains(&wall_chunk));
     }
+
+    #[test]
+    fn arrival_refreshes_sky_exposure_without_a_frame() {
+        let (mut light_system, _received) = unbounded_system();
+        let below = IVec3::ZERO;
+        let above = IVec3::new(0, 1, 0);
+        arrive(&mut light_system, below, |donor| {
+            donor.mutator().place(IVec3::new(8, 2, 8), 0, None);
+        });
+        assert!(
+            light_system.grid().sky_exposed_at(IVec3::new(1, 5, 1)),
+            "open air in an arrived chunk sees the sky"
+        );
+
+        arrive(&mut light_system, above, |donor| {
+            donor.mutator().place(IVec3::new(1, 20, 1), 0, None);
+        });
+
+        let grid = light_system.grid();
+        assert!(
+            !grid.sky_exposed_at(IVec3::new(1, 5, 1)),
+            "the arriving roof shades the chunk below"
+        );
+        assert!(grid.sky_exposed_at(IVec3::new(1, 25, 1)));
+        assert!(grid.sky_exposed_at(IVec3::new(8, 18, 8)));
+        assert!(!grid.sky_exposed_at(IVec3::new(1, 18, 1)));
+    }
 }

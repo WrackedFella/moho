@@ -812,6 +812,51 @@ mod tests {
     }
 
     #[test]
+    fn placed_and_batch_modified_events_reach_the_light_system() {
+        let mut app = App::headless();
+        let placed_at = flagstone_voxel::BlockPos::new(3, 70, 3);
+        let batch = [
+            flagstone_voxel::BlockPos::new(20, 70, 3),
+            flagstone_voxel::BlockPos::new(21, 70, 3),
+            flagstone_voxel::BlockPos::new(40, 70, 3),
+        ];
+        let light_system = app.light_system.as_mut().expect("light system");
+        let grid = light_system.grid_mut();
+        for pos in &batch[..2] {
+            grid.mutator().place(*pos, 1, None);
+        }
+        for pos in [placed_at, batch[0], batch[1], batch[2]] {
+            grid.set_block_light_rgb(pos, [10, 0, 0]);
+        }
+        let _ = app.world_event_rx.try_iter().count();
+        app.event_bus.publish(WorldEvent::BlockPlaced {
+            position: placed_at,
+            material_id: 1,
+            reason: BlockChangeReason::Player,
+        });
+        app.event_bus.publish(WorldEvent::BlocksBatchModified {
+            chunk_pos: glam::IVec3::new(1, 4, 0),
+            positions: batch.to_vec(),
+            reason: BlockChangeReason::Explosion,
+        });
+
+        EventProcessor::new().process_world_events(&mut app);
+
+        let light_system = app.light_system.as_mut().expect("light system");
+        assert_eq!(
+            light_system.pending_jobs(),
+            3,
+            "one for the opaque placement, one per batched block, none for the empty position"
+        );
+        assert_eq!(light_system.process_frame(), 3);
+        let grid = light_system.grid();
+        for pos in [placed_at, batch[0], batch[1]] {
+            assert_eq!(grid.block_light_rgb_at(pos), [0, 0, 0], "{pos} cleared");
+        }
+        assert_eq!(grid.block_light_rgb_at(batch[2]), [10, 0, 0]);
+    }
+
+    #[test]
     fn duplicate_mesh_dirty_events_mesh_a_chunk_once() {
         let chunk_pos = glam::IVec3::new(0, 4, 0);
         let meshed_collider = |dirty_flags: &[(bool, bool)]| {
