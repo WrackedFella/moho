@@ -280,7 +280,6 @@ fn settle(state: &mut CharacterState, slid: &Slide, walking: bool) {
 mod tests {
     use super::*;
     use crate::world::test_support::test_settings;
-    use glam::Vec2;
     use proptest::prelude::*;
 
     const DT: f32 = 1.0 / 60.0;
@@ -508,8 +507,11 @@ mod tests {
             }
         }
 
-        /// The factor friction scales horizontal velocity by in one tick.
+        /// The factor friction scales horizontal velocity by in one tick; 1 at rest.
         fn friction_scale(speed: f32, settings: &MoveSettings) -> f32 {
+            if speed <= 0.0 {
+                return 1.0;
+            }
             let drop = speed.max(settings.stop_speed) * settings.friction * DT;
             (speed - drop).max(0.0) / speed
         }
@@ -749,11 +751,7 @@ mod tests {
 
             for tick in 0..120 {
                 let before = state.velocity.z;
-                let scale = if before == 0.0 {
-                    1.0
-                } else {
-                    friction_scale(before.abs(), &settings)
-                };
+                let scale = friction_scale(before.abs(), &settings);
                 let slowed = before * scale;
                 let expected =
                     slowed - (settings.ground_accel * DT).min(settings.max_speed + slowed);
@@ -1734,7 +1732,7 @@ mod tests {
         ) {
             let settings = test_settings();
             let command = CharacterCommand { forward, right, ..CharacterCommand::default() };
-            let limit = settings.max_speed * Vec2::new(forward, right).length().min(1.0);
+            let limit = settings.max_speed * forward.hypot(right).min(1.0);
             let mut state = standing();
             state.yaw = yaw;
 
