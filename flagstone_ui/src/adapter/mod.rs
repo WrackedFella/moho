@@ -488,7 +488,7 @@ pub enum GameplayInput {
     /// The pointer moves or leaves the window.
     Motion,
     /// Anything else, keyboard included.
-    Key,
+    Other,
 }
 
 /// Whether egui is given a window event during gameplay: pointer motion and buttons with a
@@ -513,7 +513,7 @@ impl From<&WindowEvent> for GameplayInput {
                 ..
             } => Self::Release,
             WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } => Self::Motion,
-            _ => Self::Key,
+            _ => Self::Other,
         }
     }
 }
@@ -649,11 +649,11 @@ mod tests {
             (GameplayInput::Press, true, true),
             (GameplayInput::Release, true, true),
             (GameplayInput::Motion, true, true),
-            (GameplayInput::Key, true, false),
+            (GameplayInput::Other, true, false),
             (GameplayInput::Press, false, false),
             (GameplayInput::Release, false, false),
             (GameplayInput::Motion, false, false),
-            (GameplayInput::Key, false, false),
+            (GameplayInput::Other, false, false),
         ];
 
         for (input, cursor_free, fed) in rows {
