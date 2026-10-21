@@ -1562,6 +1562,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn coarse_cap_above_the_origin_picks_the_layer_the_probe_is_in() {
+        let chunk = IVec3::new(0, 1, 0);
+        let mut grid = VoxelGrid::new(CHUNK);
+        // Coarse cell row 1 of the chunk: lower layer y 18 is soil, upper layer y 19 stone.
+        grid.place_block(IVec3::new(0, 18, 0), 1, None);
+        grid.place_block(IVec3::new(0, 19, 0), 2, None);
+
+        for (cut, expected) in [(18.5f32, 1), (19.5, 2)] {
+            let mesh = cut_cap_mesh(&grid, chunk, 1, cut);
+
+            let triangles = cap_triangle_materials(&mesh);
+            assert_eq!(triangles.len(), 4, "cut {cut}: a 2x2 square");
+            for (centroid, materials) in triangles {
+                assert_eq!(
+                    materials, [expected; 3],
+                    "cut {cut}: triangle at {centroid:?}"
+                );
+            }
+        }
+    }
+
     /// Material id of corner `k` in `cell_grid` is this plus `k`.
     const CORNER_MATERIAL_BASE: u32 = 10;
     const CELL_ORIGIN: IVec3 = IVec3::new(6, 6, 6);

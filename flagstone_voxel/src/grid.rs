@@ -1068,4 +1068,19 @@ mod tests {
         assert_eq!(registry.face_material(1, Some(9)), 0, "now mapped");
         assert_eq!(registry.face_material(1, None), 1);
     }
+
+    #[test]
+    fn is_empty_is_true_only_without_registered_materials() {
+        let default = MaterialRegistry::new();
+        let none = MaterialRegistry {
+            materials: Vec::new(),
+            lighting: Vec::new(),
+            resource_materials: HashMap::new(),
+        };
+
+        assert!(!default.is_empty());
+        assert_eq!(default.len(), 4);
+        assert!(none.is_empty());
+        assert_eq!(none.len(), 0);
+    }
 }

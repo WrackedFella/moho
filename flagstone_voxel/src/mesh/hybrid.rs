@@ -946,6 +946,25 @@ mod tests {
     }
 
     #[test]
+    fn smooth_triangles_in_a_chunk_off_the_origin_carry_their_own_blocks_material() {
+        let chunk = IVec3::new(1, 1, 0);
+        let grid = grid_with([([20, 20, 4], 2, None), ([21, 20, 4], 1, None)]);
+
+        let mesh = HybridMeshGenerator::generate_chunk_mesh(&grid, chunk, 16);
+
+        let all = triangles(&mesh);
+        let stone: Vec<_> = all.iter().filter(|(c, ..)| c.x < 20.99).collect();
+        let soil: Vec<_> = all.iter().filter(|(c, ..)| c.x > 21.01).collect();
+        assert!(!stone.is_empty() && !soil.is_empty());
+        for (c, _, materials) in stone {
+            assert_eq!(*materials, [2; 3], "triangle at {c:?}");
+        }
+        for (c, _, materials) in soil {
+            assert_eq!(*materials, [1; 3], "triangle at {c:?}");
+        }
+    }
+
+    #[test]
     fn smooth_triangles_in_a_mixed_chunk_never_carry_a_blocky_blocks_material() {
         let mut blocks = solid_box([2, 0, 2], [10, 3, 10], 2);
         blocks.push(([6, 4, 6], 100, None));
