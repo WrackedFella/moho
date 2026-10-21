@@ -53,6 +53,7 @@ pub const RESOLUTION_PRESETS: &[(&str, (u32, u32))] = &[
 pub struct Prefs {
     mouse_sensitivity: f32,
     mouse_smoothing: bool,
+    invert_mouse_y: bool,
     // Audio settings (values 0.0 to 10.0)
     audio_sound_effect_volume: f32,
     audio_music_volume: f32,
@@ -129,6 +130,9 @@ impl Prefs {
     pub fn mouse_smoothing(&self) -> bool {
         self.mouse_smoothing
     }
+    pub fn invert_mouse_y(&self) -> bool {
+        self.invert_mouse_y
+    }
     pub fn sound_effect_volume(&self) -> f32 {
         self.audio_sound_effect_volume
     }
@@ -180,6 +184,9 @@ impl Prefs {
     pub fn mouse_smoothing_mut(&mut self) -> &mut bool {
         &mut self.mouse_smoothing
     }
+    pub fn invert_mouse_y_mut(&mut self) -> &mut bool {
+        &mut self.invert_mouse_y
+    }
     pub fn sound_effect_volume_mut(&mut self) -> &mut f32 {
         &mut self.audio_sound_effect_volume
     }
@@ -221,13 +228,18 @@ impl Prefs {
         self.mouse_smoothing = v;
         self
     }
+    pub fn with_invert_mouse_y(mut self, v: bool) -> Self {
+        self.invert_mouse_y = v;
+        self
+    }
 }
 
 impl Default for Prefs {
     fn default() -> Self {
         Self {
-            mouse_sensitivity: 1.0,
+            mouse_sensitivity: 3.0,
             mouse_smoothing: false,
+            invert_mouse_y: false,
             // Audio volumes use a 0 to 10 scale
             audio_sound_effect_volume: 8.0,
             audio_music_volume: 6.0,
@@ -268,6 +280,7 @@ impl Prefs {
             "[prefs]\n\
              mouse_sensitivity={mouse_sensitivity}\n\
              mouse_smoothing={mouse_smoothing}\n\
+             invert_mouse_y={invert_mouse_y}\n\
              \n[audio]\n\
              sound_effect_volume={sfx:.1}\n\
              music_volume={music:.1}\n\
@@ -286,6 +299,7 @@ impl Prefs {
              chunks_per_frame={chunks}\n",
             mouse_sensitivity = self.mouse_sensitivity,
             mouse_smoothing = self.mouse_smoothing,
+            invert_mouse_y = self.invert_mouse_y,
             sfx = self.audio_sound_effect_volume,
             music = self.audio_music_volume,
             ui = self.audio_ui_volume,

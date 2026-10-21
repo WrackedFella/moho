@@ -14,8 +14,18 @@ use crate::pad::{PadButton, PadInput, Stick, StickAxis, StickDir};
 /// An axis reading at or past this magnitude holds its stick direction.
 pub const STICK_DIRECTION_THRESHOLD: f32 = 0.5;
 
+/// Degrees one mouse count turns at sensitivity 1.0, as in Source games.
+pub const SOURCE_DEGREES_PER_COUNT: f32 = 0.022;
+
+/// Radians one mouse count turns at a Source-scale `sensitivity`.
+pub const fn source_look_per_count(sensitivity: f32) -> f32 {
+    (SOURCE_DEGREES_PER_COUNT * sensitivity).to_radians()
+}
+
 /// Look units a fully deflected right stick adds per second, before sensitivity.
-pub const PAD_LOOK_PER_SECOND: f32 = 1560.0;
+///
+/// A half turn per second at the default sensitivity of 3.0.
+pub const PAD_LOOK_PER_SECOND: f32 = std::f32::consts::PI / source_look_per_count(3.0);
 
 const STICK_LOOK_DEAD_ZONE: f32 = 0.15;
 
@@ -24,14 +34,17 @@ const STICK_LOOK_DEAD_ZONE: f32 = 0.15;
 pub struct LookSettings {
     pub look_per_count: f32,
     pub smoothing: bool,
+    /// Negates the mouse's Y counts; the stick is unaffected.
+    pub invert_y: bool,
 }
 
 impl LookSettings {
-    /// Unsmoothed look at `look_per_count`.
+    /// Unsmoothed, non-inverted look at `look_per_count`.
     pub fn raw(look_per_count: f32) -> Self {
         Self {
             look_per_count,
             smoothing: false,
+            invert_y: false,
         }
     }
 }
@@ -291,6 +304,7 @@ impl<A: Action> ActionMap<A> {
 
     fn sample_look(&mut self, frame_dt: Duration) -> (f32, f32) {
         let (dx, dy) = std::mem::take(&mut self.look_accumulator);
+        let dy = if self.look.invert_y { -dy } else { dy };
         let counts = (dx as f32, dy as f32);
         let counts = if self.look.smoothing {
             self.smoothing.apply(counts)
@@ -515,6 +529,7 @@ mod tests {
             map.set_look(LookSettings {
                 look_per_count: 2.0,
                 smoothing,
+                invert_y: false,
             });
 
             map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
@@ -792,6 +807,7 @@ mod tests {
         map.set_look(LookSettings {
             look_per_count,
             smoothing: true,
+            invert_y: false,
         });
         map
     }
@@ -875,6 +891,7 @@ mod tests {
         map.set_look(LookSettings {
             look_per_count: 1.0,
             smoothing: true,
+            invert_y: false,
         });
         map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
         map.mouse_motion(2.0, 0.0);
@@ -910,6 +927,7 @@ mod tests {
         map.set_look(LookSettings {
             look_per_count: 1.0,
             smoothing: true,
+            invert_y: false,
         });
         map.sample_frame(FRAME);
         let after = map.end_tick().look();
@@ -941,6 +959,7 @@ mod tests {
         map.set_look(LookSettings {
             look_per_count: 2.0,
             smoothing: true,
+            invert_y: false,
         });
         map.sample_frame(FRAME);
         let after = map.end_tick().look();
@@ -1238,8 +1257,8 @@ mod tests {
         }
 
         assert!(yaws.windows(2).all(|pair| pair[1] > pair[0]), "{yaws:?}");
-        // 1560 look units per second for 4 frames of 15.625 ms at sensitivity 1.
-        assert_close((yaws[3], 0.0), (97.5, 0.0));
+        // `PAD_LOOK_PER_SECOND` look units per second for 4 frames of 15.625 ms at sensitivity 1.
+        assert_close((yaws[3], 0.0), (PAD_LOOK_PER_SECOND * 0.0625, 0.0));
     }
 
     #[test]

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use moho_app::{AppConfig, LoopConfig};
 use moho_core::prefs::Prefs;
 use moho_input::action_map::ActionMap;
+use moho_input::action_map::source_look_per_count;
 use moho_input::bindings::ActionBindings;
 use moho_physics::MoveSettings;
 use moho_ui_shell::UiShell;
@@ -21,8 +22,8 @@ use searchlight::wave::WaveTuning;
 use searchlight::{TICK_HZ, prefs_path, split_console_binding};
 use searchlight_rules::{BodyPart, BodyProfile, Magazine, Rifle};
 
-/// Radians of turn per pixel of mouse motion.
-const LOOK_PER_PIXEL: f32 = 0.002;
+/// Radians of turn per mouse count, at Source sensitivity 3.0.
+const LOOK_PER_PIXEL: f32 = source_look_per_count(3.0);
 const MAGAZINE_CAPACITY: u32 = 30;
 const SPARE_MAGAZINES: usize = 3;
 

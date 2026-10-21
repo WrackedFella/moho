@@ -6,13 +6,15 @@
 
 use moho_core::prefs::Prefs;
 use moho_input::LookSettings;
+use moho_input::action_map::source_look_per_count;
 
-/// The look settings `prefs` ask for: its sensitivity scaled by 0.002 radians per
-/// count, and its mouse-smoothing switch.
+/// The look settings `prefs` ask for: its Source-scale sensitivity as radians per
+/// count, its mouse-smoothing switch and its invert-Y switch.
 pub fn look_settings(prefs: &Prefs) -> LookSettings {
     LookSettings {
-        look_per_count: prefs.mouse_sensitivity() * 0.002,
+        look_per_count: source_look_per_count(prefs.mouse_sensitivity()),
         smoothing: prefs.mouse_smoothing(),
+        invert_y: prefs.invert_mouse_y(),
     }
 }
 
@@ -37,11 +39,14 @@ pub fn look_settings(prefs: &Prefs) -> LookSettings {
 /// ```
 #[derive(Debug, Clone)]
 pub struct AppConfig {
-    /// Per-pixel look factor: the prefs mouse sensitivity scaled by 0.002.
+    /// Radians of look per mouse count: the prefs sensitivity on Source's scale.
     pub mouse_sensitivity: f32,
 
     /// Whether mouse smoothing is on.
     pub mouse_smoothing: bool,
+
+    /// Whether the mouse's Y axis is inverted.
+    pub invert_mouse_y: bool,
 
     /// Preferences object (contains keybindings and other settings)
     pub prefs: Prefs,
@@ -79,6 +84,7 @@ impl AppConfig {
         Self {
             mouse_sensitivity: look.look_per_count,
             mouse_smoothing: look.smoothing,
+            invert_mouse_y: look.invert_y,
             prefs,
         }
     }
@@ -145,6 +151,7 @@ impl AppConfigBuilder {
         AppConfig {
             mouse_sensitivity: self.mouse_sensitivity.unwrap_or(base.mouse_sensitivity),
             mouse_smoothing: self.mouse_smoothing.unwrap_or(base.mouse_smoothing),
+            invert_mouse_y: base.invert_mouse_y,
             prefs: base.prefs,
         }
     }

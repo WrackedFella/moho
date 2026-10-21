@@ -195,13 +195,15 @@ impl AppInitializer {
 }
 
 /// Builds the action map a game runs on from `config`: the prefs' bindings, the
-/// scaled mouse sensitivity and the mouse-smoothing switch. Shared by startup and
-/// by adopting saved settings so the two can't drift apart.
+/// scaled mouse sensitivity, the mouse-smoothing switch and the invert-Y
+/// switch. Shared by startup and by adopting saved settings so the two can't drift
+/// apart.
 pub(crate) fn build_actions(config: &AppConfig) -> ActionMap<StrategyAction> {
     let mut actions = ActionMap::new(load_bindings(&config.prefs), config.mouse_sensitivity);
     actions.set_look(LookSettings {
         look_per_count: config.mouse_sensitivity,
         smoothing: config.mouse_smoothing,
+        invert_y: config.invert_mouse_y,
     });
     actions
 }
@@ -209,6 +211,8 @@ pub(crate) fn build_actions(config: &AppConfig) -> ActionMap<StrategyAction> {
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
+
+    use moho_input::action_map::source_look_per_count;
 
     use super::*;
 
@@ -238,7 +242,10 @@ mod tests {
         actions.mouse_motion(10.0, 0.0);
         actions.sample_frame(Duration::from_millis(16));
 
-        assert_eq!(actions.end_tick().look(), (2.5, 0.0));
+        assert_eq!(
+            actions.end_tick().look(),
+            (5.0 * source_look_per_count(250.0), 0.0)
+        );
     }
 
     #[test]
