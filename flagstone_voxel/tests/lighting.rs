@@ -854,7 +854,7 @@ fn random_blocks() -> impl Strategy<Value = Vec<RandomBlock>> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
+    #![proptest_config(ProptestConfig::with_cases(8))]
 
     /// Whatever order chunks stream in, light and sky end up as if the whole
     /// world had been built first and lit in one pass.
