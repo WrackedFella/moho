@@ -77,7 +77,6 @@ struct App {
     entities: SceneEntities,
     scene: moho_renderer::Scene,
     terrain_material_idx: u32,
-    /// Voxel material id to material-table index.
     terrain_palette: app::world_geometry::TerrainPalette,
     /// Material table index of the cut-face caps' colour.
     cut_face_material_idx: u32,

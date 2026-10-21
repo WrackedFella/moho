@@ -43,14 +43,14 @@ use crate::types::{GpuInstance, Vertex};
 
 /// Per-vertex attributes of the main pipeline; order must match `types::Vertex`.
 pub const MAIN_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
-    0 => Float32x3,  // position
-    1 => Float32x3,  // normal
-    2 => Float32,    // ao
-    3 => Uint32,     // geometry_type
-    10 => Float32,   // light_level (10+ to avoid the instance buffer's 4-9)
-    11 => Float32x3, // block_light_rgb
-    12 => Float32,   // sky_exposed
-    13 => Uint32,    // material
+    0 => Float32x3,
+    1 => Float32x3,
+    2 => Float32,
+    3 => Uint32,
+    10 => Float32, // 10+ to avoid the instance buffer's 4-9
+    11 => Float32x3,
+    12 => Float32,
+    13 => Uint32,
 ];
 
 /// Per-instance attributes of the main pipeline; order must match `types::GpuInstance`.

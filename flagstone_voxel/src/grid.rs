@@ -99,17 +99,14 @@ impl MaterialRegistry {
         id
     }
 
-    /// The material registered under `id`.
     pub fn material(&self, id: u32) -> Option<&MaterialType> {
         self.materials.get(id as usize)
     }
 
-    /// How many materials are registered.
     pub fn len(&self) -> usize {
         self.materials.len()
     }
 
-    /// True when no material is registered.
     pub fn is_empty(&self) -> bool {
         self.materials.is_empty()
     }
