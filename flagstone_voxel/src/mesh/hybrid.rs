@@ -1337,10 +1337,10 @@ mod tests {
 
         #[test]
         fn prop_every_vertex_light_comes_from_an_air_sample(
-            cells in prop::collection::vec((0..7i32, 0..7i32, 0..7i32), 1..120),
+            cells in prop::collection::vec((0..16i32, 0..16i32, 0..16i32), 1..120),
             lights in prop::collection::vec(
-                ((-1..=8i32, -1..=8i32, -1..=8i32), (0..=15u8, 0..=15u8, 0..=15u8), any::<bool>()),
-                0..200,
+                ((-1..=16i32, -1..=16i32, -1..=16i32), (0..=15u8, 0..=15u8, 0..=15u8), any::<bool>()),
+                0..400,
             ),
         ) {
             let mut grid = grid_with(cells.iter().map(|&(x, y, z)| ([x, y, z], 1, None)));

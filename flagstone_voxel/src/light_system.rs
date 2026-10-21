@@ -908,33 +908,72 @@ mod tests {
 
     #[test]
     fn light_change_on_a_chunk_face_dirties_the_chunk_across_it() {
-        let (mut light_system, received) = unbounded_system();
-        let source = IVec3::new(13, 8, 8);
-        LightPropagator::new().add_light_rgb(light_system.grid_mut(), source, [3, 0, 0]);
-        let face_voxel = IVec3::new(15, 8, 8);
-        assert_eq!(
-            light_system.grid().block_light_rgb_at(face_voxel),
-            [1, 0, 0],
-            "the light reaches the chunk's +x face layer"
-        );
-        assert_eq!(
-            light_system.grid().block_light_rgb_at(IVec3::new(16, 8, 8)),
-            [0, 0, 0],
-            "and stops there"
-        );
+        use crate::grid::MaterialLighting;
+        // (source, block across the border, voxel on the light's last layer, expected chunks)
+        let sides = [
+            (
+                IVec3::new(13, 8, 8),
+                IVec3::new(16, 8, 8),
+                IVec3::new(15, 8, 8),
+                [IVec3::ZERO, IVec3::new(1, 0, 0)],
+            ),
+            (
+                IVec3::new(2, 8, 8),
+                IVec3::new(-1, 8, 8),
+                IVec3::new(0, 8, 8),
+                [IVec3::ZERO, IVec3::new(-1, 0, 0)],
+            ),
+        ];
 
-        light_system.handle_event(&removed(source));
-        light_system.process_frame();
-        light_system.emit_dirty_events();
+        for adding in [true, false] {
+            for (source, across, face_voxel, chunks) in sides {
+                let why = format!("adding {adding}, source {source:?}");
+                let (mut light_system, received) = unbounded_system();
+                light_system.grid_mut().material_registry.set_lighting(
+                    1,
+                    MaterialLighting {
+                        emission: [3, 0, 0],
+                        opacity_cost: 0,
+                    },
+                );
+                light_system.grid_mut().place_block(across, 0, None);
+                if adding {
+                    light_system.grid_mut().place_block(source, 1, None);
+                }
+                settle(&mut light_system, &received);
+                if adding {
+                    light_system.handle_event(&placed(source, 1));
+                } else {
+                    LightPropagator::new().add_light_rgb(
+                        light_system.grid_mut(),
+                        source,
+                        [3, 0, 0],
+                    );
+                    assert_eq!(
+                        light_system.grid().block_light_rgb_at(face_voxel),
+                        [1, 0, 0],
+                        "{why}: the light reaches the chunk's face layer"
+                    );
+                    light_system.handle_event(&removed(source));
+                }
 
-        assert_eq!(
-            light_system.grid().block_light_rgb_at(face_voxel),
-            [0, 0, 0]
-        );
-        assert_published_once_each(
-            &received,
-            &HashSet::from([IVec3::ZERO, IVec3::new(1, 0, 0)]),
-        );
+                light_system.process_frame();
+                light_system.emit_dirty_events();
+
+                let expected_face = if adding { [1, 0, 0] } else { [0, 0, 0] };
+                assert_eq!(
+                    light_system.grid().block_light_rgb_at(face_voxel),
+                    expected_face,
+                    "{why}"
+                );
+                assert_eq!(
+                    light_system.grid().block_light_rgb_at(across),
+                    [0, 0, 0],
+                    "{why}: the light stops at the border"
+                );
+                assert_published_once_each(&received, &HashSet::from(chunks));
+            }
+        }
     }
 
     #[test]
