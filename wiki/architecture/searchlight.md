@@ -60,6 +60,10 @@ frame through `apply_engine_command`, which reaches the renderer (`RendererBacke
 through `FrameContext`; with neither present the command is dropped. Console commands are hidden debug commands
 ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
 
+The shell also draws game text: `UiShell::draw_text(ScreenText)` queues one anchored line for the next
+`ui_frame`, which paints it under the console and clears the queue, so a game re-queues it every frame.
+Use a few fixed sizes; each new size grows the font atlas.
+
 Game commands (`tgm [0|1]`) queue as `ConsoleCommand` on the console. `SearchlightGame` drains them
 at the start of each `command()` sample (`apply_console_commands`), applies them in order, saves
 a changed value through `DebugSettings` (a failed save is logged, not fatal) and echoes a bare
