@@ -3149,6 +3149,115 @@ mod enemy_tests {
         );
     }
 
+    #[test]
+    fn an_enemy_that_loses_a_player_at_a_jump_apex_keeps_chasing_toward_them() {
+        let mut sim = SearchlightSim::start(duel(&[]), cover_config());
+        run(&mut sim, &script(10, &[]));
+        let standing = sim.player().position.y;
+        let jump = SearchlightCommand {
+            movement: CharacterCommand {
+                jump: true,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        sim.tick(&jump, DT);
+        sim.drain_feedback();
+        let mut apex = sim.player().position;
+        for _ in 0..120 {
+            sim.tick(&idle(), DT);
+            sim.drain_feedback();
+            if sim.player().position.y < apex.y {
+                break;
+            }
+            apex = sim.player().position;
+        }
+        assert!(
+            apex.y - standing > 0.9,
+            "the jump never rose well off the floor: {apex:?}, standing at {standing}"
+        );
+        // Nothing can be seen beyond a metre from now on; the player is still airborne.
+        sim.enemy.sight_range = 1.0;
+        let before = enemy_at(&sim, 0);
+        let airborne = sim.player().position;
+
+        sim.tick(&idle(), DT);
+        sim.drain_feedback();
+        let after_losing_sight = sim.targets[0].brain;
+        for _ in 0..5 {
+            sim.tick(&idle(), DT);
+            sim.drain_feedback();
+        }
+
+        assert!(
+            airborne.y - standing > 0.9,
+            "the player landed before sight was lost: {airborne:?}"
+        );
+        assert!(
+            matches!(after_losing_sight, Some(Brain::Chase { .. })),
+            "the enemy should keep chasing: {after_losing_sight:?}"
+        );
+        assert!(
+            horizontal(enemy_at(&sim, 0), airborne) < horizontal(before, airborne) - 0.05,
+            "the enemy did not walk toward the player: {before:?} -> {:?}",
+            enemy_at(&sim, 0)
+        );
+    }
+
+    /// Full height: neither sight nor a walking enemy passes it. It runs east from just beside
+    /// the straight line between the enemy and the player to the edge of the floor, so the only
+    /// way past is the west end.
+    const FULL_WALL: (Vec3, Vec3) = (Vec3::new(-0.2, 0.0, 4.0), Vec3::new(30.0, 4.0, 4.4));
+
+    #[test]
+    fn a_chasing_enemy_rounds_a_full_height_wall_to_where_it_lost_the_player() {
+        let mut config = cover_config();
+        config.enemy.arrive_radius = 1.0;
+        config.enemy.chase_ticks = 900;
+        // The player is lost to the wall, and runs on out of range of the wall's west end.
+        config.enemy.sight_range = 11.0;
+        let arena = arena_with(
+            &[FULL_WALL],
+            Vec3::new(-3.0, 0.0, 0.0),
+            &[ENEMY_SPAWN],
+            &[TOWARD_PLAYER, Vec3::new(0.0, 0.0, 25.0)],
+        );
+        let mut sim = SearchlightSim::start(arena, config);
+        let step_east = |first: bool| SearchlightCommand {
+            movement: CharacterCommand {
+                forward: 1.0,
+                yaw_delta: if first { FRAC_PI_2 } else { 0.0 },
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        let mut lost_at = None;
+        let mut closest_to_lost = f32::MAX;
+
+        for tick in 0..900 {
+            let command = if tick < 240 {
+                step_east(tick == 0)
+            } else {
+                idle()
+            };
+            sim.tick(&command, DT);
+            sim.drain_feedback();
+            if lost_at.is_none() && matches!(sim.targets[0].brain, Some(Brain::Chase { .. })) {
+                lost_at = Some(sim.player().position);
+            }
+            if let Some(lost) = lost_at {
+                closest_to_lost = closest_to_lost.min(horizontal(enemy_at(&sim, 0), lost));
+            }
+        }
+
+        let lost = lost_at.expect("the enemy never lost the player");
+        let reach = sim.enemy.arrive_radius + LAST_SEEN_SLACK;
+        assert!(
+            closest_to_lost <= reach,
+            "the enemy never reached {lost:?}, closest {closest_to_lost} m"
+        );
+    }
+
     /// A box the player can stand on but no enemy can climb: taller than the 0.5 m autostep.
     const PLATEAU: (Vec3, Vec3) = (Vec3::new(-2.0, 0.0, -2.0), Vec3::new(2.0, 1.5, 2.0));
 

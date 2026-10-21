@@ -438,3 +438,66 @@ fn a_path_from_a_point_to_itself_is_that_point_snapped() {
         "non-finite corner in {path:?}"
     );
 }
+
+#[test]
+fn an_agent_profile_that_cannot_describe_a_walker_fails_the_build() {
+    let world = [floor()];
+    let build_with = |change: fn(&mut AgentProfile)| {
+        let mut profile = PROFILE;
+        change(&mut profile);
+        NavMesh::build(&world, profile)
+    };
+
+    let nan_radius = build_with(|p| p.radius = f32::NAN);
+    let zero_radius = build_with(|p| p.radius = 0.0);
+    let negative_height = build_with(|p| p.height = -1.0);
+    let negative_climb = build_with(|p| p.max_climb = -0.1);
+    let upright_slope = build_with(|p| p.max_slope = std::f32::consts::FRAC_PI_2);
+    let nan_slope = build_with(|p| p.max_slope = f32::NAN);
+    let no_climb = build_with(|p| p.max_climb = 0.0);
+
+    assert!(nan_radius.is_err(), "NaN radius built");
+    assert!(zero_radius.is_err(), "zero radius built");
+    assert!(negative_height.is_err(), "negative height built");
+    assert!(negative_climb.is_err(), "negative climb built");
+    assert!(upright_slope.is_err(), "a slope of pi/2 built");
+    assert!(nan_slope.is_err(), "NaN slope built");
+    let flat = no_climb.expect("an agent that cannot climb at all is a valid profile");
+    // The generated surface sits up to a voxel above the mesh, so with no climb allowed a
+    // query has to start above it to snap.
+    assert!(
+        flat.path(Vec3::new(-5.0, 0.3, 0.0), Vec3::new(5.0, 0.3, 0.0))
+            .is_some(),
+        "a flat floor is still walkable without climbing"
+    );
+}
+
+/// A thin walkable slab over the middle of the floor, with agent-height clearance beneath.
+fn slab() -> WorldMesh {
+    box_mesh(Vec3::new(-4.0, 2.15, -4.0), Vec3::new(4.0, 2.35, 4.0))
+}
+
+/// A point inside both the floor and the slab on the ground plane: the slab's top is 0.4 m
+/// above it, the floor 1.95 m below.
+const BETWEEN: Vec3 = Vec3::new(0.0, 1.95, 0.0);
+
+#[test]
+fn a_point_between_two_walkable_levels_snaps_to_the_nearer_one_whatever_the_mesh_order() {
+    let floor_first = build(&[floor(), slab()]);
+    let slab_first = build(&[slab(), floor()]);
+    let far = Vec3::new(3.0, 2.35, 3.0);
+
+    let from_floor_first = floor_first
+        .path(BETWEEN, far)
+        .expect("the slab is walkable");
+    let from_slab_first = slab_first.path(BETWEEN, far).expect("the slab is walkable");
+
+    for path in [&from_floor_first, &from_slab_first] {
+        let start = path[0];
+        assert!(
+            (start.y - 2.35).abs() <= 0.3,
+            "snapped to height {} instead of the slab top at 2.35: {path:?}",
+            start.y
+        );
+    }
+}
