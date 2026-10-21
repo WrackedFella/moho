@@ -764,4 +764,93 @@ mod tests {
         assert!(grid.sky_exposed_at(IVec3::new(8, 18, 8)));
         assert!(!grid.sky_exposed_at(IVec3::new(1, 18, 1)));
     }
+
+    #[test]
+    fn arriving_the_same_chunk_twice_in_one_call_lights_it_once() {
+        let (mut light_system, received) = unbounded_system();
+        let source = IVec3::new(5, 5, 5);
+        let mut donor = test_grid();
+        donor.mutator().place(source, 1, None);
+        let bytes = donor.serialize_chunk(IVec3::ZERO).expect("holds blocks");
+        light_system
+            .grid_mut()
+            .deserialize_chunk_into(IVec3::ZERO, &bytes)
+            .expect("valid chunk bytes");
+
+        light_system.light_arrived_chunks(&[IVec3::ZERO, IVec3::ZERO]);
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        assert_eq!(grid.block_light_rgb_at(source), TORCH);
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(4, 5, 5)), [14, 7, 1]);
+        let got = received.lock().unwrap().clone();
+        let unique: HashSet<IVec3> = got.iter().copied().collect();
+        assert_eq!(unique.len(), got.len(), "one event per chunk: {got:?}");
+        assert!(unique.contains(&IVec3::ZERO), "the arrived chunk: {got:?}");
+    }
+
+    #[test]
+    fn arrival_below_a_loaded_roof_is_shaded_and_the_roof_chunk_is_not_remeshed() {
+        let (mut light_system, received) = unbounded_system();
+        let roof_chunk = IVec3::new(0, 1, 0);
+        let below = IVec3::ZERO;
+        arrive(&mut light_system, roof_chunk, |donor| {
+            donor.mutator().place(IVec3::new(1, 20, 1), 0, None);
+        });
+        light_system.emit_dirty_events();
+        received.lock().unwrap().clear();
+
+        arrive(&mut light_system, below, |donor| {
+            donor.mutator().place(IVec3::new(8, 5, 8), 0, None);
+        });
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        assert!(!grid.sky_exposed_at(IVec3::new(1, 5, 1)), "roofed column");
+        assert!(grid.sky_exposed_at(IVec3::new(8, 6, 8)), "open column");
+        let got = received.lock().unwrap().clone();
+        assert!(got.contains(&below), "the arrived chunk: {got:?}");
+        assert!(!got.contains(&roof_chunk), "roof chunk unchanged: {got:?}");
+    }
+
+    #[test]
+    fn a_frame_with_no_edits_remeshes_nothing() {
+        let (mut light_system, received) = unbounded_system();
+        for layer in 0..3 {
+            arrive(&mut light_system, IVec3::new(0, layer, 0), |donor| {
+                donor
+                    .mutator()
+                    .place(IVec3::new(1, layer * 16 + 3, 1), 0, None);
+            });
+        }
+        light_system.emit_dirty_events();
+        received.lock().unwrap().clear();
+
+        light_system.process_frame();
+        let emitted = light_system.emit_dirty_events();
+
+        assert_eq!(emitted, 0);
+        assert!(received.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn removing_the_only_torch_after_arrival_leaves_no_light() {
+        let (mut light_system, _received) = unbounded_system();
+        let source = IVec3::new(15, 5, 5);
+        arrive(&mut light_system, IVec3::ZERO, |donor| {
+            donor.mutator().place(source, 1, None);
+        });
+        light_system.emit_dirty_events();
+        assert_eq!(light_system.grid().block_light_rgb_at(source), TORCH);
+
+        assert!(light_system.grid_mut().mutator().remove(source));
+        light_system.handle_event(&WorldEvent::BlockRemoved {
+            position: source,
+            old_material_id: 1,
+            reason: BlockChangeReason::Player,
+        });
+        light_system.process_frame();
+
+        assert!(lit_chunks(light_system.grid(), source).is_empty());
+    }
 }
