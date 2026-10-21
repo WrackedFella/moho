@@ -1323,6 +1323,24 @@ mod tests {
         assert!(walls >= 54, "the pocket's walls are meshed: {walls}");
     }
 
+    #[test]
+    fn smooth_vertices_on_a_chunk_edge_read_the_diagonal_chunk() {
+        let mut grid = grid_with(solid_box([2, 0, 2], [15, 16, 13], 1));
+        let edge_air = IVec3::new(16, 16, 8);
+        grid.set_block_light_rgb(edge_air, [9, 4, 2]);
+        grid.set_sky_exposed(edge_air, false);
+
+        let mesh = chunk_mesh(&grid);
+
+        let edge_vertices: Vec<usize> = (0..mesh.vertices.len())
+            .filter(|&i| mesh.vertices[i] == [16.0, 16.5, 8.5])
+            .collect();
+        assert!(!edge_vertices.is_empty(), "the chunk meshes the edge voxel");
+        for i in edge_vertices {
+            assert_vertex_light(&mesh, i, [9, 4, 2], false, "voxel in the diagonal chunk").unwrap();
+        }
+    }
+
     /// The voxel on the air side of the edge `vertex` lies on: smooth vertices sit at
     /// block centres on two axes and on a block boundary along the edge's axis.
     fn air_voxel_of(grid: &VoxelGrid, vertex: [f32; 3]) -> IVec3 {

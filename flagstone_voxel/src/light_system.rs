@@ -1004,4 +1004,53 @@ mod tests {
             &HashSet::from([IVec3::ZERO, IVec3::new(0, 1, 0), IVec3::new(0, 2, 0)]),
         );
     }
+
+    #[test]
+    fn light_change_on_a_chunk_edge_dirties_the_diagonal_chunk_that_reads_it() {
+        use crate::grid::MaterialLighting;
+        let source = IVec3::new(16, 16, 8);
+        let loaded = [
+            IVec3::new(5, 5, 5),
+            IVec3::new(20, 5, 5),
+            IVec3::new(5, 20, 5),
+            IVec3::new(20, 20, 5),
+        ];
+        let expected = HashSet::from([
+            IVec3::ZERO,
+            IVec3::new(1, 0, 0),
+            IVec3::new(0, 1, 0),
+            IVec3::new(1, 1, 0),
+        ]);
+
+        for adding in [true, false] {
+            let (mut light_system, received) = unbounded_system();
+            light_system.grid_mut().material_registry.set_lighting(
+                1,
+                MaterialLighting {
+                    emission: [1, 0, 0],
+                    opacity_cost: 0,
+                },
+            );
+            for pos in loaded {
+                light_system.grid_mut().place_block(pos, 0, None);
+            }
+            if adding {
+                light_system.grid_mut().place_block(source, 1, None);
+            }
+            settle(&mut light_system, &received);
+            if adding {
+                light_system.handle_event(&placed(source, 1));
+            } else {
+                LightPropagator::new().add_light_rgb(light_system.grid_mut(), source, [1, 0, 0]);
+                light_system.handle_event(&removed(source));
+            }
+
+            light_system.process_frame();
+            light_system.emit_dirty_events();
+
+            let lit = if adding { [1, 0, 0] } else { [0, 0, 0] };
+            assert_eq!(light_system.grid().block_light_rgb_at(source), lit);
+            assert_published_once_each(&received, &expected);
+        }
+    }
 }
