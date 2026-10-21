@@ -13,6 +13,7 @@ pub mod mode;
 pub mod shot;
 pub mod sim;
 pub mod tag;
+pub mod tuning;
 pub mod wave;
 
 use std::collections::BTreeMap;
@@ -22,6 +23,14 @@ use moho_ui_shell::CONSOLE_BINDING;
 
 /// Ticks per second the prototype runs at.
 pub const TICK_HZ: u32 = 60;
+
+/// The id of the rifle in `weapons.toml`.
+pub const RIFLE_ID: &str = "rifle";
+
+/// The base content folder, beside the crate like `assets`.
+pub fn content_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("content")
+}
 
 /// Where the FPS keeps its preferences.
 pub fn prefs_path() -> PathBuf {
