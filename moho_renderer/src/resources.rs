@@ -260,7 +260,7 @@ impl ResourcePool {
 
     /// Create the lighting uniform buffer with default lighting.
     ///
-    /// Size: 96 bytes (6 vec4s: sun_dir, sun_col, moon_dir, moon_col, ambient, time_of_day)
+    /// Size: `size_of::<LightingGpu>()` (144 bytes, 9 vec4s).
     fn create_lighting_buffer(device: &wgpu::Device) -> wgpu::Buffer {
         let initial_lighting = LightingGpu::default();
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

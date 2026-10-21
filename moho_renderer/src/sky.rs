@@ -9,6 +9,15 @@ pub struct SkyPalette {
 }
 
 impl SkyPalette {
+    fn lerp(self, to: Self, t: f32) -> Self {
+        let mix = |a: [f32; 3], b: [f32; 3]| [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t);
+        Self {
+            zenith: mix(self.zenith, to.zenith),
+            horizon: mix(self.horizon, to.horizon),
+            ground: mix(self.ground, to.ground),
+        }
+    }
+
     /// Zenith, horizon and ground as uniform `vec4`s, w unused.
     pub(crate) fn to_gpu(self) -> [[f32; 4]; 3] {
         [self.zenith, self.horizon, self.ground].map(|[r, g, b]| [r, g, b, 0.0])
@@ -52,10 +61,6 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
-}
-
 /// The sky palette at `time_of_day` hours; hours outside `0..24` wrap into it.
 pub fn sky_palette(time_of_day: f32) -> SkyPalette {
     let hour = time_of_day.rem_euclid(24.0);
@@ -65,12 +70,7 @@ pub fn sky_palette(time_of_day: f32) -> SkyPalette {
         .map_or(NIGHT, |pair| {
             let (start, from) = pair[0];
             let (end, to) = pair[1];
-            let t = smoothstep(start, end, hour);
-            SkyPalette {
-                zenith: mix(from.zenith, to.zenith, t),
-                horizon: mix(from.horizon, to.horizon, t),
-                ground: mix(from.ground, to.ground, t),
-            }
+            from.lerp(to, smoothstep(start, end, hour))
         })
 }
 

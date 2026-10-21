@@ -29,7 +29,7 @@ pub struct LightingGpu {
     pub ambient: [f32; 4],
     /// Shader parameters:
     /// x = Time of day (0-24 hours)
-    /// y = Debug Mode (0=None, 1=Normals, 2=Bias, 3=Cascades, 4=Shadows, 5=Point lights, 6=Sky ambient)
+    /// y = Debug Mode (0=None, 1=Normals, 2=Bias, 3=Shadows, 4=Light level, 5=Point lights, 6=Sky ambient)
     /// zw = Unused
     pub params: [f32; 4],
     /// Sky zenith colour (rgb) and unused (w). The renderer fills it from the time of
