@@ -1,6 +1,6 @@
 //! Action-keyed bindings: what a game declares, and how they persist.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
 
@@ -219,6 +219,8 @@ pub struct BindingWarning {
 pub struct ActionBindings<A: Action> {
     /// Holds every action in `A::ALL`; `defaults` fills it and `set` only replaces.
     map: HashMap<A, Vec<Binding>>,
+    /// Only toggleable actions set to `Toggle` appear; every other action reads as `Hold`.
+    toggled: HashSet<A>,
 }
 
 impl<A: Action> ActionBindings<A> {
@@ -228,6 +230,7 @@ impl<A: Action> ActionBindings<A> {
                 .iter()
                 .map(|&a| (a, a.default_bindings().to_vec()))
                 .collect(),
+            toggled: HashSet::new(),
         }
     }
 
@@ -269,18 +272,73 @@ impl<A: Action> ActionBindings<A> {
         self.map.insert(action, bindings);
     }
 
-    pub fn mode(&self, _action: A) -> ActionMode {
-        ActionMode::Hold
+    /// `Hold` unless the action is toggleable and set to `Toggle`.
+    pub fn mode(&self, action: A) -> ActionMode {
+        if self.toggled.contains(&action) {
+            ActionMode::Toggle
+        } else {
+            ActionMode::Hold
+        }
     }
 
-    pub fn set_mode(&mut self, _action: A, _mode: ActionMode) {}
-
-    pub fn load_modes(&mut self, _section: &BTreeMap<String, String>) -> Vec<BindingWarning> {
-        Vec::new()
+    /// Setting `Toggle` on a non-toggleable action is ignored: such an action has no toggle.
+    pub fn set_mode(&mut self, action: A, mode: ActionMode) {
+        if !action.toggleable() {
+            return;
+        }
+        match mode {
+            ActionMode::Toggle => self.toggled.insert(action),
+            ActionMode::Hold => self.toggled.remove(&action),
+        };
     }
 
+    /// Reads the raw `[action_modes]` section. Each unusable line (unknown value, unknown
+    /// action, or an action that is not toggleable) yields a warning and leaves that action
+    /// in `Hold`.
+    pub fn load_modes(&mut self, section: &BTreeMap<String, String>) -> Vec<BindingWarning> {
+        let mut warnings = Vec::new();
+        for (name, value) in section {
+            let action = A::ALL
+                .iter()
+                .copied()
+                .find(|a| a.name() == name && a.toggleable());
+            let mode = parse_mode(value);
+            match (action, mode) {
+                (Some(action), Some(mode)) => self.set_mode(action, mode),
+                _ => warnings.push(BindingWarning {
+                    name: name.clone(),
+                    value: value.clone(),
+                }),
+            }
+        }
+        warnings
+    }
+
+    /// Writes every toggleable action, including those left at `Hold`.
     pub fn modes_to_section(&self) -> BTreeMap<String, String> {
-        BTreeMap::new()
+        A::ALL
+            .iter()
+            .filter(|a| a.toggleable())
+            .map(|&a| (a.name().to_string(), mode_name(self.mode(a)).to_string()))
+            .collect()
+    }
+}
+
+fn parse_mode(value: &str) -> Option<ActionMode> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("hold") {
+        Some(ActionMode::Hold)
+    } else if value.eq_ignore_ascii_case("toggle") {
+        Some(ActionMode::Toggle)
+    } else {
+        None
+    }
+}
+
+const fn mode_name(mode: ActionMode) -> &'static str {
+    match mode {
+        ActionMode::Hold => "hold",
+        ActionMode::Toggle => "toggle",
     }
 }
 

@@ -410,6 +410,14 @@ impl Prefs {
                     .map(|(action, value)| format!("{action}={value}\n")),
             );
         }
+        if !self.action_modes.is_empty() {
+            text.push_str("\n[action_modes]\n");
+            text.extend(
+                self.action_modes
+                    .iter()
+                    .map(|(action, value)| format!("{action}={value}\n")),
+            );
+        }
         if !self.debug.is_empty() {
             text.push_str("\n[debug]\n");
             text.extend(

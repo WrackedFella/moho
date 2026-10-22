@@ -28,6 +28,7 @@ impl BindingRegistry {
             section.insert(CONSOLE_BINDING.to_owned(), console.clone());
         }
         prefs.set_bindings(section);
+        prefs.set_action_modes(self.bindings.modes_to_section());
     }
 
     /// The listed row (other than `exclude`) already bound to `key`, if any.

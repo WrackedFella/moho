@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 
-use crate::bindings::{Action, ActionBindings, Binding, Input, Modifiers, Trigger};
+use crate::bindings::{Action, ActionBindings, ActionMode, Binding, Input, Modifiers, Trigger};
 use crate::filter::{DeadzoneFilter, MouseSmoothing};
 use crate::key::{Key, MouseButton};
 use crate::pad::{PadButton, PadInput, Stick, StickAxis, StickDir};
@@ -126,6 +126,12 @@ pub struct ActionMap<A: Action> {
     /// Inputs some action binds with `Hold`, per modifier set: their `Press` bindings with
     /// that set fire on a quick release.
     split: HashSet<(Input, Modifiers)>,
+    /// Actions in toggle mode, fixed at construction.
+    toggled: u64,
+    /// Held mask resolved from the inputs, before toggle actions are latched.
+    raw_held: u64,
+    /// Toggle-mode actions currently latched on.
+    latched: u64,
     held: u64,
     pressed: u64,
     released: u64,
@@ -151,10 +157,17 @@ impl<A: Action> ActionMap<A> {
             .filter(|binding| binding.trigger == Trigger::Hold)
             .map(|binding| (binding.input, binding.modifiers))
             .collect();
+        let toggled = A::ALL
+            .iter()
+            .filter(|&&action| bindings.mode(action) == ActionMode::Toggle)
+            .fold(0, |mask, &action| mask | bit(action));
         Self {
             bindings,
             down: HashMap::new(),
             split,
+            toggled,
+            raw_held: 0,
+            latched: 0,
             held: 0,
             pressed: 0,
             released: 0,
@@ -224,6 +237,7 @@ impl<A: Action> ActionMap<A> {
     pub fn release_all(&mut self) {
         self.sticks = [(0.0, 0.0); 2];
         self.down.clear();
+        self.latched = 0;
         self.refresh_held(0);
     }
 
@@ -363,9 +377,17 @@ impl<A: Action> ActionMap<A> {
     }
 
     /// Recomputes the held mask; `taps` are actions that press and release in this tick.
+    ///
+    /// A toggle-mode action's reported bit is its latch, flipped by a rising edge or a tap
+    /// of the resolved mask, so its edges come from the latch changing.
     fn refresh_held(&mut self, taps: u64) {
-        let held = self.actions_where(|b| self.binding_down(b));
-        let taps = taps & !held;
+        let raw = self.actions_where(|b| self.binding_down(b));
+        let taps = taps & !raw;
+        let rising = raw & !self.raw_held;
+        self.latched ^= (rising | taps) & self.toggled;
+        self.raw_held = raw;
+        let held = (raw & !self.toggled) | self.latched;
+        let taps = taps & !self.toggled;
         self.pressed |= (held & !self.held) | taps;
         self.released |= (self.held & !held) | taps;
         self.held = held;

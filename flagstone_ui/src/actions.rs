@@ -80,6 +80,10 @@ impl Action for StrategyAction {
             StrategyAction::Select => &SELECT,
         }
     }
+
+    fn toggleable(self) -> bool {
+        self == StrategyAction::Sprint
+    }
 }
 
 /// Reads the strategy bindings from prefs, warning about each line that fell back to a default.
@@ -87,9 +91,12 @@ impl Action for StrategyAction {
 pub fn load_bindings(prefs: &Prefs) -> ActionBindings<StrategyAction> {
     let mut section = prefs.bindings().clone();
     section.remove(CONSOLE_BINDING);
-    let (bindings, warnings) = ActionBindings::load(&section);
+    let (mut bindings, warnings) = ActionBindings::load(&section);
     for w in warnings {
         tracing::warn!(action = %w.name, value = %w.value, "Unusable binding, default kept");
+    }
+    for w in bindings.load_modes(prefs.action_modes()) {
+        tracing::warn!(action = %w.name, value = %w.value, "Unusable action mode, hold kept");
     }
     bindings
 }

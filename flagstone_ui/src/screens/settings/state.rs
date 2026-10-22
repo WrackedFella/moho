@@ -150,9 +150,10 @@ impl SettingsState {
         self.staged_bindings.get_mode(action)
     }
 
-    /// Replace the staged mode of one action.
+    /// Replace the staged mode of one action and mark its row dirty.
     pub fn set_staged_mode(&mut self, action: StrategyAction, mode: ActionMode) {
         self.staged_bindings.set_mode(action, mode);
+        self.mark_dirty(SettingsField::Binding(action));
     }
 
     /// Stage a window mode and mark it dirty.
@@ -167,9 +168,10 @@ impl SettingsState {
         self.mark_dirty(SettingsField::WindowResolution);
     }
 
-    /// Whether the staged bindings of `action` differ from the saved ones.
+    /// Whether the staged bindings or mode of `action` differ from the saved ones.
     pub fn is_binding_modified(&self, action: StrategyAction) -> bool {
         self.staged_bindings.get_binding(action) != self.saved_bindings.get_binding(action)
+            || self.staged_bindings.get_mode(action) != self.saved_bindings.get_mode(action)
     }
 }
 
