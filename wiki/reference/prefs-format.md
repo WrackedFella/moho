@@ -77,7 +77,7 @@ opened there still saves to the default path).
 | `[video]` | `window_mode` | `Windowed` \| `Fullscreen` \| `Borderless`, exact case | `Windowed` |
 | | `window_width` `window_height` | unsigned integer pixels | `1920` `1080` |
 | | `vsync` | `true` \| `false`; whether presented frames wait for the display refresh | `true` |
-| | `fps_max` | unsigned integer frames per second applied while `vsync` is off; `0` is uncapped | `300` |
+| | `fps_max` | unsigned integer frames per second applied while `vsync` is off; `0` is uncapped; the Video tab's cap control clamps a value above 1000 to 1000 when shown | `300` |
 | `[world]` | `load_radius` `unload_radius` | integer chunks | `8` `12` |
 | | `chunks_per_frame` | unsigned integer, 1 or more | `4` |
 | `[debug]` | one key per game debug value | free text, see below | none |
