@@ -1,6 +1,6 @@
-# FPS-F1 — Game Design Document (v0.2)
+# FPS-F1 — Game Design Document (v0.3)
 
-**Status:** draft v0.2, approved for Phase 1. Writing this page is
+**Status:** draft v0.3, approved for Phase 1. Writing this page is
 [FPS-F1](../../_todo/searchlight/FPS-F1-game-design-document/_feature.md)'s deliverable. Open questions are in §9.
 **Working pitch:** a survival-focused looter shooter with realistic gunplay, where your gear is your character and every fight is a line on a ledger.
 **Working target:** single-player first, co-op later, mod support a priority. Pivots (Destiny-like, Arma-like) are open questions, not commitments (§9).
@@ -11,7 +11,7 @@
 
 Each pillar is a filter: a feature that serves none of them is cut.
 
-1. **Gear is your character.** No XP, no skill trees. Capability comes from what you carry and its condition.
+1. **Gear is your character.** No levels, no stat points. Capability comes from what you carry and its condition, on a body whose attributes are fixed (§4.12). Skills that grow with use are a deferred layer that buffs gear, never replaces it (§9 Q14).
 2. **Every encounter has a price.** Rounds, component wear, armor damage, meds, food, time. Success is measured as profit, not kills or survival.
 3. **Difficulty comes from systems, not sponges.** Enemies die to a few well-placed rounds; danger comes from jams, wounds, scarcity and bad decisions. Armor is the only legitimate source of tankiness.
 4. **The world doesn't wait for you.** Factions, creatures and independents pursue their own goals; you arrive into consequences.
@@ -59,7 +59,7 @@ Each system states the question its prototype must answer, the design, and its c
 - **Question:** can one data-driven item model carry weapons, mags, rounds, meds, food and repair kits without special cases?
 - Items are defined in data files (moddable), not code.
 - **Loadout slots:** weapon slots (2 primary + sidearm), **belt/vest** slots (fast access: mags, meds, grenades), **backpack** (slow: open inventory screen, time passes, you're vulnerable).
-- Carry weight drives stamina and speed.
+- Carry weight against the player's carry capacity (§4.12) drives stamina and speed through load thresholds.
 - **Cut line:** grid/Tetris inventory is out; weight plus slot count only.
 
 ### 4.2 Firearms and magazines
@@ -117,11 +117,11 @@ Each system states the question its prototype must answer, the design, and its c
 - **Question:** does separating limb health from life health create interesting downtime decisions?
 - **Body parts:** head, torso, left arm, right arm, left leg, right leg. Each has its own HP.
 - **Player HP** is separate. Hits damage the part, and a share flows to Player HP (head and torso a larger share). Player HP at 0 is death. Limbs at 0 are **disabled**, not fatal.
-- **Location effects (initial):**
-  - Head: vision blur, aim sway; at 0 = death
-  - Torso: stamina cap and regen
-  - Arms: sway and reload speed; disabled arm forces one-handed (pistol only)
-  - Legs: speed, no sprint; disabled leg = limp
+- **Location effects (initial):** each part declares stat changes against §4.12 by its condition, plus effects that are not stats; it never writes a stat directly, so meds can mask it and the character screen can explain it.
+  - Head: steadiness down; vision blur (effect); at 0 = death
+  - Torso: stamina cap and recovery down
+  - Arms: steadiness, recoil control and handling down; disabled arm forces one-handed (pistol only)
+  - Legs: movement speed down; disabled leg caps "no sprint" and shows as a limp
 - **First aid (quick):** adds **temporary HP** to a part. Temp HP decays over time. Does **not** restore Player HP.
 - **Secondary aid (post):** **locks in** current temp HP as real HP, applies a debuff (dizziness, faster hunger/thirst/fatigue), and starts a **heal over time** on Player HP.
 - **Player HP regen sources (always over time):** secondary aid, resting at a safe location, food, some meds.
@@ -136,7 +136,7 @@ Each system states the question its prototype must answer, the design, and its c
 
 - **Question:** do hunger, thirst and fatigue add pressure to the loop, or just chores?
 - Three stats, drained by **game time** (not real time), modified by exertion and meds.
-- Thresholds apply penalties (stamina, sway, regen), not damage, until the extreme end.
+- Thresholds declare stat changes against §4.12 (stamina, steadiness, recovery), not damage, until the extreme end.
 - **Sleep** restores fatigue, passes time (healing timers advance), and is the moment the **Director plans the next day** (§4.10). Sleep only in safe spots.
 - **Cut lines:** temperature, disease, food spoilage.
 
@@ -179,6 +179,20 @@ Each system states the question its prototype must answer, the design, and its c
 - **Grenades:** veterans use them to flush a player from cover. Gated on thrown objects and area damage, so cut until after Phase 4.
 - **Cut lines:** morale and surrender, dialogue, voice lines beyond a few callouts, enemies that open doors or use vehicles, learning from the player, a player-side suppression effect (first version is AI behavior only), predator-prey ecosystems.
 
+### 4.12 Player and weapon stats
+
+- **Question:** can one modifier layer carry gear, load, wounds, stance and survival so the player can always answer "why am I slow"?
+- **Attributes are fixed.** The player has a short sheet of base attributes (names TBD; Strength governs carry capacity) that never change over a character's life. Gear may augment an attribute (an exoskeleton adds Strength) or a stat directly (boots add speed). Everyone starts with the same sheet; starting backgrounds are a §9 fork.
+- **Stats** are what systems read. Six at most: **carry capacity**, **movement speed**, **stamina** (pool and recovery), **steadiness** (sway, breath settle), **recoil control** (kick absorbed, return to aim), **handling** (reload, mag check, swap, stance change). Each stat is its attribute's baseline plus whatever is true right now; nothing is stored or levelled.
+- **Not stats:** toughness or a health pool (armor is the only tankiness, pillar 3; HP stays as §4.7); vision and hearing (head wounds and dizziness are screen and audio **effects**); luck, loot find or trade.
+- **Weapon stats** belong to the gun and come from its class, components and condition (§4.3) and attachments (§4.4): **kick** (vertical, horizontal), **spread**, **weight and balance**, **ergonomics**, **reliability**. Damage is the round's (§4.2). **Seam rule:** what reaches the screen is the weapon stat shaped by the player stat: kick felt is kick less recoil control; sway seen is weight and balance less steadiness; reload time is ergonomics scaled by handling. A better gun and a steadier body both help, and the player can tell which did.
+- **Modifier layer:** every source declares its changes in three verbs, **add** ("+8 kg carry"), **scale** ("speed −15%") and **cap** ("no sprint"). Adds, then scales, then caps, then a per-stat floor. Sources: equipment (per item while worn; its weight into load), load (thresholds against carry capacity: fine, slowed, no sprint, cannot move), wounds (§4.7), stance (crouch, prone, lean while held), survival (§4.8), meds and food (timed, and **suppression** of another source: painkillers mask wounds), artifacts (later), skills (deferred, §9 Q14).
+- **Items reach the sheet by the repair rule:** an item with a % contributes by its condition and comes back when repaired or cleaned; an item with a number of uses is a timed change that consumes a use and is never a permanent source. The body follows the same rule: limb HP is a %, healing is repair. Wasting injuries (§4.7) are the one permanent change, and only downward.
+- **Presentation follows the number:** limping, heavy breathing and a slow reload are read off resolved stats and effects; no system animates a penalty the sheet does not show.
+- **Inspection:** a character screen (not HUD, §3.3) lists each stat with its contributors (*pack −8%, left leg −20%, painkiller suppresses left leg*). This is where the game feels RPG-like.
+- **Order (start simple):** Phase 1 nothing; the arena's recoil and sprint constants move behind the layer in Phase 2. Phase 2 births the layer with only the three stats load touches (carry capacity, movement speed, stamina), the three verbs, equipment and load as sources, and a weight readout. Steadiness, recoil control and handling arrive with their first real source (furniture wear in Phase 3, wounds in Phase 4, stance when scheduled).
+- **Cut lines:** more than six stats; any stat or attribute that grows with use; a visible level; per-character random attributes (until the backgrounds fork is decided).
+
 ## 5 Modes and levels: how maps are made
 
 | Mode / level | Map source | Notes |
@@ -198,7 +212,7 @@ No procedural geometry in scope. Generation is limited to *what* is placed *wher
 - Not a seamless open world: discrete zones with transitions.
 - Not a score-chasing game: score, waves and match timers exist only in the arena mode layer.
 - Not story-driven: no authored campaign, no dialogue trees in scope.
-- Not an RPG with levels: no XP, no skill trees, no stat points for the player. (Enemy grades, §4.11, are not player levels.)
+- Not an RPG with levels: no XP levels, no stat points, no attribute that grows with use (§4.12). Skills that grow are deferred and, if they come, buff on top of gear (§9 Q14). (Enemy grades, §4.11, are not player levels.)
 - No vehicles, base building, or crafting of weapons from scratch.
 - No bullet sponges and no damage scaling with difficulty by default.
 
@@ -262,6 +276,9 @@ Why this order:
 11. **Suppression:** AI behavior only at first. Does it get a player-side effect (blurred view, spread penalty) once wounds exist (Phase 4)?
 12. **Difficulty and AI:** is AI sophistication (grade mix, tactics on or off) part of the complexity toggles in Q8? Decide with Q8.
 13. **Rank-up:** may the Director raise an enemy's grade over time (Phase 7 nice-to-have)?
+14. **Skills that grow:** Decided in principle (2026-10-22): attributes and stats never grow; a separate skill layer may grow with use and buff stats through §4.12's modifier layer. Deferred: no milestone needs it, and the first version must state its anti-grind rule (a skill may not rise from an action that costs nothing on the ledger). Attribute names (Strength, …) are also still TBD.
+15. **Starting backgrounds:** different baseline attribute sheets and starting kits (Anomaly's faction start) as a one-time pick. Decide at Phase 6 with the hub.
+16. **Character screen:** raw numbers (kg, %) or bands (light, heavy)? Recommend numbers, since the screen is a deliberate inspection, not a HUD readout.
 
 ## 10 Engine fit and engine requests
 
