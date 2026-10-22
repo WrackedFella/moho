@@ -833,8 +833,8 @@ mod tests {
         ];
         let light_system = app.light_system.as_mut().expect("light system");
         let grid = light_system.grid_mut();
-        for pos in &batch[..2] {
-            grid.mutator().place(*pos, 1, None);
+        for pos in [placed_at, batch[0], batch[1]] {
+            grid.mutator().place(pos, 1, None);
         }
         for pos in [placed_at, batch[0], batch[1], batch[2]] {
             grid.set_block_light_rgb(pos, [10, 0, 0]);
@@ -856,15 +856,14 @@ mod tests {
         let light_system = app.light_system.as_mut().expect("light system");
         assert_eq!(
             light_system.pending_jobs(),
-            3,
-            "one for the opaque placement, one per batched block, none for the empty position"
+            4,
+            "one for the opaque placement, one per batched position, the empty one included"
         );
-        assert_eq!(light_system.process_frame(), 3);
+        assert_eq!(light_system.process_frame(), 4);
         let grid = light_system.grid();
-        for pos in [placed_at, batch[0], batch[1]] {
-            assert_eq!(grid.block_light_rgb_at(pos), [0, 0, 0], "{pos} cleared");
+        for pos in [placed_at, batch[0], batch[1], batch[2]] {
+            assert_eq!(grid.block_light_rgb_at(pos), [0, 0, 0], "{pos} reconciled");
         }
-        assert_eq!(grid.block_light_rgb_at(batch[2]), [10, 0, 0]);
     }
 
     #[test]

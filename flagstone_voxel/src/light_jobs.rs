@@ -45,54 +45,26 @@ impl Default for JobId {
     }
 }
 
-/// Type of light update operation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LightUpdateOp {
-    /// Add light from a new source (torch placement, emissive block)
-    Add,
-    /// Remove light from a removed source (torch removal, block placement blocking light)
-    Remove,
-}
-
-/// A light update job
+/// A light update job: reconcile the light at one position with the grid.
 #[derive(Debug, Clone)]
 pub struct LightUpdateJob {
     /// Unique identifier for this job
     pub id: JobId,
 
-    /// Type of operation to perform
-    pub op: LightUpdateOp,
-
-    /// The block whose light is added or removed.
+    /// The position whose light is reconciled with the grid.
     pub source_pos: BlockPos,
-
-    /// RGB emission for Add operations. [0,0,0] for Remove.
-    pub rgb: [u8; 3],
 
     /// Priority (lower = higher priority, typically distance to player)
     pub priority: i32,
 }
 
 impl LightUpdateJob {
-    /// Create a new light update job for adding RGB block-light.
-    pub fn add_light(source_pos: BlockPos, rgb: [u8; 3], priority: i32) -> Self {
+    /// Create a job that reconciles the light at `source_pos` with the grid.
+    pub fn at(source_pos: BlockPos) -> Self {
         Self {
             id: JobId::new(),
-            op: LightUpdateOp::Add,
             source_pos,
-            rgb,
-            priority,
-        }
-    }
-
-    /// Create a new light update job for removing block-light at `source_pos`.
-    pub fn remove_light(source_pos: BlockPos, priority: i32) -> Self {
-        Self {
-            id: JobId::new(),
-            op: LightUpdateOp::Remove,
-            source_pos,
-            rgb: [0, 0, 0],
-            priority,
+            priority: 0,
         }
     }
 
@@ -251,18 +223,8 @@ impl LightJobQueue {
 
     /// Process a single light update job
     fn process_job(&mut self, grid: &mut VoxelGrid, job: LightUpdateJob) -> LightUpdateResult {
-        let (affected_chunks, blocks_processed) = match job.op {
-            LightUpdateOp::Add => {
-                let chunks = self.propagator.add_light_rgb(grid, job.source_pos, job.rgb);
-                let blocks = self.estimate_blocks_affected(&chunks);
-                (chunks, blocks)
-            }
-            LightUpdateOp::Remove => {
-                let chunks = self.propagator.remove_light(grid, job.source_pos);
-                let blocks = self.estimate_blocks_affected(&chunks);
-                (chunks, blocks)
-            }
-        };
+        let affected_chunks = self.propagator.update_at(grid, job.source_pos);
+        let blocks_processed = self.estimate_blocks_affected(&affected_chunks);
 
         LightUpdateResult {
             job,
@@ -317,7 +279,32 @@ mod tests {
                 opacity_cost: 0,
             },
         );
+        grid.material_registry.set_lighting(
+            2,
+            MaterialLighting {
+                emission: [15, 0, 0],
+                opacity_cost: 0,
+            },
+        );
+        grid.material_registry.set_lighting(
+            DIM,
+            MaterialLighting {
+                emission: [1, 0, 0],
+                opacity_cost: 0,
+            },
+        );
         grid
+    }
+
+    /// Material 2 emits red at 15, material 3 at 1; both are transparent.
+    const BRIGHT: u32 = 2;
+    const DIM: u32 = 3;
+
+    fn job(pos: IVec3, priority: i32) -> LightUpdateJob {
+        LightUpdateJob {
+            priority,
+            ..LightUpdateJob::at(pos)
+        }
     }
 
     fn unlimited_budget() -> LightFrameBudget {
@@ -333,11 +320,9 @@ mod tests {
         let mut queue = LightJobQueue::new(unlimited_budget());
 
         for (x, priority) in [(0, 50), (10, 100), (20, 25)] {
-            queue.submit(LightUpdateJob::add_light(
-                IVec3::new(x, 0, 0),
-                [15, 0, 0],
-                priority,
-            ));
+            let pos = IVec3::new(x, 0, 0);
+            grid.place_block(pos, BRIGHT, None);
+            queue.submit(job(pos, priority));
         }
         queue.process_frame(&mut grid);
 
@@ -363,8 +348,8 @@ mod tests {
         }
 
         let light_pos = IVec3::new(2, 2, 2);
-        let job = LightUpdateJob::add_light(light_pos, [15, 0, 0], 10);
-        queue.submit(job);
+        grid.place_block(light_pos, BRIGHT, None);
+        queue.submit(job(light_pos, 10));
 
         let completed = queue.process_frame(&mut grid);
         assert_eq!(completed, 1);
@@ -394,16 +379,16 @@ mod tests {
             }
         }
 
-        // Add light via propagator directly.
         let light_pos = IVec3::new(2, 2, 2);
+        grid.place_block(light_pos, BRIGHT, None);
         let mut propagator = LightPropagator::new();
         propagator.add_light_rgb(&mut grid, light_pos, [15, 0, 0]);
 
         let (sc, si, _) = light_storage::world_to_chunk_local(light_pos);
         assert_eq!(grid.chunk_light(sc).unwrap().block_light_r[si], 15);
 
-        let job = LightUpdateJob::remove_light(light_pos, 10);
-        queue.submit(job);
+        grid.mutator().remove(light_pos);
+        queue.submit(job(light_pos, 10));
 
         let completed = queue.process_frame(&mut grid);
         assert_eq!(completed, 1);
@@ -419,12 +404,8 @@ mod tests {
             max_time_us: u64::MAX,
         });
         for i in 0..3i32 {
-            grid.place_block(IVec3::new(i, 0, 0), 1, None);
-            queue.submit(LightUpdateJob::add_light(
-                IVec3::new(i, 0, 0),
-                [15, 0, 0],
-                i,
-            ));
+            grid.place_block(IVec3::new(i, 0, 0), BRIGHT, None);
+            queue.submit(job(IVec3::new(i, 0, 0), i));
         }
 
         let first = queue.process_frame(&mut grid);
@@ -439,9 +420,11 @@ mod tests {
         assert_eq!(queue.pending_jobs(), 0);
     }
 
-    /// One lit voxel per job, so each finished job is charged one chunk.
-    fn single_chunk_job(x: i32) -> LightUpdateJob {
-        LightUpdateJob::add_light(IVec3::new(x, 8, 8), [1, 0, 0], x)
+    /// A dim emitter lights one voxel, so each finished job is charged one chunk.
+    fn single_chunk_job(grid: &mut VoxelGrid, x: i32) -> LightUpdateJob {
+        let pos = IVec3::new(x, 8, 8);
+        grid.place_block(pos, DIM, None);
+        job(pos, x)
     }
 
     fn budget_of(max_blocks_per_frame: usize) -> LightFrameBudget {
@@ -458,7 +441,8 @@ mod tests {
             let mut grid = transparent_grid();
             let mut queue = LightJobQueue::new(budget_of(budget));
             for x in 0..4 {
-                queue.submit(single_chunk_job(x));
+                let job = single_chunk_job(&mut grid, x);
+                queue.submit(job);
             }
 
             let completed = queue.process_frame(&mut grid);
@@ -472,7 +456,8 @@ mod tests {
     fn zero_budget_processes_nothing_and_keeps_the_job_queued() {
         let mut grid = transparent_grid();
         let mut queue = LightJobQueue::new(budget_of(0));
-        queue.submit(single_chunk_job(0));
+        let job = single_chunk_job(&mut grid, 0);
+        queue.submit(job);
 
         let completed = queue.process_frame(&mut grid);
 
@@ -520,7 +505,8 @@ mod tests {
         let mut grid = transparent_grid();
         let mut queue = LightJobQueue::new(LightFrameBudget::default());
         let source = IVec3::new(15, 15, 15);
-        queue.submit(LightUpdateJob::add_light(source, [15, 0, 0], 0));
+        grid.place_block(source, BRIGHT, None);
+        queue.submit(job(source, 0));
 
         queue.process_frame(&mut grid);
 
@@ -534,9 +520,11 @@ mod tests {
         let mut grid = transparent_grid();
         let mut queue = LightJobQueue::new(LightFrameBudget::default());
         let source = IVec3::new(15, 15, 15);
+        grid.place_block(source, BRIGHT, None);
         LightPropagator::new().add_light_rgb(&mut grid, source, [15, 0, 0]);
         let lit_before = lit_chunks(&grid, source);
-        queue.submit(LightUpdateJob::remove_light(source, 0));
+        grid.mutator().remove(source);
+        queue.submit(job(source, 0));
 
         queue.process_frame(&mut grid);
 
@@ -548,22 +536,20 @@ mod tests {
 
     #[test]
     fn jobs_are_equal_by_id_not_by_content() {
-        let job = LightUpdateJob::add_light(IVec3::new(1, 2, 3), [15, 0, 0], 7);
-        let twin = LightUpdateJob::add_light(IVec3::new(1, 2, 3), [15, 0, 0], 7);
+        let first = job(IVec3::new(1, 2, 3), 7);
+        let twin = job(IVec3::new(1, 2, 3), 7);
 
-        assert_eq!(job, job.clone());
-        assert_ne!(job, twin);
+        assert_eq!(first, first.clone());
+        assert_ne!(first, twin);
     }
 
     #[test]
     fn test_player_distance_priority() {
         let player_pos = Vec3::new(0.0, 0.0, 0.0);
 
-        let job_close = LightUpdateJob::add_light(IVec3::new(5, 0, 0), [15, 0, 0], 100)
-            .with_player_distance(player_pos);
+        let job_close = job(IVec3::new(5, 0, 0), 100).with_player_distance(player_pos);
 
-        let job_far = LightUpdateJob::add_light(IVec3::new(50, 0, 0), [15, 0, 0], 100)
-            .with_player_distance(player_pos);
+        let job_far = job(IVec3::new(50, 0, 0), 100).with_player_distance(player_pos);
 
         assert!(job_close.priority < job_far.priority);
     }
