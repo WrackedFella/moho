@@ -176,6 +176,13 @@ The egui UI is drawn by the UI pass from paint data (below); `finish_frame` only
 and presents. Shader sources are `shaders/*.wgsl` (`common`, `vertex`,
 `fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`, `marker`).
 
+Present mode: the surface starts on `Fifo` and the renderer keeps the present modes the
+surface supports. `RendererBackend::set_vsync(on)` picks the mode with
+`device::choose_present_mode` and reconfigures the surface, the same path as `resize`.
+On gives `Fifo`. Off gives `Immediate`, else `Mailbox`, else `Fifo` with a fallback
+reason, which `Renderer::set_vsync` logs at `warn`. `FifoRelaxed` is never chosen. The
+trait method is a no-op by default.
+
 ### 5.1 Light composition
 
 The last lighting step in `shaders/fragment.wgsl` combines the two per-vertex light

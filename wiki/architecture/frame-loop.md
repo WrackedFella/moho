@@ -17,12 +17,12 @@ flowchart TD
 
     NE["new_events"] --> acc["FixedStep accumulates<br/>time since last wake"]
     acc --> tk["per due tick:<br/>Game::command, Game::tick,<br/>then GameClock advance"]
-    tk --> cf["control flow: wait until next tick"]
+    tk --> cf["control flow: wait until next tick<br/>or next frame when capped"]
 
     WE["window_event"] --> route{"runner::route"}
     route -- RedrawRequested --> wp["if paused: Game::command,<br/>then Game::apply_while_paused"] --> fr["Game::frame(alpha, frame_dt)"]
     fr --> req["apply set_paused / set_speed<br/>from the next tick"]
-    req --> rr["request_redraw<br/>unless exiting"]
+    req --> rr["request_redraw<br/>unless exiting or capped"]
     route -- Resized --> rs["renderer.resize, then Game::event"]
     route -- CloseRequested --> ev["Game::event, then exit"]
     route -- other --> ev2["Game::event"]
@@ -35,6 +35,7 @@ Init failures (window, renderer) end `run` with an `AppError`; audio failure onl
 `FrameContext::renderer` and `audio` are `None` under `HeadlessLoop`, which drives the
 same `command`/`tick`/`frame` without a window (`init` and `event` never run).
 Every frame requests the next redraw, so frames run at the presentation rate and look turns the view on each one; `FrameContext::frame_dt` is the time since the previous frame, capped at `tick_length` times `max_catch_up_ticks`. Time beyond `max_catch_up_ticks` is dropped ([overview](overview.md#4-fixed-step-loop-moho_app)).
+A game caps the frame rate with `FrameContext::set_frame_cap(Option<NonZeroU32>)` (frames per second); a game that never calls it is uncapped. The runner holds a `FramePacer` (`moho_app/src/pacing.rs`) that times the next frame from when the last one was actually drawn. When capped, a frame does not request the next redraw: `new_events` requests it once the pacer is due, and the wait is `WaitUntil(min(next tick, next frame due))`. Ticks keep their own schedule, so a low cap never slows the simulation. `App` hands the cap to the loop from its prefs: none while vsync is on (the display paces frames) or `fps_max` is 0, else `fps_max`.
 A game pauses or changes `SimSpeed` through `set_paused` / `set_speed` on its event or frame context; the loop applies the request after the callback returns, from the next tick. While paused the loop runs no tick and still renders every frame ([ADR-0018](../../_todo/adr/0018-paused-commands-apply-at-the-tick-boundary.md)).
 
 ## 2 `Game::tick` order (`App`)

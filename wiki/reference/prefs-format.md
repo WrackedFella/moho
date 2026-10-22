@@ -76,6 +76,8 @@ opened there still saves to the default path).
 | `[graphics]` | `shadow_quality` `ssao_quality` | unsigned integer; the UI offers 0 (off) to 4 (ultra) | `3` `3` |
 | `[video]` | `window_mode` | `Windowed` \| `Fullscreen` \| `Borderless`, exact case | `Windowed` |
 | | `window_width` `window_height` | unsigned integer pixels | `1920` `1080` |
+| | `vsync` | `true` \| `false`; whether presented frames wait for the display refresh | `true` |
+| | `fps_max` | unsigned integer frames per second applied while `vsync` is off; `0` is uncapped | `300` |
 | `[world]` | `load_radius` `unload_radius` | integer chunks | `8` `12` |
 | | `chunks_per_frame` | unsigned integer, 1 or more | `4` |
 | `[debug]` | one key per game debug value | free text, see below | none |
@@ -169,6 +171,8 @@ ssao_quality=3
 window_mode=Windowed
 window_width=1280
 window_height=720
+vsync=true
+fps_max=300
 
 [world]
 load_radius=8
