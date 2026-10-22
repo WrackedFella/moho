@@ -8,7 +8,8 @@ use std::sync::Arc;
 use moho_app::{AppConfig, LoopConfig};
 use moho_core::content::{ContentError, ContentRoots, load_kind};
 use moho_core::prefs::Prefs;
-use moho_input::bindings::ActionBindings;
+use moho_input::bindings::{ActionBindings, Input};
+use moho_input::key::Key;
 use moho_ui_shell::UiShell;
 use searchlight::arena::{self, Arena};
 use searchlight::console_commands;
@@ -26,6 +27,11 @@ fn load_rifle() -> Result<RifleDef, ContentError> {
     let roots = ContentRoots::base(&content_root())?;
     let weapons = load_kind::<RifleDef>(&roots, "weapons")?;
     weapons.require(RIFLE_ID).cloned()
+}
+
+/// Keys that flip windowed and borderless fullscreen, besides Alt+Enter.
+fn toggle_keys() -> Vec<Input> {
+    vec![Input::Key(Key::F11)]
 }
 
 fn assets() -> PathBuf {
@@ -78,7 +84,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
             window_title: WINDOW_TITLE.to_owned(),
             loop_config: LoopConfig::new(TICK_HZ),
             init_audio: true,
-            toggle_keys: None,
+            toggle_keys: Some(toggle_keys()),
         },
     )?;
     Ok(ExitCode::SUCCESS)

@@ -1,7 +1,10 @@
 //! Window-mode toggle keys: the runner consumes them so the game never sees them.
 
+use std::collections::HashSet;
+
 use moho_input::bindings::Input;
-use winit::keyboard::KeyCode;
+use moho_input::key::Key;
+use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// What the runner does with one observed key event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +28,10 @@ pub enum WindowMode {
 impl WindowMode {
     /// The other mode.
     pub fn toggled(self) -> Self {
-        todo!()
+        match self {
+            WindowMode::Windowed => WindowMode::Borderless,
+            WindowMode::Borderless => WindowMode::Windowed,
+        }
     }
 }
 
@@ -33,22 +39,65 @@ impl WindowMode {
 #[derive(Debug, Clone)]
 pub struct ToggleKeys {
     keys: Vec<Input>,
+    alt_left: bool,
+    alt_right: bool,
+    /// Physical keys whose press was consumed, so their repeats and release are too.
+    swallowed: HashSet<KeyCode>,
 }
 
 impl ToggleKeys {
     pub fn new(keys: Vec<Input>) -> Self {
-        Self { keys }
+        Self {
+            keys,
+            alt_left: false,
+            alt_right: false,
+            swallowed: HashSet::new(),
+        }
     }
 
     /// Classifies one key event.
     pub fn observe(&mut self, code: KeyCode, pressed: bool, repeat: bool) -> Observed {
-        let _ = (&self.keys, code, pressed, repeat);
-        todo!()
+        match code {
+            KeyCode::AltLeft => self.alt_left = pressed,
+            KeyCode::AltRight => self.alt_right = pressed,
+            _ => {}
+        }
+        if matches!(code, KeyCode::AltLeft | KeyCode::AltRight) {
+            return Observed::Pass;
+        }
+
+        if !pressed {
+            return if self.swallowed.remove(&code) {
+                Observed::Swallow
+            } else {
+                Observed::Pass
+            };
+        }
+        if self.swallowed.contains(&code) {
+            return Observed::Swallow;
+        }
+        if repeat || !self.is_toggle(code) {
+            return Observed::Pass;
+        }
+        self.swallowed.insert(code);
+        Observed::Flip
     }
 
     /// Forgets held modifiers: their releases go to another window.
     pub fn focus_lost(&mut self) {
-        todo!()
+        self.alt_left = false;
+        self.alt_right = false;
+        self.swallowed.clear();
+    }
+
+    fn is_toggle(&self, code: KeyCode) -> bool {
+        let alt_enter = (self.alt_left || self.alt_right)
+            && matches!(code, KeyCode::Enter | KeyCode::NumpadEnter);
+        alt_enter
+            || self.keys.iter().any(|input| match input {
+                Input::Key(key) => Key::from_winit(PhysicalKey::Code(code)) == Some(*key),
+                _ => false,
+            })
     }
 }
 

@@ -8,10 +8,12 @@ use moho_renderer::RendererBackend;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowAttributes, WindowId};
+use winit::keyboard::PhysicalKey;
+use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 
 use crate::{
     AppConfig, AppError, Event, EventContext, FrameContext, Game, HeadlessLoop, InitContext,
+    Observed, ToggleKeys, WindowMode,
 };
 
 /// What the runner does with a window event.
@@ -47,10 +49,13 @@ pub(crate) fn route(event: &WindowEvent) -> Route {
 /// Returns [`AppError`] if the event loop, window or renderer cannot be created.
 pub fn run<G: Game + 'static>(game: G, config: AppConfig) -> Result<(), AppError> {
     let event_loop = EventLoop::new().map_err(|e| AppError::EventLoop(e.to_string()))?;
+    let toggles = config.toggle_keys.clone().map(ToggleKeys::new);
     let mut runner = Runner {
         sim: HeadlessLoop::new(config.loop_config),
         game,
         config,
+        toggles,
+        mode: WindowMode::Windowed,
         window: None,
         renderer: None,
         audio: None,
@@ -69,6 +74,8 @@ pub fn run<G: Game + 'static>(game: G, config: AppConfig) -> Result<(), AppError
 struct Runner<G: Game> {
     game: G,
     config: AppConfig,
+    toggles: Option<ToggleKeys>,
+    mode: WindowMode,
     sim: HeadlessLoop<G>,
     window: Option<Arc<Window>>,
     renderer: Option<Box<dyn RendererBackend>>,
@@ -76,6 +83,50 @@ struct Runner<G: Game> {
     last_wake: Instant,
     last_frame: Instant,
     error: Option<AppError>,
+}
+
+impl<G: Game> Runner<G> {
+    /// Feeds key and focus events to the toggle detector; without one everything passes.
+    fn observe_toggle(&mut self, event: &WindowEvent) -> Observed {
+        let Some(toggles) = &mut self.toggles else {
+            return Observed::Pass;
+        };
+        match event {
+            WindowEvent::KeyboardInput { event, .. } => match event.physical_key {
+                PhysicalKey::Code(code) => {
+                    toggles.observe(code, event.state.is_pressed(), event.repeat)
+                }
+                PhysicalKey::Unidentified(_) => Observed::Pass,
+            },
+            WindowEvent::Focused(false) => {
+                toggles.focus_lost();
+                Observed::Pass
+            }
+            _ => Observed::Pass,
+        }
+    }
+
+    fn flip_window_mode(&mut self, event_loop: &ActiveEventLoop) {
+        self.mode = self.mode.toggled();
+        if let Some(window) = &self.window {
+            window.set_fullscreen(match self.mode {
+                WindowMode::Windowed => None,
+                WindowMode::Borderless => Some(Fullscreen::Borderless(None)),
+            });
+        }
+        let mut ctx = EventContext::new(
+            self.sim.clock(),
+            self.renderer.as_deref_mut(),
+            self.audio.as_mut(),
+        );
+        self.game.window_mode_changed(&mut ctx, self.mode);
+        let requests = ctx.loop_requests();
+        let exit = ctx.exit_requested();
+        self.sim.apply_requests(requests);
+        if exit {
+            event_loop.exit();
+        }
+    }
 }
 
 impl<G: Game> ApplicationHandler for Runner<G> {
@@ -156,6 +207,15 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        match self.observe_toggle(&event) {
+            Observed::Pass => {}
+            Observed::Swallow => return,
+            Observed::Flip => {
+                self.flip_window_mode(event_loop);
+                return;
+            }
+        }
+
         let route = route(&event);
         match route {
             Route::Frame => {

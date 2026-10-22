@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use glam::{Mat4, Quat, Vec3};
-use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext};
+use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext, WindowMode};
 use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
 use moho_input::bindings::Input;
@@ -339,7 +339,7 @@ fn lighting() -> LightingGpu {
 
 /// Keeps the pointer inside the window for mouse look; a platform that allows neither
 /// grab leaves it free.
-fn capture_cursor(window: &Window) {
+fn grab_cursor(window: &Window) {
     window.set_cursor_visible(false);
     let grabbed = window
         .set_cursor_grab(CursorGrabMode::Confined)
@@ -396,6 +396,17 @@ impl Stage {
             ))),
             #[cfg(test)]
             cursor_captures: 0,
+        }
+    }
+
+    /// Captures the cursor in the stage's window, if it has one.
+    fn capture_cursor(&mut self) {
+        #[cfg(test)]
+        {
+            self.cursor_captures += 1;
+        }
+        if let Some(window) = &self.window {
+            grab_cursor(window);
         }
     }
 
@@ -763,13 +774,22 @@ impl Game for SearchlightGame {
     }
 
     fn init(&mut self, ctx: &mut InitContext<'_>) {
-        capture_cursor(ctx.window);
+        self.stage.window = Some(ctx.window.clone());
+        self.stage.capture_cursor();
         self.stage.shell().attach(ctx.window.clone());
         let crosshair: UiSource = self.stage.crosshair.clone();
         let shell: UiSource = self.stage.shell.clone();
         let layers: UiSource = Arc::new(Mutex::new(UiLayers::new(vec![crosshair, shell])));
         ctx.renderer.set_ui_source(Some(layers));
-        self.stage.window = Some(ctx.window.clone());
+    }
+
+    fn window_mode_changed(&mut self, _ctx: &mut EventContext<'_>, _mode: WindowMode) {
+        // The platform drops held keys' releases and the grab across a mode change.
+        self.input.release_all();
+        self.input.reset_look();
+        if !self.stage.shell().captures_input() {
+            self.stage.capture_cursor();
+        }
     }
 
     fn event(&mut self, ctx: &mut EventContext<'_>, event: Event) {

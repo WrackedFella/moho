@@ -217,18 +217,18 @@ impl Key {
             Key::Shift => "Shift",
             Key::Ctrl => "Ctrl",
             Key::Alt => "Alt",
-            Key::F1
-            | Key::F2
-            | Key::F3
-            | Key::F4
-            | Key::F5
-            | Key::F6
-            | Key::F7
-            | Key::F8
-            | Key::F9
-            | Key::F10
-            | Key::F11
-            | Key::F12 => "?",
+            Key::F1 => "F1",
+            Key::F2 => "F2",
+            Key::F3 => "F3",
+            Key::F4 => "F4",
+            Key::F5 => "F5",
+            Key::F6 => "F6",
+            Key::F7 => "F7",
+            Key::F8 => "F8",
+            Key::F9 => "F9",
+            Key::F10 => "F10",
+            Key::F11 => "F11",
+            Key::F12 => "F12",
         }
     }
 
@@ -349,6 +349,18 @@ impl Key {
             KeyCode::ShiftLeft | KeyCode::ShiftRight => Key::Shift,
             KeyCode::ControlLeft | KeyCode::ControlRight => Key::Ctrl,
             KeyCode::AltLeft | KeyCode::AltRight => Key::Alt,
+            KeyCode::F1 => Key::F1,
+            KeyCode::F2 => Key::F2,
+            KeyCode::F3 => Key::F3,
+            KeyCode::F4 => Key::F4,
+            KeyCode::F5 => Key::F5,
+            KeyCode::F6 => Key::F6,
+            KeyCode::F7 => Key::F7,
+            KeyCode::F8 => Key::F8,
+            KeyCode::F9 => Key::F9,
+            KeyCode::F10 => Key::F10,
+            KeyCode::F11 => Key::F11,
+            KeyCode::F12 => Key::F12,
             _ => return None,
         })
     }
@@ -737,7 +749,11 @@ mod tests {
 
             assert_eq!(key.name(), expected);
             assert_eq!(Key::parse(&expected), Some(key), "{expected}");
-            assert_eq!(Key::parse(&expected.to_lowercase()), Some(key), "{expected}");
+            assert_eq!(
+                Key::parse(&expected.to_lowercase()),
+                Some(key),
+                "{expected}"
+            );
         }
     }
 
